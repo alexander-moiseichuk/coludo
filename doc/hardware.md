@@ -27,6 +27,8 @@ looks like a promising option taking into account price and [technical specifica
 Not many options for [5V USB-C low-weight](https://www.amazon.com/dp/B07SZKNST4) power delivery are avaialbe.
 Need to clarify after checking weight for [3.7V batteries](https://www.amazon.com/dp/B0F7QJ4BVK)
 
+Alternative is to connect e.g. from [6F22 9V using plug](https://www.amazon.com/dp/B083QFFH66) and [some LM7805 voltage stabilizer](https://www.amazon.com/dp/B00LTQTZYQ)
+
 
 ## Button 
 Button is required for detection stage separation, when active part (engine work) completed and booster throws away
