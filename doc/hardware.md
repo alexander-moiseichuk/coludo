@@ -15,7 +15,9 @@ could be an option but may lead too much battery pack weigh.
 **Required, weight 30.5g**
 
 ## Accelerometer and Gyro
-Something on [MPU6050](https://www.amazon.com/dp/B0BMY15TC4?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_13) could be acceptable.
+Something like [MPU6050](https://www.amazon.com/dp/B0BMY15TC4?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_13) highly not recommended due to noise for high moving cases.
+The [one recommendation](https://github.com/purraricat/SlimeVR-CheeseCake-PandaTrackers/blob/main/docs/imu-comparison.md) or [another option](https://docs.slimevr.dev/diy/imu-comparison.html) 
+pushed to look on `ICM-45686` or `LSM6DSV*` so new [IMU ordered](https://www.amazon.com/Aboiled-45686-QMC6309-SlimeVR-Trackers/dp/B0GK4JHN44) keeping in mind [more expensive option](https://www.amazon.com/ICM-42688-ICM-45686-Accelerometer-Gyroscope-CM42688/dp/B0FFZRK6D9?th=1)
 
 **Required, weight 3.2g**
 
