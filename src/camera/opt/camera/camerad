@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+#
+# The camera daemon script
+#
+# configuration located as camerad.conf (see CONFIG below)
+
+DAEMON=$(basename $0)
+CONFIG="$0.conf"
+
+# configuration which is required
+export LD_LIBRARY_PATH="/oem/usr/lib:/oem/lib:"
+export HOME="/oem"
+export PATH="$PATH:/oem:/oem/bin:/oem/usr/bin:/oem/sbin:/oem/usr/sbin"
+
+# binaries to handle videos
+VENC_SERVER=rkaiq_3A_server
+VENC_HANDLER=simple_vi_bind_venc
+# hackish check - this one uses /dev/video11-13
+VENC_DEVICES="/dev/video11 /dev/video12 /dev/video13"
+
+# shellcheck source=/dev/null
+[ -r "$CONFIG" ] && . "$CONFIG"
+# shellcheck source=/dev/null
+[ -r "/etc/default/$DAEMON" ] && . "/etc/default/$DAEMON"
+
+function fatal() {
+    loggy "FATAL: $@"
+    led_control none 0
+    exit 1
+}
+
+function main() {
+    local devices=0
+    local counter=0
+    local server_pid=0
+    local video_path=""
+    local frames=$(($VIDEO_DURATION * $VIDEO_FPS))
+    local duration=0
+    local fps=0
+
+    # and now handle main function
+    loggy "starting $DAEMON to collect video to $VIDEO_FOLDER, pending for $VENC_DEVICES"
+    while [ $devices -eq 0 ]; do
+        devices=1
+        for device in $VENC_DEVICES; do
+            [ -e "$device" ] || devices=0
+        done
+    done
+    loggy "devices $VENC_DEVICES are ready, continue"
+    sleep 1
+    # now processing videos
+    while true; do
+        server_pid=$(pidof $VENC_SERVER)    # this one can crash
+        if [ -z "$server_pid" ]; then
+            $VENC_SERVER &
+            sleep 2
+            server_pid=$(pidof $VENC_SERVER)
+            loggy "started $VENC_SERVER with PID $server_pid"
+        else
+            loggy "required $VENC_SERVER is running PID $server_pid"
+        fi
+        [ -n "$server_pid" ] || fatal "cannot properly start $VENC_SERVER"
+        # produce file path
+        video_path=$(printf "%s/%03u_%ux%u.%s" $VIDEO_FOLDER $counter $VIDEO_WIDTH $VIDEO_HEIGH $VIDEO_FORMAT)
+        counter=$(($counter + 1))
+        [ -f "$video_path" ] && continue
+        # and now writing and save duration
+        duration=$(date +%s)
+        $VENC_HANDLER -w $VIDEO_WIDTH -h $VIDEO_HEIGH -c $frames -e $VIDEO_FORMAT -o "$video_path"
+        duration=$(($(date +%s) - $duration))
+        fps=$(echo "scale=1; $frames / $duration" | bc)
+        loggy "$(cat $THERMAL) mC -- $frames saved in $duration seconds with $fps FPS as $(du -ms $video_path)"
+    done
+}
+
+# quick check of important parameters
+[ -d "$VIDEO_FOLDER" ] || fatal "no video folder $VIDEO_FOLDER"
+[ -x "$(which $VENC_SERVER)" ] || fatal "cannot find video server $VENC_SERVER"
+[ -x "$(which $VENC_HANDLER)" ] || fatal "cannot find video handler $VENC_HANDLER"
+
+# and finalize in main
+main
