@@ -15,6 +15,7 @@ The last wish to be enlisted is to use Micropython as available for this limited
 - hardware weight and power restrictions limits main controller to [eSBC esp32-p4](https://wiki.dfrobot.com/FireBeetle_2_ESP32_P4_Development_Board_IO_Expansion_Kit)
 - event C/C++ is more effective but Micropython is prefferable as known solution
 - to compensate Micropython single-thread affinity the [asyncio](https://github.com/peterhinch/micropython-async) must be used with using interrupts and potential Threads usage to utilize 2nd core in Python code if necessary
+- the first part of the implementation will be testing sensor and telemetry acquisition to garuantee that later active control will have proper data. So engines will be installed and control fully enabled after trials. 
 
 # Lifecycle
 
@@ -24,7 +25,7 @@ The glider lifecycle is quite short and can be simplified to the following stage
 - **gliding** (passive stage) - in 4-6 second after engine stopped, the extraction system separates glider from booster and glider continue to fly to landing zone
 - **landing** - gliding assumed gentle landing, speed will become zero and altitude not changed which means the flight finished.
 
-## Setting (does setting mean preflight setup?)
+## Setting 
 
 The Setting stage started with powering up and finished with engine activation (Boosting stage). Expected duration will be about 15 minutes.
 As electronics started, the following operations must be performed:
@@ -32,11 +33,11 @@ As electronics started, the following operations must be performed:
 - blinking rate of power indication LED is set to 2 Hz (250ms on and 250ms off)
 - creation of all required Python objects
 - initial calibration and zeroing all components as altimeter, compass, accelerometer and gyro, fins engines check
-- wifi network with ssid **coludo_MAC** is activated and remote text console available becomes available
+- wifi network with ssid **coludo** will be connected to control PC, with and the device need to be registered on the PC to allow remote control and monitoring.
 - if camera used - the video streaming must be available.
 - if Storage (SD card) is installed, the video stream and telemetry must be recorded to the components respective flies
 - if microphone enabled - it should start recording
-- GPS must get a fix on satelites on and landing zone must be available in settings, direction vector must be calculated with distance to land zone under 200 meters
+- if GPS is avaliable, it must get a fix on satelites on and landing zone must be available in settings, direction vector must be calculated with distance to land zone under 200 meters
   - fix polling rate can be 1Hz 
   - system time syncronized to GPS time
 - Flight Controller will handle these preparation steps and validate the device's state based on component feedback
@@ -83,17 +84,15 @@ As stated above to archive required latency targets (1ms for component reaction,
 
 Controller is the main component which:
 - creates all required Components 
-- keep track of the rocket's current State { Setting, Boosting, Gliding, Landing }
+- keeps track of the rocket's current State { Setting, Boosting, Gliding, Landing }
 - get Landing Zone coordinates, understand TargetPoint and landing parameters e.g. distance from start to TargetPoint must be nearby to LaunchPoint e.g. 200m
 - controls Components states and gets async feedback for course correction
 - if the Flight Controller crashes the async loop should be restarted
 
-Main maneuvers of the Controller depends on the current stage. The procedure of directional change compensation needs to be clarified but the main goal will be to prevent overcorrection and react with
-feedback multiplier i.e. if error is angle A into some direction the fins will be twisted by A * feedback(A) angle. For example, feedback(A) can be always 0.5 or 1 for
-simplest case. In the same time maximal twist angle must be limited by -+ 45 degrees.
+Main maneuvers of the Controller depend on the current stage. The main goal will be to prevent overcorrection which will be achieved with the use of a Proportional-Integral-Derivative gains control algorithm (PIDgca). The idea about the Feedback Multiplier (Proportional Control) won't work since the glider will wildly overcorrect causing severe rocking or even the risk of stall. Thus it would be nice to have an IMU which gives position, speed, and acceleration.
 
 Examples: 
-- yaw shows direction 30 degrees right, in this case vertical fin needs to be turned 15 degrees left
+- yaw shows direction 30 degrees right, in this case vertical fin needs to be turned 15 degrees left or however much the PIDgca states
 - pitch shows nose down 10 pitch (or -10) degrees off, in this case horizontal fins must be turned down by 5 degrees (or -5) to push for resulting zero
 - roll shows 25 degrees right, so fins should be twisted for 13 degrees but left down and right up.
 - this is done to prevent overcorrection caused by potential communicational latency between components and sensors.
@@ -260,6 +259,8 @@ The centralized logging should be used with 3 possible destinations:
 - Network logging to port **1235** if WiFi is available, so using netcat or telnet possible to track logging until `Coludo` is in network range
 - /sd/logging/date_time.log if Storage is available
 
+See below writing restrictions sections
+
 ## Telemetry
 
 Similar to Logging approach but resulted in fixed-contents CSV files (;-separated) per each reporting case e.g. `/sd/telemetry/date_time.cpu.csv`:
@@ -272,6 +273,14 @@ uptime;utilization;temperature
 ``` 
 
 Later telemetry can be used e.g. in converting position and elevation of GPS to GPX format to create a trace of the glider's flight in 3D.
+
+See below writing restrictions sections
+
+## Writing restrictions
+
+Latest investigation shows that writing to the SD card or internal flash isn't possible due to internal SPI lock and upto 80 ms timeouts. To fix this there are two options:
+- Round robin writing into in-psram buffer and drop it to the SD card or flash after landing. Its limited by 32 MB psram size and probability to lose power before writing.
+- Make an [UART/I2C device which will record everything we need onto to an SD card](https://www.dfrobot.com/product-2499.html). 
 
 
 ## Console
@@ -392,13 +401,14 @@ The auxiliary large storage expected to be SD card which is nicely supported by 
 Test function could do some read/write sequential testing. 
 
 ## WiFi
-The Wifi (2.4GHz only for distance and power saving) must be automatically enabled during boot up with SSID **coludo_MAC** and default secret password ;)
-The specified address scope should be used and `Coludo` should be **.1** node e.g. 192.168.10.1, occupying unprivileged ports e.g. 1234, 1235, 1236 etc.
+The Wifi (2.4GHz only for distance and power saving) must be automatically enabled during boot up with SSID **coludo** and default secret password ;)
+After connecting to wifi it should register to Control Center PC with IP address **.1** node e.g. 192.168.10.1 and allow to modify the parameters of the glider before flight and monitor logs. 
 
 ## Camera
 The optional [Camera for Raspberry Pi](https://www.dfrobot.com/product-1179.html) can produce 30 FPS FHD.
 If sufficient Storage is installed then Camera can write data to /sd/video/ folder.
 If the WiFi is enabled it probably could be populated over web e.g. tcp port **1236**
+Should be a separate unit due to high load sensitivity.
 
 ## Audio
 The very optional functionality to record sounds from board built-in mic as .WAV or any other simple format to replay later.

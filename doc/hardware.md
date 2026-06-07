@@ -40,9 +40,9 @@ looks like a promising option taking into account price and [technical specifica
 Not many options for [5V USB-C low-weight](https://www.amazon.com/dp/B07SZKNST4) power delivery are avaialbe.
 Need to clarify after checking weight for [3.7V batteries](https://www.amazon.com/dp/B0F7QJ4BVK)
 
-Alternative is to connect e.g. from [6F22 9V using plug](https://www.amazon.com/dp/B083QFFH66) and [some LM7805 voltage stabilizer](https://www.amazon.com/dp/B00LTQTZYQ)
+Alternative is to connect e.g. from [6F22 9V using plug](https://www.amazon.com/dp/B083QFFH66) and a lightweight power-down module or a LiPo 3.7 V single cell battery and boost up circuit for controller and a separate circuit for the servos.
 
-**Required, weight 42.1g for 6F22 and LM7805 board**
+**Required, weight 42.1g for 6F22, and power-down board**
 
 ## Button 
 Button is required for detection stage separation, when active part (engine work) completed and booster throws away
@@ -55,14 +55,14 @@ and get HIGH when not pressed (separated). In theory it will save some milliwats
 
 ## Camera
 Some simple camera under 4K nice to have, ideally with autofocus. Used [Camera for Raspberry Pi](https://www.dfrobot.com/product-1179.html)
-just because it was in shop to fit free delivery.
+just because it was in shop to fit free delivery. Due to performance restrictions and software global lock it is more optimal to make it its own isolated module.
 
 **Optional, weight 4.5g**
 
 ## Navigation
-As accelerometer might be not enough for landing into proper zone and glissade, the 
+As accelerometer might be not enough for landing into proper zone and glissade, the auxillary
 [Teyleten Robot ATGM336H GPS+BDS Dual-Mode Module Flight Control Satellite Positioning Navigator](https://www.amazon.com/dp/B09LQDG1HY)
-will be helpful as has [low weight, sufficient accuracy, <30 mA power consumption and up to 10 Hz update rate](https://docs.cirkitdesigner.com/component/ab5c0c19-2fd9-4121-964e-1009970a950a/gps-atgm336h)
+will be helpful as has [low weight, sufficient accuracy, <30 mA power consumption and up to 10 Hz update rate](https://docs.cirkitdesigner.com/component/ab5c0c19-2fd9-4121-964e-1009970a950a/gps-atgm336h). Through fast movement the GPS may lose lock with satelites, so its software implementation and its enablment will not be a priority.
 
 **Required, weight 7.4g**
 
