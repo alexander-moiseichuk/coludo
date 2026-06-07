@@ -1,0 +1,737 @@
+
+duming device /dev/video0
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'RG10' (10-bit Bayer RGRG/GBGB)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[1]: 'BA10' (10-bit Bayer GRGR/BGBG)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[2]: 'GB10' (10-bit Bayer GBGB/RGRG)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[3]: 'BG10' (10-bit Bayer BGBG/GRGR)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[4]: 'Y10 ' (10-bit Greyscale)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+
+duming device /dev/video1
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'RG10' (10-bit Bayer RGRG/GBGB)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[1]: 'BA10' (10-bit Bayer GRGR/BGBG)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[2]: 'GB10' (10-bit Bayer GBGB/RGRG)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[3]: 'BG10' (10-bit Bayer BGBG/GRGR)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[4]: 'Y10 ' (10-bit Greyscale)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+
+duming device /dev/video10
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'RGGB' (8-bit Bayer RGRG/GBGB)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[1]: 'GRBG' (8-bit Bayer GRGR/BGBG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[2]: 'GBRG' (8-bit Bayer GBGB/RGRG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[3]: 'BA81' (8-bit Bayer BGBG/GRGR)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[4]: 'RG10' (10-bit Bayer RGRG/GBGB)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[5]: 'BA10' (10-bit Bayer GRGR/BGBG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[6]: 'GB10' (10-bit Bayer GBGB/RGRG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[7]: 'BG10' (10-bit Bayer BGBG/GRGR)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[8]: 'RG12' (12-bit Bayer RGRG/GBGB)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[9]: 'BA12' (12-bit Bayer GRGR/BGBG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[10]: 'GB12' (12-bit Bayer GBGB/RGRG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[11]: 'BG12' (12-bit Bayer BGBG/GRGR)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+
+duming device /dev/video11
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'UYVY' (UYVY 4:2:2)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[1]: 'NV16' (Y/CbCr 4:2:2)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[2]: 'NV61' (Y/CrCb 4:2:2)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[3]: 'NV21' (Y/CrCb 4:2:0)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[4]: 'NV12' (Y/CbCr 4:2:0)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[5]: 'NM21' (Y/CrCb 4:2:0 (N-C))
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[6]: 'NM12' (Y/CbCr 4:2:0 (N-C))
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+
+duming device /dev/video12
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'UYVY' (UYVY 4:2:2)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[1]: 'NV16' (Y/CbCr 4:2:2)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[2]: 'NV61' (Y/CrCb 4:2:2)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[3]: 'NV21' (Y/CrCb 4:2:0)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[4]: 'NV12' (Y/CbCr 4:2:0)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[5]: 'NM21' (Y/CrCb 4:2:0 (N-C))
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[6]: 'NM12' (Y/CbCr 4:2:0 (N-C))
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[7]: 'GREY' (8-bit Greyscale)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[8]: 'XR24' (32-bit BGRX 8-8-8-8)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[9]: 'RGBP' (16-bit RGB 5-6-5)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+
+duming device /dev/video13
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'UYVY' (UYVY 4:2:2)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[1]: 'NV16' (Y/CbCr 4:2:2)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[2]: 'NV12' (Y/CbCr 4:2:0)
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+	[3]: 'NM12' (Y/CbCr 4:2:0 (N-C))
+		Size: Stepwise 32x32 - 2304x1296 with step 8/8
+
+duming device /dev/video14
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'UYVY' (UYVY 4:2:2)
+		Size: Discrete 576x324
+	[1]: 'NV16' (Y/CbCr 4:2:2)
+		Size: Discrete 576x324
+	[2]: 'NV12' (Y/CbCr 4:2:0)
+		Size: Discrete 576x324
+	[3]: 'NM12' (Y/CbCr 4:2:0 (N-C))
+		Size: Discrete 576x324
+
+duming device /dev/video15
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'UYVY' (UYVY 4:2:2)
+		Size: Discrete 144x81
+	[1]: 'NV16' (Y/CbCr 4:2:2)
+		Size: Discrete 144x81
+	[2]: 'NV12' (Y/CbCr 4:2:0)
+		Size: Discrete 144x81
+	[3]: 'NM12' (Y/CbCr 4:2:0 (N-C))
+		Size: Discrete 144x81
+
+duming device /dev/video16
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'GREY' (8-bit Greyscale)
+		Size: Discrete 72x41
+
+duming device /dev/video17
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+
+duming device /dev/video18
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+
+duming device /dev/video19
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture
+
+
+duming device /dev/video2
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'RG10' (10-bit Bayer RGRG/GBGB)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[1]: 'BA10' (10-bit Bayer GRGR/BGBG)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[2]: 'GB10' (10-bit Bayer GBGB/RGRG)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[3]: 'BG10' (10-bit Bayer BGBG/GRGR)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[4]: 'Y10 ' (10-bit Greyscale)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+
+duming device /dev/video20
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture
+
+
+duming device /dev/video3
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'RG10' (10-bit Bayer RGRG/GBGB)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[1]: 'BA10' (10-bit Bayer GRGR/BGBG)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[2]: 'GB10' (10-bit Bayer GBGB/RGRG)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[3]: 'BG10' (10-bit Bayer BGBG/GRGR)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+	[4]: 'Y10 ' (10-bit Greyscale)
+		Size: Stepwise 64x64 - 2304x1296 with step 8/8
+
+duming device /dev/video4
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'RG16' (16-bit Bayer RGRG/GBGB)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+	[1]: 'GR16' (16-bit Bayer GRGR/BGBG)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+	[2]: 'GB16' (16-bit Bayer GBGB/RGRG)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+	[3]: 'BYR2' (16-bit Bayer BGBG/GRGR)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+
+duming device /dev/video5
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'RG16' (16-bit Bayer RGRG/GBGB)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+	[1]: 'GR16' (16-bit Bayer GRGR/BGBG)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+	[2]: 'GB16' (16-bit Bayer GBGB/RGRG)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+	[3]: 'BYR2' (16-bit Bayer BGBG/GRGR)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+
+duming device /dev/video6
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'RG16' (16-bit Bayer RGRG/GBGB)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+	[1]: 'GR16' (16-bit Bayer GRGR/BGBG)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+	[2]: 'GB16' (16-bit Bayer GBGB/RGRG)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+	[3]: 'BYR2' (16-bit Bayer BGBG/GRGR)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+
+duming device /dev/video7
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'RG16' (16-bit Bayer RGRG/GBGB)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+	[1]: 'GR16' (16-bit Bayer GRGR/BGBG)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+	[2]: 'GB16' (16-bit Bayer GBGB/RGRG)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+	[3]: 'BYR2' (16-bit Bayer BGBG/GRGR)
+		Size: Discrete 288x162
+		Size: Discrete 144x80
+		Size: Discrete 72x40
+
+duming device /dev/video8
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'RGGB' (8-bit Bayer RGRG/GBGB)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[1]: 'GRBG' (8-bit Bayer GRGR/BGBG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[2]: 'GBRG' (8-bit Bayer GBGB/RGRG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[3]: 'BA81' (8-bit Bayer BGBG/GRGR)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[4]: 'RG10' (10-bit Bayer RGRG/GBGB)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[5]: 'BA10' (10-bit Bayer GRGR/BGBG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[6]: 'GB10' (10-bit Bayer GBGB/RGRG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[7]: 'BG10' (10-bit Bayer BGBG/GRGR)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[8]: 'RG12' (12-bit Bayer RGRG/GBGB)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[9]: 'BA12' (12-bit Bayer GRGR/BGBG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[10]: 'GB12' (12-bit Bayer GBGB/RGRG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[11]: 'BG12' (12-bit Bayer BGBG/GRGR)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+
+duming device /dev/video9
+ioctl: VIDIOC_ENUM_FMT
+	Type: Video Capture Multiplanar
+
+	[0]: 'RGGB' (8-bit Bayer RGRG/GBGB)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[1]: 'GRBG' (8-bit Bayer GRGR/BGBG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[2]: 'GBRG' (8-bit Bayer GBGB/RGRG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[3]: 'BA81' (8-bit Bayer BGBG/GRGR)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[4]: 'RG10' (10-bit Bayer RGRG/GBGB)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[5]: 'BA10' (10-bit Bayer GRGR/BGBG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[6]: 'GB10' (10-bit Bayer GBGB/RGRG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[7]: 'BG10' (10-bit Bayer BGBG/GRGR)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[8]: 'RG12' (12-bit Bayer RGRG/GBGB)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[9]: 'BA12' (12-bit Bayer GRGR/BGBG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[10]: 'GB12' (12-bit Bayer GBGB/RGRG)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+	[11]: 'BG12' (12-bit Bayer BGBG/GRGR)
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296
+		Size: Discrete 2304x1296

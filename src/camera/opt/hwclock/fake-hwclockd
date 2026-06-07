@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+#
+# Trivial script to load/save current contents of the kernel clock
+# from/to a file. Helpful as a *bootstrap* clock on machines where
+# there isn't a useful RTC driver (e.g. on development boards). Using
+# NTP is still recommended on these machines to get to real time sync
+# once more of the system is up and running.
+#
+# Idea adopted for Luckfox Mini from
+# Copyright 2012-2024 Steve McIntyre <93sam@debian.org>
+#
+# License: GPLv2, see COPYING
+
+# Midnight on the day of this release, used as a sanity check when
+# saving
+HWCLOCK_EPOCH_SEC="1775926841"
+
+# Set defaults
+THIS=$(basename $0)
+COMMAND="$1"
+PARAM=/etc/default/fake-hwclock
+FILE=/etc/fake-hwclock.data
+PACE=10     # how often to update FILE to prevent wearing out, usually reboot cycle takes 5s
+
+# Read our config file if it exists, allowing override of those
+# defaults.
+if [ -f $PARAM ]; then
+    . "$PARAM"
+fi
+
+case $COMMAND in
+    load)
+        if [ -e $FILE ] ; then
+            SAVED=$(($(cat $FILE) + $PACE))
+            NOW_SEC=$(date -u '+%s')
+            if [ $NOW_SEC -ge $SAVED ] ; then
+                logger -s -t $THIS "system time set to $NOW_SEC which is more then saved $SAVED"
+            else
+                date -u -s @"$SAVED"
+                logger -s -t $THIS "system time successfully restored to $SAVED: $(date)"
+                exit 0
+            fi
+        else
+            logger -s -t $THIS "unable to read saved clock information: $FILE does not exist"
+        fi
+        ;;
+    save)
+        while true; do
+            NOW_SEC=$(date -u '+%s')
+            if [ $NOW_SEC -ge $HWCLOCK_EPOCH_SEC ] ; then
+                echo $NOW_SEC > $FILE
+            else
+                logger -s -t $THIS "current system time $NOW_SEC below acceptance $HWCLOCK_EPOCH_SEC"
+            fi
+            sleep $PACE
+        done
+        ;;
+    *)
+        echo $0: Unknown command $COMMAND
+        ;;
+esac
+
+# all cases here are problematic
+exit 1
