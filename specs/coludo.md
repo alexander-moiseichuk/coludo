@@ -45,6 +45,53 @@ Upon electronic initialization, the following sequential operations are executed
 * **Validation:** The Flight Controller polls all subsystems. If all validation gates pass, the LED status changes to a "Ready" heartbeat pattern (100ms ON / 900ms OFF).
 * **Staging:** The vehicle is cleared to be mounted vertically on the launch rail.
 
+## Flight Controller
+
+Controller is the main component which:
+
+- creates all required Components
+- keeps track of the rocket's current State { Setting, Boosting, Gliding, Landing }
+- get Landing Zone coordinates, understand TargetPoint and landing parameters e.g. distance from start to TargetPoint must be nearby to LaunchPoint e.g. 200m
+- controls Components' states and gets async feedback for course correction
+- if the Flight Controller crashes the async loop should be restarted
+
+Main maneuvers of the Controller depend on the current stage. The main goal will be to prevent overcorrection which will be achieved with the use of a Proportional-Integral-Derivative gains control algorithm (PIDgca). The idea previous about the Feedback Multiplier (Proportional Control) won't work since the glider will wildly overcorrect causing severe rocking or even the risk of stall. Thus it would be nice to have an IMU which gives position, speed, and acceleration.
+
+Examples:
+- yaw shows direction 30 degrees right, in this case vertical fin needs to be turned 15 degrees left or however much the PIDgca states
+- pitch shows nose down 10 pitch (or -10) degrees off, in this case horizontal fins must be turned down by 5 degrees (or -5) to push for resulting zero
+- roll shows 25 degrees right, so fins should be twisted for 13 degrees but left down and right up.
+- this is done to prevent overcorrection caused by potential communicational latency between components and sensors.
+- This feedback() function could be smarter depending on air speed, sensor data quality and delivery delays, if software works fast then factor over 1 will allow to stabilize faster but with some extra G-factor.
+
+## Controller Setting maneuvers
+
+After pre-start internal things and testing fins rotations Controller should fix all fins into a "zeroed position" (angle=0) and check sensors for engine ignition.
+
+## Controller Boosting maneuvers
+
+The main point of the software is to keep glider and booster strictly vertical:
+
+detect inclination and turn all fins to some direction to make vertical fin orthogonal to incline surface
+as the vertical fin points to incline on angle A (glider collapses on top) turns horizontal fins down to opposite direction
+OR when vertical fin points to opposite inclining on angle -A (glider falling on bottom) turn horizontal fins up to opposite direction
+During Boosting phase as speed is not high probably it is probably best to keep the feedback factor > 1
+
+## Controller Gliding maneuvers
+
+Not many different evolutions are required:
+
+if glider after separation happened to be upside-down the left or right half-roll is required using all 3 fins pointing into opposite direction to roll
+direct flight when vertical fin set to 0 and left and right fins keep pitch horizontal
+left turn when vertical fin turned right to target direction and left/right fins assists (or just keep horizon level)
+right turn when vertical fin turned left for up to target direction and left/right fins assists (or just keep horizon)
+Controller Landing manoeuvres
+Final step when coming to LandingZone or nearby on low altitude, no time for manoeuvres except keep going with minimal corrections:
+
+direct flight when vertical fin set to 0 and left and right fins keep pitch horizontal
+small corrections to left turn when vertical fin turned right to target direction and left/right fins keep horizont
+right turn when vertical fin turned left for up to target direction and left/right fins keep horizont
+
 ## Boosting
 
 The Boosting phase spans engine ignition through booster separation. While a zero-delay motor (like an F15-0) would trigger instantly, the operational profile utilizes motors featuring a built-in 4–6 second delay tracking element to coast cleanly to apogee:
@@ -119,18 +166,63 @@ Vertically (latitutude) stretched landing zone
                       Entrance
 ```
 
-## Flight Control
 
-The software follows a modular design governed by the centralized `Flight Controller`. The framework maintains strict execution latency targets: a maximum 1ms component reaction window and a 5ms system-wide decision-making loop, achieved via cooperative asynchronous multitasking.
-
-## Flight Controller
-
-The core Controller task manages the global state machine:
-* Dynamically monitors the runtime states: `{ Setting, Boosting, Gliding, Landing }`.
-* Generates target intersections based on the geometric average of the bounding Landing Zone coordinates.
-* **PID Control Loop:** To prevent violent overcorrection—which introduces catastrophic aerodynamic rocking, phugoid oscillations, or aerodynamic stalls—the system rejects basic multiplier gains in favor of a full Proportional-Integral-Derivative (PID) algorithm. The onboard IMU supplies high-rate angular velocity, linear acceleration, and absolute orientation vectors directly to this loop.
 
 Task creation orders and internal dependencies are explicitly hardcoded within the controller to keep execution logic simple and predictable.
+
+## Sensors and Interrupts
+
+If a hardware component can be linked to an interrupt, that interrupt must be utilized to reduce reaction time. Of course, interrupts must be properly connected to asyncio as specified in guides
+
+## Sensors Fusion/Backup
+
+To have reliable control over parameters the sensor data fusion must be implemented e.g. based on priorities and timeouts: if several sensors are available and they produce the same kind of data the best should be used until not the data isn't outdated, otherwise backup sensor(s) should be selected. If more advanced technique is available it could be applied as well.
+
+Example: for altitude the queue of selection could be the following
+
+- main sensor ICP-10111 timeout 100 ms (e.g. for drop speed 10m/s and granularity 8.5cm => ~10 samples per meter)
+- backup sensor 1 could be BMP280 timeout 200 ms
+- backup sensor 2 could be accelerometer
+- backup sensor 3 could be navigation - it has rate 10 Hz/100ms but real elevation data update ~10m which leads to 1 second to timeout
+
+Proper cross-analysis for initial fusion (backing) should be performed by documentation and can be tweaked later after trials. These sequences and constants will be hardcoded as in flight no time to tweak decisions.
+
+## Tasks
+
+One task must be created explicitly - the Controller, it creates the rest of the tasks which are located in the tasks folder and support some common API e.g.:
+
+- setup() - async call to make initial task activation (or reset) and returns True or False
+- run() - async and other methods to proceed usual activities
+- notify() - to subscribe owner object for specific tasks for some callback to send async notification about change/update (what is owner object?)
+- report() - produce report about task status
+- finish() - to shutdown task
+- validate() - to evaluate current task status and return True if everything is fine or false otherwise
+- testing() - async call performs basic functionality testing e.g. as a part of setup()
+
+For the Task's common scope, more calls might be required, for example:
+
+- directory() - build list of names for all tasks by scanning tasks/ subfolder. Controller will use it for activation auxiliary tasks e.g.
+- create() - to create specified tasks by name if Settings allows for task class name and returns task reference or None
+- close() - deactivate some task and cleanup resources, might be require after landing
+- active() - query another active task or tasks (if None passed) by name e.g. camera may query Storage (SD card)
+ here is the activation command of important tasks 
+.....
+ here is the activation command of non-important tasks
+
+for name in Task.directory():
+    if not Task.active(name):
+        task = Task.create()
+        if task.setup():
+            logger.info(f'task {name} is up and running')
+        else:
+            logger.warning(f'task {name} failed to setup')
+            task.close()
+As set of tasks is not changed over flight the creation order and dependencies can be hardcoded in Controller e.g. enabling Wifi enables
+
+Console to control and check parameters
+if Storage available - backing Logging and Telemetry to storage
+if Camera available - translation of video stream begins
+But to make code less complex one task can ask object of another task by class i.e. if Console created it will auto connect during setup() to Wifi or UART.
 
 ## Logging
 
