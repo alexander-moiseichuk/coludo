@@ -10,7 +10,7 @@ The lower booster stage has already been successfully test-flown using E16 and F
 
 ## Limitations
 
-To optimize weight distribution in future iterations, `Coludo` may eventually transition into a single-stage glider. However, the current airframe is strictly limited to a payload capacity of 100–150 grams, as documented in the [hardware components specifications](../doc/hardware.md). 
+To optimize weight distribution in future iterations, `Coludo` may eventually transition into a single-stage glider. However, the current airframe is strictly limited to a payload capacity of 100–150 grams, as documented in the [hardware components specifications](../doc/hardware.md) where everything fits under 100 grams. The video recording and telemetry recording module was implemented separately with its own power supply. 
 
 This rigid weight constraint severely limits the onboard power supply. The current physical envelope can accommodate a 800 mAh single cell LiPo battery with a power booster or a LiPo 6F22 9V battery paired with a power down regulator. To avoid any power shocks controller and engine regulators must be separated. Consequently, the maximum target power consumption for the electronics suite must remain under 3.5W (approximately 5V @ 700mA). To achieve this safely, a high-efficiency 5V switching regulator (such as a UBEC or buck converter) must be used; a traditional linear [LM7805 voltage stabilizer](https://www.amazon.com/dp/B00LTQTZYQ) cannot reliably handle the transient current spikes drawn by the control servos without inducing thermal shutdown.
 
@@ -18,7 +18,19 @@ The software architecture relies on MicroPython to manage this hardware stack, p
 * **Hardware Constraints:** The weight and power limitations restrict the primary flight controller to the [eSBC esp32-p4](https://wiki.dfrobot.com/FireBeetle_2_ESP32_P4_Development_Board_IO_Expansion_Kit) development platform.
 * **Language Choice:** While a compiled C/C++ codebase offers raw execution efficiency, MicroPython is preferred due to rapid prototyping familiarity.
 * **Concurrency:** To circumvent MicroPython's single-thread affinity, [asyncio](https://github.com/peterhinch/micropython-async) is heavily utilized. This ensures non-blocking cooperative multitasking, supplemented by hardware interrupts and selective multi-threading to leverage the ESP32's second core where necessary.
-* **Phased Rollout:** Phase one focuses entirely on validating sensor fusion and telemetry acquisition to guarantee data integrity. Active control surfaces and motorized actuation loops will only be enabled after these telemetry baselines are proven in flight trials.
+* **Phased Rollout:** Phase one focuses entirely on validating sensor fusion and telemetry acquisition to guarantee data integrity. Active control surfaces and motorized actuation loops will only be enabled after these telemetry baselines are proven in flight trials. 
+
+There is some problems with micropython in general:
+- MicroPython GC pauses can be 20–200 ms depending on heap fragmentation.
+- Your control loop needs <10–20 ms latency to avoid oscillation.
+- Asyncio is cooperative — if one task yields late, the whole system lags.
+- Servo updates, GNSS parsing, and IMU callbacks all compete for time.
+
+There are several improvemts planned to mitigate those problems:
+1. High end esp32-p4 with 32 MB PSRAM to be used to minize gc calls
+2. gc collect will be called before critical moments and it will be off during the flight
+3. In case of big latencies, the flight controller will be moved to own core thread
+4. If it doesn't help the native code will be used for implementing flight controller and servo control
 
 # Lifecycle
 
@@ -44,6 +56,22 @@ Upon electronic initialization, the following sequential operations are executed
 * **GNSS Lock:** The GPS module begins polling at 1 Hz to acquire a multi-satellite 3D fix. The coordinates of the target landing zone must fall within a 200-meter threshold vector relative to the launch point. System time is automatically synchronized to the GPS atomic clock.
 * **Validation:** The Flight Controller polls all subsystems. If all validation gates pass, the LED status changes to a "Ready" heartbeat pattern (100ms ON / 900ms OFF).
 * **Staging:** The vehicle is cleared to be mounted vertically on the launch rail.
+
+Potential problems:
+- GNSS accuracy during dynamic flight is often ±5–15 m.
+- At low altitude, multipath error increases.
+- A 200 m zone is fine, but your boundary‑tracking logic assumes much better accuracy.
+
+What will happen - The glider will:
+- “hunt” for the boundary
+- overshoot repeatedly
+- oscillate between entry points
+- possibly exit the zone unintentionally
+
+To fix these issues there are some possible workarounds:
+1. deadband logic (don’t correct unless error > X meters)
+2. heading‑only navigation (ignore lateral error when close)
+3. wind compensation (IMU + GNSS drift vector)
 
 ## Flight Controller
 
@@ -84,8 +112,11 @@ Not many different evolutions are required:
 if glider after separation happened to be upside-down the left or right half-roll is required using all 3 fins pointing into opposite direction to roll
 direct flight when vertical fin set to 0 and left and right fins keep pitch horizontal
 left turn when vertical fin turned right to target direction and left/right fins assists (or just keep horizon level)
-right turn when vertical fin turned left for up to target direction and left/right fins assists (or just keep horizon)
-Controller Landing manoeuvres
+right turn when vertical fin turned left for up to target direction and left/right fins assists (or just keep horizontal)
+Aggressive turns will be permitted only over minimal controllable speed.
+
+## Controller Landing manoeuvres
+
 Final step when coming to LandingZone or nearby on low altitude, no time for manoeuvres except keep going with minimal corrections:
 
 direct flight when vertical fin set to 0 and left and right fins keep pitch horizontal
@@ -113,7 +144,7 @@ Following booster separation, the Gliding phase executes for approximately 40 se
 
 ## Landing
 
-The Pre-Landing sequence triggers when the glider drops to 3 meters AGL (Above Ground Level) relative to the launch pad elevation. The priority shifts from destination tracking to structural preservation:
+The Pre-Landing sequence triggers when the glider drops to 4-12 meters AGL (Above Ground Level) relative to the launch pad elevation and speed is vertical speed < −1.5 m/s and roll < 10°. The priority shifts from destination tracking to structural preservation:
 * **Attitude Lock:** The flight surfaces lock into a straight-and-level attitude glide. All aggressive rolling, pitching, or yawing maneuvers are suppressed to ensure clean underbelly contact with the ground.
 * **Data Logging Surge:** To capture maximum high-resolution structural and aerodynamic impact data, the telemetry and multimedia flush rates are boosted from 1 Hz to 10 Hz.
 * **Touchdown Detection:** Ground impact is verified when horizontal/vertical velocities decay to near-zero margins and barometric altitude output stabilizes completely.
@@ -126,7 +157,7 @@ Horizontally (longitude) stretched landing zone
             |                                                                          |
             |                                                                          |
             |                                                                          |
-       ---> Enterance                    targetPoint                            Entrance <----
+       ---> Entrance                    targetPoint                            Entrance <----
             |                                                                          |
             |                                                                          |
             |                                                                          |
@@ -137,7 +168,7 @@ Horizontally (longitude) stretched landing zone
 
 Vertically (latitutude) stretched landing zone
 ```
-                       Enterance
+                       Entrance
                            |
             |TL------------_--------------|
             |                             |
@@ -170,6 +201,13 @@ Vertically (latitutude) stretched landing zone
 
 Task creation orders and internal dependencies are explicitly hardcoded within the controller to keep execution logic simple and predictable.
 
+## Degraded Mode
+
+Incase of complete sensor faliure or other critical errors the degraded mode will be enabled: 
+
+- When IMU degraded/produced invalid data the glider must fly straight or minimize turns
+- If GNSS is lost - glide in current heading, prioritize gentle descent
+
 ## Sensors and Interrupts
 
 If a hardware component can be linked to an interrupt, that interrupt must be utilized to reduce reaction time. Of course, interrupts must be properly connected to asyncio as specified in guides
@@ -185,7 +223,7 @@ Example: for altitude the queue of selection could be the following
 - backup sensor 2 could be accelerometer
 - backup sensor 3 could be navigation - it has rate 10 Hz/100ms but real elevation data update ~10m which leads to 1 second to timeout
 
-Proper cross-analysis for initial fusion (backing) should be performed by documentation and can be tweaked later after trials. These sequences and constants will be hardcoded as in flight no time to tweak decisions.
+Proper cross-analysis for initial fusion (backing) should be performed by documentation and can be tweaked later after trials. Sensor disagreements will be handled during timeouts and limits per each individually and switching to backup sensor. For example, the controller expects GPS data every 100 ms and if there is no data or repetative data for at least 200 ms then it will switch to the IMU.  
 
 ## Tasks
 
@@ -197,7 +235,9 @@ One task must be created explicitly - the Controller, it creates the rest of the
 - report() - produce report about task status
 - finish() - to shutdown task
 - validate() - to evaluate current task status and return True if everything is fine or false otherwise
-- testing() - async call performs basic functionality testing e.g. as a part of setup()
+
+The testing part per each task can be implemented in test/ subfolder separately from the main code: 
+- testing() - async call performs basic functionality testing e.g. as a part of setup() 
 
 For the Task's common scope, more calls might be required, for example:
 
@@ -253,7 +293,9 @@ Raw write evaluations show that direct synchronous block-writing to local flash 
 
 - Allocating a high-rate circular FIFO buffer inside the ESP32's 32MB PSRAM, deferring block storage writes until after touchdown validation is complete.
 
-- Routing data lines out to an independent, dedicated external UART/I2C hardware data logger to isolate the primary SPI bus from I/O delays.
+- Instead writing to the SD card or Flash the code will send the data using a UART line to the video and telemtry recording module which has an SD card.
+
+See [recorder module in sources](../src/camera)
 
 ## Console
 
@@ -326,7 +368,11 @@ The physical booster separation event is handled via an explicit electrical disc
 - Pressure Micro-Switch: A Gravity Digital Crash Sensor mounted to the airframe that springs open immediately as the glider leaves the booster body tube.
 - Breakaway Pin/Socket: A physical wire loop plugged into a dedicated port on the flight computer. When the motor's black powder ejection charge pops the glider out of the body tube, the tethered wire pulls free from the socket.
 
-The resulting state transition instantly alters the input pin logic to HIGH, invoking an unblock event via a hardware interrupt. This forces the master Flight Controller to transition immediately from Boosting to Gliding state.
+The resulting state transition instantly alters the input pin logic to HIGH, invoking an unblock event via a hardware interrupt. This forces the master Flight Controller to transition immediately from Boosting to Gliding state. For separation detection, sensor or termination wire and IMU can be used simultaneously to ensure proper separation detection: 
+1. Separation sensor triggered
+2. IMU detects sudden pitch/roll change
+3. Altimeter shows positive vertical deceleration
+4. Wire is disconnected and pin gets 0
 
 ## Servos
 
@@ -354,6 +400,22 @@ An optional high-resolution Camera for Raspberry Pi captures 30 FPS Full HD vide
 
 An optional acoustic logging subsystem captures ambient flight noise via an onboard digital microphone, saving raw audio feeds directly to /sd/audio/ in standard .WAV file formats for post-flight analysis.
 
-## Miscellaneous
+# Overall Design Risks and Mitigations
 
-Placeholder for future design notes, wind tunnel evaluation data, and telemetric expansion profiles.
+- First flights will be with telemetry ONLY collection without active control to understand potential locking and sensor problems which will be mitigated later by adding more functional components like watchdog, heartbeat, or runtime health monitor service. 
+- Assume by aerodynamics that the minimum effective airspeed to control the glider is about 10 meters per second.
+- Having GPS accuracy target as 10 meters, I will asign the landing zone's sides at atleast 50 meters.
+- To not overload the system with current and keep the battery safe, at least 800 mAh battary will be used with seperate voltage boosters for the controller and engines. Additionally, the servos' positioning / adjusting will be done sequentially. 
+- Definition of "no control" will be clarified through trials with a telemtry only glider, preliminary
+
+| Subsystem / Loop            | Target Frequency | Max Allowed Latency | Notes / Rationale |
+|-----------------------------|------------------|----------------------|-------------------|
+| **Primary PID Control Loop** | 50–100 Hz        | < 10 ms     | Core stabilization loop; must run even if other tasks stall. Should ideally run on its own core or native module. |
+| **IMU Sampling (BNO055)**   | 100–200 Hz       | < 5 ms       | Gyro/accel data must be fresh for stable control. Interrupt-driven preferred. |
+| **Servo Output Update**     | 40–60 Hz         | < 20 ms      | Standard RC servo frame rate; sequential updates to avoid current spikes. |
+| **GNSS Parsing**            | 10 Hz            | < 150 ms     | Only needed for navigation; not safety‑critical for attitude control. |
+| **Altimeter (ICP‑10111)**   | 20–50 Hz         | < 50 ms      | Needed for landing detection and vertical rate estimation. |
+| **Telemetry Logging**       | 1 Hz (normal)    | < 500 ms     | Low priority; should never block control loops. |
+| **Telemetry Burst (Landing)** | 10 Hz          | < 100 ms     | Only after control authority is no longer critical. |
+| **Task Scheduler / Asyncio** | 20–50 Hz        | < 20 ms      | Supervisory logic; must not interfere with PID loop timing. |
+| **Watchdog Reset Window**   | —                | 100–200 ms   | If PID loop or IMU updates stall beyond this, system must reset or enter degraded mode. |
