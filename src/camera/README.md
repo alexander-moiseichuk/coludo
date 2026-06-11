@@ -42,3 +42,24 @@ to indicate it during boot LED does ~5s ON period and then start actively blinki
 otherwise turned off.
 
 in case of PC script should not start allowing download videos in easy way and LED is OFF.
+
+# recorded
+
+The SPI + GIL seems potentially can do 80-100 ms freeze of Micropython, so to solve issue with storing telemetry and logs the recorded is required.
+It works fine for 921600 bod using single wire to deliver information throgh UART to Luckfox board which needs to be configured using luckfox-config
+to enable /dev/ttyS3 or /dev/ttyS4. Installation is easy - just required RX pin to be connected from TX pin of microcontoller and enabled duing boot
+```
+	# adb shell
+	# ln -s /opt/recorded/recorded.sh /etc/init.d/S99recorded
+        # sync
+        # poweroff
+```
+Expected format is simple:
+	contents line\n
+or
+	@target_file@contents line\n
+
+In first case all unknown lines will be added into predefined in config file (`/userdata/recordings/recorder.log`), in second case line will be added into
+`/userdata/recordings/target_file`. So, practically any logging and CSV telemetry can be stored this way.
+
+
