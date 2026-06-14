@@ -2,6 +2,13 @@
 
 This document is intended to provide a top-level architectural overview of the `Coludo` project.
 
+> **Note:** hardware composition, pin mapping, Wi-Fi role, storage, and the configuration
+> lifecycle are governed by [`board-config.md`](board-config.md), which is authoritative
+> wherever it conflicts with statements below. In particular: the board joins the Control
+> Center's Wi-Fi network as a **station** (it does not host an access point), the controller
+> has **no SD card** (logs/telemetry/video go to the Recorder over UART), and the **camera
+> lives on the Recorder**, not the controller.
+
 The core concept of `Coludo` stems from the idea that traditional active-control rocket launches can be made significantly more engaging by introducing a secondary phase: at apogee, a glider deploys from the booster stage to achieve a controlled, gentle recovery back to earth. 
 
 The lower booster stage has already been successfully test-flown using E16 and F15 model rocket engines. The current phase of development focuses on replacing the standard nosecone with an autonomous glider capable of piggyback deployment, drawing inspiration from vehicles like the [Spiral space plane](https://russianspaceweb.com/spiral_development.html) and the [X-37B glider](https://en.wikipedia.org/wiki/Boeing_X-37).
@@ -20,17 +27,24 @@ The software architecture relies on MicroPython to manage this hardware stack, p
 * **Concurrency:** To circumvent MicroPython's single-thread affinity, [asyncio](https://github.com/peterhinch/micropython-async) is heavily utilized. This ensures non-blocking cooperative multitasking, supplemented by hardware interrupts and selective multi-threading to leverage the ESP32's second core where necessary.
 * **Phased Rollout:** Phase one focuses entirely on validating sensor fusion and telemetry acquisition to guarantee data integrity. Active control surfaces and motorized actuation loops will only be enabled after these telemetry baselines are proven in flight trials. 
 
-There is some problems with micropython in general:
-- MicroPython GC pauses can be 20–200 ms depending on heap fragmentation.
-- Your control loop needs <10–20 ms latency to avoid oscillation.
+There is some problems with micropython in general (measured on the target board — see the
+[benchmark findings](../doc/benches/esp32p4-micropython-findings.md)):
+- GC pauses scale with live-object count on the PSRAM heap: ~0.3 ms on a clean heap but
+  ~67 ms with only 10k small live objects — far beyond the control-loop budget.
+- `asyncio.sleep_ms()` quantises to the ~10 ms FreeRTOS tick, so cooperative scheduling tops
+  out near 100 Hz; a 5 ms / 200 Hz loop is **not** achievable via `asyncio.sleep`.
+- The whole GC heap is in PSRAM (~12 MB/s memcpy) and `bytearray` slice-assignment is
+  O(buffer length), so large preallocated buffers must be written with `struct.pack_into`.
 - Asyncio is cooperative — if one task yields late, the whole system lags.
 - Servo updates, GNSS parsing, and IMU callbacks all compete for time.
 
-There are several improvemts planned to mitigate those problems:
-1. High end esp32-p4 with 32 MB PSRAM to be used to minize gc calls
-2. gc collect will be called before critical moments and it will be off during the flight
-3. In case of big latencies, the flight controller will be moved to own core thread
-4. If it doesn't help the native code will be used for implementing flight controller and servo control
+There are several improvements planned to mitigate those problems:
+1. The 32 MB PSRAM lets the heap grow so GC runs less often — but each collection is slower
+   (PSRAM is slow), so allocations on hot paths are minimised regardless.
+2. gc.collect() is called before critical moments and GC is disabled during the flight.
+3. The sub-10 ms control loop is paced by a hardware timer (+ `ThreadSafeFlag`) or a busy-wait
+   on `ticks_us()`, not `asyncio.sleep`; if needed it moves to its own core thread.
+4. If that is not enough, native code is used for the flight controller and servo control.
 
 # Lifecycle
 
@@ -49,10 +63,8 @@ Upon electronic initialization, the following sequential operations are executed
 * **Status Indication:** The main power LED is set to flash at a slow 2 Hz cycle (250ms ON / 250ms OFF).
 * **Object Instantiation:** The MicroPython environment initializes all core software components and drivers.
 * **Calibration:** The system zeroes out the altimeter, digital compass, accelerometer, and gyroscope while performing a full deflection check of the fin servos.
-* **Network Connectivity:** A local Wi-Fi access point is initialized with the SSID **coludo**. The flight software establishes a handshake connection with the ground control station (PC) to facilitate remote diagnostics and real-time monitoring.
-* **Video Capture:** If an onboard camera is detected, the video streaming pipeline is initialized.
-* **Non-Volatile Storage:** If an SD card is present, local file handles are created to mirror all incoming telemetry and video/audio streams.
-* **Audio Capture:** If an onboard microphone is enabled, audio streaming begins recording to the local buffer.
+* **Network Connectivity:** The board joins the Control Center's Wi-Fi network as a **station** (see [`board-config.md`](board-config.md)) and establishes a connection with the ground control station (PC) to facilitate remote diagnostics and real-time monitoring.
+* **Recorder Link:** If the Recorder module is present, the UART telemetry/log sink is opened (the controller has no local SD card; the Recorder owns video and storage).
 * **GNSS Lock:** The GPS module begins polling at 1 Hz to acquire a multi-satellite 3D fix. The coordinates of the target landing zone must fall within a 200-meter threshold vector relative to the launch point. System time is automatically synchronized to the GPS atomic clock.
 * **Validation:** The Flight Controller polls all subsystems. If all validation gates pass, the LED status changes to a "Ready" heartbeat pattern (100ms ON / 900ms OFF).
 * **Staging:** The vehicle is cleared to be mounted vertically on the launch rail.
@@ -148,7 +160,7 @@ The Pre-Landing sequence triggers when the glider drops to 4-12 meters AGL (Abov
 * **Attitude Lock:** The flight surfaces lock into a straight-and-level attitude glide. All aggressive rolling, pitching, or yawing maneuvers are suppressed to ensure clean underbelly contact with the ground.
 * **Data Logging Surge:** To capture maximum high-resolution structural and aerodynamic impact data, the telemetry and multimedia flush rates are boosted from 1 Hz to 10 Hz.
 * **Touchdown Detection:** Ground impact is verified when horizontal/vertical velocities decay to near-zero margins and barometric altitude output stabilizes completely.
-* **De-initialization:** Following a 5-second confirmation window of absolute silence, the flight is officially flagged as completed. All open data streams are flushed, file systems are safely unmounted from storage to prevent corruption, and the controller puts the hardware into a deep sleep state via `pyb.stop()` or `pyb.standby()`.
+* **De-initialization:** Following a 5-second confirmation window of absolute silence, the flight is officially flagged as completed. All open data streams are flushed to the Recorder over UART (the controller has no local filesystem to unmount), and the controller puts the hardware into a low-power state via the ESP32 `machine.deepsleep()` API (the earlier `pyb.stop()`/`pyb.standby()` calls are pyboard-only and do not apply to the ESP32 port).
 
 Horizontally (longitude) stretched landing zone
 ```
@@ -264,6 +276,41 @@ if Storage available - backing Logging and Telemetry to storage
 if Camera available - translation of video stream begins
 But to make code less complex one task can ask object of another task by class i.e. if Console created it will auto connect during setup() to Wifi or UART.
 
+## Task Data-Flow and Message Propagation
+
+Data does not flow through a single generic message bus. A bus that allocates a message
+object per sample at IMU rates (100–200 Hz) would fragment the heap and trigger GC pauses,
+violating the `<10 ms` control-loop budget; and under cooperative `asyncio` a single slow
+subscriber would stall the publisher inline. Instead the mechanism is chosen per data class:
+
+* **Hot sensor data (direct, latest-value "blackboard").** High-rate readings (IMU, baro) are
+  written in place into preallocated per-quantity slots — each holding `value + timestamp +
+  source` — with latest-wins semantics and no per-sample allocation. The control loop and the
+  sensor-fusion layer read the freshest *valid* slot directly (staleness is the fusion
+  priority/timeout logic). The control loop is therefore self-contained: it reads the
+  blackboard and writes servos without pulling per-cycle data through any queue, so it keeps
+  running even if other tasks stall. It is paced by a hardware timer, not `asyncio.sleep`,
+  which floors at ~10 ms on this port (see the
+  [benchmark findings](../doc/benches/esp32p4-micropython-findings.md)).
+
+* **Everything else goes through one Logger.** For simplicity there is a single non-hot path.
+  Every task reports logs and telemetry **directly to the Logger**, and each record is stamped
+  with `time.ticks_us()` at the source. The Logger enqueues records into PSRAM queues by
+  priority:
+  * **Telemetry — 1st priority queue.**
+  * **Logs — 2nd priority queue.**
+  A drain task empties these queues to the Recorder over UART, telemetry before logs. The UART
+  push to the Recorder happens **first** (it is the authoritative flight-data sink); any other
+  subscribers — notably the Control Center live view — receive the same records **only after**
+  they have been pushed to UART. This guarantees recorder durability first and treats CC as a
+  best-effort secondary consumer. Records are written into the PSRAM queues with
+  `struct.pack_into` rather than slice-assignment, which is O(buffer length) on this port
+  (see the [benchmark findings](../doc/benches/esp32p4-micropython-findings.md)).
+
+This collapses what would otherwise be a separate event-bus plus ring buffers into the Logger:
+discrete events are just log records, and the priority queues are the decoupling buffers
+between fast producers and the slow UART/CC drains.
+
 ## Logging
 
 Log strings append system uptime values in milliseconds alongside a standard descriptor layout:
@@ -272,14 +319,14 @@ Log strings append system uptime values in milliseconds alongside a standard des
  2222 Controller :: boosting detected
  5555 Controller :: landing completed
 
- The centralized logging manager multiplexes data across three potential sinks depending on system state:
-- Hardwired UART serial interface.
-- Raw network sockets over TCP port 1235 (active only when Wi-Fi connection is maintained).
-- Local storage block pointing to /sd/logging/date_time.log (subject to physical I/O constraints).
+ The centralized logging manager multiplexes data across these potential sinks depending on system state:
+- Hardwired UART serial interface (console).
+- Raw network sockets to the Control Center over TCP (active only when the Wi-Fi connection is maintained, i.e. prestart).
+- The Recorder module over the dedicated `uart_recorder` link, which persists logs to its own SD card (the controller has no local SD). See [recorder module](../src/camera).
 
 ## Telemetry
 
-Telemetry mirrors the logging architecture but outputs data in structured, semicolon-separated CSV profiles (e.g., /sd/telemetry/date_time.cpu.csv):
+Telemetry mirrors the logging architecture but outputs data in structured, semicolon-separated CSV profiles streamed to the Recorder (e.g., the Recorder stores `telemetry/date_time.cpu.csv` on its SD card):
 uptime;utilization;temperature
 111;40;51
 2222;45;52
@@ -289,13 +336,13 @@ Post-flight parsing arrays can extract these files to compile automated 3D spati
 
 ## Storage Write Constraints
 
-Raw write evaluations show that direct synchronous block-writing to local flash or SD arrays introduces SPI bus-locking delays lasting up to 80ms. This latency is unacceptable for a tight flight control loop. To mitigate this risk, the architecture adopts two defensive paths:
+Raw write evaluations show that direct synchronous block-writing to local flash or SD arrays introduces SPI bus-locking delays lasting up to 80ms. This latency is unacceptable for a tight flight control loop. The controller therefore carries **no SD card at all**; data is offloaded over UART. Two defensive measures decouple data offload from the control loop:
 
-- Allocating a high-rate circular FIFO buffer inside the ESP32's 32MB PSRAM, deferring block storage writes until after touchdown validation is complete.
+- A high-rate circular FIFO buffer inside the ESP32's PSRAM absorbs bursts so producing tasks never block on I/O.
 
-- Instead writing to the SD card or Flash the code will send the data using a UART line to the video and telemtry recording module which has an SD card.
+- The buffer drains over the dedicated `uart_recorder` line to the Recorder module, which owns the SD card and persists logs, telemetry, and video.
 
-See [recorder module in sources](../src/camera)
+See [recorder module in sources](../src/camera) and [`board-config.md`](board-config.md).
 
 ## Console
 
@@ -304,11 +351,11 @@ The interactive system console provides terminal access to:
 - Active task auditing and dynamic run-state toggling.
 - Global software reset commands.
 - Profiling dumps using the localized task.report() method.
-The interface defaults to standard UART communication lines. If a Wi-Fi connection is active, the terminal maps to TCP port 1234.
+A local UART line is always available for direct on-bench debugging. Over Wi-Fi the board does **not** host a console; instead it connects to the Control Center as a client and answers the line protocol, which CC exposes to operators (telnet on TCP 1235) and to the browser. See [`cc-protocol.md`](cc-protocol.md).
 
 ## Pins Distribution
 
-To ensure hardware modularity, all physical microcontroller pins are defined inside a single, immutable configuration wrapper class named PinMap.
+To ensure hardware modularity, physical microcontroller pins are **not** hardcoded; they are defined by the board configuration (`buses` and `pins` sections of `board.json`, with firmware defaults in `config_default.py`). The controller reads this config at boot to build the pin map and instantiate the declared components. See [`board-config.md`](board-config.md) for the schema and activation lifecycle.
 
 ## System Status
 
@@ -386,19 +433,19 @@ Three independent Beffkkip SG90 micro-servos drive the vertical stabilizer and d
 
 ## Storage
 
-High-capacity data tracking is handled via an external SD card interface using native hardware libraries. The driver manages automated card detection, volume mounting, and safe post-flight unmounting sequences. The task validation function runs sequential read/write block tests during pre-flight staging to verify file system stability.
+High-capacity storage does **not** live on the controller. The Recorder module (Luckfox Pico) owns the SD card and persists logs, telemetry, and video received over the `uart_recorder` link. See [recorder module](../src/camera) and [`board-config.md`](board-config.md). This keeps the SPI bus off the controller's critical path entirely.
 
 ## Wi-Fi
 
-The integrated 2.4GHz Wi-Fi subsystem is optimized for extended range. It initializes during ground staging using a fixed access point configuration with the SSID coludo. Once an active network socket connection is established with the ground control station at the default gateway IP (192.168.10.1), the flight controller unlocks remote parameter tuning and live telemetry streaming.
+The integrated 2.4GHz Wi-Fi subsystem is optimized for extended range. During ground staging the board joins the **Control Center's** network as a **station** (SSID, credentials, CC host/port and tunable TX power come from the `wifi` section of `board.json`; Bluetooth is disabled to improve the link). Once a network socket connection to the Control Center is established, the flight controller unlocks remote parameter tuning, health monitoring, and live telemetry streaming. The link exists only in prestart; it is expected to be lost from ignition onward. See [`board-config.md`](board-config.md).
 
 ## Camera
 
-An optional high-resolution Camera for Raspberry Pi captures 30 FPS Full HD video records. If an SD card is present, the video frames save directly to the /sd/video/ directory. If a stable Wi-Fi connection is maintained on the pad, a low-latency live video stream is broadcast over TCP port 1236. This component is isolated within an independent execution thread to prevent video encoding overhead from impacting the primary flight control tasks.
+Video capture is **not** a controller responsibility. It is handled by the independent Recorder module (Luckfox Pico + sc3336b), which records 2304×1296 30 FPS video to its own SD card on its own power supply. Isolating it on a separate board prevents video encoding overhead and storage I/O from impacting the primary flight control tasks. See [recorder module](../src/camera).
 
 ## Audio
 
-An optional acoustic logging subsystem captures ambient flight noise via an onboard digital microphone, saving raw audio feeds directly to /sd/audio/ in standard .WAV file formats for post-flight analysis.
+Audio is captured (if at all) by the Recorder module alongside its video, not by the controller. The controller has no microphone or local storage. This subsystem is optional and out of scope for the controller firmware.
 
 # Overall Design Risks and Mitigations
 
@@ -419,3 +466,9 @@ An optional acoustic logging subsystem captures ambient flight noise via an onbo
 | **Telemetry Burst (Landing)** | 10 Hz          | < 100 ms     | Only after control authority is no longer critical. |
 | **Task Scheduler / Asyncio** | 20–50 Hz        | < 20 ms      | Supervisory logic; must not interfere with PID loop timing. |
 | **Watchdog Reset Window**   | —                | 100–200 ms   | If PID loop or IMU updates stall beyond this, system must reset or enter degraded mode. |
+
+**Measured reality check** (see [benchmark findings](../doc/benches/esp32p4-micropython-findings.md)):
+`asyncio.sleep_ms()` floors at ~10 ms (FreeRTOS 100 Hz tick), so the 50–100 Hz / 200 Hz rows
+above cannot be met with `asyncio.sleep` — those loops must be paced by a hardware timer or a
+`ticks_us()` busy-wait. A fragmented-heap `gc.collect()` was measured at ~67 ms, which is why
+GC is controlled explicitly and disabled during the flight.
