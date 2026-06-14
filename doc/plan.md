@@ -59,6 +59,17 @@ testable foundations and connectivity come before the flight loop.
 - Landing-zone navigation + per-launch mission config, GPX export of telemetry, richer
   browser UI, GC/perf strategy (second core or native control loop if latency demands).
 
+### `launch.config` (mission config)
+A separate config document, same layered/validated/save+reactivate form as `board.json`
+([`../specs/board-config.md`](../specs/board-config.md)), describing a *specific launch* rather
+than the *board*:
+- landing zone (TL / BR corners, target point), entrance threshold, allowed-zone radius,
+- AGL landing-trigger altitude and vertical-speed/roll gates,
+- minimum controllable airspeed, and any per-launch tuning.
+
+Needed by Phase 3/4 navigation. **Interim:** until it exists, and because all launches are from
+the same site, these parameters may live in `board.json` (noted in `board-config.md`).
+
 ## Task data-flow model
 
 Adopted and documented in [`../specs/coludo.md`](../specs/coludo.md) ("Task Data-Flow and
