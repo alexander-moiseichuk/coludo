@@ -49,8 +49,11 @@ def validate(cfg):
     if not isinstance(board, dict):
         errs.append("missing or invalid 'board' section")
     else:
-        if not isinstance(board.get('id'), str) or not board.get('id'):
+        bid = board.get('id')
+        if not isinstance(bid, str) or not bid:
             errs.append('board.id must be a non-empty string')
+        elif any(c in bid for c in ' \t\r\n'):
+            errs.append('board.id must not contain whitespace (it is a bare wire token)')
         mcu = board.get('mcu')
         if not isinstance(mcu, str):
             errs.append('board.mcu must be a string')

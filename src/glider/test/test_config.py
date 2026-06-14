@@ -36,6 +36,11 @@ def main():
     bb['components'][0]['bus'] = 'nope'
     assert any('not a defined bus' in e for e in config.validate(bb))
 
+    # board.id must be a bare wire token (no spaces)
+    spc = default()
+    spc['board']['id'] = 'glider 1'
+    assert any('must not contain whitespace' in e for e in config.validate(spc))
+
     # save / load round-trip on the board filesystem
     config.reset(PATH)
     cid2 = config.save(default(), PATH)
