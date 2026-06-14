@@ -10,7 +10,7 @@ upstream. Raw data: [`esp32p4_micropython-1.28.0.log`](esp32p4_micropython-1.28.
 
 | | |
 |---|---|
-| Board | FireBeetle 2 ESP32-P4, 32 MB PSRAM |
+| Board | [WaveShare ESP32-P4-WIFI6, 32 MB PSRAM](https://www.waveshare.com/esp32-p4-wifi6.htm) |
 | Firmware | `MicroPython v1.28.0 on 2026-04-06` (impl 3.4.0), `sys.platform == "esp32"` |
 | CPU | `machine.freq()` = 360 MHz |
 | Heap | `gc.mem_free()` ≈ 33.08 MB at start → the GC heap is backed by (slow) PSRAM |
