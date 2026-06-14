@@ -34,6 +34,13 @@ def default():
             'servo_elevon_r': 32,
         },
 
+        'recorder': {                   # PSRAM ring sizes + drain cadence (Recorder)
+            'tel_slots': 512,
+            'log_slots': 512,
+            'slot_size': 192,
+            'drain_ms': 50,
+        },
+
         'components': [
             {'name': 'accel_adxl375', 'driver': 'adxl375', 'bus': 'i2c0', 'addr': 0x53,
              'enabled': True,

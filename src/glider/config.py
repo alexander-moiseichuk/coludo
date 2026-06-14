@@ -119,6 +119,16 @@ def validate(cfg):
                 errs.append('%s uses reserved GPIO%d (breaks Wi-Fi/USB/console on %s)'
                             % (pin_owner[pin], pin, mcu))
 
+    # recorder (optional) --------------------------------------------------
+    rec = cfg.get('recorder')
+    if rec is not None:
+        if not isinstance(rec, dict):
+            errs.append("'recorder' must be an object")
+        else:
+            for k in ('tel_slots', 'log_slots', 'slot_size', 'drain_ms'):
+                if k in rec and not (_is_int(rec[k]) and rec[k] > 0):
+                    errs.append('recorder.%s must be a positive int' % k)
+
     # components -----------------------------------------------------------
     comps = cfg.get('components')
     if not isinstance(comps, list):
