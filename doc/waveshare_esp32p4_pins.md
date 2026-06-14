@@ -72,6 +72,29 @@ A conflict-free starting assignment (drop into `board.json`):
   play — keep them out of the free pool then.
 - Never assign GPIO6/14–19/54 (Wi-Fi) or GPIO37/38 (console) in `board.json`.
 
+## Firmware peripheral defaults — do not rely on them
+
+This is a *generic* ESP32-P4 MicroPython build, so `machine` bus constructors return default
+pins unrelated to this board's wiring. **Always pass explicit pins** (which is what `board.json`
+does):
+
+| constructor | firmware default pins | problem |
+|---|---|---|
+| `I2C(0)` | scl=18, sda=19 | **GPIO18/19 are the C6 Wi-Fi SDIO lines** — the default fights Wi-Fi |
+| `I2C(1)` | scl=9, sda=8 | GPIO9 is a codec I²S pin |
+| `SPI(1)` | sck=9, mosi=8, miso=10 | codec / I²C pins |
+| `SPI(2)` | sck=43, mosi=44, miso=39 | **the microSD pins** |
+
+Two hardware I²C controllers exist (`I2C(0)`/`I2C(1)`; `I2C(2)` **hard-crashes** the board — see
+the [benchmark findings](benches/esp32p4-micropython-findings.md)). Two hardware SPI controllers
+exist (`SPI(1)`/`SPI(2)`; `SPI(0)`/`SPI(3)` raise `ValueError`). Any controller remaps to
+arbitrary GPIOs via the matrix.
+
+**Validated on hardware** (MicroPython v1.28.0): the recommended map all constructs cleanly —
+`I2C(0, scl=8, sda=7)`, `UART(1, tx=20, rx=21, 921600)` (comes up ~922190 baud, within UART
+tolerance), `UART(2, tx=22, rx=23, 9600)`, `PWM` on 26/27/32 at 50 Hz, `Pin(33, IN, PULL_UP)`
+reading HIGH (= separated), and `Pin(2, OUT)` for the status LED.
+
 ## Sources
 
 - Board schematic (authoritative for this board's net routing):
