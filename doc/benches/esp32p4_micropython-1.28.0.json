@@ -1,0 +1,68 @@
+{
+    "gc_collect_clean_us": 334,
+    "alloc_bytes256_us": 44.1155,
+    "gc_frag_objects": 10000,
+    "ctl_200hz_6tasks_gc_off": {
+        "p95": 1436139,
+        "min": 11164,
+        "max": 1506131,
+        "avg": 758625.2,
+        "n": 300
+    },
+    "mem_free_end": 32545056,
+    "indexed_write_us": 2.728,
+    "impl": "3.4.0; MicroPython v1.28.0 on 2026-04-06",
+    "mem_free_start": 33083920,
+    "sleep_5ms_us": {
+        "p95": 10004,
+        "min": 8547,
+        "max": 10004,
+        "avg": 9987.9,
+        "n": 200
+    },
+    "pack_into_16B_us": 8.513,
+    "ctl_200hz_6tasks_gc_on": {
+        "p95": 1433786,
+        "min": 8794,
+        "max": 1503787,
+        "avg": 756282.2,
+        "n": 300
+    },
+    "await_sleep0_us": 83.581,
+    "gc_collect_fragmented_us": 67167,
+    "alloc_dict_us": 2.5535,
+    "ticks_us_call_us": 3.1082,
+    "alloc_bytearray256_us": 39.0675,
+    "platform": "esp32",
+    "freq_hz": 360000000,
+    "psram_memcpy_us_1MB": 88996.8,
+    "sleep_1ms_us": {
+        "p95": 10004,
+        "min": 8279,
+        "max": 10005,
+        "avg": 9986.1,
+        "n": 200
+    },
+    "alloc_list8_us": 7.043,
+    "sleep_10ms_us": {
+        "p95": 10004,
+        "min": 9932,
+        "max": 18800,
+        "avg": 10039.0,
+        "n": 200
+    },
+    "slice_assign_us_by_buflen": {
+        "64": 4.079,
+        "4096": 71.26,
+        "65536": 1098.015,
+        "262144": 19670.3
+    },
+    "event_pingpong_us": {
+        "p95": 396,
+        "min": 171,
+        "max": 498,
+        "avg": 305.2,
+        "n": 500
+    },
+    "psram_memcpy_MBps": 11.8
+}
