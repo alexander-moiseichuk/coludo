@@ -11,11 +11,19 @@ mods=("$HERE"/../*.py)
 
 mpremote connect "$PORT" reset >/dev/null 2>&1 || true
 sleep 2
+fail=0
 for m in "${mods[@]}"; do
     n="$(basename "$m")"
-    if mpremote connect "$PORT" cp "$m" ":$n" >/dev/null 2>&1; then
+    ok=0
+    for _ in 1 2 3; do
+        if mpremote connect "$PORT" cp "$m" ":$n" >/dev/null 2>&1; then ok=1; break; fi
+        sleep 1
+    done
+    if [ "$ok" = 1 ]; then
         echo "  deployed $n"
     else
-        echo "  WARN: failed to deploy $n"
+        echo "  ERROR: failed to deploy $n"
+        fail=1
     fi
 done
+exit $fail
