@@ -1,5 +1,5 @@
-# Coludo glider on-board test tasks. Run from this directory (src/glider/test).
-#   make test            compile + run all test_*.py on the board, pass/fail report
+# Coludo glider test tasks (MicroPython on the board). Run from this dir (src/glider/test).
+#   make test            deploy modules + compile/run all test_*.py on the board, pass/fail
 #   make test-recorder   integration test: UART write -> recorder (needs mpremote + adb)
 #   make bench           run the asyncio/PSRAM benchmark on the board
 #   make test PORT=...   override the serial port (default /dev/ttyACM0)
