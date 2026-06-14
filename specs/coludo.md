@@ -1,6 +1,6 @@
 # Introduction
 
-This document is intended to provide a top-level architectural overview of the `Coludo` project. It serves as the foundational input for the [Spec Kit](https://github.com/github/spec-kit) constitution, specification, development plan, and task breakdown.
+This document is intended to provide a top-level architectural overview of the `Coludo` project.
 
 The core concept of `Coludo` stems from the idea that traditional active-control rocket launches can be made significantly more engaging by introducing a secondary phase: at apogee, a glider deploys from the booster stage to achieve a controlled, gentle recovery back to earth. 
 
@@ -325,7 +325,7 @@ This sensor serves as the primary trigger source for transitioning from the Sett
 
 ## Gyroscope
 
-The rotational tracking loops rely on the integrated bno055 gyroscope to sample yaw, pitch, and roll rates. The driver issues asynchronous callbacks to the flight controller whenever angular rates cross a defined deadband threshold. To eliminate sensor drift errors, the module must be physically aligned as closely as possible to the physical center of gravity of the airframe.
+The rotational tracking loops rely on the integrated bno055 gyroscope to sample yaw, pitch, and roll rates. The driver issues asynchronous callbacks to the flight controller whenever angular rates cross a defined deadband threshold. To eliminate sensor drift errors, the module must be physically aligned as closely as possible to the physical center of gravity of the airframe. Due to the low G tolerance of the BNO055, the ADXL375 is better to use. 
 
 ## Geomagnetic
 
@@ -359,7 +359,7 @@ The Flight Controller continually correlates accelerometer vectors alongside GNS
 
 ## Altimeter
 
-High-resolution altitude tracking uses a Gravity: ICP-10111 Pressure Sensor, selected for its 8.5cm operational accuracy and low 2mA current consumption. Barometric calculations are cross-checked against a secondary onboard BMP280 Digital Pressure Sensor and incoming GNSS elevation metrics.A verified vertical delta $\le 3\text{ meters}$ AGL acts as the absolute trigger to drop the master state machine from Gliding to Landing mode.
+High-resolution altitude tracking uses a Gravity: ICP-10111 Pressure Sensor, selected for its 8.5cm operational accuracy and low 2mA current consumption. Barometric calculations are cross-checked against a secondary onboard BMP280 Digital Pressure Sensor and incoming GNSS elevation metrics.A verified vertical delta $\le 3\text{ meters}$ AGL acts as the absolute trigger to drop the master state machine from Gliding to Landing mode. Due to low altitude mode not working very well on the barometer the laser range finder is mandatory for safety. 
 
 ## Separation Sensor (Switch or Breakaway Wire)
 

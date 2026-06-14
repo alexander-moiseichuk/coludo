@@ -15,13 +15,12 @@ could be an option but may lead too much battery pack weigh.
 **Required, weight 30.5g**
 
 ## Accelerometer and Gyro
-Something like [MPU6050](https://www.amazon.com/dp/B0BMY15TC4?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_13) highly not recommended due to noise for high moving cases.
-The [SlimeVR recommendation](https://github.com/purraricat/SlimeVR-CheeseCake-PandaTrackers/blob/main/docs/imu-comparison.md) pushed to look on `ICM-45686` but [HPR Rocket Flight Computer](https://github.com/SparkyVT/HPR-Rocket-Flight-Computer)
-points the best `LSM6DSOX` keeping wide range as acceptable including `MPU6050`. 
 
-Thus, lets try with [bno055](https://www.dfrobot.com/product-1793.html) and rely on 16g accelerometer as 30-100g recommended (3LIS331DL or ADXL377) but with extra weight.
+Something like [MPU6050](https://www.amazon.com/dp/B0BMY15TC4?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_13) highly not recommended due to noise for high moving cases. [HPR Rocket Flight Computer](https://github.com/SparkyVT/HPR-Rocket-Flight-Computer) points the best `LSM6DSOX` keeping wide range as acceptable including `MPU6050`. 
 
-**Required, weight 3.2g**
+Options like [bno055](https://www.dfrobot.com/product-1793.html) aren't very suitable due to low G tolerance and rely on 16g accelerometer as 30-100g recommended (3LIS331DL or ADXL377) but with extra weight so we will use [ADXL375 - High G Accelerometer (+-200g)](https://www.adafruit.com/product/5374)
+
+**Required, weight 1.0 g**
 
 ## Altimeter (pressure)
 As stated in docs the [Gravity: ICP-10111 Pressure Sensor](https://www.dfrobot.com/product-2525.html) looks promising for accuracy (8.5cm), 
@@ -30,16 +29,13 @@ sampling rate and power consumption (2mA).
 **Required, weight 7.1g**
 
 ## Altimeter (laser)
-Ultrasonic sensors are not suitable for 4m+ distance, but lasers are power hungry, so should be turned on on landing.
-For now will rely on athmo altimeter but [50m TOF Laser Ranging Sensor, 100Hz](https://www.dfrobot.com/product-2923.html)
-looks like a promising option taking into account price and [technical specification](https://wiki.dfrobot.com/SKU_SEN0648_TOF_laser_ranging_sensor_50m)
+Barometer works very badly at very low altitudes, so the laser module becomes essential to cover the 10 meters and below range.
+Reasonable [use atleast 6 meters](https://www.adafruit.com/product/5425) this option or if worst comes to worst [50m TOF Laser Ranging Sensor, 100Hz](https://www.dfrobot.com/product-2923.html). The specifications of the last option looks promising [technical specification](https://wiki.dfrobot.com/SKU_SEN0648_TOF_laser_ranging_sensor_50m)
 
-**Very optional as power consumption needs another battery, weight ~20g**
+**as power consumption needs another battery, weight ~20g**
 
 ## Battery
 Not many options for [5V USB-C low-weight](https://www.amazon.com/dp/B07SZKNST4) power delivery are avaialbe.
-Need to clarify after checking weight for [3.7V batteries](https://www.amazon.com/dp/B0F7QJ4BVK)
-
 Alternative is to connect e.g. from [6F22 9V using plug](https://www.amazon.com/dp/B083QFFH66) and a lightweight power-down module or a LiPo 3.7 V single cell battery and boost up circuit for controller and a separate circuit for the servos.
 
 **Required, weight 42.1g for 6F22, and power-down board**
