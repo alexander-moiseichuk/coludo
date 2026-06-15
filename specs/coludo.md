@@ -308,8 +308,8 @@ subscriber would stall the publisher inline. Instead the mechanism is chosen per
   rather than slice-assignment, which is O(buffer length) on this port (see the
   [benchmark findings](../doc/benches/esp32p4-micropython-findings.md)). Telemetry streams are
   created via a `Telemetry(file, fields)` helper that emits a CSV header first and then
-  timestamped rows; all streams in a boot share one session prefix (`YYYYMMDD_HHMMSS`, the
-  board's boot time, refined when CC syncs the clock) so each flight's files are distinct.
+  timestamped rows; all streams in a boot share one session prefix (`YYYYMMDD_HHMMSS`, produced
+  from the RTC the first time telemetry is emitted) so each flight's files are distinct.
 
 This collapses what would otherwise be a separate event-bus plus ring buffers into the Recorder:
 discrete events are just log records, and the priority queues are the decoupling buffers

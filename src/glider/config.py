@@ -125,7 +125,7 @@ def validate(cfg):
         if not isinstance(rec, dict):
             errs.append("'recorder' must be an object")
         else:
-            for k in ('tel_slots', 'log_slots', 'slot_size', 'drain_ms'):
+            for k in ('tlm_slots', 'log_slots', 'slot_size', 'drain_ms'):
                 if k in rec and not (_is_int(rec[k]) and rec[k] > 0):
                     errs.append('recorder.%s must be a positive int' % k)
 

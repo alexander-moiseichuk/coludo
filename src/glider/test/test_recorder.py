@@ -16,33 +16,28 @@ class Collector:
 
 
 def main():
-    # Ring: write / read (read returns a copy and advances)
-    r = Ring(4, 32)
-    assert r.write(b'hello') and r.count == 1
-    assert r.read() == b'hello' and r.count == 0
-    assert r.read() is None
+    # Ring: SPSC write / read (read returns a copy and advances); holds slots-1 records
+    r = Ring(3, 32)
+    assert r.write(b'a') and r.write(b'b') and r.count() == 2
+    assert r.write(b'c') is False and r.dropped == 1        # full -> skip, no overwrite
+    assert r.read() == b'a' and r.read() == b'b'
+    assert r.read() is None and r.count() == 0
 
-    # too-big -> dropped; overflow -> drop oldest
-    assert r.write(b'x' * 31) is False and r.dropped == 1
-    r = Ring(2, 16)
-    r.write(b'a'); r.write(b'b'); r.write(b'c')
-    assert r.count == 2 and r.dropped == 1 and r.read() == b'b'
+    # too-big record is skipped
+    assert r.write(b'x' * 31) is False and r.dropped == 2
 
-    # Recorder setup from config
-    Recorder.setup(default())
-    assert len(Recorder.session()) == 15            # YYYYMMDD_HHMMSS
-    assert Recorder.uptime_us() >= 0
-
-    # the session prefix is fixed for the boot -> stable file names across streams
+    # Recorder setup (inject a dummy sink so no real UART is opened in the unit test)
+    Recorder.setup(default(), uart=Collector())
+    assert Recorder._session is None                        # lazy: not produced until first tlm
+    assert len(Recorder.session()) == 15                    # YYYYMMDD_HHMMSS
     sess = Recorder.session()
+
+    # log + telemetry, telemetry first, with @<session>_file@ routing
     Recorder.log('Controller', 'setup started')
     Recorder.tlm('cpu.csv', '40;51')
     sink = Collector()
-    n = Recorder.drain(sink)
-    assert n == 2
-    # telemetry first, with @<session>_file@ routing
+    assert Recorder.drain(sink) == 2
     assert sink.items[0] == ('@%s_cpu.csv@40;51\n' % sess).encode(), sink.items[0]
-    # logs second, "<uptime_us> Controller :: setup started"
     assert b' Controller :: setup started\n' in sink.items[1]
     assert Recorder.drain(Collector()) == 0
 
@@ -58,7 +53,7 @@ def main():
     assert trace[0][0] == 'uart' and trace[1][0] == 'cc' and trace[0][1] == trace[1][1]
 
     # Telemetry: header first (uptime + fields), then timestamped rows
-    Recorder.drain(Collector())                     # clear
+    Recorder.drain(Collector())                             # clear
     t = Telemetry('imu.csv', ('yaw', 'pitch', 'roll'))
     t.push((1.0, 2.0, 3.0))
     t.push((4, 5, 6))
@@ -69,9 +64,11 @@ def main():
     assert out.items[1].endswith(b';1.0;2.0;3.0\n')
     assert out.items[2].endswith(b';4;5;6\n')
 
-    # set_clock back-dates the session to boot time (and keeps it 15 chars)
-    Recorder.set_clock(800000000)
-    assert len(Recorder.session()) == 15
+    # drain tracks high-water marks; report exposes count()/max/dropped
+    rep = Recorder.report()
+    assert rep['session'] == sess
+    assert rep['tlm']['max'] >= 1 and 'count' in rep['tlm'] and 'dropped' in rep['log']
+    assert 'max=' in Recorder._stats()
 
     # async drain loop drains queued records then stops
     async def amain():
@@ -85,7 +82,7 @@ def main():
         assert len(s.items) >= 1
     asyncio.run(amain())
 
-    print('ok: recorder ring/log/tlm/priority/session-prefix, Telemetry header+rows, async run')
+    print('ok: recorder SPSC ring/log/tlm/priority/session, Telemetry header+rows, async run')
 
 
 main()
