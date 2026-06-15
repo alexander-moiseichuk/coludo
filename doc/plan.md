@@ -3,6 +3,19 @@
 Required hardware and the phased development roadmap. Architecture lives in
 [`../specs/`](../specs/); working conventions in [`skills.md`](skills.md).
 
+## Status
+
+- **Phase 0 — done.** `config`, `task`+`controller`, `cc_protocol`, `recorder` (SPSC rings +
+  `Telemetry`) in `src/glider/`, all MicroPython, on-board tested (`make test`).
+- **Phase 1 board side — done.** `wifi` (STA) and `cc_client` (`Dispatcher`/`Client` +
+  `standard_dispatcher` answering whoami/ping/health/state/report/get-config/save-config/
+  reset-config/reboot). 8/8 on-board tests.
+- **Resume point (next):** the **CC hub** in `src/control/` (host Python, stdlib asyncio — the
+  isolated piece; the board client already speaks the protocol to it). **Then** the Controller
+  **bring-up wiring** (connect → CC time-sync → Recorder drain as the `uart_sink` task), which is
+  two-sided so wants the hub live first. The `RecorderTask @driver('uart_sink')` integration was
+  scoped but deferred.
+
 ## Required hardware
 
 1. ESP32-P4 with Wi-Fi (or ESP32-C6 low-end variant) — Main Controller
@@ -24,22 +37,26 @@ UART). Everything must stay under 100 g to fit F6-class lift. See
 The project rule drives the order: **telemetry-only first, active control later.** Host-
 testable foundations and connectivity come before the flight loop.
 
-### Phase 0 — Foundations (host-testable, no board required)
-- `src/glider/` config: `config_default.py`, loader, validator (pin uniqueness, bus refs,
-  types), `config_id` hashing, defaults → active overlay + fallback to defaults.
-- Task base (`setup/run/notify/report/finish/validate/testing`) + Controller skeleton
-  (`directory/create/active/close`, hardcoded creation order).
-- Line-protocol tokenizer (positional / `key=value` / quoted) + message framing.
-- Log/telemetry ring buffers + record formats.
-- Tests for each under `src/glider/test/`, runnable on the host.
-- **Milestone:** config + tasks + protocol parsing green on host.
+### Phase 0 — Foundations (MicroPython, on-board tested) — DONE
+- ✅ `config.py` + `config_default.py`: loader, validator (pin uniqueness, bus refs, reserved
+  pins, board.id, `recorder` section), `config_id` hashing, layered load + fallback, atomic save.
+- ✅ `task.py` + `controller.py`: Task base + `DRIVERS` registry; Controller
+  (`directory/create/active/close`, supervised run loops, flight state machine).
+- ✅ `cc_protocol.py`: line parser — bare tokens or `base64:<data>` (no quoting/tokenizing),
+  `parse`/`build`/`encode`/`decode`.
+- ✅ `recorder.py`: lock-free SPSC `Ring`s (write via `struct.pack_into`), `Recorder` singleton
+  (`log`/`tlm`, async drain, session prefix, stats), `Telemetry(file, fields)`.
+- **Milestone met:** config + tasks + protocol + recorder green on the board.
 
 ### Phase 1 — Connectivity & ground ops (no flight control)
-- Board: Wi-Fi STA join (`panda`), CC client (dial out, `whoami`/`iam`, command loop),
-  LED status, system status (temp/mem/load).
-- `src/control/` CC hub: board listener (1234), telnet (1235), HTTP + SSE (8080), registry,
-  2 s poll loop, `help`/`list`/`select`, draft config.
-- Minimal browser dashboard: health, enable/disable, `save-config` → `reboot`.
+- ✅ **Board side:** `wifi.py` (STA join `panda`, tx-power), `cc_client.py` (`Client` dial-out +
+  `serve` loop, `standard_dispatcher` answering whoami/ping/health/state/report/get-config/
+  save-config/reset-config/reboot). System status (temp/mem/uptime) is in the health handler.
+- ◻ **CC hub** (`src/control/`, host Python): board listener (1234), telnet (1235), HTTP + SSE
+  (8080), registry, ~2 s poll loop, `help`/`list`/`select`, draft config. ← **next**
+- ◻ Minimal browser dashboard: health, enable/disable, `save-config` → `reboot`.
+- ◻ Controller bring-up wiring (connect → time-sync → Recorder drain as the `uart_sink` task)
+  and an LED-status task.
 - **Milestone:** power a board → it appears on CC → view health → toggle a component →
   save + reboot → it returns from the saved config.
 
@@ -87,5 +104,5 @@ data class to respect the GC-pause and <10 ms control-loop budgets on MicroPytho
 
 The control loop stays self-contained (reads blackboard, writes servos) so it runs even if
 other tasks stall, and is paced by a hardware timer (not `asyncio.sleep`, which floors at
-~10 ms on this port). The logger's PSRAM queues are written with `struct.pack_into`, never
+~10 ms on this port). The Recorder's PSRAM queues are written with `struct.pack_into`, never
 slice-assignment (which is O(buffer length) here).
