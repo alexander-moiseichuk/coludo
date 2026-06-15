@@ -30,6 +30,10 @@ command -v mpy-cross >/dev/null || { have_mpycross=0; echo "${Y}warning: mpy-cro
 if [ "$#" -gt 0 ]; then tests=("$@"); else tests=("$HERE"/test_*.py); fi
 if [ ! -e "${tests[0]}" ]; then echo "${Y}no tests found in $HERE (test_*.py)${N}"; exit 0; fi
 
+# deploy the glider modules so on-board tests can import them (config, ...)
+echo "deploying modules to $PORT..."
+bash "$HERE/deploy_modules.sh" "$PORT" || echo "${Y}warning: module deploy had issues${N}"
+
 tmpmpy="$(mktemp "$LOGDIR/compile_XXXX.mpy")"
 trap 'rm -f "$tmpmpy"' EXIT
 

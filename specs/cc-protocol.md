@@ -60,33 +60,36 @@ The general form is:
 
 - The **first word** is the command.
 - The **second word** is the target **board id**, taken verbatim from the board's config
-  (`board.id`, e.g. `glider1`, `glider7a`).
-- The **rest** is parameters, **space-separated**, in an old-school shell style:
-  - **positional** — a bare token: `log glider1 3000`
-  - **named** — `key=value`: `tel glider1 ms=3000`
-  - **quoted** — wrap a value in double quotes when it contains spaces:
-    `note glider1 msg="pad 7, gusty"` (use `\"` for a literal quote inside).
+  (`board.id`, e.g. `glider1`, `glider7a`). A board id is **always a bare token with no
+  whitespace** — never encoded — and config validation rejects ids that contain spaces.
+- The **rest** is parameters, **whitespace-separated**. There is **no quoting or escaping** —
+  both sides know each command's schema, so a value is just one of:
+  - **bare token** — a simple value with no spaces: `log glider1 3000`, `select glider1`. The
+    parser returns it as a string; the receiver converts numerics itself (it knows `ms` is an
+    int).
+  - **`base64:<data>`** — anything with spaces, quotes, JSON, or binary content, base64-encoded
+    with a readable prefix so it stays a single whitespace-free token. E.g. a note with spaces:
+    `note glider1 msg=base64:cGFkIDcsIGd1c3R5`.
+  - **named** params are `key=value` (the value being bare or `base64:...`); everything else is
+    positional.
 
-So an operator can type any command by hand over telnet. Parsing is a simple tokenizer:
-split on spaces (respecting quotes), then a token with `=` is a named param, otherwise
-positional.
+Parsing is therefore a trivial `line.split()` — no quote-aware tokenizer. Operators type every
+common command bare (none of `ping`/`health`/`log N`/`select`/`reboot` need spaces); only the
+rare space-containing value needs `base64:`, which the browser UI / tools encode.
 
-**JSON is used only when the parameter itself is a structured document** — currently just the
-full config in `save-config <json>`, which CC or the browser sends and no operator hand-types.
-Everything else a human types is positional or `key=value`. (Response payloads are also JSON,
-but those are machine-generated and only read, never typed — see
-[Responses](#responses--error-codes).)
+**JSON has no special case** — a config or structured payload is simply a `base64:` value, so
+`save-config glider1 base64:<encoded-json>` is one ordinary token. CC and the browser encode
+it; no operator hand-types it.
 
 Responses use the same framing, with a status word first:
 
 ```
-<status> <board-id> [payload]
+<status> <board-id> [params...]
 ```
 
-where `status` is `ok`, `err`, `pong`, or `iam`. Any structured payload is compact JSON on the
-same line; multi-record results (e.g. several log lines) are returned as a **JSON array on one
-line**, never as multiple physical lines. This keeps the invariant: exactly one message per
-`\n`. Plain text inside JSON is escaped normally.
+where `status` is `ok`, `err`, `pong`, or `iam`. A structured payload (health, a list, several
+log lines) is JSON `base64:`-encoded into one token, keeping the invariant: exactly one message
+per `\n`.
 
 Two exceptions to "`command board-id ...`":
 - **`whoami`** carries no board id — at that moment CC has not yet learned the id (see below).
@@ -193,7 +196,9 @@ the selected one — `health` becomes `health glider1`. An explicit id always ov
 selection for that one line. CC tags everything it relays back from a board with the source id
 (`ok glider1 …`), so a telnet operator always sees which board answered.
 
-Example telnet session:
+Example telnet session (response **JSON payloads are shown decoded for readability**; on the
+wire each is a single `base64:` token — e.g. the `ok glider1` reply to `health` is literally
+`ok glider1 base64:eyJ0ZW1wIjo1NCw...`):
 
 ```
 > help log

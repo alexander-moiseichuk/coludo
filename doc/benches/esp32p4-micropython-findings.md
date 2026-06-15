@@ -114,6 +114,21 @@ pays this rate, which is what makes Finding 1's tail-memmove so expensive.
 
 ---
 
+## Finding 5 — `machine.I2C(2)` hard-crashes instead of raising `ValueError`
+
+On this build there are two hardware I²C controllers. Requesting a non-existent peripheral id
+is handled inconsistently: `SPI(0)` and `SPI(3)` cleanly raise `ValueError: SPI(n) doesn't
+exist`, but **`I2C(2)` triggers a fatal error and crash dump** (the board resets) instead of a
+`ValueError`. Reproduce from the REPL:
+
+```python
+from machine import I2C, SPI
+SPI(3)    # -> ValueError: SPI(3) doesn't exist   (correct)
+I2C(2)    # -> "A fatal error occurred. The crash dump printed below ..."  (board resets)
+```
+
+An out-of-range bus id should raise, not crash.
+
 ## Other primitives (for budgeting)
 
 | op | cost |

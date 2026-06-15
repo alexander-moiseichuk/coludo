@@ -76,17 +76,17 @@ identical behaviour every time.
   },
 
   "buses": {
-    "i2c0":          { "sda": 21, "scl": 22, "freq": 400000 },
-    "uart_recorder": { "tx": 17, "rx": 18, "baud": 921600 },
-    "uart_console":  { "tx": 43, "rx": 44, "baud": 115200 }
+    "i2c0":          { "sda": 7, "scl": 8, "freq": 400000 },
+    "uart_recorder": { "tx": 20, "rx": 21, "baud": 921600 },
+    "uart_gnss":     { "tx": 22, "rx": 23, "baud": 9600 }
   },
 
   "pins": {
     "led_status": 2,
-    "separation_switch": 4,
-    "servo_yaw": 5,
-    "servo_elevon_l": 6,
-    "servo_elevon_r": 7
+    "separation_switch": 33,
+    "servo_yaw": 26,
+    "servo_elevon_l": 27,
+    "servo_elevon_r": 32
   },
 
   "components": [
@@ -107,7 +107,7 @@ identical behaviour every time.
       "enabled": true,
       "provides": { "altitude": { "priority": 1, "timeout_ms": 200 } } },
 
-    { "name": "gnss", "driver": "atgm336h", "bus": "uart_console", "addr": null,
+    { "name": "gnss", "driver": "atgm336h", "bus": "uart_gnss", "addr": null,
       "enabled": true,
       "provides": { "position": { "priority": 0, "timeout_ms": 150 },
                     "altitude": { "priority": 3, "timeout_ms": 1000 } } },
@@ -131,7 +131,10 @@ identical behaviour every time.
   point at the CC service; `tx_power_dbm` is the operator-tunable signal level.
 - **`buses`** — named buses (I²C / UART / SPI) with their pins and parameters. Components
   reference a bus by name.
-- **`pins`** — discrete signals (LED, separation switch, servo PWM lines).
+- **`pins`** — discrete signals (LED, separation switch, servo PWM lines). The concrete GPIO
+  numbers for the WaveShare ESP32-P4-WIFI6 — and which GPIOs are reserved (Wi-Fi C6, console,
+  SD, codec) — are in [`../doc/waveshare_esp32p4_pins.md`](../doc/waveshare_esp32p4_pins.md).
+  The values in the example above are that board's recommended map.
 - **`components`** — the declarative hardware list. Each entry has a `name`, a `driver`, a
   `bus` reference, an optional `addr`, an `enabled` flag, and a `provides` map. JSON has no
   hex literals, so addresses are decimal (`0x28` → `40`); `config_default.py` may use hex.
@@ -153,8 +156,11 @@ to keep in sync.
 ### What is NOT in board config
 
 **Mission config** (landing-zone coordinates, altitude thresholds, target point) is *per
-launch*, not *per board*, and lives elsewhere. Board config describes the vehicle's hardware;
-mission config describes a specific flight.
+launch*, not *per board*, and will live in a dedicated `launch.config` (same layered/validated
+form as `board.json` — see the plan). Board config describes the vehicle's hardware; mission
+config describes a specific flight. **Interim:** until `launch.config` exists, and because all
+launches are currently from the same site, these launch parameters may temporarily be carried
+in `board.json`.
 
 ## Lifecycle and activation
 

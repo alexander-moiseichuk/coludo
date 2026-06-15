@@ -293,21 +293,25 @@ subscriber would stall the publisher inline. Instead the mechanism is chosen per
   which floors at ~10 ms on this port (see the
   [benchmark findings](../doc/benches/esp32p4-micropython-findings.md)).
 
-* **Everything else goes through one Logger.** For simplicity there is a single non-hot path.
-  Every task reports logs and telemetry **directly to the Logger**, and each record is stamped
-  with `time.ticks_us()` at the source. The Logger enqueues records into PSRAM queues by
-  priority:
+* **Everything else goes through one Recorder.** For simplicity there is a single non-hot path.
+  Every task reports logs and telemetry **directly to the Recorder** (`Recorder.log()`,
+  `Recorder.tlm()` — a global singleton), and each record is stamped with `time.time_ns()//1000`
+  (microseconds, monotonic, no wrap). The Recorder enqueues complete UART-ready text lines into
+  two PSRAM ring buffers by priority:
   * **Telemetry — 1st priority queue.**
   * **Logs — 2nd priority queue.**
-  A drain task empties these queues to the Recorder over UART, telemetry before logs. The UART
-  push to the Recorder happens **first** (it is the authoritative flight-data sink); any other
+  An async drain loop empties these to the Recorder module (Luckfox) over UART, telemetry before
+  logs. The UART push happens **first** (it is the authoritative flight-data sink); any other
   subscribers — notably the Control Center live view — receive the same records **only after**
   they have been pushed to UART. This guarantees recorder durability first and treats CC as a
-  best-effort secondary consumer. Records are written into the PSRAM queues with
-  `struct.pack_into` rather than slice-assignment, which is O(buffer length) on this port
-  (see the [benchmark findings](../doc/benches/esp32p4-micropython-findings.md)).
+  best-effort secondary consumer. Records are written into the rings with `struct.pack_into`
+  rather than slice-assignment, which is O(buffer length) on this port (see the
+  [benchmark findings](../doc/benches/esp32p4-micropython-findings.md)). Telemetry streams are
+  created via a `Telemetry(file, fields)` helper that emits a CSV header first and then
+  timestamped rows; all streams in a boot share one session prefix (`YYYYMMDD_HHMMSS`, produced
+  from the RTC the first time telemetry is emitted) so each flight's files are distinct.
 
-This collapses what would otherwise be a separate event-bus plus ring buffers into the Logger:
+This collapses what would otherwise be a separate event-bus plus ring buffers into the Recorder:
 discrete events are just log records, and the priority queues are the decoupling buffers
 between fast producers and the slow UART/CC drains.
 

@@ -68,17 +68,26 @@ This dovetails with the task model in `coludo.md`, where each task exposes `test
 - **config parsing and validation** (pin uniqueness, bad bus refs, fallback to defaults),
 - **protocol parsing** (command tokenizer, `key=value`, quoted values, error codes).
 
-Prefer tests runnable **on-device** (`mpremote run`). Where the logic is host-portable — the
-config loader/validator, fusion ordering, the CC protocol parser — also make it **runnable on
-the host** for fast iteration without a board.
+The glider firmware targets **MicroPython only** — tests run **on the board** (`mpremote`), not
+on a host CPython approximation. Even host-portable logic (config loader/validator, fusion
+ordering, the protocol parser) is verified on the real runtime.
 
-**Running the tests.** `src/glider/test/run_tests.sh` (or `make test` in that directory)
-compiles every `test_*.py` with `mpy-cross -O3`, runs it on the board, and prints a pass/fail
-report. Convention: a test is named `test_*.py` and **passes if it compiles and runs to
-completion without raising** (mpremote exit 0); it **fails** on a compile error, an uncaught
-exception / failed `assert`, a timeout, or `FAIL`/`Traceback` in its output. So write checks
-as `assert`. Override the port with `PORT=/dev/ttyACM0` and the per-test limit with
-`TIMEOUT=<secs>`. `make bench` runs the benchmark.
+**Running the tests.** `src/glider/test/run_tests.sh` (or `make test` in that directory) first
+deploys the glider modules (`src/glider/*.py`) to the board with `deploy_modules.sh` so tests
+can `import` them, then compiles every `test_*.py` with `mpy-cross -O3`, runs it on the board,
+and prints a pass/fail report. Convention: a test is named `test_*.py` and **passes if it
+compiles and runs to completion without raising** (mpremote exit 0); it **fails** on a compile
+error, an uncaught exception / failed `assert`, a timeout, or `FAIL`/`Traceback` in its output.
+So write checks as `assert`. Override the port with `PORT=/dev/ttyACM0` and the per-test limit
+with `TIMEOUT=<secs>`. `make bench` runs the benchmark; `make test-recorder` runs the
+adb-backed recorder UART integration test (which reads its UART pins from the board's config).
+
+## Code style
+
+- **Python string literals use single quotes** `'...'`; reach for double quotes `"..."` only
+  when the string itself contains a single quote (e.g. `"board.mcu '%s' invalid"`). Don't
+  backslash-escape a quote when switching the outer style avoids it.
+- MicroPython-only for `src/glider/` — don't add a parallel host/CPython path.
 
 ## Control Center
 
