@@ -13,7 +13,7 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, HERE)
+sys.path.insert(0, os.path.dirname(HERE))  # src/control (control.py + cc_protocol symlink)
 from control import Server  # noqa: E402
 
 PORT_DEV = os.environ.get('PORT_DEV', '/dev/ttyACM0')

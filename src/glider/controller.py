@@ -75,6 +75,7 @@ class Controller(Inspectable):
                 ok = False
             if ok:
                 self.tasks[name] = task
+                Inspector.register(task)  # operator can `inspect <task>`
                 self.log("controller :: task '%s' up" % name)
             else:
                 self.log("controller :: task '%s' failed setup" % name)
@@ -103,6 +104,7 @@ class Controller(Inspectable):
             runner.cancel()
         task = self.tasks.pop(name, None)
         if task is not None:
+            Inspector.unregister(name)
             await task.finish()
 
     async def finish(self):
@@ -118,10 +120,6 @@ class Controller(Inspectable):
         self.state = state
         self.log('controller :: state -> %s' % state)
 
-    # ----------------------------------------------------------- introspection
-    def report(self):
-        return {'state': self.state, 'tasks': dict((n, t.report()) for n, t in self.tasks.items())}
-
     def validate(self):
         """True if every active task is healthy."""
         for t in self.tasks.values():
@@ -134,4 +132,4 @@ class Controller(Inspectable):
         return {'state': self.state, 'tasks': list(self.tasks.keys())}
 
     def stats(self):
-        return self.report()
+        return {'state': self.state, 'tasks': dict((n, t.inspect()) for n, t in self.tasks.items())}

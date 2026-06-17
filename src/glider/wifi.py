@@ -10,15 +10,6 @@ import network
 from inspector import Inspectable, Inspector
 
 
-def _read_password(ssid: str, fallback: str) -> str:
-    try:
-        with open('%s.creds' % ssid) as creds:
-            password = creds.readline().strip()
-            return password if password else fallback
-    except OSError:
-        return fallback
-
-
 class Wifi(Inspectable):
     name = 'wifi'
     kind = 'wifi'
@@ -26,11 +17,20 @@ class Wifi(Inspectable):
     def __init__(self, config: dict, log=None):
         wifi = config.get('wifi', {})
         self.ssid: str = wifi.get('ssid', '')
-        self.password: str = _read_password(self.ssid, wifi.get('password', ''))
+        self.password: str = self._read_password(wifi.get('password', ''))
         self.tx_power = wifi.get('tx_power_dbm')
         self.log = log if log is not None else (lambda message: None)
         self.wlan = None
         Inspector.register(self)
+
+    def _read_password(self, fallback: str) -> str:
+        """Read the password from <ssid>.creds (gitignored, deploy.sh-pushed), else `fallback`."""
+        try:
+            with open('%s.creds' % self.ssid) as creds:
+                password = creds.readline().strip()
+                return password if password else fallback
+        except OSError:
+            return fallback
 
     async def connect(self, timeout_ms: int = 15000) -> bool:
         """Join the configured network. Returns True once connected, False on timeout."""
@@ -61,8 +61,10 @@ class Wifi(Inspectable):
         return self.wlan.ifconfig() if self.wlan is not None else None
 
     def ip(self) -> str:
-        config = self.ifconfig()
-        return config[0] if config else None
+        try:
+            return self.wlan.ifconfig()[0]
+        except Exception:
+            return None
 
     def rssi(self):
         try:
@@ -70,7 +72,7 @@ class Wifi(Inspectable):
         except Exception:
             return None
 
-    def set_txpower(self, dbm: int) -> bool:
+    def set_tx_power(self, dbm: int) -> bool:
         """Adjust the TX power (operator signal-level tuning). Returns True on success."""
         self.tx_power = dbm
         if self.wlan is not None:
@@ -94,7 +96,7 @@ class Wifi(Inspectable):
     def update(self, props: dict) -> list:
         changed = []
         dbm = props.get('tx_power')
-        if dbm is not None and dbm != self.tx_power and self.set_txpower(dbm):
+        if dbm is not None and dbm != self.tx_power and self.set_tx_power(dbm):
             changed.append('tx_power')
         return changed
 

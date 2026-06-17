@@ -116,7 +116,7 @@ a sync loop that waits until GPS is ready.
 
 Adopted and documented in [`../specs/coludo.md`](../specs/coludo.md) ("Task Data-Flow and
 Message Propagation"), grounded by on-board measurements (see
-[benchmark findings](benches/esp32p4-micropython-findings.md)). Not one paradigm — chosen per
+[benchmark findings](benches/WaveShare_esp32p4-micropython-findings.md)). Not one paradigm — chosen per
 data class to respect the GC-pause and <10 ms control-loop budgets on MicroPython:
 
 - **Hot sensor data** (IMU/baro at 100–200 Hz) → a shared **latest-value blackboard**:

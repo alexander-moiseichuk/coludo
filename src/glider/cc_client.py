@@ -108,7 +108,7 @@ def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_p
         return cc.build('ok', [json.dumps({'state': state()})])
 
     async def report(msg):
-        return cc.build('ok', [json.dumps(controller.report() if controller is not None else {})])
+        return cc.build('ok', [json.dumps(controller.stats() if controller is not None else {})])
 
     async def objects(msg):
         return cc.build('ok', [json.dumps(Inspector.names())])

@@ -28,7 +28,7 @@ _LENGTH_BYTES = const(2)  # uint16 record-length header
 _STATS_PERIOD_MS = const(1000)  # how often run() logs a buffer-stats line
 
 
-class _RecorderError(Exception):
+class _RecorderError(ValueError):
     """Raised when an important (telemetry) record cannot be queued."""
 
 

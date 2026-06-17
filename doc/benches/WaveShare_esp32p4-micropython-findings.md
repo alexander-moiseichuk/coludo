@@ -2,8 +2,8 @@
 
 Measurements taken for the Coludo flight-controller project to validate latency and memory
 assumptions, with several results that look like general MicroPython behaviour worth sharing
-upstream. Raw data: [`esp32p4_micropython-1.28.0.log`](esp32p4_micropython-1.28.0.log) and
-[`esp32p4_micropython-1.28.0.json`](esp32p4_micropython-1.28.0.json). Benchmark source:
+upstream. Raw data: [`WaveShare_esp32p4_micropython-1.28.0.log`](WaveShare_esp32p4_micropython-1.28.0.log) and
+[`WaveShare_esp32p4_micropython-1.28.0.json`](WaveShare_esp32p4_micropython-1.28.0.json). Benchmark source:
 [`../../src/glider/test/bench_asyncio.py`](../../src/glider/test/bench_asyncio.py).
 
 ## Environment

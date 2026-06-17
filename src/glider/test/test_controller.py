@@ -18,10 +18,10 @@ class FakeSensor(Task):
             self.ran += 1
             await asyncio.sleep_ms(1)
 
-    def report(self):
-        r = Task.report(self)
-        r['ran'] = self.ran
-        return r
+    def inspect(self):
+        status = Task.inspect(self)
+        status['ran'] = self.ran
+        return status
 
 
 class FailSensor(Task):
@@ -63,12 +63,17 @@ async def amain():
 
     assert c.validate() is True
 
-    # run the task loops, then check report
+    # run the task loops, then check stats()
     await c.start()
     await asyncio.sleep_ms(50)
-    rep = c.report()
+    rep = c.stats()
     assert rep['state'] == 'setting'
     assert rep['tasks']['s1']['ran'] >= 1, rep
+
+    # tasks are individually inspectable through the Inspector
+    from inspector import Inspector
+
+    assert Inspector.inspect('s1')['ran'] >= 1
 
     # notify/emit
     seen = []
@@ -93,7 +98,7 @@ async def amain():
     assert c.tasks == {}
     assert c.state == 'done'
 
-    print('ok: controller directory/create/setup/run/active/report/validate/close/finish')
+    print('ok: controller directory/create/setup/run/active/inspect/stats/validate/close/finish')
 
 
 asyncio.run(amain())

@@ -169,7 +169,6 @@ operator via report()/validate().
 - `close(name)` — Deactivate a task and clean up its resources.
 - `finish()` — Shut down all tasks.
 - `set_state(state)`
-- `report()`
 - `validate()` — True if every active task is healthy.
 - `inspect()`
 - `stats()`
@@ -199,6 +198,7 @@ three for computed values.
 ### `class Inspector`
 
 - `register(obj) -> None` _(classmethod)_
+- `unregister(name: str) -> None` _(classmethod)_
 - `names() -> list` _(classmethod)_
 - `get(name: str)` _(classmethod)_
 - `inspect(name: str) -> dict` _(classmethod)_
@@ -264,9 +264,10 @@ Every component/system task follows the common lifecycle from specs/coludo.md:
 setup()    async; initialize or reset; return True on success
 run()      async; the task's main activity loop
 notify()   subscribe a callback for this task's updates
-report()   return a status dict
 validate() return True if the task is currently healthy
 finish()   async; shut down and release resources
+A Task is Inspectable: inspect()/update()/stats() expose it to the operator (the Controller
+registers each task with the Inspector), so there is no separate report().
 
 A driver registers itself with @driver('name'); the Controller maps a component's 'driver'
 field to the class via DRIVERS.
@@ -275,16 +276,16 @@ field to the class via DRIVERS.
 
 Class decorator: register a Task subclass under a driver name.
 
-### `class Task`
+### `class Task(Inspectable)`
 
 - `__init__(name, config=None, controller=None)` — constructor
 - `setup()` — Initialize or reset. Override. Return True on success, False otherwise.
 - `run()` — Main activity loop. Override. Default returns immediately.
 - `notify(callback)` — Register callback(task, event) to be invoked on this task's updates.
 - `emit(event=None)` — Notify all subscribers of an update.
-- `report()` — Return a status dict. Subclasses extend it.
 - `validate()` — Return True if the task is currently healthy.
 - `finish()` — Shut down and release resources.
+- `inspect()` — Status dict. Subclasses extend it.
 
 ## `wifi.py`
 
@@ -303,7 +304,7 @@ by deploy.sh, never committed) so it is not in the repo.
 - `ifconfig()`
 - `ip() -> str`
 - `rssi()`
-- `set_txpower(dbm: int) -> bool` — Adjust the TX power (operator signal-level tuning). Returns True on success.
+- `set_tx_power(dbm: int) -> bool` — Adjust the TX power (operator signal-level tuning). Returns True on success.
 - `inspect() -> dict`
 - `update(props: dict) -> list`
 - `stats() -> dict`

@@ -4,12 +4,15 @@
 #   setup()    async; initialize or reset; return True on success
 #   run()      async; the task's main activity loop
 #   notify()   subscribe a callback for this task's updates
-#   report()   return a status dict
 #   validate() return True if the task is currently healthy
 #   finish()   async; shut down and release resources
+# A Task is Inspectable: inspect()/update()/stats() expose it to the operator (the Controller
+# registers each task with the Inspector), so there is no separate report().
 #
 # A driver registers itself with @driver('name'); the Controller maps a component's 'driver'
 # field to the class via DRIVERS.
+
+from inspector import Inspectable
 
 DRIVERS = {}
 
@@ -24,10 +27,12 @@ def driver(name):
     return deco
 
 
-class Task:
+class Task(Inspectable):
+    kind = 'task'
+
     def __init__(self, name, config=None, controller=None):
         self.name = name
-        self.config = config or {}  # this task's component dict from board.json
+        self.config = config or {}  # this task's sensor/component dict from board.json
         self.controller = controller  # back-reference for active()/notify()
         self._ok = False
         self._subs = []
@@ -51,10 +56,6 @@ class Task:
         for cb in self._subs:
             cb(self, event)
 
-    def report(self):
-        """Return a status dict. Subclasses extend it."""
-        return {'name': self.name, 'ok': self._ok}
-
     def validate(self):
         """Return True if the task is currently healthy."""
         return self._ok
@@ -62,3 +63,8 @@ class Task:
     async def finish(self):
         """Shut down and release resources."""
         self._ok = False
+
+    # --- Inspectable ---
+    def inspect(self):
+        """Status dict. Subclasses extend it."""
+        return {'name': self.name, 'ok': self._ok}

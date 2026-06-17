@@ -121,7 +121,8 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `state` | — | `ok {state,uptime}` | current flight phase |
 | `tel` | `[ms]` | `ok {samples:[...]}` | telemetry samples within the last `ms` |
 | `log` | `<ms>` | `ok {lines:[...], truncated}` | log lines from the last `ms` |
-| `report` | `[task]` | `ok {...}` | `task.report()` dump; all tasks if none named |
+| `report` | — | `ok {state, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
+| `objects` | — | `ok [name, ...]` | names of all `Inspectable` objects (for the `inspect`/`update`/`stats` targets) |
 | `inspect` | `<object>` | `ok {props}` | `Inspectable.inspect()` of a named object |
 | `update` | `<object> <json>` | `ok {changed:[...]}` | `Inspectable.update()` — names of properties actually changed |
 | `stats` | `<object>` | `ok {stats}` | `Inspectable.stats()` of a named object |

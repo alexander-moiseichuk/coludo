@@ -28,7 +28,7 @@ The software architecture relies on MicroPython to manage this hardware stack, p
 * **Phased Rollout:** Phase one focuses entirely on validating sensor fusion and telemetry acquisition to guarantee data integrity. Active control surfaces and motorized actuation loops will only be enabled after these telemetry baselines are proven in flight trials. 
 
 There is some problems with micropython in general (measured on the target board — see the
-[benchmark findings](../doc/benches/esp32p4-micropython-findings.md)):
+[benchmark findings](../doc/benches/WaveShare_esp32p4-micropython-findings.md)):
 - GC pauses scale with live-object count on the PSRAM heap: ~0.3 ms on a clean heap but
   ~67 ms with only 10k small live objects — far beyond the control-loop budget.
 - `asyncio.sleep_ms()` quantises to the ~10 ms FreeRTOS tick, so cooperative scheduling tops
@@ -291,7 +291,7 @@ subscriber would stall the publisher inline. Instead the mechanism is chosen per
   blackboard and writes servos without pulling per-cycle data through any queue, so it keeps
   running even if other tasks stall. It is paced by a hardware timer, not `asyncio.sleep`,
   which floors at ~10 ms on this port (see the
-  [benchmark findings](../doc/benches/esp32p4-micropython-findings.md)).
+  [benchmark findings](../doc/benches/WaveShare_esp32p4-micropython-findings.md)).
 
 * **Everything else goes through one Recorder.** For simplicity there is a single non-hot path.
   Every task reports logs and telemetry **directly to the Recorder** (`Recorder.log()`,
@@ -306,7 +306,7 @@ subscriber would stall the publisher inline. Instead the mechanism is chosen per
   they have been pushed to UART. This guarantees recorder durability first and treats CC as a
   best-effort secondary consumer. Records are written into the rings with `struct.pack_into`
   rather than slice-assignment, which is O(buffer length) on this port (see the
-  [benchmark findings](../doc/benches/esp32p4-micropython-findings.md)). Telemetry streams are
+  [benchmark findings](../doc/benches/WaveShare_esp32p4-micropython-findings.md)). Telemetry streams are
   created via a `Telemetry(file, fields)` helper that emits a CSV header first and then
   timestamped rows; all streams in a boot share one session prefix (`YYYYMMDD_HHMMSS`, produced
   from the RTC the first time telemetry is emitted) so each flight's files are distinct.
@@ -471,7 +471,7 @@ Audio is captured (if at all) by the Recorder module alongside its video, not by
 | **Task Scheduler / Asyncio** | 20–50 Hz        | < 20 ms      | Supervisory logic; must not interfere with PID loop timing. |
 | **Watchdog Reset Window**   | —                | 100–200 ms   | If PID loop or IMU updates stall beyond this, system must reset or enter degraded mode. |
 
-**Measured reality check** (see [benchmark findings](../doc/benches/esp32p4-micropython-findings.md)):
+**Measured reality check** (see [benchmark findings](../doc/benches/WaveShare_esp32p4-micropython-findings.md)):
 `asyncio.sleep_ms()` floors at ~10 ms (FreeRTOS 100 Hz tick), and a fragmented-heap `gc.collect()`
 was measured at ~67 ms (hence GC is controlled and disabled in flight).
 
