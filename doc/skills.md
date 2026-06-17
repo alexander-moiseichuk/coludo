@@ -91,6 +91,7 @@ so it must run on both.
 
 - **Strings**: single quotes `'...'`; double quotes only when the literal contains a single quote
   (e.g. `"board.mcu '%s' invalid"`) — don't backslash-escape when switching the outer style avoids it.
+  Docstrings use `"""` (ruff / PEP 257 — the one exception, applied by `ruff format`).
 - **No abbreviations**, and an argument's name matches the field it sets: `capacity`/`cell_size`
   not `slots`, `max_payload` not `maxpay`, `storage` not `buf`, `servo_eleron_left` not `..._l`.
 - **PEP8**; module-internal names and classes start with `_` (e.g. `_Msg`, `_is_simple`).

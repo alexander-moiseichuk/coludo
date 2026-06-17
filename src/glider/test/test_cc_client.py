@@ -5,13 +5,13 @@ import asyncio
 import json
 
 import cc_protocol as cc
-from cc_client import Dispatcher, Client, standard_dispatcher
+from cc_client import Client, Dispatcher, standard_dispatcher
 from config_default import default
 
 
 class FakeReader:
     def __init__(self, lines):
-        self.q = [l if isinstance(l, bytes) else (l + '\n').encode() for l in lines]
+        self.q = [item if isinstance(item, bytes) else (item + '\n').encode() for item in lines]
         self.i = 0
 
     async def readline(self):
@@ -39,17 +39,19 @@ async def amain():
 
     async def ping_h(msg):
         return cc.build('pong', ['glider1'])
+
     d.on('ping', ping_h)
 
     assert await d.handle('ping glider1') == 'pong glider1'
-    assert 'badcmd' in await d.handle('nope glider1')            # unknown command
-    assert 'badboard' in await d.handle('ping glider2')          # wrong board id
+    assert 'badcmd' in await d.handle('nope glider1')  # unknown command
+    assert 'badboard' in await d.handle('ping glider2')  # wrong board id
 
     async def boom(msg):
         raise ValueError('x')
+
     d.on('boom', boom)
-    assert 'internal' in await d.handle('boom glider1')          # handler exception
-    assert await d.handle('   ') is None                         # empty line
+    assert 'internal' in await d.handle('boom glider1')  # handler exception
+    assert await d.handle('   ') is None  # empty line
 
     # --- Client.serve over fake streams ---------------------------------
     sd = standard_dispatcher(default())
@@ -75,7 +77,8 @@ async def amain():
 
     # save-config: invalid rejected, valid persisted; reset-config removes it
     sd2 = standard_dispatcher(default(), config_path='test_cc_board.json')
-    bad = default(); bad['pins']['servo_yaw'] = 18              # reserved Wi-Fi pin -> invalid
+    bad = default()
+    bad['pins']['servo_yaw'] = 18  # reserved Wi-Fi pin -> invalid
     r = await sd2.handle(cc.build('save-config', ['glider1', json.dumps(bad)]))
     assert 'invalid' in r, r
     r = await sd2.handle(cc.build('save-config', ['glider1', json.dumps(default())]))

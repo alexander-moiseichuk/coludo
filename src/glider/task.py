@@ -15,48 +15,50 @@ DRIVERS = {}
 
 
 def driver(name):
-    '''Class decorator: register a Task subclass under a driver name.'''
+    """Class decorator: register a Task subclass under a driver name."""
+
     def deco(cls):
         DRIVERS[name] = cls
         return cls
+
     return deco
 
 
 class Task:
     def __init__(self, name, config=None, controller=None):
         self.name = name
-        self.config = config or {}      # this task's component dict from board.json
-        self.controller = controller    # back-reference for active()/notify()
+        self.config = config or {}  # this task's component dict from board.json
+        self.controller = controller  # back-reference for active()/notify()
         self._ok = False
         self._subs = []
 
     async def setup(self):
-        '''Initialize or reset. Override. Return True on success, False otherwise.'''
+        """Initialize or reset. Override. Return True on success, False otherwise."""
         self._ok = True
         return True
 
     async def run(self):
-        '''Main activity loop. Override. Default returns immediately.'''
+        """Main activity loop. Override. Default returns immediately."""
         pass
 
     def notify(self, callback):
-        '''Register callback(task, event) to be invoked on this task's updates.'''
+        """Register callback(task, event) to be invoked on this task's updates."""
         if callback not in self._subs:
             self._subs.append(callback)
 
     def emit(self, event=None):
-        '''Notify all subscribers of an update.'''
+        """Notify all subscribers of an update."""
         for cb in self._subs:
             cb(self, event)
 
     def report(self):
-        '''Return a status dict. Subclasses extend it.'''
+        """Return a status dict. Subclasses extend it."""
         return {'name': self.name, 'ok': self._ok}
 
     def validate(self):
-        '''Return True if the task is currently healthy.'''
+        """Return True if the task is currently healthy."""
         return self._ok
 
     async def finish(self):
-        '''Shut down and release resources.'''
+        """Shut down and release resources."""
         self._ok = False

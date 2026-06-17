@@ -6,44 +6,44 @@
 # Wi-Fi pins (GPIO18/19) and SPI(2) onto the microSD pins, so touching the defaults can disrupt
 # Wi-Fi / the SD slot. It also never calls I2C(2), which hard-crashes this build.
 
-from machine import Pin, I2C, UART, PWM
+from machine import I2C, PWM, UART, Pin
 
 # Recommended map (keep in sync with doc/waveshare_esp32p4_pins.md until board.json drives it).
 I2C_SDA, I2C_SCL = 7, 8
 REC_TX, REC_RX = 20, 21
 GNSS_TX, GNSS_RX = 22, 23
-SERVOS = (("yaw", 26), ("elevon_l", 27), ("elevon_r", 32))
+SERVOS = (('yaw', 26), ('elevon_l', 27), ('elevon_r', 32))
 PIN_SEPARATION = 33
 PIN_LED = 2
 
 
 def main():
     i2c = I2C(0, scl=Pin(I2C_SCL), sda=Pin(I2C_SDA), freq=400000)
-    print("I2C0 sensors  :", i2c)
+    print('I2C0 sensors  :', i2c)
 
     rec = UART(1, tx=REC_TX, rx=REC_RX, baudrate=921600)
-    print("UART1 recorder:", rec)
+    print('UART1 recorder:', rec)
     rec.deinit()
 
     gnss = UART(2, tx=GNSS_TX, rx=GNSS_RX, baudrate=9600)
-    print("UART2 gnss    :", gnss)
+    print('UART2 gnss    :', gnss)
     gnss.deinit()
 
     for name, g in SERVOS:
         pwm = PWM(Pin(g), freq=50, duty_u16=0)
-        print("servo %-9s: GPIO%d %s" % (name, g, pwm))
+        print('servo %-9s: GPIO%d %s' % (name, g, pwm))
         pwm.deinit()
 
     sw = Pin(PIN_SEPARATION, Pin.IN, Pin.PULL_UP)
     val = sw.value()
     assert val in (0, 1)
-    print("separation sw : GPIO%d pull-up = %d (1=separated)" % (PIN_SEPARATION, val))
+    print('separation sw : GPIO%d pull-up = %d (1=separated)' % (PIN_SEPARATION, val))
 
     led = Pin(PIN_LED, Pin.OUT)
     led.value(0)
-    print("status LED    : GPIO%d out ok" % PIN_LED)
+    print('status LED    : GPIO%d out ok' % PIN_LED)
 
-    print("ok: all recommended pins constructed")
+    print('ok: all recommended pins constructed')
 
 
 main()

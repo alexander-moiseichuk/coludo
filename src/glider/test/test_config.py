@@ -5,7 +5,7 @@
 import config
 from config_default import default
 
-PATH = 'test_board.json'        # a throwaway path; never touches a real board.json
+PATH = 'test_board.json'  # a throwaway path; never touches a real board.json
 
 
 def main():

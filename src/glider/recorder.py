@@ -14,36 +14,38 @@ import time
 
 try:
     from micropython import const
-except ImportError:               # CPython (tooling / off-board checks)
+except ImportError:  # CPython (tooling / off-board checks)
+
     def const(value):
         return value
 
-_DEFAULT_CELL_SIZE = const(256)   # bytes per ring cell (record + 2-byte length header)
-_DEFAULT_CAPACITY = const(1024)   # cells per ring
-_LENGTH_BYTES = const(2)          # uint16 record-length header
-_STATS_PERIOD_MS = const(1000)    # how often run() logs a buffer-stats line
+
+_DEFAULT_CELL_SIZE = const(256)  # bytes per ring cell (record + 2-byte length header)
+_DEFAULT_CAPACITY = const(1024)  # cells per ring
+_LENGTH_BYTES = const(2)  # uint16 record-length header
+_STATS_PERIOD_MS = const(1000)  # how often run() logs a buffer-stats line
 
 
 class _RecorderError(Exception):
-    '''Raised when an important (telemetry) record cannot be queued.'''
+    """Raised when an important (telemetry) record cannot be queued."""
 
 
 class Ring:
-    '''Lock-free single-producer / single-consumer byte ring. The writer owns `head`, the reader
+    """Lock-free single-producer / single-consumer byte ring. The writer owns `head`, the reader
     owns `tail`; they never touch the same field, so it is safe between an ISR producer and a task
     consumer with no locks. Each cell holds <uint16 length><payload>. write() uses pack_into
     (cost O(record)) and returns False if there is no room (the record is skipped, never
     overwriting unread data). read() returns a bytes copy (stable across an await). Holds
-    `capacity - 1` records (one cell separates full from empty).'''
+    `capacity - 1` records (one cell separates full from empty)."""
 
     def __init__(self, capacity: int = _DEFAULT_CAPACITY, cell_size: int = _DEFAULT_CELL_SIZE):
         self.capacity: int = capacity or _DEFAULT_CAPACITY
         self.cell_size: int = cell_size or _DEFAULT_CELL_SIZE
         self.max_payload: int = self.cell_size - _LENGTH_BYTES
         self.storage: bytearray = bytearray(self.capacity * self.cell_size)
-        self.head: int = 0            # writer-owned: next cell to write
-        self.tail: int = 0            # reader-owned: next cell to read
-        self.dropped: int = 0         # writer-owned: records skipped (too big, or full)
+        self.head: int = 0  # writer-owned: next cell to write
+        self.tail: int = 0  # reader-owned: next cell to read
+        self.dropped: int = 0  # writer-owned: records skipped (too big, or full)
 
     def write(self, data: bytes) -> bool:
         size = len(data)
@@ -54,27 +56,27 @@ class Ring:
         nxt = head + 1
         if nxt == self.capacity:
             nxt = 0
-        if nxt == self.tail:          # full -> skip, do not overwrite unread data
+        if nxt == self.tail:  # full -> skip, do not overwrite unread data
             self.dropped += 1
             return False
         struct.pack_into('<H%ds' % size, self.storage, head * self.cell_size, size, data)
-        self.head = nxt               # publish only after the record is written
+        self.head = nxt  # publish only after the record is written
         return True
 
     def read(self) -> bytes:
-        '''Return the oldest record as bytes (a copy) and advance, or None if empty.'''
+        """Return the oldest record as bytes (a copy) and advance, or None if empty."""
         tail = self.tail
         if self.head == tail:
             return None
         offset = tail * self.cell_size
         size = struct.unpack_from('<H', self.storage, offset)[0]
-        record = bytes(self.storage[offset + _LENGTH_BYTES:offset + _LENGTH_BYTES + size])
+        record = bytes(self.storage[offset + _LENGTH_BYTES : offset + _LENGTH_BYTES + size])
         nxt = tail + 1
         self.tail = 0 if nxt == self.capacity else nxt
         return record
 
     def count(self) -> int:
-        '''Records currently queued (a stats snapshot).'''
+        """Records currently queued (a stats snapshot)."""
         delta = self.head - self.tail
         return delta if delta >= 0 else delta + self.capacity
 
@@ -82,12 +84,13 @@ class Ring:
 class Recorder:
     _tlm: Ring = None
     _log: Ring = None
-    _uart = None                  # asyncio.StreamWriter wrapping the recorder UART
-    _session: str = None          # 'YYYYMMDD_HHMMSS', produced on first tlm(), fixed for the boot
-    _drain_ms: int = 50
-    _tlm_max: int = 0             # high-water mark of queued telemetry records
-    _log_max: int = 0             # high-water mark of queued log records
-    _stats_every: int = 20        # log a stats line every N drains
+    _uart = None  # asyncio.StreamWriter wrapping the recorder UART
+    _flag = None  # ThreadSafeFlag set by producers, waited on by run()
+    _session: str = None  # 'YYYYMMDD_HHMMSS', produced on first tlm(), fixed for the boot
+    _tlm_max: int = 0  # high-water mark of queued telemetry records
+    _log_max: int = 0  # high-water mark of queued log records
+    _stats_ms: int = _STATS_PERIOD_MS
+    _last_stats_ms: int = 0
 
     @classmethod
     def setup(cls, config: dict, uart=None) -> None:
@@ -95,13 +98,15 @@ class Recorder:
         cell_size = recorder.get('cell_size', _DEFAULT_CELL_SIZE)
         cls._tlm = Ring(recorder.get('tlm_capacity', _DEFAULT_CAPACITY), cell_size)
         cls._log = Ring(recorder.get('log_capacity', _DEFAULT_CAPACITY), cell_size)
-        cls._drain_ms = recorder.get('drain_ms', 50)
         cls._session = None
         cls._tlm_max = 0
         cls._log_max = 0
-        cls._stats_every = max(1, _STATS_PERIOD_MS // cls._drain_ms)
+        cls._flag = asyncio.ThreadSafeFlag()
+        cls._stats_ms = recorder.get('stats_ms', _STATS_PERIOD_MS)
+        cls._last_stats_ms = time.ticks_ms()
         if uart is None:
             from machine import UART
+
             bus = config['buses']['uart_recorder']
             uart = UART(1, baudrate=bus['baud'], tx=bus['tx'], rx=bus['rx'])
         # accept a pre-wrapped async writer (tests) or wrap a raw UART for async drain
@@ -109,13 +114,13 @@ class Recorder:
 
     @classmethod
     def timestamp(cls) -> int:
-        '''Monotonic-ish record timestamp. Currently raw microseconds; the unit may change.'''
+        """Monotonic-ish record timestamp. Currently raw microseconds; the unit may change."""
         return time.ticks_us()
 
     @classmethod
     def session(cls) -> str:
-        '''The per-boot file prefix, produced from the RTC the first time it is needed and then
-        shared by every telemetry stream in this boot.'''
+        """The per-boot file prefix, produced from the RTC the first time it is needed and then
+        shared by every telemetry stream in this boot."""
         if cls._session is None:
             now = time.localtime()
             cls._session = '%04d%02d%02d_%02d%02d%02d' % (now[0], now[1], now[2], now[3], now[4], now[5])
@@ -123,24 +128,28 @@ class Recorder:
 
     @classmethod
     def log(cls, descriptor: str, message: str) -> bool:
-        '''Best-effort log line "<ts> <descriptor> :: <message>" (-> recorder.log). Truncated to
-        fit a cell; dropped (returns False) when the buffer is full.'''
+        """Best-effort log line "<ts> <descriptor> :: <message>" (-> recorder.log). Truncated to
+        fit a cell; dropped (returns False) when the buffer is full."""
         data = ('%u %s :: %s\n' % (cls.timestamp(), descriptor, message)).encode()
         if len(data) > cls._log.max_payload:
-            data = data[:cls._log.max_payload]
-        return cls._log.write(data)
+            data = data[: cls._log.max_payload]
+        if not cls._log.write(data):
+            return False
+        cls._flag.set()
+        return True
 
     @classmethod
     def tlm(cls, filename: str, content: str) -> None:
-        '''Important telemetry line "@<session>_<filename>@<content>". Raises if the record will
-        not fit or there is no room -- telemetry must not be lost silently.'''
+        """Important telemetry line "@<session>_<filename>@<content>". Raises if the record will
+        not fit or there is no room -- telemetry must not be lost silently."""
         data = ('@%s_%s@%s\n' % (cls.session(), filename, content)).encode()
         if not cls._tlm.write(data):
             raise _RecorderError('telemetry dropped (%d bytes)' % len(data))
+        cls._flag.set()
 
     @classmethod
     async def drain(cls) -> int:
-        '''Drain queued records to the UART, telemetry first then logs. Returns records drained.'''
+        """Drain queued records to the UART, telemetry first then logs. Returns records drained."""
         queued = cls._tlm.count()
         if queued > cls._tlm_max:
             cls._tlm_max = queued
@@ -161,28 +170,31 @@ class Recorder:
 
     @classmethod
     async def run(cls) -> None:
-        '''Async drain loop. Runs forever (a wedged board reboots via the watchdog); logs a
-        buffer-stats line every _stats_every drains so usage is visible in recorder.log.'''
-        since_stats = 0
+        """Event-driven drain loop: wait for a producer signal, then drain everything queued, so
+        data is delivered as fast as possible with no fixed poll interval and zero idle CPU. Runs
+        forever (a wedged board reboots via the watchdog); logs a buffer-stats line about every
+        _stats_ms."""
         while True:
+            await cls._flag.wait()
             await cls.drain()
-            since_stats += 1
-            if since_stats >= cls._stats_every:
-                since_stats = 0
+            now = time.ticks_ms()
+            if time.ticks_diff(now, cls._last_stats_ms) >= cls._stats_ms:
+                cls._last_stats_ms = now
                 cls.log('Recorder', str(cls.report()))
-            await asyncio.sleep_ms(cls._drain_ms)
 
     @classmethod
     def report(cls) -> dict:
-        return {'session': cls._session,
-                'tlm': {'count': cls._tlm.count(), 'max': cls._tlm_max, 'dropped': cls._tlm.dropped},
-                'log': {'count': cls._log.count(), 'max': cls._log_max, 'dropped': cls._log.dropped}}
+        return {
+            'session': cls._session,
+            'tlm': {'count': cls._tlm.count(), 'max': cls._tlm_max, 'dropped': cls._tlm.dropped},
+            'log': {'count': cls._log.count(), 'max': cls._log_max, 'dropped': cls._log.dropped},
+        }
 
 
 class Telemetry:
-    '''A typed telemetry stream. Created with a destination file and its data field names; the
+    """A typed telemetry stream. Created with a destination file and its data field names; the
     first push emits the CSV header (uptime + fields), then each push emits a timestamped row.
-    All streams in one boot share the Recorder session prefix, so file names are stable.'''
+    All streams in one boot share the Recorder session prefix, so file names are stable."""
 
     def __init__(self, filename: str, fields: tuple):
         self.filename: str = filename

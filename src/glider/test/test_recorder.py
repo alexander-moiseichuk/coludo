@@ -8,7 +8,7 @@ from recorder import Recorder, Ring, Telemetry, _RecorderError
 
 
 class FakeWriter:
-    '''Stands in for the asyncio.StreamWriter over the recorder UART.'''
+    """Stands in for the asyncio.StreamWriter over the recorder UART."""
 
     def __init__(self):
         self.items = []
@@ -22,8 +22,7 @@ class FakeWriter:
 
 def _config(tlm_capacity, log_capacity, cell_size):
     cfg = default()
-    cfg['recorder'] = {'tlm_capacity': tlm_capacity, 'log_capacity': log_capacity,
-                       'cell_size': cell_size, 'drain_ms': 5}
+    cfg['recorder'] = {'tlm_capacity': tlm_capacity, 'log_capacity': log_capacity, 'cell_size': cell_size}
     return cfg
 
 
@@ -31,7 +30,7 @@ def test_ring():
     # SPSC write/read; holds capacity-1 records
     ring = Ring(3, 32)
     assert ring.write(b'a') and ring.write(b'b') and ring.count() == 2
-    assert ring.write(b'c') is False and ring.dropped == 1     # full -> skip, no overwrite
+    assert ring.write(b'c') is False and ring.dropped == 1  # full -> skip, no overwrite
     assert ring.read() == b'a' and ring.read() == b'b'
     assert ring.read() is None and ring.count() == 0
     assert ring.write(b'x' * 31) is False and ring.dropped == 2  # too big for a 32-byte cell
@@ -39,9 +38,9 @@ def test_ring():
 
 async def test_recorder():
     Recorder.setup(default(), uart=FakeWriter())
-    assert Recorder._session is None                            # lazy until first tlm/session
+    assert Recorder._session is None  # lazy until first tlm/session
     session = Recorder.session()
-    assert len(session) == 15                                   # YYYYMMDD_HHMMSS
+    assert len(session) == 15  # YYYYMMDD_HHMMSS
 
     # telemetry first, then logs; @<session>_file@ routing
     assert Recorder.log('Controller', 'setup started') is True
@@ -77,12 +76,12 @@ async def test_error_policy():
     assert len(Recorder._uart.items[0]) <= 64
 
     # logs drop (return False) when the buffer is full -- no raise
-    Recorder.setup(_config(8, 2, 64), uart=FakeWriter())   # log ring holds 1
+    Recorder.setup(_config(8, 2, 64), uart=FakeWriter())  # log ring holds 1
     assert Recorder.log('A', 'one') is True
-    assert Recorder.log('A', 'two') is False               # full -> dropped, best-effort
+    assert Recorder.log('A', 'two') is False  # full -> dropped, best-effort
 
     # telemetry is important: raises when full
-    Recorder.setup(_config(2, 8, 64), uart=FakeWriter())   # tlm ring holds 1
+    Recorder.setup(_config(2, 8, 64), uart=FakeWriter())  # tlm ring holds 1
     Recorder.tlm('t.csv', '1')
     raised = False
     try:

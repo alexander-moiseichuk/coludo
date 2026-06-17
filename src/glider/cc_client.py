@@ -12,8 +12,8 @@ import cc_protocol as cc
 
 
 class Dispatcher:
-    '''Maps a command to an async handler(msg) -> response line. Enforces that board-addressed
-    commands match this board (whoami has no board-id).'''
+    """Maps a command to an async handler(msg) -> response line. Enforces that board-addressed
+    commands match this board (whoami has no board-id)."""
 
     def __init__(self, board_id):
         self.board_id = board_id
@@ -48,7 +48,7 @@ class Client:
         self.backoff_ms = backoff_ms
 
     async def run(self, stop=None):
-        '''Connect to CC and serve until stopped, reconnecting with backoff on drop.'''
+        """Connect to CC and serve until stopped, reconnecting with backoff on drop."""
         while stop is None or not stop[0]:
             try:
                 reader, writer = await asyncio.open_connection(self.host, self.port)
@@ -59,7 +59,7 @@ class Client:
             await asyncio.sleep_ms(self.backoff_ms)
 
     async def serve(self, reader, writer):
-        '''Read commands from CC, dispatch, write responses. Returns on disconnect.'''
+        """Read commands from CC, dispatch, write responses. Returns on disconnect."""
         while True:
             line = await reader.readline()
             if not line:
@@ -71,11 +71,12 @@ class Client:
 
 
 def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_path='board.json'):
-    '''Build a Dispatcher with the standard command handlers, wired to the running config and
-    (optionally) the Controller. `on_reboot` lets tests intercept the reset.'''
-    import config as config_mod
+    """Build a Dispatcher with the standard command handlers, wired to the running config and
+    (optionally) the Controller. `on_reboot` lets tests intercept the reset."""
     import gc
     import time
+
+    import config as config_mod
 
     board_id = cfg['board']['id']
     d = Dispatcher(board_id)
@@ -84,9 +85,13 @@ def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_p
         return controller.state if controller is not None else 'setting'
 
     async def h_whoami(msg):
-        info = {'mcu': cfg['board'].get('mcu'), 'fw': fw,
-                'config_id': config_mod.config_id(cfg), 'state': _state(),
-                'uptime': time.ticks_ms()}
+        info = {
+            'mcu': cfg['board'].get('mcu'),
+            'fw': fw,
+            'config_id': config_mod.config_id(cfg),
+            'state': _state(),
+            'uptime': time.ticks_ms(),
+        }
         return cc.build('iam', [board_id, json.dumps(info)])
 
     async def h_ping(msg):
@@ -95,6 +100,7 @@ def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_p
     async def h_health(msg):
         try:
             import esp32
+
             temp = esp32.mcu_temperature()
         except Exception:
             temp = None
@@ -138,6 +144,7 @@ def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_p
         async def _do():
             await asyncio.sleep_ms(200)
             reset()
+
         asyncio.create_task(_do())
         return cc.build('ok', [board_id])
 
@@ -155,4 +162,5 @@ def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_p
 
 def _machine_reset():
     import machine
+
     machine.reset()

@@ -3,8 +3,8 @@
 
 import asyncio
 
-from task import Task
 from controller import Controller
+from task import Task
 
 
 class FakeSensor(Task):
@@ -32,7 +32,8 @@ class FailSensor(Task):
 def make_config():
     return {
         'board': {'id': 't', 'mcu': 'esp32p4'},
-        'buses': {}, 'pins': {},
+        'buses': {},
+        'pins': {},
         'components': [
             {'name': 's1', 'driver': 'fake', 'enabled': True},
             {'name': 's2', 'driver': 'fake', 'enabled': True},

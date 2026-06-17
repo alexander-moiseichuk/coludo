@@ -18,7 +18,7 @@ class Wifi:
         self.wlan = None
 
     async def connect(self, timeout_ms=15000):
-        '''Join the configured network. Returns True once connected, False on timeout.'''
+        """Join the configured network. Returns True once connected, False on timeout."""
         if self.wlan is None:
             self.wlan = network.WLAN(network.STA_IF)
         self.wlan.active(True)
@@ -52,7 +52,7 @@ class Wifi:
             return None
 
     def set_txpower(self, dbm):
-        '''Adjust the TX power (operator signal-level tuning). Returns True on success.'''
+        """Adjust the TX power (operator signal-level tuning). Returns True on success."""
         self.tx_power = dbm
         if self.wlan is not None:
             try:

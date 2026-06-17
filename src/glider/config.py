@@ -15,6 +15,7 @@ import os
 try:
     import binascii
     import hashlib
+
     _HAVE_HASH = True
 except ImportError:
     _HAVE_HASH = False
@@ -37,8 +38,9 @@ def _is_int(x):
 
 # --------------------------------------------------------------------------- validate
 
+
 def validate(cfg):
-    '''Return a list of human-readable error strings (empty list == valid).'''
+    """Return a list of human-readable error strings (empty list == valid)."""
     errs = []
     if not isinstance(cfg, dict):
         return ['config is not an object']
@@ -73,7 +75,7 @@ def validate(cfg):
                 errs.append('wifi.ssid must be a string')
 
     # buses + pin-uniqueness ----------------------------------------------
-    pin_owner = {}      # gpio -> label that claimed it
+    pin_owner = {}  # gpio -> label that claimed it
 
     def claim(label, pin):
         if not _is_int(pin) or pin < 0:
@@ -100,8 +102,7 @@ def validate(cfg):
                     claim(bname + '.' + key, spec[key])
                     claimed = True
             if not claimed:
-                errs.append("bus '%s' declares no pins (need sda/scl, tx/rx or sck/mosi/miso)"
-                            % bname)
+                errs.append("bus '%s' declares no pins (need sda/scl, tx/rx or sck/mosi/miso)" % bname)
 
     # discrete pins --------------------------------------------------------
     pins = cfg.get('pins')
@@ -116,8 +117,7 @@ def validate(cfg):
     if reserved:
         for pin in sorted(pin_owner):
             if pin in reserved:
-                errs.append('%s uses reserved GPIO%d (breaks Wi-Fi/USB/console on %s)'
-                            % (pin_owner[pin], pin, mcu))
+                errs.append('%s uses reserved GPIO%d (breaks Wi-Fi/USB/console on %s)' % (pin_owner[pin], pin, mcu))
 
     # recorder (optional) --------------------------------------------------
     rec = cfg.get('recorder')
@@ -125,7 +125,7 @@ def validate(cfg):
         if not isinstance(rec, dict):
             errs.append("'recorder' must be an object")
         else:
-            for k in ('tlm_capacity', 'log_capacity', 'cell_size', 'drain_ms'):
+            for k in ('tlm_capacity', 'log_capacity', 'cell_size', 'stats_ms'):
                 if k in rec and not (_is_int(rec[k]) and rec[k] > 0):
                     errs.append('recorder.%s must be a positive int' % k)
 
@@ -179,8 +179,9 @@ def validate(cfg):
 
 # --------------------------------------------------------------------------- config_id
 
+
 def _canon(o):
-    '''Deterministic, sorted-key serialization (no json.dumps options needed).'''
+    """Deterministic, sorted-key serialization (no json.dumps options needed)."""
     if isinstance(o, dict):
         return '{' + ','.join(repr(k) + ':' + _canon(o[k]) for k in sorted(o.keys())) + '}'
     if isinstance(o, (list, tuple)):
@@ -189,11 +190,11 @@ def _canon(o):
 
 
 def config_id(cfg):
-    '''A stable short hash identifying a config snapshot (for the CC iam/config_id).'''
+    """A stable short hash identifying a config snapshot (for the CC iam/config_id)."""
     s = _canon(cfg)
     if _HAVE_HASH:
         return binascii.hexlify(hashlib.sha256(s.encode()).digest()).decode()[:12]
-    acc = 2166136261                                  # FNV-1a fallback
+    acc = 2166136261  # FNV-1a fallback
     for ch in s:
         acc = ((acc ^ ord(ch)) * 16777619) & 0xFFFFFFFF
     return '%08x' % acc
@@ -201,18 +202,20 @@ def config_id(cfg):
 
 # --------------------------------------------------------------------------- load / save
 
+
 def _builtin_default():
     import config_default
+
     return config_default.default()
 
 
 def load(path='board.json', defaults=None):
-    '''Layered load: active board.json if present and valid, else defaults.
+    """Layered load: active board.json if present and valid, else defaults.
 
     Returns (cfg, source, errors). `source` is 'active', 'default', or a fallback reason.
     Never raises — a missing/corrupt/invalid active file degrades to defaults so the board is
     always reachable.
-    '''
+    """
     if defaults is None:
         defaults = _builtin_default()
     try:
@@ -223,8 +226,7 @@ def load(path='board.json', defaults=None):
     try:
         data = json.loads(text)
     except (ValueError, OSError):
-        return defaults, 'default(fallback: board.json is not valid JSON)', \
-            ['board.json is not valid JSON']
+        return defaults, 'default(fallback: board.json is not valid JSON)', ['board.json is not valid JSON']
     errs = validate(data)
     if errs:
         return defaults, 'default(fallback: invalid board.json)', errs
@@ -232,10 +234,10 @@ def load(path='board.json', defaults=None):
 
 
 def save(cfg, path='board.json'):
-    '''Validate then atomically persist a full config snapshot. Returns its config_id.
+    """Validate then atomically persist a full config snapshot. Returns its config_id.
 
     Raises ValueError if invalid (an invalid config is never written).
-    '''
+    """
     errs = validate(cfg)
     if errs:
         raise ValueError('invalid config: ' + '; '.join(errs))
@@ -244,7 +246,7 @@ def save(cfg, path='board.json'):
         f.write(json.dumps(cfg))
     try:
         os.rename(tmp, path)
-    except OSError:                      # some VFS (FAT) won't rename onto an existing file
+    except OSError:  # some VFS (FAT) won't rename onto an existing file
         try:
             os.remove(path)
         except OSError:
@@ -254,7 +256,7 @@ def save(cfg, path='board.json'):
 
 
 def reset(path='board.json'):
-    '''Delete the active config so the next load uses defaults. Returns True if removed.'''
+    """Delete the active config so the next load uses defaults. Returns True if removed."""
     try:
         os.remove(path)
         return True
