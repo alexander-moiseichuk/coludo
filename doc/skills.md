@@ -145,3 +145,28 @@ All Control code lives in `src/control/` and is plain **CPython 3.12** for the h
    (non-Python as-is); fails before touching the board if lint or compile fails.
 3. Run the tests on-device: `cd src/glider/test && make test` (or `./run_tests.sh`).
 5. Observe live behaviour through CC (telnet on 1235, browser on 8080) over the `panda` network.
+
+## Working effectively with the AI agent
+
+Much of this codebase is built in pair with Claude Code. To get reliable results (not just fast
+typing), a few things matter more than clever prompts:
+
+- **Front-load the spec and the acceptance test.** State up front what "done" means ("all objects
+  inspectable, verified over a real wifi exchange"). It turns "build it all" into a target the
+  agent can sequence toward.
+- **Batch related thoughts** into one message instead of a stream of interrupts; each mid-flight
+  scope flip costs a re-plan (and tokens).
+- **Say the budget/completeness tradeoff** explicitly when they conflict.
+- **Keep the loop tight:** conventions in `CLAUDE.md`/this file, a structured findings list,
+  on-device tests after each change, small commits.
+
+Reading:
+
+- [Anthropic — Claude Code best practices](https://www.anthropic.com/engineering/claude-code-best-practices)
+  — `CLAUDE.md`, permissions, plan mode, custom commands.
+- [Anthropic — prompt engineering docs](https://docs.anthropic.com/en/docs/build-with-claude/prompt-engineering)
+  — be explicit, give context/examples, let the model reason before acting.
+- [Anthropic — Building effective agents](https://www.anthropic.com/engineering/building-effective-agents)
+  — orchestration patterns (subagents, fan-out, verify-then-commit) for the bigger pieces.
+- [Simon Willison — LLMs](https://simonwillison.net/tags/llms/) — practical, skeptical field notes
+  on coding with these tools.
