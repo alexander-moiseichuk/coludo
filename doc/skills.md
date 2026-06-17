@@ -82,22 +82,59 @@ So write checks as `assert`. Override the port with `PORT=/dev/ttyACM0` and the 
 with `TIMEOUT=<secs>`. `make bench` runs the benchmark; `make test-recorder` runs the
 adb-backed recorder UART integration test (which reads its UART pins from the board's config).
 
-## Code style
+## Coding conventions
 
-- **Python string literals use single quotes** `'...'`; reach for double quotes `"..."` only
-  when the string itself contains a single quote (e.g. `"board.mcu '%s' invalid"`). Don't
-  backslash-escape a quote when switching the outer style avoids it.
-- MicroPython-only for `src/glider/` — don't add a parallel host/CPython path.
+Follow these so code is right the first time; `ruff` and the `deploy.sh` gate enforce most of
+them. `src/glider/` is **MicroPython** (the board); `src/control/` is **CPython 3.12** (the host);
+`cc_protocol.py` is **shared** (it lives in `src/glider/` and is symlinked into `src/control/`),
+so it must run on both.
+
+- **Strings**: single quotes `'...'`; double quotes only when the literal contains a single quote
+  (e.g. `"board.mcu '%s' invalid"`) — don't backslash-escape when switching the outer style avoids it.
+- **No abbreviations**, and an argument's name matches the field it sets: `capacity`/`cell_size`
+  not `slots`, `max_payload` not `maxpay`, `storage` not `buf`, `servo_eleron_left` not `..._l`.
+- **PEP8**; module-internal names and classes start with `_` (e.g. `_Msg`, `_is_simple`).
+- **Type annotations** on every non-local: module constants, class variables, function arguments
+  and return types (both CPython 3.12 and MicroPython 1.28 accept them).
+- **Constants** via `micropython.const`, with a portable shim at the top of shared/board modules:
+  ```python
+  try:
+      from micropython import const
+  except ImportError:        # CPython (Control)
+      def const(x): return x
+  ```
+- **Docstring or comment per entry** — every class, method, and non-trivial constant.
+- **Slim classes, YAGNI**: no unused parameters or speculative flexibility. If the class already
+  holds a value, don't also pass it in.
+- **Error policy by criticality**: logs are best-effort — drop silently (or truncate) when the
+  buffer is full; **telemetry is important — raise** when a record won't fit or there is no room.
+- **Async I/O**: wrap blocking peripherals (UART) in `asyncio.StreamWriter`/`StreamReader` and
+  `await writer.drain()`; never do a blocking write inside a task. Long-running loops run forever
+  (no `stop` flag) — a wedged board reboots via the watchdog.
+- **Inspectable**: any object an operator inspects/tweaks via Control implements the `Inspectable`
+  mixin — `inspect() -> dict` (json-able properties), `update(dict) -> list` (names of properties
+  actually changed), `stats() -> dict` — plus `type`/`name`. Design now, adopt per-class incrementally.
+- **Tests cover positive *and* negative** cases, on the board (`test_*.py`, `make test`).
+
+### Tooling
+
+- **ruff** for lint + format (`ruff check`, `ruff format`; config in `ruff.toml`).
+- **`deploy.sh`** maps `src/glider/` → `/pyboard/`: each Python file is ruff-checked and
+  `mpy-cross`-compiled then pushed; non-Python files are pushed as-is; `test/` → `/pyboard/test`.
+- The Wi-Fi password is **not** committed: `src/glider/ssid.creds` is gitignored and pushed by
+  `deploy.sh`.
 
 ## Control Center
 
-All CC code lives in `src/control/` and is plain **Python** for the host: stdlib `asyncio`,
-no third-party dependencies (per `cc-protocol.md`).
+All Control code lives in `src/control/` and is plain **CPython 3.12** for the host: stdlib
+`asyncio`, no third-party dependencies (per `cc-protocol.md`). The protocol parser is shared:
+`src/glider/cc_protocol.py` is symlinked as `src/control/cc_protocol.py`, so edit it once (in
+`src/glider/`) and keep it CPython+MicroPython portable.
 
 ## Typical dev loop
 
 1. Edit the module in `src/glider/`.
-2. `mpy-cross -O3` to compile — catches errors and shrinks the upload.
-3. Push the `.mpy` with `mpremote` / `ampy` / `rshell`.
-4. Run the tests on-device: `cd src/glider/test && make test` (or `./run_tests.sh`).
+2. `./deploy.sh` — ruff-checks + `mpy-cross`-compiles each Python file and pushes to `/pyboard/`
+   (non-Python as-is); fails before touching the board if lint or compile fails.
+3. Run the tests on-device: `cd src/glider/test && make test` (or `./run_tests.sh`).
 5. Observe live behaviour through CC (telnet on 1235, browser on 8080) over the `panda` network.
