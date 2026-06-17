@@ -51,63 +51,43 @@ Plain TCP, no encryption (trusted LAN; encryption is explicitly out of scope for
 
 ## Framing
 
-**Newline-delimited messages. Each line is one message.** All tokens are **lowercase**.
-The general form is:
+**Newline-delimited messages, one per line, all lowercase tokens.** The operator / Control form is
+**target first**:
 
 ```
-<command> <board-id> [params...]
+<board> <command> [params...]
 ```
 
-- The **first word** is the command.
-- The **second word** is the target **board id**, taken verbatim from the board's config
-  (`board.id`, e.g. `glider1`, `glider7a`). A board id is **always a bare token with no
-  whitespace** — never encoded — and config validation rejects ids that contain spaces.
-- The **rest** is parameters, **whitespace-separated**. There is **no quoting or escaping** —
-  both sides know each command's schema, so a value is just one of:
-  - **bare token** — a simple value with no spaces: `log glider1 3000`, `select glider1`. The
-    parser returns it as a string; the receiver converts numerics itself (it knows `ms` is an
-    int).
-  - **`base64:<data>`** — anything with spaces, quotes, JSON, or binary content, base64-encoded
-    with a readable prefix so it stays a single whitespace-free token. E.g. a note with spaces:
-    `note glider1 msg=base64:cGFkIDcsIGd1c3R5`.
-  - **named** params are `key=value` (the value being bare or `base64:...`); everything else is
-    positional.
+- The **first token is the target**: a board id (from `board.id`, e.g. `glider1`, always a bare
+  whitespace-free token) or `all` / `*` to broadcast.
+- **Control routes by that token and strips it**, forwarding `<command> [params...]` to the matched
+  board socket(s). **A board receives `<command> [params...]` with no id** and never deals with
+  routing — board-id handling lives entirely in Control. (`all`/`*` is a Control-side fan-out to
+  every connected board; boards never see it.)
+- The **rest** is parameters, whitespace-separated, with **no quoting or escaping** — both sides
+  know each command's schema. A value is a **bare token** (no spaces) or **`base64:<data>`** (spaces,
+  quotes, JSON, binary). **named** params are `key=value`; everything else is positional. Parsing
+  is a trivial `line.split()`. JSON has no special case — it rides as a `base64:` value (e.g.
+  `glider1 save-config base64:<encoded-json>`).
 
-Parsing is therefore a trivial `line.split()` — no quote-aware tokenizer. Operators type every
-common command bare (none of `ping`/`health`/`log N`/`select`/`reboot` need spaces); only the
-rare space-containing value needs `base64:`, which the browser UI / tools encode.
-
-**JSON has no special case** — a config or structured payload is simply a `base64:` value, so
-`save-config glider1 base64:<encoded-json>` is one ordinary token. CC and the browser encode
-it; no operator hand-types it.
-
-Responses use the same framing, with a status word first:
-
-```
-<status> <board-id> [params...]
-```
-
-where `status` is `ok`, `err`, `pong`, or `iam`. A structured payload (health, a list, several
-log lines) is JSON `base64:`-encoded into one token, keeping the invariant: exactly one message
-per `\n`.
-
-Two exceptions to "`command board-id ...`":
-- **`whoami`** carries no board id — at that moment CC has not yet learned the id (see below).
-- **Operator/CC commands** (`list`, `select`) are addressed to the hub, answered as `ok cc …`.
+**Responses** use the same framing minus the routing token: a board replies `<status> [params...]`
+(`status` = `ok` / `err` / `pong` / `iam`), any structured payload being one `base64:`-encoded JSON
+token. Control tags the reply back to the operator as `from <board> <status> [params...]`. The only
+id a board ever emits is in **`iam`** (so Control can learn it on a new socket — see below).
 
 ## Connection & identification
 
-Because CC drives everything, a freshly accepted connection is identified by CC prompting it:
+On a fresh socket Control has not yet learned the board id, so it sends `whoami` **directly** (no
+routing token); the board replies with the one message that carries its own id:
 
 ```
-1. Board boots, dials CC:1234.
-2. CC accepts and sends:        whoami
-3. Board answers:               iam glider1 {"mcu":"esp32p4","fw":"0.1","config_id":"<hash>","state":"setting","uptime":812}
-4. CC registers socket ⇄ glider1 and begins its 2 s poll loop.
+Control → board:   whoami
+board → Control:   iam glider1 base64:<{"mcu":"esp32p4","fw":"0.1","config_id":"<hash>","state":"setting","uptime":812}>
 ```
 
-`config_id` is a hash/version of the running `board.json`, so CC can tell whether its cached
-view of the board's config is current. If a board reconnects with an id already registered, CC
+Control registers socket ⇄ `glider1`, begins its ~2 s poll loop, and thereafter routes operator
+traffic to it by id. `config_id` is a hash/version of the running `board.json`, so Control can tell
+whether its cached view of the board's config is current. If a board reconnects with an id already registered, CC
 drops the older socket and keeps the newest (a board only re-dials after a reboot or link loss).
 
 At **ignition** the Wi-Fi link drops; the TCP connection breaks and CC marks the board
@@ -127,23 +107,32 @@ command (`ping`, or a `health` poll that also returns vitals). Because CC owns a
   surfaces it to operators. The board is never auto-reconfigured — go/no-go stays with the
   operator (the strict model from `board-config.md`).
 
-## Command catalog (CC → board)
+## Command catalog (Control → board)
 
-All board commands take the board id as their second token.
+These are the **board-facing** commands — Control has already stripped the routing id, so neither
+the command nor its response carries one. Structured payloads are `base64:`-encoded JSON (shown
+here decoded). `whoami` is the connection-level exception that returns the id.
 
 | Command | Params | Response | Meaning |
 |---------|--------|----------|---------|
-| `whoami` | *(none — connection-level)* | `iam <id> {json}` | identify a new connection |
-| `ping` | — | `pong <id>` | liveness |
-| `health` | — | `ok <id> {temp,mem_free,load,uptime,links,components[]}` | vitals; `components[]` carries `{name, ok}` presence |
-| `state` | — | `ok <id> {state,uptime}` | current flight phase |
-| `tel` | `[ms]` | `ok <id> {samples:[...]}` | latest telemetry sample, or all within the last `ms` |
-| `log` | `<ms>` | `ok <id> {lines:[...], truncated}` | log lines from the last `ms` (relative window) |
-| `report` | `[task]` | `ok <id> {...}` | `task.report()` dump; all tasks if none named |
-| `get-config` | `[running\|default]` | `ok <id> {config}` | fetch a config (`running` if omitted) |
-| `save-config` | `<json>` | `ok <id> {config_id}` / `err <id> invalid <msg>` | validate + persist full snapshot to `board.json`; **running config is unchanged** |
-| `reset-config` | — | `ok <id>` | delete `board.json`; next boot uses `config_default.py` |
-| `reboot` | — | `ok <id>` then disconnect | ack, then hard reset → boots from saved config |
+| `whoami` | — | `iam <id> {json}` | identify a new socket (the one reply carrying the id) |
+| `ping` | — | `pong` | liveness |
+| `health` | — | `ok {temp,mem_free,load,uptime,components[]}` | vitals; `components[]` carries `{name, ok}` |
+| `state` | — | `ok {state,uptime}` | current flight phase |
+| `tel` | `[ms]` | `ok {samples:[...]}` | telemetry samples within the last `ms` |
+| `log` | `<ms>` | `ok {lines:[...], truncated}` | log lines from the last `ms` |
+| `report` | `[task]` | `ok {...}` | `task.report()` dump; all tasks if none named |
+| `inspect` | `<object>` | `ok {props}` | `Inspectable.inspect()` of a named object |
+| `update` | `<object> <json>` | `ok {changed:[...]}` | `Inspectable.update()` — names of properties actually changed |
+| `stats` | `<object>` | `ok {stats}` | `Inspectable.stats()` of a named object |
+| `get-config` | `[running\|default]` | `ok {config}` | fetch a config (`running` if omitted) |
+| `save-config` | `<json>` | `ok {config_id}` / `err invalid <msg>` | validate + persist full snapshot; **running config unchanged** |
+| `reset-config` | — | `ok` | delete `board.json`; next boot uses `config_default.py` |
+| `reboot` | — | `ok` then disconnect | ack, then hard reset → boots from saved config |
+
+`inspect`/`update`/`stats` address an object by name (`inspect wifi`, `update servo_yaw <json>`);
+the board resolves it from the registry of `Inspectable`s. `update` applies only supported,
+changed properties and returns their names — saving/rebooting stays an explicit operator step.
 
 ### Log / telemetry retrieval
 
@@ -160,63 +149,61 @@ save/reboot-separated model in [`board-config.md`](board-config.md). The editabl
 config lives on **CC** (it holds the UI/operator state, seeded by `get-config`); only the full
 snapshot is pushed via `save-config`. The board firmware therefore needs no per-field config
 mutation handlers — just "validate-and-persist a whole config," "delete config," and "reboot."
-A failed validation comes straight back as `err <id> invalid <msg>` and the board keeps running
-its previous config.
+A failed validation comes straight back as `err invalid <msg>` and the board keeps running its
+previous config.
 
 ## Responses & error codes
 
+A board reply carries no id (Control re-tags per socket); only `iam` carries one.
+
 | Status | Form | Meaning |
 |--------|------|---------|
-| `ok` | `ok <id> [json]` | success, optional result payload |
-| `pong` | `pong <id>` | reply to `ping` |
-| `iam` | `iam <id> {json}` | reply to `whoami` |
-| `err` | `err <id> <code> <msg>` | failure |
+| `ok` | `ok [base64:json]` | success, optional result payload |
+| `pong` | `pong` | reply to `ping` |
+| `iam` | `iam <id> base64:json` | reply to `whoami` (carries the id) |
+| `err` | `err <code> <msg>` | failure |
 
-Error `code`s (short, lowercase): `badcmd` (unknown command), `badboard` (id does not match
-this board / unknown board at CC), `badargs` (malformed params), `invalid` (config failed
-validation), `busy` (a request is already in flight), `unsupported` (capability absent on this
-board), `internal` (unexpected fault).
+Error `code`s (short, lowercase): `badcmd` (unknown command), `badargs` (malformed params),
+`invalid` (config failed validation), `busy` (a request is already in flight), `unsupported`
+(capability absent on this board), `internal` (unexpected fault). Routing failures (unknown
+target board) are Control's concern, returned to the operator as `from cc err noboard <id>`.
 
-## Operator / telnet sugar (operator ↔ CC only)
+## Operator commands (operator ↔ Control only)
 
-These commands are handled by CC and never forwarded verbatim to a board.
+A first token that is a known board id (or `all`/`*`) routes to a board; otherwise it is a
+**Control command**, handled by Control and never sent to a board:
 
 | Command | Meaning |
 |---------|---------|
-| `help` | `ok cc {commands:[...]}` — list all commands; `help <command>` returns usage for one |
-| `list` | `ok cc [{id, online, state, config_id}]` — connected boards |
-| `select <board-id>` | set this operator session's **sticky** target; `ok cc {selected}` |
-| `who` | `ok cc {selected, since}` — current selection |
+| `help` | `from cc ok {commands:[...]}` — all commands; `help <command>` for one |
+| `list` | `from cc ok [{id, online, state, config_id}]` — connected boards |
+| `select <board>` | set this session's **sticky** target; afterwards a bare `<command>` is routed to it |
+| `who` | `from cc ok {selected, since}` — current selection |
 
-`help` is answered by CC from its command catalog, so usage stays discoverable over a bare
-telnet session (`help log` → the `log` syntax and params).
+**Sticky select / broadcast:** after `select glider1`, typing `health` is routed as `glider1
+health`; an explicit `<board>`/`all`/`*` first token overrides it for that line. Control tags every
+relayed reply with its source (`from glider1 ok …`), so the operator always sees who answered.
+`all`/`*` fans out to every connected board and yields one tagged reply per board.
 
-**Sticky select:** after `select glider1`, the operator may omit the board id and CC injects
-the selected one — `health` becomes `health glider1`. An explicit id always overrides the
-selection for that one line. CC tags everything it relays back from a board with the source id
-(`ok glider1 …`), so a telnet operator always sees which board answered.
-
-Example telnet session (response **JSON payloads are shown decoded for readability**; on the
-wire each is a single `base64:` token — e.g. the `ok glider1` reply to `health` is literally
-`ok glider1 base64:eyJ0ZW1wIjo1NCw...`):
+Example telnet session (response JSON shown **decoded for readability**; on the wire each is one
+`base64:` token):
 
 ```
-> help log
-ok cc {"usage":"log <board-id> <ms>","desc":"log records from the last <ms> milliseconds"}
 > list
-ok cc [{"id":"glider1","online":true,"state":"setting","config_id":"a1b2"},
-       {"id":"glider7a","online":true,"state":"setting","config_id":"c3d4"}]
+from cc ok [{"id":"glider1","online":true,"state":"setting","config_id":"a1b2"},
+            {"id":"glider7a","online":true,"state":"setting","config_id":"c3d4"}]
 > select glider1
-ok cc {"selected":"glider1"}
-> health
-ok glider1 {"temp":54,"mem_free":812000,"load":31,"uptime":90422,
-            "components":[{"name":"gnss","ok":false},{"name":"baro_icp10111","ok":true}]}
-> tel ms=3000
-ok glider1 {"samples":[{"t":90100,"alt":0.2,"yaw":1.1},{"t":90200,"alt":0.2,"yaw":1.0}]}
-> log 3000
-ok glider1 {"lines":["90011 Controller :: gnss timeout","90250 Fusion :: altitude -> bmp280"],"truncated":false}
-> reboot glider1
-ok glider1
+from cc ok {"selected":"glider1"}
+> health                         (routed as: glider1 health)
+from glider1 ok {"temp":54,"mem_free":812000,"load":31,"uptime":90422,
+                 "components":[{"name":"gnss","ok":false},{"name":"baro_icp10111","ok":true}]}
+> inspect wifi
+from glider1 ok {"ssid":"panda","rssi":-52,"tx_power_dbm":11}
+> all ping
+from glider1 pong
+from glider7a pong
+> glider1 reboot
+from glider1 ok
 ```
 
 ## Browser bridge (HTTP + SSE)
