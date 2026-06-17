@@ -16,21 +16,13 @@ _SAFE = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/+:'
 
 
 class _Msg:
+    # A board receives `command params` (Control has stripped the routing board id), so args are
+    # the positional params and named are key=value params.
     def __init__(self, command, args, named, line):
         self.command = command  # first token, lowercased (None for an empty line)
-        self.args = args  # positional values (board-id is args[0] by convention)
+        self.args = args  # positional params
         self.named = named  # dict of key=value params
         self.line = line
-
-    @property
-    def board(self):
-        """The board-id by convention (first positional). None for whoami/list/etc."""
-        return self.args[0] if self.args else None
-
-    @property
-    def params(self):
-        """Positional params after the board-id."""
-        return self.args[1:]
 
     def __repr__(self):
         return '_Msg(%r, args=%r, named=%r)' % (self.command, self.args, self.named)

@@ -12,6 +12,8 @@ import asyncio
 import struct
 import time
 
+from inspector import Inspector
+
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
@@ -82,6 +84,8 @@ class Ring:
 
 
 class Recorder:
+    name = 'recorder'
+    kind = 'recorder'
     _tlm: Ring = None
     _log: Ring = None
     _uart = None  # asyncio.StreamWriter wrapping the recorder UART
@@ -111,6 +115,7 @@ class Recorder:
             uart = UART(1, baudrate=bus['baud'], tx=bus['tx'], rx=bus['rx'])
         # accept a pre-wrapped async writer (tests) or wrap a raw UART for async drain
         cls._uart = uart if hasattr(uart, 'drain') else asyncio.StreamWriter(uart, {})
+        Inspector.register(cls)
 
     @classmethod
     def timestamp(cls) -> int:
@@ -181,6 +186,29 @@ class Recorder:
             if time.ticks_diff(now, cls._last_stats_ms) >= cls._stats_ms:
                 cls._last_stats_ms = now
                 cls.log('Recorder', str(cls.report()))
+
+    @classmethod
+    def inspect(cls) -> dict:
+        return {
+            'session': cls._session,
+            'tlm_capacity': cls._tlm.capacity,
+            'log_capacity': cls._log.capacity,
+            'cell_size': cls._tlm.cell_size,
+            'stats_ms': cls._stats_ms,
+        }
+
+    @classmethod
+    def update(cls, props: dict) -> list:
+        changed = []
+        value = props.get('stats_ms')
+        if isinstance(value, int) and value > 0 and value != cls._stats_ms:
+            cls._stats_ms = value
+            changed.append('stats_ms')
+        return changed
+
+    @classmethod
+    def stats(cls) -> dict:
+        return cls.report()
 
     @classmethod
     def report(cls) -> dict:

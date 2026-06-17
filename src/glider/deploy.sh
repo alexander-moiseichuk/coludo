@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Deploy src/glider to the board's filesystem. Each Python file is ruff-checked and mpy-cross
-# compiled (fail before touching the board); non-Python files are pushed as-is. test/ -> :test/.
+# Deploy this glider tree to the board's filesystem. Each Python file is ruff-checked and
+# mpy-cross compiled (fail before touching the board); non-Python files (e.g. <ssid>.creds) are
+# pushed as-is. test/*.py -> :test/. Lives in src/glider, so the source dir is the script's dir.
 #
-# Usage:  ./deploy.sh [file ...]      # default: every module + test under src/glider
+# Usage:  ./deploy.sh [file ...]      # default: every module + *.creds + test/*.py
 # Env:    PORT (default /dev/ttyACM0)
 
 set -u
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-GLIDER="$HERE/src/glider"
+HERE="$(cd "$(dirname "$0")" && pwd)"   # absolute (handles relative invocation); = src/glider
 PORT="${PORT:-/dev/ttyACM0}"
 
 if [ -t 1 ]; then G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; N=$'\e[0m'; else G=; R=; Y=; N=; fi
@@ -46,8 +46,8 @@ files=()
 if [ "$#" -gt 0 ]; then
     files=("$@")
 else
-    for f in "$GLIDER"/*.py "$GLIDER"/*.creds; do [ -e "$f" ] && files+=("$f"); done
-    for f in "$GLIDER"/test/*; do [ -e "$f" ] && files+=("$f"); done
+    for f in "$HERE"/*.py "$HERE"/*.creds; do [ -e "$f" ] && files+=("$f"); done
+    for f in "$HERE"/test/*.py; do [ -e "$f" ] && files+=("$f"); done
 fi
 
 fail=0

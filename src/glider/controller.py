@@ -8,12 +8,16 @@
 
 import asyncio
 
+from inspector import Inspectable, Inspector
 from task import DRIVERS
 
 STATES = ('setting', 'boosting', 'gliding', 'landing', 'done')
 
 
-class Controller:
+class Controller(Inspectable):
+    name = 'controller'
+    kind = 'controller'
+
     def __init__(self, config, registry=None, log=None):
         self.config = config
         self.registry = registry if registry is not None else DRIVERS
@@ -21,6 +25,7 @@ class Controller:
         self.tasks = {}  # name -> Task
         self._runners = {}  # name -> asyncio.Task
         self.state = 'setting'
+        Inspector.register(self)
 
     # ------------------------------------------------------------------ scope
     def directory(self):
@@ -119,3 +124,10 @@ class Controller:
             if not t.validate():
                 return False
         return True
+
+    # --- Inspectable ---
+    def inspect(self):
+        return {'state': self.state, 'tasks': list(self.tasks.keys())}
+
+    def stats(self):
+        return self.report()
