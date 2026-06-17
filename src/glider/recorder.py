@@ -109,10 +109,13 @@ class Recorder:
         cls._stats_ms = recorder.get('stats_ms', _STATS_PERIOD_MS)
         cls._last_stats_ms = time.ticks_ms()
         if uart is None:
+            import config as config_mod
             from machine import UART
 
-            bus = config['buses']['uart_recorder']
-            uart = UART(1, baudrate=bus['baud'], tx=bus['tx'], rx=bus['rx'])
+            entry = config_mod.device(config, driver='uart_sink')
+            ref = entry['bus'] if entry else 'uart:1'
+            spec = config_mod.bus(config, ref) or {'tx': 20, 'rx': 21, 'baud': 921600}
+            uart = UART(int(ref.split(':')[1]), baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
         # accept a pre-wrapped async writer (tests) or wrap a raw UART for async drain
         cls._uart = uart if hasattr(uart, 'drain') else asyncio.StreamWriter(uart, {})
         Inspector.register(cls)

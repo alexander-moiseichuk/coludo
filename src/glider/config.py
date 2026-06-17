@@ -86,23 +86,26 @@ def validate(cfg):
         else:
             pin_owner[pin] = label
 
-    bus_names = set()
+    bus_refs = set()  # 'uart:1', 'i2c:0', ... referenced by sensors/components
     buses = cfg.get('buses')
     if not isinstance(buses, dict):
         errs.append("missing or invalid 'buses' section")
     else:
-        for bname, spec in buses.items():
-            bus_names.add(bname)
-            if not isinstance(spec, dict):
-                errs.append("bus '%s' must be an object" % bname)
+        for kind, group in buses.items():
+            if kind not in ('uart', 'i2c', 'spi'):
+                errs.append("bus type '%s' is not one of uart/i2c/spi" % kind)
+            if not isinstance(group, dict):
+                errs.append('buses.%s must be an object' % kind)
                 continue
-            claimed = False
-            for key in _BUS_PIN_KEYS:
-                if key in spec:
-                    claim(bname + '.' + key, spec[key])
-                    claimed = True
-            if not claimed:
-                errs.append("bus '%s' declares no pins (need sda/scl, tx/rx or sck/mosi/miso)" % bname)
+            for ident, spec in group.items():
+                ref = '%s:%s' % (kind, ident)
+                bus_refs.add(ref)
+                if not isinstance(spec, dict):
+                    errs.append('bus %s must be an object' % ref)
+                    continue
+                for key in _BUS_PIN_KEYS:
+                    if key in spec:
+                        claim(ref + '.' + key, spec[key])
 
     # discrete pins --------------------------------------------------------
     pins = cfg.get('pins')
@@ -129,51 +132,57 @@ def validate(cfg):
                 if k in rec and not (_is_int(rec[k]) and rec[k] > 0):
                     errs.append('recorder.%s must be a positive int' % k)
 
-    # components -----------------------------------------------------------
-    comps = cfg.get('components')
-    if not isinstance(comps, list):
-        errs.append("missing or invalid 'components' section")
-    else:
-        seen = set()
-        for i, c in enumerate(comps):
-            where = 'components[%d]' % i
-            if not isinstance(c, dict):
+    # sensors (data providers) + components (consumers/actuators) ----------
+    seen_names = set()
+
+    def validate_devices(items, label):
+        if items is None:
+            return
+        if not isinstance(items, list):
+            errs.append("'%s' must be a list" % label)
+            return
+        for i, dev in enumerate(items):
+            where = '%s[%d]' % (label, i)
+            if not isinstance(dev, dict):
                 errs.append('%s must be an object' % where)
                 continue
-            name = c.get('name')
+            name = dev.get('name')
             if not isinstance(name, str) or not name:
                 errs.append('%s.name must be a non-empty string' % where)
             else:
-                where = "component '%s'" % name
-                if name in seen:
-                    errs.append("duplicate component name '%s'" % name)
-                seen.add(name)
-            if not isinstance(c.get('driver'), str) or not c.get('driver'):
+                where = "%s '%s'" % (label, name)
+                if name in seen_names:
+                    errs.append("duplicate device name '%s'" % name)
+                seen_names.add(name)
+            if not isinstance(dev.get('driver'), str) or not dev.get('driver'):
                 errs.append('%s.driver must be a non-empty string' % where)
-            if 'enabled' in c and not isinstance(c['enabled'], bool):
+            if 'enabled' in dev and not isinstance(dev['enabled'], bool):
                 errs.append('%s.enabled must be a bool' % where)
-            bus = c.get('bus')
-            if bus is not None:
-                if not isinstance(bus, str):
+            ref = dev.get('bus')
+            if ref is not None:
+                if not isinstance(ref, str):
                     errs.append('%s.bus must be a string' % where)
-                elif bus not in bus_names:
-                    errs.append("%s.bus '%s' is not a defined bus" % (where, bus))
-            addr = c.get('addr')
+                elif ref not in bus_refs:
+                    errs.append("%s.bus '%s' is not a defined bus" % (where, ref))
+            addr = dev.get('addr')
             if addr is not None and not _is_int(addr):
                 errs.append('%s.addr must be an int or null' % where)
-            prov = c.get('provides')
-            if prov is not None:
-                if not isinstance(prov, dict):
+            provides = dev.get('provides')
+            if provides is not None:
+                if not isinstance(provides, dict):
                     errs.append('%s.provides must be an object' % where)
                 else:
-                    for q, qs in prov.items():
-                        if not isinstance(qs, dict):
-                            errs.append('%s.provides.%s must be an object' % (where, q))
+                    for quantity, spec in provides.items():
+                        if not isinstance(spec, dict):
+                            errs.append('%s.provides.%s must be an object' % (where, quantity))
                             continue
-                        if not _is_int(qs.get('priority')):
-                            errs.append('%s.provides.%s.priority must be an int' % (where, q))
-                        if not _is_int(qs.get('timeout_ms')):
-                            errs.append('%s.provides.%s.timeout_ms must be an int' % (where, q))
+                        if not _is_int(spec.get('priority')):
+                            errs.append('%s.provides.%s.priority must be an int' % (where, quantity))
+                        if not _is_int(spec.get('timeout_ms')):
+                            errs.append('%s.provides.%s.timeout_ms must be an int' % (where, quantity))
+
+    validate_devices(cfg.get('sensors'), 'sensors')
+    validate_devices(cfg.get('components'), 'components')
     return errs
 
 
@@ -262,3 +271,19 @@ def reset(path='board.json'):
         return True
     except OSError:
         return False
+
+
+def bus(cfg, ref):
+    """Resolve a bus reference 'type:id' (e.g. 'uart:1', 'i2c:0') to its spec dict, or None."""
+    if not isinstance(ref, str) or ':' not in ref:
+        return None
+    kind, _, ident = ref.partition(':')
+    return cfg.get('buses', {}).get(kind, {}).get(ident)
+
+
+def device(cfg, name=None, driver=None):
+    """Find a sensor/component by name or driver. Returns the dict or None."""
+    for item in cfg.get('sensors', []) + cfg.get('components', []):
+        if (name is None or item.get('name') == name) and (driver is None or item.get('driver') == driver):
+            return item
+    return None

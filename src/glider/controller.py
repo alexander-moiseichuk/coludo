@@ -28,14 +28,18 @@ class Controller(Inspectable):
         Inspector.register(self)
 
     # ------------------------------------------------------------------ scope
+    def _devices(self):
+        """Sensors (data providers) + components (consumers/actuators) — all are tasks."""
+        return self.config.get('sensors', []) + self.config.get('components', [])
+
     def directory(self):
-        """Names of enabled components, in creation order (config order)."""
-        return [c.get('name') for c in self.config.get('components', []) if c.get('enabled', True) and c.get('name')]
+        """Names of enabled devices, in creation order (config order)."""
+        return [d.get('name') for d in self._devices() if d.get('enabled', True) and d.get('name')]
 
     def _component(self, name):
-        for c in self.config.get('components', []):
-            if c.get('name') == name:
-                return c
+        for d in self._devices():
+            if d.get('name') == name:
+                return d
         return None
 
     def create(self, name):
