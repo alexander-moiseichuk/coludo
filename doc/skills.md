@@ -125,6 +125,9 @@ so it must run on both.
 - The Wi-Fi password is **not** committed: a `src/glider/<ssid>.creds` file (e.g. `panda.creds`,
   one line — the plain password) is gitignored (`*.creds`) and pushed by `deploy.sh`; `wifi.py`
   reads it for the password.
+- **API docs**: `python3 tools/gen_docs.py` regenerates [`doc/api.md`](api.md) from module
+  headers + docstrings by *parsing* the sources (stdlib `ast`, never imports them — so it works
+  for the firmware too). Regenerate it when public signatures or docstrings change.
 
 ## Control Center
 
