@@ -20,12 +20,14 @@ The way the glider looks can be ![found in here](https://github.com/alexander-mo
 - [Development & testing guide](doc/skills.md) — tooling (`ampy`/`mpremote`/`rshell`, `mpy-cross`), source layout, the `panda` test network, and the testing rules.
 - [Benchmarks](doc/benches/) — board performance logs (BeagleBone, RPi4, StarFive).
 - [Photos](doc/photos/) — build and electronics photos.
+- [Videos](doc/videos/) — flight footage (e.g. the TMS-6 campaign).
+
+**Models — [`models/`](models/)** — 3D-printable STL parts for the booster and glider prototypes (TMS-1 … TMS-7).
 
 **Source — [`src/`](src/)**
 - [`src/glider/`](src/glider/) — Main Controller flight firmware (MicroPython), with tests in `src/glider/test/`. *(planned)*
 - [`src/control/`](src/control/) — Control Center ground station (Python). *(planned)*
 - [`src/camera/`](src/camera/) — Recorder module (Luckfox Pico): 2304×1296 video + UART telemetry/log sink. *(implemented)*
 
-**Models — [`models/`](models/)** — 3D-printable STL parts for the booster and glider prototypes (TMS-1 … TMS-7).
+**Tools — [`tools/`](tools/)** — various tools which helps in development and setup.
 
-**Videos — [`videos/`](videos/)** — flight footage (e.g. the TMS-6 campaign).
