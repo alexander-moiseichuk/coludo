@@ -27,6 +27,12 @@ class _Reader:
         return b''
 
 
+class _HangReader:
+    async def readline(self):
+        await asyncio.sleep(60)
+        return b''
+
+
 class _Writer:
     def __init__(self):
         self.out = []
@@ -59,6 +65,14 @@ async def _unit():
 
     # identify() returns None when the reply is not iam
     assert await Board(_Reader(['pong\n']), _Writer()).identify() is None
+
+    # command() times out (raises) on a wedged board instead of hanging
+    raised = False
+    try:
+        await Board(_HangReader(), _Writer()).command('ping', timeout=0.1)
+    except asyncio.TimeoutError:
+        raised = True
+    assert raised
 
 
 async def _fake_board(reader, writer):

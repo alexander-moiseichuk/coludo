@@ -326,7 +326,7 @@ One connected board: lockstep request/response over its socket.
 
 - `__init__(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)` — constructor
 - `peer() -> str` _(property)_
-- `command(command: str, *args)` — Send `command args...` to the board and return its parsed response (or None on drop).
+- `command(command: str, *args, timeout=5.0)` — Send `command args...` and return its parsed response. The per-board lock makes calls
 - `identify() -> str`
 - `inspect(name: str) -> dict`
 - `close() -> None`

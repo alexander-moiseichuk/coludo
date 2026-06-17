@@ -24,13 +24,16 @@ class Board:
         host, port = self._writer.get_extra_info('peername')[:2]
         return '%s:%d' % (host, port)
 
-    async def command(self, command: str, *args):
-        """Send `command args...` to the board and return its parsed response (or None on drop)."""
+    async def command(self, command: str, *args, timeout: float = 5.0):
+        """Send `command args...` and return its parsed response. The per-board lock makes calls
+        strictly sequential (Control never injects a second command mid-exchange); `timeout`
+        bounds the wait so a wedged board raises asyncio.TimeoutError instead of hanging. Returns
+        None if the board disconnected."""
         line = cc.build(command, list(args))
         async with self._lock:
             self._writer.write((line + '\n').encode())
             await self._writer.drain()
-            raw = await self._reader.readline()
+            raw = await asyncio.wait_for(self._reader.readline(), timeout)
         if not raw:
             return None
         return cc.parse(raw.decode().strip())
