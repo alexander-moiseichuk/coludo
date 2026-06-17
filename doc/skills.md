@@ -68,9 +68,11 @@ This dovetails with the task model in `coludo.md`, where each task exposes `test
 - **config parsing and validation** (pin uniqueness, bad bus refs, fallback to defaults),
 - **protocol parsing** (command tokenizer, `key=value`, quoted values, error codes).
 
-The glider firmware targets **MicroPython only** — tests run **on the board** (`mpremote`), not
-on a host CPython approximation. Even host-portable logic (config loader/validator, fusion
-ordering, the protocol parser) is verified on the real runtime.
+Every module gets comprehensive `test_*.py` (positive **and** negative cases). The **glider**
+firmware targets **MicroPython only** — its tests run **on the board** (`mpremote`), not on a host
+CPython approximation; even host-portable logic (config loader/validator, fusion ordering, the
+protocol parser) is verified on the real runtime. **Control** (`src/control/`) is **host CPython**,
+so its tests run with `python3`: `cd src/control/test && make test`.
 
 **Running the tests.** `src/glider/test/run_tests.sh` (or `make test` in that directory) first
 deploys the glider modules (`src/glider/*.py`) to the board with `deploy_modules.sh` so tests
