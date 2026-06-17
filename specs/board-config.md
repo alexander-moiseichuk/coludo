@@ -76,48 +76,46 @@ identical behaviour every time.
   },
 
   "buses": {
-    "i2c0":          { "sda": 7, "scl": 8, "freq": 400000 },
-    "uart_recorder": { "tx": 20, "rx": 21, "baud": 921600 },
-    "uart_gnss":     { "tx": 22, "rx": 23, "baud": 9600 }
+    "uart": { "1": { "tx": 20, "rx": 21, "baud": 921600 },
+              "2": { "tx": 22, "rx": 23, "baud": 9600 } },
+    "i2c":  { "0": { "sda": 7, "scl": 8, "freq": 400000 } },
+    "spi":  {}
   },
 
   "pins": {
     "led_status": 2,
     "separation_switch": 33,
     "servo_yaw": 26,
-    "servo_elevon_l": 27,
-    "servo_elevon_r": 32
+    "servo_eleron_left": 27,
+    "servo_eleron_right": 32
   },
 
-  "components": [
-    { "name": "accel_adxl375", "driver": "adxl375", "bus": "i2c0", "addr": 83,
+  "sensors": [
+    { "name": "accel_adxl375", "driver": "adxl375", "bus": "i2c:0", "addr": 83,
       "enabled": true,
       "provides": { "accel": { "priority": 0, "timeout_ms": 5 } } },
 
-    { "name": "imu_bno055", "driver": "bno055", "bus": "i2c0", "addr": 40,
-      "enabled": true,
-      "provides": { "attitude": { "priority": 0, "timeout_ms": 5 },
-                    "accel":    { "priority": 1, "timeout_ms": 5 } } },
-
-    { "name": "baro_icp10111", "driver": "icp10111", "bus": "i2c0", "addr": 99,
+    { "name": "baro_icp10111", "driver": "icp10111", "bus": "i2c:0", "addr": 99,
       "enabled": true,
       "provides": { "altitude": { "priority": 0, "timeout_ms": 100 } } },
 
-    { "name": "baro_bmp280", "driver": "bmp280", "bus": "i2c0", "addr": 118,
+    { "name": "baro_bmp280", "driver": "bmp280", "bus": "i2c:0", "addr": 118,
       "enabled": true,
       "provides": { "altitude": { "priority": 1, "timeout_ms": 200 } } },
 
-    { "name": "gnss", "driver": "atgm336h", "bus": "uart_gnss", "addr": null,
+    { "name": "laser_agl", "driver": "sen0648", "bus": "i2c:0", "addr": 80,
+      "enabled": true,
+      "provides": { "agl":      { "priority": 0, "timeout_ms": 20 },
+                    "altitude": { "priority": 2, "timeout_ms": 20 } } },
+
+    { "name": "gnss", "driver": "atgm336h", "bus": "uart:2", "addr": null, "hz": 10,
       "enabled": true,
       "provides": { "position": { "priority": 0, "timeout_ms": 150 },
-                    "altitude": { "priority": 3, "timeout_ms": 1000 } } },
+                    "altitude": { "priority": 3, "timeout_ms": 1000 } } }
+  ],
 
-    { "name": "laser_agl", "driver": "sen0648", "bus": "i2c0", "addr": 80,
-      "enabled": true,
-      "provides": { "agl": { "priority": 0, "timeout_ms": 20 } } },
-
-    { "name": "recorder", "driver": "uart_sink", "bus": "uart_recorder", "addr": null,
-      "enabled": true }
+  "components": [
+    { "name": "recorder", "driver": "uart_sink", "bus": "uart:1", "enabled": true }
   ]
 }
 ```
@@ -129,8 +127,13 @@ identical behaviour every time.
 - **`wifi`** — the board is a **station (STA)** that joins the network hosted by **CC**.
   (The earlier "glider hosts an AP" idea in `coludo.md` is superseded.) `cc_host`/`cc_port`
   point at the CC service; `tx_power_dbm` is the operator-tunable signal level.
-- **`buses`** — named buses (I²C / UART / SPI) with their pins and parameters. Components
-  reference a bus by name.
+- **`buses`** — grouped by type (`uart` / `i2c` / `spi`) then id, with pins and parameters.
+  Sensors and components reference a bus as **`"type:id"`** (e.g. `"i2c:0"`, `"uart:2"`); the
+  helper `config.bus(cfg, ref)` resolves it.
+- **`sensors`** — data providers. Each declares what quantities it `provides` (with priority +
+  timeout); several may provide the same quantity with different drivers/priorities, and the
+  fusion layer groups by quantity and orders by priority. **`components`** are the consumers /
+  actuators / system tasks (e.g. the recorder).
 - **`pins`** — discrete signals (LED, separation switch, servo PWM lines). The concrete GPIO
   numbers for the WaveShare ESP32-P4-WIFI6 — and which GPIOs are reserved (Wi-Fi C6, console,
   SD, codec) — are in [`../doc/waveshare_esp32p4_pins.md`](../doc/waveshare_esp32p4_pins.md).
@@ -141,16 +144,18 @@ identical behaviour every time.
 
 ### Fusion is derived, not duplicated
 
-Each component declares what measured quantities it `provides`, each with a `priority`
-(lower = preferred) and a `timeout_ms`. The fusion layer groups all enabled components by
+Each sensor declares what measured quantities it `provides`, each with a `priority`
+(lower = preferred) and a `timeout_ms`. The fusion layer groups all enabled sensors by
 quantity and orders them by priority, e.g. from the example above:
 
-- `altitude` → `[icp10111 (100ms), bmp280 (200ms), gnss (1000ms)]`
-- `accel`    → `[adxl375 (5ms), bno055 (5ms)]`
-- `position` → `[gnss (150ms)]`
-- `agl`      → `[laser_agl (20ms)]`
+- `altitude` → `[icp10111 (p0), bmp280 (p1), laser_agl (p2), gnss (p3)]`
+- `accel`    → `[adxl375 (p0), bno055 (p1)]`
+- `position` → `[gnss (p0)]`
+- `agl`      → `[laser_agl (p0)]`
 
-Adding or disabling a sensor updates fusion automatically. There is no separate fusion table
+So one logical quantity can have several hardware providers (different drivers, redundancy); the
+fusion layer (round-robin / first-answering / freshest-data, per quantity) picks among them by
+priority and timeout. Adding or disabling a sensor updates fusion automatically. There is no separate fusion table
 to keep in sync.
 
 ### What is NOT in board config
