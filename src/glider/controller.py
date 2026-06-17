@@ -8,53 +8,60 @@
 
 import asyncio
 
+from inspector import Inspectable, Inspector
 from task import DRIVERS
 
 STATES = ('setting', 'boosting', 'gliding', 'landing', 'done')
 
 
-class Controller:
+class Controller(Inspectable):
+    name = 'controller'
+    kind = 'controller'
+
     def __init__(self, config, registry=None, log=None):
         self.config = config
         self.registry = registry if registry is not None else DRIVERS
         self.log = log if log is not None else (lambda msg: None)
-        self.tasks = {}          # name -> Task
-        self._runners = {}       # name -> asyncio.Task
+        self.tasks = {}  # name -> Task
+        self._runners = {}  # name -> asyncio.Task
         self.state = 'setting'
+        Inspector.register(self)
 
     # ------------------------------------------------------------------ scope
+    def _devices(self):
+        """Sensors (data providers) + components (consumers/actuators) — all are tasks."""
+        return self.config.get('sensors', []) + self.config.get('components', [])
+
     def directory(self):
-        '''Names of enabled components, in creation order (config order).'''
-        return [c.get('name') for c in self.config.get('components', [])
-                if c.get('enabled', True) and c.get('name')]
+        """Names of enabled devices, in creation order (config order)."""
+        return [d.get('name') for d in self._devices() if d.get('enabled', True) and d.get('name')]
 
     def _component(self, name):
-        for c in self.config.get('components', []):
-            if c.get('name') == name:
-                return c
+        for d in self._devices():
+            if d.get('name') == name:
+                return d
         return None
 
     def create(self, name):
-        '''Create a task by component name via the driver registry. Returns task or None.'''
+        """Create a task by component name via the driver registry. Returns task or None."""
         comp = self._component(name)
         if comp is None:
             return None
         cls = self.registry.get(comp.get('driver'))
         if cls is None:
-            self.log("controller :: no driver '%s' for task '%s'"
-                     % (comp.get('driver'), name))
+            self.log("controller :: no driver '%s' for task '%s'" % (comp.get('driver'), name))
             return None
         return cls(name, comp, self)
 
     def active(self, name=None):
-        '''Return the active task by name, or a list of all active tasks if name is None.'''
+        """Return the active task by name, or a list of all active tasks if name is None."""
         if name is None:
             return list(self.tasks.values())
         return self.tasks.get(name)
 
     # -------------------------------------------------------------- lifecycle
     async def setup(self):
-        '''Create + set up every enabled task in order. Skip (and report) failures.'''
+        """Create + set up every enabled task in order. Skip (and report) failures."""
         for name in self.directory():
             if name in self.tasks:
                 continue
@@ -75,13 +82,13 @@ class Controller:
         return True
 
     async def start(self):
-        '''Launch each task's run() loop as a supervised asyncio task.'''
+        """Launch each task's run() loop as a supervised asyncio task."""
         for name, task in self.tasks.items():
             if name not in self._runners:
                 self._runners[name] = asyncio.create_task(self._supervise(name, task))
 
     async def _supervise(self, name, task):
-        '''Run a task to completion; on crash, log it (restart policy is a later concern).'''
+        """Run a task to completion; on crash, log it (restart policy is a later concern)."""
         try:
             await task.run()
         except asyncio.CancelledError:
@@ -90,7 +97,7 @@ class Controller:
             self.log("controller :: task '%s' crashed: %r" % (name, e))
 
     async def close(self, name):
-        '''Deactivate a task and clean up its resources.'''
+        """Deactivate a task and clean up its resources."""
         runner = self._runners.pop(name, None)
         if runner is not None:
             runner.cancel()
@@ -99,7 +106,7 @@ class Controller:
             await task.finish()
 
     async def finish(self):
-        '''Shut down all tasks.'''
+        """Shut down all tasks."""
         for name in list(self.tasks):
             await self.close(name)
         self.state = 'done'
@@ -113,12 +120,18 @@ class Controller:
 
     # ----------------------------------------------------------- introspection
     def report(self):
-        return {'state': self.state,
-                'tasks': dict((n, t.report()) for n, t in self.tasks.items())}
+        return {'state': self.state, 'tasks': dict((n, t.report()) for n, t in self.tasks.items())}
 
     def validate(self):
-        '''True if every active task is healthy.'''
+        """True if every active task is healthy."""
         for t in self.tasks.values():
             if not t.validate():
                 return False
         return True
+
+    # --- Inspectable ---
+    def inspect(self):
+        return {'state': self.state, 'tasks': list(self.tasks.keys())}
+
+    def stats(self):
+        return self.report()

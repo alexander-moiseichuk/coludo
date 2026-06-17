@@ -56,8 +56,8 @@ A conflict-free starting assignment (drop into `board.json`):
 | UART ↔ GNSS TX | 22 | to ATGM336H RX (send `$PCAS…` config) |
 | UART ↔ GNSS RX | 23 | from ATGM336H TX (NMEA in) |
 | Servo — yaw (vertical fin) | 26 | LEDC PWM |
-| Servo — left elevon | 27 | LEDC PWM |
-| Servo — right elevon | 32 | LEDC PWM |
+| Servo — left eleron | 27 | LEDC PWM (`servo_eleron_left`) |
+| Servo — right eleron | 32 | LEDC PWM (`servo_eleron_right`) |
 | Separation switch | 33 | input, `PULL_UP`, IRQ (LOW=nested, HIGH=separated) |
 | Status LED (external) | 2 | **no onboard user LED** — wire an external LED+resistor |
 | Spare / expansion | 3, 4, 5, 28, 29, 30, 31, 46–52 | future sensors, second I²C, etc. |

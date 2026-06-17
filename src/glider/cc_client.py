@@ -1,158 +1,192 @@
-# CC client — the board side of the Control Center protocol (specs/cc-protocol.md).
-#
-# The board is a TCP client that dials out to CC; CC drives every exchange and the board only
-# answers (the poll model). On connect, CC sends `whoami`; thereafter it issues board-addressed
-# commands and the board replies. Dispatcher turns a parsed line into a response (pure logic,
-# unit-testable); Client is the thin networking that reads lines and writes responses.
+# cc_client — board side of the Control protocol (specs/cc-protocol.md). Board-first routing:
+# Control strips the routing board id, so the board receives `command params` and replies
+# `status params` (no id; only `iam` carries the board id, so Control can learn it on a new
+# socket). Dispatcher turns a parsed line into a response (pure logic, unit-testable); Client is
+# the thin networking that reads lines and writes responses.
 
 import asyncio
 import json
 
 import cc_protocol as cc
+from inspector import Inspector
 
 
 class Dispatcher:
-    '''Maps a command to an async handler(msg) -> response line. Enforces that board-addressed
-    commands match this board (whoami has no board-id).'''
+    """Maps a command to an async handler(msg) -> response line."""
 
-    def __init__(self, board_id):
-        self.board_id = board_id
+    def __init__(self):
         self.handlers = {}
 
     def on(self, command, fn):
         self.handlers[command] = fn
-        return fn
 
     async def handle(self, line):
         msg = cc.parse(line)
         if msg.command is None:
             return None
-        if msg.board is not None and msg.board != self.board_id:
-            return cc.build('err', [self.board_id, 'badboard', msg.board])
         fn = self.handlers.get(msg.command)
         if fn is None:
-            return cc.build('err', [self.board_id, 'badcmd', msg.command])
+            return cc.build('err', ['badcmd', msg.command])
         try:
             return await fn(msg)
-        except Exception as e:
-            return cc.build('err', [self.board_id, 'internal', repr(e)])
+        except Exception as error:
+            return cc.build('err', ['internal', repr(error)])
 
 
 class Client:
     def __init__(self, config, dispatcher, log=None, backoff_ms=1000):
-        w = config['wifi']
-        self.host = w['cc_host']
-        self.port = w['cc_port']
+        wifi = config['wifi']
+        self.host = wifi['cc_host']
+        self.port = wifi['cc_port']
         self.dispatcher = dispatcher
-        self.log = log if log is not None else (lambda m: None)
+        self.log = log if log is not None else (lambda message: None)
         self.backoff_ms = backoff_ms
 
-    async def run(self, stop=None):
-        '''Connect to CC and serve until stopped, reconnecting with backoff on drop.'''
-        while stop is None or not stop[0]:
+    async def run(self):
+        """Connect to Control and serve forever, reconnecting with backoff on drop."""
+        while True:
             try:
                 reader, writer = await asyncio.open_connection(self.host, self.port)
                 self.log('cc_client :: connected %s:%d' % (self.host, self.port))
                 await self.serve(reader, writer)
-            except Exception as e:
-                self.log('cc_client :: %r' % e)
+            except Exception as error:
+                self.log('cc_client :: %r' % error)
             await asyncio.sleep_ms(self.backoff_ms)
 
     async def serve(self, reader, writer):
-        '''Read commands from CC, dispatch, write responses. Returns on disconnect.'''
+        """Read commands from Control, dispatch, write responses. Returns on disconnect."""
         while True:
             line = await reader.readline()
             if not line:
                 return
-            resp = await self.dispatcher.handle(line.decode().strip())
-            if resp is not None:
-                writer.write((resp + '\n').encode())
+            response = await self.dispatcher.handle(line.decode().strip())
+            if response is not None:
+                writer.write((response + '\n').encode())
                 await writer.drain()
 
 
 def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_path='board.json'):
-    '''Build a Dispatcher with the standard command handlers, wired to the running config and
-    (optionally) the Controller. `on_reboot` lets tests intercept the reset.'''
-    import config as config_mod
+    """Build a Dispatcher with the standard command handlers, wired to the running config, the
+    Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset."""
     import gc
     import time
 
-    board_id = cfg['board']['id']
-    d = Dispatcher(board_id)
+    import config as config_mod
 
-    def _state():
+    board_id = cfg['board']['id']
+    dispatcher = Dispatcher()
+
+    def state():
         return controller.state if controller is not None else 'setting'
 
-    async def h_whoami(msg):
-        info = {'mcu': cfg['board'].get('mcu'), 'fw': fw,
-                'config_id': config_mod.config_id(cfg), 'state': _state(),
-                'uptime': time.ticks_ms()}
-        return cc.build('iam', [board_id, json.dumps(info)])
+    async def whoami(msg):
+        info = {
+            'mcu': cfg['board'].get('mcu'),
+            'fw': fw,
+            'config_id': config_mod.config_id(cfg),
+            'state': state(),
+            'uptime': time.ticks_ms(),
+        }
+        return cc.build('iam', [board_id, json.dumps(info)])  # the one reply carrying the id
 
-    async def h_ping(msg):
-        return cc.build('pong', [board_id])
+    async def ping(msg):
+        return cc.build('pong')
 
-    async def h_health(msg):
+    async def health(msg):
         try:
             import esp32
+
             temp = esp32.mcu_temperature()
         except Exception:
             temp = None
-        h = {'temp': temp, 'mem_free': gc.mem_free(), 'uptime': time.ticks_ms(), 'state': _state()}
+        info = {'temp': temp, 'mem_free': gc.mem_free(), 'uptime': time.ticks_ms(), 'state': state()}
         if controller is not None:
-            h['tasks'] = [{'name': t.name, 'ok': t.validate()} for t in controller.active()]
-        return cc.build('ok', [board_id, json.dumps(h)])
+            info['tasks'] = [{'name': t.name, 'ok': t.validate()} for t in controller.active()]
+        return cc.build('ok', [json.dumps(info)])
 
-    async def h_state(msg):
-        return cc.build('ok', [board_id, json.dumps({'state': _state()})])
+    async def get_state(msg):
+        return cc.build('ok', [json.dumps({'state': state()})])
 
-    async def h_report(msg):
-        r = controller.report() if controller is not None else {}
-        return cc.build('ok', [board_id, json.dumps(r)])
+    async def report(msg):
+        return cc.build('ok', [json.dumps(controller.report() if controller is not None else {})])
 
-    async def h_get_config(msg):
-        which = msg.params[0] if msg.params else 'running'
-        c = config_mod._builtin_default() if which == 'default' else cfg
-        return cc.build('ok', [board_id, json.dumps(c)])
+    async def objects(msg):
+        return cc.build('ok', [json.dumps(Inspector.names())])
 
-    async def h_save_config(msg):
-        if not msg.params:
-            return cc.build('err', [board_id, 'badargs', 'no config'])
+    async def inspect(msg):
+        if not msg.args:
+            return cc.build('err', ['badargs', 'inspect <object>'])
         try:
-            newcfg = json.loads(msg.params[0])
+            return cc.build('ok', [json.dumps(Inspector.inspect(msg.args[0]))])
+        except KeyError:
+            return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
+
+    async def update(msg):
+        if len(msg.args) < 2:
+            return cc.build('err', ['badargs', 'update <object> <json>'])
+        try:
+            changed = Inspector.update(msg.args[0], json.loads(msg.args[1]))
+        except KeyError:
+            return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
+        return cc.build('ok', [json.dumps({'changed': changed})])
+
+    async def stats(msg):
+        if not msg.args:
+            return cc.build('err', ['badargs', 'stats <object>'])
+        try:
+            return cc.build('ok', [json.dumps(Inspector.stats(msg.args[0]))])
+        except KeyError:
+            return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
+
+    async def get_config(msg):
+        which = msg.args[0] if msg.args else 'running'
+        config = config_mod._builtin_default() if which == 'default' else cfg
+        return cc.build('ok', [json.dumps(config)])
+
+    async def save_config(msg):
+        if not msg.args:
+            return cc.build('err', ['badargs', 'no config'])
+        try:
+            new_config = json.loads(msg.args[0])
         except Exception:
-            return cc.build('err', [board_id, 'badargs', 'bad json'])
+            return cc.build('err', ['badargs', 'bad json'])
         try:
-            cid = config_mod.save(newcfg, config_path)
-        except ValueError as e:
-            return cc.build('err', [board_id, 'invalid', str(e)])
-        return cc.build('ok', [board_id, json.dumps({'config_id': cid})])
+            config_id = config_mod.save(new_config, config_path)
+        except ValueError as error:
+            return cc.build('err', ['invalid', str(error)])
+        return cc.build('ok', [json.dumps({'config_id': config_id})])
 
-    async def h_reset_config(msg):
+    async def reset_config(msg):
         config_mod.reset(config_path)
-        return cc.build('ok', [board_id])
+        return cc.build('ok')
 
-    async def h_reboot(msg):
+    async def reboot(msg):
         reset = on_reboot if on_reboot is not None else _machine_reset
 
-        async def _do():
+        async def do_reset():
             await asyncio.sleep_ms(200)
             reset()
-        asyncio.create_task(_do())
-        return cc.build('ok', [board_id])
 
-    d.on('whoami', h_whoami)
-    d.on('ping', h_ping)
-    d.on('health', h_health)
-    d.on('state', h_state)
-    d.on('report', h_report)
-    d.on('get-config', h_get_config)
-    d.on('save-config', h_save_config)
-    d.on('reset-config', h_reset_config)
-    d.on('reboot', h_reboot)
-    return d
+        asyncio.create_task(do_reset())
+        return cc.build('ok')
+
+    dispatcher.on('whoami', whoami)
+    dispatcher.on('ping', ping)
+    dispatcher.on('health', health)
+    dispatcher.on('state', get_state)
+    dispatcher.on('report', report)
+    dispatcher.on('objects', objects)
+    dispatcher.on('inspect', inspect)
+    dispatcher.on('update', update)
+    dispatcher.on('stats', stats)
+    dispatcher.on('get-config', get_config)
+    dispatcher.on('save-config', save_config)
+    dispatcher.on('reset-config', reset_config)
+    dispatcher.on('reboot', reboot)
+    return dispatcher
 
 
 def _machine_reset():
     import machine
+
     machine.reset()

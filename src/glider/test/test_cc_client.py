@@ -1,95 +1,113 @@
-# On-board (MicroPython) test for the CC client (cc_client.py): dispatch logic + serve loop
-# with fake streams + the standard command handlers. Run by `make test`.
+# On-board (MicroPython) test for the CC client (cc_client.py). Board-first: the board socket
+# sees `command params` (no id) and replies `status params` (no id except iam). Run by `make test`.
 
 import asyncio
 import json
 
 import cc_protocol as cc
-from cc_client import Dispatcher, Client, standard_dispatcher
+from cc_client import Client, Dispatcher, standard_dispatcher
 from config_default import default
+from inspector import Inspectable, Inspector
 
 
-class FakeReader:
+class _FakeReader:
     def __init__(self, lines):
-        self.q = [l if isinstance(l, bytes) else (l + '\n').encode() for l in lines]
-        self.i = 0
+        self.queue = [item if isinstance(item, bytes) else (item + '\n').encode() for item in lines]
+        self.index = 0
 
     async def readline(self):
-        if self.i < len(self.q):
-            v = self.q[self.i]
-            self.i += 1
-            return v
+        if self.index < len(self.queue):
+            value = self.queue[self.index]
+            self.index += 1
+            return value
         return b''
 
 
-class FakeWriter:
+class _FakeWriter:
     def __init__(self):
         self.out = []
 
-    def write(self, b):
-        self.out.append(b)
+    def write(self, data):
+        self.out.append(data)
 
     async def drain(self):
         pass
 
 
+class _Knob(Inspectable):
+    name = 'knob'
+    kind = 'knob'
+    _inspect = ('level',)
+    _writable = ('level',)
+
+    def __init__(self):
+        self.level = 1
+
+
 async def amain():
-    # --- generic Dispatcher ---------------------------------------------
-    d = Dispatcher('glider1')
+    # generic Dispatcher: no board-id handling; command -> handler
+    dispatcher = Dispatcher()
 
-    async def ping_h(msg):
-        return cc.build('pong', ['glider1'])
-    d.on('ping', ping_h)
+    async def ping(msg):
+        return cc.build('pong')
 
-    assert await d.handle('ping glider1') == 'pong glider1'
-    assert 'badcmd' in await d.handle('nope glider1')            # unknown command
-    assert 'badboard' in await d.handle('ping glider2')          # wrong board id
+    dispatcher.on('ping', ping)
+    assert await dispatcher.handle('ping') == 'pong'
+    assert 'badcmd' in await dispatcher.handle('nope')  # unknown command
+    assert await dispatcher.handle('   ') is None  # empty line
 
     async def boom(msg):
         raise ValueError('x')
-    d.on('boom', boom)
-    assert 'internal' in await d.handle('boom glider1')          # handler exception
-    assert await d.handle('   ') is None                         # empty line
 
-    # --- Client.serve over fake streams ---------------------------------
+    dispatcher.on('boom', boom)
+    assert 'internal' in await dispatcher.handle('boom')  # handler exception
+
+    # standard handlers
     sd = standard_dispatcher(default())
-    client = Client(default(), sd)
-    r = FakeReader(['whoami', 'ping glider1'])
-    w = FakeWriter()
-    await client.serve(r, w)
-    resp = [x.decode().strip() for x in w.out]
-    assert cc.parse(resp[0]).command == 'iam'
-    assert cc.parse(resp[1]).command == 'pong'
 
-    # --- standard handlers ----------------------------------------------
     m = cc.parse(await sd.handle('whoami'))
-    info = json.loads(m.params[0])
-    assert m.command == 'iam' and m.board == 'glider1'
+    assert m.command == 'iam' and m.args[0] == 'glider1'
+    info = json.loads(m.args[1])
     assert info['mcu'] == 'esp32p4' and 'config_id' in info and info['state'] == 'setting'
 
-    h = json.loads(cc.parse(await sd.handle('health glider1')).params[0])
-    assert 'mem_free' in h and 'uptime' in h
+    assert cc.parse(await sd.handle('ping')).command == 'pong'
+    health = json.loads(cc.parse(await sd.handle('health')).args[0])
+    assert 'mem_free' in health and 'uptime' in health
+    cfg = json.loads(cc.parse(await sd.handle('get-config')).args[0])
+    assert cfg['board']['id'] == 'glider1'
 
-    g = json.loads(cc.parse(await sd.handle('get-config glider1')).params[0])
-    assert g['board']['id'] == 'glider1'
+    # Inspector-backed inspect/update/stats
+    Inspector.register(_Knob())
+    assert 'knob' in json.loads(cc.parse(await sd.handle('objects')).args[0])
+    assert json.loads(cc.parse(await sd.handle('inspect knob')).args[0]) == {'level': 1}
+    changed = cc.parse(await sd.handle(cc.build('update', ['knob', json.dumps({'level': 5})])))
+    assert json.loads(changed.args[0]) == {'changed': ['level']}
+    assert json.loads(cc.parse(await sd.handle('inspect knob')).args[0])['level'] == 5
+    assert 'badargs' in await sd.handle('inspect nope')  # unknown object
 
-    # save-config: invalid rejected, valid persisted; reset-config removes it
+    # Client.serve over fake streams
+    writer = _FakeWriter()
+    await Client(default(), sd).serve(_FakeReader(['whoami', 'ping']), writer)
+    resp = [b.decode().strip() for b in writer.out]
+    assert cc.parse(resp[0]).command == 'iam' and cc.parse(resp[1]).command == 'pong'
+
+    # save-config: invalid rejected; reset-config ok
     sd2 = standard_dispatcher(default(), config_path='test_cc_board.json')
-    bad = default(); bad['pins']['servo_yaw'] = 18              # reserved Wi-Fi pin -> invalid
-    r = await sd2.handle(cc.build('save-config', ['glider1', json.dumps(bad)]))
-    assert 'invalid' in r, r
-    r = await sd2.handle(cc.build('save-config', ['glider1', json.dumps(default())]))
-    assert cc.parse(r).command == 'ok' and 'config_id' in json.loads(cc.parse(r).params[0])
-    assert cc.parse(await sd2.handle('reset-config glider1')).command == 'ok'
+    bad = default()
+    bad['pins']['servo_yaw'] = 18  # reserved Wi-Fi pin -> invalid
+    assert 'invalid' in await sd2.handle(cc.build('save-config', [json.dumps(bad)]))
+    ok = cc.parse(await sd2.handle(cc.build('save-config', [json.dumps(default())])))
+    assert ok.command == 'ok' and 'config_id' in json.loads(ok.args[0])
+    assert cc.parse(await sd2.handle('reset-config')).command == 'ok'
 
-    # reboot: returns ok and fires the (intercepted) reset after a short delay
+    # reboot returns ok and fires the (intercepted) reset
     fired = []
     sd3 = standard_dispatcher(default(), on_reboot=lambda: fired.append(1))
-    assert await sd3.handle('reboot glider1') == 'ok glider1'
+    assert await sd3.handle('reboot') == 'ok'
     await asyncio.sleep_ms(260)
     assert fired == [1]
 
-    print('ok: cc_client dispatcher/serve/standard handlers (whoami/ping/health/config/reboot)')
+    print('ok: cc_client board-first dispatch/serve/standard + inspect/update/stats')
 
 
 asyncio.run(amain())

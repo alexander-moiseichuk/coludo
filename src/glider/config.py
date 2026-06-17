@@ -13,8 +13,9 @@ import json
 import os
 
 try:
-    import hashlib
     import binascii
+    import hashlib
+
     _HAVE_HASH = True
 except ImportError:
     _HAVE_HASH = False
@@ -37,8 +38,9 @@ def _is_int(x):
 
 # --------------------------------------------------------------------------- validate
 
+
 def validate(cfg):
-    '''Return a list of human-readable error strings (empty list == valid).'''
+    """Return a list of human-readable error strings (empty list == valid)."""
     errs = []
     if not isinstance(cfg, dict):
         return ['config is not an object']
@@ -73,7 +75,7 @@ def validate(cfg):
                 errs.append('wifi.ssid must be a string')
 
     # buses + pin-uniqueness ----------------------------------------------
-    pin_owner = {}      # gpio -> label that claimed it
+    pin_owner = {}  # gpio -> label that claimed it
 
     def claim(label, pin):
         if not _is_int(pin) or pin < 0:
@@ -84,24 +86,26 @@ def validate(cfg):
         else:
             pin_owner[pin] = label
 
-    bus_names = set()
+    bus_refs = set()  # 'uart:1', 'i2c:0', ... referenced by sensors/components
     buses = cfg.get('buses')
     if not isinstance(buses, dict):
         errs.append("missing or invalid 'buses' section")
     else:
-        for bname, spec in buses.items():
-            bus_names.add(bname)
-            if not isinstance(spec, dict):
-                errs.append("bus '%s' must be an object" % bname)
+        for kind, group in buses.items():
+            if kind not in ('uart', 'i2c', 'spi'):
+                errs.append("bus type '%s' is not one of uart/i2c/spi" % kind)
+            if not isinstance(group, dict):
+                errs.append('buses.%s must be an object' % kind)
                 continue
-            claimed = False
-            for key in _BUS_PIN_KEYS:
-                if key in spec:
-                    claim(bname + '.' + key, spec[key])
-                    claimed = True
-            if not claimed:
-                errs.append("bus '%s' declares no pins (need sda/scl, tx/rx or sck/mosi/miso)"
-                            % bname)
+            for ident, spec in group.items():
+                ref = '%s:%s' % (kind, ident)
+                bus_refs.add(ref)
+                if not isinstance(spec, dict):
+                    errs.append('bus %s must be an object' % ref)
+                    continue
+                for key in _BUS_PIN_KEYS:
+                    if key in spec:
+                        claim(ref + '.' + key, spec[key])
 
     # discrete pins --------------------------------------------------------
     pins = cfg.get('pins')
@@ -116,8 +120,7 @@ def validate(cfg):
     if reserved:
         for pin in sorted(pin_owner):
             if pin in reserved:
-                errs.append('%s uses reserved GPIO%d (breaks Wi-Fi/USB/console on %s)'
-                            % (pin_owner[pin], pin, mcu))
+                errs.append('%s uses reserved GPIO%d (breaks Wi-Fi/USB/console on %s)' % (pin_owner[pin], pin, mcu))
 
     # recorder (optional) --------------------------------------------------
     rec = cfg.get('recorder')
@@ -125,62 +128,69 @@ def validate(cfg):
         if not isinstance(rec, dict):
             errs.append("'recorder' must be an object")
         else:
-            for k in ('tlm_slots', 'log_slots', 'slot_size', 'drain_ms'):
+            for k in ('tlm_capacity', 'log_capacity', 'cell_size', 'stats_ms'):
                 if k in rec and not (_is_int(rec[k]) and rec[k] > 0):
                     errs.append('recorder.%s must be a positive int' % k)
 
-    # components -----------------------------------------------------------
-    comps = cfg.get('components')
-    if not isinstance(comps, list):
-        errs.append("missing or invalid 'components' section")
-    else:
-        seen = set()
-        for i, c in enumerate(comps):
-            where = 'components[%d]' % i
-            if not isinstance(c, dict):
+    # sensors (data providers) + components (consumers/actuators) ----------
+    seen_names = set()
+
+    def validate_devices(items, label):
+        if items is None:
+            return
+        if not isinstance(items, list):
+            errs.append("'%s' must be a list" % label)
+            return
+        for i, dev in enumerate(items):
+            where = '%s[%d]' % (label, i)
+            if not isinstance(dev, dict):
                 errs.append('%s must be an object' % where)
                 continue
-            name = c.get('name')
+            name = dev.get('name')
             if not isinstance(name, str) or not name:
                 errs.append('%s.name must be a non-empty string' % where)
             else:
-                where = "component '%s'" % name
-                if name in seen:
-                    errs.append("duplicate component name '%s'" % name)
-                seen.add(name)
-            if not isinstance(c.get('driver'), str) or not c.get('driver'):
+                where = "%s '%s'" % (label, name)
+                if name in seen_names:
+                    errs.append("duplicate device name '%s'" % name)
+                seen_names.add(name)
+            if not isinstance(dev.get('driver'), str) or not dev.get('driver'):
                 errs.append('%s.driver must be a non-empty string' % where)
-            if 'enabled' in c and not isinstance(c['enabled'], bool):
+            if 'enabled' in dev and not isinstance(dev['enabled'], bool):
                 errs.append('%s.enabled must be a bool' % where)
-            bus = c.get('bus')
-            if bus is not None:
-                if not isinstance(bus, str):
+            ref = dev.get('bus')
+            if ref is not None:
+                if not isinstance(ref, str):
                     errs.append('%s.bus must be a string' % where)
-                elif bus not in bus_names:
-                    errs.append("%s.bus '%s' is not a defined bus" % (where, bus))
-            addr = c.get('addr')
+                elif ref not in bus_refs:
+                    errs.append("%s.bus '%s' is not a defined bus" % (where, ref))
+            addr = dev.get('addr')
             if addr is not None and not _is_int(addr):
                 errs.append('%s.addr must be an int or null' % where)
-            prov = c.get('provides')
-            if prov is not None:
-                if not isinstance(prov, dict):
+            provides = dev.get('provides')
+            if provides is not None:
+                if not isinstance(provides, dict):
                     errs.append('%s.provides must be an object' % where)
                 else:
-                    for q, qs in prov.items():
-                        if not isinstance(qs, dict):
-                            errs.append('%s.provides.%s must be an object' % (where, q))
+                    for quantity, spec in provides.items():
+                        if not isinstance(spec, dict):
+                            errs.append('%s.provides.%s must be an object' % (where, quantity))
                             continue
-                        if not _is_int(qs.get('priority')):
-                            errs.append('%s.provides.%s.priority must be an int' % (where, q))
-                        if not _is_int(qs.get('timeout_ms')):
-                            errs.append('%s.provides.%s.timeout_ms must be an int' % (where, q))
+                        if not _is_int(spec.get('priority')):
+                            errs.append('%s.provides.%s.priority must be an int' % (where, quantity))
+                        if not _is_int(spec.get('timeout_ms')):
+                            errs.append('%s.provides.%s.timeout_ms must be an int' % (where, quantity))
+
+    validate_devices(cfg.get('sensors'), 'sensors')
+    validate_devices(cfg.get('components'), 'components')
     return errs
 
 
 # --------------------------------------------------------------------------- config_id
 
+
 def _canon(o):
-    '''Deterministic, sorted-key serialization (no json.dumps options needed).'''
+    """Deterministic, sorted-key serialization (no json.dumps options needed)."""
     if isinstance(o, dict):
         return '{' + ','.join(repr(k) + ':' + _canon(o[k]) for k in sorted(o.keys())) + '}'
     if isinstance(o, (list, tuple)):
@@ -189,11 +199,11 @@ def _canon(o):
 
 
 def config_id(cfg):
-    '''A stable short hash identifying a config snapshot (for the CC iam/config_id).'''
+    """A stable short hash identifying a config snapshot (for the CC iam/config_id)."""
     s = _canon(cfg)
     if _HAVE_HASH:
         return binascii.hexlify(hashlib.sha256(s.encode()).digest()).decode()[:12]
-    acc = 2166136261                                  # FNV-1a fallback
+    acc = 2166136261  # FNV-1a fallback
     for ch in s:
         acc = ((acc ^ ord(ch)) * 16777619) & 0xFFFFFFFF
     return '%08x' % acc
@@ -201,18 +211,20 @@ def config_id(cfg):
 
 # --------------------------------------------------------------------------- load / save
 
+
 def _builtin_default():
     import config_default
+
     return config_default.default()
 
 
 def load(path='board.json', defaults=None):
-    '''Layered load: active board.json if present and valid, else defaults.
+    """Layered load: active board.json if present and valid, else defaults.
 
     Returns (cfg, source, errors). `source` is 'active', 'default', or a fallback reason.
     Never raises — a missing/corrupt/invalid active file degrades to defaults so the board is
     always reachable.
-    '''
+    """
     if defaults is None:
         defaults = _builtin_default()
     try:
@@ -223,8 +235,7 @@ def load(path='board.json', defaults=None):
     try:
         data = json.loads(text)
     except (ValueError, OSError):
-        return defaults, 'default(fallback: board.json is not valid JSON)', \
-            ['board.json is not valid JSON']
+        return defaults, 'default(fallback: board.json is not valid JSON)', ['board.json is not valid JSON']
     errs = validate(data)
     if errs:
         return defaults, 'default(fallback: invalid board.json)', errs
@@ -232,10 +243,10 @@ def load(path='board.json', defaults=None):
 
 
 def save(cfg, path='board.json'):
-    '''Validate then atomically persist a full config snapshot. Returns its config_id.
+    """Validate then atomically persist a full config snapshot. Returns its config_id.
 
     Raises ValueError if invalid (an invalid config is never written).
-    '''
+    """
     errs = validate(cfg)
     if errs:
         raise ValueError('invalid config: ' + '; '.join(errs))
@@ -244,7 +255,7 @@ def save(cfg, path='board.json'):
         f.write(json.dumps(cfg))
     try:
         os.rename(tmp, path)
-    except OSError:                      # some VFS (FAT) won't rename onto an existing file
+    except OSError:  # some VFS (FAT) won't rename onto an existing file
         try:
             os.remove(path)
         except OSError:
@@ -254,9 +265,25 @@ def save(cfg, path='board.json'):
 
 
 def reset(path='board.json'):
-    '''Delete the active config so the next load uses defaults. Returns True if removed.'''
+    """Delete the active config so the next load uses defaults. Returns True if removed."""
     try:
         os.remove(path)
         return True
     except OSError:
         return False
+
+
+def bus(cfg, ref):
+    """Resolve a bus reference 'type:id' (e.g. 'uart:1', 'i2c:0') to its spec dict, or None."""
+    if not isinstance(ref, str) or ':' not in ref:
+        return None
+    kind, _, ident = ref.partition(':')
+    return cfg.get('buses', {}).get(kind, {}).get(ident)
+
+
+def device(cfg, name=None, driver=None):
+    """Find a sensor/component by name or driver. Returns the dict or None."""
+    for item in cfg.get('sensors', []) + cfg.get('components', []):
+        if (name is None or item.get('name') == name) and (driver is None or item.get('driver') == driver):
+            return item
+    return None

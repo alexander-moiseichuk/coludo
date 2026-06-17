@@ -1,0 +1,97 @@
+# Integration test: a real wifi exchange between Control (this host) and the board.
+#
+# Control runs a TCP server; the board (over wifi) dials in and serves. Control does the
+# board-first handshake (whoami -> iam) and then ping + `inspect wifi`, and verifies the board
+# reports itself connected with an IP. Needs the board on USB (mpremote) and on the `panda`
+# network (panda.creds deployed); run `src/glider/deploy.sh` first so modules + creds are on board.
+#
+#   python3 src/control/itest_wifi.py          (PORT_DEV env overrides the serial port)
+
+import asyncio
+import os
+import subprocess
+import sys
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE)
+from control import Server  # noqa: E402
+
+PORT_DEV = os.environ.get('PORT_DEV', '/dev/ttyACM0')
+BOARD_SCRIPT = '/tmp/coludo_board_probe.py'
+
+# Runs on the board: connect wifi, dial the gateway (= Control host) and serve the protocol.
+BOARD_SRC = """
+import asyncio
+import config
+from cc_client import Client, standard_dispatcher
+from wifi import Wifi
+
+async def main():
+    cfg, source, errs = config.load()
+    wifi = Wifi(cfg, log=print)
+    if not await wifi.connect():
+        print('WIFI_FAIL')
+        return
+    gateway = wifi.ifconfig()[2]
+    print('WIFI_OK ip=%s gw=%s' % (wifi.ip(), gateway))
+    dispatcher = standard_dispatcher(cfg)
+    reader, writer = await asyncio.open_connection(gateway, 1234)
+    print('DIALED %s:1234' % gateway)
+    await Client(cfg, dispatcher).serve(reader, writer)
+    print('SERVE_DONE')
+
+asyncio.run(main())
+"""
+
+RESULT = {}
+
+
+async def main():
+    with open(BOARD_SCRIPT, 'w') as script:
+        script.write(BOARD_SRC)
+
+    done = asyncio.Event()
+
+    async def on_board(board):
+        try:
+            pong = await board.command('ping')
+            RESULT['pong'] = pong.command if pong else None
+            RESULT['wifi'] = await board.inspect('wifi')
+            objects = await board.command('objects')
+            RESULT['objects'] = objects.args[0] if objects else None
+        finally:
+            done.set()
+
+    server = Server(port=1234, on_board=on_board)
+    server_task = asyncio.create_task(server.serve_forever())
+    await asyncio.sleep(0.3)
+
+    print('launching board over %s ...' % PORT_DEV)
+    proc = subprocess.Popen(
+        ['mpremote', 'connect', PORT_DEV, 'run', BOARD_SCRIPT],
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+    board_out = ''
+    try:
+        await asyncio.wait_for(done.wait(), timeout=45)
+    except asyncio.TimeoutError:
+        print('TIMEOUT waiting for the board to connect')
+    finally:
+        await asyncio.sleep(0.3)
+        proc.terminate()
+        try:
+            board_out = proc.communicate(timeout=5)[0]
+        except Exception:
+            pass
+        server_task.cancel()
+
+    print('--- board output ---\n%s' % board_out)
+    print('--- exchange result ---\n%s' % RESULT)
+    ok = RESULT.get('pong') == 'pong' and RESULT.get('wifi', {}).get('connected') is True
+    print('WIFI EXCHANGE %s' % ('PASS' if ok else 'FAIL'))
+    return 0 if ok else 1
+
+
+sys.exit(asyncio.run(main()))

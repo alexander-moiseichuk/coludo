@@ -12,34 +12,24 @@
 import binascii
 
 _PREFIX = 'base64:'
-_SAFE = ('abcdefghijklmnopqrstuvwxyz'
-         'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-         '0123456789._-/+:')
+_SAFE = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/+:'
 
 
-class Msg:
+class _Msg:
+    # A board receives `command params` (Control has stripped the routing board id), so args are
+    # the positional params and named are key=value params.
     def __init__(self, command, args, named, line):
-        self.command = command      # first token, lowercased (None for an empty line)
-        self.args = args            # positional values (board-id is args[0] by convention)
-        self.named = named          # dict of key=value params
+        self.command = command  # first token, lowercased (None for an empty line)
+        self.args = args  # positional params
+        self.named = named  # dict of key=value params
         self.line = line
 
-    @property
-    def board(self):
-        '''The board-id by convention (first positional). None for whoami/list/etc.'''
-        return self.args[0] if self.args else None
-
-    @property
-    def params(self):
-        '''Positional params after the board-id.'''
-        return self.args[1:]
-
     def __repr__(self):
-        return 'Msg(%r, args=%r, named=%r)' % (self.command, self.args, self.named)
+        return '_Msg(%r, args=%r, named=%r)' % (self.command, self.args, self.named)
 
 
 def _is_simple(s):
-    if not s or s[:len(_PREFIX)] == _PREFIX:
+    if not s or s[: len(_PREFIX)] == _PREFIX:
         return False
     for c in s:
         if c not in _SAFE:
@@ -48,7 +38,7 @@ def _is_simple(s):
 
 
 def encode(v):
-    '''Encode a value into one whitespace-free wire token.'''
+    """Encode a value into one whitespace-free wire token."""
     if isinstance(v, bool):
         return 'true' if v else 'false'
     if isinstance(v, int):
@@ -60,34 +50,34 @@ def encode(v):
 
 
 def decode(tok):
-    '''Decode a wire token back to a str (base64-decoded if prefixed, else as-is).'''
-    if tok[:len(_PREFIX)] == _PREFIX:
-        return binascii.a2b_base64(tok[len(_PREFIX):]).decode()
+    """Decode a wire token back to a str (base64-decoded if prefixed, else as-is)."""
+    if tok[: len(_PREFIX)] == _PREFIX:
+        return binascii.a2b_base64(tok[len(_PREFIX) :]).decode()
     return tok
 
 
 def parse(line):
-    '''Parse a protocol line into a Msg (works for requests and responses).'''
+    """Parse a protocol line into a _Msg (works for requests and responses)."""
     toks = line.split()
     if not toks:
-        return Msg(None, [], {}, line)
+        return _Msg(None, [], {}, line)
     command = toks[0].lower()
     args = []
     named = {}
     for t in toks[1:]:
-        if t[:len(_PREFIX)] == _PREFIX:
-            args.append(decode(t))            # encoded positional (may contain '=')
+        if t[: len(_PREFIX)] == _PREFIX:
+            args.append(decode(t))  # encoded positional (may contain '=')
         else:
             eq = t.find('=')
             if eq > 0:
-                named[t[:eq]] = decode(t[eq + 1:])
+                named[t[:eq]] = decode(t[eq + 1 :])
             else:
                 args.append(decode(t))
-    return Msg(command, args, named, line)
+    return _Msg(command, args, named, line)
 
 
 def build(command, args=(), named=None):
-    '''Build a protocol line; values are encoded as needed.'''
+    """Build a protocol line; values are encoded as needed."""
     parts = [command]
     for a in args:
         parts.append(encode(a))

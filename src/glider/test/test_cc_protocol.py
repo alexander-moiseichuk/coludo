@@ -1,71 +1,60 @@
-# On-board (MicroPython) test for the CC line protocol (cc_protocol.py).
-# Run by `make test`. Raises (-> runner reports FAIL) on any failed assertion.
+# On-board (MicroPython) test for the CC line protocol (cc_protocol.py). Board-first: a board
+# socket sees `command params` (no id), so parse() is command-first. Run by `make test`.
 
 import cc_protocol as cc
 
 
 def main():
-    # bare command + board-id
-    m = cc.parse('ping glider1')
-    assert m.command == 'ping' and m.board == 'glider1' and m.params == [] and m.named == {}
+    # bare command, no params
+    m = cc.parse('ping')
+    assert m.command == 'ping' and m.args == [] and m.named == {}
 
-    # positional params (bare tokens are plain strings; receiver converts numerics)
-    m = cc.parse('log glider1 3000')
-    assert m.board == 'glider1' and m.params == ['3000']
+    # positional params (bare tokens are strings; the receiver converts numerics)
+    m = cc.parse('log 3000')
+    assert m.command == 'log' and m.args == ['3000']
 
     # named params
-    m = cc.parse('tel glider1 ms=3000')
-    assert m.board == 'glider1' and m.named == {'ms': '3000'} and m.params == []
+    m = cc.parse('tel ms=3000')
+    assert m.command == 'tel' and m.named == {'ms': '3000'} and m.args == []
 
-    # simple strings with safe punctuation stay bare
+    # simple values stay bare; spaces/specials ride as base64
     assert cc.encode('192.168.10.1') == '192.168.10.1'
-    assert cc.encode('glider7a') == 'glider7a'
     assert cc.encode(3000) == '3000'
-
-    # values with spaces / specials are base64 with a readable prefix
     enc = cc.encode('pad 7, gusty')
     assert enc.startswith('base64:') and cc.decode(enc) == 'pad 7, gusty'
-
-    # a value containing '=' must not look like a named param -> base64
-    enc = cc.encode('a=b')
+    enc = cc.encode('a=b')  # a value with '=' must not look like a named param
     assert enc.startswith('base64:') and cc.decode(enc) == 'a=b'
 
-    # JSON rides as one base64 value (no rest-of-line special case)
-    js = '{"board": {"id": "g7a"}, "n": 2}'
-    line = cc.build('save-config', ['glider1', js])
-    m = cc.parse(line)
-    assert m.board == 'glider1' and m.params == [js], m.params
+    # JSON rides as one base64 value (no special case)
+    payload = '{"board": {"id": "g7a"}, "n": 2}'
+    m = cc.parse(cc.build('save-config', [payload]))
+    assert m.command == 'save-config' and m.args == [payload]
 
-    # named value with spaces round-trips
-    line = cc.build('note', ['glider1'], {'msg': 'pad 7, gusty'})
-    m = cc.parse(line)
-    assert m.command == 'note' and m.board == 'glider1' and m.named == {'msg': 'pad 7, gusty'}
+    # an encoded positional containing '=' stays positional
+    m = cc.parse(cc.build('inspect', ['wifi', 'a=b']))
+    assert m.args == ['wifi', 'a=b']
 
-    # response with a JSON payload
-    line = cc.build('ok', ['glider1', '{"temp": 54}'])
-    m = cc.parse(line)
-    assert m.command == 'ok' and m.board == 'glider1' and m.params == ['{"temp": 54}']
+    # command lowercased; values keep case
+    m = cc.parse('STATE Glider1')
+    assert m.command == 'state' and m.args == ['Glider1']
 
-    # command is lowercased; values keep case
-    m = cc.parse('SELECT Glider1')
-    assert m.command == 'select' and m.args == ['Glider1']
-
-    # whoami / operator commands have no board-id
-    assert cc.parse('whoami').board is None
-    m = cc.parse('help log')
-    assert m.command == 'help' and m.args == ['log']
+    # response forms parse too (status first); iam carries the board id
+    m = cc.parse('iam glider1 base64:eyJhIjogMX0=')
+    assert m.command == 'iam' and m.args[0] == 'glider1' and m.args[1] == '{"a": 1}'
+    assert cc.parse('pong').command == 'pong'
+    m = cc.parse('err badcmd nope')
+    assert m.command == 'err' and m.args == ['badcmd', 'nope']
 
     # empty line
     m = cc.parse('   ')
     assert m.command is None and m.args == []
 
-    # mixed positional + named, with an encoded positional that contains '='
-    line = cc.build('cmd', ['glider1', 'a=b'], {'k': 'v', 'two': 'x y'})
+    # build round-trips named + positional through parse
+    line = cc.build('note', ['glider1'], {'msg': 'pad 7, gusty'})
     m = cc.parse(line)
-    assert m.args == ['glider1', 'a=b'], m.args
-    assert m.named == {'k': 'v', 'two': 'x y'}, m.named
+    assert m.command == 'note' and m.args == ['glider1'] and m.named == {'msg': 'pad 7, gusty'}
 
-    print('ok: cc_protocol parse/build/encode/decode (bare + base64, no quoting)')
+    print('ok: cc_protocol parse/build/encode/decode (board-first, base64, no quoting)')
 
 
 main()

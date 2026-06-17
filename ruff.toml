@@ -1,0 +1,14 @@
+# ruff config for Coludo. src/glider = MicroPython (board), src/control = CPython 3.12 (host),
+# cc_protocol.py shared. Format enforces single quotes (our convention).
+line-length = 120
+target-version = 'py39'
+
+[lint]
+select = ['E', 'F', 'W', 'I', 'B']   # pycodestyle, pyflakes, warnings, isort, bugbear
+
+[lint.per-file-ignores]
+# the benchmark deliberately allocates throwaway objects and counts loops to measure cost
+'src/glider/test/bench_asyncio.py' = ['F841', 'B007']
+
+[format]
+quote-style = 'single'
