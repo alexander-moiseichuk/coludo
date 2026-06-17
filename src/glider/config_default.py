@@ -35,9 +35,9 @@ def default():
         },
 
         'recorder': {                   # PSRAM ring sizes + drain cadence (Recorder)
-            'tlm_slots': 512,
-            'log_slots': 512,
-            'slot_size': 192,
+            'tlm_capacity': 512,
+            'log_capacity': 512,
+            'cell_size': 256,           # power-of-two cell; ~128 KB/ring, nothing on 32 MB PSRAM
             'drain_ms': 50,
         },
 

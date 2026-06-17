@@ -17,7 +17,7 @@ _SAFE = ('abcdefghijklmnopqrstuvwxyz'
          '0123456789._-/+:')
 
 
-class Msg:
+class _Msg:
     def __init__(self, command, args, named, line):
         self.command = command      # first token, lowercased (None for an empty line)
         self.args = args            # positional values (board-id is args[0] by convention)
@@ -35,7 +35,7 @@ class Msg:
         return self.args[1:]
 
     def __repr__(self):
-        return 'Msg(%r, args=%r, named=%r)' % (self.command, self.args, self.named)
+        return '_Msg(%r, args=%r, named=%r)' % (self.command, self.args, self.named)
 
 
 def _is_simple(s):
@@ -67,10 +67,10 @@ def decode(tok):
 
 
 def parse(line):
-    '''Parse a protocol line into a Msg (works for requests and responses).'''
+    '''Parse a protocol line into a _Msg (works for requests and responses).'''
     toks = line.split()
     if not toks:
-        return Msg(None, [], {}, line)
+        return _Msg(None, [], {}, line)
     command = toks[0].lower()
     args = []
     named = {}
@@ -83,7 +83,7 @@ def parse(line):
                 named[t[:eq]] = decode(t[eq + 1:])
             else:
                 args.append(decode(t))
-    return Msg(command, args, named, line)
+    return _Msg(command, args, named, line)
 
 
 def build(command, args=(), named=None):

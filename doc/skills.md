@@ -121,8 +121,9 @@ so it must run on both.
 - **ruff** for lint + format (`ruff check`, `ruff format`; config in `ruff.toml`).
 - **`deploy.sh`** maps `src/glider/` → `/pyboard/`: each Python file is ruff-checked and
   `mpy-cross`-compiled then pushed; non-Python files are pushed as-is; `test/` → `/pyboard/test`.
-- The Wi-Fi password is **not** committed: `src/glider/ssid.creds` is gitignored and pushed by
-  `deploy.sh`.
+- The Wi-Fi password is **not** committed: a `src/glider/<ssid>.creds` file (e.g. `panda.creds`,
+  one line — the plain password) is gitignored (`*.creds`) and pushed by `deploy.sh`; `wifi.py`
+  reads it for the password.
 
 ## Control Center
 

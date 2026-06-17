@@ -2,9 +2,10 @@
 # cc-protocol.md). STA only; the board never hosts an AP. Credentials, CC host/port and the
 # tunable TX power come from the `wifi` section of board.json.
 
-import network
-import time
 import asyncio
+import time
+
+import network
 
 
 class Wifi:
@@ -27,7 +28,7 @@ class Wifi:
             except Exception:
                 pass
         if not self.wlan.isconnected():
-            self.log("wifi :: connecting to '%s'" % self.ssid)
+            self.log('wifi :: connecting to "%s"' % self.ssid)
             self.wlan.connect(self.ssid, self.password)
             t0 = time.ticks_ms()
             while not self.wlan.isconnected():
