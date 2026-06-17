@@ -34,11 +34,13 @@ check_and_push() {
             fi
             ;;
     esac
-    if mpremote connect "$PORT" cp "$file" ":$dest" >/dev/null 2>&1; then
-        echo "  ${G}ok${N}  $dest"
-    else
-        echo "${R}push failed: $dest${N}"; return 1
-    fi
+    for _ in 1 2 3; do
+        if mpremote connect "$PORT" cp "$file" ":$dest" >/dev/null 2>&1; then
+            echo "  ${G}ok${N}  $dest"; return 0
+        fi
+        sleep 1
+    done
+    echo "${R}push failed: $dest${N}"; return 1
 }
 
 # build the file list (args, or all modules + tests + ssid.creds)
