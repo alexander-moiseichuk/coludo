@@ -81,7 +81,11 @@ def render_module(path: str, out: list) -> None:
     with open(path) as handle:
         source = handle.read()
     tree = ast.parse(source)
-    out.append('## `%s`\n' % os.path.basename(path))
+    name = os.path.basename(path)
+    out.append('## `%s`\n' % name)
+    test = os.path.join(os.path.dirname(path), 'test', 'test_%s' % name)
+    if os.path.exists(test):
+        out.append('_Tested by `test/test_%s`._\n' % name)
     header = module_header(source)
     if header:
         out.append(header + '\n')

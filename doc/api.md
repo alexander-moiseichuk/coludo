@@ -6,6 +6,8 @@ _Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand
 
 ## `board_health.py`
 
+_Tested by `test/test_board_health.py`._
+
 BoardHealth — periodic device vitals (temperature, free memory, CPU load) pushed to telemetry
 and exposed to the operator via the Inspector (findings.txt #10). CPU load is estimated from a
 low-priority idle task: the fewer times it runs in a period (vs the most it has ever run), the
@@ -22,6 +24,8 @@ busier the board.
 - `stats() -> dict`
 
 ## `cc_client.py`
+
+_Tested by `test/test_cc_client.py`._
 
 cc_client — board side of the Control protocol (specs/cc-protocol.md). Board-first routing:
 Control strips the routing board id, so the board receives `command params` and replies
@@ -49,6 +53,8 @@ Build a Dispatcher with the standard command handlers, wired to the running conf
 Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset.
 
 ## `cc_protocol.py`
+
+_Tested by `test/test_cc_protocol.py`._
 
 CC <-> board line protocol (specs/cc-protocol.md).
 
@@ -78,6 +84,8 @@ Parse a protocol line into a _Msg (works for requests and responses).
 Build a protocol line; values are encoded as needed.
 
 ## `config.py`
+
+_Tested by `test/test_config.py`._
 
 Board configuration loader / validator — the Phase 0 foundation.
 
@@ -140,6 +148,8 @@ different drivers/priorities); `components` are the consumers/actuators (recorde
 
 ## `controller.py`
 
+_Tested by `test/test_controller.py`._
+
 Flight Controller — creates and supervises the tasks described by a validated config, and
 tracks the flight state machine. See specs/coludo.md ('Flight Controller', 'Tasks').
 
@@ -165,6 +175,8 @@ operator via report()/validate().
 - `stats()`
 
 ## `inspector.py`
+
+_Tested by `test/test_inspector.py`._
 
 Inspector — the registry of Inspectable objects and the operator-facing introspection surface.
 Control's inspect/update/stats commands resolve an object by name through the Inspector
@@ -194,6 +206,8 @@ three for computed values.
 - `stats(name: str) -> dict` _(classmethod)_
 
 ## `recorder.py`
+
+_Tested by `test/test_recorder.py`._
 
 Recorder — the single non-hot data path: telemetry + logs into PSRAM ring buffers, drained to
 the Luckfox recorder over UART. See specs/coludo.md ('Task Data-Flow', 'Logging', 'Telemetry',
@@ -274,6 +288,8 @@ Class decorator: register a Task subclass under a driver name.
 
 ## `wifi.py`
 
+_Tested by `test/test_wifi.py`._
+
 Wi-Fi station — joins the Control Center's network as a client (specs/board-config.md,
 cc-protocol.md). STA only; the board never hosts an AP. SSID, CC host/port and the tunable TX
 power come from the `wifi` section of board.json; the password comes from <ssid>.creds (pushed
@@ -295,6 +311,8 @@ by deploy.sh, never committed) so it is not in the repo.
 # control (CPython) — `src/control`
 
 ## `control.py`
+
+_Tested by `test/test_control.py`._
 
 Control — host-side ground station for the Coludo boards (specs/cc-protocol.md). Board-first:
 boards dial in, Control learns each board's id via whoami/iam, and drives commands over the
