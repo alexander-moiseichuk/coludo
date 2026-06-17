@@ -472,7 +472,14 @@ Audio is captured (if at all) by the Recorder module alongside its video, not by
 | **Watchdog Reset Window**   | —                | 100–200 ms   | If PID loop or IMU updates stall beyond this, system must reset or enter degraded mode. |
 
 **Measured reality check** (see [benchmark findings](../doc/benches/esp32p4-micropython-findings.md)):
-`asyncio.sleep_ms()` floors at ~10 ms (FreeRTOS 100 Hz tick), so the 50–100 Hz / 200 Hz rows
-above cannot be met with `asyncio.sleep` — those loops must be paced by a hardware timer or a
-`ticks_us()` busy-wait. A fragmented-heap `gc.collect()` was measured at ~67 ms, which is why
-GC is controlled explicitly and disabled during the flight.
+`asyncio.sleep_ms()` floors at ~10 ms (FreeRTOS 100 Hz tick), and a fragmented-heap `gc.collect()`
+was measured at ~67 ms (hence GC is controlled and disabled in flight).
+
+**Open risk — sub-10 ms control loop.** It is not yet settled that we need one. The glider flies
+below ~100 m/s, so a ~20–50 Hz loop (well within `asyncio.sleep_ms`) may be plenty — if so this
+risk disappears and the loop stays plain cooperative asyncio. If a faster loop *is* needed, ranked
+mitigations (we have headroom — no multimedia, no native code yet): (1) split work across more
+asyncio queues/tasks; (2) drive scheduling from **IRQs** (pin/UART) kicking a `ThreadSafeFlag`
+rather than polling; (3) a **hardware-timer** tick that releases the control task; (4) move the
+control loop to its **own core thread** (`_thread`); last resort, a **native** control/servo
+module. This is decided in Phase 3 against real flight data, not now.

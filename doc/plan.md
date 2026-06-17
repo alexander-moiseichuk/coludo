@@ -10,11 +10,27 @@ Required hardware and the phased development roadmap. Architecture lives in
 - **Phase 1 board side — done.** `wifi` (STA) and `cc_client` (`Dispatcher`/`Client` +
   `standard_dispatcher` answering whoami/ping/health/state/report/get-config/save-config/
   reset-config/reboot). 8/8 on-board tests.
-- **Resume point (next):** the **CC hub** in `src/control/` (host Python, stdlib asyncio — the
-  isolated piece; the board client already speaks the protocol to it). **Then** the Controller
-  **bring-up wiring** (connect → CC time-sync → Recorder drain as the `uart_sink` task), which is
-  two-sided so wants the hub live first. The `RecorderTask @driver('uart_sink')` integration was
-  scoped but deferred.
+- **Resume point (next):** the **Control** service in `src/control/` (host CPython, stdlib asyncio
+  — the isolated piece; the board client already speaks the protocol to it). **Then** the Controller
+  **bring-up wiring** (connect → time-sync → Recorder drain as the `uart_sink` task), two-sided so
+  it wants Control live first. The `RecorderTask @driver('uart_sink')` integration was deferred.
+
+### Near-term work from `findings.txt` (quality pass)
+
+- **Conventions** adopted (`CLAUDE.md` + `skills.md`) and **protocol reorder** done
+  (`board command`, Inspectable commands). ✅
+- **Tooling**: `ruff` config + `deploy.sh` (lint + `mpy-cross` + push to `/pyboard/`) +
+  `ssid.creds` (gitignored Wi-Fi password). ◻
+- **`recorder.py` refactor** as the golden reference module (rename to full names, async
+  `StreamWriter` drain, drop `stop`/`sink`/`also`/`limit`, log-drop vs tlm-raise, `const`, type
+  annotations) + finish the `_Msg` rename in `cc_protocol`; sync tests. ◻
+- **Config schema reorg** (board-config.md): nested `buses: {uart:{1,2}, i2c:{0,1}, spi:{}}`, a
+  `sensors:` section, no abbreviations, configs in a `configs/` subfolder. ◻ (doc + code)
+- **`Inspectable` mixin** (`inspect`/`update`/`stats` + `type`/`name`) — design then adopt. ◻
+- **`BoardHealth` task** — `esp32.mcu_temperature()`, `idf_heap_info()` (PSRAM-aware), idle/load,
+  periodic Telemetry every ~1 s. ◻
+- **`test/probe_pins.py`** — sweep pins 0..60 and UART/I2C/SPI 0..5 to auto-derive a board map;
+  inspect `machine.Pin.board`. ◻ (low priority — we have a map)
 
 ## Required hardware
 
@@ -86,6 +102,15 @@ than the *board*:
 
 Needed by Phase 3/4 navigation. **Interim:** until it exists, and because all launches are from
 the same site, these parameters may live in `board.json` (noted in `board-config.md`).
+
+**Known launch pads** (several may be defined; the on-board GNSS and the host GPS each select the
+nearest one). First site — **HPRC** (Homestead Public Rocketry Club):
+- launch pad: `25.514379, -80.391795`
+- landing zone: top-left `25.514630, -80.392880`, bottom-right `25.514656, -80.391155`
+- constraint: landing-zone centre must be < 100 m from the pad.
+
+If the host laptop has a GPS (GPSD), the board could take **assisted GPS** from it during setup —
+a sync loop that waits until GPS is ready.
 
 ## Task data-flow model
 
