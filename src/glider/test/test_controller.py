@@ -62,6 +62,26 @@ async def amain():
     assert c.active('missing') is None
     assert len(c.active()) == 2
 
+    # find(): non-blocking dependency lookup (None for any not up); Task.find delegates
+    assert c.find(['s1', 's2']) == [c.tasks['s1'], c.tasks['s2']]
+    assert c.find(['s1', 'missing']) == [c.tasks['s1'], None]
+    assert c.tasks['s1'].find(['s2']) == [c.tasks['s2']]
+
+    # query(waiting=False) == find; query(waiting=True) returns once all are present
+    assert await c.query(['s1'], waiting=False) == [c.tasks['s1']]
+    assert await c.tasks['s1'].query(['s2']) == [c.tasks['s2']]
+
+    # query(waiting=True) parks until a not-yet-present task appears
+    late = FakeSensor('late', {}, c)
+
+    async def appear():
+        await asyncio.sleep_ms(20)
+        c.tasks['late'] = late
+
+    asyncio.create_task(appear())
+    assert await c.query(['s1', 'late'], waiting=True) == [c.tasks['s1'], late]
+    c.tasks.pop('late')  # drop the never-set-up fixture so it doesn't skew validate()/stats()
+
     assert c.validate() is True
 
     # run the task loops, then check stats()

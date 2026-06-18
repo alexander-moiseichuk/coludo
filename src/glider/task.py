@@ -61,6 +61,15 @@ class Task(inspector.Inspectable):
         for cb in self._subs:
             cb(self, event)
 
+    def find(self, names):
+        """Non-blocking sibling lookup via the Controller (None for any not up)."""
+        return self.controller.find(names)
+
+    async def query(self, names, waiting=True):
+        """Await sibling tasks by name via the Controller; with `waiting` (default) park until all
+        are up (order is not fixed): `wifi, = await self.query(['wifi'])`."""
+        return await self.controller.query(names, waiting)
+
     def validate(self):
         """Return True if the task is currently healthy."""
         return self._ok

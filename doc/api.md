@@ -139,22 +139,24 @@ tracks the flight state machine. See specs/coludo.md ('Flight Controller', 'Task
 The Controller is the one task created explicitly; it creates the rest from config in a
 deterministic order. Task failures are reported, not fatal (the strict/operator-authority
 model): a component that fails setup is logged and skipped, and go/no-go stays with the
-operator via report()/validate().
+operator via stats()/validate().
 
 ### `class Controller(inspector.Inspectable)`
 
-- `__init__(config, registry=None, log=None)` — constructor
-- `directory()` — Names of enabled devices, in creation order (config order).
-- `create(name)` — Create a task by component name via the registry. A component names its implementation
-- `active(name=None)` — Return the active task by name, or a list of all active tasks if name is None.
-- `setup()` — Create + set up every enabled task in order. Skip (and report) failures.
-- `start()` — Launch each task's run() loop as a supervised asyncio task.
-- `close(name)` — Deactivate a task and clean up its resources.
-- `finish()` — Shut down all tasks.
-- `set_state(state)`
-- `validate()` — True if every active task is healthy.
-- `inspect()`
-- `stats()`
+- `__init__(config: dict, registry: dict=None, log=None)` — constructor
+- `directory() -> list` — Names of enabled devices, in creation order (config order).
+- `create(name: str) -> task.Task` — Create a task by component name via the registry. A component names its implementation
+- `active(name: str=None)` — Return the active task by name (None if absent), or a list of all active tasks if
+- `find(names: list[str]) -> list` — Non-blocking: the active tasks for `names`, None for any not up. The fast lookup for
+- `query(names: list[str], waiting: bool=True) -> list` — Resolve dependencies by name. With `waiting` (the default) park the caller until every
+- `setup() -> bool` — Create + set up every enabled task in order. Skip (and report) failures.
+- `start() -> None` — Launch each task's run() loop as a supervised asyncio task.
+- `close(name: str) -> None` — Deactivate a task and clean up its resources.
+- `finish() -> None` — Shut down all tasks.
+- `set_state(state: str) -> None`
+- `validate() -> bool` — True if every active task is healthy.
+- `inspect() -> dict`
+- `stats() -> dict`
 
 ## `inspector.py`
 
@@ -321,6 +323,8 @@ name so the Controller can build it from a config component.
 - `run()` — Main activity loop. Override. Default returns immediately.
 - `notify(callback)` — Register callback(task, event) to be invoked on this task's updates.
 - `emit(event=None)` — Notify all subscribers of an update.
+- `find(names)` — Non-blocking sibling lookup via the Controller (None for any not up).
+- `query(names, waiting=True)` — Await sibling tasks by name via the Controller; with `waiting` (default) park until all
 - `validate()` — Return True if the task is currently healthy.
 - `finish()` — Shut down and release resources.
 - `inspect()` — Status dict. Subclasses extend it.
@@ -419,7 +423,7 @@ flies fine without CC. The dispatcher is wired to this board's config + Controll
 Serve the CC protocol to the hub when the link is available; never fatal.
 
 - `setup() -> bool`
-- `run() -> None` — Wait for Wi-Fi, dial CC, and serve until the link drops; then retry. Idle (not spinning)
+- `run() -> None` — Park until the Wi-Fi dependency is up, then dial CC and serve until the link drops; retry.
 
 ## `recorder.py`
 
