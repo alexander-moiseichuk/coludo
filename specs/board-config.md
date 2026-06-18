@@ -160,12 +160,14 @@ to keep in sync.
 
 ### What is NOT in board config
 
-**Mission config** (landing-zone coordinates, altitude thresholds, target point) is *per
-launch*, not *per board*, and will live in a dedicated `launch.config` (same layered/validated
-form as `board.json` — see the plan). Board config describes the vehicle's hardware; mission
-config describes a specific flight. **Interim:** until `launch.config` exists, and because all
-launches are currently from the same site, these launch parameters may temporarily be carried
-in `board.json`.
+**Mission config** (launch id, launch-site position, and later altitude thresholds / target
+point) is *per launch*, not *per board*, and lives in a dedicated **`launch.config`** loaded by
+the `mission` object (`mission.py`). Board config describes the vehicle's hardware; mission config
+describes a specific flight. Unlike `board.json` (whose draft lives on CC and is pushed whole via
+`save-config`), the mission is small and edited live on the board through the Inspector
+(`update mission {...}`, including `epoch` for time sync) and persisted with `save-mission` — see
+[`cc-protocol.md`](cc-protocol.md). The board clock is part of the mission surface but is the
+RTC's, never persisted.
 
 ## Lifecycle and activation
 

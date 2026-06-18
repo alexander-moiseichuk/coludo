@@ -160,6 +160,13 @@ def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_p
         config_mod.reset(config_path)
         return cc.build('ok')
 
+    async def save_mission(msg):
+        mission = Inspector.get('mission')
+        if mission is None:
+            return cc.build('err', ['unsupported', 'no mission'])
+        mission.save()  # persist the live mission (set via `update mission`) to launch.config
+        return cc.build('ok')
+
     async def reboot(msg):
         reset = on_reboot if on_reboot is not None else _machine_reset
 
@@ -182,6 +189,7 @@ def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_p
     dispatcher.on('get-config', get_config)
     dispatcher.on('save-config', save_config)
     dispatcher.on('reset-config', reset_config)
+    dispatcher.on('save-mission', save_mission)
     dispatcher.on('reboot', reboot)
     return dispatcher
 

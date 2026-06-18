@@ -205,6 +205,36 @@ three for computed values.
 - `update(name: str, props: dict) -> list` _(classmethod)_
 - `stats(name: str) -> dict` _(classmethod)_
 
+## `mission.py`
+
+_Tested by `test/test_mission.py`._
+
+Mission — the per-launch identity the operator sets before a flight: a launch id, the launch
+site position (a known origin and a GNSS cold-start seed), and the board clock. Unlike the board
+config (hardware; stable across flights, see config.py) the mission changes every launch, so it
+lives in its own file, `launch.config`, and is edited live through the Inspector.
+
+Mission is a singleton Inspectable:
+inspect mission                              -> launch id / site / position + the board clock
+update mission base64:{"launch_id":"t1"}     -> set the launch id for this flight
+update mission base64:{"epoch":1750170000}   -> set the board RTC (time sync; Unix seconds)
+save-mission                                 -> persist the live mission back to launch.config
+
+Position is metres / decimal degrees; it is a known origin now and seeds the GNSS driver later.
+
+### `class Mission(Inspectable)`
+
+The operator-set launch identity. One per board; registers itself so Control can
+`inspect`/`update mission`. Seeded from launch.config at construction.
+
+- `__init__(path: str=LAUNCH_PATH)` — constructor
+- `set_time(epoch) -> bool` — Set the board RTC from a Unix epoch (seconds, UTC). Returns True if applied.
+- `clock() -> str` — Current board wall-clock as 'YYYY-MM-DDTHH:MM:SS' (from the RTC).
+- `epoch() -> int` — Current board clock as a Unix epoch (seconds), for Control to compare against its own.
+- `inspect() -> dict`
+- `update(props: dict) -> list` — Apply launch_id/site/latitude/longitude/altitude (stored, range-checked) and `epoch`
+- `save() -> None` — Persist the stored mission fields to launch.config (atomic temp+rename) so the launch
+
 ## `recorder.py`
 
 _Tested by `test/test_recorder.py`._

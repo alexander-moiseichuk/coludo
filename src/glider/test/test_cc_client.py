@@ -3,11 +3,13 @@
 
 import asyncio
 import json
+import os
 
 import cc_protocol as cc
 from cc_client import Client, Dispatcher, standard_dispatcher
 from config_default import default
 from inspector import Inspectable, Inspector
+from mission import Mission
 
 
 class _FakeReader:
@@ -99,6 +101,14 @@ async def amain():
     ok = cc.parse(await sd2.handle(cc.build('save-config', [json.dumps(default())])))
     assert ok.command == 'ok' and 'config_id' in json.loads(ok.args[0])
     assert cc.parse(await sd2.handle('reset-config')).command == 'ok'
+
+    # save-mission: unsupported until a Mission is registered, then persists launch.config
+    Inspector.unregister('mission')
+    assert 'unsupported' in await sd.handle('save-mission')
+    Mission('test_cc_launch.config').update({'launch_id': 'cc-t1'})  # registers itself
+    assert cc.parse(await sd.handle('save-mission')).command == 'ok'
+    assert json.load(open('test_cc_launch.config'))['launch_id'] == 'cc-t1'
+    os.remove('test_cc_launch.config')
 
     # reboot returns ok and fires the (intercepted) reset
     fired = []
