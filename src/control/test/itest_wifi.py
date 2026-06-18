@@ -24,16 +24,16 @@ BOARD_SRC = """
 import asyncio
 import cc_client
 import config
-from wifi import Wifi
+import wifi
 
 async def main():
     cfg, source, errs = config.load()
-    wifi = Wifi(cfg, log=print)
-    if not await wifi.connect():
+    station = wifi.Wifi(cfg, log=print)
+    if not await station.connect():
         print('WIFI_FAIL')
         return
-    gateway = wifi.ifconfig()[2]
-    print('WIFI_OK ip=%s gw=%s' % (wifi.ip(), gateway))
+    gateway = station.ifconfig()[2]
+    print('WIFI_OK ip=%s gw=%s' % (station.ip(), gateway))
     dispatcher = cc_client.create_dispatcher(cfg)
     reader, writer = await asyncio.open_connection(gateway, 1234)
     print('DIALED %s:1234' % gateway)

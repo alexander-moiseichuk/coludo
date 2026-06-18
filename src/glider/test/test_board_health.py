@@ -3,10 +3,10 @@
 
 import asyncio
 
-from board_health import BoardHealth
-from config_default import default
-from inspector import Inspector
-from recorder import Recorder
+import board_health
+import config_default
+import inspector
+import recorder
 
 
 class _FakeWriter:
@@ -21,8 +21,8 @@ class _FakeWriter:
 
 
 async def amain():
-    Recorder.setup(default(), uart=_FakeWriter())
-    health = BoardHealth(period_ms=20)
+    recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
+    health = board_health.BoardHealth(period_ms=20)
 
     # sample() reports the vitals
     vitals = health.sample()
@@ -30,8 +30,8 @@ async def amain():
     assert isinstance(vitals['mem_free'], int) and vitals['mem_free'] > 0
 
     # inspectable + registered
-    assert 'health' in Inspector.names()
-    assert set(Inspector.inspect('health').keys()) == {'temp', 'mem_free', 'load'}
+    assert 'health' in inspector.Inspector.names()
+    assert set(inspector.Inspector.inspect('health').keys()) == {'temp', 'mem_free', 'load'}
 
     # run a few periods: rows land in telemetry routed to the health.csv file
     task = asyncio.create_task(health.run())
@@ -41,8 +41,8 @@ async def amain():
         await task
     except asyncio.CancelledError:
         pass
-    await Recorder.drain()
-    rows = [bytes(i) for i in Recorder._uart.items]
+    await recorder.Recorder.drain()
+    rows = [bytes(i) for i in recorder.Recorder._uart.items]
     assert any(b'_health.csv@' in r for r in rows), rows
     assert any(b'uptime;temp;mem_free;load' in r for r in rows)  # header emitted
     assert 0.0 <= health.load <= 1.0

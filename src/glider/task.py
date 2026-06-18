@@ -12,7 +12,7 @@
 # A driver registers itself with @driver('name'); the Controller maps a component's 'driver'
 # field to the class via DRIVERS.
 
-from inspector import Inspectable
+import inspector
 
 DRIVERS = {}
 
@@ -27,7 +27,7 @@ def driver(name):
     return deco
 
 
-class Task(Inspectable):
+class Task(inspector.Inspectable):
     kind = 'task'
 
     def __init__(self, name, config=None, controller=None):

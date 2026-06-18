@@ -104,7 +104,9 @@ so it must run on both.
   Standard-library / builtin imports are fine as-is (`import json`, `from micropython import const`,
   `from machine import RTC`), and `cc_protocol` keeps its `as cc` alias. This holds in a module's
   **own** unit test too — `import mission` and reach its internals qualified (`mission._load`),
-  renaming any instance variable that would otherwise shadow the module (`launch = mission.Mission(...)`).
+  renaming any instance variable that would otherwise shadow the module. Give the rename a
+  **problem-specific** name that reads (`launch = mission.Mission(...)`; a Controller Task becomes
+  `new_task` / `pending_task` / `closing_task` by lifecycle phase) — never a bare `task_` disambiguator.
 - **Type annotations** on every non-local: module constants, class variables, function arguments
   and return types (both CPython 3.12 and MicroPython 1.28 accept them).
 - **Constants** via `micropython.const`, with a portable shim at the top of shared/board modules:

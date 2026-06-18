@@ -8,7 +8,7 @@ import asyncio
 import json
 
 import cc_protocol as cc
-from inspector import Inspector
+import inspector
 
 
 class Dispatcher:
@@ -111,13 +111,13 @@ def create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_pat
         return cc.build('ok', [json.dumps(controller.stats() if controller is not None else {})])
 
     async def objects(msg):
-        return cc.build('ok', [json.dumps(Inspector.names())])
+        return cc.build('ok', [json.dumps(inspector.Inspector.names())])
 
     async def inspect(msg):
         if not msg.args:
             return cc.build('err', ['badargs', 'inspect <object>'])
         try:
-            return cc.build('ok', [json.dumps(Inspector.inspect(msg.args[0]))])
+            return cc.build('ok', [json.dumps(inspector.Inspector.inspect(msg.args[0]))])
         except KeyError:
             return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
 
@@ -125,7 +125,7 @@ def create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_pat
         if len(msg.args) < 2:
             return cc.build('err', ['badargs', 'update <object> <json>'])
         try:
-            changed = Inspector.update(msg.args[0], json.loads(msg.args[1]))
+            changed = inspector.Inspector.update(msg.args[0], json.loads(msg.args[1]))
         except KeyError:
             return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
         return cc.build('ok', [json.dumps({'changed': changed})])
@@ -134,7 +134,7 @@ def create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_pat
         if not msg.args:
             return cc.build('err', ['badargs', 'stats <object>'])
         try:
-            return cc.build('ok', [json.dumps(Inspector.stats(msg.args[0]))])
+            return cc.build('ok', [json.dumps(inspector.Inspector.stats(msg.args[0]))])
         except KeyError:
             return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
 
@@ -161,7 +161,7 @@ def create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_pat
         return cc.build('ok')
 
     async def save_mission(msg):
-        mission = Inspector.get('mission')
+        mission = inspector.Inspector.get('mission')
         if mission is None:
             return cc.build('err', ['unsupported', 'no mission'])
         mission.save()  # persist the live mission (set via `update mission`) to launch.config

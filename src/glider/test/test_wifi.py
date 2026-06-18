@@ -2,12 +2,12 @@
 # Does NOT connect (that needs the panda AP up) -- only checks construction is correct.
 # Run by `make test`.
 
-from config_default import default
-from wifi import Wifi
+import config_default
+import wifi
 
 
 def main():
-    w = Wifi(default())
+    w = wifi.Wifi(config_default.default())
     assert w.ssid == 'panda', w.ssid
     assert w.tx_power == 11
     assert w.isconnected() is False  # WLAN not created until connect()

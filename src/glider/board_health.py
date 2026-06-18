@@ -7,8 +7,8 @@ import asyncio
 import gc
 import time
 
-from inspector import Inspectable, Inspector
-from recorder import Telemetry
+import inspector
+import recorder
 
 try:
     import esp32
@@ -16,7 +16,7 @@ except ImportError:
     esp32 = None
 
 
-class BoardHealth(Inspectable):
+class BoardHealth(inspector.Inspectable):
     name = 'health'
     kind = 'health'
 
@@ -25,8 +25,8 @@ class BoardHealth(Inspectable):
         self.load: float = 0.0
         self._idle_count: int = 0
         self._max_rate: float = 0.0
-        self._tlm = Telemetry('health.csv', ('temp', 'mem_free', 'load'))
-        Inspector.register(self)
+        self._tlm = recorder.Telemetry('health.csv', ('temp', 'mem_free', 'load'))
+        inspector.Inspector.register(self)
 
     def temperature(self):
         if esp32 is not None:

@@ -12,7 +12,7 @@ import asyncio
 import struct
 import time
 
-from inspector import Inspector
+import inspector
 
 try:
     from micropython import const
@@ -118,7 +118,7 @@ class Recorder:
             uart = UART(int(ref.split(':')[1]), baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
         # accept a pre-wrapped async writer (tests) or wrap a raw UART for async drain
         cls._uart = uart if hasattr(uart, 'drain') else asyncio.StreamWriter(uart, {})
-        Inspector.register(cls)
+        inspector.Inspector.register(cls)
 
     @classmethod
     def timestamp(cls) -> int:

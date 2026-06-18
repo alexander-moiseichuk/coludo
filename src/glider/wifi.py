@@ -6,11 +6,11 @@
 import asyncio
 import time
 
+import inspector
 import network
-from inspector import Inspectable, Inspector
 
 
-class Wifi(Inspectable):
+class Wifi(inspector.Inspectable):
     name = 'wifi'
     kind = 'wifi'
 
@@ -21,7 +21,7 @@ class Wifi(Inspectable):
         self.tx_power = wifi.get('tx_power_dbm')
         self.log = log if log is not None else (lambda message: None)
         self.wlan = None
-        Inspector.register(self)
+        inspector.Inspector.register(self)
 
     def _read_password(self, fallback: str) -> str:
         """Read the password from <ssid>.creds (gitignored, deploy.sh-pushed), else `fallback`."""

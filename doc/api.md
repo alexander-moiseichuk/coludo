@@ -13,7 +13,7 @@ and exposed to the operator via the Inspector (findings.txt #10). CPU load is es
 low-priority idle task: the fewer times it runs in a period (vs the most it has ever run), the
 busier the board.
 
-### `class BoardHealth(Inspectable)`
+### `class BoardHealth(inspector.Inspectable)`
 
 - `__init__(period_ms: int=1000)` — constructor
 - `temperature()`
@@ -158,7 +158,7 @@ deterministic order. Task failures are reported, not fatal (the strict/operator-
 model): a component that fails setup is logged and skipped, and go/no-go stays with the
 operator via report()/validate().
 
-### `class Controller(Inspectable)`
+### `class Controller(inspector.Inspectable)`
 
 - `__init__(config, registry=None, log=None)` — constructor
 - `directory()` — Names of enabled devices, in creation order (config order).
@@ -222,7 +222,7 @@ save-mission                                 -> persist the live mission back to
 
 Position is metres / decimal degrees; it is a known origin now and seeds the GNSS driver later.
 
-### `class Mission(Inspectable)`
+### `class Mission(inspector.Inspectable)`
 
 The operator-set launch identity. One per board; registers itself so Control can
 `inspect`/`update mission`. Seeded from launch.config at construction.
@@ -306,7 +306,7 @@ field to the class via DRIVERS.
 
 Class decorator: register a Task subclass under a driver name.
 
-### `class Task(Inspectable)`
+### `class Task(inspector.Inspectable)`
 
 - `__init__(name, config=None, controller=None)` — constructor
 - `setup()` — Initialize or reset. Override. Return True on success, False otherwise.
@@ -326,7 +326,7 @@ cc-protocol.md). STA only; the board never hosts an AP. SSID, CC host/port and t
 power come from the `wifi` section of board.json; the password comes from <ssid>.creds (pushed
 by deploy.sh, never committed) so it is not in the repo.
 
-### `class Wifi(Inspectable)`
+### `class Wifi(inspector.Inspectable)`
 
 - `__init__(config: dict, log=None)` — constructor
 - `connect(timeout_ms: int=15000) -> bool` — Join the configured network. Returns True once connected, False on timeout.

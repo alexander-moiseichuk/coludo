@@ -8,24 +8,24 @@
 
 import asyncio
 
-from inspector import Inspectable, Inspector
-from task import DRIVERS
+import inspector
+import task
 
 STATES = ('setting', 'boosting', 'gliding', 'landing', 'done')
 
 
-class Controller(Inspectable):
+class Controller(inspector.Inspectable):
     name = 'controller'
     kind = 'controller'
 
     def __init__(self, config, registry=None, log=None):
         self.config = config
-        self.registry = registry if registry is not None else DRIVERS
+        self.registry = registry if registry is not None else task.DRIVERS
         self.log = log if log is not None else (lambda msg: None)
         self.tasks = {}  # name -> Task
         self._runners = {}  # name -> asyncio.Task
         self.state = 'setting'
-        Inspector.register(self)
+        inspector.Inspector.register(self)
 
     # ------------------------------------------------------------------ scope
     def _devices(self):
@@ -65,33 +65,33 @@ class Controller(Inspectable):
         for name in self.directory():
             if name in self.tasks:
                 continue
-            task = self.create(name)
-            if task is None:
+            new_task = self.create(name)
+            if new_task is None:
                 continue
             try:
-                ok = await task.setup()
+                ok = await new_task.setup()
             except Exception as e:
                 self.log("controller :: task '%s' setup raised: %r" % (name, e))
                 ok = False
             if ok:
-                self.tasks[name] = task
-                Inspector.register(task)  # operator can `inspect <task>`
+                self.tasks[name] = new_task
+                inspector.Inspector.register(new_task)  # operator can `inspect <task>`
                 self.log("controller :: task '%s' up" % name)
             else:
                 self.log("controller :: task '%s' failed setup" % name)
-                await task.finish()
+                await new_task.finish()
         return True
 
     async def start(self):
         """Launch each task's run() loop as a supervised asyncio task."""
-        for name, task in self.tasks.items():
+        for name, pending_task in self.tasks.items():
             if name not in self._runners:
-                self._runners[name] = asyncio.create_task(self._supervise(name, task))
+                self._runners[name] = asyncio.create_task(self._supervise(name, pending_task))
 
-    async def _supervise(self, name, task):
+    async def _supervise(self, name, supervised_task):
         """Run a task to completion; on crash, log it (restart policy is a later concern)."""
         try:
-            await task.run()
+            await supervised_task.run()
         except asyncio.CancelledError:
             raise
         except Exception as e:
@@ -102,10 +102,10 @@ class Controller(Inspectable):
         runner = self._runners.pop(name, None)
         if runner is not None:
             runner.cancel()
-        task = self.tasks.pop(name, None)
-        if task is not None:
-            Inspector.unregister(name)
-            await task.finish()
+        closing_task = self.tasks.pop(name, None)
+        if closing_task is not None:
+            inspector.Inspector.unregister(name)
+            await closing_task.finish()
 
     async def finish(self):
         """Shut down all tasks."""

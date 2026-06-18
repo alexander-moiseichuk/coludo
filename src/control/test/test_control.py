@@ -9,7 +9,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cc_protocol as cc  # noqa: E402
 
-from control import Board, Server  # noqa: E402
+import control  # noqa: E402
 
 PORT = 18234
 
@@ -52,24 +52,24 @@ class _Writer:
 
 async def _unit():
     # command() returns the parsed response
-    board = Board(_Reader(['pong\n']), _Writer())
+    board = control.Board(_Reader(['pong\n']), _Writer())
     assert (await board.command('ping')).command == 'pong'
 
     # command() returns None on disconnect (empty readline)
-    assert await Board(_Reader([]), _Writer()).command('ping') is None
+    assert await control.Board(_Reader([]), _Writer()).command('ping') is None
 
     # identify() learns the id + info from iam
     iam = cc.build('iam', ['glider2', json.dumps({'mcu': 'esp32p4'})])
-    board = Board(_Reader([iam + '\n']), _Writer())
+    board = control.Board(_Reader([iam + '\n']), _Writer())
     assert await board.identify() == 'glider2' and board.info['mcu'] == 'esp32p4'
 
     # identify() returns None when the reply is not iam
-    assert await Board(_Reader(['pong\n']), _Writer()).identify() is None
+    assert await control.Board(_Reader(['pong\n']), _Writer()).identify() is None
 
     # command() times out (raises) on a wedged board instead of hanging
     raised = False
     try:
-        await Board(_HangReader(), _Writer()).command('ping', timeout=0.1)
+        await control.Board(_HangReader(), _Writer()).command('ping', timeout=0.1)
     except asyncio.TimeoutError:
         raised = True
     assert raised
@@ -106,7 +106,7 @@ async def _loopback():
         finally:
             done.set()
 
-    server = Server(host='127.0.0.1', port=PORT, on_board=on_board, log=lambda message: None)
+    server = control.Server(host='127.0.0.1', port=PORT, on_board=on_board, log=lambda message: None)
     server_task = asyncio.create_task(server.serve_forever())
     await asyncio.sleep(0.1)
 
