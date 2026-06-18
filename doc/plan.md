@@ -76,10 +76,12 @@ testable foundations and connectivity come before the flight loop.
   `commands/`) + **HTTP + SSE browser bridge** (8080: `/`, `/api/boards`, `/api/cmd`, `/events`,
   `web.py` + `static/index.html`). ✅ ◻ remaining: draft config + richer dashboard (save/reboot). ← **next**
 - ◻ Minimal browser dashboard: health, enable/disable, `save-config` → `reboot`.
-- ◧ **Controller bring-up wiring** — `main.py` (boot): config → objects (Mission/Wifi/BoardHealth)
-  → `Controller.setup`/`start` (incl. the Recorder virtual driver, driverless sensors skipped) →
-  Wi-Fi join → dial + serve Control. Telemetry-first (tasks start before the network); time sync
-  arrives from Control (`update mission {epoch}`). On-board tested (`test_main`). ✅ ◻ LED-status task.
+- ✅ **Controller bring-up wiring** — `main.py` (boot): config → objects (Mission/Wifi/BoardHealth)
+  → `Controller.setup`/`start` (incl. the Recorder virtual driver + the status LED, driverless
+  sensors skipped) → Wi-Fi join → dial + serve Control. Telemetry-first (tasks start before the
+  network); time sync arrives from Control (`update mission {epoch}`). On-board tested (`test_main`).
+- ✅ **Status LED** — `led.py` `@task.driver('led')`: one GPIO (`led_status`) blinks the board
+  state (fast=error, slow=standby, solid=flying) from controller state + health. `test_led`.
 - **Milestone:** power a board → it appears on CC → view health → toggle a component →
   save + reboot → it returns from the saved config.
 

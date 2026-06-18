@@ -205,6 +205,23 @@ three for computed values.
 - `update(name: str, props: dict) -> list` _(classmethod)_
 - `stats(name: str) -> dict` _(classmethod)_
 
+## `led.py`
+
+_Tested by `test/test_led.py`._
+
+led.py — status LED driver. One GPIO shows the board state at a glance: fast blink when a task is
+unhealthy (error), slow blink while setting up / standing by, solid once flying. The pin role
+(default 'led_status') comes from the component's `pin` field, resolved against the config `pins`
+section. Registered as @task.driver('led') so the Controller creates and supervises it.
+
+### `class LedStatus(task.Task)`
+
+Blink a status pattern on one GPIO derived from the controller's state + health.
+
+- `setup() -> bool`
+- `run() -> None`
+- `inspect() -> dict`
+
 ## `main.py`
 
 _Tested by `test/test_main.py`._

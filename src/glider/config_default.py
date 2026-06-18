@@ -103,5 +103,7 @@ def default():
         'components': [
             # Recorder drain loop: a virtual driver over the global Recorder, using uart:1.
             {'name': 'recorder', 'driver': 'recorder', 'bus': 'uart:1', 'enabled': True},
+            # Status LED on the led_status pin: blinks the board state (error/standby/flying).
+            {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': True},
         ],
     }

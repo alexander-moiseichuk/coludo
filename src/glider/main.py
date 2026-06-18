@@ -12,6 +12,7 @@ import board_health
 import cc_client
 import config
 import controller
+import led  # noqa: F401 -- imported for its @task.driver('led') registration
 import mission
 import wifi
 
