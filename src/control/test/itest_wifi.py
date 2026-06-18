@@ -14,7 +14,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))  # src/control (control.py + cc_protocol symlink)
-from control import Server  # noqa: E402
+import control  # noqa: E402
 
 PORT_DEV = os.environ.get('PORT_DEV', '/dev/ttyACM0')
 BOARD_SCRIPT = '/tmp/coludo_board_probe.py'
@@ -22,8 +22,8 @@ BOARD_SCRIPT = '/tmp/coludo_board_probe.py'
 # Runs on the board: connect wifi, dial the gateway (= Control host) and serve the protocol.
 BOARD_SRC = """
 import asyncio
+import cc_client
 import config
-from cc_client import Client, create_dispatcher
 from wifi import Wifi
 
 async def main():
@@ -34,10 +34,10 @@ async def main():
         return
     gateway = wifi.ifconfig()[2]
     print('WIFI_OK ip=%s gw=%s' % (wifi.ip(), gateway))
-    dispatcher = create_dispatcher(cfg)
+    dispatcher = cc_client.create_dispatcher(cfg)
     reader, writer = await asyncio.open_connection(gateway, 1234)
     print('DIALED %s:1234' % gateway)
-    await Client(cfg, dispatcher).serve(reader, writer)
+    await cc_client.Client(cfg, dispatcher).serve(reader, writer)
     print('SERVE_DONE')
 
 asyncio.run(main())
@@ -62,7 +62,7 @@ async def main():
         finally:
             done.set()
 
-    server = Server(port=1234, on_board=on_board)
+    server = control.Server(port=1234, on_board=on_board)
     server_task = asyncio.create_task(server.serve_forever())
     await asyncio.sleep(0.3)
 

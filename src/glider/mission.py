@@ -20,7 +20,7 @@ try:
 except ImportError:  # CPython tooling / off-board lint+compile only
     RTC = None
 
-from inspector import Inspectable, Inspector
+import inspector
 
 LAUNCH_PATH: str = 'launch.config'
 
@@ -49,7 +49,7 @@ def _number(value, low: float, high: float):
     return value if low <= value <= high else None
 
 
-class Mission(Inspectable):
+class Mission(inspector.Inspectable):
     """The operator-set launch identity. One per board; registers itself so Control can
     `inspect`/`update mission`. Seeded from launch.config at construction."""
 
@@ -64,7 +64,7 @@ class Mission(Inspectable):
         self.latitude = _number(data.get('latitude'), -90.0, 90.0)  # decimal degrees, None unset
         self.longitude = _number(data.get('longitude'), -180.0, 180.0)
         self.altitude = data.get('altitude')  # launch-site elevation, metres (None unset)
-        Inspector.register(self)
+        inspector.Inspector.register(self)
 
     def set_time(self, epoch) -> bool:
         """Set the board RTC from a Unix epoch (seconds, UTC). Returns True if applied."""
