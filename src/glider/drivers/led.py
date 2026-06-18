@@ -5,6 +5,7 @@
 
 import asyncio
 
+import controller
 import task
 
 try:
@@ -40,7 +41,7 @@ class LedStatus(task.Task):
         """Blink half-period for the current status, or None to hold the LED solid (flying)."""
         if not self.controller.validate():
             return _BLINK_ERROR_MS  # an unhealthy task wins -> fast blink
-        if self.controller.state == 'setting':
+        if self.controller.stage == controller.STAGE_SETTING:
             return _BLINK_SETTING_MS
         return None
 
@@ -58,6 +59,6 @@ class LedStatus(task.Task):
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
-        status['state'] = self.controller.state
+        status['stage'] = self.controller.stage_name()
         status['error'] = not self.controller.validate()
         return status

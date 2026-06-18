@@ -35,8 +35,8 @@ def main():
     assert m.args == ['wifi', 'a=b']
 
     # command lowercased; values keep case
-    m = cc.parse('STATE Glider1')
-    assert m.command == 'state' and m.args == ['Glider1']
+    m = cc.parse('STAGE Glider1')
+    assert m.command == 'stage' and m.args == ['Glider1']
 
     # response forms parse too (status first); iam carries the board id
     m = cc.parse('iam glider1 base64:eyJhIjogMX0=')

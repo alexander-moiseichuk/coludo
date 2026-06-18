@@ -97,10 +97,10 @@ class Server:
         self.commands = commands.load()  # operator command registry, loaded from commands/ at start
 
     def board_rows(self) -> list:
-        """The registry as json-able rows (id, online, last-known state/config_id) — shared by the
+        """The registry as json-able rows (id, online, last-known stage/config_id) — shared by the
         `list` operator command and the web /api/boards + /events feeds."""
         return [
-            {'id': board.id, 'online': board.online, 'state': board.info.get('state'),
+            {'id': board.id, 'online': board.online, 'stage': board.info.get('stage'),
              'config_id': board.info.get('config_id')}
             for board in self.boards.values()
         ]

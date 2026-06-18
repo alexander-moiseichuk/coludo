@@ -88,7 +88,7 @@ async def _fake_board(reader, writer):
             return
         msg = cc.parse(line.decode().strip())
         if msg.command == 'whoami':
-            info = {'mcu': 'esp32p4', 'fw': '0.1', 'state': 'setting', 'config_id': 'abc123'}
+            info = {'mcu': 'esp32p4', 'fw': '0.1', 'stage': 'setting', 'config_id': 'abc123'}
             reply = cc.build('iam', ['glider9', json.dumps(info)])
         elif msg.command == 'ping':
             reply = cc.build('pong')
@@ -156,7 +156,7 @@ async def _operator_console():
         listing = await ask('list')
         assert listing.startswith('from cc ok ')
         rows = json.loads(listing[len('from cc ok '):])
-        assert rows[0] == {'id': 'glider9', 'online': True, 'state': 'setting', 'config_id': 'abc123'}
+        assert rows[0] == {'id': 'glider9', 'online': True, 'stage': 'setting', 'config_id': 'abc123'}
 
         # an unknown first token (no selection yet) is a bad Control command, never sent to a board
         assert await ask('bogus') == 'from cc err badcmd bogus'
@@ -222,7 +222,7 @@ async def _web():
         status, payload = await _http(WEB_PORT, 'GET', '/api/boards')
         assert status == 200
         rows = json.loads(payload)
-        assert rows[0]['id'] == 'glider9' and rows[0]['online'] is True and rows[0]['state'] == 'setting'
+        assert rows[0]['id'] == 'glider9' and rows[0]['online'] is True and rows[0]['stage'] == 'setting'
 
         # POST /api/cmd routes to the board and returns its reply
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',

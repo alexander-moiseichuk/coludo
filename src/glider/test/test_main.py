@@ -34,7 +34,7 @@ async def amain():
 
     await asyncio.sleep_ms(30)  # let the loops tick (the recorder drains)
     await flight.finish()
-    assert flight.state == 'done' and flight.tasks == {}
+    assert flight.stage_name() == 'done' and flight.tasks == {}
 
     print('ok: main.bringup wires Mission/BoardHealth/Controller + Recorder driver, skips driverless sensors')
 

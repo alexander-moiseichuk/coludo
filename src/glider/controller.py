@@ -1,5 +1,5 @@
 # Flight Controller — creates and supervises the tasks described by a validated config, and
-# tracks the flight state machine. See specs/coludo.md ('Flight Controller', 'Tasks').
+# tracks the flight stage machine. See specs/coludo.md ('Flight Controller', 'Tasks').
 #
 # The Controller is the one task created explicitly; it creates the rest from config in a
 # deterministic order. Task failures are reported, not fatal (the strict/operator-authority
@@ -11,7 +11,28 @@ import asyncio
 import inspector
 import task
 
-STATES: tuple = ('setting', 'boosting', 'gliding', 'landing', 'done')
+try:
+    from micropython import const
+except ImportError:  # CPython (tooling / off-board checks)
+
+    def const(value):
+        return value
+
+
+# Flight stages — int ids (cheap to compare/store on MicroPython) paired with operator-facing names.
+STAGE_SETTING = const(0)
+STAGE_BOOSTING = const(1)
+STAGE_GLIDING = const(2)
+STAGE_LANDING = const(3)
+STAGE_DONE = const(4)
+STAGE_NAMES: dict[int, str] = {
+    STAGE_SETTING: 'setting',
+    STAGE_BOOSTING: 'boosting',
+    STAGE_GLIDING: 'gliding',
+    STAGE_LANDING: 'landing',
+    STAGE_DONE: 'done',
+}
+STAGES: tuple[int] = tuple(STAGE_NAMES.keys())
 
 
 class Controller(inspector.Inspectable):
@@ -24,7 +45,7 @@ class Controller(inspector.Inspectable):
         self.log = log if log is not None else (lambda msg: None)
         self.tasks: dict = {}  # name -> Task
         self._runners: dict = {}  # name -> asyncio.Task
-        self.state: str = 'setting'
+        self.stage: int = STAGE_SETTING
         inspector.Inspector.register(self)
 
     # ------------------------------------------------------------------ scope
@@ -68,9 +89,28 @@ class Controller(inspector.Inspectable):
         return [self.tasks.get(name) for name in names]
 
     async def query(self, names: list[str], waiting: bool = True) -> list:
-        """Resolve dependencies by name. With `waiting` (the default) park the caller until every
-        named task is up (creation order is not fixed), then return them all; with `waiting=False`
-        return immediately like find(): `gnss, baro = await self.query(['gnss', 'baro_icp10111'])`."""
+        """Look up sibling tasks by name from the registry: `gnss, baro = await self.query(['gnss',
+        'baro_icp10111'])`.
+
+        waiting=False: return immediately — a list aligned with `names`, with None for any task not
+        yet enlisted. The caller must handle the Nones. Safe anywhere, including setup().
+
+        waiting=True: await until every named task is present, then return them all.
+
+        IMPORTANT — call waiting=True only from run(), never from setup():
+          * setup() runs serially in the single bring-up coroutine: the Controller awaits each
+            task's setup() before creating the next. Blocking there blocks the whole boot — if the
+            dependency is set up later in the order, you deadlock bring-up.
+          * run() loops are concurrent: awaiting here suspends only THIS task's coroutine while the
+            event loop keeps scheduling every other task's run(), so the rest of boot progresses.
+            When the dependency appears, the await resumes.
+
+        The wait is await-based (poll + asyncio.sleep), so the current coroutine yields and never
+        starves the single-core scheduler — never a busy `while not found`.
+
+        Rule of thumb: discover-or-skip in setup() (waiting=False, handle None); block-for-ready in
+        run() (waiting=True). A wait timeout (so a never-appearing dependency surfaces as a logged
+        error rather than a task parked forever) fits the strict/operator-authority model — TODO."""
         while True:
             found = [self.tasks.get(name) for name in names]
             if not waiting or all(t is not None for t in found):
@@ -129,14 +169,18 @@ class Controller(inspector.Inspectable):
         """Shut down all tasks."""
         for name in list(self.tasks):
             await self.close(name)
-        self.state = 'done'
+        self.stage = STAGE_DONE
 
-    # ------------------------------------------------------------------ state
-    def set_state(self, state: str) -> None:
-        if state not in STATES:
-            raise ValueError('unknown state: %s' % state)
-        self.state = state
-        self.log('controller :: state -> %s' % state)
+    # ------------------------------------------------------------------ stage
+    def set_stage(self, stage: int) -> None:
+        if stage not in STAGES:
+            raise ValueError('unknown stage: %s' % stage)
+        self.stage = stage
+        self.log('controller :: stage -> %s' % STAGE_NAMES[stage])
+
+    def stage_name(self) -> str:
+        """The current flight stage as its operator-facing name."""
+        return STAGE_NAMES[self.stage]
 
     def validate(self) -> bool:
         """True if every active task is healthy."""
@@ -147,7 +191,7 @@ class Controller(inspector.Inspectable):
 
     # --- Inspectable ---
     def inspect(self) -> dict:
-        return {'state': self.state, 'tasks': list(self.tasks.keys())}
+        return {'stage': self.stage_name(), 'tasks': list(self.tasks.keys())}
 
     def stats(self) -> dict:
-        return {'state': self.state, 'tasks': dict((n, t.inspect()) for n, t in self.tasks.items())}
+        return {'stage': self.stage_name(), 'tasks': dict((n, t.inspect()) for n, t in self.tasks.items())}

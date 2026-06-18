@@ -23,7 +23,7 @@
 <h1>Coludo Control</h1>
 
 <table id="boards">
-  <thead><tr><th>board</th><th>online</th><th>state</th><th>config</th></tr></thead>
+  <thead><tr><th>board</th><th>online</th><th>stage</th><th>config</th></tr></thead>
   <tbody><tr><td colspan="4" class="muted">waiting for boards…</td></tr></tbody>
 </table>
 
@@ -48,7 +48,7 @@ new EventSource('/events').onmessage = (event) => {
     <tr class="${b.online ? 'on' : 'off'}">
       <td>${b.id}</td>
       <td><span class="dot">${b.online ? '●' : '○'}</span></td>
-      <td>${b.state || ''}</td>
+      <td>${b.stage || ''}</td>
       <td>${b.config_id || ''}</td>
     </tr>`).join('');
 };

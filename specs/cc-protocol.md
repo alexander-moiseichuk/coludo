@@ -82,7 +82,7 @@ routing token); the board replies with the one message that carries its own id:
 
 ```
 Control → board:   whoami
-board → Control:   iam glider1 base64:<{"mcu":"esp32p4","fw":"0.1","config_id":"<hash>","state":"setting","uptime":812}>
+board → Control:   iam glider1 base64:<{"mcu":"esp32p4","fw":"0.1","config_id":"<hash>","stage":"setting","uptime":812}>
 ```
 
 Control registers socket ⇄ `glider1`, begins its ~2 s poll loop, and thereafter routes operator
@@ -118,10 +118,10 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `whoami` | — | `iam <id> {json}` | identify a new socket (the one reply carrying the id) |
 | `ping` | — | `pong` | liveness |
 | `health` | — | `ok {temp,mem_free,load,uptime,components[]}` | vitals; `components[]` carries `{name, ok}` |
-| `state` | — | `ok {state,uptime}` | current flight phase |
+| `stage` | — | `ok {stage,uptime}` | current flight stage |
 | `tel` | `[ms]` | `ok {samples:[...]}` | telemetry samples within the last `ms` |
 | `log` | `<ms>` | `ok {lines:[...], truncated}` | log lines from the last `ms` |
-| `report` | — | `ok {state, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
+| `report` | — | `ok {stage, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
 | `objects` | — | `ok [name, ...]` | names of all `Inspectable` objects (for the `inspect`/`update`/`stats` targets) |
 | `inspect` | `<object>` | `ok {props}` | `Inspectable.inspect()` of a named object |
 | `update` | `<object> <json>` | `ok {changed:[...]}` | `Inspectable.update()` — names of properties actually changed |
@@ -201,7 +201,7 @@ A first token that is a known board id (or `all`/`*`) routes to a board; otherwi
 | Command | Meaning |
 |---------|---------|
 | `help` | `from cc ok {commands:[...]}` — all commands; `help <command>` for one |
-| `list` | `from cc ok [{id, online, state, config_id}]` — connected boards |
+| `list` | `from cc ok [{id, online, stage, config_id}]` — connected boards |
 | `select <board>` | set this session's **sticky** target; afterwards a bare `<command>` is routed to it |
 | `who` | `from cc ok {selected, since}` — current selection |
 
@@ -215,8 +215,8 @@ Example telnet session (response JSON shown **decoded for readability**; on the 
 
 ```
 > list
-from cc ok [{"id":"glider1","online":true,"state":"setting","config_id":"a1b2"},
-            {"id":"glider7a","online":true,"state":"setting","config_id":"c3d4"}]
+from cc ok [{"id":"glider1","online":true,"stage":"setting","config_id":"a1b2"},
+            {"id":"glider7a","online":true,"stage":"setting","config_id":"c3d4"}]
 > select glider1
 from cc ok {"selected":"glider1"}
 > health                         (routed as: glider1 health)

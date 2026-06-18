@@ -60,7 +60,7 @@ testable foundations and connectivity come before the flight loop.
 - ✅ `config.py` + `config_default.py`: loader, validator (pin uniqueness, bus refs, reserved
   pins, board.id, `recorder` section), `config_id` hashing, layered load + fallback, atomic save.
 - ✅ `task.py` + `controller.py`: Task base + `ACTIVITIES` registry; Controller
-  (`directory/create/active/close`, supervised run loops, flight state machine).
+  (`directory/create/active/close`, supervised run loops, flight stage machine).
 - ✅ `cc_protocol.py`: line parser — bare tokens or `base64:<data>` (no quoting/tokenizing),
   `parse`/`build`/`encode`/`decode`.
 - ✅ `recorder.py`: lock-free SPSC `Ring`s (write via `struct.pack_into`), `Recorder` singleton
@@ -101,7 +101,7 @@ testable foundations and connectivity come before the flight loop.
 
 ### Phase 3 — Active control
 - Servo task (sequential updates, calibration maps, ±45° limits).
-- Flight state machine (ignition → separation → apogee → landing thresholds) + PID
+- Flight stage machine (ignition → separation → apogee → landing thresholds) + PID
   stabilization + per-phase maneuvers + degraded modes + watchdog / health monitor.
 - **Milestone:** a controlled glide.
 

@@ -134,7 +134,7 @@ different drivers/priorities); `components` are the consumers/actuators (recorde
 _Tested by `test/test_controller.py`._
 
 Flight Controller — creates and supervises the tasks described by a validated config, and
-tracks the flight state machine. See specs/coludo.md ('Flight Controller', 'Tasks').
+tracks the flight stage machine. See specs/coludo.md ('Flight Controller', 'Tasks').
 
 The Controller is the one task created explicitly; it creates the rest from config in a
 deterministic order. Task failures are reported, not fatal (the strict/operator-authority
@@ -153,7 +153,8 @@ operator via stats()/validate().
 - `start() -> None` — Launch each task's run() loop as a supervised asyncio task.
 - `close(name: str) -> None` — Deactivate a task and clean up its resources.
 - `finish() -> None` — Shut down all tasks.
-- `set_state(state: str) -> None`
+- `set_stage(stage: int) -> None`
+- `stage_name() -> str` — The current flight stage as its operator-facing name.
 - `validate() -> bool` — True if every active task is healthy.
 - `inspect() -> dict`
 - `stats() -> dict`
@@ -482,7 +483,7 @@ The hub: a board listener + per-board heartbeat + an operator console. `on_board
 optional async hook invoked once, right after a board identifies (used by integration tests).
 
 - `__init__(host: str='0.0.0.0', port: int=1234, operator_port: int=1235, web_port: int=8080, on_board=None, log=print, heartbeat_s: float=HEARTBEAT_S)` — constructor
-- `board_rows() -> list` — The registry as json-able rows (id, online, last-known state/config_id) — shared by the
+- `board_rows() -> list` — The registry as json-able rows (id, online, last-known stage/config_id) — shared by the
 - `serve_forever() -> None` — Accept board connections on `port` (board-facing listener).
 - `serve_operators() -> None` — Accept operator connections on `operator_port` (telnet-friendly console).
 - `run() -> None` — Run the board listener, operator console, and web bridge until cancelled — the entry.

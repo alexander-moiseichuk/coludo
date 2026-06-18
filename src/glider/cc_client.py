@@ -77,15 +77,15 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None, fw: str = '0.1
     board_id = cfg['board']['id']
     dispatcher = Dispatcher()
 
-    def state() -> str:
-        return controller.state if controller is not None else 'setting'
+    def stage() -> str:
+        return controller.stage_name() if controller is not None else 'setting'
 
     async def whoami(msg) -> str:
         info = {
             'mcu': cfg['board'].get('mcu'),
             'fw': fw,
             'config_id': config_mod.config_id(cfg),
-            'state': state(),
+            'stage': stage(),
             'uptime': time.ticks_ms(),
         }
         return cc.build('iam', [board_id, json.dumps(info)])  # the one reply carrying the id
@@ -100,13 +100,13 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None, fw: str = '0.1
             temp = esp32.mcu_temperature()
         except Exception:
             temp = None
-        info = {'temp': temp, 'mem_free': gc.mem_free(), 'uptime': time.ticks_ms(), 'state': state()}
+        info = {'temp': temp, 'mem_free': gc.mem_free(), 'uptime': time.ticks_ms(), 'stage': stage()}
         if controller is not None:
             info['tasks'] = [{'name': t.name, 'ok': t.validate()} for t in controller.active()]
         return cc.build('ok', [json.dumps(info)])
 
-    async def get_state(msg) -> str:
-        return cc.build('ok', [json.dumps({'state': state()})])
+    async def get_stage(msg) -> str:
+        return cc.build('ok', [json.dumps({'stage': stage()})])
 
     async def report(msg) -> str:
         return cc.build('ok', [json.dumps(controller.stats() if controller is not None else {})])
@@ -181,7 +181,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None, fw: str = '0.1
     dispatcher.on('whoami', whoami)
     dispatcher.on('ping', ping)
     dispatcher.on('health', health)
-    dispatcher.on('state', get_state)
+    dispatcher.on('stage', get_stage)
     dispatcher.on('report', report)
     dispatcher.on('objects', objects)
     dispatcher.on('inspect', inspect)

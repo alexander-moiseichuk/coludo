@@ -88,7 +88,7 @@ async def amain():
     await c.start()
     await asyncio.sleep_ms(50)
     rep = c.stats()
-    assert rep['state'] == 'setting'
+    assert rep['stage'] == 'setting'  # the operator-facing stage name
     assert rep['tasks']['s1']['ran'] >= 1, rep
 
     # tasks are individually inspectable through the Inspector
@@ -100,12 +100,12 @@ async def amain():
     c.tasks['s1'].emit('hello')
     assert seen == ['hello']
 
-    # state machine
-    c.set_state('boosting')
-    assert c.state == 'boosting'
+    # stage machine: int ids internally, name on the wire
+    c.set_stage(controller.STAGE_BOOSTING)
+    assert c.stage == controller.STAGE_BOOSTING and c.stage_name() == 'boosting'
     raised = False
     try:
-        c.set_state('nope')
+        c.set_stage(99)  # not a defined stage
     except ValueError:
         raised = True
     assert raised
@@ -115,7 +115,7 @@ async def amain():
     assert 's1' not in c.tasks
     await c.finish()
     assert c.tasks == {}
-    assert c.state == 'done'
+    assert c.stage == controller.STAGE_DONE
 
     print('ok: controller directory/create/setup/run/active/inspect/stats/validate/close/finish')
 
