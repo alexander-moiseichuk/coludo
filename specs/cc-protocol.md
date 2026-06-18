@@ -82,7 +82,7 @@ routing token); the board replies with the one message that carries its own id:
 
 ```
 Control → board:   whoami
-board → Control:   iam glider1 base64:<{"mcu":"esp32p4","fw":"0.1","config_id":"<hash>","stage":"setting","uptime":812}>
+board → Control:   iam glider1 base64:<{"mcu":"esp32p4","firmware_version":"a1b2c3d4e5f6","config_id":"<hash>","stage":"setting","uptime":812}>
 ```
 
 Control registers socket ⇄ `glider1`, begins its ~2 s poll loop, and thereafter routes operator

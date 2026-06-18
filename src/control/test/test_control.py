@@ -88,7 +88,7 @@ async def _fake_board(reader, writer):
             return
         msg = cc.parse(line.decode().strip())
         if msg.command == 'whoami':
-            info = {'mcu': 'esp32p4', 'fw': '0.1', 'stage': 'setting', 'config_id': 'abc123'}
+            info = {'mcu': 'esp32p4', 'firmware_version': 'a1b2c3', 'stage': 'setting', 'config_id': 'abc123'}
             reply = cc.build('iam', ['glider9', json.dumps(info)])
         elif msg.command == 'ping':
             reply = cc.build('pong')

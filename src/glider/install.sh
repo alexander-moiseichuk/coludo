@@ -17,6 +17,9 @@ have_mpy=1;  command -v mpy-cross >/dev/null || { have_mpy=0;  echo "${Y}warning
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
 # runtime files: top-level modules + the packages (NO test/, NO *.creds / *.config)
+# stamp the firmware version from the git commit so config_default can report it (version.py is gitignored)
+printf "VERSION = '%s'\n" "$(git -C "$HERE" rev-parse --short=12 HEAD 2>/dev/null || echo dev)" > "$HERE/version.py"
+
 mods=("$HERE"/*.py)
 [ -e "${mods[0]}" ] || { echo "${R}no modules to install${N}"; exit 1; }
 files=("${mods[@]}")

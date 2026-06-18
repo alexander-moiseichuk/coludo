@@ -8,10 +8,15 @@
 # are data providers fused by quantity + priority (several may provide the same quantity with
 # different drivers/priorities); `components` are the consumers/actuators (recorder, ...).
 
+try:
+    from version import VERSION as _FIRMWARE_VERSION  # generated at deploy/install (git commit sha)
+except ImportError:
+    _FIRMWARE_VERSION = 'dev'
+
 
 def default() -> dict:
     return {
-        'board': {'id': 'glider1', 'mcu': 'esp32p4', 'rev': 1},
+        'board': {'id': 'glider1', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION},
         'wifi': {  # STA — the board joins the Control network
             'mode': 'sta',
             'ssid': 'panda',

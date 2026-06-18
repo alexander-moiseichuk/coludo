@@ -28,7 +28,7 @@ Maps a command to an async handler(msg) -> response line.
 - `run() -> None` — Connect to Control and serve forever, reconnecting with backoff on drop.
 - `serve(reader, writer) -> None` — Read commands from Control, dispatch, write responses. Returns on disconnect.
 
-### `create_dispatcher(cfg: dict, controller=None, on_reboot=None, fw: str='0.1', config_path: str='board.json') -> Dispatcher`
+### `create_dispatcher(cfg: dict, controller=None, on_reboot=None, config_path: str='board.json') -> Dispatcher`
 
 Build a Dispatcher with the standard command handlers, wired to the running config, the
 Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset.

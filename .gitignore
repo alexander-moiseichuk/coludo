@@ -3,3 +3,4 @@ __pycache__/
 *.mpy
 .nfs*
 *.creds
+version.py

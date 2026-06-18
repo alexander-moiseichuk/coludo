@@ -65,7 +65,7 @@ class Client:
                 await writer.drain()
 
 
-def create_dispatcher(cfg: dict, controller=None, on_reboot=None, fw: str = '0.1',
+def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
                       config_path: str = 'board.json') -> Dispatcher:
     """Build a Dispatcher with the standard command handlers, wired to the running config, the
     Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset."""
@@ -83,7 +83,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None, fw: str = '0.1
     async def whoami(msg) -> str:
         info = {
             'mcu': cfg['board'].get('mcu'),
-            'fw': fw,
+            'firmware_version': cfg['board'].get('firmware_version', 'dev'),
             'config_id': config_mod.config_id(cfg),
             'stage': stage(),
             'uptime': time.ticks_ms(),
