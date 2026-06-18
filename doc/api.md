@@ -286,6 +286,20 @@ All streams in one boot share the Recorder session prefix, so file names are sta
 - `__init__(filename: str, fields: tuple)` — constructor
 - `push(values) -> None`
 
+### `class RecorderTask(task.Task)`
+
+Virtual driver that plugs the global Recorder into the Controller's task graph, so the
+`recorder` component (its `bus` selects the UART, e.g. uart:1) is created and supervised like
+any other task. There is no separate 'uart_sink' abstraction -- the Recorder singleton is the
+implementation; this only owns its setup + drain loop and surfaces it to the operator. Every
+module still logs/telemeters through the global Recorder.
+
+- `setup() -> bool`
+- `run() -> None`
+- `inspect() -> dict`
+- `stats() -> dict`
+- `update(props) -> list`
+
 ## `task.py`
 
 Task base class and driver registry — the unit the Controller creates and supervises.

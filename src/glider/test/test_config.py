@@ -47,7 +47,7 @@ def main():
     assert config.bus(cfg, 'i2c:0') == {'sda': 7, 'scl': 8, 'freq': 400000}
     assert config.bus(cfg, 'uart:2')['baud'] == 9600
     assert config.bus(cfg, 'nope') is None
-    assert config.device(cfg, driver='uart_sink')['name'] == 'recorder'
+    assert config.device(cfg, driver='recorder')['name'] == 'recorder'
     assert config.device(cfg, name='gnss')['bus'] == 'uart:2'
     assert config.device(cfg, name='absent') is None
 

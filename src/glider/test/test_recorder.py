@@ -5,6 +5,7 @@ import asyncio
 
 import config_default
 import recorder
+import task
 
 
 class FakeWriter:
@@ -104,20 +105,45 @@ async def test_run_loop():
     # run() loops forever; cancellation stops it (no stop flag)
     recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
     recorder.Recorder.log('X', 'y')
-    task = asyncio.create_task(recorder.Recorder.run())
+    drain_task = asyncio.create_task(recorder.Recorder.run())
     await asyncio.sleep_ms(120)
-    task.cancel()
+    drain_task.cancel()
     try:
-        await task
+        await drain_task
     except asyncio.CancelledError:
         pass
     assert len(recorder.Recorder._uart.items) >= 1
+
+
+async def test_virtual_driver():
+    # the Recorder is registered as a virtual driver named 'recorder' (no 'uart_sink' abstraction),
+    # so the Controller creates + supervises the `recorder` component instead of skipping it.
+    assert task.DRIVERS.get('recorder') is recorder.RecorderTask
+
+    component = {'name': 'recorder', 'driver': 'recorder', 'bus': 'uart:1', 'enabled': True}
+
+    # the task proxies the singleton's Inspectable surface to the operator
+    recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
+    proxy = recorder.RecorderTask('recorder', component, None)
+    snapshot = proxy.inspect()
+    assert snapshot['name'] == 'recorder' and snapshot['ok'] is False and 'session' in snapshot
+    assert proxy.stats() == recorder.Recorder.stats()
+    assert proxy.update({'stats_ms': 500}) == ['stats_ms'] and recorder.Recorder._stats_ms == 500
+
+    # setup() wires the singleton from the controller's full config (resolves the recorder bus uart:1)
+    class _StubController:
+        config = config_default.default()
+
+    wired = recorder.RecorderTask('recorder', component, _StubController())
+    assert await wired.setup() is True and wired.validate() is True
+    assert recorder.Recorder._tlm is not None  # singleton initialized through the task
 
 
 async def _amain():
     await test_recorder()
     await test_error_policy()
     await test_run_loop()
+    await test_virtual_driver()
 
 
 test_ring()

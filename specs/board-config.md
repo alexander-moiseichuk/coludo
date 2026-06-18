@@ -115,7 +115,7 @@ identical behaviour every time.
   ],
 
   "components": [
-    { "name": "recorder", "driver": "uart_sink", "bus": "uart:1", "enabled": true }
+    { "name": "recorder", "driver": "recorder", "bus": "uart:1", "enabled": true }
   ]
 }
 ```

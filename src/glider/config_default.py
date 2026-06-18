@@ -101,6 +101,7 @@ def default():
         ],
         # Consumers / actuators / system tasks.
         'components': [
-            {'name': 'recorder', 'driver': 'uart_sink', 'bus': 'uart:1', 'enabled': True},
+            # Recorder drain loop: a virtual driver over the global Recorder, using uart:1.
+            {'name': 'recorder', 'driver': 'recorder', 'bus': 'uart:1', 'enabled': True},
         ],
     }

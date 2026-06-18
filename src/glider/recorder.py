@@ -13,6 +13,7 @@ import struct
 import time
 
 import inspector
+import task
 
 try:
     from micropython import const
@@ -112,7 +113,7 @@ class Recorder:
             import config as config_mod
             from machine import UART
 
-            entry = config_mod.device(config, driver='uart_sink')
+            entry = config_mod.device(config, driver='recorder')
             ref = entry['bus'] if entry else 'uart:1'
             spec = config_mod.bus(config, ref) or {'tx': 20, 'rx': 21, 'baud': 921600}
             uart = UART(int(ref.split(':')[1]), baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
@@ -237,3 +238,32 @@ class Telemetry:
             Recorder.tlm(self.filename, 'uptime;' + ';'.join(self.fields))
             self._header_sent = True
         Recorder.tlm(self.filename, '%u;%s' % (Recorder.timestamp(), ';'.join(str(v) for v in values)))
+
+
+@task.driver('recorder')
+class RecorderTask(task.Task):
+    """Virtual driver that plugs the global Recorder into the Controller's task graph, so the
+    `recorder` component (its `bus` selects the UART, e.g. uart:1) is created and supervised like
+    any other task. There is no separate 'uart_sink' abstraction -- the Recorder singleton is the
+    implementation; this only owns its setup + drain loop and surfaces it to the operator. Every
+    module still logs/telemeters through the global Recorder."""
+
+    async def setup(self) -> bool:
+        Recorder.setup(self.controller.config)  # resolves the recorder component's UART bus
+        self._ok = True
+        return True
+
+    async def run(self) -> None:
+        await Recorder.run()
+
+    def inspect(self) -> dict:
+        status = Recorder.inspect()
+        status['name'] = self.name
+        status['ok'] = self._ok
+        return status
+
+    def stats(self) -> dict:
+        return Recorder.stats()
+
+    def update(self, props) -> list:
+        return Recorder.update(props)
