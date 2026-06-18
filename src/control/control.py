@@ -6,7 +6,8 @@
 # telnet-friendly operator console (port 1235): a line whose first token is a board id / `all` / `*`
 # is routed to that board (the id stripped, the rest forwarded verbatim) and the reply tagged
 # `from <board> ...`; any other first token is a Control command (`help`/`list`/`select`/`who`),
-# served from a drop-in registry loaded from the `commands/` package at start.
+# served from a drop-in registry loaded from the `commands/` package at start. A browser bridge
+# (web.py) exposes the same over plain HTTP + SSE on 8080. run() serves all three.
 #
 # CPython 3.12, stdlib asyncio only. cc_protocol.py is shared with the firmware (symlinked).
 
@@ -16,6 +17,7 @@ import time
 
 import cc_protocol as cc
 import commands
+import web
 
 HEARTBEAT_S: float = 2.0  # poll an idle board this often to prove it is alive
 
@@ -83,15 +85,25 @@ class Server:
     optional async hook invoked once, right after a board identifies (used by integration tests)."""
 
     def __init__(self, host: str = '0.0.0.0', port: int = 1234, operator_port: int = 1235,
-                 on_board=None, log=print, heartbeat_s: float = HEARTBEAT_S):
+                 web_port: int = 8080, on_board=None, log=print, heartbeat_s: float = HEARTBEAT_S):
         self.host = host
         self.port = port
         self.operator_port = operator_port
+        self.web_port = web_port
         self.boards = {}  # id -> Board (kept after disconnect with online=False)
         self.on_board = on_board
         self.log = log
         self.heartbeat_s = heartbeat_s
         self.commands = commands.load()  # operator command registry, loaded from commands/ at start
+
+    def board_rows(self) -> list:
+        """The registry as json-able rows (id, online, last-known state/config_id) — shared by the
+        `list` operator command and the web /api/boards + /events feeds."""
+        return [
+            {'id': board.id, 'online': board.online, 'state': board.info.get('state'),
+             'config_id': board.info.get('config_id')}
+            for board in self.boards.values()
+        ]
 
     # ----------------------------------------------------------------- board side
     async def _handle(self, reader, writer):
@@ -200,8 +212,9 @@ class Server:
             await server.serve_forever()
 
     async def run(self) -> None:
-        """Run both listeners until cancelled — the hub entry point."""
-        await asyncio.gather(self.serve_forever(), self.serve_operators())
+        """Run the board listener, operator console, and web bridge until cancelled — the entry."""
+        bridge = web.Web(self, self.host, self.web_port, self.log)
+        await asyncio.gather(self.serve_forever(), self.serve_operators(), bridge.serve())
 
 
 if __name__ == '__main__':

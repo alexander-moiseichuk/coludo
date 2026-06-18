@@ -367,7 +367,8 @@ the id). Control polls each online board (~2 s heartbeat) to prove liveness, and
 telnet-friendly operator console (port 1235): a line whose first token is a board id / `all` / `*`
 is routed to that board (the id stripped, the rest forwarded verbatim) and the reply tagged
 `from <board> ...`; any other first token is a Control command (`help`/`list`/`select`/`who`),
-served from a drop-in registry loaded from the `commands/` package at start.
+served from a drop-in registry loaded from the `commands/` package at start. A browser bridge
+(web.py) exposes the same over plain HTTP + SSE on 8080. run() serves all three.
 
 CPython 3.12, stdlib asyncio only. cc_protocol.py is shared with the firmware (symlinked).
 
@@ -390,7 +391,27 @@ the heartbeat and operator traffic to one board can never overlap.
 The hub: a board listener + per-board heartbeat + an operator console. `on_board` is an
 optional async hook invoked once, right after a board identifies (used by integration tests).
 
-- `__init__(host: str='0.0.0.0', port: int=1234, operator_port: int=1235, on_board=None, log=print, heartbeat_s: float=HEARTBEAT_S)` — constructor
+- `__init__(host: str='0.0.0.0', port: int=1234, operator_port: int=1235, web_port: int=8080, on_board=None, log=print, heartbeat_s: float=HEARTBEAT_S)` — constructor
+- `board_rows() -> list` — The registry as json-able rows (id, online, last-known state/config_id) — shared by the
 - `serve_forever() -> None` — Accept board connections on `port` (board-facing listener).
 - `serve_operators() -> None` — Accept operator connections on `operator_port` (telnet-friendly console).
-- `run() -> None` — Run both listeners until cancelled — the hub entry point.
+- `run() -> None` — Run the board listener, operator console, and web bridge until cancelled — the entry.
+
+## `web.py`
+
+Web bridge — the browser face of the Control hub (specs/cc-protocol.md "Browser bridge").
+
+A minimal HTTP/1.1 + SSE server on 8080 over the same stdlib asyncio loop as the board listener
+and operator console (no extra dependency, no framework). Plain HTTP: the LAN is trusted and
+encryption is out of scope (cc-protocol.md "Transport & ports"). Routes:
+GET  /             -> the one-page dashboard (static/index.html)
+GET  /api/boards   -> hub.board_rows() as JSON (same data as the `list` command)
+POST /api/cmd      -> {board, command, params} -> run it on the board, reply as JSON
+GET  /events       -> Server-Sent Events: the board list pushed every heartbeat (live table)
+
+### `class Web`
+
+The HTTP/SSE server. Holds the hub for the board registry + routing; one per hub.
+
+- `__init__(hub, host: str='0.0.0.0', port: int=8080, log=print)` — constructor
+- `serve() -> None`

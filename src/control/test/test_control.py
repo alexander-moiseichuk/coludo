@@ -14,6 +14,9 @@ import control  # noqa: E402
 PORT = 18234
 BOARD_PORT = 18235
 OPERATOR_PORT = 18236
+WEB_PORT = 18237
+WEB_BOARD_PORT = 18238
+WEB_OPERATOR_PORT = 18239
 
 
 class _Reader:
@@ -129,7 +132,7 @@ async def _operator_console():
     """A board dials in; an operator drives it through the telnet console: list / route / select /
     broadcast / Control commands, with replies tagged by source."""
     server = control.Server(host='127.0.0.1', port=BOARD_PORT, operator_port=OPERATOR_PORT,
-                            log=lambda message: None, heartbeat_s=0.05)
+                            web_port=WEB_PORT, log=lambda message: None, heartbeat_s=0.05)
     hub_task = asyncio.create_task(server.run())
     await asyncio.sleep(0.1)
 
@@ -181,11 +184,74 @@ async def _operator_console():
         board_task.cancel()
 
 
+async def _http(port, method, path, body=None):
+    """A tiny raw HTTP/1.1 client: send one request, read the (Connection: close) response."""
+    reader, writer = await asyncio.open_connection('127.0.0.1', port)
+    data = body.encode() if isinstance(body, str) else (body or b'')
+    request = '%s %s HTTP/1.1\r\nHost: t\r\nContent-Type: application/json\r\nContent-Length: %d\r\n\r\n' % (
+        method, path, len(data))
+    writer.write(request.encode() + data)
+    await writer.drain()
+    raw = await asyncio.wait_for(reader.read(), 2)  # Connection: close -> read to EOF
+    writer.close()
+    head, _, payload = raw.partition(b'\r\n\r\n')
+    return int(head.split()[1]), payload
+
+
+async def _web():
+    """The browser bridge on 8080: dashboard, /api/boards, /api/cmd routing, and /events SSE."""
+    server = control.Server(host='127.0.0.1', port=WEB_BOARD_PORT, operator_port=WEB_OPERATOR_PORT,
+                            web_port=WEB_PORT, log=lambda message: None, heartbeat_s=0.05)
+    hub_task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.1)
+
+    board_reader, board_writer = await asyncio.open_connection('127.0.0.1', WEB_BOARD_PORT)
+    board_task = asyncio.create_task(_fake_board(board_reader, board_writer))
+    for _ in range(50):
+        if 'glider9' in server.boards:
+            break
+        await asyncio.sleep(0.02)
+    assert 'glider9' in server.boards
+
+    try:
+        # GET / serves the dashboard page
+        status, page = await _http(WEB_PORT, 'GET', '/')
+        assert status == 200 and b'Coludo Control' in page
+
+        # GET /api/boards is the registry as JSON (same data as the `list` command)
+        status, payload = await _http(WEB_PORT, 'GET', '/api/boards')
+        assert status == 200
+        rows = json.loads(payload)
+        assert rows[0]['id'] == 'glider9' and rows[0]['online'] is True and rows[0]['state'] == 'setting'
+
+        # POST /api/cmd routes to the board and returns its reply
+        status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
+                                      json.dumps({'board': 'glider9', 'command': 'ping'}))
+        assert status == 200 and json.loads(payload)['status'] == 'pong'
+
+        # POST to an unknown board is a 404
+        status, _payload = await _http(WEB_PORT, 'POST', '/api/cmd',
+                                       json.dumps({'board': 'ghost', 'command': 'ping'}))
+        assert status == 404
+
+        # GET /events streams the board list as Server-Sent Events
+        events_reader, events_writer = await asyncio.open_connection('127.0.0.1', WEB_PORT)
+        events_writer.write(b'GET /events HTTP/1.1\r\nHost: t\r\n\r\n')
+        await events_writer.drain()
+        frame = await asyncio.wait_for(events_reader.readuntil(b'\n\n'), 2)
+        assert b'text/event-stream' in frame and b'data: [' in frame and b'glider9' in frame
+        events_writer.close()
+    finally:
+        hub_task.cancel()
+        board_task.cancel()
+
+
 async def main():
     await _unit()
     await _loopback()
     await _operator_console()
-    print('ok: control Board lockstep + Server accept + operator console (list/route/select/broadcast)')
+    await _web()
+    print('ok: control Board + Server + operator console + web bridge (api/boards, api/cmd, events)')
 
 
 asyncio.run(main())
