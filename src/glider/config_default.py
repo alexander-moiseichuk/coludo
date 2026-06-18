@@ -9,7 +9,7 @@
 # different drivers/priorities); `components` are the consumers/actuators (recorder, ...).
 
 
-def default():
+def default() -> dict:
     return {
         'board': {'id': 'glider1', 'mcu': 'esp32p4', 'rev': 1},
         'wifi': {  # STA — the board joins the Control network

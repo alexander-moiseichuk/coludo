@@ -18,17 +18,17 @@ _SAFE = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-/+:'
 class _Msg:
     # A board receives `command params` (Control has stripped the routing board id), so args are
     # the positional params and named are key=value params.
-    def __init__(self, command, args, named, line):
+    def __init__(self, command, args: list, named: dict, line: str):
         self.command = command  # first token, lowercased (None for an empty line)
-        self.args = args  # positional params
-        self.named = named  # dict of key=value params
-        self.line = line
+        self.args: list = args  # positional params
+        self.named: dict = named  # dict of key=value params
+        self.line: str = line
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return '_Msg(%r, args=%r, named=%r)' % (self.command, self.args, self.named)
 
 
-def _is_simple(s):
+def _is_simple(s: str) -> bool:
     if not s or s[: len(_PREFIX)] == _PREFIX:
         return False
     for c in s:
@@ -37,7 +37,7 @@ def _is_simple(s):
     return True
 
 
-def encode(v):
+def encode(v) -> str:
     """Encode a value into one whitespace-free wire token."""
     if isinstance(v, bool):
         return 'true' if v else 'false'
@@ -49,14 +49,14 @@ def encode(v):
     return _PREFIX + binascii.b2a_base64(s.encode()).rstrip().decode()
 
 
-def decode(tok):
+def decode(tok: str) -> str:
     """Decode a wire token back to a str (base64-decoded if prefixed, else as-is)."""
     if tok[: len(_PREFIX)] == _PREFIX:
         return binascii.a2b_base64(tok[len(_PREFIX) :]).decode()
     return tok
 
 
-def parse(line):
+def parse(line: str) -> _Msg:
     """Parse a protocol line into a _Msg (works for requests and responses)."""
     toks = line.split()
     if not toks:
@@ -76,7 +76,7 @@ def parse(line):
     return _Msg(command, args, named, line)
 
 
-def build(command, args=(), named=None):
+def build(command: str, args=(), named=None) -> str:
     """Build a protocol line; values are encoded as needed."""
     parts = [command]
     for a in args:

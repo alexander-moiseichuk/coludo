@@ -29,7 +29,7 @@ class BoardHealth(task.Task):
         self._ok = True
         return True
 
-    def temperature(self):
+    def temperature(self) -> float:
         if esp32 is not None:
             try:
                 return esp32.mcu_temperature()

@@ -19,9 +19,9 @@ class _Command:
     """A registered operator command: its name, handler, and one-line help."""
 
     def __init__(self, name: str, handler, help_text: str):
-        self.name = name
+        self.name: str = name
         self.handler = handler
-        self.help = help_text
+        self.help: str = help_text
 
 
 def command(name: str, help_text: str = ''):

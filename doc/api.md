@@ -19,16 +19,16 @@ the thin networking that reads lines and writes responses.
 Maps a command to an async handler(msg) -> response line.
 
 - `__init__()` — constructor
-- `on(command, fn)`
-- `handle(line)`
+- `on(command: str, fn) -> None`
+- `handle(line: str) -> str`
 
 ### `class Client`
 
-- `__init__(config, dispatcher, log=None, backoff_ms=1000)` — constructor
-- `run()` — Connect to Control and serve forever, reconnecting with backoff on drop.
-- `serve(reader, writer)` — Read commands from Control, dispatch, write responses. Returns on disconnect.
+- `__init__(config: dict, dispatcher, log=None, backoff_ms: int=1000)` — constructor
+- `run() -> None` — Connect to Control and serve forever, reconnecting with backoff on drop.
+- `serve(reader, writer) -> None` — Read commands from Control, dispatch, write responses. Returns on disconnect.
 
-### `create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_path='board.json')`
+### `create_dispatcher(cfg: dict, controller=None, on_reboot=None, fw: str='0.1', config_path: str='board.json') -> Dispatcher`
 
 Build a Dispatcher with the standard command handlers, wired to the running config, the
 Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset.
@@ -48,19 +48,19 @@ returned as a str and the receiver converts numerics itself (it knows `ms` is an
 params are key=value; everything else is positional. The command is lowercased; values keep
 their case. parse() handles requests and responses (ok/err/pong/iam) alike.
 
-### `encode(v)`
+### `encode(v) -> str`
 
 Encode a value into one whitespace-free wire token.
 
-### `decode(tok)`
+### `decode(tok: str) -> str`
 
 Decode a wire token back to a str (base64-decoded if prefixed, else as-is).
 
-### `parse(line)`
+### `parse(line: str) -> _Msg`
 
 Parse a protocol line into a _Msg (works for requests and responses).
 
-### `build(command, args=(), named=None)`
+### `build(command: str, args=(), named=None) -> str`
 
 Build a protocol line; values are encoded as needed.
 
@@ -79,15 +79,15 @@ Runs on MicroPython on the board. Validation here is config-file *integrity* (st
 types, pin uniqueness, bus refs, reserved pins) — NOT hardware health, which is checked at
 runtime and surfaced to the operator (the strict model).
 
-### `validate(cfg)`
+### `validate(cfg) -> list`
 
 Return a list of human-readable error strings (empty list == valid).
 
-### `config_id(cfg)`
+### `config_id(cfg) -> str`
 
 A stable short hash identifying a config snapshot (for the CC iam/config_id).
 
-### `load(path='board.json', defaults=None)`
+### `load(path: str='board.json', defaults=None) -> tuple`
 
 Layered load: active board.json if present and valid, else defaults.
 
@@ -95,21 +95,21 @@ Returns (cfg, source, errors). `source` is 'active', 'default', or a fallback re
 Never raises — a missing/corrupt/invalid active file degrades to defaults so the board is
 always reachable.
 
-### `save(cfg, path='board.json')`
+### `save(cfg, path: str='board.json') -> str`
 
 Validate then atomically persist a full config snapshot. Returns its config_id.
 
 Raises ValueError if invalid (an invalid config is never written).
 
-### `reset(path='board.json')`
+### `reset(path: str='board.json') -> bool`
 
 Delete the active config so the next load uses defaults. Returns True if removed.
 
-### `bus(cfg, ref)`
+### `bus(cfg, ref) -> dict`
 
 Resolve a bus reference 'type:id' (e.g. 'uart:1', 'i2c:0') to its spec dict, or None.
 
-### `device(cfg, name=None, driver=None)`
+### `device(cfg, name=None, driver=None) -> dict`
 
 Find a sensor/component by `name` and/or implementation. `driver` matches the resolved
 implementation -- a component's `driver` (drivers/) or `activity` (tasks/) field. Returns the
@@ -127,7 +127,7 @@ Topology: buses are grouped by type then id (referenced as 'uart:1', 'i2c:0', ..
 are data providers fused by quantity + priority (several may provide the same quantity with
 different drivers/priorities); `components` are the consumers/actuators (recorder, ...).
 
-### `default()`
+### `default() -> dict`
 
 ## `controller.py`
 
@@ -148,7 +148,7 @@ operator via stats()/validate().
 - `create(name: str) -> task.Task` — Create a task by component name via the registry. A component names its implementation
 - `active(name: str=None)` — Return the active task by name (None if absent), or a list of all active tasks if
 - `find(names: list[str]) -> list` — Non-blocking: the active tasks for `names`, None for any not up. The fast lookup for
-- `query(names: list[str], waiting: bool=True) -> list` — Resolve dependencies by name. With `waiting` (the default) park the caller until every
+- `query(names: list[str], waiting: bool=True) -> list` — Look up sibling tasks by name from the registry: `gnss, baro = await self.query(['gnss',
 - `setup() -> bool` — Create + set up every enabled task in order. Skip (and report) failures.
 - `start() -> None` — Launch each task's run() loop as a supervised asyncio task.
 - `close(name: str) -> None` — Deactivate a task and clean up its resources.
@@ -205,13 +205,13 @@ Telemetry-first: the task loops (recording included) start immediately and keep 
 Wi-Fi/CC tasks connect in the background when they can. Time sync + live tweaks arrive from Control
 over the link (e.g. `update mission {epoch}` sets the RTC); the board itself never asks.
 
-### `bringup(cfg, log=print)`
+### `bringup(cfg: dict, log=print) -> controller.Controller`
 
 Register every driver/task, create the Mission, and have the Controller build + start the
 enabled tasks from the config. Returns the Controller. Network-free itself -- any Wi-Fi/CC work
 happens inside the tasks the Controller starts.
 
-### `main()`
+### `main() -> None`
 
 ## `mission.py`
 
@@ -318,16 +318,16 @@ name so the Controller can build it from a config component.
 
 ### `class Task(inspector.Inspectable)`
 
-- `__init__(name, config=None, controller=None)` — constructor
-- `setup()` — Initialize or reset. Override. Return True on success, False otherwise.
-- `run()` — Main activity loop. Override. Default returns immediately.
-- `notify(callback)` — Register callback(task, event) to be invoked on this task's updates.
-- `emit(event=None)` — Notify all subscribers of an update.
-- `find(names)` — Non-blocking sibling lookup via the Controller (None for any not up).
-- `query(names, waiting=True)` — Await sibling tasks by name via the Controller; with `waiting` (default) park until all
-- `validate()` — Return True if the task is currently healthy.
-- `finish()` — Shut down and release resources.
-- `inspect()` — Status dict. Subclasses extend it.
+- `__init__(name: str, config: dict=None, controller=None)` — constructor
+- `setup() -> bool` — Initialize or reset. Override. Return True on success, False otherwise.
+- `run() -> None` — Main activity loop. Override. Default returns immediately.
+- `notify(callback) -> None` — Register callback(task, event) to be invoked on this task's updates.
+- `emit(event=None) -> None` — Notify all subscribers of an update.
+- `find(names: list[str]) -> list` — Non-blocking sibling lookup via the Controller (None for any not up).
+- `query(names: list[str], waiting: bool=True) -> list` — Await sibling tasks by name via the Controller; with `waiting` (default) park until all
+- `validate() -> bool` — Return True if the task is currently healthy.
+- `finish() -> None` — Shut down and release resources.
+- `inspect() -> dict` — Status dict. Subclasses extend it.
 
 # glider HAL drivers — `drivers/` — `src/glider/drivers`
 
@@ -382,9 +382,9 @@ Join + maintain the STA link; Inspectable as `wifi`.
 - `run() -> None` — Keep the link up: (re)join whenever disconnected. Never fatal -- the board flies without
 - `connect(timeout_ms: int=15000) -> bool` — Join the configured network. Returns True once connected, False on timeout/error.
 - `isconnected() -> bool`
-- `ifconfig()`
+- `ifconfig() -> tuple`
 - `ip() -> str`
-- `rssi()`
+- `rssi() -> int`
 - `set_tx_power(dbm: int) -> bool` — Adjust the TX power (operator signal-level tuning). Returns True on success.
 - `inspect() -> dict`
 - `update(props: dict) -> list`
@@ -404,7 +404,7 @@ the board. Registered as @task.activity('health') so the Controller creates and 
 Periodic vitals -> telemetry (health.csv) + `inspect health`.
 
 - `setup() -> bool`
-- `temperature()`
+- `temperature() -> float`
 - `mem_free() -> int`
 - `sample() -> dict`
 - `run() -> None` — Sample vitals every period_ms, estimate load, and push a telemetry row. Runs forever.
@@ -470,8 +470,8 @@ the heartbeat and operator traffic to one board can never overlap.
 
 - `__init__(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)` — constructor
 - `peer() -> str` _(property)_
-- `exchange(line: str, timeout: float=5.0)` — Send a ready board-facing line and return its parsed reply (None if disconnected).
-- `command(command: str, *args, timeout=5.0)` — Build `command args...` and exchange it. Returns the parsed reply or None.
+- `exchange(line: str, timeout: float=5.0) -> cc._Msg` — Send a ready board-facing line and return its parsed reply (None if disconnected).
+- `command(command: str, *args, timeout=5.0) -> cc._Msg` — Build `command args...` and exchange it. Returns the parsed reply or None.
 - `identify() -> str`
 - `inspect(name: str) -> dict`
 - `close() -> None`

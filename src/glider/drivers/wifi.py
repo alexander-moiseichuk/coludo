@@ -78,7 +78,7 @@ class Wifi(task.Task):
     def isconnected(self) -> bool:
         return self.wlan.isconnected()
 
-    def ifconfig(self):
+    def ifconfig(self) -> tuple:
         return self.wlan.ifconfig()
 
     def ip(self) -> str:
@@ -87,7 +87,7 @@ class Wifi(task.Task):
         except Exception:
             return None
 
-    def rssi(self):
+    def rssi(self) -> int:
         try:
             return self.wlan.status('rssi')
         except Exception:

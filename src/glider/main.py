@@ -18,7 +18,7 @@ import mission
 import tasks
 
 
-async def bringup(cfg, log=print):
+async def bringup(cfg: dict, log=print) -> controller.Controller:
     """Register every driver/task, create the Mission, and have the Controller build + start the
     enabled tasks from the config. Returns the Controller. Network-free itself -- any Wi-Fi/CC work
     happens inside the tasks the Controller starts."""
@@ -31,7 +31,7 @@ async def bringup(cfg, log=print):
     return flight
 
 
-async def main():
+async def main() -> None:
     cfg, source, errors = config.load()
     print('main :: config %s%s' % (source, '' if not errors else ' ERRORS=%s' % errors))
     await bringup(cfg)

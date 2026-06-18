@@ -49,7 +49,7 @@ class Board:
         host, port = self._writer.get_extra_info('peername')[:2]
         return '%s:%d' % (host, port)
 
-    async def exchange(self, line: str, timeout: float = 5.0):
+    async def exchange(self, line: str, timeout: float = 5.0) -> cc._Msg:
         """Send a ready board-facing line and return its parsed reply (None if disconnected).
         `timeout` bounds the wait so a wedged board raises asyncio.TimeoutError, not hangs."""
         async with self._lock:
@@ -61,7 +61,7 @@ class Board:
         self.last_seen = time.monotonic()
         return cc.parse(raw.decode().strip())
 
-    async def command(self, command: str, *args, timeout: float = 5.0):
+    async def command(self, command: str, *args, timeout: float = 5.0) -> cc._Msg:
         """Build `command args...` and exchange it. Returns the parsed reply or None."""
         return await self.exchange(cc.build(command, list(args)), timeout)
 
@@ -106,7 +106,7 @@ class Server:
         ]
 
     # ----------------------------------------------------------------- board side
-    async def _handle(self, reader, writer):
+    async def _handle(self, reader, writer) -> None:
         """Identify a freshly connected board, register it, then poll it until it drops."""
         board = Board(reader, writer)
         self.log('control :: board connected %s' % board.peer)
@@ -129,7 +129,7 @@ class Server:
             board.close()
             self.log('control :: %s offline' % (board.id or board.peer))
 
-    async def _poll(self, board):
+    async def _poll(self, board) -> None:
         """Heartbeat: ping an idle board every `heartbeat_s`; a successful exchange (operator or
         ping) within the window already proves liveness, so it is skipped. Returns on disconnect."""
         while True:
@@ -140,7 +140,7 @@ class Server:
                 return  # disconnected -> _handle marks it offline
 
     # -------------------------------------------------------------- operator side
-    async def _operator(self, reader, writer):
+    async def _operator(self, reader, writer) -> None:
         """One telnet/dev operator session: read lines, dispatch, write tagged replies."""
         session = {'selected': None}
         try:
