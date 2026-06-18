@@ -8,7 +8,7 @@ import asyncio
 import json
 
 import cc_protocol as cc
-from inspector import Inspector
+import inspector
 
 
 class Dispatcher:
@@ -65,7 +65,7 @@ class Client:
                 await writer.drain()
 
 
-def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_path='board.json'):
+def create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_path='board.json'):
     """Build a Dispatcher with the standard command handlers, wired to the running config, the
     Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset."""
     import gc
@@ -108,16 +108,16 @@ def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_p
         return cc.build('ok', [json.dumps({'state': state()})])
 
     async def report(msg):
-        return cc.build('ok', [json.dumps(controller.report() if controller is not None else {})])
+        return cc.build('ok', [json.dumps(controller.stats() if controller is not None else {})])
 
     async def objects(msg):
-        return cc.build('ok', [json.dumps(Inspector.names())])
+        return cc.build('ok', [json.dumps(inspector.Inspector.names())])
 
     async def inspect(msg):
         if not msg.args:
             return cc.build('err', ['badargs', 'inspect <object>'])
         try:
-            return cc.build('ok', [json.dumps(Inspector.inspect(msg.args[0]))])
+            return cc.build('ok', [json.dumps(inspector.Inspector.inspect(msg.args[0]))])
         except KeyError:
             return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
 
@@ -125,7 +125,7 @@ def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_p
         if len(msg.args) < 2:
             return cc.build('err', ['badargs', 'update <object> <json>'])
         try:
-            changed = Inspector.update(msg.args[0], json.loads(msg.args[1]))
+            changed = inspector.Inspector.update(msg.args[0], json.loads(msg.args[1]))
         except KeyError:
             return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
         return cc.build('ok', [json.dumps({'changed': changed})])
@@ -134,7 +134,7 @@ def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_p
         if not msg.args:
             return cc.build('err', ['badargs', 'stats <object>'])
         try:
-            return cc.build('ok', [json.dumps(Inspector.stats(msg.args[0]))])
+            return cc.build('ok', [json.dumps(inspector.Inspector.stats(msg.args[0]))])
         except KeyError:
             return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
 
@@ -160,8 +160,15 @@ def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_p
         config_mod.reset(config_path)
         return cc.build('ok')
 
+    async def save_mission(msg):
+        mission = inspector.Inspector.get('mission')
+        if mission is None:
+            return cc.build('err', ['unsupported', 'no mission'])
+        mission.save()  # persist the live mission (set via `update mission`) to launch.config
+        return cc.build('ok')
+
     async def reboot(msg):
-        reset = on_reboot if on_reboot is not None else _machine_reset
+        reset = on_reboot or (lambda: __import__('machine').reset())  # imported only when it fires
 
         async def do_reset():
             await asyncio.sleep_ms(200)
@@ -182,11 +189,6 @@ def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_p
     dispatcher.on('get-config', get_config)
     dispatcher.on('save-config', save_config)
     dispatcher.on('reset-config', reset_config)
+    dispatcher.on('save-mission', save_mission)
     dispatcher.on('reboot', reboot)
     return dispatcher
-
-
-def _machine_reset():
-    import machine
-
-    machine.reset()

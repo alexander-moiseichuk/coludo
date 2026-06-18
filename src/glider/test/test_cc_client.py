@@ -3,11 +3,13 @@
 
 import asyncio
 import json
+import os
 
+import cc_client
 import cc_protocol as cc
-from cc_client import Client, Dispatcher, standard_dispatcher
-from config_default import default
-from inspector import Inspectable, Inspector
+import config_default
+import inspector
+import mission
 
 
 class _FakeReader:
@@ -34,7 +36,7 @@ class _FakeWriter:
         pass
 
 
-class _Knob(Inspectable):
+class _Knob(inspector.Inspectable):
     name = 'knob'
     kind = 'knob'
     _inspect = ('level',)
@@ -46,7 +48,7 @@ class _Knob(Inspectable):
 
 async def amain():
     # generic Dispatcher: no board-id handling; command -> handler
-    dispatcher = Dispatcher()
+    dispatcher = cc_client.Dispatcher()
 
     async def ping(msg):
         return cc.build('pong')
@@ -63,7 +65,7 @@ async def amain():
     assert 'internal' in await dispatcher.handle('boom')  # handler exception
 
     # standard handlers
-    sd = standard_dispatcher(default())
+    sd = cc_client.create_dispatcher(config_default.default())
 
     m = cc.parse(await sd.handle('whoami'))
     assert m.command == 'iam' and m.args[0] == 'glider1'
@@ -77,7 +79,7 @@ async def amain():
     assert cfg['board']['id'] == 'glider1'
 
     # Inspector-backed inspect/update/stats
-    Inspector.register(_Knob())
+    inspector.Inspector.register(_Knob())
     assert 'knob' in json.loads(cc.parse(await sd.handle('objects')).args[0])
     assert json.loads(cc.parse(await sd.handle('inspect knob')).args[0]) == {'level': 1}
     changed = cc.parse(await sd.handle(cc.build('update', ['knob', json.dumps({'level': 5})])))
@@ -87,22 +89,30 @@ async def amain():
 
     # Client.serve over fake streams
     writer = _FakeWriter()
-    await Client(default(), sd).serve(_FakeReader(['whoami', 'ping']), writer)
+    await cc_client.Client(config_default.default(), sd).serve(_FakeReader(['whoami', 'ping']), writer)
     resp = [b.decode().strip() for b in writer.out]
     assert cc.parse(resp[0]).command == 'iam' and cc.parse(resp[1]).command == 'pong'
 
     # save-config: invalid rejected; reset-config ok
-    sd2 = standard_dispatcher(default(), config_path='test_cc_board.json')
-    bad = default()
+    sd2 = cc_client.create_dispatcher(config_default.default(), config_path='test_cc_board.json')
+    bad = config_default.default()
     bad['pins']['servo_yaw'] = 18  # reserved Wi-Fi pin -> invalid
     assert 'invalid' in await sd2.handle(cc.build('save-config', [json.dumps(bad)]))
-    ok = cc.parse(await sd2.handle(cc.build('save-config', [json.dumps(default())])))
+    ok = cc.parse(await sd2.handle(cc.build('save-config', [json.dumps(config_default.default())])))
     assert ok.command == 'ok' and 'config_id' in json.loads(ok.args[0])
     assert cc.parse(await sd2.handle('reset-config')).command == 'ok'
 
+    # save-mission: unsupported until a Mission is registered, then persists launch.config
+    inspector.Inspector.unregister('mission')
+    assert 'unsupported' in await sd.handle('save-mission')
+    mission.Mission('test_cc_launch.config').update({'launch_id': 'cc-t1'})  # registers itself
+    assert cc.parse(await sd.handle('save-mission')).command == 'ok'
+    assert json.load(open('test_cc_launch.config'))['launch_id'] == 'cc-t1'
+    os.remove('test_cc_launch.config')
+
     # reboot returns ok and fires the (intercepted) reset
     fired = []
-    sd3 = standard_dispatcher(default(), on_reboot=lambda: fired.append(1))
+    sd3 = cc_client.create_dispatcher(config_default.default(), on_reboot=lambda: fired.append(1))
     assert await sd3.handle('reboot') == 'ok'
     await asyncio.sleep_ms(260)
     assert fired == [1]

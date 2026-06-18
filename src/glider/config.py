@@ -154,8 +154,9 @@ def validate(cfg):
                 if name in seen_names:
                     errs.append("duplicate device name '%s'" % name)
                 seen_names.add(name)
-            if not isinstance(dev.get('driver'), str) or not dev.get('driver'):
-                errs.append('%s.driver must be a non-empty string' % where)
+            runs = dev.get('driver') or dev.get('activity')  # drivers/ via `driver`, tasks/ via `activity`
+            if not isinstance(runs, str) or not runs:
+                errs.append('%s must name an implementation: `driver` (drivers/) or `activity` (tasks/)' % where)
             if 'enabled' in dev and not isinstance(dev['enabled'], bool):
                 errs.append('%s.enabled must be a bool' % where)
             ref = dev.get('bus')
@@ -282,8 +283,11 @@ def bus(cfg, ref):
 
 
 def device(cfg, name=None, driver=None):
-    """Find a sensor/component by name or driver. Returns the dict or None."""
+    """Find a sensor/component by `name` and/or implementation. `driver` matches the resolved
+    implementation -- a component's `driver` (drivers/) or `activity` (tasks/) field. Returns the
+    dict or None."""
     for item in cfg.get('sensors', []) + cfg.get('components', []):
-        if (name is None or item.get('name') == name) and (driver is None or item.get('driver') == driver):
+        runs = item.get('driver') or item.get('activity')
+        if (name is None or item.get('name') == name) and (driver is None or runs == driver):
             return item
     return None

@@ -97,6 +97,16 @@ so it must run on both.
 - **No abbreviations**, and an argument's name matches the field it sets: `capacity`/`cell_size`
   not `slots`, `max_payload` not `maxpay`, `storage` not `buf`, `servo_eleron_left` not `..._l`.
 - **PEP8**; module-internal names and classes start with `_` (e.g. `_Msg`, `_is_simple`).
+- **Qualify project-module references**: import our own modules whole and call *through* them —
+  `import cc_client` then `cc_client.create_dispatcher()`, not `from cc_client import create_dispatcher`.
+  The module scope stays visible at the call site (which catches edit errors) and a module's external
+  surface is greppable (`cc_client.`); this matters most when pulling several names from one module.
+  Standard-library / builtin imports are fine as-is (`import json`, `from micropython import const`,
+  `from machine import RTC`), and `cc_protocol` keeps its `as cc` alias. This holds in a module's
+  **own** unit test too — `import mission` and reach its internals qualified (`mission._load`),
+  renaming any instance variable that would otherwise shadow the module. Give the rename a
+  **problem-specific** name that reads (`launch = mission.Mission(...)`; a Controller Task becomes
+  `new_task` / `pending_task` / `closing_task` by lifecycle phase) — never a bare `task_` disambiguator.
 - **Type annotations** on every non-local: module constants, class variables, function arguments
   and return types (both CPython 3.12 and MicroPython 1.28 accept them).
 - **Constants** via `micropython.const`, with a portable shim at the top of shared/board modules:

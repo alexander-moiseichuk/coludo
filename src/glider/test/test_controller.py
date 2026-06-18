@@ -3,11 +3,12 @@
 
 import asyncio
 
-from controller import Controller
-from task import Task
+import controller
+import inspector
+import task
 
 
-class FakeSensor(Task):
+class FakeSensor(task.Task):
     async def setup(self):
         self.ran = 0
         self._ok = True
@@ -18,13 +19,13 @@ class FakeSensor(Task):
             self.ran += 1
             await asyncio.sleep_ms(1)
 
-    def report(self):
-        r = Task.report(self)
-        r['ran'] = self.ran
-        return r
+    def inspect(self):
+        status = task.Task.inspect(self)
+        status['ran'] = self.ran
+        return status
 
 
-class FailSensor(Task):
+class FailSensor(task.Task):
     async def setup(self):
         return False
 
@@ -47,7 +48,7 @@ def make_config():
 async def amain():
     logs = []
     reg = {'fake': FakeSensor, 'fail': FailSensor}
-    c = Controller(make_config(), registry=reg, log=lambda m: logs.append(m))
+    c = controller.Controller(make_config(), registry=reg, log=lambda m: logs.append(m))
 
     # directory() excludes disabled, keeps config order
     assert c.directory() == ['s1', 's2', 'bad', 'failing'], c.directory()
@@ -63,16 +64,19 @@ async def amain():
 
     assert c.validate() is True
 
-    # run the task loops, then check report
+    # run the task loops, then check stats()
     await c.start()
     await asyncio.sleep_ms(50)
-    rep = c.report()
+    rep = c.stats()
     assert rep['state'] == 'setting'
     assert rep['tasks']['s1']['ran'] >= 1, rep
 
+    # tasks are individually inspectable through the Inspector
+    assert inspector.Inspector.inspect('s1')['ran'] >= 1
+
     # notify/emit
     seen = []
-    c.tasks['s1'].notify(lambda task, ev: seen.append(ev))
+    c.tasks['s1'].notify(lambda emitter, ev: seen.append(ev))
     c.tasks['s1'].emit('hello')
     assert seen == ['hello']
 
@@ -93,7 +97,7 @@ async def amain():
     assert c.tasks == {}
     assert c.state == 'done'
 
-    print('ok: controller directory/create/setup/run/active/report/validate/close/finish')
+    print('ok: controller directory/create/setup/run/active/inspect/stats/validate/close/finish')
 
 
 asyncio.run(amain())

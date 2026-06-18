@@ -86,7 +86,7 @@ does):
 | `SPI(2)` | sck=43, mosi=44, miso=39 | **the microSD pins** |
 
 Two hardware I²C controllers exist (`I2C(0)`/`I2C(1)`; `I2C(2)` **hard-crashes** the board — see
-the [benchmark findings](benches/esp32p4-micropython-findings.md)). Two hardware SPI controllers
+the [benchmark findings](benches/WaveShare_esp32p4-micropython-findings.md)). Two hardware SPI controllers
 exist (`SPI(1)`/`SPI(2)`; `SPI(0)`/`SPI(3)` raise `ValueError`). Any controller remaps to
 arbitrary GPIOs via the matrix.
 

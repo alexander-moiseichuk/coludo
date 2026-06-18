@@ -40,6 +40,10 @@ class Inspector:
         cls._objects[obj.name] = obj
 
     @classmethod
+    def unregister(cls, name: str) -> None:
+        cls._objects.pop(name, None)
+
+    @classmethod
     def names(cls) -> list:
         return sorted(cls._objects.keys())
 

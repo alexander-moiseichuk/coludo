@@ -10,8 +10,14 @@ import ast
 import os
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SOURCES = [('src/glider', 'glider firmware (MicroPython)'), ('src/control', 'control (CPython)')]
-SKIP_PREFIXES = ('test_', 'itest_', 'bench_', 'gen_docs')
+SOURCES = [
+    ('src/glider', 'glider firmware (MicroPython)'),
+    ('src/glider/drivers', 'glider HAL drivers — `drivers/`'),
+    ('src/glider/tasks', 'glider subsystem tasks — `tasks/`'),
+    ('src/control', 'control (CPython)'),
+    ('src/control/commands', 'control operator commands — `commands/`'),
+]
+SKIP_PREFIXES = ('test_', 'itest_', 'bench_', 'gen_docs', '__init__')
 
 
 def module_header(source: str) -> str:

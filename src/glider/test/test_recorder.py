@@ -3,8 +3,8 @@
 
 import asyncio
 
-from config_default import default
-from recorder import Recorder, Ring, Telemetry, _RecorderError
+import config_default
+import recorder
 
 
 class FakeWriter:
@@ -21,14 +21,14 @@ class FakeWriter:
 
 
 def _config(tlm_capacity, log_capacity, cell_size):
-    cfg = default()
+    cfg = config_default.default()
     cfg['recorder'] = {'tlm_capacity': tlm_capacity, 'log_capacity': log_capacity, 'cell_size': cell_size}
     return cfg
 
 
 def test_ring():
     # SPSC write/read; holds capacity-1 records
-    ring = Ring(3, 32)
+    ring = recorder.Ring(3, 32)
     assert ring.write(b'a') and ring.write(b'b') and ring.count() == 2
     assert ring.write(b'c') is False and ring.dropped == 1  # full -> skip, no overwrite
     assert ring.read() == b'a' and ring.read() == b'b'
@@ -37,32 +37,32 @@ def test_ring():
 
 
 async def test_recorder():
-    Recorder.setup(default(), uart=FakeWriter())
-    assert Recorder._session is None  # lazy until first tlm/session
-    session = Recorder.session()
+    recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
+    assert recorder.Recorder._session is None  # lazy until first tlm/session
+    session = recorder.Recorder.session()
     assert len(session) == 15  # YYYYMMDD_HHMMSS
 
     # telemetry first, then logs; @<session>_file@ routing
-    assert Recorder.log('Controller', 'setup started') is True
-    Recorder.tlm('cpu.csv', '40;51')
-    assert await Recorder.drain() == 2
-    out = Recorder._uart.items
+    assert recorder.Recorder.log('Controller', 'setup started') is True
+    recorder.Recorder.tlm('cpu.csv', '40;51')
+    assert await recorder.Recorder.drain() == 2
+    out = recorder.Recorder._uart.items
     assert out[0] == ('@%s_cpu.csv@40;51\n' % session).encode(), out[0]
     assert b' Controller :: setup started\n' in out[1]
-    assert await Recorder.drain() == 0
+    assert await recorder.Recorder.drain() == 0
 
     # report exposes count/max/dropped
-    rep = Recorder.report()
+    rep = recorder.Recorder.report()
     assert rep['session'] == session and rep['tlm']['max'] >= 1 and 'dropped' in rep['log']
 
     # Telemetry: header first (uptime + fields), then timestamped rows
-    Recorder.setup(default(), uart=FakeWriter())
-    stream = Telemetry('imu.csv', ('yaw', 'pitch', 'roll'))
+    recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
+    stream = recorder.Telemetry('imu.csv', ('yaw', 'pitch', 'roll'))
     stream.push((1.0, 2.0, 3.0))
     stream.push((4, 5, 6))
-    await Recorder.drain()
-    rows = Recorder._uart.items
-    prefix = ('@%s_imu.csv@' % Recorder.session()).encode()
+    await recorder.Recorder.drain()
+    rows = recorder.Recorder._uart.items
+    prefix = ('@%s_imu.csv@' % recorder.Recorder.session()).encode()
     assert rows[0] == prefix + b'uptime;yaw;pitch;roll\n', rows[0]
     assert rows[1].startswith(prefix) and rows[1].endswith(b';1.0;2.0;3.0\n')
     assert rows[2].endswith(b';4;5;6\n')
@@ -70,48 +70,48 @@ async def test_recorder():
 
 async def test_error_policy():
     # logs are best-effort: a too-long message is truncated to the cell and still stored
-    Recorder.setup(_config(8, 8, 64), uart=FakeWriter())
-    assert Recorder.log('X', 'y' * 300) is True
-    await Recorder.drain()
-    assert len(Recorder._uart.items[0]) <= 64
+    recorder.Recorder.setup(_config(8, 8, 64), uart=FakeWriter())
+    assert recorder.Recorder.log('X', 'y' * 300) is True
+    await recorder.Recorder.drain()
+    assert len(recorder.Recorder._uart.items[0]) <= 64
 
     # logs drop (return False) when the buffer is full -- no raise
-    Recorder.setup(_config(8, 2, 64), uart=FakeWriter())  # log ring holds 1
-    assert Recorder.log('A', 'one') is True
-    assert Recorder.log('A', 'two') is False  # full -> dropped, best-effort
+    recorder.Recorder.setup(_config(8, 2, 64), uart=FakeWriter())  # log ring holds 1
+    assert recorder.Recorder.log('A', 'one') is True
+    assert recorder.Recorder.log('A', 'two') is False  # full -> dropped, best-effort
 
     # telemetry is important: raises when full
-    Recorder.setup(_config(2, 8, 64), uart=FakeWriter())  # tlm ring holds 1
-    Recorder.tlm('t.csv', '1')
+    recorder.Recorder.setup(_config(2, 8, 64), uart=FakeWriter())  # tlm ring holds 1
+    recorder.Recorder.tlm('t.csv', '1')
     raised = False
     try:
-        Recorder.tlm('t.csv', '2')
-    except _RecorderError:
+        recorder.Recorder.tlm('t.csv', '2')
+    except recorder._RecorderError:
         raised = True
     assert raised
 
     # telemetry raises when a record is too big for a cell
-    Recorder.setup(_config(8, 8, 64), uart=FakeWriter())
+    recorder.Recorder.setup(_config(8, 8, 64), uart=FakeWriter())
     raised = False
     try:
-        Recorder.tlm('t.csv', 'v' * 200)
-    except _RecorderError:
+        recorder.Recorder.tlm('t.csv', 'v' * 200)
+    except recorder._RecorderError:
         raised = True
     assert raised
 
 
 async def test_run_loop():
     # run() loops forever; cancellation stops it (no stop flag)
-    Recorder.setup(default(), uart=FakeWriter())
-    Recorder.log('X', 'y')
-    task = asyncio.create_task(Recorder.run())
+    recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
+    recorder.Recorder.log('X', 'y')
+    drain_task = asyncio.create_task(recorder.Recorder.run())
     await asyncio.sleep_ms(120)
-    task.cancel()
+    drain_task.cancel()
     try:
-        await task
+        await drain_task
     except asyncio.CancelledError:
         pass
-    assert len(Recorder._uart.items) >= 1
+    assert len(recorder.Recorder._uart.items) >= 1
 
 
 async def _amain():

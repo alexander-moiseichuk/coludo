@@ -12,7 +12,7 @@ import asyncio
 import struct
 import time
 
-from inspector import Inspector
+import inspector
 
 try:
     from micropython import const
@@ -28,7 +28,7 @@ _LENGTH_BYTES = const(2)  # uint16 record-length header
 _STATS_PERIOD_MS = const(1000)  # how often run() logs a buffer-stats line
 
 
-class _RecorderError(Exception):
+class _RecorderError(ValueError):
     """Raised when an important (telemetry) record cannot be queued."""
 
 
@@ -112,13 +112,13 @@ class Recorder:
             import config as config_mod
             from machine import UART
 
-            entry = config_mod.device(config, driver='uart_sink')
+            entry = config_mod.device(config, driver='recorder')
             ref = entry['bus'] if entry else 'uart:1'
             spec = config_mod.bus(config, ref) or {'tx': 20, 'rx': 21, 'baud': 921600}
             uart = UART(int(ref.split(':')[1]), baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
         # accept a pre-wrapped async writer (tests) or wrap a raw UART for async drain
         cls._uart = uart if hasattr(uart, 'drain') else asyncio.StreamWriter(uart, {})
-        Inspector.register(cls)
+        inspector.Inspector.register(cls)
 
     @classmethod
     def timestamp(cls) -> int:

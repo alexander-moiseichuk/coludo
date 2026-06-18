@@ -99,8 +99,18 @@ def default():
                 },
             },
         ],
-        # Consumers / actuators / system tasks.
+        # Consumers / actuators / system tasks. `driver` runs from drivers/ (HAL), `activity` from
+        # tasks/ (higher-level subsystems); both resolve through the same registry.
         'components': [
-            {'name': 'recorder', 'driver': 'uart_sink', 'bus': 'uart:1', 'enabled': True},
+            # Recorder drain loop: a thin activity over the global Recorder, using uart:1.
+            {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart:1', 'enabled': True},
+            # Status LED on the led_status pin: blinks the board state (error/standby/flying).
+            {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': True},
+            # Board vitals (temperature/memory/load) -> telemetry every period_ms.
+            {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'enabled': True},
+            # Connectivity (optional): join Wi-Fi (HAL driver), then serve the CC hub (activity). A
+            # board with no Wi-Fi (e.g. FireBeetle 2) skips these at setup and runs standalone.
+            {'name': 'wifi', 'driver': 'wifi', 'enabled': True},
+            {'name': 'cc', 'activity': 'cc', 'enabled': True},
         ],
     }

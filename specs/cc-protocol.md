@@ -121,18 +121,43 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `state` | — | `ok {state,uptime}` | current flight phase |
 | `tel` | `[ms]` | `ok {samples:[...]}` | telemetry samples within the last `ms` |
 | `log` | `<ms>` | `ok {lines:[...], truncated}` | log lines from the last `ms` |
-| `report` | `[task]` | `ok {...}` | `task.report()` dump; all tasks if none named |
+| `report` | — | `ok {state, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
+| `objects` | — | `ok [name, ...]` | names of all `Inspectable` objects (for the `inspect`/`update`/`stats` targets) |
 | `inspect` | `<object>` | `ok {props}` | `Inspectable.inspect()` of a named object |
 | `update` | `<object> <json>` | `ok {changed:[...]}` | `Inspectable.update()` — names of properties actually changed |
 | `stats` | `<object>` | `ok {stats}` | `Inspectable.stats()` of a named object |
 | `get-config` | `[running\|default]` | `ok {config}` | fetch a config (`running` if omitted) |
 | `save-config` | `<json>` | `ok {config_id}` / `err invalid <msg>` | validate + persist full snapshot; **running config unchanged** |
 | `reset-config` | — | `ok` | delete `board.json`; next boot uses `config_default.py` |
+| `save-mission` | — | `ok` / `err unsupported` | persist the live mission (set via `update mission`) to `launch.config` |
 | `reboot` | — | `ok` then disconnect | ack, then hard reset → boots from saved config |
 
 `inspect`/`update`/`stats` address an object by name (`inspect wifi`, `update servo_yaw <json>`);
 the board resolves it from the registry of `Inspectable`s. `update` applies only supported,
 changed properties and returns their names — saving/rebooting stays an explicit operator step.
+
+### The mission object (launch identity + clock)
+
+The per-launch identity — **launch id**, launch-**site** name, launch **position**
+(`latitude`/`longitude`/`altitude`), and the board **clock** — is the `mission` Inspectable, so it
+rides the generic `inspect`/`update` surface rather than bespoke commands:
+
+```
+> inspect mission
+from glider1 ok {"launch_id":"hprc-t1","site":"pad-a","latitude":45.5,"longitude":-73.5,
+                 "altitude":120,"clock":"2026-06-17T14:32:05","epoch":1781000000}
+> update mission base64:{"epoch":1781000000}    (time sync — Unix seconds, sets the board RTC)
+from glider1 ok {"changed":["epoch"]}
+> update mission base64:{"launch_id":"hprc-t2","latitude":45.51}
+from glider1 ok {"changed":["launch_id","latitude"]}
+```
+
+`epoch` is a momentary action (it sets the RTC, never stored); `inspect` reports the live clock as
+both an ISO string and a Unix `epoch` for CC to compare against its own. A broadcast
+`all update mission base64:{"epoch":...}` time-syncs the whole fleet. Unlike the board config
+(whose draft lives on CC), the mission is small and edited live on the board, so **`save-mission`**
+persists the current values to `launch.config` — the per-launch counterpart to `board.json` — to
+survive a pre-flight reboot. `err unsupported` means the board has no mission object.
 
 ### Log / telemetry retrieval
 

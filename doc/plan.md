@@ -8,12 +8,15 @@ Required hardware and the phased development roadmap. Architecture lives in
 - **Phase 0 — done.** `config`, `task`+`controller`, `cc_protocol`, `recorder` (SPSC rings +
   `Telemetry`) in `src/glider/`, all MicroPython, on-board tested (`make test`).
 - **Phase 1 board side — done.** `wifi` (STA) and `cc_client` (`Dispatcher`/`Client` +
-  `standard_dispatcher` answering whoami/ping/health/state/report/get-config/save-config/
+  `create_dispatcher` answering whoami/ping/health/state/report/get-config/save-config/
   reset-config/reboot). 8/8 on-board tests.
-- **Resume point (next):** the **Control** service in `src/control/` (host CPython, stdlib asyncio
-  — the isolated piece; the board client already speaks the protocol to it). **Then** the Controller
-  **bring-up wiring** (connect → time-sync → Recorder drain as the `uart_sink` task), two-sided so
-  it wants Control live first. The `RecorderTask @driver('uart_sink')` integration was deferred.
+- **Control hub — done.** `src/control/`: board listener + registry + ~2 s heartbeat + telnet
+  operator console (drop-in `commands/`) + HTTP/SSE browser dashboard on 8080 (`web.py`),
+  host-tested. Remaining polish: draft config + save/reboot from the UI. **Then** the Controller
+  **bring-up wiring** (connect → time-sync → start tasks), two-sided so it wants Control live first.
+  The Recorder is now wired into the task graph by a thin adapter (`@task.activity('recorder')` in
+  `tasks/recorder.py`); the `recorder` component (bus uart:1) makes the Controller create + supervise
+  its drain loop. ✅
 
 ### Near-term work from `findings.txt` (quality pass)
 
@@ -56,7 +59,7 @@ testable foundations and connectivity come before the flight loop.
 ### Phase 0 — Foundations (MicroPython, on-board tested) — DONE
 - ✅ `config.py` + `config_default.py`: loader, validator (pin uniqueness, bus refs, reserved
   pins, board.id, `recorder` section), `config_id` hashing, layered load + fallback, atomic save.
-- ✅ `task.py` + `controller.py`: Task base + `DRIVERS` registry; Controller
+- ✅ `task.py` + `controller.py`: Task base + `ACTIVITIES` registry; Controller
   (`directory/create/active/close`, supervised run loops, flight state machine).
 - ✅ `cc_protocol.py`: line parser — bare tokens or `base64:<data>` (no quoting/tokenizing),
   `parse`/`build`/`encode`/`decode`.
@@ -66,13 +69,27 @@ testable foundations and connectivity come before the flight loop.
 
 ### Phase 1 — Connectivity & ground ops (no flight control)
 - ✅ **Board side:** `wifi.py` (STA join `panda`, tx-power), `cc_client.py` (`Client` dial-out +
-  `serve` loop, `standard_dispatcher` answering whoami/ping/health/state/report/get-config/
+  `serve` loop, `create_dispatcher` answering whoami/ping/health/state/report/get-config/
   save-config/reset-config/reboot). System status (temp/mem/uptime) is in the health handler.
-- ◻ **CC hub** (`src/control/`, host Python): board listener (1234), telnet (1235), HTTP + SSE
-  (8080), registry, ~2 s poll loop, `help`/`list`/`select`, draft config. ← **next**
+- ◧ **CC hub** (`src/control/`, host Python): board listener (1234) + registry + ~2 s heartbeat
+  poll + telnet operator console (1235, routing `<board>`/`all`/`*`, sticky `select`, drop-in
+  `commands/`) + **HTTP + SSE browser bridge** (8080: `/`, `/api/boards`, `/api/cmd`, `/events`,
+  `web.py` + `static/index.html`). ✅ ◻ remaining: draft config + richer dashboard (save/reboot). ← **next**
 - ◻ Minimal browser dashboard: health, enable/disable, `save-config` → `reboot`.
-- ◻ Controller bring-up wiring (connect → time-sync → Recorder drain as the `uart_sink` task)
-  and an LED-status task.
+- ✅ **Task packages** — `drivers/` (HAL: `led`, `wifi`, the future sensors/servo, via `@task.driver`)
+  and `tasks/` (subsystems: Recorder adapter, `board_health`, `cc_link`, via the `@task.activity`
+  alias), each with a `load()` that imports its modules so the registrations run (one shared
+  `ACTIVITIES` registry for now). A config component names its impl with `driver` (drivers/) or
+  `activity` (tasks/). `task.py` stays the base; top-level `recorder` / `mission` stay (data path /
+  identity). `deploy.sh` pushes packages in one batched
+  mpremote session (a deployed main.py auto-runs on each soft-reset).
+- ✅ **Controller bring-up wiring** — `main.py` (boot): `drivers.load()` + `tasks.load()` → create
+  Mission → hand the config to the Controller, which builds + starts the *enabled* tasks (Recorder,
+  LED, BoardHealth; driverless sensors skipped). **No driver named by hand** — drop a file in
+  `drivers/`/`tasks/` and enable it in the config. Then Wi-Fi join → dial + serve Control.
+  Telemetry-first; time sync arrives from Control (`update mission {epoch}`). Tested (`test_main`).
+- ✅ **Status LED** — `drivers/led.py` `@task.driver('led')`: one GPIO (`led_status`) blinks the
+  board state (fast=error, slow=standby, solid=flying) from controller state + health. `test_led`.
 - **Milestone:** power a board → it appears on CC → view health → toggle a component →
   save + reboot → it returns from the saved config.
 
@@ -116,7 +133,7 @@ a sync loop that waits until GPS is ready.
 
 Adopted and documented in [`../specs/coludo.md`](../specs/coludo.md) ("Task Data-Flow and
 Message Propagation"), grounded by on-board measurements (see
-[benchmark findings](benches/esp32p4-micropython-findings.md)). Not one paradigm — chosen per
+[benchmark findings](benches/WaveShare_esp32p4-micropython-findings.md)). Not one paradigm — chosen per
 data class to respect the GC-pause and <10 ms control-loop budgets on MicroPython:
 
 - **Hot sensor data** (IMU/baro at 100–200 Hz) → a shared **latest-value blackboard**:

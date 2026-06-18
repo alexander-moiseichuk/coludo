@@ -1,14 +1,14 @@
-# BoardHealth — periodic device vitals (temperature, free memory, CPU load) pushed to telemetry
-# and exposed to the operator via the Inspector (findings.txt #10). CPU load is estimated from a
-# low-priority idle task: the fewer times it runs in a period (vs the most it has ever run), the
-# busier the board.
+# tasks/board_health.py — board vitals task: samples temperature, free memory and CPU load every
+# period, pushes a telemetry row, and exposes the latest to the operator. CPU load is estimated from
+# a low-priority idle task: the fewer times it runs in a period (vs the most it ever has), the busier
+# the board. Registered as @task.activity('health') so the Controller creates and supervises it.
 
 import asyncio
 import gc
 import time
 
-from inspector import Inspectable, Inspector
-from recorder import Telemetry
+import recorder
+import task
 
 try:
     import esp32
@@ -16,17 +16,18 @@ except ImportError:
     esp32 = None
 
 
-class BoardHealth(Inspectable):
-    name = 'health'
-    kind = 'health'
+@task.activity('health')
+class BoardHealth(task.Task):
+    """Periodic vitals -> telemetry (health.csv) + `inspect health`."""
 
-    def __init__(self, period_ms: int = 1000):
-        self.period_ms: int = period_ms
+    async def setup(self) -> bool:
+        self.period_ms: int = self.config.get('period_ms', 1000)
         self.load: float = 0.0
         self._idle_count: int = 0
         self._max_rate: float = 0.0
-        self._tlm = Telemetry('health.csv', ('temp', 'mem_free', 'load'))
-        Inspector.register(self)
+        self._tlm = recorder.Telemetry('health.csv', ('temp', 'mem_free', 'load'))
+        self._ok = True
+        return True
 
     def temperature(self):
         if esp32 is not None:

@@ -115,7 +115,8 @@ identical behaviour every time.
   ],
 
   "components": [
-    { "name": "recorder", "driver": "uart_sink", "bus": "uart:1", "enabled": true }
+    { "name": "recorder", "activity": "recorder", "bus": "uart:1", "enabled": true },
+    { "name": "led", "driver": "led", "pin": "led_status", "enabled": true }
   ]
 }
 ```
@@ -133,7 +134,9 @@ identical behaviour every time.
 - **`sensors`** — data providers. Each declares what quantities it `provides` (with priority +
   timeout); several may provide the same quantity with different drivers/priorities, and the
   fusion layer groups by quantity and orders by priority. **`components`** are the consumers /
-  actuators / system tasks (e.g. the recorder).
+  actuators / system tasks. Each sensor/component names its implementation with **`driver`** (a HAL
+  driver from `drivers/`) or **`activity`** (a higher-level subsystem from `tasks/`); both resolve
+  through the one registry, and `config.device(cfg, driver=…)` finds a device by either.
 - **`pins`** — discrete signals (LED, separation switch, servo PWM lines). The concrete GPIO
   numbers for the WaveShare ESP32-P4-WIFI6 — and which GPIOs are reserved (Wi-Fi C6, console,
   SD, codec) — are in [`../doc/waveshare_esp32p4_pins.md`](../doc/waveshare_esp32p4_pins.md).
@@ -160,12 +163,14 @@ to keep in sync.
 
 ### What is NOT in board config
 
-**Mission config** (landing-zone coordinates, altitude thresholds, target point) is *per
-launch*, not *per board*, and will live in a dedicated `launch.config` (same layered/validated
-form as `board.json` — see the plan). Board config describes the vehicle's hardware; mission
-config describes a specific flight. **Interim:** until `launch.config` exists, and because all
-launches are currently from the same site, these launch parameters may temporarily be carried
-in `board.json`.
+**Mission config** (launch id, launch-site position, and later altitude thresholds / target
+point) is *per launch*, not *per board*, and lives in a dedicated **`launch.config`** loaded by
+the `mission` object (`mission.py`). Board config describes the vehicle's hardware; mission config
+describes a specific flight. Unlike `board.json` (whose draft lives on CC and is pushed whole via
+`save-config`), the mission is small and edited live on the board through the Inspector
+(`update mission {...}`, including `epoch` for time sync) and persisted with `save-mission` — see
+[`cc-protocol.md`](cc-protocol.md). The board clock is part of the mission surface but is the
+RTC's, never persisted.
 
 ## Lifecycle and activation
 
