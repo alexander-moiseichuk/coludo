@@ -366,7 +366,8 @@ owns every exchange over the board socket (which sees `command params`, no id; o
 the id). Control polls each online board (~2 s heartbeat) to prove liveness, and exposes a
 telnet-friendly operator console (port 1235): a line whose first token is a board id / `all` / `*`
 is routed to that board (the id stripped, the rest forwarded verbatim) and the reply tagged
-`from <board> ...`; any other first token is a Control command (`help`/`list`/`select`/`who`).
+`from <board> ...`; any other first token is a Control command (`help`/`list`/`select`/`who`),
+served from a drop-in registry loaded from the `commands/` package at start.
 
 CPython 3.12, stdlib asyncio only. cc_protocol.py is shared with the firmware (symlinked).
 

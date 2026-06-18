@@ -5,7 +5,8 @@
 # the id). Control polls each online board (~2 s heartbeat) to prove liveness, and exposes a
 # telnet-friendly operator console (port 1235): a line whose first token is a board id / `all` / `*`
 # is routed to that board (the id stripped, the rest forwarded verbatim) and the reply tagged
-# `from <board> ...`; any other first token is a Control command (`help`/`list`/`select`/`who`).
+# `from <board> ...`; any other first token is a Control command (`help`/`list`/`select`/`who`),
+# served from a drop-in registry loaded from the `commands/` package at start.
 #
 # CPython 3.12, stdlib asyncio only. cc_protocol.py is shared with the firmware (symlinked).
 
@@ -14,9 +15,9 @@ import json
 import time
 
 import cc_protocol as cc
+import commands
 
 HEARTBEAT_S: float = 2.0  # poll an idle board this often to prove it is alive
-_CONTROL_COMMANDS: tuple = ('help', 'list', 'select', 'who')
 
 
 def _render(resp) -> str:
@@ -90,6 +91,7 @@ class Server:
         self.on_board = on_board
         self.log = log
         self.heartbeat_s = heartbeat_s
+        self.commands = commands.load()  # operator command registry, loaded from commands/ at start
 
     # ----------------------------------------------------------------- board side
     async def _handle(self, reader, writer):
@@ -147,14 +149,16 @@ class Server:
 
     async def _dispatch(self, text, session) -> list:
         """Route one operator line. A known board id / `all` / `*` first token routes to a board
-        (id stripped); a Control command is handled here; otherwise a sticky `select` target (if
-        any) takes the whole line."""
+        (id stripped); a registered Control command (from commands/) handles its own; otherwise a
+        sticky `select` target (if any) takes the whole line."""
         tokens = text.split()
         first = tokens[0]
         if first in self.boards or first in ('all', '*'):
             return await self._route(first, tokens[1:])
-        if first in _CONTROL_COMMANDS:
-            return self._control(tokens, session)
+        spec = self.commands.get(first)
+        if spec is not None:
+            result = spec.handler(self, tokens, session)
+            return await result if asyncio.iscoroutine(result) else result
         if session['selected']:
             return await self._route(session['selected'], tokens)
         return ['from cc err badcmd %s' % first]
@@ -179,24 +183,6 @@ class Server:
             resp = await board.exchange(line)
             out.append('from %s %s' % (board.id, _render(resp)) if resp else 'from %s err offline' % board.id)
         return out
-
-    def _control(self, tokens, session) -> list:
-        """Handle a Control-only command (never sent to a board)."""
-        command = tokens[0]
-        if command == 'help':
-            return ['from cc ok commands=%s' % ','.join(_CONTROL_COMMANDS + ('<board> <command>',))]
-        if command == 'list':
-            rows = [{'id': b.id, 'online': b.online, 'state': b.info.get('state'),
-                     'config_id': b.info.get('config_id')} for b in self.boards.values()]
-            return ['from cc ok %s' % json.dumps(rows)]
-        if command == 'select':
-            if len(tokens) < 2:
-                return ['from cc err badargs select-needs-a-board']
-            session['selected'] = tokens[1]
-            return ['from cc ok %s' % json.dumps({'selected': tokens[1]})]
-        if command == 'who':
-            return ['from cc ok %s' % json.dumps({'selected': session['selected']})]
-        return ['from cc err badcmd %s' % command]
 
     # ------------------------------------------------------------------ listeners
     async def serve_forever(self) -> None:

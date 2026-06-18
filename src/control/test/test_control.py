@@ -157,7 +157,10 @@ async def _operator_console():
 
         # an unknown first token (no selection yet) is a bad Control command, never sent to a board
         assert await ask('bogus') == 'from cc err badcmd bogus'
-        assert (await ask('help')).startswith('from cc ok commands=')
+        # help is served from the commands/ registry (every registered command appears)
+        helped = await ask('help')
+        assert helped.startswith('from cc ok ')
+        assert {'help', 'list', 'select', 'who'} <= set(json.loads(helped[len('from cc ok '):]))
 
         # explicit-target routing, reply tagged by source
         assert await ask('glider9 ping') == 'from glider9 pong'
