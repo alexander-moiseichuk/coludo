@@ -327,6 +327,22 @@ name so the Controller can build it from a config component.
 
 # glider HAL drivers — `drivers/` — `src/glider/drivers`
 
+## `bluetooth.py`
+
+drivers/bluetooth.py — set the BLE radio to the state declared in config at boot. The component
+field `radio` (true/false, default false) says whether Bluetooth should be ON; the driver applies
+it -- transparent, so nobody is surprised by an implicit disable. Default false saves power (the
+wireless is the external C6 and BLE is unused on the glider). Setup-only @task.driver('bluetooth')
+plus update() so the operator can toggle it live (`update bluetooth {"radio": true}`).
+
+### `class Bluetooth(task.Task)`
+
+Apply the configured BLE radio state. Inspectable: `radio` requested, `active` actual.
+
+- `setup() -> bool`
+- `inspect() -> dict`
+- `update(props) -> list`
+
 ## `led.py`
 
 led.py — status LED driver. One GPIO shows the board state at a glance: fast blink when a task is
