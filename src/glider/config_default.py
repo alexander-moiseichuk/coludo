@@ -107,5 +107,9 @@ def default():
             {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': True},
             # Board vitals (temperature/memory/load) -> telemetry every period_ms.
             {'name': 'health', 'driver': 'health', 'period_ms': 1000, 'enabled': True},
+            # Connectivity (optional): join Wi-Fi, then serve the CC hub. A board with no Wi-Fi
+            # (e.g. FireBeetle 2) skips these at setup and runs standalone. Params: the `wifi` section.
+            {'name': 'wifi', 'driver': 'wifi', 'enabled': True},
+            {'name': 'cc', 'driver': 'cc', 'enabled': True},
         ],
     }

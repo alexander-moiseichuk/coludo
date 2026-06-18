@@ -9,22 +9,27 @@
 # A Task is Inspectable: inspect()/update()/stats() expose it to the operator (the Controller
 # registers each task with the Inspector), so there is no separate report().
 #
-# A driver registers itself with @driver('name'); the Controller maps a component's 'driver'
-# field to the class via DRIVERS.
+# A task registers itself with @activity('name') (or its alias @driver('name') for the HAL ones in
+# drivers/); the Controller maps a component's 'driver' field to the class via DRIVERS. The two
+# names share one registry for now -- splitting drivers out is a later concern if it is needed.
 
 import inspector
 
 DRIVERS = {}
 
 
-def driver(name):
-    """Class decorator: register a Task subclass under a driver name."""
+def activity(name):
+    """Class decorator: register a Task subclass (a HAL driver or a higher-level activity) under a
+    name so the Controller can build it from a config component."""
 
     def deco(cls):
         DRIVERS[name] = cls
         return cls
 
     return deco
+
+
+driver = activity  # alias: drivers/ files read as @task.driver, tasks/ files as @task.activity
 
 
 class Task(inspector.Inspectable):

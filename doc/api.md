@@ -190,20 +190,22 @@ three for computed values.
 
 _Tested by `test/test_main.py`._
 
-main.py — board bring-up, run on boot. Loads the driver/task packages (so every @task.driver
-registers), creates the Mission (launch identity), and hands the board config to the Controller,
-which builds + supervises the *enabled* tasks (Recorder, LED, BoardHealth, and later the sensors).
-Then it joins Wi-Fi, dials Control and serves. No driver is named here by hand — adding a task is
-dropping a file in drivers/ or tasks/ and enabling it in the board config.
+main.py — board bring-up, run on boot. Loads the driver/task packages (so every @task.activity /
+@task.driver registers), creates the Mission (launch identity), and hands the config to the Controller,
+which builds + supervises the *enabled* tasks. Connectivity (Wi-Fi + the CC link) is just two of
+those tasks, so a board with no Wi-Fi (e.g. FireBeetle 2) boots and runs everything else without
+CC -- nothing here is hardcoded. Adding a task is dropping a file in drivers/ or tasks/ and
+enabling it in the board config.
 
-Telemetry-first: the task loops (recording included) start BEFORE the network, so the board
-records even if Wi-Fi never comes up. Time sync and live tweaks arrive from Control over the
-running link (e.g. `update mission {epoch}` sets the RTC); the board itself never asks.
+Telemetry-first: the task loops (recording included) start immediately and keep running; the
+Wi-Fi/CC tasks connect in the background when they can. Time sync + live tweaks arrive from Control
+over the link (e.g. `update mission {epoch}` sets the RTC); the board itself never asks.
 
 ### `bringup(cfg, log=print)`
 
 Register every driver/task, create the Mission, and have the Controller build + start the
-enabled tasks from the config. Network-free, so it is testable on-board. Returns the Controller.
+enabled tasks from the config. Returns the Controller. Network-free itself -- any Wi-Fi/CC work
+happens inside the tasks the Controller starts.
 
 ### `main()`
 
@@ -301,12 +303,14 @@ finish()   async; shut down and release resources
 A Task is Inspectable: inspect()/update()/stats() expose it to the operator (the Controller
 registers each task with the Inspector), so there is no separate report().
 
-A driver registers itself with @driver('name'); the Controller maps a component's 'driver'
-field to the class via DRIVERS.
+A task registers itself with @activity('name') (or its alias @driver('name') for the HAL ones in
+drivers/); the Controller maps a component's 'driver' field to the class via DRIVERS. The two
+names share one registry for now -- splitting drivers out is a later concern if it is needed.
 
-### `driver(name)`
+### `activity(name)`
 
-Class decorator: register a Task subclass under a driver name.
+Class decorator: register a Task subclass (a HAL driver or a higher-level activity) under a
+name so the Controller can build it from a config component.
 
 ### `class Task(inspector.Inspectable)`
 
@@ -318,28 +322,6 @@ Class decorator: register a Task subclass under a driver name.
 - `validate()` — Return True if the task is currently healthy.
 - `finish()` — Shut down and release resources.
 - `inspect()` — Status dict. Subclasses extend it.
-
-## `wifi.py`
-
-_Tested by `test/test_wifi.py`._
-
-Wi-Fi station — joins the Control Center's network as a client (specs/board-config.md,
-cc-protocol.md). STA only; the board never hosts an AP. SSID, CC host/port and the tunable TX
-power come from the `wifi` section of board.json; the password comes from <ssid>.creds (pushed
-by deploy.sh, never committed) so it is not in the repo.
-
-### `class Wifi(inspector.Inspectable)`
-
-- `__init__(config: dict, log=None)` — constructor
-- `connect(timeout_ms: int=15000) -> bool` — Join the configured network. Returns True once connected, False on timeout.
-- `isconnected() -> bool`
-- `ifconfig()`
-- `ip() -> str`
-- `rssi()`
-- `set_tx_power(dbm: int) -> bool` — Adjust the TX power (operator signal-level tuning). Returns True on success.
-- `inspect() -> dict`
-- `update(props: dict) -> list`
-- `stats() -> dict`
 
 # glider HAL drivers — `drivers/` — `src/glider/drivers`
 
@@ -365,7 +347,7 @@ Blink a status pattern on one GPIO derived from the controller's state + health.
 tasks/board_health.py — board vitals task: samples temperature, free memory and CPU load every
 period, pushes a telemetry row, and exposes the latest to the operator. CPU load is estimated from
 a low-priority idle task: the fewer times it runs in a period (vs the most it ever has), the busier
-the board. Registered as @task.driver('health') so the Controller creates and supervises it.
+the board. Registered as @task.activity('health') so the Controller creates and supervises it.
 
 ### `class BoardHealth(task.Task)`
 
@@ -379,10 +361,24 @@ Periodic vitals -> telemetry (health.csv) + `inspect health`.
 - `inspect() -> dict`
 - `stats() -> dict`
 
+## `cc_link.py`
+
+tasks/cc_link.py — the Control link task: once Wi-Fi is up it dials the CC hub and serves the
+command dispatcher, reconnecting with backoff. @task.activity('cc'). Optional + telemetry-first:
+with no `cc_host` configured setup() skips it; with no Wi-Fi up it simply waits, so the board
+flies fine without CC. The dispatcher is wired to this board's config + Controller (cc_client.py).
+
+### `class ControlLink(task.Task)`
+
+Serve the CC protocol to the hub when the link is available; never fatal.
+
+- `setup() -> bool`
+- `run() -> None` — Wait for Wi-Fi, dial CC, and serve until the link drops; then retry. Idle (not spinning)
+
 ## `recorder.py`
 
 tasks/recorder.py — the Recorder's task adapter. The data path itself is the top-level `recorder`
-singleton (used directly by every module via recorder.Recorder.log/tlm); this thin @task.driver
+singleton (used directly by every module via recorder.Recorder.log/tlm); this thin @task.activity
 plugs it into the Controller's task graph so the `recorder` component (its bus selects the UART)
 is created and supervised like any other task. No 'uart_sink' abstraction -- the Recorder is it.
 
@@ -396,6 +392,33 @@ keeps logging/telemetering through the global recorder.Recorder.
 - `inspect() -> dict`
 - `stats() -> dict`
 - `update(props) -> list`
+
+## `wifi.py`
+
+tasks/wifi.py — Wi-Fi station task: joins the configured network and keeps it joined, exposing
+signal/ip to the operator. STA only; SSID / CC host / TX power come from the `wifi` section of
+board.json, the password from <ssid>.creds (gitignored, deploy.sh-pushed). @task.activity('wifi').
+
+Optional + telemetry-first: `network` is imported in setup() so the module still loads on a board
+with no Wi-Fi (e.g. the FireBeetle 2); setup() then returns False, the Controller skips the task,
+and the board runs everything else without CC. run() is a maintain loop -- a failed join is never
+fatal, it just retries.
+
+### `class Wifi(task.Task)`
+
+Join + maintain the STA link; Inspectable as `wifi`.
+
+- `setup() -> bool`
+- `run() -> None` — Keep the link up: (re)join whenever disconnected. Never fatal -- the board flies without
+- `connect(timeout_ms: int=15000) -> bool` — Join the configured network. Returns True once connected, False on timeout/error.
+- `isconnected() -> bool`
+- `ifconfig()`
+- `ip() -> str`
+- `rssi()`
+- `set_tx_power(dbm: int) -> bool` — Adjust the TX power (operator signal-level tuning). Returns True on success.
+- `inspect() -> dict`
+- `update(props: dict) -> list`
+- `stats() -> dict`
 
 # control (CPython) — `src/control`
 

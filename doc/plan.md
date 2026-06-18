@@ -14,8 +14,8 @@ Required hardware and the phased development roadmap. Architecture lives in
   operator console (drop-in `commands/`) + HTTP/SSE browser dashboard on 8080 (`web.py`),
   host-tested. Remaining polish: draft config + save/reboot from the UI. **Then** the Controller
   **bring-up wiring** (connect → time-sync → start tasks), two-sided so it wants Control live first.
-  The Recorder is now wired into the task graph as a **virtual driver** (`@task.driver('recorder')`
-  in `recorder.py`); the `recorder` component (bus uart:1) makes the Controller create + supervise
+  The Recorder is now wired into the task graph by a thin adapter (`@task.activity('recorder')` in
+  `tasks/recorder.py`); the `recorder` component (bus uart:1) makes the Controller create + supervise
   its drain loop. ✅
 
 ### Near-term work from `findings.txt` (quality pass)
@@ -76,10 +76,11 @@ testable foundations and connectivity come before the flight loop.
   `commands/`) + **HTTP + SSE browser bridge** (8080: `/`, `/api/boards`, `/api/cmd`, `/events`,
   `web.py` + `static/index.html`). ✅ ◻ remaining: draft config + richer dashboard (save/reboot). ← **next**
 - ◻ Minimal browser dashboard: health, enable/disable, `save-config` → `reboot`.
-- ✅ **Task packages** — `drivers/` (HAL: `led`, and the future sensors/servo) and `tasks/`
-  (subsystems: the Recorder adapter, `board_health`), each with a `load()` that imports its modules
-  so the `@task.driver` registrations run. `task.py` stays the base; the top-level `recorder` /
-  `mission` / `wifi` stay (data path / identity / link). `deploy.sh` pushes packages in one batched
+- ✅ **Task packages** — `drivers/` (HAL: `led`, and the future sensors/servo, via `@task.driver`)
+  and `tasks/` (subsystems: Recorder adapter, `board_health`, `wifi`, `cc_link`, via the
+  `@task.activity` alias), each with a `load()` that imports its modules so the registrations run
+  (one shared `DRIVERS` registry for now). `task.py` stays the base; top-level `recorder` /
+  `mission` stay (data path / identity). `deploy.sh` pushes packages in one batched
   mpremote session (a deployed main.py auto-runs on each soft-reset).
 - ✅ **Controller bring-up wiring** — `main.py` (boot): `drivers.load()` + `tasks.load()` → create
   Mission → hand the config to the Controller, which builds + starts the *enabled* tasks (Recorder,

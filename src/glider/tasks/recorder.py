@@ -1,5 +1,5 @@
 # tasks/recorder.py — the Recorder's task adapter. The data path itself is the top-level `recorder`
-# singleton (used directly by every module via recorder.Recorder.log/tlm); this thin @task.driver
+# singleton (used directly by every module via recorder.Recorder.log/tlm); this thin @task.activity
 # plugs it into the Controller's task graph so the `recorder` component (its bus selects the UART)
 # is created and supervised like any other task. No 'uart_sink' abstraction -- the Recorder is it.
 
@@ -7,7 +7,7 @@ import recorder
 import task
 
 
-@task.driver('recorder')
+@task.activity('recorder')
 class RecorderTask(task.Task):
     """Owns the Recorder's setup + drain loop and surfaces it to the operator; everything else
     keeps logging/telemetering through the global recorder.Recorder."""

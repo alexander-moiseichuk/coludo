@@ -19,21 +19,27 @@ import control  # noqa: E402
 PORT_DEV = os.environ.get('PORT_DEV', '/dev/ttyACM0')
 BOARD_SCRIPT = '/tmp/coludo_board_probe.py'
 
-# Runs on the board: connect wifi, dial the gateway (= Control host) and serve the protocol.
+# Runs on the board: bring the Wi-Fi task up, dial the gateway (= Control host) and serve the
+# protocol. Uses the real wifi task (tasks/wifi.py) but dials the gateway directly so the test
+# works on any network regardless of the configured cc_host.
 BOARD_SRC = """
 import asyncio
 import cc_client
 import config
-import wifi
+from tasks import wifi
+
+class _Stub:
+    pass
 
 async def main():
     cfg, source, errs = config.load()
-    station = wifi.Wifi(cfg, log=print)
-    if not await station.connect():
+    stub = _Stub(); stub.config = cfg
+    radio = wifi.Wifi('wifi', {}, stub)
+    if not await radio.setup() or not await radio.connect():
         print('WIFI_FAIL')
         return
-    gateway = station.ifconfig()[2]
-    print('WIFI_OK ip=%s gw=%s' % (station.ip(), gateway))
+    gateway = radio.ifconfig()[2]
+    print('WIFI_OK ip=%s gw=%s' % (radio.ip(), gateway))
     dispatcher = cc_client.create_dispatcher(cfg)
     reader, writer = await asyncio.open_connection(gateway, 1234)
     print('DIALED %s:1234' % gateway)

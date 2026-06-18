@@ -1,7 +1,7 @@
 # tasks/board_health.py — board vitals task: samples temperature, free memory and CPU load every
 # period, pushes a telemetry row, and exposes the latest to the operator. CPU load is estimated from
 # a low-priority idle task: the fewer times it runs in a period (vs the most it ever has), the busier
-# the board. Registered as @task.driver('health') so the Controller creates and supervises it.
+# the board. Registered as @task.activity('health') so the Controller creates and supervises it.
 
 import asyncio
 import gc
@@ -16,7 +16,7 @@ except ImportError:
     esp32 = None
 
 
-@task.driver('health')
+@task.activity('health')
 class BoardHealth(task.Task):
     """Periodic vitals -> telemetry (health.csv) + `inspect health`."""
 

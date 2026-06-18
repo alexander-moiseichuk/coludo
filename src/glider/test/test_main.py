@@ -10,7 +10,12 @@ import main
 
 
 async def amain():
-    flight = await main.bringup(config_default.default(), log=lambda message: None)
+    # a board with no Wi-Fi (e.g. FireBeetle 2): drop the connectivity components -- it must still
+    # bring up everything else and run without CC.
+    cfg = config_default.default()
+    cfg['components'] = [c for c in cfg['components'] if c['driver'] not in ('wifi', 'cc')]
+
+    flight = await main.bringup(cfg, log=lambda message: None)
 
     # Mission (explicit) + the Controller and its config tasks all registered with the Inspector
     assert {'mission', 'controller', 'recorder', 'led', 'health'} <= set(inspector.Inspector.names())
@@ -18,6 +23,9 @@ async def amain():
     # every enabled component with a registered driver came up healthy (built purely from config)
     for name in ('recorder', 'led', 'health'):
         assert name in flight.tasks and flight.tasks[name].validate()
+
+    # no connectivity configured -> the board runs standalone, no Wi-Fi/CC tasks
+    assert 'wifi' not in flight.tasks and 'cc' not in flight.tasks
 
     # sensors whose drivers are not implemented yet (adxl375, ...) are skipped, not fatal
     assert 'accel_adxl375' not in flight.tasks
