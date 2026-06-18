@@ -12,6 +12,8 @@ import cc_protocol as cc  # noqa: E402
 import control  # noqa: E402
 
 PORT = 18234
+BOARD_PORT = 18235
+OPERATOR_PORT = 18236
 
 
 class _Reader:
@@ -83,7 +85,8 @@ async def _fake_board(reader, writer):
             return
         msg = cc.parse(line.decode().strip())
         if msg.command == 'whoami':
-            reply = cc.build('iam', ['glider9', json.dumps({'mcu': 'esp32p4', 'fw': '0.1'})])
+            info = {'mcu': 'esp32p4', 'fw': '0.1', 'state': 'setting', 'config_id': 'abc123'}
+            reply = cc.build('iam', ['glider9', json.dumps(info)])
         elif msg.command == 'ping':
             reply = cc.build('pong')
         elif msg.command == 'inspect':
@@ -122,10 +125,64 @@ async def _loopback():
     assert result['wifi'] == {'name': 'wifi', 'ok': True}
 
 
+async def _operator_console():
+    """A board dials in; an operator drives it through the telnet console: list / route / select /
+    broadcast / Control commands, with replies tagged by source."""
+    server = control.Server(host='127.0.0.1', port=BOARD_PORT, operator_port=OPERATOR_PORT,
+                            log=lambda message: None, heartbeat_s=0.05)
+    hub_task = asyncio.create_task(server.run())
+    await asyncio.sleep(0.1)
+
+    board_reader, board_writer = await asyncio.open_connection('127.0.0.1', BOARD_PORT)
+    board_task = asyncio.create_task(_fake_board(board_reader, board_writer))
+    for _ in range(50):  # wait for the handshake to register it
+        if 'glider9' in server.boards:
+            break
+        await asyncio.sleep(0.02)
+    assert 'glider9' in server.boards
+
+    operator_reader, operator_writer = await asyncio.open_connection('127.0.0.1', OPERATOR_PORT)
+
+    async def ask(text):
+        operator_writer.write((text + '\n').encode())
+        await operator_writer.drain()
+        return (await asyncio.wait_for(operator_reader.readline(), 2)).decode().strip()
+
+    try:
+        # Control command: list shows the online board with its iam-reported state/config_id
+        listing = await ask('list')
+        assert listing.startswith('from cc ok ')
+        rows = json.loads(listing[len('from cc ok '):])
+        assert rows[0] == {'id': 'glider9', 'online': True, 'state': 'setting', 'config_id': 'abc123'}
+
+        # an unknown first token (no selection yet) is a bad Control command, never sent to a board
+        assert await ask('bogus') == 'from cc err badcmd bogus'
+        assert (await ask('help')).startswith('from cc ok commands=')
+
+        # explicit-target routing, reply tagged by source
+        assert await ask('glider9 ping') == 'from glider9 pong'
+        # structured payloads render as readable JSON (base64 decoded by Control)
+        inspected = await ask('glider9 inspect wifi')
+        assert inspected.startswith('from glider9 ok ') and '"name": "wifi"' in inspected
+
+        # sticky select -> a bare command routes to the selected board
+        assert await ask('select glider9') == 'from cc ok {"selected": "glider9"}'
+        assert await ask('who') == 'from cc ok {"selected": "glider9"}'
+        assert await ask('ping') == 'from glider9 pong'
+
+        # broadcast to every online board
+        assert await ask('all ping') == 'from glider9 pong'
+    finally:
+        operator_writer.close()
+        hub_task.cancel()
+        board_task.cancel()
+
+
 async def main():
     await _unit()
     await _loopback()
-    print('ok: control Board identify/command/inspect + Server accept (loopback)')
+    await _operator_console()
+    print('ok: control Board lockstep + Server accept + operator console (list/route/select/broadcast)')
 
 
 asyncio.run(main())

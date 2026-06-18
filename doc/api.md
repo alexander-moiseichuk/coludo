@@ -359,23 +359,37 @@ by deploy.sh, never committed) so it is not in the repo.
 
 _Tested by `test/test_control.py`._
 
-Control — host-side ground station for the Coludo boards (specs/cc-protocol.md). Board-first:
-boards dial in, Control learns each board's id via whoami/iam, and drives commands over the
-board socket (which sees `command params`, no id; only `iam` carries the id). CPython 3.12,
-stdlib asyncio only. cc_protocol.py is shared with the firmware (symlinked).
+Control — host-side ground station / hub for the Coludo boards (specs/cc-protocol.md).
+
+Board-first: boards dial in (port 1234), Control learns each board's id via whoami/iam and then
+owns every exchange over the board socket (which sees `command params`, no id; only `iam` carries
+the id). Control polls each online board (~2 s heartbeat) to prove liveness, and exposes a
+telnet-friendly operator console (port 1235): a line whose first token is a board id / `all` / `*`
+is routed to that board (the id stripped, the rest forwarded verbatim) and the reply tagged
+`from <board> ...`; any other first token is a Control command (`help`/`list`/`select`/`who`).
+
+CPython 3.12, stdlib asyncio only. cc_protocol.py is shared with the firmware (symlinked).
 
 ### `class Board`
 
-One connected board: lockstep request/response over its socket.
+One connected board: lockstep request/response over its socket. The per-board lock makes
+every exchange strictly sequential (Control never injects a second command mid-exchange), so
+the heartbeat and operator traffic to one board can never overlap.
 
 - `__init__(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)` — constructor
 - `peer() -> str` _(property)_
-- `command(command: str, *args, timeout=5.0)` — Send `command args...` and return its parsed response. The per-board lock makes calls
+- `exchange(line: str, timeout: float=5.0)` — Send a ready board-facing line and return its parsed reply (None if disconnected).
+- `command(command: str, *args, timeout=5.0)` — Build `command args...` and exchange it. Returns the parsed reply or None.
 - `identify() -> str`
 - `inspect(name: str) -> dict`
 - `close() -> None`
 
 ### `class Server`
 
-- `__init__(host: str='0.0.0.0', port: int=1234, on_board=None, log=print)` — constructor
-- `serve_forever() -> None`
+The hub: a board listener + per-board heartbeat + an operator console. `on_board` is an
+optional async hook invoked once, right after a board identifies (used by integration tests).
+
+- `__init__(host: str='0.0.0.0', port: int=1234, operator_port: int=1235, on_board=None, log=print, heartbeat_s: float=HEARTBEAT_S)` — constructor
+- `serve_forever() -> None` — Accept board connections on `port` (board-facing listener).
+- `serve_operators() -> None` — Accept operator connections on `operator_port` (telnet-friendly console).
+- `run() -> None` — Run both listeners until cancelled — the hub entry point.

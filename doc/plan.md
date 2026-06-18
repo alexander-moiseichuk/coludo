@@ -10,8 +10,9 @@ Required hardware and the phased development roadmap. Architecture lives in
 - **Phase 1 board side — done.** `wifi` (STA) and `cc_client` (`Dispatcher`/`Client` +
   `create_dispatcher` answering whoami/ping/health/state/report/get-config/save-config/
   reset-config/reboot). 8/8 on-board tests.
-- **Resume point (next):** the **Control** service in `src/control/` (host CPython, stdlib asyncio
-  — the isolated piece; the board client already speaks the protocol to it). **Then** the Controller
+- **Control hub — core done.** `src/control/control.py`: board listener + registry + ~2 s
+  heartbeat + telnet operator console (route/select/list/who/help), host-tested. Remaining: the
+  HTTP + SSE browser bridge (8080) + draft config. **Then** the Controller
   **bring-up wiring** (connect → time-sync → start tasks), two-sided so it wants Control live first.
   The Recorder is now wired into the task graph as a **virtual driver** (`@task.driver('recorder')`
   in `recorder.py`); the `recorder` component (bus uart:1) makes the Controller create + supervise
@@ -70,8 +71,9 @@ testable foundations and connectivity come before the flight loop.
 - ✅ **Board side:** `wifi.py` (STA join `panda`, tx-power), `cc_client.py` (`Client` dial-out +
   `serve` loop, `create_dispatcher` answering whoami/ping/health/state/report/get-config/
   save-config/reset-config/reboot). System status (temp/mem/uptime) is in the health handler.
-- ◻ **CC hub** (`src/control/`, host Python): board listener (1234), telnet (1235), HTTP + SSE
-  (8080), registry, ~2 s poll loop, `help`/`list`/`select`, draft config. ← **next**
+- ◧ **CC hub** (`src/control/control.py`, host Python): board listener (1234) + registry +
+  ~2 s heartbeat poll + telnet operator console (1235) with routing (`<board>`/`all`/`*`, sticky
+  `select`) and `help`/`list`/`who`. ✅ ◻ remaining: HTTP + SSE (8080), draft config. ← **next**
 - ◻ Minimal browser dashboard: health, enable/disable, `save-config` → `reboot`.
 - ◻ Controller bring-up wiring (connect → time-sync → `setup`/`start` the configured tasks,
   incl. the Recorder virtual driver) and an LED-status task.
