@@ -59,7 +59,7 @@ testable foundations and connectivity come before the flight loop.
 ### Phase 0 — Foundations (MicroPython, on-board tested) — DONE
 - ✅ `config.py` + `config_default.py`: loader, validator (pin uniqueness, bus refs, reserved
   pins, board.id, `recorder` section), `config_id` hashing, layered load + fallback, atomic save.
-- ✅ `task.py` + `controller.py`: Task base + `DRIVERS` registry; Controller
+- ✅ `task.py` + `controller.py`: Task base + `ACTIVITIES` registry; Controller
   (`directory/create/active/close`, supervised run loops, flight state machine).
 - ✅ `cc_protocol.py`: line parser — bare tokens or `base64:<data>` (no quoting/tokenizing),
   `parse`/`build`/`encode`/`decode`.
@@ -79,7 +79,7 @@ testable foundations and connectivity come before the flight loop.
 - ✅ **Task packages** — `drivers/` (HAL: `led`, and the future sensors/servo, via `@task.driver`)
   and `tasks/` (subsystems: Recorder adapter, `board_health`, `wifi`, `cc_link`, via the
   `@task.activity` alias), each with a `load()` that imports its modules so the registrations run
-  (one shared `DRIVERS` registry for now). `task.py` stays the base; top-level `recorder` /
+  (one shared `ACTIVITIES` registry for now). `task.py` stays the base; top-level `recorder` /
   `mission` stay (data path / identity). `deploy.sh` pushes packages in one batched
   mpremote session (a deployed main.py auto-runs on each soft-reset).
 - ✅ **Controller bring-up wiring** — `main.py` (boot): `drivers.load()` + `tasks.load()` → create

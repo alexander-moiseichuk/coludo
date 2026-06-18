@@ -20,7 +20,7 @@ class Controller(inspector.Inspectable):
 
     def __init__(self, config, registry=None, log=None):
         self.config = config
-        self.registry = registry if registry is not None else task.DRIVERS
+        self.registry = registry if registry is not None else task.ACTIVITIES
         self.log = log if log is not None else (lambda msg: None)
         self.tasks = {}  # name -> Task
         self._runners = {}  # name -> asyncio.Task

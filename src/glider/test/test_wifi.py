@@ -14,7 +14,7 @@ class _StubController:
 
 
 async def amain():
-    assert task.DRIVERS.get('wifi') is wifi.Wifi  # registered driver
+    assert task.ACTIVITIES.get('wifi') is wifi.Wifi  # registered driver
 
     radio = wifi.Wifi('wifi', {}, _StubController())
     assert await radio.setup() is True and radio.validate()

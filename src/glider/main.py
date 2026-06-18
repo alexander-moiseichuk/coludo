@@ -22,8 +22,8 @@ async def bringup(cfg, log=print):
     """Register every driver/task, create the Mission, and have the Controller build + start the
     enabled tasks from the config. Returns the Controller. Network-free itself -- any Wi-Fi/CC work
     happens inside the tasks the Controller starts."""
-    drivers.load()  # HAL drivers (LED, sensors, ...) -> task.DRIVERS
-    tasks.load()  # subsystem tasks (Recorder, BoardHealth, Wi-Fi, CC link, ...) -> task.DRIVERS
+    drivers.load()  # HAL drivers (LED, sensors, ...) -> task.ACTIVITIES
+    tasks.load()  # subsystem tasks (Recorder, BoardHealth, Wi-Fi, CC link, ...) -> task.ACTIVITIES
     mission.Mission()  # launch identity + clock; not a task, self-registers for `inspect mission`
     flight = controller.Controller(cfg, log=log)
     await flight.setup()  # create each enabled component's task; skip the ones without a driver / hardware

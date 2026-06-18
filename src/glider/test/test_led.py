@@ -22,7 +22,7 @@ class _StubController:
 
 async def amain():
     # registered as a driver the Controller can build
-    assert task.DRIVERS.get('led') is led.LedStatus
+    assert task.ACTIVITIES.get('led') is led.LedStatus
 
     cfg = config_default.default()
     component = {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': True}

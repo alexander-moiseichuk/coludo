@@ -26,7 +26,7 @@ class _StubController:
 
 async def amain():
     # registered as the 'recorder' driver so the Controller builds the recorder component
-    assert task.DRIVERS.get('recorder') is tasks.recorder.RecorderTask
+    assert task.ACTIVITIES.get('recorder') is tasks.recorder.RecorderTask
 
     component = {'name': 'recorder', 'driver': 'recorder', 'bus': 'uart:1', 'enabled': True}
 

@@ -17,7 +17,7 @@ class _NoCcController:
 
 
 async def amain():
-    assert task.DRIVERS.get('cc') is tasks.cc_link.ControlLink  # registered driver
+    assert task.ACTIVITIES.get('cc') is tasks.cc_link.ControlLink  # registered driver
 
     # cc_host configured -> setup builds the reconnecting client toward the hub
     link = tasks.cc_link.ControlLink('cc', {}, _StubController())

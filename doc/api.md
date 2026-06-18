@@ -304,10 +304,10 @@ A Task is Inspectable: inspect()/update()/stats() expose it to the operator (the
 registers each task with the Inspector), so there is no separate report().
 
 A task registers itself with @activity('name') (or its alias @driver('name') for the HAL ones in
-drivers/); the Controller maps a component's 'driver' field to the class via DRIVERS. The two
+drivers/); the Controller maps a component's 'driver' field to the class via ACTIVITIES. The two
 names share one registry for now -- splitting drivers out is a later concern if it is needed.
 
-### `activity(name)`
+### `activity(name: str)`
 
 Class decorator: register a Task subclass (a HAL driver or a higher-level activity) under a
 name so the Controller can build it from a config component.

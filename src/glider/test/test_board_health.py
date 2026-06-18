@@ -22,7 +22,7 @@ class _FakeWriter:
 
 async def amain():
     # registered as the 'health' driver the Controller builds from config
-    assert task.DRIVERS.get('health') is board_health.BoardHealth
+    assert task.ACTIVITIES.get('health') is board_health.BoardHealth
 
     recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
     health = board_health.BoardHealth('health', {'period_ms': 20}, None)
