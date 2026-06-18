@@ -1,12 +1,12 @@
-# On-board (MicroPython) test for BoardHealth (board_health.py): vitals sampling, telemetry
-# push, load estimation, and Inspectable. Run by `make test`.
+# On-board test for the board vitals task (tasks/board_health.py): @task.driver('health')
+# registration, vitals sampling, telemetry push, load estimation, and inspect. Run by `make test`.
 
 import asyncio
 
-import board_health
 import config_default
-import inspector
 import recorder
+import task
+from tasks import board_health
 
 
 class _FakeWriter:
@@ -21,24 +21,25 @@ class _FakeWriter:
 
 
 async def amain():
-    recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
-    health = board_health.BoardHealth(period_ms=20)
+    # registered as the 'health' driver the Controller builds from config
+    assert task.DRIVERS.get('health') is board_health.BoardHealth
 
-    # sample() reports the vitals
+    recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
+    health = board_health.BoardHealth('health', {'period_ms': 20}, None)
+    assert await health.setup() is True and health.validate()
+
+    # sample() reports the vitals; inspect() exposes exactly them
     vitals = health.sample()
     assert 'temp' in vitals and 'load' in vitals
     assert isinstance(vitals['mem_free'], int) and vitals['mem_free'] > 0
-
-    # inspectable + registered
-    assert 'health' in inspector.Inspector.names()
-    assert set(inspector.Inspector.inspect('health').keys()) == {'temp', 'mem_free', 'load'}
+    assert set(health.inspect().keys()) == {'temp', 'mem_free', 'load'}
 
     # run a few periods: rows land in telemetry routed to the health.csv file
-    task = asyncio.create_task(health.run())
+    runner = asyncio.create_task(health.run())
     await asyncio.sleep_ms(120)
-    task.cancel()
+    runner.cancel()
     try:
-        await task
+        await runner
     except asyncio.CancelledError:
         pass
     await recorder.Recorder.drain()
@@ -47,7 +48,7 @@ async def amain():
     assert any(b'uptime;temp;mem_free;load' in r for r in rows)  # header emitted
     assert 0.0 <= health.load <= 1.0
 
-    print('ok: board_health sample/telemetry/load/inspectable')
+    print('ok: board_health task driver registered, sample/telemetry/load/inspect')
 
 
 asyncio.run(amain())

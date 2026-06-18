@@ -105,5 +105,7 @@ def default():
             {'name': 'recorder', 'driver': 'recorder', 'bus': 'uart:1', 'enabled': True},
             # Status LED on the led_status pin: blinks the board state (error/standby/flying).
             {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': True},
+            # Board vitals (temperature/memory/load) -> telemetry every period_ms.
+            {'name': 'health', 'driver': 'health', 'period_ms': 1000, 'enabled': True},
         ],
     }

@@ -4,8 +4,8 @@
 import asyncio
 
 import config_default
-import led
 import task
+from drivers import led
 
 
 class _StubController:

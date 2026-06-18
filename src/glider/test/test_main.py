@@ -10,14 +10,14 @@ import main
 
 
 async def amain():
-    flight, health = await main.bringup(config_default.default(), log=lambda message: None)
+    flight = await main.bringup(config_default.default(), log=lambda message: None)
 
-    # the operator-facing objects self-registered with the Inspector
-    assert {'mission', 'health', 'controller', 'recorder', 'led'} <= set(inspector.Inspector.names())
+    # Mission (explicit) + the Controller and its config tasks all registered with the Inspector
+    assert {'mission', 'controller', 'recorder', 'led', 'health'} <= set(inspector.Inspector.names())
 
-    # the components with registered drivers (Recorder virtual driver + status LED) came up healthy
-    assert 'recorder' in flight.tasks and flight.tasks['recorder'].validate()
-    assert 'led' in flight.tasks and flight.tasks['led'].validate()
+    # every enabled component with a registered driver came up healthy (built purely from config)
+    for name in ('recorder', 'led', 'health'):
+        assert name in flight.tasks and flight.tasks[name].validate()
 
     # sensors whose drivers are not implemented yet (adxl375, ...) are skipped, not fatal
     assert 'accel_adxl375' not in flight.tasks

@@ -1,6 +1,8 @@
-# main.py — board bring-up, run on boot. Loads the config, creates the operator-facing objects
-# (Mission, Wifi, BoardHealth) and the Controller (which creates the configured tasks, including
-# the Recorder virtual driver), starts the task loops, joins Wi-Fi, then dials Control and serves.
+# main.py — board bring-up, run on boot. Loads the driver/task packages (so every @task.driver
+# registers), creates the Mission (launch identity), and hands the board config to the Controller,
+# which builds + supervises the *enabled* tasks (Recorder, LED, BoardHealth, and later the sensors).
+# Then it joins Wi-Fi, dials Control and serves. No driver is named here by hand — adding a task is
+# dropping a file in drivers/ or tasks/ and enabling it in the board config.
 #
 # Telemetry-first: the task loops (recording included) start BEFORE the network, so the board
 # records even if Wi-Fi never comes up. Time sync and live tweaks arrive from Control over the
@@ -8,25 +10,25 @@
 
 import asyncio
 
-import board_health
 import cc_client
 import config
 import controller
-import led  # noqa: F401 -- imported for its @task.driver('led') registration
+import drivers
 import mission
+import tasks
 import wifi
 
 
 async def bringup(cfg, log=print):
-    """Create the inspectable objects + Controller and start the configured task loops. This is
-    network-free, so it is testable on-board. Returns (controller, board_health) for the caller to
-    wire to Control and to start the health telemetry."""
-    mission.Mission()  # launch identity + clock; self-registers for `inspect mission`
-    health = board_health.BoardHealth()  # vitals -> telemetry + `inspect health`
+    """Register every driver/task, create the Mission, and have the Controller build + start the
+    enabled tasks from the config. Network-free, so it is testable on-board. Returns the Controller."""
+    drivers.load()  # HAL drivers (LED, sensors, ...) -> task.DRIVERS
+    tasks.load()  # higher-level tasks (Recorder adapter, BoardHealth, ...) -> task.DRIVERS
+    mission.Mission()  # launch identity + clock; not a task, self-registers for `inspect mission`
     flight = controller.Controller(cfg, log=log)
-    await flight.setup()  # create each enabled task (incl. the Recorder virtual driver); skip the driverless
-    await flight.start()  # launch the task run loops (incl. the Recorder drain)
-    return flight, health
+    await flight.setup()  # create each enabled component's task; skip the ones without a driver
+    await flight.start()  # launch the task run loops
+    return flight
 
 
 async def main():
@@ -34,8 +36,7 @@ async def main():
     print('main :: config %s%s' % (source, '' if not errors else ' ERRORS=%s' % errors))
 
     radio = wifi.Wifi(cfg, log=print)
-    flight, health = await bringup(cfg)
-    asyncio.create_task(health.run())
+    flight = await bringup(cfg)
 
     if await radio.connect():
         print('main :: wifi %s up, ip=%s' % (radio.ssid, radio.ip()))

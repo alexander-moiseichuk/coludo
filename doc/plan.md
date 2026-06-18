@@ -76,12 +76,18 @@ testable foundations and connectivity come before the flight loop.
   `commands/`) + **HTTP + SSE browser bridge** (8080: `/`, `/api/boards`, `/api/cmd`, `/events`,
   `web.py` + `static/index.html`). ✅ ◻ remaining: draft config + richer dashboard (save/reboot). ← **next**
 - ◻ Minimal browser dashboard: health, enable/disable, `save-config` → `reboot`.
-- ✅ **Controller bring-up wiring** — `main.py` (boot): config → objects (Mission/Wifi/BoardHealth)
-  → `Controller.setup`/`start` (incl. the Recorder virtual driver + the status LED, driverless
-  sensors skipped) → Wi-Fi join → dial + serve Control. Telemetry-first (tasks start before the
-  network); time sync arrives from Control (`update mission {epoch}`). On-board tested (`test_main`).
-- ✅ **Status LED** — `led.py` `@task.driver('led')`: one GPIO (`led_status`) blinks the board
-  state (fast=error, slow=standby, solid=flying) from controller state + health. `test_led`.
+- ✅ **Task packages** — `drivers/` (HAL: `led`, and the future sensors/servo) and `tasks/`
+  (subsystems: the Recorder adapter, `board_health`), each with a `load()` that imports its modules
+  so the `@task.driver` registrations run. `task.py` stays the base; the top-level `recorder` /
+  `mission` / `wifi` stay (data path / identity / link). `deploy.sh` pushes packages in one batched
+  mpremote session (a deployed main.py auto-runs on each soft-reset).
+- ✅ **Controller bring-up wiring** — `main.py` (boot): `drivers.load()` + `tasks.load()` → create
+  Mission → hand the config to the Controller, which builds + starts the *enabled* tasks (Recorder,
+  LED, BoardHealth; driverless sensors skipped). **No driver named by hand** — drop a file in
+  `drivers/`/`tasks/` and enable it in the config. Then Wi-Fi join → dial + serve Control.
+  Telemetry-first; time sync arrives from Control (`update mission {epoch}`). Tested (`test_main`).
+- ✅ **Status LED** — `drivers/led.py` `@task.driver('led')`: one GPIO (`led_status`) blinks the
+  board state (fast=error, slow=standby, solid=flying) from controller state + health. `test_led`.
 - **Milestone:** power a board → it appears on CC → view health → toggle a component →
   save + reboot → it returns from the saved config.
 

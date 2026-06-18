@@ -4,25 +4,6 @@ _Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand
 
 # glider firmware (MicroPython) — `src/glider`
 
-## `board_health.py`
-
-_Tested by `test/test_board_health.py`._
-
-BoardHealth — periodic device vitals (temperature, free memory, CPU load) pushed to telemetry
-and exposed to the operator via the Inspector (findings.txt #10). CPU load is estimated from a
-low-priority idle task: the fewer times it runs in a period (vs the most it has ever run), the
-busier the board.
-
-### `class BoardHealth(inspector.Inspectable)`
-
-- `__init__(period_ms: int=1000)` — constructor
-- `temperature()`
-- `mem_free() -> int`
-- `sample() -> dict`
-- `run() -> None` — Sample vitals every period_ms, estimate load, and push a telemetry row. Runs forever.
-- `inspect() -> dict`
-- `stats() -> dict`
-
 ## `cc_client.py`
 
 _Tested by `test/test_cc_client.py`._
@@ -205,30 +186,15 @@ three for computed values.
 - `update(name: str, props: dict) -> list` _(classmethod)_
 - `stats(name: str) -> dict` _(classmethod)_
 
-## `led.py`
-
-_Tested by `test/test_led.py`._
-
-led.py — status LED driver. One GPIO shows the board state at a glance: fast blink when a task is
-unhealthy (error), slow blink while setting up / standing by, solid once flying. The pin role
-(default 'led_status') comes from the component's `pin` field, resolved against the config `pins`
-section. Registered as @task.driver('led') so the Controller creates and supervises it.
-
-### `class LedStatus(task.Task)`
-
-Blink a status pattern on one GPIO derived from the controller's state + health.
-
-- `setup() -> bool`
-- `run() -> None`
-- `inspect() -> dict`
-
 ## `main.py`
 
 _Tested by `test/test_main.py`._
 
-main.py — board bring-up, run on boot. Loads the config, creates the operator-facing objects
-(Mission, Wifi, BoardHealth) and the Controller (which creates the configured tasks, including
-the Recorder virtual driver), starts the task loops, joins Wi-Fi, then dials Control and serves.
+main.py — board bring-up, run on boot. Loads the driver/task packages (so every @task.driver
+registers), creates the Mission (launch identity), and hands the board config to the Controller,
+which builds + supervises the *enabled* tasks (Recorder, LED, BoardHealth, and later the sensors).
+Then it joins Wi-Fi, dials Control and serves. No driver is named here by hand — adding a task is
+dropping a file in drivers/ or tasks/ and enabling it in the board config.
 
 Telemetry-first: the task loops (recording included) start BEFORE the network, so the board
 records even if Wi-Fi never comes up. Time sync and live tweaks arrive from Control over the
@@ -236,9 +202,8 @@ running link (e.g. `update mission {epoch}` sets the RTC); the board itself neve
 
 ### `bringup(cfg, log=print)`
 
-Create the inspectable objects + Controller and start the configured task loops. This is
-network-free, so it is testable on-board. Returns (controller, board_health) for the caller to
-wire to Control and to start the health telemetry.
+Register every driver/task, create the Mission, and have the Controller build + start the
+enabled tasks from the config. Network-free, so it is testable on-board. Returns the Controller.
 
 ### `main()`
 
@@ -323,20 +288,6 @@ All streams in one boot share the Recorder session prefix, so file names are sta
 - `__init__(filename: str, fields: tuple)` — constructor
 - `push(values) -> None`
 
-### `class RecorderTask(task.Task)`
-
-Virtual driver that plugs the global Recorder into the Controller's task graph, so the
-`recorder` component (its `bus` selects the UART, e.g. uart:1) is created and supervised like
-any other task. There is no separate 'uart_sink' abstraction -- the Recorder singleton is the
-implementation; this only owns its setup + drain loop and surfaces it to the operator. Every
-module still logs/telemeters through the global Recorder.
-
-- `setup() -> bool`
-- `run() -> None`
-- `inspect() -> dict`
-- `stats() -> dict`
-- `update(props) -> list`
-
 ## `task.py`
 
 Task base class and driver registry — the unit the Controller creates and supervises.
@@ -389,6 +340,62 @@ by deploy.sh, never committed) so it is not in the repo.
 - `inspect() -> dict`
 - `update(props: dict) -> list`
 - `stats() -> dict`
+
+# glider HAL drivers — `drivers/` — `src/glider/drivers`
+
+## `led.py`
+
+led.py — status LED driver. One GPIO shows the board state at a glance: fast blink when a task is
+unhealthy (error), slow blink while setting up / standing by, solid once flying. The pin role
+(default 'led_status') comes from the component's `pin` field, resolved against the config `pins`
+section. Registered as @task.driver('led') so the Controller creates and supervises it.
+
+### `class LedStatus(task.Task)`
+
+Blink a status pattern on one GPIO derived from the controller's state + health.
+
+- `setup() -> bool`
+- `run() -> None`
+- `inspect() -> dict`
+
+# glider subsystem tasks — `tasks/` — `src/glider/tasks`
+
+## `board_health.py`
+
+tasks/board_health.py — board vitals task: samples temperature, free memory and CPU load every
+period, pushes a telemetry row, and exposes the latest to the operator. CPU load is estimated from
+a low-priority idle task: the fewer times it runs in a period (vs the most it ever has), the busier
+the board. Registered as @task.driver('health') so the Controller creates and supervises it.
+
+### `class BoardHealth(task.Task)`
+
+Periodic vitals -> telemetry (health.csv) + `inspect health`.
+
+- `setup() -> bool`
+- `temperature()`
+- `mem_free() -> int`
+- `sample() -> dict`
+- `run() -> None` — Sample vitals every period_ms, estimate load, and push a telemetry row. Runs forever.
+- `inspect() -> dict`
+- `stats() -> dict`
+
+## `recorder.py`
+
+tasks/recorder.py — the Recorder's task adapter. The data path itself is the top-level `recorder`
+singleton (used directly by every module via recorder.Recorder.log/tlm); this thin @task.driver
+plugs it into the Controller's task graph so the `recorder` component (its bus selects the UART)
+is created and supervised like any other task. No 'uart_sink' abstraction -- the Recorder is it.
+
+### `class RecorderTask(task.Task)`
+
+Owns the Recorder's setup + drain loop and surfaces it to the operator; everything else
+keeps logging/telemetering through the global recorder.Recorder.
+
+- `setup() -> bool`
+- `run() -> None`
+- `inspect() -> dict`
+- `stats() -> dict`
+- `update(props) -> list`
 
 # control (CPython) — `src/control`
 
@@ -452,3 +459,29 @@ The HTTP/SSE server. Holds the hub for the board registry + routing; one per hub
 
 - `__init__(hub, host: str='0.0.0.0', port: int=8080, log=print)` — constructor
 - `serve() -> None`
+
+# control operator commands — `commands/` — `src/control/commands`
+
+## `help.py`
+
+`help` — list operator commands, or `help <command>` for one.
+
+### `help_command(hub, tokens, session) -> list`
+
+## `list.py`
+
+`list` — the connected boards and their last-known status.
+
+### `list_command(hub, tokens, session) -> list`
+
+## `select.py`
+
+`select <board>` — set this session's sticky target; a later bare command routes to it.
+
+### `select_command(hub, tokens, session) -> list`
+
+## `who.py`
+
+`who` — show this session's currently selected board.
+
+### `who_command(hub, tokens, session) -> list`
