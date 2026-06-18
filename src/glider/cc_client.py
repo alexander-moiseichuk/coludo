@@ -65,7 +65,7 @@ class Client:
                 await writer.drain()
 
 
-def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_path='board.json'):
+def create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_path='board.json'):
     """Build a Dispatcher with the standard command handlers, wired to the running config, the
     Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset."""
     import gc
@@ -168,7 +168,7 @@ def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_p
         return cc.build('ok')
 
     async def reboot(msg):
-        reset = on_reboot if on_reboot is not None else _machine_reset
+        reset = on_reboot or (lambda: __import__('machine').reset())  # imported only when it fires
 
         async def do_reset():
             await asyncio.sleep_ms(200)
@@ -192,9 +192,3 @@ def standard_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_p
     dispatcher.on('save-mission', save_mission)
     dispatcher.on('reboot', reboot)
     return dispatcher
-
-
-def _machine_reset():
-    import machine
-
-    machine.reset()

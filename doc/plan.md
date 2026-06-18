@@ -8,7 +8,7 @@ Required hardware and the phased development roadmap. Architecture lives in
 - **Phase 0 — done.** `config`, `task`+`controller`, `cc_protocol`, `recorder` (SPSC rings +
   `Telemetry`) in `src/glider/`, all MicroPython, on-board tested (`make test`).
 - **Phase 1 board side — done.** `wifi` (STA) and `cc_client` (`Dispatcher`/`Client` +
-  `standard_dispatcher` answering whoami/ping/health/state/report/get-config/save-config/
+  `create_dispatcher` answering whoami/ping/health/state/report/get-config/save-config/
   reset-config/reboot). 8/8 on-board tests.
 - **Resume point (next):** the **Control** service in `src/control/` (host CPython, stdlib asyncio
   — the isolated piece; the board client already speaks the protocol to it). **Then** the Controller
@@ -66,7 +66,7 @@ testable foundations and connectivity come before the flight loop.
 
 ### Phase 1 — Connectivity & ground ops (no flight control)
 - ✅ **Board side:** `wifi.py` (STA join `panda`, tx-power), `cc_client.py` (`Client` dial-out +
-  `serve` loop, `standard_dispatcher` answering whoami/ping/health/state/report/get-config/
+  `serve` loop, `create_dispatcher` answering whoami/ping/health/state/report/get-config/
   save-config/reset-config/reboot). System status (temp/mem/uptime) is in the health handler.
 - ◻ **CC hub** (`src/control/`, host Python): board listener (1234), telnet (1235), HTTP + SSE
   (8080), registry, ~2 s poll loop, `help`/`list`/`select`, draft config. ← **next**

@@ -23,7 +23,7 @@ BOARD_SCRIPT = '/tmp/coludo_board_probe.py'
 BOARD_SRC = """
 import asyncio
 import config
-from cc_client import Client, standard_dispatcher
+from cc_client import Client, create_dispatcher
 from wifi import Wifi
 
 async def main():
@@ -34,7 +34,7 @@ async def main():
         return
     gateway = wifi.ifconfig()[2]
     print('WIFI_OK ip=%s gw=%s' % (wifi.ip(), gateway))
-    dispatcher = standard_dispatcher(cfg)
+    dispatcher = create_dispatcher(cfg)
     reader, writer = await asyncio.open_connection(gateway, 1234)
     print('DIALED %s:1234' % gateway)
     await Client(cfg, dispatcher).serve(reader, writer)

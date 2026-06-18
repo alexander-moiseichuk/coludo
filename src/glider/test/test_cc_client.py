@@ -6,7 +6,7 @@ import json
 import os
 
 import cc_protocol as cc
-from cc_client import Client, Dispatcher, standard_dispatcher
+from cc_client import Client, Dispatcher, create_dispatcher
 from config_default import default
 from inspector import Inspectable, Inspector
 from mission import Mission
@@ -65,7 +65,7 @@ async def amain():
     assert 'internal' in await dispatcher.handle('boom')  # handler exception
 
     # standard handlers
-    sd = standard_dispatcher(default())
+    sd = create_dispatcher(default())
 
     m = cc.parse(await sd.handle('whoami'))
     assert m.command == 'iam' and m.args[0] == 'glider1'
@@ -94,7 +94,7 @@ async def amain():
     assert cc.parse(resp[0]).command == 'iam' and cc.parse(resp[1]).command == 'pong'
 
     # save-config: invalid rejected; reset-config ok
-    sd2 = standard_dispatcher(default(), config_path='test_cc_board.json')
+    sd2 = create_dispatcher(default(), config_path='test_cc_board.json')
     bad = default()
     bad['pins']['servo_yaw'] = 18  # reserved Wi-Fi pin -> invalid
     assert 'invalid' in await sd2.handle(cc.build('save-config', [json.dumps(bad)]))
@@ -112,7 +112,7 @@ async def amain():
 
     # reboot returns ok and fires the (intercepted) reset
     fired = []
-    sd3 = standard_dispatcher(default(), on_reboot=lambda: fired.append(1))
+    sd3 = create_dispatcher(default(), on_reboot=lambda: fired.append(1))
     assert await sd3.handle('reboot') == 'ok'
     await asyncio.sleep_ms(260)
     assert fired == [1]
