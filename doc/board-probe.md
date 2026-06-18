@@ -1,13 +1,13 @@
 # Board probe rounds — constructable buses per board
 
-Output of [`src/glider/test/board_probe.py`](../src/glider/test/board_probe.py) run on each physical
-board. One section per board (a "round"), since the constructable UART/SPI/I2C ids and their default
-pins are board/port-specific — only the *performance* numbers are shared (see `doc/benches/`).
+Output of [`tools/board_probe.py`](../tools/board_probe.py) run on each physical board. One section
+per board (a "round"), since the constructable UART/SPI/I2C ids and their default pins are
+board/port-specific — only the *performance* numbers are shared (see `doc/benches/`).
 
 Re-run after a board swap:
 
 ```
-mpremote connect /dev/ttyACM0 run src/glider/test/board_probe.py
+mpremote connect /dev/ttyACM0 run tools/board_probe.py
 ```
 
 > The probe **streams** results and probes I2C **last**: `I2C(2)` hard-crashes this port (Core 1

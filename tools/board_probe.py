@@ -1,7 +1,7 @@
 # board_probe.py — run ON a board to sketch an initial board.json: identity (name, unique_id),
 # and which UART/I2C/SPI ids + GPIOs are constructable. A discovery aid, not a pass/fail test.
 #
-#   mpremote connect /dev/ttyACM0 run board_probe.py
+#   mpremote connect /dev/ttyACM0 run tools/board_probe.py
 #
 # HAZARD: some ids/pins HARD-CRASH this port (e.g. I2C(2), and flash/PSRAM GPIOs) and reset the
 # board -- a try/except cannot catch that. So every result is printed immediately (streamed), the
