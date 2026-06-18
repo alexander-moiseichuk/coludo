@@ -205,6 +205,26 @@ three for computed values.
 - `update(name: str, props: dict) -> list` _(classmethod)_
 - `stats(name: str) -> dict` _(classmethod)_
 
+## `main.py`
+
+_Tested by `test/test_main.py`._
+
+main.py — board bring-up, run on boot. Loads the config, creates the operator-facing objects
+(Mission, Wifi, BoardHealth) and the Controller (which creates the configured tasks, including
+the Recorder virtual driver), starts the task loops, joins Wi-Fi, then dials Control and serves.
+
+Telemetry-first: the task loops (recording included) start BEFORE the network, so the board
+records even if Wi-Fi never comes up. Time sync and live tweaks arrive from Control over the
+running link (e.g. `update mission {epoch}` sets the RTC); the board itself never asks.
+
+### `bringup(cfg, log=print)`
+
+Create the inspectable objects + Controller and start the configured task loops. This is
+network-free, so it is testable on-board. Returns (controller, board_health) for the caller to
+wire to Control and to start the health telemetry.
+
+### `main()`
+
 ## `mission.py`
 
 _Tested by `test/test_mission.py`._
