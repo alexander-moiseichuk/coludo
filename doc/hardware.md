@@ -14,23 +14,49 @@ could be an option but may lead too much battery pack weigh.
 
 **Required, weight 30.5g**
 
+## Sensor & actuator inventory (on hand)
+
+Parts physically available now (2026-06) — these drive the Phase-2 sensor drivers in
+`src/glider/drivers/`. All sensors sit on `i2c:0` except GNSS (`uart:2`); the addresses are distinct.
+
+| Quantity | Part | Bus / addr | Notes |
+| --- | --- | --- | --- |
+| high-G accel | **ADXL375** ([Adafruit 5374](https://www.adafruit.com/product/5374)) | I²C `0x53` | ±200 g |
+| attitude (9-DOF) + baro | **sen0253** = BNO055 + BMP280 | I²C `0x28` / `0x76` | one board, two devices |
+| pressure | **sen0517** = ICP-10111 | I²C `0x63` | primary altimeter |
+| AGL laser | **VL53L4CX** ([Adafruit 5425](https://www.adafruit.com/product/5425)) | I²C `0x29` | ToF, low-altitude (<~6–10 m) |
+| GNSS | **ATGM336H** | UART 9600, 10 Hz | position; may lose lock under high-g |
+
+**Interchangeable / additional options:**
+[AHT20+BMP280](https://www.aliexpress.us/item/3256806546750874.html) (temp + baro),
+[MPU6050](https://www.amazon.com/dp/B0BMY15TC4) (cheap IMU, noisy under high-g),
+[VL53L0X / VL53L1X](https://www.aliexpress.us/item/3256807793059841.html) (alternate ToF for the `agl`
+quantity). These provide the same quantities, so the fusion layer can use them as drop-in fallbacks.
+
 ## Accelerometer and Gyro
 
 Something like [MPU6050](https://www.amazon.com/dp/B0BMY15TC4?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_13) highly not recommended due to noise for high moving cases. [HPR Rocket Flight Computer](https://github.com/SparkyVT/HPR-Rocket-Flight-Computer) points the best `LSM6DSOX` keeping wide range as acceptable including `MPU6050`. 
 
-Options like [bno055](https://www.dfrobot.com/product-1793.html) aren't very suitable due to low G tolerance and rely on 16g accelerometer as 30-100g recommended (3LIS331DL or ADXL377) but with extra weight so we will use [ADXL375 - High G Accelerometer (+-200g)](https://www.adafruit.com/product/5374)
+[bno055](https://www.dfrobot.com/product-1793.html)'s own accelerometer is only 16 g (30–100 g is
+recommended for boost), so the high-G channel is the dedicated [ADXL375 (±200 g)](https://www.adafruit.com/product/5374).
+The **BNO055 is still on board** (as part of the **sen0253** combo, with BMP280) and provides the
+**9-DOF attitude/orientation** for stabilisation — the two complement each other (ADXL375 = high-G
+accel, BNO055 = attitude). MPU6050 stays a cheap fallback IMU only.
 
 **Required, weight 1.0 g**
 
 ## Altimeter (pressure)
-As stated in docs the [Gravity: ICP-10111 Pressure Sensor](https://www.dfrobot.com/product-2525.html) looks promising for accuracy (8.5cm), 
-sampling rate and power consumption (2mA).
+Primary is the [Gravity: ICP-10111 Pressure Sensor](https://www.dfrobot.com/product-2525.html) (on hand as
+**sen0517**) — accuracy (8.5 cm), sampling rate and power (2 mA) all look good. The **BMP280** on the sen0253
+combo is the backup baro (lower priority in fusion); an AHT20+BMP280 board is an alternate.
 
 **Required, weight 7.1g**
 
 ## Altimeter (laser)
 Barometer works very badly at very low altitudes, so the laser module becomes essential to cover the 10 meters and below range.
-Reasonable [use atleast 6 meters](https://www.adafruit.com/product/5425) this option or if worst comes to worst [50m TOF Laser Ranging Sensor, 100Hz](https://www.dfrobot.com/product-2923.html). The specifications of the last option looks promising [technical specification](https://wiki.dfrobot.com/SKU_SEN0648_TOF_laser_ranging_sensor_50m)
+**Chosen: [VL53L4CX](https://www.adafruit.com/product/5425)** ToF ranger (I²C `0x29`) — covers the close range well enough.
+VL53L0X / VL53L1X are drop-in alternates; the [50m TOF Laser Ranging Sensor, 100Hz](https://www.dfrobot.com/product-2923.html)
+([sen0648 spec](https://wiki.dfrobot.com/SKU_SEN0648_TOF_laser_ranging_sensor_50m)) is the long-range fallback if needed.
 
 **as power consumption needs another battery, weight ~20g**
 
@@ -40,14 +66,14 @@ Alternative is to connect e.g. from [6F22 9V using plug](https://www.amazon.com/
 
 **Required, weight 42.1g for 6F22, and power-down board**
 
-## Button 
-Button is required for detection stage separation, when active part (engine work) completed and booster throws away
-glider and open parashute. As a button seems [Gravity: Digital Crash Sensor](https://www.dfrobot.com/product-763.html) feasible,
-it will be in pressed state during start and opened after separation, so required to be set in Pull-Up mode as waiting
-on start will be much longer then flight, so when button will be connected to ground (LOW) when pressed (no separation),
-and get HIGH when not pressed (separated). In theory it will save some milliwats.
+## Separation switch
+Detects stage separation — when the engine has burned out and the booster throws the glider away (parachute opens).
+**Chosen design (light + reliable): two adhesive copper pads**, one on the glider and one on the booster. While nested
+the pads touch and route **3V3 to the pin → HIGH (connected/nested)**; after separation the pad opens and the pin reads
+**LOW (separated)**. A 4.7 kΩ pull-down between pin and ground can be added if needed, though usually not required on ESP32.
+(Note: this **flips the polarity** of the earlier Gravity Crash Sensor button idea, which read LOW=nested.)
 
-**Required, weight 6.2g**
+**Required, weight ~negligible (copper tape) — was 6.2g for the button option**
 
 ## Camera
 Some simple camera under 4K nice to have, ideally with autofocus. Used [Camera for Raspberry Pi](https://www.dfrobot.com/product-1179.html)
@@ -63,8 +89,17 @@ will be helpful as has [low weight, sufficient accuracy, <30 mA power consumptio
 **Required, weight 7.4g**
 
 ## Servos for fins
-[SG90 is a popular variation](https://www.amazon.com/Micro-Servos-Helicopter-Airplane-Controls/dp/B07MLR1498) for such needs. But any other options seems doable.
-In case of too high power consumption peaks the sequential control might be required i.e. not turning all engines in the same time.
+Candidates (SG90 expected primary — cheap, compact, light):
+- **SG90 Micro Servo 9g, 180°** ([temu](https://share.temu.com/XLKTfrLq6oC)) — primary.
+- **MG90S Metal Gear, 360°** ([temu](https://share.temu.com/2K2ks3JEWZC)).
+- **MG996R, 180°** ([temu](https://share.temu.com/CWtCeOW2kVC)) — heavier (~55 g), only if torque demands it.
+
+**Gearing/transmission**: a reduction can trade angle for force and lower sustained current — 180°→90°/60°/45°.
+**60° looks interesting** (gives **±30°** of fin throw at ~4× torque); 45° (±22.5°) is too little angle.
+
+**Power**: servos run from their **own boost rail** (expected 5V, can be 7/9/12V if needed), separate from the
+controller; **per-pin diode protection** is required. In case of high current peaks, drive the servos **sequentially**
+(not all at once).
 
 **Required, weight 10.6g per each engine and wires, at least 2 are required**
 
