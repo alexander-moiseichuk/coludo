@@ -1,4 +1,4 @@
-# On-board test for the Wi-Fi station task (tasks/wifi.py): @task.driver('wifi') registration,
+# On-board test for the Wi-Fi station driver (drivers/wifi.py): @task.driver('wifi') registration,
 # setup (brings the STA interface up), config parsing, and inspect. Does NOT join a network (that
 # needs the AP up) -- only checks construction. Run by `make test`.
 
@@ -6,7 +6,7 @@ import asyncio
 
 import config_default
 import task
-from tasks import wifi
+from drivers import wifi
 
 
 class _StubController:

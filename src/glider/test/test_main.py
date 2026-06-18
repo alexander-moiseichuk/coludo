@@ -13,7 +13,8 @@ async def amain():
     # a board with no Wi-Fi (e.g. FireBeetle 2): drop the connectivity components -- it must still
     # bring up everything else and run without CC.
     cfg = config_default.default()
-    cfg['components'] = [c for c in cfg['components'] if c['driver'] not in ('wifi', 'cc')]
+    cfg['components'] = [c for c in cfg['components']
+                         if (c.get('driver') or c.get('activity')) not in ('wifi', 'cc')]
 
     flight = await main.bringup(cfg, log=lambda message: None)
 

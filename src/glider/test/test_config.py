@@ -42,6 +42,11 @@ def main():
     spaced['board']['id'] = 'glider 1'
     assert any('must not contain whitespace' in e for e in config.validate(spaced))
 
+    # a component must name its implementation: `driver` (drivers/) or `activity` (tasks/)
+    noimpl = config_default.default()
+    del noimpl['components'][0]['activity']  # the recorder component
+    assert any('driver` (drivers/) or `activity`' in e for e in config.validate(noimpl))
+
     # bus() / device() helpers
     cfg = config_default.default()
     assert config.bus(cfg, 'i2c:0') == {'sda': 7, 'scl': 8, 'freq': 400000}

@@ -115,7 +115,8 @@ identical behaviour every time.
   ],
 
   "components": [
-    { "name": "recorder", "driver": "recorder", "bus": "uart:1", "enabled": true }
+    { "name": "recorder", "activity": "recorder", "bus": "uart:1", "enabled": true },
+    { "name": "led", "driver": "led", "pin": "led_status", "enabled": true }
   ]
 }
 ```
@@ -133,7 +134,9 @@ identical behaviour every time.
 - **`sensors`** — data providers. Each declares what quantities it `provides` (with priority +
   timeout); several may provide the same quantity with different drivers/priorities, and the
   fusion layer groups by quantity and orders by priority. **`components`** are the consumers /
-  actuators / system tasks (e.g. the recorder).
+  actuators / system tasks. Each sensor/component names its implementation with **`driver`** (a HAL
+  driver from `drivers/`) or **`activity`** (a higher-level subsystem from `tasks/`); both resolve
+  through the one registry, and `config.device(cfg, driver=…)` finds a device by either.
 - **`pins`** — discrete signals (LED, separation switch, servo PWM lines). The concrete GPIO
   numbers for the WaveShare ESP32-P4-WIFI6 — and which GPIOs are reserved (Wi-Fi C6, console,
   SD, codec) — are in [`../doc/waveshare_esp32p4_pins.md`](../doc/waveshare_esp32p4_pins.md).

@@ -111,7 +111,9 @@ Resolve a bus reference 'type:id' (e.g. 'uart:1', 'i2c:0') to its spec dict, or 
 
 ### `device(cfg, name=None, driver=None)`
 
-Find a sensor/component by name or driver. Returns the dict or None.
+Find a sensor/component by `name` and/or implementation. `driver` matches the resolved
+implementation -- a component's `driver` (drivers/) or `activity` (tasks/) field. Returns the
+dict or None.
 
 ## `config_default.py`
 
@@ -143,7 +145,7 @@ operator via report()/validate().
 
 - `__init__(config, registry=None, log=None)` — constructor
 - `directory()` — Names of enabled devices, in creation order (config order).
-- `create(name)` — Create a task by component name via the driver registry. Returns task or None.
+- `create(name)` — Create a task by component name via the registry. A component names its implementation
 - `active(name=None)` — Return the active task by name, or a list of all active tasks if name is None.
 - `setup()` — Create + set up every enabled task in order. Skip (and report) failures.
 - `start()` — Launch each task's run() loop as a supervised asyncio task.
@@ -340,6 +342,34 @@ Blink a status pattern on one GPIO derived from the controller's state + health.
 - `run() -> None`
 - `inspect() -> dict`
 
+## `wifi.py`
+
+drivers/wifi.py — Wi-Fi station driver: joins the configured network and keeps it joined, exposing
+signal/ip to the operator. HAL (it drives the radio), so @task.driver('wifi'). STA only; SSID / CC
+host / TX power come from the `wifi` section of board.json, the password from <ssid>.creds
+(gitignored, deploy.sh-pushed).
+
+Optional + telemetry-first: `network` is imported in setup() so the module still loads on a board
+with no Wi-Fi (e.g. the FireBeetle 2); setup() then returns False, the Controller skips the task,
+and the board runs everything else without CC. run() is a maintain loop -- a failed join is never
+fatal, it just retries.
+
+### `class Wifi(task.Task)`
+
+Join + maintain the STA link; Inspectable as `wifi`.
+
+- `setup() -> bool`
+- `run() -> None` — Keep the link up: (re)join whenever disconnected. Never fatal -- the board flies without
+- `connect(timeout_ms: int=15000) -> bool` — Join the configured network. Returns True once connected, False on timeout/error.
+- `isconnected() -> bool`
+- `ifconfig()`
+- `ip() -> str`
+- `rssi()`
+- `set_tx_power(dbm: int) -> bool` — Adjust the TX power (operator signal-level tuning). Returns True on success.
+- `inspect() -> dict`
+- `update(props: dict) -> list`
+- `stats() -> dict`
+
 # glider subsystem tasks — `tasks/` — `src/glider/tasks`
 
 ## `board_health.py`
@@ -392,33 +422,6 @@ keeps logging/telemetering through the global recorder.Recorder.
 - `inspect() -> dict`
 - `stats() -> dict`
 - `update(props) -> list`
-
-## `wifi.py`
-
-tasks/wifi.py — Wi-Fi station task: joins the configured network and keeps it joined, exposing
-signal/ip to the operator. STA only; SSID / CC host / TX power come from the `wifi` section of
-board.json, the password from <ssid>.creds (gitignored, deploy.sh-pushed). @task.activity('wifi').
-
-Optional + telemetry-first: `network` is imported in setup() so the module still loads on a board
-with no Wi-Fi (e.g. the FireBeetle 2); setup() then returns False, the Controller skips the task,
-and the board runs everything else without CC. run() is a maintain loop -- a failed join is never
-fatal, it just retries.
-
-### `class Wifi(task.Task)`
-
-Join + maintain the STA link; Inspectable as `wifi`.
-
-- `setup() -> bool`
-- `run() -> None` — Keep the link up: (re)join whenever disconnected. Never fatal -- the board flies without
-- `connect(timeout_ms: int=15000) -> bool` — Join the configured network. Returns True once connected, False on timeout/error.
-- `isconnected() -> bool`
-- `ifconfig()`
-- `ip() -> str`
-- `rssi()`
-- `set_tx_power(dbm: int) -> bool` — Adjust the TX power (operator signal-level tuning). Returns True on success.
-- `inspect() -> dict`
-- `update(props: dict) -> list`
-- `stats() -> dict`
 
 # control (CPython) — `src/control`
 

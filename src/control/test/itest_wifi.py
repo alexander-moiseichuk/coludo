@@ -20,13 +20,14 @@ PORT_DEV = os.environ.get('PORT_DEV', '/dev/ttyACM0')
 BOARD_SCRIPT = '/tmp/coludo_board_probe.py'
 
 # Runs on the board: bring the Wi-Fi task up, dial the gateway (= Control host) and serve the
-# protocol. Uses the real wifi task (tasks/wifi.py) but dials the gateway directly so the test
+# protocol. Uses the real wifi driver (drivers/wifi.py) but dials the gateway directly so the test
 # works on any network regardless of the configured cc_host.
 BOARD_SRC = """
 import asyncio
 import cc_client
 import config
-from tasks import wifi
+import inspector
+from drivers import wifi
 
 class _Stub:
     pass
@@ -38,6 +39,7 @@ async def main():
     if not await radio.setup() or not await radio.connect():
         print('WIFI_FAIL')
         return
+    inspector.Inspector.register(radio)  # the Controller does this normally; here we do it by hand
     gateway = radio.ifconfig()[2]
     print('WIFI_OK ip=%s gw=%s' % (radio.ip(), gateway))
     dispatcher = cc_client.create_dispatcher(cfg)

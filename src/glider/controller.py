@@ -43,13 +43,15 @@ class Controller(inspector.Inspectable):
         return None
 
     def create(self, name):
-        """Create a task by component name via the driver registry. Returns task or None."""
+        """Create a task by component name via the registry. A component names its implementation
+        with `driver` (from drivers/) or `activity` (from tasks/). Returns task or None."""
         comp = self._component(name)
         if comp is None:
             return None
-        cls = self.registry.get(comp.get('driver'))
+        runs = comp.get('driver') or comp.get('activity')
+        cls = self.registry.get(runs)
         if cls is None:
-            self.log("controller :: no driver '%s' for task '%s'" % (comp.get('driver'), name))
+            self.log("controller :: no driver/activity '%s' for '%s'" % (runs, name))
             return None
         return cls(name, comp, self)
 

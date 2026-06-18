@@ -76,11 +76,12 @@ testable foundations and connectivity come before the flight loop.
   `commands/`) + **HTTP + SSE browser bridge** (8080: `/`, `/api/boards`, `/api/cmd`, `/events`,
   `web.py` + `static/index.html`). ✅ ◻ remaining: draft config + richer dashboard (save/reboot). ← **next**
 - ◻ Minimal browser dashboard: health, enable/disable, `save-config` → `reboot`.
-- ✅ **Task packages** — `drivers/` (HAL: `led`, and the future sensors/servo, via `@task.driver`)
-  and `tasks/` (subsystems: Recorder adapter, `board_health`, `wifi`, `cc_link`, via the
-  `@task.activity` alias), each with a `load()` that imports its modules so the registrations run
-  (one shared `ACTIVITIES` registry for now). `task.py` stays the base; top-level `recorder` /
-  `mission` stay (data path / identity). `deploy.sh` pushes packages in one batched
+- ✅ **Task packages** — `drivers/` (HAL: `led`, `wifi`, the future sensors/servo, via `@task.driver`)
+  and `tasks/` (subsystems: Recorder adapter, `board_health`, `cc_link`, via the `@task.activity`
+  alias), each with a `load()` that imports its modules so the registrations run (one shared
+  `ACTIVITIES` registry for now). A config component names its impl with `driver` (drivers/) or
+  `activity` (tasks/). `task.py` stays the base; top-level `recorder` / `mission` stay (data path /
+  identity). `deploy.sh` pushes packages in one batched
   mpremote session (a deployed main.py auto-runs on each soft-reset).
 - ✅ **Controller bring-up wiring** — `main.py` (boot): `drivers.load()` + `tasks.load()` → create
   Mission → hand the config to the Controller, which builds + starts the *enabled* tasks (Recorder,
