@@ -7,15 +7,19 @@
 <style>
   body { font-family: system-ui, sans-serif; margin: 2rem; color: #222; }
   h1 { margin: 0 0 1rem; }
-  table { border-collapse: collapse; margin-bottom: 1.5rem; }
+  h2 { margin: 1.5rem 0 .5rem; }
+  table { border-collapse: collapse; margin-bottom: 1rem; }
   th, td { border: 1px solid #ccc; padding: .3rem .7rem; text-align: left; }
   th { background: #f4f4f4; }
+  tr.click { cursor: pointer; }
+  tr.click:hover { background: #f0f6ff; }
   tr.off { color: #999; }
   .dot { font-size: 1.1rem; }
   .on .dot { color: #2a9d3a; }
   .off .dot { color: #bbb; }
-  input, button { font: inherit; padding: .3rem .5rem; }
-  #reply { white-space: pre-wrap; background: #f4f4f4; padding: .6rem; min-height: 1.2rem; border-radius: 4px; }
+  input, button, textarea { font: inherit; padding: .3rem .5rem; }
+  textarea { font-family: ui-monospace, monospace; font-size: .85rem; width: 100%; max-width: 60rem; box-sizing: border-box; }
+  pre { white-space: pre-wrap; background: #f4f4f4; padding: .6rem; min-height: 1.2rem; border-radius: 4px; max-width: 60rem; }
   .muted { color: #888; font-size: .85rem; }
 </style>
 </head>
@@ -26,6 +30,7 @@
   <thead><tr><th>board</th><th>online</th><th>stage</th><th>config</th></tr></thead>
   <tbody><tr><td colspan="4" class="muted">waiting for boards…</td></tr></tbody>
 </table>
+<p class="muted">click a board to target it below</p>
 
 <h2>send command</h2>
 <p>
@@ -35,8 +40,34 @@
 </p>
 <pre id="reply"></pre>
 
+<h2>config &amp; control</h2>
+<p>
+  <input id="cfgboard" placeholder="board id" size="10">
+  <button id="load">load</button>
+  <button id="save">save</button>
+  <button id="reboot">reboot</button>
+  <button id="reset">reset config</button>
+</p>
+<textarea id="config" rows="14" placeholder="board config — click load to fetch the running config as an editable draft, then save → reboot"></textarea>
+<pre id="cfgresult"></pre>
+
 <script>
 const tbody = document.querySelector('#boards tbody');
+
+// POST one command to a board via the hub; returns {board, status, args} (or {error}).
+async function cmd(board, command, params = []) {
+  const res = await fetch('/api/cmd', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ board, command, params }),
+  });
+  return res.json();
+}
+
+function selectBoard(id) {
+  document.getElementById('board').value = id;
+  document.getElementById('cfgboard').value = id;
+}
 
 new EventSource('/events').onmessage = (event) => {
   const rows = JSON.parse(event.data);
@@ -45,7 +76,7 @@ new EventSource('/events').onmessage = (event) => {
     return;
   }
   tbody.innerHTML = rows.map((b) => `
-    <tr class="${b.online ? 'on' : 'off'}">
+    <tr class="click ${b.online ? 'on' : 'off'}" onclick="selectBoard('${b.id}')">
       <td>${b.id}</td>
       <td><span class="dot">${b.online ? '●' : '○'}</span></td>
       <td>${b.stage || ''}</td>
@@ -53,6 +84,7 @@ new EventSource('/events').onmessage = (event) => {
     </tr>`).join('');
 };
 
+// --- ad-hoc command box ---
 async function send() {
   const board = document.getElementById('board').value.trim();
   const parts = document.getElementById('cmd').value.trim().split(/\s+/);
@@ -60,19 +92,47 @@ async function send() {
   const reply = document.getElementById('reply');
   reply.textContent = '…';
   try {
-    const res = await fetch('/api/cmd', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ board, command, params: parts }),
-    });
-    reply.textContent = JSON.stringify(await res.json(), null, 2);
+    reply.textContent = JSON.stringify(await cmd(board, command, parts), null, 2);
   } catch (err) {
     reply.textContent = 'error: ' + err;
   }
 }
-
 document.getElementById('send').addEventListener('click', send);
 document.getElementById('cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+
+// --- config editor: load (get-config) -> edit draft -> save (save-config) -> reboot ---
+const cfgOut = document.getElementById('cfgresult');
+const cfgArea = document.getElementById('config');
+const cfgBoard = () => document.getElementById('cfgboard').value.trim();
+
+document.getElementById('load').onclick = async () => {
+  cfgOut.textContent = '…';
+  const r = await cmd(cfgBoard(), 'get-config');
+  if (r.status === 'ok') {
+    try {
+      cfgArea.value = JSON.stringify(JSON.parse(r.args[0]), null, 2);
+      cfgOut.textContent = 'loaded running config of ' + cfgBoard();
+    } catch (e) { cfgOut.textContent = 'unreadable config from board: ' + e; }
+  } else {
+    cfgOut.textContent = JSON.stringify(r, null, 2);
+  }
+};
+
+document.getElementById('save').onclick = async () => {
+  let json;
+  try { json = JSON.stringify(JSON.parse(cfgArea.value)); }
+  catch (e) { cfgOut.textContent = 'draft is not valid JSON: ' + e; return; }
+  cfgOut.textContent = '…';
+  cfgOut.textContent = JSON.stringify(await cmd(cfgBoard(), 'save-config', [json]), null, 2);
+};
+
+document.getElementById('reboot').onclick = async () => {
+  cfgOut.textContent = JSON.stringify(await cmd(cfgBoard(), 'reboot'), null, 2);
+};
+
+document.getElementById('reset').onclick = async () => {
+  cfgOut.textContent = JSON.stringify(await cmd(cfgBoard(), 'reset-config'), null, 2);
+};
 </script>
 </body>
 </html>

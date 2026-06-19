@@ -33,6 +33,13 @@ async def _fake_board(reader, writer):
             reply = cc.build('pong')
         elif msg.command == 'inspect':
             reply = cc.build('ok', [json.dumps({'name': msg.args[0], 'ok': True})])
+        elif msg.command == 'get-config':
+            reply = cc.build('ok', [json.dumps({'board': {'id': 'glider9', 'mcu': 'esp32p4'}, 'sensors': []})])
+        elif msg.command == 'save-config':
+            json.loads(msg.args[0])  # the config arrives base64-decoded by parse
+            reply = cc.build('ok', [json.dumps({'config_id': 'newcfg'})])
+        elif msg.command in ('reset-config', 'reboot'):
+            reply = cc.build('ok')
         else:
             reply = cc.build('err', ['badcmd', msg.command])
         writer.write((reply + '\n').encode())
@@ -172,6 +179,21 @@ async def _web():
         status, _payload = await _http(WEB_PORT, 'POST', '/api/cmd',
                                        json.dumps({'board': 'ghost', 'command': 'ping'}))
         assert status == 404
+
+        # dashboard config flow over /api/cmd: get-config -> edit the draft -> save-config -> reboot
+        status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
+                                      json.dumps({'board': 'glider9', 'command': 'get-config'}))
+        assert status == 200
+        config = json.loads(json.loads(payload)['args'][0])  # the board's config, ready to edit
+        assert config['board']['id'] == 'glider9'
+        status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
+                                      json.dumps({'board': 'glider9', 'command': 'save-config',
+                                                  'params': [json.dumps(config)]}))
+        assert status == 200 and json.loads(payload) == {'board': 'glider9', 'status': 'ok',
+                                                         'args': [json.dumps({'config_id': 'newcfg'})]}
+        status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
+                                      json.dumps({'board': 'glider9', 'command': 'reboot'}))
+        assert status == 200 and json.loads(payload)['status'] == 'ok'
 
         # GET /events streams the board list as Server-Sent Events
         events_reader, events_writer = await asyncio.open_connection('127.0.0.1', WEB_PORT)

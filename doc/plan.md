@@ -76,7 +76,8 @@ testable foundations and connectivity come before the flight loop.
 - ✅ **CC hub** (`src/control/`): `board.py` (Board, 10 s exchange timeout) + `server.py` (board
   listener 1234 + ~2 s heartbeat + operator console 1235, routing `<board>`/`all`, sticky `select`,
   drop-in `commands/`) + `main.py` (CLI `--host`/`--port`/`--help`) + **HTTP/SSE dashboard** (8080,
-  `web.py`+`static/index.html`). Per-file host tests. ◻ remaining: draft config + save/reboot UI. ← **next**
+  `web.py`+`static/index.html`) with a **config editor** (load `get-config` → edit the draft → `save-config`
+  → `reboot`/`reset-config`, all via `/api/cmd`; rows click-to-target). Per-file host tests.
 - ✅ **Task packages** — `drivers/` (HAL: `led`, `wifi`, the future sensors/servo, via `@task.driver`)
   and `tasks/` (subsystems: Recorder adapter, `board_health`, `cc_link`, via the `@task.activity`
   alias), each with a `load()` that imports its modules so the registrations run (one shared
