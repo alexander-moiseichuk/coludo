@@ -9,19 +9,24 @@ _Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand
 _Tested by `test/test_blackboard.py`._
 
 blackboard.py — the shared latest-value store for hot sensor data (specs/coludo.md "Task
-Data-Flow and Message Propagation"). Per-quantity slots hold the latest value + timestamp +
-source; sensor drivers write, the control loop / fusion read directly. Latest-wins, no fan-out,
-no subscriptions. Slots are declared up front so a steady-state write just updates fields in place
-(the value object itself is the producer's concern -- prefer reusing a buffer to stay allocation-
-free on the hot path). A global singleton like the Recorder, and Inspectable so the operator can
-watch live values (`inspect blackboard`).
+Data-Flow"). Two layers:
+raw   — each sensor's latest reading, kept per (quantity, source) so several providers of the
+same quantity (e.g. altitude from the ICP-10111 and the BMP280) coexist.
+fused — the one selected value per quantity that consumers read; the fusion task picks it from
+the raw providers by priority + freshness (tasks/fusion.py) and publishes it here.
+Sensors call write(); fusion calls providers()/publish(); consumers call value()/read(). Slots are
+updated in place (allocation-free on the hot path). A global singleton, Inspectable as
+`blackboard` (shows the fused values).
 
 ### `class Blackboard`
 
-- `declare(quantity: str) -> None` _(classmethod)_ — Preallocate a quantity's slot (idempotent). Registers with the Inspector on first use.
-- `write(quantity: str, value, source: str=None) -> None` _(classmethod)_ — Store the latest value for a quantity (latest-wins), updating the slot fields in place.
-- `read(quantity: str) -> _Slot` _(classmethod)_ — The latest _Slot (value / timestamp / source) for a quantity, or None if never written.
-- `value(quantity: str)` _(classmethod)_ — Just the latest value for a quantity (None if absent).
+- `declare(quantity: str) -> None` _(classmethod)_ — Preallocate a quantity's raw map + fused slot (idempotent). Registers on first use.
+- `write(quantity: str, value, source: str) -> None` _(classmethod)_ — A sensor publishes its latest raw reading for `quantity` (latest-wins per source).
+- `raw(quantity: str, source: str) -> _Slot` _(classmethod)_ — A specific sensor's latest raw reading for `quantity` (None if it never wrote).
+- `providers(quantity: str) -> dict` _(classmethod)_ — All raw readings for `quantity` as { source -> _Slot } (for the fusion task).
+- `publish(quantity: str, value, source: str) -> None` _(classmethod)_ — Fusion sets the selected value for `quantity` (`source` = which provider won).
+- `read(quantity: str) -> _Slot` _(classmethod)_ — The fused _Slot (value/timestamp/source) for `quantity` — what consumers read.
+- `value(quantity: str)` _(classmethod)_ — Just the fused value for `quantity` (None if nothing fused yet).
 - `inspect() -> dict` _(classmethod)_
 - `stats() -> dict` _(classmethod)_
 
@@ -565,6 +570,27 @@ Serve the CC protocol to the hub when the link is available; never fatal.
 
 - `setup() -> bool`
 - `run() -> None` — Park until the Wi-Fi dependency is up, then dial CC and serve until the link drops; retry.
+
+## `fusion.py`
+
+tasks/fusion.py — sensor fusion: turn the blackboard's raw per-provider readings into one selected
+value per quantity (specs/coludo.md). @task.activity('fusion'). Each sensor's config declares what
+it `provides` with a priority (lower = preferred) and a timeout_ms (how long a reading stays
+fresh); fusion groups the providers by quantity and, every cycle, publishes the highest-priority
+provider whose latest reading is still fresh, falling back to the next when the preferred one goes
+stale (e.g. ICP-10111 altitude preferred, BMP280 as backup). A pure read-from-blackboard task, so
+it needs no sensor dependency wait -- absent sensors simply never produce fresh data and are
+skipped. Inspectable: `selected` shows which source currently wins each quantity.
+
+### `class Fusion(task.Task)`
+
+Pick the live value per quantity from its providers by priority + freshness.
+
+- `setup() -> bool`
+- `fuse_once() -> None` — One arbitration pass: for each quantity publish the preferred provider that is fresh.
+- `run() -> None`
+- `inspect() -> dict`
+- `stats() -> dict`
 
 ## `recorder.py`
 

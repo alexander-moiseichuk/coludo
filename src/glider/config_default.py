@@ -60,7 +60,7 @@ def default() -> dict:
                 'addr': 0x53,
                 'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — polled for now
                 'enabled': True,
-                'provides': {'accel': {'priority': 0, 'timeout_ms': 5}},
+                'provides': {'accel': {'priority': 0, 'timeout_ms': 50}},
             },
             {
                 'name': 'imu_bno055',
@@ -68,7 +68,8 @@ def default() -> dict:
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x28,
                 'enabled': True,
-                'provides': {'attitude': {'priority': 0, 'timeout_ms': 5}, 'accel': {'priority': 1, 'timeout_ms': 5}},
+                'provides': {'attitude': {'priority': 0, 'timeout_ms': 100},
+                             'accel': {'priority': 1, 'timeout_ms': 50}},
             },
             {
                 'name': 'baro_icp10111',
@@ -76,8 +77,8 @@ def default() -> dict:
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x63,
                 'enabled': True,
-                'provides': {'altitude': {'priority': 0, 'timeout_ms': 100},
-                             'temperature': {'priority': 0, 'timeout_ms': 1000}},
+                'provides': {'altitude': {'priority': 0, 'timeout_ms': 300},
+                             'temperature': {'priority': 0, 'timeout_ms': 2000}},
             },
             {
                 'name': 'baro_bmp280',
@@ -85,8 +86,8 @@ def default() -> dict:
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x76,
                 'enabled': True,
-                'provides': {'altitude': {'priority': 1, 'timeout_ms': 200},
-                             'temperature': {'priority': 1, 'timeout_ms': 1000}},
+                'provides': {'altitude': {'priority': 1, 'timeout_ms': 500},
+                             'temperature': {'priority': 1, 'timeout_ms': 2000}},
             },
             {
                 'name': 'laser_agl',
@@ -117,6 +118,9 @@ def default() -> dict:
             # Status LED on the led_status pin: blinks the board state (error/standby/flying).
             # Disabled by default -- not every board has the external LED wired; enable per board.
             {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': False},
+            # Sensor fusion: select each quantity's live value from its providers by priority +
+            # freshness (reads the blackboard's raw readings, publishes the fused value).
+            {'name': 'fusion', 'activity': 'fusion', 'period_ms': 20, 'enabled': True},
             # Board vitals (temperature/memory/load) -> telemetry every period_ms.
             {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'enabled': True},
             # Apply the BLE radio state at boot: off by default to save power (BLE is unused).

@@ -106,9 +106,9 @@ class Bmp280(task.Task):
             await asyncio.sleep_ms(self._period_ms)
 
     def _mine(self, quantity: str):
-        """The blackboard value for `quantity` if this sensor wrote it last, else None."""
-        slot = blackboard.Blackboard.read(quantity)
-        return slot.value if (slot is not None and slot.source == self.name) else None
+        """This sensor's own latest raw value for `quantity` (None if never written)."""
+        slot = blackboard.Blackboard.raw(quantity, self.name)
+        return slot.value if slot is not None else None
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)  # latest samples from the blackboard (no hot-path I2C here)

@@ -106,7 +106,12 @@ testable foundations and connectivity come before the flight loop.
   ✅ **BMP280** (Bosch-compensated `altitude` m + `temperature` °C, 10 Hz, backup baro);
   ✅ **ICP-10111** (`drivers/icp10111.py` — TDK command/OTP protocol, `altitude` + `temperature`,
   primary baro, prio 0); ◻ GNSS (ATGM336H), VL53L4CX. All live-verified on `i2c:0`.
-- ◻ Sensor fusion (priority/timeout from each component's `provides`), separation switch (IRQ).
+- ✅ **Sensor fusion** (`tasks/fusion.py` `@task.activity('fusion')`) — blackboard split into a raw
+  layer (per quantity+source) and a fused layer; fusion picks each quantity's live value from its
+  providers by `provides` priority + freshness (timeout), falling back when the preferred goes stale.
+  Live: altitude/temperature → ICP-10111 (prio 0) over BMP280, accel/attitude pass through. Config
+  `timeout_ms` set to realistic windows (a few sample periods). `test_fusion` + `test_blackboard`.
+- ◻ Separation switch (IRQ).
 - ◻ Recorder UART link from the board; telemetry/log flush to the Recorder.
 - **Milestone:** a real telemetry-only flight — collect data, no actuation.
 

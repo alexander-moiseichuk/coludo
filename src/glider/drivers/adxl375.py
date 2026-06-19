@@ -77,7 +77,8 @@ class Adxl375(task.Task):
 
         await self._bus.write(self._addr, _REG_INT_MAP, b'\x00')  # DATA_READY -> INT1
         await self._bus.write(self._addr, _REG_INT_ENABLE, bytes([_DATA_READY]))
-        self._int = Pin(gpio, Pin.IN)
+        await self._bus.read_into(self._addr, _REG_DATAX0, self._buf)  # clear the pending DATA_READY
+        self._int = Pin(gpio, Pin.IN)  # so the next conversion gives a clean rising edge promptly
         self._int.irq(self._on_data_ready, Pin.IRQ_RISING)
 
     def _on_data_ready(self, pin) -> None:
@@ -109,6 +110,6 @@ class Adxl375(task.Task):
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['interrupt'] = self._int is not None
-        slot = blackboard.Blackboard.read('accel')  # the latest sample (no hot-path I2C in inspect)
-        status['accel_g'] = slot.value if (slot is not None and slot.source == self.name) else None
+        slot = blackboard.Blackboard.raw('accel', self.name)  # our own latest (no hot-path I2C here)
+        status['accel_g'] = slot.value if slot is not None else None
         return status

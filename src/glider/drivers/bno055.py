@@ -79,6 +79,6 @@ class Bno055(task.Task):
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
-        slot = blackboard.Blackboard.read('attitude')  # latest sample (no hot-path I2C in inspect)
-        status['attitude_deg'] = slot.value if (slot is not None and slot.source == self.name) else None
+        slot = blackboard.Blackboard.raw('attitude', self.name)  # our own latest (no hot-path I2C)
+        status['attitude_deg'] = slot.value if slot is not None else None
         return status
