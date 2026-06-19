@@ -365,21 +365,27 @@ name so the Controller can build it from a config component.
 ## `adxl375.py`
 
 drivers/adxl375.py — ADXL375 ±200 g high-G accelerometer over I2C: the boost-phase accel channel.
-@task.driver('adxl375'). setup() probes the device id and configures it; run() samples at the
-component's rate and writes the latest (x, y, z) acceleration in g to the blackboard 'accel' slot.
-If the device is absent (no I2C ack / wrong device id) setup() returns False and the Controller
-skips it, so the board boots fine with the sensor unplugged.
+@task.driver('adxl375'). setup() probes the device id and configures it; run() writes the latest
+(x, y, z) acceleration in g to the blackboard 'accel' slot. If the device is absent (no I2C ack /
+wrong device id) setup() returns False and the Controller skips it, so the board boots fine with
+the sensor unplugged.
+
+Sampling is interrupt-driven when an `int_pin` (INT1) is wired: the chip raises DATA_READY when a
+new sample is ready, an IRQ sets a ThreadSafeFlag, and run() awaits it -- so the coroutine sleeps
+until there is genuinely fresh data instead of blind-polling. A `fallback_ms` timeout still forces
+a sample if interrupts go silent (dead sensor / wiring). With no int_pin it falls back to a plain
+`period_ms` poll.
 
 NOTE: this driver opens its own machine.I2C on the component's bus. When several I2C sensors share
 `i2c:0`, a shared (locked) bus manager is the right next step — see specs/coludo.md.
 
 ### `class Adxl375(task.Task)`
 
-High-G accel: samples (x, y, z) in g to the blackboard 'accel' slot.
+High-G accel: samples (x, y, z) in g to the blackboard 'accel' slot, interrupt-driven.
 
 - `setup() -> bool`
-- `sample() -> tuple` — Read and return (x, y, z) acceleration in g.
-- `run() -> None`
+- `sample() -> tuple` — Read and return (x, y, z) acceleration in g (also clears DATA_READY).
+- `run() -> None` — Sample on DATA_READY (or every fallback_ms if interrupts go silent); plain poll with no
 - `inspect() -> dict`
 
 ## `bluetooth.py`
