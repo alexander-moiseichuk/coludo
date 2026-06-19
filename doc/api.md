@@ -189,6 +189,30 @@ The flight stages, self-contained: int ids (cheap to compare/store on MicroPytho
 - `inspect() -> dict`
 - `stats() -> dict`
 
+## `i2cbus.py`
+
+_Tested by `test/test_i2cbus.py`._
+
+i2cbus.py — shared, lock-serialized I2C buses. Several sensor drivers sit on one physical bus
+(i2c:0 carries the ADXL375, BNO055 and BMP280), so they must not interleave transactions on the
+single peripheral: each bus id has ONE machine.I2C plus an asyncio.Lock, and get() hands back the
+shared wrapper. The read/write methods are async (they acquire the lock) but the underlying I2C op
+is fast and synchronous, so the lock is held only for the transaction. A glider-only module.
+
+### `class Bus`
+
+One physical I2C bus, shared by every device on it; transactions are serialized by a lock.
+
+- `__init__(bus_id: int, spec: dict)` — constructor
+- `read(addr: int, reg: int, count: int) -> bytes`
+- `read_into(addr: int, reg: int, buf) -> None`
+- `write(addr: int, reg: int, data: bytes) -> None`
+- `scan() -> list`
+
+### `get(bus_id: int, spec: dict) -> Bus`
+
+The shared Bus for `bus_id`, created once from `spec` (scl/sda/freq) and cached thereafter.
+
 ## `inspector.py`
 
 _Tested by `test/test_inspector.py`._
@@ -374,10 +398,7 @@ Sampling is interrupt-driven when an `int_pin` (INT1) is wired: the chip raises 
 new sample is ready, an IRQ sets a ThreadSafeFlag, and run() awaits it -- so the coroutine sleeps
 until there is genuinely fresh data instead of blind-polling. A `fallback_ms` timeout still forces
 a sample if interrupts go silent (dead sensor / wiring). With no int_pin it falls back to a plain
-`period_ms` poll.
-
-NOTE: this driver opens its own machine.I2C on the component's bus. When several I2C sensors share
-`i2c:0`, a shared (locked) bus manager is the right next step — see specs/coludo.md.
+`period_ms` poll. Uses the shared locked I2C bus (i2cbus), as it shares i2c:0 with other sensors.
 
 ### `class Adxl375(task.Task)`
 
@@ -403,6 +424,27 @@ Apply the configured BLE radio state. Inspectable: `radio` requested, `active` a
 - `setup() -> bool`
 - `inspect() -> dict`
 - `update(props) -> list`
+
+## `bno055.py`
+
+drivers/bno055.py — BNO055 9-DOF IMU (on the SEN0253) over the shared I2C bus: the attitude
+channel. @task.driver('bno055'). In NDOF fusion mode the chip computes absolute orientation
+on-chip; run() reads the Euler angles (heading, roll, pitch in degrees) to the blackboard
+'attitude' slot. Graceful: a wrong/absent chip id -> setup False -> the Controller skips it.
+
+BNO055's INT pin signals motion/threshold events, not a fusion data-ready, so this driver polls at
+period_ms (the fusion engine runs at 100 Hz internally); the wired int_pin is reserved for future
+event detection (e.g. high-g). Uses the shared locked bus (i2cbus) since it shares i2c:0 with the
+ADXL375 and BMP280.
+
+### `class Bno055(task.Task)`
+
+9-DOF attitude: polls (heading, roll, pitch) deg to the blackboard 'attitude' slot.
+
+- `setup() -> bool`
+- `sample() -> tuple` — Read the fused orientation as (heading, roll, pitch) in degrees.
+- `run() -> None`
+- `inspect() -> dict`
 
 ## `led.py`
 

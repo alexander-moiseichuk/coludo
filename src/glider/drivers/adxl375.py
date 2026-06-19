@@ -8,16 +8,14 @@
 # new sample is ready, an IRQ sets a ThreadSafeFlag, and run() awaits it -- so the coroutine sleeps
 # until there is genuinely fresh data instead of blind-polling. A `fallback_ms` timeout still forces
 # a sample if interrupts go silent (dead sensor / wiring). With no int_pin it falls back to a plain
-# `period_ms` poll.
-#
-# NOTE: this driver opens its own machine.I2C on the component's bus. When several I2C sensors share
-# `i2c:0`, a shared (locked) bus manager is the right next step — see specs/coludo.md.
+# `period_ms` poll. Uses the shared locked I2C bus (i2cbus), as it shares i2c:0 with other sensors.
 
 import asyncio
 import struct
 
 import blackboard
 import config
+import i2cbus
 import task
 
 try:
@@ -45,12 +43,11 @@ class Adxl375(task.Task):
     """High-G accel: samples (x, y, z) in g to the blackboard 'accel' slot, interrupt-driven."""
 
     async def setup(self) -> bool:
-        from machine import I2C, Pin
-
         bus_id = self.config.get('id', 0)
         spec = config.bus(self.controller.config, self.config.get('bus', 'i2c'), bus_id)
         if spec is None:
             return False
+        self._bus = i2cbus.get(bus_id, spec)
         self._addr: int = self.config.get('addr', 0x53)
         self._period_ms: int = self.config.get('period_ms', 100)  # poll interval with no INT wired
         self._fallback_ms: int = self.config.get('fallback_ms', 500)  # safety sample if INT silent
@@ -58,13 +55,12 @@ class Adxl375(task.Task):
         self._ready = asyncio.ThreadSafeFlag()
         self._int = None
         try:
-            self._i2c = I2C(bus_id, scl=Pin(spec['scl']), sda=Pin(spec['sda']), freq=spec.get('freq', 400000))
-            if self._i2c.readfrom_mem(self._addr, _REG_DEVID, 1)[0] != _DEVID:
+            if (await self._bus.read(self._addr, _REG_DEVID, 1))[0] != _DEVID:
                 return False  # not an ADXL375 at this address
-            self._i2c.writeto_mem(self._addr, _REG_DATA_FORMAT, b'\x0b')  # full-res, INT active-high
-            self._i2c.writeto_mem(self._addr, _REG_BW_RATE, b'\x0a')  # 100 Hz ODR
-            self._i2c.writeto_mem(self._addr, _REG_POWER_CTL, b'\x08')  # measure mode
-            self._setup_interrupt(Pin)
+            await self._bus.write(self._addr, _REG_DATA_FORMAT, b'\x0b')  # full-res, INT active-high
+            await self._bus.write(self._addr, _REG_BW_RATE, b'\x0a')  # 100 Hz ODR
+            await self._bus.write(self._addr, _REG_POWER_CTL, b'\x08')  # measure mode
+            await self._setup_interrupt()
         except Exception as error:
             print('adxl375 :: %r' % error)
             return False
@@ -72,13 +68,15 @@ class Adxl375(task.Task):
         self._ok = True
         return True
 
-    def _setup_interrupt(self, Pin) -> None:
+    async def _setup_interrupt(self) -> None:
         """Wire INT1 -> DATA_READY if the component declares an int_pin; else stay poll-only."""
         gpio = self.controller.config.get('pins', {}).get(self.config.get('int_pin'))
         if gpio is None:
             return
-        self._i2c.writeto_mem(self._addr, _REG_INT_MAP, b'\x00')  # DATA_READY -> INT1
-        self._i2c.writeto_mem(self._addr, _REG_INT_ENABLE, bytes([_DATA_READY]))
+        from machine import Pin
+
+        await self._bus.write(self._addr, _REG_INT_MAP, b'\x00')  # DATA_READY -> INT1
+        await self._bus.write(self._addr, _REG_INT_ENABLE, bytes([_DATA_READY]))
         self._int = Pin(gpio, Pin.IN)
         self._int.irq(self._on_data_ready, Pin.IRQ_RISING)
 
@@ -86,9 +84,9 @@ class Adxl375(task.Task):
         """IRQ: a fresh sample is ready -- wake run(). ThreadSafeFlag.set() is interrupt-safe."""
         self._ready.set()
 
-    def sample(self) -> tuple:
+    async def sample(self) -> tuple:
         """Read and return (x, y, z) acceleration in g (also clears DATA_READY)."""
-        self._i2c.readfrom_mem_into(self._addr, _REG_DATAX0, self._buf)
+        await self._bus.read_into(self._addr, _REG_DATAX0, self._buf)
         x, y, z = struct.unpack('<hhh', self._buf)
         return (x * _SCALE_G, y * _SCALE_G, z * _SCALE_G)
 
@@ -104,16 +102,13 @@ class Adxl375(task.Task):
             else:
                 await asyncio.sleep_ms(self._period_ms)
             try:
-                blackboard.Blackboard.write('accel', self.sample(), self.name)
+                blackboard.Blackboard.write('accel', await self.sample(), self.name)
             except Exception as error:
                 print('adxl375 :: read %r' % error)
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['interrupt'] = self._int is not None
-        if self._ok:
-            try:
-                status['accel_g'] = self.sample()
-            except Exception:
-                status['accel_g'] = None
+        slot = blackboard.Blackboard.read('accel')  # the latest sample (no hot-path I2C in inspect)
+        status['accel_g'] = slot.value if (slot is not None and slot.source == self.name) else None
         return status

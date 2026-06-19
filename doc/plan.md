@@ -98,10 +98,12 @@ testable foundations and connectivity come before the flight loop.
 ### Phase 2 — Sensors & telemetry (enables telemetry-only flights)
 - ✅ **`blackboard.py`** — the latest-value store (per-quantity slots: value/timestamp/source,
   latest-wins; Inspectable as `blackboard`). `test_blackboard`.
-- ◧ Sensor drivers + tests: ✅ **ADXL375** (`drivers/adxl375.py`, polls `accel` g → blackboard;
-  live-verified ~1 g at rest on `i2c:0`, INT1→GPIO4 wired for future data-ready/boost-detect);
-  ◻ BNO055, ICP-10111, BMP280, GNSS (ATGM336H), VL53L4CX.
-- ◻ Shared (locked) I²C bus manager once 2+ sensors share `i2c:0` (each driver opens its own now).
+- ✅ **Shared (locked) I²C bus** (`i2cbus.py`) — one `machine.I2C` + `asyncio.Lock` per id, shared
+  via `get()`; ADXL375 + BNO055 + BMP280 coexist on `i2c:0`. `test_i2cbus`.
+- ◧ Sensor drivers + tests: ✅ **ADXL375** (`drivers/adxl375.py` — `accel` g → blackboard,
+  interrupt-driven on DATA_READY/INT1→GPIO4 with timeout fallback; live ~1 g at rest);
+  ✅ **BNO055** (`drivers/bno055.py` — NDOF fusion `attitude` deg → blackboard, polled 50 Hz; live);
+  ◻ ICP-10111, BMP280, GNSS (ATGM336H), VL53L4CX.
 - ◻ Sensor fusion (priority/timeout from each component's `provides`), separation switch (IRQ).
 - ◻ Recorder UART link from the board; telemetry/log flush to the Recorder.
 - **Milestone:** a real telemetry-only flight — collect data, no actuation.
