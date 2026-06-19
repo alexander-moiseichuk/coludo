@@ -4,6 +4,27 @@ _Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand
 
 # glider firmware (MicroPython) — `src/glider`
 
+## `blackboard.py`
+
+_Tested by `test/test_blackboard.py`._
+
+blackboard.py — the shared latest-value store for hot sensor data (specs/coludo.md "Task
+Data-Flow and Message Propagation"). Per-quantity slots hold the latest value + timestamp +
+source; sensor drivers write, the control loop / fusion read directly. Latest-wins, no fan-out,
+no subscriptions. Slots are declared up front so a steady-state write just updates fields in place
+(the value object itself is the producer's concern -- prefer reusing a buffer to stay allocation-
+free on the hot path). A global singleton like the Recorder, and Inspectable so the operator can
+watch live values (`inspect blackboard`).
+
+### `class Blackboard`
+
+- `declare(quantity: str) -> None` _(classmethod)_ — Preallocate a quantity's slot (idempotent). Registers with the Inspector on first use.
+- `write(quantity: str, value, source: str=None) -> None` _(classmethod)_ — Store the latest value for a quantity (latest-wins), updating the slot fields in place.
+- `read(quantity: str) -> _Slot` _(classmethod)_ — The latest _Slot (value / timestamp / source) for a quantity, or None if never written.
+- `value(quantity: str)` _(classmethod)_ — Just the latest value for a quantity (None if absent).
+- `inspect() -> dict` _(classmethod)_
+- `stats() -> dict` _(classmethod)_
+
 ## `cc_client.py`
 
 _Tested by `test/test_cc_client.py`._
@@ -337,6 +358,26 @@ name so the Controller can build it from a config component.
 - `inspect() -> dict` — Status dict. Subclasses extend it.
 
 # glider HAL drivers — `drivers/` — `src/glider/drivers`
+
+## `adxl375.py`
+
+drivers/adxl375.py — ADXL375 ±200 g high-G accelerometer over I2C: the boost-phase accel channel.
+@task.driver('adxl375'). setup() probes the device id and configures it; run() samples at the
+component's rate and writes the latest (x, y, z) acceleration in g to the blackboard 'accel' slot.
+If the device is absent (no I2C ack / wrong device id) setup() returns False and the Controller
+skips it, so the board boots fine with the sensor unplugged.
+
+NOTE: this driver opens its own machine.I2C on the component's bus. When several I2C sensors share
+`i2c:0`, a shared (locked) bus manager is the right next step — see specs/coludo.md.
+
+### `class Adxl375(task.Task)`
+
+High-G accel: samples (x, y, z) in g to the blackboard 'accel' slot.
+
+- `setup() -> bool`
+- `sample() -> tuple` — Read and return (x, y, z) acceleration in g.
+- `run() -> None`
+- `inspect() -> dict`
 
 ## `bluetooth.py`
 

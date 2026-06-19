@@ -29,8 +29,9 @@ async def amain():
     assert 'led' not in flight.tasks  # enabled: False by default
     assert 'wifi' not in flight.tasks and 'cc' not in flight.tasks
 
-    # sensors whose drivers are not implemented yet (adxl375, ...) are skipped, not fatal
-    assert 'accel_adxl375' not in flight.tasks
+    # sensors whose drivers are not implemented yet (bno055, ...) are skipped, not fatal (the
+    # adxl375 driver exists now but is skipped too unless an ADXL375 actually answers on the bus)
+    assert 'imu_bno055' not in flight.tasks
 
     await asyncio.sleep_ms(30)  # let the loops tick (the recorder drains)
     await flight.finish()

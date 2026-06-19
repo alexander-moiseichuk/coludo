@@ -96,9 +96,14 @@ testable foundations and connectivity come before the flight loop.
   save + reboot → it returns from the saved config.
 
 ### Phase 2 — Sensors & telemetry (enables telemetry-only flights)
-- Sensor drivers + tests: ADXL375, BNO055, ICP-10111, BMP280, GNSS (ATGM336H), laser AGL.
-- Sensor fusion (priority/timeout from each component's `provides`), separation switch (IRQ).
-- Recorder UART link from the board; telemetry/log flush to the Recorder.
+- ✅ **`blackboard.py`** — the latest-value store (per-quantity slots: value/timestamp/source,
+  latest-wins; Inspectable as `blackboard`). `test_blackboard`.
+- ◧ Sensor drivers + tests: ✅ **ADXL375** (`drivers/adxl375.py`, polls `accel` g → blackboard;
+  live-verified ~1 g at rest on `i2c:0`, INT1→GPIO4 wired for future data-ready/boost-detect);
+  ◻ BNO055, ICP-10111, BMP280, GNSS (ATGM336H), VL53L4CX.
+- ◻ Shared (locked) I²C bus manager once 2+ sensors share `i2c:0` (each driver opens its own now).
+- ◻ Sensor fusion (priority/timeout from each component's `provides`), separation switch (IRQ).
+- ◻ Recorder UART link from the board; telemetry/log flush to the Recorder.
 - **Milestone:** a real telemetry-only flight — collect data, no actuation.
 
 ### Phase 3 — Active control

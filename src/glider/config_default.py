@@ -38,6 +38,7 @@ def default() -> dict:
         'pins': {
             'led_status': 2,  # external LED (board has no user LED)
             'separation_switch': 33,  # copper pads: HIGH=nested (3v3 routed), LOW=separated
+            'adxl375_int': 4,  # ADXL375 INT1 (free spare) — reserved for data-ready / boost-detect
             'servo_yaw': 26,
             'servo_eleron_left': 27,
             'servo_eleron_right': 32,
@@ -56,6 +57,7 @@ def default() -> dict:
                 'driver': 'adxl375',
                 'bus': 'i2c:0',
                 'addr': 0x53,
+                'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — polled for now
                 'enabled': True,
                 'provides': {'accel': {'priority': 0, 'timeout_ms': 5}},
             },
