@@ -17,7 +17,7 @@ SOURCES = [
     ('src/control', 'control (CPython)'),
     ('src/control/commands', 'control operator commands — `commands/`'),
 ]
-SKIP_PREFIXES = ('test_', 'itest_', 'bench_', 'gen_docs', '__init__')
+SKIP_PREFIXES = ('test_', 'itest_', 'bench_', 'gen_docs', '__init__', 'version')
 
 
 def module_header(source: str) -> str:

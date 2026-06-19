@@ -31,7 +31,9 @@ from a board — no async push, no subscriptions, no out-of-band events. The con
   never overlaps requests (see [Heartbeat](#heartbeat--liveness)).
 - **One outstanding request per board (lockstep).** CC sends a command and waits for the
   single response before sending the next to that board. No request IDs are needed to match
-  responses. (Different boards are polled concurrently; only per-board is serial.)
+  responses. (Different boards are polled concurrently; only per-board is serial.) Every exchange is
+  bounded by a timeout (**10 s**, `board.EXCHANGE_TIMEOUT_S`): a wedged board raises rather than
+  hanging the hub, so one stuck board never blocks the others.
 - **Data is pulled, not pushed.** The board maintains bounded ring buffers (in PSRAM) for log
   and telemetry records. CC retrieves slices on demand (`log`, `tel`). The same buffers feed
   the Recorder over UART, so there is one producer and two drains.
@@ -59,10 +61,10 @@ Plain TCP, no encryption (trusted LAN; encryption is explicitly out of scope for
 ```
 
 - The **first token is the target**: a board id (from `board.id`, e.g. `glider1`, always a bare
-  whitespace-free token) or `all` / `*` to broadcast.
+  whitespace-free token) or `all` to broadcast.
 - **Control routes by that token and strips it**, forwarding `<command> [params...]` to the matched
   board socket(s). **A board receives `<command> [params...]` with no id** and never deals with
-  routing — board-id handling lives entirely in Control. (`all`/`*` is a Control-side fan-out to
+  routing — board-id handling lives entirely in Control. (`all` is a Control-side fan-out to
   every connected board; boards never see it.)
 - The **rest** is parameters, whitespace-separated, with **no quoting or escaping** — both sides
   know each command's schema. A value is a **bare token** (no spaces) or **`base64:<data>`** (spaces,
@@ -82,7 +84,7 @@ routing token); the board replies with the one message that carries its own id:
 
 ```
 Control → board:   whoami
-board → Control:   iam glider1 base64:<{"mcu":"esp32p4","fw":"0.1","config_id":"<hash>","state":"setting","uptime":812}>
+board → Control:   iam glider1 base64:<{"mcu":"esp32p4","firmware_version":"a1b2c3d4e5f6","config_id":"<hash>","stage":"setting","uptime":812}>
 ```
 
 Control registers socket ⇄ `glider1`, begins its ~2 s poll loop, and thereafter routes operator
@@ -118,10 +120,10 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `whoami` | — | `iam <id> {json}` | identify a new socket (the one reply carrying the id) |
 | `ping` | — | `pong` | liveness |
 | `health` | — | `ok {temp,mem_free,load,uptime,components[]}` | vitals; `components[]` carries `{name, ok}` |
-| `state` | — | `ok {state,uptime}` | current flight phase |
+| `stage` | — | `ok {stage,uptime}` | current flight stage |
 | `tel` | `[ms]` | `ok {samples:[...]}` | telemetry samples within the last `ms` |
 | `log` | `<ms>` | `ok {lines:[...], truncated}` | log lines from the last `ms` |
-| `report` | — | `ok {state, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
+| `report` | — | `ok {stage, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
 | `objects` | — | `ok [name, ...]` | names of all `Inspectable` objects (for the `inspect`/`update`/`stats` targets) |
 | `inspect` | `<object>` | `ok {props}` | `Inspectable.inspect()` of a named object |
 | `update` | `<object> <json>` | `ok {changed:[...]}` | `Inspectable.update()` — names of properties actually changed |
@@ -195,28 +197,28 @@ target board) are Control's concern, returned to the operator as `from cc err no
 
 ## Operator commands (operator ↔ Control only)
 
-A first token that is a known board id (or `all`/`*`) routes to a board; otherwise it is a
+A first token that is a known board id (or `all`) routes to a board; otherwise it is a
 **Control command**, handled by Control and never sent to a board:
 
 | Command | Meaning |
 |---------|---------|
 | `help` | `from cc ok {commands:[...]}` — all commands; `help <command>` for one |
-| `list` | `from cc ok [{id, online, state, config_id}]` — connected boards |
+| `list` | `from cc ok [{id, online, stage, config_id}]` — connected boards |
 | `select <board>` | set this session's **sticky** target; afterwards a bare `<command>` is routed to it |
 | `who` | `from cc ok {selected, since}` — current selection |
 
 **Sticky select / broadcast:** after `select glider1`, typing `health` is routed as `glider1
-health`; an explicit `<board>`/`all`/`*` first token overrides it for that line. Control tags every
+health`; an explicit `<board>`/`all` first token overrides it for that line. Control tags every
 relayed reply with its source (`from glider1 ok …`), so the operator always sees who answered.
-`all`/`*` fans out to every connected board and yields one tagged reply per board.
+`all` fans out to every connected board and yields one tagged reply per board.
 
 Example telnet session (response JSON shown **decoded for readability**; on the wire each is one
 `base64:` token):
 
 ```
 > list
-from cc ok [{"id":"glider1","online":true,"state":"setting","config_id":"a1b2"},
-            {"id":"glider7a","online":true,"state":"setting","config_id":"c3d4"}]
+from cc ok [{"id":"glider1","online":true,"stage":"setting","config_id":"a1b2"},
+            {"id":"glider7a","online":true,"stage":"setting","config_id":"c3d4"}]
 > select glider1
 from cc ok {"selected":"glider1"}
 > health                         (routed as: glider1 health)

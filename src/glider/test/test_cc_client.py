@@ -70,7 +70,7 @@ async def amain():
     m = cc.parse(await sd.handle('whoami'))
     assert m.command == 'iam' and m.args[0] == 'glider1'
     info = json.loads(m.args[1])
-    assert info['mcu'] == 'esp32p4' and 'config_id' in info and info['state'] == 'setting'
+    assert info['mcu'] == 'esp32p4' and 'config_id' in info and info['stage'] == 'setting'
 
     assert cc.parse(await sd.handle('ping')).command == 'pong'
     health = json.loads(cc.parse(await sd.handle('health')).args[0])

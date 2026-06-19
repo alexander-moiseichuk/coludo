@@ -28,7 +28,7 @@ async def amain():
     # registered as the 'recorder' driver so the Controller builds the recorder component
     assert task.ACTIVITIES.get('recorder') is tasks.recorder.RecorderTask
 
-    component = {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart:1', 'enabled': True}
+    component = {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True}
 
     # the task proxies the singleton's Inspectable surface to the operator
     recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())

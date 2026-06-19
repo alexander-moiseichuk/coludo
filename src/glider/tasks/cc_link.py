@@ -6,7 +6,6 @@
 import asyncio
 
 import cc_client
-import inspector
 import task
 
 
@@ -24,11 +23,12 @@ class ControlLink(task.Task):
         return True
 
     async def run(self) -> None:
-        """Wait for Wi-Fi, dial CC, and serve until the link drops; then retry. Idle (not spinning)
-        while there is no Wi-Fi, so a board with no link just keeps running its other tasks."""
+        """Park until the Wi-Fi dependency is up, then dial CC and serve until the link drops; retry.
+        On a board with no Wi-Fi the query never returns, so this just stays idle -- the board keeps
+        running its other tasks."""
+        wifi, = await self.query(['wifi'])  # block until the wifi task is up (our dependency)
         while True:
-            wifi = inspector.Inspector.get('wifi')
-            if wifi is None or not wifi.isconnected():
+            if not wifi.isconnected():
                 await asyncio.sleep_ms(2000)
                 continue
             try:

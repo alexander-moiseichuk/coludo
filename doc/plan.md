@@ -10,9 +10,11 @@ Required hardware and the phased development roadmap. Architecture lives in
 - **Phase 1 board side — done.** `wifi` (STA) and `cc_client` (`Dispatcher`/`Client` +
   `create_dispatcher` answering whoami/ping/health/state/report/get-config/save-config/
   reset-config/reboot). 8/8 on-board tests.
-- **Control hub — done.** `src/control/`: board listener + registry + ~2 s heartbeat + telnet
-  operator console (drop-in `commands/`) + HTTP/SSE browser dashboard on 8080 (`web.py`),
-  host-tested. Remaining polish: draft config + save/reboot from the UI. **Then** the Controller
+- **Control hub — done.** `src/control/` split into `board.py` (Board, 10 s exchange timeout),
+  `server.py` (the hub: board listener + ~2 s heartbeat + telnet operator console, drop-in
+  `commands/`, `all`-only broadcast) and `main.py` (CLI: `--host 0.0.0.0` / `--port` / `--help`),
+  plus the HTTP/SSE dashboard (`web.py`). Per-file host tests (`test_board`, `test_server`).
+  Remaining polish: draft config + save/reboot from the UI. **Then** the Controller
   **bring-up wiring** (connect → time-sync → start tasks), two-sided so it wants Control live first.
   The Recorder is now wired into the task graph by a thin adapter (`@task.activity('recorder')` in
   `tasks/recorder.py`); the `recorder` component (bus uart:1) makes the Controller create + supervise
@@ -60,7 +62,7 @@ testable foundations and connectivity come before the flight loop.
 - ✅ `config.py` + `config_default.py`: loader, validator (pin uniqueness, bus refs, reserved
   pins, board.id, `recorder` section), `config_id` hashing, layered load + fallback, atomic save.
 - ✅ `task.py` + `controller.py`: Task base + `ACTIVITIES` registry; Controller
-  (`directory/create/active/close`, supervised run loops, flight state machine).
+  (`directory/create/active/close`, supervised run loops, flight stage machine).
 - ✅ `cc_protocol.py`: line parser — bare tokens or `base64:<data>` (no quoting/tokenizing),
   `parse`/`build`/`encode`/`decode`.
 - ✅ `recorder.py`: lock-free SPSC `Ring`s (write via `struct.pack_into`), `Recorder` singleton
@@ -71,11 +73,11 @@ testable foundations and connectivity come before the flight loop.
 - ✅ **Board side:** `wifi.py` (STA join `panda`, tx-power), `cc_client.py` (`Client` dial-out +
   `serve` loop, `create_dispatcher` answering whoami/ping/health/state/report/get-config/
   save-config/reset-config/reboot). System status (temp/mem/uptime) is in the health handler.
-- ◧ **CC hub** (`src/control/`, host Python): board listener (1234) + registry + ~2 s heartbeat
-  poll + telnet operator console (1235, routing `<board>`/`all`/`*`, sticky `select`, drop-in
-  `commands/`) + **HTTP + SSE browser bridge** (8080: `/`, `/api/boards`, `/api/cmd`, `/events`,
-  `web.py` + `static/index.html`). ✅ ◻ remaining: draft config + richer dashboard (save/reboot). ← **next**
-- ◻ Minimal browser dashboard: health, enable/disable, `save-config` → `reboot`.
+- ✅ **CC hub** (`src/control/`): `board.py` (Board, 10 s exchange timeout) + `server.py` (board
+  listener 1234 + ~2 s heartbeat + operator console 1235, routing `<board>`/`all`, sticky `select`,
+  drop-in `commands/`) + `main.py` (CLI `--host`/`--port`/`--help`) + **HTTP/SSE dashboard** (8080,
+  `web.py`+`static/index.html`) with a **config editor** (load `get-config` → edit the draft → `save-config`
+  → `reboot`/`reset-config`, all via `/api/cmd`; rows click-to-target). Per-file host tests.
 - ✅ **Task packages** — `drivers/` (HAL: `led`, `wifi`, the future sensors/servo, via `@task.driver`)
   and `tasks/` (subsystems: Recorder adapter, `board_health`, `cc_link`, via the `@task.activity`
   alias), each with a `load()` that imports its modules so the registrations run (one shared
@@ -94,14 +96,35 @@ testable foundations and connectivity come before the flight loop.
   save + reboot → it returns from the saved config.
 
 ### Phase 2 — Sensors & telemetry (enables telemetry-only flights)
-- Sensor drivers + tests: ADXL375, BNO055, ICP-10111, BMP280, GNSS (ATGM336H), laser AGL.
-- Sensor fusion (priority/timeout from each component's `provides`), separation switch (IRQ).
-- Recorder UART link from the board; telemetry/log flush to the Recorder.
+- ✅ **`blackboard.py`** — the latest-value store (per-quantity slots: value/timestamp/source,
+  latest-wins; Inspectable as `blackboard`). `test_blackboard`.
+- ✅ **Shared (locked) I²C bus** (`i2cbus.py`) — one `machine.I2C` + `asyncio.Lock` per id, shared
+  via `get()`; ADXL375 + BNO055 + BMP280 coexist on `i2c:0`. `test_i2cbus`.
+- ◧ Sensor drivers + tests (all → blackboard, write `altitude`/`temperature`/`accel`/`attitude`):
+  ✅ **ADXL375** (`accel` g, interrupt-driven on DATA_READY/INT1→GPIO4 + timeout fallback);
+  ✅ **BNO055** (NDOF fusion `attitude` deg, polled 50 Hz);
+  ✅ **BMP280** (Bosch-compensated `altitude` m + `temperature` °C, 10 Hz, backup baro);
+  ✅ **ICP-10111** (`drivers/icp10111.py` — TDK command/OTP protocol, `altitude` + `temperature`,
+  primary baro, prio 0); ◻ GNSS (ATGM336H), VL53L4CX. All live-verified on `i2c:0`.
+- ✅ **Sensor fusion** (`tasks/fusion.py` `@task.activity('fusion')`) — blackboard split into a raw
+  layer (per quantity+source) and a fused layer; fusion picks each quantity's live value from its
+  providers by `provides` priority + freshness (timeout), falling back when the preferred goes stale.
+  Live: altitude/temperature → ICP-10111 (prio 0) over BMP280, accel/attitude pass through. Config
+  `timeout_ms` set to realistic windows (a few sample periods). `test_fusion` + `test_blackboard`.
+- ✅ **Telemetry wiring** — `Telemetry(prorate_us)` rate-limits a stream (a fast sensor pushes every
+  sample, decimated to a sane rate). Each sensor emits its own `SENSOR.csv` (accel 50 Hz, imu 25 Hz,
+  baros 10 Hz) + fusion emits a wide `fused.csv` (one column per quantity, vectors pipe-joined,
+  10 Hz). Live-verified: rows/sec match the configured `telemetry_us`.
+- ✅ **Separation switch** (`drivers/separation.py` `@task.driver('separation')`) — copper pads on
+  `separation_switch` (GPIO33): HIGH=nested, LOW=separated, internal pull-down (no external resistor
+  needed). IRQ on either edge → debounce → on a confirmed separation during Boosting, drive
+  Boosting→Gliding (guarded). Live-verified: unplugging 3V3 fired the transition. `test_separation`.
+- ◻ Recorder UART link to the physical Luckfox recorder (rings drain to uart:1 already).
 - **Milestone:** a real telemetry-only flight — collect data, no actuation.
 
 ### Phase 3 — Active control
 - Servo task (sequential updates, calibration maps, ±45° limits).
-- Flight state machine (ignition → separation → apogee → landing thresholds) + PID
+- Flight stage machine (ignition → separation → apogee → landing thresholds) + PID
   stabilization + per-phase maneuvers + degraded modes + watchdog / health monitor.
 - **Milestone:** a controlled glide.
 

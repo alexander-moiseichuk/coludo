@@ -27,10 +27,15 @@ def main():
     res['pins']['servo_yaw'] = 18
     assert any('reserved GPIO18' in e for e in config.validate(res))
 
-    # unknown bus reference on a sensor
+    # unknown bus reference on a sensor (a valid kind, but an id with no defined bus)
     badref = config_default.default()
-    badref['sensors'][0]['bus'] = 'nope'
-    assert any('not a defined bus' in e for e in config.validate(badref))
+    badref['sensors'][0]['id'] = 9  # i2c:9 is not defined
+    assert any('is not defined' in e for e in config.validate(badref))
+
+    # a device naming a bus must give an int id
+    badid = config_default.default()
+    badid['sensors'][0]['id'] = 'x'
+    assert any('.id must be the int bus id' in e for e in config.validate(badid))
 
     # bad bus type
     badtype = config_default.default()
@@ -47,13 +52,15 @@ def main():
     del noimpl['components'][0]['activity']  # the recorder component
     assert any('driver` (drivers/) or `activity`' in e for e in config.validate(noimpl))
 
-    # bus() / device() helpers
+    # bus() / device() helpers — addressed by (kind, id), no string parsing
     cfg = config_default.default()
-    assert config.bus(cfg, 'i2c:0') == {'sda': 7, 'scl': 8, 'freq': 400000}
-    assert config.bus(cfg, 'uart:2')['baud'] == 9600
-    assert config.bus(cfg, 'nope') is None
+    assert config.bus(cfg, 'i2c', 0) == {'sda': 7, 'scl': 8, 'freq': 400000}
+    assert config.bus(cfg, 'uart', 2)['baud'] == 9600
+    assert config.bus(cfg, 'i2c', 9) is None  # undefined id
+    assert config.bus(cfg, 'nope', 0) is None  # undefined kind
     assert config.device(cfg, driver='recorder')['name'] == 'recorder'
-    assert config.device(cfg, name='gnss')['bus'] == 'uart:2'
+    gnss = config.device(cfg, name='gnss')
+    assert gnss['bus'] == 'uart' and gnss['id'] == 2
     assert config.device(cfg, name='absent') is None
 
     # save / load round-trip on the board filesystem

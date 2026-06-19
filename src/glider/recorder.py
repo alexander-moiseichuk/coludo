@@ -112,10 +112,10 @@ class Recorder:
             import config as config_mod
             from machine import UART
 
-            entry = config_mod.device(config, driver='recorder')
-            ref = entry['bus'] if entry else 'uart:1'
-            spec = config_mod.bus(config, ref) or {'tx': 20, 'rx': 21, 'baud': 921600}
-            uart = UART(int(ref.split(':')[1]), baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
+            entry = config_mod.device(config, driver='recorder') or {'bus': 'uart', 'id': 1}
+            kind, bus_id = entry.get('bus', 'uart'), entry.get('id', 1)
+            spec = config_mod.bus(config, kind, bus_id) or {'tx': 20, 'rx': 21, 'baud': 921600}
+            uart = UART(bus_id, baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
         # accept a pre-wrapped async writer (tests) or wrap a raw UART for async drain
         cls._uart = uart if hasattr(uart, 'drain') else asyncio.StreamWriter(uart, {})
         inspector.Inspector.register(cls)
@@ -225,15 +225,25 @@ class Recorder:
 class Telemetry:
     """A typed telemetry stream. Created with a destination file and its data field names; the
     first push emits the CSV header (uptime + fields), then each push emits a timestamped row.
-    All streams in one boot share the Recorder session prefix, so file names are stable."""
+    All streams in one boot share the Recorder session prefix, so file names are stable.
 
-    def __init__(self, filename: str, fields: tuple):
+    `decimate_us` rate-limits the stream: with it 0 every push() emits; with it set, push() emits
+    only when at least `decimate_us` microseconds have passed since the last emitted row (a fast
+    sensor can push every sample and have its telemetry decimated to a sane rate)."""
+
+    def __init__(self, filename: str, fields: tuple, decimate_us: int = 0):
         self.filename: str = filename
         self.fields: tuple = fields
+        self.decimate_us = decimate_us  # min gap between emitted rows (0 = emit every push)
         self._header_sent: bool = False
+        self._last_us: int = Recorder.timestamp() - decimate_us  # one window back -> first push emits
 
     def push(self, values) -> None:
         if not self._header_sent:
             Recorder.tlm(self.filename, 'uptime;' + ';'.join(self.fields))
             self._header_sent = True
-        Recorder.tlm(self.filename, '%u;%s' % (Recorder.timestamp(), ';'.join(str(v) for v in values)))
+        now = Recorder.timestamp()
+        if time.ticks_diff(now, self._last_us) < self.decimate_us:
+            return  # too soon since the last row -> decimate
+        Recorder.tlm(self.filename, '%u;%s' % (now, ';'.join(str(v) for v in values)))
+        self._last_us = now

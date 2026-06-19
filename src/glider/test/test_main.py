@@ -18,22 +18,24 @@ async def amain():
 
     flight = await main.bringup(cfg, log=lambda message: None)
 
-    # Mission (explicit) + the Controller and its config tasks all registered with the Inspector
-    assert {'mission', 'controller', 'recorder', 'led', 'health'} <= set(inspector.Inspector.names())
+    # Mission (explicit) + the Controller and its enabled tasks all registered with the Inspector
+    assert {'mission', 'controller', 'recorder', 'health', 'bluetooth'} <= set(inspector.Inspector.names())
 
     # every enabled component with a registered driver came up healthy (built purely from config)
-    for name in ('recorder', 'led', 'health'):
+    for name in ('recorder', 'health', 'bluetooth'):
         assert name in flight.tasks and flight.tasks[name].validate()
 
-    # no connectivity configured -> the board runs standalone, no Wi-Fi/CC tasks
+    # disabled-by-default + stripped components are absent; the board still runs standalone
+    assert 'led' not in flight.tasks  # enabled: False by default
     assert 'wifi' not in flight.tasks and 'cc' not in flight.tasks
 
-    # sensors whose drivers are not implemented yet (adxl375, ...) are skipped, not fatal
-    assert 'accel_adxl375' not in flight.tasks
+    # a sensor whose driver is not implemented yet (gnss/atgm336h) is skipped, not fatal -- the
+    # adxl375/bno055/bmp280 drivers exist now and build only if their device answers on the bus
+    assert 'gnss' not in flight.tasks
 
     await asyncio.sleep_ms(30)  # let the loops tick (the recorder drains)
     await flight.finish()
-    assert flight.state == 'done' and flight.tasks == {}
+    assert flight.stage_name() == 'done' and flight.tasks == {}
 
     print('ok: main.bringup wires Mission/BoardHealth/Controller + Recorder driver, skips driverless sensors')
 

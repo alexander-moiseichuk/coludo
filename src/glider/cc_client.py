@@ -17,10 +17,10 @@ class Dispatcher:
     def __init__(self):
         self.handlers = {}
 
-    def on(self, command, fn):
+    def on(self, command: str, fn) -> None:
         self.handlers[command] = fn
 
-    async def handle(self, line):
+    async def handle(self, line: str) -> str:
         msg = cc.parse(line)
         if msg.command is None:
             return None
@@ -34,7 +34,7 @@ class Dispatcher:
 
 
 class Client:
-    def __init__(self, config, dispatcher, log=None, backoff_ms=1000):
+    def __init__(self, config: dict, dispatcher, log=None, backoff_ms: int = 1000):
         wifi = config['wifi']
         self.host = wifi['cc_host']
         self.port = wifi['cc_port']
@@ -42,7 +42,7 @@ class Client:
         self.log = log if log is not None else (lambda message: None)
         self.backoff_ms = backoff_ms
 
-    async def run(self):
+    async def run(self) -> None:
         """Connect to Control and serve forever, reconnecting with backoff on drop."""
         while True:
             try:
@@ -53,7 +53,7 @@ class Client:
                 self.log('cc_client :: %r' % error)
             await asyncio.sleep_ms(self.backoff_ms)
 
-    async def serve(self, reader, writer):
+    async def serve(self, reader, writer) -> None:
         """Read commands from Control, dispatch, write responses. Returns on disconnect."""
         while True:
             line = await reader.readline()
@@ -65,7 +65,8 @@ class Client:
                 await writer.drain()
 
 
-def create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_path='board.json'):
+def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
+                      config_path: str = 'board.json') -> Dispatcher:
     """Build a Dispatcher with the standard command handlers, wired to the running config, the
     Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset."""
     import gc
@@ -76,44 +77,44 @@ def create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_pat
     board_id = cfg['board']['id']
     dispatcher = Dispatcher()
 
-    def state():
-        return controller.state if controller is not None else 'setting'
+    def stage() -> str:
+        return controller.stage_name() if controller is not None else 'setting'
 
-    async def whoami(msg):
+    async def whoami(msg) -> str:
         info = {
             'mcu': cfg['board'].get('mcu'),
-            'fw': fw,
+            'firmware_version': cfg['board'].get('firmware_version', 'dev'),
             'config_id': config_mod.config_id(cfg),
-            'state': state(),
+            'stage': stage(),
             'uptime': time.ticks_ms(),
         }
         return cc.build('iam', [board_id, json.dumps(info)])  # the one reply carrying the id
 
-    async def ping(msg):
+    async def ping(msg) -> str:
         return cc.build('pong')
 
-    async def health(msg):
+    async def health(msg) -> str:
         try:
             import esp32
 
             temp = esp32.mcu_temperature()
         except Exception:
             temp = None
-        info = {'temp': temp, 'mem_free': gc.mem_free(), 'uptime': time.ticks_ms(), 'state': state()}
+        info = {'temp': temp, 'mem_free': gc.mem_free(), 'uptime': time.ticks_ms(), 'stage': stage()}
         if controller is not None:
             info['tasks'] = [{'name': t.name, 'ok': t.validate()} for t in controller.active()]
         return cc.build('ok', [json.dumps(info)])
 
-    async def get_state(msg):
-        return cc.build('ok', [json.dumps({'state': state()})])
+    async def get_stage(msg) -> str:
+        return cc.build('ok', [json.dumps({'stage': stage()})])
 
-    async def report(msg):
+    async def report(msg) -> str:
         return cc.build('ok', [json.dumps(controller.stats() if controller is not None else {})])
 
-    async def objects(msg):
+    async def objects(msg) -> str:
         return cc.build('ok', [json.dumps(inspector.Inspector.names())])
 
-    async def inspect(msg):
+    async def inspect(msg) -> str:
         if not msg.args:
             return cc.build('err', ['badargs', 'inspect <object>'])
         try:
@@ -121,7 +122,7 @@ def create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_pat
         except KeyError:
             return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
 
-    async def update(msg):
+    async def update(msg) -> str:
         if len(msg.args) < 2:
             return cc.build('err', ['badargs', 'update <object> <json>'])
         try:
@@ -130,7 +131,7 @@ def create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_pat
             return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
         return cc.build('ok', [json.dumps({'changed': changed})])
 
-    async def stats(msg):
+    async def stats(msg) -> str:
         if not msg.args:
             return cc.build('err', ['badargs', 'stats <object>'])
         try:
@@ -138,12 +139,12 @@ def create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_pat
         except KeyError:
             return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
 
-    async def get_config(msg):
+    async def get_config(msg) -> str:
         which = msg.args[0] if msg.args else 'running'
         config = config_mod._builtin_default() if which == 'default' else cfg
         return cc.build('ok', [json.dumps(config)])
 
-    async def save_config(msg):
+    async def save_config(msg) -> str:
         if not msg.args:
             return cc.build('err', ['badargs', 'no config'])
         try:
@@ -156,21 +157,21 @@ def create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_pat
             return cc.build('err', ['invalid', str(error)])
         return cc.build('ok', [json.dumps({'config_id': config_id})])
 
-    async def reset_config(msg):
+    async def reset_config(msg) -> str:
         config_mod.reset(config_path)
         return cc.build('ok')
 
-    async def save_mission(msg):
+    async def save_mission(msg) -> str:
         mission = inspector.Inspector.get('mission')
         if mission is None:
             return cc.build('err', ['unsupported', 'no mission'])
         mission.save()  # persist the live mission (set via `update mission`) to launch.config
         return cc.build('ok')
 
-    async def reboot(msg):
+    async def reboot(msg) -> str:
         reset = on_reboot or (lambda: __import__('machine').reset())  # imported only when it fires
 
-        async def do_reset():
+        async def do_reset() -> None:
             await asyncio.sleep_ms(200)
             reset()
 
@@ -180,7 +181,7 @@ def create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_pat
     dispatcher.on('whoami', whoami)
     dispatcher.on('ping', ping)
     dispatcher.on('health', health)
-    dispatcher.on('state', get_state)
+    dispatcher.on('stage', get_stage)
     dispatcher.on('report', report)
     dispatcher.on('objects', objects)
     dispatcher.on('inspect', inspect)

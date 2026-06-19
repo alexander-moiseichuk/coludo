@@ -4,14 +4,20 @@
 # specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
 # test/test_pins.py). `default()` returns a FRESH dict each call so callers may mutate it freely.
 #
-# Topology: buses are grouped by type then id (referenced as 'uart:1', 'i2c:0', ...). `sensors`
-# are data providers fused by quantity + priority (several may provide the same quantity with
-# different drivers/priorities); `components` are the consumers/actuators (recorder, ...).
+# Topology: buses are grouped by type then id; a sensor/component addresses one by `bus` (the kind,
+# e.g. 'i2c') + `id` (its int id), so nothing parses a 'type:id' string. `sensors` are data
+# providers fused by quantity + priority (several may provide the same quantity with different
+# drivers/priorities); `components` are the consumers/actuators (recorder, ...).
+
+try:
+    from version import VERSION as _FIRMWARE_VERSION  # generated at deploy/install (git commit sha)
+except ImportError:
+    _FIRMWARE_VERSION = 'dev'
 
 
-def default():
+def default() -> dict:
     return {
-        'board': {'id': 'glider1', 'mcu': 'esp32p4', 'rev': 1},
+        'board': {'id': 'glider1', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION},
         'wifi': {  # STA — the board joins the Control network
             'mode': 'sta',
             'ssid': 'panda',
@@ -32,7 +38,8 @@ def default():
         },
         'pins': {
             'led_status': 2,  # external LED (board has no user LED)
-            'separation_switch': 33,  # pull-up: LOW=nested, HIGH=separated
+            'separation_switch': 33,  # copper pads: HIGH=nested (3v3 routed), LOW=separated
+            'adxl375_int': 4,  # ADXL375 INT1 (free spare) — DATA_READY drives the accel sampling
             'servo_yaw': 26,
             'servo_eleron_left': 27,
             'servo_eleron_right': 32,
@@ -49,47 +56,53 @@ def default():
             {
                 'name': 'accel_adxl375',
                 'driver': 'adxl375',
-                'bus': 'i2c:0',
+                'bus': 'i2c', 'id': 0,
                 'addr': 0x53,
+                'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — polled for now
+                'telemetry_us': 20000,  # ~100 Hz sampling decimated to 50 Hz in accel_adxl375.csv
                 'enabled': True,
-                'provides': {'accel': {'priority': 0, 'timeout_ms': 5}},
+                'provides': {'accel': {'priority': 0, 'timeout_ms': 50}},
             },
             {
                 'name': 'imu_bno055',
                 'driver': 'bno055',
-                'bus': 'i2c:0',
+                'bus': 'i2c', 'id': 0,
                 'addr': 0x28,
+                'telemetry_us': 40000,  # ~50 Hz sampling decimated to 25 Hz in imu_bno055.csv
                 'enabled': True,
-                'provides': {'attitude': {'priority': 0, 'timeout_ms': 5}, 'accel': {'priority': 1, 'timeout_ms': 5}},
+                'provides': {'attitude': {'priority': 0, 'timeout_ms': 100},
+                             'accel': {'priority': 1, 'timeout_ms': 50}},
             },
             {
                 'name': 'baro_icp10111',
                 'driver': 'icp10111',
-                'bus': 'i2c:0',
+                'bus': 'i2c', 'id': 0,
                 'addr': 0x63,
                 'enabled': True,
-                'provides': {'altitude': {'priority': 0, 'timeout_ms': 100}},
+                'provides': {'altitude': {'priority': 0, 'timeout_ms': 300},
+                             'temperature': {'priority': 0, 'timeout_ms': 2000}},
             },
             {
                 'name': 'baro_bmp280',
                 'driver': 'bmp280',
-                'bus': 'i2c:0',
+                'bus': 'i2c', 'id': 0,
                 'addr': 0x76,
                 'enabled': True,
-                'provides': {'altitude': {'priority': 1, 'timeout_ms': 200}},
+                'provides': {'altitude': {'priority': 1, 'timeout_ms': 500},
+                             'temperature': {'priority': 1, 'timeout_ms': 2000}},
             },
             {
                 'name': 'laser_agl',
-                'driver': 'sen0648',
-                'bus': 'i2c:0',
-                'addr': 0x50,
+                'driver': 'vl53l4cx',
+                'bus': 'i2c', 'id': 0,
+                'addr': 0x29,
                 'enabled': True,
                 'provides': {'agl': {'priority': 0, 'timeout_ms': 20}, 'altitude': {'priority': 2, 'timeout_ms': 20}},
             },
             {
                 'name': 'gnss',
                 'driver': 'atgm336h',
-                'bus': 'uart:2',
+                'bus': 'uart', 'id': 2,
                 'addr': None,
                 'hz': 10,
                 'enabled': True,
@@ -103,11 +116,19 @@ def default():
         # tasks/ (higher-level subsystems); both resolve through the same registry.
         'components': [
             # Recorder drain loop: a thin activity over the global Recorder, using uart:1.
-            {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart:1', 'enabled': True},
+            {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True},
             # Status LED on the led_status pin: blinks the board state (error/standby/flying).
-            {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': True},
+            # Disabled by default -- not every board has the external LED wired; enable per board.
+            {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': False},
+            # Stage-separation switch (copper pads): HIGH=nested, LOW=separated -> Boosting->Gliding.
+            {'name': 'separation', 'driver': 'separation', 'pin': 'separation_switch', 'enabled': True},
+            # Sensor fusion: select each quantity's live value from its providers by priority +
+            # freshness (reads the blackboard's raw readings, publishes the fused value).
+            {'name': 'fusion', 'activity': 'fusion', 'period_ms': 20, 'telemetry_us': 100000, 'enabled': True},
             # Board vitals (temperature/memory/load) -> telemetry every period_ms.
             {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'enabled': True},
+            # Apply the BLE radio state at boot: off by default to save power (BLE is unused).
+            {'name': 'bluetooth', 'driver': 'bluetooth', 'radio': False, 'enabled': True},
             # Connectivity (optional): join Wi-Fi (HAL driver), then serve the CC hub (activity). A
             # board with no Wi-Fi (e.g. FireBeetle 2) skips these at setup and runs standalone.
             {'name': 'wifi', 'driver': 'wifi', 'enabled': True},

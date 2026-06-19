@@ -55,7 +55,7 @@ class Web:
         async with server:
             await server.serve_forever()
 
-    async def _handle(self, reader, writer):
+    async def _handle(self, reader, writer) -> None:
         try:
             request_line = await reader.readline()
             if not request_line:
@@ -76,7 +76,7 @@ class Web:
         finally:
             writer.close()
 
-    async def _route(self, method, path, body, writer):
+    async def _route(self, method: str, path: str, body: bytes, writer) -> None:
         route = path.split('?', 1)[0]
         if method == 'GET' and route == '/':
             return await _send(writer, 200, 'text/html; charset=utf-8', self.page)
@@ -88,7 +88,7 @@ class Web:
             return await self._events(writer)
         await _send(writer, 404, 'text/plain', 'not found')
 
-    async def _api_cmd(self, body, writer):
+    async def _api_cmd(self, body: bytes, writer) -> None:
         try:
             request = json.loads(body or b'{}')
         except ValueError:
@@ -104,7 +104,7 @@ class Web:
             return await _send_json(writer, 502, {'board': board.id, 'error': 'offline'})
         return await _send_json(writer, 200, {'board': board.id, 'status': resp.command, 'args': resp.args})
 
-    async def _events(self, writer):
+    async def _events(self, writer) -> None:
         writer.write(
             b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n'
             b'Cache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n'

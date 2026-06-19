@@ -4,6 +4,32 @@ _Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand
 
 # glider firmware (MicroPython) — `src/glider`
 
+## `blackboard.py`
+
+_Tested by `test/test_blackboard.py`._
+
+blackboard.py — the shared latest-value store for hot sensor data (specs/coludo.md "Task
+Data-Flow"). Two layers:
+raw   — each sensor's latest reading, kept per (quantity, source) so several providers of the
+same quantity (e.g. altitude from the ICP-10111 and the BMP280) coexist.
+fused — the one selected value per quantity that consumers read; the fusion task picks it from
+the raw providers by priority + freshness (tasks/fusion.py) and publishes it here.
+Sensors call write(); fusion calls providers()/publish(); consumers call value()/read(). Slots are
+updated in place (allocation-free on the hot path). A global singleton, Inspectable as
+`blackboard` (shows the fused values).
+
+### `class Blackboard`
+
+- `declare(quantity: str) -> None` _(classmethod)_ — Preallocate a quantity's raw map + fused slot (idempotent). Registers on first use.
+- `write(quantity: str, value, source: str) -> None` _(classmethod)_ — A sensor publishes its latest raw reading for `quantity` (latest-wins per source).
+- `raw(quantity: str, source: str) -> _Slot` _(classmethod)_ — A specific sensor's latest raw reading for `quantity` (None if it never wrote).
+- `providers(quantity: str) -> dict` _(classmethod)_ — All raw readings for `quantity` as { source -> _Slot } (for the fusion task).
+- `publish(quantity: str, value, source: str) -> None` _(classmethod)_ — Fusion sets the selected value for `quantity` (`source` = which provider won).
+- `read(quantity: str) -> _Slot` _(classmethod)_ — The fused _Slot (value/timestamp/source) for `quantity` — what consumers read.
+- `value(quantity: str)` _(classmethod)_ — Just the fused value for `quantity` (None if nothing fused yet).
+- `inspect() -> dict` _(classmethod)_
+- `stats() -> dict` _(classmethod)_
+
 ## `cc_client.py`
 
 _Tested by `test/test_cc_client.py`._
@@ -19,16 +45,16 @@ the thin networking that reads lines and writes responses.
 Maps a command to an async handler(msg) -> response line.
 
 - `__init__()` — constructor
-- `on(command, fn)`
-- `handle(line)`
+- `on(command: str, fn) -> None`
+- `handle(line: str) -> str`
 
 ### `class Client`
 
-- `__init__(config, dispatcher, log=None, backoff_ms=1000)` — constructor
-- `run()` — Connect to Control and serve forever, reconnecting with backoff on drop.
-- `serve(reader, writer)` — Read commands from Control, dispatch, write responses. Returns on disconnect.
+- `__init__(config: dict, dispatcher, log=None, backoff_ms: int=1000)` — constructor
+- `run() -> None` — Connect to Control and serve forever, reconnecting with backoff on drop.
+- `serve(reader, writer) -> None` — Read commands from Control, dispatch, write responses. Returns on disconnect.
 
-### `create_dispatcher(cfg, controller=None, on_reboot=None, fw='0.1', config_path='board.json')`
+### `create_dispatcher(cfg: dict, controller=None, on_reboot=None, config_path: str='board.json') -> Dispatcher`
 
 Build a Dispatcher with the standard command handlers, wired to the running config, the
 Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset.
@@ -48,19 +74,19 @@ returned as a str and the receiver converts numerics itself (it knows `ms` is an
 params are key=value; everything else is positional. The command is lowercased; values keep
 their case. parse() handles requests and responses (ok/err/pong/iam) alike.
 
-### `encode(v)`
+### `encode(v) -> str`
 
 Encode a value into one whitespace-free wire token.
 
-### `decode(tok)`
+### `decode(tok: str) -> str`
 
 Decode a wire token back to a str (base64-decoded if prefixed, else as-is).
 
-### `parse(line)`
+### `parse(line: str) -> _Msg`
 
 Parse a protocol line into a _Msg (works for requests and responses).
 
-### `build(command, args=(), named=None)`
+### `build(command: str, args=(), named=None) -> str`
 
 Build a protocol line; values are encoded as needed.
 
@@ -79,15 +105,15 @@ Runs on MicroPython on the board. Validation here is config-file *integrity* (st
 types, pin uniqueness, bus refs, reserved pins) — NOT hardware health, which is checked at
 runtime and surfaced to the operator (the strict model).
 
-### `validate(cfg)`
+### `validate(cfg) -> list`
 
 Return a list of human-readable error strings (empty list == valid).
 
-### `config_id(cfg)`
+### `config_id(cfg) -> str`
 
 A stable short hash identifying a config snapshot (for the CC iam/config_id).
 
-### `load(path='board.json', defaults=None)`
+### `load(path: str='board.json', defaults=None) -> tuple`
 
 Layered load: active board.json if present and valid, else defaults.
 
@@ -95,21 +121,23 @@ Returns (cfg, source, errors). `source` is 'active', 'default', or a fallback re
 Never raises — a missing/corrupt/invalid active file degrades to defaults so the board is
 always reachable.
 
-### `save(cfg, path='board.json')`
+### `save(cfg, path: str='board.json') -> str`
 
 Validate then atomically persist a full config snapshot. Returns its config_id.
 
 Raises ValueError if invalid (an invalid config is never written).
 
-### `reset(path='board.json')`
+### `reset(path: str='board.json') -> bool`
 
 Delete the active config so the next load uses defaults. Returns True if removed.
 
-### `bus(cfg, ref)`
+### `bus(cfg, kind, ident) -> dict`
 
-Resolve a bus reference 'type:id' (e.g. 'uart:1', 'i2c:0') to its spec dict, or None.
+Resolve a bus addressed by `kind` ('uart'/'i2c'/'spi') + `ident` (its id) to its spec dict,
+or None. Ids are JSON object keys (always strings), so the int id from a component is normalized
+here -- callers pass `device['bus'], device['id']` and never parse a 'type:id' string.
 
-### `device(cfg, name=None, driver=None)`
+### `device(cfg, name=None, driver=None) -> dict`
 
 Find a sensor/component by `name` and/or implementation. `driver` matches the resolved
 implementation -- a component's `driver` (drivers/) or `activity` (tasks/) field. Returns the
@@ -123,38 +151,74 @@ Human-edited firmware default and the safe fallback when no valid board.json exi
 specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
 test/test_pins.py). `default()` returns a FRESH dict each call so callers may mutate it freely.
 
-Topology: buses are grouped by type then id (referenced as 'uart:1', 'i2c:0', ...). `sensors`
-are data providers fused by quantity + priority (several may provide the same quantity with
-different drivers/priorities); `components` are the consumers/actuators (recorder, ...).
+Topology: buses are grouped by type then id; a sensor/component addresses one by `bus` (the kind,
+e.g. 'i2c') + `id` (its int id), so nothing parses a 'type:id' string. `sensors` are data
+providers fused by quantity + priority (several may provide the same quantity with different
+drivers/priorities); `components` are the consumers/actuators (recorder, ...).
 
-### `default()`
+### `default() -> dict`
 
 ## `controller.py`
 
 _Tested by `test/test_controller.py`._
 
 Flight Controller — creates and supervises the tasks described by a validated config, and
-tracks the flight state machine. See specs/coludo.md ('Flight Controller', 'Tasks').
+tracks the flight stage machine. See specs/coludo.md ('Flight Controller', 'Tasks').
 
 The Controller is the one task created explicitly; it creates the rest from config in a
 deterministic order. Task failures are reported, not fatal (the strict/operator-authority
 model): a component that fails setup is logged and skipped, and go/no-go stays with the
-operator via report()/validate().
+operator via stats()/validate().
+
+### `class Stage`
+
+The flight stages, self-contained: int ids (cheap to compare/store on MicroPython) and the
+`STAGES` id->name mapping (operator-facing names; `in Stage.STAGES` is an O(1) key check).
+
 
 ### `class Controller(inspector.Inspectable)`
 
-- `__init__(config, registry=None, log=None)` — constructor
-- `directory()` — Names of enabled devices, in creation order (config order).
-- `create(name)` — Create a task by component name via the registry. A component names its implementation
-- `active(name=None)` — Return the active task by name, or a list of all active tasks if name is None.
-- `setup()` — Create + set up every enabled task in order. Skip (and report) failures.
-- `start()` — Launch each task's run() loop as a supervised asyncio task.
-- `close(name)` — Deactivate a task and clean up its resources.
-- `finish()` — Shut down all tasks.
-- `set_state(state)`
-- `validate()` — True if every active task is healthy.
-- `inspect()`
-- `stats()`
+- `__init__(config: dict, registry: dict=None, log=None)` — constructor
+- `directory() -> list` — Names of enabled devices, in creation order (config order).
+- `create(name: str) -> task.Task` — Create a task by component name via the registry. A component names its implementation
+- `active(name: str=None)` — Return the active task by name (None if absent), or a list of all active tasks if
+- `find(names: list[str]) -> list` — Non-blocking: the active tasks for `names`, None for any not up. The fast lookup for
+- `query(names: list[str], waiting: bool=True) -> list` — Look up sibling tasks by name from the registry: `gnss, baro = await self.query(['gnss',
+- `setup() -> bool` — Create + set up every enabled task in order. Skip (and report) failures.
+- `start() -> None` — Launch each task's run() loop as a supervised asyncio task.
+- `close(name: str) -> None` — Deactivate a task and clean up its resources.
+- `finish() -> None` — Shut down all tasks.
+- `set_stage(stage: int) -> None`
+- `stage_name() -> str` — The current flight stage as its operator-facing name.
+- `validate() -> bool` — True if every active task is healthy.
+- `inspect() -> dict`
+- `stats() -> dict`
+
+## `i2cbus.py`
+
+_Tested by `test/test_i2cbus.py`._
+
+i2cbus.py — shared, lock-serialized I2C buses. Several sensor drivers sit on one physical bus
+(i2c:0 carries the ADXL375, BNO055 and BMP280), so they must not interleave transactions on the
+single peripheral: each bus id has ONE machine.I2C plus an asyncio.Lock, and get() hands back the
+shared wrapper. The read/write methods are async (they acquire the lock) but the underlying I2C op
+is fast and synchronous, so the lock is held only for the transaction. A glider-only module.
+
+### `class Bus`
+
+One physical I2C bus, shared by every device on it; transactions are serialized by a lock.
+
+- `__init__(bus_id: int, spec: dict)` — constructor
+- `read(addr: int, reg: int, count: int) -> bytes`
+- `read_into(addr: int, reg: int, buf) -> None`
+- `write(addr: int, reg: int, data: bytes) -> None`
+- `writeto(addr: int, data: bytes) -> None` — Raw write (no register) — for command-based devices like the ICP-10111.
+- `readfrom(addr: int, count: int) -> bytes` — Raw read (no register) — pairs with writeto() for command-based devices.
+- `scan() -> list`
+
+### `get(bus_id: int, spec: dict) -> Bus`
+
+The shared Bus for `bus_id`, created once from `spec` (scl/sda/freq) and cached thereafter.
 
 ## `inspector.py`
 
@@ -203,13 +267,13 @@ Telemetry-first: the task loops (recording included) start immediately and keep 
 Wi-Fi/CC tasks connect in the background when they can. Time sync + live tweaks arrive from Control
 over the link (e.g. `update mission {epoch}` sets the RTC); the board itself never asks.
 
-### `bringup(cfg, log=print)`
+### `bringup(cfg: dict, log=print) -> controller.Controller`
 
 Register every driver/task, create the Mission, and have the Controller build + start the
 enabled tasks from the config. Returns the Controller. Network-free itself -- any Wi-Fi/CC work
 happens inside the tasks the Controller starts.
 
-### `main()`
+### `main() -> None`
 
 ## `mission.py`
 
@@ -289,7 +353,11 @@ A typed telemetry stream. Created with a destination file and its data field nam
 first push emits the CSV header (uptime + fields), then each push emits a timestamped row.
 All streams in one boot share the Recorder session prefix, so file names are stable.
 
-- `__init__(filename: str, fields: tuple)` — constructor
+`decimate_us` rate-limits the stream: with it 0 every push() emits; with it set, push() emits
+only when at least `decimate_us` microseconds have passed since the last emitted row (a fast
+sensor can push every sample and have its telemetry decimated to a sane rate).
+
+- `__init__(filename: str, fields: tuple, decimate_us: int=0)` — constructor
 - `push(values) -> None`
 
 ## `task.py`
@@ -316,16 +384,118 @@ name so the Controller can build it from a config component.
 
 ### `class Task(inspector.Inspectable)`
 
-- `__init__(name, config=None, controller=None)` — constructor
-- `setup()` — Initialize or reset. Override. Return True on success, False otherwise.
-- `run()` — Main activity loop. Override. Default returns immediately.
-- `notify(callback)` — Register callback(task, event) to be invoked on this task's updates.
-- `emit(event=None)` — Notify all subscribers of an update.
-- `validate()` — Return True if the task is currently healthy.
-- `finish()` — Shut down and release resources.
-- `inspect()` — Status dict. Subclasses extend it.
+- `__init__(name: str, config: dict=None, controller=None)` — constructor
+- `setup() -> bool` — Initialize or reset. Override. Return True on success, False otherwise.
+- `run() -> None` — Main activity loop. Override. Default returns immediately.
+- `notify(callback) -> None` — Register callback(task, event) to be invoked on this task's updates.
+- `emit(event=None) -> None` — Notify all subscribers of an update.
+- `find(names: list[str]) -> list` — Non-blocking sibling lookup via the Controller (None for any not up).
+- `query(names: list[str], waiting: bool=True) -> list` — Await sibling tasks by name via the Controller; with `waiting` (default) park until all
+- `validate() -> bool` — Return True if the task is currently healthy.
+- `finish() -> None` — Shut down and release resources.
+- `inspect() -> dict` — Status dict. Subclasses extend it.
 
 # glider HAL drivers — `drivers/` — `src/glider/drivers`
+
+## `adxl375.py`
+
+drivers/adxl375.py — ADXL375 ±200 g high-G accelerometer over I2C: the boost-phase accel channel.
+@task.driver('adxl375'). setup() probes the device id and configures it; run() writes the latest
+(x, y, z) acceleration in g to the blackboard 'accel' slot. If the device is absent (no I2C ack /
+wrong device id) setup() returns False and the Controller skips it, so the board boots fine with
+the sensor unplugged.
+
+Sampling is interrupt-driven when an `int_pin` (INT1) is wired: the chip raises DATA_READY when a
+new sample is ready, an IRQ sets a ThreadSafeFlag, and run() awaits it -- so the coroutine sleeps
+until there is genuinely fresh data instead of blind-polling. A `fallback_ms` timeout still forces
+a sample if interrupts go silent (dead sensor / wiring). With no int_pin it falls back to a plain
+`period_ms` poll. Uses the shared locked I2C bus (i2cbus), as it shares i2c:0 with other sensors.
+
+### `class Adxl375(task.Task)`
+
+High-G accel: samples (x, y, z) in g to the blackboard 'accel' slot, interrupt-driven.
+
+- `setup() -> bool`
+- `sample() -> tuple` — Read and return (x, y, z) acceleration in g (also clears DATA_READY).
+- `run() -> None` — Sample on DATA_READY (or every fallback_ms if interrupts go silent); plain poll with no
+- `inspect() -> dict`
+
+## `bluetooth.py`
+
+drivers/bluetooth.py — set the BLE radio to the state declared in config at boot. The component
+field `radio` (true/false, default false) says whether Bluetooth should be ON; the driver applies
+it -- transparent, so nobody is surprised by an implicit disable. Default false saves power (the
+wireless is the external C6 and BLE is unused on the glider). Setup-only @task.driver('bluetooth')
+plus update() so the operator can toggle it live (`update bluetooth {"radio": true}`).
+
+### `class Bluetooth(task.Task)`
+
+Apply the configured BLE radio state. Inspectable: `radio` requested, `active` actual.
+
+- `setup() -> bool`
+- `inspect() -> dict`
+- `update(props) -> list`
+
+## `bmp280.py`
+
+drivers/bmp280.py — BMP280 barometric pressure sensor (on the SEN0253) over the shared I2C bus:
+the backup altitude channel. @task.driver('bmp280'). setup() probes the chip id, reads the factory
+calibration and starts normal-mode conversion; run() reads pressure, applies Bosch compensation
+and writes barometric altitude (m AMSL) to the blackboard 'altitude' slot. Graceful: wrong/absent
+chip id -> setup False -> the Controller skips it.
+
+Polled at period_ms (the BMP280 conversion is ~tens of ms, far slower than the IMU). Uses the
+shared locked bus (i2cbus) since it shares i2c:0 with the ADXL375 and BNO055.
+
+### `class Bmp280(task.Task)`
+
+Barometric altitude: polls compensated pressure -> altitude (m) to the blackboard 'altitude'.
+
+- `setup() -> bool`
+- `sample() -> tuple` — Read the sensor and return (barometric altitude m AMSL, temperature °C).
+- `run() -> None`
+- `inspect() -> dict`
+
+## `bno055.py`
+
+drivers/bno055.py — BNO055 9-DOF IMU (on the SEN0253) over the shared I2C bus: the attitude
+channel. @task.driver('bno055'). In NDOF fusion mode the chip computes absolute orientation
+on-chip; run() reads the Euler angles (heading, roll, pitch in degrees) to the blackboard
+'attitude' slot. Graceful: a wrong/absent chip id -> setup False -> the Controller skips it.
+
+BNO055's INT pin signals motion/threshold events, not a fusion data-ready, so this driver polls at
+period_ms (the fusion engine runs at 100 Hz internally); the wired int_pin is reserved for future
+event detection (e.g. high-g). Uses the shared locked bus (i2cbus) since it shares i2c:0 with the
+ADXL375 and BMP280.
+
+### `class Bno055(task.Task)`
+
+9-DOF attitude: polls (heading, roll, pitch) deg to the blackboard 'attitude' slot.
+
+- `setup() -> bool`
+- `sample() -> tuple` — Read the fused orientation as (heading, roll, pitch) in degrees.
+- `run() -> None`
+- `inspect() -> dict`
+
+## `icp10111.py`
+
+drivers/icp10111.py — ICP-10111 barometric pressure sensor (TDK ICP-101xx, on the SEN0517) over
+the shared I2C bus: the PRIMARY altitude channel (8.5 cm accuracy). @task.driver('icp10111').
+Command-based, not register-mapped: setup() verifies the product id and reads the 4 OTP calibration
+constants; run() issues a measure command, reads pressure+temperature, applies the TDK polynomial
+conversion and writes barometric altitude (m AMSL) to the blackboard 'altitude' slot. Graceful:
+wrong/absent id -> setup False -> the Controller skips it.
+
+Polled at period_ms. Uses the shared locked bus (i2cbus); shares i2c:0 with the other sensors.
+
+### `class Icp10111(task.Task)`
+
+Primary barometric altitude: polls compensated pressure -> altitude (m) to 'altitude'.
+
+- `setup() -> bool`
+- `sample() -> tuple` — Measure and return (barometric altitude m AMSL, temperature °C).
+- `run() -> None`
+- `inspect() -> dict`
 
 ## `led.py`
 
@@ -337,6 +507,27 @@ section. Registered as @task.driver('led') so the Controller creates and supervi
 ### `class LedStatus(task.Task)`
 
 Blink a status pattern on one GPIO derived from the controller's state + health.
+
+- `setup() -> bool`
+- `run() -> None`
+- `inspect() -> dict`
+
+## `separation.py`
+
+drivers/separation.py — stage-separation switch: two adhesive copper pads (one on the glider, one
+on the booster) that route 3V3 to a pin while nested (HIGH) and open on separation (LOW). A HAL
+input, @task.driver('separation'). An IRQ on either edge wakes run(), which debounces, and on a
+confirmed separation during the Boosting stage drives the documented Boosting -> Gliding transition
+(the booster ejects the glider at apogee). The event is logged and emitted to subscribers; the
+discrete event is NOT a blackboard quantity (per specs/coludo.md, events use notify/log).
+
+The pin uses an internal pull-down so an open (separated) circuit reads LOW reliably; while nested
+the pads override it HIGH. A separation while not Boosting (e.g. a ground test in Setting) is
+logged but does not transition -- the guard keeps go/no-go correct.
+
+### `class Separation(task.Task)`
+
+Detect stage separation (HIGH=nested -> LOW=separated) and trigger Boosting -> Gliding.
 
 - `setup() -> bool`
 - `run() -> None`
@@ -362,9 +553,9 @@ Join + maintain the STA link; Inspectable as `wifi`.
 - `run() -> None` — Keep the link up: (re)join whenever disconnected. Never fatal -- the board flies without
 - `connect(timeout_ms: int=15000) -> bool` — Join the configured network. Returns True once connected, False on timeout/error.
 - `isconnected() -> bool`
-- `ifconfig()`
+- `ifconfig() -> tuple`
 - `ip() -> str`
-- `rssi()`
+- `rssi() -> int`
 - `set_tx_power(dbm: int) -> bool` — Adjust the TX power (operator signal-level tuning). Returns True on success.
 - `inspect() -> dict`
 - `update(props: dict) -> list`
@@ -384,7 +575,7 @@ the board. Registered as @task.activity('health') so the Controller creates and 
 Periodic vitals -> telemetry (health.csv) + `inspect health`.
 
 - `setup() -> bool`
-- `temperature()`
+- `temperature() -> float`
 - `mem_free() -> int`
 - `sample() -> dict`
 - `run() -> None` — Sample vitals every period_ms, estimate load, and push a telemetry row. Runs forever.
@@ -403,7 +594,28 @@ flies fine without CC. The dispatcher is wired to this board's config + Controll
 Serve the CC protocol to the hub when the link is available; never fatal.
 
 - `setup() -> bool`
-- `run() -> None` — Wait for Wi-Fi, dial CC, and serve until the link drops; then retry. Idle (not spinning)
+- `run() -> None` — Park until the Wi-Fi dependency is up, then dial CC and serve until the link drops; retry.
+
+## `fusion.py`
+
+tasks/fusion.py — sensor fusion: turn the blackboard's raw per-provider readings into one selected
+value per quantity (specs/coludo.md). @task.activity('fusion'). Each sensor's config declares what
+it `provides` with a priority (lower = preferred) and a timeout_ms (how long a reading stays
+fresh); fusion groups the providers by quantity and, every cycle, publishes the highest-priority
+provider whose latest reading is still fresh, falling back to the next when the preferred one goes
+stale (e.g. ICP-10111 altitude preferred, BMP280 as backup). A pure read-from-blackboard task, so
+it needs no sensor dependency wait -- absent sensors simply never produce fresh data and are
+skipped. Inspectable: `selected` shows which source currently wins each quantity.
+
+### `class Fusion(task.Task)`
+
+Pick the live value per quantity from its providers by priority + freshness.
+
+- `setup() -> bool`
+- `fuse_once() -> None` — One arbitration pass: for each quantity publish the preferred provider that is fresh.
+- `run() -> None`
+- `inspect() -> dict`
+- `stats() -> dict`
 
 ## `recorder.py`
 
@@ -425,36 +637,45 @@ keeps logging/telemetering through the global recorder.Recorder.
 
 # control (CPython) — `src/control`
 
-## `control.py`
+## `board.py`
 
-_Tested by `test/test_control.py`._
+_Tested by `test/test_board.py`._
 
-Control — host-side ground station / hub for the Coludo boards (specs/cc-protocol.md).
-
-Board-first: boards dial in (port 1234), Control learns each board's id via whoami/iam and then
-owns every exchange over the board socket (which sees `command params`, no id; only `iam` carries
-the id). Control polls each online board (~2 s heartbeat) to prove liveness, and exposes a
-telnet-friendly operator console (port 1235): a line whose first token is a board id / `all` / `*`
-is routed to that board (the id stripped, the rest forwarded verbatim) and the reply tagged
-`from <board> ...`; any other first token is a Control command (`help`/`list`/`select`/`who`),
-served from a drop-in registry loaded from the `commands/` package at start. A browser bridge
-(web.py) exposes the same over plain HTTP + SSE on 8080. run() serves all three.
-
-CPython 3.12, stdlib asyncio only. cc_protocol.py is shared with the firmware (symlinked).
+board.py — one connected Coludo board as seen by the hub: lockstep request/response over its
+socket (specs/cc-protocol.md). The per-board lock makes every exchange strictly sequential, so the
+heartbeat and operator traffic to one board can never overlap. CPython 3.12, stdlib asyncio only.
 
 ### `class Board`
 
-One connected board: lockstep request/response over its socket. The per-board lock makes
-every exchange strictly sequential (Control never injects a second command mid-exchange), so
-the heartbeat and operator traffic to one board can never overlap.
+One connected board: lockstep request/response over its socket.
 
 - `__init__(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)` — constructor
 - `peer() -> str` _(property)_
-- `exchange(line: str, timeout: float=5.0)` — Send a ready board-facing line and return its parsed reply (None if disconnected).
-- `command(command: str, *args, timeout=5.0)` — Build `command args...` and exchange it. Returns the parsed reply or None.
+- `exchange(line: str, timeout: float=EXCHANGE_TIMEOUT_S) -> cc._Msg` — Send a ready board-facing line and return its parsed reply (None if disconnected).
+- `command(command: str, *args, timeout=EXCHANGE_TIMEOUT_S) -> cc._Msg` — Build `command args...` and exchange it. Returns the parsed reply or None.
 - `identify() -> str`
 - `inspect(name: str) -> dict`
 - `close() -> None`
+
+## `main.py`
+
+main.py — CLI entry point for the Control hub. Run it headless on a LAN box (it binds 0.0.0.0 by
+default) and telnet / browse to it from another workstation, instead of opening a browser locally.
+
+python3 main.py [--host H] [--port N] [--operator-port N] [--web-port N]   (--help for all)
+
+### `main() -> None`
+
+## `server.py`
+
+_Tested by `test/test_server.py`._
+
+server.py — the Control hub: a board listener (1234) + per-board heartbeat + a telnet operator
+console (1235), plus the web bridge (web.py, 8080). Boards dial in, Control learns each id via
+whoami/iam and owns every exchange. An operator line whose first token is a board id or `all`
+routes to that board (id stripped, the rest forwarded verbatim) and the reply is tagged
+`from <board> ...`; any other first token is a Control command from the drop-in commands/ registry.
+CPython 3.12, stdlib asyncio only. cc_protocol.py is shared with the firmware (symlinked).
 
 ### `class Server`
 
@@ -462,10 +683,10 @@ The hub: a board listener + per-board heartbeat + an operator console. `on_board
 optional async hook invoked once, right after a board identifies (used by integration tests).
 
 - `__init__(host: str='0.0.0.0', port: int=1234, operator_port: int=1235, web_port: int=8080, on_board=None, log=print, heartbeat_s: float=HEARTBEAT_S)` — constructor
-- `board_rows() -> list` — The registry as json-able rows (id, online, last-known state/config_id) — shared by the
+- `board_rows() -> list` — The registry as json-able rows (id, online, last-known stage/config_id) — shared by the
 - `serve_forever() -> None` — Accept board connections on `port` (board-facing listener).
 - `serve_operators() -> None` — Accept operator connections on `operator_port` (telnet-friendly console).
-- `run() -> None` — Run the board listener, operator console, and web bridge until cancelled — the entry.
+- `run() -> None` — Run the board listener, operator console, and web bridge until cancelled.
 
 ## `web.py`
 
