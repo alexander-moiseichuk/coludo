@@ -17,11 +17,11 @@ async def amain():
     assert task.ACTIVITIES.get('adxl375') is adxl375.Adxl375  # registered driver
 
     # an undefined bus -> graceful False, no hardware touched
-    no_bus = adxl375.Adxl375('accel', {'bus': 'i2c:9'}, _StubController())
+    no_bus = adxl375.Adxl375('accel', {'bus': 'i2c', 'id': 9}, _StubController())
     assert await no_bus.setup() is False and not no_bus.validate()
 
     # a real bus but a bogus address (nothing acks) -> graceful False (Controller would skip it)
-    absent = adxl375.Adxl375('accel', {'bus': 'i2c:0', 'addr': 0x7F}, _StubController())
+    absent = adxl375.Adxl375('accel', {'bus': 'i2c', 'id': 0, 'addr': 0x7F}, _StubController())
     assert await absent.setup() is False
 
     print('ok: adxl375 driver registered; setup fails gracefully when no device answers')

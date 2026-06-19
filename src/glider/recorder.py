@@ -112,10 +112,10 @@ class Recorder:
             import config as config_mod
             from machine import UART
 
-            entry = config_mod.device(config, driver='recorder')
-            ref = entry['bus'] if entry else 'uart:1'
-            spec = config_mod.bus(config, ref) or {'tx': 20, 'rx': 21, 'baud': 921600}
-            uart = UART(int(ref.split(':')[1]), baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
+            entry = config_mod.device(config, driver='recorder') or {'bus': 'uart', 'id': 1}
+            kind, bus_id = entry.get('bus', 'uart'), entry.get('id', 1)
+            spec = config_mod.bus(config, kind, bus_id) or {'tx': 20, 'rx': 21, 'baud': 921600}
+            uart = UART(bus_id, baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
         # accept a pre-wrapped async writer (tests) or wrap a raw UART for async drain
         cls._uart = uart if hasattr(uart, 'drain') else asyncio.StreamWriter(uart, {})
         inspector.Inspector.register(cls)

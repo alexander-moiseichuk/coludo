@@ -86,7 +86,7 @@ def validate(cfg) -> list:
         else:
             pin_owner[pin] = label
 
-    bus_refs = set()  # 'uart:1', 'i2c:0', ... referenced by sensors/components
+    bus_refs = set()  # (kind, id) pairs referenced by sensors/components, e.g. ('i2c', '0')
     buses = cfg.get('buses')
     if not isinstance(buses, dict):
         errs.append("missing or invalid 'buses' section")
@@ -98,14 +98,14 @@ def validate(cfg) -> list:
                 errs.append('buses.%s must be an object' % kind)
                 continue
             for ident, spec in group.items():
-                ref = '%s:%s' % (kind, ident)
-                bus_refs.add(ref)
+                bus_refs.add((kind, str(ident)))  # ids are JSON object keys, so always strings
+                label = '%s:%s' % (kind, ident)
                 if not isinstance(spec, dict):
-                    errs.append('bus %s must be an object' % ref)
+                    errs.append('bus %s must be an object' % label)
                     continue
                 for key in _BUS_PIN_KEYS:
                     if key in spec:
-                        claim(ref + '.' + key, spec[key])
+                        claim(label + '.' + key, spec[key])
 
     # discrete pins --------------------------------------------------------
     pins = cfg.get('pins')
@@ -159,12 +159,15 @@ def validate(cfg) -> list:
                 errs.append('%s must name an implementation: `driver` (drivers/) or `activity` (tasks/)' % where)
             if 'enabled' in dev and not isinstance(dev['enabled'], bool):
                 errs.append('%s.enabled must be a bool' % where)
-            ref = dev.get('bus')
-            if ref is not None:
-                if not isinstance(ref, str):
-                    errs.append('%s.bus must be a string' % where)
-                elif ref not in bus_refs:
-                    errs.append("%s.bus '%s' is not a defined bus" % (where, ref))
+            kind = dev.get('bus')  # a device addresses its bus by kind ('i2c') + id (0)
+            if kind is not None:
+                ident = dev.get('id')
+                if not isinstance(kind, str):
+                    errs.append('%s.bus must be a string (the bus kind, e.g. "i2c")' % where)
+                elif not _is_int(ident):
+                    errs.append('%s.id must be the int bus id (with bus "%s")' % (where, kind))
+                elif (kind, str(ident)) not in bus_refs:
+                    errs.append("%s addresses bus %s:%s which is not defined" % (where, kind, ident))
             addr = dev.get('addr')
             if addr is not None and not _is_int(addr):
                 errs.append('%s.addr must be an int or null' % where)
@@ -274,12 +277,11 @@ def reset(path: str = 'board.json') -> bool:
         return False
 
 
-def bus(cfg, ref) -> dict:
-    """Resolve a bus reference 'type:id' (e.g. 'uart:1', 'i2c:0') to its spec dict, or None."""
-    if not isinstance(ref, str) or ':' not in ref:
-        return None
-    kind, _, ident = ref.partition(':')
-    return cfg.get('buses', {}).get(kind, {}).get(ident)
+def bus(cfg, kind, ident) -> dict:
+    """Resolve a bus addressed by `kind` ('uart'/'i2c'/'spi') + `ident` (its id) to its spec dict,
+    or None. Ids are JSON object keys (always strings), so the int id from a component is normalized
+    here -- callers pass `device['bus'], device['id']` and never parse a 'type:id' string."""
+    return cfg.get('buses', {}).get(kind, {}).get(str(ident))
 
 
 def device(cfg, name=None, driver=None) -> dict:

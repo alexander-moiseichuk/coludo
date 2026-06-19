@@ -91,31 +91,31 @@ identical behaviour every time.
   },
 
   "sensors": [
-    { "name": "accel_adxl375", "driver": "adxl375", "bus": "i2c:0", "addr": 83,
+    { "name": "accel_adxl375", "driver": "adxl375", "bus": "i2c", "id": 0, "addr": 83,
       "enabled": true,
       "provides": { "accel": { "priority": 0, "timeout_ms": 5 } } },
 
-    { "name": "baro_icp10111", "driver": "icp10111", "bus": "i2c:0", "addr": 99,
+    { "name": "baro_icp10111", "driver": "icp10111", "bus": "i2c", "id": 0, "addr": 99,
       "enabled": true,
       "provides": { "altitude": { "priority": 0, "timeout_ms": 100 } } },
 
-    { "name": "baro_bmp280", "driver": "bmp280", "bus": "i2c:0", "addr": 118,
+    { "name": "baro_bmp280", "driver": "bmp280", "bus": "i2c", "id": 0, "addr": 118,
       "enabled": true,
       "provides": { "altitude": { "priority": 1, "timeout_ms": 200 } } },
 
-    { "name": "laser_agl", "driver": "sen0648", "bus": "i2c:0", "addr": 80,
+    { "name": "laser_agl", "driver": "sen0648", "bus": "i2c", "id": 0, "addr": 80,
       "enabled": true,
       "provides": { "agl":      { "priority": 0, "timeout_ms": 20 },
                     "altitude": { "priority": 2, "timeout_ms": 20 } } },
 
-    { "name": "gnss", "driver": "atgm336h", "bus": "uart:2", "addr": null, "hz": 10,
+    { "name": "gnss", "driver": "atgm336h", "bus": "uart", "id": 2, "addr": null, "hz": 10,
       "enabled": true,
       "provides": { "position": { "priority": 0, "timeout_ms": 150 },
                     "altitude": { "priority": 3, "timeout_ms": 1000 } } }
   ],
 
   "components": [
-    { "name": "recorder", "activity": "recorder", "bus": "uart:1", "enabled": true },
+    { "name": "recorder", "activity": "recorder", "bus": "uart", "id": 1, "enabled": true },
     { "name": "led", "driver": "led", "pin": "led_status", "enabled": true }
   ]
 }
@@ -128,9 +128,12 @@ identical behaviour every time.
 - **`wifi`** — the board is a **station (STA)** that joins the network hosted by **CC**.
   (The earlier "glider hosts an AP" idea in `coludo.md` is superseded.) `cc_host`/`cc_port`
   point at the CC service; `tx_power_dbm` is the operator-tunable signal level.
-- **`buses`** — grouped by type (`uart` / `i2c` / `spi`) then id, with pins and parameters.
-  Sensors and components reference a bus as **`"type:id"`** (e.g. `"i2c:0"`, `"uart:2"`); the
-  helper `config.bus(cfg, ref)` resolves it.
+- **`buses`** — grouped by type (`uart` / `i2c` / `spi`) then id, with pins and parameters. A
+  sensor/component addresses one with two fields — **`bus`** (the kind, e.g. `"i2c"`) and **`id`**
+  (its int id, e.g. `0`) — so nothing parses a `"type:id"` string; the helper
+  `config.bus(cfg, kind, id)` resolves the spec, and a driver gets the numeric id straight from the
+  component's `id` for `I2C(id)`/`UART(id)`. (Bus-section keys are JSON strings; the `id` field is
+  the int, normalized on lookup.)
 - **`sensors`** — data providers. Each declares what quantities it `provides` (with priority +
   timeout); several may provide the same quantity with different drivers/priorities, and the
   fusion layer groups by quantity and orders by priority. **`components`** are the consumers /

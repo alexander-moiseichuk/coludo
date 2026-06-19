@@ -4,9 +4,10 @@
 # specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
 # test/test_pins.py). `default()` returns a FRESH dict each call so callers may mutate it freely.
 #
-# Topology: buses are grouped by type then id (referenced as 'uart:1', 'i2c:0', ...). `sensors`
-# are data providers fused by quantity + priority (several may provide the same quantity with
-# different drivers/priorities); `components` are the consumers/actuators (recorder, ...).
+# Topology: buses are grouped by type then id; a sensor/component addresses one by `bus` (the kind,
+# e.g. 'i2c') + `id` (its int id), so nothing parses a 'type:id' string. `sensors` are data
+# providers fused by quantity + priority (several may provide the same quantity with different
+# drivers/priorities); `components` are the consumers/actuators (recorder, ...).
 
 try:
     from version import VERSION as _FIRMWARE_VERSION  # generated at deploy/install (git commit sha)
@@ -55,7 +56,7 @@ def default() -> dict:
             {
                 'name': 'accel_adxl375',
                 'driver': 'adxl375',
-                'bus': 'i2c:0',
+                'bus': 'i2c', 'id': 0,
                 'addr': 0x53,
                 'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — polled for now
                 'enabled': True,
@@ -64,7 +65,7 @@ def default() -> dict:
             {
                 'name': 'imu_bno055',
                 'driver': 'bno055',
-                'bus': 'i2c:0',
+                'bus': 'i2c', 'id': 0,
                 'addr': 0x28,
                 'enabled': True,
                 'provides': {'attitude': {'priority': 0, 'timeout_ms': 5}, 'accel': {'priority': 1, 'timeout_ms': 5}},
@@ -72,7 +73,7 @@ def default() -> dict:
             {
                 'name': 'baro_icp10111',
                 'driver': 'icp10111',
-                'bus': 'i2c:0',
+                'bus': 'i2c', 'id': 0,
                 'addr': 0x63,
                 'enabled': True,
                 'provides': {'altitude': {'priority': 0, 'timeout_ms': 100}},
@@ -80,7 +81,7 @@ def default() -> dict:
             {
                 'name': 'baro_bmp280',
                 'driver': 'bmp280',
-                'bus': 'i2c:0',
+                'bus': 'i2c', 'id': 0,
                 'addr': 0x76,
                 'enabled': True,
                 'provides': {'altitude': {'priority': 1, 'timeout_ms': 200}},
@@ -88,7 +89,7 @@ def default() -> dict:
             {
                 'name': 'laser_agl',
                 'driver': 'vl53l4cx',
-                'bus': 'i2c:0',
+                'bus': 'i2c', 'id': 0,
                 'addr': 0x29,
                 'enabled': True,
                 'provides': {'agl': {'priority': 0, 'timeout_ms': 20}, 'altitude': {'priority': 2, 'timeout_ms': 20}},
@@ -96,7 +97,7 @@ def default() -> dict:
             {
                 'name': 'gnss',
                 'driver': 'atgm336h',
-                'bus': 'uart:2',
+                'bus': 'uart', 'id': 2,
                 'addr': None,
                 'hz': 10,
                 'enabled': True,
@@ -110,7 +111,7 @@ def default() -> dict:
         # tasks/ (higher-level subsystems); both resolve through the same registry.
         'components': [
             # Recorder drain loop: a thin activity over the global Recorder, using uart:1.
-            {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart:1', 'enabled': True},
+            {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True},
             # Status LED on the led_status pin: blinks the board state (error/standby/flying).
             # Disabled by default -- not every board has the external LED wired; enable per board.
             {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': False},

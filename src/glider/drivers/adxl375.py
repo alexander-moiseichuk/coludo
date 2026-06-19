@@ -38,14 +38,14 @@ class Adxl375(task.Task):
     async def setup(self) -> bool:
         from machine import I2C, Pin
 
-        spec = config.bus(self.controller.config, self.config.get('bus', 'i2c:0'))
+        bus_id = self.config.get('id', 0)
+        spec = config.bus(self.controller.config, self.config.get('bus', 'i2c'), bus_id)
         if spec is None:
             return False
         self._addr: int = self.config.get('addr', 0x53)
         self._period_ms: int = self.config.get('period_ms', 10)  # ~100 Hz default
         self._buf = bytearray(6)
         try:
-            bus_id = int(self.config.get('bus', 'i2c:0').split(':')[1])
             self._i2c = I2C(bus_id, scl=Pin(spec['scl']), sda=Pin(spec['sda']), freq=spec.get('freq', 400000))
             if self._i2c.readfrom_mem(self._addr, _REG_DEVID, 1)[0] != _DEVID:
                 return False  # not an ADXL375 at this address

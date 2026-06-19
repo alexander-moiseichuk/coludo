@@ -126,9 +126,11 @@ Raises ValueError if invalid (an invalid config is never written).
 
 Delete the active config so the next load uses defaults. Returns True if removed.
 
-### `bus(cfg, ref) -> dict`
+### `bus(cfg, kind, ident) -> dict`
 
-Resolve a bus reference 'type:id' (e.g. 'uart:1', 'i2c:0') to its spec dict, or None.
+Resolve a bus addressed by `kind` ('uart'/'i2c'/'spi') + `ident` (its id) to its spec dict,
+or None. Ids are JSON object keys (always strings), so the int id from a component is normalized
+here -- callers pass `device['bus'], device['id']` and never parse a 'type:id' string.
 
 ### `device(cfg, name=None, driver=None) -> dict`
 
@@ -144,9 +146,10 @@ Human-edited firmware default and the safe fallback when no valid board.json exi
 specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
 test/test_pins.py). `default()` returns a FRESH dict each call so callers may mutate it freely.
 
-Topology: buses are grouped by type then id (referenced as 'uart:1', 'i2c:0', ...). `sensors`
-are data providers fused by quantity + priority (several may provide the same quantity with
-different drivers/priorities); `components` are the consumers/actuators (recorder, ...).
+Topology: buses are grouped by type then id; a sensor/component addresses one by `bus` (the kind,
+e.g. 'i2c') + `id` (its int id), so nothing parses a 'type:id' string. `sensors` are data
+providers fused by quantity + priority (several may provide the same quantity with different
+drivers/priorities); `components` are the consumers/actuators (recorder, ...).
 
 ### `default() -> dict`
 
