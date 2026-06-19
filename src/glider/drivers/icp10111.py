@@ -13,6 +13,7 @@ import struct
 import blackboard
 import config
 import i2cbus
+import recorder
 import task
 
 try:
@@ -67,6 +68,8 @@ class Icp10111(task.Task):
             return False
         blackboard.Blackboard.declare('altitude')
         blackboard.Blackboard.declare('temperature')
+        self._tlm = recorder.Telemetry('%s.csv' % self.name, ('altitude', 'temperature'),
+                                       prorate_us=self.config.get('telemetry_us', 0))
         self._ok = True
         return True
 
@@ -102,6 +105,7 @@ class Icp10111(task.Task):
                 altitude, temp_c = await self.sample()
                 blackboard.Blackboard.write('altitude', altitude, self.name)
                 blackboard.Blackboard.write('temperature', temp_c, self.name)
+                self._tlm.push((altitude, temp_c))
             except Exception as error:
                 print('icp10111 :: read %r' % error)
             await asyncio.sleep_ms(self._period_ms)

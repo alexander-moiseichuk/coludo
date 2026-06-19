@@ -111,8 +111,12 @@ testable foundations and connectivity come before the flight loop.
   providers by `provides` priority + freshness (timeout), falling back when the preferred goes stale.
   Live: altitude/temperature → ICP-10111 (prio 0) over BMP280, accel/attitude pass through. Config
   `timeout_ms` set to realistic windows (a few sample periods). `test_fusion` + `test_blackboard`.
+- ✅ **Telemetry wiring** — `Telemetry(prorate_us)` rate-limits a stream (a fast sensor pushes every
+  sample, decimated to a sane rate). Each sensor emits its own `SENSOR.csv` (accel 50 Hz, imu 25 Hz,
+  baros 10 Hz) + fusion emits a wide `fused.csv` (one column per quantity, vectors pipe-joined,
+  10 Hz). Live-verified: rows/sec match the configured `telemetry_us`.
 - ◻ Separation switch (IRQ).
-- ◻ Recorder UART link from the board; telemetry/log flush to the Recorder.
+- ◻ Recorder UART link to the physical Luckfox recorder (rings drain to uart:1 already).
 - **Milestone:** a real telemetry-only flight — collect data, no actuation.
 
 ### Phase 3 — Active control

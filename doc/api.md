@@ -353,7 +353,11 @@ A typed telemetry stream. Created with a destination file and its data field nam
 first push emits the CSV header (uptime + fields), then each push emits a timestamped row.
 All streams in one boot share the Recorder session prefix, so file names are stable.
 
-- `__init__(filename: str, fields: tuple)` — constructor
+`prorate_us` rate-limits the stream: with it unset every push() emits; with it set, push()
+emits only when at least `prorate_us` microseconds have passed since the last emitted row (a
+fast sensor can push every sample and have its telemetry decimated to a sane rate).
+
+- `__init__(filename: str, fields: tuple, prorate_us: int=0)` — constructor
 - `push(values) -> None`
 
 ## `task.py`

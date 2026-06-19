@@ -59,6 +59,7 @@ def default() -> dict:
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x53,
                 'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — polled for now
+                'telemetry_us': 20000,  # ~100 Hz sampling decimated to 50 Hz in accel_adxl375.csv
                 'enabled': True,
                 'provides': {'accel': {'priority': 0, 'timeout_ms': 50}},
             },
@@ -67,6 +68,7 @@ def default() -> dict:
                 'driver': 'bno055',
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x28,
+                'telemetry_us': 40000,  # ~50 Hz sampling decimated to 25 Hz in imu_bno055.csv
                 'enabled': True,
                 'provides': {'attitude': {'priority': 0, 'timeout_ms': 100},
                              'accel': {'priority': 1, 'timeout_ms': 50}},
@@ -120,7 +122,7 @@ def default() -> dict:
             {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': False},
             # Sensor fusion: select each quantity's live value from its providers by priority +
             # freshness (reads the blackboard's raw readings, publishes the fused value).
-            {'name': 'fusion', 'activity': 'fusion', 'period_ms': 20, 'enabled': True},
+            {'name': 'fusion', 'activity': 'fusion', 'period_ms': 20, 'telemetry_us': 100000, 'enabled': True},
             # Board vitals (temperature/memory/load) -> telemetry every period_ms.
             {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'enabled': True},
             # Apply the BLE radio state at boot: off by default to save power (BLE is unused).

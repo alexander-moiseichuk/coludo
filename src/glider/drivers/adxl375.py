@@ -16,6 +16,7 @@ import struct
 import blackboard
 import config
 import i2cbus
+import recorder
 import task
 
 try:
@@ -65,6 +66,8 @@ class Adxl375(task.Task):
             print('adxl375 :: %r' % error)
             return False
         blackboard.Blackboard.declare('accel')
+        self._tlm = recorder.Telemetry('%s.csv' % self.name, ('ax', 'ay', 'az'),
+                                       prorate_us=self.config.get('telemetry_us', 0))
         self._ok = True
         return True
 
@@ -103,7 +106,9 @@ class Adxl375(task.Task):
             else:
                 await asyncio.sleep_ms(self._period_ms)
             try:
-                blackboard.Blackboard.write('accel', await self.sample(), self.name)
+                accel = await self.sample()
+                blackboard.Blackboard.write('accel', accel, self.name)
+                self._tlm.push(accel)
             except Exception as error:
                 print('adxl375 :: read %r' % error)
 

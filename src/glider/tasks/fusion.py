@@ -11,6 +11,7 @@ import asyncio
 import time
 
 import blackboard
+import recorder
 import task
 
 
@@ -33,8 +34,21 @@ class Fusion(task.Task):
             self._map[quantity].sort()
             blackboard.Blackboard.declare(quantity)
         self._selected: dict = {}  # quantity -> the source currently chosen (None if all stale)
+        # one wide fused.csv row per cycle: a column per quantity (vectors are pipe-joined), so the
+        # stream's prorate_us decimates the whole row together.
+        self._fields: tuple = tuple(sorted(self._map.keys()))
+        self._tlm = recorder.Telemetry('fused.csv', self._fields, prorate_us=self.config.get('telemetry_us', 0))
         self._ok = True
         return True
+
+    @staticmethod
+    def _cell(value) -> str:
+        """Format a fused value for one CSV cell: '' if absent, pipe-joined if a vector, else %g."""
+        if value is None:
+            return ''
+        if isinstance(value, (tuple, list)):
+            return '|'.join('%g' % v for v in value)
+        return '%g' % value
 
     def fuse_once(self) -> None:
         """One arbitration pass: for each quantity publish the preferred provider that is fresh."""
@@ -52,6 +66,7 @@ class Fusion(task.Task):
     async def run(self) -> None:
         while True:
             self.fuse_once()
+            self._tlm.push([self._cell(blackboard.Blackboard.value(q)) for q in self._fields])
             await asyncio.sleep_ms(self._period_ms)
 
     def inspect(self) -> dict:

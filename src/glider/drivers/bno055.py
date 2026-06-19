@@ -14,6 +14,7 @@ import struct
 import blackboard
 import config
 import i2cbus
+import recorder
 import task
 
 try:
@@ -60,6 +61,8 @@ class Bno055(task.Task):
             print('bno055 :: %r' % error)
             return False
         blackboard.Blackboard.declare('attitude')
+        self._tlm = recorder.Telemetry('%s.csv' % self.name, ('heading', 'roll', 'pitch'),
+                                       prorate_us=self.config.get('telemetry_us', 0))
         self._ok = True
         return True
 
@@ -72,7 +75,9 @@ class Bno055(task.Task):
     async def run(self) -> None:
         while True:
             try:
-                blackboard.Blackboard.write('attitude', await self.sample(), self.name)
+                attitude = await self.sample()
+                blackboard.Blackboard.write('attitude', attitude, self.name)
+                self._tlm.push(attitude)
             except Exception as error:
                 print('bno055 :: read %r' % error)
             await asyncio.sleep_ms(self._period_ms)
