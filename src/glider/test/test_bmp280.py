@@ -28,10 +28,11 @@ async def amain():
     # (dig_T1..P9 and adc_t/adc_p from the BMP280 datasheet worked example.)
     probe = bmp280.Bmp280('baro', {}, _StubController())
     probe._cal = (27504, 26435, -1000, 36477, -10685, 3024, 2855, 140, -7, 15500, -14600, 6000)
-    pa = probe._compensate(519888, 415148)
+    pa, temp_c = probe._compensate(519888, 415148)
     assert 99000.0 < pa < 102000.0, pa  # datasheet expects ~100653 Pa
+    assert 20.0 < temp_c < 30.0, temp_c  # datasheet worked example ≈ 25.08 °C
 
-    print('ok: bmp280 driver registered; graceful-absent; compensation ~%d Pa' % pa)
+    print('ok: bmp280 registered; graceful-absent; compensation ~%d Pa / %.1f C' % (pa, temp_c))
 
 
 asyncio.run(amain())

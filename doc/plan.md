@@ -100,11 +100,12 @@ testable foundations and connectivity come before the flight loop.
   latest-wins; Inspectable as `blackboard`). `test_blackboard`.
 - ✅ **Shared (locked) I²C bus** (`i2cbus.py`) — one `machine.I2C` + `asyncio.Lock` per id, shared
   via `get()`; ADXL375 + BNO055 + BMP280 coexist on `i2c:0`. `test_i2cbus`.
-- ◧ Sensor drivers + tests: ✅ **ADXL375** (`drivers/adxl375.py` — `accel` g → blackboard,
-  interrupt-driven on DATA_READY/INT1→GPIO4 with timeout fallback; live ~1 g at rest);
-  ✅ **BNO055** (`drivers/bno055.py` — NDOF fusion `attitude` deg → blackboard, polled 50 Hz; live);
-  ✅ **BMP280** (`drivers/bmp280.py` — Bosch-compensated pressure → barometric `altitude` m →
-  blackboard, polled 10 Hz; live ~1020 hPa); ◻ ICP-10111, GNSS (ATGM336H), VL53L4CX.
+- ◧ Sensor drivers + tests (all → blackboard, write `altitude`/`temperature`/`accel`/`attitude`):
+  ✅ **ADXL375** (`accel` g, interrupt-driven on DATA_READY/INT1→GPIO4 + timeout fallback);
+  ✅ **BNO055** (NDOF fusion `attitude` deg, polled 50 Hz);
+  ✅ **BMP280** (Bosch-compensated `altitude` m + `temperature` °C, 10 Hz, backup baro);
+  ✅ **ICP-10111** (`drivers/icp10111.py` — TDK command/OTP protocol, `altitude` + `temperature`,
+  primary baro, prio 0); ◻ GNSS (ATGM336H), VL53L4CX. All live-verified on `i2c:0`.
 - ◻ Sensor fusion (priority/timeout from each component's `provides`), separation switch (IRQ).
 - ◻ Recorder UART link from the board; telemetry/log flush to the Recorder.
 - **Milestone:** a real telemetry-only flight — collect data, no actuation.

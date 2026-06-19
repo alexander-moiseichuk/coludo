@@ -30,6 +30,16 @@ class Bus:
         async with self._lock:
             self._i2c.writeto_mem(addr, reg, data)
 
+    async def writeto(self, addr: int, data: bytes) -> None:
+        """Raw write (no register) — for command-based devices like the ICP-10111."""
+        async with self._lock:
+            self._i2c.writeto(addr, data)
+
+    async def readfrom(self, addr: int, count: int) -> bytes:
+        """Raw read (no register) — pairs with writeto() for command-based devices."""
+        async with self._lock:
+            return self._i2c.readfrom(addr, count)
+
     def scan(self) -> list:
         return self._i2c.scan()
 

@@ -207,6 +207,8 @@ One physical I2C bus, shared by every device on it; transactions are serialized 
 - `read(addr: int, reg: int, count: int) -> bytes`
 - `read_into(addr: int, reg: int, buf) -> None`
 - `write(addr: int, reg: int, data: bytes) -> None`
+- `writeto(addr: int, data: bytes) -> None` — Raw write (no register) — for command-based devices like the ICP-10111.
+- `readfrom(addr: int, count: int) -> bytes` — Raw read (no register) — pairs with writeto() for command-based devices.
 - `scan() -> list`
 
 ### `get(bus_id: int, spec: dict) -> Bus`
@@ -441,7 +443,7 @@ shared locked bus (i2cbus) since it shares i2c:0 with the ADXL375 and BNO055.
 Barometric altitude: polls compensated pressure -> altitude (m) to the blackboard 'altitude'.
 
 - `setup() -> bool`
-- `sample() -> float` — Read pressure and return barometric altitude in metres (AMSL, std sea-level reference).
+- `sample() -> tuple` — Read the sensor and return (barometric altitude m AMSL, temperature °C).
 - `run() -> None`
 - `inspect() -> dict`
 
@@ -463,6 +465,26 @@ ADXL375 and BMP280.
 
 - `setup() -> bool`
 - `sample() -> tuple` — Read the fused orientation as (heading, roll, pitch) in degrees.
+- `run() -> None`
+- `inspect() -> dict`
+
+## `icp10111.py`
+
+drivers/icp10111.py — ICP-10111 barometric pressure sensor (TDK ICP-101xx, on the SEN0517) over
+the shared I2C bus: the PRIMARY altitude channel (8.5 cm accuracy). @task.driver('icp10111').
+Command-based, not register-mapped: setup() verifies the product id and reads the 4 OTP calibration
+constants; run() issues a measure command, reads pressure+temperature, applies the TDK polynomial
+conversion and writes barometric altitude (m AMSL) to the blackboard 'altitude' slot. Graceful:
+wrong/absent id -> setup False -> the Controller skips it.
+
+Polled at period_ms. Uses the shared locked bus (i2cbus); shares i2c:0 with the other sensors.
+
+### `class Icp10111(task.Task)`
+
+Primary barometric altitude: polls compensated pressure -> altitude (m) to 'altitude'.
+
+- `setup() -> bool`
+- `sample() -> tuple` — Measure and return (barometric altitude m AMSL, temperature °C).
 - `run() -> None`
 - `inspect() -> dict`
 

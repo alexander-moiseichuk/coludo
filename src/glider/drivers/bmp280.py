@@ -59,16 +59,18 @@ class Bmp280(task.Task):
             print('bmp280 :: %r' % error)
             return False
         blackboard.Blackboard.declare('altitude')
+        blackboard.Blackboard.declare('temperature')
         self._ok = True
         return True
 
-    def _compensate(self, adc_t: int, adc_p: int) -> float:
-        """Bosch fixed-point compensation: raw ADC -> pressure in Pa (int64 math; MicroPython ints
-        are arbitrary precision). Returns 0.0 if the calibration is degenerate."""
+    def _compensate(self, adc_t: int, adc_p: int) -> tuple:
+        """Bosch fixed-point compensation: raw ADC -> (pressure Pa, temperature °C). int64 math
+        (MicroPython ints are arbitrary precision); pressure is 0.0 if the calibration is degenerate."""
         t1, t2, t3, p1, p2, p3, p4, p5, p6, p7, p8, p9 = self._cal
-        var1 = (((adc_t >> 3) - (t1 << 1)) * t2) >> 11
-        var2 = (((((adc_t >> 4) - t1) * ((adc_t >> 4) - t1)) >> 12) * t3) >> 14
-        t_fine = var1 + var2
+        tv1 = (((adc_t >> 3) - (t1 << 1)) * t2) >> 11
+        tv2 = (((((adc_t >> 4) - t1) * ((adc_t >> 4) - t1)) >> 12) * t3) >> 14
+        t_fine = tv1 + tv2
+        temp_c = ((t_fine * 5 + 128) >> 8) / 100.0
         var1 = t_fine - 128000
         var2 = var1 * var1 * p6
         var2 = var2 + ((var1 * p5) << 17)
@@ -76,34 +78,40 @@ class Bmp280(task.Task):
         var1 = ((var1 * var1 * p3) >> 8) + ((var1 * p2) << 12)
         var1 = (((1 << 47) + var1) * p1) >> 33
         if var1 == 0:
-            return 0.0
+            return 0.0, temp_c
         p = 1048576 - adc_p
         p = (((p << 31) - var2) * 3125) // var1
         var1 = (p9 * (p >> 13) * (p >> 13)) >> 25
         var2 = (p8 * p) >> 19
         p = ((p + var1 + var2) >> 8) + (p7 << 4)
-        return p / 256.0  # Pa
+        return p / 256.0, temp_c
 
-    async def sample(self) -> float:
-        """Read pressure and return barometric altitude in metres (AMSL, std sea-level reference)."""
+    async def sample(self) -> tuple:
+        """Read the sensor and return (barometric altitude m AMSL, temperature °C)."""
         await self._bus.read_into(self._addr, _REG_DATA, self._buf)
         adc_p = (self._buf[0] << 12) | (self._buf[1] << 4) | (self._buf[2] >> 4)
         adc_t = (self._buf[3] << 12) | (self._buf[4] << 4) | (self._buf[5] >> 4)
-        pressure = self._compensate(adc_t, adc_p)
-        if pressure <= 0.0:
-            return 0.0
-        return 44330.0 * (1.0 - (pressure / _SEA_LEVEL_PA) ** 0.190294957)
+        pressure, temp_c = self._compensate(adc_t, adc_p)
+        altitude = 0.0 if pressure <= 0.0 else 44330.0 * (1.0 - (pressure / _SEA_LEVEL_PA) ** 0.190294957)
+        return altitude, temp_c
 
     async def run(self) -> None:
         while True:
             try:
-                blackboard.Blackboard.write('altitude', await self.sample(), self.name)
+                altitude, temp_c = await self.sample()
+                blackboard.Blackboard.write('altitude', altitude, self.name)
+                blackboard.Blackboard.write('temperature', temp_c, self.name)
             except Exception as error:
                 print('bmp280 :: read %r' % error)
             await asyncio.sleep_ms(self._period_ms)
 
+    def _mine(self, quantity: str):
+        """The blackboard value for `quantity` if this sensor wrote it last, else None."""
+        slot = blackboard.Blackboard.read(quantity)
+        return slot.value if (slot is not None and slot.source == self.name) else None
+
     def inspect(self) -> dict:
-        status = task.Task.inspect(self)
-        slot = blackboard.Blackboard.read('altitude')  # latest sample (no hot-path I2C in inspect)
-        status['altitude_m'] = slot.value if (slot is not None and slot.source == self.name) else None
+        status = task.Task.inspect(self)  # latest samples from the blackboard (no hot-path I2C here)
+        status['altitude_m'] = self._mine('altitude')
+        status['temperature_c'] = self._mine('temperature')
         return status

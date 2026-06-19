@@ -40,7 +40,6 @@ def default() -> dict:
             'led_status': 2,  # external LED (board has no user LED)
             'separation_switch': 33,  # copper pads: HIGH=nested (3v3 routed), LOW=separated
             'adxl375_int': 4,  # ADXL375 INT1 (free spare) — DATA_READY drives the accel sampling
-            'bno055_int': 5,  # BNO055 (sen0253) INT (free spare) — for the upcoming imu driver
             'servo_yaw': 26,
             'servo_eleron_left': 27,
             'servo_eleron_right': 32,
@@ -68,7 +67,6 @@ def default() -> dict:
                 'driver': 'bno055',
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x28,
-                'int_pin': 'bno055_int',
                 'enabled': True,
                 'provides': {'attitude': {'priority': 0, 'timeout_ms': 5}, 'accel': {'priority': 1, 'timeout_ms': 5}},
             },
@@ -78,7 +76,8 @@ def default() -> dict:
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x63,
                 'enabled': True,
-                'provides': {'altitude': {'priority': 0, 'timeout_ms': 100}},
+                'provides': {'altitude': {'priority': 0, 'timeout_ms': 100},
+                             'temperature': {'priority': 0, 'timeout_ms': 1000}},
             },
             {
                 'name': 'baro_bmp280',
@@ -86,7 +85,8 @@ def default() -> dict:
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x76,
                 'enabled': True,
-                'provides': {'altitude': {'priority': 1, 'timeout_ms': 200}},
+                'provides': {'altitude': {'priority': 1, 'timeout_ms': 200},
+                             'temperature': {'priority': 1, 'timeout_ms': 1000}},
             },
             {
                 'name': 'laser_agl',
