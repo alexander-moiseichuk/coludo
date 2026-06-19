@@ -120,6 +120,8 @@ def default() -> dict:
             # Status LED on the led_status pin: blinks the board state (error/standby/flying).
             # Disabled by default -- not every board has the external LED wired; enable per board.
             {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': False},
+            # Stage-separation switch (copper pads): HIGH=nested, LOW=separated -> Boosting->Gliding.
+            {'name': 'separation', 'driver': 'separation', 'pin': 'separation_switch', 'enabled': True},
             # Sensor fusion: select each quantity's live value from its providers by priority +
             # freshness (reads the blackboard's raw readings, publishes the fused value).
             {'name': 'fusion', 'activity': 'fusion', 'period_ms': 20, 'telemetry_us': 100000, 'enabled': True},

@@ -115,7 +115,10 @@ testable foundations and connectivity come before the flight loop.
   sample, decimated to a sane rate). Each sensor emits its own `SENSOR.csv` (accel 50 Hz, imu 25 Hz,
   baros 10 Hz) + fusion emits a wide `fused.csv` (one column per quantity, vectors pipe-joined,
   10 Hz). Live-verified: rows/sec match the configured `telemetry_us`.
-- ◻ Separation switch (IRQ).
+- ✅ **Separation switch** (`drivers/separation.py` `@task.driver('separation')`) — copper pads on
+  `separation_switch` (GPIO33): HIGH=nested, LOW=separated, internal pull-down (no external resistor
+  needed). IRQ on either edge → debounce → on a confirmed separation during Boosting, drive
+  Boosting→Gliding (guarded). Live-verified: unplugging 3V3 fired the transition. `test_separation`.
 - ◻ Recorder UART link to the physical Luckfox recorder (rings drain to uart:1 already).
 - **Milestone:** a real telemetry-only flight — collect data, no actuation.
 

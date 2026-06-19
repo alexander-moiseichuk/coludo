@@ -512,6 +512,27 @@ Blink a status pattern on one GPIO derived from the controller's state + health.
 - `run() -> None`
 - `inspect() -> dict`
 
+## `separation.py`
+
+drivers/separation.py — stage-separation switch: two adhesive copper pads (one on the glider, one
+on the booster) that route 3V3 to a pin while nested (HIGH) and open on separation (LOW). A HAL
+input, @task.driver('separation'). An IRQ on either edge wakes run(), which debounces, and on a
+confirmed separation during the Boosting stage drives the documented Boosting -> Gliding transition
+(the booster ejects the glider at apogee). The event is logged and emitted to subscribers; the
+discrete event is NOT a blackboard quantity (per specs/coludo.md, events use notify/log).
+
+The pin uses an internal pull-down so an open (separated) circuit reads LOW reliably; while nested
+the pads override it HIGH. A separation while not Boosting (e.g. a ground test in Setting) is
+logged but does not transition -- the guard keeps go/no-go correct.
+
+### `class Separation(task.Task)`
+
+Detect stage separation (HIGH=nested -> LOW=separated) and trigger Boosting -> Gliding.
+
+- `setup() -> bool`
+- `run() -> None`
+- `inspect() -> dict`
+
 ## `wifi.py`
 
 drivers/wifi.py — Wi-Fi station driver: joins the configured network and keeps it joined, exposing
