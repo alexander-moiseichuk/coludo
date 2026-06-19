@@ -25,14 +25,13 @@ STAGE_BOOSTING = const(1)
 STAGE_GLIDING = const(2)
 STAGE_LANDING = const(3)
 STAGE_DONE = const(4)
-STAGE_NAMES: dict[int, str] = {
+STAGES: dict[int, str] = {  # the defined stage ids -> operator-facing names; `in` is an O(1) key check
     STAGE_SETTING: 'setting',
     STAGE_BOOSTING: 'boosting',
     STAGE_GLIDING: 'gliding',
     STAGE_LANDING: 'landing',
     STAGE_DONE: 'done',
 }
-STAGES: tuple[int] = tuple(STAGE_NAMES.keys())
 
 
 class Controller(inspector.Inspectable):
@@ -176,11 +175,11 @@ class Controller(inspector.Inspectable):
         if stage not in STAGES:
             raise ValueError('unknown stage: %s' % stage)
         self.stage = stage
-        self.log('controller :: stage -> %s' % STAGE_NAMES[stage])
+        self.log('controller :: stage -> %s' % STAGES[stage])
 
     def stage_name(self) -> str:
         """The current flight stage as its operator-facing name."""
-        return STAGE_NAMES[self.stage]
+        return STAGES[self.stage]
 
     def validate(self) -> bool:
         """True if every active task is healthy."""

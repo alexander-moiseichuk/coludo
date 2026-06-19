@@ -21,7 +21,7 @@ class _StubController:
         return self._healthy
 
     def stage_name(self):
-        return controller.STAGE_NAMES[self.stage]
+        return controller.STAGES[self.stage]
 
 
 async def amain():
