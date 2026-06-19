@@ -62,7 +62,7 @@ class Bmp280(task.Task):
         blackboard.Blackboard.declare('altitude')
         blackboard.Blackboard.declare('temperature')
         self._tlm = recorder.Telemetry('%s.csv' % self.name, ('altitude', 'temperature'),
-                                       prorate_us=self.config.get('telemetry_us', 0))
+                                       decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True
         return True
 

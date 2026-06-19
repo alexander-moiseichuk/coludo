@@ -35,9 +35,9 @@ class Fusion(task.Task):
             blackboard.Blackboard.declare(quantity)
         self._selected: dict = {}  # quantity -> the source currently chosen (None if all stale)
         # one wide fused.csv row per cycle: a column per quantity (vectors are pipe-joined), so the
-        # stream's prorate_us decimates the whole row together.
+        # stream's decimate_us decimates the whole row together.
         self._fields: tuple = tuple(sorted(self._map.keys()))
-        self._tlm = recorder.Telemetry('fused.csv', self._fields, prorate_us=self.config.get('telemetry_us', 0))
+        self._tlm = recorder.Telemetry('fused.csv', self._fields, decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True
         return True
 

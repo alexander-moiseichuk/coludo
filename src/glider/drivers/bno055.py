@@ -62,7 +62,7 @@ class Bno055(task.Task):
             return False
         blackboard.Blackboard.declare('attitude')
         self._tlm = recorder.Telemetry('%s.csv' % self.name, ('heading', 'roll', 'pitch'),
-                                       prorate_us=self.config.get('telemetry_us', 0))
+                                       decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True
         return True
 

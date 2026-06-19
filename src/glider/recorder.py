@@ -227,23 +227,23 @@ class Telemetry:
     first push emits the CSV header (uptime + fields), then each push emits a timestamped row.
     All streams in one boot share the Recorder session prefix, so file names are stable.
 
-    `prorate_us` rate-limits the stream: with it unset every push() emits; with it set, push()
-    emits only when at least `prorate_us` microseconds have passed since the last emitted row (a
-    fast sensor can push every sample and have its telemetry decimated to a sane rate)."""
+    `decimate_us` rate-limits the stream: with it 0 every push() emits; with it set, push() emits
+    only when at least `decimate_us` microseconds have passed since the last emitted row (a fast
+    sensor can push every sample and have its telemetry decimated to a sane rate)."""
 
-    def __init__(self, filename: str, fields: tuple, prorate_us: int = 0):
+    def __init__(self, filename: str, fields: tuple, decimate_us: int = 0):
         self.filename: str = filename
         self.fields: tuple = fields
-        self.prorate_us = prorate_us  # min gap between emitted rows (0 = emit every push)
+        self.decimate_us = decimate_us  # min gap between emitted rows (0 = emit every push)
         self._header_sent: bool = False
-        self._last_us: int = 0        # timestamp of the last emitted row, ensure we in past
+        self._last_us: int = Recorder.timestamp() - decimate_us  # one window back -> first push emits
 
     def push(self, values) -> None:
         if not self._header_sent:
             Recorder.tlm(self.filename, 'uptime;' + ';'.join(self.fields))
             self._header_sent = True
         now = Recorder.timestamp()
-        if time.ticks_diff(now, self._last_us) < self.prorate_us:
+        if time.ticks_diff(now, self._last_us) < self.decimate_us:
             return  # too soon since the last row -> decimate
         Recorder.tlm(self.filename, '%u;%s' % (now, ';'.join(str(v) for v in values)))
         self._last_us = now

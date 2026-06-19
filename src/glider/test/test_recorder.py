@@ -67,9 +67,9 @@ async def test_recorder():
     assert rows[1].startswith(prefix) and rows[1].endswith(b';1.0;2.0;3.0\n')
     assert rows[2].endswith(b';4;5;6\n')
 
-    # prorate_us: a fast stream is decimated -- bursts within the window collapse to one row
+    # decimate_us: a fast stream is decimated -- bursts within the window collapse to one row
     recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
-    rated = recorder.Telemetry('fast.csv', ('v',), prorate_us=50000)  # >= 50 ms between rows
+    rated = recorder.Telemetry('fast.csv', ('v',), decimate_us=50000)  # >= 50 ms between rows
     rated.push((1,))  # first push always emits (header + row)
     rated.push((2,))  # immediately after -> decimated away
     rated.push((3,))

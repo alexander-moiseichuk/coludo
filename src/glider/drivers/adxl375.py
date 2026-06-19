@@ -67,7 +67,7 @@ class Adxl375(task.Task):
             return False
         blackboard.Blackboard.declare('accel')
         self._tlm = recorder.Telemetry('%s.csv' % self.name, ('ax', 'ay', 'az'),
-                                       prorate_us=self.config.get('telemetry_us', 0))
+                                       decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True
         return True
 
