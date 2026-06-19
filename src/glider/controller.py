@@ -19,19 +19,22 @@ except ImportError:  # CPython (tooling / off-board checks)
         return value
 
 
-# Flight stages — int ids (cheap to compare/store on MicroPython) paired with operator-facing names.
-STAGE_SETTING = const(0)
-STAGE_BOOSTING = const(1)
-STAGE_GLIDING = const(2)
-STAGE_LANDING = const(3)
-STAGE_DONE = const(4)
-STAGES: dict[int, str] = {  # the defined stage ids -> operator-facing names; `in` is an O(1) key check
-    STAGE_SETTING: 'setting',
-    STAGE_BOOSTING: 'boosting',
-    STAGE_GLIDING: 'gliding',
-    STAGE_LANDING: 'landing',
-    STAGE_DONE: 'done',
-}
+class Stage:
+    """The flight stages, self-contained: int ids (cheap to compare/store on MicroPython) and the
+    `STAGES` id->name mapping (operator-facing names; `in Stage.STAGES` is an O(1) key check)."""
+
+    SETTING = const(0)
+    BOOSTING = const(1)
+    GLIDING = const(2)
+    LANDING = const(3)
+    DONE = const(4)
+    STAGES: dict[int, str] = {
+        SETTING: 'setting',
+        BOOSTING: 'boosting',
+        GLIDING: 'gliding',
+        LANDING: 'landing',
+        DONE: 'done',
+    }
 
 
 class Controller(inspector.Inspectable):
@@ -44,7 +47,7 @@ class Controller(inspector.Inspectable):
         self.log = log if log is not None else (lambda msg: None)
         self.tasks: dict = {}  # name -> Task
         self._runners: dict = {}  # name -> asyncio.Task
-        self.stage: int = STAGE_SETTING
+        self.stage: int = Stage.SETTING
         inspector.Inspector.register(self)
 
     # ------------------------------------------------------------------ scope
@@ -168,18 +171,18 @@ class Controller(inspector.Inspectable):
         """Shut down all tasks."""
         for name in list(self.tasks):
             await self.close(name)
-        self.stage = STAGE_DONE
+        self.stage = Stage.DONE
 
     # ------------------------------------------------------------------ stage
     def set_stage(self, stage: int) -> None:
-        if stage not in STAGES:
+        if stage not in Stage.STAGES:
             raise ValueError('unknown stage: %s' % stage)
         self.stage = stage
-        self.log('controller :: stage -> %s' % STAGES[stage])
+        self.log('controller :: stage -> %s' % Stage.STAGES[stage])
 
     def stage_name(self) -> str:
         """The current flight stage as its operator-facing name."""
-        return STAGES[self.stage]
+        return Stage.STAGES[self.stage]
 
     def validate(self) -> bool:
         """True if every active task is healthy."""

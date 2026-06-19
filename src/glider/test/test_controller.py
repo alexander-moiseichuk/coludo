@@ -101,8 +101,8 @@ async def amain():
     assert seen == ['hello']
 
     # stage machine: int ids internally, name on the wire
-    c.set_stage(controller.STAGE_BOOSTING)
-    assert c.stage == controller.STAGE_BOOSTING and c.stage_name() == 'boosting'
+    c.set_stage(controller.Stage.BOOSTING)
+    assert c.stage == controller.Stage.BOOSTING and c.stage_name() == 'boosting'
     raised = False
     try:
         c.set_stage(99)  # not a defined stage
@@ -115,7 +115,7 @@ async def amain():
     assert 's1' not in c.tasks
     await c.finish()
     assert c.tasks == {}
-    assert c.stage == controller.STAGE_DONE
+    assert c.stage == controller.Stage.DONE
 
     print('ok: controller directory/create/setup/run/active/inspect/stats/validate/close/finish')
 

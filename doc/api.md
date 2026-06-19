@@ -141,6 +141,12 @@ deterministic order. Task failures are reported, not fatal (the strict/operator-
 model): a component that fails setup is logged and skipped, and go/no-go stays with the
 operator via stats()/validate().
 
+### `class Stage`
+
+The flight stages, self-contained: int ids (cheap to compare/store on MicroPython) and the
+`STAGES` id->name mapping (operator-facing names; `in Stage.STAGES` is an O(1) key check).
+
+
 ### `class Controller(inspector.Inspectable)`
 
 - `__init__(config: dict, registry: dict=None, log=None)` — constructor

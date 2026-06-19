@@ -41,7 +41,7 @@ class LedStatus(task.Task):
         """Blink half-period for the current status, or None to hold the LED solid (flying)."""
         if not self.controller.validate():
             return _BLINK_ERROR_MS  # an unhealthy task wins -> fast blink
-        if self.controller.stage == controller.STAGE_SETTING:
+        if self.controller.stage == controller.Stage.SETTING:
             return _BLINK_SETTING_MS
         return None
 

@@ -12,7 +12,7 @@ from drivers import led
 class _StubController:
     """Stand-in for the Controller: just the bits the LED reads (config / stage / validate)."""
 
-    def __init__(self, config, stage=controller.STAGE_SETTING, healthy=True):
+    def __init__(self, config, stage=controller.Stage.SETTING, healthy=True):
         self.config = config
         self.stage = stage
         self._healthy = healthy
@@ -21,7 +21,7 @@ class _StubController:
         return self._healthy
 
     def stage_name(self):
-        return controller.STAGES[self.stage]
+        return controller.Stage.STAGES[self.stage]
 
 
 async def amain():
@@ -32,14 +32,14 @@ async def amain():
     component = {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': True}
 
     # setup resolves the pin from config.pins and comes up healthy
-    stub = _StubController(cfg, stage=controller.STAGE_SETTING, healthy=True)
+    stub = _StubController(cfg, stage=controller.Stage.SETTING, healthy=True)
     blinker = led.LedStatus('led', component, stub)
     assert await blinker.setup() is True and blinker.validate()
 
     # status -> blink half-period: a positive period while setting, solid (None) when flying
     setting = blinker._half_period_ms()
     assert isinstance(setting, int) and setting > 0
-    stub.stage = controller.STAGE_GLIDING
+    stub.stage = controller.Stage.GLIDING
     assert blinker._half_period_ms() is None
     # an unhealthy task wins over flying, and blinks faster than standby (error is most urgent)
     stub._healthy = False
