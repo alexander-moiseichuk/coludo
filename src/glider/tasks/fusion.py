@@ -37,7 +37,7 @@ class Fusion(task.Task):
         # one wide fused.csv row per cycle: a column per quantity (vectors are pipe-joined), so the
         # stream's decimate_us decimates the whole row together.
         self._fields: tuple = tuple(sorted(self._map.keys()))
-        self._tlm = recorder.Telemetry('fused.csv', self._fields, decimate_us=self.config.get('telemetry_us', 0))
+        self._telemetry = recorder.Telemetry('fused.csv', self._fields, decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True
         return True
 
@@ -66,7 +66,7 @@ class Fusion(task.Task):
     async def run(self) -> None:
         while True:
             self.fuse_once()
-            self._tlm.push([self._cell(blackboard.Blackboard.value(q)) for q in self._fields])
+            self._telemetry.push([self._cell(blackboard.Blackboard.value(q)) for q in self._fields])
             await asyncio.sleep_ms(self._period_ms)
 
     def inspect(self) -> dict:

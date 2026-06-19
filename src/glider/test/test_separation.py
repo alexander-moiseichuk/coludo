@@ -46,6 +46,11 @@ async def amain():
     assert sep._separated is True and boosting.stage == controller.Stage.GLIDING
     assert sep.inspect()['separated'] is True
 
+    # the event is recorded to telemetry (durable separation.csv), not only the best-effort log
+    await recorder.Recorder.drain()
+    rows = [bytes(i) for i in recorder.Recorder._uart.items]
+    assert any(b'_separation.csv@' in r and b'separated;gliding' in r for r in rows), rows
+
     # idempotent (same level) + a re-nest emits but never reverses the stage
     sep._apply(True)
     sep._apply(False)

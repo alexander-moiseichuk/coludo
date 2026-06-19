@@ -61,7 +61,7 @@ class Bno055(task.Task):
             print('bno055 :: %r' % error)
             return False
         blackboard.Blackboard.declare('attitude')
-        self._tlm = recorder.Telemetry('%s.csv' % self.name, ('heading', 'roll', 'pitch'),
+        self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('heading', 'roll', 'pitch'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True
         return True
@@ -77,7 +77,7 @@ class Bno055(task.Task):
             try:
                 attitude = await self.sample()
                 blackboard.Blackboard.write('attitude', attitude, self.name)
-                self._tlm.push(attitude)
+                self._telemetry.push(attitude)
             except Exception as error:
                 print('bno055 :: read %r' % error)
             await asyncio.sleep_ms(self._period_ms)

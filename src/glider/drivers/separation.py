@@ -30,6 +30,7 @@ class Separation(task.Task):
         self._flag = asyncio.ThreadSafeFlag()
         self._pin = Pin(gpio, Pin.IN, Pin.PULL_DOWN)
         self._separated: bool = self._pin.value() == 0  # LOW = pads open = separated
+        self._telemetry = recorder.Telemetry('separation.csv', ('event', 'stage'))  # durable, every event
         self._pin.irq(self._on_edge, Pin.IRQ_RISING | Pin.IRQ_FALLING)
         self._ok = True
         return True
@@ -39,16 +40,18 @@ class Separation(task.Task):
         self._flag.set()
 
     def _apply(self, separated: bool) -> None:
-        """Act on a confirmed pin level: on a change, emit + log, and (only) on separation during
-        Boosting advance the flight stage to Gliding."""
+        """Act on a confirmed pin level: on a change, advance Boosting->Gliding on separation, then
+        record the event to telemetry (durable, committed as separation.csv) before the best-effort
+        log, and notify subscribers."""
         if separated == self._separated:
             return
         self._separated = separated
         event = 'separated' if separated else 'nested'
-        self.emit(event)
-        recorder.Recorder.log('separation', event)
         if separated and self.controller.stage == controller.Stage.BOOSTING:
             self.controller.set_stage(controller.Stage.GLIDING)
+        self._telemetry.push((event, controller.Stage.STAGES[self.controller.stage]))  # telemetry first
+        recorder.Recorder.log('separation', event)
+        self.emit(event)
 
     async def run(self) -> None:
         while True:

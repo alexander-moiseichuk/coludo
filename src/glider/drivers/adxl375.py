@@ -66,7 +66,7 @@ class Adxl375(task.Task):
             print('adxl375 :: %r' % error)
             return False
         blackboard.Blackboard.declare('accel')
-        self._tlm = recorder.Telemetry('%s.csv' % self.name, ('ax', 'ay', 'az'),
+        self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('ax', 'ay', 'az'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True
         return True
@@ -108,7 +108,7 @@ class Adxl375(task.Task):
             try:
                 accel = await self.sample()
                 blackboard.Blackboard.write('accel', accel, self.name)
-                self._tlm.push(accel)
+                self._telemetry.push(accel)
             except Exception as error:
                 print('adxl375 :: read %r' % error)
 

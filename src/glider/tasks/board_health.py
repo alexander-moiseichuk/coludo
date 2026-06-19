@@ -25,7 +25,7 @@ class BoardHealth(task.Task):
         self.load: float = 0.0
         self._idle_count: int = 0
         self._max_rate: float = 0.0
-        self._tlm = recorder.Telemetry('health.csv', ('temp', 'mem_free', 'load'))
+        self._telemetry = recorder.Telemetry('health.csv', ('temp', 'mem_free', 'load'))
         self._ok = True
         return True
 
@@ -64,7 +64,7 @@ class BoardHealth(task.Task):
                 self._max_rate = rate
             self.load = max(0.0, 1.0 - rate / self._max_rate) if self._max_rate else 0.0
             vitals = self.sample()
-            self._tlm.push((vitals['temp'], vitals['mem_free'], vitals['load']))
+            self._telemetry.push((vitals['temp'], vitals['mem_free'], vitals['load']))
 
     # --- Inspectable ---
     def inspect(self) -> dict:
