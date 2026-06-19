@@ -425,6 +425,26 @@ Apply the configured BLE radio state. Inspectable: `radio` requested, `active` a
 - `inspect() -> dict`
 - `update(props) -> list`
 
+## `bmp280.py`
+
+drivers/bmp280.py — BMP280 barometric pressure sensor (on the SEN0253) over the shared I2C bus:
+the backup altitude channel. @task.driver('bmp280'). setup() probes the chip id, reads the factory
+calibration and starts normal-mode conversion; run() reads pressure, applies Bosch compensation
+and writes barometric altitude (m AMSL) to the blackboard 'altitude' slot. Graceful: wrong/absent
+chip id -> setup False -> the Controller skips it.
+
+Polled at period_ms (the BMP280 conversion is ~tens of ms, far slower than the IMU). Uses the
+shared locked bus (i2cbus) since it shares i2c:0 with the ADXL375 and BNO055.
+
+### `class Bmp280(task.Task)`
+
+Barometric altitude: polls compensated pressure -> altitude (m) to the blackboard 'altitude'.
+
+- `setup() -> bool`
+- `sample() -> float` — Read pressure and return barometric altitude in metres (AMSL, std sea-level reference).
+- `run() -> None`
+- `inspect() -> dict`
+
 ## `bno055.py`
 
 drivers/bno055.py — BNO055 9-DOF IMU (on the SEN0253) over the shared I2C bus: the attitude

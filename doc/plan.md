@@ -103,7 +103,8 @@ testable foundations and connectivity come before the flight loop.
 - ◧ Sensor drivers + tests: ✅ **ADXL375** (`drivers/adxl375.py` — `accel` g → blackboard,
   interrupt-driven on DATA_READY/INT1→GPIO4 with timeout fallback; live ~1 g at rest);
   ✅ **BNO055** (`drivers/bno055.py` — NDOF fusion `attitude` deg → blackboard, polled 50 Hz; live);
-  ◻ ICP-10111, BMP280, GNSS (ATGM336H), VL53L4CX.
+  ✅ **BMP280** (`drivers/bmp280.py` — Bosch-compensated pressure → barometric `altitude` m →
+  blackboard, polled 10 Hz; live ~1020 hPa); ◻ ICP-10111, GNSS (ATGM336H), VL53L4CX.
 - ◻ Sensor fusion (priority/timeout from each component's `provides`), separation switch (IRQ).
 - ◻ Recorder UART link from the board; telemetry/log flush to the Recorder.
 - **Milestone:** a real telemetry-only flight — collect data, no actuation.
