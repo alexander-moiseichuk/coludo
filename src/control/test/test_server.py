@@ -1,5 +1,6 @@
-# Host (CPython) test for the Control ground station (control.py): Board lockstep + Server accept
-# over a real loopback. Run by `make test` in this dir (or python3 test_control.py).
+# Host (CPython) test for server.py: the hub — board accept/handshake (loopback), the operator
+# console (list / route / select / broadcast / Control commands), and the web bridge (api/boards,
+# api/cmd, events) — all over a real loopback. Run by `make test`.
 
 import asyncio
 import json
@@ -8,8 +9,7 @@ import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cc_protocol as cc  # noqa: E402
-
-import control  # noqa: E402
+import server  # noqa: E402
 
 PORT = 18234
 BOARD_PORT = 18235
@@ -17,67 +17,6 @@ OPERATOR_PORT = 18236
 WEB_PORT = 18237
 WEB_BOARD_PORT = 18238
 WEB_OPERATOR_PORT = 18239
-
-
-class _Reader:
-    def __init__(self, lines):
-        self.lines = [line.encode() for line in lines]
-        self.index = 0
-
-    async def readline(self):
-        if self.index < len(self.lines):
-            value = self.lines[self.index]
-            self.index += 1
-            return value
-        return b''
-
-
-class _HangReader:
-    async def readline(self):
-        await asyncio.sleep(60)
-        return b''
-
-
-class _Writer:
-    def __init__(self):
-        self.out = []
-
-    def write(self, data):
-        self.out.append(data)
-
-    async def drain(self):
-        pass
-
-    def get_extra_info(self, key):
-        return ('1.2.3.4', 5)
-
-    def close(self):
-        pass
-
-
-async def _unit():
-    # command() returns the parsed response
-    board = control.Board(_Reader(['pong\n']), _Writer())
-    assert (await board.command('ping')).command == 'pong'
-
-    # command() returns None on disconnect (empty readline)
-    assert await control.Board(_Reader([]), _Writer()).command('ping') is None
-
-    # identify() learns the id + info from iam
-    iam = cc.build('iam', ['glider2', json.dumps({'mcu': 'esp32p4'})])
-    board = control.Board(_Reader([iam + '\n']), _Writer())
-    assert await board.identify() == 'glider2' and board.info['mcu'] == 'esp32p4'
-
-    # identify() returns None when the reply is not iam
-    assert await control.Board(_Reader(['pong\n']), _Writer()).identify() is None
-
-    # command() times out (raises) on a wedged board instead of hanging
-    raised = False
-    try:
-        await control.Board(_HangReader(), _Writer()).command('ping', timeout=0.1)
-    except asyncio.TimeoutError:
-        raised = True
-    assert raised
 
 
 async def _fake_board(reader, writer):
@@ -112,8 +51,8 @@ async def _loopback():
         finally:
             done.set()
 
-    server = control.Server(host='127.0.0.1', port=PORT, on_board=on_board, log=lambda message: None)
-    server_task = asyncio.create_task(server.serve_forever())
+    hub = server.Server(host='127.0.0.1', port=PORT, on_board=on_board, log=lambda message: None)
+    server_task = asyncio.create_task(hub.serve_forever())
     await asyncio.sleep(0.1)
 
     reader, writer = await asyncio.open_connection('127.0.0.1', PORT)
@@ -131,18 +70,18 @@ async def _loopback():
 async def _operator_console():
     """A board dials in; an operator drives it through the telnet console: list / route / select /
     broadcast / Control commands, with replies tagged by source."""
-    server = control.Server(host='127.0.0.1', port=BOARD_PORT, operator_port=OPERATOR_PORT,
-                            web_port=WEB_PORT, log=lambda message: None, heartbeat_s=0.05)
-    hub_task = asyncio.create_task(server.run())
+    hub = server.Server(host='127.0.0.1', port=BOARD_PORT, operator_port=OPERATOR_PORT,
+                        web_port=WEB_PORT, log=lambda message: None, heartbeat_s=0.05)
+    hub_task = asyncio.create_task(hub.run())
     await asyncio.sleep(0.1)
 
     board_reader, board_writer = await asyncio.open_connection('127.0.0.1', BOARD_PORT)
     board_task = asyncio.create_task(_fake_board(board_reader, board_writer))
     for _ in range(50):  # wait for the handshake to register it
-        if 'glider9' in server.boards:
+        if 'glider9' in hub.boards:
             break
         await asyncio.sleep(0.02)
-    assert 'glider9' in server.boards
+    assert 'glider9' in hub.boards
 
     operator_reader, operator_writer = await asyncio.open_connection('127.0.0.1', OPERATOR_PORT)
 
@@ -152,7 +91,7 @@ async def _operator_console():
         return (await asyncio.wait_for(operator_reader.readline(), 2)).decode().strip()
 
     try:
-        # Control command: list shows the online board with its iam-reported state/config_id
+        # Control command: list shows the online board with its iam-reported stage/config_id
         listing = await ask('list')
         assert listing.startswith('from cc ok ')
         rows = json.loads(listing[len('from cc ok '):])
@@ -176,7 +115,7 @@ async def _operator_console():
         assert await ask('who') == 'from cc ok {"selected": "glider9"}'
         assert await ask('ping') == 'from glider9 pong'
 
-        # broadcast to every online board
+        # broadcast to every online board (only `all` -- `*` is gone)
         assert await ask('all ping') == 'from glider9 pong'
     finally:
         operator_writer.close()
@@ -200,18 +139,18 @@ async def _http(port, method, path, body=None):
 
 async def _web():
     """The browser bridge on 8080: dashboard, /api/boards, /api/cmd routing, and /events SSE."""
-    server = control.Server(host='127.0.0.1', port=WEB_BOARD_PORT, operator_port=WEB_OPERATOR_PORT,
-                            web_port=WEB_PORT, log=lambda message: None, heartbeat_s=0.05)
-    hub_task = asyncio.create_task(server.run())
+    hub = server.Server(host='127.0.0.1', port=WEB_BOARD_PORT, operator_port=WEB_OPERATOR_PORT,
+                        web_port=WEB_PORT, log=lambda message: None, heartbeat_s=0.05)
+    hub_task = asyncio.create_task(hub.run())
     await asyncio.sleep(0.1)
 
     board_reader, board_writer = await asyncio.open_connection('127.0.0.1', WEB_BOARD_PORT)
     board_task = asyncio.create_task(_fake_board(board_reader, board_writer))
     for _ in range(50):
-        if 'glider9' in server.boards:
+        if 'glider9' in hub.boards:
             break
         await asyncio.sleep(0.02)
-    assert 'glider9' in server.boards
+    assert 'glider9' in hub.boards
 
     try:
         # GET / serves the dashboard page
@@ -247,11 +186,10 @@ async def _web():
 
 
 async def main():
-    await _unit()
     await _loopback()
     await _operator_console()
     await _web()
-    print('ok: control Board + Server + operator console + web bridge (api/boards, api/cmd, events)')
+    print('ok: server accept (loopback) + operator console + web bridge (api/boards, api/cmd, events)')
 
 
 asyncio.run(main())

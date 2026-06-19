@@ -2,7 +2,7 @@
 #
 # Each command is a small module in this package that registers itself with @command('name'); the
 # hub calls load() once at start to import them all, so a new operator command is added by dropping
-# a file here -- control.py never changes. (Board-facing commands live on the board, in cc_client.)
+# a file here -- server.py never changes. (Board-facing commands live on the board, in cc_client.)
 #
 # A handler is `handler(hub, tokens, session) -> list[str]` (the reply lines, each `from cc ...`).
 # `hub` is the Server (for the board registry), `tokens` the split operator line, `session` the

@@ -14,7 +14,7 @@ import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))  # src/control (control.py + cc_protocol symlink)
-import control  # noqa: E402
+import server  # noqa: E402
 
 PORT_DEV = os.environ.get('PORT_DEV', '/dev/ttyACM0')
 BOARD_SCRIPT = '/tmp/coludo_board_probe.py'
@@ -70,8 +70,8 @@ async def main():
         finally:
             done.set()
 
-    server = control.Server(port=1234, on_board=on_board)
-    server_task = asyncio.create_task(server.serve_forever())
+    hub = server.Server(port=1234, on_board=on_board)
+    server_task = asyncio.create_task(hub.serve_forever())
     await asyncio.sleep(0.3)
 
     print('launching board over %s ...' % PORT_DEV)

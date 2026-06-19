@@ -13,5 +13,5 @@ def help_command(hub, tokens, session) -> list:
             return ['from cc err badargs no-such-command %s' % tokens[1]]
         return ['from cc ok %s' % json.dumps({tokens[1]: spec.help})]
     listing = {name: REGISTRY[name].help for name in sorted(REGISTRY)}
-    listing['<board> <command>'] = 'route a command to a board (or all / *)'
+    listing['<board> <command>'] = 'route a command to a board (or all)'
     return ['from cc ok %s' % json.dumps(listing)]

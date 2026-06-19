@@ -1,25 +1,19 @@
-# Control — host-side ground station / hub for the Coludo boards (specs/cc-protocol.md).
-#
-# Board-first: boards dial in (port 1234), Control learns each board's id via whoami/iam and then
-# owns every exchange over the board socket (which sees `command params`, no id; only `iam` carries
-# the id). Control polls each online board (~2 s heartbeat) to prove liveness, and exposes a
-# telnet-friendly operator console (port 1235): a line whose first token is a board id / `all` / `*`
-# is routed to that board (the id stripped, the rest forwarded verbatim) and the reply tagged
-# `from <board> ...`; any other first token is a Control command (`help`/`list`/`select`/`who`),
-# served from a drop-in registry loaded from the `commands/` package at start. A browser bridge
-# (web.py) exposes the same over plain HTTP + SSE on 8080. run() serves all three.
-#
+# server.py — the Control hub: a board listener (1234) + per-board heartbeat + a telnet operator
+# console (1235), plus the web bridge (web.py, 8080). Boards dial in, Control learns each id via
+# whoami/iam and owns every exchange. An operator line whose first token is a board id or `all`
+# routes to that board (id stripped, the rest forwarded verbatim) and the reply is tagged
+# `from <board> ...`; any other first token is a Control command from the drop-in commands/ registry.
 # CPython 3.12, stdlib asyncio only. cc_protocol.py is shared with the firmware (symlinked).
 
 import asyncio
-import json
 import time
 
-import cc_protocol as cc
+import board
 import commands
 import web
 
 HEARTBEAT_S: float = 2.0  # poll an idle board this often to prove it is alive
+BROADCAST: str = 'all'  # the one broadcast target -- a clean token for scripting (no '*')
 
 
 def _render(resp) -> str:
@@ -28,56 +22,6 @@ def _render(resp) -> str:
     if not resp.args:
         return resp.command
     return '%s %s' % (resp.command, ' '.join(str(a) for a in resp.args))
-
-
-class Board:
-    """One connected board: lockstep request/response over its socket. The per-board lock makes
-    every exchange strictly sequential (Control never injects a second command mid-exchange), so
-    the heartbeat and operator traffic to one board can never overlap."""
-
-    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
-        self._reader = reader
-        self._writer = writer
-        self._lock = asyncio.Lock()
-        self.id = None
-        self.info = {}
-        self.online: bool = True
-        self.last_seen: float = time.monotonic()
-
-    @property
-    def peer(self) -> str:
-        host, port = self._writer.get_extra_info('peername')[:2]
-        return '%s:%d' % (host, port)
-
-    async def exchange(self, line: str, timeout: float = 5.0) -> cc._Msg:
-        """Send a ready board-facing line and return its parsed reply (None if disconnected).
-        `timeout` bounds the wait so a wedged board raises asyncio.TimeoutError, not hangs."""
-        async with self._lock:
-            self._writer.write((line + '\n').encode())
-            await self._writer.drain()
-            raw = await asyncio.wait_for(self._reader.readline(), timeout)
-        if not raw:
-            return None
-        self.last_seen = time.monotonic()
-        return cc.parse(raw.decode().strip())
-
-    async def command(self, command: str, *args, timeout: float = 5.0) -> cc._Msg:
-        """Build `command args...` and exchange it. Returns the parsed reply or None."""
-        return await self.exchange(cc.build(command, list(args)), timeout)
-
-    async def identify(self) -> str:
-        resp = await self.command('whoami')
-        if resp and resp.command == 'iam' and len(resp.args) >= 2:
-            self.id = resp.args[0]
-            self.info = json.loads(resp.args[1])
-        return self.id
-
-    async def inspect(self, name: str) -> dict:
-        resp = await self.command('inspect', name)
-        return json.loads(resp.args[0]) if resp and resp.command == 'ok' else {}
-
-    def close(self) -> None:
-        self._writer.close()
 
 
 class Server:
@@ -90,7 +34,7 @@ class Server:
         self.port = port
         self.operator_port = operator_port
         self.web_port = web_port
-        self.boards = {}  # id -> Board (kept after disconnect with online=False)
+        self.boards = {}  # id -> board.Board (kept after disconnect with online=False)
         self.on_board = on_board
         self.log = log
         self.heartbeat_s = heartbeat_s
@@ -100,43 +44,43 @@ class Server:
         """The registry as json-able rows (id, online, last-known stage/config_id) — shared by the
         `list` operator command and the web /api/boards + /events feeds."""
         return [
-            {'id': board.id, 'online': board.online, 'stage': board.info.get('stage'),
-             'config_id': board.info.get('config_id')}
-            for board in self.boards.values()
+            {'id': client.id, 'online': client.online, 'stage': client.info.get('stage'),
+             'config_id': client.info.get('config_id')}
+            for client in self.boards.values()
         ]
 
     # ----------------------------------------------------------------- board side
     async def _handle(self, reader, writer) -> None:
         """Identify a freshly connected board, register it, then poll it until it drops."""
-        board = Board(reader, writer)
-        self.log('control :: board connected %s' % board.peer)
+        client = board.Board(reader, writer)
+        self.log('control :: board connected %s' % client.peer)
         try:
-            board_id = await board.identify()
+            board_id = await client.identify()
             if not board_id:
-                self.log('control :: whoami failed from %s' % board.peer)
+                self.log('control :: whoami failed from %s' % client.peer)
                 return
-            self.boards[board_id] = board
-            self.log('control :: %s online %s' % (board_id, board.info))
+            self.boards[board_id] = client
+            self.log('control :: %s online %s' % (board_id, client.info))
             if self.on_board is not None:
-                await self.on_board(board)
-            await self._poll(board)
+                await self.on_board(client)
+            await self._poll(client)
         except (asyncio.TimeoutError, ConnectionError, asyncio.IncompleteReadError) as error:
-            self.log('control :: %s link lost %r' % (board.id or board.peer, error))
+            self.log('control :: %s link lost %r' % (client.id or client.peer, error))
         except Exception as error:
             self.log('control :: error %r' % error)
         finally:
-            board.online = False
-            board.close()
-            self.log('control :: %s offline' % (board.id or board.peer))
+            client.online = False
+            client.close()
+            self.log('control :: %s offline' % (client.id or client.peer))
 
-    async def _poll(self, board) -> None:
+    async def _poll(self, client) -> None:
         """Heartbeat: ping an idle board every `heartbeat_s`; a successful exchange (operator or
         ping) within the window already proves liveness, so it is skipped. Returns on disconnect."""
         while True:
             await asyncio.sleep(self.heartbeat_s)
-            if time.monotonic() - board.last_seen < self.heartbeat_s:
+            if time.monotonic() - client.last_seen < self.heartbeat_s:
                 continue  # a recent exchange already proved liveness
-            if await board.command('ping') is None:
+            if await client.command('ping') is None:
                 return  # disconnected -> _handle marks it offline
 
     # -------------------------------------------------------------- operator side
@@ -160,12 +104,12 @@ class Server:
             writer.close()
 
     async def _dispatch(self, text, session) -> list:
-        """Route one operator line. A known board id / `all` / `*` first token routes to a board
-        (id stripped); a registered Control command (from commands/) handles its own; otherwise a
-        sticky `select` target (if any) takes the whole line."""
+        """Route one operator line. A known board id / `all` first token routes to a board (id
+        stripped); a registered Control command (from commands/) handles its own; otherwise a sticky
+        `select` target (if any) takes the whole line."""
         tokens = text.split()
         first = tokens[0]
-        if first in self.boards or first in ('all', '*'):
+        if first in self.boards or first == BROADCAST:
             return await self._route(first, tokens[1:])
         spec = self.commands.get(first)
         if spec is not None:
@@ -181,19 +125,19 @@ class Server:
         if not command_tokens:
             return ['from cc err badargs empty-command']
         line = ' '.join(command_tokens)
-        if target in ('all', '*'):
-            targets = [b for b in self.boards.values() if b.online]
+        if target == BROADCAST:
+            targets = [c for c in self.boards.values() if c.online]
             if not targets:
-                return ['from cc err noboard *']
+                return ['from cc err noboard all']
         else:
-            board = self.boards.get(target)
-            if board is None or not board.online:
+            client = self.boards.get(target)
+            if client is None or not client.online:
                 return ['from cc err noboard %s' % target]
-            targets = [board]
+            targets = [client]
         out = []
-        for board in targets:
-            resp = await board.exchange(line)
-            out.append('from %s %s' % (board.id, _render(resp)) if resp else 'from %s err offline' % board.id)
+        for client in targets:
+            resp = await client.exchange(line)
+            out.append('from %s %s' % (client.id, _render(resp)) if resp else 'from %s err offline' % client.id)
         return out
 
     # ------------------------------------------------------------------ listeners
@@ -212,10 +156,6 @@ class Server:
             await server.serve_forever()
 
     async def run(self) -> None:
-        """Run the board listener, operator console, and web bridge until cancelled — the entry."""
+        """Run the board listener, operator console, and web bridge until cancelled."""
         bridge = web.Web(self, self.host, self.web_port, self.log)
         await asyncio.gather(self.serve_forever(), self.serve_operators(), bridge.serve())
-
-
-if __name__ == '__main__':
-    asyncio.run(Server().run())

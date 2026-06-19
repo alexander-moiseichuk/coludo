@@ -31,7 +31,9 @@ from a board — no async push, no subscriptions, no out-of-band events. The con
   never overlaps requests (see [Heartbeat](#heartbeat--liveness)).
 - **One outstanding request per board (lockstep).** CC sends a command and waits for the
   single response before sending the next to that board. No request IDs are needed to match
-  responses. (Different boards are polled concurrently; only per-board is serial.)
+  responses. (Different boards are polled concurrently; only per-board is serial.) Every exchange is
+  bounded by a timeout (**10 s**, `board.EXCHANGE_TIMEOUT_S`): a wedged board raises rather than
+  hanging the hub, so one stuck board never blocks the others.
 - **Data is pulled, not pushed.** The board maintains bounded ring buffers (in PSRAM) for log
   and telemetry records. CC retrieves slices on demand (`log`, `tel`). The same buffers feed
   the Recorder over UART, so there is one producer and two drains.
@@ -59,10 +61,10 @@ Plain TCP, no encryption (trusted LAN; encryption is explicitly out of scope for
 ```
 
 - The **first token is the target**: a board id (from `board.id`, e.g. `glider1`, always a bare
-  whitespace-free token) or `all` / `*` to broadcast.
+  whitespace-free token) or `all` to broadcast.
 - **Control routes by that token and strips it**, forwarding `<command> [params...]` to the matched
   board socket(s). **A board receives `<command> [params...]` with no id** and never deals with
-  routing — board-id handling lives entirely in Control. (`all`/`*` is a Control-side fan-out to
+  routing — board-id handling lives entirely in Control. (`all` is a Control-side fan-out to
   every connected board; boards never see it.)
 - The **rest** is parameters, whitespace-separated, with **no quoting or escaping** — both sides
   know each command's schema. A value is a **bare token** (no spaces) or **`base64:<data>`** (spaces,
@@ -195,7 +197,7 @@ target board) are Control's concern, returned to the operator as `from cc err no
 
 ## Operator commands (operator ↔ Control only)
 
-A first token that is a known board id (or `all`/`*`) routes to a board; otherwise it is a
+A first token that is a known board id (or `all`) routes to a board; otherwise it is a
 **Control command**, handled by Control and never sent to a board:
 
 | Command | Meaning |
@@ -206,9 +208,9 @@ A first token that is a known board id (or `all`/`*`) routes to a board; otherwi
 | `who` | `from cc ok {selected, since}` — current selection |
 
 **Sticky select / broadcast:** after `select glider1`, typing `health` is routed as `glider1
-health`; an explicit `<board>`/`all`/`*` first token overrides it for that line. Control tags every
+health`; an explicit `<board>`/`all` first token overrides it for that line. Control tags every
 relayed reply with its source (`from glider1 ok …`), so the operator always sees who answered.
-`all`/`*` fans out to every connected board and yields one tagged reply per board.
+`all` fans out to every connected board and yields one tagged reply per board.
 
 Example telnet session (response JSON shown **decoded for readability**; on the wire each is one
 `base64:` token):

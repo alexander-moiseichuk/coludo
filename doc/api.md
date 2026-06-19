@@ -446,36 +446,45 @@ keeps logging/telemetering through the global recorder.Recorder.
 
 # control (CPython) — `src/control`
 
-## `control.py`
+## `board.py`
 
-_Tested by `test/test_control.py`._
+_Tested by `test/test_board.py`._
 
-Control — host-side ground station / hub for the Coludo boards (specs/cc-protocol.md).
-
-Board-first: boards dial in (port 1234), Control learns each board's id via whoami/iam and then
-owns every exchange over the board socket (which sees `command params`, no id; only `iam` carries
-the id). Control polls each online board (~2 s heartbeat) to prove liveness, and exposes a
-telnet-friendly operator console (port 1235): a line whose first token is a board id / `all` / `*`
-is routed to that board (the id stripped, the rest forwarded verbatim) and the reply tagged
-`from <board> ...`; any other first token is a Control command (`help`/`list`/`select`/`who`),
-served from a drop-in registry loaded from the `commands/` package at start. A browser bridge
-(web.py) exposes the same over plain HTTP + SSE on 8080. run() serves all three.
-
-CPython 3.12, stdlib asyncio only. cc_protocol.py is shared with the firmware (symlinked).
+board.py — one connected Coludo board as seen by the hub: lockstep request/response over its
+socket (specs/cc-protocol.md). The per-board lock makes every exchange strictly sequential, so the
+heartbeat and operator traffic to one board can never overlap. CPython 3.12, stdlib asyncio only.
 
 ### `class Board`
 
-One connected board: lockstep request/response over its socket. The per-board lock makes
-every exchange strictly sequential (Control never injects a second command mid-exchange), so
-the heartbeat and operator traffic to one board can never overlap.
+One connected board: lockstep request/response over its socket.
 
 - `__init__(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)` — constructor
 - `peer() -> str` _(property)_
-- `exchange(line: str, timeout: float=5.0) -> cc._Msg` — Send a ready board-facing line and return its parsed reply (None if disconnected).
-- `command(command: str, *args, timeout=5.0) -> cc._Msg` — Build `command args...` and exchange it. Returns the parsed reply or None.
+- `exchange(line: str, timeout: float=EXCHANGE_TIMEOUT_S) -> cc._Msg` — Send a ready board-facing line and return its parsed reply (None if disconnected).
+- `command(command: str, *args, timeout=EXCHANGE_TIMEOUT_S) -> cc._Msg` — Build `command args...` and exchange it. Returns the parsed reply or None.
 - `identify() -> str`
 - `inspect(name: str) -> dict`
 - `close() -> None`
+
+## `main.py`
+
+main.py — CLI entry point for the Control hub. Run it headless on a LAN box (it binds 0.0.0.0 by
+default) and telnet / browse to it from another workstation, instead of opening a browser locally.
+
+python3 main.py [--host H] [--port N] [--operator-port N] [--web-port N]   (--help for all)
+
+### `main() -> None`
+
+## `server.py`
+
+_Tested by `test/test_server.py`._
+
+server.py — the Control hub: a board listener (1234) + per-board heartbeat + a telnet operator
+console (1235), plus the web bridge (web.py, 8080). Boards dial in, Control learns each id via
+whoami/iam and owns every exchange. An operator line whose first token is a board id or `all`
+routes to that board (id stripped, the rest forwarded verbatim) and the reply is tagged
+`from <board> ...`; any other first token is a Control command from the drop-in commands/ registry.
+CPython 3.12, stdlib asyncio only. cc_protocol.py is shared with the firmware (symlinked).
 
 ### `class Server`
 
@@ -486,7 +495,7 @@ optional async hook invoked once, right after a board identifies (used by integr
 - `board_rows() -> list` — The registry as json-able rows (id, online, last-known stage/config_id) — shared by the
 - `serve_forever() -> None` — Accept board connections on `port` (board-facing listener).
 - `serve_operators() -> None` — Accept operator connections on `operator_port` (telnet-friendly console).
-- `run() -> None` — Run the board listener, operator console, and web bridge until cancelled — the entry.
+- `run() -> None` — Run the board listener, operator console, and web bridge until cancelled.
 
 ## `web.py`
 

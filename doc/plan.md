@@ -10,9 +10,11 @@ Required hardware and the phased development roadmap. Architecture lives in
 - **Phase 1 board side — done.** `wifi` (STA) and `cc_client` (`Dispatcher`/`Client` +
   `create_dispatcher` answering whoami/ping/health/state/report/get-config/save-config/
   reset-config/reboot). 8/8 on-board tests.
-- **Control hub — done.** `src/control/`: board listener + registry + ~2 s heartbeat + telnet
-  operator console (drop-in `commands/`) + HTTP/SSE browser dashboard on 8080 (`web.py`),
-  host-tested. Remaining polish: draft config + save/reboot from the UI. **Then** the Controller
+- **Control hub — done.** `src/control/` split into `board.py` (Board, 10 s exchange timeout),
+  `server.py` (the hub: board listener + ~2 s heartbeat + telnet operator console, drop-in
+  `commands/`, `all`-only broadcast) and `main.py` (CLI: `--host 0.0.0.0` / `--port` / `--help`),
+  plus the HTTP/SSE dashboard (`web.py`). Per-file host tests (`test_board`, `test_server`).
+  Remaining polish: draft config + save/reboot from the UI. **Then** the Controller
   **bring-up wiring** (connect → time-sync → start tasks), two-sided so it wants Control live first.
   The Recorder is now wired into the task graph by a thin adapter (`@task.activity('recorder')` in
   `tasks/recorder.py`); the `recorder` component (bus uart:1) makes the Controller create + supervise
@@ -71,11 +73,10 @@ testable foundations and connectivity come before the flight loop.
 - ✅ **Board side:** `wifi.py` (STA join `panda`, tx-power), `cc_client.py` (`Client` dial-out +
   `serve` loop, `create_dispatcher` answering whoami/ping/health/state/report/get-config/
   save-config/reset-config/reboot). System status (temp/mem/uptime) is in the health handler.
-- ◧ **CC hub** (`src/control/`, host Python): board listener (1234) + registry + ~2 s heartbeat
-  poll + telnet operator console (1235, routing `<board>`/`all`/`*`, sticky `select`, drop-in
-  `commands/`) + **HTTP + SSE browser bridge** (8080: `/`, `/api/boards`, `/api/cmd`, `/events`,
-  `web.py` + `static/index.html`). ✅ ◻ remaining: draft config + richer dashboard (save/reboot). ← **next**
-- ◻ Minimal browser dashboard: health, enable/disable, `save-config` → `reboot`.
+- ✅ **CC hub** (`src/control/`): `board.py` (Board, 10 s exchange timeout) + `server.py` (board
+  listener 1234 + ~2 s heartbeat + operator console 1235, routing `<board>`/`all`, sticky `select`,
+  drop-in `commands/`) + `main.py` (CLI `--host`/`--port`/`--help`) + **HTTP/SSE dashboard** (8080,
+  `web.py`+`static/index.html`). Per-file host tests. ◻ remaining: draft config + save/reboot UI. ← **next**
 - ✅ **Task packages** — `drivers/` (HAL: `led`, `wifi`, the future sensors/servo, via `@task.driver`)
   and `tasks/` (subsystems: Recorder adapter, `board_health`, `cc_link`, via the `@task.activity`
   alias), each with a `load()` that imports its modules so the registrations run (one shared
