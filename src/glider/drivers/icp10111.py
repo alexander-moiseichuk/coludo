@@ -66,8 +66,7 @@ class Icp10111(task.Task):
         except Exception as error:
             print('icp10111 :: %r' % error)
             return False
-        blackboard.Blackboard.declare('altitude')
-        blackboard.Blackboard.declare('temperature')
+        blackboard.Blackboard.provide(self.name, self.config.get('provides', {}))
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('altitude', 'temperature'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True

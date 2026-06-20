@@ -8,25 +8,60 @@ _Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand
 
 _Tested by `test/test_blackboard.py`._
 
-blackboard.py — the shared latest-value store for hot sensor data (specs/coludo.md "Task
-Data-Flow"). Two layers:
-raw   — each sensor's latest reading, kept per (quantity, source) so several providers of the
-same quantity (e.g. altitude from the ICP-10111 and the BMP280) coexist.
-fused — the one selected value per quantity that consumers read; the fusion task picks it from
-the raw providers by priority + freshness (tasks/fusion.py) and publishes it here.
-Sensors call write(); fusion calls providers()/publish(); consumers call value()/read(). Slots are
-updated in place (allocation-free on the hot path). A global singleton, Inspectable as
-`blackboard` (shows the fused values).
+blackboard.py — the shared latest-value store + sensor fusion for hot data (specs/coludo.md "Task
+Data-Flow and Message Propagation"). Replaces a two-layer raw/fused store + a polling fusion task
+with a registry of Parameter objects whose fused value is computed on read.
+
+Structure.
+Blackboard   — a registry of Parameter objects. Blackboard.parameter(name) gets-or-creates one;
+a sensor registers itself as a source via provide() and reports via write().
+Parameter    — one fused quantity (e.g. 'altitude'). Owns a _Channel per source.
+_Channel     — one source's stream: a static rank (priority; lower = preferred), an expiry
+window, and TWO slots (the last two readings) + a deadline. write() updates the
+channel's value + timestamp on the fly; the deadline = ts + expire is recomputed.
+
+Fusion is a pure read-time function, Parameter.value():
+1. winner = the lowest-rank channel that is still fresh (freshness is evaluated per channel,
+now <= its deadline); a rank tie breaks to the newer reading. Return its value.
+2. if NO channel is fresh, take the newest channel and linearly extrapolate its two slots to
+`now` (component-wise for vector values).
+3. if nothing was ever written, None.
+So "rank 0 answers while fresh; rank 1 takes over the instant rank 0 expires" is EMERGENT -- every
+read re-evaluates each channel's freshness; there is no queue to sort, insert into, or evict.
+
+Bounded by design. A parameter with M ranked sources holds exactly M channels. Each channel keeps
+TWO slots because the extrapolation here is LINEAR (needs 2 points); the slot depth is a function
+of the model order -- degree-N polynomial would need N+1 readings (linear=2, quadratic=3, ...). A
+future model registry could carry that, e.g. {'linear': (fn, 2), 'quadratic': (fn, 3)}, and size
+the channel from it; for now it is fixed at 2 (linear). Storage is fixed when sources register --
+nothing grows per sample. (A rank may in theory have several sources -- just channels with the
+same rank, tiebroken by time -- though in practice each rank is one device.) Per-source slots keep
+extrapolation within a single source, never across the bias gap between, say, ICP-10111 and BMP280.
+
+Telemetry is separate: each sensor writes its own raw SENSOR.csv directly. A global singleton,
+Inspectable as `blackboard` (fused value/source/age per parameter).
+
+### `class Parameter`
+
+One fused quantity. Holds a channel per source; value() fuses them by rank/freshness, falling
+back to extrapolation when none is fresh.
+
+- `__init__(name: str)` — constructor
+- `add_source(source: str, rank: int, expire_us: int) -> None` — Register (or re-register) a source for this parameter with its rank + expiry.
+- `write(value, source: str) -> None` — Report a source's latest reading (updates its channel's value + timestamp).
+- `value()` — The fused estimate: the preferred fresh source's value; if none is fresh, the newest
+- `read() -> tuple` — (value, source, age_ms) of the fused estimate; `source` is None when extrapolated.
+- `raw(source: str)` — A specific source's latest value (None if absent / unwritten).
+- `sources() -> list`
 
 ### `class Blackboard`
 
-- `declare(quantity: str) -> None` _(classmethod)_ — Preallocate a quantity's raw map + fused slot (idempotent). Registers on first use.
-- `write(quantity: str, value, source: str) -> None` _(classmethod)_ — A sensor publishes its latest raw reading for `quantity` (latest-wins per source).
-- `raw(quantity: str, source: str) -> _Slot` _(classmethod)_ — A specific sensor's latest raw reading for `quantity` (None if it never wrote).
-- `providers(quantity: str) -> dict` _(classmethod)_ — All raw readings for `quantity` as { source -> _Slot } (for the fusion task).
-- `publish(quantity: str, value, source: str) -> None` _(classmethod)_ — Fusion sets the selected value for `quantity` (`source` = which provider won).
-- `read(quantity: str) -> _Slot` _(classmethod)_ — The fused _Slot (value/timestamp/source) for `quantity` — what consumers read.
-- `value(quantity: str)` _(classmethod)_ — Just the fused value for `quantity` (None if nothing fused yet).
+- `parameter(name: str) -> Parameter` _(classmethod)_ — Get-or-create the Parameter for `name` (registers with the Inspector on the first one).
+- `provide(source: str, provides: dict) -> None` _(classmethod)_ — A sensor registers the params it provides: {param: {priority, timeout_ms}}.
+- `write(name: str, value, source: str) -> None` _(classmethod)_
+- `value(name: str)` _(classmethod)_
+- `read(name: str) -> tuple` _(classmethod)_
+- `raw(name: str, source: str)` _(classmethod)_
 - `inspect() -> dict` _(classmethod)_
 - `stats() -> dict` _(classmethod)_
 
@@ -595,27 +630,6 @@ Serve the CC protocol to the hub when the link is available; never fatal.
 
 - `setup() -> bool`
 - `run() -> None` — Park until the Wi-Fi dependency is up, then dial CC and serve until the link drops; retry.
-
-## `fusion.py`
-
-tasks/fusion.py — sensor fusion: turn the blackboard's raw per-provider readings into one selected
-value per quantity (specs/coludo.md). @task.activity('fusion'). Each sensor's config declares what
-it `provides` with a priority (lower = preferred) and a timeout_ms (how long a reading stays
-fresh); fusion groups the providers by quantity and, every cycle, publishes the highest-priority
-provider whose latest reading is still fresh, falling back to the next when the preferred one goes
-stale (e.g. ICP-10111 altitude preferred, BMP280 as backup). A pure read-from-blackboard task, so
-it needs no sensor dependency wait -- absent sensors simply never produce fresh data and are
-skipped. Inspectable: `selected` shows which source currently wins each quantity.
-
-### `class Fusion(task.Task)`
-
-Pick the live value per quantity from its providers by priority + freshness.
-
-- `setup() -> bool`
-- `fuse_once() -> None` — One arbitration pass: for each quantity publish the preferred provider that is fresh.
-- `run() -> None`
-- `inspect() -> dict`
-- `stats() -> dict`
 
 ## `recorder.py`
 

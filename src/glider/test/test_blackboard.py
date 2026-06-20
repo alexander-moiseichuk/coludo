@@ -1,44 +1,53 @@
-# On-board test for the latest-value blackboard (blackboard.py): the raw layer (per quantity+source)
-# and the fused layer (publish/read), providers(), Inspector registration. Run by `make test`.
+# On-board test for the blackboard (blackboard.py): provide/write/raw, value() rank-preference,
+# the expiry handover (rank 0 expires -> rank 1 takes over), and stale extrapolation. Run by
+# `make test`.
+
+import time
 
 import inspector
 from blackboard import Blackboard
 
 
 def main():
-    # declaring a quantity registers the blackboard with the Inspector
-    Blackboard.declare('altitude')
+    # provide registers channels with rank(=priority) + expiry; registers with the Inspector
+    Blackboard.provide('icp', {'altitude': {'priority': 0, 'timeout_ms': 50}})
+    Blackboard.provide('bmp', {'altitude': {'priority': 1, 'timeout_ms': 500}})
     assert 'blackboard' in inspector.Inspector.names()
-    assert Blackboard.value('altitude') is None  # nothing fused yet
+    assert Blackboard.value('altitude') is None  # nothing written yet
 
-    # raw layer: several providers of one quantity coexist (no clobber)
-    Blackboard.write('altitude', 10.0, 'icp')
-    Blackboard.write('altitude', 20.0, 'bmp')
-    assert Blackboard.raw('altitude', 'icp').value == 10.0
-    assert Blackboard.raw('altitude', 'bmp').value == 20.0
-    assert set(Blackboard.providers('altitude').keys()) == {'icp', 'bmp'}
+    # both fresh -> rank 0 (icp) wins; per-source latest still visible via raw()
+    Blackboard.write('altitude', 100.0, 'icp')
+    Blackboard.write('altitude', 200.0, 'bmp')
+    assert Blackboard.value('altitude') == 100.0
+    assert Blackboard.read('altitude')[1] == 'icp'
+    assert Blackboard.raw('altitude', 'bmp') == 200.0
 
-    # latest-wins per source; timestamp/source recorded
-    Blackboard.write('altitude', 11.0, 'icp')
-    icp = Blackboard.raw('altitude', 'icp')
-    assert icp.value == 11.0 and icp.source == 'icp' and icp.timestamp > 0
+    # rank 0 (icp) goes stale past its 50 ms window while rank 1 (bmp) stays fresh -> bmp takes over
+    time.sleep_ms(70)
+    Blackboard.write('altitude', 201.0, 'bmp')  # bmp fresh, icp now stale
+    assert Blackboard.value('altitude') == 201.0 and Blackboard.read('altitude')[1] == 'bmp'
 
-    # fused layer: publish (by fusion) -> read/value (by consumers)
-    assert Blackboard.value('altitude') is None  # raw written, but nothing fused
-    Blackboard.publish('altitude', 11.0, 'icp')
-    assert Blackboard.value('altitude') == 11.0 and Blackboard.read('altitude').source == 'icp'
-
-    # write auto-declares; unknown -> None
+    # single-provider passthrough, vector value
+    Blackboard.provide('adxl', {'accel': {'priority': 0, 'timeout_ms': 100}})
     Blackboard.write('accel', (1.0, 2.0, 3.0), 'adxl')
-    assert Blackboard.raw('accel', 'adxl').value == (1.0, 2.0, 3.0)
-    assert Blackboard.raw('altitude', 'missing') is None and Blackboard.value('missing') is None
+    assert Blackboard.value('accel') == (1.0, 2.0, 3.0)
 
-    # inspect shows the fused values; stats lists raw providers per quantity
+    # all stale -> linearly extrapolate the newest source's last two points forward to now
+    Blackboard.provide('s', {'h': {'priority': 0, 'timeout_ms': 10}})
+    Blackboard.write('h', 10.0, 's')
+    time.sleep_ms(5)
+    Blackboard.write('h', 12.0, 's')  # rising +2 over ~5 ms
+    time.sleep_ms(40)  # both points now older than the 10 ms window -> extrapolate
+    value, source, age = Blackboard.read('h')
+    assert source is None and age is None  # no fresh provider -> extrapolated
+    assert value > 12.0, value  # projected forward beyond the last reading
+
+    # inspect shows the fused value per param; stats lists each param's providers
     snap = Blackboard.inspect()
-    assert snap['altitude']['value'] == 11.0 and snap['altitude']['source'] == 'icp'
+    assert snap['altitude']['value'] == 201.0 and snap['altitude']['source'] == 'bmp'
     assert sorted(Blackboard.stats()['altitude']) == ['bmp', 'icp']
 
-    print('ok: blackboard raw(per source)/providers + fused publish/read, inspect')
+    print('ok: blackboard provide/write/raw, rank-preference, expiry handover, extrapolation')
 
 
 main()

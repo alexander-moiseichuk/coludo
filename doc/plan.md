@@ -96,8 +96,11 @@ testable foundations and connectivity come before the flight loop.
   save + reboot → it returns from the saved config.
 
 ### Phase 2 — Sensors & telemetry (enables telemetry-only flights)
-- ✅ **`blackboard.py`** — the latest-value store (per-quantity slots: value/timestamp/source,
-  latest-wins; Inspectable as `blackboard`). `test_blackboard`.
+- ✅ **`blackboard.py`** — latest-value store **+ read-time fusion** in one structure: a registry of
+  `Parameter` objects, each owning a channel per source (rank=priority, expiry, 2 slots). `value()`
+  returns the lowest-rank fresh source, else linearly extrapolates the newest source to now — so
+  "rank 0 until it expires, then rank 1" is emergent (no queue, no fusion task). Inspectable.
+  `test_blackboard`.
 - ✅ **Shared (locked) I²C bus** (`i2cbus.py`) — one `machine.I2C` + `asyncio.Lock` per id, shared
   via `get()`; ADXL375 + BNO055 + BMP280 coexist on `i2c:0`. `test_i2cbus`.
 - ◧ Sensor drivers + tests (all → blackboard, write `altitude`/`temperature`/`accel`/`attitude`):
@@ -106,15 +109,13 @@ testable foundations and connectivity come before the flight loop.
   ✅ **BMP280** (Bosch-compensated `altitude` m + `temperature` °C, 10 Hz, backup baro);
   ✅ **ICP-10111** (`drivers/icp10111.py` — TDK command/OTP protocol, `altitude` + `temperature`,
   primary baro, prio 0); ◻ GNSS (ATGM336H), VL53L4CX. All live-verified on `i2c:0`.
-- ✅ **Sensor fusion** (`tasks/fusion.py` `@task.activity('fusion')`) — blackboard split into a raw
-  layer (per quantity+source) and a fused layer; fusion picks each quantity's live value from its
-  providers by `provides` priority + freshness (timeout), falling back when the preferred goes stale.
-  Live: altitude/temperature → ICP-10111 (prio 0) over BMP280, accel/attitude pass through. Config
-  `timeout_ms` set to realistic windows (a few sample periods). `test_fusion` + `test_blackboard`.
-- ✅ **Telemetry wiring** — `Telemetry(prorate_us)` rate-limits a stream (a fast sensor pushes every
+- ✅ **Sensor fusion** — folded into the blackboard's read-time `value()` (the separate fusion task
+  is gone). rank=`priority`, expiry=`timeout_ms` (realistic windows: a few sample periods). Live:
+  altitude/temperature → ICP-10111 (rank 0) over BMP280, accel/attitude pass through.
+- ✅ **Telemetry wiring** — `Telemetry(decimate_us)` rate-limits a stream (a fast sensor pushes every
   sample, decimated to a sane rate). Each sensor emits its own `SENSOR.csv` (accel 50 Hz, imu 25 Hz,
-  baros 10 Hz) + fusion emits a wide `fused.csv` (one column per quantity, vectors pipe-joined,
-  10 Hz). Live-verified: rows/sec match the configured `telemetry_us`.
+  baros 10 Hz); separation emits a durable `separation.csv`. Live-verified: rows/sec match the
+  configured `telemetry_us`. (No `fused.csv` — the fused value is read-time via the blackboard.)
 - ✅ **Separation switch** (`drivers/separation.py` `@task.driver('separation')`) — copper pads on
   `separation_switch` (GPIO33): HIGH=nested, LOW=separated, internal pull-down (no external resistor
   needed). IRQ on either edge → debounce → on a confirmed separation during Boosting, drive
