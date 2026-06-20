@@ -84,5 +84,5 @@ class Bno055(task.Task):
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
-        status['attitude_deg'] = self._attitude.v1  # our channel's latest (no hot-path I2C)
+        status['attitude_deg'] = self._attitude.value()  # our channel's latest (no hot-path I2C)
         return status

@@ -115,5 +115,5 @@ class Adxl375(task.Task):
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['interrupt'] = self._int is not None
-        status['accel_g'] = self._accel.v1  # our channel's latest (no hot-path I2C here)
+        status['accel_g'] = self._accel.value()  # our channel's latest (no hot-path I2C here)
         return status

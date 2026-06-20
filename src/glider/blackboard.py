@@ -68,6 +68,10 @@ class _Channel:
     def fresh(self, now: int) -> bool:
         return time.ticks_diff(self.deadline, now) >= 0
 
+    def value(self):
+        """This channel's latest reading (None until first push). The handle a source reads back."""
+        return self.v1
+
 
 def _extrapolate(channel: _Channel, now: int):
     """Linear projection of a channel's two slots to `now` -- value is a scalar (int|float). With

@@ -111,6 +111,6 @@ class Bmp280(task.Task):
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)  # our channels' latest (no hot-path I2C here)
-        status['altitude_m'] = self._altitude.v1
-        status['temperature_c'] = self._temperature.v1
+        status['altitude_m'] = self._altitude.value()
+        status['temperature_c'] = self._temperature.value()
         return status
