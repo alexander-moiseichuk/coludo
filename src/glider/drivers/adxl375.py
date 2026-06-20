@@ -65,7 +65,7 @@ class Adxl375(task.Task):
         except Exception as error:
             print('adxl375 :: %r' % error)
             return False
-        self._accel = blackboard.Blackboard.provide(self.name, self.config.get('provides', {}))['accel']
+        self._accel = blackboard.Blackboard.provide(self.name, self.config.get('provides', {}), 'accel')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('ax', 'ay', 'az'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True

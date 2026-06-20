@@ -70,9 +70,8 @@ class Icp10111(task.Task):
             print('icp10111 :: %r' % error)
             return False
         self._ground = await self._ground_zero()
-        channels = blackboard.Blackboard.provide(self.name, self.config.get('provides', {}))
-        self._altitude, self._temperature = channels['altitude'], channels['temperature']
-        self._pressure, self._elevation = channels['pressure'], channels['elevation']
+        self._altitude, self._temperature, self._pressure, self._elevation = blackboard.Blackboard.provide(
+            self.name, self.config.get('provides', {}), 'altitude', 'temperature', 'pressure', 'elevation')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
                                        ('altitude', 'temperature', 'pressure', 'elevation'),
                                        decimate_us=self.config.get('telemetry_us', 0))

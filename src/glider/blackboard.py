@@ -26,6 +26,10 @@
 # slots; storage is fixed when sources register, nothing grows per sample. Per-source slots keep
 # extrapolation within a single source, never across the bias gap between e.g. ICP-10111 and BMP280.
 #
+# Dependencies. A sensor that consumes another's quantity grabs a read handle with parameter(*names)
+# (get-or-create, so setup order does not matter); a provider gets its write-channels from
+# provide(source, provides, *want). Both return one handle for one name, a tuple for several.
+#
 # Telemetry is separate: each sensor writes its own raw SENSOR.csv directly. A global singleton,
 # Inspectable as `blackboard` (fused value/source/age per parameter).
 
@@ -163,22 +167,35 @@ class Blackboard:
     _params: dict = {}  # name -> Parameter
 
     @classmethod
-    def parameter(cls, name: str) -> Parameter:
-        """Get-or-create the Parameter for `name` (registers with the Inspector on the first one)."""
-        param = cls._params.get(name)
-        if param is None:
-            if not cls._params:
-                inspector.Inspector.register(cls)
-            param = cls._params[name] = Parameter(name)
-        return param
+    def parameter(cls, *names):
+        """Get-or-create read handle(s) for `names` -- the dependency accessor: a consumer grabs
+        another sensor's Parameter regardless of setup order (created on first touch, reused after;
+        registers with the Inspector on the very first one). One name returns the Parameter; several
+        return a tuple in order."""
+        handles = []
+        for name in names:
+            param = cls._params.get(name)
+            if param is None:
+                if not cls._params:
+                    inspector.Inspector.register(cls)
+                param = cls._params[name] = Parameter(name)
+            handles.append(param)
+        return handles[0] if len(handles) == 1 else tuple(handles)
 
     @classmethod
-    def provide(cls, source: str, provides: dict) -> dict:
-        """A sensor registers the params it provides ({param: {priority, timeout_ms}}) and gets back
-        {param: _Channel} so it can push() its readings directly -- one step, no per-write lookup."""
-        return {name: cls.parameter(name).add_source(source, spec.get('priority', 0),
-                                                     spec.get('timeout_ms', 0) * 1000)
-                for name, spec in provides.items()}
+    def provide(cls, source: str, provides: dict, *want):
+        """Register `source` for the params it provides ({param: {priority, timeout_ms}}) and hand
+        back its write-channel(s), ready to push(): name the ones you `want` -- one name returns that
+        channel, several return a tuple in that order, none returns the {param: channel} dict. So a
+        driver writes `self._a, self._b = provide(name, provides, 'a', 'b')` in one line."""
+        channels = {name: cls.parameter(name).add_source(source, spec.get('priority', 0),
+                                                         spec.get('timeout_ms', 0) * 1000)
+                    for name, spec in provides.items()}
+        if not want:
+            return channels
+        if len(want) == 1:
+            return channels[want[0]]
+        return tuple(channels[name] for name in want)
 
     @classmethod
     def write(cls, name: str, value, source: str) -> None:

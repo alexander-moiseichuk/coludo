@@ -63,8 +63,8 @@ class Bno055(task.Task):
         except Exception as error:
             print('bno055 :: %r' % error)
             return False
-        channels = blackboard.Blackboard.provide(self.name, self.config.get('provides', {}))
-        self._attitude, self._accel = channels['attitude'], channels['accel']
+        self._attitude, self._accel = blackboard.Blackboard.provide(
+            self.name, self.config.get('provides', {}), 'attitude', 'accel')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
                                              ('heading', 'roll', 'pitch', 'ax', 'ay', 'az'),
                                              decimate_us=self.config.get('telemetry_us', 0))

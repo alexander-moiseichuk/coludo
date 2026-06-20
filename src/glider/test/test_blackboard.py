@@ -47,7 +47,26 @@ def main():
     assert snap['altitude']['value'] == 201.0 and snap['altitude']['source'] == 'bmp'
     assert sorted(Blackboard.stats()['altitude']) == ['bmp', 'icp']
 
-    print('ok: blackboard provide/write/raw, rank-preference, expiry handover, extrapolation')
+    # provide() hands back named write-channel(s): one name -> the channel, several -> a tuple, none
+    # -> the dict; the clumsy `channels = provide(...); self._x = channels['x']` is gone
+    one = Blackboard.provide('s1', {'p1': {'priority': 0, 'timeout_ms': 100}}, 'p1')
+    one.push(5.0)  # the returned object is the _Channel, push()-able directly
+    assert Blackboard.value('p1') == 5.0
+    pa_ch, pb_ch = Blackboard.provide('s2', {'pa': {'priority': 0, 'timeout_ms': 100},
+                                             'pb': {'priority': 0, 'timeout_ms': 100}}, 'pa', 'pb')
+    pa_ch.push(1.0)
+    pb_ch.push(2.0)
+    assert Blackboard.value('pa') == 1.0 and Blackboard.value('pb') == 2.0
+    assert 'pc' in Blackboard.provide('s3', {'pc': {'priority': 0, 'timeout_ms': 100}})  # no want -> dict
+
+    # parameter() is the dependency accessor: get-or-create read handles, order-independent of setup
+    dep = Blackboard.parameter('pa')  # an existing param
+    pending = Blackboard.parameter('not_yet')  # created on first touch though no source exists yet
+    assert dep.value() == 1.0 and pending.value() is None
+    handle_a, handle_b = Blackboard.parameter('pa', 'pb')  # several -> a tuple in order
+    assert handle_a.value() == 1.0 and handle_b.value() == 2.0
+
+    print('ok: blackboard provide/parameter ergonomics, rank-preference, expiry handover, extrapolation')
 
 
 main()
