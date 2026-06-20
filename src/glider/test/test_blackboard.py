@@ -66,7 +66,35 @@ def main():
     handle_a, handle_b = Blackboard.parameter('pa', 'pb')  # several -> a tuple in order
     assert handle_a.value() == 1.0 and handle_b.value() == 2.0
 
-    print('ok: blackboard provide/parameter ergonomics, rank-preference, expiry handover, extrapolation')
+    # shared freshness window: the primary (lowest-rank) timeout governs EVERY channel. A backup is
+    # used only while itself that fresh; when it lapses too, the PRIMARY is extrapolated (not the
+    # backup's stale value, which would carry its bias).
+    Blackboard.provide('pri', {'w': {'priority': 0, 'timeout_ms': 20}})    # primary: tight 20 ms
+    Blackboard.provide('sec', {'w': {'priority': 1, 'timeout_ms': 5000}})  # backup declares 5 s...
+    Blackboard.write('w', 10.0, 'pri')
+    time.sleep_ms(5)
+    Blackboard.write('w', 12.0, 'pri')  # primary: two points ~5 ms apart, rising +2
+    Blackboard.write('w', 5.0, 'sec')   # backup is the newest channel, but only rank 1
+    assert Blackboard.value('w') == 12.0  # both fresh -> rank-0 primary wins
+    # primary goes stale; the backup keeps pushing within the 20 ms window -> backup is used
+    time.sleep_ms(30)
+    Blackboard.write('w', 6.0, 'sec')
+    assert Blackboard.read('w')[1] == 'sec' and Blackboard.value('w') == 6.0
+    # backup lapses too (its own 5 s timeout is ignored) -> extrapolate the PRIMARY, not sec's 6.0
+    time.sleep_ms(30)
+    value, source, age = Blackboard.read('w')
+    assert source is None and age is None  # nobody fresh in the shared 20 ms window
+    assert value > 12.0, value  # primary's rising trajectory projected forward, not the stale backup
+
+    # two rank-0 sources -> the shared window is the MIN of their timeouts (the tighter one)
+    Blackboard.provide('a0', {'m': {'priority': 0, 'timeout_ms': 40}})
+    Blackboard.provide('b0', {'m': {'priority': 0, 'timeout_ms': 15}})  # tighter -> sets the window
+    Blackboard.write('m', 1.0, 'a0')
+    time.sleep_ms(25)  # 25 ms > 15 ms window though < a0's own 40 ms -> a0 stale: min() applied
+    assert Blackboard.read('m')[1] is None  # nobody fresh in the 15 ms window
+
+    print('ok: blackboard provide/parameter ergonomics, rank-preference, shared-window handover, '
+          'primary extrapolation')
 
 
 main()
