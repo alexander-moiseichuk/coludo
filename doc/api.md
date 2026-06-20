@@ -503,10 +503,11 @@ ADXL375 and BMP280.
 
 ### `class Bno055(task.Task)`
 
-9-DOF attitude: polls (heading, roll, pitch) deg to the blackboard 'attitude' slot.
+9-DOF: attitude (heading, roll, pitch) deg -> 'attitude', plus the calibrated accelerometer
+(g, incl gravity) -> 'accel' as a low-g backup to the ADXL375 (priority 1).
 
 - `setup() -> bool`
-- `sample() -> tuple` — Read the fused orientation as (heading, roll, pitch) in degrees.
+- `sample() -> tuple` — Read the block and return (attitude (heading, roll, pitch) deg, accel (x, y, z) g).
 - `run() -> None`
 - `inspect() -> dict`
 
