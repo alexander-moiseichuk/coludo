@@ -17,6 +17,17 @@ OPERATOR_PORT = 18236
 WEB_PORT = 18237
 WEB_BOARD_PORT = 18238
 WEB_OPERATOR_PORT = 18239
+GPS_BOARD_PORT = 18240
+GPS_OPERATOR_PORT = 18241
+GPS_WEB_PORT = 18242
+
+
+def _nmea(body):
+    """`$<body>*hh` with a correct XOR checksum — for feeding a synthetic fix to gps.Gps in tests."""
+    checksum = 0
+    for character in body:
+        checksum ^= ord(character)
+    return '$%s*%02X' % (body, checksum)
 
 
 async def _fake_board(reader, writer):
@@ -38,7 +49,9 @@ async def _fake_board(reader, writer):
         elif msg.command == 'save-config':
             json.loads(msg.args[0])  # the config arrives base64-decoded by parse
             reply = cc.build('ok', [json.dumps({'config_id': 'newcfg'})])
-        elif msg.command in ('reset-config', 'reboot'):
+        elif msg.command == 'update':
+            reply = cc.build('ok', [json.dumps({'changed': sorted(json.loads(msg.args[1]))})])
+        elif msg.command in ('reset-config', 'reboot', 'save-mission'):
             reply = cc.build('ok')
         else:
             reply = cc.build('err', ['badcmd', msg.command])
@@ -221,11 +234,60 @@ async def _web():
         board_task.cancel()
 
 
+async def _gps_assist():
+    """A host GPS with a usable 3D fix: `gps` reports it and `assist <board>` pushes the position to
+    the board's mission (update mission -> save-mission)."""
+    import gps as gps_mod
+    host_gps = gps_mod.Gps(log=lambda message: None)
+    host_gps.feed(_nmea('GPGSA,A,3,01,02,03,04,05,06,,,,,,,2.0,1.0,1.5'))  # 3D fix
+    host_gps.feed(_nmea('GPGGA,123519,4807.038,N,01131.000,E,1,06,0.9,545.4,M,46.9,M,,'))  # 6 sats
+    assert host_gps.position() is not None
+
+    hub = server.Server(host='127.0.0.1', port=GPS_BOARD_PORT, operator_port=GPS_OPERATOR_PORT,
+                        web_port=GPS_WEB_PORT, log=lambda message: None, heartbeat_s=0.05, gps=host_gps)
+    hub_task = asyncio.create_task(hub.run())
+    await asyncio.sleep(0.1)
+
+    board_reader, board_writer = await asyncio.open_connection('127.0.0.1', GPS_BOARD_PORT)
+    board_task = asyncio.create_task(_fake_board(board_reader, board_writer))
+    for _ in range(50):
+        if 'glider9' in hub.boards:
+            break
+        await asyncio.sleep(0.02)
+    assert 'glider9' in hub.boards
+
+    operator_reader, operator_writer = await asyncio.open_connection('127.0.0.1', GPS_OPERATOR_PORT)
+
+    async def ask(text):
+        operator_writer.write((text + '\n').encode())
+        await operator_writer.drain()
+        return (await asyncio.wait_for(operator_reader.readline(), 2)).decode().strip()
+
+    try:
+        # gps status shows the usable 3D fix and satellite count
+        reply = await ask('gps')
+        assert reply.startswith('from cc ok '), reply
+        status = json.loads(reply[len('from cc ok '):])
+        assert status['usable'] and status['fix_3d'] and status['satellites'] == 6, status
+
+        # assist pushes the host position to the board mission and persists it (save-mission)
+        reply = await ask('assist glider9')
+        assert reply.startswith('from cc ok '), reply
+        out = json.loads(reply[len('from cc ok '):])
+        assert out['assisted'] == 'glider9' and out['saved'] is True, out
+        assert abs(out['position']['latitude'] - 48.1173) < 1e-3, out
+    finally:
+        operator_writer.close()
+        hub_task.cancel()
+        board_task.cancel()
+
+
 async def main():
     await _loopback()
     await _operator_console()
     await _web()
-    print('ok: server accept (loopback) + operator console + web bridge (api/boards, api/cmd, events)')
+    await _gps_assist()
+    print('ok: server accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) + gps assist')
 
 
 asyncio.run(main())

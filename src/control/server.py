@@ -29,7 +29,8 @@ class Server:
     optional async hook invoked once, right after a board identifies (used by integration tests)."""
 
     def __init__(self, host: str = '0.0.0.0', port: int = 1234, operator_port: int = 1235,
-                 web_port: int = 8080, on_board=None, log=print, heartbeat_s: float = HEARTBEAT_S):
+                 web_port: int = 8080, on_board=None, log=print, heartbeat_s: float = HEARTBEAT_S,
+                 gps=None):
         self.host = host
         self.port = port
         self.operator_port = operator_port
@@ -38,6 +39,7 @@ class Server:
         self.on_board = on_board
         self.log = log
         self.heartbeat_s = heartbeat_s
+        self.gps = gps  # optional host GPS (gps.Gps) for launch-position assist; None if unattached
         self.commands = commands.load()  # operator command registry, loaded from commands/ at start
 
     def board_rows(self) -> list:
