@@ -621,14 +621,14 @@ Detect stage separation (HIGH=nested -> LOW=separated) and trigger Boosting -> G
 drivers/vl53l4cx.py — VL53L4CX time-of-flight laser ranger (Adafruit 5425) over the shared I2C bus:
 the above-ground-level (AGL) channel for the last metres of the glide, where the barometer is
 useless. @task.driver('vl53l4cx'). The VL53 family uses 16-BIT register addresses (i2cbus addrsize=
-16) and continuous-ranging mode: setup() optionally pulses XSHUT to reset, waits for the firmware to
-boot, writes the default configuration block and starts ranging; run() waits for data-ready (the
-GPIO1 interrupt if wired, else a poll), reads the distance and writes AGL (m) to the databoard.
+16). This part is the newer 0xEBAA silicon (shared by the VL53L4CD/L4CX), so it uses the VL53L4CD
+Ultra-Lite-Driver init -- the older VL53L1X (0xEACC) config does NOT produce ranges on it.
 
-The init + ranging follow the VL53L1X Ultra-Lite-Driver register protocol, which the L4CX is
-register-compatible with for single-target distance (its multi-target / long-range extras need the
-full ST ULD upload and are not used here). Graceful: no I2C ack -> setup False -> Controller skips
-it. Shares i2c:0 with the other sensors via the locked i2cbus. Tuned/validated on the bench.
+setup(): optional XSHUT reset -> wait for boot -> write the default configuration -> run one VHV
+calibration ranging cycle (start/wait/clear/stop, then the VHV config writes) -> start continuous
+ranging. run(): wait for data-ready (the GPIO1 interrupt if wired, else a poll), read the distance
+and write AGL (m) to the databoard. Single-target distance; the L4CX multi-target extras are unused.
+Graceful: no I2C ack -> setup False -> Controller skips it. Shares i2c:0 via the locked i2cbus.
 
 ### `class Vl53l4cx(task.Task)`
 

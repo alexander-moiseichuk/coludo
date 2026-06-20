@@ -113,6 +113,7 @@ def default() -> dict:
                 'addr': 0x29,
                 'xshut_pin': 'laser_xshut',  # enable/reset
                 'int_pin': 'laser_int',  # GPIO1 data-ready
+                'timing_budget_ms': 100,  # ranging integration (10..200); higher = lower sigma, slower
                 'enabled': True,
                 # laser gives AGL (ground distance), not AMSL altitude, so it provides 'agl' only;
                 # ~30 Hz continuous ranging -> 100 ms freshness (tune the timing budget on the bench).
