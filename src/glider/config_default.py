@@ -61,7 +61,7 @@ def default() -> dict:
                 'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — polled for now
                 'telemetry_us': 20000,  # ~100 Hz sampling decimated to 50 Hz in accel_adxl375.csv
                 'enabled': True,
-                'provides': {'accel': {'priority': 0, 'timeout_ms': 50}},
+                'provides': {'accel': {'priority': 0, 'timeout_ms': 20}},
             },
             {
                 'name': 'imu_bno055',
@@ -70,8 +70,8 @@ def default() -> dict:
                 'addr': 0x28,
                 'telemetry_us': 40000,  # ~50 Hz sampling decimated to 25 Hz in imu_bno055.csv
                 'enabled': True,
-                'provides': {'attitude': {'priority': 0, 'timeout_ms': 100},
-                             'accel': {'priority': 1, 'timeout_ms': 50}},
+                'provides': {'attitude': {'priority': 0, 'timeout_ms': 40},
+                             'accel': {'priority': 1, 'timeout_ms': 40}},
             },
             {
                 'name': 'baro_icp10111',
@@ -79,10 +79,10 @@ def default() -> dict:
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x63,
                 'enabled': True,
-                'provides': {'altitude': {'priority': 0, 'timeout_ms': 300},
-                             'elevation': {'priority': 0, 'timeout_ms': 300},
-                             'pressure': {'priority': 0, 'timeout_ms': 300},
-                             'temperature': {'priority': 0, 'timeout_ms': 2000}},
+                'provides': {'altitude': {'priority': 0, 'timeout_ms': 200},
+                             'elevation': {'priority': 0, 'timeout_ms': 200},
+                             'pressure': {'priority': 0, 'timeout_ms': 200},
+                             'temperature': {'priority': 0, 'timeout_ms': 500}},  # slow quantity, capped ≤1000
             },
             {
                 'name': 'baro_bmp280',
@@ -90,10 +90,10 @@ def default() -> dict:
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x76,
                 'enabled': True,
-                'provides': {'altitude': {'priority': 1, 'timeout_ms': 500},
-                             'elevation': {'priority': 1, 'timeout_ms': 500},
-                             'pressure': {'priority': 1, 'timeout_ms': 500},
-                             'temperature': {'priority': 1, 'timeout_ms': 2000}},
+                'provides': {'altitude': {'priority': 1, 'timeout_ms': 200},
+                             'elevation': {'priority': 1, 'timeout_ms': 200},
+                             'pressure': {'priority': 1, 'timeout_ms': 200},
+                             'temperature': {'priority': 1, 'timeout_ms': 500}},  # slow quantity, capped ≤1000
             },
             {
                 'name': 'laser_agl',
@@ -111,8 +111,8 @@ def default() -> dict:
                 'hz': 10,
                 'enabled': True,
                 'provides': {
-                    'position': {'priority': 0, 'timeout_ms': 150},
-                    'altitude': {'priority': 3, 'timeout_ms': 1000},
+                    'position': {'priority': 0, 'timeout_ms': 200},  # 10 Hz -> 2x period
+                    'altitude': {'priority': 3, 'timeout_ms': 200},
                 },
             },
         ],
