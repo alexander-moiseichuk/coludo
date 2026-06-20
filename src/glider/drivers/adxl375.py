@@ -65,7 +65,7 @@ class Adxl375(task.Task):
         except Exception as error:
             print('adxl375 :: %r' % error)
             return False
-        blackboard.Blackboard.provide(self.name, self.config.get('provides', {}))
+        self._accel = blackboard.Blackboard.provide(self.name, self.config.get('provides', {}))['accel']
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('ax', 'ay', 'az'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True
@@ -107,7 +107,7 @@ class Adxl375(task.Task):
                 await asyncio.sleep_ms(self._period_ms)
             try:
                 accel = await self.sample()
-                blackboard.Blackboard.write('accel', accel, self.name)
+                self._accel.push(accel)  # one step: push our channel directly
                 self._telemetry.push(accel)
             except Exception as error:
                 print('adxl375 :: read %r' % error)
@@ -115,6 +115,5 @@ class Adxl375(task.Task):
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['interrupt'] = self._int is not None
-        slot = blackboard.Blackboard.raw('accel', self.name)  # our own latest (no hot-path I2C here)
-        status['accel_g'] = slot.value if slot is not None else None
+        status['accel_g'] = self._accel.v1  # our channel's latest (no hot-path I2C here)
         return status

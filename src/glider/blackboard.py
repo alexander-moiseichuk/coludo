@@ -4,29 +4,27 @@
 #
 # Structure.
 #   Blackboard   — a registry of Parameter objects. Blackboard.parameter(name) gets-or-creates one;
-#                  a sensor registers itself as a source via provide() and reports via write().
-#   Parameter    — one fused quantity (e.g. 'altitude'). Owns a _Channel per source.
-#   _Channel     — one source's stream: a static rank (priority; lower = preferred), an expiry
-#                  window, and TWO slots (the last two readings) + a deadline. write() updates the
-#                  channel's value + timestamp on the fly; the deadline = ts + expire is recomputed.
+#                  a sensor registers itself as a source via provide() (which returns its channel
+#                  handles) and then reports by pushing each channel directly -- the hot write path
+#                  is one step, no lookup. value()/read() resolve the winner + newest in one pass.
+#   Parameter    — one fused quantity (e.g. 'altitude') for the consumer. Holds a short LIST of
+#                  channels (one per source -- 1..few; a list, not a dict, is faster at this size).
+#   _Channel     — one source's stream: a static rank (priority; lower = preferred), an expiry, and
+#                  TWO slots (the last two readings) -- two slots because the extrapolation here is
+#                  LINEAR (needs 2 points); a degree-N model would keep N+1.
 #
 # Fusion is a pure read-time function, Parameter.value():
-#   1. winner = the lowest-rank channel that is still fresh (freshness is evaluated per channel,
-#      now <= its deadline); a rank tie breaks to the newer reading. Return its value.
-#   2. if NO channel is fresh, take the newest channel and linearly extrapolate its two slots to
-#      `now` (component-wise for vector values).
+#   1. winner = the lowest-rank channel still fresh (freshness is per channel: now <= its deadline,
+#      where deadline = last-write + expire); a rank tie breaks to the newer reading. Return its value.
+#   2. if NO channel is fresh, take the newest channel and linearly extrapolate its two slots to now.
 #   3. if nothing was ever written, None.
 # So "rank 0 answers while fresh; rank 1 takes over the instant rank 0 expires" is EMERGENT -- every
-# read re-evaluates each channel's freshness; there is no queue to sort, insert into, or evict.
+# read re-evaluates each channel's freshness; there is no queue to sort, insert into, or evict. A
+# channel is BORN EXPIRED (t1 = now - expire), so "no data yet" needs no flag -- it is just expired.
 #
-# Bounded by design. A parameter with M ranked sources holds exactly M channels. Each channel keeps
-# TWO slots because the extrapolation here is LINEAR (needs 2 points); the slot depth is a function
-# of the model order -- degree-N polynomial would need N+1 readings (linear=2, quadratic=3, ...). A
-# future model registry could carry that, e.g. {'linear': (fn, 2), 'quadratic': (fn, 3)}, and size
-# the channel from it; for now it is fixed at 2 (linear). Storage is fixed when sources register --
-# nothing grows per sample. (A rank may in theory have several sources -- just channels with the
-# same rank, tiebroken by time -- though in practice each rank is one device.) Per-source slots keep
-# extrapolation within a single source, never across the bias gap between, say, ICP-10111 and BMP280.
+# Bounded by design. A parameter with M ranked sources holds exactly M channels, each with two
+# slots; storage is fixed when sources register, nothing grows per sample. Per-source slots keep
+# extrapolation within a single source, never across the bias gap between e.g. ICP-10111 and BMP280.
 #
 # Telemetry is separate: each sensor writes its own raw SENSOR.csv directly. A global singleton,
 # Inspectable as `blackboard` (fused value/source/age per parameter).
@@ -35,111 +33,124 @@ import time
 
 import inspector
 
-_DEFAULT_EXPIRE_US = 1000000  # fallback freshness window for a channel written without provide()
+try:
+    from micropython import const
+except ImportError:  # CPython (tooling / off-board checks)
+
+    def const(value):
+        return value
+
+
+_DEFAULT_EXPIRE_US: int = const(1000_000)  # fallback freshness window when a source declares none
 
 
 class _Channel:
-    """One source's stream within a Parameter: a static rank, an expiry, and the last two readings
-    (newest = t1/v1, previous = t0/v0) -- two slots for LINEAR extrapolation (a degree-N model would
-    keep N+1)."""
+    """One source's stream within a Parameter: a static rank, an expiry, and two slots (newest =
+    t1/v1, previous = t0/v0) for linear extrapolation. Born expired so 'no data yet' is just stale."""
 
     def __init__(self, source: str, rank: int, expire_us: int):
         self.source: str = source
         self.rank: int = rank
-        self.expire_us: int = expire_us
-        self.t0: int = 0
+        self.expire_us: int = expire_us or _DEFAULT_EXPIRE_US
+        self.t0: int = time.ticks_add(time.ticks_us(), -self.expire_us)  # in the past: born expired
         self.v0 = None
-        self.t1: int = 0
+        self.t1: int = self.t0
         self.v1 = None
-        self.deadline: int = 0  # t1 + expire_us; fresh while now <= deadline
-        self.has_data: bool = False
+        self.deadline: int = time.ticks_add(self.t1, self.expire_us)  # fresh while now <= deadline
 
-    def push(self, ts: int, value) -> None:
+    def push(self, value) -> None:
+        """Record a reading now (timestamp taken here -- a value is delivered the moment it's known)."""
+        ts = time.ticks_us()
         self.t0, self.v0 = self.t1, self.v1
         self.t1, self.v1 = ts, value
         self.deadline = time.ticks_add(ts, self.expire_us)
-        self.has_data = True
 
     def fresh(self, now: int) -> bool:
-        return self.has_data and time.ticks_diff(self.deadline, now) >= 0
+        return time.ticks_diff(self.deadline, now) >= 0
 
 
 def _extrapolate(channel: _Channel, now: int):
-    """Linearly project a channel's two slots to `now` (component-wise for tuples); falls back to
-    the latest value if there is only one reading. LINEAR (2-point) model -- a higher-order fit
-    (quadratic = 3 points, etc.) would read deeper history and pair with a wider channel; if that is
-    ever needed, swap this for a model from a {'linear': (fn, 2), 'quadratic': (fn, 3)} registry."""
-    if channel.v0 is None or channel.t1 == channel.t0:
-        return channel.v1
+    """Linear projection of a channel's two slots to `now` -- value is a scalar (int|float). With
+    only one reading, or a non-scalar value (a stale vector), return the latest as-is."""
+    older, newest = channel.v0, channel.v1
     span = time.ticks_diff(channel.t1, channel.t0)
-    ahead = time.ticks_diff(now, channel.t1)
-
-    def project(old, new):
-        return new + (new - old) * ahead / span
-
-    if isinstance(channel.v1, (tuple, list)):
-        return tuple(project(o, n) for o, n in zip(channel.v0, channel.v1))
-    return project(channel.v0, channel.v1)
+    if older is None or span <= 0:
+        return newest
+    try:
+        return newest + (newest - older) * time.ticks_diff(now, channel.t1) / span
+    except TypeError:  # vector etc. -> latest, no projection
+        return newest
 
 
 class Parameter:
-    """One fused quantity. Holds a channel per source; value() fuses them by rank/freshness, falling
-    back to extrapolation when none is fresh."""
+    """One fused quantity. Holds a channel per source; value() fuses by rank/freshness, falling back
+    to extrapolation when none is fresh."""
 
     def __init__(self, name: str):
         self.name: str = name
-        self.channels: dict = {}  # source -> _Channel
+        self.channels: list = []  # _Channel per source (few; a list beats a dict at this size)
 
-    def add_source(self, source: str, rank: int, expire_us: int) -> None:
-        """Register (or re-register) a source for this parameter with its rank + expiry."""
-        self.channels[source] = _Channel(source, rank, expire_us)
+    def _channel(self, source: str) -> _Channel:
+        for channel in self.channels:
+            if channel.source == source:
+                return channel
+        return None
+
+    def add_source(self, source: str, rank: int, expire_us: int) -> _Channel:
+        """Register (or re-register) a source with its rank + expiry; return its channel so the
+        sensor can push() to it directly (no per-write lookup)."""
+        channel = self._channel(source)
+        if channel is None:
+            channel = _Channel(source, rank, expire_us)
+            self.channels.append(channel)
+        else:
+            channel.rank, channel.expire_us = rank, expire_us or _DEFAULT_EXPIRE_US
+        return channel
 
     def write(self, value, source: str) -> None:
-        """Report a source's latest reading (updates its channel's value + timestamp)."""
-        channel = self.channels.get(source)
+        """Report a source's latest reading by name (convenience; sensors push() their channel)."""
+        channel = self._channel(source)
         if channel is None:
-            channel = self.channels[source] = _Channel(source, 0, _DEFAULT_EXPIRE_US)
-        channel.push(time.ticks_us(), value)
+            channel = self.add_source(source, 0, _DEFAULT_EXPIRE_US)
+        channel.push(value)
 
-    def _winner(self, now: int) -> _Channel:
-        """The lowest-rank fresh channel (newest reading breaks a rank tie), or None."""
-        best = None
-        for channel in self.channels.values():
-            if not channel.fresh(now):
-                continue
-            if best is None or channel.rank < best.rank or (
-                    channel.rank == best.rank and time.ticks_diff(channel.t1, best.t1) > 0):
-                best = channel
-        return best
+    def _resolve(self, now: int) -> tuple:
+        """One pass over the channels: (winner, newest). winner = lowest-rank fresh channel (newest
+        reading breaks a rank tie) or None; newest = the channel with the most recent reading."""
+        winner = None
+        newest = None
+        for channel in self.channels:
+            if newest is None or time.ticks_diff(channel.t1, newest.t1) > 0:
+                newest = channel
+            if channel.fresh(now) and (winner is None or channel.rank < winner.rank or (
+                    channel.rank == winner.rank and time.ticks_diff(channel.t1, winner.t1) > 0)):
+                winner = channel
+        return winner, newest
 
     def value(self):
         """The fused estimate: the preferred fresh source's value; if none is fresh, the newest
         source extrapolated to now; else None."""
         now = time.ticks_us()
-        winner = self._winner(now)
+        winner, newest = self._resolve(now)
         if winner is not None:
             return winner.v1
-        newest = None
-        for channel in self.channels.values():
-            if channel.has_data and (newest is None or time.ticks_diff(channel.t1, newest.t1) > 0):
-                newest = channel
         return _extrapolate(newest, now) if newest is not None else None
 
     def read(self) -> tuple:
         """(value, source, age_ms) of the fused estimate; `source` is None when extrapolated."""
         now = time.ticks_us()
-        winner = self._winner(now)
+        winner, newest = self._resolve(now)
         if winner is not None:
             return (winner.v1, winner.source, time.ticks_diff(now, winner.t1) // 1000)
-        return (self.value(), None, None)
+        return (_extrapolate(newest, now) if newest is not None else None, None, None)
 
     def raw(self, source: str):
         """A specific source's latest value (None if absent / unwritten)."""
-        channel = self.channels.get(source)
-        return channel.v1 if (channel is not None and channel.has_data) else None
+        channel = self._channel(source)
+        return channel.v1 if channel is not None else None
 
     def sources(self) -> list:
-        return sorted(self.channels.keys())
+        return sorted(channel.source for channel in self.channels)
 
 
 class Blackboard:
@@ -158,10 +169,12 @@ class Blackboard:
         return param
 
     @classmethod
-    def provide(cls, source: str, provides: dict) -> None:
-        """A sensor registers the params it provides: {param: {priority, timeout_ms}}."""
-        for name, spec in provides.items():
-            cls.parameter(name).add_source(source, spec.get('priority', 0), spec.get('timeout_ms', 1000) * 1000)
+    def provide(cls, source: str, provides: dict) -> dict:
+        """A sensor registers the params it provides ({param: {priority, timeout_ms}}) and gets back
+        {param: _Channel} so it can push() its readings directly -- one step, no per-write lookup."""
+        return {name: cls.parameter(name).add_source(source, spec.get('priority', 0),
+                                                     spec.get('timeout_ms', 0) * 1000)
+                for name, spec in provides.items()}
 
     @classmethod
     def write(cls, name: str, value, source: str) -> None:

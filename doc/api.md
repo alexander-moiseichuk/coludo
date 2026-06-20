@@ -14,41 +14,39 @@ with a registry of Parameter objects whose fused value is computed on read.
 
 Structure.
 Blackboard   — a registry of Parameter objects. Blackboard.parameter(name) gets-or-creates one;
-a sensor registers itself as a source via provide() and reports via write().
-Parameter    — one fused quantity (e.g. 'altitude'). Owns a _Channel per source.
-_Channel     — one source's stream: a static rank (priority; lower = preferred), an expiry
-window, and TWO slots (the last two readings) + a deadline. write() updates the
-channel's value + timestamp on the fly; the deadline = ts + expire is recomputed.
+a sensor registers itself as a source via provide() (which returns its channel
+handles) and then reports by pushing each channel directly -- the hot write path
+is one step, no lookup. value()/read() resolve the winner + newest in one pass.
+Parameter    — one fused quantity (e.g. 'altitude') for the consumer. Holds a short LIST of
+channels (one per source -- 1..few; a list, not a dict, is faster at this size).
+_Channel     — one source's stream: a static rank (priority; lower = preferred), an expiry, and
+TWO slots (the last two readings) -- two slots because the extrapolation here is
+LINEAR (needs 2 points); a degree-N model would keep N+1.
 
 Fusion is a pure read-time function, Parameter.value():
-1. winner = the lowest-rank channel that is still fresh (freshness is evaluated per channel,
-now <= its deadline); a rank tie breaks to the newer reading. Return its value.
-2. if NO channel is fresh, take the newest channel and linearly extrapolate its two slots to
-`now` (component-wise for vector values).
+1. winner = the lowest-rank channel still fresh (freshness is per channel: now <= its deadline,
+where deadline = last-write + expire); a rank tie breaks to the newer reading. Return its value.
+2. if NO channel is fresh, take the newest channel and linearly extrapolate its two slots to now.
 3. if nothing was ever written, None.
 So "rank 0 answers while fresh; rank 1 takes over the instant rank 0 expires" is EMERGENT -- every
-read re-evaluates each channel's freshness; there is no queue to sort, insert into, or evict.
+read re-evaluates each channel's freshness; there is no queue to sort, insert into, or evict. A
+channel is BORN EXPIRED (t1 = now - expire), so "no data yet" needs no flag -- it is just expired.
 
-Bounded by design. A parameter with M ranked sources holds exactly M channels. Each channel keeps
-TWO slots because the extrapolation here is LINEAR (needs 2 points); the slot depth is a function
-of the model order -- degree-N polynomial would need N+1 readings (linear=2, quadratic=3, ...). A
-future model registry could carry that, e.g. {'linear': (fn, 2), 'quadratic': (fn, 3)}, and size
-the channel from it; for now it is fixed at 2 (linear). Storage is fixed when sources register --
-nothing grows per sample. (A rank may in theory have several sources -- just channels with the
-same rank, tiebroken by time -- though in practice each rank is one device.) Per-source slots keep
-extrapolation within a single source, never across the bias gap between, say, ICP-10111 and BMP280.
+Bounded by design. A parameter with M ranked sources holds exactly M channels, each with two
+slots; storage is fixed when sources register, nothing grows per sample. Per-source slots keep
+extrapolation within a single source, never across the bias gap between e.g. ICP-10111 and BMP280.
 
 Telemetry is separate: each sensor writes its own raw SENSOR.csv directly. A global singleton,
 Inspectable as `blackboard` (fused value/source/age per parameter).
 
 ### `class Parameter`
 
-One fused quantity. Holds a channel per source; value() fuses them by rank/freshness, falling
-back to extrapolation when none is fresh.
+One fused quantity. Holds a channel per source; value() fuses by rank/freshness, falling back
+to extrapolation when none is fresh.
 
 - `__init__(name: str)` — constructor
-- `add_source(source: str, rank: int, expire_us: int) -> None` — Register (or re-register) a source for this parameter with its rank + expiry.
-- `write(value, source: str) -> None` — Report a source's latest reading (updates its channel's value + timestamp).
+- `add_source(source: str, rank: int, expire_us: int) -> _Channel` — Register (or re-register) a source with its rank + expiry; return its channel so the
+- `write(value, source: str) -> None` — Report a source's latest reading by name (convenience; sensors push() their channel).
 - `value()` — The fused estimate: the preferred fresh source's value; if none is fresh, the newest
 - `read() -> tuple` — (value, source, age_ms) of the fused estimate; `source` is None when extrapolated.
 - `raw(source: str)` — A specific source's latest value (None if absent / unwritten).
@@ -57,7 +55,7 @@ back to extrapolation when none is fresh.
 ### `class Blackboard`
 
 - `parameter(name: str) -> Parameter` _(classmethod)_ — Get-or-create the Parameter for `name` (registers with the Inspector on the first one).
-- `provide(source: str, provides: dict) -> None` _(classmethod)_ — A sensor registers the params it provides: {param: {priority, timeout_ms}}.
+- `provide(source: str, provides: dict) -> dict` _(classmethod)_ — A sensor registers the params it provides ({param: {priority, timeout_ms}}) and gets back
 - `write(name: str, value, source: str) -> None` _(classmethod)_
 - `value(name: str)` _(classmethod)_
 - `read(name: str) -> tuple` _(classmethod)_

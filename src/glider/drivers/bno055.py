@@ -60,7 +60,7 @@ class Bno055(task.Task):
         except Exception as error:
             print('bno055 :: %r' % error)
             return False
-        blackboard.Blackboard.provide(self.name, self.config.get('provides', {}))
+        self._attitude = blackboard.Blackboard.provide(self.name, self.config.get('provides', {}))['attitude']
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('heading', 'roll', 'pitch'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True
@@ -76,7 +76,7 @@ class Bno055(task.Task):
         while True:
             try:
                 attitude = await self.sample()
-                blackboard.Blackboard.write('attitude', attitude, self.name)
+                self._attitude.push(attitude)  # one step: push our channel directly
                 self._telemetry.push(attitude)
             except Exception as error:
                 print('bno055 :: read %r' % error)
@@ -84,6 +84,5 @@ class Bno055(task.Task):
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
-        slot = blackboard.Blackboard.raw('attitude', self.name)  # our own latest (no hot-path I2C)
-        status['attitude_deg'] = slot.value if slot is not None else None
+        status['attitude_deg'] = self._attitude.v1  # our channel's latest (no hot-path I2C)
         return status

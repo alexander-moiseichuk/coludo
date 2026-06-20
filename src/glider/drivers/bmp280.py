@@ -59,7 +59,8 @@ class Bmp280(task.Task):
         except Exception as error:
             print('bmp280 :: %r' % error)
             return False
-        blackboard.Blackboard.provide(self.name, self.config.get('provides', {}))
+        channels = blackboard.Blackboard.provide(self.name, self.config.get('provides', {}))
+        self._altitude, self._temperature = channels['altitude'], channels['temperature']
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('altitude', 'temperature'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True
@@ -101,20 +102,15 @@ class Bmp280(task.Task):
         while True:
             try:
                 altitude, temp_c = await self.sample()
-                blackboard.Blackboard.write('altitude', altitude, self.name)
-                blackboard.Blackboard.write('temperature', temp_c, self.name)
+                self._altitude.push(altitude)  # one step: push our channels directly
+                self._temperature.push(temp_c)
                 self._telemetry.push((altitude, temp_c))
             except Exception as error:
                 print('bmp280 :: read %r' % error)
             await asyncio.sleep_ms(self._period_ms)
 
-    def _mine(self, quantity: str):
-        """This sensor's own latest raw value for `quantity` (None if never written)."""
-        slot = blackboard.Blackboard.raw(quantity, self.name)
-        return slot.value if slot is not None else None
-
     def inspect(self) -> dict:
-        status = task.Task.inspect(self)  # latest samples from the blackboard (no hot-path I2C here)
-        status['altitude_m'] = self._mine('altitude')
-        status['temperature_c'] = self._mine('temperature')
+        status = task.Task.inspect(self)  # our channels' latest (no hot-path I2C here)
+        status['altitude_m'] = self._altitude.v1
+        status['temperature_c'] = self._temperature.v1
         return status
