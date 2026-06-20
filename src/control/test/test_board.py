@@ -63,6 +63,19 @@ async def main():
     # identify() returns None when the reply is not iam
     assert await Board(_Reader(['pong\n']), _Writer()).identify() is None
 
+    # exchange() logs both directions (tx '->' then rx '<-') through the optional log hook
+    captured = []
+    board = Board(_Reader(['pong\n']), _Writer(), log=captured.append)
+    board.id = 'glider2'
+    await board.command('ping')
+    assert any('glider2 -> ping' in m for m in captured), captured
+    assert any('glider2 <- pong' in m for m in captured), captured
+
+    # a disconnect during exchange is logged as a received '<disconnected>' marker
+    captured = []
+    assert await Board(_Reader([]), _Writer(), log=captured.append).command('ping') is None
+    assert any('<- <disconnected>' in m for m in captured), captured
+
     # command() times out (raises) on a wedged board instead of hanging
     raised = False
     try:

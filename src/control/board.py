@@ -14,9 +14,10 @@ EXCHANGE_TIMEOUT_S: float = 10.0  # bound every board exchange so a wedged board
 class Board:
     """One connected board: lockstep request/response over its socket."""
 
-    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+    def __init__(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, log=None):
         self._reader = reader
         self._writer = writer
+        self._log = log or (lambda message: None)  # CC<->board exchange log (no-op unless wired)
         self._lock = asyncio.Lock()
         self.id = None
         self.info = {}
@@ -31,14 +32,18 @@ class Board:
     async def exchange(self, line: str, timeout: float = EXCHANGE_TIMEOUT_S) -> cc._Msg:
         """Send a ready board-facing line and return its parsed reply (None if disconnected).
         `timeout` (default 10 s) bounds the wait so a wedged board raises asyncio.TimeoutError."""
+        tag = self.id or self.peer
         async with self._lock:
+            self._log('control :: %s -> %s' % (tag, line))  # CC sends (tx); logged before the wait
             self._writer.write((line + '\n').encode())
             await self._writer.drain()
             raw = await asyncio.wait_for(self._reader.readline(), timeout)
+        reply = raw.decode().strip()
+        self._log('control :: %s <- %s' % (tag, reply if raw else '<disconnected>'))  # board replies (rx)
         if not raw:
             return None
         self.last_seen = time.monotonic()
-        return cc.parse(raw.decode().strip())
+        return cc.parse(reply)
 
     async def command(self, command: str, *args, timeout: float = EXCHANGE_TIMEOUT_S) -> cc._Msg:
         """Build `command args...` and exchange it. Returns the parsed reply or None."""

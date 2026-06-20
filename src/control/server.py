@@ -52,7 +52,7 @@ class Server:
     # ----------------------------------------------------------------- board side
     async def _handle(self, reader, writer) -> None:
         """Identify a freshly connected board, register it, then poll it until it drops."""
-        client = board.Board(reader, writer)
+        client = board.Board(reader, writer, log=self.log)  # log every CC<->board line exchanged
         self.log('control :: board connected %s' % client.peer)
         try:
             board_id = await client.identify()
