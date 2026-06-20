@@ -2,8 +2,8 @@
 # the shared I2C bus: the PRIMARY altitude channel (8.5 cm accuracy). @task.driver('icp10111').
 # Command-based, not register-mapped: setup() verifies the product id and reads the 4 OTP calibration
 # constants; run() issues a measure command, reads pressure+temperature, applies the TDK polynomial
-# conversion and writes barometric altitude (m AMSL) to the blackboard 'altitude' slot. Graceful:
-# wrong/absent id -> setup False -> the Controller skips it.
+# conversion and writes pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
+# per-sensor startup ground zero) to the blackboard. Graceful: wrong/absent id -> setup False -> skipped.
 #
 # Polled at period_ms. Uses the shared locked bus (i2cbus); shares i2c:0 with the other sensors.
 
@@ -37,11 +37,14 @@ _LUT_LOWER = 3.5 * (1 << 20)
 _LUT_UPPER = 11.5 * (1 << 20)
 _OFFSET = 2048.0
 _PCAL = (45000.0, 80000.0, 105000.0)  # calibration pressures for the conversion LUT
+_GROUND_SAMPLES = const(8)  # readings averaged at startup to fix the ground-zero reference
 
 
 @task.driver('icp10111')
 class Icp10111(task.Task):
-    """Primary barometric altitude: polls compensated pressure -> altitude (m) to 'altitude'."""
+    """Primary baro: pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
+    startup ground zero, captured per-sensor so it is offset-free) to the blackboard. `update`
+    {"rezero": true} re-captures ground zero (e.g. after warm-up, just before launch)."""
 
     async def setup(self) -> bool:
         bus_id = self.config.get('id', 0)
@@ -66,14 +69,25 @@ class Icp10111(task.Task):
         except Exception as error:
             print('icp10111 :: %r' % error)
             return False
+        self._ground = await self._ground_zero()
         channels = blackboard.Blackboard.provide(self.name, self.config.get('provides', {}))
         self._altitude, self._temperature = channels['altitude'], channels['temperature']
-        self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('altitude', 'temperature'),
+        self._pressure, self._elevation = channels['pressure'], channels['elevation']
+        self._telemetry = recorder.Telemetry('%s.csv' % self.name,
+                                       ('altitude', 'temperature', 'pressure', 'elevation'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True
         return True
 
-    def _pressure(self, p_raw: int, t_raw: int) -> float:
+    async def _ground_zero(self) -> float:
+        """Average a short burst of altitude readings -> the per-sensor ground reference (m AMSL)."""
+        total = 0.0
+        for _ in range(_GROUND_SAMPLES):
+            altitude, _temp, _pressure = await self._read()
+            total += altitude
+        return total / _GROUND_SAMPLES
+
+    def _compensate(self, p_raw: int, t_raw: int) -> float:
         """TDK ICP-101xx polynomial: raw pressure + temperature -> pressure in Pa."""
         c0, c1, c2, c3 = self._otp
         t = t_raw - 32768
@@ -87,31 +101,44 @@ class Icp10111(task.Task):
         b = (p0 - a) * (s1 + c)
         return a + b / (c + p_raw)
 
-    async def sample(self) -> tuple:
-        """Measure and return (barometric altitude m AMSL, temperature °C)."""
+    async def _read(self) -> tuple:
+        """Measure and return (altitude m AMSL, temperature °C, pressure Pa)."""
         await self._bus.writeto(self._addr, _CMD_MEASURE)
         await asyncio.sleep_ms(_MEASURE_MS)
         data = await self._bus.readfrom(self._addr, 9)  # P[0,1],CRC, P[3],_,CRC, T[6,7],CRC
         p_raw = (data[0] << 16) | (data[1] << 8) | data[3]
         t_raw = (data[6] << 8) | data[7]
         temp_c = -45.0 + 175.0 / 65536.0 * t_raw
-        pressure = self._pressure(p_raw, t_raw)
+        pressure = self._compensate(p_raw, t_raw)
         altitude = 0.0 if pressure <= 0.0 else 44330.0 * (1.0 - (pressure / _SEA_LEVEL_PA) ** 0.190294957)
-        return altitude, temp_c
+        return altitude, temp_c, pressure
 
     async def run(self) -> None:
         while True:
             try:
-                altitude, temp_c = await self.sample()
+                altitude, temp_c, pressure = await self._read()
+                elevation = altitude - self._ground
                 self._altitude.push(altitude)  # one step: push our channels directly
                 self._temperature.push(temp_c)
-                self._telemetry.push((altitude, temp_c))
+                self._pressure.push(pressure)
+                self._elevation.push(elevation)
+                self._telemetry.push((altitude, temp_c, pressure, elevation))
             except Exception as error:
                 print('icp10111 :: read %r' % error)
             await asyncio.sleep_ms(self._period_ms)
+
+    def update(self, props: dict) -> list:
+        """`{"rezero": true}` re-captures ground zero from the latest altitude (sync; operator does
+        it when the reading is stable)."""
+        if props.get('rezero') and self._altitude.value() is not None:
+            self._ground = self._altitude.value()
+            return ['ground']
+        return []
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)  # our channels' latest (no hot-path I2C here)
         status['altitude_m'] = self._altitude.value()
         status['temperature_c'] = self._temperature.value()
+        status['pressure_pa'] = self._pressure.value()
+        status['elevation_m'] = self._elevation.value()
         return status

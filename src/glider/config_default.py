@@ -80,6 +80,8 @@ def default() -> dict:
                 'addr': 0x63,
                 'enabled': True,
                 'provides': {'altitude': {'priority': 0, 'timeout_ms': 300},
+                             'elevation': {'priority': 0, 'timeout_ms': 300},
+                             'pressure': {'priority': 0, 'timeout_ms': 300},
                              'temperature': {'priority': 0, 'timeout_ms': 2000}},
             },
             {
@@ -89,6 +91,8 @@ def default() -> dict:
                 'addr': 0x76,
                 'enabled': True,
                 'provides': {'altitude': {'priority': 1, 'timeout_ms': 500},
+                             'elevation': {'priority': 1, 'timeout_ms': 500},
+                             'pressure': {'priority': 1, 'timeout_ms': 500},
                              'temperature': {'priority': 1, 'timeout_ms': 2000}},
             },
             {
