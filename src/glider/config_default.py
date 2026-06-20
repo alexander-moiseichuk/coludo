@@ -79,9 +79,11 @@ def default() -> dict:
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x63,
                 'enabled': True,
-                'provides': {'altitude': {'priority': 0, 'timeout_ms': 200},
+                # reconcile altitude/pressure: ICP-10111 is the rank-0 primary, so BMP280 (and any
+                # GNSS/laser) is bias-corrected against it on a fallback handover (additive scalars).
+                'provides': {'altitude': {'priority': 0, 'timeout_ms': 200, 'reconcile': True},
                              'elevation': {'priority': 0, 'timeout_ms': 200},
-                             'pressure': {'priority': 0, 'timeout_ms': 200},
+                             'pressure': {'priority': 0, 'timeout_ms': 200, 'reconcile': True},
                              'temperature': {'priority': 0, 'timeout_ms': 500}},  # slow quantity, capped ≤1000
             },
             {

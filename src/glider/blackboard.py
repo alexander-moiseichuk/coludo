@@ -25,10 +25,14 @@
 # extrapolated" is EMERGENT -- every read re-evaluates freshness against the shared window; there is
 # no queue to sort, insert into, or evict. A channel with no data (v1 None) is never fresh.
 #
-# This shared window is the simple stand-in for offset reconciliation: instead of learning and
-# subtracting each backup's bias, we only hand a backup out while it is genuinely current; otherwise
-# the primary's own trajectory is projected. Per-source slots keep extrapolation within a single
-# source, never across the bias gap between e.g. ICP-10111 and BMP280.
+# The shared window decides WHEN to fall back; offset reconciliation (opt-in, 'reconcile': true on a
+# provider) decides WHAT the fallback reports. While the primary is fresh, each backup's BIAS against
+# it is learned (EMA, once per new primary reading -- the rate is set by data, not by reads); on
+# handover the backup's value is corrected by that offset, so it reads what the primary would --
+# closing the bias gap between e.g. ICP-10111 and BMP280 rather than jumping across it. Offsets FREEZE
+# while the primary is stale, and reconciliation is for additive SCALARS only (altitude, pressure) --
+# never vectors (attitude/accel) or unlike quantities (agl, position). Per-source slots keep
+# extrapolation within a single source.
 #
 # Dependencies. A sensor that consumes another's quantity grabs a read handle with parameter(*names)
 # (get-or-create, so setup order does not matter); a provider gets its write-channels from
@@ -50,12 +54,14 @@ except ImportError:  # CPython (tooling / off-board checks)
 
 
 _DEFAULT_EXPIRE_US: int = const(1000_000)  # fallback freshness window when a source declares none
+_OFFSET_ALPHA: float = 0.1  # EMA weight when learning a backup's bias against the fresh primary
 
 
 class _Channel:
     """One source's stream within a Parameter: a static rank, a declared expiry (the parameter
     applies one shared window, min() over the rank-0 tier), and two slots (newest = t1/v1, previous =
-    t0/v0) for linear extrapolation. No data (v1 None) reads as not-fresh."""
+    t0/v0) for linear extrapolation. No data (v1 None) reads as not-fresh. `offset` is the bias
+    learned against the primary (None until learned), added on a reconciled fallback."""
 
     def __init__(self, source: str, rank: int, expire_us: int):
         self.source: str = source
@@ -65,6 +71,7 @@ class _Channel:
         self.v0 = None
         self.t1: int = self.t0
         self.v1 = None
+        self.offset = None  # learned bias vs the primary, added when this is the reconciled fallback
 
     def push(self, value) -> None:
         """Record a reading now (timestamp taken here -- a value is delivered the moment it's known)."""
@@ -102,6 +109,8 @@ class Parameter:
         self.name: str = name
         self.channels: list = []  # _Channel per source (few; a list beats a dict at this size)
         self.window_us: int = _DEFAULT_EXPIRE_US  # shared freshness window = primary tier's min expiry
+        self.reconcile: bool = False  # offset reconciliation on? (a provider declares it)
+        self._learned_t1 = None  # primary.t1 at the last offset update (learn once per new reading)
 
     def _channel(self, source: str) -> _Channel:
         for channel in self.channels:
@@ -109,16 +118,19 @@ class Parameter:
                 return channel
         return None
 
-    def add_source(self, source: str, rank: int, expire_us: int) -> _Channel:
+    def add_source(self, source: str, rank: int, expire_us: int, reconcile: bool = False) -> _Channel:
         """Register (or re-register) a source with its rank + expiry; return its channel so the sensor
         can push() to it directly (no per-write lookup). Recomputes the shared freshness window: the
-        tightest expiry among the primary tier (lowest-rank sources), used for every channel."""
+        tightest expiry among the primary tier (lowest-rank sources), used for every channel.
+        `reconcile` (declared by any provider) turns on offset reconciliation for this parameter."""
         channel = self._channel(source)
         if channel is None:
             channel = _Channel(source, rank, expire_us)
             self.channels.append(channel)
         else:
             channel.rank, channel.expire_us = rank, expire_us or _DEFAULT_EXPIRE_US
+        if reconcile:
+            self.reconcile = True
         primary_rank = min(candidate.rank for candidate in self.channels)
         self.window_us = min(candidate.expire_us for candidate in self.channels
                              if candidate.rank == primary_rank)
@@ -146,22 +158,54 @@ class Parameter:
                 winner = channel
         return winner, primary
 
-    def value(self):
-        """The fused estimate: the preferred fresh source's value; if none is fresh, the primary
-        source extrapolated to now; else None."""
-        now = time.ticks_us()
+    def _learn(self, now: int, primary: _Channel) -> None:
+        """While the primary (lowest-rank source with data) is fresh, learn each fresh backup's bias
+        against it (EMA) -- once per new primary reading, so the rate is set by data, not by reads.
+        Co-primaries (same rank) are not reconciled. Offsets FREEZE while the primary is stale; they
+        are applied on fallback in _estimate()."""
+        if primary is None or primary.t1 == self._learned_t1 or not primary.fresh(now, self.window_us):
+            return
+        self._learned_t1 = primary.t1
+        reference = primary.v1
+        for channel in self.channels:
+            if channel.rank <= primary.rank or channel.v1 is None or not channel.fresh(now, self.window_us):
+                continue  # skip the primary and its co-primaries; only lower-priority backups learn
+            try:
+                sample = reference - channel.v1
+            except TypeError:
+                continue  # a non-scalar in a reconciled param -> skip, never crash
+            channel.offset = sample if channel.offset is None else (
+                channel.offset + _OFFSET_ALPHA * (sample - channel.offset))
+
+    def _estimate(self, now: int) -> tuple:
+        """(value, winner) of the fused estimate. winner is None when nothing is fresh (the value is
+        then the primary extrapolated, or None). With reconciliation on, a fresh non-primary winner
+        is bias-corrected by its learned offset so the handover off the primary is seamless."""
         winner, primary = self._resolve(now)
-        if winner is not None:
-            return winner.v1
-        return _extrapolate(primary, now) if primary is not None else None
+        if self.reconcile:
+            self._learn(now, primary)
+        if winner is None:
+            return (_extrapolate(primary, now) if primary is not None else None, None)
+        if self.reconcile and winner is not primary and winner.offset is not None:
+            return (winner.v1 + winner.offset, winner)
+        return (winner.v1, winner)
+
+    def value(self):
+        """The fused estimate (offset-reconciled when enabled); None if nothing was ever written."""
+        return self._estimate(time.ticks_us())[0]
 
     def read(self) -> tuple:
-        """(value, source, age_ms) of the fused estimate; `source` is None when extrapolated."""
+        """(value, source, age_ms) of the fused estimate; `source` is None when extrapolated. A
+        reconciled value is offset-corrected, but `source` still names the raw provider it came from."""
         now = time.ticks_us()
-        winner, primary = self._resolve(now)
-        if winner is not None:
-            return (winner.v1, winner.source, time.ticks_diff(now, winner.t1) // 1000)
-        return (_extrapolate(primary, now) if primary is not None else None, None, None)
+        value, winner = self._estimate(now)
+        if winner is None:
+            return (value, None, None)
+        return (value, winner.source, time.ticks_diff(now, winner.t1) // 1000)
+
+    def offsets(self) -> dict:
+        """Learned bias per source (source -> offset) for diagnostics; empty until reconciled."""
+        return {channel.source: channel.offset for channel in self.channels if channel.offset is not None}
 
     def raw(self, source: str):
         """A specific source's latest value (None if absent / unwritten)."""
@@ -195,12 +239,13 @@ class Blackboard:
 
     @classmethod
     def provide(cls, source: str, provides: dict, *want):
-        """Register `source` for the params it provides ({param: {priority, timeout_ms}}) and hand
-        back its write-channel(s), ready to push(): name the ones you `want` -- one name returns that
-        channel, several return a tuple in that order, none returns the {param: channel} dict. So a
-        driver writes `self._a, self._b = provide(name, provides, 'a', 'b')` in one line."""
+        """Register `source` for the params it provides ({param: {priority, timeout_ms[, reconcile]}})
+        and hand back its write-channel(s), ready to push(): name the ones you `want` -- one name
+        returns that channel, several return a tuple in that order, none returns the {param: channel}
+        dict. So a driver writes `self._a, self._b = provide(name, provides, 'a', 'b')` in one line."""
         channels = {name: cls.parameter(name).add_source(source, spec.get('priority', 0),
-                                                         spec.get('timeout_ms', 0) * 1000)
+                                                         spec.get('timeout_ms', 0) * 1000,
+                                                         spec.get('reconcile', False))
                     for name, spec in provides.items()}
         if not want:
             return channels
@@ -233,7 +278,7 @@ class Blackboard:
         out = {}
         for name, param in cls._params.items():
             value, source, age_ms = param.read()
-            out[name] = {'value': value, 'source': source, 'age_ms': age_ms}
+            out[name] = {'value': value, 'source': source, 'age_ms': age_ms, 'offsets': param.offsets()}
         return out
 
     @classmethod

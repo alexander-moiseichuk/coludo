@@ -93,8 +93,27 @@ def main():
     time.sleep_ms(25)  # 25 ms > 15 ms window though < a0's own 40 ms -> a0 stale: min() applied
     assert Blackboard.read('m')[1] is None  # nobody fresh in the 15 ms window
 
+    # offset reconciliation layered on the shared window: while the primary is fresh the backup
+    # learns its bias; on handover (primary stale, backup fresh in the window) it is bias-corrected
+    Blackboard.provide('icp3', {'alt3': {'priority': 0, 'timeout_ms': 50, 'reconcile': True}})
+    Blackboard.provide('bmp3', {'alt3': {'priority': 1, 'timeout_ms': 5000}})
+    for _ in range(5):  # icp 100, bmp 102.5 (+2.5 bias); both fresh -> bmp learns once per icp sample
+        Blackboard.write('alt3', 100.0, 'icp3')
+        Blackboard.write('alt3', 102.5, 'bmp3')
+        Blackboard.value('alt3')  # a read drives the learn step
+        time.sleep_ms(2)
+    assert abs(Blackboard.value('alt3') - 100.0) < 1e-6  # primary fresh -> icp raw 100, no correction
+    learned = Blackboard.parameter('alt3').offsets()
+    assert abs(learned['bmp3'] + 2.5) < 0.1, learned  # bmp bias learned ~ icp - bmp = -2.5
+    time.sleep_ms(60)  # icp's 50 ms window lapses
+    Blackboard.write('alt3', 102.5, 'bmp3')  # bmp fresh within the 50 ms window -> it takes over
+    value, source, _age = Blackboard.read('alt3')
+    assert source == 'bmp3' and abs(value - 100.0) < 0.1, (value, source)  # corrected, not raw 102.5
+    # a non-reconciled param never learns an offset (the shared-window 'pri'/'sec' pair above)
+    assert Blackboard.parameter('w').offsets() == {}
+
     print('ok: blackboard provide/parameter ergonomics, rank-preference, shared-window handover, '
-          'primary extrapolation')
+          'primary extrapolation, offset reconciliation')
 
 
 main()
