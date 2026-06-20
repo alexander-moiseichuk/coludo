@@ -1,7 +1,14 @@
 # tasks/board_health.py — board vitals task: samples temperature, free memory and CPU load every
-# period, pushes a telemetry row, and exposes the latest to the operator. CPU load is estimated from
-# a low-priority idle task: the fewer times it runs in a period (vs the most it ever has), the busier
-# the board. Registered as @task.activity('health') so the Controller creates and supervises it.
+# period, pushes a telemetry row (health.csv) and exposes the latest to the operator. Registered as
+# @task.activity('health') so the Controller creates and supervises it.
+#
+# CPU load (an integer percent 0..100) is estimated from a low-priority idle task that increments a
+# counter and yields (sleep_ms(0)) in a tight loop. Each period we measure the idle counter's RATE
+# (counts/ms); the highest rate ever observed (`_max_rate`) is taken as the fully-idle baseline, and
+#   load% = round(100 * (1 - rate / _max_rate)).
+# So load is RELATIVE to the busiest-idle moment seen: it self-calibrates as the board gets idle
+# time (the baseline only rises), but a board that is never truly idle reads relative to its
+# least-busy moment. test_board_health drives a CPU hog and asserts the load rises with real load.
 
 import asyncio
 import gc
@@ -22,7 +29,7 @@ class BoardHealth(task.Task):
 
     async def setup(self) -> bool:
         self.period_ms: int = self.config.get('period_ms', 1000)
-        self.load: float = 0.0
+        self.load: int = 0  # CPU load as an integer percent 0..100
         self._idle_count: int = 0
         self._max_rate: float = 0.0
         self._telemetry = recorder.Telemetry('health.csv', ('temp', 'mem_free', 'load'))
@@ -41,7 +48,11 @@ class BoardHealth(task.Task):
         return gc.mem_free()
 
     def sample(self) -> dict:
-        return {'temp': self.temperature(), 'mem_free': self.mem_free(), 'load': round(self.load, 3)}
+        return {'temp': self.temperature(), 'mem_free': self.mem_free(), 'load': self.load}
+
+    def _row(self) -> None:
+        vitals = self.sample()
+        self._telemetry.push((vitals['temp'], vitals['mem_free'], vitals['load']))
 
     async def _idle_loop(self) -> None:
         while True:
@@ -49,10 +60,12 @@ class BoardHealth(task.Task):
             await asyncio.sleep_ms(0)
 
     async def run(self) -> None:
-        """Sample vitals every period_ms, estimate load, and push a telemetry row. Runs forever."""
+        """Push a vitals row at startup, then every period_ms estimate load and push again. Runs
+        forever."""
         asyncio.create_task(self._idle_loop())
         last_count = self._idle_count
         last_ms = time.ticks_ms()
+        self._row()  # first row at startup (load 0 until the first interval calibrates it)
         while True:
             await asyncio.sleep_ms(self.period_ms)
             now_count = self._idle_count
@@ -62,9 +75,8 @@ class BoardHealth(task.Task):
             last_count, last_ms = now_count, now_ms
             if rate > self._max_rate:
                 self._max_rate = rate
-            self.load = max(0.0, 1.0 - rate / self._max_rate) if self._max_rate else 0.0
-            vitals = self.sample()
-            self._telemetry.push((vitals['temp'], vitals['mem_free'], vitals['load']))
+            self.load = round(100 * (1.0 - rate / self._max_rate)) if self._max_rate else 0
+            self._row()
 
     # --- Inspectable ---
     def inspect(self) -> dict:
