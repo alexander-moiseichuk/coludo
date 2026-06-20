@@ -49,8 +49,13 @@ A conflict-free starting assignment (drop into `board.json`):
 
 | Function | GPIO | Notes |
 |---|---|---|
-| I²C0 SDA | 7 | sensors: ADXL375, BNO055, ICP-10111, BMP280, laser AGL (shared) |
+| I²C0 SDA | 7 | sensors: BNO055, ICP-10111, BMP280, laser AGL (shared) |
 | I²C0 SCL | 8 | |
+| SPI1 SCK | 48 | ADXL375 (its own bus, mode 3, 5 MHz — off I²C for clean high-rate reads) |
+| SPI1 MOSI | 47 | ADXL375 SDA/SDI |
+| SPI1 MISO | 46 | ADXL375 SDO |
+| ADXL375 CS | 49 | SPI chip-select (`adxl375_cs`), active low |
+| ADXL375 INT1 | 4 | DATA_READY (`adxl375_int`) — drives interrupt sampling |
 | UART → Recorder TX | 20 | to Luckfox RX, 921600 baud (logs/telemetry sink) |
 | UART → Recorder RX | 21 | optional (one-way link only needs TX) |
 | UART ↔ GNSS TX | 22 | to ATGM336H RX (send `$PCAS…` config) |
@@ -60,7 +65,7 @@ A conflict-free starting assignment (drop into `board.json`):
 | Servo — right eleron | 32 | LEDC PWM (`servo_eleron_right`) |
 | Separation switch | 33 | input, `PULL_UP`, IRQ (LOW=nested, HIGH=separated) |
 | Status LED (external) | 2 | **no onboard user LED** — wire an external LED+resistor |
-| Spare / expansion | 3, 4, 5, 28, 29, 30, 31, 46–52 | future sensors, second I²C, etc. |
+| Spare / expansion | 3, 5, 28, 29, 30, 31, 50, 51, 52 | future sensors, second I²C, etc. |
 
 ### Caveats
 

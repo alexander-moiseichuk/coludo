@@ -264,6 +264,7 @@ One physical I2C bus, shared by every device on it; transactions are serialized 
 - `write(addr: int, reg: int, data: bytes) -> None`
 - `writeto(addr: int, data: bytes) -> None` — Raw write (no register) — for command-based devices like the ICP-10111.
 - `readfrom(addr: int, count: int) -> bytes` — Raw read (no register) — pairs with writeto() for command-based devices.
+- `device(addr: int) -> _Device` — A register window for one address on this bus (matches spibus.Bus.device).
 - `scan() -> list`
 
 ### `get(bus_id: int, spec: dict) -> Bus`
@@ -410,6 +411,26 @@ sensor can push every sample and have its telemetry decimated to a sane rate).
 - `__init__(filename: str, fields: tuple, decimate_us: int=0)` — constructor
 - `push(values) -> None`
 
+## `spibus.py`
+
+spibus.py — shared, lock-serialized SPI buses, mirroring i2cbus. A sensor may move off the shared
+I2C bus onto SPI (e.g. the ADXL375, for clean high-rate reads): each bus id gets ONE machine.SPI
+plus an asyncio.Lock, and get() hands back the shared wrapper. device(cs) returns a register window
+with the SAME read/read_into/write(reg, ...) interface as i2cbus, so a driver is bus-agnostic. The
+chip-select is a plain GPIO held low only around each locked transaction (the SPI peripheral does
+not own it, so several devices can share one bus). A glider-only module (MicroPython).
+
+### `class Bus`
+
+One physical SPI bus, shared by every device on it; transactions are serialized by a lock.
+
+- `__init__(bus_id: int, spec: dict)` — constructor
+- `device(cs: int, mb_bit: int=6) -> _Device` — A register window for one chip-select on this bus (matches i2cbus.Bus.device).
+
+### `get(bus_id: int, spec: dict) -> Bus`
+
+The shared Bus for `bus_id`, created once from `spec` (sck/mosi/miso/baud/mode) and cached.
+
 ## `task.py`
 
 Task base class and driver registry — the unit the Controller creates and supervises.
@@ -424,8 +445,13 @@ A Task is Inspectable: inspect()/update()/stats() expose it to the operator (the
 registers each task with the Inspector), so there is no separate report().
 
 A task registers itself with @activity('name') (or its alias @driver('name') for the HAL ones in
-drivers/); the Controller maps a component's 'driver' field to the class via ACTIVITIES. The two
-names share one registry for now -- splitting drivers out is a later concern if it is needed.
+drivers/) into ACTIVITIES, the CLASS registry: name -> Task subclass, "what can be built". It is a
+module global on purpose -- the decorators fill it at IMPORT time, before any Controller exists, so
+it cannot live on a Controller instance (that is why moving it into the Controller would be a mess,
+not a tidy-up). The Controller READS it (injected as `registry`, defaulting to ACTIVITIES) to build
+a component, and keeps its own INSTANCE directory -- find()/query(), "what is currently running" --
+for dependency lookup. Two deliberately separate lookups: class-by-name here, instance-by-name on
+the Controller. The driver/activity names share one registry for now; splitting drivers out later.
 
 ### `activity(name: str)`
 
@@ -449,11 +475,13 @@ name so the Controller can build it from a config component.
 
 ## `adxl375.py`
 
-drivers/adxl375.py — ADXL375 ±200 g high-G accelerometer over I2C: the boost-phase accel channel.
-@task.driver('adxl375'). setup() probes the device id and configures it; run() writes the latest
-(x, y, z) acceleration in g to the databoard 'accel' slot. If the device is absent (no I2C ack /
-wrong device id) setup() returns False and the Controller skips it, so the board boots fine with
-the sensor unplugged.
+drivers/adxl375.py — ADXL375 ±200 g high-G accelerometer: the boost-phase accel channel. Works over
+I2C (shared bus) OR SPI (its own bus, for clean high-rate reads) -- the component's `bus` field
+selects, and a shared register-window device (i2cbus/spibus .device()) keeps the driver code
+bus-agnostic. @task.driver('adxl375'). setup() probes the device id and configures it; run() writes
+the latest (x, y, z) acceleration in g to the databoard 'accel' slot. If the device is absent (no
+ack / wrong device id) setup() returns False and the Controller skips it -- the board boots fine
+with the sensor unplugged.
 
 Sampling is interrupt-driven when an `int_pin` (INT1) is wired: the chip raises DATA_READY when a
 new sample is ready, an IRQ sets a ThreadSafeFlag, and run() awaits it -- so the coroutine sleeps

@@ -34,12 +34,15 @@ def default() -> dict:
             'i2c': {
                 '0': {'sda': 7, 'scl': 8, 'freq': 400000},
             },
-            'spi': {},
+            'spi': {
+                '1': {'sck': 48, 'mosi': 47, 'miso': 46, 'baud': 5000000, 'mode': 3},  # ADXL375 (mode 3)
+            },
         },
         'pins': {
             'led_status': 2,  # external LED (board has no user LED)
             'separation_switch': 33,  # copper pads: HIGH=nested (3v3 routed), LOW=separated
             'adxl375_int': 4,  # ADXL375 INT1 (free spare) — DATA_READY drives the accel sampling
+            'adxl375_cs': 49,  # ADXL375 SPI chip-select (free spare)
             'servo_yaw': 26,
             'servo_eleron_left': 27,
             'servo_eleron_right': 32,
@@ -56,9 +59,10 @@ def default() -> dict:
             {
                 'name': 'accel_adxl375',
                 'driver': 'adxl375',
-                'bus': 'i2c', 'id': 0,
-                'addr': 0x53,
-                'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — polled for now
+                'bus': 'spi', 'id': 1,  # moved off i2c:0 to its own SPI bus for clean high-rate reads
+                'addr': 0x53,  # kept for an i2c fallback (set bus 'i2c', id 0)
+                'cs_pin': 'adxl375_cs',  # SPI chip-select
+                'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — drives the sampling
                 'telemetry_us': 20000,  # ~100 Hz sampling decimated to 50 Hz in accel_adxl375.csv
                 'enabled': True,
                 'provides': {'accel': {'priority': 0, 'timeout_ms': 20}},

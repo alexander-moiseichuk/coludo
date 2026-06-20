@@ -9,6 +9,24 @@ import asyncio
 _buses: dict = {}  # bus id -> Bus
 
 
+class _Device:
+    """A register window on a shared I2C bus for one address, mirroring spibus.Bus.device so a driver
+    can use either bus the same way: read(reg, n) / read_into(reg, buf) / write(reg, data)."""
+
+    def __init__(self, bus, addr: int):
+        self._bus = bus
+        self._addr = addr
+
+    async def read(self, reg: int, count: int) -> bytes:
+        return await self._bus.read(self._addr, reg, count)
+
+    async def read_into(self, reg: int, buf) -> None:
+        await self._bus.read_into(self._addr, reg, buf)
+
+    async def write(self, reg: int, data: bytes) -> None:
+        await self._bus.write(self._addr, reg, data)
+
+
 class Bus:
     """One physical I2C bus, shared by every device on it; transactions are serialized by a lock."""
 
@@ -39,6 +57,10 @@ class Bus:
         """Raw read (no register) — pairs with writeto() for command-based devices."""
         async with self._lock:
             return self._i2c.readfrom(addr, count)
+
+    def device(self, addr: int) -> _Device:
+        """A register window for one address on this bus (matches spibus.Bus.device)."""
+        return _Device(self, addr)
 
     def scan(self) -> list:
         return self._i2c.scan()

@@ -24,7 +24,15 @@ async def amain():
     absent = adxl375.Adxl375('accel', {'bus': 'i2c', 'id': 0, 'addr': 0x7F}, _StubController())
     assert await absent.setup() is False
 
-    print('ok: adxl375 driver registered; setup fails gracefully when no device answers')
+    # SPI transport on the real SPI bus but no ADXL on the chip-select -> graceful False (id mismatch)
+    spi_absent = adxl375.Adxl375('accel', {'bus': 'spi', 'id': 1, 'cs_pin': 'adxl375_cs'}, _StubController())
+    assert await spi_absent.setup() is False
+
+    # SPI selected but no cs_pin declared -> graceful False (no chip-select to drive)
+    no_cs = adxl375.Adxl375('accel', {'bus': 'spi', 'id': 1}, _StubController())
+    assert await no_cs.setup() is False
+
+    print('ok: adxl375 registered; graceful setup over i2c (no ack) and spi (id mismatch / no cs)')
 
 
 asyncio.run(amain())
