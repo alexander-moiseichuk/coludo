@@ -117,6 +117,12 @@ async def _operator_console():
         inspected = await ask('glider9 inspect wifi')
         assert inspected.startswith('from glider9 ok ') and '"name": "wifi"' in inspected
 
+        # that inspect reply was cached Control-side; `cache` shows it without re-polling the board
+        cached = await ask('cache glider9')
+        assert cached.startswith('from cc ok '), cached
+        props = json.loads(cached[len('from cc ok '):])
+        assert props['id'] == 'glider9' and props['inspect']['wifi'] == {'name': 'wifi', 'ok': True}
+
         # sticky select -> a bare command routes to the selected board
         assert await ask('select glider9') == 'from cc ok {"selected": "glider9"}'
         assert await ask('who') == 'from cc ok {"selected": "glider9"}'
@@ -194,6 +200,14 @@ async def _web():
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
                                       json.dumps({'board': 'glider9', 'command': 'reboot'}))
         assert status == 200 and json.loads(payload)['status'] == 'ok'
+
+        # /api/board/<id> serves the Control-side cache (config was cached by the get-config above)
+        status, payload = await _http(WEB_PORT, 'GET', '/api/board/glider9')
+        assert status == 200
+        props = json.loads(payload)
+        assert props['id'] == 'glider9' and props['config']['board']['id'] == 'glider9'
+        status, _payload = await _http(WEB_PORT, 'GET', '/api/board/ghost')  # unknown board -> 404
+        assert status == 404
 
         # GET /events streams the board list as Server-Sent Events
         events_reader, events_writer = await asyncio.open_connection('127.0.0.1', WEB_PORT)

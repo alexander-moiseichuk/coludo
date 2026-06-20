@@ -82,11 +82,21 @@ class Web:
             return await _send(writer, 200, 'text/html; charset=utf-8', self.page)
         if method == 'GET' and route == '/api/boards':
             return await _send_json(writer, 200, self.hub.board_rows())
+        if method == 'GET' and route.startswith('/api/board/'):
+            return await self._api_board(route[len('/api/board/'):], writer)
         if method == 'POST' and route == '/api/cmd':
             return await self._api_cmd(body, writer)
         if method == 'GET' and route == '/events':
             return await self._events(writer)
         await _send(writer, 404, 'text/plain', 'not found')
+
+    async def _api_board(self, board_id: str, writer) -> None:
+        """The Control-side cached properties for one board (config / inspect / stats / health) —
+        last-known values, served without touching the board."""
+        board = self.hub.boards.get(board_id)
+        if board is None:
+            return await _send_json(writer, 404, {'error': 'no board %r' % board_id})
+        return await _send_json(writer, 200, board.properties())
 
     async def _api_cmd(self, body: bytes, writer) -> None:
         try:
