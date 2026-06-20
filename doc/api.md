@@ -498,6 +498,28 @@ High-G accel: samples (x, y, z) in g to the databoard 'accel' slot, interrupt-dr
 - `run() -> None` — Sample on DATA_READY (or every fallback_ms if interrupts go silent); plain poll with no
 - `inspect() -> dict`
 
+## `atgm336h.py`
+
+drivers/atgm336h.py — ATGM336H GNSS (GPS + BDS) over UART: the position channel. @task.driver(
+'atgm336h'). At setup it reconfigures the module to RMC-only at the configured rate (default 10 Hz)
+via PMTK commands -- RMC alone (~70 B) fits 10 Hz inside 9600 baud (~960 B/s), so no baud switch is
+needed. run() reads NMEA lines asynchronously (asyncio.StreamReader), parses RMC for the fix and
+writes (latitude, longitude) to the databoard 'position' slot; a GGA sentence, if the module still
+emits one, supplies altitude (a deep fallback to the baro). Lock is lost easily under high-g, so
+position is best-effort and the consumers fall back when it goes stale.
+
+NMEA is talker-agnostic (GP/GN/BD). The UART is dedicated (uart:2), not a shared bus, so the driver
+owns the peripheral. Graceful: an undefined bus -> setup False -> the Controller skips it.
+
+### `class Atgm336h(task.Task)`
+
+GNSS: reconfigures to RMC-only at `hz`, then writes (latitude, longitude) to 'position' (and
+altitude to 'altitude' if a GGA is seen). Best-effort -- lock can drop under boost.
+
+- `setup() -> bool`
+- `run() -> None` — Read NMEA lines forever and parse them; non-ASCII noise lines and malformed fields are
+- `inspect() -> dict`
+
 ## `bluetooth.py`
 
 drivers/bluetooth.py — set the BLE radio to the state declared in config at boot. The component
