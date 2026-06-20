@@ -10,21 +10,24 @@
 #   Parameter    — one fused quantity (e.g. 'altitude') for the consumer. Holds a short LIST of
 #                  channels KEPT IN RANK ORDER (lowest = primary first; a list, not a dict, is faster
 #                  at this size), plus the shared freshness window derived from its primary tier.
-#   _Channel     — one source's stream: a static rank (priority; lower = preferred), a declared
-#                  expiry (the parameter applies one shared window), and TWO slots (the last two
-#                  readings) -- two slots because the extrapolation here is LINEAR (needs 2 points).
+#   _Channel     — one source's stream: a static rank (priority; lower = preferred) and TWO slots
+#                  (the last two readings) -- two slots because the extrapolation here is LINEAR
+#                  (needs 2 points); a degree-N model would keep N+1.
 #
 # Fusion is a pure read-time function, Parameter.value():
 #   1. winner = the lowest-rank channel still fresh. Channels are rank-ordered, so it is just the
 #      FIRST fresh one in the list (same-rank channels are equivalent). Freshness uses ONE shared
 #      window per parameter: the tightest expiry among the rank-0 tier (min() if two share rank 0),
 #      applied to EVERY channel. Return its value.
-#   2. if NO channel is fresh, linearly extrapolate the PRIMARY's two slots to now -- project the
-#      trusted source forward rather than hand out a backup that is itself stale (and bias-shifted).
-#   3. if nothing was ever written, None.
+#   2. if NO channel is fresh, linearly extrapolate the PRIMARY (channels[0]) two slots to now --
+#      project the trusted source forward rather than hand out a backup that is itself stale.
+#   3. if the primary never pushed (startup), None.
 # So "rank 0 answers while fresh; a backup takes over only while itself THIS fresh, else rank 0 is
-# extrapolated" is EMERGENT -- every read re-evaluates freshness against the shared window; there is
-# no queue to sort, insert into, or evict. A channel with no data (v1 None) is never fresh.
+# extrapolated" is EMERGENT -- every read re-evaluates freshness against the shared window. A channel
+# is BORN STALE (t1 a full _DEFAULT_EXPIRE in the past), so an un-pushed channel is never fresh; and
+# since every window is <= _DEFAULT_EXPIRE, a FRESH channel always has data -- which is why nothing
+# downstream needs a v1-None check (a source that never produces is simply never fresh, and surfaces
+# as a missing reading rather than a hidden guard).
 #
 # The shared window decides WHEN to fall back; offset reconciliation (opt-in, 'reconcile': true on a
 # provider) decides WHAT the fallback reports. While the primary is fresh, each backup's BIAS against
@@ -54,21 +57,20 @@ except ImportError:  # CPython (tooling / off-board checks)
         return value
 
 
-_DEFAULT_EXPIRE_US: int = const(1000_000)  # fallback freshness window when a source declares none
+_DEFAULT_EXPIRE_US: int = const(1000_000)  # default + upper bound on a freshness window (~2x slowest sensor)
 _OFFSET_ALPHA: float = 0.1  # EMA weight when learning a backup's bias against the fresh primary
 
 
 class _Channel:
-    """One source's stream within a Parameter: a static rank, a declared expiry (the parameter
-    applies one shared window, min() over the rank-0 tier), and two slots (newest = t1/v1, previous =
-    t0/v0) for linear extrapolation. No data (v1 None) reads as not-fresh. `offset` is the bias
+    """One source's stream within a Parameter: a static rank and two slots (newest = t1/v1, previous
+    = t0/v0) for linear extrapolation. Born STALE (t1 a full _DEFAULT_EXPIRE in the past, no data), so
+    an un-pushed channel is never fresh and a fresh channel always has data. `offset` is the bias
     learned against the primary (None until learned), added on a reconciled fallback."""
 
-    def __init__(self, source: str, rank: int, expire_us: int):
+    def __init__(self, source: str, rank: int):
         self.source: str = source
         self.rank: int = rank
-        self.expire_us: int = expire_us or _DEFAULT_EXPIRE_US  # only the rank-0 tier's min is used
-        self.t0: int = time.ticks_add(time.ticks_us(), -self.expire_us)  # in the past: born stale
+        self.t0: int = time.ticks_add(time.ticks_us(), -(_DEFAULT_EXPIRE_US + 1))  # past any window: born stale
         self.v0 = None
         self.t1: int = self.t0
         self.v1 = None
@@ -81,35 +83,34 @@ class _Channel:
         self.t1, self.v1 = ts, value
 
     def fresh(self, now: int, window_us: int) -> bool:
-        """Fresh iff it holds a reading pushed within `window_us` of now (no data -> never fresh)."""
-        return self.v1 is not None and time.ticks_diff(now, self.t1) <= window_us
+        """Fresh iff it pushed within `window_us` of now. Born stale + window <= _DEFAULT_EXPIRE means
+        a fresh channel always has data -- no v1-None check needed here or downstream."""
+        return time.ticks_diff(now, self.t1) <= window_us
 
     def value(self):
         """This channel's latest reading (None until first push). The handle a source reads back."""
         return self.v1
 
 
-def _extrapolate(channel: _Channel, now: int):
-    """Linear projection of a channel's two slots to `now` -- value is a scalar (int|float). With
-    only one reading, or a non-scalar value (a stale vector), return the latest as-is."""
-    older, newest = channel.v0, channel.v1
-    span = time.ticks_diff(channel.t1, channel.t0)
-    if older is None or span <= 0:
-        return newest
+def _extrapolate(chan: _Channel, now: int):
+    """Linear projection of a channel's two slots to `now`. With only one reading, a zero span, or a
+    non-scalar value (a stale vector), the math raises and we return the latest as-is (None if the
+    channel never pushed)."""
     try:
-        return newest + (newest - older) * time.ticks_diff(now, channel.t1) / span
-    except TypeError:  # vector etc. -> latest, no projection
-        return newest
+        return chan.v1 + (chan.v1 - chan.v0) * time.ticks_diff(now, chan.t1) / time.ticks_diff(chan.t1, chan.t0)
+    except Exception:  # TypeError (None / vector), ZeroDivisionError -> latest reading, no projection
+        return chan.v1
 
 
 class Parameter:
-    """One fused quantity. Holds a channel per source; value() fuses by rank/freshness, falling back
-    to extrapolation when none is fresh."""
+    """One fused quantity. Holds a rank-ordered channel per source; value() fuses by rank/freshness,
+    falling back to extrapolation of the primary when none is fresh."""
 
     def __init__(self, name: str):
         self.name: str = name
-        self.channels: list = []  # _Channel per source (few; a list beats a dict at this size)
-        self.window_us: int = _DEFAULT_EXPIRE_US  # shared freshness window = primary tier's min expiry
+        self.channels: list = []  # _Channel per source, rank-ordered (channels[0] = primary)
+        self.window_us: int = _DEFAULT_EXPIRE_US  # shared freshness window = primary tier's tightest expiry
+        self._primary_rank: int = 1 << 30  # rank of the current primary tier (for window tracking)
         self.reconcile: bool = False  # offset reconciliation on? (a provider declares it)
         self._learned_t1 = None  # primary.t1 at the last offset update (learn once per new reading)
 
@@ -120,75 +121,75 @@ class Parameter:
         return None
 
     def add_source(self, source: str, rank: int, expire_us: int, reconcile: bool = False) -> _Channel:
-        """Register (or re-register) a source with its rank + expiry; return its channel so the sensor
-        can push() to it directly (no per-write lookup). Channels are KEPT IN RANK ORDER (channels[0]
-        = primary), so resolve is a single forward scan. Recomputes the shared freshness window: the
-        tightest expiry among the rank-0 tier. `reconcile` (any provider) turns it on here."""
+        """Register (or re-register) a source at `rank`; return its channel to push() to directly (no
+        per-write lookup). Channels are KEPT IN RANK ORDER (channels[0] = primary). The shared
+        freshness window is the tightest expiry of the primary (lowest-rank) tier, tracked here -- the
+        only place expiry is consulted; runtime freshness uses window_us alone. `reconcile` (any
+        provider) turns on offset reconciliation for this parameter."""
         channel = self._channel(source)
         if channel is None:
-            channel = _Channel(source, rank, expire_us)
+            channel = _Channel(source, rank)
             self.channels.append(channel)
         else:
-            channel.rank, channel.expire_us = rank, expire_us or _DEFAULT_EXPIRE_US
+            channel.rank = rank
+        self.channels.sort(key=lambda candidate: candidate.rank)  # rank order: channels[0] = primary
         if reconcile:
             self.reconcile = True
-        self.channels.sort(key=lambda candidate: candidate.rank)  # rank order: channels[0] = primary
-        primary_rank = self.channels[0].rank
-        self.window_us = min(candidate.expire_us for candidate in self.channels
-                             if candidate.rank == primary_rank)
+        expire_us = expire_us or _DEFAULT_EXPIRE_US
+        if rank < self._primary_rank:  # a new, lower-rank primary tier -> the window resets to it
+            self._primary_rank, self.window_us = rank, expire_us
+        elif rank == self._primary_rank:  # another primary-tier source -> the tightest wins
+            self.window_us = min(self.window_us, expire_us)
         return channel
 
     def write(self, value, source: str) -> None:
-        """Report a source's latest reading by name (convenience; sensors push() their channel)."""
-        channel = self._channel(source)
-        if channel is None:
-            channel = self.add_source(source, 0, _DEFAULT_EXPIRE_US)
-        channel.push(value)
+        """Report a source's latest reading by name (convenience; sensors push() their channel). The
+        source is created on first write if it was not provided (rank 0, default window)."""
+        try:
+            self._channel(source).push(value)
+        except AttributeError:
+            self.add_source(source, 0, _DEFAULT_EXPIRE_US).push(value)
 
     def _resolve(self, now: int) -> tuple:
-        """One forward scan over the rank-ordered channels: (winner, primary). winner = the first
-        channel fresh within the shared window (lowest rank wins; same-rank channels are equivalent,
-        so the first is taken); primary = the first channel holding data -- extrapolated when nothing
-        is fresh."""
-        winner = None
-        primary = None
+        """Forward scan over the rank-ordered channels: (winner, primary). winner = the first fresh
+        channel (lowest rank wins; same-rank channels are equivalent) or None; primary = channels[0],
+        the designated source extrapolated when nothing is fresh. IndexError if no sources yet."""
         for channel in self.channels:
-            if primary is None and channel.v1 is not None:
-                primary = channel
-            if winner is None and channel.fresh(now, self.window_us):
-                winner = channel
-            if winner is not None and primary is not None:
-                break
-        return winner, primary
+            if channel.fresh(now, self.window_us):
+                return channel, self.channels[0]
+        return None, self.channels[0]
 
     def _learn(self, now: int, primary: _Channel) -> None:
-        """While the primary (lowest-rank source with data) is fresh, learn each fresh backup's bias
+        """While the primary (channels[0]) is fresh it is truth; learn each fresh backup's bias
         against it (EMA) -- once per new primary reading, so the rate is set by data, not by reads.
         Co-primaries (same rank) are not reconciled. Offsets FREEZE while the primary is stale; they
         are applied on fallback in _estimate()."""
-        if primary is None or primary.t1 == self._learned_t1 or not primary.fresh(now, self.window_us):
+        if primary.t1 == self._learned_t1 or not primary.fresh(now, self.window_us):
             return
         self._learned_t1 = primary.t1
         reference = primary.v1
-        for channel in self.channels:
-            if channel.rank <= primary.rank or channel.v1 is None or not channel.fresh(now, self.window_us):
-                continue  # skip the primary and its co-primaries; only lower-priority backups learn
+        for channel in self.channels[1:]:  # backups (rank-ordered, primary is channels[0])
+            if channel.rank == primary.rank or not channel.fresh(now, self.window_us):
+                continue  # skip co-primaries and stale backups
             try:
                 sample = reference - channel.v1
+                channel.offset = sample if channel.offset is None else (
+                    channel.offset + _OFFSET_ALPHA * (sample - channel.offset))
             except TypeError:
-                continue  # a non-scalar in a reconciled param -> skip, never crash
-            channel.offset = sample if channel.offset is None else (
-                channel.offset + _OFFSET_ALPHA * (sample - channel.offset))
+                pass  # a non-scalar slipped into a reconciled param -> skip, never crash
 
     def _estimate(self, now: int) -> tuple:
-        """(value, winner) of the fused estimate. winner is None when nothing is fresh (the value is
-        then the primary extrapolated, or None). With reconciliation on, a fresh non-primary winner
-        is bias-corrected by its learned offset so the handover off the primary is seamless."""
-        winner, primary = self._resolve(now)
+        """(value, winner) of the fused estimate. winner None -> the value is the primary extrapolated
+        to now (or None if it never pushed). With reconciliation on, a fresh non-primary winner is
+        bias-corrected by its learned offset so the handover off the primary is seamless."""
+        try:
+            winner, primary = self._resolve(now)
+        except IndexError:
+            return (None, None)  # no sources registered yet (a consumer touched the param early)
         if self.reconcile:
             self._learn(now, primary)
         if winner is None:
-            return (_extrapolate(primary, now) if primary is not None else None, None)
+            return (_extrapolate(primary, now), None)
         if self.reconcile and winner is not primary and winner.offset is not None:
             return (winner.v1 + winner.offset, winner)
         return (winner.v1, winner)
@@ -212,8 +213,10 @@ class Parameter:
 
     def raw(self, source: str):
         """A specific source's latest value (None if absent / unwritten)."""
-        channel = self._channel(source)
-        return channel.v1 if channel is not None else None
+        try:
+            return self._channel(source).v1
+        except AttributeError:
+            return None
 
     def sources(self) -> list:
         return sorted(channel.source for channel in self.channels)
