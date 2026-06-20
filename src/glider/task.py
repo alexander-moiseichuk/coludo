@@ -10,12 +10,17 @@
 # registers each task with the Inspector), so there is no separate report().
 #
 # A task registers itself with @activity('name') (or its alias @driver('name') for the HAL ones in
-# drivers/); the Controller maps a component's 'driver' field to the class via ACTIVITIES. The two
-# names share one registry for now -- splitting drivers out is a later concern if it is needed.
+# drivers/) into ACTIVITIES, the CLASS registry: name -> Task subclass, "what can be built". It is a
+# module global on purpose -- the decorators fill it at IMPORT time, before any Controller exists, so
+# it cannot live on a Controller instance (that is why moving it into the Controller would be a mess,
+# not a tidy-up). The Controller READS it (injected as `registry`, defaulting to ACTIVITIES) to build
+# a component, and keeps its own INSTANCE directory -- find()/query(), "what is currently running" --
+# for dependency lookup. Two deliberately separate lookups: class-by-name here, instance-by-name on
+# the Controller. The driver/activity names share one registry for now; splitting drivers out later.
 
 import inspector
 
-ACTIVITIES: dict = {}  # registered name -> Task subclass (drivers + activities, one registry)
+ACTIVITIES: dict = {}  # CLASS registry: name -> Task subclass (instance lookup is Controller.find/query)
 
 
 def activity(name: str):

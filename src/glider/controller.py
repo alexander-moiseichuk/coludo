@@ -43,6 +43,8 @@ class Controller(inspector.Inspectable):
 
     def __init__(self, config: dict, registry: dict = None, log=None):
         self.config: dict = config
+        # the CLASS registry (name -> Task class) used by create(); the INSTANCE directory is
+        # self.tasks, looked up by find()/query(). Injected for tests; defaults to task.ACTIVITIES.
         self.registry: dict = registry if registry is not None else task.ACTIVITIES
         self.log = log if log is not None else (lambda msg: None)
         self.tasks: dict = {}  # name -> Task
