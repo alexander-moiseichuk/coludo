@@ -46,6 +46,8 @@ def default() -> dict:
             'separation_switch': 33,  # copper pads: HIGH=nested (3v3 routed), LOW=separated
             'adxl375_int': 4,  # ADXL375 INT1 (free spare) — DATA_READY drives the accel sampling
             'adxl375_cs': 49,  # ADXL375 SPI chip-select (free spare)
+            'laser_xshut': 5,  # VL53L4CX XSHUT enable/reset (free spare)
+            'laser_int': 3,  # VL53L4CX GPIO1 data-ready interrupt (free spare)
             'servo_yaw': 26,
             'servo_eleron_left': 27,
             'servo_eleron_right': 32,
@@ -109,8 +111,12 @@ def default() -> dict:
                 'driver': 'vl53l4cx',
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x29,
+                'xshut_pin': 'laser_xshut',  # enable/reset
+                'int_pin': 'laser_int',  # GPIO1 data-ready
                 'enabled': True,
-                'provides': {'agl': {'priority': 0, 'timeout_ms': 20}, 'altitude': {'priority': 2, 'timeout_ms': 20}},
+                # laser gives AGL (ground distance), not AMSL altitude, so it provides 'agl' only;
+                # ~30 Hz continuous ranging -> 100 ms freshness (tune the timing budget on the bench).
+                'provides': {'agl': {'priority': 0, 'timeout_ms': 100}},
             },
             {
                 'name': 'gnss',

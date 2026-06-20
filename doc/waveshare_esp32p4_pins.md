@@ -56,6 +56,8 @@ A conflict-free starting assignment (drop into `board.json`):
 | SPI1 MISO | 46 | ADXL375 SDO |
 | ADXL375 CS | 49 | SPI chip-select (`adxl375_cs`), active low |
 | ADXL375 INT1 | 4 | DATA_READY (`adxl375_int`) — drives interrupt sampling |
+| VL53L4CX XSHUT | 5 | laser enable/reset (`laser_xshut`), active low |
+| VL53L4CX GPIO1 | 3 | laser data-ready interrupt (`laser_int`) |
 | UART → Recorder TX | 20 | to Luckfox RX, 921600 baud (logs/telemetry sink) |
 | UART → Recorder RX | 21 | optional (one-way link only needs TX) |
 | UART ↔ GNSS TX | 22 | to ATGM336H RX (send `$PCAS…` config) |
@@ -65,7 +67,7 @@ A conflict-free starting assignment (drop into `board.json`):
 | Servo — right eleron | 32 | LEDC PWM (`servo_eleron_right`) |
 | Separation switch | 33 | input, `PULL_UP`, IRQ (LOW=nested, HIGH=separated) |
 | Status LED (external) | 2 | **no onboard user LED** — wire an external LED+resistor |
-| Spare / expansion | 3, 5, 28, 29, 30, 31, 50, 51, 52 | future sensors, second I²C, etc. |
+| Spare / expansion | 28, 29, 30, 31, 50, 51, 52 | future sensors, second I²C, etc. |
 
 ### Caveats
 

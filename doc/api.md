@@ -259,9 +259,9 @@ is fast and synchronous, so the lock is held only for the transaction. A glider-
 One physical I2C bus, shared by every device on it; transactions are serialized by a lock.
 
 - `__init__(bus_id: int, spec: dict)` — constructor
-- `read(addr: int, reg: int, count: int) -> bytes`
-- `read_into(addr: int, reg: int, buf) -> None`
-- `write(addr: int, reg: int, data: bytes) -> None`
+- `read(addr: int, reg: int, count: int, addrsize: int=8) -> bytes`
+- `read_into(addr: int, reg: int, buf, addrsize: int=8) -> None`
+- `write(addr: int, reg: int, data: bytes, addrsize: int=8) -> None`
 - `writeto(addr: int, data: bytes) -> None` — Raw write (no register) — for command-based devices like the ICP-10111.
 - `readfrom(addr: int, count: int) -> bytes` — Raw read (no register) — pairs with writeto() for command-based devices.
 - `device(addr: int) -> _Device` — A register window for one address on this bus (matches spibus.Bus.device).
@@ -614,6 +614,29 @@ Detect stage separation (HIGH=nested -> LOW=separated) and trigger Boosting -> G
 
 - `setup() -> bool`
 - `run() -> None`
+- `inspect() -> dict`
+
+## `vl53l4cx.py`
+
+drivers/vl53l4cx.py — VL53L4CX time-of-flight laser ranger (Adafruit 5425) over the shared I2C bus:
+the above-ground-level (AGL) channel for the last metres of the glide, where the barometer is
+useless. @task.driver('vl53l4cx'). The VL53 family uses 16-BIT register addresses (i2cbus addrsize=
+16) and continuous-ranging mode: setup() optionally pulses XSHUT to reset, waits for the firmware to
+boot, writes the default configuration block and starts ranging; run() waits for data-ready (the
+GPIO1 interrupt if wired, else a poll), reads the distance and writes AGL (m) to the databoard.
+
+The init + ranging follow the VL53L1X Ultra-Lite-Driver register protocol, which the L4CX is
+register-compatible with for single-target distance (its multi-target / long-range extras need the
+full ST ULD upload and are not used here). Graceful: no I2C ack -> setup False -> Controller skips
+it. Shares i2c:0 with the other sensors via the locked i2cbus. Tuned/validated on the bench.
+
+### `class Vl53l4cx(task.Task)`
+
+Laser ToF: writes above-ground-level distance (m) to the databoard 'agl' slot, for the final
+low-altitude metres where the barometer cannot resolve height. Interrupt-driven when GPIO1 wired.
+
+- `setup() -> bool`
+- `run() -> None` — Sample on data-ready (GPIO1) or every period_ms; write AGL (m) to the databoard. Runs
 - `inspect() -> dict`
 
 ## `wifi.py`

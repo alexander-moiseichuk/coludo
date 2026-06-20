@@ -36,17 +36,17 @@ class Bus:
         self._i2c = I2C(bus_id, scl=Pin(spec['scl']), sda=Pin(spec['sda']), freq=spec.get('freq', 400000))
         self._lock = asyncio.Lock()
 
-    async def read(self, addr: int, reg: int, count: int) -> bytes:
+    async def read(self, addr: int, reg: int, count: int, addrsize: int = 8) -> bytes:
         async with self._lock:
-            return self._i2c.readfrom_mem(addr, reg, count)
+            return self._i2c.readfrom_mem(addr, reg, count, addrsize=addrsize)
 
-    async def read_into(self, addr: int, reg: int, buf) -> None:
+    async def read_into(self, addr: int, reg: int, buf, addrsize: int = 8) -> None:
         async with self._lock:
-            self._i2c.readfrom_mem_into(addr, reg, buf)
+            self._i2c.readfrom_mem_into(addr, reg, buf, addrsize=addrsize)
 
-    async def write(self, addr: int, reg: int, data: bytes) -> None:
+    async def write(self, addr: int, reg: int, data: bytes, addrsize: int = 8) -> None:
         async with self._lock:
-            self._i2c.writeto_mem(addr, reg, data)
+            self._i2c.writeto_mem(addr, reg, data, addrsize=addrsize)
 
     async def writeto(self, addr: int, data: bytes) -> None:
         """Raw write (no register) — for command-based devices like the ICP-10111."""
