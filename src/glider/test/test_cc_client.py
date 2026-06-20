@@ -68,7 +68,7 @@ async def amain():
     sd = cc_client.create_dispatcher(config_default.default())
 
     m = cc.parse(await sd.handle('whoami'))
-    assert m.command == 'iam' and m.args[0] == 'glider1'
+    assert m.command == 'iam' and m.args[0] == 'taster'
     info = json.loads(m.args[1])
     assert info['mcu'] == 'esp32p4' and 'config_id' in info and info['stage'] == 'setting'
 
@@ -76,7 +76,7 @@ async def amain():
     health = json.loads(cc.parse(await sd.handle('health')).args[0])
     assert 'mem_free' in health and 'uptime' in health
     cfg = json.loads(cc.parse(await sd.handle('get-config')).args[0])
-    assert cfg['board']['id'] == 'glider1'
+    assert cfg['board']['id'] == 'taster'
 
     # Inspector-backed inspect/update/stats
     inspector.Inspector.register(_Knob())

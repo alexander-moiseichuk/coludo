@@ -100,7 +100,7 @@ CC <-> board line protocol (specs/cc-protocol.md).
 
 One newline-delimited message per line:  <command> <board-id> [params...]
 Tokens are whitespace-separated, so there is NO quoting or escaping. A param value is one of:
-* bare token    -> a simple value with no spaces (e.g. 3000, glider1, 192.168.10.1)
+* bare token    -> a simple value with no spaces (e.g. 3000, taster, 192.168.10.1)
 * base64:<data> -> anything else: spaces, quotes, JSON, binary
 Both sides know each command's schema, so the parser does not guess types: a bare token is
 returned as a str and the receiver converts numerics itself (it knows `ms` is an int). Named
@@ -599,9 +599,16 @@ Join + maintain the STA link; Inspectable as `wifi`.
 ## `board_health.py`
 
 tasks/board_health.py — board vitals task: samples temperature, free memory and CPU load every
-period, pushes a telemetry row, and exposes the latest to the operator. CPU load is estimated from
-a low-priority idle task: the fewer times it runs in a period (vs the most it ever has), the busier
-the board. Registered as @task.activity('health') so the Controller creates and supervises it.
+period, pushes a telemetry row (health.csv) and exposes the latest to the operator. Registered as
+@task.activity('health') so the Controller creates and supervises it.
+
+CPU load (an integer percent 0..100) is estimated from a low-priority idle task that increments a
+counter and yields (sleep_ms(0)) in a tight loop. Each period we measure the idle counter's RATE
+(counts/ms); the highest rate ever observed (`_max_rate`) is taken as the fully-idle baseline, and
+load% = round(100 * (1 - rate / _max_rate)).
+So load is RELATIVE to the busiest-idle moment seen: it self-calibrates as the board gets idle
+time (the baseline only rises), but a board that is never truly idle reads relative to its
+least-busy moment. test_board_health drives a CPU hog and asserts the load rises with real load.
 
 ### `class BoardHealth(task.Task)`
 
@@ -611,7 +618,7 @@ Periodic vitals -> telemetry (health.csv) + `inspect health`.
 - `temperature() -> float`
 - `mem_free() -> int`
 - `sample() -> dict`
-- `run() -> None` — Sample vitals every period_ms, estimate load, and push a telemetry row. Runs forever.
+- `run() -> None` — Push a vitals row at startup, then every period_ms estimate load and push again. Runs
 - `inspect() -> dict`
 - `stats() -> dict`
 
