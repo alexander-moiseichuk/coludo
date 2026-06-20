@@ -8,16 +8,17 @@
 #                  handles) and then reports by pushing each channel directly -- the hot write path
 #                  is one step, no lookup. value()/read() resolve the winner + primary in one pass.
 #   Parameter    — one fused quantity (e.g. 'altitude') for the consumer. Holds a short LIST of
-#                  channels (one per source -- 1..few; a list, not a dict, is faster at this size),
-#                  plus the shared freshness window derived from its primary tier.
+#                  channels KEPT IN RANK ORDER (lowest = primary first; a list, not a dict, is faster
+#                  at this size), plus the shared freshness window derived from its primary tier.
 #   _Channel     — one source's stream: a static rank (priority; lower = preferred), a declared
 #                  expiry (the parameter applies one shared window), and TWO slots (the last two
 #                  readings) -- two slots because the extrapolation here is LINEAR (needs 2 points).
 #
 # Fusion is a pure read-time function, Parameter.value():
-#   1. winner = the lowest-rank channel still fresh. Freshness uses ONE shared window per parameter:
-#      the tightest expiry among the primary tier (the lowest-rank sources -- min() if two share
-#      rank 0), applied to EVERY channel. A rank tie breaks to the newer reading. Return its value.
+#   1. winner = the lowest-rank channel still fresh. Channels are rank-ordered, so it is just the
+#      FIRST fresh one in the list (same-rank channels are equivalent). Freshness uses ONE shared
+#      window per parameter: the tightest expiry among the rank-0 tier (min() if two share rank 0),
+#      applied to EVERY channel. Return its value.
 #   2. if NO channel is fresh, linearly extrapolate the PRIMARY's two slots to now -- project the
 #      trusted source forward rather than hand out a backup that is itself stale (and bias-shifted).
 #   3. if nothing was ever written, None.
@@ -120,9 +121,9 @@ class Parameter:
 
     def add_source(self, source: str, rank: int, expire_us: int, reconcile: bool = False) -> _Channel:
         """Register (or re-register) a source with its rank + expiry; return its channel so the sensor
-        can push() to it directly (no per-write lookup). Recomputes the shared freshness window: the
-        tightest expiry among the primary tier (lowest-rank sources), used for every channel.
-        `reconcile` (declared by any provider) turns on offset reconciliation for this parameter."""
+        can push() to it directly (no per-write lookup). Channels are KEPT IN RANK ORDER (channels[0]
+        = primary), so resolve is a single forward scan. Recomputes the shared freshness window: the
+        tightest expiry among the rank-0 tier. `reconcile` (any provider) turns it on here."""
         channel = self._channel(source)
         if channel is None:
             channel = _Channel(source, rank, expire_us)
@@ -131,7 +132,8 @@ class Parameter:
             channel.rank, channel.expire_us = rank, expire_us or _DEFAULT_EXPIRE_US
         if reconcile:
             self.reconcile = True
-        primary_rank = min(candidate.rank for candidate in self.channels)
+        self.channels.sort(key=lambda candidate: candidate.rank)  # rank order: channels[0] = primary
+        primary_rank = self.channels[0].rank
         self.window_us = min(candidate.expire_us for candidate in self.channels
                              if candidate.rank == primary_rank)
         return channel
@@ -144,18 +146,19 @@ class Parameter:
         channel.push(value)
 
     def _resolve(self, now: int) -> tuple:
-        """One pass over the channels: (winner, primary). winner = lowest-rank channel fresh within
-        the shared window (a newer reading breaks a rank tie) or None; primary = the lowest-rank
-        channel that holds data -- the source extrapolated when nothing is fresh."""
+        """One forward scan over the rank-ordered channels: (winner, primary). winner = the first
+        channel fresh within the shared window (lowest rank wins; same-rank channels are equivalent,
+        so the first is taken); primary = the first channel holding data -- extrapolated when nothing
+        is fresh."""
         winner = None
         primary = None
         for channel in self.channels:
-            if channel.v1 is not None and (primary is None or channel.rank < primary.rank or (
-                    channel.rank == primary.rank and time.ticks_diff(channel.t1, primary.t1) > 0)):
+            if primary is None and channel.v1 is not None:
                 primary = channel
-            if channel.fresh(now, self.window_us) and (winner is None or channel.rank < winner.rank or (
-                    channel.rank == winner.rank and time.ticks_diff(channel.t1, winner.t1) > 0)):
+            if winner is None and channel.fresh(now, self.window_us):
                 winner = channel
+            if winner is not None and primary is not None:
+                break
         return winner, primary
 
     def _learn(self, now: int, primary: _Channel) -> None:
