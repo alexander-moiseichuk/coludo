@@ -96,26 +96,26 @@ testable foundations and connectivity come before the flight loop.
   save + reboot → it returns from the saved config.
 
 ### Phase 2 — Sensors & telemetry (enables telemetry-only flights)
-- ✅ **`blackboard.py`** — latest-value store **+ read-time fusion** in one structure: a registry of
+- ✅ **`databoard.py`** — latest-value store **+ read-time fusion** in one structure: a registry of
   `Parameter` objects, each owning a channel per source (rank=priority, expiry, 2 slots). `value()`
   returns the lowest-rank fresh source, else linearly extrapolates the newest source to now — so
   "rank 0 until it expires, then rank 1" is emergent (no queue, no fusion task). Inspectable.
-  `test_blackboard`.
+  `test_databoard`.
 - ✅ **Shared (locked) I²C bus** (`i2cbus.py`) — one `machine.I2C` + `asyncio.Lock` per id, shared
   via `get()`; ADXL375 + BNO055 + BMP280 coexist on `i2c:0`. `test_i2cbus`.
-- ◧ Sensor drivers + tests (all → blackboard, write `altitude`/`temperature`/`accel`/`attitude`):
+- ◧ Sensor drivers + tests (all → databoard, write `altitude`/`temperature`/`accel`/`attitude`):
   ✅ **ADXL375** (`accel` g, interrupt-driven on DATA_READY/INT1→GPIO4 + timeout fallback);
   ✅ **BNO055** (NDOF fusion `attitude` deg, polled 50 Hz);
   ✅ **BMP280** (Bosch-compensated `altitude` m + `temperature` °C, 10 Hz, backup baro);
   ✅ **ICP-10111** (`drivers/icp10111.py` — TDK command/OTP protocol, `altitude` + `temperature`,
   primary baro, prio 0); ◻ GNSS (ATGM336H), VL53L4CX. All live-verified on `i2c:0`.
-- ✅ **Sensor fusion** — folded into the blackboard's read-time `value()` (the separate fusion task
+- ✅ **Sensor fusion** — folded into the databoard's read-time `value()` (the separate fusion task
   is gone). rank=`priority`, expiry=`timeout_ms` (realistic windows: a few sample periods). Live:
   altitude/temperature → ICP-10111 (rank 0) over BMP280, accel/attitude pass through.
 - ✅ **Telemetry wiring** — `Telemetry(decimate_us)` rate-limits a stream (a fast sensor pushes every
   sample, decimated to a sane rate). Each sensor emits its own `SENSOR.csv` (accel 50 Hz, imu 25 Hz,
   baros 10 Hz); separation emits a durable `separation.csv`. Live-verified: rows/sec match the
-  configured `telemetry_us`. (No `fused.csv` — the fused value is read-time via the blackboard.)
+  configured `telemetry_us`. (No `fused.csv` — the fused value is read-time via the databoard.)
 - ✅ **Separation switch** (`drivers/separation.py` `@task.driver('separation')`) — copper pads on
   `separation_switch` (GPIO33): HIGH=nested, LOW=separated, internal pull-down (no external resistor
   needed). IRQ on either edge → debounce → on a confirmed separation during Boosting, drive
@@ -160,7 +160,7 @@ Message Propagation"), grounded by on-board measurements (see
 [benchmark findings](benches/WaveShare_esp32p4-micropython-findings.md)). Not one paradigm — chosen per
 data class to respect the GC-pause and <10 ms control-loop budgets on MicroPython:
 
-- **Hot sensor data** (IMU/baro at 100–200 Hz) → a shared **latest-value blackboard**:
+- **Hot sensor data** (IMU/baro at 100–200 Hz) → a shared **latest-value databoard**:
   preallocated per-quantity slots (value + timestamp + source), latest-wins, no per-sample
   allocation. The control loop and fusion read it directly. Avoids GC churn and starvation.
 - **Discrete events / commands** (separation, phase change, CC commands, enable/disable) →
@@ -168,7 +168,7 @@ data class to respect the GC-pause and <10 ms control-loop budgets on MicroPytho
 - **Bulk telemetry / logs** → **ring buffers** (producer/consumer), drained to the Recorder
   over UART and served to CC on poll.
 
-The control loop stays self-contained (reads blackboard, writes servos) so it runs even if
+The control loop stays self-contained (reads databoard, writes servos) so it runs even if
 other tasks stall, and is paced by a hardware timer (not `asyncio.sleep`, which floors at
 ~10 ms on this port). The Recorder's PSRAM queues are written with `struct.pack_into`, never
 slice-assignment (which is O(buffer length) here).

@@ -1,9 +1,9 @@
-# blackboard.py — the shared latest-value store + sensor fusion for hot data (specs/coludo.md "Task
+# databoard.py — the shared latest-value store + sensor fusion for hot data (specs/coludo.md "Task
 # Data-Flow and Message Propagation"). Replaces a two-layer raw/fused store + a polling fusion task
 # with a registry of Parameter objects whose fused value is computed on read.
 #
 # Structure.
-#   Blackboard   — a registry of Parameter objects. Blackboard.parameter(name) gets-or-creates one;
+#   Databoard   — a registry of Parameter objects. Databoard.parameter(name) gets-or-creates one;
 #                  a sensor registers itself as a source via provide() (which returns its channel
 #                  handles) and then reports by pushing each channel directly -- the hot write path
 #                  is one step, no lookup. value()/read() resolve the winner + primary in one pass.
@@ -43,7 +43,7 @@
 # provide(source, provides, *want). Both return one handle for one name, a tuple for several.
 #
 # Telemetry is separate: each sensor writes its own raw SENSOR.csv directly. A global singleton,
-# Inspectable as `blackboard` (fused value/source/age per parameter).
+# Inspectable as `databoard` (fused value/source/age per parameter).
 
 import time
 
@@ -222,9 +222,9 @@ class Parameter:
         return sorted(channel.source for channel in self.channels)
 
 
-class Blackboard:
-    name: str = 'blackboard'
-    kind: str = 'blackboard'
+class Databoard:
+    name: str = 'databoard'
+    kind: str = 'databoard'
     _params: dict = {}  # name -> Parameter
 
     @classmethod

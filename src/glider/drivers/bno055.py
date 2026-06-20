@@ -1,6 +1,6 @@
 # drivers/bno055.py — BNO055 9-DOF IMU (on the SEN0253) over the shared I2C bus: the attitude
 # channel. @task.driver('bno055'). In NDOF fusion mode the chip computes absolute orientation
-# on-chip; run() reads the Euler angles (heading, roll, pitch in degrees) to the blackboard
+# on-chip; run() reads the Euler angles (heading, roll, pitch in degrees) to the databoard
 # 'attitude' slot. Graceful: a wrong/absent chip id -> setup False -> the Controller skips it.
 #
 # BNO055's INT pin signals motion/threshold events, not a fusion data-ready, so this driver polls at
@@ -11,8 +11,8 @@
 import asyncio
 import struct
 
-import blackboard
 import config
+import databoard
 import i2cbus
 import recorder
 import task
@@ -63,7 +63,7 @@ class Bno055(task.Task):
         except Exception as error:
             print('bno055 :: %r' % error)
             return False
-        self._attitude, self._accel = blackboard.Blackboard.provide(
+        self._attitude, self._accel = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'attitude', 'accel')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
                                              ('heading', 'roll', 'pitch', 'ax', 'ay', 'az'),

@@ -4,65 +4,6 @@ _Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand
 
 # glider firmware (MicroPython) — `src/glider`
 
-## `blackboard.py`
-
-_Tested by `test/test_blackboard.py`._
-
-blackboard.py — the shared latest-value store + sensor fusion for hot data (specs/coludo.md "Task
-Data-Flow and Message Propagation"). Replaces a two-layer raw/fused store + a polling fusion task
-with a registry of Parameter objects whose fused value is computed on read.
-
-Structure.
-Blackboard   — a registry of Parameter objects. Blackboard.parameter(name) gets-or-creates one;
-a sensor registers itself as a source via provide() (which returns its channel
-handles) and then reports by pushing each channel directly -- the hot write path
-is one step, no lookup. value()/read() resolve the winner + newest in one pass.
-Parameter    — one fused quantity (e.g. 'altitude') for the consumer. Holds a short LIST of
-channels (one per source -- 1..few; a list, not a dict, is faster at this size).
-_Channel     — one source's stream: a static rank (priority; lower = preferred), an expiry, and
-TWO slots (the last two readings) -- two slots because the extrapolation here is
-LINEAR (needs 2 points); a degree-N model would keep N+1.
-
-Fusion is a pure read-time function, Parameter.value():
-1. winner = the lowest-rank channel still fresh (freshness is per channel: now <= its deadline,
-where deadline = last-write + expire); a rank tie breaks to the newer reading. Return its value.
-2. if NO channel is fresh, take the newest channel and linearly extrapolate its two slots to now.
-3. if nothing was ever written, None.
-So "rank 0 answers while fresh; rank 1 takes over the instant rank 0 expires" is EMERGENT -- every
-read re-evaluates each channel's freshness; there is no queue to sort, insert into, or evict. A
-channel is BORN EXPIRED (t1 = now - expire), so "no data yet" needs no flag -- it is just expired.
-
-Bounded by design. A parameter with M ranked sources holds exactly M channels, each with two
-slots; storage is fixed when sources register, nothing grows per sample. Per-source slots keep
-extrapolation within a single source, never across the bias gap between e.g. ICP-10111 and BMP280.
-
-Telemetry is separate: each sensor writes its own raw SENSOR.csv directly. A global singleton,
-Inspectable as `blackboard` (fused value/source/age per parameter).
-
-### `class Parameter`
-
-One fused quantity. Holds a channel per source; value() fuses by rank/freshness, falling back
-to extrapolation when none is fresh.
-
-- `__init__(name: str)` — constructor
-- `add_source(source: str, rank: int, expire_us: int) -> _Channel` — Register (or re-register) a source with its rank + expiry; return its channel so the
-- `write(value, source: str) -> None` — Report a source's latest reading by name (convenience; sensors push() their channel).
-- `value()` — The fused estimate: the preferred fresh source's value; if none is fresh, the newest
-- `read() -> tuple` — (value, source, age_ms) of the fused estimate; `source` is None when extrapolated.
-- `raw(source: str)` — A specific source's latest value (None if absent / unwritten).
-- `sources() -> list`
-
-### `class Blackboard`
-
-- `parameter(name: str) -> Parameter` _(classmethod)_ — Get-or-create the Parameter for `name` (registers with the Inspector on the first one).
-- `provide(source: str, provides: dict) -> dict` _(classmethod)_ — A sensor registers the params it provides ({param: {priority, timeout_ms}}) and gets back
-- `write(name: str, value, source: str) -> None` _(classmethod)_
-- `value(name: str)` _(classmethod)_
-- `read(name: str) -> tuple` _(classmethod)_
-- `raw(name: str, source: str)` _(classmethod)_
-- `inspect() -> dict` _(classmethod)_
-- `stats() -> dict` _(classmethod)_
-
 ## `cc_client.py`
 
 _Tested by `test/test_cc_client.py`._
@@ -226,6 +167,82 @@ The flight stages, self-contained: int ids (cheap to compare/store on MicroPytho
 - `validate() -> bool` — True if every active task is healthy.
 - `inspect() -> dict`
 - `stats() -> dict`
+
+## `databoard.py`
+
+_Tested by `test/test_databoard.py`._
+
+databoard.py — the shared latest-value store + sensor fusion for hot data (specs/coludo.md "Task
+Data-Flow and Message Propagation"). Replaces a two-layer raw/fused store + a polling fusion task
+with a registry of Parameter objects whose fused value is computed on read.
+
+Structure.
+Databoard   — a registry of Parameter objects. Databoard.parameter(name) gets-or-creates one;
+a sensor registers itself as a source via provide() (which returns its channel
+handles) and then reports by pushing each channel directly -- the hot write path
+is one step, no lookup. value()/read() resolve the winner + primary in one pass.
+Parameter    — one fused quantity (e.g. 'altitude') for the consumer. Holds a short LIST of
+channels KEPT IN RANK ORDER (lowest = primary first; a list, not a dict, is faster
+at this size), plus the shared freshness window derived from its primary tier.
+_Channel     — one source's stream: a static rank (priority; lower = preferred) and TWO slots
+(the last two readings) -- two slots because the extrapolation here is LINEAR
+(needs 2 points); a degree-N model would keep N+1.
+
+Fusion is a pure read-time function, Parameter.value():
+1. winner = the lowest-rank channel still fresh. Channels are rank-ordered, so it is just the
+FIRST fresh one in the list (same-rank channels are equivalent). Freshness uses ONE shared
+window per parameter: the tightest expiry among the rank-0 tier (min() if two share rank 0),
+applied to EVERY channel. Return its value.
+2. if NO channel is fresh, linearly extrapolate the PRIMARY (channels[0]) two slots to now --
+project the trusted source forward rather than hand out a backup that is itself stale.
+3. if the primary never pushed (startup), None.
+So "rank 0 answers while fresh; a backup takes over only while itself THIS fresh, else rank 0 is
+extrapolated" is EMERGENT -- every read re-evaluates freshness against the shared window. A channel
+is BORN STALE (t1 a full _DEFAULT_EXPIRE in the past), so an un-pushed channel is never fresh; and
+since every window is <= _DEFAULT_EXPIRE, a FRESH channel always has data -- which is why nothing
+downstream needs a v1-None check (a source that never produces is simply never fresh, and surfaces
+as a missing reading rather than a hidden guard).
+
+The shared window decides WHEN to fall back; offset reconciliation (opt-in, 'reconcile': true on a
+provider) decides WHAT the fallback reports. While the primary is fresh, each backup's BIAS against
+it is learned (EMA, once per new primary reading -- the rate is set by data, not by reads); on
+handover the backup's value is corrected by that offset, so it reads what the primary would --
+closing the bias gap between e.g. ICP-10111 and BMP280 rather than jumping across it. Offsets FREEZE
+while the primary is stale, and reconciliation is for additive SCALARS only (altitude, pressure) --
+never vectors (attitude/accel) or unlike quantities (agl, position). Per-source slots keep
+extrapolation within a single source.
+
+Dependencies. A sensor that consumes another's quantity grabs a read handle with parameter(*names)
+(get-or-create, so setup order does not matter); a provider gets its write-channels from
+provide(source, provides, *want). Both return one handle for one name, a tuple for several.
+
+Telemetry is separate: each sensor writes its own raw SENSOR.csv directly. A global singleton,
+Inspectable as `databoard` (fused value/source/age per parameter).
+
+### `class Parameter`
+
+One fused quantity. Holds a rank-ordered channel per source; value() fuses by rank/freshness,
+falling back to extrapolation of the primary when none is fresh.
+
+- `__init__(name: str)` — constructor
+- `add_source(source: str, rank: int, expire_us: int, reconcile: bool=False) -> _Channel` — Register (or re-register) a source at `rank`; return its channel to push() to directly (no
+- `write(value, source: str) -> None` — Report a source's latest reading by name (convenience; sensors push() their channel). The
+- `value()` — The fused estimate (offset-reconciled when enabled); None if nothing was ever written.
+- `read() -> tuple` — (value, source, age_ms) of the fused estimate; `source` is None when extrapolated. A
+- `offsets() -> dict` — Learned bias per source (source -> offset) for diagnostics; empty until reconciled.
+- `raw(source: str)` — A specific source's latest value (None if absent / unwritten).
+- `sources() -> list`
+
+### `class Databoard`
+
+- `parameter(*names)` _(classmethod)_ — Get-or-create read handle(s) for `names` -- the dependency accessor: a consumer grabs
+- `provide(source: str, provides: dict, *want)` _(classmethod)_ — Register `source` for the params it provides ({param: {priority, timeout_ms[, reconcile]}})
+- `write(name: str, value, source: str) -> None` _(classmethod)_
+- `value(name: str)` _(classmethod)_
+- `read(name: str) -> tuple` _(classmethod)_
+- `raw(name: str, source: str)` _(classmethod)_
+- `inspect() -> dict` _(classmethod)_
+- `stats() -> dict` _(classmethod)_
 
 ## `i2cbus.py`
 
@@ -434,7 +451,7 @@ name so the Controller can build it from a config component.
 
 drivers/adxl375.py — ADXL375 ±200 g high-G accelerometer over I2C: the boost-phase accel channel.
 @task.driver('adxl375'). setup() probes the device id and configures it; run() writes the latest
-(x, y, z) acceleration in g to the blackboard 'accel' slot. If the device is absent (no I2C ack /
+(x, y, z) acceleration in g to the databoard 'accel' slot. If the device is absent (no I2C ack /
 wrong device id) setup() returns False and the Controller skips it, so the board boots fine with
 the sensor unplugged.
 
@@ -446,7 +463,7 @@ a sample if interrupts go silent (dead sensor / wiring). With no int_pin it fall
 
 ### `class Adxl375(task.Task)`
 
-High-G accel: samples (x, y, z) in g to the blackboard 'accel' slot, interrupt-driven.
+High-G accel: samples (x, y, z) in g to the databoard 'accel' slot, interrupt-driven.
 
 - `setup() -> bool`
 - `sample() -> tuple` — Read and return (x, y, z) acceleration in g (also clears DATA_READY).
@@ -474,26 +491,28 @@ Apply the configured BLE radio state. Inspectable: `radio` requested, `active` a
 drivers/bmp280.py — BMP280 barometric pressure sensor (on the SEN0253) over the shared I2C bus:
 the backup altitude channel. @task.driver('bmp280'). setup() probes the chip id, reads the factory
 calibration and starts normal-mode conversion; run() reads pressure, applies Bosch compensation
-and writes barometric altitude (m AMSL) to the blackboard 'altitude' slot. Graceful: wrong/absent
-chip id -> setup False -> the Controller skips it.
+and writes pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the per-sensor
+startup ground zero) to the databoard. Graceful: wrong/absent chip id -> setup False -> skipped.
 
 Polled at period_ms (the BMP280 conversion is ~tens of ms, far slower than the IMU). Uses the
 shared locked bus (i2cbus) since it shares i2c:0 with the ADXL375 and BNO055.
 
 ### `class Bmp280(task.Task)`
 
-Barometric altitude: polls compensated pressure -> altitude (m) to the blackboard 'altitude'.
+Backup baro: pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
+startup ground zero, captured per-sensor so it is offset-free) to the databoard. `update`
+{"rezero": true} re-captures ground zero (e.g. after warm-up, just before launch).
 
 - `setup() -> bool`
-- `sample() -> tuple` — Read the sensor and return (barometric altitude m AMSL, temperature °C).
 - `run() -> None`
+- `update(props: dict) -> list` — `{"rezero": true}` re-captures ground zero from the latest altitude (sync; operator does
 - `inspect() -> dict`
 
 ## `bno055.py`
 
 drivers/bno055.py — BNO055 9-DOF IMU (on the SEN0253) over the shared I2C bus: the attitude
 channel. @task.driver('bno055'). In NDOF fusion mode the chip computes absolute orientation
-on-chip; run() reads the Euler angles (heading, roll, pitch in degrees) to the blackboard
+on-chip; run() reads the Euler angles (heading, roll, pitch in degrees) to the databoard
 'attitude' slot. Graceful: a wrong/absent chip id -> setup False -> the Controller skips it.
 
 BNO055's INT pin signals motion/threshold events, not a fusion data-ready, so this driver polls at
@@ -517,18 +536,20 @@ drivers/icp10111.py — ICP-10111 barometric pressure sensor (TDK ICP-101xx, on 
 the shared I2C bus: the PRIMARY altitude channel (8.5 cm accuracy). @task.driver('icp10111').
 Command-based, not register-mapped: setup() verifies the product id and reads the 4 OTP calibration
 constants; run() issues a measure command, reads pressure+temperature, applies the TDK polynomial
-conversion and writes barometric altitude (m AMSL) to the blackboard 'altitude' slot. Graceful:
-wrong/absent id -> setup False -> the Controller skips it.
+conversion and writes pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
+per-sensor startup ground zero) to the databoard. Graceful: wrong/absent id -> setup False -> skipped.
 
 Polled at period_ms. Uses the shared locked bus (i2cbus); shares i2c:0 with the other sensors.
 
 ### `class Icp10111(task.Task)`
 
-Primary barometric altitude: polls compensated pressure -> altitude (m) to 'altitude'.
+Primary baro: pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
+startup ground zero, captured per-sensor so it is offset-free) to the databoard. `update`
+{"rezero": true} re-captures ground zero (e.g. after warm-up, just before launch).
 
 - `setup() -> bool`
-- `sample() -> tuple` — Measure and return (barometric altitude m AMSL, temperature °C).
 - `run() -> None`
+- `update(props: dict) -> list` — `{"rezero": true}` re-captures ground zero from the latest altitude (sync; operator does
 - `inspect() -> dict`
 
 ## `led.py`
@@ -553,7 +574,7 @@ on the booster) that route 3V3 to a pin while nested (HIGH) and open on separati
 input, @task.driver('separation'). An IRQ on either edge wakes run(), which debounces, and on a
 confirmed separation during the Boosting stage drives the documented Boosting -> Gliding transition
 (the booster ejects the glider at apogee). The event is logged and emitted to subscribers; the
-discrete event is NOT a blackboard quantity (per specs/coludo.md, events use notify/log).
+discrete event is NOT a databoard quantity (per specs/coludo.md, events use notify/log).
 
 The pin uses an internal pull-down so an open (separated) circuit reads LOW reliably; while nested
 the pads override it HIGH. A separation while not Boosting (e.g. a ground test in Setting) is
@@ -669,13 +690,56 @@ heartbeat and operator traffic to one board can never overlap. CPython 3.12, std
 
 One connected board: lockstep request/response over its socket.
 
-- `__init__(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)` — constructor
+- `__init__(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, log=None)` — constructor
 - `peer() -> str` _(property)_
 - `exchange(line: str, timeout: float=EXCHANGE_TIMEOUT_S) -> cc._Msg` — Send a ready board-facing line and return its parsed reply (None if disconnected).
+- `properties() -> dict` — The Control-side snapshot of this board: identity + the cached config/inspect/stats/health
 - `command(command: str, *args, timeout=EXCHANGE_TIMEOUT_S) -> cc._Msg` — Build `command args...` and exchange it. Returns the parsed reply or None.
 - `identify() -> str`
 - `inspect(name: str) -> dict`
 - `close() -> None`
+
+## `gps.py`
+
+_Tested by `test/test_gps.py`._
+
+gps.py — host-side GPS assist for the Control hub (finding #10).
+
+The flight board carries its own GNSS (ATGM336H); a GPS plugged into the Control host (e.g.
+/dev/ttyUSB0) is an ASSIST, not the source of truth. Two jobs:
+1. tell the operator when a usable fix is available — the ideal launch condition is a 3D fix
+with 4+ satellites (so the board's own cold start has a good almanac/position seed);
+2. hand a launch position to the board (operator `assist <board>` -> `update mission` +
+`save-mission`, persisted in the board's launch.config) when the on-board GPS has no fix yet.
+
+Pure NMEA parsing (GGA position/sats, GSA 2D/3D mode) is split from the serial transport so it is
+unit-tested without hardware (test_gps.py); the Linux serial open + read loop is exercised by
+itest_gps.py against a real receiver. CPython 3.12, stdlib asyncio only — no pyserial.
+
+### `class Fix`
+
+The latest GNSS fix, accumulated from GGA (position/altitude/satellites) and GSA (2D/3D).
+
+- `__init__()` — constructor
+- `fix_3d() -> bool` _(property)_
+- `has_position() -> bool` _(property)_
+- `usable() -> bool` _(property)_ — The ideal launch condition: a 3D fix with enough satellites and an actual position.
+
+### `class Gps`
+
+Host GPS reader: feed NMEA lines, expose the latest fix + a launch position for board assist.
+
+- `__init__(log=print)` — constructor
+- `feed(line: str) -> bool` — Parse one NMEA sentence into the running fix. Returns False for non-NMEA, a bad checksum,
+- `status() -> dict` — Operator-facing fix snapshot: is it a usable 3D fix, how many satellites, where.
+- `position()` — The host position as a mission dict (latitude/longitude[/altitude]) when the fix is
+- `run(reader: asyncio.StreamReader) -> None` — Feed every line from an NMEA stream until it ends (the read loop, transport-agnostic).
+- `serve(device: str, baud: int=9600) -> None` — Open the serial GPS and feed it forever (the wired host-assist path).
+
+### `open_serial(device: str, baud: int=9600) -> asyncio.StreamReader`
+
+Open a Linux serial tty as an asyncio StreamReader: raw 8N1 at `baud`, stdlib only (termios +
+connect_read_pipe). Hardware path — covered by itest_gps.py, not the host unit tests.
 
 ## `main.py`
 
@@ -702,7 +766,7 @@ CPython 3.12, stdlib asyncio only. cc_protocol.py is shared with the firmware (s
 The hub: a board listener + per-board heartbeat + an operator console. `on_board` is an
 optional async hook invoked once, right after a board identifies (used by integration tests).
 
-- `__init__(host: str='0.0.0.0', port: int=1234, operator_port: int=1235, web_port: int=8080, on_board=None, log=print, heartbeat_s: float=HEARTBEAT_S)` — constructor
+- `__init__(host: str='0.0.0.0', port: int=1234, operator_port: int=1235, web_port: int=8080, on_board=None, log=print, heartbeat_s: float=HEARTBEAT_S, gps=None)` — constructor
 - `board_rows() -> list` — The registry as json-able rows (id, online, last-known stage/config_id) — shared by the
 - `serve_forever() -> None` — Accept board connections on `port` (board-facing listener).
 - `serve_operators() -> None` — Accept operator connections on `operator_port` (telnet-friendly console).
@@ -728,6 +792,28 @@ The HTTP/SSE server. Holds the hub for the board registry + routing; one per hub
 - `serve() -> None`
 
 # control operator commands — `commands/` — `src/control/commands`
+
+## `assist.py`
+
+`assist <board>` — push the host GPS position to a board's mission (sync the launch site), then
+persist it to the board's launch.config. Only sends a usable 3D fix; defaults to the selected
+board. Requires a GPS attached to the Control host (main.py --gps-device).
+
+### `assist_command(hub, tokens, session) -> list`
+
+## `cache.py`
+
+`cache <board>` — the Control-side cached properties for a board (config / inspect / stats /
+health), last-known values without touching the board. Defaults to the session's selected board.
+
+### `cache_command(hub, tokens, session) -> list`
+
+## `gps.py`
+
+`gps` — the host GPS fix status (3D + satellites), so the operator knows when the launch site has
+a usable position. Requires a GPS attached to the Control host (main.py --gps-device).
+
+### `gps_command(hub, tokens, session) -> list`
 
 ## `help.py`
 

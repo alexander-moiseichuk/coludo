@@ -1,6 +1,6 @@
 # drivers/adxl375.py — ADXL375 ±200 g high-G accelerometer over I2C: the boost-phase accel channel.
 # @task.driver('adxl375'). setup() probes the device id and configures it; run() writes the latest
-# (x, y, z) acceleration in g to the blackboard 'accel' slot. If the device is absent (no I2C ack /
+# (x, y, z) acceleration in g to the databoard 'accel' slot. If the device is absent (no I2C ack /
 # wrong device id) setup() returns False and the Controller skips it, so the board boots fine with
 # the sensor unplugged.
 #
@@ -13,8 +13,8 @@
 import asyncio
 import struct
 
-import blackboard
 import config
+import databoard
 import i2cbus
 import recorder
 import task
@@ -41,7 +41,7 @@ _SCALE_G = 0.049  # ADXL375 ≈ 49 mg/LSB (full-resolution, fixed ±200 g)
 
 @task.driver('adxl375')
 class Adxl375(task.Task):
-    """High-G accel: samples (x, y, z) in g to the blackboard 'accel' slot, interrupt-driven."""
+    """High-G accel: samples (x, y, z) in g to the databoard 'accel' slot, interrupt-driven."""
 
     async def setup(self) -> bool:
         bus_id = self.config.get('id', 0)
@@ -65,7 +65,7 @@ class Adxl375(task.Task):
         except Exception as error:
             print('adxl375 :: %r' % error)
             return False
-        self._accel = blackboard.Blackboard.provide(self.name, self.config.get('provides', {}), 'accel')
+        self._accel = databoard.Databoard.provide(self.name, self.config.get('provides', {}), 'accel')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('ax', 'ay', 'az'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True
@@ -96,7 +96,7 @@ class Adxl375(task.Task):
 
     async def run(self) -> None:
         """Sample on DATA_READY (or every fallback_ms if interrupts go silent); plain poll with no
-        INT wired. Either way, write the latest acceleration to the blackboard."""
+        INT wired. Either way, write the latest acceleration to the databoard."""
         while True:
             if self._int is not None:
                 try:

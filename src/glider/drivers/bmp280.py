@@ -2,7 +2,7 @@
 # the backup altitude channel. @task.driver('bmp280'). setup() probes the chip id, reads the factory
 # calibration and starts normal-mode conversion; run() reads pressure, applies Bosch compensation
 # and writes pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the per-sensor
-# startup ground zero) to the blackboard. Graceful: wrong/absent chip id -> setup False -> skipped.
+# startup ground zero) to the databoard. Graceful: wrong/absent chip id -> setup False -> skipped.
 #
 # Polled at period_ms (the BMP280 conversion is ~tens of ms, far slower than the IMU). Uses the
 # shared locked bus (i2cbus) since it shares i2c:0 with the ADXL375 and BNO055.
@@ -10,8 +10,8 @@
 import asyncio
 import struct
 
-import blackboard
 import config
+import databoard
 import i2cbus
 import recorder
 import task
@@ -39,7 +39,7 @@ _GROUND_SAMPLES = const(8)  # readings averaged at startup to fix the ground-zer
 @task.driver('bmp280')
 class Bmp280(task.Task):
     """Backup baro: pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
-    startup ground zero, captured per-sensor so it is offset-free) to the blackboard. `update`
+    startup ground zero, captured per-sensor so it is offset-free) to the databoard. `update`
     {"rezero": true} re-captures ground zero (e.g. after warm-up, just before launch)."""
 
     async def setup(self) -> bool:
@@ -64,7 +64,7 @@ class Bmp280(task.Task):
             return False
         await asyncio.sleep_ms(50)  # let the first normal-mode conversion complete
         self._ground = await self._ground_zero()
-        self._altitude, self._temperature, self._pressure, self._elevation = blackboard.Blackboard.provide(
+        self._altitude, self._temperature, self._pressure, self._elevation = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'altitude', 'temperature', 'pressure', 'elevation')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
                                              ('altitude', 'temperature', 'pressure', 'elevation'),

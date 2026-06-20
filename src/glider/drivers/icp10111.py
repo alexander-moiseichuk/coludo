@@ -3,15 +3,15 @@
 # Command-based, not register-mapped: setup() verifies the product id and reads the 4 OTP calibration
 # constants; run() issues a measure command, reads pressure+temperature, applies the TDK polynomial
 # conversion and writes pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
-# per-sensor startup ground zero) to the blackboard. Graceful: wrong/absent id -> setup False -> skipped.
+# per-sensor startup ground zero) to the databoard. Graceful: wrong/absent id -> setup False -> skipped.
 #
 # Polled at period_ms. Uses the shared locked bus (i2cbus); shares i2c:0 with the other sensors.
 
 import asyncio
 import struct
 
-import blackboard
 import config
+import databoard
 import i2cbus
 import recorder
 import task
@@ -43,7 +43,7 @@ _GROUND_SAMPLES = const(8)  # readings averaged at startup to fix the ground-zer
 @task.driver('icp10111')
 class Icp10111(task.Task):
     """Primary baro: pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
-    startup ground zero, captured per-sensor so it is offset-free) to the blackboard. `update`
+    startup ground zero, captured per-sensor so it is offset-free) to the databoard. `update`
     {"rezero": true} re-captures ground zero (e.g. after warm-up, just before launch)."""
 
     async def setup(self) -> bool:
@@ -70,7 +70,7 @@ class Icp10111(task.Task):
             print('icp10111 :: %r' % error)
             return False
         self._ground = await self._ground_zero()
-        self._altitude, self._temperature, self._pressure, self._elevation = blackboard.Blackboard.provide(
+        self._altitude, self._temperature, self._pressure, self._elevation = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'altitude', 'temperature', 'pressure', 'elevation')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
                                        ('altitude', 'temperature', 'pressure', 'elevation'),
