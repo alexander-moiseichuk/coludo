@@ -638,6 +638,28 @@ Detect stage separation (HIGH=nested -> LOW=separated) and trigger Boosting -> G
 - `run() -> None`
 - `inspect() -> dict`
 
+## `servo.py`
+
+drivers/servo.py — one fin servo (SG90) on a PWM pin. @task.driver('servo'), one instance per fin
+(yaw / left eleron / right eleron), each naming its `pin`. 50 Hz frame; the command unit is DEGREES,
+linearly mapped to a pulse width (min_us..max_us over min_deg..max_deg) and CLAMPED to the range so
+a bad command can never drive the horn past the linkage. Set-and-hold like the bluetooth driver: no
+run loop -- setup() drives the servo to its neutral angle (transparent state) and update {"angle":
+d} moves it live; the PWM keeps holding between commands.
+
+Power: servos run off their own boost rail (per-pin diode protected) and are driven sequentially
+under load -- the board only sources the low-current signal on the PWM pin, never the servo supply.
+
+### `class Servo(task.Task)`
+
+One PWM fin servo, commanded in degrees (clamped to [min_deg, max_deg]). `update {"angle": d}`
+moves it; inspect reports the current angle + pulse width.
+
+- `setup() -> bool`
+- `update(props: dict) -> list` — `{"angle": d}` moves the servo (degrees, clamped to the range). Returns ['angle'] if set.
+- `finish() -> None` — Release the PWM (stop driving the pin) on shutdown.
+- `inspect() -> dict`
+
 ## `vl53l4cx.py`
 
 drivers/vl53l4cx.py — VL53L4CX time-of-flight laser ranger (Adafruit 5425) over the shared I2C bus:

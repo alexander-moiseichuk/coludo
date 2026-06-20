@@ -142,6 +142,12 @@ def default() -> dict:
             {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': False},
             # Stage-separation switch (copper pads): HIGH=nested, LOW=separated -> Boosting->Gliding.
             {'name': 'separation', 'driver': 'separation', 'pin': 'separation_switch', 'enabled': True},
+            # Fin servos (SG90) on their PWM pins, commanded in degrees via `update {"angle": d}`;
+            # neutral (mid-range) at boot. Powered from a separate boost rail (the board drives signal
+            # only). Set min_deg/max_deg per fin to limit throw (e.g. the 60deg geared -> +-30deg).
+            {'name': 'servo_yaw', 'driver': 'servo', 'pin': 'servo_yaw', 'enabled': True},
+            {'name': 'servo_eleron_left', 'driver': 'servo', 'pin': 'servo_eleron_left', 'enabled': True},
+            {'name': 'servo_eleron_right', 'driver': 'servo', 'pin': 'servo_eleron_right', 'enabled': True},
             # Board vitals (temperature/memory/load) -> telemetry every period_ms.
             {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'enabled': True},
             # Apply the BLE radio state at boot: off by default to save power (BLE is unused).
