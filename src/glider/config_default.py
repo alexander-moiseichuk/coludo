@@ -35,7 +35,10 @@ def default() -> dict:
                 '0': {'sda': 7, 'scl': 8, 'freq': 400000},
             },
             'spi': {
-                '1': {'sck': 48, 'mosi': 47, 'miso': 46, 'baud': 5000000, 'mode': 3},  # ADXL375 (mode 3)
+                # ADXL375 on its own SPI bus (mode 3, 5 MHz). NOTE the Adafruit 5374 breakout labels
+                # its SPI data pins by their I2C names: SDA = MOSI (->47), SDO = MISO (->46). See
+                # doc/hardware.md "ADXL375 -> SPI wiring".
+                '1': {'sck': 48, 'mosi': 47, 'miso': 46, 'baud': 5000000, 'mode': 3},
             },
         },
         'pins': {
