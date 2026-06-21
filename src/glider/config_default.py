@@ -125,14 +125,17 @@ def default() -> dict:
             },
             {
                 'name': 'gnss',
-                'driver': 'atgm336h',
+                'driver': 'atgm336h',  # alt: 'neo6mv2' (GY-NEO6MV2 u-blox) -- same UART, swap the device
                 'bus': 'uart', 'id': 2,
                 'addr': None,
-                'hz': 10,
+                'hz': 10,  # NEO-6M tops out near 5 Hz -- lower this when running 'neo6mv2'
                 'enabled': True,
                 'provides': {
                     'position': {'priority': 0, 'timeout_ms': 200},  # 10 Hz -> 2x period
-                    'altitude': {'priority': 3, 'timeout_ms': 200},
+                    # altitude/elevation are a deep baro backup: high priority number (low rank), and a
+                    # generous window since GGA runs at ~1 Hz to stay within 9600 baud.
+                    'altitude': {'priority': 3, 'timeout_ms': 2000},
+                    'elevation': {'priority': 3, 'timeout_ms': 2000},
                 },
             },
         ],
