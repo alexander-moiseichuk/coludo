@@ -123,12 +123,18 @@ def default() -> dict:
                 # ~30 Hz continuous ranging -> 100 ms freshness (tune the timing budget on the bench).
                 'provides': {'agl': {'priority': 0, 'timeout_ms': 100}},
             },
+            # GNSS. Primary: ATGM336H (CASIC) at 10 Hz. Backup: GY-NEO6MV2 (u-blox NEO-6M) -- same
+            # uart:2, both share gnss.py. To run the NEO-6M instead:
+            #   1. power the board off, swap the module onto uart:2 (keep board-TX -> module-RX wired:
+            #      without it the NEO ignores config and free-runs all sentences at 1 Hz),
+            #   2. set 'driver' to 'neo6mv2' and 'hz' to 5 (the NEO-6M tops out near 5 Hz).
+            # Live-verified on the NEO: RMC 5 Hz (position) + GGA ~1 Hz (altitude/elevation).
             {
                 'name': 'gnss',
-                'driver': 'atgm336h',  # alt: 'neo6mv2' (GY-NEO6MV2 u-blox) -- same UART, swap the device
+                'driver': 'atgm336h',  # ATGM336H (CASIC), 10 Hz -- or 'neo6mv2' (see note above)
                 'bus': 'uart', 'id': 2,
                 'addr': None,
-                'hz': 10,  # NEO-6M tops out near 5 Hz -- lower this when running 'neo6mv2'
+                'hz': 10,  # set 5 for 'neo6mv2' (NEO-6M caps ~5 Hz)
                 'enabled': True,
                 'provides': {
                     'position': {'priority': 0, 'timeout_ms': 200},  # 10 Hz -> 2x period
