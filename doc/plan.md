@@ -177,14 +177,16 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
   reached 100 Hz here at lower CPU, but it has no rate guarantee under contention (the timer's whole
   point). **Chosen: 100 Hz timer** — 1 m/step at 100 m/s, deterministic, ~15 % load, matched to the
   BNO055's ~100 Hz attitude ceiling.
-- ◻ **3. Stage automation** — make `set_stage` transitions automatic + guarded, each logged +
-  telemetry'd:
-  `SETTING→BOOSTING` launch detect (|accel| > g-threshold sustained N ms);
-  `BOOSTING→GLIDING` separation (exists) with a burnout/timeout fallback;
-  `GLIDING→LANDING` low `agl` (or descent + low `elevation`);
-  `LANDING→done` on-ground (low motion for N s). Per-stage task gating (the control loop runs only in
-  `GLIDING`; high-g `BOOSTING` keeps fins locked neutral). Test each threshold with synthetic
-  databoard inputs (fires once, monotonic, no chatter).
+- ✅ **3. Stage automation** (`tasks/sequencer.py`, `@task.activity('sequencer')`) — a guarded,
+  forward-only `_tick` driving `set_stage` from databoard signals: `SETTING→BOOSTING` sustained
+  `|accel| > launch_g` for `launch_ms`; `BOOSTING→GLIDING` the separation switch (primary, exists) with
+  a `boost_timeout_ms` burnout fallback; `GLIDING→LANDING` `agl < land_agl_m` (elevation fallback);
+  `LANDING→done` `|accel|≈1g` stationary for `ground_ms`. Each fires once (stage check + reset-on-change
+  guard, incl. separation-driven hops), logged (`controller :: stage ->`, picked up by the analysis
+  tool) + a `sequencer.csv` marker. Thresholds in config; **enabled** (safe on passive flights — logs
+  the stage timeline, no actuation since the flight task is disabled). `test_sequencer` drives every
+  transition + the transient guard with synthetic accel/agl. The control loop (task 2) already gates to
+  `GLIDING`, so this closes that loop.
 - ◻ **4. Per-phase behaviour / maneuvers** — setpoint policy per stage: `BOOSTING` = fins locked
   neutral (no actuation under thrust); `GLIDING` = hold target attitude / glide path (initially
   wings-level + heading hold; spiral-to-launch-site once GNSS nav lands in Phase 4); `LANDING` =

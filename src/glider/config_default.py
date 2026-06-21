@@ -176,6 +176,14 @@ def default() -> dict:
             {'name': 'servo_yaw', 'driver': 'sg90', 'pin': 'servo_yaw', 'enabled': True},
             {'name': 'servo_eleron_left', 'driver': 'sg90', 'pin': 'servo_eleron_left', 'enabled': True},
             {'name': 'servo_eleron_right', 'driver': 'sg90', 'pin': 'servo_eleron_right', 'enabled': True},
+            # Flight-stage automation (Phase 3): launch-detect -> separation/burnout -> agl-landing ->
+            # on-ground. Drives the stage machine the control loop gates on; logs every transition
+            # (+ sequencer.csv). Enabled -- safe on the passive flights (the flight task is the actuator
+            # and stays disabled), and it captures the stage timeline. Tune launch_g/launch_ms from the
+            # first powered flights.
+            {'name': 'sequencer', 'activity': 'sequencer', 'enabled': True, 'period_ms': 50,
+             'launch_g': 3.0, 'launch_ms': 100, 'boost_timeout_ms': 6000,
+             'land_agl_m': 5.0, 'still_g': 0.3, 'ground_ms': 3000},
             # Phase 3 stabilization loop (off by default -- no actuation until enabled + tuned on the
             # airframe). schedule_hz > 0 -> machine.Timer (deterministic slice, ~1 m/step at 100 Hz/100 m/s);
             # schedule_hz 0 -> asyncio at period_ms. Gains/setpoint are airframe tuning; gates to GLIDING.
