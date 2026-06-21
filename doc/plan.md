@@ -187,10 +187,14 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
   the stage timeline, no actuation since the flight task is disabled). `test_sequencer` drives every
   transition + the transient guard with synthetic accel/agl. The control loop (task 2) already gates to
   `GLIDING`, so this closes that loop.
-- ◻ **4. Per-phase behaviour / maneuvers** — setpoint policy per stage: `BOOSTING` = fins locked
-  neutral (no actuation under thrust); `GLIDING` = hold target attitude / glide path (initially
-  wings-level + heading hold; spiral-to-launch-site once GNSS nav lands in Phase 4); `LANDING` =
-  flare / neutral. Setpoints declared per stage in config.
+- ✅ **4. Per-phase behaviour** (folded into `tasks/flight.py`) — the loop's gating generalised from
+  GLIDING-only to a `phases` config map: each entry names a CONTROL stage and its attitude setpoint;
+  stages absent from it (`SETTING`/`BOOSTING`/`DONE`) hold the fins neutral (no actuation under thrust /
+  on the ground). `GLIDING` = wings-level + heading hold; `LANDING` carries its own setpoint (the flare
+  knob, 0 until tuned). Heading is captured on entering control and held across a glide→landing hand-off
+  (continuous control, no neutral between); PIDs reset only on (re)entering control from a non-control
+  stage. `inspect` exposes `active`/`phase`. `test_flight` covers the per-stage engage/switch/disengage.
+  (Spiral-to-launch-site maneuver waits on GNSS nav — Phase 4.)
 - ◻ **5. Watchdog + health gating** — hardware `machine.WDT` fed by the live control loop (a wedged
   loop reboots, matching the no-stop-flag policy); the `health` task gates actuation — unhealthy
   sensors / low battery → fail-safe neutral + flagged. Test the gate (forced-unhealthy → neutral).

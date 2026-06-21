@@ -1,8 +1,9 @@
 # tasks/flight.py — Phase 3 stabilization loop. @task.activity('flight'). At `schedule_hz` it reads the
-# IMU 'attitude' (heading, roll, pitch), runs a PID per axis to the setpoint (+ heading hold), mixes
-# the result to the fins (mixer.py) and writes them via sg90.update(). ACTIVE ONLY IN GLIDING -- every
-# other stage holds the fins neutral, so it never actuates under boost or on the ground. Degraded:
-# stale/absent attitude -> neutral (never act on stale data).
+# IMU 'attitude' (heading, roll, pitch), runs a PID per axis to the current stage's setpoint (+ heading
+# hold), mixes the result to the fins (mixer.py) and writes them via sg90.update(). Per-stage: the
+# `phases` config names the CONTROL stages and their setpoint (GLIDING = wings-level + heading hold,
+# LANDING = its own flare setpoint); any other stage (SETTING/BOOSTING/DONE) holds the fins neutral, so
+# it never actuates under thrust or on the ground. Degraded: stale/absent attitude -> neutral.
 #
 # Scheduling: schedule_hz > 0 -> a machine.Timer ticks the step, so the control law gets a regular slice
 # independent of what other asyncio tasks are doing (deterministic, e.g. while the laser hammers I2C in
@@ -46,10 +47,14 @@ class Flight(task.Task):
         self._pid = {axis: pid.Pid(output_limit=limit,
                                    integral_limit=self.config.get('integral_limit', limit),
                                    **gains.get(axis, {})) for axis in _AXES}
-        self._setpoint: dict = self.config.get('setpoint', {'roll': 0.0, 'pitch': 0.0})
+        # per-stage behaviour: which flight stages are CONTROL phases and their attitude setpoint.
+        # Stages not listed hold the fins neutral (SETTING/BOOSTING/DONE -- no actuation under thrust /
+        # on the ground). GLIDING = wings-level + heading hold; LANDING carries its own setpoint (flare).
+        self._phases: dict = self.config.get('phases', {'gliding': {'roll': 0.0, 'pitch': 0.0}})
         self._attitude = databoard.Databoard.parameter('attitude')  # (heading, roll, pitch)
-        self._heading_hold = None  # captured on entering glide -> hold the glide heading
-        self._gliding: bool = False
+        self._heading_hold = None  # captured on entering a control phase -> hold that heading
+        self._active: bool = False  # in a control phase (PID engaged)
+        self._phase = None  # the current control-phase name (for inspect)
         self._steps: int = 0  # control steps run (self-timing for load characterization)
         self._max_step_us: int = 0
         self._timer = None
@@ -60,23 +65,26 @@ class Flight(task.Task):
         """One control update (sync, no await -> runs whole in a timer slice): gate -> read attitude ->
         PID -> mix -> apply. Self-times for the load sweep."""
         start = time.ticks_us()
-        if self.controller.stage_name() != 'gliding':
-            if self._gliding:  # just left glide -> centre the fins
+        setpoint = self._phases.get(self.controller.stage_name())  # None -> not a control phase
+        if setpoint is None:
+            if self._active:  # left the control phases -> centre the fins
                 self._neutral()
-                self._gliding = False
+                self._active = False
+                self._phase = None
             return
         value, source, _age = self._attitude.read()
         if source is None or value is None:  # stale / absent attitude -> degraded -> neutral
             self._neutral()
             return
         heading, roll, pitch = value
-        if not self._gliding:  # entering glide: capture the heading to hold, reset integrators
-            self._gliding = True
+        if not self._active:  # entering control (from a non-control stage): capture heading, reset PIDs
+            self._active = True
             self._heading_hold = heading
             for controller in self._pid.values():
                 controller.reset()
-        roll_cmd = self._pid['roll'].step(self._setpoint.get('roll', 0.0) - roll, self._dt)
-        pitch_cmd = self._pid['pitch'].step(self._setpoint.get('pitch', 0.0) - pitch, self._dt)
+        self._phase = self.controller.stage_name()  # may switch between control phases (glide -> landing)
+        roll_cmd = self._pid['roll'].step(setpoint.get('roll', 0.0) - roll, self._dt)
+        pitch_cmd = self._pid['pitch'].step(setpoint.get('pitch', 0.0) - pitch, self._dt)
         yaw_cmd = self._pid['yaw'].step(_heading_error(self._heading_hold, heading), self._dt)
         self._apply(self._mixer.mix(roll=round(roll_cmd), pitch=round(pitch_cmd), yaw=round(yaw_cmd)))
         self._steps += 1
@@ -128,7 +136,8 @@ class Flight(task.Task):
         status = task.Task.inspect(self)
         status['schedule'] = 'timer' if self._schedule_hz > 0 else 'asyncio'
         status['schedule_hz'] = self._schedule_hz if self._schedule_hz > 0 else round(1000 / self._period_ms)
-        status['gliding'] = self._gliding
+        status['active'] = self._active
+        status['phase'] = self._phase
         status['steps'] = self._steps  # load sweep: compare steps/sec + max_step_us vs board_health load
         status['max_step_us'] = self._max_step_us
         return status

@@ -188,7 +188,10 @@ def default() -> dict:
             # airframe). schedule_hz > 0 -> machine.Timer (deterministic slice, ~1 m/step at 100 Hz/100 m/s);
             # schedule_hz 0 -> asyncio at period_ms. Gains/setpoint are airframe tuning; gates to GLIDING.
             {'name': 'flight', 'activity': 'flight', 'schedule_hz': 100, 'period_ms': 20, 'enabled': False,
-             'gains': {'roll': {}, 'pitch': {}, 'yaw': {}}, 'setpoint': {'roll': 0, 'pitch': 0}},
+             'gains': {'roll': {}, 'pitch': {}, 'yaw': {}},
+             # per-stage attitude setpoint; stages absent here hold the fins neutral. GLIDING =
+             # wings-level + heading hold; LANDING pitch is the flare knob (0 = none until tuned).
+             'phases': {'gliding': {'roll': 0, 'pitch': 0}, 'landing': {'roll': 0, 'pitch': 0}}},
             # Board vitals (temperature/memory/load) -> telemetry every period_ms.
             {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'enabled': True},
             # Apply the BLE radio state at boot: off by default to save power (BLE is unused).

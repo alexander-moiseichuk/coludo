@@ -47,19 +47,19 @@ async def amain():
     # gliding but attitude born-stale (not pushed) -> degraded -> fins neutral, not engaged
     ctrl._stage = 'gliding'
     unit._step()
-    assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._gliding is False
+    assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._active is False
 
     # gliding + fresh attitude -> engage: kp=1 on roll=10 -> roll cmd -10 -> elevons differential
     attitude.push((100.0, 10.0, -5.0))  # heading, roll, pitch
     unit._step()
-    assert unit._gliding is True and unit._steps == 1
+    assert unit._active is True and unit._phase == 'gliding' and unit._steps == 1
     assert ctrl.fins['servo_eleron_left'].angle == 80 and ctrl.fins['servo_eleron_right'].angle == 100
     assert ctrl.fins['servo_yaw'].angle == 90  # heading hold captured at 100 -> error 0 -> rudder neutral
 
-    # leaving gliding -> centre the fins + drop the glide state
+    # landing is NOT a control phase by default (only gliding) -> centre the fins + disengage
     ctrl._stage = 'landing'
     unit._step()
-    assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._gliding is False
+    assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._active is False
 
     # asyncio mode (schedule_hz 0): run() loops and runs control steps
     ctrl._stage = 'gliding'
@@ -85,7 +85,25 @@ async def amain():
     await timed.finish()  # deinit the timer
     assert timed._steps > 0 and timed.inspect()['schedule'] == 'timer'
 
-    print('ok: flight -- gliding gating, degraded->neutral, PID->mix->fins, asyncio + timer scheduling')
+    # per-stage behaviour: LANDING declared as a control phase -> continuous control glide->landing
+    # (stays engaged, setpoint switches), then a non-control stage centres the fins
+    attitude.push((100.0, 10.0, -5.0))  # refresh
+    pctrl = _StubController('gliding')
+    phased = flight.Flight('flight', {'schedule_hz': 0, 'gains': {'pitch': {'kp': 1.0}},
+                                      'phases': {'gliding': {'pitch': 0}, 'landing': {'pitch': 0}}}, pctrl)
+    assert await phased.setup() is True
+    phased._step()  # gliding -> engage
+    assert phased._active is True and phased._phase == 'gliding'
+    pctrl._stage = 'landing'
+    phased._step()  # still a control phase -> stays engaged (no neutral between)
+    assert phased._active is True and phased._phase == 'landing'
+    # pitch=-5, landing setpoint 0 -> error 5 -> kp=1 -> elevons 90+5 (controlling, not neutral)
+    assert pctrl.fins['servo_eleron_left'].angle == 95 and pctrl.fins['servo_eleron_right'].angle == 95
+    pctrl._stage = 'boosting'
+    phased._step()  # non-control stage -> fins neutral, disengaged
+    assert all(fin.angle == 90 for fin in pctrl.fins.values()) and phased._active is False
+
+    print('ok: flight -- per-stage phases, degraded->neutral, PID->mix->fins, asyncio + timer scheduling')
 
 
 asyncio.run(amain())
