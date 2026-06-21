@@ -78,6 +78,21 @@ class BoardHealth(task.Task):
             self.load = round(100 * (1.0 - rate / self._max_rate)) if self._max_rate else 0
             self._row()
 
+    async def probe(self) -> str:
+        """On-demand self-test: free memory reads positive (a basic board-vitals sanity); the
+        temperature reading is logged for the operator (None on a build without esp32.mcu_temperature)."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: vitals ...')
+            mem = self.mem_free()
+            if mem <= 0:
+                raise ValueError('mem_free %d' % mem)
+            recorder.Recorder.log(self.name, 'probe: vitals ok (mem_free %d, temp %s)' % (mem, self.temperature()))
+        except Exception as error:
+            message = 'vitals: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None
+
     # --- Inspectable ---
     def inspect(self) -> dict:
         return self.sample()

@@ -125,6 +125,29 @@ class Adxl375(task.Task):
             except Exception as error:
                 print('adxl375 :: read %r' % error)
 
+    async def probe(self) -> str:
+        """On-demand self-test: the device id reads back, then one sample succeeds (each step logged)."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: device id ...')
+            devid = (await self._dev.read(_REG_DEVID, 1))[0]
+            if devid != _DEVID:
+                raise ValueError('ADXL375 id 0x%02x != 0x%02x on %s:%s' % (
+                    devid, _DEVID, self.config.get('bus'), self.config.get('id')))
+            recorder.Recorder.log(self.name, 'probe: device id ok 0x%02x' % devid)
+        except Exception as error:
+            message = 'device id: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        try:
+            recorder.Recorder.log(self.name, 'probe: sample ...')
+            ax, ay, az = await self.sample()
+            recorder.Recorder.log(self.name, 'probe: sample ok (%.2f,%.2f,%.2f)g' % (ax, ay, az))
+        except Exception as error:
+            message = 'sample: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['interrupt'] = self._int is not None

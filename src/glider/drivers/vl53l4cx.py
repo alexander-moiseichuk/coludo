@@ -183,6 +183,29 @@ class Vl53l4cx(task.Task):
             except Exception as error:
                 print('vl53l4cx :: read %r' % error)
 
+    async def probe(self) -> str:
+        """On-demand self-test: the model id reads back, then one range read succeeds (each step logged)."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: model id ...')
+            model = (await self._read(_REG_MODEL_ID, 1))[0]
+            if model != 0xEB:
+                raise ValueError('VL53L4CX id 0x%02x != 0xEB at i2c:%s 0x%02x' % (
+                    model, self.config.get('id'), self._addr))
+            recorder.Recorder.log(self.name, 'probe: model id ok 0x%02x' % model)
+        except Exception as error:
+            message = 'model id: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        try:
+            recorder.Recorder.log(self.name, 'probe: range ...')
+            agl = await self._range()
+            recorder.Recorder.log(self.name, 'probe: range ok %s m' % agl)
+        except Exception as error:
+            message = 'range: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['interrupt'] = self._int is not None

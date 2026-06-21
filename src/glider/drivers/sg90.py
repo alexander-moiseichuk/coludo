@@ -111,11 +111,18 @@ class SG90(task.Task):
 
     async def probe(self) -> str:
         """On-demand self-test (CC `probe`, pre-flight -- never at boot): sweep min -> max -> neutral so
-        the fin is seen to travel, logging each step. Open-loop (no feedback) -> the sweep can only
-        fail on a PWM/hardware error, in which case that step's error string is returned."""
-        return (await self._probe_step('sweep to min %d' % self._min_deg, lambda: self.move(self._min_deg))
-                or await self._probe_step('sweep to max %d' % self._max_deg, lambda: self.move(self._max_deg))
-                or await self._probe_step('return to neutral %d' % self._neutral, lambda: self.move(self._neutral)))
+        the fin is seen to travel, logging each step. Open-loop (no feedback) -> a step can only fail
+        on a PWM/hardware error, and returns that step's message."""
+        for label, target in (('min', self._min_deg), ('max', self._max_deg), ('neutral', self._neutral)):
+            try:
+                recorder.Recorder.log(self.name, 'probe: sweep to %s %d ...' % (label, target))
+                await self.move(target)
+                recorder.Recorder.log(self.name, 'probe: at %s %d ok' % (label, target))
+            except Exception as error:
+                message = 'sweep to %s %d: %s' % (label, target, error)
+                recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+                return message
+        return None
 
     def _clamp(self, angle) -> int:
         return min(max(round(angle), self._min_deg), self._max_deg)

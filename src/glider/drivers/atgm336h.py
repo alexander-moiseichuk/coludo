@@ -68,6 +68,7 @@ class Atgm336h(task.Task):
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('lat', 'lon', 'speed_kn', 'course'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._fix: bool = False
+        self._lines: int = 0  # NMEA lines seen (a liveness counter for probe(), no reader contention)
         self._ok = True
         return True
 
@@ -114,10 +115,28 @@ class Atgm336h(task.Task):
         while True:
             raw = await self._reader.readline()
             if raw:
+                self._lines += 1
                 try:
                     self._parse(raw.decode().strip())
                 except (UnicodeError, ValueError, IndexError):
                     pass  # noise byte / malformed field -> drop the line
+
+    async def probe(self) -> str:
+        """On-demand self-test: NMEA is arriving on the UART (the run loop counts lines). A satellite
+        fix needs sky view, so it is logged (fix true/false), not treated as a failure."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: nmea link ...')
+            before = self._lines
+            await asyncio.sleep_ms(1500)  # longer than one NMEA interval
+            if self._lines == before:
+                raise ValueError('no NMEA on uart:%s in 1.5s' % self.config.get('id'))
+            recorder.Recorder.log(self.name, 'probe: nmea link ok (+%d lines, fix=%s)' % (
+                self._lines - before, self._fix))
+        except Exception as error:
+            message = 'nmea link: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)

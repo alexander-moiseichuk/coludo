@@ -500,6 +500,7 @@ High-G accel: samples (x, y, z) in g to the databoard 'accel' slot, interrupt-dr
 - `setup() -> bool`
 - `sample() -> tuple` — Read and return (x, y, z) acceleration in g (also clears DATA_READY).
 - `run() -> None` — Sample on DATA_READY (or every fallback_ms if interrupts go silent); plain poll with no
+- `probe() -> str` — On-demand self-test: the device id reads back, then one sample succeeds (each step logged).
 - `inspect() -> dict`
 
 ## `atgm336h.py`
@@ -522,6 +523,7 @@ altitude to 'altitude' if a GGA is seen). Best-effort -- lock can drop under boo
 
 - `setup() -> bool`
 - `run() -> None` — Read NMEA lines forever and parse them; non-ASCII noise lines and malformed fields are
+- `probe() -> str` — On-demand self-test: NMEA is arriving on the UART (the run loop counts lines). A satellite
 - `inspect() -> dict`
 
 ## `bluetooth.py`
@@ -536,6 +538,7 @@ plus update() so the operator can toggle it live (`update bluetooth {"radio": tr
 
 Apply the configured BLE radio state. Inspectable: `radio` requested, `active` actual.
 
+- `probe() -> str` — On-demand self-test: the BLE radio is in the requested state (or absent on this board ->
 - `setup() -> bool`
 - `inspect() -> dict`
 - `update(props) -> list`
@@ -560,6 +563,7 @@ startup ground zero, captured per-sensor so it is offset-free) to the databoard.
 - `setup() -> bool`
 - `run() -> None`
 - `update(props: dict) -> list` — `{"rezero": true}` re-captures ground zero from the latest altitude (sync; operator does
+- `probe() -> str` — On-demand self-test: the chip id reads back, then one conversion reads (each step logged).
 - `inspect() -> dict`
 
 ## `bno055.py`
@@ -582,6 +586,7 @@ ADXL375 and BMP280.
 - `setup() -> bool`
 - `sample() -> tuple` — Read the block and return (attitude (heading, roll, pitch) deg, accel (x, y, z) g).
 - `run() -> None`
+- `probe() -> str` — On-demand self-test: the chip id reads back, then one fused sample succeeds (each step logged).
 - `inspect() -> dict`
 
 ## `icp10111.py`
@@ -604,6 +609,7 @@ startup ground zero, captured per-sensor so it is offset-free) to the databoard.
 - `setup() -> bool`
 - `run() -> None`
 - `update(props: dict) -> list` — `{"rezero": true}` re-captures ground zero from the latest altitude (sync; operator does
+- `probe() -> str` — On-demand self-test: the product id reads back, then one measurement reads (each step logged).
 - `inspect() -> dict`
 
 ## `led.py`
@@ -640,6 +646,7 @@ Detect stage separation (HIGH=nested -> LOW=separated) and trigger Boosting -> G
 
 - `setup() -> bool`
 - `run() -> None`
+- `probe() -> str` — On-demand self-test: the separation pin reads a valid level (logged nested/separated).
 - `inspect() -> dict`
 
 ## `sg90.py`
@@ -713,6 +720,7 @@ low-altitude metres where the barometer cannot resolve height. Interrupt-driven 
 
 - `setup() -> bool`
 - `run() -> None` — Sample on data-ready (GPIO1) or every period_ms; write AGL (m) to the databoard. Runs
+- `probe() -> str` — On-demand self-test: the model id reads back, then one range read succeeds (each step logged).
 - `inspect() -> dict`
 
 ## `wifi.py`
@@ -768,6 +776,7 @@ Periodic vitals -> telemetry (health.csv) + `inspect health`.
 - `mem_free() -> int`
 - `sample() -> dict`
 - `run() -> None` — Push a vitals row at startup, then every period_ms estimate load and push again. Runs
+- `probe() -> str` — On-demand self-test: free memory reads positive (a basic board-vitals sanity); the
 - `inspect() -> dict`
 - `stats() -> dict`
 

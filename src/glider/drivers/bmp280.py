@@ -135,6 +135,29 @@ class Bmp280(task.Task):
             return ['ground']
         return []
 
+    async def probe(self) -> str:
+        """On-demand self-test: the chip id reads back, then one conversion reads (each step logged)."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: chip id ...')
+            chip = (await self._bus.read(self._addr, _REG_CHIP_ID, 1))[0]
+            if chip != _CHIP_ID:
+                raise ValueError('BMP280 id 0x%02x != 0x%02x at i2c:%s 0x%02x' % (
+                    chip, _CHIP_ID, self.config.get('id'), self._addr))
+            recorder.Recorder.log(self.name, 'probe: chip id ok 0x%02x' % chip)
+        except Exception as error:
+            message = 'chip id: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        try:
+            recorder.Recorder.log(self.name, 'probe: read ...')
+            _altitude, _temp, pressure = await self._read()
+            recorder.Recorder.log(self.name, 'probe: read ok %.0f Pa' % pressure)
+        except Exception as error:
+            message = 'read: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)  # our channels' latest (no hot-path I2C here)
         status['altitude_m'] = self._altitude.value()

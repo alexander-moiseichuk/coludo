@@ -134,6 +134,29 @@ class Icp10111(task.Task):
             return ['ground']
         return []
 
+    async def probe(self) -> str:
+        """On-demand self-test: the product id reads back, then one measurement reads (each step logged)."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: product id ...')
+            await self._bus.writeto(self._addr, _CMD_ID)
+            ident = await self._bus.readfrom(self._addr, 3)
+            if (((ident[0] << 8) | ident[1]) & _ID_MASK) != _ID_VALUE:
+                raise ValueError('ICP-10111 not found at i2c:%s 0x%02x' % (self.config.get('id'), self._addr))
+            recorder.Recorder.log(self.name, 'probe: product id ok')
+        except Exception as error:
+            message = 'product id: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        try:
+            recorder.Recorder.log(self.name, 'probe: read ...')
+            _altitude, _temp, pressure = await self._read()
+            recorder.Recorder.log(self.name, 'probe: read ok %.0f Pa' % pressure)
+        except Exception as error:
+            message = 'read: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)  # our channels' latest (no hot-path I2C here)
         status['altitude_m'] = self._altitude.value()

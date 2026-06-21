@@ -89,6 +89,29 @@ class Bno055(task.Task):
                 print('bno055 :: read %r' % error)
             await asyncio.sleep_ms(self._period_ms)
 
+    async def probe(self) -> str:
+        """On-demand self-test: the chip id reads back, then one fused sample succeeds (each step logged)."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: chip id ...')
+            chip = (await self._bus.read(self._addr, _REG_CHIP_ID, 1))[0]
+            if chip != _CHIP_ID:
+                raise ValueError('BNO055 id 0x%02x != 0x%02x at i2c:%s 0x%02x' % (
+                    chip, _CHIP_ID, self.config.get('id'), self._addr))
+            recorder.Recorder.log(self.name, 'probe: chip id ok 0x%02x' % chip)
+        except Exception as error:
+            message = 'chip id: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        try:
+            recorder.Recorder.log(self.name, 'probe: sample ...')
+            attitude, _accel = await self.sample()
+            recorder.Recorder.log(self.name, 'probe: sample ok heading=%.1f deg' % attitude[0])
+        except Exception as error:
+            message = 'sample: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['attitude_deg'] = self._attitude.value()  # our channels' latest (no hot-path I2C)

@@ -59,6 +59,20 @@ class Separation(task.Task):
             await asyncio.sleep_ms(self._debounce_ms)  # let the contact bounce settle, then re-read
             self._apply(self._pin.value() == 0)
 
+    async def probe(self) -> str:
+        """On-demand self-test: the separation pin reads a valid level (logged nested/separated)."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: separation pin ...')
+            value = self._pin.value()
+            if value not in (0, 1):
+                raise ValueError('pin read %r' % value)
+            recorder.Recorder.log(self.name, 'probe: pin ok (%s)' % ('separated' if value == 0 else 'nested'))
+        except Exception as error:
+            message = 'separation pin: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['separated'] = self._separated
