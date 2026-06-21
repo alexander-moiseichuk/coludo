@@ -113,6 +113,26 @@ def test_save_roundtrip():
     _cleanup()
 
 
+def test_landing_zone():
+    _cleanup()
+    launch = mission.Mission(PATH)
+    assert launch.zone is None  # unset by default
+
+    # a valid 2-corner rectangle is stored (tuples) + reported changed
+    assert launch.update({'zone': [[48.001, 11.000], [48.000, 11.010]]}) == ['zone']
+    assert launch.zone == ((48.001, 11.000), (48.000, 11.010))
+    assert launch.inspect()['zone'] == ((48.001, 11.000), (48.000, 11.010))
+    # negative: malformed / out-of-range zones are ignored (the valid one stays)
+    assert launch.update({'zone': [[48.0, 11.0]]}) == []  # only one corner
+    assert launch.update({'zone': [[200.0, 11.0], [48.0, 11.0]]}) == []  # bad latitude
+    assert launch.zone == ((48.001, 11.000), (48.000, 11.010))
+
+    # round-trips through launch.config (JSON lists -> tuples on reload)
+    launch.save()
+    assert mission.Mission(PATH).zone == ((48.001, 11.000), (48.000, 11.010))
+    _cleanup()
+
+
 def main():
     assert mission._EPOCH_OFFSET == 946684800
     try:
@@ -124,9 +144,10 @@ def main():
         test_update_positive_and_negative()
         test_time_setup()
         test_save_roundtrip()
+        test_landing_zone()
     finally:
         _cleanup()
-    print('ok: mission load/update/time-setup/launch-prefix/save + Inspector')
+    print('ok: mission load/update/time-setup/launch-prefix/save + landing-zone + Inspector')
 
 
 main()

@@ -1,9 +1,11 @@
 # tasks/flight.py — Phase 3 stabilization loop. @task.activity('flight'). At `schedule_hz` it reads the
 # IMU 'attitude' (heading, roll, pitch), runs a PID per axis to the current stage's setpoint (+ heading
 # hold), mixes the result to the fins (mixer.py) and writes them via sg90.update(). Per-stage: the
-# `phases` config names the CONTROL stages and their setpoint (GLIDING = wings-level + heading hold,
-# LANDING = its own flare setpoint); any other stage (SETTING/BOOSTING/DONE) holds the fins neutral, so
-# it never actuates under thrust or on the ground. Degraded: stale/absent attitude -> neutral.
+# `phases` config names the CONTROL stages and their setpoint (GLIDING = wings-level + steer to the
+# landing zone, LANDING = its own flare setpoint, straight-and-level); any other stage
+# (SETTING/BOOSTING/DONE) holds the fins neutral. In GLIDING the yaw heading setpoint is the bearing to
+# the landing zone (nav.py, from the mission) when a fix is fresh, else the captured glide heading;
+# LANDING locks the heading. Degraded: stale/absent attitude -> neutral.
 #
 # Scheduling: schedule_hz > 0 -> a machine.Timer ticks the step, so the control law gets a regular slice
 # independent of what other asyncio tasks are doing (deterministic, e.g. while the laser hammers I2C in
@@ -15,11 +17,13 @@ import asyncio
 import time
 
 import databoard
+import inspector
 import mixer
+import nav
 import pid
 import task
 
-_AXES = ('roll', 'pitch', 'yaw')
+_AXES: tuple = ('roll', 'pitch', 'yaw')
 
 
 def _heading_error(target: float, current: float) -> float:
@@ -52,6 +56,8 @@ class Flight(task.Task):
         # on the ground). GLIDING = wings-level + heading hold; LANDING carries its own setpoint (flare).
         self._phases: dict = self.config.get('phases', {'gliding': {'roll': 0.0, 'pitch': 0.0}})
         self._attitude = databoard.Databoard.parameter('attitude')  # (heading, roll, pitch)
+        self._position = databoard.Databoard.parameter('position')  # (lat, lon) for landing-zone nav
+        self._mission = inspector.Inspector.get('mission')  # the landing zone lives here (may be None)
         self._heading_hold = None  # captured on entering a control phase -> hold that heading
         self._active: bool = False  # in a control phase (PID engaged)
         self._phase = None  # the current control-phase name (for inspect)
@@ -85,12 +91,23 @@ class Flight(task.Task):
         self._phase = self.controller.stage_name()  # may switch between control phases (glide -> landing)
         roll_cmd = self._pid['roll'].step(setpoint.get('roll', 0.0) - roll, self._dt)
         pitch_cmd = self._pid['pitch'].step(setpoint.get('pitch', 0.0) - pitch, self._dt)
-        yaw_cmd = self._pid['yaw'].step(_heading_error(self._heading_hold, heading), self._dt)
+        yaw_cmd = self._pid['yaw'].step(_heading_error(self._target_heading(), heading), self._dt)
         self._apply(self._mixer.mix(roll=round(roll_cmd), pitch=round(pitch_cmd), yaw=round(yaw_cmd)))
         self._steps += 1
         elapsed = time.ticks_diff(time.ticks_us(), start)
         if elapsed > self._max_step_us:
             self._max_step_us = elapsed
+
+    def _target_heading(self) -> float:
+        """The heading to steer: the landing-zone bearing (nav.py) during GLIDING when a zone + a fresh
+        GNSS fix are available, else the captured glide heading (hold). Nav steers only in GLIDING --
+        LANDING locks straight-and-level (coludo.md), and stale/absent position falls back to the hold."""
+        if self.controller.stage_name() != 'gliding' or self._mission is None or not self._mission.zone:
+            return self._heading_hold
+        position, source, _age = self._position.read()
+        if source is None or position is None:  # no fresh fix -> hold heading
+            return self._heading_hold
+        return nav.steer(position, self._mission.zone[0], self._mission.zone[1])[0]
 
     def _apply(self, angles: dict) -> None:
         for name, angle in angles.items():

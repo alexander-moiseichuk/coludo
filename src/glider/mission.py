@@ -50,6 +50,26 @@ def _number(value, low: float, high: float):
     return value if low <= value <= high else None
 
 
+def _zone(value):
+    """Validate a landing zone `[[lat_tl, lon_tl], [lat_br, lon_br]]` (top-left + bottom-right corners)
+    -> ((lat, lon), (lat, lon)) or None. nav.py resolves the target (centre) + gates (short-side
+    midpoints) from it. The corner choice is an operator SAFETY decision: orient the zone so the
+    short-side entrances face hazard-free corridors -- nav steers to a gate with no hazard awareness
+    (specs/coludo.md "Zone orientation")."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    corners = []
+    for point in value:
+        if not isinstance(point, (list, tuple)) or len(point) != 2:
+            return None
+        latitude = _number(point[0], -90.0, 90.0)
+        longitude = _number(point[1], -180.0, 180.0)
+        if latitude is None or longitude is None:
+            return None
+        corners.append((latitude, longitude))
+    return (corners[0], corners[1])
+
+
 class Mission(inspector.Inspectable):
     """The operator-set launch identity. One per board; registers itself so Control can
     `inspect`/`update mission`. Seeded from launch.config at construction."""
@@ -65,6 +85,7 @@ class Mission(inspector.Inspectable):
         self.latitude = _number(data.get('latitude'), -90.0, 90.0)  # decimal degrees, None unset
         self.longitude = _number(data.get('longitude'), -180.0, 180.0)
         self.altitude = data.get('altitude')  # launch-site elevation, metres (None unset)
+        self.zone = _zone(data.get('zone'))  # landing zone ((lat,lon) TL, (lat,lon) BR) or None
         inspector.Inspector.register(self)
 
     def set_time(self, epoch) -> bool:
@@ -107,6 +128,7 @@ class Mission(inspector.Inspectable):
             'latitude': self.latitude,
             'longitude': self.longitude,
             'altitude': self.altitude,
+            'zone': self.zone,
             'clock': self.clock(),
             'epoch': self.epoch(),
         }
@@ -129,6 +151,11 @@ class Mission(inspector.Inspectable):
             if getattr(self, key) != value:
                 setattr(self, key, value)
                 changed.append(key)
+        if 'zone' in props:  # landing zone: a valid 2-corner rectangle replaces it, invalid is ignored
+            zone = _zone(props['zone'])
+            if zone is not None and zone != self.zone:
+                self.zone = zone
+                changed.append('zone')
         if 'epoch' in props and self.set_time(props['epoch']):
             changed.append('epoch')
         return changed
@@ -137,6 +164,8 @@ class Mission(inspector.Inspectable):
         """Persist the stored mission fields to launch.config (atomic temp+rename) so the launch
         identity survives a pre-flight reboot. The clock is never persisted -- it is the RTC's."""
         data = {key: getattr(self, key) for key in _FIELDS}
+        if self.zone is not None:  # persist the landing zone as plain lists (JSON has no tuples)
+            data['zone'] = [list(self.zone[0]), list(self.zone[1])]
         tmp = self.path + '.tmp'
         with open(tmp, 'w') as handle:
             handle.write(json.dumps(data))

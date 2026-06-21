@@ -209,7 +209,24 @@ Vertically (latitutude) stretched landing zone
                       Entrance
 ```
 
+### Zone orientation — an operator safety decision
 
+The two **gate entrances are fixed to the midpoints of the SHORT sides** — the navigator resolves them
+purely from geometry (`nav.steer()` always vectors to the nearer short-side entrance, then to the
+centre; on an overshoot it turns ~180° back through the gate it just crossed and re-approaches). Two
+reasons reinforce that placement, but only if the zone is laid out deliberately:
+
+- **Aerodynamic:** entering along the long (major) axis gives the longest run-in to the target — lower
+  effective crosswind and more room to settle before touchdown.
+- **Safety:** the short sides are the glider's only approach corridors. **The operator must orient the
+  zone — the TL/BR corners in `launch.config` — so the two short-side entrances point at hazard-free
+  airspace.** The long sides should border the hazards (trees, the launch pad, people); the short
+  sides the clear approaches.
+
+This is a placement decision at mission-setup time, **not just a rectangle**: `nav.py` will steer to a
+short-side entrance on every approach and re-approach, with **no knowledge of what lies beyond any
+side**. Choosing the corners so the gates align with clear corridors is therefore safety-critical and
+entirely the operator's responsibility — the firmware cannot verify it.
 
 Task creation orders and internal dependencies are explicitly hardcoded within the controller to keep execution logic simple and predictable.
 
