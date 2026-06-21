@@ -66,8 +66,8 @@ class Flight(task.Task):
         PID -> mix -> apply. Self-times for the load sweep."""
         start = time.ticks_us()
         setpoint = self._phases.get(self.controller.stage_name())  # None -> not a control phase
-        if setpoint is None:
-            if self._active:  # left the control phases -> centre the fins
+        if setpoint is None or not self.controller.armed:  # not a control phase, or disarmed -> neutral
+            if self._active:  # left the control phases (or disarmed) -> centre the fins
                 self._neutral()
                 self._active = False
                 self._phase = None

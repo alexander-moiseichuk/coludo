@@ -140,6 +140,17 @@ async def amain():
         raised = True
     assert raised
 
+    # arming + manual hold (the actuation safety gate + ground-test override)
+    assert c.armed is False and c.manual is False  # disarmed / auto by default
+    c.arm()
+    assert c.armed is True and c.inspect()['armed'] is True
+    c.disarm()
+    assert c.armed is False
+    assert c.hold('gliding') is True and c.stage_name() == 'gliding' and c.manual is True
+    assert c.hold('nope') is False  # unknown stage name
+    c.resume()
+    assert c.manual is False and c.inspect()['manual'] is False
+
     # close one, then finish all
     await c.close('s1')
     assert 's1' not in c.tasks

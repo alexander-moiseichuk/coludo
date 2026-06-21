@@ -60,7 +60,10 @@ class Sequencer(task.Task):
 
     def _tick(self, now: int) -> None:
         """One stage-machine step. `now` is ticks_ms. Forward-only: each branch only advances, and the
-        sustained-detect timer resets whenever the stage changes (so a separation-driven hop is clean)."""
+        sustained-detect timer resets whenever the stage changes (so a separation-driven hop is clean).
+        Paused while the operator holds the stage (ground test)."""
+        if self.controller.manual:  # operator holds the stage -> do not auto-advance
+            return
         stage = self.controller.stage
         if stage != self._stage_seen:  # changed (by us or by the separation driver) -> fresh timer
             self._since = None

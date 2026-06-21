@@ -26,6 +26,7 @@ class _StubController:
     def __init__(self):
         self.config = config_default.default()
         self.stage = Stage.SETTING
+        self.manual = False  # operator hold -> the sequencer pauses (tested below)
 
     def set_stage(self, stage):
         self.stage = stage
@@ -85,7 +86,14 @@ async def amain():
     seq._tick(2050)
     assert ctrl.stage == Stage.SETTING
 
-    print('ok: sequencer -- sustained launch detect, boost-timeout fallback, agl landing, on-ground, guard')
+    # operator hold (ground test): manual pauses auto-sequencing -- a sustained launch is ignored
+    ctrl.stage, ctrl.manual, seq._stage_seen = Stage.SETTING, True, None
+    accel.push((0.0, 0.0, 8.0))
+    seq._tick(3000)
+    seq._tick(3200)  # well past launch_ms
+    assert ctrl.stage == Stage.SETTING  # held -> no auto-advance
+
+    print('ok: sequencer -- launch detect, boost-timeout, agl landing, on-ground, guard, manual hold')
 
 
 asyncio.run(amain())

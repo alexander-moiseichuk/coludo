@@ -51,6 +51,8 @@ class Controller(inspector.Inspectable):
         self.failures: dict = {}  # name -> reason, for enabled devices that did not come up (setup)
         self._runners: dict = {}  # name -> asyncio.Task
         self.stage: int = Stage.SETTING
+        self.armed: bool = False  # actuation gate -- the control loop holds fins neutral until armed
+        self.manual: bool = False  # operator holds the stage (ground test) -> sequencer pauses
         inspector.Inspector.register(self)
 
     # ------------------------------------------------------------------ scope
@@ -207,6 +209,32 @@ class Controller(inspector.Inspectable):
         """The current flight stage as its operator-facing name."""
         return Stage.STAGES[self.stage]
 
+    # ------------------------------------------------------------------ arming
+    def arm(self) -> None:
+        """Enable actuation. The pre-flight precondition (probe all clean, mission set) is enforced by
+        the caller (the CC `arm` command); here it is the bare state + log."""
+        self.armed = True
+        self.log('controller :: armed')
+
+    def disarm(self) -> None:
+        self.armed = False
+        self.log('controller :: disarmed')
+
+    def hold(self, stage_name: str) -> bool:
+        """Operator stage override (ground test): force a stage and pause auto-sequencing. Returns
+        False for an unknown stage name."""
+        for stage_id, name in Stage.STAGES.items():
+            if name == stage_name:
+                self.set_stage(stage_id)
+                self.manual = True
+                return True
+        return False
+
+    def resume(self) -> None:
+        """Clear the operator hold -> the sequencer drives the stages again."""
+        self.manual = False
+        self.log('controller :: stage auto')
+
     def validate(self) -> bool:
         """True if every active task is healthy."""
         for t in self.tasks.values():
@@ -216,7 +244,8 @@ class Controller(inspector.Inspectable):
 
     # --- Inspectable ---
     def inspect(self) -> dict:
-        return {'stage': self.stage_name(), 'tasks': list(self.tasks.keys()), 'failures': self.failures}
+        return {'stage': self.stage_name(), 'armed': self.armed, 'manual': self.manual,
+                'tasks': list(self.tasks.keys()), 'failures': self.failures}
 
     def stats(self) -> dict:
         return {'stage': self.stage_name(), 'tasks': dict((n, t.inspect()) for n, t in self.tasks.items())}

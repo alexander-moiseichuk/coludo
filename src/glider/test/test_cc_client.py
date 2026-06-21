@@ -178,7 +178,47 @@ async def amain():
     assert recorder.Recorder._cc_deadline == 0
     assert 'badargs' in await sd5.handle('log notanumber')  # non-integer duration rejected
 
-    print('ok: cc_client board-first dispatch/serve/standard + inspect/update/stats + probe + log')
+    # arming: refused while a probe fails, clean board -> armed; disarm; manual stage hold + auto resume
+    class _ArmController:
+        failures = {}
+
+        def __init__(self):
+            self.armed, self.manual, self._stage = False, False, 'setting'
+
+        def arm(self):
+            self.armed = True
+
+        def disarm(self):
+            self.armed = False
+
+        def stage_name(self):
+            return self._stage
+
+        def resume(self):
+            self.manual = False
+
+        def hold(self, name):
+            if name not in ('setting', 'boosting', 'gliding', 'landing', 'done'):
+                return False
+            self._stage, self.manual = name, True
+            return True
+
+    arm_ctrl = _ArmController()
+    sd_arm = cc_client.create_dispatcher(config_default.default(), controller=arm_ctrl)
+    assert 'unsafe' in await sd_arm.handle('arm') and arm_ctrl.armed is False  # p_bad probe fails -> refused
+
+    inspector.Inspector.unregister('p_bad')  # clear the failing probes -> a clean board
+    inspector.Inspector.unregister('mission')
+    assert json.loads(cc.parse(await sd_arm.handle('arm')).args[0])['armed'] is True and arm_ctrl.armed is True
+    assert json.loads(cc.parse(await sd_arm.handle('disarm')).args[0])['armed'] is False
+
+    held = json.loads(cc.parse(await sd_arm.handle('stage gliding')).args[0])  # operator hold (ground test)
+    assert held['stage'] == 'gliding' and held['manual'] is True
+    assert 'badargs' in await sd_arm.handle('stage nope')  # unknown stage name
+    assert json.loads(cc.parse(await sd_arm.handle('stage auto')).args[0])['manual'] is False  # resume
+    assert 'unsupported' in await cc_client.create_dispatcher(config_default.default()).handle('arm')
+
+    print('ok: cc_client dispatch/serve/standard + inspect/update/stats + probe + verify + log + arm')
 
 
 asyncio.run(amain())

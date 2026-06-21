@@ -204,13 +204,22 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
   (the flight loop already fail-safes to neutral, task 2). Disabled by default (a live WDT also resets
   the board during REPL bench work). `test_watchdog` (injected WDT/reset) covers the stall decision +
   feed-vs-reset. **±90°/tumble is deliberately not a trigger** — control should keep fighting there.
-- ◻ **6. Arming + ground-test safety** — actuation only when **armed** and in `GLIDING`; arming
-  requires `probe all` clean; a ground-test mode exercises the loop with surfaces live but stages
-  forced, so it can be bench-validated before flight. (CC `arm`/`disarm`, mission-gated.)
+- ✅ **6. Arming + ground-test safety** — `Controller.armed` gates actuation: the flight loop holds
+  the fins neutral unless **armed** *and* in a control phase. CC **`arm`** enables it only when board
+  verify is clean (every device up + probe healthy — and `mission.probe` requires the launch position,
+  so arming is mission-gated for free); a refused arm returns the problems. **`disarm`** clears it.
+  Ground test: **`stage <name>`** holds a stage (`Controller.manual` → the sequencer pauses) so the
+  live loop can be exercised on the bench (`arm` + `stage gliding` → tilt the board, watch the fins);
+  `stage auto` resumes. Tests across controller/flight/sequencer/cc_client (disarmed→neutral,
+  manual→no auto-advance, arm refused-on-probe-fail / clean→armed).
 - **Deferred to Phase 4:** GNSS landing-zone navigation (heading-to-home), GPX export. Until nav
   exists, `GLIDING` holds wings-level + a fixed heading.
+- **Bench-complete (all 6 tasks ✅):** the full chain — sensors → stage machine → armed + per-phase
+  gated PID → mixer → fins, with a watchdog backstop — is built and on-board tested (34/34). The only
+  thing left before flight is **gain tuning on the real airframe** (gains default 0; the flight +
+  watchdog tasks ship disabled), informed by the E16/F15 passive-flight data.
 - **Milestone:** a controlled glide — launch detect → separation → stabilized glide → flare, with
-  the loop gated by stage + health and a fed watchdog.
+  the loop gated by stage + arming + a fed watchdog.
 
 ### Phase 4 — Polish
 - Landing-zone navigation + per-launch mission config, GPX export of telemetry, richer

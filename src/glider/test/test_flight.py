@@ -23,6 +23,7 @@ class _StubController:
     def __init__(self, stage):
         self.config = config_default.default()  # carries the mixer block
         self._stage = stage
+        self.armed = True  # the gate: disarmed -> the loop holds neutral (tested below)
         self.fins = {n: _FakeFin() for n in ('servo_yaw', 'servo_eleron_left', 'servo_eleron_right')}
 
     def stage_name(self):
@@ -60,6 +61,12 @@ async def amain():
     ctrl._stage = 'landing'
     unit._step()
     assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._active is False
+
+    # disarmed -> neutral even in a control phase (the arming safety gate)
+    ctrl._stage, ctrl.armed = 'gliding', False
+    unit._step()
+    assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._active is False
+    ctrl.armed = True  # re-arm for the scheduling-mode checks below
 
     # asyncio mode (schedule_hz 0): run() loops and runs control steps
     ctrl._stage = 'gliding'

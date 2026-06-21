@@ -106,7 +106,40 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         return cc.build('ok', [json.dumps(info)])
 
     async def get_stage(msg) -> str:
-        return cc.build('ok', [json.dumps({'stage': stage()})])
+        """`stage` -> the current stage; `stage <name>` holds it (operator override, pauses the
+        sequencer -- ground test); `stage auto` resumes auto-sequencing."""
+        manual = controller.manual if controller is not None else False
+        if msg.args and controller is not None:
+            if msg.args[0] == 'auto':
+                controller.resume()
+            elif not controller.hold(msg.args[0]):
+                return cc.build('err', ['badargs', 'no stage ' + msg.args[0]])
+            manual = controller.manual
+        return cc.build('ok', [json.dumps({'stage': stage(), 'manual': manual})])
+
+    async def arm(msg) -> str:
+        """Enable actuation -- but only when board verify is clean (every device up + probe healthy,
+        incl. the mission launch-position): a refused arm returns the problems. Disarmed by default;
+        the control loop holds the fins neutral until armed."""
+        if controller is None:
+            return cc.build('err', ['unsupported', 'no controller'])
+        problems = dict(controller.failures)  # not-connected devices
+        for name in inspector.Inspector.names():
+            run = getattr(inspector.Inspector.get(name), 'probe', None)
+            if run is not None:
+                result = await run()
+                if result is not None:
+                    problems[name] = result
+        if problems:
+            return cc.build('err', ['unsafe', json.dumps(problems)])  # refuse to arm
+        controller.arm()
+        return cc.build('ok', [json.dumps({'armed': True})])
+
+    async def disarm(msg) -> str:
+        if controller is None:
+            return cc.build('err', ['unsupported', 'no controller'])
+        controller.disarm()
+        return cc.build('ok', [json.dumps({'armed': False})])
 
     async def report(msg) -> str:
         return cc.build('ok', [json.dumps(controller.stats() if controller is not None else {})])
@@ -239,6 +272,8 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
     dispatcher.on('ping', ping)
     dispatcher.on('health', health)
     dispatcher.on('stage', get_stage)
+    dispatcher.on('arm', arm)
+    dispatcher.on('disarm', disarm)
     dispatcher.on('report', report)
     dispatcher.on('objects', objects)
     dispatcher.on('inspect', inspect)

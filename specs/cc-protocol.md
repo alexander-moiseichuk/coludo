@@ -120,7 +120,9 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `whoami` | — | `iam <id> {json}` | identify a new socket (the one reply carrying the id) |
 | `ping` | — | `pong` | liveness |
 | `health` | — | `ok {temp,mem_free,load,uptime,components[]}` | vitals; `components[]` carries `{name, ok}` |
-| `stage` | — | `ok {stage,uptime}` | current flight stage |
+| `stage` | `[name\|auto]` | `ok {stage,manual}` | get the stage; `<name>` holds it (pauses the sequencer — ground test); `auto` resumes |
+| `arm` | — | `ok {armed:true}` / `err unsafe {problems}` | enable actuation — only when verify is clean (every device up + probe healthy, incl. mission launch-position) |
+| `disarm` | — | `ok {armed:false}` | disable actuation (the control loop holds the fins neutral) |
 | `tel` | `[ms]` | `ok {samples:[...]}` | telemetry samples within the last `ms` |
 | `log` | `<ms>` | `ok {lines:[...]}` | poll-model: lines buffered since the last `log`; re-arm teeing for `ms` (`0` stops) |
 | `report` | — | `ok {stage, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
