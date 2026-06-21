@@ -63,6 +63,19 @@ def default() -> dict:
         # Max fin servos allowed to SLEW at once via servo.move() -- caps the boost-rail current
         # transient. 3 (== fin count) = no limit; drop to 2/1 if the rail sags on the built airframe.
         'servo_concurrency': 3,
+        # Control-surface mixing (Phase 3): elevons (the two elerons move together for pitch,
+        # differentially for roll) + a rudder (the yaw fin). Flip a gain sign if a surface deflects the
+        # wrong way; set `trim` (deg) for mechanical neutral. limit_deg bounds control deflection.
+        'mixer': {
+            'neutral_deg': 90,
+            'limit_deg': 45,
+            'surfaces': {
+                'servo_yaw': {'yaw': 1},
+                'servo_eleron_left': {'pitch': 1, 'roll': 1},
+                'servo_eleron_right': {'pitch': 1, 'roll': -1},
+            },
+            'trim': {},  # per-fin neutral offset (deg), set during bench alignment
+        },
         # Data providers. Fusion groups by quantity and orders providers by priority (lower
         # first); several providers per quantity is normal (different drivers, redundancy).
         'sensors': [

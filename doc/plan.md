@@ -148,11 +148,11 @@ Builds on what Phase 2 already shipped: the `Stage` machine (`SETTING→BOOSTING
 Order: **1 → 2 → 3 → 4** (mixer, then the loop it drives, then automate the stages that gate it,
 then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests, on-board.
 
-- ◻ **1. Surface mixer** (`tasks/mixer.py` or fold into a control task) — map control axes to the 3
-  fins: **elevon mixing** (pitch = both elerons together, roll = differential) + **yaw = rudder**.
-  Per-fin trim (neutral), direction sign, and a hard ±limit clamp (config; e.g. ±45°) on top of
-  `sg90.update()`. Pure integer-degree math; unit-tested independent of hardware (mix → per-fin
-  angles, clamp, trim). No servo motion until commanded.
+- ✅ **1. Surface mixer** (`mixer.py`, sibling of servo.py) — `Mixer.mix(roll, pitch, yaw)` →
+  `{fin: angle}`: **elevon mixing** (pitch = both elerons together, roll = differential) + **yaw =
+  rudder**, per-fin trim (neutral) + direction-sign gains + a hard ±`limit_deg` clamp on control
+  deflection (config `mixer`). Pure integer-degree math, `neutralise()` for the safe output;
+  `test_mixer` covers the matrix/trim/clamp. No servo motion until the control task drives it.
 - ◻ **2. Stabilization loop** (`tasks/flight.py`, `@task.activity('flight')`) — ~50 Hz: read
   `attitude` (+ `accel`) from the databoard, run a **PID per axis** (setpoint − measured → command),
   feed the mixer. Gains + setpoints from config; integral clamp / output saturation. **Active only in
