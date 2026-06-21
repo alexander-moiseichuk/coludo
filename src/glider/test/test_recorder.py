@@ -110,6 +110,47 @@ async def test_error_policy():
     assert raised
 
 
+async def test_cc_stream():
+    # poll-model `log <ms>` streaming: a tee of log() onto a lazily-allocated CC ring, gated by a
+    # deadline; the UART/Luckfox path must be untouched throughout.
+    recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
+    assert recorder.Recorder._cc is None  # nothing allocated until the first request
+
+    # off by default: log() does NOT collect for CC, but still goes to the UART ring
+    assert recorder.Recorder.log('A', 'before') is True
+    assert recorder.Recorder.cc_logs(0) == {'lines': []}  # disabled -> empty batch
+    assert recorder.Recorder._cc is None  # nothing allocated while off
+
+    # `log 1000` sizes + allocates the ring, returns the (empty) batch so far, and arms a 1 s window
+    assert recorder.Recorder.cc_logs(1000)['lines'] == []
+    assert recorder.Recorder._cc is not None and recorder.Recorder._cc_deadline  # ring sized, armed
+    recorder.Recorder.log('B', 'one')
+    recorder.Recorder.log('B', 'two')
+    batch = recorder.Recorder.cc_logs(1000)['lines']  # drain + re-arm
+    assert len(batch) == 2 and batch[0].endswith('B :: one') and batch[1].endswith('B :: two'), batch
+    assert recorder.Recorder.cc_logs(1000)['lines'] == []  # already drained -> empty next time
+
+    # the UART log path is unaffected: every log() above still reached the _log ring (3 lines)
+    assert await recorder.Recorder.drain() == 3
+    assert all(b' :: ' in item for item in recorder.Recorder._uart.items)
+
+    # the ring capacity is derived from the window (10 records/ms) and capped at 4x the default (1024)
+    assert recorder.Recorder._cc.capacity == min(1000 * 10, 4 * 1024)
+
+    # `log 0` hands back the final batch and stops streaming (deadline cleared)
+    recorder.Recorder.cc_logs(1000)  # re-arm, ring empty
+    recorder.Recorder.log('C', 'last')
+    final = recorder.Recorder.cc_logs(0)['lines']
+    assert len(final) == 1 and final[0].endswith('C :: last') and recorder.Recorder._cc_deadline == 0
+
+    # window lapse: a deadline already in the past -> the next log() discards + disables, no collection
+    recorder.Recorder.cc_logs(1000)  # arm
+    recorder.Recorder._cc_deadline = recorder.time.ticks_add(recorder.Recorder.timestamp(), -1)  # already past
+    recorder.Recorder.log('D', 'after-lapse')
+    assert recorder.Recorder._cc_deadline == 0  # log() saw the lapse and disabled
+    assert recorder.Recorder.cc_logs(0)['lines'] == []  # nothing collected after the lapse
+
+
 async def test_run_loop():
     # run() loops forever; cancellation stops it (no stop flag)
     recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
@@ -127,9 +168,10 @@ async def test_run_loop():
 async def _amain():
     await test_recorder()
     await test_error_policy()
+    await test_cc_stream()
     await test_run_loop()
 
 
 test_ring()
 asyncio.run(_amain())
-print('ok: recorder SPSC ring, async drain/priority, log-drop vs tlm-raise, Telemetry, run loop')
+print('ok: recorder SPSC ring, async drain/priority, log-drop vs tlm-raise, Telemetry, cc-stream, run loop')

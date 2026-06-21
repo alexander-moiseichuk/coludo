@@ -122,7 +122,7 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `health` | — | `ok {temp,mem_free,load,uptime,components[]}` | vitals; `components[]` carries `{name, ok}` |
 | `stage` | — | `ok {stage,uptime}` | current flight stage |
 | `tel` | `[ms]` | `ok {samples:[...]}` | telemetry samples within the last `ms` |
-| `log` | `<ms>` | `ok {lines:[...], truncated}` | log lines from the last `ms` |
+| `log` | `<ms>` | `ok {lines:[...]}` | poll-model: lines buffered since the last `log`; re-arm teeing for `ms` (`0` stops) |
 | `report` | — | `ok {stage, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
 | `objects` | — | `ok [name, ...]` | names of all `Inspectable` objects (for the `inspect`/`update`/`stats` targets) |
 | `inspect` | `<object>` | `ok {props}` | `Inspectable.inspect()` of a named object |

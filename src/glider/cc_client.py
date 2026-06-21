@@ -187,6 +187,20 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
             return cc.build('err', ['badargs', 'no probe for ' + target])
         return cc.build('ok', [json.dumps({target: await run()})])
 
+    async def log(msg) -> str:
+        """`log <duration_ms>` -- poll-model log streaming. Reply with the log lines the board buffered
+        since the last `log`, and keep teeing log() for another `duration_ms` (the operator re-sends it
+        each tick; `log 0` stops, default 1000 ms). The batch rides back as one base64 token (a JSON
+        list). An EXTRA route: the UART/Luckfox log path is untouched, and with no `log` request the
+        board collects nothing -- a lost link cannot grow memory once the window lapses."""
+        import recorder
+
+        try:
+            duration_ms = int(msg.args[0]) if msg.args else 1000
+        except ValueError:
+            return cc.build('err', ['badargs', 'log <duration_ms>'])
+        return cc.build('ok', [json.dumps(recorder.Recorder.cc_logs(duration_ms))])
+
     async def reboot(msg) -> str:
         reset = on_reboot or (lambda: __import__('machine').reset())  # imported only when it fires
 
@@ -207,6 +221,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
     dispatcher.on('update', update)
     dispatcher.on('stats', stats)
     dispatcher.on('probe', probe)
+    dispatcher.on('log', log)
     dispatcher.on('get-config', get_config)
     dispatcher.on('save-config', save_config)
     dispatcher.on('reset-config', reset_config)

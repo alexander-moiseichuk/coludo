@@ -88,6 +88,8 @@ class Recorder:
     kind = 'recorder'
     _tlm: Ring = None
     _log: Ring = None
+    _cc: Ring = None  # CC log ring, sized + allocated on the first `log <ms>` request, then reused
+    _cc_deadline: int = 0  # ticks_us window-end while streaming to CC (0 = off); log() tees until it lapses
     _uart = None  # asyncio.StreamWriter wrapping the recorder UART
     _flag = None  # ThreadSafeFlag set by producers, waited on by run()
     _session: str = None  # 'YYYYMMDD_HHMMSS', produced on first tlm(), fixed for the boot
@@ -102,6 +104,8 @@ class Recorder:
         cell_size = recorder.get('cell_size', _DEFAULT_CELL_SIZE)
         cls._tlm = Ring(recorder.get('tlm_capacity', _DEFAULT_CAPACITY), cell_size)
         cls._log = Ring(recorder.get('log_capacity', _DEFAULT_CAPACITY), cell_size)
+        cls._cc = None  # lazily allocated + sized on the first `log <ms>` request, then reused
+        cls._cc_deadline = 0  # off at boot: nothing is collected for CC until it asks
         cls._session = None
         cls._tlm_max = 0
         cls._log_max = 0
@@ -143,10 +147,49 @@ class Recorder:
         data = ('%u %s :: %s\n' % (cls.timestamp(), descriptor, message)).encode()
         if len(data) > cls._log.max_payload:
             data = data[: cls._log.max_payload]
-        if not cls._log.write(data):
-            return False
-        cls._flag.set()
-        return True
+        stored = cls._log.write(data)  # UART/Luckfox is the primary sink -> write it first
+        if stored:
+            cls._flag.set()
+        if cls._cc_deadline:  # CC tee is the extra route -> never gates the primary return code
+            if time.ticks_diff(cls._cc_deadline, cls.timestamp()) > 0:
+                cls._cc.write(data)  # within the requested window (best-effort, bounded ring)
+            else:
+                cls._cc_deadline = 0  # window lapsed with no follow-up `log` -> stop and discard
+                cls._cc_take()
+        return stored
+
+    @classmethod
+    def _cc_take(cls) -> list:
+        """Drain the CC ring -> its buffered lines, emptying it. Internal to cc_logs() and the
+        window-lapse discard in log()."""
+        lines = []
+        if cls._cc is not None:
+            record = cls._cc.read()
+            while record is not None:
+                lines.append(record.decode().rstrip())
+                record = cls._cc.read()
+        return lines
+
+    @classmethod
+    def cc_logs(cls, duration_ms: int) -> dict:
+        """Poll-model CC log streaming (the `log <ms>` command): return {'lines': [...]} buffered since
+        the last call and re-arm teeing for `duration_ms` more (<= 0 stops it). Freeze first (deadline
+        0) so no producer tees mid-drain -- the protocol is request->reply, so no other `log` arrives
+        until this batch reaches CC. The ring is sized from the first window (~10 records/ms) and
+        reused, sharing the log cell size and capped at 4x the default ring. If no follow-up `log`
+        arrives before the window lapses, the
+        next log() discards the buffer and disables -- a lost link cannot grow memory. The UART path is
+        never touched."""
+        cls._cc_deadline = 0  # freeze teeing while we drain
+        if cls._cc is None:
+            if duration_ms <= 0:
+                return {'lines': []}
+            capacity = min(duration_ms * 10, 4 * _DEFAULT_CAPACITY)  # ~10 records/ms, capped
+            cls._cc = Ring(capacity, cls._log.cell_size)  # first window sizes it; reused after
+        lines = cls._cc_take()
+        if duration_ms > 0:
+            cls._cc_deadline = time.ticks_add(cls.timestamp(), duration_ms * 1000)  # re-arm
+        return {'lines': lines}
 
     @classmethod
     def tlm(cls, filename: str, content: str) -> None:

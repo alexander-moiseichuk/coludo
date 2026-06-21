@@ -137,7 +137,21 @@ async def amain():
     assert 'badargs' in await sd4.handle('probe knob')  # registered, but has no probe()
     assert 'badargs' in await sd4.handle('probe nope')  # unknown object
 
-    print('ok: cc_client board-first dispatch/serve/standard + inspect/update/stats + probe')
+    # log streaming: `log <ms>` arms collection + returns the batch buffered since the last call.
+    # Poll model -- the operator re-sends `log` each tick; the batch rides back as one base64 token.
+    import recorder
+
+    recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
+    sd5 = cc_client.create_dispatcher(config_default.default())
+    assert json.loads(cc.parse(await sd5.handle('log 1000')).args[0])['lines'] == []  # arm, empty
+    recorder.Recorder.log('test', 'hello')
+    batch = json.loads(cc.parse(await sd5.handle('log 1000')).args[0])  # drain + re-arm
+    assert batch['lines'][0].endswith('test :: hello'), batch
+    assert json.loads(cc.parse(await sd5.handle('log 0')).args[0])['lines'] == []  # stop, drained
+    assert recorder.Recorder._cc_deadline == 0
+    assert 'badargs' in await sd5.handle('log notanumber')  # non-integer duration rejected
+
+    print('ok: cc_client board-first dispatch/serve/standard + inspect/update/stats + probe + log')
 
 
 asyncio.run(amain())
