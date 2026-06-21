@@ -18,6 +18,7 @@ except ImportError:
 def default() -> dict:
     return {
         'board': {'id': 'taster', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION},
+        'setup_retries': 3,  # re-attempt a flaky device setup at boot (breadboard contacts; 1 = no retry)
         'wifi': {  # STA — the board joins the Control network
             'mode': 'sta',
             'ssid': 'panda',

@@ -129,31 +129,41 @@ class Controller(inspector.Inspectable):
         the active self-test is probe(), run on demand (the CC `probe` command), never at boot -- a
         mid-flight reboot must not sweep the fins."""
         self.failures = {}  # recomputed each bring-up
+        attempts = max(1, self.config.get('setup_retries', 1))  # retry flaky contacts (breadboard)
         for name in self.directory():
             if name in self.tasks:
                 continue
-            new_task = self.create(name)
-            if new_task is None:
-                self.failures[name] = 'no driver/activity'  # create() already logged the detail
-                continue
-            try:
-                ok = await new_task.setup()
-            except Exception as e:
-                self.log("controller :: task '%s' setup raised: %r" % (name, e))
-                self.failures[name] = repr(e)
-                ok = False
-            if ok:
+            new_task = await self._bring_up(name, attempts)
+            if new_task is not None:
                 self.tasks[name] = new_task
                 inspector.Inspector.register(new_task)  # operator can `inspect <task>`
                 self.log("controller :: task '%s' up" % name)
-            else:
-                self.failures.setdefault(name, 'setup failed (absent / miswired?)')
-                self.log("controller :: task '%s' failed setup" % name)
-                await new_task.finish()
         if self.failures:
             self.log('controller :: %d device(s) not up: %s' % (
                 len(self.failures), ', '.join(sorted(self.failures))))
         return True
+
+    async def _bring_up(self, name: str, attempts: int) -> task.Task:
+        """Create + set up a device, retrying a flaky setup up to `attempts` times (breadboard contacts
+        make and break). Returns the task on success, else None and records the failure reason."""
+        reason = 'no driver/activity'  # if create() never yields a task (missing driver)
+        for attempt in range(1, attempts + 1):
+            new_task = self.create(name)
+            if new_task is None:
+                break  # missing driver/activity -> retrying cannot help
+            try:
+                if await new_task.setup():
+                    return new_task
+                reason = 'setup failed (absent / miswired?)'
+            except Exception as error:
+                reason = repr(error)
+                self.log("controller :: task '%s' setup raised: %r" % (name, error))
+            await new_task.finish()
+            if attempt < attempts:
+                self.log("controller :: task '%s' setup attempt %d/%d failed, retrying" % (name, attempt, attempts))
+                await asyncio.sleep_ms(200)  # let a flaky contact settle before the retry
+        self.failures[name] = reason
+        return None
 
     async def start(self) -> None:
         """Launch each task's run() loop as a supervised asyncio task."""
