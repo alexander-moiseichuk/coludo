@@ -43,7 +43,45 @@ async def amain():
     assert geared.angle == 30
     await geared.finish()
 
-    print('ok: servo registered; neutral at boot, degrees->pulse, clamp to range, update/finish')
+    # move() drives to the clamped angle through the slew gate and returns it (settle-aware)
+    fin2 = servo.Servo('servo_yaw', {'pin': 'servo_yaw'}, _StubController())
+    await fin2.setup()
+    assert await fin2.move(120) == 120 and fin2.angle == 120
+    assert await fin2.move(999) == 180  # clamped to max
+    await fin2.finish()
+
+    # the slew gate serialises when permits run out: at N=1 the two holders never overlap
+    gate = servo._Gate(1)
+    order = []
+
+    async def worker(tag):
+        async with gate:
+            order.append('in' + tag)
+            await asyncio.sleep_ms(20)
+            order.append('out' + tag)
+
+    await asyncio.gather(worker('A'), worker('B'))
+    assert order in (['inA', 'outA', 'inB', 'outB'], ['inB', 'outB', 'inA', 'outA']), order
+
+    # N=2: two hold at once; a third blocks until a release hands it the permit
+    gate2 = servo._Gate(2)
+    await gate2.acquire()
+    await gate2.acquire()
+    held = []
+
+    async def third():
+        await gate2.acquire()
+        held.append('got')
+
+    pending = asyncio.create_task(third())
+    await asyncio.sleep_ms(10)
+    assert held == []  # both permits taken -> blocked
+    gate2.release()
+    await asyncio.sleep_ms(10)
+    assert held == ['got']  # released -> handed the permit
+    await pending
+
+    print('ok: servo neutral/degrees/clamp/update/finish + move() and the N-slew gate')
 
 
 asyncio.run(amain())

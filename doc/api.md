@@ -644,19 +644,28 @@ drivers/servo.py — one fin servo (SG90) on a PWM pin. @task.driver('servo'), o
 (yaw / left eleron / right eleron), each naming its `pin`. 50 Hz frame; the command unit is DEGREES,
 linearly mapped to a pulse width (min_us..max_us over min_deg..max_deg) and CLAMPED to the range so
 a bad command can never drive the horn past the linkage. Set-and-hold like the bluetooth driver: no
-run loop -- setup() drives the servo to its neutral angle (transparent state) and update {"angle":
-d} moves it live; the PWM keeps holding between commands.
+run loop -- setup() drives the servo to its neutral angle (transparent state).
 
-Power: servos run off their own boost rail (per-pin diode protected) and are driven sequentially
-under load -- the board only sources the low-current signal on the PWM pin, never the servo supply.
+Two ways to command a fin:
+update {"angle": d}  -- IMMEDIATE, ungated: the operator override (sync, returns at once).
+await move(d)        -- GATED + settle-aware: passes through a SHARED slew gate so at most
+`servo_concurrency` (board config, default 3 = no limit) fins slew at
+once, then awaits the estimated travel so the caller knows it has (open-
+loop, no feedback) arrived. The flight control loop uses this; limiting N
+bounds the boost-rail transient when several fins would move together.
+
+Power: servos run off their own boost rail (per-pin diode protected); the board sources only the
+low-current signal on the PWM pin, never the servo supply.
 
 ### `class Servo(task.Task)`
 
 One PWM fin servo, commanded in degrees (clamped to [min_deg, max_deg]). `update {"angle": d}`
-moves it; inspect reports the current angle + pulse width.
+moves it immediately; `await move(d)` moves it through the shared slew gate. Inspect reports the
+current angle + pulse width.
 
 - `setup() -> bool`
-- `update(props: dict) -> list` — `{"angle": d}` moves the servo (degrees, clamped to the range). Returns ['angle'] if set.
+- `move(angle: float) -> float` — Drive to `angle` (clamped) through the shared slew gate -- at most servo_concurrency fins
+- `update(props: dict) -> list` — `{"angle": d}` moves the servo IMMEDIATELY (degrees, clamped) -- the operator override.
 - `finish() -> None` — Release the PWM (stop driving the pin) on shutdown.
 - `inspect() -> dict`
 

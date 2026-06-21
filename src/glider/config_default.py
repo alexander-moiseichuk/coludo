@@ -58,6 +58,9 @@ def default() -> dict:
             'cell_size': 256,  # power-of-two cell; ~128 KB/ring, nothing on 32 MB PSRAM
             'stats_ms': 1000,
         },
+        # Max fin servos allowed to SLEW at once via servo.move() -- caps the boost-rail current
+        # transient. 3 (== fin count) = no limit; drop to 2/1 if the rail sags on the built airframe.
+        'servo_concurrency': 3,
         # Data providers. Fusion groups by quantity and orders providers by priority (lower
         # first); several providers per quantity is normal (different drivers, redundancy).
         'sensors': [
