@@ -141,10 +141,46 @@ testable foundations and connectivity come before the flight loop.
 - **Milestone:** a real telemetry-only flight — collect data, no actuation.
 
 ### Phase 3 — Active control
-- Servo task (sequential updates, calibration maps, ±45° limits).
-- Flight stage machine (ignition → separation → apogee → landing thresholds) + PID
-  stabilization + per-phase maneuvers + degraded modes + watchdog / health monitor.
-- **Milestone:** a controlled glide.
+Builds on what Phase 2 already shipped: the `Stage` machine (`SETTING→BOOSTING→GLIDING→LANDING`,
+`controller.py`), 3× SG90 fins (`servo_yaw` + `servo_eleron_left`/`_right`, integer-degree `move()`
++ N-slew gate), the separation switch (drives `BOOSTING→GLIDING`), and databoard signals
+(`attitude` deg from BNO055, `accel` g from ADXL375, `altitude`/`elevation` m, `agl` m, `position`).
+Order: **1 → 2 → 3 → 4** (mixer, then the loop it drives, then automate the stages that gate it,
+then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests, on-board.
+
+- ◻ **1. Surface mixer** (`tasks/mixer.py` or fold into a control task) — map control axes to the 3
+  fins: **elevon mixing** (pitch = both elerons together, roll = differential) + **yaw = rudder**.
+  Per-fin trim (neutral), direction sign, and a hard ±limit clamp (config; e.g. ±45°) on top of
+  `sg90.update()`. Pure integer-degree math; unit-tested independent of hardware (mix → per-fin
+  angles, clamp, trim). No servo motion until commanded.
+- ◻ **2. Stabilization loop** (`tasks/flight.py`, `@task.activity('flight')`) — ~50 Hz: read
+  `attitude` (+ `accel`) from the databoard, run a **PID per axis** (setpoint − measured → command),
+  feed the mixer. Gains + setpoints from config; integral clamp / output saturation. **Active only in
+  `GLIDING`** (neutral/disabled otherwise). Degraded mode: stale/missing attitude → surfaces to
+  neutral, never act on stale data (the databoard freshness already exposes this). Test the PID +
+  saturation math with synthetic error sequences (positive + negative, wind-up guard).
+- ◻ **3. Stage automation** — make `set_stage` transitions automatic + guarded, each logged +
+  telemetry'd:
+  `SETTING→BOOSTING` launch detect (|accel| > g-threshold sustained N ms);
+  `BOOSTING→GLIDING` separation (exists) with a burnout/timeout fallback;
+  `GLIDING→LANDING` low `agl` (or descent + low `elevation`);
+  `LANDING→done` on-ground (low motion for N s). Per-stage task gating (the control loop runs only in
+  `GLIDING`; high-g `BOOSTING` keeps fins locked neutral). Test each threshold with synthetic
+  databoard inputs (fires once, monotonic, no chatter).
+- ◻ **4. Per-phase behaviour / maneuvers** — setpoint policy per stage: `BOOSTING` = fins locked
+  neutral (no actuation under thrust); `GLIDING` = hold target attitude / glide path (initially
+  wings-level + heading hold; spiral-to-launch-site once GNSS nav lands in Phase 4); `LANDING` =
+  flare / neutral. Setpoints declared per stage in config.
+- ◻ **5. Watchdog + health gating** — hardware `machine.WDT` fed by the live control loop (a wedged
+  loop reboots, matching the no-stop-flag policy); the `health` task gates actuation — unhealthy
+  sensors / low battery → fail-safe neutral + flagged. Test the gate (forced-unhealthy → neutral).
+- ◻ **6. Arming + ground-test safety** — actuation only when **armed** and in `GLIDING`; arming
+  requires `probe all` clean; a ground-test mode exercises the loop with surfaces live but stages
+  forced, so it can be bench-validated before flight. (CC `arm`/`disarm`, mission-gated.)
+- **Deferred to Phase 4:** GNSS landing-zone navigation (heading-to-home), GPX export. Until nav
+  exists, `GLIDING` holds wings-level + a fixed heading.
+- **Milestone:** a controlled glide — launch detect → separation → stabilized glide → flare, with
+  the loop gated by stage + health and a fed watchdog.
 
 ### Phase 4 — Polish
 - Landing-zone navigation + per-launch mission config, GPX export of telemetry, richer
