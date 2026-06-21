@@ -137,6 +137,33 @@ async def amain():
     assert 'badargs' in await sd4.handle('probe knob')  # registered, but has no probe()
     assert 'badargs' in await sd4.handle('probe nope')  # unknown object
 
+    # `probe all` also surfaces devices that never set up (absent/miswired) from Controller.failures,
+    # so one command shows the whole connected/not picture (probe checks wiring + setup)
+    class _FaultyController:
+        failures = {'baro_icp10111': 'setup failed (absent / miswired?)'}
+
+    sd_fail = cc_client.create_dispatcher(config_default.default(), controller=_FaultyController())
+    allres = json.loads(cc.parse(await sd_fail.handle('probe')).args[0])
+    assert allres.get('p_good') is None  # an inspectable device still probed live
+    assert allres.get('baro_icp10111', '').startswith('not connected: ')  # never set up -> reported
+
+    # `verify`: dump every configured device (up/down) + probe self-tests + an overall PASS/fail verdict
+    class _VerifyController:
+        failures = {'baro_icp10111': 'setup failed (absent / miswired?)'}
+
+        def directory(self):
+            return ['imu_bno055', 'baro_icp10111']
+
+        def active(self, name):
+            return object() if name == 'imu_bno055' else None  # imu up, baro never set up
+
+    sd_verify = cc_client.create_dispatcher(config_default.default(), controller=_VerifyController())
+    report = json.loads(cc.parse(await sd_verify.handle('verify')).args[0])
+    assert report['devices']['imu_bno055'] == 'up'
+    assert report['devices']['baro_icp10111'].startswith('down: ')  # configured but not connected
+    assert 'baro_icp10111' in report['problems'] and report['pass'] is False  # a problem -> not PASS
+    assert 'unsupported' in await cc_client.create_dispatcher(config_default.default()).handle('verify')
+
     # log streaming: `log <ms>` arms collection + returns the batch buffered since the last call.
     # Poll model -- the operator re-sends `log` each tick; the batch rides back as one base64 token.
     import recorder

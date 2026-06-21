@@ -48,6 +48,7 @@ class Controller(inspector.Inspectable):
         self.registry: dict = registry if registry is not None else task.ACTIVITIES
         self.log = log if log is not None else (lambda msg: None)
         self.tasks: dict = {}  # name -> Task
+        self.failures: dict = {}  # name -> reason, for enabled devices that did not come up (setup)
         self._runners: dict = {}  # name -> asyncio.Task
         self.stage: int = Stage.SETTING
         inspector.Inspector.register(self)
@@ -127,24 +128,31 @@ class Controller(inspector.Inspectable):
         device to a SAFE state (sensors detect-or-skip, servos centre) with no costly side effects;
         the active self-test is probe(), run on demand (the CC `probe` command), never at boot -- a
         mid-flight reboot must not sweep the fins."""
+        self.failures = {}  # recomputed each bring-up
         for name in self.directory():
             if name in self.tasks:
                 continue
             new_task = self.create(name)
             if new_task is None:
+                self.failures[name] = 'no driver/activity'  # create() already logged the detail
                 continue
             try:
                 ok = await new_task.setup()
             except Exception as e:
                 self.log("controller :: task '%s' setup raised: %r" % (name, e))
+                self.failures[name] = repr(e)
                 ok = False
             if ok:
                 self.tasks[name] = new_task
                 inspector.Inspector.register(new_task)  # operator can `inspect <task>`
                 self.log("controller :: task '%s' up" % name)
             else:
+                self.failures.setdefault(name, 'setup failed (absent / miswired?)')
                 self.log("controller :: task '%s' failed setup" % name)
                 await new_task.finish()
+        if self.failures:
+            self.log('controller :: %d device(s) not up: %s' % (
+                len(self.failures), ', '.join(sorted(self.failures))))
         return True
 
     async def start(self) -> None:
@@ -198,7 +206,7 @@ class Controller(inspector.Inspectable):
 
     # --- Inspectable ---
     def inspect(self) -> dict:
-        return {'stage': self.stage_name(), 'tasks': list(self.tasks.keys())}
+        return {'stage': self.stage_name(), 'tasks': list(self.tasks.keys()), 'failures': self.failures}
 
     def stats(self) -> dict:
         return {'stage': self.stage_name(), 'tasks': dict((n, t.inspect()) for n, t in self.tasks.items())}

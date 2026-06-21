@@ -128,6 +128,8 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `inspect` | `<object>` | `ok {props}` | `Inspectable.inspect()` of a named object |
 | `update` | `<object> <json>` | `ok {changed:[...]}` | `Inspectable.update()` — names of properties actually changed |
 | `stats` | `<object>` | `ok {stats}` | `Inspectable.stats()` of a named object |
+| `probe` | `[name\|all]` | `ok {name: null\|error}` | on-demand device self-tests; `all` also lists devices that never set up (not connected). Active — sweeps servos |
+| `verify` | — | `ok {pass, devices, problems}` | verify board setup: every configured device up/down + probe, with an overall PASS — the launch-pad re-check (catches anything disconnected in transport) |
 | `get-config` | `[running\|default]` | `ok {config}` | fetch a config (`running` if omitted) |
 | `save-config` | `<json>` | `ok {config_id}` / `err invalid <msg>` | validate + persist full snapshot; **running config unchanged** |
 | `reset-config` | — | `ok` | delete `board.json`; next boot uses `config_default.py` |

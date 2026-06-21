@@ -57,6 +57,12 @@ async def amain():
     # s1/s2 created; 'off' disabled; 'bad' has no driver; 'failing' setup() -> False
     assert set(c.tasks.keys()) == set(['s1', 's2']), c.tasks.keys()
 
+    # failures collects every enabled device that did not come up (not the disabled 'off')
+    assert set(c.failures.keys()) == set(['bad', 'failing']), c.failures
+    assert c.failures['bad'] == 'no driver/activity' and 'setup failed' in c.failures['failing']
+    assert c.inspect()['failures'] == c.failures  # exposed for the operator (probe / inspect)
+    assert any('2 device(s) not up' in m for m in logs), logs
+
     # active()
     assert c.active('s1') is c.tasks['s1']
     assert c.active('missing') is None

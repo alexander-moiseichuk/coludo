@@ -33,6 +33,13 @@ async def amain():
     # presence check, unlike the i2c/spi sensors which build only if their device answers on the bus
     assert 'gnss' in flight.tasks and flight.tasks['gnss'].validate()
 
+    # the failures mechanism (hardware-independent invariants): a task that came up is never also
+    # listed failed, and the always-set-up tasks (no bus presence check) never appear in failures.
+    # The strict "every device connected" gate is the OPERATOR's check -- `verify` /
+    # tools/board_check.py -- not the unit suite, which must run without every i2c/spi sensor wired.
+    assert set(flight.failures) & set(flight.tasks) == set()  # up and failed are disjoint
+    assert not (set(flight.failures) & {'gnss', 'recorder', 'health', 'bluetooth'})  # always set up
+
     await asyncio.sleep_ms(30)  # let the loops tick (the recorder drains)
     await flight.finish()
     assert flight.stage_name() == 'done' and flight.tasks == {}
