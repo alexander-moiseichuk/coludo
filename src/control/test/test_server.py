@@ -20,6 +20,9 @@ WEB_OPERATOR_PORT = 18239
 GPS_BOARD_PORT = 18240
 GPS_OPERATOR_PORT = 18241
 GPS_WEB_PORT = 18242
+LOG_BOARD_PORT = 18243
+LOG_OPERATOR_PORT = 18244
+LOG_WEB_PORT = 18245
 
 
 def _nmea(body):
@@ -51,6 +54,10 @@ async def _fake_board(reader, writer):
             reply = cc.build('ok', [json.dumps({'config_id': 'newcfg'})])
         elif msg.command == 'update':
             reply = cc.build('ok', [json.dumps({'changed': sorted(json.loads(msg.args[1]))})])
+        elif msg.command == 'log':  # poll-model log streaming: one canned line per armed window
+            window = int(msg.args[0]) if msg.args else 0
+            lines = ['100 test :: tick'] if window > 0 else []
+            reply = cc.build('ok', [json.dumps({'lines': lines})])
         elif msg.command in ('reset-config', 'reboot', 'save-mission'):
             reply = cc.build('ok')
         else:
@@ -282,12 +289,71 @@ async def _gps_assist():
         board_task.cancel()
 
 
+async def _log_stream():
+    """Operator enables `logs <board> <ms>`: the hub polls the board's `log` buffer and surfaces each
+    line to the console (`<id>: <line>`) and the /logs SSE feed; `logs <board> off` stops it (and
+    tells the board to stop collecting with a final `log 0`)."""
+    seen = []
+    hub = server.Server(host='127.0.0.1', port=LOG_BOARD_PORT, operator_port=LOG_OPERATOR_PORT,
+                        web_port=LOG_WEB_PORT, log=seen.append, heartbeat_s=5.0)
+    hub_task = asyncio.create_task(hub.run())
+    await asyncio.sleep(0.1)
+
+    board_reader, board_writer = await asyncio.open_connection('127.0.0.1', LOG_BOARD_PORT)
+    board_task = asyncio.create_task(_fake_board(board_reader, board_writer))
+    for _ in range(50):
+        if 'glider9' in hub.boards:
+            break
+        await asyncio.sleep(0.02)
+    assert 'glider9' in hub.boards
+
+    operator_reader, operator_writer = await asyncio.open_connection('127.0.0.1', LOG_OPERATOR_PORT)
+
+    async def ask(text):
+        operator_writer.write((text + '\n').encode())
+        await operator_writer.drain()
+        return (await asyncio.wait_for(operator_reader.readline(), 2)).decode().strip()
+
+    try:
+        # subscribe to /logs SSE first, so it sees the same lines the console gets
+        sse_reader, sse_writer = await asyncio.open_connection('127.0.0.1', LOG_WEB_PORT)
+        sse_writer.write(b'GET /logs HTTP/1.1\r\nHost: t\r\n\r\n')
+        await sse_writer.drain()
+        await asyncio.wait_for(sse_reader.readuntil(b'\r\n\r\n'), 2)  # consume the SSE response headers
+
+        reply = await ask('logs glider9 30')
+        assert reply.startswith('from cc ok ') and '"interval_ms": 30' in reply, reply
+
+        # the hub polls the board and surfaces each line as `<id>: <line>` on the console
+        for _ in range(50):
+            if 'glider9: 100 test :: tick' in seen:
+                break
+            await asyncio.sleep(0.02)
+        assert 'glider9: 100 test :: tick' in seen, seen[-5:]
+
+        # the same line arrives on the /logs SSE feed
+        frame = await asyncio.wait_for(sse_reader.readuntil(b'\n\n'), 2)
+        assert b'"board": "glider9"' in frame and b'test :: tick' in frame, frame
+
+        # stop -> the board is told to stop collecting (log 0) and no streaming task remains
+        reply = await ask('logs glider9 off')
+        assert '"streaming": false' in reply, reply
+        assert 'glider9' not in hub.streams
+        sse_writer.close()
+    finally:
+        operator_writer.close()
+        hub_task.cancel()
+        board_task.cancel()
+
+
 async def main():
     await _loopback()
     await _operator_console()
     await _web()
     await _gps_assist()
-    print('ok: server accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) + gps assist')
+    await _log_stream()
+    print('ok: server accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) '
+          '+ gps assist + log streaming')
 
 
 asyncio.run(main())

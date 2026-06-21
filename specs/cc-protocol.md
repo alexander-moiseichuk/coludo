@@ -206,6 +206,7 @@ A first token that is a known board id (or `all`) routes to a board; otherwise i
 | `list` | `from cc ok [{id, online, stage, config_id}]` — connected boards |
 | `select <board>` | set this session's **sticky** target; afterwards a bare `<command>` is routed to it |
 | `who` | `from cc ok {selected, since}` — current selection |
+| `logs <board> [ms\|off]` | stream a board's logs (poll-driven `log <ms>` every tick) to the console as `<id>: <line>` and the `/logs` SSE feed; `off`/`0` stops + drains |
 
 **Sticky select / broadcast:** after `select taster`, typing `health` is routed as `taster
 health`; an explicit `<board>`/`all` first token overrides it for that line. Control tags every
@@ -242,10 +243,12 @@ CC exposes the same capabilities to the browser without the browser ever speakin
 - **`POST /api/cmd`** — body `{board, command, params}`; CC runs the command against the board
   (respecting per-board lockstep) and returns the response as JSON. Used for one-off actions
   (`save-config`, `reboot`, `get-config`, …).
-- **`GET /events`** (optionally `?board=taster`) — a **Server-Sent Events** stream. CC's
-  per-board poll loop publishes `health`, `tel`, and `log` results to subscribed browsers as
-  SSE events. SSE is chosen over WebSocket because the live need is server→browser streaming,
-  it is plain HTTP (no extra dependency), and browser→board actions are ordinary POSTs.
+- **`GET /events`** — a **Server-Sent Events** stream of the board list, pushed every heartbeat
+  (the live table). SSE is chosen over WebSocket because the live need is server→browser
+  streaming, it is plain HTTP (no extra dependency), and browser→board actions are ordinary POSTs.
+- **`GET /logs`** — a **Server-Sent Events** stream of `{board, line}` log lines, pushed as the
+  hub emits them while an operator has `logs <board>` active. A passive viewer: browsers watch;
+  the operator console enables/disables the underlying poll.
 
 The browser is thus a thin view over CC's polling: CC is the only component that polls boards,
 and it relays results both to telnet operators and to SSE subscribers.

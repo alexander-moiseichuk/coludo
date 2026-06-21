@@ -88,6 +88,8 @@ class Web:
             return await self._api_cmd(body, writer)
         if method == 'GET' and route == '/events':
             return await self._events(writer)
+        if method == 'GET' and route == '/logs':
+            return await self._logs(writer)
         await _send(writer, 404, 'text/plain', 'not found')
 
     async def _api_board(self, board_id: str, writer) -> None:
@@ -124,3 +126,20 @@ class Web:
             writer.write(('data: %s\n\n' % json.dumps(self.hub.board_rows())).encode())
             await writer.drain()
             await asyncio.sleep(self.hub.heartbeat_s)
+
+    async def _logs(self, writer) -> None:
+        """Server-Sent Events of streamed board log lines (`{board, line}`), pushed as the hub emits
+        them while `logs <board>` is active. One queue per connection, dropped from the hub on close."""
+        queue = asyncio.Queue(maxsize=1000)
+        self.hub.log_subscribers.add(queue)
+        try:
+            writer.write(
+                b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n'
+                b'Cache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n'
+            )
+            await writer.drain()
+            while True:
+                writer.write(('data: %s\n\n' % json.dumps(await queue.get())).encode())
+                await writer.drain()
+        finally:
+            self.hub.log_subscribers.discard(queue)
