@@ -36,8 +36,8 @@ class Dispatcher:
 class Client:
     def __init__(self, config: dict, dispatcher, log=None, backoff_ms: int = 1000):
         wifi = config['wifi']
-        self.host = wifi['cc_host']
-        self.port = wifi['cc_port']
+        self.host = wifi.get('cc_host')  # None -> cc_link derives the `.1` of the board's subnet at dial
+        self.port = wifi.get('cc_port', 1234)
         self.dispatcher = dispatcher
         self.log = log if log is not None else (lambda message: None)
         self.backoff_ms = backoff_ms

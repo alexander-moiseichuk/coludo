@@ -22,7 +22,8 @@ def default() -> dict:
             'mode': 'sta',
             'ssid': 'panda',
             'password': '',
-            'cc_host': '192.168.10.1',
+            # no cc_host -> the board dials the `.1` of whatever subnet it joins (the hub by
+            # convention); set cc_host to override for a hub elsewhere on the net.
             'cc_port': 1234,
             'tx_power_dbm': 11,
         },
