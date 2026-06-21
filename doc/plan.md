@@ -195,9 +195,15 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
   (continuous control, no neutral between); PIDs reset only on (re)entering control from a non-control
   stage. `inspect` exposes `active`/`phase`. `test_flight` covers the per-stage engage/switch/disengage.
   (Spiral-to-launch-site maneuver waits on GNSS nav — Phase 4.)
-- ◻ **5. Watchdog + health gating** — hardware `machine.WDT` fed by the live control loop (a wedged
-  loop reboots, matching the no-stop-flag policy); the `health` task gates actuation — unhealthy
-  sensors / low battery → fail-safe neutral + flagged. Test the gate (forced-unhealthy → neutral).
+- ✅ **5. Watchdog + heartbeat** (`tasks/watchdog.py`, `@task.activity('watchdog')`) — two layers:
+  a hardware `machine.WDT` fed every period (a TOTAL event-loop wedge stops the feed → hard reset — the
+  backstop), plus a **control-loop heartbeat** (while the flight task is in a control phase its step
+  counter must advance; a stall → **full `machine.reset()`**). Recovery is a full reset, not a soft
+  event-loop restart — MicroPython can't preempt a wedged native call and the HW (PWM / I²C / sensors)
+  needs a clean reset; boot re-centres the fins to bound the window. Stale attitude is NOT a trigger
+  (the flight loop already fail-safes to neutral, task 2). Disabled by default (a live WDT also resets
+  the board during REPL bench work). `test_watchdog` (injected WDT/reset) covers the stall decision +
+  feed-vs-reset. **±90°/tumble is deliberately not a trigger** — control should keep fighting there.
 - ◻ **6. Arming + ground-test safety** — actuation only when **armed** and in `GLIDING`; arming
   requires `probe all` clean; a ground-test mode exercises the loop with surfaces live but stages
   forced, so it can be bench-validated before flight. (CC `arm`/`disarm`, mission-gated.)

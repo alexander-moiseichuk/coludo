@@ -192,6 +192,12 @@ def default() -> dict:
              # per-stage attitude setpoint; stages absent here hold the fins neutral. GLIDING =
              # wings-level + heading hold; LANDING pitch is the flare knob (0 = none until tuned).
              'phases': {'gliding': {'roll': 0, 'pitch': 0}, 'landing': {'roll': 0, 'pitch': 0}}},
+            # Watchdog + heartbeat (Phase 3): feeds a hardware WDT (a total event-loop wedge -> hard
+            # reset) and supervises the control loop (stall in a control phase -> full reset; boot
+            # re-centres the fins). Disabled by default -- a live WDT also resets the board when you
+            # drop the running firmware to the REPL for bench work; enable it for flight.
+            {'name': 'watchdog', 'activity': 'watchdog', 'enabled': False,
+             'wdt_timeout_ms': 2000, 'period_ms': 200},
             # Board vitals (temperature/memory/load) -> telemetry every period_ms.
             {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'enabled': True},
             # Apply the BLE radio state at boot: off by default to save power (BLE is unused).
