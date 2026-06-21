@@ -252,9 +252,10 @@ CC exposes the same capabilities to the browser without the browser ever speakin
 - **`GET /events`** — a **Server-Sent Events** stream of the board list, pushed every heartbeat
   (the live table). SSE is chosen over WebSocket because the live need is server→browser
   streaming, it is plain HTTP (no extra dependency), and browser→board actions are ordinary POSTs.
+- **`POST /api/log`** — body `{board, interval_ms}` (≤ 0 stops); starts/stops the hub's per-board
+  log stream from the dashboard, the same toggle as the operator's `<board> log <ms>`.
 - **`GET /logs`** — a **Server-Sent Events** stream of `{board, line}` log lines, pushed as the
-  hub emits them while an operator has `logs <board>` active. A passive viewer: browsers watch;
-  the operator console enables/disables the underlying poll.
+  hub emits them while a stream is active (enabled via `POST /api/log` or `<board> log <ms>`).
 
 The browser is thus a thin view over CC's polling: CC is the only component that polls boards,
 and it relays results both to telnet operators and to SSE subscribers.

@@ -321,6 +321,17 @@ async def _log_stream():
         await sse_writer.drain()
         await asyncio.wait_for(sse_reader.readuntil(b'\r\n\r\n'), 2)  # consume the SSE response headers
 
+        # dashboard path: POST /api/log starts the same hub stream (and /logs SSE carries the lines)
+        status, payload = await _http(LOG_WEB_PORT, 'POST', '/api/log',
+                                      json.dumps({'board': 'glider9', 'interval_ms': 40}))
+        assert status == 200 and json.loads(payload) == {'board': 'glider9', 'streaming': True,
+                                                         'interval_ms': 40}, payload
+        assert 'glider9' in hub.streams
+        status, payload = await _http(LOG_WEB_PORT, 'POST', '/api/log',
+                                      json.dumps({'board': 'glider9', 'interval_ms': 0}))
+        assert status == 200 and json.loads(payload) == {'board': 'glider9', 'streaming': False}
+        assert 'glider9' not in hub.streams
+
         reply = await ask('glider9 log 30')
         assert reply.startswith('from glider9 ok ') and '"interval_ms": 30' in reply, reply
 

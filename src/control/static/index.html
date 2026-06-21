@@ -52,7 +52,13 @@
 <pre id="cfgresult"></pre>
 
 <h2>logs</h2>
-<p class="muted">enable from the operator console: <code>&lt;board&gt; log [ms]</code> to start, <code>&lt;board&gt; log off</code> to stop</p>
+<p>
+  <input id="logboard" placeholder="board id" size="10">
+  <input id="logms" value="1000" size="6" title="poll interval (ms)">
+  <button id="logstart">start</button>
+  <button id="logstop">stop</button>
+  <button id="logclear">clear</button>
+</p>
 <pre id="logs"></pre>
 
 <script>
@@ -71,6 +77,7 @@ async function cmd(board, command, params = []) {
 function selectBoard(id) {
   document.getElementById('board').value = id;
   document.getElementById('cfgboard').value = id;
+  document.getElementById('logboard').value = id;
 }
 
 new EventSource('/events').onmessage = (event) => {
@@ -138,8 +145,23 @@ document.getElementById('reset').onclick = async () => {
   cfgOut.textContent = JSON.stringify(await cmd(cfgBoard(), 'reset-config'), null, 2);
 };
 
-// --- live log stream: a passive viewer of /logs (enable via the operator `<board> log <ms>` command) ---
+// --- live log stream: start/stop the hub's per-board stream, then view the /logs SSE feed ---
 const logPane = document.getElementById('logs');
+const logBoard = () => document.getElementById('logboard').value.trim();
+
+async function setLog(on) {
+  const interval_ms = on ? (parseInt(document.getElementById('logms').value, 10) || 1000) : 0;
+  const res = await fetch('/api/log', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ board: logBoard(), interval_ms }),
+  });
+  return res.json();
+}
+document.getElementById('logstart').onclick = () => setLog(true);
+document.getElementById('logstop').onclick = () => setLog(false);
+document.getElementById('logclear').onclick = () => { logPane.textContent = ''; };
+
 new EventSource('/logs').onmessage = (event) => {
   const { board, line } = JSON.parse(event.data);
   logPane.textContent += `${board}: ${line}\n`;
