@@ -2,7 +2,7 @@
 #
 # One newline-delimited message per line:  <command> <board-id> [params...]
 # Tokens are whitespace-separated, so there is NO quoting or escaping. A param value is one of:
-#   * bare token    -> a simple value with no spaces (e.g. 3000, glider1, 192.168.10.1)
+#   * bare token    -> a simple value with no spaces (e.g. 3000, taster, 192.168.10.1)
 #   * base64:<data> -> anything else: spaces, quotes, JSON, binary
 # Both sides know each command's schema, so the parser does not guess types: a bare token is
 # returned as a str and the receiver converts numerics itself (it knows `ms` is an int). Named

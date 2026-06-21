@@ -4,12 +4,27 @@
 # wireless is the external C6 and BLE is unused on the glider). Setup-only @task.driver('bluetooth')
 # plus update() so the operator can toggle it live (`update bluetooth {"radio": true}`).
 
+import recorder
 import task
 
 
 @task.driver('bluetooth')
 class Bluetooth(task.Task):
     """Apply the configured BLE radio state. Inspectable: `radio` requested, `active` actual."""
+
+    async def probe(self) -> str:
+        """On-demand self-test: the BLE radio is in the requested state (or absent on this board ->
+        active is None, which is fine)."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: ble radio ...')
+            if self.active is not None and self.active != self.radio:
+                raise ValueError('radio active=%s != requested %s' % (self.active, self.radio))
+            recorder.Recorder.log(self.name, 'probe: ble radio ok (active=%s)' % self.active)
+        except Exception as error:
+            message = 'ble radio: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None
 
     async def setup(self) -> bool:
         self.radio = self.config.get('radio', False)  # desired BLE state (default off)

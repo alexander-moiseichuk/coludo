@@ -82,11 +82,25 @@ class Web:
             return await _send(writer, 200, 'text/html; charset=utf-8', self.page)
         if method == 'GET' and route == '/api/boards':
             return await _send_json(writer, 200, self.hub.board_rows())
+        if method == 'GET' and route.startswith('/api/board/'):
+            return await self._api_board(route[len('/api/board/'):], writer)
         if method == 'POST' and route == '/api/cmd':
             return await self._api_cmd(body, writer)
+        if method == 'POST' and route == '/api/log':
+            return await self._api_log(body, writer)
         if method == 'GET' and route == '/events':
             return await self._events(writer)
+        if method == 'GET' and route == '/logs':
+            return await self._logs(writer)
         await _send(writer, 404, 'text/plain', 'not found')
+
+    async def _api_board(self, board_id: str, writer) -> None:
+        """The Control-side cached properties for one board (config / inspect / stats / health) —
+        last-known values, served without touching the board."""
+        board = self.hub.boards.get(board_id)
+        if board is None:
+            return await _send_json(writer, 404, {'error': 'no board %r' % board_id})
+        return await _send_json(writer, 200, board.properties())
 
     async def _api_cmd(self, body: bytes, writer) -> None:
         try:
@@ -104,6 +118,24 @@ class Web:
             return await _send_json(writer, 502, {'board': board.id, 'error': 'offline'})
         return await _send_json(writer, 200, {'board': board.id, 'status': resp.command, 'args': resp.args})
 
+    async def _api_log(self, body: bytes, writer) -> None:
+        """Start/stop the hub's log stream for a board from the dashboard: body `{board, interval_ms}`
+        (interval_ms <= 0 stops). The streamed lines arrive on the /logs SSE feed, same as when an
+        operator types `<board> log <ms>`."""
+        try:
+            request = json.loads(body or b'{}')
+        except ValueError:
+            return await _send_json(writer, 400, {'error': 'bad json'})
+        board = self.hub.boards.get(request.get('board'))
+        if board is None or not board.online:
+            return await _send_json(writer, 404, {'error': 'no online board %r' % request.get('board')})
+        interval_ms = request.get('interval_ms', 1000)
+        if not isinstance(interval_ms, int) or interval_ms <= 0:
+            await self.hub.stop_stream(board.id)
+            return await _send_json(writer, 200, {'board': board.id, 'streaming': False})
+        self.hub.start_stream(board, interval_ms)
+        return await _send_json(writer, 200, {'board': board.id, 'streaming': True, 'interval_ms': interval_ms})
+
     async def _events(self, writer) -> None:
         writer.write(
             b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n'
@@ -114,3 +146,20 @@ class Web:
             writer.write(('data: %s\n\n' % json.dumps(self.hub.board_rows())).encode())
             await writer.drain()
             await asyncio.sleep(self.hub.heartbeat_s)
+
+    async def _logs(self, writer) -> None:
+        """Server-Sent Events of streamed board log lines (`{board, line}`), pushed as the hub emits
+        them while `log <board>` is active. One queue per connection, dropped from the hub on close."""
+        queue = asyncio.Queue(maxsize=1000)
+        self.hub.log_subscribers.add(queue)
+        try:
+            writer.write(
+                b'HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n'
+                b'Cache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n'
+            )
+            await writer.drain()
+            while True:
+                writer.write(('data: %s\n\n' % json.dumps(await queue.get())).encode())
+                await writer.drain()
+        finally:
+            self.hub.log_subscribers.discard(queue)

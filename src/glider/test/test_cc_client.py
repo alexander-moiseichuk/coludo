@@ -68,7 +68,7 @@ async def amain():
     sd = cc_client.create_dispatcher(config_default.default())
 
     m = cc.parse(await sd.handle('whoami'))
-    assert m.command == 'iam' and m.args[0] == 'glider1'
+    assert m.command == 'iam' and m.args[0] == 'taster'
     info = json.loads(m.args[1])
     assert info['mcu'] == 'esp32p4' and 'config_id' in info and info['stage'] == 'setting'
 
@@ -76,7 +76,7 @@ async def amain():
     health = json.loads(cc.parse(await sd.handle('health')).args[0])
     assert 'mem_free' in health and 'uptime' in health
     cfg = json.loads(cc.parse(await sd.handle('get-config')).args[0])
-    assert cfg['board']['id'] == 'glider1'
+    assert cfg['board']['id'] == 'taster'
 
     # Inspector-backed inspect/update/stats
     inspector.Inspector.register(_Knob())
@@ -117,7 +117,41 @@ async def amain():
     await asyncio.sleep_ms(260)
     assert fired == [1]
 
-    print('ok: cc_client board-first dispatch/serve/standard + inspect/update/stats')
+    # probe: on-demand self-tests over the inspectable objects that implement probe() (None = healthy,
+    # else an error string); objects without probe() (the _Knob above) are skipped
+    class _Probeable(inspector.Inspectable):
+        def __init__(self, name, result):
+            self.name = name
+            self._result = result
+
+        async def probe(self):
+            return self._result
+
+    inspector.Inspector.register(_Probeable('p_good', None))
+    inspector.Inspector.register(_Probeable('p_bad', 'X not found on i2c:0'))
+    sd4 = cc_client.create_dispatcher(config_default.default())
+    allres = json.loads(cc.parse(await sd4.handle('probe')).args[0])  # 'probe' / 'probe all'
+    assert allres.get('p_good') is None and allres.get('p_bad') == 'X not found on i2c:0'
+    assert 'knob' not in allres  # an inspectable without probe() is skipped
+    assert json.loads(cc.parse(await sd4.handle('probe p_good')).args[0]) == {'p_good': None}
+    assert 'badargs' in await sd4.handle('probe knob')  # registered, but has no probe()
+    assert 'badargs' in await sd4.handle('probe nope')  # unknown object
+
+    # log streaming: `log <ms>` arms collection + returns the batch buffered since the last call.
+    # Poll model -- the operator re-sends `log` each tick; the batch rides back as one base64 token.
+    import recorder
+
+    recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
+    sd5 = cc_client.create_dispatcher(config_default.default())
+    assert json.loads(cc.parse(await sd5.handle('log 1000')).args[0])['lines'] == []  # arm, empty
+    recorder.Recorder.log('test', 'hello')
+    batch = json.loads(cc.parse(await sd5.handle('log 1000')).args[0])  # drain + re-arm
+    assert batch['lines'][0].endswith('test :: hello'), batch
+    assert json.loads(cc.parse(await sd5.handle('log 0')).args[0])['lines'] == []  # stop, drained
+    assert recorder.Recorder._cc_deadline == 0
+    assert 'badargs' in await sd5.handle('log notanumber')  # non-integer duration rejected
+
+    print('ok: cc_client board-first dispatch/serve/standard + inspect/update/stats + probe + log')
 
 
 asyncio.run(amain())

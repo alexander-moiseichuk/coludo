@@ -27,7 +27,7 @@ async def amain():
     # conversion against real OTP + raw values captured live from the wired sensor -> ~101797 Pa
     probe = icp10111.Icp10111('baro', {}, _StubController())
     probe._otp = [211, 371, 553, 3833]
-    pa = probe._pressure(11441968, 27034)
+    pa = probe._compensate(11441968, 27034)
     assert 100000.0 < pa < 103000.0, pa  # matches the live ~1017.97 hPa reading
 
     print('ok: icp10111 driver registered; graceful-absent; conversion ~%d Pa' % pa)

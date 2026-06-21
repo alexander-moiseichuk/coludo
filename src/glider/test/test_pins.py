@@ -6,12 +6,14 @@
 # Wi-Fi pins (GPIO18/19) and SPI(2) onto the microSD pins, so touching the defaults can disrupt
 # Wi-Fi / the SD slot. It also never calls I2C(2), which hard-crashes this build.
 
-from machine import I2C, PWM, UART, Pin
+from machine import I2C, PWM, SPI, UART, Pin
 
 # Recommended map (keep in sync with doc/waveshare_esp32p4_pins.md until board.json drives it).
 I2C_SDA, I2C_SCL = 7, 8
 REC_TX, REC_RX = 20, 21
 GNSS_TX, GNSS_RX = 22, 23
+SPI_SCK, SPI_MOSI, SPI_MISO = 48, 47, 46  # ADXL375 on SPI(1)
+PIN_ADXL_CS, PIN_ADXL_INT = 49, 4
 SERVOS = (('yaw', 26), ('elevon_l', 27), ('elevon_r', 32))
 PIN_SEPARATION = 33
 PIN_LED = 2
@@ -28,6 +30,14 @@ def main():
     gnss = UART(2, tx=GNSS_TX, rx=GNSS_RX, baudrate=9600)
     print('UART2 gnss    :', gnss)
     gnss.deinit()
+
+    spi = SPI(1, baudrate=5_000_000, polarity=1, phase=1,
+              sck=Pin(SPI_SCK), mosi=Pin(SPI_MOSI), miso=Pin(SPI_MISO))  # ADXL375, mode 3
+    print('SPI1 adxl375  :', spi)
+    spi.deinit()
+    cs = Pin(PIN_ADXL_CS, Pin.OUT, value=1)
+    cs.value(1)
+    print('adxl375 CS/INT: GPIO%d cs, GPIO%d int' % (PIN_ADXL_CS, PIN_ADXL_INT))
 
     for name, g in SERVOS:
         pwm = PWM(Pin(g), freq=50, duty_u16=0)

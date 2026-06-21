@@ -6,6 +6,7 @@
 import asyncio
 
 import controller
+import recorder
 import task
 
 try:
@@ -56,6 +57,21 @@ class LedStatus(task.Task):
                 level ^= 1
                 self._pin.value(level)
                 await asyncio.sleep_ms(half)
+
+    async def probe(self) -> str:
+        """On-demand self-test: blink the status LED a few times so it is seen to drive, then off."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: blink ...')
+            for _ in range(6):
+                self._pin.value(self._pin.value() ^ 1)
+                await asyncio.sleep_ms(120)
+            self._pin.value(0)
+            recorder.Recorder.log(self.name, 'probe: blink ok')
+        except Exception as error:
+            message = 'blink: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)

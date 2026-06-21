@@ -20,6 +20,19 @@ class RecorderTask(task.Task):
     async def run(self) -> None:
         await recorder.Recorder.run()
 
+    async def probe(self) -> str:
+        """On-demand self-test: the Recorder rings are up and a probe log line writes through them."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: recorder rings ...')
+            if recorder.Recorder._log is None or recorder.Recorder._tlm is None:
+                raise ValueError('rings not set up')
+            recorder.Recorder.log(self.name, 'probe: rings ok (%s)' % recorder.Recorder.report())
+        except Exception as error:
+            message = 'recorder rings: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None
+
     def inspect(self) -> dict:
         status = recorder.Recorder.inspect()
         status['name'] = self.name

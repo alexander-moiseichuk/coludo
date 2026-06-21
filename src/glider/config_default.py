@@ -17,12 +17,13 @@ except ImportError:
 
 def default() -> dict:
     return {
-        'board': {'id': 'glider1', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION},
+        'board': {'id': 'taster', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION},
         'wifi': {  # STA — the board joins the Control network
             'mode': 'sta',
             'ssid': 'panda',
             'password': '',
-            'cc_host': '192.168.10.1',
+            # no cc_host -> the board dials the `.1` of whatever subnet it joins (the hub by
+            # convention); set an explicit address to override, or '' to disable CC (fly standalone).
             'cc_port': 1234,
             'tx_power_dbm': 11,
         },
@@ -34,12 +35,20 @@ def default() -> dict:
             'i2c': {
                 '0': {'sda': 7, 'scl': 8, 'freq': 400000},
             },
-            'spi': {},
+            'spi': {
+                # ADXL375 on its own SPI bus (mode 3, 5 MHz). NOTE the Adafruit 5374 breakout labels
+                # its SPI data pins by their I2C names: SDA = MOSI (->47), SDO = MISO (->46). See
+                # doc/hardware.md "ADXL375 -> SPI wiring".
+                '1': {'sck': 48, 'mosi': 47, 'miso': 46, 'baud': 5000000, 'mode': 3},
+            },
         },
         'pins': {
             'led_status': 2,  # external LED (board has no user LED)
             'separation_switch': 33,  # copper pads: HIGH=nested (3v3 routed), LOW=separated
             'adxl375_int': 4,  # ADXL375 INT1 (free spare) — DATA_READY drives the accel sampling
+            'adxl375_cs': 49,  # ADXL375 SPI chip-select (free spare)
+            'laser_xshut': 5,  # VL53L4CX XSHUT enable/reset (free spare)
+            'laser_int': 3,  # VL53L4CX GPIO1 data-ready interrupt (free spare)
             'servo_yaw': 26,
             'servo_eleron_left': 27,
             'servo_eleron_right': 32,
@@ -50,18 +59,22 @@ def default() -> dict:
             'cell_size': 256,  # power-of-two cell; ~128 KB/ring, nothing on 32 MB PSRAM
             'stats_ms': 1000,
         },
+        # Max fin servos allowed to SLEW at once via servo.move() -- caps the boost-rail current
+        # transient. 3 (== fin count) = no limit; drop to 2/1 if the rail sags on the built airframe.
+        'servo_concurrency': 3,
         # Data providers. Fusion groups by quantity and orders providers by priority (lower
         # first); several providers per quantity is normal (different drivers, redundancy).
         'sensors': [
             {
                 'name': 'accel_adxl375',
                 'driver': 'adxl375',
-                'bus': 'i2c', 'id': 0,
-                'addr': 0x53,
-                'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — polled for now
+                'bus': 'spi', 'id': 1,  # moved off i2c:0 to its own SPI bus for clean high-rate reads
+                'addr': 0x53,  # kept for an i2c fallback (set bus 'i2c', id 0)
+                'cs_pin': 'adxl375_cs',  # SPI chip-select
+                'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — drives the sampling
                 'telemetry_us': 20000,  # ~100 Hz sampling decimated to 50 Hz in accel_adxl375.csv
                 'enabled': True,
-                'provides': {'accel': {'priority': 0, 'timeout_ms': 50}},
+                'provides': {'accel': {'priority': 0, 'timeout_ms': 20}},
             },
             {
                 'name': 'imu_bno055',
@@ -70,8 +83,8 @@ def default() -> dict:
                 'addr': 0x28,
                 'telemetry_us': 40000,  # ~50 Hz sampling decimated to 25 Hz in imu_bno055.csv
                 'enabled': True,
-                'provides': {'attitude': {'priority': 0, 'timeout_ms': 100},
-                             'accel': {'priority': 1, 'timeout_ms': 50}},
+                'provides': {'attitude': {'priority': 0, 'timeout_ms': 40},
+                             'accel': {'priority': 1, 'timeout_ms': 40}},
             },
             {
                 'name': 'baro_icp10111',
@@ -79,8 +92,12 @@ def default() -> dict:
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x63,
                 'enabled': True,
-                'provides': {'altitude': {'priority': 0, 'timeout_ms': 300},
-                             'temperature': {'priority': 0, 'timeout_ms': 2000}},
+                # reconcile altitude/pressure: ICP-10111 is the rank-0 primary, so BMP280 (and any
+                # GNSS/laser) is bias-corrected against it on a fallback handover (additive scalars).
+                'provides': {'altitude': {'priority': 0, 'timeout_ms': 200, 'reconcile': True},
+                             'elevation': {'priority': 0, 'timeout_ms': 200},
+                             'pressure': {'priority': 0, 'timeout_ms': 200, 'reconcile': True},
+                             'temperature': {'priority': 0, 'timeout_ms': 500}},  # slow quantity, capped ≤1000
             },
             {
                 'name': 'baro_bmp280',
@@ -88,16 +105,23 @@ def default() -> dict:
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x76,
                 'enabled': True,
-                'provides': {'altitude': {'priority': 1, 'timeout_ms': 500},
-                             'temperature': {'priority': 1, 'timeout_ms': 2000}},
+                'provides': {'altitude': {'priority': 1, 'timeout_ms': 200},
+                             'elevation': {'priority': 1, 'timeout_ms': 200},
+                             'pressure': {'priority': 1, 'timeout_ms': 200},
+                             'temperature': {'priority': 1, 'timeout_ms': 500}},  # slow quantity, capped ≤1000
             },
             {
                 'name': 'laser_agl',
                 'driver': 'vl53l4cx',
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x29,
+                'xshut_pin': 'laser_xshut',  # enable/reset
+                'int_pin': 'laser_int',  # GPIO1 data-ready
+                'timing_budget_ms': 100,  # ranging integration (10..200); higher = lower sigma, slower
                 'enabled': True,
-                'provides': {'agl': {'priority': 0, 'timeout_ms': 20}, 'altitude': {'priority': 2, 'timeout_ms': 20}},
+                # laser gives AGL (ground distance), not AMSL altitude, so it provides 'agl' only;
+                # ~30 Hz continuous ranging -> 100 ms freshness (tune the timing budget on the bench).
+                'provides': {'agl': {'priority': 0, 'timeout_ms': 100}},
             },
             {
                 'name': 'gnss',
@@ -107,8 +131,8 @@ def default() -> dict:
                 'hz': 10,
                 'enabled': True,
                 'provides': {
-                    'position': {'priority': 0, 'timeout_ms': 150},
-                    'altitude': {'priority': 3, 'timeout_ms': 1000},
+                    'position': {'priority': 0, 'timeout_ms': 200},  # 10 Hz -> 2x period
+                    'altitude': {'priority': 3, 'timeout_ms': 200},
                 },
             },
         ],
@@ -122,9 +146,13 @@ def default() -> dict:
             {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': False},
             # Stage-separation switch (copper pads): HIGH=nested, LOW=separated -> Boosting->Gliding.
             {'name': 'separation', 'driver': 'separation', 'pin': 'separation_switch', 'enabled': True},
-            # Sensor fusion: select each quantity's live value from its providers by priority +
-            # freshness (reads the blackboard's raw readings, publishes the fused value).
-            {'name': 'fusion', 'activity': 'fusion', 'period_ms': 20, 'telemetry_us': 100000, 'enabled': True},
+            # Fin servos (SG90) on their PWM pins, commanded in INTEGER degrees via `update {"angle":
+            # d}` / move(); neutral (mid-range) at boot. Open-loop -- no position feedback. Powered
+            # from a separate boost rail (the board drives signal only). Set min_deg/max_deg per fin to
+            # limit throw (e.g. the 60deg geared -> +-30deg). Other servo types = their own `driver`.
+            {'name': 'servo_yaw', 'driver': 'sg90', 'pin': 'servo_yaw', 'enabled': True},
+            {'name': 'servo_eleron_left', 'driver': 'sg90', 'pin': 'servo_eleron_left', 'enabled': True},
+            {'name': 'servo_eleron_right', 'driver': 'sg90', 'pin': 'servo_eleron_right', 'enabled': True},
             # Board vitals (temperature/memory/load) -> telemetry every period_ms.
             {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'enabled': True},
             # Apply the BLE radio state at boot: off by default to save power (BLE is unused).

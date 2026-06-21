@@ -21,6 +21,7 @@ except ImportError:  # CPython tooling / off-board lint+compile only
     RTC = None
 
 import inspector
+import recorder
 
 LAUNCH_PATH: str = 'launch.config'
 
@@ -82,6 +83,21 @@ class Mission(inspector.Inspectable):
     def epoch(self) -> int:
         """Current board clock as a Unix epoch (seconds), for Control to compare against its own."""
         return time.time() + _EPOCH_OFFSET
+
+    async def probe(self) -> str:
+        """On-demand self-test: a launch position is set, so an unconfigured site is caught pre-flight
+        (the operator sets it via `update mission` / launch.config). Not a hardware check -- data."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: launch position ...')
+            if self.latitude is None or self.longitude is None:
+                raise ValueError('launch position not set (lat/lon)')
+            recorder.Recorder.log(self.name, 'probe: position ok (%.5f, %.5f)' % (
+                self.latitude, self.longitude))
+        except Exception as error:
+            message = 'launch position: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None
 
     # --- Inspectable ---
     def inspect(self) -> dict:

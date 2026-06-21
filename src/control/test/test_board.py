@@ -63,6 +63,42 @@ async def main():
     # identify() returns None when the reply is not iam
     assert await Board(_Reader(['pong\n']), _Writer()).identify() is None
 
+    # exchange() logs both directions (tx '->' then rx '<-') through the optional log hook
+    captured = []
+    board = Board(_Reader(['pong\n']), _Writer(), log=captured.append)
+    board.id = 'glider2'
+    await board.command('ping')
+    assert any('glider2 -> ping' in m for m in captured), captured
+    assert any('glider2 <- pong' in m for m in captured), captured
+
+    # a disconnect during exchange is logged as a received '<disconnected>' marker
+    captured = []
+    assert await Board(_Reader([]), _Writer(), log=captured.append).command('ping') is None
+    assert any('<- <disconnected>' in m for m in captured), captured
+
+    # exchange caches board-state replies for the dashboard: get-config / inspect / stats
+    cfg = cc.build('ok', [json.dumps({'board': {'id': 'glider2'}})])
+    insp = cc.build('ok', [json.dumps({'name': 'wifi', 'ok': True})])
+    stat = cc.build('ok', [json.dumps({'rx': 5})])
+    board = Board(_Reader([cfg + '\n', insp + '\n', stat + '\n']), _Writer())
+    await board.command('get-config')
+    await board.command('inspect', 'wifi')
+    await board.command('stats', 'wifi')
+    props = board.properties()
+    assert props['config'] == {'board': {'id': 'glider2'}}, props
+    assert props['inspect']['wifi'] == {'name': 'wifi', 'ok': True}, props
+    assert props['stats']['wifi'] == {'rx': 5}, props
+
+    # `get-config default` is the built-in default, NOT the running config -> not cached as config
+    board = Board(_Reader([cfg + '\n']), _Writer())
+    await board.command('get-config', 'default')
+    assert board.properties()['config'] is None
+
+    # an err reply never pollutes the cache
+    board = Board(_Reader([cc.build('err', ['badargs', 'no object x']) + '\n']), _Writer())
+    await board.command('inspect', 'x')
+    assert board.properties()['inspect'] == {}
+
     # command() times out (raises) on a wedged board instead of hanging
     raised = False
     try:

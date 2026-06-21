@@ -3,7 +3,7 @@
 # input, @task.driver('separation'). An IRQ on either edge wakes run(), which debounces, and on a
 # confirmed separation during the Boosting stage drives the documented Boosting -> Gliding transition
 # (the booster ejects the glider at apogee). The event is logged and emitted to subscribers; the
-# discrete event is NOT a blackboard quantity (per specs/coludo.md, events use notify/log).
+# discrete event is NOT a databoard quantity (per specs/coludo.md, events use notify/log).
 #
 # The pin uses an internal pull-down so an open (separated) circuit reads LOW reliably; while nested
 # the pads override it HIGH. A separation while not Boosting (e.g. a ground test in Setting) is
@@ -58,6 +58,20 @@ class Separation(task.Task):
             await self._flag.wait()
             await asyncio.sleep_ms(self._debounce_ms)  # let the contact bounce settle, then re-read
             self._apply(self._pin.value() == 0)
+
+    async def probe(self) -> str:
+        """On-demand self-test: the separation pin reads a valid level (logged nested/separated)."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: separation pin ...')
+            value = self._pin.value()
+            if value not in (0, 1):
+                raise ValueError('pin read %r' % value)
+            recorder.Recorder.log(self.name, 'probe: pin ok (%s)' % ('separated' if value == 0 else 'nested'))
+        except Exception as error:
+            message = 'separation pin: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)

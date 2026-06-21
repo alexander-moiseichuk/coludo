@@ -6,6 +6,7 @@
 # CPython 3.12, stdlib asyncio only. cc_protocol.py is shared with the firmware (symlinked).
 
 import asyncio
+import json
 import time
 
 import board
@@ -29,7 +30,8 @@ class Server:
     optional async hook invoked once, right after a board identifies (used by integration tests)."""
 
     def __init__(self, host: str = '0.0.0.0', port: int = 1234, operator_port: int = 1235,
-                 web_port: int = 8080, on_board=None, log=print, heartbeat_s: float = HEARTBEAT_S):
+                 web_port: int = 8080, on_board=None, log=print, heartbeat_s: float = HEARTBEAT_S,
+                 gps=None):
         self.host = host
         self.port = port
         self.operator_port = operator_port
@@ -38,7 +40,10 @@ class Server:
         self.on_board = on_board
         self.log = log
         self.heartbeat_s = heartbeat_s
+        self.gps = gps  # optional host GPS (gps.Gps) for launch-position assist; None if unattached
         self.commands = commands.load()  # operator command registry, loaded from commands/ at start
+        self.streams = {}  # board id -> the log-streaming Task while `log <board>` is active
+        self.log_subscribers = set()  # asyncio.Queue per /logs SSE listener (streamed log lines)
 
     def board_rows(self) -> list:
         """The registry as json-able rows (id, online, last-known stage/config_id) — shared by the
@@ -52,7 +57,7 @@ class Server:
     # ----------------------------------------------------------------- board side
     async def _handle(self, reader, writer) -> None:
         """Identify a freshly connected board, register it, then poll it until it drops."""
-        client = board.Board(reader, writer)
+        client = board.Board(reader, writer, log=self.log)  # log every CC<->board line exchanged
         self.log('control :: board connected %s' % client.peer)
         try:
             board_id = await client.identify()
@@ -69,9 +74,72 @@ class Server:
         except Exception as error:
             self.log('control :: error %r' % error)
         finally:
+            self._drop_stream(client.id)  # stop any log stream for this board
             client.online = False
             client.close()
             self.log('control :: %s offline' % (client.id or client.peer))
+
+    # --------------------------------------------------------------- log streaming
+    def _emit_log(self, board_id, line) -> None:
+        """Surface one streamed board log line: to the console as `<id>: <line>` and to every /logs
+        SSE subscriber (a full subscriber queue drops the line, never blocks the poll)."""
+        self.log('%s: %s' % (board_id, line))
+        for queue in list(self.log_subscribers):
+            try:
+                queue.put_nowait({'board': board_id, 'line': line})
+            except asyncio.QueueFull:
+                pass
+
+    async def _stream(self, client, interval_ms) -> None:
+        """Poll a board's `log` buffer every `interval_ms` and emit each returned line. The board
+        window is 2x the interval so its deadline never lapses between polls; if this task stops, the
+        window lapses and the board self-disables (no consumer -> no collection). Ends on disconnect."""
+        window_ms = max(1, interval_ms) * 2
+        while True:
+            resp = await client.command('log', window_ms)
+            if resp is None:
+                return  # board dropped -> _handle marks it offline and drops the stream
+            if resp.command == 'ok' and resp.args:
+                try:
+                    lines = json.loads(resp.args[0]).get('lines', [])
+                except ValueError:
+                    lines = []
+                for line in lines:
+                    self._emit_log(client.id, line)
+            await asyncio.sleep(interval_ms / 1000.0)
+
+    def start_stream(self, client, interval_ms) -> None:
+        """(Re)start streaming a board's logs at `interval_ms`, replacing any running stream for it."""
+        self._drop_stream(client.id)
+        self.streams[client.id] = asyncio.create_task(self._stream(client, interval_ms))
+
+    def _drop_stream(self, board_id):
+        """Cancel and forget any streaming task for a board; return its Board (or None)."""
+        task = self.streams.pop(board_id, None)
+        if task is not None:
+            task.cancel()
+        return self.boards.get(board_id)
+
+    async def stop_stream(self, board_id) -> None:
+        """Stop streaming a board's logs and tell the board to stop collecting (a final `log 0`
+        drain), so it does not keep teeing once nobody is polling."""
+        client = self._drop_stream(board_id)
+        if client is not None and client.online:
+            await client.command('log', 0)
+
+    async def _stream_toggle(self, client, args) -> str:
+        """`<board> log [ms|off]`: start/refresh (default 1000 ms) or stop the hub's log stream for one
+        board. Returns a source-tagged reply line, like any board-first command."""
+        arg = args[0] if args else '1000'
+        if arg in ('off', '0'):
+            await self.stop_stream(client.id)
+            return 'from %s ok %s' % (client.id, json.dumps({'log': 'off'}))
+        try:
+            interval_ms = int(arg)
+        except ValueError:
+            return 'from %s err badargs log [ms|off]' % client.id
+        self.start_stream(client, interval_ms)
+        return 'from %s ok %s' % (client.id, json.dumps({'log': 'on', 'interval_ms': interval_ms}))
 
     async def _poll(self, client) -> None:
         """Heartbeat: ping an idle board every `heartbeat_s`; a successful exchange (operator or
@@ -120,11 +188,11 @@ class Server:
         return ['from cc err badcmd %s' % first]
 
     async def _route(self, target, command_tokens) -> list:
-        """Forward `command_tokens` (verbatim — already board-facing) to one board or every online
-        board, and tag each reply with its source."""
+        """Run `command_tokens` against one board or every online board, tagging each reply with its
+        source. `log [ms|off]` is intercepted as hub-orchestrated streaming (start/stop a poll task);
+        every other command is forwarded verbatim (already board-facing) as a one-shot exchange."""
         if not command_tokens:
             return ['from cc err badargs empty-command']
-        line = ' '.join(command_tokens)
         if target == BROADCAST:
             targets = [c for c in self.boards.values() if c.online]
             if not targets:
@@ -134,6 +202,9 @@ class Server:
             if client is None or not client.online:
                 return ['from cc err noboard %s' % target]
             targets = [client]
+        if command_tokens[0] == 'log':  # hub streaming toggle, not a one-shot forward
+            return [await self._stream_toggle(client, command_tokens[1:]) for client in targets]
+        line = ' '.join(command_tokens)
         out = []
         for client in targets:
             resp = await client.exchange(line)

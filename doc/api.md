@@ -4,32 +4,6 @@ _Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand
 
 # glider firmware (MicroPython) — `src/glider`
 
-## `blackboard.py`
-
-_Tested by `test/test_blackboard.py`._
-
-blackboard.py — the shared latest-value store for hot sensor data (specs/coludo.md "Task
-Data-Flow"). Two layers:
-raw   — each sensor's latest reading, kept per (quantity, source) so several providers of the
-same quantity (e.g. altitude from the ICP-10111 and the BMP280) coexist.
-fused — the one selected value per quantity that consumers read; the fusion task picks it from
-the raw providers by priority + freshness (tasks/fusion.py) and publishes it here.
-Sensors call write(); fusion calls providers()/publish(); consumers call value()/read(). Slots are
-updated in place (allocation-free on the hot path). A global singleton, Inspectable as
-`blackboard` (shows the fused values).
-
-### `class Blackboard`
-
-- `declare(quantity: str) -> None` _(classmethod)_ — Preallocate a quantity's raw map + fused slot (idempotent). Registers on first use.
-- `write(quantity: str, value, source: str) -> None` _(classmethod)_ — A sensor publishes its latest raw reading for `quantity` (latest-wins per source).
-- `raw(quantity: str, source: str) -> _Slot` _(classmethod)_ — A specific sensor's latest raw reading for `quantity` (None if it never wrote).
-- `providers(quantity: str) -> dict` _(classmethod)_ — All raw readings for `quantity` as { source -> _Slot } (for the fusion task).
-- `publish(quantity: str, value, source: str) -> None` _(classmethod)_ — Fusion sets the selected value for `quantity` (`source` = which provider won).
-- `read(quantity: str) -> _Slot` _(classmethod)_ — The fused _Slot (value/timestamp/source) for `quantity` — what consumers read.
-- `value(quantity: str)` _(classmethod)_ — Just the fused value for `quantity` (None if nothing fused yet).
-- `inspect() -> dict` _(classmethod)_
-- `stats() -> dict` _(classmethod)_
-
 ## `cc_client.py`
 
 _Tested by `test/test_cc_client.py`._
@@ -67,7 +41,7 @@ CC <-> board line protocol (specs/cc-protocol.md).
 
 One newline-delimited message per line:  <command> <board-id> [params...]
 Tokens are whitespace-separated, so there is NO quoting or escaping. A param value is one of:
-* bare token    -> a simple value with no spaces (e.g. 3000, glider1, 192.168.10.1)
+* bare token    -> a simple value with no spaces (e.g. 3000, taster, 192.168.10.1)
 * base64:<data> -> anything else: spaces, quotes, JSON, binary
 Both sides know each command's schema, so the parser does not guess types: a bare token is
 returned as a str and the receiver converts numerics itself (it knows `ms` is an int). Named
@@ -184,7 +158,7 @@ The flight stages, self-contained: int ids (cheap to compare/store on MicroPytho
 - `active(name: str=None)` — Return the active task by name (None if absent), or a list of all active tasks if
 - `find(names: list[str]) -> list` — Non-blocking: the active tasks for `names`, None for any not up. The fast lookup for
 - `query(names: list[str], waiting: bool=True) -> list` — Look up sibling tasks by name from the registry: `gnss, baro = await self.query(['gnss',
-- `setup() -> bool` — Create + set up every enabled task in order. Skip (and report) failures.
+- `setup() -> bool` — Create + set up every enabled task in order. Skip (and report) failures. setup() brings a
 - `start() -> None` — Launch each task's run() loop as a supervised asyncio task.
 - `close(name: str) -> None` — Deactivate a task and clean up its resources.
 - `finish() -> None` — Shut down all tasks.
@@ -193,6 +167,82 @@ The flight stages, self-contained: int ids (cheap to compare/store on MicroPytho
 - `validate() -> bool` — True if every active task is healthy.
 - `inspect() -> dict`
 - `stats() -> dict`
+
+## `databoard.py`
+
+_Tested by `test/test_databoard.py`._
+
+databoard.py — the shared latest-value store + sensor fusion for hot data (specs/coludo.md "Task
+Data-Flow and Message Propagation"). Replaces a two-layer raw/fused store + a polling fusion task
+with a registry of Parameter objects whose fused value is computed on read.
+
+Structure.
+Databoard   — a registry of Parameter objects. Databoard.parameter(name) gets-or-creates one;
+a sensor registers itself as a source via provide() (which returns its channel
+handles) and then reports by pushing each channel directly -- the hot write path
+is one step, no lookup. value()/read() resolve the winner + primary in one pass.
+Parameter    — one fused quantity (e.g. 'altitude') for the consumer. Holds a short LIST of
+channels KEPT IN RANK ORDER (lowest = primary first; a list, not a dict, is faster
+at this size), plus the shared freshness window derived from its primary tier.
+_Channel     — one source's stream: a static rank (priority; lower = preferred) and TWO slots
+(the last two readings) -- two slots because the extrapolation here is LINEAR
+(needs 2 points); a degree-N model would keep N+1.
+
+Fusion is a pure read-time function, Parameter.value():
+1. winner = the lowest-rank channel still fresh. Channels are rank-ordered, so it is just the
+FIRST fresh one in the list (same-rank channels are equivalent). Freshness uses ONE shared
+window per parameter: the tightest expiry among the rank-0 tier (min() if two share rank 0),
+applied to EVERY channel. Return its value.
+2. if NO channel is fresh, linearly extrapolate the PRIMARY (channels[0]) two slots to now --
+project the trusted source forward rather than hand out a backup that is itself stale.
+3. if the primary never pushed (startup), None.
+So "rank 0 answers while fresh; a backup takes over only while itself THIS fresh, else rank 0 is
+extrapolated" is EMERGENT -- every read re-evaluates freshness against the shared window. A channel
+is BORN STALE (t1 a full _DEFAULT_EXPIRE in the past), so an un-pushed channel is never fresh; and
+since every window is <= _DEFAULT_EXPIRE, a FRESH channel always has data -- which is why nothing
+downstream needs a v1-None check (a source that never produces is simply never fresh, and surfaces
+as a missing reading rather than a hidden guard).
+
+The shared window decides WHEN to fall back; offset reconciliation (opt-in, 'reconcile': true on a
+provider) decides WHAT the fallback reports. While the primary is fresh, each backup's BIAS against
+it is learned (EMA, once per new primary reading -- the rate is set by data, not by reads); on
+handover the backup's value is corrected by that offset, so it reads what the primary would --
+closing the bias gap between e.g. ICP-10111 and BMP280 rather than jumping across it. Offsets FREEZE
+while the primary is stale, and reconciliation is for additive SCALARS only (altitude, pressure) --
+never vectors (attitude/accel) or unlike quantities (agl, position). Per-source slots keep
+extrapolation within a single source.
+
+Dependencies. A sensor that consumes another's quantity grabs a read handle with parameter(*names)
+(get-or-create, so setup order does not matter); a provider gets its write-channels from
+provide(source, provides, *want). Both return one handle for one name, a tuple for several.
+
+Telemetry is separate: each sensor writes its own raw SENSOR.csv directly. A global singleton,
+Inspectable as `databoard` (fused value/source/age per parameter).
+
+### `class Parameter`
+
+One fused quantity. Holds a rank-ordered channel per source; value() fuses by rank/freshness,
+falling back to extrapolation of the primary when none is fresh.
+
+- `__init__(name: str)` — constructor
+- `add_source(source: str, rank: int, expire_us: int, reconcile: bool=False) -> _Channel` — Register (or re-register) a source at `rank`; return its channel to push() to directly (no
+- `write(value, source: str) -> None` — Report a source's latest reading by name (convenience; sensors push() their channel). The
+- `value()` — The fused estimate (offset-reconciled when enabled); None if nothing was ever written.
+- `read() -> tuple` — (value, source, age_ms) of the fused estimate; `source` is None when extrapolated. A
+- `offsets() -> dict` — Learned bias per source (source -> offset) for diagnostics; empty until reconciled.
+- `raw(source: str)` — A specific source's latest value (None if absent / unwritten).
+- `sources() -> list`
+
+### `class Databoard`
+
+- `parameter(*names)` _(classmethod)_ — Get-or-create read handle(s) for `names` -- the dependency accessor: a consumer grabs
+- `provide(source: str, provides: dict, *want)` _(classmethod)_ — Register `source` for the params it provides ({param: {priority, timeout_ms[, reconcile]}})
+- `write(name: str, value, source: str) -> None` _(classmethod)_
+- `value(name: str)` _(classmethod)_
+- `read(name: str) -> tuple` _(classmethod)_
+- `raw(name: str, source: str)` _(classmethod)_
+- `inspect() -> dict` _(classmethod)_
+- `stats() -> dict` _(classmethod)_
 
 ## `i2cbus.py`
 
@@ -209,11 +259,12 @@ is fast and synchronous, so the lock is held only for the transaction. A glider-
 One physical I2C bus, shared by every device on it; transactions are serialized by a lock.
 
 - `__init__(bus_id: int, spec: dict)` — constructor
-- `read(addr: int, reg: int, count: int) -> bytes`
-- `read_into(addr: int, reg: int, buf) -> None`
-- `write(addr: int, reg: int, data: bytes) -> None`
+- `read(addr: int, reg: int, count: int, addrsize: int=8) -> bytes`
+- `read_into(addr: int, reg: int, buf, addrsize: int=8) -> None`
+- `write(addr: int, reg: int, data: bytes, addrsize: int=8) -> None`
 - `writeto(addr: int, data: bytes) -> None` — Raw write (no register) — for command-based devices like the ICP-10111.
 - `readfrom(addr: int, count: int) -> bytes` — Raw read (no register) — pairs with writeto() for command-based devices.
+- `device(addr: int) -> _Device` — A register window for one address on this bus (matches spibus.Bus.device).
 - `scan() -> list`
 
 ### `get(bus_id: int, spec: dict) -> Bus`
@@ -301,6 +352,7 @@ The operator-set launch identity. One per board; registers itself so Control can
 - `set_time(epoch) -> bool` — Set the board RTC from a Unix epoch (seconds, UTC). Returns True if applied.
 - `clock() -> str` — Current board wall-clock as 'YYYY-MM-DDTHH:MM:SS' (from the RTC).
 - `epoch() -> int` — Current board clock as a Unix epoch (seconds), for Control to compare against its own.
+- `probe() -> str` — On-demand self-test: a launch position is set, so an unconfigured site is caught pre-flight
 - `inspect() -> dict`
 - `update(props: dict) -> list` — Apply launch_id/site/latitude/longitude/altitude (stored, range-checked) and `epoch`
 - `save() -> None` — Persist the stored mission fields to launch.config (atomic temp+rename) so the launch
@@ -360,12 +412,35 @@ sensor can push every sample and have its telemetry decimated to a sane rate).
 - `__init__(filename: str, fields: tuple, decimate_us: int=0)` — constructor
 - `push(values) -> None`
 
+## `spibus.py`
+
+spibus.py — shared, lock-serialized SPI buses, mirroring i2cbus. A sensor may move off the shared
+I2C bus onto SPI (e.g. the ADXL375, for clean high-rate reads): each bus id gets ONE machine.SPI
+plus an asyncio.Lock, and get() hands back the shared wrapper. device(cs) returns a register window
+with the SAME read/read_into/write(reg, ...) interface as i2cbus, so a driver is bus-agnostic. The
+chip-select is a plain GPIO held low only around each locked transaction (the SPI peripheral does
+not own it, so several devices can share one bus). A glider-only module (MicroPython).
+
+### `class Bus`
+
+One physical SPI bus, shared by every device on it; transactions are serialized by a lock.
+
+- `__init__(bus_id: int, spec: dict)` — constructor
+- `device(cs: int, mb_bit: int=6) -> _Device` — A register window for one chip-select on this bus (matches i2cbus.Bus.device).
+
+### `get(bus_id: int, spec: dict) -> Bus`
+
+The shared Bus for `bus_id`, created once from `spec` (sck/mosi/miso/baud/mode) and cached.
+
 ## `task.py`
 
 Task base class and driver registry — the unit the Controller creates and supervises.
 
 Every component/system task follows the common lifecycle from specs/coludo.md:
 setup()    async; initialize or reset; return True on success
+probe()    async; ON-DEMAND self-test (the CC `probe` command, never at boot) -> None if healthy,
+else an error string. Default None; a sensor reports 'X not found on i2c:0', an actuator
+exercises itself (the servo sweeps its range) -- so a mid-flight reboot never sweeps fins.
 run()      async; the task's main activity loop
 notify()   subscribe a callback for this task's updates
 validate() return True if the task is currently healthy
@@ -374,8 +449,13 @@ A Task is Inspectable: inspect()/update()/stats() expose it to the operator (the
 registers each task with the Inspector), so there is no separate report().
 
 A task registers itself with @activity('name') (or its alias @driver('name') for the HAL ones in
-drivers/); the Controller maps a component's 'driver' field to the class via ACTIVITIES. The two
-names share one registry for now -- splitting drivers out is a later concern if it is needed.
+drivers/) into ACTIVITIES, the CLASS registry: name -> Task subclass, "what can be built". It is a
+module global on purpose -- the decorators fill it at IMPORT time, before any Controller exists, so
+it cannot live on a Controller instance (that is why moving it into the Controller would be a mess,
+not a tidy-up). The Controller READS it (injected as `registry`, defaulting to ACTIVITIES) to build
+a component, and keeps its own INSTANCE directory -- find()/query(), "what is currently running" --
+for dependency lookup. Two deliberately separate lookups: class-by-name here, instance-by-name on
+the Controller. The driver/activity names share one registry for now; splitting drivers out later.
 
 ### `activity(name: str)`
 
@@ -386,6 +466,7 @@ name so the Controller can build it from a config component.
 
 - `__init__(name: str, config: dict=None, controller=None)` — constructor
 - `setup() -> bool` — Initialize or reset. Override. Return True on success, False otherwise.
+- `probe() -> str` — On-demand self-test (the CC `probe` command, NOT run at boot): return None when healthy, or
 - `run() -> None` — Main activity loop. Override. Default returns immediately.
 - `notify(callback) -> None` — Register callback(task, event) to be invoked on this task's updates.
 - `emit(event=None) -> None` — Notify all subscribers of an update.
@@ -399,11 +480,13 @@ name so the Controller can build it from a config component.
 
 ## `adxl375.py`
 
-drivers/adxl375.py — ADXL375 ±200 g high-G accelerometer over I2C: the boost-phase accel channel.
-@task.driver('adxl375'). setup() probes the device id and configures it; run() writes the latest
-(x, y, z) acceleration in g to the blackboard 'accel' slot. If the device is absent (no I2C ack /
-wrong device id) setup() returns False and the Controller skips it, so the board boots fine with
-the sensor unplugged.
+drivers/adxl375.py — ADXL375 ±200 g high-G accelerometer: the boost-phase accel channel. Works over
+I2C (shared bus) OR SPI (its own bus, for clean high-rate reads) -- the component's `bus` field
+selects, and a shared register-window device (i2cbus/spibus .device()) keeps the driver code
+bus-agnostic. @task.driver('adxl375'). setup() probes the device id and configures it; run() writes
+the latest (x, y, z) acceleration in g to the databoard 'accel' slot. If the device is absent (no
+ack / wrong device id) setup() returns False and the Controller skips it -- the board boots fine
+with the sensor unplugged.
 
 Sampling is interrupt-driven when an `int_pin` (INT1) is wired: the chip raises DATA_READY when a
 new sample is ready, an IRQ sets a ThreadSafeFlag, and run() awaits it -- so the coroutine sleeps
@@ -413,11 +496,35 @@ a sample if interrupts go silent (dead sensor / wiring). With no int_pin it fall
 
 ### `class Adxl375(task.Task)`
 
-High-G accel: samples (x, y, z) in g to the blackboard 'accel' slot, interrupt-driven.
+High-G accel: samples (x, y, z) in g to the databoard 'accel' slot, interrupt-driven.
 
 - `setup() -> bool`
 - `sample() -> tuple` — Read and return (x, y, z) acceleration in g (also clears DATA_READY).
 - `run() -> None` — Sample on DATA_READY (or every fallback_ms if interrupts go silent); plain poll with no
+- `probe() -> str` — On-demand self-test: the device id reads back, then one sample succeeds (each step logged).
+- `inspect() -> dict`
+
+## `atgm336h.py`
+
+drivers/atgm336h.py — ATGM336H GNSS (GPS + BDS) over UART: the position channel. @task.driver(
+'atgm336h'). At setup it reconfigures the module to RMC-only at the configured rate (default 10 Hz)
+via PMTK commands -- RMC alone (~70 B) fits 10 Hz inside 9600 baud (~960 B/s), so no baud switch is
+needed. run() reads NMEA lines asynchronously (asyncio.StreamReader), parses RMC for the fix and
+writes (latitude, longitude) to the databoard 'position' slot; a GGA sentence, if the module still
+emits one, supplies altitude (a deep fallback to the baro). Lock is lost easily under high-g, so
+position is best-effort and the consumers fall back when it goes stale.
+
+NMEA is talker-agnostic (GP/GN/BD). The UART is dedicated (uart:2), not a shared bus, so the driver
+owns the peripheral. Graceful: an undefined bus -> setup False -> the Controller skips it.
+
+### `class Atgm336h(task.Task)`
+
+GNSS: reconfigures to RMC-only at `hz`, then writes (latitude, longitude) to 'position' (and
+altitude to 'altitude' if a GGA is seen). Best-effort -- lock can drop under boost.
+
+- `setup() -> bool`
+- `run() -> None` — Read NMEA lines forever and parse them; non-ASCII noise lines and malformed fields are
+- `probe() -> str` — On-demand self-test: NMEA is arriving on the UART (the run loop counts lines). A satellite
 - `inspect() -> dict`
 
 ## `bluetooth.py`
@@ -432,6 +539,7 @@ plus update() so the operator can toggle it live (`update bluetooth {"radio": tr
 
 Apply the configured BLE radio state. Inspectable: `radio` requested, `active` actual.
 
+- `probe() -> str` — On-demand self-test: the BLE radio is in the requested state (or absent on this board ->
 - `setup() -> bool`
 - `inspect() -> dict`
 - `update(props) -> list`
@@ -441,26 +549,29 @@ Apply the configured BLE radio state. Inspectable: `radio` requested, `active` a
 drivers/bmp280.py — BMP280 barometric pressure sensor (on the SEN0253) over the shared I2C bus:
 the backup altitude channel. @task.driver('bmp280'). setup() probes the chip id, reads the factory
 calibration and starts normal-mode conversion; run() reads pressure, applies Bosch compensation
-and writes barometric altitude (m AMSL) to the blackboard 'altitude' slot. Graceful: wrong/absent
-chip id -> setup False -> the Controller skips it.
+and writes pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the per-sensor
+startup ground zero) to the databoard. Graceful: wrong/absent chip id -> setup False -> skipped.
 
 Polled at period_ms (the BMP280 conversion is ~tens of ms, far slower than the IMU). Uses the
 shared locked bus (i2cbus) since it shares i2c:0 with the ADXL375 and BNO055.
 
 ### `class Bmp280(task.Task)`
 
-Barometric altitude: polls compensated pressure -> altitude (m) to the blackboard 'altitude'.
+Backup baro: pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
+startup ground zero, captured per-sensor so it is offset-free) to the databoard. `update`
+{"rezero": true} re-captures ground zero (e.g. after warm-up, just before launch).
 
 - `setup() -> bool`
-- `sample() -> tuple` — Read the sensor and return (barometric altitude m AMSL, temperature °C).
 - `run() -> None`
+- `update(props: dict) -> list` — `{"rezero": true}` re-captures ground zero from the latest altitude (sync; operator does
+- `probe() -> str` — On-demand self-test: the chip id reads back, then one conversion reads (each step logged).
 - `inspect() -> dict`
 
 ## `bno055.py`
 
 drivers/bno055.py — BNO055 9-DOF IMU (on the SEN0253) over the shared I2C bus: the attitude
 channel. @task.driver('bno055'). In NDOF fusion mode the chip computes absolute orientation
-on-chip; run() reads the Euler angles (heading, roll, pitch in degrees) to the blackboard
+on-chip; run() reads the Euler angles (heading, roll, pitch in degrees) to the databoard
 'attitude' slot. Graceful: a wrong/absent chip id -> setup False -> the Controller skips it.
 
 BNO055's INT pin signals motion/threshold events, not a fusion data-ready, so this driver polls at
@@ -470,11 +581,13 @@ ADXL375 and BMP280.
 
 ### `class Bno055(task.Task)`
 
-9-DOF attitude: polls (heading, roll, pitch) deg to the blackboard 'attitude' slot.
+9-DOF: attitude (heading, roll, pitch) deg -> 'attitude', plus the calibrated accelerometer
+(g, incl gravity) -> 'accel' as a low-g backup to the ADXL375 (priority 1).
 
 - `setup() -> bool`
-- `sample() -> tuple` — Read the fused orientation as (heading, roll, pitch) in degrees.
+- `sample() -> tuple` — Read the block and return (attitude (heading, roll, pitch) deg, accel (x, y, z) g).
 - `run() -> None`
+- `probe() -> str` — On-demand self-test: the chip id reads back, then one fused sample succeeds (each step logged).
 - `inspect() -> dict`
 
 ## `icp10111.py`
@@ -483,18 +596,21 @@ drivers/icp10111.py — ICP-10111 barometric pressure sensor (TDK ICP-101xx, on 
 the shared I2C bus: the PRIMARY altitude channel (8.5 cm accuracy). @task.driver('icp10111').
 Command-based, not register-mapped: setup() verifies the product id and reads the 4 OTP calibration
 constants; run() issues a measure command, reads pressure+temperature, applies the TDK polynomial
-conversion and writes barometric altitude (m AMSL) to the blackboard 'altitude' slot. Graceful:
-wrong/absent id -> setup False -> the Controller skips it.
+conversion and writes pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
+per-sensor startup ground zero) to the databoard. Graceful: wrong/absent id -> setup False -> skipped.
 
 Polled at period_ms. Uses the shared locked bus (i2cbus); shares i2c:0 with the other sensors.
 
 ### `class Icp10111(task.Task)`
 
-Primary barometric altitude: polls compensated pressure -> altitude (m) to 'altitude'.
+Primary baro: pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
+startup ground zero, captured per-sensor so it is offset-free) to the databoard. `update`
+{"rezero": true} re-captures ground zero (e.g. after warm-up, just before launch).
 
 - `setup() -> bool`
-- `sample() -> tuple` — Measure and return (barometric altitude m AMSL, temperature °C).
 - `run() -> None`
+- `update(props: dict) -> list` — `{"rezero": true}` re-captures ground zero from the latest altitude (sync; operator does
+- `probe() -> str` — On-demand self-test: the run loop is producing pressure. We issue NO I2C here -- the
 - `inspect() -> dict`
 
 ## `led.py`
@@ -510,6 +626,7 @@ Blink a status pattern on one GPIO derived from the controller's state + health.
 
 - `setup() -> bool`
 - `run() -> None`
+- `probe() -> str` — On-demand self-test: blink the status LED a few times so it is seen to drive, then off.
 - `inspect() -> dict`
 
 ## `separation.py`
@@ -519,7 +636,7 @@ on the booster) that route 3V3 to a pin while nested (HIGH) and open on separati
 input, @task.driver('separation'). An IRQ on either edge wakes run(), which debounces, and on a
 confirmed separation during the Boosting stage drives the documented Boosting -> Gliding transition
 (the booster ejects the glider at apogee). The event is logged and emitted to subscribers; the
-discrete event is NOT a blackboard quantity (per specs/coludo.md, events use notify/log).
+discrete event is NOT a databoard quantity (per specs/coludo.md, events use notify/log).
 
 The pin uses an internal pull-down so an open (separated) circuit reads LOW reliably; while nested
 the pads override it HIGH. A separation while not Boosting (e.g. a ground test in Setting) is
@@ -531,6 +648,81 @@ Detect stage separation (HIGH=nested -> LOW=separated) and trigger Boosting -> G
 
 - `setup() -> bool`
 - `run() -> None`
+- `probe() -> str` — On-demand self-test: the separation pin reads a valid level (logged nested/separated).
+- `inspect() -> dict`
+
+## `sg90.py`
+
+drivers/sg90.py — SG90 micro fin servo on a PWM pin. @task.driver('sg90'), one instance per fin
+(yaw / left eleron / right eleron), each naming its `pin`. 50 Hz frame; the command unit is INTEGER
+DEGREES, linearly mapped to a pulse width (min_us..max_us over min_deg..max_deg, integer math) and
+CLAMPED to the range so a bad command can never drive the horn past the linkage.
+
+OPEN-LOOP -- NO POSITION FEEDBACK. A 3-wire SG90 (signal / V+ / GND) only RECEIVES a PWM command;
+the signal pin is input-only on the servo and there is no wire back, so the board CANNOT read where
+the horn actually is. Everything this driver reports (inspect()/telemetry `angle`, `pulse_us`) is
+the LAST COMMANDED value it tracks in software -- what we asked for, NOT a measurement. A stalled,
+force-held or jammed surface would still read the commanded target. inspect() carries
+`feedback: None` to make that explicit. (Real feedback would need a feedback servo, or tapping the
+internal pot to an ADC, or a current-sense on the rail.) Separately, this MicroPython-P4 build's PWM
+duty_u16()/duty_ns() GETTERS are broken (return a constant), so we cannot even read the commanded
+duty back from the peripheral -- the driver only ever WRITES it and remembers what it set.
+
+This class is SG90-specific on purpose. Other servos (MG90S, MG996R, ...) differ in pulse range and
+behaviour and would be their own @task.driver -- a new drivers/<type>.py subclassing this or
+standalone -- selected by the component's `driver` field. The shared slew gate + degree->pulse math
+live here for now; factor them into a servo base when a second type lands.
+
+Two ways to command a fin:
+update {"angle": d}  -- IMMEDIATE, ungated: the operator override (sync, returns at once).
+await move(d)        -- GATED + settle-aware: passes through a SHARED slew gate so at most
+`servo_concurrency` (board config, default 3 = no limit) fins slew at
+once, then awaits the estimated travel so the caller knows it has (open-
+loop, no feedback) arrived. The flight control loop uses this.
+Both record the command to per-fin telemetry (<name>.csv: angle, pulse_us, done) -- done=0 when a
+command is ISSUED, done=1 when a move() has (estimated) COMPLETED. probe() is the on-demand self-
+test (CC `probe`, pre-flight -- never at boot, so a reboot never sweeps fins): it sweeps the full
+range and returns to neutral, logging each step.
+
+Power: servos run off their own boost rail (per-pin diode protected); the board sources only the
+low-current signal on the PWM pin, never the servo supply.
+
+### `class SG90(task.Task)`
+
+One PWM SG90 fin servo, commanded in integer degrees (clamped to [min_deg, max_deg]). OPEN-LOOP
+-- reported angle is the last command, never a measurement (see module header; inspect carries
+`feedback: None`). `update {"angle": d}` moves it immediately; `await move(d)` moves it through the
+shared slew gate; probe() sweeps it on demand.
+
+- `setup() -> bool`
+- `probe() -> str` — On-demand self-test (CC `probe`, pre-flight -- never at boot): sweep min -> max -> neutral so
+- `move(angle) -> int` — Drive to `angle` (clamped, integer degrees) through the shared slew gate -- at most
+- `update(props: dict) -> list` — `{"angle": d}` moves the servo IMMEDIATELY (integer degrees, clamped) -- the operator
+- `finish() -> None` — Release the PWM (stop driving the pin) on shutdown.
+- `inspect() -> dict`
+
+## `vl53l4cx.py`
+
+drivers/vl53l4cx.py — VL53L4CX time-of-flight laser ranger (Adafruit 5425) over the shared I2C bus:
+the above-ground-level (AGL) channel for the last metres of the glide, where the barometer is
+useless. @task.driver('vl53l4cx'). The VL53 family uses 16-BIT register addresses (i2cbus addrsize=
+16). This part is the newer 0xEBAA silicon (shared by the VL53L4CD/L4CX), so it uses the VL53L4CD
+Ultra-Lite-Driver init -- the older VL53L1X (0xEACC) config does NOT produce ranges on it.
+
+setup(): optional XSHUT reset -> wait for boot -> write the default configuration -> run one VHV
+calibration ranging cycle (start/wait/clear/stop, then the VHV config writes) -> start continuous
+ranging. run(): wait for data-ready (the GPIO1 interrupt if wired, else a poll), read the distance
+and write AGL (m) to the databoard. Single-target distance; the L4CX multi-target extras are unused.
+Graceful: no I2C ack -> setup False -> Controller skips it. Shares i2c:0 via the locked i2cbus.
+
+### `class Vl53l4cx(task.Task)`
+
+Laser ToF: writes above-ground-level distance (m) to the databoard 'agl' slot, for the final
+low-altitude metres where the barometer cannot resolve height. Interrupt-driven when GPIO1 wired.
+
+- `setup() -> bool`
+- `run() -> None` — Sample on data-ready (GPIO1) or every period_ms; write AGL (m) to the databoard. Runs
+- `probe() -> str` — On-demand self-test: the model id reads back -- a single locked op, safe alongside the run
 - `inspect() -> dict`
 
 ## `wifi.py`
@@ -566,9 +758,16 @@ Join + maintain the STA link; Inspectable as `wifi`.
 ## `board_health.py`
 
 tasks/board_health.py — board vitals task: samples temperature, free memory and CPU load every
-period, pushes a telemetry row, and exposes the latest to the operator. CPU load is estimated from
-a low-priority idle task: the fewer times it runs in a period (vs the most it ever has), the busier
-the board. Registered as @task.activity('health') so the Controller creates and supervises it.
+period, pushes a telemetry row (health.csv) and exposes the latest to the operator. Registered as
+@task.activity('health') so the Controller creates and supervises it.
+
+CPU load (an integer percent 0..100) is estimated from a low-priority idle task that increments a
+counter and yields (sleep_ms(0)) in a tight loop. Each period we measure the idle counter's RATE
+(counts/ms); the highest rate ever observed (`_max_rate`) is taken as the fully-idle baseline, and
+load% = round(100 * (1 - rate / _max_rate)).
+So load is RELATIVE to the busiest-idle moment seen: it self-calibrates as the board gets idle
+time (the baseline only rises), but a board that is never truly idle reads relative to its
+least-busy moment. test_board_health drives a CPU hog and asserts the load rises with real load.
 
 ### `class BoardHealth(task.Task)`
 
@@ -578,7 +777,8 @@ Periodic vitals -> telemetry (health.csv) + `inspect health`.
 - `temperature() -> float`
 - `mem_free() -> int`
 - `sample() -> dict`
-- `run() -> None` — Sample vitals every period_ms, estimate load, and push a telemetry row. Runs forever.
+- `run() -> None` — Push a vitals row at startup, then every period_ms estimate load and push again. Runs
+- `probe() -> str` — On-demand self-test: free memory reads positive (a basic board-vitals sanity); the
 - `inspect() -> dict`
 - `stats() -> dict`
 
@@ -595,27 +795,7 @@ Serve the CC protocol to the hub when the link is available; never fatal.
 
 - `setup() -> bool`
 - `run() -> None` — Park until the Wi-Fi dependency is up, then dial CC and serve until the link drops; retry.
-
-## `fusion.py`
-
-tasks/fusion.py — sensor fusion: turn the blackboard's raw per-provider readings into one selected
-value per quantity (specs/coludo.md). @task.activity('fusion'). Each sensor's config declares what
-it `provides` with a priority (lower = preferred) and a timeout_ms (how long a reading stays
-fresh); fusion groups the providers by quantity and, every cycle, publishes the highest-priority
-provider whose latest reading is still fresh, falling back to the next when the preferred one goes
-stale (e.g. ICP-10111 altitude preferred, BMP280 as backup). A pure read-from-blackboard task, so
-it needs no sensor dependency wait -- absent sensors simply never produce fresh data and are
-skipped. Inspectable: `selected` shows which source currently wins each quantity.
-
-### `class Fusion(task.Task)`
-
-Pick the live value per quantity from its providers by priority + freshness.
-
-- `setup() -> bool`
-- `fuse_once() -> None` — One arbitration pass: for each quantity publish the preferred provider that is fresh.
-- `run() -> None`
-- `inspect() -> dict`
-- `stats() -> dict`
+- `probe() -> str` — On-demand self-test: the CC client is configured (host:port) and the Wi-Fi dependency is
 
 ## `recorder.py`
 
@@ -631,6 +811,7 @@ keeps logging/telemetering through the global recorder.Recorder.
 
 - `setup() -> bool`
 - `run() -> None`
+- `probe() -> str` — On-demand self-test: the Recorder rings are up and a probe log line writes through them.
 - `inspect() -> dict`
 - `stats() -> dict`
 - `update(props) -> list`
@@ -649,13 +830,56 @@ heartbeat and operator traffic to one board can never overlap. CPython 3.12, std
 
 One connected board: lockstep request/response over its socket.
 
-- `__init__(reader: asyncio.StreamReader, writer: asyncio.StreamWriter)` — constructor
+- `__init__(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, log=None)` — constructor
 - `peer() -> str` _(property)_
 - `exchange(line: str, timeout: float=EXCHANGE_TIMEOUT_S) -> cc._Msg` — Send a ready board-facing line and return its parsed reply (None if disconnected).
+- `properties() -> dict` — The Control-side snapshot of this board: identity + the cached config/inspect/stats/health
 - `command(command: str, *args, timeout=EXCHANGE_TIMEOUT_S) -> cc._Msg` — Build `command args...` and exchange it. Returns the parsed reply or None.
 - `identify() -> str`
 - `inspect(name: str) -> dict`
 - `close() -> None`
+
+## `gps.py`
+
+_Tested by `test/test_gps.py`._
+
+gps.py — host-side GPS assist for the Control hub (finding #10).
+
+The flight board carries its own GNSS (ATGM336H); a GPS plugged into the Control host (e.g.
+/dev/ttyUSB0) is an ASSIST, not the source of truth. Two jobs:
+1. tell the operator when a usable fix is available — the ideal launch condition is a 3D fix
+with 4+ satellites (so the board's own cold start has a good almanac/position seed);
+2. hand a launch position to the board (operator `assist <board>` -> `update mission` +
+`save-mission`, persisted in the board's launch.config) when the on-board GPS has no fix yet.
+
+Pure NMEA parsing (GGA position/sats, GSA 2D/3D mode) is split from the serial transport so it is
+unit-tested without hardware (test_gps.py); the Linux serial open + read loop is exercised by
+itest_gps.py against a real receiver. CPython 3.12, stdlib asyncio only — no pyserial.
+
+### `class Fix`
+
+The latest GNSS fix, accumulated from GGA (position/altitude/satellites) and GSA (2D/3D).
+
+- `__init__()` — constructor
+- `fix_3d() -> bool` _(property)_
+- `has_position() -> bool` _(property)_
+- `usable() -> bool` _(property)_ — The ideal launch condition: a 3D fix with enough satellites and an actual position.
+
+### `class Gps`
+
+Host GPS reader: feed NMEA lines, expose the latest fix + a launch position for board assist.
+
+- `__init__(log=print)` — constructor
+- `feed(line: str) -> bool` — Parse one NMEA sentence into the running fix. Returns False for non-NMEA, a bad checksum,
+- `status() -> dict` — Operator-facing fix snapshot: is it a usable 3D fix, how many satellites, where.
+- `position()` — The host position as a mission dict (latitude/longitude[/altitude]) when the fix is
+- `run(reader: asyncio.StreamReader) -> None` — Feed every line from an NMEA stream until it ends (the read loop, transport-agnostic).
+- `serve(device: str, baud: int=9600) -> None` — Open the serial GPS and feed it forever (the wired host-assist path).
+
+### `open_serial(device: str, baud: int=9600) -> asyncio.StreamReader`
+
+Open a Linux serial tty as an asyncio StreamReader: raw 8N1 at `baud`, stdlib only (termios +
+connect_read_pipe). Hardware path — covered by itest_gps.py, not the host unit tests.
 
 ## `main.py`
 
@@ -682,7 +906,7 @@ CPython 3.12, stdlib asyncio only. cc_protocol.py is shared with the firmware (s
 The hub: a board listener + per-board heartbeat + an operator console. `on_board` is an
 optional async hook invoked once, right after a board identifies (used by integration tests).
 
-- `__init__(host: str='0.0.0.0', port: int=1234, operator_port: int=1235, web_port: int=8080, on_board=None, log=print, heartbeat_s: float=HEARTBEAT_S)` — constructor
+- `__init__(host: str='0.0.0.0', port: int=1234, operator_port: int=1235, web_port: int=8080, on_board=None, log=print, heartbeat_s: float=HEARTBEAT_S, gps=None)` — constructor
 - `board_rows() -> list` — The registry as json-able rows (id, online, last-known stage/config_id) — shared by the
 - `serve_forever() -> None` — Accept board connections on `port` (board-facing listener).
 - `serve_operators() -> None` — Accept operator connections on `operator_port` (telnet-friendly console).
@@ -708,6 +932,28 @@ The HTTP/SSE server. Holds the hub for the board registry + routing; one per hub
 - `serve() -> None`
 
 # control operator commands — `commands/` — `src/control/commands`
+
+## `assist.py`
+
+`assist <board>` — push the host GPS position to a board's mission (sync the launch site), then
+persist it to the board's launch.config. Only sends a usable 3D fix; defaults to the selected
+board. Requires a GPS attached to the Control host (main.py --gps-device).
+
+### `assist_command(hub, tokens, session) -> list`
+
+## `cache.py`
+
+`cache <board>` — the Control-side cached properties for a board (config / inspect / stats /
+health), last-known values without touching the board. Defaults to the session's selected board.
+
+### `cache_command(hub, tokens, session) -> list`
+
+## `gps.py`
+
+`gps` — the host GPS fix status (3D + satellites), so the operator knows when the launch site has
+a usable position. Requires a GPS attached to the Control host (main.py --gps-device).
+
+### `gps_command(hub, tokens, session) -> list`
 
 ## `help.py`
 

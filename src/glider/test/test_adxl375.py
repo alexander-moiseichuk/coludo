@@ -11,6 +11,7 @@ from drivers import adxl375
 
 class _StubController:
     config = config_default.default()
+    config['pins']['nc_cs'] = 52  # a free, unconnected GPIO for the spi-absent probe (nothing wired)
 
 
 async def amain():
@@ -24,7 +25,16 @@ async def amain():
     absent = adxl375.Adxl375('accel', {'bus': 'i2c', 'id': 0, 'addr': 0x7F}, _StubController())
     assert await absent.setup() is False
 
-    print('ok: adxl375 driver registered; setup fails gracefully when no device answers')
+    # SPI bus but the chip-select points at a free, unconnected GPIO -> nothing answers -> False
+    # (uses a non-ADXL cs so the test stays deterministic now that the real ADXL is wired on cs 49)
+    spi_absent = adxl375.Adxl375('accel', {'bus': 'spi', 'id': 1, 'cs_pin': 'nc_cs'}, _StubController())
+    assert await spi_absent.setup() is False
+
+    # SPI selected but no cs_pin declared -> graceful False (no chip-select to drive)
+    no_cs = adxl375.Adxl375('accel', {'bus': 'spi', 'id': 1}, _StubController())
+    assert await no_cs.setup() is False
+
+    print('ok: adxl375 registered; graceful setup over i2c (no ack) and spi (id mismatch / no cs)')
 
 
 asyncio.run(amain())

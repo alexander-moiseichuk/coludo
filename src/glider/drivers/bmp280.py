@@ -1,8 +1,8 @@
 # drivers/bmp280.py — BMP280 barometric pressure sensor (on the SEN0253) over the shared I2C bus:
 # the backup altitude channel. @task.driver('bmp280'). setup() probes the chip id, reads the factory
 # calibration and starts normal-mode conversion; run() reads pressure, applies Bosch compensation
-# and writes barometric altitude (m AMSL) to the blackboard 'altitude' slot. Graceful: wrong/absent
-# chip id -> setup False -> the Controller skips it.
+# and writes pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the per-sensor
+# startup ground zero) to the databoard. Graceful: wrong/absent chip id -> setup False -> skipped.
 #
 # Polled at period_ms (the BMP280 conversion is ~tens of ms, far slower than the IMU). Uses the
 # shared locked bus (i2cbus) since it shares i2c:0 with the ADXL375 and BNO055.
@@ -10,8 +10,8 @@
 import asyncio
 import struct
 
-import blackboard
 import config
+import databoard
 import i2cbus
 import recorder
 import task
@@ -32,12 +32,15 @@ _REG_DATA = const(0xF7)  # press msb/lsb/xlsb, temp msb/lsb/xlsb -- 6 bytes
 _CHIP_ID = const(0x58)
 _CTRL_NORMAL = const(0x2F)  # osrs_t x1, osrs_p x4, mode = normal
 _CONFIG_FILTER = const(0x08)  # t_sb 0.5 ms, IIR filter x4
-_SEA_LEVEL_PA = 101325.0  # reference for the barometric-altitude formula
+_SEA_LEVEL_PA = 101325.0  # reference for the barometric-altitude formula (AMSL)
+_GROUND_SAMPLES = const(8)  # readings averaged at startup to fix the ground-zero reference
 
 
 @task.driver('bmp280')
 class Bmp280(task.Task):
-    """Barometric altitude: polls compensated pressure -> altitude (m) to the blackboard 'altitude'."""
+    """Backup baro: pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
+    startup ground zero, captured per-sensor so it is offset-free) to the databoard. `update`
+    {"rezero": true} re-captures ground zero (e.g. after warm-up, just before launch)."""
 
     async def setup(self) -> bool:
         bus_id = self.config.get('id', 0)
@@ -59,12 +62,24 @@ class Bmp280(task.Task):
         except Exception as error:
             print('bmp280 :: %r' % error)
             return False
-        blackboard.Blackboard.declare('altitude')
-        blackboard.Blackboard.declare('temperature')
-        self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('altitude', 'temperature'),
-                                       decimate_us=self.config.get('telemetry_us', 0))
+        await asyncio.sleep_ms(50)  # let the first normal-mode conversion complete
+        self._ground = await self._ground_zero()
+        self._altitude, self._temperature, self._pressure, self._elevation = databoard.Databoard.provide(
+            self.name, self.config.get('provides', {}), 'altitude', 'temperature', 'pressure', 'elevation')
+        self._telemetry = recorder.Telemetry('%s.csv' % self.name,
+                                             ('altitude', 'temperature', 'pressure', 'elevation'),
+                                             decimate_us=self.config.get('telemetry_us', 0))
         self._ok = True
         return True
+
+    async def _ground_zero(self) -> float:
+        """Average a short burst of altitude readings -> the per-sensor ground reference (m AMSL)."""
+        total = 0.0
+        for _ in range(_GROUND_SAMPLES):
+            altitude, _temp, _pressure = await self._read()
+            total += altitude
+            await asyncio.sleep_ms(20)
+        return total / _GROUND_SAMPLES
 
     def _compensate(self, adc_t: int, adc_p: int) -> tuple:
         """Bosch fixed-point compensation: raw ADC -> (pressure Pa, temperature °C). int64 math
@@ -89,33 +104,64 @@ class Bmp280(task.Task):
         p = ((p + var1 + var2) >> 8) + (p7 << 4)
         return p / 256.0, temp_c
 
-    async def sample(self) -> tuple:
-        """Read the sensor and return (barometric altitude m AMSL, temperature °C)."""
+    async def _read(self) -> tuple:
+        """Read the sensor and return (altitude m AMSL, temperature °C, pressure Pa)."""
         await self._bus.read_into(self._addr, _REG_DATA, self._buf)
         adc_p = (self._buf[0] << 12) | (self._buf[1] << 4) | (self._buf[2] >> 4)
         adc_t = (self._buf[3] << 12) | (self._buf[4] << 4) | (self._buf[5] >> 4)
         pressure, temp_c = self._compensate(adc_t, adc_p)
         altitude = 0.0 if pressure <= 0.0 else 44330.0 * (1.0 - (pressure / _SEA_LEVEL_PA) ** 0.190294957)
-        return altitude, temp_c
+        return altitude, temp_c, pressure
 
     async def run(self) -> None:
         while True:
             try:
-                altitude, temp_c = await self.sample()
-                blackboard.Blackboard.write('altitude', altitude, self.name)
-                blackboard.Blackboard.write('temperature', temp_c, self.name)
-                self._telemetry.push((altitude, temp_c))
+                altitude, temp_c, pressure = await self._read()
+                elevation = altitude - self._ground
+                self._altitude.push(altitude)  # one step: push our channels directly
+                self._temperature.push(temp_c)
+                self._pressure.push(pressure)
+                self._elevation.push(elevation)
+                self._telemetry.push((altitude, temp_c, pressure, elevation))
             except Exception as error:
                 print('bmp280 :: read %r' % error)
             await asyncio.sleep_ms(self._period_ms)
 
-    def _mine(self, quantity: str):
-        """This sensor's own latest raw value for `quantity` (None if never written)."""
-        slot = blackboard.Blackboard.raw(quantity, self.name)
-        return slot.value if slot is not None else None
+    def update(self, props: dict) -> list:
+        """`{"rezero": true}` re-captures ground zero from the latest altitude (sync; operator does
+        it when the reading is stable)."""
+        if props.get('rezero') and self._altitude.value() is not None:
+            self._ground = self._altitude.value()
+            return ['ground']
+        return []
+
+    async def probe(self) -> str:
+        """On-demand self-test: the chip id reads back, then one conversion reads (each step logged)."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: chip id ...')
+            chip = (await self._bus.read(self._addr, _REG_CHIP_ID, 1))[0]
+            if chip != _CHIP_ID:
+                raise ValueError('BMP280 id 0x%02x != 0x%02x at i2c:%s 0x%02x' % (
+                    chip, _CHIP_ID, self.config.get('id'), self._addr))
+            recorder.Recorder.log(self.name, 'probe: chip id ok 0x%02x' % chip)
+        except Exception as error:
+            message = 'chip id: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        try:
+            recorder.Recorder.log(self.name, 'probe: read ...')
+            _altitude, _temp, pressure = await self._read()
+            recorder.Recorder.log(self.name, 'probe: read ok %.0f Pa' % pressure)
+        except Exception as error:
+            message = 'read: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None
 
     def inspect(self) -> dict:
-        status = task.Task.inspect(self)  # latest samples from the blackboard (no hot-path I2C here)
-        status['altitude_m'] = self._mine('altitude')
-        status['temperature_c'] = self._mine('temperature')
+        status = task.Task.inspect(self)  # our channels' latest (no hot-path I2C here)
+        status['altitude_m'] = self._altitude.value()
+        status['temperature_c'] = self._temperature.value()
+        status['pressure_pa'] = self._pressure.value()
+        status['elevation_m'] = self._elevation.value()
         return status

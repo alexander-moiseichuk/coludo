@@ -39,8 +39,8 @@ def main():
     assert m.command == 'stage' and m.args == ['Glider1']
 
     # response forms parse too (status first); iam carries the board id
-    m = cc.parse('iam glider1 base64:eyJhIjogMX0=')
-    assert m.command == 'iam' and m.args[0] == 'glider1' and m.args[1] == '{"a": 1}'
+    m = cc.parse('iam taster base64:eyJhIjogMX0=')
+    assert m.command == 'iam' and m.args[0] == 'taster' and m.args[1] == '{"a": 1}'
     assert cc.parse('pong').command == 'pong'
     m = cc.parse('err badcmd nope')
     assert m.command == 'err' and m.args == ['badcmd', 'nope']
@@ -50,9 +50,9 @@ def main():
     assert m.command is None and m.args == []
 
     # build round-trips named + positional through parse
-    line = cc.build('note', ['glider1'], {'msg': 'pad 7, gusty'})
+    line = cc.build('note', ['taster'], {'msg': 'pad 7, gusty'})
     m = cc.parse(line)
-    assert m.command == 'note' and m.args == ['glider1'] and m.named == {'msg': 'pad 7, gusty'}
+    assert m.command == 'note' and m.args == ['taster'] and m.named == {'msg': 'pad 7, gusty'}
 
     print('ok: cc_protocol parse/build/encode/decode (board-first, base64, no quoting)')
 

@@ -36,8 +36,8 @@ class Dispatcher:
 class Client:
     def __init__(self, config: dict, dispatcher, log=None, backoff_ms: int = 1000):
         wifi = config['wifi']
-        self.host = wifi['cc_host']
-        self.port = wifi['cc_port']
+        self.host = wifi.get('cc_host')  # None -> cc_link derives the `.1` of the board's subnet at dial
+        self.port = wifi.get('cc_port', 1234)
         self.dispatcher = dispatcher
         self.log = log if log is not None else (lambda message: None)
         self.backoff_ms = backoff_ms
@@ -168,6 +168,39 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         mission.save()  # persist the live mission (set via `update mission`) to launch.config
         return cc.build('ok')
 
+    async def probe(msg) -> str:
+        """Run self-tests ON DEMAND over the inspectable objects (tasks + mission + ...) that implement
+        probe(): `probe <name>` for one, `probe`/`probe all` for every one. Per object None when
+        healthy, else its error string. Costly ACTIVE checks (e.g. the servo range sweep) live in
+        probe(), never at boot -- so a mid-flight reboot never sweeps the fins; the operator runs it
+        pre-flight. Sequential, so fins self-test one at a time."""
+        target = msg.args[0] if msg.args else 'all'
+        if target == 'all':
+            results = {}
+            for name in inspector.Inspector.names():
+                run = getattr(inspector.Inspector.get(name), 'probe', None)
+                if run is not None:
+                    results[name] = await run()
+            return cc.build('ok', [json.dumps(results)])
+        run = getattr(inspector.Inspector.get(target), 'probe', None)
+        if run is None:
+            return cc.build('err', ['badargs', 'no probe for ' + target])
+        return cc.build('ok', [json.dumps({target: await run()})])
+
+    async def log(msg) -> str:
+        """`log <duration_ms>` -- poll-model log streaming. Reply with the log lines the board buffered
+        since the last `log`, and keep teeing log() for another `duration_ms` (the operator re-sends it
+        each tick; `log 0` stops, default 1000 ms). The batch rides back as one base64 token (a JSON
+        list). An EXTRA route: the UART/Luckfox log path is untouched, and with no `log` request the
+        board collects nothing -- a lost link cannot grow memory once the window lapses."""
+        import recorder
+
+        try:
+            duration_ms = int(msg.args[0]) if msg.args else 1000
+        except ValueError:
+            return cc.build('err', ['badargs', 'log <duration_ms>'])
+        return cc.build('ok', [json.dumps(recorder.Recorder.cc_logs(duration_ms))])
+
     async def reboot(msg) -> str:
         reset = on_reboot or (lambda: __import__('machine').reset())  # imported only when it fires
 
@@ -187,6 +220,8 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
     dispatcher.on('inspect', inspect)
     dispatcher.on('update', update)
     dispatcher.on('stats', stats)
+    dispatcher.on('probe', probe)
+    dispatcher.on('log', log)
     dispatcher.on('get-config', get_config)
     dispatcher.on('save-config', save_config)
     dispatcher.on('reset-config', reset_config)

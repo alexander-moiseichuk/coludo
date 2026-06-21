@@ -2,6 +2,9 @@
 #
 # Every component/system task follows the common lifecycle from specs/coludo.md:
 #   setup()    async; initialize or reset; return True on success
+#   probe()    async; ON-DEMAND self-test (the CC `probe` command, never at boot) -> None if healthy,
+#              else an error string. Default None; a sensor reports 'X not found on i2c:0', an actuator
+#              exercises itself (the servo sweeps its range) -- so a mid-flight reboot never sweeps fins.
 #   run()      async; the task's main activity loop
 #   notify()   subscribe a callback for this task's updates
 #   validate() return True if the task is currently healthy
@@ -10,12 +13,17 @@
 # registers each task with the Inspector), so there is no separate report().
 #
 # A task registers itself with @activity('name') (or its alias @driver('name') for the HAL ones in
-# drivers/); the Controller maps a component's 'driver' field to the class via ACTIVITIES. The two
-# names share one registry for now -- splitting drivers out is a later concern if it is needed.
+# drivers/) into ACTIVITIES, the CLASS registry: name -> Task subclass, "what can be built". It is a
+# module global on purpose -- the decorators fill it at IMPORT time, before any Controller exists, so
+# it cannot live on a Controller instance (that is why moving it into the Controller would be a mess,
+# not a tidy-up). The Controller READS it (injected as `registry`, defaulting to ACTIVITIES) to build
+# a component, and keeps its own INSTANCE directory -- find()/query(), "what is currently running" --
+# for dependency lookup. Two deliberately separate lookups: class-by-name here, instance-by-name on
+# the Controller. The driver/activity names share one registry for now; splitting drivers out later.
 
 import inspector
 
-ACTIVITIES: dict = {}  # registered name -> Task subclass (drivers + activities, one registry)
+ACTIVITIES: dict = {}  # CLASS registry: name -> Task subclass (instance lookup is Controller.find/query)
 
 
 def activity(name: str):
@@ -46,6 +54,27 @@ class Task(inspector.Inspectable):
         """Initialize or reset. Override. Return True on success, False otherwise."""
         self._ok = True
         return True
+
+    async def probe(self) -> str:
+        """On-demand self-test (the CC `probe` command, NOT run at boot): return None when healthy, or
+        a human-readable error string (e.g. 'BMP280 not found on i2c:0'). The operator runs it
+        pre-flight; costly active checks (the servo range sweep) belong here, so a reboot never
+        triggers them. Override per device; default has nothing to probe.
+
+        Convention -- write each step EXPLICITLY, wrapped in its own try/except with a Recorder.log
+        before the action, after success (with the value got), and on failure; on failure return the
+        step's message so probe()'s caller sees which step broke:
+            try:
+                recorder.Recorder.log(self.name, 'probe: chip id ...')
+                chip = await self._read_id()
+                recorder.Recorder.log(self.name, 'probe: chip id ok 0x%02x' % chip)
+            except Exception as error:
+                message = 'chip id: %s' % error
+                recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+                return message
+            ... next step ...
+            return None"""
+        return None
 
     async def run(self) -> None:
         """Main activity loop. Override. Default returns immediately."""

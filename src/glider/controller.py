@@ -43,6 +43,8 @@ class Controller(inspector.Inspectable):
 
     def __init__(self, config: dict, registry: dict = None, log=None):
         self.config: dict = config
+        # the CLASS registry (name -> Task class) used by create(); the INSTANCE directory is
+        # self.tasks, looked up by find()/query(). Injected for tests; defaults to task.ACTIVITIES.
         self.registry: dict = registry if registry is not None else task.ACTIVITIES
         self.log = log if log is not None else (lambda msg: None)
         self.tasks: dict = {}  # name -> Task
@@ -121,7 +123,10 @@ class Controller(inspector.Inspectable):
 
     # -------------------------------------------------------------- lifecycle
     async def setup(self) -> bool:
-        """Create + set up every enabled task in order. Skip (and report) failures."""
+        """Create + set up every enabled task in order. Skip (and report) failures. setup() brings a
+        device to a SAFE state (sensors detect-or-skip, servos centre) with no costly side effects;
+        the active self-test is probe(), run on demand (the CC `probe` command), never at boot -- a
+        mid-flight reboot must not sweep the fins."""
         for name in self.directory():
             if name in self.tasks:
                 continue

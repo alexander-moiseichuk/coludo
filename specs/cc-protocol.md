@@ -18,7 +18,7 @@ no CC link is expected.
 
 ```
    browser ──HTTP + SSE──┐
-                         ├──►  CC (single hub) ──TCP──►  board glider1
+                         ├──►  CC (single hub) ──TCP──►  board taster
    telnet  ──raw TCP─────┘                       └─TCP──►  board glider7a
 ```
 
@@ -60,7 +60,7 @@ Plain TCP, no encryption (trusted LAN; encryption is explicitly out of scope for
 <board> <command> [params...]
 ```
 
-- The **first token is the target**: a board id (from `board.id`, e.g. `glider1`, always a bare
+- The **first token is the target**: a board id (from `board.id`, e.g. `taster`, always a bare
   whitespace-free token) or `all` to broadcast.
 - **Control routes by that token and strips it**, forwarding `<command> [params...]` to the matched
   board socket(s). **A board receives `<command> [params...]` with no id** and never deals with
@@ -70,7 +70,7 @@ Plain TCP, no encryption (trusted LAN; encryption is explicitly out of scope for
   know each command's schema. A value is a **bare token** (no spaces) or **`base64:<data>`** (spaces,
   quotes, JSON, binary). **named** params are `key=value`; everything else is positional. Parsing
   is a trivial `line.split()`. JSON has no special case — it rides as a `base64:` value (e.g.
-  `glider1 save-config base64:<encoded-json>`).
+  `taster save-config base64:<encoded-json>`).
 
 **Responses** use the same framing minus the routing token: a board replies `<status> [params...]`
 (`status` = `ok` / `err` / `pong` / `iam`), any structured payload being one `base64:`-encoded JSON
@@ -84,10 +84,10 @@ routing token); the board replies with the one message that carries its own id:
 
 ```
 Control → board:   whoami
-board → Control:   iam glider1 base64:<{"mcu":"esp32p4","firmware_version":"a1b2c3d4e5f6","config_id":"<hash>","stage":"setting","uptime":812}>
+board → Control:   iam taster base64:<{"mcu":"esp32p4","firmware_version":"a1b2c3d4e5f6","config_id":"<hash>","stage":"setting","uptime":812}>
 ```
 
-Control registers socket ⇄ `glider1`, begins its ~2 s poll loop, and thereafter routes operator
+Control registers socket ⇄ `taster`, begins its ~2 s poll loop, and thereafter routes operator
 traffic to it by id. `config_id` is a hash/version of the running `board.json`, so Control can tell
 whether its cached view of the board's config is current. If a board reconnects with an id already registered, CC
 drops the older socket and keeps the newest (a board only re-dials after a reboot or link loss).
@@ -122,7 +122,7 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `health` | — | `ok {temp,mem_free,load,uptime,components[]}` | vitals; `components[]` carries `{name, ok}` |
 | `stage` | — | `ok {stage,uptime}` | current flight stage |
 | `tel` | `[ms]` | `ok {samples:[...]}` | telemetry samples within the last `ms` |
-| `log` | `<ms>` | `ok {lines:[...], truncated}` | log lines from the last `ms` |
+| `log` | `<ms>` | `ok {lines:[...]}` | poll-model: lines buffered since the last `log`; re-arm teeing for `ms` (`0` stops) |
 | `report` | — | `ok {stage, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
 | `objects` | — | `ok [name, ...]` | names of all `Inspectable` objects (for the `inspect`/`update`/`stats` targets) |
 | `inspect` | `<object>` | `ok {props}` | `Inspectable.inspect()` of a named object |
@@ -146,12 +146,12 @@ rides the generic `inspect`/`update` surface rather than bespoke commands:
 
 ```
 > inspect mission
-from glider1 ok {"launch_id":"hprc-t1","site":"pad-a","latitude":45.5,"longitude":-73.5,
+from taster ok {"launch_id":"hprc-t1","site":"pad-a","latitude":45.5,"longitude":-73.5,
                  "altitude":120,"clock":"2026-06-17T14:32:05","epoch":1781000000}
 > update mission base64:{"epoch":1781000000}    (time sync — Unix seconds, sets the board RTC)
-from glider1 ok {"changed":["epoch"]}
+from taster ok {"changed":["epoch"]}
 > update mission base64:{"launch_id":"hprc-t2","latitude":45.51}
-from glider1 ok {"changed":["launch_id","latitude"]}
+from taster ok {"changed":["launch_id","latitude"]}
 ```
 
 `epoch` is a momentary action (it sets the RTC, never stored); `inspect` reports the live clock as
@@ -163,7 +163,7 @@ survive a pre-flight reboot. `err unsupported` means the board has no mission ob
 
 ### Log / telemetry retrieval
 
-`log glider1 5000` means "the log records from the **last 5000 ms**." The board keeps a bounded
+`log taster 5000` means "the log records from the **last 5000 ms**." The board keeps a bounded
 ring buffer; if the requested window is older than the buffer holds, it returns what it has and
 sets `"truncated": true`. For continuous tailing, CC polls with a window at least as wide as
 its poll interval and de-duplicates by record uptime (each record carries its uptime, per the
@@ -207,30 +207,37 @@ A first token that is a known board id (or `all`) routes to a board; otherwise i
 | `select <board>` | set this session's **sticky** target; afterwards a bare `<command>` is routed to it |
 | `who` | `from cc ok {selected, since}` — current selection |
 
-**Sticky select / broadcast:** after `select glider1`, typing `health` is routed as `glider1
+**Sticky select / broadcast:** after `select taster`, typing `health` is routed as `taster
 health`; an explicit `<board>`/`all` first token overrides it for that line. Control tags every
-relayed reply with its source (`from glider1 ok …`), so the operator always sees who answered.
+relayed reply with its source (`from taster ok …`), so the operator always sees who answered.
 `all` fans out to every connected board and yields one tagged reply per board.
+
+**Log streaming** is board-first like any other command, but **intercepted by Control** rather than
+forwarded as a one-shot: `<board> log [ms]` (default 1000) starts a per-board poll task that drives
+the board-facing `log <ms>` every tick and surfaces each line to the console as `<id>: <line>` and
+the `/logs` SSE feed; `<board> log off` (or `0`) stops it and sends a final `log 0` so the board
+stops collecting. `all log <ms>` streams every online board. (The raw one-shot board-facing `log`
+remains available programmatically via `POST /api/cmd`.)
 
 Example telnet session (response JSON shown **decoded for readability**; on the wire each is one
 `base64:` token):
 
 ```
 > list
-from cc ok [{"id":"glider1","online":true,"stage":"setting","config_id":"a1b2"},
+from cc ok [{"id":"taster","online":true,"stage":"setting","config_id":"a1b2"},
             {"id":"glider7a","online":true,"stage":"setting","config_id":"c3d4"}]
-> select glider1
-from cc ok {"selected":"glider1"}
-> health                         (routed as: glider1 health)
-from glider1 ok {"temp":54,"mem_free":812000,"load":31,"uptime":90422,
+> select taster
+from cc ok {"selected":"taster"}
+> health                         (routed as: taster health)
+from taster ok {"temp":54,"mem_free":812000,"load":31,"uptime":90422,
                  "components":[{"name":"gnss","ok":false},{"name":"baro_icp10111","ok":true}]}
 > inspect wifi
-from glider1 ok {"ssid":"panda","rssi":-52,"tx_power_dbm":11}
+from taster ok {"ssid":"panda","rssi":-52,"tx_power_dbm":11}
 > all ping
-from glider1 pong
+from taster pong
 from glider7a pong
-> glider1 reboot
-from glider1 ok
+> taster reboot
+from taster ok
 ```
 
 ## Browser bridge (HTTP + SSE)
@@ -242,10 +249,13 @@ CC exposes the same capabilities to the browser without the browser ever speakin
 - **`POST /api/cmd`** — body `{board, command, params}`; CC runs the command against the board
   (respecting per-board lockstep) and returns the response as JSON. Used for one-off actions
   (`save-config`, `reboot`, `get-config`, …).
-- **`GET /events`** (optionally `?board=glider1`) — a **Server-Sent Events** stream. CC's
-  per-board poll loop publishes `health`, `tel`, and `log` results to subscribed browsers as
-  SSE events. SSE is chosen over WebSocket because the live need is server→browser streaming,
-  it is plain HTTP (no extra dependency), and browser→board actions are ordinary POSTs.
+- **`GET /events`** — a **Server-Sent Events** stream of the board list, pushed every heartbeat
+  (the live table). SSE is chosen over WebSocket because the live need is server→browser
+  streaming, it is plain HTTP (no extra dependency), and browser→board actions are ordinary POSTs.
+- **`POST /api/log`** — body `{board, interval_ms}` (≤ 0 stops); starts/stops the hub's per-board
+  log stream from the dashboard, the same toggle as the operator's `<board> log <ms>`.
+- **`GET /logs`** — a **Server-Sent Events** stream of `{board, line}` log lines, pushed as the
+  hub emits them while a stream is active (enabled via `POST /api/log` or `<board> log <ms>`).
 
 The browser is thus a thin view over CC's polling: CC is the only component that polls boards,
 and it relays results both to telnet operators and to SSE subscribers.

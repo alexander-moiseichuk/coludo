@@ -283,12 +283,12 @@ object per sample at IMU rates (100–200 Hz) would fragment the heap and trigge
 violating the `<10 ms` control-loop budget; and under cooperative `asyncio` a single slow
 subscriber would stall the publisher inline. Instead the mechanism is chosen per data class:
 
-* **Hot sensor data (direct, latest-value "blackboard").** High-rate readings (IMU, baro) are
+* **Hot sensor data (direct, latest-value "databoard").** High-rate readings (IMU, baro) are
   written in place into preallocated per-quantity slots — each holding `value + timestamp +
   source` — with latest-wins semantics and no per-sample allocation. The control loop and the
   sensor-fusion layer read the freshest *valid* slot directly (staleness is the fusion
   priority/timeout logic). The control loop is therefore self-contained: it reads the
-  blackboard and writes servos without pulling per-cycle data through any queue, so it keeps
+  databoard and writes servos without pulling per-cycle data through any queue, so it keeps
   running even if other tasks stall. It is paced by a hardware timer, not `asyncio.sleep`,
   which floors at ~10 ms on this port (see the
   [benchmark findings](../doc/benches/WaveShare_esp32p4-micropython-findings.md)).

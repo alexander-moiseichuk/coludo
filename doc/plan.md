@@ -10,6 +10,10 @@ Required hardware and the phased development roadmap. Architecture lives in
 - **Phase 1 board side — done.** `wifi` (STA) and `cc_client` (`Dispatcher`/`Client` +
   `create_dispatcher` answering whoami/ping/health/state/report/get-config/save-config/
   reset-config/reboot). 8/8 on-board tests.
+- **Phase 2 — done (bench-verified).** All sensors (ADXL375/BNO055/BMP280/ICP-10111/ATGM336H/
+  VL53L4CX) → `databoard` read-time fusion, per-sensor telemetry, board health, separation switch,
+  `probe` self-tests, servos, and CC log streaming with auto hub discovery. 26/26 board + 3/3
+  control. Deferred (not blocking): LSM6DSO32 (not arrived), outdoor GNSS fix. **Next: Phase 3.**
 - **Control hub — done.** `src/control/` split into `board.py` (Board, 10 s exchange timeout),
   `server.py` (the hub: board listener + ~2 s heartbeat + telnet operator console, drop-in
   `commands/`, `all`-only broadcast) and `main.py` (CLI: `--host 0.0.0.0` / `--port` / `--help`),
@@ -95,38 +99,88 @@ testable foundations and connectivity come before the flight loop.
 - **Milestone:** power a board → it appears on CC → view health → toggle a component →
   save + reboot → it returns from the saved config.
 
-### Phase 2 — Sensors & telemetry (enables telemetry-only flights)
-- ✅ **`blackboard.py`** — the latest-value store (per-quantity slots: value/timestamp/source,
-  latest-wins; Inspectable as `blackboard`). `test_blackboard`.
+### Phase 2 — Sensors & telemetry (enables telemetry-only flights) — DONE (bench-verified)
+- ✅ **`databoard.py`** — latest-value store **+ read-time fusion** in one structure: a registry of
+  `Parameter` objects, each owning a channel per source (rank=priority, expiry, 2 slots). `value()`
+  returns the lowest-rank fresh source, else linearly extrapolates the newest source to now — so
+  "rank 0 until it expires, then rank 1" is emergent (no queue, no fusion task). Inspectable.
+  `test_databoard`.
 - ✅ **Shared (locked) I²C bus** (`i2cbus.py`) — one `machine.I2C` + `asyncio.Lock` per id, shared
   via `get()`; ADXL375 + BNO055 + BMP280 coexist on `i2c:0`. `test_i2cbus`.
-- ◧ Sensor drivers + tests (all → blackboard, write `altitude`/`temperature`/`accel`/`attitude`):
-  ✅ **ADXL375** (`accel` g, interrupt-driven on DATA_READY/INT1→GPIO4 + timeout fallback);
+- ✅ Sensor drivers + tests (all → databoard, write `altitude`/`temperature`/`accel`/`attitude`/
+  `agl`/`position`):
+  ✅ **ADXL375** (`accel` g, on SPI(1) — I²C code retained; interrupt-driven + timeout fallback);
   ✅ **BNO055** (NDOF fusion `attitude` deg, polled 50 Hz);
   ✅ **BMP280** (Bosch-compensated `altitude` m + `temperature` °C, 10 Hz, backup baro);
-  ✅ **ICP-10111** (`drivers/icp10111.py` — TDK command/OTP protocol, `altitude` + `temperature`,
-  primary baro, prio 0); ◻ GNSS (ATGM336H), VL53L4CX. All live-verified on `i2c:0`.
-- ✅ **Sensor fusion** (`tasks/fusion.py` `@task.activity('fusion')`) — blackboard split into a raw
-  layer (per quantity+source) and a fused layer; fusion picks each quantity's live value from its
-  providers by `provides` priority + freshness (timeout), falling back when the preferred goes stale.
-  Live: altitude/temperature → ICP-10111 (prio 0) over BMP280, accel/attitude pass through. Config
-  `timeout_ms` set to realistic windows (a few sample periods). `test_fusion` + `test_blackboard`.
-- ✅ **Telemetry wiring** — `Telemetry(prorate_us)` rate-limits a stream (a fast sensor pushes every
+  ✅ **ICP-10111** (TDK command/OTP protocol, `altitude`/`pressure`/`temperature`/`elevation`,
+  primary baro, prio 0);
+  ✅ **ATGM336H GNSS** (UART, CASIC/PCAS RMC-only @10 Hz → `position`);
+  ✅ **VL53L4CX** (laser ToF, I²C, VL53L4CD ULD init → `agl` m). All live-verified.
+- ✅ **Sensor fusion** — folded into the databoard's read-time `value()` (the separate fusion task
+  is gone). rank=`priority`, expiry=`timeout_ms` (realistic windows: a few sample periods). Live:
+  altitude/temperature → ICP-10111 (rank 0) over BMP280, accel/attitude pass through.
+- ✅ **Telemetry wiring** — `Telemetry(decimate_us)` rate-limits a stream (a fast sensor pushes every
   sample, decimated to a sane rate). Each sensor emits its own `SENSOR.csv` (accel 50 Hz, imu 25 Hz,
-  baros 10 Hz) + fusion emits a wide `fused.csv` (one column per quantity, vectors pipe-joined,
-  10 Hz). Live-verified: rows/sec match the configured `telemetry_us`.
+  baros 10 Hz); separation emits a durable `separation.csv`. Live-verified: rows/sec match the
+  configured `telemetry_us`. (No `fused.csv` — the fused value is read-time via the databoard.)
 - ✅ **Separation switch** (`drivers/separation.py` `@task.driver('separation')`) — copper pads on
   `separation_switch` (GPIO33): HIGH=nested, LOW=separated, internal pull-down (no external resistor
   needed). IRQ on either edge → debounce → on a confirmed separation during Boosting, drive
   Boosting→Gliding (guarded). Live-verified: unplugging 3V3 fired the transition. `test_separation`.
-- ◻ Recorder UART link to the physical Luckfox recorder (rings drain to uart:1 already).
+- ✅ Recorder UART link to the physical Luckfox recorder (rings drain to uart:1).
+- ✅ **`probe` self-tests** — on-demand pre-flight check over every Inspectable (`probe [name|all]`
+  via CC), per-step inline logging; active checks (servo sweep) run on demand, never at boot.
+- ✅ **Servos** (`drivers/sg90.py`) — 3× SG90 on PWM, integer-degree open-loop, N-slew concurrency
+  gate (`servo_concurrency`) to bound the boost-rail transient. Live-verified (groundwork for Phase 3).
+- ✅ **CC log streaming** — board tees `Recorder.log()` into a deadline-gated ring on demand; the
+  `<board> log <ms>` poll (operator console or dashboard `POST /api/log`) returns each window's lines
+  to the console + `/logs` SSE. Auto hub discovery: a board with no `cc_host` dials its subnet `.1`
+  (explicit address overrides; `''` = standalone).
+- **Deferred (not blocking close):** LSM6DSO32 IMU driver (hardware not arrived — fusion already
+  accepts a new ranked accel source); outdoor GNSS fix (driver works indoors, needs an open-sky test).
 - **Milestone:** a real telemetry-only flight — collect data, no actuation.
 
 ### Phase 3 — Active control
-- Servo task (sequential updates, calibration maps, ±45° limits).
-- Flight stage machine (ignition → separation → apogee → landing thresholds) + PID
-  stabilization + per-phase maneuvers + degraded modes + watchdog / health monitor.
-- **Milestone:** a controlled glide.
+Builds on what Phase 2 already shipped: the `Stage` machine (`SETTING→BOOSTING→GLIDING→LANDING`,
+`controller.py`), 3× SG90 fins (`servo_yaw` + `servo_eleron_left`/`_right`, integer-degree `move()`
++ N-slew gate), the separation switch (drives `BOOSTING→GLIDING`), and databoard signals
+(`attitude` deg from BNO055, `accel` g from ADXL375, `altitude`/`elevation` m, `agl` m, `position`).
+Order: **1 → 2 → 3 → 4** (mixer, then the loop it drives, then automate the stages that gate it,
+then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests, on-board.
+
+- ◻ **1. Surface mixer** (`tasks/mixer.py` or fold into a control task) — map control axes to the 3
+  fins: **elevon mixing** (pitch = both elerons together, roll = differential) + **yaw = rudder**.
+  Per-fin trim (neutral), direction sign, and a hard ±limit clamp (config; e.g. ±45°) on top of
+  `sg90.update()`. Pure integer-degree math; unit-tested independent of hardware (mix → per-fin
+  angles, clamp, trim). No servo motion until commanded.
+- ◻ **2. Stabilization loop** (`tasks/flight.py`, `@task.activity('flight')`) — ~50 Hz: read
+  `attitude` (+ `accel`) from the databoard, run a **PID per axis** (setpoint − measured → command),
+  feed the mixer. Gains + setpoints from config; integral clamp / output saturation. **Active only in
+  `GLIDING`** (neutral/disabled otherwise). Degraded mode: stale/missing attitude → surfaces to
+  neutral, never act on stale data (the databoard freshness already exposes this). Test the PID +
+  saturation math with synthetic error sequences (positive + negative, wind-up guard).
+- ◻ **3. Stage automation** — make `set_stage` transitions automatic + guarded, each logged +
+  telemetry'd:
+  `SETTING→BOOSTING` launch detect (|accel| > g-threshold sustained N ms);
+  `BOOSTING→GLIDING` separation (exists) with a burnout/timeout fallback;
+  `GLIDING→LANDING` low `agl` (or descent + low `elevation`);
+  `LANDING→done` on-ground (low motion for N s). Per-stage task gating (the control loop runs only in
+  `GLIDING`; high-g `BOOSTING` keeps fins locked neutral). Test each threshold with synthetic
+  databoard inputs (fires once, monotonic, no chatter).
+- ◻ **4. Per-phase behaviour / maneuvers** — setpoint policy per stage: `BOOSTING` = fins locked
+  neutral (no actuation under thrust); `GLIDING` = hold target attitude / glide path (initially
+  wings-level + heading hold; spiral-to-launch-site once GNSS nav lands in Phase 4); `LANDING` =
+  flare / neutral. Setpoints declared per stage in config.
+- ◻ **5. Watchdog + health gating** — hardware `machine.WDT` fed by the live control loop (a wedged
+  loop reboots, matching the no-stop-flag policy); the `health` task gates actuation — unhealthy
+  sensors / low battery → fail-safe neutral + flagged. Test the gate (forced-unhealthy → neutral).
+- ◻ **6. Arming + ground-test safety** — actuation only when **armed** and in `GLIDING`; arming
+  requires `probe all` clean; a ground-test mode exercises the loop with surfaces live but stages
+  forced, so it can be bench-validated before flight. (CC `arm`/`disarm`, mission-gated.)
+- **Deferred to Phase 4:** GNSS landing-zone navigation (heading-to-home), GPX export. Until nav
+  exists, `GLIDING` holds wings-level + a fixed heading.
+- **Milestone:** a controlled glide — launch detect → separation → stabilized glide → flare, with
+  the loop gated by stage + health and a fed watchdog.
 
 ### Phase 4 — Polish
 - Landing-zone navigation + per-launch mission config, GPX export of telemetry, richer
@@ -159,7 +213,7 @@ Message Propagation"), grounded by on-board measurements (see
 [benchmark findings](benches/WaveShare_esp32p4-micropython-findings.md)). Not one paradigm — chosen per
 data class to respect the GC-pause and <10 ms control-loop budgets on MicroPython:
 
-- **Hot sensor data** (IMU/baro at 100–200 Hz) → a shared **latest-value blackboard**:
+- **Hot sensor data** (IMU/baro at 100–200 Hz) → a shared **latest-value databoard**:
   preallocated per-quantity slots (value + timestamp + source), latest-wins, no per-sample
   allocation. The control loop and fusion read it directly. Avoids GC churn and starvation.
 - **Discrete events / commands** (separation, phase change, CC commands, enable/disable) →
@@ -167,7 +221,7 @@ data class to respect the GC-pause and <10 ms control-loop budgets on MicroPytho
 - **Bulk telemetry / logs** → **ring buffers** (producer/consumer), drained to the Recorder
   over UART and served to CC on poll.
 
-The control loop stays self-contained (reads blackboard, writes servos) so it runs even if
+The control loop stays self-contained (reads databoard, writes servos) so it runs even if
 other tasks stall, and is paced by a hardware timer (not `asyncio.sleep`, which floors at
 ~10 ms on this port). The Recorder's PSRAM queues are written with `struct.pack_into`, never
 slice-assignment (which is O(buffer length) here).

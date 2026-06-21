@@ -17,11 +17,12 @@ could be an option but may lead too much battery pack weigh.
 ## Sensor & actuator inventory (on hand)
 
 Parts physically available now (2026-06) — these drive the Phase-2 sensor drivers in
-`src/glider/drivers/`. All sensors sit on `i2c:0` except GNSS (`uart:2`); the addresses are distinct.
+`src/glider/drivers/`. Most sensors sit on `i2c:0`; the ADXL375 is on its own `spi:1` bus and GNSS on
+`uart:2`. The I²C addresses are distinct.
 
 | Quantity | Part | Bus / addr | Notes |
 | --- | --- | --- | --- |
-| high-G accel | **ADXL375** ([Adafruit 5374](https://www.adafruit.com/product/5374)) | I²C `0x53` | ±200 g |
+| high-G accel | **ADXL375** ([Adafruit 5374](https://www.adafruit.com/product/5374)) | SPI `1` (cs 49) | ±200 g; moved off I²C for clean high-rate reads (see wiring below) |
 | attitude (9-DOF) + baro | **sen0253** = BNO055 + BMP280 | I²C `0x28` / `0x76` | one board, two devices |
 | pressure | **sen0517** = ICP-10111 | I²C `0x63` | primary altimeter |
 | AGL laser | **VL53L4CX** ([Adafruit 5425](https://www.adafruit.com/product/5425)) | I²C `0x29` | ToF, low-altitude (<~6–10 m) |
@@ -42,6 +43,28 @@ recommended for boost), so the high-G channel is the dedicated [ADXL375 (±200 g
 The **BNO055 is still on board** (as part of the **sen0253** combo, with BMP280) and provides the
 **9-DOF attitude/orientation** for stabilisation — the two complement each other (ADXL375 = high-G
 accel, BNO055 = attitude). MPU6050 stays a cheap fallback IMU only.
+
+### ADXL375 → SPI wiring (Adafruit 5374 → ESP32-P4)
+
+The ADXL375 runs on its own **SPI(1)** bus (mode 3, 5 MHz), off the shared I²C so its ~100 Hz reads
+never queue behind the baros. **Watch the breakout labels** — on the Adafruit board the SPI data pins
+are silk-printed by their I²C names, so the mapping is *not* one-to-one:
+
+- **SDA = MOSI** (controller→sensor, "SDI") → wire to the controller's **MOSI**.
+- **SDO = MISO** (sensor→controller) → wire to the controller's **MISO**.
+
+| ADXL375 breakout pin | meaning | ESP32-P4 GPIO | net |
+| --- | --- | --- | --- |
+| VIN | power | 3V3 | 3.3 V |
+| GND | ground | GND | ground |
+| SCL | SPI clock (SCK) | **48** | SPI1 SCK |
+| **SDA** | SPI **MOSI** (SDI) | **47** | SPI1 MOSI |
+| **SDO** | SPI **MISO** | **46** | SPI1 MISO |
+| CS | chip-select (active low) | **49** | `adxl375_cs` |
+| INT1 | DATA_READY | **4** | `adxl375_int` |
+
+To revert to I²C: tie CS high, wire SDA/SCL to GPIO7/8, and set the component `bus: 'i2c', id: 0`
+(the driver keeps the I²C path; `addr 0x53`).
 
 **Required, weight 1.0 g**
 

@@ -29,9 +29,9 @@ async def amain():
     assert 'led' not in flight.tasks  # enabled: False by default
     assert 'wifi' not in flight.tasks and 'cc' not in flight.tasks
 
-    # a sensor whose driver is not implemented yet (gnss/atgm336h) is skipped, not fatal -- the
-    # adxl375/bno055/bmp280 drivers exist now and build only if their device answers on the bus
-    assert 'gnss' not in flight.tasks
+    # the gnss driver (atgm336h) is implemented and builds whenever enabled -- a UART has no
+    # presence check, unlike the i2c/spi sensors which build only if their device answers on the bus
+    assert 'gnss' in flight.tasks and flight.tasks['gnss'].validate()
 
     await asyncio.sleep_ms(30)  # let the loops tick (the recorder drains)
     await flight.finish()
