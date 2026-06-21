@@ -129,7 +129,7 @@ class Web:
 
     async def _logs(self, writer) -> None:
         """Server-Sent Events of streamed board log lines (`{board, line}`), pushed as the hub emits
-        them while `logs <board>` is active. One queue per connection, dropped from the hub on close."""
+        them while `log <board>` is active. One queue per connection, dropped from the hub on close."""
         queue = asyncio.Queue(maxsize=1000)
         self.hub.log_subscribers.add(queue)
         try:

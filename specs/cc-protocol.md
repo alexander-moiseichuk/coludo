@@ -206,7 +206,7 @@ A first token that is a known board id (or `all`) routes to a board; otherwise i
 | `list` | `from cc ok [{id, online, stage, config_id}]` — connected boards |
 | `select <board>` | set this session's **sticky** target; afterwards a bare `<command>` is routed to it |
 | `who` | `from cc ok {selected, since}` — current selection |
-| `logs <board> [ms\|off]` | stream a board's logs (poll-driven `log <ms>` every tick) to the console as `<id>: <line>` and the `/logs` SSE feed; `off`/`0` stops + drains |
+| `log <board> [ms\|off]` | stream a board's logs (poll-driven board-facing `log <ms>` every tick) to the console as `<id>: <line>` and the `/logs` SSE feed; `off`/`0` stops + drains |
 
 **Sticky select / broadcast:** after `select taster`, typing `health` is routed as `taster
 health`; an explicit `<board>`/`all` first token overrides it for that line. Control tags every

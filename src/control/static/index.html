@@ -52,7 +52,7 @@
 <pre id="cfgresult"></pre>
 
 <h2>logs</h2>
-<p class="muted">enable from the operator console: <code>logs &lt;board&gt; [ms]</code> to start, <code>logs &lt;board&gt; off</code> to stop</p>
+<p class="muted">enable from the operator console: <code>log &lt;board&gt; [ms]</code> to start, <code>log &lt;board&gt; off</code> to stop</p>
 <pre id="logs"></pre>
 
 <script>
@@ -138,7 +138,7 @@ document.getElementById('reset').onclick = async () => {
   cfgOut.textContent = JSON.stringify(await cmd(cfgBoard(), 'reset-config'), null, 2);
 };
 
-// --- live log stream: a passive viewer of /logs (enable via the operator `logs <board>` command) ---
+// --- live log stream: a passive viewer of /logs (enable via the operator `log <board>` command) ---
 const logPane = document.getElementById('logs');
 new EventSource('/logs').onmessage = (event) => {
   const { board, line } = JSON.parse(event.data);

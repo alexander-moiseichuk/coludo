@@ -42,7 +42,7 @@ class Server:
         self.heartbeat_s = heartbeat_s
         self.gps = gps  # optional host GPS (gps.Gps) for launch-position assist; None if unattached
         self.commands = commands.load()  # operator command registry, loaded from commands/ at start
-        self.streams = {}  # board id -> the log-streaming Task while `logs <board>` is active
+        self.streams = {}  # board id -> the log-streaming Task while `log <board>` is active
         self.log_subscribers = set()  # asyncio.Queue per /logs SSE listener (streamed log lines)
 
     def board_rows(self) -> list:

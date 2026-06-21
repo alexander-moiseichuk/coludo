@@ -290,8 +290,8 @@ async def _gps_assist():
 
 
 async def _log_stream():
-    """Operator enables `logs <board> <ms>`: the hub polls the board's `log` buffer and surfaces each
-    line to the console (`<id>: <line>`) and the /logs SSE feed; `logs <board> off` stops it (and
+    """Operator enables `log <board> <ms>`: the hub polls the board's `log` buffer and surfaces each
+    line to the console (`<id>: <line>`) and the /logs SSE feed; `log <board> off` stops it (and
     tells the board to stop collecting with a final `log 0`)."""
     seen = []
     hub = server.Server(host='127.0.0.1', port=LOG_BOARD_PORT, operator_port=LOG_OPERATOR_PORT,
@@ -321,7 +321,7 @@ async def _log_stream():
         await sse_writer.drain()
         await asyncio.wait_for(sse_reader.readuntil(b'\r\n\r\n'), 2)  # consume the SSE response headers
 
-        reply = await ask('logs glider9 30')
+        reply = await ask('log glider9 30')
         assert reply.startswith('from cc ok ') and '"interval_ms": 30' in reply, reply
 
         # the hub polls the board and surfaces each line as `<id>: <line>` on the console
@@ -336,7 +336,7 @@ async def _log_stream():
         assert b'"board": "glider9"' in frame and b'test :: tick' in frame, frame
 
         # stop -> the board is told to stop collecting (log 0) and no streaming task remains
-        reply = await ask('logs glider9 off')
+        reply = await ask('log glider9 off')
         assert '"streaming": false' in reply, reply
         assert 'glider9' not in hub.streams
         sse_writer.close()
