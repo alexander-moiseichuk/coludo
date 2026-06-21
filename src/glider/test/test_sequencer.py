@@ -79,7 +79,8 @@ async def amain():
     assert ctrl.stage == Stage.DONE
 
     # guard: a transient (high g that drops before launch_ms) does NOT trip launch
-    ctrl.stage, seq._stage_seen = Stage.SETTING, None
+    ctrl.stage = Stage.SETTING
+    seq._stage_seen = None
     accel.push((0.0, 0.0, 8.0))
     seq._tick(2000)  # condition starts
     accel.push((0.0, 0.0, 1.0))  # drops back before launch_ms
@@ -87,7 +88,9 @@ async def amain():
     assert ctrl.stage == Stage.SETTING
 
     # operator hold (ground test): manual pauses auto-sequencing -- a sustained launch is ignored
-    ctrl.stage, ctrl.manual, seq._stage_seen = Stage.SETTING, True, None
+    ctrl.stage = Stage.SETTING
+    ctrl.manual = True
+    seq._stage_seen = None
     accel.push((0.0, 0.0, 8.0))
     seq._tick(3000)
     seq._tick(3200)  # well past launch_ms

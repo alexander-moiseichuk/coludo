@@ -69,7 +69,8 @@ async def main():
         await flight_task.setup()
         runner = asyncio.create_task(flight_task.run())
         await asyncio.sleep_ms(300)
-        flight_task._steps, flight_task._max_step_us = 0, 0
+        flight_task._steps = 0
+        flight_task._max_step_us = 0
         idle_delta, ms = await _window(2000)
         achieved = flight_task._steps * 1000 / ms
         load = (1 - (idle_delta * 1000 / ms) / base_rate) * 100

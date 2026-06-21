@@ -41,14 +41,16 @@ async def amain():
     wd = watchdog.Watchdog('watchdog', {'period_ms': 5, 'wdt_timeout_ms': 2000}, _StubController(flight))
     assert await wd.setup() is True
     resets = []
-    wd._wdt, wd._reset = StubWDT(), lambda: resets.append(1)
+    wd._wdt = StubWDT()
+    wd._reset = lambda: resets.append(1)
 
     # not in a control phase -> nothing to supervise (never "stalled")
     flight._active = False
     assert wd._stalled(flight) is False
 
     # in a control phase + the step counter advancing -> healthy
-    flight._active, flight._steps = True, 10
+    flight._active = True
+    flight._steps = 10
     assert wd._stalled(flight) is False  # 0 -> 10
     flight._steps = 20
     assert wd._stalled(flight) is False  # 10 -> 20
@@ -56,7 +58,8 @@ async def amain():
     assert wd._stalled(flight) is True  # 20 == 20
 
     # run(): a healthy (advancing) control loop -> WDT fed, no reset
-    flight._active, flight._steps = True, 0
+    flight._active = True
+    flight._steps = 0
     ticker = asyncio.create_task(_tick(flight))
     runner = asyncio.create_task(wd.run())
     await asyncio.sleep_ms(40)

@@ -63,7 +63,8 @@ async def amain():
     assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._active is False
 
     # disarmed -> neutral even in a control phase (the arming safety gate)
-    ctrl._stage, ctrl.armed = 'gliding', False
+    ctrl._stage = 'gliding'
+    ctrl.armed = False
     unit._step()
     assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._active is False
     ctrl.armed = True  # re-arm for the scheduling-mode checks below

@@ -183,7 +183,9 @@ async def amain():
         failures = {}
 
         def __init__(self):
-            self.armed, self.manual, self._stage = False, False, 'setting'
+            self.armed = False
+            self.manual = False
+            self._stage = 'setting'
 
         def arm(self):
             self.armed = True
@@ -200,7 +202,8 @@ async def amain():
         def hold(self, name):
             if name not in ('setting', 'boosting', 'gliding', 'landing', 'done'):
                 return False
-            self._stage, self.manual = name, True
+            self._stage = name
+            self.manual = True
             return True
 
     arm_ctrl = _ArmController()
