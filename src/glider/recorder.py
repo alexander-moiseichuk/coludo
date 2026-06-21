@@ -9,6 +9,7 @@
 # when full); telemetry is important (raises if a record will not fit).
 
 import asyncio
+import random
 import struct
 import time
 
@@ -135,7 +136,11 @@ class Recorder:
         shared by every telemetry stream in this boot."""
         if cls._session is None:
             now = time.localtime()
-            cls._session = '%04d%02d%02d_%02d%02d%02d' % (now[0], now[1], now[2], now[3], now[4], now[5])
+            # a random suffix disambiguates boots that start before the RTC ticks (fast restarts share
+            # the same wall-clock second otherwise -> colliding session ids -> telemetry files clobbered
+            # / a header spliced mid-file on the Luckfox).
+            cls._session = '%04d%02d%02d_%02d%02d%02d_%d' % (
+                now[0], now[1], now[2], now[3], now[4], now[5], random.randint(100, 1000))
         return cls._session
 
     @classmethod

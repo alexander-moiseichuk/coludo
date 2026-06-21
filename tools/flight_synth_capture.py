@@ -1,11 +1,11 @@
-# synth_capture.py — generate a synthetic Coludo recorder capture (a believable E/F-motor boost ->
-# coast -> glide -> land), in the exact wire format flight_telemetry.parse() reads. Lets the report be
-# demoed before any real flight, and gives the parser test realistic data. `python3 synth_capture.py`
-# prints a capture to stdout; pipe it into flight_report.py.
+# flight_synth_capture.py — generate a synthetic Coludo recorder capture (a believable E/F-motor boost
+# -> coast -> glide -> land), in the exact wire format flight_telemetry.parse() reads. Lets the report
+# be demoed before any real flight, and gives the parser test realistic data.
+# `python3 flight_synth_capture.py` prints a capture to stdout; pipe it into flight_report.py.
 
 import math
 
-_SESSION = '20260621_120000'
+_SESSION = '20260621_120000_500'  # YYYYMMDD_HHMMSS_<rand>, matching recorder.session()
 _GROUND_M = 520.0  # launch-site elevation (m AMSL)
 _LAT0, _LON0 = 48.1173, 11.5167
 

@@ -5,11 +5,13 @@
 #                                        each data row is `<uptime_us>;<v>;<v>;...`  (';'-separated)
 #   <ticks_us> <descriptor> :: <message> best-effort log line
 # parse() reads a raw capture (both kinds interleaved) and returns the streams + logs. Stdlib only, so
-# it stays importable in the control test suite; the plotly rendering lives in flight_report.py.
+# it stays importable in the test suite; the plotly rendering lives in flight_report.py.
 
 import re
 
-_SESSION = re.compile(r'^\d{8}_\d{6}_')  # the YYYYMMDD_HHMMSS_ prefix on each telemetry @tag
+# the session prefix on each telemetry @tag: YYYYMMDD_HHMMSS, optionally with a _<rand> disambiguator
+# (recorder.session()); both shapes strip down to the bare file name.
+_SESSION = re.compile(r'^\d{8}_\d{6}(?:_\d+)?_')
 
 
 class Stream:

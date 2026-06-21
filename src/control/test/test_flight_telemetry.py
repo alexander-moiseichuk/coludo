@@ -5,15 +5,18 @@
 import os
 import sys
 
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from tools import flight_telemetry, synth_capture  # noqa: E402
+_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(0, os.path.join(_ROOT, 'tools'))
+import flight_synth_capture  # noqa: E402
+import flight_telemetry  # noqa: E402
 
+# new session shape YYYYMMDD_HHMMSS_<rand>_<file> -- the parser strips it to the bare file name
 FIXTURE = '\n'.join([
-    '@20260609_101715_accel.csv@uptime;ax;ay;az',
-    '@20260609_101715_accel.csv@1000000;0.0;0.0;1.0',
-    '@20260609_101715_accel.csv@1010000;0.1;-0.2;1.0',
-    '@20260609_101715_atgm336h.csv@uptime;lat;lon;speed_kn;course',
-    '@20260609_101715_atgm336h.csv@1000000;48.1173;11.5167;0.0;0.0',
+    '@20260609_101715_500_accel.csv@uptime;ax;ay;az',
+    '@20260609_101715_500_accel.csv@1000000;0.0;0.0;1.0',
+    '@20260609_101715_500_accel.csv@1010000;0.1;-0.2;1.0',
+    '@20260609_101715_500_atgm336h.csv@uptime;lat;lon;speed_kn;course',
+    '@20260609_101715_500_atgm336h.csv@1000000;48.1173;11.5167;0.0;0.0',
     '161221274 health :: probe: vitals ok (mem_free 31480912, temp 35)',
     '161300000 controller :: stage -> gliding',
 ])
@@ -37,7 +40,7 @@ def test_fixture():
 
 
 def test_synthetic_flight():
-    streams, logs = flight_telemetry.parse(synth_capture.generate())
+    streams, logs = flight_telemetry.parse(flight_synth_capture.generate())
     assert {'accel.csv', 'baro_icp10111.csv', 'imu_bno055.csv', 'atgm336h.csv', 'vl53l4cx.csv'} <= set(streams)
     _times, az = streams['accel.csv'].column('az')
     assert max(az) > 5.0  # the boost spike is present

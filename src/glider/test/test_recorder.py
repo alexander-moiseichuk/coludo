@@ -40,7 +40,7 @@ async def test_recorder():
     recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
     assert recorder.Recorder._session is None  # lazy until first tlm/session
     session = recorder.Recorder.session()
-    assert len(session) == 15  # YYYYMMDD_HHMMSS
+    assert len(session) >= 19 and session[15] == '_'  # YYYYMMDD_HHMMSS_<rand>, rand disambiguates boots
 
     # telemetry first, then logs; @<session>_file@ routing
     assert recorder.Recorder.log('Controller', 'setup started') is True
