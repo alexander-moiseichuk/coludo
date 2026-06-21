@@ -1,9 +1,11 @@
 # On-board test for mission.py: launch.config load, live update (launch id / position / RTC time
 # setup), persistence, and Inspector integration. Positive + negative.
 
+import asyncio
 import json
 import os
 
+import databoard
 import inspector
 import mission
 
@@ -133,6 +135,35 @@ def test_landing_zone():
     _cleanup()
 
 
+def test_zone_geometry_and_range():
+    _cleanup()
+    launch = mission.Mission(PATH)
+    launch.update({'latitude': 48.00025, 'longitude': 11.0005})  # launch at the zone centre
+    launch.update({'zone': [[48.0005, 11.000], [48.0000, 11.001]]})  # ~74 m wide -> gates ~37 m away
+    snap = launch.inspect()
+    # all 3 points (target + both gates) and their range from the launch point are exposed
+    assert len(snap['gates']) == 2 and set(snap['distances_m']) == {'target', 'gate_a', 'gate_b'}
+    assert snap['distances_m']['target'] < 2.0  # centre ~ the launch point
+    assert 30.0 < snap['distances_m']['gate_a'] < 45.0  # ~37 m to a short-side gate
+    assert snap['in_range'] is True
+
+    # move the launch point far -> all points blow the range -> in_range flag + probe both fail
+    launch.update({'latitude': 48.005})  # ~530 m north of the zone
+    assert launch.inspect()['in_range'] is False
+    assert 'out of range' in asyncio.run(launch.probe())
+    _cleanup()
+
+
+def test_launch_point_from_gnss():
+    _cleanup()
+    launch = mission.Mission(PATH)  # no CC-set position
+    assert launch.launch_point() is None  # nothing from CC, no fix yet
+    channel = databoard.Databoard.provide('gnss', {'position': {'priority': 0, 'timeout_ms': 1000}}, 'position')
+    channel.push((48.0, 11.0))
+    assert launch.launch_point() == (48.0, 11.0)  # set by GPS (databoard) when CC has not
+    _cleanup()
+
+
 def main():
     assert mission._EPOCH_OFFSET == 946684800
     try:
@@ -145,9 +176,11 @@ def main():
         test_time_setup()
         test_save_roundtrip()
         test_landing_zone()
+        test_zone_geometry_and_range()
+        test_launch_point_from_gnss()
     finally:
         _cleanup()
-    print('ok: mission load/update/time-setup/launch-prefix/save + landing-zone + Inspector')
+    print('ok: mission load/update/time/save + landing-zone geometry/range + GNSS launch-point + Inspector')
 
 
 main()

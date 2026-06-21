@@ -20,7 +20,9 @@ try:
 except ImportError:  # CPython tooling / off-board lint+compile only
     RTC = None
 
+import databoard
 import inspector
+import nav
 import recorder
 
 LAUNCH_PATH: str = 'launch.config'
@@ -30,6 +32,10 @@ LAUNCH_PATH: str = 'launch.config'
 _EPOCH_OFFSET: int = 946684800
 
 _FIELDS: tuple = ('launch_id', 'site', 'latitude', 'longitude', 'altitude')
+
+# coludo.md: the landing zone must fall within ~200 m of the launch point (so the on-board GNSS, ~2.5 m
+# CEP, can resolve a meaningful vector to it). All three zone points (target + both gates) are checked.
+_MAX_RANGE_M: float = 200.0
 
 
 def _load(path: str) -> dict:
@@ -105,24 +111,55 @@ class Mission(inspector.Inspectable):
         """Current board clock as a Unix epoch (seconds), for Control to compare against its own."""
         return time.time() + _EPOCH_OFFSET
 
+    # ------------------------------------------------------------ landing zone
+    def launch_point(self):
+        """The launch origin (lat, lon): the operator-set position (CC `update mission` / `assist`) if
+        present, else the live on-board GNSS fix from the databoard, else None. So it is set by CC
+        unless taken from GPS."""
+        if self.latitude is not None and self.longitude is not None:
+            return (self.latitude, self.longitude)
+        value, source, _age = databoard.Databoard.parameter('position').read()
+        return value if source is not None and value is not None else None  # only a FRESH fix
+
+    def geometry(self) -> dict:
+        """The landing zone resolved against the launch point: the target (centre) + both gates
+        (short-side entrances) and the launch-point->point distances, with `in_range` False if any of
+        the three exceeds _MAX_RANGE_M (coludo.md). None if the zone or the launch point is unset."""
+        if self.zone is None:
+            return None
+        origin = self.launch_point()
+        if origin is None:
+            return None
+        target, gate_a, gate_b = nav.zone(self.zone[0], self.zone[1])
+        distances = {name: round(nav.distance(origin[0], origin[1], point[0], point[1]), 1)
+                     for name, point in (('target', target), ('gate_a', gate_a), ('gate_b', gate_b))}
+        farthest = max(distances.values())
+        return {'origin': origin, 'target': target, 'gates': [gate_a, gate_b], 'distances_m': distances,
+                'max_distance_m': farthest, 'in_range': farthest <= _MAX_RANGE_M}
+
     async def probe(self) -> str:
-        """On-demand self-test: a launch position is set, so an unconfigured site is caught pre-flight
-        (the operator sets it via `update mission` / launch.config). Not a hardware check -- data."""
+        """On-demand self-test: a launch position is set (CC or GNSS) and, if a landing zone is set, all
+        three of its points are within range of the launch point. Caught pre-flight (arm/verify). Not a
+        hardware check -- data."""
         try:
             recorder.Recorder.log(self.name, 'probe: launch position ...')
-            if self.latitude is None or self.longitude is None:
-                raise ValueError('launch position not set (lat/lon)')
-            recorder.Recorder.log(self.name, 'probe: position ok (%.5f, %.5f)' % (
-                self.latitude, self.longitude))
+            origin = self.launch_point()
+            if origin is None:
+                raise ValueError('launch position not set (CC or GNSS)')
+            recorder.Recorder.log(self.name, 'probe: position ok (%.5f, %.5f)' % (origin[0], origin[1]))
+            geometry = self.geometry()
+            if geometry is not None and not geometry['in_range']:
+                raise ValueError('landing zone out of range (%.0f m > %.0f m)' % (
+                    geometry['max_distance_m'], _MAX_RANGE_M))
         except Exception as error:
-            message = 'launch position: %s' % error
+            message = 'launch/zone: %s' % error
             recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
             return message
         return None
 
     # --- Inspectable ---
     def inspect(self) -> dict:
-        return {
+        snapshot = {
             'launch_id': self.launch_id,
             'site': self.site,
             'latitude': self.latitude,
@@ -132,6 +169,13 @@ class Mission(inspector.Inspectable):
             'clock': self.clock(),
             'epoch': self.epoch(),
         }
+        geometry = self.geometry()  # the resolved target + gates + their range from the launch point
+        if geometry is not None:
+            snapshot['target'] = geometry['target']
+            snapshot['gates'] = geometry['gates']
+            snapshot['distances_m'] = geometry['distances_m']
+            snapshot['in_range'] = geometry['in_range']
+        return snapshot
 
     def update(self, props: dict) -> list:
         """Apply launch_id/site/latitude/longitude/altitude (stored, range-checked) and `epoch`
