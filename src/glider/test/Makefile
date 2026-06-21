@@ -4,16 +4,20 @@
 #                        firmware already deployed (run `make test` or ../deploy.sh first)
 #   make test-recorder   integration test: UART write -> recorder (needs mpremote + adb)
 #   make bench           run the asyncio/PSRAM benchmark on the board
+#   make bench-flight    flight-loop load sweep (schedule_hz 0/50/100/200) -- needs firmware deployed
 #   make test PORT=...   override the serial port (default /dev/ttyACM0)
 PORT ?= /dev/ttyACM0
 REC_FILE ?= uart_itest.log
 
-.PHONY: test check test-recorder bench clean
+.PHONY: test check test-recorder bench bench-flight clean
 test:
 	@PORT=$(PORT) bash run_tests.sh
 
 check:
 	@mpremote connect $(PORT) run ../../../tools/board_check.py
+
+bench-flight:
+	@mpremote connect $(PORT) run bench_flight.py
 
 test-recorder:
 	@PORT=$(PORT) REC_FILE=$(REC_FILE) bash itest_recorder.sh
