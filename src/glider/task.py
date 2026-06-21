@@ -22,6 +22,7 @@
 # the Controller. The driver/activity names share one registry for now; splitting drivers out later.
 
 import inspector
+import recorder
 
 ACTIVITIES: dict = {}  # CLASS registry: name -> Task subclass (instance lookup is Controller.find/query)
 
@@ -60,6 +61,22 @@ class Task(inspector.Inspectable):
         a human-readable error string (e.g. 'BMP280 not found on i2c:0'). The operator runs it
         pre-flight; costly active checks (the servo range sweep) belong here, so a reboot never
         triggers them. Override per device; default has nothing to probe."""
+        return None
+
+    async def _probe_step(self, label: str, action) -> str:
+        """One probe() step: log the attempt, run `action` (a no-arg coroutine fn), log the outcome.
+        Returns None on success, or a human-readable error string on failure (which probe() returns to
+        stop the remaining steps). Logs are best-effort. Chain steps with `or`:
+            return await self._probe_step('chip id', self._read_id) or await self._probe_step(...)
+        -- the first failure's message short-circuits the rest, else None."""
+        recorder.Recorder.log(self.name, 'probe: %s ...' % label)
+        try:
+            await action()
+        except Exception as error:
+            message = '%s failed: %s' % (label, error)
+            recorder.Recorder.log(self.name, 'probe: ' + message)
+            return message
+        recorder.Recorder.log(self.name, 'probe: %s ok' % label)
         return None
 
     async def run(self) -> None:

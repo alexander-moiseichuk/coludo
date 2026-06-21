@@ -137,7 +137,9 @@ class Recorder:
     @classmethod
     def log(cls, descriptor: str, message: str) -> bool:
         """Best-effort log line "<ts> <descriptor> :: <message>" (-> recorder.log). Truncated to
-        fit a cell; dropped (returns False) when the buffer is full."""
+        fit a cell; dropped (returns False) when the buffer is full or the Recorder is not set up."""
+        if cls._log is None:
+            return False  # not set up yet -> drop (logs are best-effort)
         data = ('%u %s :: %s\n' % (cls.timestamp(), descriptor, message)).encode()
         if len(data) > cls._log.max_payload:
             data = data[: cls._log.max_payload]
