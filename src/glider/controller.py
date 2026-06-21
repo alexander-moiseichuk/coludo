@@ -123,8 +123,10 @@ class Controller(inspector.Inspectable):
 
     # -------------------------------------------------------------- lifecycle
     async def setup(self) -> bool:
-        """Create, set up, and probe every enabled task in order. Skip (and report) failures: a task
-        whose setup() returns False, or whose probe() returns an error string, is logged and dropped."""
+        """Create + set up every enabled task in order. Skip (and report) failures. setup() brings a
+        device to a SAFE state (sensors detect-or-skip, servos centre) with no costly side effects;
+        the active self-test is probe(), run on demand (the CC `probe` command), never at boot -- a
+        mid-flight reboot must not sweep the fins."""
         for name in self.directory():
             if name in self.tasks:
                 continue
@@ -133,16 +135,15 @@ class Controller(inspector.Inspectable):
                 continue
             try:
                 ok = await new_task.setup()
-                problem = await new_task.probe() if ok else None
             except Exception as e:
-                self.log("controller :: task '%s' bring-up raised: %r" % (name, e))
-                ok, problem = False, None
-            if ok and problem is None:
+                self.log("controller :: task '%s' setup raised: %r" % (name, e))
+                ok = False
+            if ok:
                 self.tasks[name] = new_task
                 inspector.Inspector.register(new_task)  # operator can `inspect <task>`
                 self.log("controller :: task '%s' up" % name)
             else:
-                self.log("controller :: task '%s' skipped: %s" % (name, problem or 'setup failed'))
+                self.log("controller :: task '%s' failed setup" % name)
                 await new_task.finish()
         return True
 

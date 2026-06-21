@@ -117,7 +117,32 @@ async def amain():
     await asyncio.sleep_ms(260)
     assert fired == [1]
 
-    print('ok: cc_client board-first dispatch/serve/standard + inspect/update/stats')
+    # probe: on-demand task self-tests (None = healthy, else an error string), needs a Controller
+    assert 'unsupported' in await sd.handle('probe')  # sd has no controller wired
+
+    class _FakeTask:
+        def __init__(self, name, result):
+            self.name, self._result = name, result
+
+        async def probe(self):
+            return self._result
+
+    class _FakeController:
+        config = config_default.default()
+        _tasks = [_FakeTask('good', None), _FakeTask('bad', 'sensor X not found on i2c:0')]
+
+        def active(self, name=None):
+            if name is None:
+                return self._tasks
+            return next((t for t in self._tasks if t.name == name), None)
+
+    sd4 = cc_client.create_dispatcher(config_default.default(), controller=_FakeController())
+    assert json.loads(cc.parse(await sd4.handle('probe')).args[0]) == {  # 'probe' / 'probe all'
+        'good': None, 'bad': 'sensor X not found on i2c:0'}
+    assert json.loads(cc.parse(await sd4.handle('probe good')).args[0]) == {'good': None}
+    assert 'badargs' in await sd4.handle('probe nope')  # unknown task
+
+    print('ok: cc_client board-first dispatch/serve/standard + inspect/update/stats + probe')
 
 
 asyncio.run(amain())

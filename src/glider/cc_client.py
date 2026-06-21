@@ -168,6 +168,23 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         mission.save()  # persist the live mission (set via `update mission`) to launch.config
         return cc.build('ok')
 
+    async def probe(msg) -> str:
+        """Run task self-tests ON DEMAND (`probe <name>` or `probe`/`probe all`): per task None when
+        healthy, else its error string. Costly ACTIVE checks (e.g. the servo range sweep) live here,
+        never at boot -- so a mid-flight reboot never sweeps the fins. The operator runs it pre-flight."""
+        if controller is None:
+            return cc.build('err', ['unsupported', 'no controller'])
+        target = msg.args[0] if msg.args else 'all'
+        if target == 'all':
+            results = {}
+            for active in controller.active():
+                results[active.name] = await active.probe()  # sequential: one fin sweeps at a time
+            return cc.build('ok', [json.dumps(results)])
+        active = controller.active(target)
+        if active is None:
+            return cc.build('err', ['badargs', 'no task ' + target])
+        return cc.build('ok', [json.dumps({target: await active.probe()})])
+
     async def reboot(msg) -> str:
         reset = on_reboot or (lambda: __import__('machine').reset())  # imported only when it fires
 
@@ -187,6 +204,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
     dispatcher.on('inspect', inspect)
     dispatcher.on('update', update)
     dispatcher.on('stats', stats)
+    dispatcher.on('probe', probe)
     dispatcher.on('get-config', get_config)
     dispatcher.on('save-config', save_config)
     dispatcher.on('reset-config', reset_config)

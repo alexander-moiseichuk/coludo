@@ -4,8 +4,9 @@
 # CLAMPED to the range so a bad command can never drive the horn past the linkage. Set-and-hold like
 # the bluetooth driver: no run loop -- setup() drives the servo to its neutral (zero) angle.
 #
-# probe() is the power-on self-test: it sweeps the full range and returns to neutral, so each fin is
-# seen to travel at bring-up (open-loop, so it cannot fail on its own -> returns None).
+# probe() is the on-demand self-test (the CC `probe` command, run pre-flight -- never at boot, so a
+# reboot can't sweep the fins in the air): it sweeps the full range and returns to neutral, so each
+# fin is seen to travel (open-loop, so it cannot fail on its own -> returns None).
 #
 # Two ways to command a fin:
 #   update {"angle": d}  -- IMMEDIATE, ungated: the operator override (sync, returns at once).
@@ -92,9 +93,9 @@ class Servo(task.Task):
         return True
 
     async def probe(self) -> str:
-        """Power-on self-test: sweep the full range then fix at neutral (zero), so the fin is seen to
-        travel. Open-loop (no feedback) -> always None; gated like any move(), so fins self-test one
-        slew tier at a time."""
+        """On-demand self-test (CC `probe`, pre-flight -- never at boot): sweep the full range then fix
+        at neutral (zero) so the fin is seen to travel. Open-loop (no feedback) -> always None; gated
+        like any move(), so fins self-test one slew tier at a time."""
         await self.move(self._min_deg)
         await self.move(self._max_deg)
         await self.move(self._neutral)

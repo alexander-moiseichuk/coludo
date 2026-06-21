@@ -2,9 +2,9 @@
 #
 # Every component/system task follows the common lifecycle from specs/coludo.md:
 #   setup()    async; initialize or reset; return True on success
-#   probe()    async; bring-up self-test -> None if healthy, else an error string (Controller logs +
-#              skips). Run right after setup(). Default None; sensors report 'X not found on i2c:0',
-#              actuators exercise themselves (the servo sweeps its range).
+#   probe()    async; ON-DEMAND self-test (the CC `probe` command, never at boot) -> None if healthy,
+#              else an error string. Default None; a sensor reports 'X not found on i2c:0', an actuator
+#              exercises itself (the servo sweeps its range) -- so a mid-flight reboot never sweeps fins.
 #   run()      async; the task's main activity loop
 #   notify()   subscribe a callback for this task's updates
 #   validate() return True if the task is currently healthy
@@ -56,9 +56,10 @@ class Task(inspector.Inspectable):
         return True
 
     async def probe(self) -> str:
-        """Bring-up self-test, run by the Controller right after setup(): return None when all is
-        well, or a human-readable error string (e.g. 'BMP280 not found on i2c:0') when not -- the
-        Controller logs it and skips the task. Override per device; default has nothing to probe."""
+        """On-demand self-test (the CC `probe` command, NOT run at boot): return None when healthy, or
+        a human-readable error string (e.g. 'BMP280 not found on i2c:0'). The operator runs it
+        pre-flight; costly active checks (the servo range sweep) belong here, so a reboot never
+        triggers them. Override per device; default has nothing to probe."""
         return None
 
     async def run(self) -> None:
