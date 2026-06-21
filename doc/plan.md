@@ -153,12 +153,14 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
   rudder**, per-fin trim (neutral) + direction-sign gains + a hard ±`limit_deg` clamp on control
   deflection (config `mixer`). Pure integer-degree math, `neutralise()` for the safe output;
   `test_mixer` covers the matrix/trim/clamp. No servo motion until the control task drives it.
-- ◻ **2. Stabilization loop** (`tasks/flight.py`, `@task.activity('flight')`) — ~50 Hz: read
-  `attitude` (+ `accel`) from the databoard, run a **PID per axis** (setpoint − measured → command),
-  feed the mixer. Gains + setpoints from config; integral clamp / output saturation. **Active only in
-  `GLIDING`** (neutral/disabled otherwise). Degraded mode: stale/missing attitude → surfaces to
-  neutral, never act on stale data (the databoard freshness already exposes this). Test the PID +
-  saturation math with synthetic error sequences (positive + negative, wind-up guard).
+- ✅ **2. Stabilization loop** (`tasks/flight.py`, `@task.activity('flight')` + `pid.py`) — reads
+  `attitude` (heading/roll/pitch), **PID per axis** (`pid.Pid`, integral + output clamp) to the
+  setpoint + heading-hold → `mixer.mix()` → `sg90.update()`. **Active only in `GLIDING`** (every other
+  stage holds fins neutral); stale/absent attitude → neutral (degraded). **Timer-driven**:
+  `rate_hz > 0` → `machine.Timer` ticks a ThreadSafeFlag (deterministic slice independent of other
+  tasks, ~1 m/step at 100 Hz/100 m/s); `rate_hz 0` → asyncio at `period_ms`. Self-times (steps +
+  max_step_us via inspect) for a load sweep vs board_health. Gains 0 + task disabled by default. Tests
+  `test_pid` (P/I/D + clamps) + `test_flight` (gating, degraded, PID→mix→fins, both schedule modes).
 - ◻ **3. Stage automation** — make `set_stage` transitions automatic + guarded, each logged +
   telemetry'd:
   `SETTING→BOOSTING` launch detect (|accel| > g-threshold sustained N ms);
