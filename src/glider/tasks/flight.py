@@ -1,12 +1,12 @@
-# tasks/flight.py — Phase 3 stabilization loop. @task.activity('flight'). At `rate_hz` it reads the
+# tasks/flight.py — Phase 3 stabilization loop. @task.activity('flight'). At `schedule_hz` it reads the
 # IMU 'attitude' (heading, roll, pitch), runs a PID per axis to the setpoint (+ heading hold), mixes
 # the result to the fins (mixer.py) and writes them via sg90.update(). ACTIVE ONLY IN GLIDING -- every
 # other stage holds the fins neutral, so it never actuates under boost or on the ground. Degraded:
 # stale/absent attitude -> neutral (never act on stale data).
 #
-# Scheduling: rate_hz > 0 -> a machine.Timer ticks the step, so the control law gets a regular slice
+# Scheduling: schedule_hz > 0 -> a machine.Timer ticks the step, so the control law gets a regular slice
 # independent of what other asyncio tasks are doing (deterministic, e.g. while the laser hammers I2C in
-# landing). rate_hz == 0 -> a plain asyncio loop at period_ms (reconfigure/debug; subject to the ~10 ms
+# landing). schedule_hz == 0 -> a plain asyncio loop at period_ms (reconfigure/debug; subject to the ~10 ms
 # asyncio floor). Default 100 Hz timer = ~1 m per control step at 100 m/s. Gains default to 0 and the
 # task is disabled by default -- it cannot move a surface until enabled + tuned on the airframe.
 
@@ -38,9 +38,9 @@ class Flight(task.Task):
     async def setup(self) -> bool:
         board = self.controller.config
         self._mixer = mixer.Mixer(board.get('mixer', {}))
-        self._rate_hz: int = self.config.get('rate_hz', 100)  # > 0 -> timer; 0 -> asyncio at period_ms
+        self._schedule_hz: int = self.config.get('schedule_hz', 100)  # > 0 -> timer; 0 -> asyncio at period_ms
         self._period_ms: int = self.config.get('period_ms', 20)
-        self._dt: float = (1.0 / self._rate_hz) if self._rate_hz > 0 else (self._period_ms / 1000.0)
+        self._dt: float = (1.0 / self._schedule_hz) if self._schedule_hz > 0 else (self._period_ms / 1000.0)
         gains = self.config.get('gains', {})
         limit = self._mixer.limit
         self._pid = {axis: pid.Pid(output_limit=limit,
@@ -94,26 +94,26 @@ class Flight(task.Task):
         self._apply(self._mixer.neutralise())
 
     async def run(self) -> None:
-        if self._rate_hz > 0:
+        if self._schedule_hz > 0:
             await self._run_timer()
         else:
             await self._run_asyncio()
 
     async def _run_timer(self) -> None:
-        """A machine.Timer ticks a ThreadSafeFlag at rate_hz; the step runs in this task (not the ISR).
+        """A machine.Timer ticks a ThreadSafeFlag at schedule_hz; the step runs in this task (not the ISR).
         A regular slice regardless of other tasks. The flag coalesces, so an overrun runs the latest
         step (no backlog)."""
         from machine import Timer
 
         flag = asyncio.ThreadSafeFlag()
         self._timer = Timer(self.config.get('timer_id', 0))
-        self._timer.init(freq=self._rate_hz, mode=Timer.PERIODIC, callback=lambda t: flag.set())
+        self._timer.init(freq=self._schedule_hz, mode=Timer.PERIODIC, callback=lambda t: flag.set())
         while True:
             await flag.wait()
             self._step()
 
     async def _run_asyncio(self) -> None:
-        """The escape hatch (rate_hz == 0): a plain asyncio loop -- reconfigure / debug, no timer."""
+        """The escape hatch (schedule_hz == 0): a plain asyncio loop -- reconfigure / debug, no timer."""
         while True:
             await asyncio.sleep_ms(self._period_ms)
             self._step()
@@ -126,8 +126,8 @@ class Flight(task.Task):
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
-        status['schedule'] = 'timer' if self._rate_hz > 0 else 'asyncio'
-        status['rate_hz'] = self._rate_hz if self._rate_hz > 0 else round(1000 / self._period_ms)
+        status['schedule'] = 'timer' if self._schedule_hz > 0 else 'asyncio'
+        status['schedule_hz'] = self._schedule_hz if self._schedule_hz > 0 else round(1000 / self._period_ms)
         status['gliding'] = self._gliding
         status['steps'] = self._steps  # load sweep: compare steps/sec + max_step_us vs board_health load
         status['max_step_us'] = self._max_step_us

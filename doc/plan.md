@@ -157,10 +157,26 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
   `attitude` (heading/roll/pitch), **PID per axis** (`pid.Pid`, integral + output clamp) to the
   setpoint + heading-hold → `mixer.mix()` → `sg90.update()`. **Active only in `GLIDING`** (every other
   stage holds fins neutral); stale/absent attitude → neutral (degraded). **Timer-driven**:
-  `rate_hz > 0` → `machine.Timer` ticks a ThreadSafeFlag (deterministic slice independent of other
-  tasks, ~1 m/step at 100 Hz/100 m/s); `rate_hz 0` → asyncio at `period_ms`. Self-times (steps +
+  `schedule_hz > 0` → `machine.Timer` ticks a ThreadSafeFlag (deterministic slice independent of other
+  tasks, ~1 m/step at 100 Hz/100 m/s); `schedule_hz 0` → asyncio at `period_ms`. Self-times (steps +
   max_step_us via inspect) for a load sweep vs board_health. Gains 0 + task disabled by default. Tests
   `test_pid` (P/I/D + clamps) + `test_flight` (gating, degraded, PID→mix→fins, both schedule modes).
+  **Load sweep** (ESP32-P4, otherwise-idle board, gains 0 so each step does the full read→PID→mix→
+  apply; CPU from an idle-counter vs a no-flight baseline):
+
+  | schedule | achieved | worst step | CPU load |
+  |---|---|---|---|
+  | asyncio (10 ms) | 100 Hz | ~1.15 ms | ~5 % |
+  | timer 50 Hz | 50.0 Hz | ~1.08 ms | ~12 % |
+  | timer 100 Hz | 100.0 Hz | ~1.07 ms | ~15 % |
+  | timer 200 Hz | 200.0 Hz | ~1.07 ms | ~20 % |
+
+  Takeaways: the **timer hits the configured rate exactly** (deterministic), CPU scales ~linearly with
+  rate with comfortable headroom even at 200 Hz; the **worst-case step is ~1.1 ms** (an occasional GC
+  pause — typical steps are far shorter — and it still fits the 5 ms period at 200 Hz). asyncio also
+  reached 100 Hz here at lower CPU, but it has no rate guarantee under contention (the timer's whole
+  point). **Chosen: 100 Hz timer** — 1 m/step at 100 m/s, deterministic, ~15 % load, matched to the
+  BNO055's ~100 Hz attitude ceiling.
 - ◻ **3. Stage automation** — make `set_stage` transitions automatic + guarded, each logged +
   telemetry'd:
   `SETTING→BOOSTING` launch detect (|accel| > g-threshold sustained N ms);

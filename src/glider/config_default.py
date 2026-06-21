@@ -177,9 +177,9 @@ def default() -> dict:
             {'name': 'servo_eleron_left', 'driver': 'sg90', 'pin': 'servo_eleron_left', 'enabled': True},
             {'name': 'servo_eleron_right', 'driver': 'sg90', 'pin': 'servo_eleron_right', 'enabled': True},
             # Phase 3 stabilization loop (off by default -- no actuation until enabled + tuned on the
-            # airframe). rate_hz > 0 -> machine.Timer (deterministic slice, ~1 m/step at 100 Hz/100 m/s);
-            # rate_hz 0 -> asyncio at period_ms. Gains/setpoint are airframe tuning; gates to GLIDING.
-            {'name': 'flight', 'activity': 'flight', 'rate_hz': 100, 'period_ms': 20, 'enabled': False,
+            # airframe). schedule_hz > 0 -> machine.Timer (deterministic slice, ~1 m/step at 100 Hz/100 m/s);
+            # schedule_hz 0 -> asyncio at period_ms. Gains/setpoint are airframe tuning; gates to GLIDING.
+            {'name': 'flight', 'activity': 'flight', 'schedule_hz': 100, 'period_ms': 20, 'enabled': False,
              'gains': {'roll': {}, 'pitch': {}, 'yaw': {}}, 'setpoint': {'roll': 0, 'pitch': 0}},
             # Board vitals (temperature/memory/load) -> telemetry every period_ms.
             {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'enabled': True},

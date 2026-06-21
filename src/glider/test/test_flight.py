@@ -1,6 +1,6 @@
 # On-board test for the Phase 3 stabilization loop (tasks/flight.py): registration, GLIDING gating,
 # degraded->neutral on stale attitude, the PID->mixer->fin path, and both scheduling modes (asyncio at
-# rate_hz=0, machine.Timer at rate_hz>0). Uses fake fins + a stub controller; attitude comes from the
+# schedule_hz=0, machine.Timer at schedule_hz>0). Uses fake fins + a stub controller; attitude comes from the
 # databoard. Run by `make test`.
 
 import asyncio
@@ -36,7 +36,7 @@ async def amain():
     assert task.ACTIVITIES.get('flight') is flight.Flight  # registered driver
 
     ctrl = _StubController('setting')
-    unit = flight.Flight('flight', {'rate_hz': 0, 'period_ms': 20, 'gains': {'roll': {'kp': 1.0}}}, ctrl)
+    unit = flight.Flight('flight', {'schedule_hz': 0, 'period_ms': 20, 'gains': {'roll': {'kp': 1.0}}}, ctrl)
     assert await unit.setup() is True
     attitude = databoard.Databoard.provide('imu', {'attitude': {'priority': 0, 'timeout_ms': 1000}}, 'attitude')
 
@@ -61,7 +61,7 @@ async def amain():
     unit._step()
     assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._gliding is False
 
-    # asyncio mode (rate_hz 0): run() loops and runs control steps
+    # asyncio mode (schedule_hz 0): run() loops and runs control steps
     ctrl._stage = 'gliding'
     runner = asyncio.create_task(unit.run())
     await asyncio.sleep_ms(80)
@@ -72,8 +72,8 @@ async def amain():
         pass
     assert unit._steps > 1  # the asyncio loop ticked
 
-    # timer mode (rate_hz > 0): a machine.Timer drives the step deterministically
-    timed = flight.Flight('flight', {'rate_hz': 100, 'gains': {}}, _StubController('gliding'))
+    # timer mode (schedule_hz > 0): a machine.Timer drives the step deterministically
+    timed = flight.Flight('flight', {'schedule_hz': 100, 'gains': {}}, _StubController('gliding'))
     assert await timed.setup() is True
     timer_runner = asyncio.create_task(timed.run())
     await asyncio.sleep_ms(120)
