@@ -23,7 +23,7 @@ def default() -> dict:
             'ssid': 'panda',
             'password': '',
             # no cc_host -> the board dials the `.1` of whatever subnet it joins (the hub by
-            # convention); set cc_host to override for a hub elsewhere on the net.
+            # convention); set an explicit address to override, or '' to disable CC (fly standalone).
             'cc_port': 1234,
             'tx_power_dbm': 11,
         },

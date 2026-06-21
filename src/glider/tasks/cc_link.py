@@ -2,7 +2,8 @@
 # command dispatcher, reconnecting with backoff. @task.activity('cc'). Telemetry-first: with no Wi-Fi
 # up it simply waits, so the board flies fine without CC. The hub address is the configured `cc_host`,
 # or -- when unset -- the `.1` of whatever subnet the board joins (the Control hub by convention), so
-# a board reaches its hub on any network. The dispatcher is wired to this board's config + Controller.
+# a board reaches its hub on any network. An empty `cc_host` ('') disables CC entirely (standalone).
+# The dispatcher is wired to this board's config + Controller.
 
 import asyncio
 
@@ -22,9 +23,12 @@ def _network_host(ip: str) -> str:
 @task.activity('cc')
 class ControlLink(task.Task):
     """Serve the CC protocol to the hub when the link is available; never fatal. With no `cc_host`
-    configured the board dials the `.1` of whatever subnet it joins (the Control hub by convention)."""
+    configured the board dials the `.1` of whatever subnet it joins (the Control hub by convention);
+    an empty `cc_host` ('') disables CC and the board flies standalone."""
 
     async def setup(self) -> bool:
+        if self.controller.config.get('wifi', {}).get('cc_host') == '':
+            return False  # cc_host explicitly '' -> standalone: the board never dials Control
         dispatcher = cc_client.create_dispatcher(self.controller.config, controller=self.controller)
         self._client = cc_client.Client(self.controller.config, dispatcher, log=print)
         self._ok = True

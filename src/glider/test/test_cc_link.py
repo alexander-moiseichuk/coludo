@@ -17,6 +17,10 @@ class _ExplicitController:
     config = {'board': {'id': 'x', 'mcu': 'esp32p4'}, 'wifi': {'cc_host': '10.0.0.5', 'cc_port': 1234}}
 
 
+class _StandaloneController:
+    config = {'board': {'id': 'x', 'mcu': 'esp32p4'}, 'wifi': {'cc_host': ''}}  # '' -> no CC
+
+
 async def amain():
     assert task.ACTIVITIES.get('cc') is tasks.cc_link.ControlLink  # registered driver
 
@@ -30,13 +34,17 @@ async def amain():
     assert await explicit.setup() is True
     assert explicit._client.host == '10.0.0.5'
 
+    # empty cc_host -> standalone: setup skips, the board never dials Control
+    standalone = tasks.cc_link.ControlLink('cc', {}, _StandaloneController())
+    assert await standalone.setup() is False
+
     # derive: no explicit host -> the `.1` of the board's own subnet (the hub by convention)
     assert tasks.cc_link._network_host('192.168.102.152') == '192.168.102.1'
     assert tasks.cc_link._network_host('10.4.7.88') == '10.4.7.1'
     assert tasks.cc_link._network_host(None) is None  # no lease yet
     assert tasks.cc_link._network_host('0.0.0.0') is None
 
-    print('ok: cc link task registered; default derives <subnet>.1, explicit cc_host honored')
+    print('ok: cc link task registered; default derives <subnet>.1, explicit cc_host honored, "" standalone')
 
 
 asyncio.run(amain())
