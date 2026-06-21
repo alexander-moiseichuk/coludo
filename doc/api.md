@@ -352,6 +352,7 @@ The operator-set launch identity. One per board; registers itself so Control can
 - `set_time(epoch) -> bool` — Set the board RTC from a Unix epoch (seconds, UTC). Returns True if applied.
 - `clock() -> str` — Current board wall-clock as 'YYYY-MM-DDTHH:MM:SS' (from the RTC).
 - `epoch() -> int` — Current board clock as a Unix epoch (seconds), for Control to compare against its own.
+- `probe() -> str` — On-demand self-test: a launch position is set, so an unconfigured site is caught pre-flight
 - `inspect() -> dict`
 - `update(props: dict) -> list` — Apply launch_id/site/latitude/longitude/altitude (stored, range-checked) and `epoch`
 - `save() -> None` — Persist the stored mission fields to launch.config (atomic temp+rename) so the launch
@@ -609,7 +610,7 @@ startup ground zero, captured per-sensor so it is offset-free) to the databoard.
 - `setup() -> bool`
 - `run() -> None`
 - `update(props: dict) -> list` — `{"rezero": true}` re-captures ground zero from the latest altitude (sync; operator does
-- `probe() -> str` — On-demand self-test: the product id reads back, then one measurement reads (each step logged).
+- `probe() -> str` — On-demand self-test: the run loop is producing pressure. We issue NO I2C here -- the
 - `inspect() -> dict`
 
 ## `led.py`
@@ -625,6 +626,7 @@ Blink a status pattern on one GPIO derived from the controller's state + health.
 
 - `setup() -> bool`
 - `run() -> None`
+- `probe() -> str` — On-demand self-test: blink the status LED a few times so it is seen to drive, then off.
 - `inspect() -> dict`
 
 ## `separation.py`
@@ -720,7 +722,7 @@ low-altitude metres where the barometer cannot resolve height. Interrupt-driven 
 
 - `setup() -> bool`
 - `run() -> None` — Sample on data-ready (GPIO1) or every period_ms; write AGL (m) to the databoard. Runs
-- `probe() -> str` — On-demand self-test: the model id reads back, then one range read succeeds (each step logged).
+- `probe() -> str` — On-demand self-test: the model id reads back -- a single locked op, safe alongside the run
 - `inspect() -> dict`
 
 ## `wifi.py`
@@ -793,6 +795,7 @@ Serve the CC protocol to the hub when the link is available; never fatal.
 
 - `setup() -> bool`
 - `run() -> None` — Park until the Wi-Fi dependency is up, then dial CC and serve until the link drops; retry.
+- `probe() -> str` — On-demand self-test: the CC client is configured (host:port) and the Wi-Fi dependency is
 
 ## `recorder.py`
 
@@ -808,6 +811,7 @@ keeps logging/telemetering through the global recorder.Recorder.
 
 - `setup() -> bool`
 - `run() -> None`
+- `probe() -> str` — On-demand self-test: the Recorder rings are up and a probe log line writes through them.
 - `inspect() -> dict`
 - `stats() -> dict`
 - `update(props) -> list`

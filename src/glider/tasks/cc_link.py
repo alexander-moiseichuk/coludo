@@ -6,6 +6,7 @@
 import asyncio
 
 import cc_client
+import recorder
 import task
 
 
@@ -38,3 +39,18 @@ class ControlLink(task.Task):
             except Exception as error:
                 print('cc :: %r' % error)
             await asyncio.sleep_ms(self._client.backoff_ms)
+
+    async def probe(self) -> str:
+        """On-demand self-test: the CC client is configured (host:port) and the Wi-Fi dependency is
+        up. A down link is logged, not failed -- run() dials it on demand with backoff."""
+        try:
+            recorder.Recorder.log(self.name, 'probe: cc link ...')
+            host_port = '%s:%d' % (self._client.host, self._client.port)
+            wifi = self.controller.find(['wifi'])[0]
+            wifi_up = wifi is not None and wifi.validate()
+            recorder.Recorder.log(self.name, 'probe: cc ok (hub %s, wifi up=%s)' % (host_port, wifi_up))
+        except Exception as error:
+            message = 'cc link: %s' % error
+            recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+            return message
+        return None

@@ -169,21 +169,23 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         return cc.build('ok')
 
     async def probe(msg) -> str:
-        """Run task self-tests ON DEMAND (`probe <name>` or `probe`/`probe all`): per task None when
-        healthy, else its error string. Costly ACTIVE checks (e.g. the servo range sweep) live here,
-        never at boot -- so a mid-flight reboot never sweeps the fins. The operator runs it pre-flight."""
-        if controller is None:
-            return cc.build('err', ['unsupported', 'no controller'])
+        """Run self-tests ON DEMAND over the inspectable objects (tasks + mission + ...) that implement
+        probe(): `probe <name>` for one, `probe`/`probe all` for every one. Per object None when
+        healthy, else its error string. Costly ACTIVE checks (e.g. the servo range sweep) live in
+        probe(), never at boot -- so a mid-flight reboot never sweeps the fins; the operator runs it
+        pre-flight. Sequential, so fins self-test one at a time."""
         target = msg.args[0] if msg.args else 'all'
         if target == 'all':
             results = {}
-            for active in controller.active():
-                results[active.name] = await active.probe()  # sequential: one fin sweeps at a time
+            for name in inspector.Inspector.names():
+                run = getattr(inspector.Inspector.get(name), 'probe', None)
+                if run is not None:
+                    results[name] = await run()
             return cc.build('ok', [json.dumps(results)])
-        active = controller.active(target)
-        if active is None:
-            return cc.build('err', ['badargs', 'no task ' + target])
-        return cc.build('ok', [json.dumps({target: await active.probe()})])
+        run = getattr(inspector.Inspector.get(target), 'probe', None)
+        if run is None:
+            return cc.build('err', ['badargs', 'no probe for ' + target])
+        return cc.build('ok', [json.dumps({target: await run()})])
 
     async def reboot(msg) -> str:
         reset = on_reboot or (lambda: __import__('machine').reset())  # imported only when it fires

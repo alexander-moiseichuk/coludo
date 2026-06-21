@@ -117,30 +117,25 @@ async def amain():
     await asyncio.sleep_ms(260)
     assert fired == [1]
 
-    # probe: on-demand task self-tests (None = healthy, else an error string), needs a Controller
-    assert 'unsupported' in await sd.handle('probe')  # sd has no controller wired
-
-    class _FakeTask:
+    # probe: on-demand self-tests over the inspectable objects that implement probe() (None = healthy,
+    # else an error string); objects without probe() (the _Knob above) are skipped
+    class _Probeable(inspector.Inspectable):
         def __init__(self, name, result):
-            self.name, self._result = name, result
+            self.name = name
+            self._result = result
 
         async def probe(self):
             return self._result
 
-    class _FakeController:
-        config = config_default.default()
-        _tasks = [_FakeTask('good', None), _FakeTask('bad', 'sensor X not found on i2c:0')]
-
-        def active(self, name=None):
-            if name is None:
-                return self._tasks
-            return next((t for t in self._tasks if t.name == name), None)
-
-    sd4 = cc_client.create_dispatcher(config_default.default(), controller=_FakeController())
-    assert json.loads(cc.parse(await sd4.handle('probe')).args[0]) == {  # 'probe' / 'probe all'
-        'good': None, 'bad': 'sensor X not found on i2c:0'}
-    assert json.loads(cc.parse(await sd4.handle('probe good')).args[0]) == {'good': None}
-    assert 'badargs' in await sd4.handle('probe nope')  # unknown task
+    inspector.Inspector.register(_Probeable('p_good', None))
+    inspector.Inspector.register(_Probeable('p_bad', 'X not found on i2c:0'))
+    sd4 = cc_client.create_dispatcher(config_default.default())
+    allres = json.loads(cc.parse(await sd4.handle('probe')).args[0])  # 'probe' / 'probe all'
+    assert allres.get('p_good') is None and allres.get('p_bad') == 'X not found on i2c:0'
+    assert 'knob' not in allres  # an inspectable without probe() is skipped
+    assert json.loads(cc.parse(await sd4.handle('probe p_good')).args[0]) == {'p_good': None}
+    assert 'badargs' in await sd4.handle('probe knob')  # registered, but has no probe()
+    assert 'badargs' in await sd4.handle('probe nope')  # unknown object
 
     print('ok: cc_client board-first dispatch/serve/standard + inspect/update/stats + probe')
 
