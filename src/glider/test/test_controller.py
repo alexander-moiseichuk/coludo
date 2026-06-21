@@ -30,6 +30,15 @@ class FailSensor(task.Task):
         return False
 
 
+class ProbeFailSensor(task.Task):
+    async def setup(self):  # sets up fine...
+        self._ok = True
+        return True
+
+    async def probe(self):  # ...but fails its bring-up self-test -> Controller skips it
+        return 'self-test failed on bus 9'
+
+
 def make_config():
     return {
         'board': {'id': 't', 'mcu': 'esp32p4'},
@@ -41,21 +50,23 @@ def make_config():
             {'name': 'off', 'driver': 'fake', 'enabled': False},
             {'name': 'bad', 'driver': 'nodriver', 'enabled': True},
             {'name': 'failing', 'driver': 'fail', 'enabled': True},
+            {'name': 'noprobe', 'driver': 'probefail', 'enabled': True},
         ],
     }
 
 
 async def amain():
     logs = []
-    reg = {'fake': FakeSensor, 'fail': FailSensor}
+    reg = {'fake': FakeSensor, 'fail': FailSensor, 'probefail': ProbeFailSensor}
     c = controller.Controller(make_config(), registry=reg, log=lambda m: logs.append(m))
 
     # directory() excludes disabled, keeps config order
-    assert c.directory() == ['s1', 's2', 'bad', 'failing'], c.directory()
+    assert c.directory() == ['s1', 's2', 'bad', 'failing', 'noprobe'], c.directory()
 
     assert await c.setup() is True
-    # s1/s2 created; 'off' disabled; 'bad' has no driver; 'failing' setup() -> False
+    # s1/s2 up; 'off' disabled; 'bad' has no driver; 'failing' setup() -> False; 'noprobe' probe() -> error
     assert set(c.tasks.keys()) == set(['s1', 's2']), c.tasks.keys()
+    assert any('noprobe' in m and 'self-test failed' in m for m in logs), logs  # probe error logged
 
     # active()
     assert c.active('s1') is c.tasks['s1']

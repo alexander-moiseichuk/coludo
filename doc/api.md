@@ -158,7 +158,7 @@ The flight stages, self-contained: int ids (cheap to compare/store on MicroPytho
 - `active(name: str=None)` — Return the active task by name (None if absent), or a list of all active tasks if
 - `find(names: list[str]) -> list` — Non-blocking: the active tasks for `names`, None for any not up. The fast lookup for
 - `query(names: list[str], waiting: bool=True) -> list` — Look up sibling tasks by name from the registry: `gnss, baro = await self.query(['gnss',
-- `setup() -> bool` — Create + set up every enabled task in order. Skip (and report) failures.
+- `setup() -> bool` — Create, set up, and probe every enabled task in order. Skip (and report) failures: a task
 - `start() -> None` — Launch each task's run() loop as a supervised asyncio task.
 - `close(name: str) -> None` — Deactivate a task and clean up its resources.
 - `finish() -> None` — Shut down all tasks.
@@ -437,6 +437,9 @@ Task base class and driver registry — the unit the Controller creates and supe
 
 Every component/system task follows the common lifecycle from specs/coludo.md:
 setup()    async; initialize or reset; return True on success
+probe()    async; bring-up self-test -> None if healthy, else an error string (Controller logs +
+skips). Run right after setup(). Default None; sensors report 'X not found on i2c:0',
+actuators exercise themselves (the servo sweeps its range).
 run()      async; the task's main activity loop
 notify()   subscribe a callback for this task's updates
 validate() return True if the task is currently healthy
@@ -462,6 +465,7 @@ name so the Controller can build it from a config component.
 
 - `__init__(name: str, config: dict=None, controller=None)` — constructor
 - `setup() -> bool` — Initialize or reset. Override. Return True on success, False otherwise.
+- `probe() -> str` — Bring-up self-test, run by the Controller right after setup(): return None when all is
 - `run() -> None` — Main activity loop. Override. Default returns immediately.
 - `notify(callback) -> None` — Register callback(task, event) to be invoked on this task's updates.
 - `emit(event=None) -> None` — Notify all subscribers of an update.
@@ -641,10 +645,13 @@ Detect stage separation (HIGH=nested -> LOW=separated) and trigger Boosting -> G
 ## `servo.py`
 
 drivers/servo.py — one fin servo (SG90) on a PWM pin. @task.driver('servo'), one instance per fin
-(yaw / left eleron / right eleron), each naming its `pin`. 50 Hz frame; the command unit is DEGREES,
-linearly mapped to a pulse width (min_us..max_us over min_deg..max_deg) and CLAMPED to the range so
-a bad command can never drive the horn past the linkage. Set-and-hold like the bluetooth driver: no
-run loop -- setup() drives the servo to its neutral angle (transparent state).
+(yaw / left eleron / right eleron), each naming its `pin`. 50 Hz frame; the command unit is INTEGER
+DEGREES, linearly mapped to a pulse width (min_us..max_us over min_deg..max_deg, integer math) and
+CLAMPED to the range so a bad command can never drive the horn past the linkage. Set-and-hold like
+the bluetooth driver: no run loop -- setup() drives the servo to its neutral (zero) angle.
+
+probe() is the power-on self-test: it sweeps the full range and returns to neutral, so each fin is
+seen to travel at bring-up (open-loop, so it cannot fail on its own -> returns None).
 
 Two ways to command a fin:
 update {"angle": d}  -- IMMEDIATE, ungated: the operator override (sync, returns at once).
@@ -659,13 +666,14 @@ low-current signal on the PWM pin, never the servo supply.
 
 ### `class Servo(task.Task)`
 
-One PWM fin servo, commanded in degrees (clamped to [min_deg, max_deg]). `update {"angle": d}`
-moves it immediately; `await move(d)` moves it through the shared slew gate. Inspect reports the
-current angle + pulse width.
+One PWM fin servo, commanded in integer degrees (clamped to [min_deg, max_deg]). `update
+{"angle": d}` moves it immediately; `await move(d)` moves it through the shared slew gate;
+probe() sweeps it at bring-up. Inspect reports the current angle + pulse width.
 
 - `setup() -> bool`
-- `move(angle: float) -> float` — Drive to `angle` (clamped) through the shared slew gate -- at most servo_concurrency fins
-- `update(props: dict) -> list` — `{"angle": d}` moves the servo IMMEDIATELY (degrees, clamped) -- the operator override.
+- `probe() -> str` — Power-on self-test: sweep the full range then fix at neutral (zero), so the fin is seen to
+- `move(angle) -> int` — Drive to `angle` (clamped, integer degrees) through the shared slew gate -- at most
+- `update(props: dict) -> list` — `{"angle": d}` moves the servo IMMEDIATELY (integer degrees, clamped) -- the operator
 - `finish() -> None` — Release the PWM (stop driving the pin) on shutdown.
 - `inspect() -> dict`
 

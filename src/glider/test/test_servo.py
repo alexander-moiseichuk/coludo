@@ -81,7 +81,14 @@ async def amain():
     assert held == ['got']  # released -> handed the permit
     await pending
 
-    print('ok: servo neutral/degrees/clamp/update/finish + move() and the N-slew gate')
+    # probe() sweeps the range and fixes at neutral (zero), returning None (open-loop self-test)
+    fin3 = servo.Servo('servo_yaw', {'pin': 'servo_yaw'}, _StubController())
+    await fin3.setup()
+    assert await fin3.probe() is None
+    assert fin3.angle == 90 and isinstance(fin3.angle, int)  # ended at neutral, integer degrees
+    await fin3.finish()
+
+    print('ok: servo int degrees/clamp/update/finish + move(), N-slew gate, probe() sweep')
 
 
 asyncio.run(amain())

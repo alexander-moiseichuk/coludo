@@ -2,6 +2,9 @@
 #
 # Every component/system task follows the common lifecycle from specs/coludo.md:
 #   setup()    async; initialize or reset; return True on success
+#   probe()    async; bring-up self-test -> None if healthy, else an error string (Controller logs +
+#              skips). Run right after setup(). Default None; sensors report 'X not found on i2c:0',
+#              actuators exercise themselves (the servo sweeps its range).
 #   run()      async; the task's main activity loop
 #   notify()   subscribe a callback for this task's updates
 #   validate() return True if the task is currently healthy
@@ -51,6 +54,12 @@ class Task(inspector.Inspectable):
         """Initialize or reset. Override. Return True on success, False otherwise."""
         self._ok = True
         return True
+
+    async def probe(self) -> str:
+        """Bring-up self-test, run by the Controller right after setup(): return None when all is
+        well, or a human-readable error string (e.g. 'BMP280 not found on i2c:0') when not -- the
+        Controller logs it and skips the task. Override per device; default has nothing to probe."""
+        return None
 
     async def run(self) -> None:
         """Main activity loop. Override. Default returns immediately."""
