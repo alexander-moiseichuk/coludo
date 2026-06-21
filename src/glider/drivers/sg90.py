@@ -35,6 +35,7 @@
 import asyncio
 
 import recorder
+import servo
 import task
 
 _PERIOD_US: int = 20000  # 50 Hz servo frame (20 ms)
@@ -42,45 +43,8 @@ _SLEW_MS_PER_60: int = 150  # ~0.15 s / 60deg SG90 slew estimate (open-loop -- n
 _SETTLE_MARGIN_MS: int = 60  # added to the slew estimate so move() returns after it has settled
 _DEFAULT_CONCURRENCY: int = 3  # fins allowed to slew at once (== fin count -> no limit)
 
-_gate = None  # the shared slew gate, created on the first servo setup
-
-
-class _Gate:
-    """A tiny FIFO counting semaphore (MicroPython asyncio has no Semaphore, only Lock/Event): at most
-    `permits` holders at once, the rest queue and are handed a permit in order on release."""
-
-    def __init__(self, permits: int):
-        self._free: int = permits
-        self._waiters: list = []
-
-    async def acquire(self) -> None:
-        if self._free > 0:
-            self._free -= 1
-        else:
-            event = asyncio.Event()
-            self._waiters.append(event)
-            await event.wait()  # release() hands this waiter the permit directly; _free unchanged
-
-    def release(self) -> None:
-        if self._waiters:
-            self._waiters.pop(0).set()  # direct hand-off to the next in line (FIFO)
-        else:
-            self._free += 1
-
-    async def __aenter__(self):
-        await self.acquire()
-        return self
-
-    async def __aexit__(self, *exception):
-        self.release()
-
-
-def _slew_gate(permits: int) -> _Gate:
-    """The process-wide slew gate, created once (the first servo's `permits` wins)."""
-    global _gate
-    if _gate is None:
-        _gate = _Gate(permits)
-    return _gate
+# The N-slew concurrency gate is shared infrastructure (servo.py) so future servo types share one
+# board-wide `servo_concurrency` budget.
 
 
 @task.driver('sg90')
@@ -101,7 +65,7 @@ class SG90(task.Task):
         self._min_deg: int = self.config.get('min_deg', 0)
         self._max_deg: int = self.config.get('max_deg', 180)
         self._neutral: int = (self._min_deg + self._max_deg) // 2  # the zero position
-        self._gate = _slew_gate(self.controller.config.get('servo_concurrency', _DEFAULT_CONCURRENCY))
+        self._gate = servo.slew_gate(self.controller.config.get('servo_concurrency', _DEFAULT_CONCURRENCY))
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('angle', 'pulse_us', 'done'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._pwm = PWM(Pin(gpio), freq=50, duty_u16=0)

@@ -62,36 +62,7 @@ async def amain():
     assert await fin2.move(999) == 180  # clamped to max
     await fin2.finish()
 
-    # the slew gate serialises when permits run out: at N=1 the two holders never overlap
-    gate = sg90._Gate(1)
-    order = []
-
-    async def worker(tag):
-        async with gate:
-            order.append('in' + tag)
-            await asyncio.sleep_ms(20)
-            order.append('out' + tag)
-
-    await asyncio.gather(worker('A'), worker('B'))
-    assert order in (['inA', 'outA', 'inB', 'outB'], ['inB', 'outB', 'inA', 'outA']), order
-
-    # N=2: two hold at once; a third blocks until a release hands it the permit
-    gate2 = sg90._Gate(2)
-    await gate2.acquire()
-    await gate2.acquire()
-    held = []
-
-    async def third():
-        await gate2.acquire()
-        held.append('got')
-
-    pending = asyncio.create_task(third())
-    await asyncio.sleep_ms(10)
-    assert held == []  # both permits taken -> blocked
-    gate2.release()
-    await asyncio.sleep_ms(10)
-    assert held == ['got']  # released -> handed the permit
-    await pending
+    # (the N-slew gate itself is covered by test_servo; move() above exercises it via the driver)
 
     # probe() sweeps the range and fixes at neutral (zero), returning None (open-loop self-test)
     fin3 = sg90.SG90('servo_yaw', {'pin': 'servo_yaw'}, _StubController())
@@ -100,7 +71,7 @@ async def amain():
     assert fin3.angle == 90 and isinstance(fin3.angle, int)  # ended at neutral, integer degrees
     await fin3.finish()
 
-    print('ok: sg90 int degrees/clamp/update/finish + move(), N-slew gate, feedback:None, probe() sweep')
+    print('ok: sg90 int degrees/clamp/update/finish + move() (gated), feedback:None, probe() sweep')
 
 
 asyncio.run(amain())
