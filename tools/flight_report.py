@@ -26,12 +26,15 @@ def _require_plotly():
     return go, pio, make_subplots
 
 
-def find_stream(streams, *fields):
-    """The first stream that carries all the given field names (None if none does)."""
-    for stream in streams.values():
-        if all(field in stream.fields for field in fields):
-            return stream
-    return None
+def find_stream(streams, *fields, prefer=None):
+    """The stream carrying all the given fields; when several match, one whose name contains `prefer`
+    wins (e.g. the dedicated ADXL high-g accel over the IMU's low-g accel). None if none match."""
+    matches = [stream for stream in streams.values() if all(field in stream.fields for field in fields)]
+    if prefer:
+        for stream in matches:
+            if prefer in stream.name:
+                return stream
+    return matches[0] if matches else None
 
 
 def stage_events(logs):
@@ -54,9 +57,9 @@ def _nearest(times, values, targets):
 
 
 def build(streams, logs, go, make_subplots):
-    accel = find_stream(streams, 'ax', 'ay', 'az')
-    attitude = find_stream(streams, 'yaw', 'pitch', 'roll')
-    baro = find_stream(streams, 'elevation') or find_stream(streams, 'altitude')
+    accel = find_stream(streams, 'ax', 'ay', 'az', prefer='adxl')  # high-g, not the IMU's low-g accel
+    attitude = find_stream(streams, 'roll', 'pitch', prefer='bno')  # BNO055 emits heading/roll/pitch
+    baro = find_stream(streams, 'elevation', prefer='icp') or find_stream(streams, 'altitude')
     laser = find_stream(streams, 'agl')
     gnss = find_stream(streams, 'lat', 'lon')
 
@@ -90,9 +93,10 @@ def build(streams, logs, go, make_subplots):
                 times, values = baro.column(field)
                 series.add_trace(go.Scatter(x=times, y=values, name=field), row=2, col=1)
     if attitude is not None:
-        for field in ('yaw', 'pitch', 'roll'):
-            times, values = attitude.column(field)
-            series.add_trace(go.Scatter(x=times, y=values, name=field), row=3, col=1)
+        for field in ('heading', 'yaw', 'roll', 'pitch'):
+            if field in attitude.fields:
+                times, values = attitude.column(field)
+                series.add_trace(go.Scatter(x=times, y=values, name=field), row=3, col=1)
     if laser is not None:
         times, values = laser.column('agl')
         series.add_trace(go.Scatter(x=times, y=values, name='agl', mode='markers'), row=4, col=1)
