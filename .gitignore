@@ -3,6 +3,4 @@ __pycache__/
 *.mpy
 .nfs*
 *.creds
-*.config
-board.json
 version.py
