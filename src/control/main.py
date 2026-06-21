@@ -18,10 +18,24 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument('--operator-port', type=int, default=1235,
                         help='telnet operator console port (default 1235)')
     parser.add_argument('--web-port', type=int, default=8080, help='HTTP + SSE dashboard port (default 8080)')
-    parser.add_argument('--gps-device', default=None,
-                        help='serial GPS for launch-site assist, e.g. /dev/ttyUSB0 (off by default)')
+    parser.add_argument('--gps-device', default='auto',
+                        help="serial GPS for launch-site assist: 'auto' (default) picks the first "
+                             "/dev/ttyUSB*, an explicit path overrides, 'off' disables")
     parser.add_argument('--gps-baud', type=int, default=9600, help='host GPS baud (default 9600)')
     return parser.parse_args()
+
+
+def _resolve_gps_device(arg: str):
+    """Resolve --gps-device: 'auto' -> the first /dev/ttyUSB* if any (else None); 'off'/'none'/'' ->
+    None; an explicit path -> itself. So a USB GPS is used by default when present, without a flag."""
+    if arg in ('off', 'none', ''):
+        return None
+    if arg == 'auto':
+        import glob
+
+        found = sorted(glob.glob('/dev/ttyUSB*'))
+        return found[0] if found else None
+    return arg
 
 
 async def _run(args, hub) -> None:
@@ -34,6 +48,7 @@ async def _run(args, hub) -> None:
 
 def main() -> None:
     args = _parse_args()
+    args.gps_device = _resolve_gps_device(args.gps_device)  # 'auto' -> first /dev/ttyUSB* (or None)
     gps = gps_mod.Gps() if args.gps_device else None
     hub = server.Server(host=args.host, port=args.port, operator_port=args.operator_port,
                         web_port=args.web_port, gps=gps)

@@ -277,6 +277,13 @@ async def _gps_assist():
         status = json.loads(reply[len('from cc ok '):])
         assert status['usable'] and status['fix_3d'] and status['satellites'] == 6, status
 
+        # `gps <board>` compares the host fix with the board's on-board GNSS (inspect gnss)
+        reply = await ask('gps glider9')
+        assert reply.startswith('from cc ok '), reply
+        compare = json.loads(reply[len('from cc ok '):])
+        assert compare['host']['usable'] and compare['board'] == 'glider9'
+        assert compare['onboard'] == {'name': 'gnss', 'ok': True}, compare  # the board's inspect gnss
+
         # assist pushes the host position to the board mission and persists it (save-mission)
         reply = await ask('assist glider9')
         assert reply.startswith('from cc ok '), reply
@@ -357,14 +364,26 @@ async def _log_stream():
         board_task.cancel()
 
 
+def _gps_device_resolve():
+    """main._resolve_gps_device: explicit/off deterministic; 'auto' picks a /dev/ttyUSB* or None."""
+    import main as control_main
+
+    assert control_main._resolve_gps_device('off') is None
+    assert control_main._resolve_gps_device('') is None
+    assert control_main._resolve_gps_device('/dev/ttyUSB7') == '/dev/ttyUSB7'
+    auto = control_main._resolve_gps_device('auto')  # host-dependent: a ttyUSB path or None
+    assert auto is None or auto.startswith('/dev/ttyUSB'), auto
+
+
 async def main():
     await _loopback()
     await _operator_console()
     await _web()
     await _gps_assist()
     await _log_stream()
+    _gps_device_resolve()
     print('ok: server accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) '
-          '+ gps assist + log streaming')
+          '+ gps assist/compare + log streaming + gps auto-detect')
 
 
 asyncio.run(main())
