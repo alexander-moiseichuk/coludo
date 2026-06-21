@@ -206,12 +206,18 @@ A first token that is a known board id (or `all`) routes to a board; otherwise i
 | `list` | `from cc ok [{id, online, stage, config_id}]` — connected boards |
 | `select <board>` | set this session's **sticky** target; afterwards a bare `<command>` is routed to it |
 | `who` | `from cc ok {selected, since}` — current selection |
-| `log <board> [ms\|off]` | stream a board's logs (poll-driven board-facing `log <ms>` every tick) to the console as `<id>: <line>` and the `/logs` SSE feed; `off`/`0` stops + drains |
 
 **Sticky select / broadcast:** after `select taster`, typing `health` is routed as `taster
 health`; an explicit `<board>`/`all` first token overrides it for that line. Control tags every
 relayed reply with its source (`from taster ok …`), so the operator always sees who answered.
 `all` fans out to every connected board and yields one tagged reply per board.
+
+**Log streaming** is board-first like any other command, but **intercepted by Control** rather than
+forwarded as a one-shot: `<board> log [ms]` (default 1000) starts a per-board poll task that drives
+the board-facing `log <ms>` every tick and surfaces each line to the console as `<id>: <line>` and
+the `/logs` SSE feed; `<board> log off` (or `0`) stops it and sends a final `log 0` so the board
+stops collecting. `all log <ms>` streams every online board. (The raw one-shot board-facing `log`
+remains available programmatically via `POST /api/cmd`.)
 
 Example telnet session (response JSON shown **decoded for readability**; on the wire each is one
 `base64:` token):

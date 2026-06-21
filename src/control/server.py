@@ -127,6 +127,20 @@ class Server:
         if client is not None and client.online:
             await client.command('log', 0)
 
+    async def _stream_toggle(self, client, args) -> str:
+        """`<board> log [ms|off]`: start/refresh (default 1000 ms) or stop the hub's log stream for one
+        board. Returns a source-tagged reply line, like any board-first command."""
+        arg = args[0] if args else '1000'
+        if arg in ('off', '0'):
+            await self.stop_stream(client.id)
+            return 'from %s ok %s' % (client.id, json.dumps({'log': 'off'}))
+        try:
+            interval_ms = int(arg)
+        except ValueError:
+            return 'from %s err badargs log [ms|off]' % client.id
+        self.start_stream(client, interval_ms)
+        return 'from %s ok %s' % (client.id, json.dumps({'log': 'on', 'interval_ms': interval_ms}))
+
     async def _poll(self, client) -> None:
         """Heartbeat: ping an idle board every `heartbeat_s`; a successful exchange (operator or
         ping) within the window already proves liveness, so it is skipped. Returns on disconnect."""
@@ -174,11 +188,11 @@ class Server:
         return ['from cc err badcmd %s' % first]
 
     async def _route(self, target, command_tokens) -> list:
-        """Forward `command_tokens` (verbatim — already board-facing) to one board or every online
-        board, and tag each reply with its source."""
+        """Run `command_tokens` against one board or every online board, tagging each reply with its
+        source. `log [ms|off]` is intercepted as hub-orchestrated streaming (start/stop a poll task);
+        every other command is forwarded verbatim (already board-facing) as a one-shot exchange."""
         if not command_tokens:
             return ['from cc err badargs empty-command']
-        line = ' '.join(command_tokens)
         if target == BROADCAST:
             targets = [c for c in self.boards.values() if c.online]
             if not targets:
@@ -188,6 +202,9 @@ class Server:
             if client is None or not client.online:
                 return ['from cc err noboard %s' % target]
             targets = [client]
+        if command_tokens[0] == 'log':  # hub streaming toggle, not a one-shot forward
+            return [await self._stream_toggle(client, command_tokens[1:]) for client in targets]
+        line = ' '.join(command_tokens)
         out = []
         for client in targets:
             resp = await client.exchange(line)
