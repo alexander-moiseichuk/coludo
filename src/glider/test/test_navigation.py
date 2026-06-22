@@ -41,17 +41,17 @@ def test_inside_and_steer():
     assert navigation.inside((48.0005, 11.005), tl, br) is True  # the centre is inside
     assert navigation.inside((48.0005, 10.990), tl, br) is False  # west of the zone
 
-    # west of the zone -> head for the LEFT gate (the nearer entrance), leg 'gate', bearing ~east
+    # west of the zone -> head for the LEFT gate (the nearer entrance), leg GATE, bearing ~east
     heading, waypoint, leg = navigation.steer((48.0005, 10.990), tl, br)
-    assert leg == 'gate' and _close(waypoint[1], 11.000, 1e-4) and _close(heading, 90.0, 5.0)
+    assert leg == navigation.GATE and _close(waypoint[1], 11.000, 1e-4) and _close(heading, 90.0, 5.0)
 
     # east of the zone -> head for the RIGHT gate
     heading, waypoint, leg = navigation.steer((48.0005, 11.020), tl, br)
-    assert leg == 'gate' and _close(waypoint[1], 11.010, 1e-4) and _close(heading, 270.0, 5.0)
+    assert leg == navigation.GATE and _close(waypoint[1], 11.010, 1e-4) and _close(heading, 270.0, 5.0)
 
     # inside the zone -> track to the centre (target), not a gate
     heading, waypoint, leg = navigation.steer((48.0005, 11.002), tl, br)
-    assert leg == 'target' and _close(waypoint[1], 11.005, 1e-4) and _close(heading, 90.0, 5.0)
+    assert leg == navigation.TARGET and _close(waypoint[1], 11.005, 1e-4) and _close(heading, 90.0, 5.0)
 
 
 def test_overshoot_loop():
@@ -60,7 +60,7 @@ def test_overshoot_loop():
     # re-approaches through the RIGHT gate. Stateless: no waypoint memory, just per-tick nearest-gate.
     tl, br = (48.001, 11.000), (48.000, 11.010)
     heading, waypoint, leg = navigation.steer((48.0005, 11.011), tl, br)  # just past the east edge
-    assert leg == 'gate' and _close(waypoint[1], 11.010, 1e-4)  # the right gate (the one just crossed)
+    assert leg == navigation.GATE and _close(waypoint[1], 11.010, 1e-4)  # the right gate (the one just crossed)
     assert _close(heading, 270.0, 5.0)  # ~180 from the eastbound entry -> turn back west through it
 
 

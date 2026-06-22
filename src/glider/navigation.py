@@ -15,7 +15,21 @@
 
 import math
 
+try:
+    from micropython import const
+except ImportError:  # CPython (tooling / off-board checks)
+
+    def const(value):
+        return value
+
+
 _M_PER_DEG: float = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat))
+
+# steer() leg -- which waypoint the returned heading aims at this tick. Named integer codes rather
+# than bare strings (cheaper to compare, no typo-prone literals at the call sites).
+UNKNOWN: int = const(0)  # not steering (no zone) -- never produced by steer(), a sentinel for callers
+TARGET: int = const(1)   # inside the zone -> heading for the centre (the landing target)
+GATE: int = const(2)     # outside the zone -> heading for the nearer short-side entrance
 
 
 def _offset_m(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
@@ -66,7 +80,7 @@ def inside(position: tuple, corner_tl: tuple, corner_br: tuple) -> bool:
 def steer(position: tuple, corner_tl: tuple, corner_br: tuple) -> tuple:
     """The heading to fly toward the landing target via the nearer gate: head for the closer short-side
     entrance until inside the zone, then for the centre. Returns (bearing_deg, waypoint, leg) with leg
-    'gate' or 'target'. position = (lat, lon).
+    GATE or TARGET. position = (lat, lon).
 
     Stateless + re-evaluated each tick, so the overshoot loop is emergent: if the glider crosses the
     zone and exits the far side without landing (still high), the gate it just crossed is now the
@@ -76,8 +90,8 @@ def steer(position: tuple, corner_tl: tuple, corner_br: tuple) -> tuple:
     target, gate_a, gate_b = zone(corner_tl, corner_br)
     if inside(position, corner_tl, corner_br):
         waypoint = target
-        leg = 'target'
+        leg = TARGET
     else:
         waypoint = gate_a if distance(lat, lon, *gate_a) <= distance(lat, lon, *gate_b) else gate_b
-        leg = 'gate'
+        leg = GATE
     return bearing(lat, lon, waypoint[0], waypoint[1]), waypoint, leg
