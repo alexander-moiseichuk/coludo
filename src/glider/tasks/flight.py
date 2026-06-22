@@ -3,9 +3,10 @@
 # hold), mixes the result to the fins (mixer.py) and writes them via sg90.update(). Per-stage: the
 # `phases` config names the CONTROL stages and their setpoint (GLIDING = wings-level + steer to the
 # landing zone, LANDING = its own flare setpoint, straight-and-level); any other stage
-# (SETTING/BOOSTING/DONE) holds the fins neutral. In GLIDING the yaw heading setpoint is the bearing to
-# the landing zone (nav.py, from the mission) when a fix is fresh, else the captured glide heading;
-# LANDING locks the heading. Degraded: stale/absent attitude -> neutral.
+# (SETTING/BOOSTING/DONE) holds the fins neutral. In GLIDING the yaw heading setpoint comes from nav.py
+# in three GPS-degrading tiers (_target_heading): live fix -> steer from the current position; no fix
+# but a CC-set launch point -> hold the launch->gate bearing (open-loop); neither -> the captured glide
+# heading. LANDING locks the heading. Degraded: stale/absent attitude -> neutral.
 #
 # Scheduling: schedule_hz > 0 -> a machine.Timer ticks the step, so the control law gets a regular slice
 # independent of what other asyncio tasks are doing (deterministic, e.g. while the laser hammers I2C in
@@ -99,15 +100,23 @@ class Flight(task.Task):
             self._max_step_us = elapsed
 
     def _target_heading(self) -> float:
-        """The heading to steer: the landing-zone bearing (nav.py) during GLIDING when a zone + a fresh
-        GNSS fix are available, else the captured glide heading (hold). Nav steers only in GLIDING --
-        LANDING locks straight-and-level (coludo.md), and stale/absent position falls back to the hold."""
+        """The heading to steer in GLIDING (LANDING + non-control phases just hold). Three tiers,
+        degrading gracefully as the GNSS does:
+          1. a FRESH fix -> steer from the current position (closed-loop, corrects wind drift);
+          2. no fix but a launch point (CC-set) -> hold the launch->gate bearing (open-loop, AIMED at
+             the zone but wind-uncorrected -- the GPS-denied fallback);
+          3. neither -> the captured glide heading (blind).
+        Nav steers only in GLIDING; LANDING locks straight-and-level (coludo.md)."""
         if self.controller.stage_name() != 'gliding' or self._mission is None or not self._mission.zone:
             return self._heading_hold
+        zone = self._mission.zone
         position, source, _age = self._position.read()
-        if source is None or position is None:  # no fresh fix -> hold heading
-            return self._heading_hold
-        return nav.steer(position, self._mission.zone[0], self._mission.zone[1])[0]
+        if source is not None and position is not None:  # tier 1: live fix
+            return nav.steer(position, zone[0], zone[1])[0]
+        launch = self._mission.launch_point()  # tier 2: open-loop from the launch point (CC-set)
+        if launch is not None:
+            return nav.steer(launch, zone[0], zone[1])[0]
+        return self._heading_hold  # tier 3: blind
 
     def _apply(self, angles: dict) -> None:
         for name, angle in angles.items():

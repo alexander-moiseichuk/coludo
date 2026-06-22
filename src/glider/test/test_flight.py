@@ -111,24 +111,35 @@ async def amain():
     phased._step()  # non-control stage -> fins neutral, disengaged
     assert all(fin.angle == 90 for fin in pctrl.fins.values()) and phased._active is False
 
-    # landing-zone nav: in GLIDING with a zone + a fresh fix, the yaw heading setpoint = bearing to the
-    # nearer gate (nav.py); no fix, or LANDING, falls back to the captured heading hold
+    # landing-zone nav, three GPS-degrading tiers of the yaw heading setpoint (GLIDING only)
     class _StubMission:
         zone = ((48.001, 11.000), (48.000, 11.010))  # longitude-stretched -> gates on the left/right edges
+
+        def __init__(self, launch=None):
+            self._launch = launch
+
+        def launch_point(self):
+            return self._launch
 
     nav_ctrl = _StubController('gliding')
     navflight = flight.Flight('flight', {'schedule_hz': 0, 'gains': {}}, nav_ctrl)
     assert await navflight.setup() is True
-    navflight._mission = _StubMission()
-    navflight._heading_hold = 200.0  # the fallback heading
-    assert navflight._target_heading() == 200.0  # no fresh fix yet -> hold
-    position = databoard.Databoard.provide('gnss', {'position': {'priority': 0, 'timeout_ms': 1000}}, 'position')
-    position.push((48.0005, 10.990))  # west of the zone -> steer toward the left gate (~east, 90)
+    navflight._heading_hold = 200.0  # the blind fallback heading
+
+    # tier 3: no fix, no launch point -> hold the captured heading (blind)
+    navflight._mission = _StubMission(launch=None)
+    assert navflight._target_heading() == 200.0
+    # tier 2: no fix, CC-set launch point (west of the zone) -> launch->left-gate bearing (~east, 90)
+    navflight._mission = _StubMission(launch=(48.0005, 10.990))
     assert abs(navflight._target_heading() - 90.0) < 5.0
+    # tier 1: a fresh fix overrides -> steer from the CURRENT position (east of the zone -> right gate, ~270)
+    position = databoard.Databoard.provide('gnss', {'position': {'priority': 0, 'timeout_ms': 1000}}, 'position')
+    position.push((48.0005, 11.020))
+    assert abs(navflight._target_heading() - 270.0) < 5.0  # current position, not the launch point
     nav_ctrl._stage = 'landing'  # nav steers only in GLIDING -> LANDING holds (straight-and-level)
     assert navflight._target_heading() == 200.0
 
-    print('ok: flight -- per-stage phases, landing-zone nav, degraded->neutral, PID->mix->fins, scheduling')
+    print('ok: flight -- per-stage phases, nav (3 GPS tiers), degraded->neutral, PID->mix->fins, scheduling')
 
 
 asyncio.run(amain())
