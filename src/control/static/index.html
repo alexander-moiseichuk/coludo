@@ -72,6 +72,14 @@
 <textarea id="config" rows="14" placeholder="board config — click load to fetch the running config as an editable draft, then save → reboot"></textarea>
 <pre id="cfgresult"></pre>
 
+<h2>inspect</h2>
+<p>
+  <input id="inspboard" placeholder="board id" size="10">
+  <button id="inspall">inspect all</button>
+  <span class="muted">every Inspectable object + its live properties</span>
+</p>
+<pre id="inspresult"></pre>
+
 <h2>logs</h2>
 <p>
   <input id="logboard" placeholder="board id" size="10">
@@ -95,16 +103,18 @@ async function cmd(board, command, params = []) {
   return res.json();
 }
 
+// Parse JSON, or return the original value if it is not JSON (board payloads arrive as JSON strings).
+function safeParse(value) {
+  if (typeof value !== 'string') return value;
+  try { return JSON.parse(value); } catch (e) { return value; }
+}
+
 // Pretty-print a command result. The board returns structured payloads as JSON *strings* inside
 // args[], so a raw JSON.stringify shows a backslash-escaped wall. Unwrap any arg that is itself JSON
 // into a nested object, then format it (2-space, like the config editor).
 function prettyResult(result) {
   if (result && Array.isArray(result.args)) {
-    const args = result.args.map((a) => {
-      if (typeof a === 'string') { try { return JSON.parse(a); } catch (e) { /* a plain string */ } }
-      return a;
-    });
-    result = { ...result, args };
+    result = { ...result, args: result.args.map(safeParse) };
   }
   return JSON.stringify(result, null, 2);
 }
@@ -112,6 +122,7 @@ function prettyResult(result) {
 function selectBoard(id) {
   document.getElementById('board').value = id;
   document.getElementById('cfgboard').value = id;
+  document.getElementById('inspboard').value = id;
   document.getElementById('logboard').value = id;
 }
 
@@ -179,6 +190,24 @@ document.getElementById('reboot').onclick = async () => {
 
 document.getElementById('reset').onclick = async () => {
   cfgOut.textContent = prettyResult(await cmd(cfgBoard(), 'reset-config'));
+};
+
+// --- inspect: list objects, then inspect each -> one tree of every Inspectable object ---
+const inspOut = document.getElementById('inspresult');
+const inspBoard = () => document.getElementById('inspboard').value.trim();
+
+document.getElementById('inspall').onclick = async () => {
+  inspOut.textContent = '…';
+  const list = await cmd(inspBoard(), 'objects');
+  if (list.status !== 'ok' || !Array.isArray(list.args)) { inspOut.textContent = prettyResult(list); return; }
+  const names = safeParse(list.args[0]);
+  if (!Array.isArray(names)) { inspOut.textContent = prettyResult(list); return; }
+  const tree = {};
+  for (const name of names) {
+    const r = await cmd(inspBoard(), 'inspect', [name]);
+    tree[name] = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : r;
+  }
+  inspOut.textContent = JSON.stringify(tree, null, 2);
 };
 
 // --- live log stream: start/stop the hub's per-board stream, then view the /logs SSE feed ---
