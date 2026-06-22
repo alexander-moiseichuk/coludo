@@ -4,10 +4,6 @@
 # caller rounds the output to integer degrees for the mixer/servos.
 
 
-def _clamp(value: float, limit: float) -> float:
-    return -limit if value < -limit else (limit if value > limit else value)
-
-
 class Pid:
     """error -> control output. step(error, dt): kp*e + ki*integral(e) + kd*de/dt, each clamped."""
 
@@ -21,6 +17,11 @@ class Pid:
         self._integral: float = 0.0
         self._previous: float = 0.0
 
+    @staticmethod
+    def _clamp(value: float, limit: float) -> float:
+        """Symmetric clamp of `value` to +/- `limit`."""
+        return -limit if value < -limit else (limit if value > limit else value)
+
     def reset(self) -> None:
         """Clear the integral + derivative history -- on entering a control phase, so a fresh glide
         does not inherit wind-up from a previous one."""
@@ -30,8 +31,8 @@ class Pid:
     def step(self, error: float, dt: float) -> float:
         self._integral += error * dt
         if self.integral_limit is not None:
-            self._integral = _clamp(self._integral, self.integral_limit)
+            self._integral = self._clamp(self._integral, self.integral_limit)
         derivative = (error - self._previous) / dt if dt > 0 else 0.0
         self._previous = error
         output = self.kp * error + self.ki * self._integral + self.kd * derivative
-        return _clamp(output, self.output_limit) if self.output_limit is not None else output
+        return self._clamp(output, self.output_limit) if self.output_limit is not None else output
