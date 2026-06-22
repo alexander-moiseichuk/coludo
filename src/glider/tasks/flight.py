@@ -24,22 +24,20 @@ import navigation
 import pid
 import task
 
-_AXES: tuple = ('roll', 'pitch', 'yaw')
-
-
-def _heading_error(target: float, current: float) -> float:
-    """Shortest signed heading error (deg), wrapped to [-180, 180] so 350 -> 10 is +20, not -340."""
-    error = target - current
-    while error > 180:
-        error -= 360
-    while error < -180:
-        error += 360
-    return error
-
 
 @task.activity('flight')
 class Flight(task.Task):
     """Attitude-hold stabilization: GLIDING-gated, timer- or asyncio-scheduled, fail-safe to neutral."""
+
+    _AXES: tuple = ('roll', 'pitch', 'yaw')
+
+    @staticmethod
+    def _heading_error(target: float, current: float) -> int:
+        """Shortest signed heading error (deg), wrapped to [-180, 180] so 350 -> 10 is +20, not -340.
+        Integer degrees -- sub-degree precision is irrelevant to a servo and lets one modulo replace the
+        wrap loop."""
+        error = int(target - current)
+        return error if -180 <= error <= 180 else (error + 180) % 360 - 180
 
     async def setup(self) -> bool:
         board = self.controller.config
@@ -51,7 +49,7 @@ class Flight(task.Task):
         limit = self._mixer.limit
         self._pid = {axis: pid.Pid(output_limit=limit,
                                    integral_limit=self.config.get('integral_limit', limit),
-                                   **gains.get(axis, {})) for axis in _AXES}
+                                   **gains.get(axis, {})) for axis in self._AXES}
         # per-stage behaviour: which flight stages are CONTROL phases and their attitude setpoint.
         # Stages not listed hold the fins neutral (SETTING/BOOSTING/DONE -- no actuation under thrust /
         # on the ground). GLIDING = wings-level + heading hold; LANDING carries its own setpoint (flare).
@@ -92,7 +90,7 @@ class Flight(task.Task):
         self._phase = self.controller.stage_name()  # may switch between control phases (glide -> landing)
         roll_cmd = self._pid['roll'].step(setpoint.get('roll', 0.0) - roll, self._dt)
         pitch_cmd = self._pid['pitch'].step(setpoint.get('pitch', 0.0) - pitch, self._dt)
-        yaw_cmd = self._pid['yaw'].step(_heading_error(self._target_heading(), heading), self._dt)
+        yaw_cmd = self._pid['yaw'].step(self._heading_error(self._target_heading(), heading), self._dt)
         self._apply(self._mixer.mix(roll=round(roll_cmd), pitch=round(pitch_cmd), yaw=round(yaw_cmd)))
         self._steps += 1
         elapsed = time.ticks_diff(time.ticks_us(), start)
