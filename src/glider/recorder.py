@@ -84,7 +84,7 @@ class Ring:
         return delta if delta >= 0 else delta + self.capacity
 
 
-class _CcTee:
+class _TeeSink:
     """A poll-model CC mirror of a recorder stream (`log` and `tlm` both use one). While a deadline is
     armed, tee() copies each record into a bounded ring; drain(ms) returns the batch buffered since the
     last call and re-arms for `ms` more (<= 0 stops). The ring is lazily sized from the first window
@@ -139,8 +139,8 @@ class Recorder:
     kind = 'recorder'
     _tlm: Ring = None
     _log: Ring = None
-    _cc_log = _CcTee()  # CC mirror of the log stream (the `log <ms>` command)
-    _cc_tlm = _CcTee()  # CC mirror of the telemetry stream (the `tlm <ms>` command)
+    _cc_log = _TeeSink()  # CC mirror of the log stream (the `log <ms>` command)
+    _cc_tlm = _TeeSink()  # CC mirror of the telemetry stream (the `tlm <ms>` command)
     _uart = None  # asyncio.StreamWriter wrapping the recorder UART
     _flag = None  # ThreadSafeFlag set by producers, waited on by run()
     _session: str = None  # 'YYYYMMDD_HHMMSS', produced on first tlm(), fixed for the boot
