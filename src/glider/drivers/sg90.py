@@ -65,7 +65,7 @@ class SG90(task.Task):
         self._min_deg: int = self.config.get('min_deg', 0)
         self._max_deg: int = self.config.get('max_deg', 180)
         self._neutral: int = (self._min_deg + self._max_deg) // 2  # the zero position
-        self._gate = servo.slew_gate(self.controller.config.get('servo_concurrency', _DEFAULT_CONCURRENCY))
+        self._gate = servo.Gate.slew(self.controller.config.get('servo_concurrency', _DEFAULT_CONCURRENCY))
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('angle', 'pulse_us', 'done'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._pwm = PWM(Pin(gpio), freq=50, duty_u16=0)

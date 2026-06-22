@@ -1,6 +1,6 @@
 # On-board (MicroPython) test for the shared servo slew gate (servo.py): the FIFO counting semaphore
-# that bounds simultaneous fin slews, and the process-wide slew_gate()/reset_gate() factory. Run by
-# `make test`.
+# that bounds simultaneous fin slews, and the process-wide Gate.slew()/Gate.reset() shared instance.
+# Run by `make test`.
 
 import asyncio
 
@@ -46,14 +46,14 @@ async def amain():
     await gate3.acquire()  # the permit is back -> acquires without blocking
     gate3.release()
 
-    # slew_gate() is process-wide: created once (first permits win), reset_gate() rebuilds it
-    servo.reset_gate()
-    shared = servo.slew_gate(3)
-    assert servo.slew_gate(1) is shared  # second call keeps the first gate (1 ignored)
-    servo.reset_gate()
-    assert servo.slew_gate(2) is not shared  # after reset a fresh gate is built
+    # Gate.slew() is process-wide: created once (first permits win), Gate.reset() rebuilds it
+    servo.Gate.reset()
+    shared = servo.Gate.slew(3)
+    assert servo.Gate.slew(1) is shared  # second call keeps the first gate (1 ignored)
+    servo.Gate.reset()
+    assert servo.Gate.slew(2) is not shared  # after reset a fresh gate is built
 
-    print('ok: servo slew gate -- FIFO counting semaphore, N-limit serialisation, process-wide factory')
+    print('ok: servo slew gate -- FIFO counting semaphore, N-limit serialisation, process-wide shared')
 
 
 asyncio.run(amain())

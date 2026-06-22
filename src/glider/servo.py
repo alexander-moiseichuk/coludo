@@ -6,12 +6,14 @@
 
 import asyncio
 
-_gate = None  # the process-wide slew gate, created on the first servo setup
-
 
 class Gate:
     """A tiny FIFO counting semaphore (MicroPython asyncio has no Semaphore, only Lock/Event): at most
-    `permits` holders at once, the rest queue and are handed a permit in order on release."""
+    `permits` holders at once, the rest queue and are handed a permit in order on release. The
+    process-wide shared instance lives on the class itself (Gate.slew()/Gate.reset()) -- no module
+    global."""
+
+    _shared: 'Gate' = None  # the process-wide slew gate, created on the first Gate.slew()
 
     def __init__(self, permits: int):
         self._free: int = permits
@@ -38,18 +40,17 @@ class Gate:
     async def __aexit__(self, *exception):
         self.release()
 
+    @classmethod
+    def slew(cls, permits: int) -> 'Gate':
+        """The process-wide slew gate, created once (the first servo's `permits` wins) and shared by
+        every servo driver, so `servo_concurrency` bounds simultaneous slews board-wide rather than
+        per driver."""
+        if cls._shared is None:
+            cls._shared = cls(permits)
+        return cls._shared
 
-def slew_gate(permits: int) -> Gate:
-    """The process-wide slew gate, created once (the first servo's `permits` wins) and shared by every
-    servo driver, so `servo_concurrency` bounds simultaneous slews board-wide rather than per driver."""
-    global _gate
-    if _gate is None:
-        _gate = Gate(permits)
-    return _gate
-
-
-def reset_gate() -> None:
-    """Drop the shared gate so the next slew_gate() rebuilds it -- for tests (clean permit count) and
-    a full reconfigure."""
-    global _gate
-    _gate = None
+    @classmethod
+    def reset(cls) -> None:
+        """Drop the shared gate so the next Gate.slew() rebuilds it -- for tests (clean permit count)
+        and a full reconfigure."""
+        cls._shared = None
