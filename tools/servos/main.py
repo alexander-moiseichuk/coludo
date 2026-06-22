@@ -54,8 +54,10 @@ _U16 = const(65535)
 
 # --- button timing (in poll ticks of _POLL_MS) -----------------------------------------------------
 _POLL_MS = const(20)
-_CONFIRM_TICKS = const(2)  # a lone press must hold this long before the first step (filters a both-press race)
-_REPEAT_TICKS = const(8)   # auto-repeat period while held (~160 ms)
+_CONFIRM_TICKS = const(2)        # a lone press must hold this long before the first step (filters a both-press race)
+_REPEAT_DELAY_TICKS = const(25)  # then keep holding this long (~0.5 s) before auto-repeat begins -> a tap = 1 step
+_REPEAT_TICKS = const(8)         # auto-repeat period once it has begun (sweep while held)
+_TRACE_BUTTONS = const(1)        # 1 -> print a 'BTN ...' trace line per button event (bench validation); 0 -> off
 
 # --- the three editable parameters: indices into _HUD_ROWS (defined below, after Servo) -------------
 _ANG: int = const(0)
@@ -190,9 +192,20 @@ class Buttons:
         self._held_side: int = 0   # -1 left, +1 right, 0 none
         self._held_ticks: int = 0
         self._combo: bool = False
+        self._counts: dict = {'+': 0, '-': 0, 'switch': 0}  # bench instrumentation (see _emit)
 
     def _down(self, pin) -> bool:
         return pin.value() == _BUTTON_ACTIVE
+
+    def _emit(self, event: str, left: bool, right: bool) -> str:
+        """Tally an event and (when _TRACE_BUTTONS) print a 'BTN' trace line: the event, the raw pin
+        levels (confirms wiring/polarity), and the running +/-/switch counts -- so a hand-pressed
+        sequence is verifiable from the console."""
+        self._counts[event] += 1
+        if _TRACE_BUTTONS:
+            print('BTN ev=%-6s L=%d R=%d +=%d -=%d switch=%d' % (
+                event, left, right, self._counts['+'], self._counts['-'], self._counts['switch']))
+        return event
 
     def poll(self) -> str:
         """One sample -> an event: '-', '+', 'switch', or '' (nothing). Call every _POLL_MS."""
@@ -201,7 +214,7 @@ class Buttons:
             self._held_side, self._held_ticks = 0, 0
             if not self._combo:
                 self._combo = True
-                return 'switch'
+                return self._emit('switch', left, right)
             return ''
         if left or right:
             side = -1 if left else 1
@@ -211,10 +224,12 @@ class Buttons:
                 self._held_side, self._held_ticks = side, 1  # new press: start the confirm window
                 return ''
             self._held_ticks += 1
-            first = self._held_ticks == _CONFIRM_TICKS
-            repeat = self._held_ticks > _CONFIRM_TICKS and (self._held_ticks - _CONFIRM_TICKS) % _REPEAT_TICKS == 0
+            elapsed = self._held_ticks - _CONFIRM_TICKS  # ticks since the first step fired
+            first = elapsed == 0  # the initial step
+            # auto-repeat only after holding _REPEAT_DELAY_TICKS past the first step, then every _REPEAT_TICKS
+            repeat = elapsed >= _REPEAT_DELAY_TICKS and (elapsed - _REPEAT_DELAY_TICKS) % _REPEAT_TICKS == 0
             if first or repeat:
-                return '-' if side < 0 else '+'
+                return self._emit('-' if side < 0 else '+', left, right)
             return ''
         self._held_side, self._held_ticks, self._combo = 0, 0, False
         return ''
