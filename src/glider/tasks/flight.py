@@ -3,7 +3,7 @@
 # hold), mixes the result to the fins (mixer.py) and writes them via sg90.update(). Per-stage: the
 # `phases` config names the CONTROL stages and their setpoint (GLIDING = wings-level + steer to the
 # landing zone, LANDING = its own flare setpoint, straight-and-level); any other stage
-# (SETTING/BOOSTING/DONE) holds the fins neutral. In GLIDING the yaw heading setpoint comes from nav.py
+# (SETTING/BOOSTING/DONE) holds the fins neutral. In GLIDING the yaw heading setpoint comes from navigation.py
 # in three GPS-degrading tiers (_target_heading): live fix -> steer from the current position; no fix
 # but a CC-set launch point -> hold the launch->gate bearing (open-loop); neither -> the captured glide
 # heading. LANDING locks the heading. Degraded: stale/absent attitude -> neutral.
@@ -20,7 +20,7 @@ import time
 import databoard
 import inspector
 import mixer
-import nav
+import navigation
 import pid
 import task
 
@@ -57,7 +57,7 @@ class Flight(task.Task):
         # on the ground). GLIDING = wings-level + heading hold; LANDING carries its own setpoint (flare).
         self._phases: dict = self.config.get('phases', {'gliding': {'roll': 0.0, 'pitch': 0.0}})
         self._attitude = databoard.Databoard.parameter('attitude')  # (heading, roll, pitch)
-        self._position = databoard.Databoard.parameter('position')  # (lat, lon) for landing-zone nav
+        self._position = databoard.Databoard.parameter('position')  # (lat, lon) for landing-zone navigation
         self._mission = inspector.Inspector.get('mission')  # the landing zone lives here (may be None)
         self._heading_hold = None  # captured on entering a control phase -> hold that heading
         self._active: bool = False  # in a control phase (PID engaged)
@@ -112,10 +112,10 @@ class Flight(task.Task):
         zone = self._mission.zone
         position, source, _age = self._position.read()
         if source is not None and position is not None:  # tier 1: live fix
-            return nav.steer(position, zone[0], zone[1])[0]
+            return navigation.steer(position, zone[0], zone[1])[0]
         launch = self._mission.launch_point()  # tier 2: open-loop from the launch point (CC-set)
         if launch is not None:
-            return nav.steer(launch, zone[0], zone[1])[0]
+            return navigation.steer(launch, zone[0], zone[1])[0]
         return self._heading_hold  # tier 3: blind
 
     def _apply(self, angles: dict) -> None:

@@ -22,7 +22,7 @@ except ImportError:  # CPython tooling / off-board lint+compile only
 
 import databoard
 import inspector
-import nav
+import navigation
 import recorder
 
 LAUNCH_PATH: str = 'launch.config'
@@ -59,9 +59,9 @@ def _number(value, low: float, high: float):
 
 def _zone(value):
     """Validate a landing zone `[[lat_tl, lon_tl], [lat_br, lon_br]]` (top-left + bottom-right corners)
-    -> ((lat, lon), (lat, lon)) or None. nav.py resolves the target (centre) + gates (short-side
+    -> ((lat, lon), (lat, lon)) or None. navigation.py resolves the target (centre) + gates (short-side
     midpoints) from it. The corner choice is an operator SAFETY decision: orient the zone so the
-    short-side entrances face hazard-free corridors -- nav steers to a gate with no hazard awareness
+    short-side entrances face hazard-free corridors -- navigation steers to a gate with no hazard awareness
     (specs/coludo.md "Zone orientation")."""
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         return None
@@ -132,8 +132,8 @@ class Mission(inspector.Inspectable):
         origin = self.launch_point()
         if origin is None:
             return None
-        target, gate_a, gate_b = nav.zone(self.zone[0], self.zone[1])
-        distances = {name: round(nav.distance(origin[0], origin[1], point[0], point[1]), 1)
+        target, gate_a, gate_b = navigation.zone(self.zone[0], self.zone[1])
+        distances = {name: round(navigation.distance(origin[0], origin[1], point[0], point[1]), 1)
                      for name, point in (('target', target), ('gate_a', gate_a), ('gate_b', gate_b))}
         farthest = max(distances.values())
         return {'origin': origin, 'target': target, 'gates': [gate_a, gate_b], 'distances_m': distances,

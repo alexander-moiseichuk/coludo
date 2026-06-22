@@ -222,10 +222,10 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
   the loop gated by stage + arming + a fed watchdog.
 
 ### Phase 4 — Polish
-- ✅ **Landing-zone navigation** (`nav.py` + `tasks/flight.py` + `mission.py`) — the mission's zone is a
-  lat/lon rectangle (TL/BR); `nav.zone()` → target (centre) + gates (short-side midpoints, the safe
+- ✅ **Landing-zone navigation** (`navigation.py` + `tasks/flight.py` + `mission.py`) — the mission's zone is a
+  lat/lon rectangle (TL/BR); `navigation.zone()` → target (centre) + gates (short-side midpoints, the safe
   approach corridors — operator orients the zone, `coludo.md`). In GLIDING the yaw heading setpoint is
-  `nav.steer()` toward the nearer gate then the centre (overshoot → ~180° re-approach, emergent). Three
+  `navigation.steer()` toward the nearer gate then the centre (overshoot → ~180° re-approach, emergent). Three
   GPS-degrading tiers: live fix → steer from the current position; no fix + CC-set launch point → hold
   the launch→gate bearing (open-loop, GPS-denied fallback); neither → captured heading. Mission resolves
   the zone vs the launch point (CC-set or GNSS), gates it on `max_range_m` (board config — airframe

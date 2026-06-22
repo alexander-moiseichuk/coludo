@@ -212,7 +212,7 @@ Vertically (latitutude) stretched landing zone
 ### Zone orientation — an operator safety decision
 
 The two **gate entrances are fixed to the midpoints of the SHORT sides** — the navigator resolves them
-purely from geometry (`nav.steer()` always vectors to the nearer short-side entrance, then to the
+purely from geometry (`navigation.steer()` always vectors to the nearer short-side entrance, then to the
 centre; on an overshoot it turns ~180° back through the gate it just crossed and re-approaches). Two
 reasons reinforce that placement, but only if the zone is laid out deliberately:
 
@@ -223,7 +223,7 @@ reasons reinforce that placement, but only if the zone is laid out deliberately:
   airspace.** The long sides should border the hazards (trees, the launch pad, people); the short
   sides the clear approaches.
 
-This is a placement decision at mission-setup time, **not just a rectangle**: `nav.py` will steer to a
+This is a placement decision at mission-setup time, **not just a rectangle**: `navigation.py` will steer to a
 short-side entrance on every approach and re-approach, with **no knowledge of what lies beyond any
 side**. Choosing the corners so the gates align with clear corridors is therefore safety-critical and
 entirely the operator's responsibility — the firmware cannot verify it.
