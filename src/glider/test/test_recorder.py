@@ -111,19 +111,20 @@ async def test_error_policy():
 
 
 async def test_cc_stream():
-    # poll-model `log <ms>` streaming: a tee of log() onto a lazily-allocated CC ring, gated by a
-    # deadline; the UART/Luckfox path must be untouched throughout.
+    # poll-model `log <ms>` streaming: a tee of log() onto a lazily-allocated CC ring (_cc_log), gated
+    # by a deadline; the UART/Luckfox path must be untouched throughout.
     recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
-    assert recorder.Recorder._cc is None  # nothing allocated until the first request
+    tee = recorder.Recorder._cc_log
+    assert tee._ring is None  # nothing allocated until the first request
 
     # off by default: log() does NOT collect for CC, but still goes to the UART ring
     assert recorder.Recorder.log('A', 'before') is True
     assert recorder.Recorder.cc_logs(0) == {'lines': []}  # disabled -> empty batch
-    assert recorder.Recorder._cc is None  # nothing allocated while off
+    assert tee._ring is None  # nothing allocated while off
 
     # `log 1000` sizes + allocates the ring, returns the (empty) batch so far, and arms a 1 s window
     assert recorder.Recorder.cc_logs(1000)['lines'] == []
-    assert recorder.Recorder._cc is not None and recorder.Recorder._cc_deadline  # ring sized, armed
+    assert tee._ring is not None and tee._deadline  # ring sized, armed
     recorder.Recorder.log('B', 'one')
     recorder.Recorder.log('B', 'two')
     batch = recorder.Recorder.cc_logs(1000)['lines']  # drain + re-arm
@@ -135,20 +136,51 @@ async def test_cc_stream():
     assert all(b' :: ' in item for item in recorder.Recorder._uart.items)
 
     # the ring capacity is derived from the window (10 records/ms) and capped at 4x the default (1024)
-    assert recorder.Recorder._cc.capacity == min(1000 * 10, 4 * 1024)
+    assert tee._ring.capacity == min(1000 * 10, 4 * 1024)
 
     # `log 0` hands back the final batch and stops streaming (deadline cleared)
     recorder.Recorder.cc_logs(1000)  # re-arm, ring empty
     recorder.Recorder.log('C', 'last')
     final = recorder.Recorder.cc_logs(0)['lines']
-    assert len(final) == 1 and final[0].endswith('C :: last') and recorder.Recorder._cc_deadline == 0
+    assert len(final) == 1 and final[0].endswith('C :: last') and tee._deadline == 0
 
     # window lapse: a deadline already in the past -> the next log() discards + disables, no collection
     recorder.Recorder.cc_logs(1000)  # arm
-    recorder.Recorder._cc_deadline = recorder.time.ticks_add(recorder.Recorder.timestamp(), -1)  # already past
+    tee._deadline = recorder.time.ticks_add(recorder.time.ticks_us(), -1)  # already past
     recorder.Recorder.log('D', 'after-lapse')
-    assert recorder.Recorder._cc_deadline == 0  # log() saw the lapse and disabled
+    assert tee._deadline == 0  # log() saw the lapse and disabled
     assert recorder.Recorder.cc_logs(0)['lines'] == []  # nothing collected after the lapse
+
+
+async def test_cc_telemetry():
+    # poll-model `tlm <ms>` streaming: the same tee mechanism mirrors tlm() onto _cc_tlm, returning
+    # {'samples': [...]}; the primary telemetry ring (and its raise-on-overflow policy) is untouched.
+    recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
+    tee = recorder.Recorder._cc_tlm
+    assert tee._ring is None  # off until requested
+
+    # off by default: tlm() does NOT collect for CC, but still reaches the primary _tlm ring
+    recorder.Recorder.tlm('t.csv', 'a')
+    assert recorder.Recorder.cc_telemetry(0) == {'samples': []}  # disabled -> empty batch
+    assert tee._ring is None
+
+    # `tlm 1000` arms the window; subsequent tlm() rows are mirrored and drained on the next poll
+    assert recorder.Recorder.cc_telemetry(1000)['samples'] == []
+    assert tee._ring is not None and tee._deadline
+    recorder.Recorder.tlm('t.csv', 'b')
+    recorder.Recorder.tlm('t.csv', 'c')
+    samples = recorder.Recorder.cc_telemetry(1000)['samples']  # drain + re-arm
+    assert len(samples) == 2 and samples[0].endswith('@b') and samples[1].endswith('@c'), samples
+
+    # the primary telemetry path is unaffected: every tlm() above still reached the _tlm ring
+    assert await recorder.Recorder.drain() == 3  # a, b, c
+    assert all(item.startswith(b'@') for item in recorder.Recorder._uart.items)
+
+    # `tlm 0` hands back the final batch and stops streaming
+    recorder.Recorder.cc_telemetry(1000)  # re-arm, ring empty
+    recorder.Recorder.tlm('t.csv', 'z')
+    final = recorder.Recorder.cc_telemetry(0)['samples']
+    assert len(final) == 1 and final[0].endswith('@z') and tee._deadline == 0
 
 
 async def test_run_loop():
@@ -169,9 +201,10 @@ async def _amain():
     await test_recorder()
     await test_error_policy()
     await test_cc_stream()
+    await test_cc_telemetry()
     await test_run_loop()
 
 
 test_ring()
 asyncio.run(_amain())
-print('ok: recorder SPSC ring, async drain/priority, log-drop vs tlm-raise, Telemetry, cc-stream, run loop')
+print('ok: recorder SPSC ring, async drain/priority, log-drop vs tlm-raise, Telemetry, cc log+tlm stream, run loop')

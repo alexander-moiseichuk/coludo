@@ -175,8 +175,17 @@ async def amain():
     batch = json.loads(cc.parse(await sd5.handle('log 1000')).args[0])  # drain + re-arm
     assert batch['lines'][0].endswith('test :: hello'), batch
     assert json.loads(cc.parse(await sd5.handle('log 0')).args[0])['lines'] == []  # stop, drained
-    assert recorder.Recorder._cc_deadline == 0
+    assert recorder.Recorder._cc_log._deadline == 0
     assert 'badargs' in await sd5.handle('log notanumber')  # non-integer duration rejected
+
+    # telemetry streaming: `tlm <ms>` mirrors `log` -- arms collection + returns {'samples': [...]}.
+    assert json.loads(cc.parse(await sd5.handle('tlm 1000')).args[0])['samples'] == []  # arm, empty
+    recorder.Recorder.tlm('t.csv', 'row')
+    samples = json.loads(cc.parse(await sd5.handle('tlm 1000')).args[0])  # drain + re-arm
+    assert samples['samples'][0].endswith('@row'), samples
+    assert json.loads(cc.parse(await sd5.handle('tlm 0')).args[0])['samples'] == []  # stop, drained
+    assert recorder.Recorder._cc_tlm._deadline == 0
+    assert 'badargs' in await sd5.handle('tlm notanumber')  # non-integer duration rejected
 
     # arming: refused while a probe fails, clean board -> armed; disarm; manual stage hold + auto resume
     class _ArmController:
@@ -221,7 +230,7 @@ async def amain():
     assert json.loads(cc.parse(await sd_arm.handle('stage auto')).args[0])['manual'] is False  # resume
     assert 'unsupported' in await cc_client.create_dispatcher(config_default.default()).handle('arm')
 
-    print('ok: cc_client dispatch/serve/standard + inspect/update/stats + probe + verify + log + arm')
+    print('ok: cc_client dispatch/serve/standard + inspect/update/stats + probe + verify + log + tlm + arm')
 
 
 asyncio.run(amain())

@@ -123,8 +123,8 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `stage` | `[name\|auto]` | `ok {stage,manual}` | get the stage; `<name>` holds it (pauses the sequencer — ground test); `auto` resumes |
 | `arm` | — | `ok {armed:true}` / `err unsafe {problems}` | enable actuation — only when verify is clean (every device up + probe healthy, incl. mission launch-position) |
 | `disarm` | — | `ok {armed:false}` | disable actuation (the control loop holds the fins neutral) |
-| `tel` | `[ms]` | `ok {samples:[...]}` | telemetry samples within the last `ms` |
 | `log` | `<ms>` | `ok {lines:[...]}` | poll-model: lines buffered since the last `log`; re-arm teeing for `ms` (`0` stops) |
+| `tlm` | `<ms>` | `ok {samples:[...]}` | poll-model: telemetry rows buffered since the last `tlm`; re-arm teeing for `ms` (`0` stops) |
 | `report` | — | `ok {stage, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
 | `objects` | — | `ok [name, ...]` | names of all `Inspectable` objects (for the `inspect`/`update`/`stats` targets) |
 | `inspect` | `<object>` | `ok {props}` | `Inspectable.inspect()` of a named object |
@@ -171,7 +171,7 @@ survive a pre-flight reboot. `err unsupported` means the board has no mission ob
 ring buffer; if the requested window is older than the buffer holds, it returns what it has and
 sets `"truncated": true`. For continuous tailing, CC polls with a window at least as wide as
 its poll interval and de-duplicates by record uptime (each record carries its uptime, per the
-`coludo.md` logging format). `tel` behaves the same way for telemetry samples.
+`coludo.md` logging format). `tlm` behaves the same way for telemetry rows (`ok {samples:[...]}`).
 
 ### Config commands map to the activation model
 

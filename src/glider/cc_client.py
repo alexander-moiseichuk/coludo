@@ -258,6 +258,19 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
             return cc.build('err', ['badargs', 'log <duration_ms>'])
         return cc.build('ok', [json.dumps(recorder.Recorder.cc_logs(duration_ms))])
 
+    async def tlm(msg) -> str:
+        """`tlm <duration_ms>` -- poll-model telemetry streaming (mirrors `log`). Reply with the
+        telemetry rows the board buffered since the last `tlm`, and keep teeing tlm() for another
+        `duration_ms` (`tlm 0` stops, default 1000 ms). One base64 JSON token. An EXTRA route: the
+        UART/Luckfox telemetry is untouched, and with no `tlm` request the board collects nothing."""
+        import recorder
+
+        try:
+            duration_ms = int(msg.args[0]) if msg.args else 1000
+        except ValueError:
+            return cc.build('err', ['badargs', 'tlm <duration_ms>'])
+        return cc.build('ok', [json.dumps(recorder.Recorder.cc_telemetry(duration_ms))])
+
     async def reboot(msg) -> str:
         reset = on_reboot or (lambda: __import__('machine').reset())  # imported only when it fires
 
@@ -282,6 +295,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
     dispatcher.on('probe', probe)
     dispatcher.on('verify', verify)
     dispatcher.on('log', log)
+    dispatcher.on('tlm', tlm)
     dispatcher.on('get-config', get_config)
     dispatcher.on('save-config', save_config)
     dispatcher.on('reset-config', reset_config)
