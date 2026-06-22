@@ -212,8 +212,8 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
   live loop can be exercised on the bench (`arm` + `stage gliding` → tilt the board, watch the fins);
   `stage auto` resumes. Tests across controller/flight/sequencer/cc_client (disarmed→neutral,
   manual→no auto-advance, arm refused-on-probe-fail / clean→armed).
-- **Deferred to Phase 4:** GNSS landing-zone navigation (heading-to-home), GPX export. Until nav
-  exists, `GLIDING` holds wings-level + a fixed heading.
+- **Landing-zone navigation** (heading-to-home) is now implemented — see Phase 4. GPX export still
+  deferred.
 - **Bench-complete (all 6 tasks ✅):** the full chain — sensors → stage machine → armed + per-phase
   gated PID → mixer → fins, with a watchdog backstop — is built and on-board tested (34/34). The only
   thing left before flight is **gain tuning on the real airframe** (gains default 0; the flight +
@@ -222,8 +222,16 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
   the loop gated by stage + arming + a fed watchdog.
 
 ### Phase 4 — Polish
-- Landing-zone navigation + per-launch mission config, GPX export of telemetry, richer
-  browser UI, GC/perf strategy (second core or native control loop if latency demands).
+- ✅ **Landing-zone navigation** (`nav.py` + `tasks/flight.py` + `mission.py`) — the mission's zone is a
+  lat/lon rectangle (TL/BR); `nav.zone()` → target (centre) + gates (short-side midpoints, the safe
+  approach corridors — operator orients the zone, `coludo.md`). In GLIDING the yaw heading setpoint is
+  `nav.steer()` toward the nearer gate then the centre (overshoot → ~180° re-approach, emergent). Three
+  GPS-degrading tiers: live fix → steer from the current position; no fix + CC-set launch point → hold
+  the launch→gate bearing (open-loop, GPS-denied fallback); neither → captured heading. Mission resolves
+  the zone vs the launch point (CC-set or GNSS), gates it on `max_range_m` (board config — airframe
+  glide range), exposes points + distances + `in_range` in `inspect()`, and `probe` fails a too-far zone.
+- Per-launch mission config, GPX export of telemetry, richer browser UI, GC/perf strategy (second core
+  or native control loop if latency demands). Spiral-to-launch-site maneuver.
 
 ### `launch.config` (mission config)
 A separate config document, same layered/validated/save+reactivate form as `board.json`
