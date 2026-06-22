@@ -74,6 +74,20 @@ async function cmd(board, command, params = []) {
   return res.json();
 }
 
+// Pretty-print a command result. The board returns structured payloads as JSON *strings* inside
+// args[], so a raw JSON.stringify shows a backslash-escaped wall. Unwrap any arg that is itself JSON
+// into a nested object, then format it (2-space, like the config editor).
+function prettyResult(result) {
+  if (result && Array.isArray(result.args)) {
+    const args = result.args.map((a) => {
+      if (typeof a === 'string') { try { return JSON.parse(a); } catch (e) { /* a plain string */ } }
+      return a;
+    });
+    result = { ...result, args };
+  }
+  return JSON.stringify(result, null, 2);
+}
+
 function selectBoard(id) {
   document.getElementById('board').value = id;
   document.getElementById('cfgboard').value = id;
@@ -103,7 +117,7 @@ async function send() {
   const reply = document.getElementById('reply');
   reply.textContent = '…';
   try {
-    reply.textContent = JSON.stringify(await cmd(board, command, parts), null, 2);
+    reply.textContent = prettyResult(await cmd(board, command, parts));
   } catch (err) {
     reply.textContent = 'error: ' + err;
   }
@@ -125,7 +139,7 @@ document.getElementById('load').onclick = async () => {
       cfgOut.textContent = 'loaded running config of ' + cfgBoard();
     } catch (e) { cfgOut.textContent = 'unreadable config from board: ' + e; }
   } else {
-    cfgOut.textContent = JSON.stringify(r, null, 2);
+    cfgOut.textContent = prettyResult(r);
   }
 };
 
@@ -134,15 +148,15 @@ document.getElementById('save').onclick = async () => {
   try { json = JSON.stringify(JSON.parse(cfgArea.value)); }
   catch (e) { cfgOut.textContent = 'draft is not valid JSON: ' + e; return; }
   cfgOut.textContent = '…';
-  cfgOut.textContent = JSON.stringify(await cmd(cfgBoard(), 'save-config', [json]), null, 2);
+  cfgOut.textContent = prettyResult(await cmd(cfgBoard(), 'save-config', [json]));
 };
 
 document.getElementById('reboot').onclick = async () => {
-  cfgOut.textContent = JSON.stringify(await cmd(cfgBoard(), 'reboot'), null, 2);
+  cfgOut.textContent = prettyResult(await cmd(cfgBoard(), 'reboot'));
 };
 
 document.getElementById('reset').onclick = async () => {
-  cfgOut.textContent = JSON.stringify(await cmd(cfgBoard(), 'reset-config'), null, 2);
+  cfgOut.textContent = prettyResult(await cmd(cfgBoard(), 'reset-config'));
 };
 
 // --- live log stream: start/stop the hub's per-board stream, then view the /logs SSE feed ---
