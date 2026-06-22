@@ -33,9 +33,10 @@ _EPOCH_OFFSET: int = 946684800
 
 _FIELDS: tuple = ('launch_id', 'site', 'latitude', 'longitude', 'altitude')
 
-# coludo.md: the landing zone must fall within ~200 m of the launch point (so the on-board GNSS, ~2.5 m
-# CEP, can resolve a meaningful vector to it). All three zone points (target + both gates) are checked.
-_MAX_RANGE_M: float = 200.0
+# Default max range (m) from the launch point to any zone point, when the board config omits it. The
+# real value is `max_range_m` in board.json -- it is a glide-range property of the AIRFRAME (a bigger
+# glider reaches farther), so it lives in the board config, not the per-launch mission.
+_DEFAULT_MAX_RANGE_M: float = 200.0
 
 
 def _load(path: str) -> dict:
@@ -83,9 +84,10 @@ class Mission(inspector.Inspectable):
     name: str = 'mission'
     kind: str = 'mission'
 
-    def __init__(self, path: str = LAUNCH_PATH):
+    def __init__(self, path: str = LAUNCH_PATH, max_range_m: float = _DEFAULT_MAX_RANGE_M):
         data = _load(path)
         self.path: str = path
+        self.max_range_m: float = max_range_m  # from board config (airframe glide range); zone range gate
         self.launch_id: str = data.get('launch_id', '')
         self.site: str = data.get('site', '')
         self.latitude = _number(data.get('latitude'), -90.0, 90.0)  # decimal degrees, None unset
@@ -135,7 +137,7 @@ class Mission(inspector.Inspectable):
                      for name, point in (('target', target), ('gate_a', gate_a), ('gate_b', gate_b))}
         farthest = max(distances.values())
         return {'origin': origin, 'target': target, 'gates': [gate_a, gate_b], 'distances_m': distances,
-                'max_distance_m': farthest, 'in_range': farthest <= _MAX_RANGE_M}
+                'max_distance_m': farthest, 'in_range': farthest <= self.max_range_m}
 
     async def probe(self) -> str:
         """On-demand self-test: a launch position is set (CC or GNSS) and, if a landing zone is set, all
@@ -150,7 +152,7 @@ class Mission(inspector.Inspectable):
             geometry = self.geometry()
             if geometry is not None and not geometry['in_range']:
                 raise ValueError('landing zone out of range (%.0f m > %.0f m)' % (
-                    geometry['max_distance_m'], _MAX_RANGE_M))
+                    geometry['max_distance_m'], self.max_range_m))
         except Exception as error:
             message = 'launch/zone: %s' % error
             recorder.Recorder.log(self.name, 'probe FAILED: ' + message)

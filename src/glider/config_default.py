@@ -19,6 +19,8 @@ def default() -> dict:
     return {
         'board': {'id': 'taster', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION},
         'setup_retries': 3,  # re-attempt a flaky device setup at boot (breadboard contacts; 1 = no retry)
+        'max_range_m': 200,  # landing zone must be within this of the launch point -- the AIRFRAME glide
+        #                      range (a bigger glider reaches farther); the mission range-gate uses it
         'wifi': {  # STA — the board joins the Control network
             'mode': 'sta',
             'ssid': 'panda',

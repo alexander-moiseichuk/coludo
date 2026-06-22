@@ -151,6 +151,11 @@ def test_zone_geometry_and_range():
     launch.update({'latitude': 48.005})  # ~530 m north of the zone
     assert launch.inspect()['in_range'] is False
     assert 'out of range' in asyncio.run(launch.probe())
+
+    # the threshold is board config (airframe glide range), not hardcoded: a tighter range flags it
+    tight = mission.Mission(PATH, max_range_m=10.0)
+    tight.update({'latitude': 48.00025, 'longitude': 11.0005, 'zone': [[48.0005, 11.000], [48.0000, 11.001]]})
+    assert tight.inspect()['in_range'] is False  # ~37 m gates exceed the 10 m range
     _cleanup()
 
 
