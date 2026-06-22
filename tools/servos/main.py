@@ -68,9 +68,15 @@ _ANGLE, _PULSE, _DUTY = const(0), const(1), const(2)
 _PARAM_NAMES = ('angle', 'pulse', 'duty')
 
 
-def _clamp(value: float, low: float, high: float) -> float:
+def _clamp(value: int, low: int, high: int) -> int:
     """value clamped to [low, high]."""
     return low if value < low else (high if value > high else value)
+
+
+def _div_round(numerator: int, denominator: int) -> int:
+    """Rounded integer division (both operands >= 0). Used everywhere instead of float math -- the C3
+    has no FPU, and rounding (not floor) keeps the angle<->pulse<->duty round-trips from drifting."""
+    return (numerator + denominator // 2) // denominator
 
 
 def _scaled_text(display, text: str, x: int, y: int, scale: int) -> None:
@@ -88,34 +94,35 @@ def _scaled_text(display, text: str, x: int, y: int, scale: int) -> None:
 
 
 class Servo:
-    """One hobby servo on a PWM pin. The canonical state is the pulse width (us); angle and duty are
-    just linear views of it. apply() writes the duty and the peripheral read-back gives the 'get'."""
+    """One hobby servo on a PWM pin. The canonical state is the pulse width (us, int); angle and duty
+    are just linear integer views of it. apply() writes the duty and the peripheral read-back gives the
+    'get'. Float-free: the C3 has no FPU, so every conversion is rounded integer division."""
 
     def __init__(self, pin: int):
         self._pwm = PWM(Pin(pin), freq=_FREQ_HZ)
-        self.pulse_us: float = _PULSE_MIN_US  # canonical commanded state
+        self.pulse_us: int = _PULSE_MIN_US  # canonical commanded state
         self.apply(_PULSE_MIN_US)
 
-    # --- conversions (all linear over the pulse envelope) ---
+    # --- conversions (all linear over the pulse envelope, integer math) ---
     @staticmethod
-    def angle_to_pulse(angle: float) -> float:
-        span = (angle - _ANGLE_MIN) / (_ANGLE_MAX - _ANGLE_MIN)
-        return _PULSE_MIN_US + span * (_PULSE_MAX_US - _PULSE_MIN_US)
+    def angle_to_pulse(angle: int) -> int:
+        return _PULSE_MIN_US + _div_round((angle - _ANGLE_MIN) * (_PULSE_MAX_US - _PULSE_MIN_US),
+                                          _ANGLE_MAX - _ANGLE_MIN)
 
     @staticmethod
-    def pulse_to_angle(pulse: float) -> float:
-        span = (pulse - _PULSE_MIN_US) / (_PULSE_MAX_US - _PULSE_MIN_US)
-        return _ANGLE_MIN + span * (_ANGLE_MAX - _ANGLE_MIN)
+    def pulse_to_angle(pulse: int) -> int:
+        return _ANGLE_MIN + _div_round((pulse - _PULSE_MIN_US) * (_ANGLE_MAX - _ANGLE_MIN),
+                                       _PULSE_MAX_US - _PULSE_MIN_US)
 
     @staticmethod
-    def pulse_to_duty(pulse: float) -> int:
-        return round(pulse / _PERIOD_US * _U16)
+    def pulse_to_duty(pulse: int) -> int:
+        return _div_round(pulse * _U16, _PERIOD_US)
 
     @staticmethod
-    def duty_to_pulse(duty: float) -> float:
-        return duty / _U16 * _PERIOD_US
+    def duty_to_pulse(duty: int) -> int:
+        return _div_round(duty * _PERIOD_US, _U16)
 
-    def apply(self, pulse_us: float) -> None:
+    def apply(self, pulse_us: int) -> None:
         """Command a pulse width (clamped) and write it to the timer."""
         self.pulse_us = _clamp(pulse_us, _PULSE_MIN_US, _PULSE_MAX_US)
         self._pwm.duty_u16(self.pulse_to_duty(self.pulse_us))
@@ -126,10 +133,10 @@ class Servo:
 
     # --- set values (what we commanded) ---
     def angle_set(self) -> int:
-        return round(self.pulse_to_angle(self.pulse_us))
+        return self.pulse_to_angle(self.pulse_us)
 
     def pulse_set(self) -> int:
-        return round(self.pulse_us)
+        return self.pulse_us
 
     def duty_set(self) -> int:
         return self.pulse_to_duty(self.pulse_us)
@@ -249,20 +256,22 @@ class Tester:
 
     def report(self, event: str) -> None:
         """One key=value line per event to the USB console -- the rich data that does not fit the OLED.
-        Human-readable and trivially parseable; capture it while you sweep the servo."""
+        Human-readable and trivially parseable; capture it while you sweep the servo. Float-free: the
+        percentages are integer tenths (per-mille // formatting)."""
         servo = self.servo
         duty_set, duty_get = servo.duty_set(), servo.duty_get()
-        pulse_set = servo.pulse_set()
-        pulse_get = round(servo.duty_to_pulse(duty_get))
-        travel = (servo.pulse_us - _PULSE_MIN_US) / (_PULSE_MAX_US - _PULSE_MIN_US) * 100
-        slew_ms = round(abs(servo.angle_set() - self._last_angle) / 60.0 * 150 + 60)  # SG90 ~0.15s/60deg + settle
-        print('t=%d ev=%s sel=%s angle=%d/%d pulse=%dus/%dus duty=%d/%d duty_pct=%.1f '
-              'freq=%dHz period=%dus step=%d travel=%.1f%% quant_err=%dus slew_est=%dms moves=%d '
+        pulse_set, pulse_get = servo.pulse_set(), servo.duty_to_pulse(duty_get)
+        angle_get = servo.pulse_to_angle(pulse_get)
+        duty_pct = _div_round(duty_get * 1000, _U16)  # tenths of a percent
+        travel = _div_round((servo.pulse_us - _PULSE_MIN_US) * 1000, _PULSE_MAX_US - _PULSE_MIN_US)
+        slew_ms = _div_round(abs(servo.angle_set() - self._last_angle) * 150, 60) + 60  # SG90 ~0.15s/60deg + settle
+        print('t=%d ev=%s sel=%s angle=%d/%d pulse=%dus/%dus duty=%d/%d duty_pct=%d.%d '
+              'freq=%dHz period=%dus step=%d travel=%d.%d%% quant_err=%dus slew_est=%dms moves=%d '
               'angle_span=%d..%d' % (
                   time.ticks_ms(), event or 'tick', _PARAM_NAMES[self.selected],
-                  servo.angle_set(), round(servo.pulse_to_angle(servo.duty_to_pulse(duty_get))),
-                  pulse_set, pulse_get, duty_set, duty_get, duty_get / _U16 * 100,
-                  _FREQ_HZ, _PERIOD_US, self.step(), travel, pulse_set - pulse_get, slew_ms,
+                  servo.angle_set(), angle_get, pulse_set, pulse_get, duty_set, duty_get,
+                  duty_pct // 10, duty_pct % 10, _FREQ_HZ, _PERIOD_US, self.step(),
+                  travel // 10, travel % 10, pulse_set - pulse_get, slew_ms,
                   self.moves, self.angle_min_seen, self.angle_max_seen))
 
     def banner(self) -> None:
