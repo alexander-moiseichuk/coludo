@@ -35,7 +35,28 @@
 <h2>send command</h2>
 <p>
   <input id="board" placeholder="board id" size="10">
-  <input id="cmd" placeholder="command, e.g. ping  or  inspect wifi" size="34">
+  <select id="cmd" title="board command">
+    <option>ping</option>
+    <option>health</option>
+    <option>report</option>
+    <option>objects</option>
+    <option>inspect</option>
+    <option>stats</option>
+    <option>verify</option>
+    <option>probe</option>
+    <option>stage</option>
+    <option>arm</option>
+    <option>disarm</option>
+    <option>tlm</option>
+    <option>update</option>
+    <option>whoami</option>
+    <option>get-config</option>
+    <option>reset-config</option>
+    <option>save-mission</option>
+    <option>reboot</option>
+  </select>
+  <input id="params" placeholder="params — e.g. wifi · gliding · 5000" size="28"
+         title="space-separated arguments (e.g. inspect → wifi, stage → gliding, tlm → 5000)">
   <button id="send">send</button>
 </p>
 <pre id="reply"></pre>
@@ -109,11 +130,12 @@ new EventSource('/events').onmessage = (event) => {
     </tr>`).join('');
 };
 
-// --- ad-hoc command box ---
+// --- ad-hoc command box: pick a command, type its params (space-separated) ---
 async function send() {
   const board = document.getElementById('board').value.trim();
-  const parts = document.getElementById('cmd').value.trim().split(/\s+/);
-  const command = parts.shift();
+  const command = document.getElementById('cmd').value;
+  const raw = document.getElementById('params').value.trim();
+  const parts = raw ? raw.split(/\s+/) : [];
   const reply = document.getElementById('reply');
   reply.textContent = '…';
   try {
@@ -123,7 +145,7 @@ async function send() {
   }
 }
 document.getElementById('send').addEventListener('click', send);
-document.getElementById('cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+document.getElementById('params').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 
 // --- config editor: load (get-config) -> edit draft -> save (save-config) -> reboot ---
 const cfgOut = document.getElementById('cfgresult');
