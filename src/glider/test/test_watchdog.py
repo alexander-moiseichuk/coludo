@@ -21,7 +21,7 @@ class FakeFlight:
     def __init__(self):
         self._active = False
         self._steps = 0
-        self._phase = None
+        self._stage = None
 
 
 class _StubController:
@@ -44,17 +44,17 @@ async def amain():
     wd._wdt = StubWDT()
     wd._reset = lambda: resets.append(1)
 
-    # not in a control phase -> nothing to supervise (never "stalled")
+    # not in a control stage -> nothing to supervise (never "stalled")
     flight._active = False
     assert wd._stalled(flight) is False
 
-    # in a control phase + the step counter advancing -> healthy
+    # in a control stage + the step counter advancing -> healthy
     flight._active = True
     flight._steps = 10
     assert wd._stalled(flight) is False  # 0 -> 10
     flight._steps = 20
     assert wd._stalled(flight) is False  # 10 -> 20
-    # in a control phase + NOT advancing -> stalled
+    # in a control stage + NOT advancing -> stalled
     assert wd._stalled(flight) is True  # 20 == 20
 
     # run(): a healthy (advancing) control loop -> WDT fed, no reset
