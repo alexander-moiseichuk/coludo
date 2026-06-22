@@ -47,25 +47,20 @@ _SCREEN_HEIGHT = const(40)
 _X_OFFSET = const((_BUFFER_WIDTH - _SCREEN_WIDTH) // 2)   # 28
 _Y_OFFSET = const((_BUFFER_HEIGHT - _SCREEN_HEIGHT) // 2)  # 12
 
-# --- PWM / servo envelope --------------------------------------------------------------------------
+# --- PWM / servo timing ----------------------------------------------------------------------------
 _FREQ_HZ = const(50)
 _PERIOD_US = const(1000000 // _FREQ_HZ)  # 20000 us
 _U16 = const(65535)
-_ANGLE_MIN = const(0)
-_ANGLE_MAX = const(360)
-_ANGLE_STEP = const(5)
-_PULSE_MIN_US = const(500)
-_PULSE_MAX_US = const(2500)
-_PULSE_STEP_US = const(25)
-_DUTY_STEP = const(100)
 
 # --- button timing (in poll ticks of _POLL_MS) -----------------------------------------------------
 _POLL_MS = const(20)
 _CONFIRM_TICKS = const(2)  # a lone press must hold this long before the first step (filters a both-press race)
 _REPEAT_TICKS = const(8)   # auto-repeat period while held (~160 ms)
 
-_ANGLE, _PULSE, _DUTY = const(0), const(1), const(2)
-_PARAM_NAMES = ('angle', 'pulse', 'duty')
+# --- the three editable parameters: indices into _HUD_ROWS (defined below, after Servo) -------------
+_ANG: int = const(0)
+_PUL: int = const(1)
+_DUT: int = const(2)
 
 
 def _clamp(value: int, low: int, high: int) -> int:
@@ -77,6 +72,15 @@ def _div_round(numerator: int, denominator: int) -> int:
     """Rounded integer division (both operands >= 0). Used everywhere instead of float math -- the C3
     has no FPU, and rounding (not floor) keeps the angle<->pulse<->duty round-trips from drifting."""
     return (numerator + denominator // 2) // denominator
+
+
+def _convert(value: int, source: int, target: int) -> int:
+    """Map `value` from row `source`'s [min, max] linearly onto row `target`'s [min, max] (integer).
+    The three parameters are views of ONE servo position, so this is how a change to one becomes the
+    others. The duty row's range is exactly the pulse range expressed as duty, so _convert(pulse->duty)
+    equals duty_u16 = pulse * 65535 / period -- no separate formula needed."""
+    src, dst = _HUD_ROWS[source], _HUD_ROWS[target]
+    return dst['min'] + _div_round((value - src['min']) * (dst['max'] - dst['min']), src['max'] - src['min'])
 
 
 def _scaled_text(display, text: str, x: int, y: int, scale: int) -> None:
@@ -94,80 +98,84 @@ def _scaled_text(display, text: str, x: int, y: int, scale: int) -> None:
 
 
 class Servo:
-    """One hobby servo on a PWM pin. The canonical state is the pulse width (us, int); angle and duty
-    are just linear integer views of it. apply() writes the duty and the peripheral read-back gives the
-    'get'. Float-free: the C3 has no FPU, so every conversion is rounded integer division."""
+    """Thin PWM wrapper: it holds the canonical pulse width (us, int) and writes / reads back the raw
+    duty. All the parameter conversions live in _convert + the _HUD_ROWS callbacks, so this stays
+    minimal. Float-free -- the C3 has no FPU."""
 
     def __init__(self, pin: int):
         self._pwm = PWM(Pin(pin), freq=_FREQ_HZ)
-        self.pulse_us: int = _PULSE_MIN_US  # canonical commanded state
-        self.apply(_PULSE_MIN_US)
+        self.pulse_us: int = _HUD_ROWS[_PUL]['min']  # canonical commanded state
+        self.apply_pulse(self.pulse_us)
 
-    # --- conversions (all linear over the pulse envelope, integer math) ---
-    @staticmethod
-    def angle_to_pulse(angle: int) -> int:
-        return _PULSE_MIN_US + _div_round((angle - _ANGLE_MIN) * (_PULSE_MAX_US - _PULSE_MIN_US),
-                                          _ANGLE_MAX - _ANGLE_MIN)
-
-    @staticmethod
-    def pulse_to_angle(pulse: int) -> int:
-        return _ANGLE_MIN + _div_round((pulse - _PULSE_MIN_US) * (_ANGLE_MAX - _ANGLE_MIN),
-                                       _PULSE_MAX_US - _PULSE_MIN_US)
-
-    @staticmethod
-    def pulse_to_duty(pulse: int) -> int:
-        return _div_round(pulse * _U16, _PERIOD_US)
-
-    @staticmethod
-    def duty_to_pulse(duty: int) -> int:
-        return _div_round(duty * _PERIOD_US, _U16)
-
-    def apply(self, pulse_us: int) -> None:
-        """Command a pulse width (clamped) and write it to the timer."""
-        self.pulse_us = _clamp(pulse_us, _PULSE_MIN_US, _PULSE_MAX_US)
-        self._pwm.duty_u16(self.pulse_to_duty(self.pulse_us))
+    def apply_pulse(self, pulse: int) -> None:
+        """Command a pulse width (clamped to the pulse row's range) and write it to the timer."""
+        self.pulse_us = _clamp(pulse, _HUD_ROWS[_PUL]['min'], _HUD_ROWS[_PUL]['max'])
+        self._pwm.duty_u16(_convert(self.pulse_us, _PUL, _DUT))
 
     def duty_get(self) -> int:
         """The duty the PWM peripheral reports back (proves the write, shows quantisation)."""
         return self._pwm.duty_u16()
 
-    # --- set values (what we commanded) ---
-    def angle_set(self) -> int:
-        return self.pulse_to_angle(self.pulse_us)
+    # --- the three parameter views: get/set per parameter, referenced directly by _HUD_ROWS as
+    # unbound methods (row['get'](servo) / row['set'](servo, value)). All keyed off the canonical pulse.
+    def angle(self) -> int:
+        return _convert(self.pulse_us, _PUL, _ANG)
 
-    def pulse_set(self) -> int:
+    def set_angle(self, value: int) -> None:
+        self.apply_pulse(_convert(value, _ANG, _PUL))
+
+    def pulse(self) -> int:
         return self.pulse_us
 
-    def duty_set(self) -> int:
-        return self.pulse_to_duty(self.pulse_us)
+    def set_pulse(self, value: int) -> None:
+        self.apply_pulse(value)
+
+    def duty(self) -> int:
+        return _convert(self.pulse_us, _PUL, _DUT)
+
+    def set_duty(self, value: int) -> None:
+        self.apply_pulse(_convert(value, _DUT, _PUL))
+
+
+# Every per-parameter knob in ONE table (these were scattered across constants + three _step branches):
+# the OLED position (x, y in the visible window), the label, the editable [min, max], the step, and the
+# get / set callbacks. The three parameters are LINKED views of one position, so a row carries no stored
+# value -- get(servo) computes the live value and set(servo, value) applies it through the servo, which
+# keeps all three consistent. Indexed by _ANG / _PUL / _DUT. To add a parameter, add a row.
+# `text` carries a leading space (the cursor column): render draws the label as-is and overlays a '>'
+# on the selected row, so the draw loop needs no per-row cursor branch.
+_HUD_ROWS = [
+    {'x': 0, 'y': 16, 'text': ' ang', 'min': 0, 'max': 360, 'step': 5,
+     'get': Servo.angle, 'set': Servo.set_angle},
+    {'x': 0, 'y': 24, 'text': ' pul', 'min': 500, 'max': 2500, 'step': 25,  # microseconds
+     'get': Servo.pulse, 'set': Servo.set_pulse},
+    {'x': 0, 'y': 32, 'text': ' dut', 'min': 1638, 'max': 8192, 'step': 100,  # duty_u16 == pulse 500..2500us @50Hz
+     'get': Servo.duty, 'set': Servo.set_duty},
+]
 
 
 class Hud:
-    """The 72x40 OLED view: a big 2x read-out of the selected parameter over three compact rows
-    (angle/pulse/duty set values) with a '>' cursor on the selection."""
+    """The 72x40 OLED view: a big 2x read-out of the selected parameter over the _HUD_ROWS rows
+    (angle/pulse/duty live values) with a '>' cursor on the selection."""
 
     def __init__(self):
         i2c = I2C(_I2C_ID, sda=Pin(_PIN_SDA), scl=Pin(_PIN_SCL), freq=400000)
         self._display = ssd1306.SSD1306_I2C(_BUFFER_WIDTH, _BUFFER_HEIGHT, i2c)
         self._display.contrast(255)
 
-    def _text(self, text: str, col: int, row: int) -> None:
-        """1x text at character cell (col, row) inside the visible window."""
-        self._display.text(text, _X_OFFSET + col * 8, _Y_OFFSET + row * 8, 1)
-
     def render(self, servo: Servo, selected: int) -> None:
         display = self._display
         display.fill(0)
-        values = (servo.angle_set(), servo.pulse_set(), servo.duty_set())
         # big read-out of the selected value, centred over the visible width
-        big = '%d' % values[selected]
+        big = '%d' % _HUD_ROWS[selected]['get'](servo)
         big_x = _X_OFFSET + max(0, (_SCREEN_WIDTH - len(big) * 16) // 2)
         _scaled_text(display, big, big_x, _Y_OFFSET, 2)
-        # three compact rows under the big read-out (rows 2/3/4 of the 5-row window)
-        labels = ('ang', 'pul', 'dut')
-        for index in range(3):
-            cursor = '>' if index == selected else ' '
-            self._text('%s%s %d' % (cursor, labels[index], values[index]), 0, 2 + index)
+        # one compact row per parameter (the label already carries the leading cursor column)
+        for row in _HUD_ROWS:
+            display.text('%s %d' % (row['text'], row['get'](servo)), _X_OFFSET + row['x'], _Y_OFFSET + row['y'], 1)
+        # overlay the cursor on the selected row's leading column
+        chosen = _HUD_ROWS[selected]
+        display.text('>', _X_OFFSET + chosen['x'], _Y_OFFSET + chosen['y'], 1)
         display.show()
 
 
@@ -213,42 +221,35 @@ class Buttons:
 
 
 class Tester:
-    """Glue: hold the servo + selection, apply button events, drive the HUD, and report to the console."""
+    """Glue: hold the servo + selection, apply button events through the _HUD_ROWS callbacks, drive the
+    HUD, and report to the console."""
 
     def __init__(self):
         self.servo = Servo(_PIN_SERVO)
         self.hud = Hud()
-        self.selected: int = _ANGLE
+        self.selected: int = _ANG
         self.moves: int = 0
-        self.angle_min_seen: int = self.servo.angle_set()
-        self.angle_max_seen: int = self.servo.angle_set()
-        self._last_angle: int = self.servo.angle_set()
+        angle = _HUD_ROWS[_ANG]['get'](self.servo)
+        self.angle_min_seen: int = angle
+        self.angle_max_seen: int = angle
+        self._last_angle: int = angle
 
     def _step(self, direction: int) -> None:
-        """Nudge the selected parameter by its step in `direction` (-1/+1) and re-apply the servo."""
-        if self.selected == _ANGLE:
-            angle = _clamp(self.servo.angle_set() + direction * _ANGLE_STEP, _ANGLE_MIN, _ANGLE_MAX)
-            self.servo.apply(self.servo.angle_to_pulse(angle))
-        elif self.selected == _PULSE:
-            self.servo.apply(self.servo.pulse_us + direction * _PULSE_STEP_US)
-        else:  # _DUTY
-            duty = _clamp(self.servo.duty_set() + direction * _DUTY_STEP,
-                          self.servo.pulse_to_duty(_PULSE_MIN_US), self.servo.pulse_to_duty(_PULSE_MAX_US))
-            self.servo.apply(self.servo.duty_to_pulse(duty))
+        """Nudge the selected parameter by its step in `direction` (-1/+1), clamped to the row's range,
+        and apply it through the row's set() callback. Fully table-driven -- no per-parameter branch."""
+        row = _HUD_ROWS[self.selected]
+        value = _clamp(row['get'](self.servo) + direction * row['step'], row['min'], row['max'])
+        row['set'](self.servo, value)
         self.moves += 1
-
-    def step(self) -> int:
-        """The active parameter's step size (for reporting)."""
-        return (_ANGLE_STEP, _PULSE_STEP_US, _DUTY_STEP)[self.selected]
 
     def apply_event(self, event: str) -> None:
         if event == 'switch':
-            self.selected = (self.selected + 1) % 3
+            self.selected = (self.selected + 1) % len(_HUD_ROWS)
         elif event == '-':
             self._step(-1)
         elif event == '+':
             self._step(1)
-        angle = self.servo.angle_set()
+        angle = _HUD_ROWS[_ANG]['get'](self.servo)
         self.angle_min_seen = min(self.angle_min_seen, angle)
         self.angle_max_seen = max(self.angle_max_seen, angle)
         self.report(event)
@@ -259,27 +260,28 @@ class Tester:
         Human-readable and trivially parseable; capture it while you sweep the servo. Float-free: the
         percentages are integer tenths (per-mille // formatting)."""
         servo = self.servo
-        duty_set, duty_get = servo.duty_set(), servo.duty_get()
-        pulse_set, pulse_get = servo.pulse_set(), servo.duty_to_pulse(duty_get)
-        angle_get = servo.pulse_to_angle(pulse_get)
+        row, pulse = _HUD_ROWS[self.selected], _HUD_ROWS[_PUL]
+        duty_get = servo.duty_get()
+        pulse_set, pulse_get = servo.pulse_us, _convert(duty_get, _DUT, _PUL)
+        angle_set, angle_get = _HUD_ROWS[_ANG]['get'](servo), _convert(pulse_get, _PUL, _ANG)
+        duty_set = _HUD_ROWS[_DUT]['get'](servo)
         duty_pct = _div_round(duty_get * 1000, _U16)  # tenths of a percent
-        travel = _div_round((servo.pulse_us - _PULSE_MIN_US) * 1000, _PULSE_MAX_US - _PULSE_MIN_US)
-        slew_ms = _div_round(abs(servo.angle_set() - self._last_angle) * 150, 60) + 60  # SG90 ~0.15s/60deg + settle
+        travel = _div_round((pulse_set - pulse['min']) * 1000, pulse['max'] - pulse['min'])
+        slew_ms = _div_round(abs(angle_set - self._last_angle) * 150, 60) + 60  # SG90 ~0.15s/60deg + settle
         print('t=%d ev=%s sel=%s angle=%d/%d pulse=%dus/%dus duty=%d/%d duty_pct=%d.%d '
               'freq=%dHz period=%dus step=%d travel=%d.%d%% quant_err=%dus slew_est=%dms moves=%d '
               'angle_span=%d..%d' % (
-                  time.ticks_ms(), event or 'tick', _PARAM_NAMES[self.selected],
-                  servo.angle_set(), angle_get, pulse_set, pulse_get, duty_set, duty_get,
-                  duty_pct // 10, duty_pct % 10, _FREQ_HZ, _PERIOD_US, self.step(),
+                  time.ticks_ms(), event or 'tick', row['text'].strip(),
+                  angle_set, angle_get, pulse_set, pulse_get, duty_set, duty_get,
+                  duty_pct // 10, duty_pct % 10, _FREQ_HZ, _PERIOD_US, row['step'],
                   travel // 10, travel % 10, pulse_set - pulse_get, slew_ms,
                   self.moves, self.angle_min_seen, self.angle_max_seen))
 
     def banner(self) -> None:
-        print('# servo_test -- servo=pin%d left=pin%d right=pin%d i2c=(sda%d,scl%d)' % (
-            _PIN_SERVO, _PIN_LEFT, _PIN_RIGHT, _PIN_SDA, _PIN_SCL))
-        print('# ranges: angle[%d..%d]/%d pulse[%d..%d]us/%d duty[%d..%d]/%d at %dHz' % (
-            _ANGLE_MIN, _ANGLE_MAX, _ANGLE_STEP, _PULSE_MIN_US, _PULSE_MAX_US, _PULSE_STEP_US,
-            self.servo.pulse_to_duty(_PULSE_MIN_US), self.servo.pulse_to_duty(_PULSE_MAX_US), _DUTY_STEP, _FREQ_HZ))
+        print('# servo tester -- servo=pin%d left=pin%d right=pin%d i2c=(sda%d,scl%d) at %dHz' % (
+            _PIN_SERVO, _PIN_LEFT, _PIN_RIGHT, _PIN_SDA, _PIN_SCL, _FREQ_HZ))
+        for row in _HUD_ROWS:
+            print('# %s [%d..%d] step %d' % (row['text'].strip(), row['min'], row['max'], row['step']))
 
 
 async def main() -> None:
