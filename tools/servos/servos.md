@@ -43,7 +43,7 @@ value. On boot the servo is driven to angle 0 and every parameter is printed.
 
 Everything that does not fit the tiny screen goes to the USB serial console (115200, the REPL port) —
 one `key=value` line per event (button press, switch, boot), easy to read or pipe/parse. See
-`servo_test.py` `report()` for the field list; it includes set **and** get for angle/pulse/duty, the
+`main.py` `report()` for the field list; it includes set **and** get for angle/pulse/duty, the
 duty percentage, PWM frequency/period, the active step, travel percentage, the set-vs-get
 quantisation error in µs, an SG90 slew-time estimate for the last move, a move counter, and the
 min/max angle touched this session. A `# ` banner with the pin map and ranges is printed at startup.
@@ -57,7 +57,7 @@ min/max angle touched this session. A `# ` banner with the pin map and ranges is
   offset of `x = (128-72)//2 = 28`, `y = (64-40)//2 = 12` (`demo.py` uses 30/12 — either centres
   acceptably; the tool uses the computed values)
 - I2C: `I2C(0, sda=Pin(5), scl=Pin(6), freq=400000)`
-- driver: `ssd1306.py` (bundled); `demo.py` is the original bouncing-ball example
+- driver: `ssd1306.py` (bundled, stock MicroPython SSD1306 framebuffer driver)
 
 ### Buttons
 - two capacitive buttons: **pin 0 = left (`-`)**, **pin 1 = right (`+`)** (active-high; flip
@@ -68,9 +68,10 @@ min/max angle touched this session. A `# ` banner with the pin map and ranges is
 
 ## Running
 
-Copy `ssd1306.py` and `servo_test.py` to the C3 and run `servo_test.py` (or save it as `main.py` to
-auto-start as a kiosk on boot):
+The tool is `main.py`, so once copied the C3 auto-starts it on power-up. Copy it and the driver, then
+reset (or `run` it to stream the console while iterating):
 
 ```
-mpremote connect /dev/ttyACM1 cp ssd1306.py : + cp servo_test.py : + run servo_test.py
+mpremote connect /dev/ttyACM1 cp ssd1306.py : + cp main.py : + reset
+mpremote connect /dev/ttyACM1 run main.py      # stream the console (Ctrl-C to stop)
 ```

@@ -1,10 +1,19 @@
-# servo_test.py — a handheld servo bench tester for an ESP32-C3 + 0.42" SSD1306 OLED + two capacitive
+# main.py — a handheld servo bench tester for an ESP32-C3 + 0.42" SSD1306 OLED + two capacitive
 # buttons (see servos.md). Standalone: it does NOT import the glider firmware. Dial one of three views
 # of the same PWM state (angle / pulse width / raw duty) up or down with the buttons, watch the live
-# set-vs-get read-back on the OLED, and get the full state over the USB console.
+# set-vs-get read-back on the OLED, and get the full state over the USB console. Named main.py so the
+# C3 auto-starts it on power-up -- a self-contained gadget; nothing else lives on that board.
 #
 # Controls: left (pin 0) = '-', right (pin 1) = '+', both = switch parameter, hold = auto-repeat.
-# Run directly, or save as main.py on the C3 to auto-start as a kiosk.
+#
+# Install (the C3 enumerates as /dev/ttyACM1 here; adjust the port to taste):
+#   pip install mpremote                                   # once, on the host
+#   mpremote connect /dev/ttyACM1 cp ssd1306.py :          # the OLED driver this imports
+#   mpremote connect /dev/ttyACM1 cp main.py :             # this tool (auto-runs on the next reset)
+#   mpremote connect /dev/ttyACM1 reset                    # reset -> it starts on its own
+# Watch the console (or iterate before relying on auto-run):
+#   mpremote connect /dev/ttyACM1 run main.py              # run + stream the console (Ctrl-C to stop)
+# Tweak if the hardware differs: _BUTTON_ACTIVE (active-high/low) and _X_OFFSET/_Y_OFFSET (OLED centring).
 
 import asyncio
 import time
