@@ -8,7 +8,7 @@
 # Signs are config (`surfaces` gains + `trim`), set during bench alignment: if a surface deflects the
 # wrong way, flip its gain sign; if its neutral is off, set its trim.
 
-_DEFAULT_SURFACES = {
+_DEFAULT_SURFACES: dict = {
     'servo_yaw': {'yaw': 1},                          # rudder
     'servo_eleron_left': {'pitch': 1, 'roll': 1},     # elevon
     'servo_eleron_right': {'pitch': 1, 'roll': -1},   # elevon (roll is differential)
