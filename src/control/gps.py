@@ -123,7 +123,7 @@ class Gps:
     async def serve(self, device: str, baud: int = 9600) -> None:
         """Open the serial GPS and feed it forever (the wired host-assist path)."""
         reader = await open_serial(device, baud)
-        self.log('control :: host gps on %s @ %d' % (device, baud))
+        self.log('host gps on %s @ %d' % (device, baud))
         await self.run(reader)
 
 

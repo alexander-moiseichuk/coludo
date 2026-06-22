@@ -5,9 +5,16 @@
 
 import argparse
 import asyncio
+import datetime
 
 import gps as gps_mod
 import server
+
+
+def _log(message: str) -> None:
+    """Console logger: every line stamped `YYYY-MM-DD HH:MM:SS` (no `control ::` prefix -- the
+    timestamp carries the context). Wired into the hub so boards, operators and the web bridge share it."""
+    print('%s %s' % (datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S'), message))
 
 
 def _parse_args() -> argparse.Namespace:
@@ -49,16 +56,16 @@ async def _run(args, hub) -> None:
 def main() -> None:
     args = _parse_args()
     args.gps_device = _resolve_gps_device(args.gps_device)  # 'auto' -> first /dev/ttyUSB* (or None)
-    gps = gps_mod.Gps() if args.gps_device else None
+    gps = gps_mod.Gps(log=_log) if args.gps_device else None
     hub = server.Server(host=args.host, port=args.port, operator_port=args.operator_port,
-                        web_port=args.web_port, gps=gps)
-    print('control :: hub on %s — boards:%d operators:%d web:%d%s (Ctrl-C to stop)' % (
+                        web_port=args.web_port, gps=gps, log=_log)
+    _log('hub on %s — boards:%d operators:%d web:%d%s (Ctrl-C to stop)' % (
         args.host, args.port, args.operator_port, args.web_port,
         ' gps:%s' % args.gps_device if gps else ''))
     try:
         asyncio.run(_run(args, hub))
     except KeyboardInterrupt:
-        print('\ncontrol :: stopped')
+        _log('stopped')
 
 
 if __name__ == '__main__':

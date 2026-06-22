@@ -58,26 +58,26 @@ class Server:
     async def _handle(self, reader, writer) -> None:
         """Identify a freshly connected board, register it, then poll it until it drops."""
         client = board.Board(reader, writer, log=self.log)  # log every CC<->board line exchanged
-        self.log('control :: board connected %s' % client.peer)
+        self.log('board connected %s' % client.peer)
         try:
             board_id = await client.identify()
             if not board_id:
-                self.log('control :: whoami failed from %s' % client.peer)
+                self.log('whoami failed from %s' % client.peer)
                 return
             self.boards[board_id] = client
-            self.log('control :: %s online %s' % (board_id, client.info))
+            self.log('%s online %s' % (board_id, client.info))
             if self.on_board is not None:
                 await self.on_board(client)
             await self._poll(client)
         except (asyncio.TimeoutError, ConnectionError, asyncio.IncompleteReadError) as error:
-            self.log('control :: %s link lost %r' % (client.id or client.peer, error))
+            self.log('%s link lost %r' % (client.id or client.peer, error))
         except Exception as error:
-            self.log('control :: error %r' % error)
+            self.log('error %r' % error)
         finally:
             self._drop_stream(client.id)  # stop any log stream for this board
             client.online = False
             client.close()
-            self.log('control :: %s offline' % (client.id or client.peer))
+            self.log('%s offline' % (client.id or client.peer))
 
     # --------------------------------------------------------------- log streaming
     def _emit_log(self, board_id, line) -> None:
@@ -143,12 +143,19 @@ class Server:
 
     async def _poll(self, client) -> None:
         """Heartbeat: ping an idle board every `heartbeat_s`; a successful exchange (operator or
-        ping) within the window already proves liveness, so it is skipped. Returns on disconnect."""
+        ping) within the window already proves liveness, so it is skipped. The ping is `quiet` (no
+        per-beat tx/rx spam) -- only a CHANGE in liveness is logged (the first 'ok', the first 'lost').
+        Returns on disconnect."""
+        alive = None  # last heartbeat outcome (None until the first ping) -> log only on transition
         while True:
             await asyncio.sleep(self.heartbeat_s)
             if time.monotonic() - client.last_seen < self.heartbeat_s:
                 continue  # a recent exchange already proved liveness
-            if await client.command('ping') is None:
+            ok = await client.command('ping', quiet=True) is not None
+            if ok != alive:
+                self.log('%s heartbeat %s' % (client.id, 'ok' if ok else 'lost'))
+                alive = ok
+            if not ok:
                 return  # disconnected -> _handle marks it offline
 
     # -------------------------------------------------------------- operator side
@@ -215,14 +222,14 @@ class Server:
     async def serve_forever(self) -> None:
         """Accept board connections on `port` (board-facing listener)."""
         server = await asyncio.start_server(self._handle, self.host, self.port)
-        self.log('control :: boards on %s:%d' % (self.host, self.port))
+        self.log('boards on %s:%d' % (self.host, self.port))
         async with server:
             await server.serve_forever()
 
     async def serve_operators(self) -> None:
         """Accept operator connections on `operator_port` (telnet-friendly console)."""
         server = await asyncio.start_server(self._operator, self.host, self.operator_port)
-        self.log('control :: operators on %s:%d' % (self.host, self.operator_port))
+        self.log('operators on %s:%d' % (self.host, self.operator_port))
         async with server:
             await server.serve_forever()
 

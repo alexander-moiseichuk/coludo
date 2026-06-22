@@ -51,7 +51,7 @@ class Web:
 
     async def serve(self) -> None:
         server = await asyncio.start_server(self._handle, self.host, self.port)
-        self.log('control :: web on %s:%d' % (self.host, self.port))
+        self.log('web on %s:%d' % (self.host, self.port))
         async with server:
             await server.serve_forever()
 
