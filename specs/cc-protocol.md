@@ -120,14 +120,18 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `whoami` | — | `iam <id> {json}` | identify a new socket (the one reply carrying the id) |
 | `ping` | — | `pong` | liveness |
 | `health` | — | `ok {temp,mem_free,load,uptime,components[]}` | vitals; `components[]` carries `{name, ok}` |
-| `stage` | — | `ok {stage,uptime}` | current flight stage |
-| `tel` | `[ms]` | `ok {samples:[...]}` | telemetry samples within the last `ms` |
+| `stage` | `[name\|auto]` | `ok {stage,manual}` | get the stage; `<name>` holds it (pauses the sequencer — ground test); `auto` resumes |
+| `arm` | — | `ok {armed:true}` / `err unsafe {problems}` | enable actuation — only when verify is clean (every device up + probe healthy, incl. mission launch-position) |
+| `disarm` | — | `ok {armed:false}` | disable actuation (the control loop holds the fins neutral) |
 | `log` | `<ms>` | `ok {lines:[...]}` | poll-model: lines buffered since the last `log`; re-arm teeing for `ms` (`0` stops) |
+| `tlm` | `<ms>` | `ok {samples:[...]}` | poll-model: telemetry rows buffered since the last `tlm`; re-arm teeing for `ms` (`0` stops) |
 | `report` | — | `ok {stage, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
 | `objects` | — | `ok [name, ...]` | names of all `Inspectable` objects (for the `inspect`/`update`/`stats` targets) |
 | `inspect` | `<object>` | `ok {props}` | `Inspectable.inspect()` of a named object |
 | `update` | `<object> <json>` | `ok {changed:[...]}` | `Inspectable.update()` — names of properties actually changed |
 | `stats` | `<object>` | `ok {stats}` | `Inspectable.stats()` of a named object |
+| `probe` | `[name\|all]` | `ok {name: null\|error}` | on-demand device self-tests; `all` also lists devices that never set up (not connected). Active — sweeps servos |
+| `verify` | — | `ok {pass, devices, problems}` | verify board setup: every configured device up/down + probe, with an overall PASS — the launch-pad re-check (catches anything disconnected in transport) |
 | `get-config` | `[running\|default]` | `ok {config}` | fetch a config (`running` if omitted) |
 | `save-config` | `<json>` | `ok {config_id}` / `err invalid <msg>` | validate + persist full snapshot; **running config unchanged** |
 | `reset-config` | — | `ok` | delete `board.json`; next boot uses `config_default.py` |
@@ -167,7 +171,7 @@ survive a pre-flight reboot. `err unsupported` means the board has no mission ob
 ring buffer; if the requested window is older than the buffer holds, it returns what it has and
 sets `"truncated": true`. For continuous tailing, CC polls with a window at least as wide as
 its poll interval and de-duplicates by record uptime (each record carries its uptime, per the
-`coludo.md` logging format). `tel` behaves the same way for telemetry samples.
+`coludo.md` logging format). `tlm` behaves the same way for telemetry rows (`ok {samples:[...]}`).
 
 ### Config commands map to the activation model
 

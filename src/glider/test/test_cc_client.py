@@ -137,6 +137,33 @@ async def amain():
     assert 'badargs' in await sd4.handle('probe knob')  # registered, but has no probe()
     assert 'badargs' in await sd4.handle('probe nope')  # unknown object
 
+    # `probe all` also surfaces devices that never set up (absent/miswired) from Controller.failures,
+    # so one command shows the whole connected/not picture (probe checks wiring + setup)
+    class _FaultyController:
+        failures = {'baro_icp10111': 'setup failed (absent / miswired?)'}
+
+    sd_fail = cc_client.create_dispatcher(config_default.default(), controller=_FaultyController())
+    allres = json.loads(cc.parse(await sd_fail.handle('probe')).args[0])
+    assert allres.get('p_good') is None  # an inspectable device still probed live
+    assert allres.get('baro_icp10111', '').startswith('not connected: ')  # never set up -> reported
+
+    # `verify`: dump every configured device (up/down) + probe self-tests + an overall PASS/fail verdict
+    class _VerifyController:
+        failures = {'baro_icp10111': 'setup failed (absent / miswired?)'}
+
+        def directory(self):
+            return ['imu_bno055', 'baro_icp10111']
+
+        def active(self, name):
+            return object() if name == 'imu_bno055' else None  # imu up, baro never set up
+
+    sd_verify = cc_client.create_dispatcher(config_default.default(), controller=_VerifyController())
+    report = json.loads(cc.parse(await sd_verify.handle('verify')).args[0])
+    assert report['devices']['imu_bno055'] == 'up'
+    assert report['devices']['baro_icp10111'].startswith('down: ')  # configured but not connected
+    assert 'baro_icp10111' in report['problems'] and report['pass'] is False  # a problem -> not PASS
+    assert 'unsupported' in await cc_client.create_dispatcher(config_default.default()).handle('verify')
+
     # log streaming: `log <ms>` arms collection + returns the batch buffered since the last call.
     # Poll model -- the operator re-sends `log` each tick; the batch rides back as one base64 token.
     import recorder
@@ -148,10 +175,62 @@ async def amain():
     batch = json.loads(cc.parse(await sd5.handle('log 1000')).args[0])  # drain + re-arm
     assert batch['lines'][0].endswith('test :: hello'), batch
     assert json.loads(cc.parse(await sd5.handle('log 0')).args[0])['lines'] == []  # stop, drained
-    assert recorder.Recorder._cc_deadline == 0
+    assert recorder.Recorder._cc_log._deadline == 0
     assert 'badargs' in await sd5.handle('log notanumber')  # non-integer duration rejected
 
-    print('ok: cc_client board-first dispatch/serve/standard + inspect/update/stats + probe + log')
+    # telemetry streaming: `tlm <ms>` mirrors `log` -- arms collection + returns {'samples': [...]}.
+    assert json.loads(cc.parse(await sd5.handle('tlm 1000')).args[0])['samples'] == []  # arm, empty
+    recorder.Recorder.tlm('t.csv', 'row')
+    samples = json.loads(cc.parse(await sd5.handle('tlm 1000')).args[0])  # drain + re-arm
+    assert samples['samples'][0].endswith('@row'), samples
+    assert json.loads(cc.parse(await sd5.handle('tlm 0')).args[0])['samples'] == []  # stop, drained
+    assert recorder.Recorder._cc_tlm._deadline == 0
+    assert 'badargs' in await sd5.handle('tlm notanumber')  # non-integer duration rejected
+
+    # arming: refused while a probe fails, clean board -> armed; disarm; manual stage hold + auto resume
+    class _ArmController:
+        failures = {}
+
+        def __init__(self):
+            self.armed = False
+            self.manual = False
+            self._stage = 'setting'
+
+        def arm(self):
+            self.armed = True
+
+        def disarm(self):
+            self.armed = False
+
+        def stage_name(self):
+            return self._stage
+
+        def resume(self):
+            self.manual = False
+
+        def hold(self, name):
+            if name not in ('setting', 'boosting', 'gliding', 'landing', 'done'):
+                return False
+            self._stage = name
+            self.manual = True
+            return True
+
+    arm_ctrl = _ArmController()
+    sd_arm = cc_client.create_dispatcher(config_default.default(), controller=arm_ctrl)
+    assert 'unsafe' in await sd_arm.handle('arm') and arm_ctrl.armed is False  # p_bad probe fails -> refused
+
+    inspector.Inspector.unregister('p_bad')  # clear the failing probes -> a clean board
+    inspector.Inspector.unregister('mission')
+    assert json.loads(cc.parse(await sd_arm.handle('arm')).args[0])['armed'] is True and arm_ctrl.armed is True
+    assert json.loads(cc.parse(await sd_arm.handle('disarm')).args[0])['armed'] is False
+
+    held = json.loads(cc.parse(await sd_arm.handle('stage gliding')).args[0])  # operator hold (ground test)
+    assert held['stage'] == 'gliding' and held['manual'] is True
+    assert 'badargs' in await sd_arm.handle('stage nope')  # unknown stage name
+    assert json.loads(cc.parse(await sd_arm.handle('stage auto')).args[0])['manual'] is False  # resume
+    assert 'unsupported' in await cc_client.create_dispatcher(config_default.default()).handle('arm')
+
+    print('ok: cc_client dispatch/serve/standard + inspect/update/stats + probe + verify + log + tlm + arm')
 
 
 asyncio.run(amain())

@@ -20,7 +20,9 @@ try:
 except ImportError:  # CPython tooling / off-board lint+compile only
     RTC = None
 
+import databoard
 import inspector
+import nav
 import recorder
 
 LAUNCH_PATH: str = 'launch.config'
@@ -30,6 +32,11 @@ LAUNCH_PATH: str = 'launch.config'
 _EPOCH_OFFSET: int = 946684800
 
 _FIELDS: tuple = ('launch_id', 'site', 'latitude', 'longitude', 'altitude')
+
+# Default max range (m) from the launch point to any zone point, when the board config omits it. The
+# real value is `max_range_m` in board.json -- it is a glide-range property of the AIRFRAME (a bigger
+# glider reaches farther), so it lives in the board config, not the per-launch mission.
+_DEFAULT_MAX_RANGE_M: float = 200.0
 
 
 def _load(path: str) -> dict:
@@ -50,6 +57,26 @@ def _number(value, low: float, high: float):
     return value if low <= value <= high else None
 
 
+def _zone(value):
+    """Validate a landing zone `[[lat_tl, lon_tl], [lat_br, lon_br]]` (top-left + bottom-right corners)
+    -> ((lat, lon), (lat, lon)) or None. nav.py resolves the target (centre) + gates (short-side
+    midpoints) from it. The corner choice is an operator SAFETY decision: orient the zone so the
+    short-side entrances face hazard-free corridors -- nav steers to a gate with no hazard awareness
+    (specs/coludo.md "Zone orientation")."""
+    if not isinstance(value, (list, tuple)) or len(value) != 2:
+        return None
+    corners = []
+    for point in value:
+        if not isinstance(point, (list, tuple)) or len(point) != 2:
+            return None
+        latitude = _number(point[0], -90.0, 90.0)
+        longitude = _number(point[1], -180.0, 180.0)
+        if latitude is None or longitude is None:
+            return None
+        corners.append((latitude, longitude))
+    return (corners[0], corners[1])
+
+
 class Mission(inspector.Inspectable):
     """The operator-set launch identity. One per board; registers itself so Control can
     `inspect`/`update mission`. Seeded from launch.config at construction."""
@@ -57,14 +84,16 @@ class Mission(inspector.Inspectable):
     name: str = 'mission'
     kind: str = 'mission'
 
-    def __init__(self, path: str = LAUNCH_PATH):
+    def __init__(self, path: str = LAUNCH_PATH, max_range_m: float = _DEFAULT_MAX_RANGE_M):
         data = _load(path)
         self.path: str = path
+        self.max_range_m: float = max_range_m  # from board config (airframe glide range); zone range gate
         self.launch_id: str = data.get('launch_id', '')
         self.site: str = data.get('site', '')
         self.latitude = _number(data.get('latitude'), -90.0, 90.0)  # decimal degrees, None unset
         self.longitude = _number(data.get('longitude'), -180.0, 180.0)
         self.altitude = data.get('altitude')  # launch-site elevation, metres (None unset)
+        self.zone = _zone(data.get('zone'))  # landing zone ((lat,lon) TL, (lat,lon) BR) or None
         inspector.Inspector.register(self)
 
     def set_time(self, epoch) -> bool:
@@ -84,32 +113,71 @@ class Mission(inspector.Inspectable):
         """Current board clock as a Unix epoch (seconds), for Control to compare against its own."""
         return time.time() + _EPOCH_OFFSET
 
+    # ------------------------------------------------------------ landing zone
+    def launch_point(self):
+        """The launch origin (lat, lon): the operator-set position (CC `update mission` / `assist`) if
+        present, else the live on-board GNSS fix from the databoard, else None. So it is set by CC
+        unless taken from GPS."""
+        if self.latitude is not None and self.longitude is not None:
+            return (self.latitude, self.longitude)
+        value, source, _age = databoard.Databoard.parameter('position').read()
+        return value if source is not None and value is not None else None  # only a FRESH fix
+
+    def geometry(self) -> dict:
+        """The landing zone resolved against the launch point: the target (centre) + both gates
+        (short-side entrances) and the launch-point->point distances, with `in_range` False if any of
+        the three exceeds _MAX_RANGE_M (coludo.md). None if the zone or the launch point is unset."""
+        if self.zone is None:
+            return None
+        origin = self.launch_point()
+        if origin is None:
+            return None
+        target, gate_a, gate_b = nav.zone(self.zone[0], self.zone[1])
+        distances = {name: round(nav.distance(origin[0], origin[1], point[0], point[1]), 1)
+                     for name, point in (('target', target), ('gate_a', gate_a), ('gate_b', gate_b))}
+        farthest = max(distances.values())
+        return {'origin': origin, 'target': target, 'gates': [gate_a, gate_b], 'distances_m': distances,
+                'max_distance_m': farthest, 'in_range': farthest <= self.max_range_m}
+
     async def probe(self) -> str:
-        """On-demand self-test: a launch position is set, so an unconfigured site is caught pre-flight
-        (the operator sets it via `update mission` / launch.config). Not a hardware check -- data."""
+        """On-demand self-test: a launch position is set (CC or GNSS) and, if a landing zone is set, all
+        three of its points are within range of the launch point. Caught pre-flight (arm/verify). Not a
+        hardware check -- data."""
         try:
             recorder.Recorder.log(self.name, 'probe: launch position ...')
-            if self.latitude is None or self.longitude is None:
-                raise ValueError('launch position not set (lat/lon)')
-            recorder.Recorder.log(self.name, 'probe: position ok (%.5f, %.5f)' % (
-                self.latitude, self.longitude))
+            origin = self.launch_point()
+            if origin is None:
+                raise ValueError('launch position not set (CC or GNSS)')
+            recorder.Recorder.log(self.name, 'probe: position ok (%.5f, %.5f)' % (origin[0], origin[1]))
+            geometry = self.geometry()
+            if geometry is not None and not geometry['in_range']:
+                raise ValueError('landing zone out of range (%.0f m > %.0f m)' % (
+                    geometry['max_distance_m'], self.max_range_m))
         except Exception as error:
-            message = 'launch position: %s' % error
+            message = 'launch/zone: %s' % error
             recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
             return message
         return None
 
     # --- Inspectable ---
     def inspect(self) -> dict:
-        return {
+        snapshot = {
             'launch_id': self.launch_id,
             'site': self.site,
             'latitude': self.latitude,
             'longitude': self.longitude,
             'altitude': self.altitude,
+            'zone': self.zone,
             'clock': self.clock(),
             'epoch': self.epoch(),
         }
+        geometry = self.geometry()  # the resolved target + gates + their range from the launch point
+        if geometry is not None:
+            snapshot['target'] = geometry['target']
+            snapshot['gates'] = geometry['gates']
+            snapshot['distances_m'] = geometry['distances_m']
+            snapshot['in_range'] = geometry['in_range']
+        return snapshot
 
     def update(self, props: dict) -> list:
         """Apply launch_id/site/latitude/longitude/altitude (stored, range-checked) and `epoch`
@@ -129,6 +197,11 @@ class Mission(inspector.Inspectable):
             if getattr(self, key) != value:
                 setattr(self, key, value)
                 changed.append(key)
+        if 'zone' in props:  # landing zone: a valid 2-corner rectangle replaces it, invalid is ignored
+            zone = _zone(props['zone'])
+            if zone is not None and zone != self.zone:
+                self.zone = zone
+                changed.append('zone')
         if 'epoch' in props and self.set_time(props['epoch']):
             changed.append('epoch')
         return changed
@@ -137,6 +210,8 @@ class Mission(inspector.Inspectable):
         """Persist the stored mission fields to launch.config (atomic temp+rename) so the launch
         identity survives a pre-flight reboot. The clock is never persisted -- it is the RTC's."""
         data = {key: getattr(self, key) for key in _FIELDS}
+        if self.zone is not None:  # persist the landing zone as plain lists (JSON has no tuples)
+            data['zone'] = [list(self.zone[0]), list(self.zone[1])]
         tmp = self.path + '.tmp'
         with open(tmp, 'w') as handle:
             handle.write(json.dumps(data))

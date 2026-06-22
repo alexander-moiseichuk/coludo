@@ -148,43 +148,90 @@ Builds on what Phase 2 already shipped: the `Stage` machine (`SETTING→BOOSTING
 Order: **1 → 2 → 3 → 4** (mixer, then the loop it drives, then automate the stages that gate it,
 then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests, on-board.
 
-- ◻ **1. Surface mixer** (`tasks/mixer.py` or fold into a control task) — map control axes to the 3
-  fins: **elevon mixing** (pitch = both elerons together, roll = differential) + **yaw = rudder**.
-  Per-fin trim (neutral), direction sign, and a hard ±limit clamp (config; e.g. ±45°) on top of
-  `sg90.update()`. Pure integer-degree math; unit-tested independent of hardware (mix → per-fin
-  angles, clamp, trim). No servo motion until commanded.
-- ◻ **2. Stabilization loop** (`tasks/flight.py`, `@task.activity('flight')`) — ~50 Hz: read
-  `attitude` (+ `accel`) from the databoard, run a **PID per axis** (setpoint − measured → command),
-  feed the mixer. Gains + setpoints from config; integral clamp / output saturation. **Active only in
-  `GLIDING`** (neutral/disabled otherwise). Degraded mode: stale/missing attitude → surfaces to
-  neutral, never act on stale data (the databoard freshness already exposes this). Test the PID +
-  saturation math with synthetic error sequences (positive + negative, wind-up guard).
-- ◻ **3. Stage automation** — make `set_stage` transitions automatic + guarded, each logged +
-  telemetry'd:
-  `SETTING→BOOSTING` launch detect (|accel| > g-threshold sustained N ms);
-  `BOOSTING→GLIDING` separation (exists) with a burnout/timeout fallback;
-  `GLIDING→LANDING` low `agl` (or descent + low `elevation`);
-  `LANDING→done` on-ground (low motion for N s). Per-stage task gating (the control loop runs only in
-  `GLIDING`; high-g `BOOSTING` keeps fins locked neutral). Test each threshold with synthetic
-  databoard inputs (fires once, monotonic, no chatter).
-- ◻ **4. Per-phase behaviour / maneuvers** — setpoint policy per stage: `BOOSTING` = fins locked
-  neutral (no actuation under thrust); `GLIDING` = hold target attitude / glide path (initially
-  wings-level + heading hold; spiral-to-launch-site once GNSS nav lands in Phase 4); `LANDING` =
-  flare / neutral. Setpoints declared per stage in config.
-- ◻ **5. Watchdog + health gating** — hardware `machine.WDT` fed by the live control loop (a wedged
-  loop reboots, matching the no-stop-flag policy); the `health` task gates actuation — unhealthy
-  sensors / low battery → fail-safe neutral + flagged. Test the gate (forced-unhealthy → neutral).
-- ◻ **6. Arming + ground-test safety** — actuation only when **armed** and in `GLIDING`; arming
-  requires `probe all` clean; a ground-test mode exercises the loop with surfaces live but stages
-  forced, so it can be bench-validated before flight. (CC `arm`/`disarm`, mission-gated.)
-- **Deferred to Phase 4:** GNSS landing-zone navigation (heading-to-home), GPX export. Until nav
-  exists, `GLIDING` holds wings-level + a fixed heading.
+- ✅ **1. Surface mixer** (`mixer.py`, sibling of servo.py) — `Mixer.mix(roll, pitch, yaw)` →
+  `{fin: angle}`: **elevon mixing** (pitch = both elerons together, roll = differential) + **yaw =
+  rudder**, per-fin trim (neutral) + direction-sign gains + a hard ±`limit_deg` clamp on control
+  deflection (config `mixer`). Pure integer-degree math, `neutralise()` for the safe output;
+  `test_mixer` covers the matrix/trim/clamp. No servo motion until the control task drives it.
+- ✅ **2. Stabilization loop** (`tasks/flight.py`, `@task.activity('flight')` + `pid.py`) — reads
+  `attitude` (heading/roll/pitch), **PID per axis** (`pid.Pid`, integral + output clamp) to the
+  setpoint + heading-hold → `mixer.mix()` → `sg90.update()`. **Active only in `GLIDING`** (every other
+  stage holds fins neutral); stale/absent attitude → neutral (degraded). **Timer-driven**:
+  `schedule_hz > 0` → `machine.Timer` ticks a ThreadSafeFlag (deterministic slice independent of other
+  tasks, ~1 m/step at 100 Hz/100 m/s); `schedule_hz 0` → asyncio at `period_ms`. Self-times (steps +
+  max_step_us via inspect) for a load sweep vs board_health. Gains 0 + task disabled by default. Tests
+  `test_pid` (P/I/D + clamps) + `test_flight` (gating, degraded, PID→mix→fins, both schedule modes).
+  **Load sweep** (ESP32-P4, otherwise-idle board, gains 0 so each step does the full read→PID→mix→
+  apply; CPU from an idle-counter vs a no-flight baseline):
+
+  | schedule | achieved | worst step | CPU load |
+  |---|---|---|---|
+  | asyncio (10 ms) | 100 Hz | ~1.15 ms | ~5 % |
+  | timer 50 Hz | 50.0 Hz | ~1.08 ms | ~12 % |
+  | timer 100 Hz | 100.0 Hz | ~1.07 ms | ~15 % |
+  | timer 200 Hz | 200.0 Hz | ~1.07 ms | ~20 % |
+
+  Takeaways: the **timer hits the configured rate exactly** (deterministic), CPU scales ~linearly with
+  rate with comfortable headroom even at 200 Hz; the **worst-case step is ~1.1 ms** (an occasional GC
+  pause — typical steps are far shorter — and it still fits the 5 ms period at 200 Hz). asyncio also
+  reached 100 Hz here at lower CPU, but it has no rate guarantee under contention (the timer's whole
+  point). **Chosen: 100 Hz timer** — 1 m/step at 100 m/s, deterministic, ~15 % load, matched to the
+  BNO055's ~100 Hz attitude ceiling.
+- ✅ **3. Stage automation** (`tasks/sequencer.py`, `@task.activity('sequencer')`) — a guarded,
+  forward-only `_tick` driving `set_stage` from databoard signals: `SETTING→BOOSTING` sustained
+  `|accel| > launch_g` for `launch_ms`; `BOOSTING→GLIDING` the separation switch (primary, exists) with
+  a `boost_timeout_ms` burnout fallback; `GLIDING→LANDING` `agl < land_agl_m` (elevation fallback);
+  `LANDING→done` `|accel|≈1g` stationary for `ground_ms`. Each fires once (stage check + reset-on-change
+  guard, incl. separation-driven hops), logged (`controller :: stage ->`, picked up by the analysis
+  tool) + a `sequencer.csv` marker. Thresholds in config; **enabled** (safe on passive flights — logs
+  the stage timeline, no actuation since the flight task is disabled). `test_sequencer` drives every
+  transition + the transient guard with synthetic accel/agl. The control loop (task 2) already gates to
+  `GLIDING`, so this closes that loop.
+- ✅ **4. Per-phase behaviour** (folded into `tasks/flight.py`) — the loop's gating generalised from
+  GLIDING-only to a `phases` config map: each entry names a CONTROL stage and its attitude setpoint;
+  stages absent from it (`SETTING`/`BOOSTING`/`DONE`) hold the fins neutral (no actuation under thrust /
+  on the ground). `GLIDING` = wings-level + heading hold; `LANDING` carries its own setpoint (the flare
+  knob, 0 until tuned). Heading is captured on entering control and held across a glide→landing hand-off
+  (continuous control, no neutral between); PIDs reset only on (re)entering control from a non-control
+  stage. `inspect` exposes `active`/`phase`. `test_flight` covers the per-stage engage/switch/disengage.
+  (Spiral-to-launch-site maneuver waits on GNSS nav — Phase 4.)
+- ✅ **5. Watchdog + heartbeat** (`tasks/watchdog.py`, `@task.activity('watchdog')`) — two layers:
+  a hardware `machine.WDT` fed every period (a TOTAL event-loop wedge stops the feed → hard reset — the
+  backstop), plus a **control-loop heartbeat** (while the flight task is in a control phase its step
+  counter must advance; a stall → **full `machine.reset()`**). Recovery is a full reset, not a soft
+  event-loop restart — MicroPython can't preempt a wedged native call and the HW (PWM / I²C / sensors)
+  needs a clean reset; boot re-centres the fins to bound the window. Stale attitude is NOT a trigger
+  (the flight loop already fail-safes to neutral, task 2). Disabled by default (a live WDT also resets
+  the board during REPL bench work). `test_watchdog` (injected WDT/reset) covers the stall decision +
+  feed-vs-reset. **±90°/tumble is deliberately not a trigger** — control should keep fighting there.
+- ✅ **6. Arming + ground-test safety** — `Controller.armed` gates actuation: the flight loop holds
+  the fins neutral unless **armed** *and* in a control phase. CC **`arm`** enables it only when board
+  verify is clean (every device up + probe healthy — and `mission.probe` requires the launch position,
+  so arming is mission-gated for free); a refused arm returns the problems. **`disarm`** clears it.
+  Ground test: **`stage <name>`** holds a stage (`Controller.manual` → the sequencer pauses) so the
+  live loop can be exercised on the bench (`arm` + `stage gliding` → tilt the board, watch the fins);
+  `stage auto` resumes. Tests across controller/flight/sequencer/cc_client (disarmed→neutral,
+  manual→no auto-advance, arm refused-on-probe-fail / clean→armed).
+- **Landing-zone navigation** (heading-to-home) is now implemented — see Phase 4. GPX export still
+  deferred.
+- **Bench-complete (all 6 tasks ✅):** the full chain — sensors → stage machine → armed + per-phase
+  gated PID → mixer → fins, with a watchdog backstop — is built and on-board tested (34/34). The only
+  thing left before flight is **gain tuning on the real airframe** (gains default 0; the flight +
+  watchdog tasks ship disabled), informed by the E16/F15 passive-flight data.
 - **Milestone:** a controlled glide — launch detect → separation → stabilized glide → flare, with
-  the loop gated by stage + health and a fed watchdog.
+  the loop gated by stage + arming + a fed watchdog.
 
 ### Phase 4 — Polish
-- Landing-zone navigation + per-launch mission config, GPX export of telemetry, richer
-  browser UI, GC/perf strategy (second core or native control loop if latency demands).
+- ✅ **Landing-zone navigation** (`nav.py` + `tasks/flight.py` + `mission.py`) — the mission's zone is a
+  lat/lon rectangle (TL/BR); `nav.zone()` → target (centre) + gates (short-side midpoints, the safe
+  approach corridors — operator orients the zone, `coludo.md`). In GLIDING the yaw heading setpoint is
+  `nav.steer()` toward the nearer gate then the centre (overshoot → ~180° re-approach, emergent). Three
+  GPS-degrading tiers: live fix → steer from the current position; no fix + CC-set launch point → hold
+  the launch→gate bearing (open-loop, GPS-denied fallback); neither → captured heading. Mission resolves
+  the zone vs the launch point (CC-set or GNSS), gates it on `max_range_m` (board config — airframe
+  glide range), exposes points + distances + `in_range` in `inspect()`, and `probe` fails a too-far zone.
+- Per-launch mission config, GPX export of telemetry, richer browser UI, GC/perf strategy (second core
+  or native control loop if latency demands). Spiral-to-launch-site maneuver.
 
 ### `launch.config` (mission config)
 A separate config document, same layered/validated/save+reactivate form as `board.json`

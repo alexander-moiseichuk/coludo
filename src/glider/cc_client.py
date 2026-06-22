@@ -106,7 +106,40 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         return cc.build('ok', [json.dumps(info)])
 
     async def get_stage(msg) -> str:
-        return cc.build('ok', [json.dumps({'stage': stage()})])
+        """`stage` -> the current stage; `stage <name>` holds it (operator override, pauses the
+        sequencer -- ground test); `stage auto` resumes auto-sequencing."""
+        manual = controller.manual if controller is not None else False
+        if msg.args and controller is not None:
+            if msg.args[0] == 'auto':
+                controller.resume()
+            elif not controller.hold(msg.args[0]):
+                return cc.build('err', ['badargs', 'no stage ' + msg.args[0]])
+            manual = controller.manual
+        return cc.build('ok', [json.dumps({'stage': stage(), 'manual': manual})])
+
+    async def arm(msg) -> str:
+        """Enable actuation -- but only when board verify is clean (every device up + probe healthy,
+        incl. the mission launch-position): a refused arm returns the problems. Disarmed by default;
+        the control loop holds the fins neutral until armed."""
+        if controller is None:
+            return cc.build('err', ['unsupported', 'no controller'])
+        problems = dict(controller.failures)  # not-connected devices
+        for name in inspector.Inspector.names():
+            run = getattr(inspector.Inspector.get(name), 'probe', None)
+            if run is not None:
+                result = await run()
+                if result is not None:
+                    problems[name] = result
+        if problems:
+            return cc.build('err', ['unsafe', json.dumps(problems)])  # refuse to arm
+        controller.arm()
+        return cc.build('ok', [json.dumps({'armed': True})])
+
+    async def disarm(msg) -> str:
+        if controller is None:
+            return cc.build('err', ['unsupported', 'no controller'])
+        controller.disarm()
+        return cc.build('ok', [json.dumps({'armed': False})])
 
     async def report(msg) -> str:
         return cc.build('ok', [json.dumps(controller.stats() if controller is not None else {})])
@@ -171,9 +204,11 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
     async def probe(msg) -> str:
         """Run self-tests ON DEMAND over the inspectable objects (tasks + mission + ...) that implement
         probe(): `probe <name>` for one, `probe`/`probe all` for every one. Per object None when
-        healthy, else its error string. Costly ACTIVE checks (e.g. the servo range sweep) live in
-        probe(), never at boot -- so a mid-flight reboot never sweeps the fins; the operator runs it
-        pre-flight. Sequential, so fins self-test one at a time."""
+        healthy, else its error string. `probe all` also lists the devices that never set up (absent /
+        miswired -> not inspectable), from the Controller's failures, so one command shows the whole
+        connected/not picture. Costly ACTIVE checks (e.g. the servo range sweep) live in probe(), never
+        at boot -- so a mid-flight reboot never sweeps the fins; the operator runs it pre-flight.
+        Sequential, so fins self-test one at a time."""
         target = msg.args[0] if msg.args else 'all'
         if target == 'all':
             results = {}
@@ -181,11 +216,33 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
                 run = getattr(inspector.Inspector.get(name), 'probe', None)
                 if run is not None:
                     results[name] = await run()
+            if controller is not None:  # devices that failed setup aren't inspectable -> not connected
+                for name, reason in controller.failures.items():
+                    results.setdefault(name, 'not connected: ' + reason)
             return cc.build('ok', [json.dumps(results)])
         run = getattr(inspector.Inspector.get(target), 'probe', None)
         if run is None:
             return cc.build('err', ['badargs', 'no probe for ' + target])
         return cc.build('ok', [json.dumps({target: await run()})])
+
+    async def verify(msg) -> str:
+        """Verify board setup and report PASS or the problems: dump every configured device (up vs
+        down) and run the probe self-tests, with an overall `pass`. The on-the-pad / pre-flight
+        re-check -- catches anything disconnected in transport. Needs the Controller (the configured
+        device list + setup failures). NOTE: probe is active (sweeps the servos)."""
+        if controller is None:
+            return cc.build('err', ['unsupported', 'no controller'])
+        devices = {name: ('up' if controller.active(name) is not None
+                          else 'down: ' + controller.failures.get(name, '?'))
+                   for name in controller.directory()}
+        problems = dict(controller.failures)  # not-connected devices
+        for name in inspector.Inspector.names():
+            run = getattr(inspector.Inspector.get(name), 'probe', None)
+            if run is not None:
+                result = await run()
+                if result is not None:
+                    problems[name] = result
+        return cc.build('ok', [json.dumps({'pass': not problems, 'devices': devices, 'problems': problems})])
 
     async def log(msg) -> str:
         """`log <duration_ms>` -- poll-model log streaming. Reply with the log lines the board buffered
@@ -201,6 +258,19 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
             return cc.build('err', ['badargs', 'log <duration_ms>'])
         return cc.build('ok', [json.dumps(recorder.Recorder.cc_logs(duration_ms))])
 
+    async def tlm(msg) -> str:
+        """`tlm <duration_ms>` -- poll-model telemetry streaming (mirrors `log`). Reply with the
+        telemetry rows the board buffered since the last `tlm`, and keep teeing tlm() for another
+        `duration_ms` (`tlm 0` stops, default 1000 ms). One base64 JSON token. An EXTRA route: the
+        UART/Luckfox telemetry is untouched, and with no `tlm` request the board collects nothing."""
+        import recorder
+
+        try:
+            duration_ms = int(msg.args[0]) if msg.args else 1000
+        except ValueError:
+            return cc.build('err', ['badargs', 'tlm <duration_ms>'])
+        return cc.build('ok', [json.dumps(recorder.Recorder.cc_telemetry(duration_ms))])
+
     async def reboot(msg) -> str:
         reset = on_reboot or (lambda: __import__('machine').reset())  # imported only when it fires
 
@@ -215,13 +285,17 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
     dispatcher.on('ping', ping)
     dispatcher.on('health', health)
     dispatcher.on('stage', get_stage)
+    dispatcher.on('arm', arm)
+    dispatcher.on('disarm', disarm)
     dispatcher.on('report', report)
     dispatcher.on('objects', objects)
     dispatcher.on('inspect', inspect)
     dispatcher.on('update', update)
     dispatcher.on('stats', stats)
     dispatcher.on('probe', probe)
+    dispatcher.on('verify', verify)
     dispatcher.on('log', log)
+    dispatcher.on('tlm', tlm)
     dispatcher.on('get-config', get_config)
     dispatcher.on('save-config', save_config)
     dispatcher.on('reset-config', reset_config)

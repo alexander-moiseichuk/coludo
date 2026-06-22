@@ -137,7 +137,8 @@ class Parameter:
             self.reconcile = True
         expire_us = expire_us or _DEFAULT_EXPIRE_US
         if rank < self._primary_rank:  # a new, lower-rank primary tier -> the window resets to it
-            self._primary_rank, self.window_us = rank, expire_us
+            self._primary_rank = rank
+            self.window_us = expire_us
         elif rank == self._primary_rank:  # another primary-tier source -> the tightest wins
             self.window_us = min(self.window_us, expire_us)
         return channel

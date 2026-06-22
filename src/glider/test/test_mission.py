@@ -1,9 +1,11 @@
 # On-board test for mission.py: launch.config load, live update (launch id / position / RTC time
 # setup), persistence, and Inspector integration. Positive + negative.
 
+import asyncio
 import json
 import os
 
+import databoard
 import inspector
 import mission
 
@@ -113,6 +115,60 @@ def test_save_roundtrip():
     _cleanup()
 
 
+def test_landing_zone():
+    _cleanup()
+    launch = mission.Mission(PATH)
+    assert launch.zone is None  # unset by default
+
+    # a valid 2-corner rectangle is stored (tuples) + reported changed
+    assert launch.update({'zone': [[48.001, 11.000], [48.000, 11.010]]}) == ['zone']
+    assert launch.zone == ((48.001, 11.000), (48.000, 11.010))
+    assert launch.inspect()['zone'] == ((48.001, 11.000), (48.000, 11.010))
+    # negative: malformed / out-of-range zones are ignored (the valid one stays)
+    assert launch.update({'zone': [[48.0, 11.0]]}) == []  # only one corner
+    assert launch.update({'zone': [[200.0, 11.0], [48.0, 11.0]]}) == []  # bad latitude
+    assert launch.zone == ((48.001, 11.000), (48.000, 11.010))
+
+    # round-trips through launch.config (JSON lists -> tuples on reload)
+    launch.save()
+    assert mission.Mission(PATH).zone == ((48.001, 11.000), (48.000, 11.010))
+    _cleanup()
+
+
+def test_zone_geometry_and_range():
+    _cleanup()
+    launch = mission.Mission(PATH)
+    launch.update({'latitude': 48.00025, 'longitude': 11.0005})  # launch at the zone centre
+    launch.update({'zone': [[48.0005, 11.000], [48.0000, 11.001]]})  # ~74 m wide -> gates ~37 m away
+    snap = launch.inspect()
+    # all 3 points (target + both gates) and their range from the launch point are exposed
+    assert len(snap['gates']) == 2 and set(snap['distances_m']) == {'target', 'gate_a', 'gate_b'}
+    assert snap['distances_m']['target'] < 2.0  # centre ~ the launch point
+    assert 30.0 < snap['distances_m']['gate_a'] < 45.0  # ~37 m to a short-side gate
+    assert snap['in_range'] is True
+
+    # move the launch point far -> all points blow the range -> in_range flag + probe both fail
+    launch.update({'latitude': 48.005})  # ~530 m north of the zone
+    assert launch.inspect()['in_range'] is False
+    assert 'out of range' in asyncio.run(launch.probe())
+
+    # the threshold is board config (airframe glide range), not hardcoded: a tighter range flags it
+    tight = mission.Mission(PATH, max_range_m=10.0)
+    tight.update({'latitude': 48.00025, 'longitude': 11.0005, 'zone': [[48.0005, 11.000], [48.0000, 11.001]]})
+    assert tight.inspect()['in_range'] is False  # ~37 m gates exceed the 10 m range
+    _cleanup()
+
+
+def test_launch_point_from_gnss():
+    _cleanup()
+    launch = mission.Mission(PATH)  # no CC-set position
+    assert launch.launch_point() is None  # nothing from CC, no fix yet
+    channel = databoard.Databoard.provide('gnss', {'position': {'priority': 0, 'timeout_ms': 1000}}, 'position')
+    channel.push((48.0, 11.0))
+    assert launch.launch_point() == (48.0, 11.0)  # set by GPS (databoard) when CC has not
+    _cleanup()
+
+
 def main():
     assert mission._EPOCH_OFFSET == 946684800
     try:
@@ -124,9 +180,12 @@ def main():
         test_update_positive_and_negative()
         test_time_setup()
         test_save_roundtrip()
+        test_landing_zone()
+        test_zone_geometry_and_range()
+        test_launch_point_from_gnss()
     finally:
         _cleanup()
-    print('ok: mission load/update/time-setup/launch-prefix/save + Inspector')
+    print('ok: mission load/update/time/save + landing-zone geometry/range + GNSS launch-point + Inspector')
 
 
 main()

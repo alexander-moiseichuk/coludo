@@ -1,11 +1,11 @@
-# synth_capture.py — generate a synthetic Coludo recorder capture (a believable E/F-motor boost ->
-# coast -> glide -> land), in the exact wire format flight_telemetry.parse() reads. Lets the report be
-# demoed before any real flight, and gives the parser test realistic data. `python3 synth_capture.py`
-# prints a capture to stdout; pipe it into flight_report.py.
+# flight_synth_capture.py — generate a synthetic Coludo recorder capture (a believable E/F-motor boost
+# -> coast -> glide -> land), in the exact wire format flight_telemetry.parse() reads. Lets the report
+# be demoed before any real flight, and gives the parser test realistic data.
+# `python3 flight_synth_capture.py` prints a capture to stdout; pipe it into flight_report.py.
 
 import math
 
-_SESSION = '20260621_120000'
+_SESSION = '20260621_120000_500'  # YYYYMMDD_HHMMSS_<rand>, matching recorder.session()
 _GROUND_M = 520.0  # launch-site elevation (m AMSL)
 _LAT0, _LON0 = 48.1173, 11.5167
 
@@ -17,11 +17,12 @@ def generate() -> str:
     def tlm(file, row):
         lines.append('@%s_%s@%s' % (_SESSION, file, row))
 
-    tlm('accel.csv', 'uptime;ax;ay;az')
+    # the real telemetry file + field names (recorder writes '<component-name>.csv')
+    tlm('accel_adxl375.csv', 'uptime;ax;ay;az')
     tlm('baro_icp10111.csv', 'uptime;altitude;temperature;pressure;elevation')
-    tlm('imu_bno055.csv', 'uptime;yaw;pitch;roll')
-    tlm('atgm336h.csv', 'uptime;lat;lon;speed_kn;course')
-    tlm('vl53l4cx.csv', 'uptime;agl')
+    tlm('imu_bno055.csv', 'uptime;heading;roll;pitch')
+    tlm('gnss.csv', 'uptime;lat;lon;speed_kn;course')
+    tlm('laser_agl.csv', 'uptime;agl')
 
     step, t = 0.05, 0.0
     while t < 16.0:
@@ -38,15 +39,15 @@ def generate() -> str:
         altitude = _GROUND_M + elevation
         latitude = _LAT0 + 0.00010 * math.sin(t / 3.0)  # a gentle ground-track arc
         longitude = _LON0 + 0.00010 * (t / 16.0)
-        yaw, pitch, roll = (t * 20.0) % 360.0, 10.0 * math.sin(t), 5.0 * math.cos(t / 2.0)
+        heading, pitch, roll = (t * 20.0) % 360.0, 10.0 * math.sin(t), 5.0 * math.cos(t / 2.0)
 
-        tlm('accel.csv', '%u;%.3f;%.3f;%.3f' % (microseconds, 0.1 * math.sin(t), 0.1 * math.cos(t), az))
+        tlm('accel_adxl375.csv', '%u;%.3f;%.3f;%.3f' % (microseconds, 0.1 * math.sin(t), 0.1 * math.cos(t), az))
         tlm('baro_icp10111.csv', '%u;%.2f;21.0;%.0f;%.2f' % (microseconds, altitude, 100000.0, elevation))
-        tlm('imu_bno055.csv', '%u;%.1f;%.1f;%.1f' % (microseconds, yaw, pitch, roll))
+        tlm('imu_bno055.csv', '%u;%.1f;%.1f;%.1f' % (microseconds, heading, roll, pitch))
         if int(t / 0.1) != int((t - step) / 0.1):  # GNSS ~10 Hz
-            tlm('atgm336h.csv', '%u;%.6f;%.6f;0.0;0.0' % (microseconds, latitude, longitude))
+            tlm('gnss.csv', '%u;%.6f;%.6f;0.0;0.0' % (microseconds, latitude, longitude))
         if elevation < 4.0:  # laser only resolves the last few metres
-            tlm('vl53l4cx.csv', '%u;%.3f' % (microseconds, elevation))
+            tlm('laser_agl.csv', '%u;%.3f' % (microseconds, elevation))
         t += step
 
     lines.append('2000000 separation :: separated -> gliding')

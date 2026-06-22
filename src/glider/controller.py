@@ -48,8 +48,11 @@ class Controller(inspector.Inspectable):
         self.registry: dict = registry if registry is not None else task.ACTIVITIES
         self.log = log if log is not None else (lambda msg: None)
         self.tasks: dict = {}  # name -> Task
+        self.failures: dict = {}  # name -> reason, for enabled devices that did not come up (setup)
         self._runners: dict = {}  # name -> asyncio.Task
         self.stage: int = Stage.SETTING
+        self.armed: bool = False  # actuation gate -- the control loop holds fins neutral until armed
+        self.manual: bool = False  # operator holds the stage (ground test) -> sequencer pauses
         inspector.Inspector.register(self)
 
     # ------------------------------------------------------------------ scope
@@ -127,25 +130,42 @@ class Controller(inspector.Inspectable):
         device to a SAFE state (sensors detect-or-skip, servos centre) with no costly side effects;
         the active self-test is probe(), run on demand (the CC `probe` command), never at boot -- a
         mid-flight reboot must not sweep the fins."""
+        self.failures = {}  # recomputed each bring-up
+        attempts = max(1, self.config.get('setup_retries', 1))  # retry flaky contacts (breadboard)
         for name in self.directory():
             if name in self.tasks:
                 continue
-            new_task = self.create(name)
-            if new_task is None:
-                continue
-            try:
-                ok = await new_task.setup()
-            except Exception as e:
-                self.log("controller :: task '%s' setup raised: %r" % (name, e))
-                ok = False
-            if ok:
+            new_task = await self._bring_up(name, attempts)
+            if new_task is not None:
                 self.tasks[name] = new_task
                 inspector.Inspector.register(new_task)  # operator can `inspect <task>`
                 self.log("controller :: task '%s' up" % name)
-            else:
-                self.log("controller :: task '%s' failed setup" % name)
-                await new_task.finish()
+        if self.failures:
+            self.log('controller :: %d device(s) not up: %s' % (
+                len(self.failures), ', '.join(sorted(self.failures))))
         return True
+
+    async def _bring_up(self, name: str, attempts: int) -> task.Task:
+        """Create + set up a device, retrying a flaky setup up to `attempts` times (breadboard contacts
+        make and break). Returns the task on success, else None and records the failure reason."""
+        reason = 'no driver/activity'  # if create() never yields a task (missing driver)
+        for attempt in range(1, attempts + 1):
+            new_task = self.create(name)
+            if new_task is None:
+                break  # missing driver/activity -> retrying cannot help
+            try:
+                if await new_task.setup():
+                    return new_task
+                reason = 'setup failed (absent / miswired?)'
+            except Exception as error:
+                reason = repr(error)
+                self.log("controller :: task '%s' setup raised: %r" % (name, error))
+            await new_task.finish()
+            if attempt < attempts:
+                self.log("controller :: task '%s' setup attempt %d/%d failed, retrying" % (name, attempt, attempts))
+                await asyncio.sleep_ms(200)  # let a flaky contact settle before the retry
+        self.failures[name] = reason
+        return None
 
     async def start(self) -> None:
         """Launch each task's run() loop as a supervised asyncio task."""
@@ -189,6 +209,32 @@ class Controller(inspector.Inspectable):
         """The current flight stage as its operator-facing name."""
         return Stage.STAGES[self.stage]
 
+    # ------------------------------------------------------------------ arming
+    def arm(self) -> None:
+        """Enable actuation. The pre-flight precondition (probe all clean, mission set) is enforced by
+        the caller (the CC `arm` command); here it is the bare state + log."""
+        self.armed = True
+        self.log('controller :: armed')
+
+    def disarm(self) -> None:
+        self.armed = False
+        self.log('controller :: disarmed')
+
+    def hold(self, stage_name: str) -> bool:
+        """Operator stage override (ground test): force a stage and pause auto-sequencing. Returns
+        False for an unknown stage name."""
+        for stage_id, name in Stage.STAGES.items():
+            if name == stage_name:
+                self.set_stage(stage_id)
+                self.manual = True
+                return True
+        return False
+
+    def resume(self) -> None:
+        """Clear the operator hold -> the sequencer drives the stages again."""
+        self.manual = False
+        self.log('controller :: stage auto')
+
     def validate(self) -> bool:
         """True if every active task is healthy."""
         for t in self.tasks.values():
@@ -198,7 +244,8 @@ class Controller(inspector.Inspectable):
 
     # --- Inspectable ---
     def inspect(self) -> dict:
-        return {'stage': self.stage_name(), 'tasks': list(self.tasks.keys())}
+        return {'stage': self.stage_name(), 'armed': self.armed, 'manual': self.manual,
+                'tasks': list(self.tasks.keys()), 'failures': self.failures}
 
     def stats(self) -> dict:
         return {'stage': self.stage_name(), 'tasks': dict((n, t.inspect()) for n, t in self.tasks.items())}

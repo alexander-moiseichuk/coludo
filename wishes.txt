@@ -1,0 +1,117 @@
+Wishes 6/18 for phase2
+----------------------
+
+1. glider: should be a driver to explicitely turn bluetooth off to save power
+2. CC: all board exchange should be with timeouts like 10s or what is reasonable according to current protocol
+3. CC: control.py has sense to split to have main.py e.g. I want to have an option to listen on 0.0.0.0 to play from another LAN workstation, not open lid and start
+   browser locally
+4. CC: help for command line is essential
+5. CC: probably for addressing all boards has sense to leave only 'all' - the '*' kind of not a name and meaning is clear as well but not nice for scripting if something
+   is required to automate using telnet CC gate
+6. CC: can we separate Board and Server as well each with own test set?
+7. glider: task probably should have search() or find() method nearby activi() -> some tasks are dependand, and we can find deps. Also probably has sense
+   to support list of activities to continue when all dependencies started, if it becomes complex it could be separate method in comparison
+   to simple and fast search/find, like
+        sensor1, sensor2, sensor3 = task.query(['sensor1', 'sensor2', 'sensor3'])
+8. glider: in addition (or extension) to deploy.sh nice to have install.sh which
+   - remove from device files except boot.py
+   - install all critical files to device exluding all *.creds *.config etc which must be individually deployed
+9. glider: led to disabled state by default
+10. glider: Separation switch we desided to make reliable and ligh, so 2 pieces of ahdesive copper parts, one on glider, one on booster, in connected
+    state circut will route 3v3 to pin, after separation it goes low, if necessary I will add 4.7 kOm resistor between pin and ground but for esp32
+    usually that is not required.
+11. glider: available hardware now - gps ATGM336H, sen0253 (bno055 + bmp280), sen0517 (icp-10111), ADXL375 (https://www.adafruit.com/product/5374), VL53L4CX (https://www.adafruit.com/product/5425)
+12. plus could be used the following devices as additional:
+    - AHT20+BMP280 https://www.aliexpress.us/item/3256806546750874.html
+    - MPU6050 https://www.amazon.com/dp/B0BMY15TC4?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_15
+    - VL503LOX/1XV2 https://www.aliexpress.us/item/3256807793059841.html
+13. power delivery for servos should be on own power booster, so expected 5V but could be 7V/9V/12V if necessary but diode protection per each pin required
+14. services can be connected using transmission to make stronger force and reduce sustained current, so we can adust from 180° to 90° or 60° or 45° (4x force but too little angle -+22.5°)
+    60° looks interesting as produce reasonable -+30°
+15. glider: servos which could be used:
+    - SG90 Micro Servo 9G, 180° https://share.temu.com/XLKTfrLq6oC - expected to be primary as chip, compact and light
+    - MG90S Servo Metal Gear, 360° https://share.temu.com/2K2ks3JEWZC
+    - MG996R Servo Motors, 180° - this one a bit heavy 55g https://share.temu.com/CWtCeOW2kVC
+
+Wishes 6/19 for phase2 finalization
+-----------------------------------
+0. glider: in docs/code/tests the id as glider1 used - needs to be updated to 'taster' like mix between tester vs. toster
+1. glider: implement bno055 accel as low-g backup
+2. glider: add pressure reporting to all baros, to have pressure, temperature, altitude + fix ground zero during start to understand elevation as a separate parameter
+3. glider: Board Health - better to avoid load in floats, stay percents as int
+4. glider: Board Health - I checked CSV and I see no first row reported, could be too early start and something not ready? need to test properly
+5. glider: Board Health - it reported load around 80%, would be nice to make a test to run on different loads to ensure we reported proper loads
+   and describe approach in details
+6. glider: blackboard and fusion is way too complex, it must be simple as much, would be nice to understand your vision because my one was following:
+    for backboard:
+   - we declare parameter (e.g. altitude)
+   - some sensor is primary put it current value as altitude: (ts0, val0)
+   - if the same sensor pushed another value it will be come top again, old one kicked out if queue > MAX (e.g. 3 items)
+   - if secondary sensor declare value it pushed primary value only if fresher for period P us: (ts1, val1), then (ts0, val0) otherwise (ts0, val0) stays actual
+     and queue will be (ts0, val0) (ts1, val1) and here ts0 + P > ts1
+   - if we have 3rd level sensor principle the same: if rank of sensor is the same - check for timestamp, otherwise comparison gap will be (ranks delta) * P
+   - if someone needs altitude most adequate value will be always [0]
+
+   P and MAX could be declared for whole blackboard as e.g. 10_000 us and 3 OR (which is more flexible) per each sensor -
+   we can ask sensor about declaring parameter for Blackboard and pointing expiration time, when adding parameter we add with expiration date.
+   Every declaration will increase parameter max queue length by 1, so when adding will see ranks and expirations and simply compare. One extra value could be
+   reseved for fusion extrapolation. That is probably more reasonable as each sensor knows that some values has one expiration period (or quality/trustiness), some another.
+
+   We can even not use rank but deliver data and comare to expiration and Fusion will be take last value [0] if not expired and 2 last values [0]+[1]
+   if value [0] already expired and extrapolate value to current time knowing that ts1 < ts0 linearly (no complex computations required)
+
+   If you think any other options lets discuss but I wish to have first
+
+7. glider: bno086/bmi088 in mind, but for now ordered LSM6DSO32 https://www.adafruit.com/product/4692 (icm-42688-p has strange providers on ali)
+8. glider: replug to spi required, then perform lazer and gnss (10hz)
+   - https://github.com/PermatechCA/ATGM336H
+    // 10 Hz update rate - for 9600 baud you'll have to set the output to RMC only (see above)
+    GPS.sendCommand(PMTK_SET_NMEA_OUTPUT_RMCONLY);
+    GPS.sendCommand(PMTK_SET_NMEA_UPDATE_10HZ);
+  + https://forum.arduino.cc/t/atgm336h-gps-enabling-115200baud-and-10hz-updates/1172937
+  + https://docs.cirkitdesigner.com/component/ab5c0c19-2fd9-4121-964e-1009970a950a/gps-atgm336h
+  + https://forum.arduino.cc/t/gps-module-change-update-rate-to-10hz/665212/3 <- here should be special command to swich for 115200
+  NMEA https://cdn.sparkfun.com/assets/a/3/2/f/a/NMEA_Reference_Manual-Rev2.1-Dec07.pdf
+9. control: in Server would be nice to log commands exchange in between device(s) and CC
+10. control: how gps needs to be supported to sync to board? I plugged one, located as /dev/ttyUSB0. If we cannot assist on-board GPS position, we can assist
+    with position (basically stored in launch.config) and know when GPS almost have fix (OK 3D fix and 4+ sattelites are ideal case)
+11. control: not sure where we have cache board properties (board.config) to visualize/update as well log, stats, inspector object cache - to be implemented?
+
+
+Wishes 6/20 for phase2 finalization
+-----------------------------------
+1. version.py probably has sense to generate as YYYY.MM.DD.git_top_commit
+2. little discrepancy that task has decorator with ACTIVITIES backend which managed by Controller (find, search etc.), but moving ACTIVITES to Controller will make unnecessary mess
+3. blackboard better to rename whiteboard or even DataBoard, plus
+   - _Channel.fresh() - I think has sense to remove self.v1 None check and crash over testing to understand which sensor provide wrong data. In real life v1 must be with data
+      Also, we have t1 shifted back during initialization, so fresh() naturally does not this check
+   - _extrapolate a bit simplified to reduce copies
+   - better to make consistent use expire_us vs. window_us - one or another
+   - add_source simplified
+   - write() wish to the best or handle exception, expected to be once
+   - in Parameter._resolve() can we rely primary = self.channels[0] for simplification? At least sensor must produce something in real life, so for becomes simpler
+   - _learn() designed for test, I will assume data is exists in primary + handle exceptions if no data
+   - same for _estimate() simplify code as data is exists but add exceptions handling
+   - same for raw()
+   - same for the rest of read(), value() and raw() methods - less check, more rely on exceptions as in runtime data 99.999% will be here and we using checks just for cycles
+4. Hardware, order to plug-in is up to you
+   - ADXL375 unplugged from I2C and ready to plug to SPI, but please keep I2C code if possible
+   - VL53L4CX ready to plug to I2C
+   - AGTM336H 5N-31 ready to UART (has RX, TX, PPS and VCC+GND)
+   - 3 SG90 engines prepared and can be plugged to PWM pins
+
+Wishes 6/21 for phase 3 preparation
+-----------------------------------
+1. control: need to move control/tools to tools and rename synth_capture.py to flight_synth_capture.py
+2. glider: I see as our code started fast in many cases RTC is the same, so session produced same IDs => telemetry files overwritten or currupted by adding header
+   in the middle. could you please extend
+        cls._session = '%04d%02d%02d_%02d%02d%02d' % (now[0], now[1], now[2], now[3], now[4], now[5])
+   with one more component '_%d' with random number random.randint(100, 1000)
+3. glider: check situaion with AGTM336H 5N-31 - if no position fix lets support GY-NEO6MV2 as replacement of AGTM336H 5N-31 using the same UART. I will order new
+   antenna and we have an option to plug one device or another and tweak config.
+4. glider: gnss should generate elevation as well, not only altitude (just as backup for barometer)
+5. glider: common gnss functionality has sense to move to gnss.py, maybe in drivers folder (or up) + test cases
+6. glider: common servo functionality (e.g. servo gateway) should be moved to servo.py, maybe in drivers folder (or up) + test cases
+7. glider: ensure that all driver modules report data to telemetry, if rate is high then in pro-rated way at least 10 times/sec e.g. as for adxl375.py now I see default 0 us
+   but could be 10_000
+8. models: glider and booster are printing, we will wait prototype and add table into hardware.md + save .stl models before EOW.

@@ -24,7 +24,7 @@ async def bringup(cfg: dict, log=print) -> controller.Controller:
     happens inside the tasks the Controller starts."""
     drivers.load()  # HAL drivers (LED, sensors, ...) -> task.ACTIVITIES
     tasks.load()  # subsystem tasks (Recorder, BoardHealth, Wi-Fi, CC link, ...) -> task.ACTIVITIES
-    mission.Mission()  # launch identity + clock; not a task, self-registers for `inspect mission`
+    mission.Mission(max_range_m=cfg.get('max_range_m', 200))  # launch identity + clock + zone range gate
     flight = controller.Controller(cfg, log=log)
     await flight.setup()  # create each enabled component's task; skip the ones without a driver / hardware
     await flight.start()  # launch the task run loops

@@ -30,6 +30,21 @@ class FailSensor(task.Task):
         return False
 
 
+class FlakySensor(task.Task):
+    """Fails its first setup, succeeds on a retry (a fresh instance per attempt, so the attempt count
+    is class-level) -- models a breadboard contact that makes on the second try."""
+
+    attempts: int = 0
+
+    async def setup(self):
+        FlakySensor.attempts += 1
+        self._ok = FlakySensor.attempts >= 2
+        return self._ok
+
+    async def run(self):
+        await asyncio.sleep_ms(1)
+
+
 def make_config():
     return {
         'board': {'id': 't', 'mcu': 'esp32p4'},
@@ -56,6 +71,21 @@ async def amain():
     assert await c.setup() is True
     # s1/s2 created; 'off' disabled; 'bad' has no driver; 'failing' setup() -> False
     assert set(c.tasks.keys()) == set(['s1', 's2']), c.tasks.keys()
+
+    # failures collects every enabled device that did not come up (not the disabled 'off')
+    assert set(c.failures.keys()) == set(['bad', 'failing']), c.failures
+    assert c.failures['bad'] == 'no driver/activity' and 'setup failed' in c.failures['failing']
+    assert c.inspect()['failures'] == c.failures  # exposed for the operator (probe / inspect)
+    assert any('2 device(s) not up' in m for m in logs), logs
+
+    # setup_retries: a device that fails its first setup comes up on a retry (breadboard contacts)
+    FlakySensor.attempts = 0
+    retry_cfg = {'board': {'id': 'r', 'mcu': 'esp32p4'}, 'setup_retries': 2,
+                 'components': [{'name': 'flaky', 'driver': 'flaky', 'enabled': True}]}
+    rc = controller.Controller(retry_cfg, registry={'flaky': FlakySensor}, log=lambda m: None)
+    assert await rc.setup() is True
+    assert 'flaky' in rc.tasks and rc.failures == {} and FlakySensor.attempts == 2  # up on the 2nd try
+    await rc.finish()
 
     # active()
     assert c.active('s1') is c.tasks['s1']
@@ -109,6 +139,17 @@ async def amain():
     except ValueError:
         raised = True
     assert raised
+
+    # arming + manual hold (the actuation safety gate + ground-test override)
+    assert c.armed is False and c.manual is False  # disarmed / auto by default
+    c.arm()
+    assert c.armed is True and c.inspect()['armed'] is True
+    c.disarm()
+    assert c.armed is False
+    assert c.hold('gliding') is True and c.stage_name() == 'gliding' and c.manual is True
+    assert c.hold('nope') is False  # unknown stage name
+    c.resume()
+    assert c.manual is False and c.inspect()['manual'] is False
 
     # close one, then finish all
     await c.close('s1')
