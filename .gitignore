@@ -4,3 +4,4 @@ __pycache__/
 .nfs*
 *.creds
 version.py
+wishes.txt
