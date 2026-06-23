@@ -120,19 +120,19 @@ class Servo:
 
     # --- the three parameter views: get/set per parameter, referenced directly by _HUD_ROWS as
     # unbound methods (row['get'](servo) / row['set'](servo, value)). All keyed off the canonical pulse.
-    def angle(self) -> int:
+    def get_angle(self) -> int:
         return _convert(self.pulse_us, _PUL, _ANG)
 
     def set_angle(self, value: int) -> None:
         self.apply_pulse(_convert(value, _ANG, _PUL))
 
-    def pulse(self) -> int:
+    def get_pulse(self) -> int:
         return self.pulse_us
 
     def set_pulse(self, value: int) -> None:
         self.apply_pulse(value)
 
-    def duty(self) -> int:
+    def get_duty(self) -> int:
         return _convert(self.pulse_us, _PUL, _DUT)
 
     def set_duty(self, value: int) -> None:
@@ -148,11 +148,11 @@ class Servo:
 # on the selected row, so the draw loop needs no per-row cursor branch.
 _HUD_ROWS = [
     {'x': 0, 'y': 16, 'text': ' ang', 'min': 0, 'max': 360, 'step': 5,
-     'get': Servo.angle, 'set': Servo.set_angle},
+     'get': Servo.get_angle, 'set': Servo.set_angle},
     {'x': 0, 'y': 24, 'text': ' pul', 'min': 500, 'max': 2500, 'step': 25,  # microseconds
-     'get': Servo.pulse, 'set': Servo.set_pulse},
+     'get': Servo.get_pulse, 'set': Servo.set_pulse},
     {'x': 0, 'y': 32, 'text': ' dut', 'min': 1638, 'max': 8192, 'step': 100,  # duty_u16 == pulse 500..2500us @50Hz
-     'get': Servo.duty, 'set': Servo.set_duty},
+     'get': Servo.get_duty, 'set': Servo.set_duty},
 ]
 
 
