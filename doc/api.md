@@ -164,6 +164,10 @@ The flight stages, self-contained: int ids (cheap to compare/store on MicroPytho
 - `finish() -> None` — Shut down all tasks.
 - `set_stage(stage: int) -> None`
 - `stage_name() -> str` — The current flight stage as its operator-facing name.
+- `arm() -> None` — Enable actuation. The pre-flight precondition (probe all clean, mission set) is enforced by
+- `disarm() -> None`
+- `hold(stage_name: str) -> bool` — Operator stage override (ground test): force a stage and pause auto-sequencing. Returns
+- `resume() -> None` — Clear the operator hold -> the sequencer drives the stages again.
 - `validate() -> bool` — True if every active task is healthy.
 - `inspect() -> dict`
 - `stats() -> dict`
@@ -243,6 +247,40 @@ falling back to extrapolation of the primary when none is fresh.
 - `raw(name: str, source: str)` _(classmethod)_
 - `inspect() -> dict` _(classmethod)_
 - `stats() -> dict` _(classmethod)_
+
+## `gnss.py`
+
+_Tested by `test/test_gnss.py`._
+
+gnss.py — shared GNSS infrastructure (sibling of i2cbus/spibus/servo). NMEA helpers + a Gnss base
+Task: read NMEA over a dedicated UART, parse RMC -> 'position' (lat, lon) and GGA -> 'altitude'
+(m MSL) + 'elevation' (m above the GNSS ground zero, a barometer backup). Module-specific sentence
+selection + rate is the subclass's _configure(); ATGM336H (CASIC/PCAS) and NEO-6M (u-blox) differ
+only there. Talker-agnostic (GP/GN/BD). Best-effort -- lock drops under boost, so the channels go
+stale and consumers fall back.
+
+### `checksum_ok(sentence: str) -> bool`
+
+Verify the NMEA `*hh` XOR checksum (over the chars between '$' and '*').
+
+### `degrees(value: str, hemisphere: str)`
+
+NMEA ddmm.mmmm + N/S/E/W -> signed decimal degrees (None when the field is empty).
+
+### `nmea(body: str) -> bytes`
+
+Wrap a command body in `$...*hh\r\n` with its XOR checksum (PCAS/PMTK/PUBX config sentences).
+
+### `class Gnss(task.Task)`
+
+Base GNSS driver over a dedicated UART: RMC -> 'position' (lat, lon); GGA -> 'altitude' (m MSL)
++ 'elevation' (m above the GNSS ground zero, a baro backup). Subclasses set the module-specific
+sentence selection + rate in _configure().
+
+- `setup() -> bool`
+- `run() -> None` — Read NMEA lines forever and parse them; non-ASCII noise and malformed fields are skipped
+- `probe() -> str` — On-demand self-test: NMEA is arriving on the UART (the run loop counts lines). A satellite
+- `inspect() -> dict`
 
 ## `i2cbus.py`
 
@@ -339,7 +377,7 @@ Mission is a singleton Inspectable:
 inspect mission                              -> launch id / site / position + the board clock
 update mission base64:{"launch_id":"t1"}     -> set the launch id for this flight
 update mission base64:{"epoch":1750170000}   -> set the board RTC (time sync; Unix seconds)
-save-mission                                 -> persist the live mission back to launch.config
+get-config launch / set-config launch        -> read / save (merge + persist) launch.config
 
 Position is metres / decimal degrees; it is a known origin now and seeds the GNSS driver later.
 
@@ -348,14 +386,105 @@ Position is metres / decimal degrees; it is a known origin now and seeds the GNS
 The operator-set launch identity. One per board; registers itself so Control can
 `inspect`/`update mission`. Seeded from launch.config at construction.
 
-- `__init__(path: str=LAUNCH_PATH)` — constructor
+- `__init__(path: str=LAUNCH_PATH, max_range_m: float=_DEFAULT_MAX_RANGE_M)` — constructor
 - `set_time(epoch) -> bool` — Set the board RTC from a Unix epoch (seconds, UTC). Returns True if applied.
 - `clock() -> str` — Current board wall-clock as 'YYYY-MM-DDTHH:MM:SS' (from the RTC).
 - `epoch() -> int` — Current board clock as a Unix epoch (seconds), for Control to compare against its own.
-- `probe() -> str` — On-demand self-test: a launch position is set, so an unconfigured site is caught pre-flight
+- `launch_point()` — The launch origin (lat, lon): the operator-set position (CC `update mission` / `assist`) if
+- `geometry() -> dict` — The landing zone resolved against the launch point: the target (centre) + both gates
+- `probe() -> str` — On-demand self-test: a launch position is set (CC or GNSS) and, if a landing zone is set, all
 - `inspect() -> dict`
 - `update(props: dict) -> list` — Apply launch_id/site/latitude/longitude/altitude (stored, range-checked) and `epoch`
+- `persisted() -> dict` — The mission as it is stored in launch.config: the editable launch fields only -- no computed
 - `save() -> None` — Persist the stored mission fields to launch.config (atomic temp+rename) so the launch
+
+## `mixer.py`
+
+_Tested by `test/test_mixer.py`._
+
+mixer.py — control-surface mixer (sibling of servo.py / gnss.py). Maps the control axes (roll,
+pitch, yaw -- each a deflection command in degrees) to per-fin servo angles for the airframe's
+mixing: ELEVONS (the two elerons move together for pitch, differentially for roll) + a RUDDER (the
+yaw fin). Per-fin trim (mechanical neutral alignment) and a hard +/- limit on control deflection.
+Pure integer math, no hardware -- the flight control task (Phase 3) feeds it axis commands and
+applies the angles to the sg90 drivers; the per-driver clamp still guards the physical range.
+
+Signs are config (`surfaces` gains + `trim`), set during bench alignment: if a surface deflects the
+wrong way, flip its gain sign; if its neutral is off, set its trim.
+
+### `class Mixer`
+
+Mix (roll, pitch, yaw) deflection commands -> {fin_name: integer angle}:
+angle = neutral + trim + clamp(sum(gain * axis), +/- limit).
+
+- `__init__(config: dict=None)` — constructor
+- `mix(roll: int=0, pitch: int=0, yaw: int=0) -> dict` — Per-fin integer angle for the given axis deflections (degrees).
+- `neutralise() -> dict` — The neutral (zero-deflection) angle per fin -- the safe / control-disabled output.
+
+## `navigation.py`
+
+_Tested by `test/test_navigation.py`._
+
+navigation.py — landing-zone navigation geometry (Phase 4 'heading-to-home'), sibling of mixer.py/pid.py.
+The mission's landing zone is a lat/lon rectangle, top-left (TL) + bottom-right (BR) corners
+(specs/coludo.md). The TARGET is the zone centre; the two GATES are the midpoints of the two SHORTER
+sides, so the glider enters along the long axis (the documented "vector to the shortest boundary
+entrance"). steer() picks the nearer gate, heads for it until inside the zone, then for the centre.
+Equirectangular (flat-earth) math -- "not exact but about", which is plenty at zone scale (<~1 km).
+
+SAFETY: the gates are FIXED to the short sides, and steer() will always vector to one (and turn ~180
+back through it on an overshoot) with NO knowledge of what lies beyond any side (trees / launch pad /
+people). So the operator must ORIENT the zone -- choose the TL/BR corners in launch.config so the two
+short-side entrances point at hazard-free approach corridors and the long sides border the hazards.
+Aerodynamics (long run-in, lower crosswind) and safety (clear corridors) only align if it is laid out
+that way; the firmware cannot verify it. See specs/coludo.md "Zone orientation -- an operator safety
+decision".
+
+### `bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float`
+
+Compass bearing in degrees (0 = north, 90 = east, clockwise) from point 1 to point 2.
+
+### `distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float`
+
+Distance in metres from point 1 to point 2 (equirectangular).
+
+### `zone(corner_tl: tuple, corner_br: tuple) -> tuple`
+
+Resolve the rectangle (top-left, bottom-right corners, each (lat, lon)) -> (target, gate_a,
+gate_b): the centre and the midpoints of the two SHORTER sides. A horizontally (longitude)
+stretched zone gates on its left/right edges; a vertically (latitude) stretched one on top/bottom.
+
+### `inside(position: tuple, corner_tl: tuple, corner_br: tuple) -> bool`
+
+True if position (lat, lon) is within the zone rectangle (corner order-agnostic).
+
+### `steer(position: tuple, corner_tl: tuple, corner_br: tuple) -> tuple`
+
+The heading to fly toward the landing target via the nearer gate: head for the closer short-side
+entrance until inside the zone, then for the centre. Returns (bearing_deg, waypoint, leg) with leg
+GATE or TARGET. position = (lat, lon).
+
+Stateless + re-evaluated each tick, so the overshoot loop is emergent: if the glider crosses the
+zone and exits the far side without landing (still high), the gate it just crossed is now the
+nearest one -> it turns back (~180deg) and re-approaches through it. No waypoint memory -- the
+spec's 'recalculate to the nearest alternative entry and loop' just happens.
+
+## `pid.py`
+
+_Tested by `test/test_pid.py`._
+
+pid.py — a minimal fixed-step PID controller for the flight stabilization loop (Phase 3), sibling of
+mixer.py. One instance per control axis. Integral anti-windup clamp + output clamp; reset() on
+(re)entering a control phase. Floats internally (gains/integral are inherently fractional); the
+caller rounds the output to integer degrees for the mixer/servos.
+
+### `class Pid`
+
+error -> control output. step(error, dt): kp*e + ki*integral(e) + kd*de/dt, each clamped.
+
+- `__init__(kp: float=0.0, ki: float=0.0, kd: float=0.0, integral_limit: float=math.inf, output_limit: float=math.inf)` — constructor
+- `reset() -> None` — Clear the integral + derivative history -- on entering a control phase, so a fresh glide
+- `step(error: float, dt: float) -> float`
 
 ## `recorder.py`
 
@@ -391,6 +520,8 @@ overwriting unread data). read() returns a bytes copy (stable across an await). 
 - `timestamp() -> int` _(classmethod)_ — Monotonic-ish record timestamp. Currently raw microseconds; the unit may change.
 - `session() -> str` _(classmethod)_ — The per-boot file prefix, produced from the RTC the first time it is needed and then
 - `log(descriptor: str, message: str) -> bool` _(classmethod)_ — Best-effort log line "<ts> <descriptor> :: <message>" (-> recorder.log). Truncated to
+- `cc_logs(duration_ms: int) -> dict` _(classmethod)_ — Poll-model CC log streaming (the `log <ms>` command): the lines buffered since the last call,
+- `cc_telemetry(duration_ms: int) -> dict` _(classmethod)_ — Poll-model CC telemetry streaming (the `tlm <ms>` command): the telemetry rows buffered since
 - `tlm(filename: str, content: str) -> None` _(classmethod)_ — Important telemetry line "@<session>_<filename>@<content>". Raises if the record will
 - `drain() -> int` _(classmethod)_ — Drain queued records to the UART, telemetry first then logs. Returns records drained.
 - `run() -> None` _(classmethod)_ — Event-driven drain loop: wait for a producer signal, then drain everything queued, so
@@ -411,6 +542,29 @@ sensor can push every sample and have its telemetry decimated to a sane rate).
 
 - `__init__(filename: str, fields: tuple, decimate_us: int=0)` — constructor
 - `push(values) -> None`
+
+## `servo.py`
+
+_Tested by `test/test_servo.py`._
+
+servo.py — shared servo infrastructure, sibling of the bus helpers (i2cbus/spibus). The slew gate
+bounds how many fins slew at once (the boost-rail current transient): a process-wide counting
+semaphore so `servo_concurrency` (board config) caps total simultaneous slews across every servo
+driver. Servo-type-agnostic -- each driver (sg90, future mg90s/mg996r) imports the gate and adds its
+own pulse range + slew timing.
+
+### `class Gate`
+
+A tiny FIFO counting semaphore (MicroPython asyncio has no Semaphore, only Lock/Event): at most
+`permits` holders at once, the rest queue and are handed a permit in order on release. The
+process-wide shared instance lives on the class itself (Gate.slew()/Gate.reset()) -- no module
+global.
+
+- `__init__(permits: int)` — constructor
+- `acquire() -> None`
+- `release() -> None`
+- `slew(permits: int) -> 'Gate'` _(classmethod)_ — The process-wide slew gate, created once (the first servo's `permits` wins) and shared by
+- `reset() -> None` _(classmethod)_ — Drop the shared gate so the next Gate.slew() rebuilds it -- for tests (clean permit count)
 
 ## `spibus.py`
 
@@ -506,26 +660,17 @@ High-G accel: samples (x, y, z) in g to the databoard 'accel' slot, interrupt-dr
 
 ## `atgm336h.py`
 
-drivers/atgm336h.py — ATGM336H GNSS (GPS + BDS) over UART: the position channel. @task.driver(
-'atgm336h'). At setup it reconfigures the module to RMC-only at the configured rate (default 10 Hz)
-via PMTK commands -- RMC alone (~70 B) fits 10 Hz inside 9600 baud (~960 B/s), so no baud switch is
-needed. run() reads NMEA lines asynchronously (asyncio.StreamReader), parses RMC for the fix and
-writes (latitude, longitude) to the databoard 'position' slot; a GGA sentence, if the module still
-emits one, supplies altitude (a deep fallback to the baro). Lock is lost easily under high-g, so
-position is best-effort and the consumers fall back when it goes stale.
+drivers/atgm336h.py — ATGM336H GNSS (GPS + BDS, CASIC chip) on a dedicated UART. @task.driver(
+'atgm336h'). All NMEA reading/parsing lives in the shared gnss.Gnss base; this driver only adds the
+CASIC reconfiguration: RMC at `hz` (position) plus GGA at ~1 Hz (altitude/elevation, a baro backup)
+-- both fit 9600 baud (~10 Hz RMC ~700 B/s + ~1 Hz GGA ~70 B/s < 960). PCAS is the CASIC command set;
+the PMTK pair is sent too as a fallback for MTK-variant modules (each side ignores the other's
+sentences). Graceful: an undefined bus -> setup False (the Controller skips it).
 
-NMEA is talker-agnostic (GP/GN/BD). The UART is dedicated (uart:2), not a shared bus, so the driver
-owns the peripheral. Graceful: an undefined bus -> setup False -> the Controller skips it.
+### `class Atgm336h(gnss.Gnss)`
 
-### `class Atgm336h(task.Task)`
+ATGM336H (CASIC): RMC at `hz` for position + GGA at ~1 Hz for altitude/elevation.
 
-GNSS: reconfigures to RMC-only at `hz`, then writes (latitude, longitude) to 'position' (and
-altitude to 'altitude' if a GGA is seen). Best-effort -- lock can drop under boost.
-
-- `setup() -> bool`
-- `run() -> None` — Read NMEA lines forever and parse them; non-ASCII noise lines and malformed fields are
-- `probe() -> str` — On-demand self-test: NMEA is arriving on the UART (the run loop counts lines). A satellite
-- `inspect() -> dict`
 
 ## `bluetooth.py`
 
@@ -628,6 +773,20 @@ Blink a status pattern on one GPIO derived from the controller's state + health.
 - `run() -> None`
 - `probe() -> str` — On-demand self-test: blink the status LED a few times so it is seen to drive, then off.
 - `inspect() -> dict`
+
+## `neo6mv2.py`
+
+drivers/neo6mv2.py — GY-NEO6MV2 (u-blox NEO-6M) GNSS on a dedicated UART: a drop-in alternative to
+the ATGM336H on the SAME UART -- swap the component `driver` to 'neo6mv2' in config (and lower `hz`;
+the NEO-6M tops out near 5 Hz). @task.driver('neo6mv2'). NMEA read/parse is the shared gnss.Gnss base;
+this driver only adds the u-blox reconfiguration: $PUBX,40 selects RMC (position) + GGA at ~1 Hz
+(altitude/elevation) on the UART and silences the rest, then UBX-CFG-RATE sets the measurement
+period. Default link is 9600 8N1, like the ATGM. Graceful: an undefined bus -> setup False.
+
+### `class Neo6mv2(gnss.Gnss)`
+
+u-blox NEO-6M: $PUBX,40 selects RMC + ~1 Hz GGA, UBX-CFG-RATE sets the measurement period.
+
 
 ## `separation.py`
 
@@ -785,17 +944,48 @@ Periodic vitals -> telemetry (health.csv) + `inspect health`.
 ## `cc_link.py`
 
 tasks/cc_link.py — the Control link task: once Wi-Fi is up it dials the CC hub and serves the
-command dispatcher, reconnecting with backoff. @task.activity('cc'). Optional + telemetry-first:
-with no `cc_host` configured setup() skips it; with no Wi-Fi up it simply waits, so the board
-flies fine without CC. The dispatcher is wired to this board's config + Controller (cc_client.py).
+command dispatcher, reconnecting with backoff. @task.activity('cc'). Telemetry-first: with no Wi-Fi
+up it simply waits, so the board flies fine without CC. The hub address is the configured `cc_host`,
+or -- when unset -- the `.1` of whatever subnet the board joins (the Control hub by convention), so
+a board reaches its hub on any network. An empty `cc_host` ('') disables CC entirely (standalone).
+The dispatcher is wired to this board's config + Controller.
 
 ### `class ControlLink(task.Task)`
 
-Serve the CC protocol to the hub when the link is available; never fatal.
+Serve the CC protocol to the hub when the link is available; never fatal. With no `cc_host`
+configured the board dials the `.1` of whatever subnet it joins (the Control hub by convention);
+an empty `cc_host` ('') disables CC and the board flies standalone.
 
 - `setup() -> bool`
 - `run() -> None` — Park until the Wi-Fi dependency is up, then dial CC and serve until the link drops; retry.
-- `probe() -> str` — On-demand self-test: the CC client is configured (host:port) and the Wi-Fi dependency is
+- `probe() -> str` — On-demand self-test: the CC hub address resolves (explicit or derived) and the Wi-Fi
+
+## `flight.py`
+
+tasks/flight.py — Phase 3 stabilization loop. @task.activity('flight'). At `schedule_hz` it reads the
+IMU 'attitude' (heading, roll, pitch), runs a PID per axis to the current stage's setpoint (+ heading
+hold), mixes the result to the fins (mixer.py) and writes them via sg90.update(). Per-stage: the
+`stages` config names the CONTROL stages and their setpoint (GLIDING = wings-level + steer to the
+landing zone, LANDING = its own flare setpoint, straight-and-level); any other stage
+(SETTING/BOOSTING/DONE) holds the fins neutral. In GLIDING the yaw heading setpoint comes from navigation.py
+in three GPS-degrading tiers (_target_heading): live fix -> steer from the current position; no fix
+but a CC-set launch point -> hold the launch->gate bearing (open-loop); neither -> the captured glide
+heading. LANDING locks the heading. Degraded: stale/absent attitude -> neutral.
+
+Scheduling: schedule_hz > 0 -> a machine.Timer ticks the step, so the control law gets a regular slice
+independent of what other asyncio tasks are doing (deterministic, e.g. while the laser hammers I2C in
+landing). schedule_hz == 0 -> a plain asyncio loop at period_ms (reconfigure/debug; subject to the ~10 ms
+asyncio floor). Default 100 Hz timer = ~1 m per control step at 100 m/s. Gains default to 0 and the
+task is disabled by default -- it cannot move a surface until enabled + tuned on the airframe.
+
+### `class Flight(task.Task)`
+
+Attitude-hold stabilization: GLIDING-gated, timer- or asyncio-scheduled, fail-safe to neutral.
+
+- `setup() -> bool`
+- `run() -> None`
+- `finish() -> None`
+- `inspect() -> dict`
 
 ## `recorder.py`
 
@@ -816,6 +1006,48 @@ keeps logging/telemetering through the global recorder.Recorder.
 - `stats() -> dict`
 - `update(props) -> list`
 
+## `sequencer.py`
+
+tasks/sequencer.py — Phase 3 flight-stage automation. @task.activity('sequencer'). Watches the
+databoard and drives the guarded, forward-only stage machine that the control loop gates on:
+SETTING  -> BOOSTING : |accel| over launch_g sustained launch_ms (motor ignition)
+BOOSTING -> GLIDING  : the separation switch (drivers/separation.py) is primary; this is the
+burnout-timeout FALLBACK if the switch never fires
+GLIDING  -> LANDING  : agl below land_agl_m (the laser sees the ground; elevation is the fallback)
+LANDING  -> done     : |accel| ~1 g (stationary) sustained ground_ms (on the ground)
+Each transition fires once (the stage check + reset-on-change is the guard), logs the reason and a
+sequencer.csv telemetry marker. Thresholds are config; launch_g/launch_ms is exactly what the
+E16/F15 passive flights tune. One control-independent tick, so it runs on the passive flights too
+(stages logged, no actuation -- the flight task stays disabled).
+
+### `class Sequencer(task.Task)`
+
+Drive the flight-stage machine from sensor signals (forward-only, guarded, logged).
+
+- `setup() -> bool`
+- `run() -> None`
+
+## `watchdog.py`
+
+tasks/watchdog.py — Phase 3 watchdog + heartbeat supervisor. @task.activity('watchdog'). Two layers:
+1. a hardware machine.WDT fed every period -> a TOTAL event-loop wedge (any task stuck below the
+await level, a hung I2C bus) stops the feed and the board hard-resets. The backstop.
+2. a heartbeat check of the CONTROL LOOP: while the flight task is in a control stage it must keep
+ticking (its step counter advances). A stalled control loop (live scheduler, dead control) ->
+reset, since a soft restart cannot preempt a wedged native call and the HW (PWM, the I2C bus,
+sensors mid-transaction) needs a clean reset to be trustworthy.
+Recovery is a full machine.reset() (fast on the P4; boot re-centres the fins) -- a soft event-loop
+restart is unreliable here. The flight loop already fail-safes to neutral on stale attitude (degraded
+mode), so that is NOT a watchdog trigger. Disabled by default -- a live WDT also resets the board when
+you drop the running firmware to the REPL for bench work; enable it for flight.
+
+### `class Watchdog(task.Task)`
+
+Feed a hardware WDT (wedge backstop) + supervise the control loop (stall -> full reset).
+
+- `setup() -> bool`
+- `run() -> None`
+
 # control (CPython) — `src/control`
 
 ## `board.py`
@@ -832,9 +1064,9 @@ One connected board: lockstep request/response over its socket.
 
 - `__init__(reader: asyncio.StreamReader, writer: asyncio.StreamWriter, log=None)` — constructor
 - `peer() -> str` _(property)_
-- `exchange(line: str, timeout: float=EXCHANGE_TIMEOUT_S) -> cc._Msg` — Send a ready board-facing line and return its parsed reply (None if disconnected).
+- `exchange(line: str, timeout: float=EXCHANGE_TIMEOUT_S, quiet: bool=False) -> cc._Msg` — Send a ready board-facing line and return its parsed reply (None if disconnected).
 - `properties() -> dict` — The Control-side snapshot of this board: identity + the cached config/inspect/stats/health
-- `command(command: str, *args, timeout=EXCHANGE_TIMEOUT_S) -> cc._Msg` — Build `command args...` and exchange it. Returns the parsed reply or None.
+- `command(command: str, *args, timeout=EXCHANGE_TIMEOUT_S, quiet=False) -> cc._Msg` — Build `command args...` and exchange it. Returns the parsed reply or None.
 - `identify() -> str`
 - `inspect(name: str) -> dict`
 - `close() -> None`
@@ -850,7 +1082,7 @@ The flight board carries its own GNSS (ATGM336H); a GPS plugged into the Control
 1. tell the operator when a usable fix is available — the ideal launch condition is a 3D fix
 with 4+ satellites (so the board's own cold start has a good almanac/position seed);
 2. hand a launch position to the board (operator `assist <board>` -> `update mission` +
-`save-mission`, persisted in the board's launch.config) when the on-board GPS has no fix yet.
+`set-config launch`, persisted in the board's launch.config) when the on-board GPS has no fix yet.
 
 Pure NMEA parsing (GGA position/sats, GSA 2D/3D mode) is split from the serial transport so it is
 unit-tested without hardware (test_gps.py); the Linux serial open + read loop is exercised by
@@ -908,6 +1140,8 @@ optional async hook invoked once, right after a board identifies (used by integr
 
 - `__init__(host: str='0.0.0.0', port: int=1234, operator_port: int=1235, web_port: int=8080, on_board=None, log=print, heartbeat_s: float=HEARTBEAT_S, gps=None)` — constructor
 - `board_rows() -> list` — The registry as json-able rows (id, online, last-known stage/config_id) — shared by the
+- `start_stream(client, interval_ms) -> None` — (Re)start streaming a board's logs at `interval_ms`, replacing any running stream for it.
+- `stop_stream(board_id) -> None` — Stop streaming a board's logs and tell the board to stop collecting (a final `log 0`
 - `serve_forever() -> None` — Accept board connections on `port` (board-facing listener).
 - `serve_operators() -> None` — Accept operator connections on `operator_port` (telnet-friendly console).
 - `run() -> None` — Run the board listener, operator console, and web bridge until cancelled.
@@ -950,8 +1184,10 @@ health), last-known values without touching the board. Defaults to the session's
 
 ## `gps.py`
 
-`gps` — the host GPS fix status (3D + satellites), so the operator knows when the launch site has
-a usable position. Requires a GPS attached to the Control host (main.py --gps-device).
+`gps` — the host GPS fix status (3D + satellites), so the operator knows when the launch site has a
+usable position. `gps <board>` also fetches that board's on-board GNSS (`inspect gnss`) and shows it
+beside the host fix, to check what the on-board receiver delivers against the USB reference before
+trusting it / using `assist`. Requires a GPS attached to the Control host (main.py --gps-device).
 
 ### `gps_command(hub, tokens, session) -> list`
 

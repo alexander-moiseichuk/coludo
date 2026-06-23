@@ -93,21 +93,37 @@ async def amain():
     resp = [b.decode().strip() for b in writer.out]
     assert cc.parse(resp[0]).command == 'iam' and cc.parse(resp[1]).command == 'pong'
 
-    # save-config: invalid rejected; reset-config ok
+    # set-config board: invalid rejected; reset-config ok; bad args rejected
     sd2 = cc_client.create_dispatcher(config_default.default(), config_path='test_cc_board.json')
     bad = config_default.default()
     bad['pins']['servo_yaw'] = 18  # reserved Wi-Fi pin -> invalid
-    assert 'invalid' in await sd2.handle(cc.build('save-config', [json.dumps(bad)]))
-    ok = cc.parse(await sd2.handle(cc.build('save-config', [json.dumps(config_default.default())])))
+    assert 'invalid' in await sd2.handle(cc.build('set-config', ['board', json.dumps(bad)]))
+    ok = cc.parse(await sd2.handle(cc.build('set-config', ['board', json.dumps(config_default.default())])))
     assert ok.command == 'ok' and 'config_id' in json.loads(ok.args[0])
     assert cc.parse(await sd2.handle('reset-config')).command == 'ok'
+    assert 'badargs' in await sd2.handle('set-config board')  # no json
+    assert 'badargs' in await sd2.handle(cc.build('set-config', ['nope', '{}']))  # unknown config name
+    assert 'badargs' in await sd2.handle('get-config nope')  # unknown config name
 
-    # save-mission: unsupported until a Mission is registered, then persists launch.config
+    # config 'launch' target: get-config/set-config launch are unsupported until a Mission registers
     inspector.Inspector.unregister('mission')
-    assert 'unsupported' in await sd.handle('save-mission')
+    assert 'unsupported' in await sd.handle('get-config launch')
+    assert 'unsupported' in await sd.handle(cc.build('set-config', ['launch', '{}']))
     mission.Mission('test_cc_launch.config').update({'launch_id': 'cc-t1'})  # registers itself
-    assert cc.parse(await sd.handle('save-mission')).command == 'ok'
-    assert json.load(open('test_cc_launch.config'))['launch_id'] == 'cc-t1'
+
+    # health now carries the board wall-clock (RTC) for the dashboard top table
+    vitals = json.loads(cc.parse(await sd.handle('health')).args[0])
+    assert 'clock' in vitals and 'epoch' in vitals
+
+    # get-config launch returns the editable launch.config (persisted fields only, no computed geometry)
+    got = json.loads(cc.parse(await sd.handle('get-config launch')).args[0])
+    assert got['launch_id'] == 'cc-t1' and 'zone' in got and 'target' not in got and 'clock' not in got
+
+    # set-config launch merge-applies a draft and persists it (like set-config board)
+    draft = json.dumps({'launch_id': 'cc-t2', 'site': 'pad-z'})
+    assert cc.parse(await sd.handle(cc.build('set-config', ['launch', draft]))).command == 'ok'
+    saved = json.load(open('test_cc_launch.config'))
+    assert saved['launch_id'] == 'cc-t2' and saved['site'] == 'pad-z'
     os.remove('test_cc_launch.config')
 
     # reboot returns ok and fires the (intercepted) reset

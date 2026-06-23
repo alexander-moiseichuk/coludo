@@ -27,8 +27,8 @@ def main():
 
     # JSON rides as one base64 value (no special case)
     payload = '{"board": {"id": "g7a"}, "n": 2}'
-    m = cc.parse(cc.build('save-config', [payload]))
-    assert m.command == 'save-config' and m.args == [payload]
+    m = cc.parse(cc.build('set-config', ['board', payload]))
+    assert m.command == 'set-config' and m.args == ['board', payload]
 
     # an encoded positional containing '=' stays positional
     m = cc.parse(cc.build('inspect', ['wifi', 'a=b']))

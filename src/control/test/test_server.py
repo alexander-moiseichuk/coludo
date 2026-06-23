@@ -48,17 +48,20 @@ async def _fake_board(reader, writer):
         elif msg.command == 'inspect':
             reply = cc.build('ok', [json.dumps({'name': msg.args[0], 'ok': True})])
         elif msg.command == 'get-config':
-            reply = cc.build('ok', [json.dumps({'board': {'id': 'glider9', 'mcu': 'esp32p4'}, 'sensors': []})])
-        elif msg.command == 'save-config':
-            json.loads(msg.args[0])  # the config arrives base64-decoded by parse
-            reply = cc.build('ok', [json.dumps({'config_id': 'newcfg'})])
+            name = msg.args[0] if msg.args else 'board'
+            payload = ({'launch_id': 'l1', 'latitude': None} if name == 'launch'
+                       else {'board': {'id': 'glider9', 'mcu': 'esp32p4'}, 'sensors': []})
+            reply = cc.build('ok', [json.dumps(payload)])
+        elif msg.command == 'set-config':  # <name> <json>
+            json.loads(msg.args[1])  # the payload arrives base64-decoded by parse
+            reply = cc.build('ok', [json.dumps({'config_id': 'newcfg'})] if msg.args[0] == 'board' else [])
         elif msg.command == 'update':
             reply = cc.build('ok', [json.dumps({'changed': sorted(json.loads(msg.args[1]))})])
         elif msg.command == 'log':  # poll-model log streaming: one canned line per armed window
             window = int(msg.args[0]) if msg.args else 0
             lines = ['100 test :: tick'] if window > 0 else []
             reply = cc.build('ok', [json.dumps({'lines': lines})])
-        elif msg.command in ('reset-config', 'reboot', 'save-mission'):
+        elif msg.command in ('reset-config', 'reboot'):
             reply = cc.build('ok')
         else:
             reply = cc.build('err', ['badcmd', msg.command])
@@ -206,15 +209,15 @@ async def _web():
                                        json.dumps({'board': 'ghost', 'command': 'ping'}))
         assert status == 404
 
-        # dashboard config flow over /api/cmd: get-config -> edit the draft -> save-config -> reboot
+        # dashboard config flow over /api/cmd: get-config <name> -> edit the draft -> set-config <name> -> reboot
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
-                                      json.dumps({'board': 'glider9', 'command': 'get-config'}))
+                                      json.dumps({'board': 'glider9', 'command': 'get-config', 'params': ['board']}))
         assert status == 200
         config = json.loads(json.loads(payload)['args'][0])  # the board's config, ready to edit
         assert config['board']['id'] == 'glider9'
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
-                                      json.dumps({'board': 'glider9', 'command': 'save-config',
-                                                  'params': [json.dumps(config)]}))
+                                      json.dumps({'board': 'glider9', 'command': 'set-config',
+                                                  'params': ['board', json.dumps(config)]}))
         assert status == 200 and json.loads(payload) == {'board': 'glider9', 'status': 'ok',
                                                          'args': [json.dumps({'config_id': 'newcfg'})]}
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
@@ -243,7 +246,7 @@ async def _web():
 
 async def _gps_assist():
     """A host GPS with a usable 3D fix: `gps` reports it and `assist <board>` pushes the position to
-    the board's mission (update mission -> save-mission)."""
+    the board mission (set-config launch: merge + persist)."""
     import gps as gps_mod
     host_gps = gps_mod.Gps(log=lambda message: None)
     host_gps.feed(_nmea('GPGSA,A,3,01,02,03,04,05,06,,,,,,,2.0,1.0,1.5'))  # 3D fix
@@ -284,7 +287,7 @@ async def _gps_assist():
         assert compare['host']['usable'] and compare['board'] == 'glider9'
         assert compare['onboard'] == {'name': 'gnss', 'ok': True}, compare  # the board's inspect gnss
 
-        # assist pushes the host position to the board mission and persists it (save-mission)
+        # assist pushes the host position to the board mission and persists it (set-config launch)
         reply = await ask('assist glider9')
         assert reply.startswith('from cc ok '), reply
         out = json.loads(reply[len('from cc ok '):])

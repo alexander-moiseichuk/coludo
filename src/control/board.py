@@ -67,7 +67,7 @@ class Board:
             payload = json.loads(msg.args[0])  # already base64-decoded by cc.parse
         except ValueError:
             return
-        if command == 'get-config' and tokens[1:] != ['default']:  # cache only the running config
+        if command == 'get-config' and tokens[1:] in ([], ['board'], ['running']):  # the running board config only
             self.cache['config'] = payload
         elif command == 'inspect' and len(tokens) >= 2:
             self.cache['inspect'][tokens[1]] = payload

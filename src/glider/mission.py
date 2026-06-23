@@ -7,7 +7,7 @@
 #   inspect mission                              -> launch id / site / position + the board clock
 #   update mission base64:{"launch_id":"t1"}     -> set the launch id for this flight
 #   update mission base64:{"epoch":1750170000}   -> set the board RTC (time sync; Unix seconds)
-#   save-mission                                 -> persist the live mission back to launch.config
+#   get-config launch / set-config launch        -> read / save (merge + persist) launch.config
 #
 # Position is metres / decimal degrees; it is a known origin now and seeds the GNSS driver later.
 
@@ -206,12 +206,19 @@ class Mission(inspector.Inspectable):
             changed.append('epoch')
         return changed
 
+    def persisted(self) -> dict:
+        """The mission as it is stored in launch.config: the editable launch fields only -- no computed
+        geometry or clock. `get-config launch` returns this; the dashboard 'launch.config' editor saves
+        it back via `set-config launch` (the board config uses the same commands with name `board`).
+        Zone is plain lists (JSON has no tuples), or None when unset."""
+        data = {key: getattr(self, key) for key in _FIELDS}
+        data['zone'] = [list(self.zone[0]), list(self.zone[1])] if self.zone is not None else None
+        return data
+
     def save(self) -> None:
         """Persist the stored mission fields to launch.config (atomic temp+rename) so the launch
         identity survives a pre-flight reboot. The clock is never persisted -- it is the RTC's."""
-        data = {key: getattr(self, key) for key in _FIELDS}
-        if self.zone is not None:  # persist the landing zone as plain lists (JSON has no tuples)
-            data['zone'] = [list(self.zone[0]), list(self.zone[1])]
+        data = self.persisted()
         tmp = self.path + '.tmp'
         with open(tmp, 'w') as handle:
             handle.write(json.dumps(data))

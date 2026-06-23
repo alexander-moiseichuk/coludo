@@ -112,6 +112,14 @@ def test_save_roundtrip():
     # the clock is never persisted
     with open(PATH) as f:
         assert 'clock' not in json.load(f)
+
+    # persisted() is the editable launch.config the dashboard loads (get-config launch): the launch fields
+    # + zone, no computed geometry/clock; and it round-trips through save()
+    snapshot = launch.persisted()
+    assert snapshot['launch_id'] == 'save-me' and snapshot['latitude'] == 1.0 and snapshot['zone'] is None
+    assert 'clock' not in snapshot and 'target' not in snapshot
+    with open(PATH) as f:
+        assert json.load(f) == snapshot  # save() writes exactly persisted()
     _cleanup()
 
 
