@@ -21,6 +21,12 @@
   textarea { font-family: ui-monospace, monospace; font-size: .85rem; width: 100%; max-width: 60rem; box-sizing: border-box; }
   pre { white-space: pre-wrap; background: #f4f4f4; padding: .6rem; min-height: 1.2rem; border-radius: 4px; max-width: 60rem; }
   .muted { color: #888; font-size: .85rem; }
+  .obj { margin: .4rem 0; }
+  .obj > label { font-weight: 600; margin-right: .5rem; }
+  .obj textarea { max-width: 40rem; }
+  .tick { font-size: .85rem; margin-left: .5rem; }
+  .tick.ok { color: #2a9d3a; }
+  .tick.no { color: #888; }
 </style>
 </head>
 <body>
@@ -83,9 +89,9 @@
 <p>
   <input id="inspboard" placeholder="board id" size="10">
   <button id="inspall">inspect all</button>
-  <span class="muted">every Inspectable object + its live properties</span>
+  <span class="muted">read every object; edit a value and click update — a green ✓ marks applied changes</span>
 </p>
-<pre id="inspresult"></pre>
+<div id="inspresult"></div>
 
 <h2>logs &amp; telemetry</h2>
 <p>
@@ -244,23 +250,46 @@ document.getElementById('reset').onclick = async () => {
   cfgOut.textContent = prettyResult(await cmd(cfgBoard(), 'reset-config'));
 };
 
-// --- inspect: list objects, then inspect each -> one tree of every Inspectable object ---
+// --- inspect: list objects, then inspect each -> a per-object editor (update -> green ✓) ---
 const inspOut = document.getElementById('inspresult');
 const inspBoard = () => document.getElementById('inspboard').value.trim();
 
 document.getElementById('inspall').onclick = async () => {
+  const board = inspBoard();
   inspOut.textContent = '…';
-  const list = await cmd(inspBoard(), 'objects');
-  if (list.status !== 'ok' || !Array.isArray(list.args)) { inspOut.textContent = prettyResult(list); return; }
-  const names = safeParse(list.args[0]);
+  const list = await cmd(board, 'objects');
+  const names = (list.status === 'ok' && Array.isArray(list.args)) ? safeParse(list.args[0]) : null;
   if (!Array.isArray(names)) { inspOut.textContent = prettyResult(list); return; }
-  const tree = {};
+  inspOut.innerHTML = '';
   for (const name of names) {
-    const r = await cmd(inspBoard(), 'inspect', [name]);
-    tree[name] = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : r;
+    const r = await cmd(board, 'inspect', [name]);
+    const props = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : r;
+    const text = JSON.stringify(props, null, 2);
+    const rows = Math.min(14, Math.max(2, text.split('\n').length));
+    const card = document.createElement('div');
+    card.className = 'obj';
+    card.innerHTML = `<label>${name}</label>` +
+      `<button data-obj="${name}">update</button><span class="tick" id="tick-${name}"></span>` +
+      `<br><textarea id="insp-${name}" rows="${rows}">${text.replace(/</g, '&lt;')}</textarea>`;
+    inspOut.appendChild(card);
   }
-  inspOut.textContent = JSON.stringify(tree, null, 2);
+  inspOut.querySelectorAll('button[data-obj]').forEach((btn) => {
+    btn.onclick = () => updateObject(board, btn.dataset.obj);
+  });
 };
+
+// send the edited props of one object via `update <name> <json>`; a green ✓ lists what actually changed.
+async function updateObject(board, name) {
+  const tick = document.getElementById('tick-' + name);
+  let json;
+  try { json = JSON.stringify(JSON.parse(document.getElementById('insp-' + name).value)); }
+  catch (e) { tick.className = 'tick no'; tick.textContent = 'invalid JSON'; return; }
+  const r = await cmd(board, 'update', [name, json]);
+  const changed = (r.status === 'ok' && Array.isArray(r.args)) ? (safeParse(r.args[0]).changed || []) : null;
+  if (changed && changed.length) { tick.className = 'tick ok'; tick.textContent = '✓ ' + changed.join(', '); }
+  else if (changed) { tick.className = 'tick no'; tick.textContent = 'no change'; }
+  else { tick.className = 'tick no'; tick.textContent = JSON.stringify(r); }
+}
 
 // --- live log stream: start/stop the hub's per-board stream, then view the /logs SSE feed ---
 const logPane = document.getElementById('logs');
