@@ -165,8 +165,9 @@ class Web:
             b'Cache-Control: no-cache\r\nConnection: keep-alive\r\n\r\n'
         )
         await writer.drain()
-        while True:  # thin view over the hub: push the board list every heartbeat
-            writer.write(('data: %s\n\n' % json.dumps(self.hub.board_rows())).encode())
+        while True:  # thin view over the hub: push CC status + the board list every heartbeat
+            frame = {'cc': self.hub.cc_status(), 'boards': self.hub.board_rows()}
+            writer.write(('data: %s\n\n' % json.dumps(frame)).encode())
             await writer.drain()
             await asyncio.sleep(self.hub.heartbeat_s)
 

@@ -45,9 +45,10 @@ async def _fake_board(reader, writer):
             reply = cc.build('iam', ['glider9', json.dumps(info)])
         elif msg.command == 'ping':
             reply = cc.build('pong')
-        elif msg.command == 'health':  # the heartbeat polls this; carries the vitals + board clock
+        elif msg.command == 'health':  # the heartbeat polls this; carries the vitals + board clock + position
             reply = cc.build('ok', [json.dumps({'temp': 40, 'mem_free': 1000, 'uptime': 12345,
-                                                'stage': 'setting', 'clock': '2026-06-22T20:00:00'})])
+                                                'stage': 'setting', 'clock': '2026-06-22T20:00:00',
+                                                'position': [48.117, 11.517]})])
         elif msg.command == 'inspect':
             reply = cc.build('ok', [json.dumps({'name': msg.args[0], 'ok': True})])
         elif msg.command == 'get-config':
@@ -203,13 +204,14 @@ async def _web():
         rows = json.loads(payload)
         assert rows[0]['id'] == 'glider9' and rows[0]['online'] is True and rows[0]['stage'] == 'setting'
 
-        # the heartbeat polls health -> board_rows carries live vitals (uptime + board clock)
+        # the heartbeat polls health -> board_rows carries live vitals (uptime, clock, position) + version
         for _ in range(50):
             rows = json.loads((await _http(WEB_PORT, 'GET', '/api/boards'))[1])
             if rows[0].get('uptime') is not None:
                 break
             await asyncio.sleep(0.02)
         assert rows[0]['uptime'] == 12345 and rows[0]['clock'] == '2026-06-22T20:00:00', rows[0]
+        assert rows[0]['version'] == 'a1b2c3' and rows[0]['position'] == [48.117, 11.517], rows[0]
 
         # POST /api/cmd routes to the board and returns its reply
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
@@ -244,12 +246,14 @@ async def _web():
         status, _payload = await _http(WEB_PORT, 'GET', '/api/board/ghost')  # unknown board -> 404
         assert status == 404
 
-        # GET /events streams the board list as Server-Sent Events
+        # GET /events streams {cc, boards} as Server-Sent Events
         events_reader, events_writer = await asyncio.open_connection('127.0.0.1', WEB_PORT)
         events_writer.write(b'GET /events HTTP/1.1\r\nHost: t\r\n\r\n')
         await events_writer.drain()
         frame = await asyncio.wait_for(events_reader.readuntil(b'\n\n'), 2)
-        assert b'text/event-stream' in frame and b'data: [' in frame and b'glider9' in frame
+        assert b'text/event-stream' in frame and b'data: {' in frame
+        payload = json.loads(frame.split(b'data: ', 1)[1])
+        assert 'time' in payload['cc'] and payload['boards'][0]['id'] == 'glider9'
         events_writer.close()
     finally:
         hub_task.cancel()

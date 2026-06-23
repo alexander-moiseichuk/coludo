@@ -24,11 +24,17 @@
 </style>
 </head>
 <body>
-<h1>Coludo Control</h1>
+<div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap;">
+  <h1>Coludo Control</h1>
+  <span class="muted" id="ccstatus">CC —</span>
+</div>
 
 <table id="boards">
-  <thead><tr><th>board</th><th>online</th><th>stage</th><th>config</th><th>uptime</th><th>board time</th><th>actions</th></tr></thead>
-  <tbody><tr><td colspan="7" class="muted">waiting for boards…</td></tr></tbody>
+  <thead><tr>
+    <th>board</th><th>online</th><th>stage</th><th>version</th><th>config</th><th>uptime</th>
+    <th>board time</th><th></th><th>position</th><th></th>
+  </tr></thead>
+  <tbody><tr><td colspan="10" class="muted">waiting for boards…</td></tr></tbody>
 </table>
 <p class="muted">click a board to target it below · <span id="boardmsg"></span></p>
 
@@ -133,26 +139,37 @@ function fmtUptime(ms) {
   const s = Math.floor(ms / 1000);
   return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m${String(s % 60).padStart(2, '0')}s`;
 }
+const fmtPos = (p) => (p ? `${p[0].toFixed(5)}, ${p[1].toFixed(5)}` : 'N/A');
+// CC GPS: N/A when no device, No FIX until a usable fix, else the coordinates.
+function ccGps(gps) {
+  if (!gps) return 'N/A';
+  if (!gps.usable) return 'No FIX';
+  return `${gps.latitude.toFixed(5)}, ${gps.longitude.toFixed(5)}`;
+}
 const boardMsg = (text) => { document.getElementById('boardmsg').textContent = text; };
 
 new EventSource('/events').onmessage = (event) => {
-  const rows = JSON.parse(event.data);
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="7" class="muted">no boards connected</td></tr>';
+  const { cc, boards } = JSON.parse(event.data);
+  document.getElementById('ccstatus').textContent = `CC ${(cc.time || '').replace('T', ' ')} · GPS ${ccGps(cc.gps)}`;
+  const ccHasFix = !!(cc.gps && cc.gps.usable);  // 'sync CC GPS' is offered only when CC has a fix
+  if (!boards.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="muted">no boards connected</td></tr>';
     return;
   }
-  tbody.innerHTML = rows.map((b) => `
+  tbody.innerHTML = boards.map((b) => `
     <tr class="click ${b.online ? 'on' : 'off'}" onclick="selectBoard('${b.id}')">
       <td>${b.id}</td>
       <td><span class="dot">${b.online ? '●' : '○'}</span></td>
       <td>${b.stage || ''}</td>
+      <td>${b.version || ''}</td>
       <td>${b.config_id || ''}</td>
       <td>${fmtUptime(b.uptime)}</td>
       <td>${(b.clock || '').replace('T', ' ')}</td>
-      <td>
-        <button onclick="event.stopPropagation(); syncTime('${b.id}')" title="set the board RTC to this PC's clock">sync time</button>
-        <button onclick="event.stopPropagation(); gpsAssist('${b.id}')" title="push the host GPS position to the board launch config">gps</button>
-      </td>
+      <td><button onclick="event.stopPropagation(); syncTime('${b.id}')" title="set the board RTC to the CC clock">sync CC time</button></td>
+      <td>${fmtPos(b.position)}</td>
+      <td>${ccHasFix
+        ? `<button onclick="event.stopPropagation(); gpsAssist('${b.id}')" title="push the CC GPS fix to the board launch config">sync CC GPS</button>`
+        : '<span class="muted">—</span>'}</td>
     </tr>`).join('');
 };
 

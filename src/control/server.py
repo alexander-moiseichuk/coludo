@@ -55,11 +55,19 @@ class Server:
             rows.append({
                 'id': client.id, 'online': client.online,
                 'stage': health.get('stage') or client.info.get('stage'),  # health is fresher than the handshake
+                'version': client.info.get('firmware_version'),
                 'config_id': client.info.get('config_id'),
                 'uptime': health.get('uptime'), 'clock': health.get('clock'),
+                'position': health.get('position'),  # board GNSS fix (lat, lon) or None
                 'temp': health.get('temp'), 'mem_free': health.get('mem_free'),
             })
         return rows
+
+    def cc_status(self) -> dict:
+        """The Control host's own status for the dashboard header: the wall clock and the host GPS
+        (None if no GPS device is attached; otherwise gps.status() -- usable / fix_3d / lat / lon)."""
+        return {'time': time.strftime('%Y-%m-%dT%H:%M:%S'),
+                'gps': self.gps.status() if self.gps is not None else None}
 
     # ----------------------------------------------------------------- board side
     async def _handle(self, reader, writer) -> None:

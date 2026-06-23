@@ -73,6 +73,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
     import time
 
     import config as config_mod
+    import databoard
 
     board_id = cfg['board']['id']
     dispatcher = Dispatcher()
@@ -101,6 +102,10 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         except Exception:
             temp = None
         info = {'temp': temp, 'mem_free': gc.mem_free(), 'uptime': time.ticks_ms(), 'stage': stage()}
+        position = databoard.Databoard.parameter('position')  # board GNSS fix -> dashboard (None until a fix)
+        if position is not None:
+            value, source, _age = position.read()
+            info['position'] = value if source is not None and value is not None else None
         mission = inspector.Inspector.get('mission')
         if mission is not None:  # the board wall-clock (RTC) -> the dashboard top table shows it live
             info['clock'] = mission.clock()
