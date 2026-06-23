@@ -34,7 +34,7 @@ class _StubController:
 
 # small thresholds for a fast, deterministic test
 SPEC = {'period_ms': 10, 'launch_g': 3.0, 'launch_ms': 100, 'boost_timeout_ms': 500,
-        'land_agl_m': 5.0, 'still_g': 0.3, 'ground_ms': 300}
+        'land_agl_m': 5.0, 'land_ms': 100, 'still_g': 0.3, 'ground_ms': 300}
 
 
 async def amain():
@@ -64,11 +64,18 @@ async def amain():
     seq._tick(1620)  # 510 ms > boost_timeout 500
     assert ctrl.stage == Stage.GLIDING
 
-    # GLIDING: no agl (out of laser range) holds; agl below land_agl -> LANDING
+    # GLIDING: out of laser range holds; below land_agl must be SUSTAINED land_ms (g12: not a spike)
     seq._tick(1630)
     assert ctrl.stage == Stage.GLIDING
     agl.push(2.0)
-    seq._tick(1640)
+    seq._tick(1640)  # below land_agl -> the sustained timer starts, not yet elapsed
+    assert ctrl.stage == Stage.GLIDING
+    agl.push(50.0)   # a single spurious-low sample bounces back up -> timer resets, no premature flare
+    seq._tick(1650)
+    assert ctrl.stage == Stage.GLIDING
+    agl.push(2.0)
+    seq._tick(1700)  # below again -> restart the timer
+    seq._tick(1810)  # 110 ms > land_ms 100 -> LANDING
     assert ctrl.stage == Stage.LANDING
 
     # LANDING: ~1 g stationary sustained ground_ms -> done

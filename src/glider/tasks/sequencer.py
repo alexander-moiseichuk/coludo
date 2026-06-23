@@ -41,6 +41,7 @@ class Sequencer(task.Task):
         self._launch_ms: int = cfg.get('launch_ms', 100)
         self._boost_timeout_ms: int = cfg.get('boost_timeout_ms', 6000)
         self._land_agl_m: float = cfg.get('land_agl_m', 5.0)
+        self._land_ms: int = cfg.get('land_ms', 300)  # AGL must stay below land_agl_m this long (anti-spike)
         self._still_g: float = cfg.get('still_g', 0.3)
         self._ground_ms: int = cfg.get('ground_ms', 3000)
         self._accel = databoard.Databoard.parameter('accel')
@@ -88,8 +89,12 @@ class Sequencer(task.Task):
         elif stage == _STAGE.GLIDING:
             agl = self._agl.value()
             height = agl if agl is not None else self._elevation.value()
-            if height is not None and height < self._land_agl_m:
-                self._advance(_STAGE.LANDING, 'agl %.1fm' % height)
+            if height is not None and height < self._land_agl_m:  # below the landing height...
+                self._since = self._since if self._since is not None else now
+                if time.ticks_diff(now, self._since) >= self._land_ms:  # ...SUSTAINED (g12: not a spike)
+                    self._advance(_STAGE.LANDING, 'agl %.1fm' % height)
+            else:
+                self._since = None  # rose back / lost reading -> reset: a single low sample never flares
         elif stage == _STAGE.LANDING:
             g = _magnitude(self._accel.value())
             if g is not None and abs(g - 1.0) < self._still_g:
