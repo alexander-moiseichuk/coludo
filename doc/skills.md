@@ -51,7 +51,7 @@ can be gitignored). Upload `.mpy` to the board.
 An ad-hoc test Wi-Fi network, **SSID `panda`**, is available for connectivity testing
 (board ↔ CC links, telemetry, console). The password is **not a secret** — ask if you need it.
 
-Point a board at it via the `wifi` section of its `board.json` (`ssid=panda`, plus
+Point a board at it via the `wifi` section of its `board.config` (`ssid=panda`, plus
 `cc_host`/`cc_port` for the running CC instance). See `board-config.md`.
 
 ## Testing requirements

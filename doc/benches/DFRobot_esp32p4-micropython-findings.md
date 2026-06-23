@@ -40,5 +40,5 @@ event-driven drain, hardware-timer-or-not control loop) are driven by these and 
 
 The FireBeetle 2 and WaveShare ESP32-P4-WIFI6 differ in **USB interface** (native ESP-JTAG vs
 CH343), **header pinout**, and onboard peripherals — so the pin map (`doc/waveshare_esp32p4_pins.md`)
-is board-specific and a `board.json` per board is the right model. Performance assumptions are
+is board-specific and a `board.config` per board is the right model. Performance assumptions are
 shared; pin assignments are not.

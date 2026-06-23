@@ -234,7 +234,7 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
   or native control loop if latency demands). Spiral-to-launch-site maneuver.
 
 ### `launch.config` (mission config)
-A separate config document, same layered/validated/save+reactivate form as `board.json`
+A separate config document, same layered/validated/save+reactivate form as `board.config`
 ([`../specs/board-config.md`](../specs/board-config.md)), describing a *specific launch* rather
 than the *board*:
 - landing zone (TL / BR corners, target point), entrance threshold, allowed-zone radius,
@@ -242,7 +242,7 @@ than the *board*:
 - minimum controllable airspeed, and any per-launch tuning.
 
 Needed by Phase 3/4 navigation. **Interim:** until it exists, and because all launches are from
-the same site, these parameters may live in `board.json` (noted in `board-config.md`).
+the same site, these parameters may live in `board.config` (noted in `board-config.md`).
 
 **Known launch pads** (several may be defined; the on-board GNSS and the host GPS each select the
 nearest one). First site — **HPRC** (Homestead Public Rocketry Club):

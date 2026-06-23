@@ -64,7 +64,7 @@ def main():
     assert config.device(cfg, name='absent') is None
 
     # save / load round-trip on the board filesystem
-    path = 'test_board.json'
+    path = 'test_board.config'
     config.reset(path)
     cid = config.save(config_default.default(), path)
     cfg, source, errs = config.load(path, defaults=config_default.default())

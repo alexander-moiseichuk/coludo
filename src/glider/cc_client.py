@@ -66,7 +66,7 @@ class Client:
 
 
 def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
-                      config_path: str = 'board.json') -> Dispatcher:
+                      config_path: str = 'board.config') -> Dispatcher:
     """Build a Dispatcher with the standard command handlers, wired to the running config, the
     Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset."""
     import gc

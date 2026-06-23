@@ -4,7 +4,7 @@
 # Helps lay out / trace a PCB without doing it by hand. Host tool (parses config, never imports
 # firmware peripherals).
 #
-#   python3 tools/board_pinmap.py [board.json]    # default: the firmware default config
+#   python3 tools/board_pinmap.py [board.config]    # default: the firmware default config
 
 import os
 import sys

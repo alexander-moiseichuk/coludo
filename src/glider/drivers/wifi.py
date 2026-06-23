@@ -1,6 +1,6 @@
 # drivers/wifi.py — Wi-Fi station driver: joins the configured network and keeps it joined, exposing
 # signal/ip to the operator. HAL (it drives the radio), so @task.driver('wifi'). STA only; SSID / CC
-# host / TX power come from the `wifi` section of board.json, the password from <ssid>.creds
+# host / TX power come from the `wifi` section of board.config, the password from <ssid>.creds
 # (gitignored, deploy.sh-pushed).
 #
 # Optional + telemetry-first: `network` is imported in setup() so the module still loads on a board

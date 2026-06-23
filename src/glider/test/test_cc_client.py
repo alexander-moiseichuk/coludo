@@ -94,7 +94,7 @@ async def amain():
     assert cc.parse(resp[0]).command == 'iam' and cc.parse(resp[1]).command == 'pong'
 
     # set-config board: invalid rejected; reset-config ok; bad args rejected
-    sd2 = cc_client.create_dispatcher(config_default.default(), config_path='test_cc_board.json')
+    sd2 = cc_client.create_dispatcher(config_default.default(), config_path='test_cc_board.config')
     bad = config_default.default()
     bad['pins']['servo_yaw'] = 18  # reserved Wi-Fi pin -> invalid
     assert 'invalid' in await sd2.handle(cc.build('set-config', ['board', json.dumps(bad)]))

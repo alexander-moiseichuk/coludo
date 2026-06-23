@@ -45,7 +45,7 @@ class Task(inspector.Inspectable):
 
     def __init__(self, name: str, config: dict = None, controller=None):
         self.name: str = name
-        self.config: dict = config or {}  # this task's sensor/component dict from board.json
+        self.config: dict = config or {}  # this task's sensor/component dict from board.config
         self.controller = controller  # back-reference for find()/query()/notify()
         self._ok: bool = False
         self._subs: list = []

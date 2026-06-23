@@ -34,7 +34,7 @@ _EPOCH_OFFSET: int = 946684800
 _FIELDS: tuple = ('launch_id', 'site', 'latitude', 'longitude', 'altitude')
 
 # Default max range (m) from the launch point to any zone point, when the board config omits it. The
-# real value is `max_range_m` in board.json -- it is a glide-range property of the AIRFRAME (a bigger
+# real value is `max_range_m` in board.config -- it is a glide-range property of the AIRFRAME (a bigger
 # glider reaches farther), so it lives in the board config, not the per-launch mission.
 _DEFAULT_MAX_RANGE_M: float = 200.0
 

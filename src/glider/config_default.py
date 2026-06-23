@@ -1,6 +1,6 @@
 # Baked-in default board configuration for the WaveShare ESP32-P4-WIFI6 controller.
 #
-# Human-edited firmware default and the safe fallback when no valid board.json exists (see
+# Human-edited firmware default and the safe fallback when no valid board.config exists (see
 # specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
 # test/test_pins.py). `default()` returns a FRESH dict each call so callers may mutate it freely.
 #

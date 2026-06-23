@@ -376,7 +376,7 @@ A local UART line is always available for direct on-bench debugging. Over Wi-Fi 
 
 ## Pins Distribution
 
-To ensure hardware modularity, physical microcontroller pins are **not** hardcoded; they are defined by the board configuration (`buses` and `pins` sections of `board.json`, with firmware defaults in `config_default.py`). The controller reads this config at boot to build the pin map and instantiate the declared components. See [`board-config.md`](board-config.md) for the schema and activation lifecycle.
+To ensure hardware modularity, physical microcontroller pins are **not** hardcoded; they are defined by the board configuration (`buses` and `pins` sections of `board.config`, with firmware defaults in `config_default.py`). The controller reads this config at boot to build the pin map and instantiate the declared components. See [`board-config.md`](board-config.md) for the schema and activation lifecycle.
 
 ## System Status
 
@@ -458,7 +458,7 @@ High-capacity storage does **not** live on the controller. The Recorder module (
 
 ## Wi-Fi
 
-The integrated 2.4GHz Wi-Fi subsystem is optimized for extended range. During ground staging the board joins the **Control Center's** network as a **station** (SSID, credentials, CC host/port and tunable TX power come from the `wifi` section of `board.json`; Bluetooth is disabled to improve the link). Once a network socket connection to the Control Center is established, the flight controller unlocks remote parameter tuning, health monitoring, and live telemetry streaming. The link exists only in prestart; it is expected to be lost from ignition onward. See [`board-config.md`](board-config.md).
+The integrated 2.4GHz Wi-Fi subsystem is optimized for extended range. During ground staging the board joins the **Control Center's** network as a **station** (SSID, credentials, CC host/port and tunable TX power come from the `wifi` section of `board.config`; Bluetooth is disabled to improve the link). Once a network socket connection to the Control Center is established, the flight controller unlocks remote parameter tuning, health monitoring, and live telemetry streaming. The link exists only in prestart; it is expected to be lost from ignition onward. See [`board-config.md`](board-config.md).
 
 ## Camera
 

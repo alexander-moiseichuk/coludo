@@ -39,7 +39,7 @@ component drivers to instantiate.
 config_default.py   baked into firmware — human-edited, the safe fallback / floor
         │  loaded first
         ▼
-board.json          saved active config — JSON, a FULL snapshot of what the board runs
+board.config          saved active config — JSON, a FULL snapshot of what the board runs
         │  replaces defaults, then VALIDATED
         ▼
 in-memory objects   tasks + component drivers built from the validated active config
@@ -47,20 +47,20 @@ in-memory objects   tasks + component drivers built from the validated active co
 
 - **`config_default.py`** — a Python module shipped with the firmware. Human-authored, so it
   may use comments, hex addresses (`0x28`), and per-MCU variants. It is the fallback used
-  when no valid `board.json` exists.
-- **`board.json`** — the active config the board actually runs. It is a **full snapshot**, not
+  when no valid `board.config` exists.
+- **`board.config`** — the active config the board actually runs. It is a **full snapshot**, not
   a delta against the defaults. A snapshot reproduces the exact same conditions even if the
   firmware defaults later change; a delta would silently drift.
 - **in-memory objects** — never persisted, never the source of truth. They are rebuilt from
   the active config on every activation.
 
-**Power-on and re-activation use the same code path:** load defaults → if a valid `board.json`
+**Power-on and re-activation use the same code path:** load defaults → if a valid `board.config`
 exists, use it instead → validate → build tasks. One activation path to write, one to test,
 identical behaviour every time.
 
 ## Schema
 
-`board.json` (and the dict produced by `config_default.py`) has these top-level sections.
+`board.config` (and the dict produced by `config_default.py`) has these top-level sections.
 
 ```json
 {
@@ -169,7 +169,7 @@ to keep in sync.
 **Mission config** (launch id, launch-site position, and later altitude thresholds / target
 point) is *per launch*, not *per board*, and lives in a dedicated **`launch.config`** loaded by
 the `mission` object (`mission.py`). Board config describes the vehicle's hardware; mission config
-describes a specific flight. Unlike `board.json` (whose draft lives on CC and is pushed whole via
+describes a specific flight. Unlike `board.config` (whose draft lives on CC and is pushed whole via
 `set-config board`), the mission is small and edited live on the board through the Inspector
 (`update mission {...}`, including `epoch` for time sync) and persisted with `set-config launch` — see
 [`cc-protocol.md`](cc-protocol.md). The board clock is part of the mission surface but is the
@@ -187,12 +187,12 @@ during flight** — from ignition onward the board is autonomous and the config 
 2. Operator requests SAVE
        → board validates the resulting config
             ├─ invalid → reject, keep running current config, report error to CC
-            └─ valid   → atomically write board.json (temp file + rename)
+            └─ valid   → atomically write board.config (temp file + rename)
        → board KEEPS RUNNING the previous config (now "pending reactivation":
          saved config differs from running config; CC shows this state)
 3. Operator requests REBOOT (when ready)
        → hard reset (machine.reset())
-       → board boots from the saved board.json via the normal activation path
+       → board boots from the saved board.config via the normal activation path
        → reconnects to CC; saved == running again
 ```
 
