@@ -34,7 +34,7 @@ except ImportError:  # CPython (host syntax check only)
 _I2C_ID = const(0)
 _PIN_SDA = const(5)
 _PIN_SCL = const(6)
-_PIN_SERVO = const(2)
+_PIN_SERVO = const(3)  # GPIO3 (lastminuteengineers ESP32-C3 super-mini pinout: a safe, free PWM pin)
 _PIN_LEFT = const(0)   # '-' button
 _PIN_RIGHT = const(1)  # '+' button
 _BUTTON_ACTIVE = const(1)  # capacitive module reads 1 when touched; set 0 for an active-low module

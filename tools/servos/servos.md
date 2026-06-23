@@ -67,7 +67,8 @@ min/max angle touched this session. A `# ` banner with the pin map and ranges is
   `_BUTTON_ACTIVE` if your module is active-low)
 
 ### Servo
-- signal on **pin 2**, driven at 50 Hz (`PWM(Pin(2), freq=50)`)
+- signal on **pin 3** (GPIO3), driven at 50 Hz (`PWM(Pin(3), freq=50)`) — pin 3 is a safe, free PWM
+  pin per the [ESP32-C3 super-mini pinout](https://lastminuteengineers.com/esp32-c3-super-mini-pinout-reference/#esp32c3-super-mini-uart-pins)
 
 ## Running
 
