@@ -7,7 +7,7 @@
 #   inspect mission                              -> launch id / site / position + the board clock
 #   update mission base64:{"launch_id":"t1"}     -> set the launch id for this flight
 #   update mission base64:{"epoch":1750170000}   -> set the board RTC (time sync; Unix seconds)
-#   save-mission                                 -> persist the live mission back to launch.config
+#   get-config launch / set-config launch        -> read / save (merge + persist) launch.config
 #
 # Position is metres / decimal degrees; it is a known origin now and seeds the GNSS driver later.
 
@@ -22,7 +22,7 @@ except ImportError:  # CPython tooling / off-board lint+compile only
 
 import databoard
 import inspector
-import nav
+import navigation
 import recorder
 
 LAUNCH_PATH: str = 'launch.config'
@@ -59,9 +59,9 @@ def _number(value, low: float, high: float):
 
 def _zone(value):
     """Validate a landing zone `[[lat_tl, lon_tl], [lat_br, lon_br]]` (top-left + bottom-right corners)
-    -> ((lat, lon), (lat, lon)) or None. nav.py resolves the target (centre) + gates (short-side
+    -> ((lat, lon), (lat, lon)) or None. navigation.py resolves the target (centre) + gates (short-side
     midpoints) from it. The corner choice is an operator SAFETY decision: orient the zone so the
-    short-side entrances face hazard-free corridors -- nav steers to a gate with no hazard awareness
+    short-side entrances face hazard-free corridors -- navigation steers to a gate with no hazard awareness
     (specs/coludo.md "Zone orientation")."""
     if not isinstance(value, (list, tuple)) or len(value) != 2:
         return None
@@ -132,8 +132,8 @@ class Mission(inspector.Inspectable):
         origin = self.launch_point()
         if origin is None:
             return None
-        target, gate_a, gate_b = nav.zone(self.zone[0], self.zone[1])
-        distances = {name: round(nav.distance(origin[0], origin[1], point[0], point[1]), 1)
+        target, gate_a, gate_b = navigation.zone(self.zone[0], self.zone[1])
+        distances = {name: round(navigation.distance(origin[0], origin[1], point[0], point[1]), 1)
                      for name, point in (('target', target), ('gate_a', gate_a), ('gate_b', gate_b))}
         farthest = max(distances.values())
         return {'origin': origin, 'target': target, 'gates': [gate_a, gate_b], 'distances_m': distances,
@@ -206,12 +206,19 @@ class Mission(inspector.Inspectable):
             changed.append('epoch')
         return changed
 
+    def persisted(self) -> dict:
+        """The mission as it is stored in launch.config: the editable launch fields only -- no computed
+        geometry or clock. `get-config launch` returns this; the dashboard 'launch.config' editor saves
+        it back via `set-config launch` (the board config uses the same commands with name `board`).
+        Zone is plain lists (JSON has no tuples), or None when unset."""
+        data = {key: getattr(self, key) for key in _FIELDS}
+        data['zone'] = [list(self.zone[0]), list(self.zone[1])] if self.zone is not None else None
+        return data
+
     def save(self) -> None:
         """Persist the stored mission fields to launch.config (atomic temp+rename) so the launch
         identity survives a pre-flight reboot. The clock is never persisted -- it is the RTC's."""
-        data = {key: getattr(self, key) for key in _FIELDS}
-        if self.zone is not None:  # persist the landing zone as plain lists (JSON has no tuples)
-            data['zone'] = [list(self.zone[0]), list(self.zone[1])]
+        data = self.persisted()
         tmp = self.path + '.tmp'
         with open(tmp, 'w') as handle:
             handle.write(json.dumps(data))

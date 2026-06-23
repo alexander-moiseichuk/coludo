@@ -5,7 +5,7 @@
 #   1. tell the operator when a usable fix is available — the ideal launch condition is a 3D fix
 #      with 4+ satellites (so the board's own cold start has a good almanac/position seed);
 #   2. hand a launch position to the board (operator `assist <board>` -> `update mission` +
-#      `save-mission`, persisted in the board's launch.config) when the on-board GPS has no fix yet.
+#      `set-config launch`, persisted in the board's launch.config) when the on-board GPS has no fix yet.
 #
 # Pure NMEA parsing (GGA position/sats, GSA 2D/3D mode) is split from the serial transport so it is
 # unit-tested without hardware (test_gps.py); the Linux serial open + read loop is exercised by
@@ -123,7 +123,7 @@ class Gps:
     async def serve(self, device: str, baud: int = 9600) -> None:
         """Open the serial GPS and feed it forever (the wired host-assist path)."""
         reader = await open_serial(device, baud)
-        self.log('control :: host gps on %s @ %d' % (device, baud))
+        self.log('host gps on %s @ %d' % (device, baud))
         await self.run(reader)
 
 

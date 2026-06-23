@@ -70,7 +70,7 @@ Plain TCP, no encryption (trusted LAN; encryption is explicitly out of scope for
   know each command's schema. A value is a **bare token** (no spaces) or **`base64:<data>`** (spaces,
   quotes, JSON, binary). **named** params are `key=value`; everything else is positional. Parsing
   is a trivial `line.split()`. JSON has no special case — it rides as a `base64:` value (e.g.
-  `taster save-config base64:<encoded-json>`).
+  `taster set-config board base64:<encoded-json>`).
 
 **Responses** use the same framing minus the routing token: a board replies `<status> [params...]`
 (`status` = `ok` / `err` / `pong` / `iam`), any structured payload being one `base64:`-encoded JSON
@@ -119,7 +119,7 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 |---------|--------|----------|---------|
 | `whoami` | — | `iam <id> {json}` | identify a new socket (the one reply carrying the id) |
 | `ping` | — | `pong` | liveness |
-| `health` | — | `ok {temp,mem_free,load,uptime,components[]}` | vitals; `components[]` carries `{name, ok}` |
+| `health` | — | `ok {temp,mem_free,uptime,stage,clock,epoch,tasks[]}` | vitals; `clock`/`epoch` = the board RTC (for the dashboard); `tasks[]` carries `{name, ok}` |
 | `stage` | `[name\|auto]` | `ok {stage,manual}` | get the stage; `<name>` holds it (pauses the sequencer — ground test); `auto` resumes |
 | `arm` | — | `ok {armed:true}` / `err unsafe {problems}` | enable actuation — only when verify is clean (every device up + probe healthy, incl. mission launch-position) |
 | `disarm` | — | `ok {armed:false}` | disable actuation (the control loop holds the fins neutral) |
@@ -132,10 +132,9 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `stats` | `<object>` | `ok {stats}` | `Inspectable.stats()` of a named object |
 | `probe` | `[name\|all]` | `ok {name: null\|error}` | on-demand device self-tests; `all` also lists devices that never set up (not connected). Active — sweeps servos |
 | `verify` | — | `ok {pass, devices, problems}` | verify board setup: every configured device up/down + probe, with an overall PASS — the launch-pad re-check (catches anything disconnected in transport) |
-| `get-config` | `[running\|default]` | `ok {config}` | fetch a config (`running` if omitted) |
-| `save-config` | `<json>` | `ok {config_id}` / `err invalid <msg>` | validate + persist full snapshot; **running config unchanged** |
+| `get-config` | `[name]` | `ok {config}` | fetch a named config: `board` (running, default), `default` (built-in board default), `launch` (the mission) |
+| `set-config` | `<name> <json>` | `ok {config_id}` / `err invalid <msg>` | save a named config: `board` validates + replaces the full snapshot (running config unchanged until reboot); `launch` merge-applies the fields into the mission + persists `launch.config` |
 | `reset-config` | — | `ok` | delete `board.json`; next boot uses `config_default.py` |
-| `save-mission` | — | `ok` / `err unsupported` | persist the live mission (set via `update mission`) to `launch.config` |
 | `reboot` | — | `ok` then disconnect | ack, then hard reset → boots from saved config |
 
 `inspect`/`update`/`stats` address an object by name (`inspect wifi`, `update servo_yaw <json>`);
@@ -161,9 +160,10 @@ from taster ok {"changed":["launch_id","latitude"]}
 `epoch` is a momentary action (it sets the RTC, never stored); `inspect` reports the live clock as
 both an ISO string and a Unix `epoch` for CC to compare against its own. A broadcast
 `all update mission base64:{"epoch":...}` time-syncs the whole fleet. Unlike the board config
-(whose draft lives on CC), the mission is small and edited live on the board, so **`save-mission`**
-persists the current values to `launch.config` — the per-launch counterpart to `board.json` — to
-survive a pre-flight reboot. `err unsupported` means the board has no mission object.
+(whose draft lives on CC), the mission is small and edited live on the board; **`set-config launch`**
+merge-applies a draft and persists it to `launch.config` — the per-launch counterpart to `board.json`
+— so the launch identity survives a pre-flight reboot. `err unsupported` means the board has no
+mission object.
 
 ### Log / telemetry retrieval
 
@@ -175,10 +175,10 @@ its poll interval and de-duplicates by record uptime (each record carries its up
 
 ### Config commands map to the activation model
 
-`save-config` and `reboot` are deliberately **separate** commands, matching the
+`set-config` and `reboot` are deliberately **separate** commands, matching the
 save/reboot-separated model in [`board-config.md`](board-config.md). The editable *draft*
 config lives on **CC** (it holds the UI/operator state, seeded by `get-config`); only the full
-snapshot is pushed via `save-config`. The board firmware therefore needs no per-field config
+snapshot is pushed via `set-config board`. The board firmware therefore needs no per-field config
 mutation handlers — just "validate-and-persist a whole config," "delete config," and "reboot."
 A failed validation comes straight back as `err invalid <msg>` and the board keeps running its
 previous config.
@@ -252,7 +252,7 @@ CC exposes the same capabilities to the browser without the browser ever speakin
 - **`GET /api/boards`** — JSON list (same data as `list`).
 - **`POST /api/cmd`** — body `{board, command, params}`; CC runs the command against the board
   (respecting per-board lockstep) and returns the response as JSON. Used for one-off actions
-  (`save-config`, `reboot`, `get-config`, …).
+  (`set-config`, `reboot`, `get-config`, …).
 - **`GET /events`** — a **Server-Sent Events** stream of the board list, pushed every heartbeat
   (the live table). SSE is chosen over WebSocket because the live need is server→browser
   streaming, it is plain HTTP (no extra dependency), and browser→board actions are ordinary POSTs.

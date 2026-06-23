@@ -170,8 +170,8 @@ to keep in sync.
 point) is *per launch*, not *per board*, and lives in a dedicated **`launch.config`** loaded by
 the `mission` object (`mission.py`). Board config describes the vehicle's hardware; mission config
 describes a specific flight. Unlike `board.json` (whose draft lives on CC and is pushed whole via
-`save-config`), the mission is small and edited live on the board through the Inspector
-(`update mission {...}`, including `epoch` for time sync) and persisted with `save-mission` — see
+`set-config board`), the mission is small and edited live on the board through the Inspector
+(`update mission {...}`, including `epoch` for time sync) and persisted with `set-config launch` — see
 [`cc-protocol.md`](cc-protocol.md). The board clock is part of the mission surface but is the
 RTC's, never persisted.
 

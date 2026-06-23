@@ -45,20 +45,31 @@ async def _fake_board(reader, writer):
             reply = cc.build('iam', ['glider9', json.dumps(info)])
         elif msg.command == 'ping':
             reply = cc.build('pong')
+        elif msg.command == 'health':  # the heartbeat polls this; carries the vitals + board clock + position
+            reply = cc.build('ok', [json.dumps({'temp': 40, 'mem_free': 1000, 'uptime': 12345,
+                                                'stage': 'setting', 'clock': '2026-06-22T20:00:00',
+                                                'position': [48.117, 11.517]})])
         elif msg.command == 'inspect':
             reply = cc.build('ok', [json.dumps({'name': msg.args[0], 'ok': True})])
         elif msg.command == 'get-config':
-            reply = cc.build('ok', [json.dumps({'board': {'id': 'glider9', 'mcu': 'esp32p4'}, 'sensors': []})])
-        elif msg.command == 'save-config':
-            json.loads(msg.args[0])  # the config arrives base64-decoded by parse
-            reply = cc.build('ok', [json.dumps({'config_id': 'newcfg'})])
+            name = msg.args[0] if msg.args else 'board'
+            payload = ({'launch_id': 'l1', 'latitude': None} if name == 'launch'
+                       else {'board': {'id': 'glider9', 'mcu': 'esp32p4'}, 'sensors': []})
+            reply = cc.build('ok', [json.dumps(payload)])
+        elif msg.command == 'set-config':  # <name> <json>
+            json.loads(msg.args[1])  # the payload arrives base64-decoded by parse
+            reply = cc.build('ok', [json.dumps({'config_id': 'newcfg'})] if msg.args[0] == 'board' else [])
         elif msg.command == 'update':
             reply = cc.build('ok', [json.dumps({'changed': sorted(json.loads(msg.args[1]))})])
         elif msg.command == 'log':  # poll-model log streaming: one canned line per armed window
             window = int(msg.args[0]) if msg.args else 0
             lines = ['100 test :: tick'] if window > 0 else []
             reply = cc.build('ok', [json.dumps({'lines': lines})])
-        elif msg.command in ('reset-config', 'reboot', 'save-mission'):
+        elif msg.command == 'tlm':  # poll-model telemetry streaming: one canned sample per armed window
+            window = int(msg.args[0]) if msg.args else 0
+            samples = ['@s_t.csv@1;2;3'] if window > 0 else []
+            reply = cc.build('ok', [json.dumps({'samples': samples})])
+        elif msg.command in ('reset-config', 'reboot'):
             reply = cc.build('ok')
         else:
             reply = cc.build('err', ['badcmd', msg.command])
@@ -122,7 +133,8 @@ async def _operator_console():
         listing = await ask('list')
         assert listing.startswith('from cc ok ')
         rows = json.loads(listing[len('from cc ok '):])
-        assert rows[0] == {'id': 'glider9', 'online': True, 'stage': 'setting', 'config_id': 'abc123'}
+        assert rows[0]['id'] == 'glider9' and rows[0]['online'] is True
+        assert rows[0]['stage'] == 'setting' and rows[0]['config_id'] == 'abc123'  # vitals keys also present
 
         # an unknown first token (no selection yet) is a bad Control command, never sent to a board
         assert await ask('bogus') == 'from cc err badcmd bogus'
@@ -196,6 +208,15 @@ async def _web():
         rows = json.loads(payload)
         assert rows[0]['id'] == 'glider9' and rows[0]['online'] is True and rows[0]['stage'] == 'setting'
 
+        # the heartbeat polls health -> board_rows carries live vitals (uptime, clock, position) + version
+        for _ in range(50):
+            rows = json.loads((await _http(WEB_PORT, 'GET', '/api/boards'))[1])
+            if rows[0].get('uptime') is not None:
+                break
+            await asyncio.sleep(0.02)
+        assert rows[0]['uptime'] == 12345 and rows[0]['clock'] == '2026-06-22T20:00:00', rows[0]
+        assert rows[0]['version'] == 'a1b2c3' and rows[0]['position'] == [48.117, 11.517], rows[0]
+
         # POST /api/cmd routes to the board and returns its reply
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
                                       json.dumps({'board': 'glider9', 'command': 'ping'}))
@@ -206,15 +227,15 @@ async def _web():
                                        json.dumps({'board': 'ghost', 'command': 'ping'}))
         assert status == 404
 
-        # dashboard config flow over /api/cmd: get-config -> edit the draft -> save-config -> reboot
+        # dashboard config flow over /api/cmd: get-config <name> -> edit the draft -> set-config <name> -> reboot
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
-                                      json.dumps({'board': 'glider9', 'command': 'get-config'}))
+                                      json.dumps({'board': 'glider9', 'command': 'get-config', 'params': ['board']}))
         assert status == 200
         config = json.loads(json.loads(payload)['args'][0])  # the board's config, ready to edit
         assert config['board']['id'] == 'glider9'
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
-                                      json.dumps({'board': 'glider9', 'command': 'save-config',
-                                                  'params': [json.dumps(config)]}))
+                                      json.dumps({'board': 'glider9', 'command': 'set-config',
+                                                  'params': ['board', json.dumps(config)]}))
         assert status == 200 and json.loads(payload) == {'board': 'glider9', 'status': 'ok',
                                                          'args': [json.dumps({'config_id': 'newcfg'})]}
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
@@ -229,12 +250,14 @@ async def _web():
         status, _payload = await _http(WEB_PORT, 'GET', '/api/board/ghost')  # unknown board -> 404
         assert status == 404
 
-        # GET /events streams the board list as Server-Sent Events
+        # GET /events streams {cc, boards} as Server-Sent Events
         events_reader, events_writer = await asyncio.open_connection('127.0.0.1', WEB_PORT)
         events_writer.write(b'GET /events HTTP/1.1\r\nHost: t\r\n\r\n')
         await events_writer.drain()
         frame = await asyncio.wait_for(events_reader.readuntil(b'\n\n'), 2)
-        assert b'text/event-stream' in frame and b'data: [' in frame and b'glider9' in frame
+        assert b'text/event-stream' in frame and b'data: {' in frame
+        payload = json.loads(frame.split(b'data: ', 1)[1])
+        assert 'time' in payload['cc'] and payload['boards'][0]['id'] == 'glider9'
         events_writer.close()
     finally:
         hub_task.cancel()
@@ -243,7 +266,7 @@ async def _web():
 
 async def _gps_assist():
     """A host GPS with a usable 3D fix: `gps` reports it and `assist <board>` pushes the position to
-    the board's mission (update mission -> save-mission)."""
+    the board mission (set-config launch: merge + persist)."""
     import gps as gps_mod
     host_gps = gps_mod.Gps(log=lambda message: None)
     host_gps.feed(_nmea('GPGSA,A,3,01,02,03,04,05,06,,,,,,,2.0,1.0,1.5'))  # 3D fix
@@ -284,12 +307,18 @@ async def _gps_assist():
         assert compare['host']['usable'] and compare['board'] == 'glider9'
         assert compare['onboard'] == {'name': 'gnss', 'ok': True}, compare  # the board's inspect gnss
 
-        # assist pushes the host position to the board mission and persists it (save-mission)
+        # assist pushes the host position to the board mission and persists it (set-config launch)
         reply = await ask('assist glider9')
         assert reply.startswith('from cc ok '), reply
         out = json.loads(reply[len('from cc ok '):])
         assert out['assisted'] == 'glider9' and out['saved'] is True, out
         assert abs(out['position']['latitude'] - 48.1173) < 1e-3, out
+
+        # the dashboard 'gps' button: POST /api/assist does the same push (set-config launch)
+        status, payload = await _http(GPS_WEB_PORT, 'POST', '/api/assist', json.dumps({'board': 'glider9'}))
+        assert status == 200, payload
+        pushed = json.loads(payload)
+        assert pushed['assisted'] is True and abs(pushed['position']['latitude'] - 48.1173) < 1e-3, pushed
     finally:
         operator_writer.close()
         hub_task.cancel()
@@ -332,8 +361,19 @@ async def _log_stream():
         status, payload = await _http(LOG_WEB_PORT, 'POST', '/api/log',
                                       json.dumps({'board': 'glider9', 'interval_ms': 40}))
         assert status == 200 and json.loads(payload) == {'board': 'glider9', 'streaming': True,
-                                                         'interval_ms': 40}, payload
+                                                         'kind': 'log', 'interval_ms': 40}, payload
         assert 'glider9' in hub.streams
+
+        # telemetry stream: the SAME endpoint with kind=tlm polls the board's tlm buffer instead
+        status, payload = await _http(LOG_WEB_PORT, 'POST', '/api/log',
+                                      json.dumps({'board': 'glider9', 'kind': 'tlm', 'interval_ms': 40}))
+        assert status == 200 and json.loads(payload)['kind'] == 'tlm', payload
+        for _ in range(50):
+            if any('@s_t.csv@' in line for line in seen):
+                break
+            await asyncio.sleep(0.02)
+        assert any('@s_t.csv@' in line for line in seen), seen[-5:]  # tlm samples flowed to the feed
+
         status, payload = await _http(LOG_WEB_PORT, 'POST', '/api/log',
                                       json.dumps({'board': 'glider9', 'interval_ms': 0}))
         assert status == 200 and json.loads(payload) == {'board': 'glider9', 'streaming': False}

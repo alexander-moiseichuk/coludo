@@ -33,17 +33,21 @@ class Board:
         host, port = self._writer.get_extra_info('peername')[:2]
         return '%s:%d' % (host, port)
 
-    async def exchange(self, line: str, timeout: float = EXCHANGE_TIMEOUT_S) -> cc._Msg:
+    async def exchange(self, line: str, timeout: float = EXCHANGE_TIMEOUT_S, quiet: bool = False) -> cc._Msg:
         """Send a ready board-facing line and return its parsed reply (None if disconnected).
-        `timeout` (default 10 s) bounds the wait so a wedged board raises asyncio.TimeoutError."""
+        `timeout` (default 10 s) bounds the wait so a wedged board raises asyncio.TimeoutError. `quiet`
+        suppresses the tx/rx console log -- used for the heartbeat ping, which the hub summarises itself
+        (only its first success / first failure) rather than spamming a line every beat."""
         tag = self.id or self.peer
         async with self._lock:
-            self._log('control :: %s -> %s' % (tag, line))  # CC sends (tx); logged before the wait
+            if not quiet:
+                self._log('%s -> %s' % (tag, line))  # CC sends (tx); logged before the wait
             self._writer.write((line + '\n').encode())
             await self._writer.drain()
             raw = await asyncio.wait_for(self._reader.readline(), timeout)
         reply = raw.decode().strip()
-        self._log('control :: %s <- %s' % (tag, reply if raw else '<disconnected>'))  # board replies (rx)
+        if not quiet:
+            self._log('%s <- %s' % (tag, reply if raw else '<disconnected>'))  # board replies (rx)
         if not raw:
             return None
         self.last_seen = time.monotonic()
@@ -63,7 +67,7 @@ class Board:
             payload = json.loads(msg.args[0])  # already base64-decoded by cc.parse
         except ValueError:
             return
-        if command == 'get-config' and tokens[1:] != ['default']:  # cache only the running config
+        if command == 'get-config' and tokens[1:] in ([], ['board'], ['running']):  # the running board config only
             self.cache['config'] = payload
         elif command == 'inspect' and len(tokens) >= 2:
             self.cache['inspect'][tokens[1]] = payload
@@ -79,9 +83,10 @@ class Board:
                 'config': self.cache['config'], 'inspect': self.cache['inspect'],
                 'stats': self.cache['stats'], 'health': self.cache['health']}
 
-    async def command(self, command: str, *args, timeout: float = EXCHANGE_TIMEOUT_S) -> cc._Msg:
+    async def command(self, command: str, *args, timeout: float = EXCHANGE_TIMEOUT_S,
+                      quiet: bool = False) -> cc._Msg:
         """Build `command args...` and exchange it. Returns the parsed reply or None."""
-        return await self.exchange(cc.build(command, list(args)), timeout)
+        return await self.exchange(cc.build(command, list(args)), timeout, quiet=quiet)
 
     async def identify(self) -> str:
         resp = await self.command('whoami')

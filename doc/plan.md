@@ -8,7 +8,7 @@ Required hardware and the phased development roadmap. Architecture lives in
 - **Phase 0 — done.** `config`, `task`+`controller`, `cc_protocol`, `recorder` (SPSC rings +
   `Telemetry`) in `src/glider/`, all MicroPython, on-board tested (`make test`).
 - **Phase 1 board side — done.** `wifi` (STA) and `cc_client` (`Dispatcher`/`Client` +
-  `create_dispatcher` answering whoami/ping/health/state/report/get-config/save-config/
+  `create_dispatcher` answering whoami/ping/health/state/report/get-config/set-config/
   reset-config/reboot). 8/8 on-board tests.
 - **Phase 2 — done (bench-verified).** All sensors (ADXL375/BNO055/BMP280/ICP-10111/ATGM336H/
   VL53L4CX) → `databoard` read-time fusion, per-sensor telemetry, board health, separation switch,
@@ -76,11 +76,11 @@ testable foundations and connectivity come before the flight loop.
 ### Phase 1 — Connectivity & ground ops (no flight control)
 - ✅ **Board side:** `wifi.py` (STA join `panda`, tx-power), `cc_client.py` (`Client` dial-out +
   `serve` loop, `create_dispatcher` answering whoami/ping/health/state/report/get-config/
-  save-config/reset-config/reboot). System status (temp/mem/uptime) is in the health handler.
+  set-config/reset-config/reboot). System status (temp/mem/uptime) is in the health handler.
 - ✅ **CC hub** (`src/control/`): `board.py` (Board, 10 s exchange timeout) + `server.py` (board
   listener 1234 + ~2 s heartbeat + operator console 1235, routing `<board>`/`all`, sticky `select`,
   drop-in `commands/`) + `main.py` (CLI `--host`/`--port`/`--help`) + **HTTP/SSE dashboard** (8080,
-  `web.py`+`static/index.html`) with a **config editor** (load `get-config` → edit the draft → `save-config`
+  `web.py`+`static/index.html`) with a **config editor** (load `get-config` → edit the draft → `set-config`
   → `reboot`/`reset-config`, all via `/api/cmd`; rows click-to-target). Per-file host tests.
 - ✅ **Task packages** — `drivers/` (HAL: `led`, `wifi`, the future sensors/servo, via `@task.driver`)
   and `tasks/` (subsystems: Recorder adapter, `board_health`, `cc_link`, via the `@task.activity`
@@ -222,10 +222,10 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
   the loop gated by stage + arming + a fed watchdog.
 
 ### Phase 4 — Polish
-- ✅ **Landing-zone navigation** (`nav.py` + `tasks/flight.py` + `mission.py`) — the mission's zone is a
-  lat/lon rectangle (TL/BR); `nav.zone()` → target (centre) + gates (short-side midpoints, the safe
+- ✅ **Landing-zone navigation** (`navigation.py` + `tasks/flight.py` + `mission.py`) — the mission's zone is a
+  lat/lon rectangle (TL/BR); `navigation.zone()` → target (centre) + gates (short-side midpoints, the safe
   approach corridors — operator orients the zone, `coludo.md`). In GLIDING the yaw heading setpoint is
-  `nav.steer()` toward the nearer gate then the centre (overshoot → ~180° re-approach, emergent). Three
+  `navigation.steer()` toward the nearer gate then the centre (overshoot → ~180° re-approach, emergent). Three
   GPS-degrading tiers: live fix → steer from the current position; no fix + CC-set launch point → hold
   the launch→gate bearing (open-loop, GPS-denied fallback); neither → captured heading. Mission resolves
   the zone vs the launch point (CC-set or GNSS), gates it on `max_range_m` (board config — airframe

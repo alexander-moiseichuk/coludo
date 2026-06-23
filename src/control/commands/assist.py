@@ -20,11 +20,11 @@ async def assist_command(hub, tokens, session) -> list:
     position = hub.gps.position()
     if position is None:
         return ['from cc err nofix host-gps-not-3d']
-    updated = await board.command('update', 'mission', json.dumps(position))
-    if updated is None:
+    # set-config launch merge-applies the position into the mission AND persists it to launch.config in
+    # one command (replacing the old update-mission + save-mission pair).
+    saved = await board.command('set-config', 'launch', json.dumps(position))
+    if saved is None:
         return ['from cc err offline %s' % target]
-    if updated.command != 'ok':
-        return ['from cc err update %s' % ' '.join(str(a) for a in updated.args)]
-    saved = await board.command('save-mission')  # persist into the board's launch.config
-    persisted = bool(saved and saved.command == 'ok')
-    return ['from cc ok %s' % json.dumps({'assisted': target, 'position': position, 'saved': persisted})]
+    if saved.command != 'ok':
+        return ['from cc err set-config %s' % ' '.join(str(a) for a in saved.args)]
+    return ['from cc ok %s' % json.dumps({'assisted': target, 'position': position, 'saved': True})]

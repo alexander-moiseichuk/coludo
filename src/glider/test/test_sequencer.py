@@ -96,7 +96,27 @@ async def amain():
     seq._tick(3200)  # well past launch_ms
     assert ctrl.stage == Stage.SETTING  # held -> no auto-advance
 
-    print('ok: sequencer -- launch detect, boost-timeout, agl landing, on-ground, guard, manual hold')
+    # missing accel reading: _magnitude raises (no silent None) and _tick swallows it -- a dropped
+    # sample skips the tick (no crash, no spurious advance) rather than guarding every use.
+    raised = False
+    try:
+        sequencer._magnitude(None)
+    except TypeError:
+        raised = True
+    assert raised
+
+    class _NoReading:
+        def value(self):
+            return None  # a stale / absent databoard parameter
+
+    ctrl.stage = Stage.SETTING
+    ctrl.manual = False
+    seq._stage_seen = None
+    seq._accel = _NoReading()
+    seq._tick(4000)  # accel absent -> _magnitude raises -> caught -> tick skipped
+    assert ctrl.stage == Stage.SETTING  # no crash, no advance
+
+    print('ok: sequencer -- launch detect, boost-timeout, agl landing, on-ground, guard, manual hold, no-accel skip')
 
 
 asyncio.run(amain())

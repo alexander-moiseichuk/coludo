@@ -73,6 +73,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
     import time
 
     import config as config_mod
+    import databoard
 
     board_id = cfg['board']['id']
     dispatcher = Dispatcher()
@@ -101,6 +102,14 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         except Exception:
             temp = None
         info = {'temp': temp, 'mem_free': gc.mem_free(), 'uptime': time.ticks_ms(), 'stage': stage()}
+        position = databoard.Databoard.parameter('position')  # board GNSS fix -> dashboard (None until a fix)
+        if position is not None:
+            value, source, _age = position.read()
+            info['position'] = value if source is not None and value is not None else None
+        mission = inspector.Inspector.get('mission')
+        if mission is not None:  # the board wall-clock (RTC) -> the dashboard top table shows it live
+            info['clock'] = mission.clock()
+            info['epoch'] = mission.epoch()
         if controller is not None:
             info['tasks'] = [{'name': t.name, 'ok': t.validate()} for t in controller.active()]
         return cc.build('ok', [json.dumps(info)])
@@ -172,33 +181,52 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         except KeyError:
             return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
 
+    # The named configs the operator can read/write through one pair of commands (get-config <name> /
+    # set-config <name> <json>), instead of a get-/save- pair per config:
+    #   board    the running board config (hardware; config.py, validated + atomically saved)
+    #   default  the built-in board default (read-only)
+    #   launch   the per-launch mission (launch.config; mission.py, merge-applied + saved)
     async def get_config(msg) -> str:
-        which = msg.args[0] if msg.args else 'running'
-        config = config_mod._builtin_default() if which == 'default' else cfg
-        return cc.build('ok', [json.dumps(config)])
+        """`get-config [name]` -- the named config (default `board`)."""
+        name = msg.args[0] if msg.args else 'board'
+        if name in ('board', 'running'):
+            return cc.build('ok', [json.dumps(cfg)])
+        if name == 'default':
+            return cc.build('ok', [json.dumps(config_mod._builtin_default())])
+        if name == 'launch':
+            mission = inspector.Inspector.get('mission')
+            if mission is None:
+                return cc.build('err', ['unsupported', 'no mission'])
+            return cc.build('ok', [json.dumps(mission.persisted())])
+        return cc.build('err', ['badargs', 'unknown config %s' % name])
 
-    async def save_config(msg) -> str:
-        if not msg.args:
-            return cc.build('err', ['badargs', 'no config'])
+    async def set_config(msg) -> str:
+        """`set-config <name> <json>` -- save the named config. `board` validates + atomically replaces
+        the running config; `launch` merge-applies the fields into the mission and persists them."""
+        if len(msg.args) < 2:
+            return cc.build('err', ['badargs', 'set-config <name> <json>'])
+        name = msg.args[0]
         try:
-            new_config = json.loads(msg.args[0])
-        except Exception:
+            payload = json.loads(msg.args[1])
+        except ValueError:
             return cc.build('err', ['badargs', 'bad json'])
-        try:
-            config_id = config_mod.save(new_config, config_path)
-        except ValueError as error:
-            return cc.build('err', ['invalid', str(error)])
-        return cc.build('ok', [json.dumps({'config_id': config_id})])
+        if name == 'board':
+            try:
+                config_id = config_mod.save(payload, config_path)
+            except ValueError as error:
+                return cc.build('err', ['invalid', str(error)])
+            return cc.build('ok', [json.dumps({'config_id': config_id})])
+        if name == 'launch':
+            mission = inspector.Inspector.get('mission')
+            if mission is None:
+                return cc.build('err', ['unsupported', 'no mission'])
+            mission.update(payload)  # key-wise merge (a missing field is left as-is, never wiped)
+            mission.save()
+            return cc.build('ok', [json.dumps(mission.persisted())])
+        return cc.build('err', ['badargs', 'unknown config %s' % name])
 
     async def reset_config(msg) -> str:
         config_mod.reset(config_path)
-        return cc.build('ok')
-
-    async def save_mission(msg) -> str:
-        mission = inspector.Inspector.get('mission')
-        if mission is None:
-            return cc.build('err', ['unsupported', 'no mission'])
-        mission.save()  # persist the live mission (set via `update mission`) to launch.config
         return cc.build('ok')
 
     async def probe(msg) -> str:
@@ -297,8 +325,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
     dispatcher.on('log', log)
     dispatcher.on('tlm', tlm)
     dispatcher.on('get-config', get_config)
-    dispatcher.on('save-config', save_config)
+    dispatcher.on('set-config', set_config)
     dispatcher.on('reset-config', reset_config)
-    dispatcher.on('save-mission', save_mission)
     dispatcher.on('reboot', reboot)
     return dispatcher

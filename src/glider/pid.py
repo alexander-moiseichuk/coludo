@@ -3,23 +3,28 @@
 # (re)entering a control phase. Floats internally (gains/integral are inherently fractional); the
 # caller rounds the output to integer degrees for the mixer/servos.
 
-
-def _clamp(value: float, limit: float) -> float:
-    return -limit if value < -limit else (limit if value > limit else value)
+import math
 
 
 class Pid:
     """error -> control output. step(error, dt): kp*e + ki*integral(e) + kd*de/dt, each clamped."""
 
     def __init__(self, kp: float = 0.0, ki: float = 0.0, kd: float = 0.0,
-                 integral_limit: float = None, output_limit: float = None):
+                 integral_limit: float = math.inf, output_limit: float = math.inf):
+        # limits default to inf (unbounded): _clamp(x, inf) == x, so step() needs no `is not None`
+        # guard -- an unbounded PID just clamps to +/- inf, which is a no-op.
         self.kp: float = kp
         self.ki: float = ki
         self.kd: float = kd
-        self.integral_limit = integral_limit
-        self.output_limit = output_limit
+        self.integral_limit: float = integral_limit
+        self.output_limit: float = output_limit
         self._integral: float = 0.0
         self._previous: float = 0.0
+
+    @staticmethod
+    def _clamp(value: float, limit: float) -> float:
+        """Symmetric clamp of `value` to +/- `limit` (limit inf -> a no-op)."""
+        return -limit if value < -limit else (limit if value > limit else value)
 
     def reset(self) -> None:
         """Clear the integral + derivative history -- on entering a control phase, so a fresh glide
@@ -28,10 +33,8 @@ class Pid:
         self._previous = 0.0
 
     def step(self, error: float, dt: float) -> float:
-        self._integral += error * dt
-        if self.integral_limit is not None:
-            self._integral = _clamp(self._integral, self.integral_limit)
+        self._integral = self._clamp(self._integral + error * dt, self.integral_limit)
         derivative = (error - self._previous) / dt if dt > 0 else 0.0
         self._previous = error
         output = self.kp * error + self.ki * self._integral + self.kd * derivative
-        return _clamp(output, self.output_limit) if self.output_limit is not None else output
+        return self._clamp(output, self.output_limit)

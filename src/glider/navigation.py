@@ -1,4 +1,4 @@
-# nav.py — landing-zone navigation geometry (Phase 4 'heading-to-home'), sibling of mixer.py/pid.py.
+# navigation.py — landing-zone navigation geometry (Phase 4 'heading-to-home'), sibling of mixer.py/pid.py.
 # The mission's landing zone is a lat/lon rectangle, top-left (TL) + bottom-right (BR) corners
 # (specs/coludo.md). The TARGET is the zone centre; the two GATES are the midpoints of the two SHORTER
 # sides, so the glider enters along the long axis (the documented "vector to the shortest boundary
@@ -15,10 +15,24 @@
 
 import math
 
+try:
+    from micropython import const
+except ImportError:  # CPython (tooling / off-board checks)
+
+    def const(value):
+        return value
+
+
 _M_PER_DEG: float = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat))
 
+# steer() leg -- which waypoint the returned heading aims at this tick. Named integer codes rather
+# than bare strings (cheaper to compare, no typo-prone literals at the call sites).
+UNKNOWN: int = const(0)  # not steering (no zone) -- never produced by steer(), a sentinel for callers
+TARGET: int = const(1)   # inside the zone -> heading for the centre (the landing target)
+GATE: int = const(2)     # outside the zone -> heading for the nearer short-side entrance
 
-def _offset_m(lat1, lon1, lat2, lon2):
+
+def _offset_m(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
     """(east, north) offset in metres from point 1 to point 2 (equirectangular)."""
     lat_mid = math.radians((lat1 + lat2) / 2.0)
     east = (lon2 - lon1) * _M_PER_DEG * math.cos(lat_mid)
@@ -26,19 +40,19 @@ def _offset_m(lat1, lon1, lat2, lon2):
     return east, north
 
 
-def bearing(lat1, lon1, lat2, lon2):
+def bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Compass bearing in degrees (0 = north, 90 = east, clockwise) from point 1 to point 2."""
     east, north = _offset_m(lat1, lon1, lat2, lon2)
     return math.degrees(math.atan2(east, north)) % 360.0
 
 
-def distance(lat1, lon1, lat2, lon2):
+def distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Distance in metres from point 1 to point 2 (equirectangular)."""
     east, north = _offset_m(lat1, lon1, lat2, lon2)
     return math.sqrt(east * east + north * north)
 
 
-def zone(corner_tl, corner_br):
+def zone(corner_tl: tuple, corner_br: tuple) -> tuple:
     """Resolve the rectangle (top-left, bottom-right corners, each (lat, lon)) -> (target, gate_a,
     gate_b): the centre and the midpoints of the two SHORTER sides. A horizontally (longitude)
     stretched zone gates on its left/right edges; a vertically (latitude) stretched one on top/bottom."""
@@ -54,7 +68,7 @@ def zone(corner_tl, corner_br):
     return target, (lat_t, lon_c), (lat_b, lon_c)  # taller than wide -> top/bottom edges
 
 
-def inside(position, corner_tl, corner_br):
+def inside(position: tuple, corner_tl: tuple, corner_br: tuple) -> bool:
     """True if position (lat, lon) is within the zone rectangle (corner order-agnostic)."""
     lat, lon = position
     lat_t, lon_l = corner_tl
@@ -63,10 +77,10 @@ def inside(position, corner_tl, corner_br):
             min(lon_l, lon_r) <= lon <= max(lon_l, lon_r))
 
 
-def steer(position, corner_tl, corner_br):
+def steer(position: tuple, corner_tl: tuple, corner_br: tuple) -> tuple:
     """The heading to fly toward the landing target via the nearer gate: head for the closer short-side
     entrance until inside the zone, then for the centre. Returns (bearing_deg, waypoint, leg) with leg
-    'gate' or 'target'. position = (lat, lon).
+    GATE or TARGET. position = (lat, lon).
 
     Stateless + re-evaluated each tick, so the overshoot loop is emergent: if the glider crosses the
     zone and exits the far side without landing (still high), the gate it just crossed is now the
@@ -76,8 +90,8 @@ def steer(position, corner_tl, corner_br):
     target, gate_a, gate_b = zone(corner_tl, corner_br)
     if inside(position, corner_tl, corner_br):
         waypoint = target
-        leg = 'target'
+        leg = TARGET
     else:
         waypoint = gate_a if distance(lat, lon, *gate_a) <= distance(lat, lon, *gate_b) else gate_b
-        leg = 'gate'
+        leg = GATE
     return bearing(lat, lon, waypoint[0], waypoint[1]), waypoint, leg

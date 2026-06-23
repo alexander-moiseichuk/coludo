@@ -21,21 +21,51 @@
   textarea { font-family: ui-monospace, monospace; font-size: .85rem; width: 100%; max-width: 60rem; box-sizing: border-box; }
   pre { white-space: pre-wrap; background: #f4f4f4; padding: .6rem; min-height: 1.2rem; border-radius: 4px; max-width: 60rem; }
   .muted { color: #888; font-size: .85rem; }
+  .obj { margin: .4rem 0; }
+  .obj > label { font-weight: 600; margin-right: .5rem; }
+  .obj textarea { max-width: 40rem; }
+  .tick { font-size: .85rem; margin-left: .5rem; }
+  .tick.ok { color: #2a9d3a; }
+  .tick.no { color: #888; }
 </style>
 </head>
 <body>
-<h1>Coludo Control</h1>
+<div style="display:flex; justify-content:space-between; align-items:baseline; flex-wrap:wrap;">
+  <h1>Coludo Control</h1>
+  <span class="muted" id="ccstatus">CC —</span>
+</div>
 
 <table id="boards">
-  <thead><tr><th>board</th><th>online</th><th>stage</th><th>config</th></tr></thead>
-  <tbody><tr><td colspan="4" class="muted">waiting for boards…</td></tr></tbody>
+  <thead><tr>
+    <th>board</th><th>online</th><th>stage</th><th>version</th><th>config</th><th>uptime</th>
+    <th>board time</th><th></th><th>position</th><th></th>
+  </tr></thead>
+  <tbody><tr><td colspan="10" class="muted">waiting for boards…</td></tr></tbody>
 </table>
-<p class="muted">click a board to target it below</p>
+<p class="muted">click a board to target it below · <span id="boardmsg"></span></p>
 
 <h2>send command</h2>
 <p>
   <input id="board" placeholder="board id" size="10">
-  <input id="cmd" placeholder="command, e.g. ping  or  inspect wifi" size="34">
+  <select id="cmd" title="board command">
+    <option>ping</option>
+    <option>health</option>
+    <option>report</option>
+    <option>objects</option>
+    <option>inspect</option>
+    <option>stats</option>
+    <option>verify</option>
+    <option>probe</option>
+    <option>stage</option>
+    <option>arm</option>
+    <option>disarm</option>
+    <option>tlm</option>
+    <option>update</option>
+    <option>whoami</option>
+    <option>reboot</option>
+  </select>
+  <input id="params" placeholder="params — e.g. wifi · gliding · 5000" size="28"
+         title="space-separated arguments (e.g. inspect → wifi, stage → gliding, tlm → 5000)">
   <button id="send">send</button>
 </p>
 <pre id="reply"></pre>
@@ -43,17 +73,33 @@
 <h2>config &amp; control</h2>
 <p>
   <input id="cfgboard" placeholder="board id" size="10">
+  <select id="cfgtarget" title="which config to load/save">
+    <option value="board">board config</option>
+    <option value="launch">launch config</option>
+  </select>
   <button id="load">load</button>
   <button id="save">save</button>
   <button id="reboot">reboot</button>
-  <button id="reset">reset config</button>
+  <button id="reset">reset board config</button>
 </p>
-<textarea id="config" rows="14" placeholder="board config — click load to fetch the running config as an editable draft, then save → reboot"></textarea>
+<textarea id="config" rows="14" placeholder="config draft — pick board/launch, click load to fetch it as an editable draft, then save (board config needs a reboot to take effect)"></textarea>
 <pre id="cfgresult"></pre>
 
-<h2>logs</h2>
+<h2>inspect</h2>
+<p>
+  <input id="inspboard" placeholder="board id" size="10">
+  <button id="inspall">inspect all</button>
+  <span class="muted">read every object; edit a value and click update — a green ✓ marks applied changes</span>
+</p>
+<div id="inspresult"></div>
+
+<h2>logs &amp; telemetry</h2>
 <p>
   <input id="logboard" placeholder="board id" size="10">
+  <select id="logkind" title="the board serves one stream at a time">
+    <option value="log">logs</option>
+    <option value="tlm">telemetry</option>
+  </select>
   <input id="logms" value="1000" size="6" title="poll interval (ms)">
   <button id="logstart">start</button>
   <button id="logstop">stop</button>
@@ -74,58 +120,117 @@ async function cmd(board, command, params = []) {
   return res.json();
 }
 
+// Parse JSON, or return the original value if it is not JSON (board payloads arrive as JSON strings).
+function safeParse(value) {
+  if (typeof value !== 'string') return value;
+  try { return JSON.parse(value); } catch (e) { return value; }
+}
+
+// Pretty-print a command result. The board returns structured payloads as JSON *strings* inside
+// args[], so a raw JSON.stringify shows a backslash-escaped wall. Unwrap any arg that is itself JSON
+// into a nested object, then format it (2-space, like the config editor).
+function prettyResult(result) {
+  if (result && Array.isArray(result.args)) {
+    result = { ...result, args: result.args.map(safeParse) };
+  }
+  return JSON.stringify(result, null, 2);
+}
+
 function selectBoard(id) {
   document.getElementById('board').value = id;
   document.getElementById('cfgboard').value = id;
+  document.getElementById('inspboard').value = id;
   document.getElementById('logboard').value = id;
 }
 
+// uptime is milliseconds since boot (board ticks); show it as Hh MMm SSs.
+function fmtUptime(ms) {
+  if (ms == null) return '';
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m${String(s % 60).padStart(2, '0')}s`;
+}
+const fmtPos = (p) => (p ? `${p[0].toFixed(5)}, ${p[1].toFixed(5)}` : 'N/A');
+// CC GPS: N/A when no device, No FIX until a usable fix, else the coordinates.
+function ccGps(gps) {
+  if (!gps) return 'N/A';
+  if (!gps.usable) return 'No FIX';
+  return `${gps.latitude.toFixed(5)}, ${gps.longitude.toFixed(5)}`;
+}
+const boardMsg = (text) => { document.getElementById('boardmsg').textContent = text; };
+
 new EventSource('/events').onmessage = (event) => {
-  const rows = JSON.parse(event.data);
-  if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="muted">no boards connected</td></tr>';
+  const { cc, boards } = JSON.parse(event.data);
+  document.getElementById('ccstatus').textContent = `CC ${(cc.time || '').replace('T', ' ')} · GPS ${ccGps(cc.gps)}`;
+  const ccHasFix = !!(cc.gps && cc.gps.usable);  // 'sync CC GPS' is offered only when CC has a fix
+  if (!boards.length) {
+    tbody.innerHTML = '<tr><td colspan="10" class="muted">no boards connected</td></tr>';
     return;
   }
-  tbody.innerHTML = rows.map((b) => `
+  tbody.innerHTML = boards.map((b) => `
     <tr class="click ${b.online ? 'on' : 'off'}" onclick="selectBoard('${b.id}')">
       <td>${b.id}</td>
       <td><span class="dot">${b.online ? '●' : '○'}</span></td>
       <td>${b.stage || ''}</td>
+      <td>${b.version || ''}</td>
       <td>${b.config_id || ''}</td>
+      <td>${fmtUptime(b.uptime)}</td>
+      <td>${(b.clock || '').replace('T', ' ')}</td>
+      <td><button onclick="event.stopPropagation(); syncTime('${b.id}')" title="set the board RTC to the CC clock">sync CC time</button></td>
+      <td>${fmtPos(b.position)}</td>
+      <td>${ccHasFix
+        ? `<button onclick="event.stopPropagation(); gpsAssist('${b.id}')" title="push the CC GPS fix to the board launch config">sync CC GPS</button>`
+        : '<span class="muted">—</span>'}</td>
     </tr>`).join('');
 };
 
-// --- ad-hoc command box ---
+// top-table actions: set the board RTC from the PC clock (update mission epoch), and push the host
+// GPS position to the board launch config (/api/assist).
+async function syncTime(id) {
+  const r = await cmd(id, 'update', ['mission', JSON.stringify({ epoch: Math.floor(Date.now() / 1000) })]);
+  boardMsg(`${id} sync time: ${r.status === 'ok' ? 'ok' : JSON.stringify(r)}`);
+}
+async function gpsAssist(id) {
+  const res = await fetch('/api/assist', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ board: id }),
+  });
+  const r = await res.json();
+  boardMsg(`${id} gps: ${r.assisted ? 'pushed ' + JSON.stringify(r.position) : JSON.stringify(r)}`);
+}
+
+// --- ad-hoc command box: pick a command, type its params (space-separated) ---
 async function send() {
   const board = document.getElementById('board').value.trim();
-  const parts = document.getElementById('cmd').value.trim().split(/\s+/);
-  const command = parts.shift();
+  const command = document.getElementById('cmd').value;
+  const raw = document.getElementById('params').value.trim();
+  const parts = raw ? raw.split(/\s+/) : [];
   const reply = document.getElementById('reply');
   reply.textContent = '…';
   try {
-    reply.textContent = JSON.stringify(await cmd(board, command, parts), null, 2);
+    reply.textContent = prettyResult(await cmd(board, command, parts));
   } catch (err) {
     reply.textContent = 'error: ' + err;
   }
 }
 document.getElementById('send').addEventListener('click', send);
-document.getElementById('cmd').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
+document.getElementById('params').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 
-// --- config editor: load (get-config) -> edit draft -> save (save-config) -> reboot ---
+// --- config editor: pick board/launch -> load (get-config <name>) -> edit -> save (set-config <name>) ---
 const cfgOut = document.getElementById('cfgresult');
 const cfgArea = document.getElementById('config');
 const cfgBoard = () => document.getElementById('cfgboard').value.trim();
+const cfgTarget = () => document.getElementById('cfgtarget').value;
 
 document.getElementById('load').onclick = async () => {
   cfgOut.textContent = '…';
-  const r = await cmd(cfgBoard(), 'get-config');
+  const target = cfgTarget();
+  const r = await cmd(cfgBoard(), 'get-config', [target]);
   if (r.status === 'ok') {
     try {
       cfgArea.value = JSON.stringify(JSON.parse(r.args[0]), null, 2);
-      cfgOut.textContent = 'loaded running config of ' + cfgBoard();
+      cfgOut.textContent = `loaded ${target} config of ${cfgBoard()}`;
     } catch (e) { cfgOut.textContent = 'unreadable config from board: ' + e; }
   } else {
-    cfgOut.textContent = JSON.stringify(r, null, 2);
+    cfgOut.textContent = prettyResult(r);
   }
 };
 
@@ -134,27 +239,69 @@ document.getElementById('save').onclick = async () => {
   try { json = JSON.stringify(JSON.parse(cfgArea.value)); }
   catch (e) { cfgOut.textContent = 'draft is not valid JSON: ' + e; return; }
   cfgOut.textContent = '…';
-  cfgOut.textContent = JSON.stringify(await cmd(cfgBoard(), 'save-config', [json]), null, 2);
+  cfgOut.textContent = prettyResult(await cmd(cfgBoard(), 'set-config', [cfgTarget(), json]));
 };
 
 document.getElementById('reboot').onclick = async () => {
-  cfgOut.textContent = JSON.stringify(await cmd(cfgBoard(), 'reboot'), null, 2);
+  cfgOut.textContent = prettyResult(await cmd(cfgBoard(), 'reboot'));
 };
 
 document.getElementById('reset').onclick = async () => {
-  cfgOut.textContent = JSON.stringify(await cmd(cfgBoard(), 'reset-config'), null, 2);
+  cfgOut.textContent = prettyResult(await cmd(cfgBoard(), 'reset-config'));
 };
+
+// --- inspect: list objects, then inspect each -> a per-object editor (update -> green ✓) ---
+const inspOut = document.getElementById('inspresult');
+const inspBoard = () => document.getElementById('inspboard').value.trim();
+
+document.getElementById('inspall').onclick = async () => {
+  const board = inspBoard();
+  inspOut.textContent = '…';
+  const list = await cmd(board, 'objects');
+  const names = (list.status === 'ok' && Array.isArray(list.args)) ? safeParse(list.args[0]) : null;
+  if (!Array.isArray(names)) { inspOut.textContent = prettyResult(list); return; }
+  inspOut.innerHTML = '';
+  for (const name of names) {
+    const r = await cmd(board, 'inspect', [name]);
+    const props = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : r;
+    const text = JSON.stringify(props, null, 2);
+    const rows = Math.min(14, Math.max(2, text.split('\n').length));
+    const card = document.createElement('div');
+    card.className = 'obj';
+    card.innerHTML = `<label>${name}</label>` +
+      `<button data-obj="${name}">update</button><span class="tick" id="tick-${name}"></span>` +
+      `<br><textarea id="insp-${name}" rows="${rows}">${text.replace(/</g, '&lt;')}</textarea>`;
+    inspOut.appendChild(card);
+  }
+  inspOut.querySelectorAll('button[data-obj]').forEach((btn) => {
+    btn.onclick = () => updateObject(board, btn.dataset.obj);
+  });
+};
+
+// send the edited props of one object via `update <name> <json>`; a green ✓ lists what actually changed.
+async function updateObject(board, name) {
+  const tick = document.getElementById('tick-' + name);
+  let json;
+  try { json = JSON.stringify(JSON.parse(document.getElementById('insp-' + name).value)); }
+  catch (e) { tick.className = 'tick no'; tick.textContent = 'invalid JSON'; return; }
+  const r = await cmd(board, 'update', [name, json]);
+  const changed = (r.status === 'ok' && Array.isArray(r.args)) ? (safeParse(r.args[0]).changed || []) : null;
+  if (changed && changed.length) { tick.className = 'tick ok'; tick.textContent = '✓ ' + changed.join(', '); }
+  else if (changed) { tick.className = 'tick no'; tick.textContent = 'no change'; }
+  else { tick.className = 'tick no'; tick.textContent = JSON.stringify(r); }
+}
 
 // --- live log stream: start/stop the hub's per-board stream, then view the /logs SSE feed ---
 const logPane = document.getElementById('logs');
 const logBoard = () => document.getElementById('logboard').value.trim();
 
 async function setLog(on) {
+  const kind = document.getElementById('logkind').value;
   const interval_ms = on ? (parseInt(document.getElementById('logms').value, 10) || 1000) : 0;
   const res = await fetch('/api/log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ board: logBoard(), interval_ms }),
+    body: JSON.stringify({ board: logBoard(), kind, interval_ms }),
   });
   return res.json();
 }

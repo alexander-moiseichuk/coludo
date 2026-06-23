@@ -46,38 +46,53 @@ class Server:
         self.log_subscribers = set()  # asyncio.Queue per /logs SSE listener (streamed log lines)
 
     def board_rows(self) -> list:
-        """The registry as json-able rows (id, online, last-known stage/config_id) — shared by the
-        `list` operator command and the web /api/boards + /events feeds."""
-        return [
-            {'id': client.id, 'online': client.online, 'stage': client.info.get('stage'),
-             'config_id': client.info.get('config_id')}
-            for client in self.boards.values()
-        ]
+        """The registry as json-able rows — shared by the `list` operator command and the web
+        /api/boards + /events feeds. Carries the last-known stage/config_id plus the heartbeat vitals
+        (uptime / clock / temp / mem_free) cached from `health`, so the dashboard top table is live."""
+        rows = []
+        for client in self.boards.values():
+            health = client.cache.get('health') or {}
+            rows.append({
+                'id': client.id, 'online': client.online,
+                'stage': health.get('stage') or client.info.get('stage'),  # health is fresher than the handshake
+                'version': client.info.get('firmware_version'),
+                'config_id': client.info.get('config_id'),
+                'uptime': health.get('uptime'), 'clock': health.get('clock'),
+                'position': health.get('position'),  # board GNSS fix (lat, lon) or None
+                'temp': health.get('temp'), 'mem_free': health.get('mem_free'),
+            })
+        return rows
+
+    def cc_status(self) -> dict:
+        """The Control host's own status for the dashboard header: the wall clock and the host GPS
+        (None if no GPS device is attached; otherwise gps.status() -- usable / fix_3d / lat / lon)."""
+        return {'time': time.strftime('%Y-%m-%dT%H:%M:%S'),
+                'gps': self.gps.status() if self.gps is not None else None}
 
     # ----------------------------------------------------------------- board side
     async def _handle(self, reader, writer) -> None:
         """Identify a freshly connected board, register it, then poll it until it drops."""
         client = board.Board(reader, writer, log=self.log)  # log every CC<->board line exchanged
-        self.log('control :: board connected %s' % client.peer)
+        self.log('board connected %s' % client.peer)
         try:
             board_id = await client.identify()
             if not board_id:
-                self.log('control :: whoami failed from %s' % client.peer)
+                self.log('whoami failed from %s' % client.peer)
                 return
             self.boards[board_id] = client
-            self.log('control :: %s online %s' % (board_id, client.info))
+            self.log('%s online %s' % (board_id, client.info))
             if self.on_board is not None:
                 await self.on_board(client)
             await self._poll(client)
         except (asyncio.TimeoutError, ConnectionError, asyncio.IncompleteReadError) as error:
-            self.log('control :: %s link lost %r' % (client.id or client.peer, error))
+            self.log('%s link lost %r' % (client.id or client.peer, error))
         except Exception as error:
-            self.log('control :: error %r' % error)
+            self.log('error %r' % error)
         finally:
             self._drop_stream(client.id)  # stop any log stream for this board
             client.online = False
             client.close()
-            self.log('control :: %s offline' % (client.id or client.peer))
+            self.log('%s offline' % (client.id or client.peer))
 
     # --------------------------------------------------------------- log streaming
     def _emit_log(self, board_id, line) -> None:
@@ -90,42 +105,47 @@ class Server:
             except asyncio.QueueFull:
                 pass
 
-    async def _stream(self, client, interval_ms) -> None:
-        """Poll a board's `log` buffer every `interval_ms` and emit each returned line. The board
-        window is 2x the interval so its deadline never lapses between polls; if this task stops, the
-        window lapses and the board self-disables (no consumer -> no collection). Ends on disconnect."""
+    async def _stream(self, client, interval_ms, kind) -> None:
+        """Poll a board's `log`/`tlm` buffer every `interval_ms` and emit each returned line. `kind` is
+        'log' (reply `{lines}`) or 'tlm' (reply `{samples}`) -- the board's poll model serves one at a
+        time, so the dashboard picks which. The board window is 2x the interval so its deadline never
+        lapses between polls; if this task stops, the window lapses and the board self-disables (no
+        consumer -> no collection). Ends on disconnect."""
+        field = 'samples' if kind == 'tlm' else 'lines'
         window_ms = max(1, interval_ms) * 2
         while True:
-            resp = await client.command('log', window_ms)
+            resp = await client.command(kind, window_ms)
             if resp is None:
                 return  # board dropped -> _handle marks it offline and drops the stream
             if resp.command == 'ok' and resp.args:
                 try:
-                    lines = json.loads(resp.args[0]).get('lines', [])
+                    items = json.loads(resp.args[0]).get(field, [])
                 except ValueError:
-                    lines = []
-                for line in lines:
+                    items = []
+                for line in items:
                     self._emit_log(client.id, line)
             await asyncio.sleep(interval_ms / 1000.0)
 
-    def start_stream(self, client, interval_ms) -> None:
-        """(Re)start streaming a board's logs at `interval_ms`, replacing any running stream for it."""
+    def start_stream(self, client, interval_ms, kind='log') -> None:
+        """(Re)start streaming a board's `kind` ('log'|'tlm') at `interval_ms`, replacing any running
+        stream for it."""
         self._drop_stream(client.id)
-        self.streams[client.id] = asyncio.create_task(self._stream(client, interval_ms))
+        self.streams[client.id] = (asyncio.create_task(self._stream(client, interval_ms, kind)), kind)
 
     def _drop_stream(self, board_id):
         """Cancel and forget any streaming task for a board; return its Board (or None)."""
-        task = self.streams.pop(board_id, None)
-        if task is not None:
-            task.cancel()
+        entry = self.streams.pop(board_id, None)
+        if entry is not None:
+            entry[0].cancel()
         return self.boards.get(board_id)
 
     async def stop_stream(self, board_id) -> None:
-        """Stop streaming a board's logs and tell the board to stop collecting (a final `log 0`
-        drain), so it does not keep teeing once nobody is polling."""
+        """Stop streaming a board and tell it to stop collecting (a final `<kind> 0` drain), so it does
+        not keep teeing once nobody is polling."""
+        kind = self.streams.get(board_id, (None, 'log'))[1]
         client = self._drop_stream(board_id)
         if client is not None and client.online:
-            await client.command('log', 0)
+            await client.command(kind, 0)
 
     async def _stream_toggle(self, client, args) -> str:
         """`<board> log [ms|off]`: start/refresh (default 1000 ms) or stop the hub's log stream for one
@@ -142,13 +162,21 @@ class Server:
         return 'from %s ok %s' % (client.id, json.dumps({'log': 'on', 'interval_ms': interval_ms}))
 
     async def _poll(self, client) -> None:
-        """Heartbeat: ping an idle board every `heartbeat_s`; a successful exchange (operator or
-        ping) within the window already proves liveness, so it is skipped. Returns on disconnect."""
+        """Heartbeat: poll an idle board's `health` every `heartbeat_s` -- it proves liveness AND
+        refreshes the vitals (uptime / clock / temp / mem) the dashboard top table shows, cached
+        Control-side. A recent exchange within the window already proves liveness, so it is skipped.
+        The poll is `quiet` (no per-beat tx/rx spam) -- only a CHANGE in liveness is logged (the first
+        'ok', the first 'lost'). Returns on disconnect."""
+        alive = None  # last heartbeat outcome (None until the first poll) -> log only on transition
         while True:
             await asyncio.sleep(self.heartbeat_s)
             if time.monotonic() - client.last_seen < self.heartbeat_s:
                 continue  # a recent exchange already proved liveness
-            if await client.command('ping') is None:
+            ok = await client.command('health', quiet=True) is not None
+            if ok != alive:
+                self.log('%s heartbeat %s' % (client.id, 'ok' if ok else 'lost'))
+                alive = ok
+            if not ok:
                 return  # disconnected -> _handle marks it offline
 
     # -------------------------------------------------------------- operator side
@@ -215,14 +243,14 @@ class Server:
     async def serve_forever(self) -> None:
         """Accept board connections on `port` (board-facing listener)."""
         server = await asyncio.start_server(self._handle, self.host, self.port)
-        self.log('control :: boards on %s:%d' % (self.host, self.port))
+        self.log('boards on %s:%d' % (self.host, self.port))
         async with server:
             await server.serve_forever()
 
     async def serve_operators(self) -> None:
         """Accept operator connections on `operator_port` (telnet-friendly console)."""
         server = await asyncio.start_server(self._operator, self.host, self.operator_port)
-        self.log('control :: operators on %s:%d' % (self.host, self.operator_port))
+        self.log('operators on %s:%d' % (self.host, self.operator_port))
         async with server:
             await server.serve_forever()
 
