@@ -59,6 +59,9 @@ min/max angle touched this session. A `# ` banner with the pin map and ranges is
 - I2C: `I2C(0, sda=Pin(5), scl=Pin(6), freq=400000)`
 - driver: `ssd1306.py` (bundled, stock MicroPython SSD1306 framebuffer driver)
 
+**Note:** the original code of ssd1306.py available under MIT license https://github.com/PerfecXX/MicroPython-SSD1306/
+**Copyright (c) 2024 Teeraphat Kullanankanjana**
+
 ### Buttons
 - two capacitive buttons: **pin 0 = left (`-`)**, **pin 1 = right (`+`)** (active-high; flip
   `_BUTTON_ACTIVE` if your module is active-low)

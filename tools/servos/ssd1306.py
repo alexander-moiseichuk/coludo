@@ -1,4 +1,9 @@
-# Import Library
+# Imported Library from https://github.com/PerfecXX/MicroPython-SSD1306/
+#
+# MIT License
+# 
+# Copyright (c) 2024 Teeraphat Kullanankanjana
+#
 from micropython import const
 import framebuf
 import math
