@@ -5,3 +5,4 @@ __pycache__/
 *.creds
 version.py
 wishes.txt
+findings.md
