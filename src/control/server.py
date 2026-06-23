@@ -46,13 +46,20 @@ class Server:
         self.log_subscribers = set()  # asyncio.Queue per /logs SSE listener (streamed log lines)
 
     def board_rows(self) -> list:
-        """The registry as json-able rows (id, online, last-known stage/config_id) — shared by the
-        `list` operator command and the web /api/boards + /events feeds."""
-        return [
-            {'id': client.id, 'online': client.online, 'stage': client.info.get('stage'),
-             'config_id': client.info.get('config_id')}
-            for client in self.boards.values()
-        ]
+        """The registry as json-able rows — shared by the `list` operator command and the web
+        /api/boards + /events feeds. Carries the last-known stage/config_id plus the heartbeat vitals
+        (uptime / clock / temp / mem_free) cached from `health`, so the dashboard top table is live."""
+        rows = []
+        for client in self.boards.values():
+            health = client.cache.get('health') or {}
+            rows.append({
+                'id': client.id, 'online': client.online,
+                'stage': health.get('stage') or client.info.get('stage'),  # health is fresher than the handshake
+                'config_id': client.info.get('config_id'),
+                'uptime': health.get('uptime'), 'clock': health.get('clock'),
+                'temp': health.get('temp'), 'mem_free': health.get('mem_free'),
+            })
+        return rows
 
     # ----------------------------------------------------------------- board side
     async def _handle(self, reader, writer) -> None:
@@ -142,16 +149,17 @@ class Server:
         return 'from %s ok %s' % (client.id, json.dumps({'log': 'on', 'interval_ms': interval_ms}))
 
     async def _poll(self, client) -> None:
-        """Heartbeat: ping an idle board every `heartbeat_s`; a successful exchange (operator or
-        ping) within the window already proves liveness, so it is skipped. The ping is `quiet` (no
-        per-beat tx/rx spam) -- only a CHANGE in liveness is logged (the first 'ok', the first 'lost').
-        Returns on disconnect."""
-        alive = None  # last heartbeat outcome (None until the first ping) -> log only on transition
+        """Heartbeat: poll an idle board's `health` every `heartbeat_s` -- it proves liveness AND
+        refreshes the vitals (uptime / clock / temp / mem) the dashboard top table shows, cached
+        Control-side. A recent exchange within the window already proves liveness, so it is skipped.
+        The poll is `quiet` (no per-beat tx/rx spam) -- only a CHANGE in liveness is logged (the first
+        'ok', the first 'lost'). Returns on disconnect."""
+        alive = None  # last heartbeat outcome (None until the first poll) -> log only on transition
         while True:
             await asyncio.sleep(self.heartbeat_s)
             if time.monotonic() - client.last_seen < self.heartbeat_s:
                 continue  # a recent exchange already proved liveness
-            ok = await client.command('ping', quiet=True) is not None
+            ok = await client.command('health', quiet=True) is not None
             if ok != alive:
                 self.log('%s heartbeat %s' % (client.id, 'ok' if ok else 'lost'))
                 alive = ok

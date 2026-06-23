@@ -27,10 +27,10 @@
 <h1>Coludo Control</h1>
 
 <table id="boards">
-  <thead><tr><th>board</th><th>online</th><th>stage</th><th>config</th></tr></thead>
-  <tbody><tr><td colspan="4" class="muted">waiting for boards…</td></tr></tbody>
+  <thead><tr><th>board</th><th>online</th><th>stage</th><th>config</th><th>uptime</th><th>board time</th><th>actions</th></tr></thead>
+  <tbody><tr><td colspan="7" class="muted">waiting for boards…</td></tr></tbody>
 </table>
-<p class="muted">click a board to target it below</p>
+<p class="muted">click a board to target it below · <span id="boardmsg"></span></p>
 
 <h2>send command</h2>
 <p>
@@ -50,9 +50,6 @@
     <option>tlm</option>
     <option>update</option>
     <option>whoami</option>
-    <option>get-config</option>
-    <option>reset-config</option>
-    <option>save-mission</option>
     <option>reboot</option>
   </select>
   <input id="params" placeholder="params — e.g. wifi · gliding · 5000" size="28"
@@ -64,12 +61,16 @@
 <h2>config &amp; control</h2>
 <p>
   <input id="cfgboard" placeholder="board id" size="10">
+  <select id="cfgtarget" title="which config to load/save">
+    <option value="board">board config</option>
+    <option value="launch">launch config</option>
+  </select>
   <button id="load">load</button>
   <button id="save">save</button>
   <button id="reboot">reboot</button>
-  <button id="reset">reset config</button>
+  <button id="reset">reset board config</button>
 </p>
-<textarea id="config" rows="14" placeholder="board config — click load to fetch the running config as an editable draft, then save → reboot"></textarea>
+<textarea id="config" rows="14" placeholder="config draft — pick board/launch, click load to fetch it as an editable draft, then save (board config needs a reboot to take effect)"></textarea>
 <pre id="cfgresult"></pre>
 
 <h2>inspect</h2>
@@ -126,10 +127,18 @@ function selectBoard(id) {
   document.getElementById('logboard').value = id;
 }
 
+// uptime is milliseconds since boot (board ticks); show it as Hh MMm SSs.
+function fmtUptime(ms) {
+  if (ms == null) return '';
+  const s = Math.floor(ms / 1000);
+  return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m${String(s % 60).padStart(2, '0')}s`;
+}
+const boardMsg = (text) => { document.getElementById('boardmsg').textContent = text; };
+
 new EventSource('/events').onmessage = (event) => {
   const rows = JSON.parse(event.data);
   if (!rows.length) {
-    tbody.innerHTML = '<tr><td colspan="4" class="muted">no boards connected</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="7" class="muted">no boards connected</td></tr>';
     return;
   }
   tbody.innerHTML = rows.map((b) => `
@@ -138,8 +147,28 @@ new EventSource('/events').onmessage = (event) => {
       <td><span class="dot">${b.online ? '●' : '○'}</span></td>
       <td>${b.stage || ''}</td>
       <td>${b.config_id || ''}</td>
+      <td>${fmtUptime(b.uptime)}</td>
+      <td>${(b.clock || '').replace('T', ' ')}</td>
+      <td>
+        <button onclick="event.stopPropagation(); syncTime('${b.id}')" title="set the board RTC to this PC's clock">sync time</button>
+        <button onclick="event.stopPropagation(); gpsAssist('${b.id}')" title="push the host GPS position to the board launch config">gps</button>
+      </td>
     </tr>`).join('');
 };
+
+// top-table actions: set the board RTC from the PC clock (update mission epoch), and push the host
+// GPS position to the board launch config (/api/assist).
+async function syncTime(id) {
+  const r = await cmd(id, 'update', ['mission', JSON.stringify({ epoch: Math.floor(Date.now() / 1000) })]);
+  boardMsg(`${id} sync time: ${r.status === 'ok' ? 'ok' : JSON.stringify(r)}`);
+}
+async function gpsAssist(id) {
+  const res = await fetch('/api/assist', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ board: id }),
+  });
+  const r = await res.json();
+  boardMsg(`${id} gps: ${r.assisted ? 'pushed ' + JSON.stringify(r.position) : JSON.stringify(r)}`);
+}
 
 // --- ad-hoc command box: pick a command, type its params (space-separated) ---
 async function send() {
@@ -158,18 +187,20 @@ async function send() {
 document.getElementById('send').addEventListener('click', send);
 document.getElementById('params').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 
-// --- config editor: load (get-config) -> edit draft -> save (save-config) -> reboot ---
+// --- config editor: pick board/launch -> load (get-config <name>) -> edit -> save (set-config <name>) ---
 const cfgOut = document.getElementById('cfgresult');
 const cfgArea = document.getElementById('config');
 const cfgBoard = () => document.getElementById('cfgboard').value.trim();
+const cfgTarget = () => document.getElementById('cfgtarget').value;
 
 document.getElementById('load').onclick = async () => {
   cfgOut.textContent = '…';
-  const r = await cmd(cfgBoard(), 'get-config');
+  const target = cfgTarget();
+  const r = await cmd(cfgBoard(), 'get-config', [target]);
   if (r.status === 'ok') {
     try {
       cfgArea.value = JSON.stringify(JSON.parse(r.args[0]), null, 2);
-      cfgOut.textContent = 'loaded running config of ' + cfgBoard();
+      cfgOut.textContent = `loaded ${target} config of ${cfgBoard()}`;
     } catch (e) { cfgOut.textContent = 'unreadable config from board: ' + e; }
   } else {
     cfgOut.textContent = prettyResult(r);
@@ -181,7 +212,7 @@ document.getElementById('save').onclick = async () => {
   try { json = JSON.stringify(JSON.parse(cfgArea.value)); }
   catch (e) { cfgOut.textContent = 'draft is not valid JSON: ' + e; return; }
   cfgOut.textContent = '…';
-  cfgOut.textContent = prettyResult(await cmd(cfgBoard(), 'save-config', [json]));
+  cfgOut.textContent = prettyResult(await cmd(cfgBoard(), 'set-config', [cfgTarget(), json]));
 };
 
 document.getElementById('reboot').onclick = async () => {

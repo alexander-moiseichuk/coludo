@@ -45,6 +45,9 @@ async def _fake_board(reader, writer):
             reply = cc.build('iam', ['glider9', json.dumps(info)])
         elif msg.command == 'ping':
             reply = cc.build('pong')
+        elif msg.command == 'health':  # the heartbeat polls this; carries the vitals + board clock
+            reply = cc.build('ok', [json.dumps({'temp': 40, 'mem_free': 1000, 'uptime': 12345,
+                                                'stage': 'setting', 'clock': '2026-06-22T20:00:00'})])
         elif msg.command == 'inspect':
             reply = cc.build('ok', [json.dumps({'name': msg.args[0], 'ok': True})])
         elif msg.command == 'get-config':
@@ -125,7 +128,8 @@ async def _operator_console():
         listing = await ask('list')
         assert listing.startswith('from cc ok ')
         rows = json.loads(listing[len('from cc ok '):])
-        assert rows[0] == {'id': 'glider9', 'online': True, 'stage': 'setting', 'config_id': 'abc123'}
+        assert rows[0]['id'] == 'glider9' and rows[0]['online'] is True
+        assert rows[0]['stage'] == 'setting' and rows[0]['config_id'] == 'abc123'  # vitals keys also present
 
         # an unknown first token (no selection yet) is a bad Control command, never sent to a board
         assert await ask('bogus') == 'from cc err badcmd bogus'
@@ -198,6 +202,14 @@ async def _web():
         assert status == 200
         rows = json.loads(payload)
         assert rows[0]['id'] == 'glider9' and rows[0]['online'] is True and rows[0]['stage'] == 'setting'
+
+        # the heartbeat polls health -> board_rows carries live vitals (uptime + board clock)
+        for _ in range(50):
+            rows = json.loads((await _http(WEB_PORT, 'GET', '/api/boards'))[1])
+            if rows[0].get('uptime') is not None:
+                break
+            await asyncio.sleep(0.02)
+        assert rows[0]['uptime'] == 12345 and rows[0]['clock'] == '2026-06-22T20:00:00', rows[0]
 
         # POST /api/cmd routes to the board and returns its reply
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
@@ -293,6 +305,12 @@ async def _gps_assist():
         out = json.loads(reply[len('from cc ok '):])
         assert out['assisted'] == 'glider9' and out['saved'] is True, out
         assert abs(out['position']['latitude'] - 48.1173) < 1e-3, out
+
+        # the dashboard 'gps' button: POST /api/assist does the same push (set-config launch)
+        status, payload = await _http(GPS_WEB_PORT, 'POST', '/api/assist', json.dumps({'board': 'glider9'}))
+        assert status == 200, payload
+        pushed = json.loads(payload)
+        assert pushed['assisted'] is True and abs(pushed['position']['latitude'] - 48.1173) < 1e-3, pushed
     finally:
         operator_writer.close()
         hub_task.cancel()

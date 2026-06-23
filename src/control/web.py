@@ -88,6 +88,8 @@ class Web:
             return await self._api_cmd(body, writer)
         if method == 'POST' and route == '/api/log':
             return await self._api_log(body, writer)
+        if method == 'POST' and route == '/api/assist':
+            return await self._api_assist(body, writer)
         if method == 'GET' and route == '/events':
             return await self._events(writer)
         if method == 'GET' and route == '/logs':
@@ -117,6 +119,27 @@ class Web:
         if resp is None:
             return await _send_json(writer, 502, {'board': board.id, 'error': 'offline'})
         return await _send_json(writer, 200, {'board': board.id, 'status': resp.command, 'args': resp.args})
+
+    async def _api_assist(self, body: bytes, writer) -> None:
+        """Push the host GPS position into a board's launch config (the dashboard 'gps' button) -- the
+        web counterpart to the `assist` operator command (set-config launch: merge + persist)."""
+        try:
+            request = json.loads(body or b'{}')
+        except ValueError:
+            return await _send_json(writer, 400, {'error': 'bad json'})
+        board = self.hub.boards.get(request.get('board'))
+        if board is None or not board.online:
+            return await _send_json(writer, 404, {'error': 'no online board %r' % request.get('board')})
+        if self.hub.gps is None:
+            return await _send_json(writer, 400, {'error': 'no host gps'})
+        position = self.hub.gps.position()
+        if position is None:
+            return await _send_json(writer, 400, {'error': 'host gps not 3d'})
+        resp = await board.command('set-config', 'launch', json.dumps(position))
+        if resp is None:
+            return await _send_json(writer, 502, {'board': board.id, 'error': 'offline'})
+        return await _send_json(writer, 200,
+                                {'board': board.id, 'assisted': resp.command == 'ok', 'position': position})
 
     async def _api_log(self, body: bytes, writer) -> None:
         """Start/stop the hub's log stream for a board from the dashboard: body `{board, interval_ms}`
