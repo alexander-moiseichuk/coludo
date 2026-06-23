@@ -20,7 +20,7 @@ import time
 
 import framebuf
 import ssd1306
-from machine import I2C, PWM, Pin
+from machine import I2C, PWM, Pin, Timer
 
 try:
     from micropython import const
@@ -52,11 +52,11 @@ _FREQ_HZ: int = const(50)
 _PERIOD_US: int = const(1000000 // _FREQ_HZ)  # 20000 us
 _U16: int = const(65535)
 
-# --- button timing (in poll ticks of _POLL_MS) -----------------------------------------------------
-_POLL_MS: int = const(20)
-_CONFIRM_TICKS: int = const(2)        # hold this long before the first step (filters the both-press race)
-_REPEAT_DELAY_TICKS: int = const(25)  # then keep holding this long (~0.5 s) before auto-repeat begins -> a tap = 1 step
-_REPEAT_TICKS: int = const(8)         # auto-repeat period once it has begun (sweep while held)
+# --- button timing (event-driven: pin IRQs + a repeat timer, no active polling) -------------------
+_DEBOUNCE_MS: int = const(40)       # settle the level after an edge; also filters the both-press race
+_REPEAT_DELAY_MS: int = const(500)  # hold this long before auto-repeat begins -> a tap = 1 step
+_REPEAT_MS: int = const(160)        # auto-repeat period once it has begun (sweep while held)
+_TIMER_ID: int = const(0)           # machine.Timer for auto-repeat (armed only while a button is held)
 
 # --- the three editable parameters: indices into _HUD_ROWS (defined below, after Servo) -------------
 _ANG: int = const(0)
@@ -196,20 +196,37 @@ class Hud:
 
 
 class Buttons:
-    """Poll the two buttons: edge-triggered single press with hold-to-repeat, and a both-pressed combo
-    that fires once. The _CONFIRM_TICKS delay before the first single step swallows the brief moment one
-    button of an intended combo lands before the other."""
+    """Event-driven two-button input -- no active polling. Pin IRQs (both edges) wake the events()
+    task via a ThreadSafeFlag; a machine.Timer, armed only while a single button is held, drives
+    auto-repeat. A short debounce read after each wake settles the level and filters the both-press
+    race (an intended combo lands within the window -> read as both -> one 'switch', no stray step)."""
 
     def __init__(self):
-        self._left = Pin(_PIN_LEFT, Pin.IN, Pin.PULL_DOWN if _BUTTON_ACTIVE else Pin.PULL_UP)
-        self._right = Pin(_PIN_RIGHT, Pin.IN, Pin.PULL_DOWN if _BUTTON_ACTIVE else Pin.PULL_UP)
-        self._held_side: int = 0   # -1 left, +1 right, 0 none
-        self._held_ticks: int = 0
-        self._combo: bool = False
-        self._counts: dict = {'+': 0, '-': 0, 'switch': 0}  # bench instrumentation (see _emit)
+        pull = Pin.PULL_DOWN if _BUTTON_ACTIVE else Pin.PULL_UP
+        self._left = Pin(_PIN_LEFT, Pin.IN, pull)
+        self._right = Pin(_PIN_RIGHT, Pin.IN, pull)
+        self._flag = asyncio.ThreadSafeFlag()
+        self._left.irq(self._wake, Pin.IRQ_RISING | Pin.IRQ_FALLING)
+        self._right.irq(self._wake, Pin.IRQ_RISING | Pin.IRQ_FALLING)
+        self._repeat = Timer(_TIMER_ID)
+        self._held: int = 0          # current single-held side: -1 left, +1 right, 0 none/both
+        self._since: int = 0         # ticks_ms when the current single press began (for the repeat delay)
+        self._combo: bool = False    # a both-press is in progress (suppress single events until release)
+        self._counts: dict = {'+': 0, '-': 0, 'switch': 0}
 
-    def _down(self, pin) -> bool:
-        return pin.value() == _BUTTON_ACTIVE
+    def _wake(self, source) -> None:
+        """IRQ / repeat-timer callback: just wake the task (ThreadSafeFlag is ISR-safe, no allocation)."""
+        self._flag.set()
+
+    def _read(self) -> tuple:
+        """The two button levels as (left, right) booleans -- one read, unpacked by the caller."""
+        return self._left.value() == _BUTTON_ACTIVE, self._right.value() == _BUTTON_ACTIVE
+
+    def _arm_repeat(self) -> None:
+        self._repeat.init(period=_REPEAT_MS, mode=Timer.PERIODIC, callback=self._wake)
+
+    def _stop_repeat(self) -> None:
+        self._repeat.deinit()
 
     def _emit(self, event: str, left: bool, right: bool) -> str:
         """Tally an event and always print a 'BTN' trace line -- the USB console (115200 over
@@ -221,32 +238,43 @@ class Buttons:
             event, left, right, self._counts['+'], self._counts['-'], self._counts['switch']))
         return event
 
-    def poll(self) -> str:
-        """One sample -> an event: '-', '+', 'switch', or '' (nothing). Call every _POLL_MS."""
-        left, right = self._down(self._left), self._down(self._right)
-        if left and right:
-            self._held_side, self._held_ticks = 0, 0
-            if not self._combo:
-                self._combo = True
-                return self._emit('switch', left, right)
-            return ''
-        if left or right:
-            side = -1 if left else 1
+    def _resolve(self, left: bool, right: bool) -> str:
+        """Map the settled button state to an event ('-', '+', 'switch', or '')."""
+        if left and right:                       # both -> one switch, then idle until released
+            self._stop_repeat()
+            self._held = 0
             if self._combo:
-                return ''  # wait for full release after a combo
-            if side != self._held_side:
-                self._held_side, self._held_ticks = side, 1  # new press: start the confirm window
                 return ''
-            self._held_ticks += 1
-            elapsed = self._held_ticks - _CONFIRM_TICKS  # ticks since the first step fired
-            first = elapsed == 0  # the initial step
-            # auto-repeat only after holding _REPEAT_DELAY_TICKS past the first step, then every _REPEAT_TICKS
-            repeat = elapsed >= _REPEAT_DELAY_TICKS and (elapsed - _REPEAT_DELAY_TICKS) % _REPEAT_TICKS == 0
-            if first or repeat:
+            self._combo = True
+            return self._emit('switch', left, right)
+        if left or right:
+            if self._combo:                      # a button still down after a combo -> wait for full release
+                return ''
+            side = -1 if left else 1
+            if side != self._held:               # new single press -> first step + arm the repeat timer
+                self._held = side
+                self._since = time.ticks_ms()
+                self._arm_repeat()
                 return self._emit('-' if side < 0 else '+', left, right)
-            return ''
-        self._held_side, self._held_ticks, self._combo = 0, 0, False
+            if time.ticks_diff(time.ticks_ms(), self._since) >= _REPEAT_DELAY_MS:  # held -> auto-repeat
+                return self._emit('-' if side < 0 else '+', left, right)
+            return ''                            # held, but not past the repeat delay yet
+        self._stop_repeat()                      # neither pressed -> release, reset
+        self._held = 0
+        self._combo = False
         return ''
+
+    async def wait_event(self) -> str:
+        """Await the next button event ('-', '+', 'switch'), driven by pin IRQs (edges) + the repeat
+        timer (while held) -- never an active poll. Each wake settles for _DEBOUNCE_MS, then resolves the
+        state; loops until a wake actually produces an event. (A plain async method, not an async
+        generator -- MicroPython's `async for` does not support those.)"""
+        while True:
+            await self._flag.wait()
+            await asyncio.sleep_ms(_DEBOUNCE_MS)  # let the level settle (and the both-press land together)
+            event = self._resolve(*self._read())
+            if event:
+                return event
 
 
 class Tester:
@@ -320,12 +348,10 @@ async def main() -> None:
     tester.report('init')
     tester.hud.render(tester.servo, tester.selected)
     buttons = Buttons()
-    while True:
-        event = buttons.poll()
-        if event:
-            tester.apply_event(event)
-            tester.hud.render(tester.servo, tester.selected)
-        await asyncio.sleep_ms(_POLL_MS)
+    while True:  # event-driven: each wait blocks on IRQ edges + the repeat timer, no active poll
+        event = await buttons.wait_event()
+        tester.apply_event(event)
+        tester.hud.render(tester.servo, tester.selected)
 
 
 if __name__ == '__main__':
