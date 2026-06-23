@@ -31,33 +31,33 @@ except ImportError:  # CPython (host syntax check only)
 
 
 # --- hardware wiring (servos.md) -------------------------------------------------------------------
-_I2C_ID = const(0)
-_PIN_SDA = const(5)
-_PIN_SCL = const(6)
-_PIN_SERVO = const(3)  # GPIO3 (lastminuteengineers ESP32-C3 super-mini pinout: a safe, free PWM pin)
-_PIN_LEFT = const(0)   # '-' button
-_PIN_RIGHT = const(1)  # '+' button
-_BUTTON_ACTIVE = const(1)  # capacitive module reads 1 when touched; set 0 for an active-low module
+_I2C_ID: int = const(0)
+_PIN_SDA: int = const(5)
+_PIN_SCL: int = const(6)
+_PIN_SERVO: int = const(3)  # GPIO3 (lastminuteengineers ESP32-C3 super-mini pinout: a safe, free PWM pin)
+_PIN_LEFT: int = const(0)   # '-' button
+_PIN_RIGHT: int = const(1)  # '+' button
+_BUTTON_ACTIVE: int = const(1)  # capacitive module reads 1 when touched; set 0 for an active-low module
 
 # --- OLED geometry: a 72x40 visible window centred in the SSD1306's 128x64 buffer ------------------
-_BUFFER_WIDTH = const(128)
-_BUFFER_HEIGHT = const(64)
-_SCREEN_WIDTH = const(72)
-_SCREEN_HEIGHT = const(40)
-_X_OFFSET = const((_BUFFER_WIDTH - _SCREEN_WIDTH) // 2)   # 28
-_Y_OFFSET = const((_BUFFER_HEIGHT - _SCREEN_HEIGHT) // 2)  # 12
+_BUFFER_WIDTH: int = const(128)
+_BUFFER_HEIGHT: int = const(64)
+_SCREEN_WIDTH: int = const(72)
+_SCREEN_HEIGHT: int = const(40)
+_X_OFFSET: int = const((_BUFFER_WIDTH - _SCREEN_WIDTH) // 2)   # 28
+_Y_OFFSET: int = const((_BUFFER_HEIGHT - _SCREEN_HEIGHT) // 2)  # 12
 
 # --- PWM / servo timing ----------------------------------------------------------------------------
-_FREQ_HZ = const(50)
-_PERIOD_US = const(1000000 // _FREQ_HZ)  # 20000 us
-_U16 = const(65535)
+_FREQ_HZ: int = const(50)
+_PERIOD_US: int = const(1000000 // _FREQ_HZ)  # 20000 us
+_U16: int = const(65535)
 
 # --- button timing (in poll ticks of _POLL_MS) -----------------------------------------------------
-_POLL_MS = const(20)
-_CONFIRM_TICKS = const(2)        # a lone press must hold this long before the first step (filters a both-press race)
-_REPEAT_DELAY_TICKS = const(25)  # then keep holding this long (~0.5 s) before auto-repeat begins -> a tap = 1 step
-_REPEAT_TICKS = const(8)         # auto-repeat period once it has begun (sweep while held)
-_TRACE_BUTTONS = const(1)        # 1 -> print a 'BTN ...' trace line per button event (bench validation); 0 -> off
+_POLL_MS: int = const(20)
+_CONFIRM_TICKS: int = const(2)        # hold this long before the first step (filters the both-press race)
+_REPEAT_DELAY_TICKS: int = const(25)  # then keep holding this long (~0.5 s) before auto-repeat begins -> a tap = 1 step
+_REPEAT_TICKS: int = const(8)         # auto-repeat period once it has begun (sweep while held)
+_TRACE_BUTTONS: int = const(1)        # 1 -> print a 'BTN ...' trace line per button event (bench validation); 0 -> off
 
 # --- the three editable parameters: indices into _HUD_ROWS (defined below, after Servo) -------------
 _ANG: int = const(0)
