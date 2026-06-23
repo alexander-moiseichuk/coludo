@@ -96,14 +96,9 @@ async def amain():
     seq._tick(3200)  # well past launch_ms
     assert ctrl.stage == Stage.SETTING  # held -> no auto-advance
 
-    # missing accel reading: _magnitude raises (no silent None) and _tick swallows it -- a dropped
-    # sample skips the tick (no crash, no spurious advance) rather than guarding every use.
-    raised = False
-    try:
-        sequencer._magnitude(None)
-    except TypeError:
-        raised = True
-    assert raised
+    # missing accel reading: _magnitude returns None (guarded, no raise) and _tick skips via an explicit
+    # is-not-None check -- a dropped sample does not advance, no crash, no GC-churning exception (g9).
+    assert sequencer._magnitude(None) is None
 
     class _NoReading:
         def value(self):
@@ -113,7 +108,7 @@ async def amain():
     ctrl.manual = False
     seq._stage_seen = None
     seq._accel = _NoReading()
-    seq._tick(4000)  # accel absent -> _magnitude raises -> caught -> tick skipped
+    seq._tick(4000)  # accel absent -> guarded -> tick does nothing
     assert ctrl.stage == Stage.SETTING  # no crash, no advance
 
     print('ok: sequencer -- launch detect, boost-timeout, agl landing, on-ground, guard, manual hold, no-accel skip')

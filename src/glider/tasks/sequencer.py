@@ -22,9 +22,10 @@ import task
 _STAGE = controller_mod.Stage
 
 
-def _magnitude(accel) -> float:
-    """|accel| in g from (ax, ay, az). Raises (TypeError, unpacking None) when there is no reading --
-    the caller catches it and skips the tick rather than guarding every use with `is not None`."""
+def _magnitude(accel):
+    """|accel| in g from (ax, ay, az), or None when there is no reading."""
+    if accel is None:
+        return None
     ax, ay, az = accel
     return math.sqrt(ax * ax + ay * ay + az * az)
 
@@ -62,44 +63,41 @@ class Sequencer(task.Task):
         sustained-detect timer resets whenever the stage changes (so a separation-driven hop is clean).
         Paused while the operator holds the stage (ground test).
 
-        A missing accel reading raises out of _magnitude and is caught here -> the tick is skipped (the
-        sustained timer simply does not advance, tolerating a transient dropout) instead of a `is not
-        None` guard on every use. The GLIDING agl/elevation checks stay explicit -- that is real
-        fallback logic (laser first, barometric elevation second), not error handling."""
+        Missing sensor readings are guarded with explicit `is not None` checks -- NOT try/except. In
+        MicroPython raising allocates a traceback frame (GC churn), and the missing-accel case is most
+        frequent exactly under the launch/impact vibration that drops the most samples -- the worst
+        moment for a GC latency spike (6/23 g9). A dropped sample simply does not advance the timer."""
         if self.controller.manual:  # operator holds the stage -> do not auto-advance
             return
         stage = self.controller.stage
         if stage != self._stage_seen:  # changed (by us or by the separation driver) -> fresh timer
             self._since = None
             self._stage_seen = stage
-        try:
-            if stage == _STAGE.SETTING:
-                g = _magnitude(self._accel.value())
-                if g > self._launch_g:
-                    self._since = self._since if self._since is not None else now
-                    if time.ticks_diff(now, self._since) >= self._launch_ms:
-                        self._advance(_STAGE.BOOSTING, 'launch |a|=%.1fg' % g)
-                else:
-                    self._since = None
-            elif stage == _STAGE.BOOSTING:
-                self._since = self._since if self._since is not None else now  # boost-entry time
-                if time.ticks_diff(now, self._since) >= self._boost_timeout_ms:
-                    self._advance(_STAGE.GLIDING, 'burnout timeout (no separation)')
-            elif stage == _STAGE.GLIDING:
-                agl = self._agl.value()
-                height = agl if agl is not None else self._elevation.value()
-                if height is not None and height < self._land_agl_m:
-                    self._advance(_STAGE.LANDING, 'agl %.1fm' % height)
-            elif stage == _STAGE.LANDING:
-                g = _magnitude(self._accel.value())
-                if abs(g - 1.0) < self._still_g:
-                    self._since = self._since if self._since is not None else now
-                    if time.ticks_diff(now, self._since) >= self._ground_ms:
-                        self._advance(_STAGE.DONE, 'stationary %.1fg' % g)
-                else:
-                    self._since = None
-        except TypeError:  # accel reading absent this tick (_magnitude unpacks None) -> skip the tick
-            pass
+        if stage == _STAGE.SETTING:
+            g = _magnitude(self._accel.value())
+            if g is not None and g > self._launch_g:
+                self._since = self._since if self._since is not None else now
+                if time.ticks_diff(now, self._since) >= self._launch_ms:
+                    self._advance(_STAGE.BOOSTING, 'launch |a|=%.1fg' % g)
+            else:
+                self._since = None
+        elif stage == _STAGE.BOOSTING:
+            self._since = self._since if self._since is not None else now  # boost-entry time
+            if time.ticks_diff(now, self._since) >= self._boost_timeout_ms:
+                self._advance(_STAGE.GLIDING, 'burnout timeout (no separation)')
+        elif stage == _STAGE.GLIDING:
+            agl = self._agl.value()
+            height = agl if agl is not None else self._elevation.value()
+            if height is not None and height < self._land_agl_m:
+                self._advance(_STAGE.LANDING, 'agl %.1fm' % height)
+        elif stage == _STAGE.LANDING:
+            g = _magnitude(self._accel.value())
+            if g is not None and abs(g - 1.0) < self._still_g:
+                self._since = self._since if self._since is not None else now
+                if time.ticks_diff(now, self._since) >= self._ground_ms:
+                    self._advance(_STAGE.DONE, 'stationary %.1fg' % g)
+            else:
+                self._since = None
 
     async def run(self) -> None:
         while True:
