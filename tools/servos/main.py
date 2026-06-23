@@ -138,6 +138,21 @@ class Servo:
     def set_duty(self, value: int) -> None:
         self.apply_pulse(_convert(value, _DUT, _PUL))
 
+    # --- the 'api' callbacks: what each parameter maps to in the platform Servo/PWM API. Referenced by
+    # _HUD_ROWS as row['api'](servo); the banner prints them so you can see what the port actually offers.
+    def api_angle(self) -> dict:
+        """'angle' is not a native platform concept -- it is a logical dial derived from the pulse."""
+        return {'native': None, 'derived_from': 'pulse'}
+
+    def api_pulse(self) -> dict:
+        """'pulse' maps to PWM.duty_ns() when the port has it (sets the high time directly in ns),
+        else it is derived from duty_u16."""
+        return {'native': 'duty_ns' if hasattr(self._pwm, 'duty_ns') else None, 'period_us': _PERIOD_US}
+
+    def api_duty(self) -> dict:
+        """'duty' is the real PWM API: 16-bit duty_u16, plus freq() and the live readback."""
+        return {'native': 'duty_u16', 'range': [0, _U16], 'freq_hz': self._pwm.freq()}
+
 
 # Every per-parameter knob in ONE table (these were scattered across constants + three _step branches):
 # the OLED position (x, y in the visible window), the label, the editable [min, max], the step, and the
@@ -148,11 +163,11 @@ class Servo:
 # on the selected row, so the draw loop needs no per-row cursor branch.
 _HUD_ROWS = [
     {'x': 0, 'y': 16, 'text': ' ang', 'min': 0, 'max': 360, 'step': 5,
-     'get': Servo.get_angle, 'set': Servo.set_angle},
+     'get': Servo.get_angle, 'set': Servo.set_angle, 'api': Servo.api_angle},
     {'x': 0, 'y': 24, 'text': ' pul', 'min': 500, 'max': 2500, 'step': 25,  # microseconds
-     'get': Servo.get_pulse, 'set': Servo.set_pulse},
+     'get': Servo.get_pulse, 'set': Servo.set_pulse, 'api': Servo.api_pulse},
     {'x': 0, 'y': 32, 'text': ' dut', 'min': 1638, 'max': 8192, 'step': 100,  # duty_u16 == pulse 500..2500us @50Hz
-     'get': Servo.get_duty, 'set': Servo.set_duty},
+     'get': Servo.get_duty, 'set': Servo.set_duty, 'api': Servo.api_duty},
 ]
 
 
@@ -296,7 +311,8 @@ class Tester:
         print('# servo tester -- servo=pin%d left=pin%d right=pin%d i2c=(sda%d,scl%d) at %dHz' % (
             _PIN_SERVO, _PIN_LEFT, _PIN_RIGHT, _PIN_SDA, _PIN_SCL, _FREQ_HZ))
         for row in _HUD_ROWS:
-            print('# %s [%d..%d] step %d' % (row['text'].strip(), row['min'], row['max'], row['step']))
+            print('# %s [%d..%d] step %d  api=%s' % (
+                row['text'].strip(), row['min'], row['max'], row['step'], row['api'](self.servo)))
 
 
 async def main() -> None:
