@@ -141,6 +141,24 @@ Some set of [Goupchn SMD IC Test Hook Clips 10PCS 10 Colors for Logic Analyzer](
 For periodic checks during development how much power consumed something like [USB C Tester Power Meter](https://www.amazon.com/dp/B0DFBSFL38).
 If device allow to pass commands over USB it will be much better as will allow to control situation when wifi console is off.
 
+# 3D model data
+
+These numbers are coming from the printed TMS-7 models. 
+
+|Component|Count|Weight [g]|
+| ------------------- | --- | ---- |
+|Booster Body Tube    |  1  |  55  |
+|Engine Holder and Cap|  1  |  35  |
+|Parachute            |  1  |   3  |
+|F15-4 Engine         |  1  | 98.3 |
+|Wing                 |  2  |  18  |
+|Upper Body           |  1  |  10  |
+|Fin                  |  3  |   7  |
+|Front Lower Body     |  1  | 16.1 |
+|Back Lower Body      |  1  | 29.5 |
+
+So assembled booster will weigh 191.3 grams, the glider itself without electronics will weigh around 112.6 grams, the electronics are excpected to weigh around 100-150 grams.
+Thus the assembled Coludo will be between 405-455 grams.
 
 # Potential configurations
 
