@@ -65,6 +65,10 @@ async def _fake_board(reader, writer):
             window = int(msg.args[0]) if msg.args else 0
             lines = ['100 test :: tick'] if window > 0 else []
             reply = cc.build('ok', [json.dumps({'lines': lines})])
+        elif msg.command == 'tlm':  # poll-model telemetry streaming: one canned sample per armed window
+            window = int(msg.args[0]) if msg.args else 0
+            samples = ['@s_t.csv@1;2;3'] if window > 0 else []
+            reply = cc.build('ok', [json.dumps({'samples': samples})])
         elif msg.command in ('reset-config', 'reboot'):
             reply = cc.build('ok')
         else:
@@ -357,8 +361,19 @@ async def _log_stream():
         status, payload = await _http(LOG_WEB_PORT, 'POST', '/api/log',
                                       json.dumps({'board': 'glider9', 'interval_ms': 40}))
         assert status == 200 and json.loads(payload) == {'board': 'glider9', 'streaming': True,
-                                                         'interval_ms': 40}, payload
+                                                         'kind': 'log', 'interval_ms': 40}, payload
         assert 'glider9' in hub.streams
+
+        # telemetry stream: the SAME endpoint with kind=tlm polls the board's tlm buffer instead
+        status, payload = await _http(LOG_WEB_PORT, 'POST', '/api/log',
+                                      json.dumps({'board': 'glider9', 'kind': 'tlm', 'interval_ms': 40}))
+        assert status == 200 and json.loads(payload)['kind'] == 'tlm', payload
+        for _ in range(50):
+            if any('@s_t.csv@' in line for line in seen):
+                break
+            await asyncio.sleep(0.02)
+        assert any('@s_t.csv@' in line for line in seen), seen[-5:]  # tlm samples flowed to the feed
+
         status, payload = await _http(LOG_WEB_PORT, 'POST', '/api/log',
                                       json.dumps({'board': 'glider9', 'interval_ms': 0}))
         assert status == 200 and json.loads(payload) == {'board': 'glider9', 'streaming': False}

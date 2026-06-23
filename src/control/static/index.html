@@ -87,9 +87,13 @@
 </p>
 <pre id="inspresult"></pre>
 
-<h2>logs</h2>
+<h2>logs &amp; telemetry</h2>
 <p>
   <input id="logboard" placeholder="board id" size="10">
+  <select id="logkind" title="the board serves one stream at a time">
+    <option value="log">logs</option>
+    <option value="tlm">telemetry</option>
+  </select>
   <input id="logms" value="1000" size="6" title="poll interval (ms)">
   <button id="logstart">start</button>
   <button id="logstop">stop</button>
@@ -263,11 +267,12 @@ const logPane = document.getElementById('logs');
 const logBoard = () => document.getElementById('logboard').value.trim();
 
 async function setLog(on) {
+  const kind = document.getElementById('logkind').value;
   const interval_ms = on ? (parseInt(document.getElementById('logms').value, 10) || 1000) : 0;
   const res = await fetch('/api/log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ board: logBoard(), interval_ms }),
+    body: JSON.stringify({ board: logBoard(), kind, interval_ms }),
   });
   return res.json();
 }

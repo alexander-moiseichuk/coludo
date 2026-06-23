@@ -105,42 +105,47 @@ class Server:
             except asyncio.QueueFull:
                 pass
 
-    async def _stream(self, client, interval_ms) -> None:
-        """Poll a board's `log` buffer every `interval_ms` and emit each returned line. The board
-        window is 2x the interval so its deadline never lapses between polls; if this task stops, the
-        window lapses and the board self-disables (no consumer -> no collection). Ends on disconnect."""
+    async def _stream(self, client, interval_ms, kind) -> None:
+        """Poll a board's `log`/`tlm` buffer every `interval_ms` and emit each returned line. `kind` is
+        'log' (reply `{lines}`) or 'tlm' (reply `{samples}`) -- the board's poll model serves one at a
+        time, so the dashboard picks which. The board window is 2x the interval so its deadline never
+        lapses between polls; if this task stops, the window lapses and the board self-disables (no
+        consumer -> no collection). Ends on disconnect."""
+        field = 'samples' if kind == 'tlm' else 'lines'
         window_ms = max(1, interval_ms) * 2
         while True:
-            resp = await client.command('log', window_ms)
+            resp = await client.command(kind, window_ms)
             if resp is None:
                 return  # board dropped -> _handle marks it offline and drops the stream
             if resp.command == 'ok' and resp.args:
                 try:
-                    lines = json.loads(resp.args[0]).get('lines', [])
+                    items = json.loads(resp.args[0]).get(field, [])
                 except ValueError:
-                    lines = []
-                for line in lines:
+                    items = []
+                for line in items:
                     self._emit_log(client.id, line)
             await asyncio.sleep(interval_ms / 1000.0)
 
-    def start_stream(self, client, interval_ms) -> None:
-        """(Re)start streaming a board's logs at `interval_ms`, replacing any running stream for it."""
+    def start_stream(self, client, interval_ms, kind='log') -> None:
+        """(Re)start streaming a board's `kind` ('log'|'tlm') at `interval_ms`, replacing any running
+        stream for it."""
         self._drop_stream(client.id)
-        self.streams[client.id] = asyncio.create_task(self._stream(client, interval_ms))
+        self.streams[client.id] = (asyncio.create_task(self._stream(client, interval_ms, kind)), kind)
 
     def _drop_stream(self, board_id):
         """Cancel and forget any streaming task for a board; return its Board (or None)."""
-        task = self.streams.pop(board_id, None)
-        if task is not None:
-            task.cancel()
+        entry = self.streams.pop(board_id, None)
+        if entry is not None:
+            entry[0].cancel()
         return self.boards.get(board_id)
 
     async def stop_stream(self, board_id) -> None:
-        """Stop streaming a board's logs and tell the board to stop collecting (a final `log 0`
-        drain), so it does not keep teeing once nobody is polling."""
+        """Stop streaming a board and tell it to stop collecting (a final `<kind> 0` drain), so it does
+        not keep teeing once nobody is polling."""
+        kind = self.streams.get(board_id, (None, 'log'))[1]
         client = self._drop_stream(board_id)
         if client is not None and client.online:
-            await client.command('log', 0)
+            await client.command(kind, 0)
 
     async def _stream_toggle(self, client, args) -> str:
         """`<board> log [ms|off]`: start/refresh (default 1000 ms) or stop the hub's log stream for one

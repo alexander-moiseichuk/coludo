@@ -142,9 +142,9 @@ class Web:
                                 {'board': board.id, 'assisted': resp.command == 'ok', 'position': position})
 
     async def _api_log(self, body: bytes, writer) -> None:
-        """Start/stop the hub's log stream for a board from the dashboard: body `{board, interval_ms}`
-        (interval_ms <= 0 stops). The streamed lines arrive on the /logs SSE feed, same as when an
-        operator types `<board> log <ms>`."""
+        """Start/stop the hub's log/telemetry stream for a board: body `{board, kind, interval_ms}`
+        where `kind` is 'log' (default) or 'tlm' (interval_ms <= 0 stops). The board's poll model
+        serves one at a time. Streamed lines arrive on the /logs SSE feed, same as `<board> log <ms>`."""
         try:
             request = json.loads(body or b'{}')
         except ValueError:
@@ -152,12 +152,16 @@ class Web:
         board = self.hub.boards.get(request.get('board'))
         if board is None or not board.online:
             return await _send_json(writer, 404, {'error': 'no online board %r' % request.get('board')})
+        kind = request.get('kind', 'log')
+        if kind not in ('log', 'tlm'):
+            return await _send_json(writer, 400, {'error': "kind must be 'log' or 'tlm'"})
         interval_ms = request.get('interval_ms', 1000)
         if not isinstance(interval_ms, int) or interval_ms <= 0:
             await self.hub.stop_stream(board.id)
             return await _send_json(writer, 200, {'board': board.id, 'streaming': False})
-        self.hub.start_stream(board, interval_ms)
-        return await _send_json(writer, 200, {'board': board.id, 'streaming': True, 'interval_ms': interval_ms})
+        self.hub.start_stream(board, interval_ms, kind)
+        return await _send_json(writer, 200,
+                                {'board': board.id, 'streaming': True, 'kind': kind, 'interval_ms': interval_ms})
 
     async def _events(self, writer) -> None:
         writer.write(
