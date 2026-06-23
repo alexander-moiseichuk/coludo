@@ -57,7 +57,6 @@ _POLL_MS: int = const(20)
 _CONFIRM_TICKS: int = const(2)        # hold this long before the first step (filters the both-press race)
 _REPEAT_DELAY_TICKS: int = const(25)  # then keep holding this long (~0.5 s) before auto-repeat begins -> a tap = 1 step
 _REPEAT_TICKS: int = const(8)         # auto-repeat period once it has begun (sweep while held)
-_TRACE_BUTTONS: int = const(1)        # 1 -> print a 'BTN ...' trace line per button event (bench validation); 0 -> off
 
 # --- the three editable parameters: indices into _HUD_ROWS (defined below, after Servo) -------------
 _ANG: int = const(0)
@@ -213,13 +212,13 @@ class Buttons:
         return pin.value() == _BUTTON_ACTIVE
 
     def _emit(self, event: str, left: bool, right: bool) -> str:
-        """Tally an event and (when _TRACE_BUTTONS) print a 'BTN' trace line: the event, the raw pin
-        levels (confirms wiring/polarity), and the running +/-/switch counts -- so a hand-pressed
-        sequence is verifiable from the console."""
+        """Tally an event and always print a 'BTN' trace line -- the USB console (115200 over
+        /dev/ttyACMx) is the detailed tracking channel; the OLED only shows the live values. The line
+        carries the event, the raw pin levels (confirms wiring/polarity) and the running counts, so a
+        hand-pressed sequence is fully verifiable from the console."""
         self._counts[event] += 1
-        if _TRACE_BUTTONS:
-            print('BTN ev=%-6s L=%d R=%d +=%d -=%d switch=%d' % (
-                event, left, right, self._counts['+'], self._counts['-'], self._counts['switch']))
+        print('BTN ev=%-6s L=%d R=%d +=%d -=%d switch=%d' % (
+            event, left, right, self._counts['+'], self._counts['-'], self._counts['switch']))
         return event
 
     def poll(self) -> str:
