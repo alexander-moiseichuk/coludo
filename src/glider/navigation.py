@@ -39,9 +39,13 @@ GATE: int = const(2)     # outside the zone -> heading for the nearer short-side
 
 
 def _offset_m(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
-    """(east, north) offset in metres from point 1 to point 2 (equirectangular)."""
+    """(east, north) offset in metres from point 1 to point 2 (equirectangular). The longitude delta is
+    wrapped to [-180, 180] (g4) so a span crossing the anti-meridian (+/-180 deg) does not flip the
+    vector -- the same wrap the heading-error math uses. Coludo flies nowhere near +/-180, but it is a
+    free correctness guard and identical to the plain subtraction everywhere else."""
     lat_mid = math.radians((lat1 + lat2) / 2.0)
-    east = (lon2 - lon1) * _M_PER_DEG * math.cos(lat_mid)
+    dlon = (lon2 - lon1 + 180.0) % 360.0 - 180.0  # anti-meridian-safe longitude delta (g4)
+    east = dlon * _M_PER_DEG * math.cos(lat_mid)
     north = (lat2 - lat1) * _M_PER_DEG
     return east, north
 
@@ -61,7 +65,12 @@ def distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 def zone(corner_tl: tuple, corner_br: tuple) -> tuple:
     """Resolve the rectangle (top-left, bottom-right corners, each (lat, lon)) -> (target, gate_a,
     gate_b): the centre and the midpoints of the two SHORTER sides. A horizontally (longitude)
-    stretched zone gates on its left/right edges; a vertically (latitude) stretched one on top/bottom."""
+    stretched zone gates on its left/right edges; a vertically (latitude) stretched one on top/bottom.
+
+    g5: corner ORDER does not matter. The centre is the average, the spans use abs(), and the gates are
+    the coordinate EXTREMES (lon_l/lon_r at the centre latitude, or lat_t/lat_b at the centre longitude)
+    -- so whichever diagonal pair is passed (TL/BR or BL/TR), the two returned gates are the same two
+    side-midpoints; steer() then picks the nearer. inside() likewise uses min/max. No normalisation needed."""
     lat_t, lon_l = corner_tl
     lat_b, lon_r = corner_br
     lat_c = (lat_t + lat_b) / 2.0
