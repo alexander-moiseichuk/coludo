@@ -46,6 +46,42 @@ There are several improvements planned to mitigate those problems:
    on `ticks_us()`, not `asyncio.sleep`; if needed it moves to its own core thread.
 4. If that is not enough, native code is used for the flight controller and servo control.
 
+## Flight envelope (E16 / F15 estimates)
+
+Approximate, **basic-fidelity** numbers to seed modelling and the HITL simulation (Phase-5 `g15`), and
+to sanity-check sensor ranges and the launch-detect threshold. Derived from the TMS-7 masses in
+[`hardware.md`](../doc/hardware.md) (booster airframe ~93 g + glider airframe 112.6 g + electronics
+~125 g, mid of the 100–150 g budget) and the printed models in [`models/TMS-7`](../models/TMS-7).
+
+**Assumptions (kept deliberately crude — "air quality 3"):** vertical launch, no wind; constant
+*average* motor thrust over the burn with propellant mass burning off linearly; drag `F = ½·ρ·v²·Cd·A`
+with sea-level `ρ = 1.225 kg/m³`, `Cd ≈ 0.6`, frontal area from a ~30 mm effective diameter
+(`A ≈ 7 cm²`); glide phase `L/D ≈ 5` at ~12 m/s. Real flights will differ — these are seeds, not
+guarantees.
+
+| Parameter | **E16** | **F15** |
+|---|---|---|
+| Liftoff mass (incl. motor) | ~390 g | ~430 g |
+| Total impulse / burn | 28 N·s / 1.8 s | 50 N·s / 3.5 s |
+| Peak accel — accelerometer reads (specific force) | **~8.7 g** (peak thrust 33 N) | **~5.9 g** (peak thrust 25 N) |
+| Sustained boost — accelerometer reads | ~4.4 g | ~3.6 g |
+| Peak speed (at burnout) | ~58 m/s (~210 km/h) | ~85 m/s (~305 km/h) |
+| Apogee (vertical) | ~205 m @ ~7 s | ~445 m @ ~11 s |
+| Glide range / time (L/D 5) | ~1.0 km / ~85 s | ~2.2 km / ~185 s |
+| Total flight | ~90 s | ~195 s |
+
+**What this means for the design:**
+- *Accelerometer:* the accelerometer reads **specific force** = kinematic acceleration **+ 1 g**. Peak
+  is only ~6–9 g, so even the BNO055 (±16 g) would not clip — but the ADXL375 (±200 g) stays the boost
+  source for headroom and noise margin (clones/airframe vary; a spike can exceed the published peak).
+- *Launch detect:* sustained boost reads ~3.6–4.4 g, comfortably above the `launch_g = 3.0` threshold,
+  and the ignition spike (~6–9 g) confirms — so `launch_g`/`launch_ms` are in range for both motors
+  (these passive E16/F15 flights are exactly where they get tuned from real data).
+- *Mission profile:* the F15 roughly **doubles apogee** and gives **~2×** the descent time — far more
+  glide/nav window — so it is the better motor for exercising active control once the passive flights
+  validate the data pipeline. The ~1–2 km ideal glide range dwarfs the 200 m landing-zone gate
+  (`max_range_m`): the glider has ample range to return, which is what the navigation spends it on.
+
 # Lifecycle
 
 The operational lifecycle of the glider is brief and divided into four distinct phases:
