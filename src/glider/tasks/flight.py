@@ -62,6 +62,11 @@ class Flight(task.Task):
         self._attitude = databoard.Databoard.parameter('attitude')  # (heading, roll, pitch)
         self._position = databoard.Databoard.parameter('position')  # (lat, lon) for landing-zone navigation
         self._mission = inspector.Inspector.get('mission')  # the landing zone lives here (may be None)
+        # g7: throttle navigation.steer() (sin/cos/atan2) to GPS cadence -- recompute the target heading
+        # every nav_period_ms, cache the float, and read the cache at schedule_hz (see _target_heading).
+        self._nav_period_us: int = self.config.get('nav_period_ms', 100) * 1000
+        self._nav_heading = None  # cached target heading (None -> recompute on the next step)
+        self._nav_updated_us: int = 0
         self._heading_hold = None  # captured on entering a control stage -> hold that heading
         self._active: bool = False  # in a control stage (PID engaged)
         self._stage = None  # the current control-stage name (for inspect)
@@ -92,6 +97,7 @@ class Flight(task.Task):
         if not self._active:  # entering control (from a non-control stage): capture heading, reset PIDs
             self._active = True
             self._heading_hold = heading
+            self._nav_heading = None  # force a fresh steer() on the first controlled step (g7 cache)
             self._last_step_us = start  # so the first dt below is ~0 -> nominal (no jump from a stale gap)
             for controller in self._pid.values():
                 controller.reset()
@@ -110,7 +116,8 @@ class Flight(task.Task):
         roll_cmd = self._pid['roll'].step(roll_setpoint - roll, dt)
         pitch_cmd = self._pid['pitch'].step(setpoint.get('pitch', 0.0) - pitch, dt)
         yaw_cmd = self._pid['yaw'].step(heading_error, dt)  # rudder coordinates the banked turn
-        self._apply(self._mixer.mix(roll=round(roll_cmd), pitch=round(pitch_cmd), yaw=round(yaw_cmd)))
+        # positional (not roll=...) so no kwargs dict is built on the hot path (g3)
+        self._apply(self._mixer.mix(round(roll_cmd), round(pitch_cmd), round(yaw_cmd)))
         self._steps += 1
         elapsed = time.ticks_diff(time.ticks_us(), start)
         if elapsed > self._max_step_us:
@@ -123,17 +130,30 @@ class Flight(task.Task):
           2. no fix but a launch point (CC-set) -> hold the launch->gate bearing (open-loop, AIMED at
              the zone but wind-uncorrected -- the GPS-denied fallback);
           3. neither -> the captured glide heading (blind).
-        Nav steers only in GLIDING; LANDING locks straight-and-level (coludo.md)."""
+        Nav steers only in GLIDING; LANDING locks straight-and-level (coludo.md).
+
+        g7 (CPU): navigation.steer() is float trig (sin/cos/atan2 x several). The GNSS fixes at ~10 Hz
+        and the zone is fixed, so recomputing the bearing every 100 Hz step is wasted work that only
+        inflates max_step_us. The steer() result is CACHED and refreshed at most every nav_period_ms;
+        the loop reads the cached float in between. The cheap tiers (not gliding / no zone) return the
+        held heading directly with no trig and no caching. g2: this caller-side throttle (not a
+        zero-alloc rewrite of navigation.py) is the right fix -- it cuts the trig rate ~10x and keeps
+        the geometry module simple and correct."""
         if self.controller.stage_name() != 'gliding' or self._mission is None or not self._mission.zone:
             return self._heading_hold
+        now = time.ticks_us()
+        if self._nav_heading is not None and time.ticks_diff(now, self._nav_updated_us) < self._nav_period_us:
+            return self._nav_heading  # cached -- skip the trig this step
+        self._nav_updated_us = now
         zone = self._mission.zone
         position, source, _age = self._position.read()
         if source is not None and position is not None:  # tier 1: live fix
-            return navigation.steer(position, zone[0], zone[1])[0]
-        launch = self._mission.launch_point()  # tier 2: open-loop from the launch point (CC-set)
-        if launch is not None:
-            return navigation.steer(launch, zone[0], zone[1])[0]
-        return self._heading_hold  # tier 3: blind
+            self._nav_heading = navigation.steer(position, zone[0], zone[1])[0]
+        else:
+            launch = self._mission.launch_point()  # tier 2: open-loop from the launch point (CC-set)
+            self._nav_heading = navigation.steer(launch, zone[0], zone[1])[0] if launch is not None \
+                else self._heading_hold  # tier 3: blind
+        return self._nav_heading
 
     def _apply(self, angles: dict) -> None:
         # Resolve the fin objects ONCE and cache them (finding g4 / g8.A): controller.find() is a dict

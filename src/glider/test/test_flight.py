@@ -126,19 +126,31 @@ async def amain():
     navflight = flight.Flight('flight', {'schedule_hz': 0, 'gains': {}}, nav_ctrl)
     assert await navflight.setup() is True
     navflight._heading_hold = 200.0  # the blind fallback heading
+    # the g7 cache holds the steer() result for nav_period_ms; this test changes the inputs faster than
+    # that on purpose, so it clears _nav_heading before each tier to force a fresh recompute.
 
     # tier 3: no fix, no launch point -> hold the captured heading (blind)
     navflight._mission = _StubMission(launch=None)
+    navflight._nav_heading = None
     assert navflight._target_heading() == 200.0
     # tier 2: no fix, CC-set launch point (west of the zone) -> launch->left-gate bearing (~east, 90)
     navflight._mission = _StubMission(launch=(48.0005, 10.990))
+    navflight._nav_heading = None
     assert abs(navflight._target_heading() - 90.0) < 5.0
     # tier 1: a fresh fix overrides -> steer from the CURRENT position (east of the zone -> right gate, ~270)
     position = databoard.Databoard.provide('gnss', {'position': {'priority': 0, 'timeout_ms': 1000}}, 'position')
     position.push((48.0005, 11.020))
+    navflight._nav_heading = None
     assert abs(navflight._target_heading() - 270.0) < 5.0  # current position, not the launch point
     nav_ctrl._stage = 'landing'  # nav steers only in GLIDING -> LANDING holds (straight-and-level)
     assert navflight._target_heading() == 200.0
+
+    # g7: a second call within nav_period returns the CACHED heading (no recompute) even if the fix moves
+    nav_ctrl._stage = 'gliding'
+    navflight._nav_heading = None
+    first = navflight._target_heading()           # fresh steer() from (48.0005, 11.020) -> ~270
+    position.push((48.0005, 10.980))              # move the fix west; without the cache this -> ~90
+    assert navflight._target_heading() == first   # cached -> unchanged until nav_period elapses
 
     # bank-to-turn: in GLIDING a heading error commands a BANK (roll setpoint = nav_bank_gain*error,
     # capped at bank_limit), so the glider banks into the turn (differential elevons) instead of only
