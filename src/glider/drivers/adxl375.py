@@ -93,9 +93,14 @@ class Adxl375(task.Task):
 
         await self._dev.write(_REG_INT_MAP, b'\x00')  # DATA_READY -> INT1
         await self._dev.write(_REG_INT_ENABLE, bytes([_DATA_READY]))
-        await self._dev.read_into(_REG_DATAX0, self._buf)  # clear the pending DATA_READY
-        self._int = Pin(gpio, Pin.IN)  # so the next conversion gives a clean rising edge promptly
+        # Arm the IRQ BEFORE clearing the pending DATA_READY (finding 2.4.1): if a conversion landed
+        # during the writes above, INT1 is already high and stays high (DATA_READY is level, not a
+        # pulse) -- clearing FIRST then arming would miss that edge and, since the line is static-high,
+        # the RISING IRQ would never fire until the fallback sample. Armed first, the clear-read drops
+        # INT1 low, so the next conversion is a clean rising edge the IRQ catches.
+        self._int = Pin(gpio, Pin.IN)
         self._int.irq(self._on_data_ready, Pin.IRQ_RISING)
+        await self._dev.read_into(_REG_DATAX0, self._buf)  # clear -> INT1 low -> next conversion = clean edge
 
     def _on_data_ready(self, pin) -> None:
         """IRQ: a fresh sample is ready -- wake run(). ThreadSafeFlag.set() is interrupt-safe."""
