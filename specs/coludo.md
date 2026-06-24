@@ -46,6 +46,29 @@ There are several improvements planned to mitigate those problems:
    on `ticks_us()`, not `asyncio.sleep`; if needed it moves to its own core thread.
 4. If that is not enough, native code is used for the flight controller and servo control.
 
+### Garbage collection in flight — implemented (perf cluster g2/g3/g7/g14)
+
+The GC policy above is implemented in `tasks/sequencer.py`, gated behind the stage machine:
+
+- **At BOOSTING** (launch detected): `gc.collect()` compacts and frees the heap, then `gc.disable()`
+  — the whole **airborne phase runs with GC off**, so no collection pause (≈0.3 ms clean, *tens of ms*
+  on a full heap — far past the 10 ms control budget) can stall a 100 Hz control slice.
+- **At DONE** (stationary, on the ground): `gc.enable()` + `gc.collect()`. The re-enable is deliberately
+  **not** at LANDING: that transition fires at `< land_agl_m` (≈5 m) and possibly mid-flare, the worst
+  place to pay a tens-of-ms stall — it would be wrong to fly the whole descent and then crash on a GC
+  pause at the end. GC is held off through the flare and the collect is paid only once stopped.
+
+Disabling GC for the entire flight is only safe because the hot paths are near-zero-alloc: the mixer
+pre-resolves its surfaces and rewrites a shared output dict (**g3**, ~0 bytes/call), and the flight loop
+caches the landing-zone steering heading at GPS cadence instead of running `navigation.steer()` trig
+(~174 µs) every 100 Hz step (**g7/g2**). A HITL heap soak (F15, ~36 s flight) measured **~12 MB consumed
+with GC off, low-water ~20 MB free of 32 MB** (≈2.5× margin); the pre- and post-flight collect durations
+are **logged** (`gc pre-/post-flight collect <us>`) for post-flight analysis.
+
+Side effect (g14): the CPU-load probe in `tasks/board_health.py` was changed from a `sleep_ms(0)`
+busy-spin to a sleeping probe that measures wake-up lateness — the core now idles between samples,
+cutting draw markedly (measured **7.2 W → 3.6 W** with all servos active) at no loss of the load signal.
+
 ## Flight envelope (E16 / F15 estimates)
 
 Approximate, **basic-fidelity** numbers to seed modelling and the HITL simulation (Phase-5 `g15`), and

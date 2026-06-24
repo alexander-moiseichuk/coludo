@@ -11,6 +11,7 @@
 # (stages logged, no actuation -- the flight task stays disabled).
 
 import asyncio
+import gc
 import math
 import time
 
@@ -44,6 +45,12 @@ class Sequencer(task.Task):
         self._land_ms: int = cfg.get('land_ms', 300)  # AGL must stay below land_agl_m this long (anti-spike)
         self._still_g: float = cfg.get('still_g', 0.3)
         self._ground_ms: int = cfg.get('ground_ms', 3000)
+        # g14 (coludo.md GC policy): compact the heap at launch and DISABLE GC while airborne, so no GC
+        # pause (0.3 ms clean .. tens of ms on a full heap) can blow a 100 Hz control slice; re-enable at
+        # touchdown. Safe only because the hot paths are near-zero-alloc (g3 mixer, g7 nav cache) and the
+        # ~12 MB PSRAM absorbs the rest of the flight -- verified by a HITL heap soak. gc_flight False
+        # keeps GC on (ground tests, and the unit test below).
+        self._gc_flight: bool = cfg.get('gc_flight', True)
         self._accel = databoard.Databoard.parameter('accel')
         self._agl = databoard.Databoard.parameter('agl')
         self._elevation = databoard.Databoard.parameter('elevation')
@@ -58,6 +65,29 @@ class Sequencer(task.Task):
         recorder.Recorder.log(self.name, 'stage -> %s (%s)' % (_STAGE.STAGES[to_stage], reason))
         self._telemetry.push((_STAGE.STAGES[to_stage], reason))
         self._since = None
+        if self._gc_flight:  # g14: clean heap into the flight, GC OFF for the WHOLE airborne phase
+            if to_stage == _STAGE.BOOSTING:
+                start = time.ticks_us()
+                gc.collect()    # compact + free before the flight (a known pause, on the rod)
+                took = time.ticks_diff(time.ticks_us(), start)
+                recorder.Recorder.log(self.name, 'gc pre-flight collect %d us' % took)  # for post-flight analysis
+                gc.disable()
+            elif to_stage == _STAGE.DONE:
+                # re-enable + collect ONLY once stationary on the ground. The collect after a GC-off
+                # flight has accumulated garbage and blocks tens of ms (coludo.md) -- paying that at the
+                # LANDING transition would be at <land_agl_m (<5 m) and possibly mid-flare, the worst
+                # place for a control-loop stall. Holding GC off through the flare and collecting on the
+                # ground means NO GC pause ever happens in the air (it would be wrong to fly the whole
+                # descent and then crash on a GC stall at the end). Log the post-flight pause -- it is the
+                # actual cost the airborne phase deferred, recorded for analysis.
+                gc.enable()
+                start = time.ticks_us()
+                gc.collect()
+                took = time.ticks_diff(time.ticks_us(), start)
+                recorder.Recorder.log(self.name, 'gc post-flight collect %d us' % took)  # the deferred cost
+
+    async def finish(self) -> None:
+        gc.enable()  # never leave GC disabled if the task stops mid-flight (defensive)
 
     def _tick(self, now: int) -> None:
         """One stage-machine step. `now` is ticks_ms. Forward-only: each branch only advances, and the

@@ -32,9 +32,10 @@ class _StubController:
         self.stage = stage
 
 
-# small thresholds for a fast, deterministic test
+# small thresholds for a fast, deterministic test; gc_flight off here so the stage-logic checks do not
+# also toggle the interpreter's GC (the GC policy has its own focused test below)
 SPEC = {'period_ms': 10, 'launch_g': 3.0, 'launch_ms': 100, 'boost_timeout_ms': 500,
-        'land_agl_m': 5.0, 'land_ms': 100, 'still_g': 0.3, 'ground_ms': 300}
+        'land_agl_m': 5.0, 'land_ms': 100, 'still_g': 0.3, 'ground_ms': 300, 'gc_flight': False}
 
 
 async def amain():
@@ -118,7 +119,24 @@ async def amain():
     seq._tick(4000)  # accel absent -> guarded -> tick does nothing
     assert ctrl.stage == Stage.SETTING  # no crash, no advance
 
-    print('ok: sequencer -- launch detect, boost-timeout, agl landing, on-ground, guard, manual hold, no-accel skip')
+    # g14: GC policy -- compacted + DISABLED at BOOSTING, re-enabled at LANDING (coludo.md), and finish()
+    # never leaves it off. gc_flight True here (the only test that exercises the toggle).
+    import gc
+    gseq = sequencer.Sequencer('sequencer', {'gc_flight': True}, _StubController())
+    assert await gseq.setup() is True
+    assert gc.isenabled()
+    gseq._advance(Stage.BOOSTING, 'launch')
+    assert not gc.isenabled()           # GC off while airborne -> no collection can stall a control slice
+    gseq._advance(Stage.LANDING, 'agl')
+    assert not gc.isenabled()           # STILL off through the flare (a collect at <5 m could crash it)
+    gseq._advance(Stage.DONE, 'stationary')
+    assert gc.isenabled()               # re-enabled + collected only once stationary on the ground
+    gc.disable()
+    await gseq.finish()
+    assert gc.isenabled()               # defensive: a mid-flight stop must not leave GC disabled
+
+    print('ok: sequencer -- launch detect, boost-timeout, agl landing, on-ground, guard, manual hold, '
+          'no-accel skip, GC flight policy')
 
 
 asyncio.run(amain())
