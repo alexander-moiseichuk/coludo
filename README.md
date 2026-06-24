@@ -15,7 +15,7 @@ The way the glider looks can be ![found in here](https://github.com/alexander-mo
 
 **Documentation — [`doc/`](doc/)**
 - [Hardware](doc/hardware.md) — parts list, weights, power budget, and candidate build configurations.
-- [WaveShare ESP32-P4-WIFI6 pin map](doc/waveshare_esp32p4_pins.md) — reserved vs free GPIOs and the recommended `board.json` pin assignment.
+- [WaveShare ESP32-P4-WIFI6 pin map](doc/waveshare_esp32p4_pins.md) — reserved vs free GPIOs and the recommended `board.config` pin assignment.
 - [Tasks & plans](doc/plan.md) — required hardware checklist and the phased development roadmap.
 - [Development & testing guide](doc/skills.md) — tooling (`ampy`/`mpremote`/`rshell`, `mpy-cross`), source layout, the `panda` test network, and the testing rules.
 - [Benchmarks](doc/benches/) — board performance logs (BeagleBone, RPi4, StarFive).

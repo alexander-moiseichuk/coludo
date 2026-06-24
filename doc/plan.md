@@ -13,7 +13,7 @@ Required hardware and the phased development roadmap. Architecture lives in
 - **Phase 2 — done (bench-verified).** All sensors (ADXL375/BNO055/BMP280/ICP-10111/ATGM336H/
   VL53L4CX) → `databoard` read-time fusion, per-sensor telemetry, board health, separation switch,
   `probe` self-tests, servos, and CC log streaming with auto hub discovery. 26/26 board + 3/3
-  control. Deferred (not blocking): LSM6DSO32 (not arrived), outdoor GNSS fix. **Next: Phase 3.**
+  control. Deferred (not blocking): LSM6DSO32 (not arrived), outdoor GNSS fix.
 - **Control hub — done.** `src/control/` split into `board.py` (Board, 10 s exchange timeout),
   `server.py` (the hub: board listener + ~2 s heartbeat + telnet operator console, drop-in
   `commands/`, `all`-only broadcast) and `main.py` (CLI: `--host 0.0.0.0` / `--port` / `--help`),
@@ -23,23 +23,68 @@ Required hardware and the phased development roadmap. Architecture lives in
   The Recorder is now wired into the task graph by a thin adapter (`@task.activity('recorder')` in
   `tasks/recorder.py`); the `recorder` component (bus uart:1) makes the Controller create + supervise
   its drain loop. ✅
+- **Phase 3 — done.** Active control: surface `mixer`, PID stabilization `flight` loop, stage
+  `sequencer`, per-phase behaviour, `watchdog` + heartbeat, arming/ground-test safety. 36/36 board.
+- **Phase 4 — in progress.** *Done:* landing-zone `navigation` (heading-to-home, 3 GPS-degrading tiers)
+  + **bank-to-turn energy management** (the airframe was over-*ranging* the 100 m zone ~456 m downrange;
+  it now orbits the target to bleed altitude, contained to ≤ ~224 m from the pad). *Open:* flight-log
+  review, code-audit follow-ups, Phase 5 prep, and enabling the **6-DoF IMU** (LSM6DSO32).
+- **Simulation & performance — done.** On-board **HITL simulator** (closed-loop, no production-code
+  changes) + host **virtual-flight** tool with interactive HTML/SVG reports (`doc/sims/TMS-7/`:
+  noise/wind/spike sweeps + corner cases); **perf cluster g2/g3/g7/g14** (nav-heading cache, zero-alloc
+  mixer, GC-disabled-in-flight, sleeping CPU-load probe → **7.2 W → 3.6 W**); **g16** spike injection;
+  the TMS-7 flight envelope + airframe notes in `coludo.md`. Bench re-run + numbers refreshed.
+- **Phase 5 — field testing (next).** Staged ladder: maket walk-test → telemetry launch → powered
+  launch, likely on the wider **TMS-8** airframe. See below.
+
+## Phase 5 — field testing
+
+The flight stack is shipped, simulated and tuned. Phase 5 is a staged ladder from handheld to powered
+flight on real hardware (extends the flight-test-plan):
+
+1. **Maket walk-test** — the assembled *maket* (prototype) board on **battery + the Luckfox recorder**,
+   carried by hand outdoors:
+   - **power-up + register to CC** (Wi-Fi join / hub discovery), health + telemetry flowing;
+   - **`launchpad` config outdoors** — real GNSS fix at the pad, mission zone loaded;
+   - **walk-around "flight simulation"** — flight loop in GLIDING (manual stage hold), armed: carry it
+     like a glider and watch the **fins react** to the live attitude + landing-zone heading, Luckfox
+     capturing telemetry for a `flight_report`. No 58 m/s sprint required ;) — the loop flies at
+     walking pace;
+   - **trip "separation" by hand** — confirm the switch drives `BOOSTING → GLIDING` and the loop engages.
+2. **Telemetry launch** — passive electronics-only flight (no SG90 actuation): fly E16/F15, record the
+   full sensor + stage timeline to the Luckfox, review with `flight_report` — proves the data pipeline
+   and stage detection under a real boost → coast → descent.
+3. **Powered launch with active control** — enable the flight loop; first controlled glides.
+
+**Airframe:** the real flights likely move to **TMS-8** — a wider, more triangular glider (~2 cm wider
+span) for more wing area / stability than the TMS-7 modelled here. When it is printed, the sim's flight
+envelope + landing-zone numbers re-derive from the TMS-8 masses/geometry (`coludo.md`, `doc/sims/`).
+
+Supporting precision + tooling (continue alongside / from Phase 4):
+
+- **Nail the landing strip** — bank-to-turn lands ~85 m from the 40 m-wide strip centre (good sensors);
+  it drifts off on short final because LANDING goes wings-level. A tighter final-approach / flare (or a
+  smaller orbit radius), re-measured in the sim.
+- **High-noise robustness** (≥50 %): the bank loop reads attitude, so heavy noise degrades the orbit —
+  a filter / rate-limit on the steering input.
+- **`launch.config` autogen** + GPX export of telemetry. Deferred hardware: outdoor GNSS fix.
 
 ### Near-term work from `findings.txt` (quality pass)
 
 - **Conventions** adopted (`CLAUDE.md` + `skills.md`) and **protocol reorder** done
   (`board command`, Inspectable commands). ✅
 - **Tooling**: `ruff` config + `deploy.sh` (lint + `mpy-cross` + push to `/pyboard/`) +
-  `ssid.creds` (gitignored Wi-Fi password). ◻
+  `ssid.creds` (gitignored Wi-Fi password). ✅
 - **`recorder.py` refactor** as the golden reference module (rename to full names, async
   `StreamWriter` drain, drop `stop`/`sink`/`also`/`limit`, log-drop vs tlm-raise, `const`, type
-  annotations) + finish the `_Msg` rename in `cc_protocol`; sync tests. ◻
+  annotations) + finish the `_Msg` rename in `cc_protocol`; sync tests. ✅
 - **Config schema reorg** (board-config.md): nested `buses: {uart:{1,2}, i2c:{0,1}, spi:{}}`, a
-  `sensors:` section, no abbreviations, configs in a `configs/` subfolder. ◻ (doc + code)
-- **`Inspectable` mixin** (`inspect`/`update`/`stats` + `type`/`name`) — design then adopt. ◻
+  `sensors:` section, no abbreviations, configs in a `configs/` subfolder. ✅ (doc + code)
+- **`Inspectable` mixin** (`inspect`/`update`/`stats` + `type`/`name`) — design then adopt. ✅
 - **`BoardHealth` task** — `esp32.mcu_temperature()`, `idf_heap_info()` (PSRAM-aware), idle/load,
-  periodic Telemetry every ~1 s. ◻
+  periodic Telemetry every ~1 s. ✅
 - **`test/probe_pins.py`** — sweep pins 0..60 and UART/I2C/SPI 0..5 to auto-derive a board map;
-  inspect `machine.Pin.board`. ◻ (low priority — we have a map)
+  inspect `machine.Pin.board`. ✅ (low priority — we have a map)
 
 ## Required hardware
 
@@ -221,7 +266,7 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
 - **Milestone:** a controlled glide — launch detect → separation → stabilized glide → flare, with
   the loop gated by stage + arming + a fed watchdog.
 
-### Phase 4 — Polish
+### Phase 4 — Polish (in progress)
 - ✅ **Landing-zone navigation** (`navigation.py` + `tasks/flight.py` + `mission.py`) — the mission's zone is a
   lat/lon rectangle (TL/BR); `navigation.zone()` → target (centre) + gates (short-side midpoints, the safe
   approach corridors — operator orients the zone, `coludo.md`). In GLIDING the yaw heading setpoint is
@@ -230,11 +275,30 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
   the launch→gate bearing (open-loop, GPS-denied fallback); neither → captured heading. Mission resolves
   the zone vs the launch point (CC-set or GNSS), gates it on `max_range_m` (board config — airframe
   glide range), exposes points + distances + `in_range` in `inspect()`, and `probe` fails a too-far zone.
-- Per-launch mission config, GPX export of telemetry, richer browser UI, GC/perf strategy (second core
-  or native control loop if latency demands). Spiral-to-launch-site maneuver.
+- ✅ **GC/perf strategy** — done (see Simulation & performance below): GC disabled in flight (collect on the ground), nav-heading
+  cache + zero-alloc mixer keep the 100 Hz loop near-zero-allocation (`coludo.md` "Garbage collection
+  in flight"). Second-core / native control loop not needed at current latency.
+- Still open: flight-log review, **code-audit follow-ups**, **Phase 5 prep** (maket-board bring-up),
+  enabling the **6-DoF IMU** (LSM6DSO32 — frees the BNO055 / adds redundant attitude+accel), per-launch
+  mission config (`launch.config`), GPX export of telemetry, richer browser UI, spiral-to-launch-site
+  maneuver.
+
+### Simulation & performance — DONE
+- ✅ **HITL simulator** (`tasks/hitl.py` + `sim_model.py` + `config_hitl.py`) — closed-loop on the board
+  with no production-code changes: reads the commanded fins, steps a flight model, and provides the
+  simulated sensors on the databoard at priority 0 so `sequencer`/`flight`/`pid`/`mixer`/`navigation`
+  can't tell it is not real. Controlled noise N (5/10/25/50/100 %) + spikes (g15/g16).
+- ✅ **Virtual flight** (`tools/virtual_flight.py`) — the same model + real control code on the host,
+  emitting recorder captures; `tools/flight_report.py` (interactive plotly: 3D track + accel/altitude/
+  speed/attitude/**fins**/board-health/agl, unified hover) and `tools/flight_svg.py` (dependency-free).
+  Experiments + corner cases stored in [`sims/TMS-7/`](sims/TMS-7/).
+- ✅ **Energy management** (bank-to-turn, Phase 4) and the **perf cluster g2/g3/g7/g14** — measured on
+  the board (`steer()` 174 µs cached off the hot loop; mixer zero-alloc; GC-off-flight 20 MB headroom;
+  load probe 7.2 W → 3.6 W).
+- ✅ **g16** spike injection + two stored corner-case traces (glitch-rejection; everything-degraded).
 
 ### `launch.config` (mission config)
-A separate config document, same layered/validated/save+reactivate form as `board.json`
+A separate config document, same layered/validated/save+reactivate form as `board.config`
 ([`../specs/board-config.md`](../specs/board-config.md)), describing a *specific launch* rather
 than the *board*:
 - landing zone (TL / BR corners, target point), entrance threshold, allowed-zone radius,
@@ -242,13 +306,16 @@ than the *board*:
 - minimum controllable airspeed, and any per-launch tuning.
 
 Needed by Phase 3/4 navigation. **Interim:** until it exists, and because all launches are from
-the same site, these parameters may live in `board.json` (noted in `board-config.md`).
+the same site, these parameters may live in `board.config` (noted in `board-config.md`).
 
 **Known launch pads** (several may be defined; the on-board GNSS and the host GPS each select the
 nearest one). First site — **HPRC** (Homestead Public Rocketry Club):
 - launch pad: `25.514379, -80.391795`
-- landing zone: top-left `25.514630, -80.392880`, bottom-right `25.514656, -80.391155`
-- constraint: landing-zone centre must be < 100 m from the pad.
+- landing zone (Google Maps, north up): top-left `25.514944, -80.392972`,
+  bottom-right `25.514583, -80.391111` — a **~40 m (N–S) × ~187 m (E–W)** strip (~7500 m²),
+  centre `25.514764, -80.392042`, ~49 m from the pad. Long axis E–W → the nav gates the short
+  (E/W) ends (`navigation.zone()`), so the glider runs in along the strip.
+- constraint: landing-zone centre must be < 100 m from the pad (49 m here ✓).
 
 If the host laptop has a GPS (GPSD), the board could take **assisted GPS** from it during setup —
 a sync loop that waits until GPS is ready.

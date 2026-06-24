@@ -46,6 +46,92 @@ There are several improvements planned to mitigate those problems:
    on `ticks_us()`, not `asyncio.sleep`; if needed it moves to its own core thread.
 4. If that is not enough, native code is used for the flight controller and servo control.
 
+### Garbage collection in flight — implemented (perf cluster g2/g3/g7/g14)
+
+The GC policy above is implemented in `tasks/sequencer.py`, gated behind the stage machine:
+
+- **At BOOSTING** (launch detected): `gc.collect()` compacts and frees the heap, then `gc.disable()`
+  — the whole **airborne phase runs with GC off**, so no collection pause (≈0.3 ms clean, *tens of ms*
+  on a full heap — far past the 10 ms control budget) can stall a 100 Hz control slice.
+- **At DONE** (stationary, on the ground): `gc.enable()` + `gc.collect()`. The re-enable is deliberately
+  **not** at LANDING: that transition fires at `< land_agl_m` (≈5 m) and possibly mid-flare, the worst
+  place to pay a tens-of-ms stall — it would be wrong to fly the whole descent and then crash on a GC
+  pause at the end. GC is held off through the flare and the collect is paid only once stopped.
+
+Disabling GC for the entire flight is only safe because the hot paths are near-zero-alloc: the mixer
+pre-resolves its surfaces and rewrites a shared output dict (**g3**, ~0 bytes/call), and the flight loop
+caches the landing-zone steering heading at GPS cadence instead of running `navigation.steer()` trig
+(~174 µs) every 100 Hz step (**g7/g2**). A HITL heap soak (F15, ~36 s flight) measured **~12 MB consumed
+with GC off, low-water ~20 MB free of 32 MB** (≈2.5× margin); the pre- and post-flight collect durations
+are **logged** (`gc pre-/post-flight collect <us>`) for post-flight analysis.
+
+Side effect (g14): the CPU-load probe in `tasks/board_health.py` was changed from a `sleep_ms(0)`
+busy-spin to a sleeping probe that measures wake-up lateness — the core now idles between samples,
+cutting draw markedly (measured **7.2 W → 3.6 W** with all servos active) at no loss of the load signal.
+
+## Flight envelope (E16 / F15 estimates)
+
+Approximate, **basic-fidelity** numbers to seed modelling and the HITL simulation (Phase-5 `g15`), and
+to sanity-check sensor ranges and the launch-detect threshold. Derived from the TMS-7 masses in
+[`hardware.md`](../doc/hardware.md) (booster airframe ~93 g + glider airframe 112.6 g + electronics
+~125 g, mid of the 100–150 g budget) and the printed models in [`models/TMS-7`](../models/TMS-7).
+
+**Assumptions (kept deliberately crude — "air quality 3"):** vertical launch, no wind; constant
+*average* motor thrust over the burn with propellant mass burning off linearly; drag `F = ½·ρ·v²·Cd·A`
+with sea-level `ρ = 1.225 kg/m³`, `Cd ≈ 0.6`. Frontal area from a **~46 mm effective diameter**
+(`A ≈ 17 cm²`): the booster tube is only ~40 mm (motor 29 mm + holder + a ~3 mm ultra-light-filament
+wall), and the glider rides on top at ~46 mm body width — the 143 mm in the model bbox is the
+*deployed wing/fin span*, which is thin and edge-on to the airflow so it adds little frontal drag.
+Glide phase `L/D ≈ 5` at ~12 m/s (optimistic for the current 2 mm flat-plate wings — see the
+model-analysis notes). Real flights will differ — these are seeds, not guarantees.
+
+| Parameter | **E16** | **F15** |
+|---|---|---|
+| Liftoff mass (incl. motor) | ~390 g | ~430 g |
+| Total impulse / burn | 28 N·s / 1.8 s | 50 N·s / 3.5 s |
+| Peak accel — accelerometer reads (specific force) | **~8.7 g** (peak thrust 33 N) | **~5.9 g** (peak thrust 25 N) |
+| Early-boost — accelerometer reads | ~4.2 g | ~3.4 g |
+| Peak speed (at burnout) | ~57 m/s (~205 km/h) | ~79 m/s (~285 km/h) |
+| Apogee (vertical) | ~180 m @ ~7 s | ~360 m @ ~10 s |
+| Glide range / time (L/D 5) | ~0.9 km / ~75 s | ~1.8 km / ~150 s |
+| Total flight | ~80 s | ~160 s |
+
+**What this means for the design:**
+- *Accelerometer:* it reads **specific force** = kinematic acceleration **+ 1 g**. Peak is only ~6–9 g,
+  so even the BNO055 (±16 g) would not clip — but the ADXL375 (±200 g) stays the boost source for
+  headroom/noise margin (clones and the airframe vary; a spike can exceed the published peak).
+- *Launch detect:* the early-boost reading (~3.4–4.2 g, before drag builds) sits above `launch_g = 3.0`
+  and the ignition spike (~6–9 g) confirms — so `launch_g`/`launch_ms` are in range for both motors
+  (these passive E16/F15 flights are exactly where they get tuned from real data).
+- *Mission profile:* the F15 roughly **doubles apogee** and gives **~2×** the descent time — far more
+  glide/nav window — so it is the better motor for exercising active control once the passive flights
+  validate the data pipeline. The ideal glide range (~0.9–1.8 km at L/D 5) dwarfs the 200 m
+  landing-zone gate (`max_range_m`): the glider has ample range to return, which is what the
+  navigation spends it on.
+
+### Airframe notes from the printed models (`models/TMS-7`)
+
+Measured from the meshes (bbox / volume): glider 394 (span) × 121 (folded height) × 388 mm (length);
+booster tube ~40 mm (motor 29 + holder 37 + ~3 mm ultra-light wall) with the wing/fin span reaching
+143 mm when deployed. Wing (each): 222 span × **2.0 mm thick** × 67.7 mm chord, ~62 cm² planform.
+Solid-PLA volumes are 2–3× the measured part masses → ~30–42 % effective infill, consistent with
+[`hardware.md`](../doc/hardware.md). Geometry is **symmetric** (L/R wings and fins identical) — good for
+roll/trim balance. Structural / aerodynamic items to weigh before the active-control flights:
+
+1. **Wing loading is high** — ~124 cm² total wing for a ~237 g glider ≈ **~19 kg/m²**, giving a stall
+   of **~19 m/s** (CL_max ~0.9 for a flat plate). The glider therefore has to glide *fast* (~20–25 m/s)
+   and lands hot; the envelope's 12 m/s glide is in fact below stall. **Bigger wings (1.5–2× area)** are
+   the single most impactful change — they drop the stall speed, make the glide controllable and the
+   landing flare survivable, and improve the realistic L/D.
+2. **Wings/fins are 2.0 mm flat plates** — over a 222 mm span this flexes/flutters, is fragile, and
+   gives poor L/D with early stall. Thicken to 3–4 mm or use a thin cambered airfoil with a spar.
+3. **Boost stability is unverified** — the booster has no dedicated fins; with the wings folded,
+   confirm the glider's tail fins protrude enough (or add transient boost fins) so the boost-phase
+   centre-of-pressure sits ≥1 caliber behind the CG, otherwise it weathercocks/tumbles off the rod.
+4. **CG forward for pitch stability** — the glide CG should be ~25–35 % MAC (ahead of the aero centre);
+   place the battery / LuckFox / heaviest electronics in the Front Lower Body (nose) and verify on a
+   balance (the model geometry alone cannot fix the CG — it depends on the electronics layout).
+
 # Lifecycle
 
 The operational lifecycle of the glider is brief and divided into four distinct phases:
@@ -376,7 +462,7 @@ A local UART line is always available for direct on-bench debugging. Over Wi-Fi 
 
 ## Pins Distribution
 
-To ensure hardware modularity, physical microcontroller pins are **not** hardcoded; they are defined by the board configuration (`buses` and `pins` sections of `board.json`, with firmware defaults in `config_default.py`). The controller reads this config at boot to build the pin map and instantiate the declared components. See [`board-config.md`](board-config.md) for the schema and activation lifecycle.
+To ensure hardware modularity, physical microcontroller pins are **not** hardcoded; they are defined by the board configuration (`buses` and `pins` sections of `board.config`, with firmware defaults in `config_default.py`). The controller reads this config at boot to build the pin map and instantiate the declared components. See [`board-config.md`](board-config.md) for the schema and activation lifecycle.
 
 ## System Status
 
@@ -458,7 +544,7 @@ High-capacity storage does **not** live on the controller. The Recorder module (
 
 ## Wi-Fi
 
-The integrated 2.4GHz Wi-Fi subsystem is optimized for extended range. During ground staging the board joins the **Control Center's** network as a **station** (SSID, credentials, CC host/port and tunable TX power come from the `wifi` section of `board.json`; Bluetooth is disabled to improve the link). Once a network socket connection to the Control Center is established, the flight controller unlocks remote parameter tuning, health monitoring, and live telemetry streaming. The link exists only in prestart; it is expected to be lost from ignition onward. See [`board-config.md`](board-config.md).
+The integrated 2.4GHz Wi-Fi subsystem is optimized for extended range. During ground staging the board joins the **Control Center's** network as a **station** (SSID, credentials, CC host/port and tunable TX power come from the `wifi` section of `board.config`; Bluetooth is disabled to improve the link). Once a network socket connection to the Control Center is established, the flight controller unlocks remote parameter tuning, health monitoring, and live telemetry streaming. The link exists only in prestart; it is expected to be lost from ignition onward. See [`board-config.md`](board-config.md).
 
 ## Camera
 

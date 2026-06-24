@@ -28,7 +28,7 @@ Maps a command to an async handler(msg) -> response line.
 - `run() -> None` — Connect to Control and serve forever, reconnecting with backoff on drop.
 - `serve(reader, writer) -> None` — Read commands from Control, dispatch, write responses. Returns on disconnect.
 
-### `create_dispatcher(cfg: dict, controller=None, on_reboot=None, config_path: str='board.json') -> Dispatcher`
+### `create_dispatcher(cfg: dict, controller=None, on_reboot=None, config_path: str='board.config') -> Dispatcher`
 
 Build a Dispatcher with the standard command handlers, wired to the running config, the
 Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset.
@@ -72,7 +72,7 @@ Board configuration loader / validator — the Phase 0 foundation.
 
 Implements the three-layer model from specs/board-config.md:
 config_default.py  (firmware default / fallback)
-board.json         (saved active config, a full snapshot)
+board.config         (saved active config, a full snapshot)
 in-memory dict     (validated, what the Controller builds tasks from)
 
 Runs on MicroPython on the board. Validation here is config-file *integrity* (structure,
@@ -87,21 +87,21 @@ Return a list of human-readable error strings (empty list == valid).
 
 A stable short hash identifying a config snapshot (for the CC iam/config_id).
 
-### `load(path: str='board.json', defaults=None) -> tuple`
+### `load(path: str='board.config', defaults=None) -> tuple`
 
-Layered load: active board.json if present and valid, else defaults.
+Layered load: active board.config if present and valid, else defaults.
 
 Returns (cfg, source, errors). `source` is 'active', 'default', or a fallback reason.
 Never raises — a missing/corrupt/invalid active file degrades to defaults so the board is
 always reachable.
 
-### `save(cfg, path: str='board.json') -> str`
+### `save(cfg, path: str='board.config') -> str`
 
 Validate then atomically persist a full config snapshot. Returns its config_id.
 
 Raises ValueError if invalid (an invalid config is never written).
 
-### `reset(path: str='board.json') -> bool`
+### `reset(path: str='board.config') -> bool`
 
 Delete the active config so the next load uses defaults. Returns True if removed.
 
@@ -121,7 +121,7 @@ dict or None.
 
 Baked-in default board configuration for the WaveShare ESP32-P4-WIFI6 controller.
 
-Human-edited firmware default and the safe fallback when no valid board.json exists (see
+Human-edited firmware default and the safe fallback when no valid board.config exists (see
 specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
 test/test_pins.py). `default()` returns a FRESH dict each call so callers may mutate it freely.
 
@@ -888,7 +888,7 @@ low-altitude metres where the barometer cannot resolve height. Interrupt-driven 
 
 drivers/wifi.py — Wi-Fi station driver: joins the configured network and keeps it joined, exposing
 signal/ip to the operator. HAL (it drives the radio), so @task.driver('wifi'). STA only; SSID / CC
-host / TX power come from the `wifi` section of board.json, the password from <ssid>.creds
+host / TX power come from the `wifi` section of board.config, the password from <ssid>.creds
 (gitignored, deploy.sh-pushed).
 
 Optional + telemetry-first: `network` is imported in setup() so the module still loads on a board
@@ -1139,9 +1139,10 @@ The hub: a board listener + per-board heartbeat + an operator console. `on_board
 optional async hook invoked once, right after a board identifies (used by integration tests).
 
 - `__init__(host: str='0.0.0.0', port: int=1234, operator_port: int=1235, web_port: int=8080, on_board=None, log=print, heartbeat_s: float=HEARTBEAT_S, gps=None)` — constructor
-- `board_rows() -> list` — The registry as json-able rows (id, online, last-known stage/config_id) — shared by the
-- `start_stream(client, interval_ms) -> None` — (Re)start streaming a board's logs at `interval_ms`, replacing any running stream for it.
-- `stop_stream(board_id) -> None` — Stop streaming a board's logs and tell the board to stop collecting (a final `log 0`
+- `board_rows() -> list` — The registry as json-able rows — shared by the `list` operator command and the web
+- `cc_status() -> dict` — The Control host's own status for the dashboard header: the wall clock and the host GPS
+- `start_stream(client, interval_ms, kind='log') -> None` — (Re)start streaming a board's `kind` ('log'|'tlm') at `interval_ms`, replacing any running
+- `stop_stream(board_id) -> None` — Stop streaming a board and tell it to stop collecting (a final `<kind> 0` drain), so it does
 - `serve_forever() -> None` — Accept board connections on `port` (board-facing listener).
 - `serve_operators() -> None` — Accept operator connections on `operator_port` (telnet-friendly console).
 - `run() -> None` — Run the board listener, operator console, and web bridge until cancelled.

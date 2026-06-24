@@ -30,6 +30,17 @@ class FailSensor(task.Task):
         return False
 
 
+class MessySensor(task.Task):
+    """setup() raises mid-init AND finish() raises on the half-set-up device -- the controller must
+    still record the failure and bring up the rest of the board, not abort boot (finding 1.2.1)."""
+
+    async def setup(self):
+        raise RuntimeError('setup boom')
+
+    async def finish(self):
+        raise RuntimeError('cleanup boom')
+
+
 class FlakySensor(task.Task):
     """Fails its first setup, succeeds on a retry (a fresh instance per attempt, so the attempt count
     is class-level) -- models a breadboard contact that makes on the second try."""
@@ -86,6 +97,17 @@ async def amain():
     assert await rc.setup() is True
     assert 'flaky' in rc.tasks and rc.failures == {} and FlakySensor.attempts == 2  # up on the 2nd try
     await rc.finish()
+
+    # 1.2.1: a device whose setup AND cleanup both raise must not abort boot -- it is recorded and the
+    # rest of the board still comes up.
+    messy_cfg = {'board': {'id': 'm', 'mcu': 'esp32p4'},
+                 'components': [{'name': 'messy', 'driver': 'messy', 'enabled': True},
+                                {'name': 'ok', 'driver': 'fake', 'enabled': True}]}
+    mc = controller.Controller(messy_cfg, registry={'messy': MessySensor, 'fake': FakeSensor},
+                               log=lambda m: None)
+    assert await mc.setup() is True  # boot completes despite the messy cleanup raise
+    assert 'ok' in mc.tasks and 'messy' in mc.failures  # good task up, messy one recorded (not crashed)
+    await mc.finish()
 
     # active()
     assert c.active('s1') is c.tasks['s1']

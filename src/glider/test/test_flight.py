@@ -7,6 +7,7 @@ import asyncio
 
 import config_default
 import databoard
+import pid
 import task
 from tasks import flight
 
@@ -125,19 +126,67 @@ async def amain():
     navflight = flight.Flight('flight', {'schedule_hz': 0, 'gains': {}}, nav_ctrl)
     assert await navflight.setup() is True
     navflight._heading_hold = 200.0  # the blind fallback heading
+    # the g7 cache holds the steer() result for nav_period_ms; this test changes the inputs faster than
+    # that on purpose, so it clears _nav_heading before each tier to force a fresh recompute.
 
     # tier 3: no fix, no launch point -> hold the captured heading (blind)
     navflight._mission = _StubMission(launch=None)
+    navflight._nav_heading = None
     assert navflight._target_heading() == 200.0
     # tier 2: no fix, CC-set launch point (west of the zone) -> launch->left-gate bearing (~east, 90)
     navflight._mission = _StubMission(launch=(48.0005, 10.990))
+    navflight._nav_heading = None
     assert abs(navflight._target_heading() - 90.0) < 5.0
     # tier 1: a fresh fix overrides -> steer from the CURRENT position (east of the zone -> right gate, ~270)
     position = databoard.Databoard.provide('gnss', {'position': {'priority': 0, 'timeout_ms': 1000}}, 'position')
     position.push((48.0005, 11.020))
+    navflight._nav_heading = None
     assert abs(navflight._target_heading() - 270.0) < 5.0  # current position, not the launch point
     nav_ctrl._stage = 'landing'  # nav steers only in GLIDING -> LANDING holds (straight-and-level)
     assert navflight._target_heading() == 200.0
+
+    # g7: a second call within nav_period returns the CACHED heading (no recompute) even if the fix moves
+    nav_ctrl._stage = 'gliding'
+    navflight._nav_heading = None
+    first = navflight._target_heading()           # fresh steer() from (48.0005, 11.020) -> ~270
+    position.push((48.0005, 10.980))              # move the fix west; without the cache this -> ~90
+    assert navflight._target_heading() == first   # cached -> unchanged until nav_period elapses
+
+    # bank-to-turn: in GLIDING a heading error commands a BANK (roll setpoint = nav_bank_gain*error,
+    # capped at bank_limit), so the glider banks into the turn (differential elevons) instead of only
+    # yawing -- the fix for over-ranging the zone on a flat rudder skid.
+    position.push((48.0005, 10.990))   # west of the zone -> steer ~east (90) to the left gate
+    attitude.push((0.0, 0.0, 0.0))     # facing north, wings level -> a +90 heading error
+    bank_ctrl = _StubController('gliding')
+    bankflight = flight.Flight('flight', {'schedule_hz': 0, 'gains': {'roll': {'kp': 1.0}},
+                                          'nav_bank_gain': 1.5, 'bank_limit': 30}, bank_ctrl)
+    assert await bankflight.setup() is True
+    bankflight._mission = _StubMission(launch=None)  # zone present -> tier-1 uses the live fix above
+    bankflight._step()
+    # error +90 -> bank_demand(+90, 1.5, 30) = +30 -> roll PID (kp 1) -> elevons 90+/-30 (a right bank)
+    assert bank_ctrl.fins['servo_eleron_left'].angle == 120 and bank_ctrl.fins['servo_eleron_right'].angle == 60
+    assert bank_ctrl.fins['servo_eleron_left'].angle != bank_ctrl.fins['servo_eleron_right'].angle  # banked
+
+    # g6: integer-degree heading error quantises the yaw D-term -- characterise the on-device impact.
+    # A smooth turn feeds a kd-only PID (its step() output IS the D term). Float wrap gives a smooth
+    # de/dt ~= the turn rate; the production int wrap holds flat then jumps a whole degree, so the D term
+    # spikes to ~1deg/dt at each integer crossing -- larger peaks, but bounded and sparse.
+    dt = 0.01  # 100 Hz
+    sweep = [30.0 - 0.27 * i for i in range(80)]  # heading error sweeping smoothly (~27 deg/s turn)
+
+    def peak_dterm(wrap):
+        controller = pid.Pid(kd=1.0)
+        return max(abs(controller.step(wrap(e), dt)) for e in sweep)
+
+    peak_float = peak_dterm(lambda e: ((e + 180.0) % 360.0) - 180.0)  # smooth (float) heading error
+    peak_int = peak_dterm(lambda e: flight.Flight._heading_error(e, 0.0))  # the production int wrap
+    print('g6: yaw D-term peak over a smooth ~27deg/s turn @100Hz -- float=%.0f, int=%.0f deg/s'
+          % (peak_float, peak_int))
+    assert abs(peak_float - 27) < 2          # float: ~ the turn rate, no quantisation
+    assert peak_int >= 1.0 / dt - 1          # int: spikes of ~1deg/dt (~100 deg/s) at degree crossings
+    # Verdict: the spike is bounded by one degree-per-tick. With yaw kd kept small (sub-degree heading
+    # precision is irrelevant for fin authority over a 100-200 m approach) it is negligible; if a large
+    # kd is ever needed, switch the yaw error to float or low-pass the D term.
 
     print('ok: flight -- per-stage control stages, nav (3 GPS tiers), degraded->neutral, PID->mix->fins, scheduling')
 

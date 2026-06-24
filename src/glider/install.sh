@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # install.sh — clean install onto a board: WIPE the filesystem (keeping only boot.py), then push the
 # runtime firmware (top-level modules + the drivers/ and tasks/ packages), gated by ruff + mpy-cross.
-# Secrets and per-device config (*.creds, *.config, board.json) are deliberately NOT pushed -- and the
+# Secrets and per-device config (*.creds, *.config, board.config) are deliberately NOT pushed -- and the
 # wipe removes any old ones -- so you deploy those individually afterwards. For the dev iterate/test
 # loop use deploy.sh instead (it also pushes test/ and *.creds). Lives in src/glider.
 #
@@ -69,7 +69,7 @@ cmd=(cp "${mods[@]}" :)
 for pkg in drivers tasks; do [ -d "$HERE/$pkg" ] && cmd+=(+ cp -r "$HERE/$pkg" :); done
 for _ in 1 2 3 4 5; do
     if mpremote connect "$PORT" "${cmd[@]}" >/dev/null 2>&1; then
-        echo "  ${G}installed${N} ${#mods[@]} modules + drivers/ tasks/  —  now deploy *.creds / *.config / board.json separately"
+        echo "  ${G}installed${N} ${#mods[@]} modules + drivers/ tasks/  —  now deploy *.creds / *.config / board.config separately"
         exit 0
     fi
     sleep 1.5

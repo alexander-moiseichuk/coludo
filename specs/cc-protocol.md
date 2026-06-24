@@ -10,7 +10,7 @@ no CC link is expected.
 ## Topology & roles
 
 - **Boards are TCP clients.** On boot a board dials out to CC (host/port from the `wifi`
-  section of its `board.json`). A board hosts no server and knows only CC's address.
+  section of its `board.config`). A board hosts no server and knows only CC's address.
 - **CC is the single server / hub.** One CC instance accepts every board connection, keeps a
   registry of who is online, and brokers traffic between boards and operators.
 - **Browser** talks HTTP + SSE to CC; **telnet/dev** talks the raw line protocol to CC. CC
@@ -88,7 +88,7 @@ board → Control:   iam taster base64:<{"mcu":"esp32p4","firmware_version":"a1b
 ```
 
 Control registers socket ⇄ `taster`, begins its ~2 s poll loop, and thereafter routes operator
-traffic to it by id. `config_id` is a hash/version of the running `board.json`, so Control can tell
+traffic to it by id. `config_id` is a hash/version of the running `board.config`, so Control can tell
 whether its cached view of the board's config is current. If a board reconnects with an id already registered, CC
 drops the older socket and keeps the newest (a board only re-dials after a reboot or link loss).
 
@@ -134,7 +134,7 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `verify` | — | `ok {pass, devices, problems}` | verify board setup: every configured device up/down + probe, with an overall PASS — the launch-pad re-check (catches anything disconnected in transport) |
 | `get-config` | `[name]` | `ok {config}` | fetch a named config: `board` (running, default), `default` (built-in board default), `launch` (the mission) |
 | `set-config` | `<name> <json>` | `ok {config_id}` / `err invalid <msg>` | save a named config: `board` validates + replaces the full snapshot (running config unchanged until reboot); `launch` merge-applies the fields into the mission + persists `launch.config` |
-| `reset-config` | — | `ok` | delete `board.json`; next boot uses `config_default.py` |
+| `reset-config` | — | `ok` | delete `board.config`; next boot uses `config_default.py` |
 | `reboot` | — | `ok` then disconnect | ack, then hard reset → boots from saved config |
 
 `inspect`/`update`/`stats` address an object by name (`inspect wifi`, `update servo_yaw <json>`);
@@ -161,7 +161,7 @@ from taster ok {"changed":["launch_id","latitude"]}
 both an ISO string and a Unix `epoch` for CC to compare against its own. A broadcast
 `all update mission base64:{"epoch":...}` time-syncs the whole fleet. Unlike the board config
 (whose draft lives on CC), the mission is small and edited live on the board; **`set-config launch`**
-merge-applies a draft and persists it to `launch.config` — the per-launch counterpart to `board.json`
+merge-applies a draft and persists it to `launch.config` — the per-launch counterpart to `board.config`
 — so the launch identity survives a pre-flight reboot. `err unsupported` means the board has no
 mission object.
 

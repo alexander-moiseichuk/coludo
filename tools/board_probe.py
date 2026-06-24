@@ -1,4 +1,4 @@
-# board_probe.py — run ON a board to sketch an initial board.json: identity (name, unique_id),
+# board_probe.py — run ON a board to sketch an initial board.config: identity (name, unique_id),
 # and which UART/I2C/SPI ids + GPIOs are constructable. A discovery aid, not a pass/fail test.
 #
 #   mpremote connect /dev/ttyACM0 run tools/board_probe.py

@@ -51,13 +51,13 @@ async def test_basics():
 
 
 async def test_load_tracking():
-    # load tracks real CPU load: idle -> low, a CPU hog -> higher. The estimate is relative to the
-    # peak idle rate (_max_rate), so calibrate idle first, then load the board up.
+    # load tracks real CPU load: idle -> low (the probe sleep barely overshoots), a CPU hog -> higher
+    # (the hog delays the probe's wake-up). No calibration baseline -- the overshoot is absolute.
     recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
-    health = board_health.BoardHealth('health', {'period_ms': 100}, None)
+    health = board_health.BoardHealth('health', {'period_ms': 100, 'probe_ms': 10}, None)
     await health.setup()
     runner = asyncio.create_task(health.run())
-    await asyncio.sleep_ms(500)  # a few idle periods -> _max_rate calibrates, load near 0
+    await asyncio.sleep_ms(500)  # a few idle probes -> load near 0
     idle_load = health.load
 
     async def hog():  # burn cycles between minimal yields so the idle task runs far less

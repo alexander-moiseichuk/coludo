@@ -16,7 +16,7 @@ mpremote connect /dev/ttyACM0 run tools/board_probe.py
 
 These are the *defaults* the MicroPython port hands out per id — overlapping pins across UART/SPI/I2C
 ids (e.g. GPIO 9 appears as `UART(1).rx`, `SPI(1).sck`, and `I2C(1).scl`) are just unconfigured
-defaults, not a wiring claim. The authoritative wiring is `board.json` (see
+defaults, not a wiring claim. The authoritative wiring is `board.config` (see
 [`tools/board_pinmap.py`](../tools/board_pinmap.py)).
 
 ## WaveShare ESP32-P4-WIFI6 — round 2026-06-17

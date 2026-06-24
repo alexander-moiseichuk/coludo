@@ -11,6 +11,7 @@
 # you drop the running firmware to the REPL for bench work; enable it for flight.
 
 import asyncio
+import time
 
 import recorder
 import task
@@ -23,21 +24,23 @@ class Watchdog(task.Task):
     async def setup(self) -> bool:
         self._timeout_ms: int = self.config.get('wdt_timeout_ms', 1000)
         self._period_ms: int = self.config.get('period_ms', 200)
+        self._stall_us: int = self.config.get('stall_ms', 500) * 1000  # no control step in this long = stalled
         self._wdt = None  # the hardware WDT (created in run(); injectable for tests)
         self._reset = lambda: __import__('machine').reset()  # overridable for tests
-        self._last_steps: int = 0
         self._ok = True
         return True
 
     def _stalled(self, flight) -> bool:
-        """True if the control loop is in a control stage but its step counter is not advancing. When
-        it is not controlling there is nothing to supervise, so the step baseline just tracks along."""
-        if flight is None or not getattr(flight, '_active', False):
-            self._last_steps = getattr(flight, '_steps', 0) if flight is not None else 0
+        """True if the control loop says it is controlling but has produced no step within stall_ms.
+        Reads the flight task's public progress() heartbeat (not its privates, 3.6.1) and judges
+        staleness by the update TIMESTAMP -- a direct measure, independent of this watchdog's own poll
+        cadence (so it does not matter if a poll happens to land between two control steps)."""
+        if flight is None:
             return False
-        stalled = flight._steps == self._last_steps
-        self._last_steps = flight._steps
-        return stalled
+        controlling, _steps, _stage, updated_us = flight.progress()
+        if not controlling:  # not in a control stage -> nothing to supervise
+            return False
+        return time.ticks_diff(time.ticks_us(), updated_us) > self._stall_us
 
     def _arm(self) -> None:
         """Create the hardware WDT on the first run() tick -- NOT in setup(): the timeout starts
@@ -54,7 +57,7 @@ class Watchdog(task.Task):
             await asyncio.sleep_ms(self._period_ms)
             flight = self.controller.find(['flight'])[0]  # None if the flight task is disabled
             if self._stalled(flight):
-                stalled = 'control loop stalled (stage=%s) -> reset' % getattr(flight, '_stage', None)
+                stalled = 'control loop stalled (stage=%s) -> reset' % flight.progress()[2]
                 recorder.Recorder.log(self.name, stalled)
                 self._reset()  # full HW reset; stopping the feed would also fire the WDT shortly
                 return

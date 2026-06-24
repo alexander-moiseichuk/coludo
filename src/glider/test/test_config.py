@@ -42,6 +42,11 @@ def main():
     badtype['buses']['oops'] = {'0': {'tx': 99, 'rx': 98}}
     assert any('not one of uart/i2c/spi' in e for e in config.validate(badtype))
 
+    # SPI mode must be 0..3 (machine.SPI polarity/phase are each 0/1) — finding 1.5.3
+    badmode = config_default.default()
+    badmode['buses']['spi']['1']['mode'] = 4
+    assert any('.mode must be 0..3' in e for e in config.validate(badmode))
+
     # board.id must be a bare wire token (no spaces)
     spaced = config_default.default()
     spaced['board']['id'] = 'glider 1'
@@ -64,7 +69,7 @@ def main():
     assert config.device(cfg, name='absent') is None
 
     # save / load round-trip on the board filesystem
-    path = 'test_board.json'
+    path = 'test_board.config'
     config.reset(path)
     cid = config.save(config_default.default(), path)
     cfg, source, errs = config.load(path, defaults=config_default.default())

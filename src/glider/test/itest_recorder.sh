@@ -3,7 +3,7 @@
 #
 # Writes a uniquely-marked line over the recorder UART from the ESP32-P4 and confirms it landed
 # on the Luckfox recorder (via adb). The UART pins/baud are taken from the board's OWN config
-# (config.load(): board.json if present, else config_default) so this works on whatever board
+# (config.load(): board.config if present, else config_default) so this works on whatever board
 # is currently attached. Targets a DEDICATED file via the `@file@line` routing, NOT the default
 # recorder.log (which only commits to disk every 1000 lines).
 #

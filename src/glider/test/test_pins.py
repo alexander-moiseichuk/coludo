@@ -8,7 +8,7 @@
 
 from machine import I2C, PWM, SPI, UART, Pin
 
-# Recommended map (keep in sync with doc/waveshare_esp32p4_pins.md until board.json drives it).
+# Recommended map (keep in sync with doc/waveshare_esp32p4_pins.md until board.config drives it).
 I2C_SDA, I2C_SCL = 7, 8
 REC_TX, REC_RX = 20, 21
 GNSS_TX, GNSS_RX = 22, 23

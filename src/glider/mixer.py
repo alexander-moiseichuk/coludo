@@ -25,22 +25,29 @@ class Mixer:
         self.limit: int = config.get('limit_deg', 45)  # max control deflection from neutral, per surface
         self.surfaces: dict = config.get('surfaces', _DEFAULT_SURFACES)
         self.trim: dict = config.get('trim', {})  # per-fin neutral offset (deg)
+        # g3 (zero-alloc hot path): pre-resolve each surface to (name, base, roll_gain, pitch_gain,
+        # yaw_gain) where base = neutral + trim, and pre-allocate the output dict ONCE. mix() then runs
+        # at 100 Hz with NO per-call allocation -- it rewrites the shared `_out` in place (the nested
+        # axis-dict + per-axis `.get()` of the old version are gone). Under the GC-disabled-in-flight
+        # policy (coludo.md) this keeps the glide from churning the heap.
+        self._surfaces: list = [(name, int(self.neutral + self.trim.get(name, 0)),
+                                 gains.get('roll', 0), gains.get('pitch', 0), gains.get('yaw', 0))
+                                for name, gains in self.surfaces.items()]
+        self._out: dict = {name: base for name, base, _r, _p, _y in self._surfaces}
 
     def mix(self, roll: int = 0, pitch: int = 0, yaw: int = 0) -> dict:
-        """Per-fin integer angle for the given axis deflections (degrees)."""
-        axes = {'roll': roll, 'pitch': pitch, 'yaw': yaw}
-        angles = {}
-        for name, gains in self.surfaces.items():
-            deflection = 0
-            for axis, gain in gains.items():
-                deflection += gain * axes.get(axis, 0)
-            if deflection > self.limit:  # clamp the control deflection (authority), not the trim
-                deflection = self.limit
-            elif deflection < -self.limit:
-                deflection = -self.limit
-            angles[name] = int(self.neutral + self.trim.get(name, 0) + deflection)
-        return angles
+        """Per-fin integer angle for the given axis deflections (degrees). Returns a SHARED dict REUSED
+        on every call (zero-alloc) -- apply it immediately, do not retain it across mix() calls."""
+        limit = self.limit
+        for name, base, roll_gain, pitch_gain, yaw_gain in self._surfaces:
+            deflection = roll_gain * roll + pitch_gain * pitch + yaw_gain * yaw
+            if deflection > limit:  # clamp the control deflection (authority), not the trim
+                deflection = limit
+            elif deflection < -limit:
+                deflection = -limit
+            self._out[name] = base + deflection
+        return self._out
 
     def neutralise(self) -> dict:
-        """The neutral (zero-deflection) angle per fin -- the safe / control-disabled output."""
+        """The neutral (zero-deflection) angle per fin -- the safe / control-disabled output (shared dict)."""
         return self.mix(0, 0, 0)

@@ -41,12 +41,18 @@ value. On boot the servo is driven to angle 0 and every parameter is printed.
 
 ## Console reporting
 
-Everything that does not fit the tiny screen goes to the USB serial console (115200, the REPL port) —
-one `key=value` line per event (button press, switch, boot), easy to read or pipe/parse. See
-`main.py` `report()` for the field list; it includes set **and** get for angle/pulse/duty, the
-duty percentage, PWM frequency/period, the active step, travel percentage, the set-vs-get
-quantisation error in µs, an SG90 slew-time estimate for the last move, a move counter, and the
-min/max angle touched this session. A `# ` banner with the pin map and ranges is printed at startup.
+The OLED is tiny (it only shows the live `get_*` values), so the **USB serial console** (115200 over
+`/dev/ttyACMx`, the REPL port) is the detailed tracking channel — **always on**, three streams:
+
+- a `# ` **banner** at startup: the pin map, and for each parameter its range/step and its `api()`
+  (what it maps to in the platform PWM API — see s5);
+- a **`BTN`** line per button event: the event, the raw `L`/`R` pin levels (confirms wiring/polarity)
+  and the running +/-/switch counts — a hand-pressed sequence is fully verifiable from the console;
+- a **`t=` `report()`** line per event: set **and** get for angle/pulse/duty, the duty percentage, PWM
+  frequency/period, the active step, travel percentage, the set-vs-get quantisation error in µs, an
+  SG90 slew-time estimate for the last move, a move counter, and the min/max angle touched this session.
+
+Watch it live with `mpremote connect /dev/ttyACM1 run main.py` (or attach any serial monitor at 115200).
 
 ## Hardware
 
@@ -67,7 +73,8 @@ min/max angle touched this session. A `# ` banner with the pin map and ranges is
   `_BUTTON_ACTIVE` if your module is active-low)
 
 ### Servo
-- signal on **pin 2**, driven at 50 Hz (`PWM(Pin(2), freq=50)`)
+- signal on **pin 3** (GPIO3), driven at 50 Hz (`PWM(Pin(3), freq=50)`) — pin 3 is a safe, free PWM
+  pin per the [ESP32-C3 super-mini pinout](https://lastminuteengineers.com/esp32-c3-super-mini-pinout-reference/#esp32c3-super-mini-uart-pins)
 
 ## Running
 

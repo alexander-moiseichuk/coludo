@@ -2,7 +2,7 @@
 #
 # Implements the three-layer model from specs/board-config.md:
 #   config_default.py  (firmware default / fallback)
-#   board.json         (saved active config, a full snapshot)
+#   board.config         (saved active config, a full snapshot)
 #   in-memory dict     (validated, what the Controller builds tasks from)
 #
 # Runs on MicroPython on the board. Validation here is config-file *integrity* (structure,
@@ -106,6 +106,8 @@ def validate(cfg) -> list:
                 for key in _BUS_PIN_KEYS:
                     if key in spec:
                         claim(label + '.' + key, spec[key])
+                if kind == 'spi' and spec.get('mode', 0) not in (0, 1, 2, 3):  # machine.SPI: polarity/phase in {0,1}
+                    errs.append('bus %s.mode must be 0..3 (got %r)' % (label, spec.get('mode')))
 
     # discrete pins --------------------------------------------------------
     pins = cfg.get('pins')
@@ -222,8 +224,8 @@ def _builtin_default() -> dict:
     return config_default.default()
 
 
-def load(path: str = 'board.json', defaults=None) -> tuple:
-    """Layered load: active board.json if present and valid, else defaults.
+def load(path: str = 'board.config', defaults=None) -> tuple:
+    """Layered load: active board.config if present and valid, else defaults.
 
     Returns (cfg, source, errors). `source` is 'active', 'default', or a fallback reason.
     Never raises — a missing/corrupt/invalid active file degrades to defaults so the board is
@@ -239,14 +241,14 @@ def load(path: str = 'board.json', defaults=None) -> tuple:
     try:
         data = json.loads(text)
     except (ValueError, OSError):
-        return defaults, 'default(fallback: board.json is not valid JSON)', ['board.json is not valid JSON']
+        return defaults, 'default(fallback: board.config is not valid JSON)', ['board.config is not valid JSON']
     errs = validate(data)
     if errs:
-        return defaults, 'default(fallback: invalid board.json)', errs
+        return defaults, 'default(fallback: invalid board.config)', errs
     return data, 'active', []
 
 
-def save(cfg, path: str = 'board.json') -> str:
+def save(cfg, path: str = 'board.config') -> str:
     """Validate then atomically persist a full config snapshot. Returns its config_id.
 
     Raises ValueError if invalid (an invalid config is never written).
@@ -268,7 +270,7 @@ def save(cfg, path: str = 'board.json') -> str:
     return config_id(cfg)
 
 
-def reset(path: str = 'board.json') -> bool:
+def reset(path: str = 'board.config') -> bool:
     """Delete the active config so the next load uses defaults. Returns True if removed."""
     try:
         os.remove(path)

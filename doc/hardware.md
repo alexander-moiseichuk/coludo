@@ -160,6 +160,11 @@ These numbers are coming from the printed TMS-7 models.
 So assembled booster will weigh 191.3 grams, the glider itself without electronics will weigh around 112.6 grams, the electronics are excpected to weigh around 100-150 grams.
 Thus the assembled Coludo will be between 405-455 grams.
 
+The F15-4 mass above (98.3 g) is measured. The alternative **E16** motor is lighter — ~57 g loaded
+(~36 g propellant), published — so an E16 build is ~40 g lighter (≈365–415 g assembled). Both motors'
+estimated flight envelope (peak accel / speed / apogee / glide range) is in
+[`specs/coludo.md` → Flight envelope](../specs/coludo.md).
+
 # Potential configurations
 
 There are a number of composition options possible

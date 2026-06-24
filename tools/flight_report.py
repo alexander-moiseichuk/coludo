@@ -62,6 +62,8 @@ def build(streams, logs, go, make_subplots):
     baro = find_stream(streams, 'elevation', prefer='icp') or find_stream(streams, 'altitude')
     laser = find_stream(streams, 'agl')
     gnss = find_stream(streams, 'lat', 'lon')
+    fins = find_stream(streams, 'eleron_left', 'eleron_right', 'yaw')  # commanded servo angles (sim/board)
+    health = find_stream(streams, 'load')  # board_health.csv: temp (C), mem_free (bytes), load (%)
 
     trajectory = go.Figure()
     if gnss is not None:
@@ -69,18 +71,25 @@ def build(streams, logs, go, make_subplots):
         _, longitude = gnss.column('lon')
         height_field = 'elevation' if (baro and 'elevation' in baro.fields) else 'altitude'
         height = _nearest(*baro.column(height_field), targets=times) if baro else [0.0] * len(times)
+        speed = [k / 1.94384 for k in gnss.column('speed_kn')[1]] if 'speed_kn' in gnss.fields else [0.0] * len(times)
+        _, course = gnss.column('course') if 'course' in gnss.fields else (times, [0.0] * len(times))
+        # per-point hover so a click on the 3D track reads out everything known at that instant
+        text = ['t=%.1fs<br>height=%.0f m<br>speed=%.1f m/s<br>heading=%.0f deg' % point
+                for point in zip(times, height, speed, course)]
         trajectory.add_trace(go.Scatter3d(
             x=longitude, y=latitude, z=height, mode='lines+markers', name='trajectory',
+            text=text, hoverinfo='text',
             line=dict(width=4), marker=dict(size=2, color=times, colorscale='Viridis',
                                             colorbar=dict(title='t (s)'))))
-        trajectory.update_layout(title='trajectory — GNSS ground-track + baro height',
+        trajectory.update_layout(title='trajectory — GNSS ground-track + baro height (hover/click a point)',
                                  scene=dict(xaxis_title='lon', yaxis_title='lat', zaxis_title='height (m)'))
     else:
         trajectory.update_layout(title='trajectory — no GNSS fix in this capture')
 
-    series = make_subplots(rows=4, cols=1, shared_xaxes=True, vertical_spacing=0.05,
-                           subplot_titles=('|accel| (g)', 'altitude / elevation (m)',
-                                           'attitude (deg)', 'agl (m)'))
+    series = make_subplots(rows=7, cols=1, shared_xaxes=True, vertical_spacing=0.025,
+                           subplot_titles=('|accel| (g)', 'altitude / elevation (m)', 'speed (m/s)',
+                                           'attitude (deg)', 'fins — commanded (deg)',
+                                           'board health — load %, temp °C, mem MB', 'agl (m)'))
     if accel is not None:
         times, ax = accel.column('ax')
         _, ay = accel.column('ay')
@@ -92,25 +101,45 @@ def build(streams, logs, go, make_subplots):
             if field in baro.fields:
                 times, values = baro.column(field)
                 series.add_trace(go.Scatter(x=times, y=values, name=field), row=2, col=1)
+    if gnss is not None and 'speed_kn' in gnss.fields:  # GPS ground speed (knots) -> m/s
+        times, knots = gnss.column('speed_kn')
+        series.add_trace(go.Scatter(x=times, y=[k / 1.94384 for k in knots], name='speed'), row=3, col=1)
     if attitude is not None:
         for field in ('heading', 'yaw', 'roll', 'pitch'):
             if field in attitude.fields:
                 times, values = attitude.column(field)
-                series.add_trace(go.Scatter(x=times, y=values, name=field), row=3, col=1)
+                series.add_trace(go.Scatter(x=times, y=values, name=field), row=4, col=1)
+    if fins is not None:
+        for field in ('eleron_left', 'eleron_right', 'yaw'):
+            if field in fins.fields:
+                times, values = fins.column(field)
+                series.add_trace(go.Scatter(x=times, y=values, name=field), row=5, col=1)
+    if health is not None:
+        if 'load' in health.fields:
+            series.add_trace(go.Scatter(x=health.column('load')[0], y=health.column('load')[1],
+                                        name='load %'), row=6, col=1)
+        if 'temp' in health.fields:
+            series.add_trace(go.Scatter(x=health.column('temp')[0], y=health.column('temp')[1],
+                                        name='temp °C'), row=6, col=1)
+        if 'mem_free' in health.fields:  # bytes -> MB so it shares the panel's scale
+            times, mem = health.column('mem_free')
+            series.add_trace(go.Scatter(x=times, y=[m / 1e6 for m in mem], name='mem MB'), row=6, col=1)
     if laser is not None:
         times, values = laser.column('agl')
-        series.add_trace(go.Scatter(x=times, y=values, name='agl', mode='markers'), row=4, col=1)
+        series.add_trace(go.Scatter(x=times, y=values, name='agl', mode='markers'), row=7, col=1)
     for time_s, label in stage_events(logs):
         series.add_vline(x=time_s, line_dash='dash', line_color='crimson',
                          annotation_text=label, annotation_position='top left')
-    series.update_layout(height=900, title='flight parameters', showlegend=True)
-    series.update_xaxes(title_text='time (s)', row=4, col=1)
+    # 'x unified' -> hovering (or clicking) any time shows every panel's value at that instant
+    series.update_layout(height=1450, title='flight parameters', showlegend=True, hovermode='x unified')
+    series.update_xaxes(title_text='time (s)', row=7, col=1)
     return trajectory, series
 
 
-def write_html(trajectory, series, out, pio):
-    """One self-contained HTML: plotly.js embedded once, then both figures."""
-    body = (pio.to_html(trajectory, include_plotlyjs=True, full_html=False)
+def write_html(trajectory, series, out, pio, plotlyjs=True):
+    """One HTML with both figures. plotlyjs True -> embed plotly.js (self-contained, ~4.5 MB); 'cdn' ->
+    load it from the CDN (tiny file, needs internet to view)."""
+    body = (pio.to_html(trajectory, include_plotlyjs=plotlyjs, full_html=False)
             + pio.to_html(series, include_plotlyjs=False, full_html=False))
     with open(out, 'w') as handle:
         handle.write('<!doctype html><html><head><meta charset="utf-8">'
@@ -122,6 +151,7 @@ def main():
     parser = argparse.ArgumentParser(description='Render a Coludo flight capture as an interactive HTML report.')
     parser.add_argument('capture', help='recorder capture (the UART stream saved by the Luckfox)')
     parser.add_argument('-o', '--out', default='flight.html', help='output HTML (default flight.html)')
+    parser.add_argument('--cdn', action='store_true', help='load plotly.js from the CDN (tiny file, needs net)')
     args = parser.parse_args()
     go, pio, make_subplots = _require_plotly()
     with open(args.capture) as handle:
@@ -129,7 +159,7 @@ def main():
     if not streams:
         sys.exit('no telemetry streams found in %s' % args.capture)
     trajectory, series = build(streams, logs, go, make_subplots)
-    write_html(trajectory, series, args.out, pio)
+    write_html(trajectory, series, args.out, pio, 'cdn' if args.cdn else True)
     print('wrote %s (%d streams, %d log lines)' % (args.out, len(streams), len(logs)))
 
 

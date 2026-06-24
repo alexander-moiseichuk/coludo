@@ -5,6 +5,12 @@
 # entrance"). steer() picks the nearer gate, heads for it until inside the zone, then for the centre.
 # Equirectangular (flat-earth) math -- "not exact but about", which is plenty at zone scale (<~1 km).
 #
+# g2 (perf analysis): steer()/bearing()/distance() use float trig and allocate a few small tuples per
+# call. The concern was GC churn from calling them at the 100 Hz control rate. Resolution: the fix is on
+# the CALLER side, not here -- flight._target_heading() caches steer() at GPS cadence (~10 Hz, g7), so
+# the trig/alloc rate drops ~10x. With the hot-path pressure removed, a zero-allocation rewrite here
+# would only cost clarity for no measurable gain, so navigation stays simple, pure and correct.
+#
 # SAFETY: the gates are FIXED to the short sides, and steer() will always vector to one (and turn ~180
 # back through it on an overshoot) with NO knowledge of what lies beyond any side (trees / launch pad /
 # people). So the operator must ORIENT the zone -- choose the TL/BR corners in launch.config so the two
@@ -75,6 +81,17 @@ def inside(position: tuple, corner_tl: tuple, corner_br: tuple) -> bool:
     lat_b, lon_r = corner_br
     return (min(lat_t, lat_b) <= lat <= max(lat_t, lat_b) and
             min(lon_l, lon_r) <= lon <= max(lon_l, lon_r))
+
+
+def bank_demand(heading_error: float, gain: float, limit: float) -> float:
+    """Bank-to-turn: the roll angle (deg, right +) to hold for a heading error (deg). Proportional with
+    a hard limit, so the glider TURNS BY BANKING (a tight, ~v^2/(g*tan(bank)) radius coordinated turn)
+    instead of skidding flat on the rudder alone -- which is wide and weak and lets the airframe
+    over-RANGE a small zone (it sails downrange before it can come back). Re-evaluated each tick on the
+    steer() heading, a banked turn also makes the overshoot loop a tight ORBIT that bleeds excess
+    altitude over the zone rather than past it (energy management). gain 0 -> no bank (rudder-only)."""
+    bank = gain * heading_error
+    return limit if bank > limit else (-limit if bank < -limit else bank)
 
 
 def steer(position: tuple, corner_tl: tuple, corner_br: tuple) -> tuple:

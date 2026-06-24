@@ -34,7 +34,7 @@ _EPOCH_OFFSET: int = 946684800
 _FIELDS: tuple = ('launch_id', 'site', 'latitude', 'longitude', 'altitude')
 
 # Default max range (m) from the launch point to any zone point, when the board config omits it. The
-# real value is `max_range_m` in board.json -- it is a glide-range property of the AIRFRAME (a bigger
+# real value is `max_range_m` in board.config -- it is a glide-range property of the AIRFRAME (a bigger
 # glider reaches farther), so it lives in the board config, not the per-launch mission.
 _DEFAULT_MAX_RANGE_M: float = 200.0
 
@@ -97,8 +97,10 @@ class Mission(inspector.Inspectable):
         inspector.Inspector.register(self)
 
     def set_time(self, epoch) -> bool:
-        """Set the board RTC from a Unix epoch (seconds, UTC). Returns True if applied."""
-        if RTC is None or isinstance(epoch, bool) or not isinstance(epoch, int):
+        """Set the board RTC from a Unix epoch (seconds, UTC). Returns True if applied. Rejects a value
+        before 2000-01-01 (finding 1.11.1): epoch - _EPOCH_OFFSET would go negative and gmtime() would
+        set a pre-2000 RTC -- any real flight clock is well past 2000."""
+        if RTC is None or isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < _EPOCH_OFFSET:
             return False
         field = time.gmtime(epoch - _EPOCH_OFFSET)  # (year, month, mday, h, m, s, weekday, yday)
         RTC().datetime((field[0], field[1], field[2], field[6], field[3], field[4], field[5], 0))

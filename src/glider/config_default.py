@@ -1,6 +1,6 @@
 # Baked-in default board configuration for the WaveShare ESP32-P4-WIFI6 controller.
 #
-# Human-edited firmware default and the safe fallback when no valid board.json exists (see
+# Human-edited firmware default and the safe fallback when no valid board.config exists (see
 # specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
 # test/test_pins.py). `default()` returns a FRESH dict each call so callers may mutate it freely.
 #
@@ -185,21 +185,25 @@ def default() -> dict:
             # first powered flights.
             {'name': 'sequencer', 'activity': 'sequencer', 'enabled': True, 'period_ms': 50,
              'launch_g': 3.0, 'launch_ms': 100, 'boost_timeout_ms': 6000,
-             'land_agl_m': 5.0, 'still_g': 0.3, 'ground_ms': 3000},
+             'land_agl_m': 5.0, 'land_ms': 300, 'still_g': 0.3, 'ground_ms': 3000},
             # Phase 3 stabilization loop (off by default -- no actuation until enabled + tuned on the
             # airframe). schedule_hz > 0 -> machine.Timer (deterministic slice, ~1 m/step at 100 Hz/100 m/s);
             # schedule_hz 0 -> asyncio at period_ms. Gains/setpoint are airframe tuning; gates to GLIDING.
             {'name': 'flight', 'activity': 'flight', 'schedule_hz': 100, 'period_ms': 20, 'enabled': False,
              'gains': {'roll': {}, 'pitch': {}, 'yaw': {}},
+             # bank-to-turn: GLIDING steers by banking (roll setpoint = nav_bank_gain * heading_error,
+             # capped at bank_limit deg) so the turn is tight and orbits the zone to bleed altitude
+             # rather than over-ranging it on a flat rudder skid. nav_bank_gain 0 -> rudder-only.
+             'nav_bank_gain': 1.5, 'bank_limit': 30,
              # per-stage attitude setpoint; stages absent here hold the fins neutral. GLIDING =
-             # wings-level + heading hold; LANDING pitch is the flare knob (0 = none until tuned).
+             # bank-to-turn heading hold; LANDING pitch is the flare knob (0 = none until tuned).
              'stages': {'gliding': {'roll': 0, 'pitch': 0}, 'landing': {'roll': 0, 'pitch': 0}}},
             # Watchdog + heartbeat (Phase 3): feeds a hardware WDT (a total event-loop wedge -> hard
             # reset) and supervises the control loop (stall in a control stage -> full reset; boot
             # re-centres the fins). Disabled by default -- a live WDT also resets the board when you
             # drop the running firmware to the REPL for bench work; enable it for flight.
             {'name': 'watchdog', 'activity': 'watchdog', 'enabled': False,
-             'wdt_timeout_ms': 1000, 'period_ms': 200},
+             'wdt_timeout_ms': 1000, 'period_ms': 200, 'stall_ms': 500},
             # Board vitals (temperature/memory/load) -> telemetry every period_ms.
             {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'enabled': True},
             # Apply the BLE radio state at boot: off by default to save power (BLE is unused).

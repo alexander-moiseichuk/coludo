@@ -3,7 +3,7 @@
 Pin reference for the Coludo Main Controller board
 ([WaveShare ESP32-P4-WIFI6](https://www.waveshare.com/esp32-p4-wifi6.htm)), derived from the
 official [board schematic](https://files.waveshare.com/wiki/ESP32-P4-WIFI6/ESP32-P4-WIFI6-datasheet.pdf)
-(net-by-net), to seed the `buses`/`pins` sections of `board.json` (see
+(net-by-net), to seed the `buses`/`pins` sections of `board.config` (see
 [`../specs/board-config.md`](../specs/board-config.md)). The ESP32-P4 has 55 GPIOs (GPIO0–54);
 PSRAM is in-package (not pinned out). The 40-pin header is Pico-style and the **GPIO number is
 silk-printed on each header pin**, so locating a pin is trivial.
@@ -45,7 +45,7 @@ GPIO16–23 and GPIO49–54 — so a spare free pin in 20–23 or 49–52 can do
 
 ## Recommended Coludo pin map
 
-A conflict-free starting assignment (drop into `board.json`):
+A conflict-free starting assignment (drop into `board.config`):
 
 | Function | GPIO | Notes |
 |---|---|---|
@@ -77,12 +77,12 @@ A conflict-free starting assignment (drop into `board.json`):
   also drive GPIO9–13/53 for audio.
 - If a future revision needs the microSD or audio, GPIO39–44 / GPIO9–13 / GPIO53 come back into
   play — keep them out of the free pool then.
-- Never assign GPIO6/14–19/54 (Wi-Fi) or GPIO37/38 (console) in `board.json`.
+- Never assign GPIO6/14–19/54 (Wi-Fi) or GPIO37/38 (console) in `board.config`.
 
 ## Firmware peripheral defaults — do not rely on them
 
 This is a *generic* ESP32-P4 MicroPython build, so `machine` bus constructors return default
-pins unrelated to this board's wiring. **Always pass explicit pins** (which is what `board.json`
+pins unrelated to this board's wiring. **Always pass explicit pins** (which is what `board.config`
 does):
 
 | constructor | firmware default pins | problem |
