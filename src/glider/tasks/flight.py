@@ -54,6 +54,11 @@ class Flight(task.Task):
         # Stages not listed hold the fins neutral (SETTING/BOOSTING/DONE -- no actuation under thrust /
         # on the ground). GLIDING = wings-level + heading hold; LANDING carries its own setpoint (flare).
         self._stages: dict = self.config.get('stages', {'gliding': {'roll': 0.0, 'pitch': 0.0}})
+        # bank-to-turn: in GLIDING the roll SETPOINT comes from the heading error (navigation.bank_demand),
+        # so the glider banks into the turn toward the zone instead of skidding flat on the rudder (which
+        # over-ranges a small zone). gain 0 -> rudder-only (the old wings-level steering).
+        self._bank_gain: float = self.config.get('nav_bank_gain', 1.5)
+        self._bank_limit: float = self.config.get('bank_limit', 30)
         self._attitude = databoard.Databoard.parameter('attitude')  # (heading, roll, pitch)
         self._position = databoard.Databoard.parameter('position')  # (lat, lon) for landing-zone navigation
         self._mission = inspector.Inspector.get('mission')  # the landing zone lives here (may be None)
@@ -98,9 +103,13 @@ class Flight(task.Task):
         self._last_step_us = start
         if dt <= 0:
             dt = self._dt
-        roll_cmd = self._pid['roll'].step(setpoint.get('roll', 0.0) - roll, dt)
+        heading_error = self._heading_error(self._target_heading(), heading)
+        roll_setpoint = setpoint.get('roll', 0.0)
+        if self._bank_gain and self._stage == 'gliding':  # bank-to-turn toward the zone (vs rudder skid)
+            roll_setpoint = navigation.bank_demand(heading_error, self._bank_gain, self._bank_limit)
+        roll_cmd = self._pid['roll'].step(roll_setpoint - roll, dt)
         pitch_cmd = self._pid['pitch'].step(setpoint.get('pitch', 0.0) - pitch, dt)
-        yaw_cmd = self._pid['yaw'].step(self._heading_error(self._target_heading(), heading), dt)
+        yaw_cmd = self._pid['yaw'].step(heading_error, dt)  # rudder coordinates the banked turn
         self._apply(self._mixer.mix(roll=round(roll_cmd), pitch=round(pitch_cmd), yaw=round(yaw_cmd)))
         self._steps += 1
         elapsed = time.ticks_diff(time.ticks_us(), start)

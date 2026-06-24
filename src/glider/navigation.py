@@ -77,6 +77,17 @@ def inside(position: tuple, corner_tl: tuple, corner_br: tuple) -> bool:
             min(lon_l, lon_r) <= lon <= max(lon_l, lon_r))
 
 
+def bank_demand(heading_error: float, gain: float, limit: float) -> float:
+    """Bank-to-turn: the roll angle (deg, right +) to hold for a heading error (deg). Proportional with
+    a hard limit, so the glider TURNS BY BANKING (a tight, ~v^2/(g*tan(bank)) radius coordinated turn)
+    instead of skidding flat on the rudder alone -- which is wide and weak and lets the airframe
+    over-RANGE a small zone (it sails downrange before it can come back). Re-evaluated each tick on the
+    steer() heading, a banked turn also makes the overshoot loop a tight ORBIT that bleeds excess
+    altitude over the zone rather than past it (energy management). gain 0 -> no bank (rudder-only)."""
+    bank = gain * heading_error
+    return limit if bank > limit else (-limit if bank < -limit else bank)
+
+
 def steer(position: tuple, corner_tl: tuple, corner_br: tuple) -> tuple:
     """The heading to fly toward the landing target via the nearer gate: head for the closer short-side
     entrance until inside the zone, then for the centre. Returns (bearing_deg, waypoint, leg) with leg

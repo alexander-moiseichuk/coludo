@@ -191,8 +191,12 @@ def default() -> dict:
             # schedule_hz 0 -> asyncio at period_ms. Gains/setpoint are airframe tuning; gates to GLIDING.
             {'name': 'flight', 'activity': 'flight', 'schedule_hz': 100, 'period_ms': 20, 'enabled': False,
              'gains': {'roll': {}, 'pitch': {}, 'yaw': {}},
+             # bank-to-turn: GLIDING steers by banking (roll setpoint = nav_bank_gain * heading_error,
+             # capped at bank_limit deg) so the turn is tight and orbits the zone to bleed altitude
+             # rather than over-ranging it on a flat rudder skid. nav_bank_gain 0 -> rudder-only.
+             'nav_bank_gain': 1.5, 'bank_limit': 30,
              # per-stage attitude setpoint; stages absent here hold the fins neutral. GLIDING =
-             # wings-level + heading hold; LANDING pitch is the flare knob (0 = none until tuned).
+             # bank-to-turn heading hold; LANDING pitch is the flare knob (0 = none until tuned).
              'stages': {'gliding': {'roll': 0, 'pitch': 0}, 'landing': {'roll': 0, 'pitch': 0}}},
             # Watchdog + heartbeat (Phase 3): feeds a hardware WDT (a total event-loop wedge -> hard
             # reset) and supervises the control loop (stall in a control stage -> full reset; boot

@@ -140,6 +140,21 @@ async def amain():
     nav_ctrl._stage = 'landing'  # nav steers only in GLIDING -> LANDING holds (straight-and-level)
     assert navflight._target_heading() == 200.0
 
+    # bank-to-turn: in GLIDING a heading error commands a BANK (roll setpoint = nav_bank_gain*error,
+    # capped at bank_limit), so the glider banks into the turn (differential elevons) instead of only
+    # yawing -- the fix for over-ranging the zone on a flat rudder skid.
+    position.push((48.0005, 10.990))   # west of the zone -> steer ~east (90) to the left gate
+    attitude.push((0.0, 0.0, 0.0))     # facing north, wings level -> a +90 heading error
+    bank_ctrl = _StubController('gliding')
+    bankflight = flight.Flight('flight', {'schedule_hz': 0, 'gains': {'roll': {'kp': 1.0}},
+                                          'nav_bank_gain': 1.5, 'bank_limit': 30}, bank_ctrl)
+    assert await bankflight.setup() is True
+    bankflight._mission = _StubMission(launch=None)  # zone present -> tier-1 uses the live fix above
+    bankflight._step()
+    # error +90 -> bank_demand(+90, 1.5, 30) = +30 -> roll PID (kp 1) -> elevons 90+/-30 (a right bank)
+    assert bank_ctrl.fins['servo_eleron_left'].angle == 120 and bank_ctrl.fins['servo_eleron_right'].angle == 60
+    assert bank_ctrl.fins['servo_eleron_left'].angle != bank_ctrl.fins['servo_eleron_right'].angle  # banked
+
     # g6: integer-degree heading error quantises the yaw D-term -- characterise the on-device impact.
     # A smooth turn feeds a kd-only PID (its step() output IS the D term). Float wrap gives a smooth
     # de/dt ~= the turn rate; the production int wrap holds flat then jumps a whole degree, so the D term
