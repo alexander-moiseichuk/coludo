@@ -62,6 +62,7 @@ class Flight(task.Task):
         self._stage = None  # the current control-stage name (for inspect)
         self._steps: int = 0  # control steps run (self-timing for load characterization)
         self._max_step_us: int = 0
+        self._last_step_us: int = 0  # ticks_us of the previous control step -> actual dt (finding 1.14.2)
         self._timer = None
         self._ok = True
         return True
@@ -85,12 +86,20 @@ class Flight(task.Task):
         if not self._active:  # entering control (from a non-control stage): capture heading, reset PIDs
             self._active = True
             self._heading_hold = heading
+            self._last_step_us = start  # so the first dt below is ~0 -> nominal (no jump from a stale gap)
             for controller in self._pid.values():
                 controller.reset()
         self._stage = self.controller.stage_name()  # may switch between control stages (glide -> landing)
-        roll_cmd = self._pid['roll'].step(setpoint.get('roll', 0.0) - roll, self._dt)
-        pitch_cmd = self._pid['pitch'].step(setpoint.get('pitch', 0.0) - pitch, self._dt)
-        yaw_cmd = self._pid['yaw'].step(self._heading_error(self._target_heading(), heading), self._dt)
+        # ACTUAL elapsed since the last control step, not the nominal 1/schedule_hz (finding 1.14.2 / g5):
+        # a GC pause or a delayed slice makes the real interval longer, and the PID I/D terms must use it
+        # or they under/over-correct. The first step (dt 0) falls back to the nominal _dt.
+        dt = time.ticks_diff(start, self._last_step_us) / 1000000.0
+        self._last_step_us = start
+        if dt <= 0:
+            dt = self._dt
+        roll_cmd = self._pid['roll'].step(setpoint.get('roll', 0.0) - roll, dt)
+        pitch_cmd = self._pid['pitch'].step(setpoint.get('pitch', 0.0) - pitch, dt)
+        yaw_cmd = self._pid['yaw'].step(self._heading_error(self._target_heading(), heading), dt)
         self._apply(self._mixer.mix(roll=round(roll_cmd), pitch=round(pitch_cmd), yaw=round(yaw_cmd)))
         self._steps += 1
         elapsed = time.ticks_diff(time.ticks_us(), start)

@@ -18,6 +18,12 @@ def test_terms():
     deriv.step(0.0, 0.1)  # prime previous = 0
     assert abs(deriv.step(1.0, 0.1) - 10.0) < 1e-9  # (1-0)/0.1
 
+    # first step after init/reset takes NO derivative -> no spike from a 0 baseline (finding 1.14.1)
+    spike = pid.Pid(kd=1.0)
+    assert spike.step(5.0, 0.1) == 0.0  # first step: D skipped (else it would be (5-0)/0.1 = 50)
+    spike.reset()
+    assert spike.step(9.0, 0.1) == 0.0  # first step after reset: again no derivative kick
+
 
 def test_clamps_and_reset():
     # integral anti-windup

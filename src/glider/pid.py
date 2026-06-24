@@ -19,7 +19,7 @@ class Pid:
         self.integral_limit: float = integral_limit
         self.output_limit: float = output_limit
         self._integral: float = 0.0
-        self._previous: float = 0.0
+        self._previous = None  # last error; None until the first step -> no derivative kick on entry
 
     @staticmethod
     def _clamp(value: float, limit: float) -> float:
@@ -28,13 +28,18 @@ class Pid:
 
     def reset(self) -> None:
         """Clear the integral + derivative history -- on entering a control phase, so a fresh glide
-        does not inherit wind-up from a previous one."""
+        does not inherit wind-up from a previous one. `_previous = None` so the FIRST step after reset
+        takes no derivative term (finding 1.14.1: a 0 baseline would make de/dt = error/dt, a large
+        spurious D kick on entry)."""
         self._integral = 0.0
-        self._previous = 0.0
+        self._previous = None
 
     def step(self, error: float, dt: float) -> float:
         self._integral = self._clamp(self._integral + error * dt, self.integral_limit)
-        derivative = (error - self._previous) / dt if dt > 0 else 0.0
+        if self._previous is None or dt <= 0:  # first step after reset (or dt 0) -> no derivative
+            derivative = 0.0
+        else:
+            derivative = (error - self._previous) / dt
         self._previous = error
         output = self.kp * error + self.ki * self._integral + self.kd * derivative
         return self._clamp(output, self.output_limit)
