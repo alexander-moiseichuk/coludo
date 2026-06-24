@@ -106,6 +106,8 @@ def validate(cfg) -> list:
                 for key in _BUS_PIN_KEYS:
                     if key in spec:
                         claim(label + '.' + key, spec[key])
+                if kind == 'spi' and spec.get('mode', 0) not in (0, 1, 2, 3):  # machine.SPI: polarity/phase in {0,1}
+                    errs.append('bus %s.mode must be 0..3 (got %r)' % (label, spec.get('mode')))
 
     # discrete pins --------------------------------------------------------
     pins = cfg.get('pins')
