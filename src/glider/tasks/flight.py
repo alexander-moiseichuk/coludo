@@ -165,6 +165,15 @@ class Flight(task.Task):
             self._timer = None
         self._neutral()  # leave the fins centred
 
+    def progress(self) -> tuple:
+        """(controlling, steps, stage, updated_us) -- the public control-loop heartbeat, so the watchdog
+        (and anything else) need not read private attributes (finding 3.6.1). `controlling` is True only
+        in a control stage (PID engaged); `steps` advances each control update; `stage` is the current
+        control-stage name (or None); `updated_us` is time.ticks_us() of the last control step, so a
+        supervisor can judge staleness by TIME directly (not by step-count diffing against its own poll
+        cadence)."""
+        return self._active, self._steps, self._stage, self._last_step_us
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['schedule'] = 'timer' if self._schedule_hz > 0 else 'asyncio'
