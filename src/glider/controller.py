@@ -160,7 +160,10 @@ class Controller(inspector.Inspectable):
             except Exception as error:
                 reason = repr(error)
                 self.log("controller :: task '%s' setup raised: %r" % (name, error))
-            await new_task.finish()
+            try:  # clean up the half-set-up device; a cleanup failure must NOT abort the rest of boot (1.2.1)
+                await new_task.finish()
+            except Exception as error:
+                self.log("controller :: task '%s' cleanup raised: %r" % (name, error))
             if attempt < attempts:
                 self.log("controller :: task '%s' setup attempt %d/%d failed, retrying" % (name, attempt, attempts))
                 await asyncio.sleep_ms(200)  # let a flaky contact settle before the retry
