@@ -102,7 +102,9 @@ loop is the other open thread.
 
 ## Files
 
-- `vf_noise{05,10,25,50,100}.txt`, `vf_wind{00,03,06,09,12}.txt` — recorder captures
-- `report_*.html` — interactive reports (3D trajectory + accel/altitude/speed/attitude/fins/agl, unified hover)
-- `report_*.svg` — dependency-free per-flight look (plan view + altitude/roll)
+- `vf_noise{05,10,25,50,100}.txt`, `vf_wind{00,03,06,09,12}.txt` — recorder captures (all rounds)
+- `report_{noise05,noise50,wind00}.html` — **three committed interactive reports** kept as reference
+  points (clean sensors / degraded sensors / calm baseline); the full set regenerates for any round with
+  the `flight_report.py` command above — the other rounds are summarised in the tables and `compare_*.svg`
+- `report_*.svg` — dependency-free per-flight look (plan view + altitude/roll), all rounds
 - `compare_noise.svg`, `compare_wind.svg` — sweep overlays (all tracks on one plan view)
