@@ -27,6 +27,7 @@ import pid  # noqa: E402
 import sim_model  # noqa: E402
 
 _FINS = ('servo_eleron_left', 'servo_eleron_right', 'servo_yaw')
+_SPIKE_S = 3.0  # g16: a transient 2x sensor glitch fires once every this many seconds (within 2-5 s)
 
 
 def _heading_error(target: float, current: float) -> int:
@@ -88,6 +89,15 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         pitch_m = sim_model.noisy(sensors['pitch'], noise, -180.0, 180.0)
         altitude_m = sim_model.noisy(sensors['altitude'], noise, -100.0, 10000.0)
         agl = sensors['agl']
+
+        # g16: inject a transient 2x glitch on the attitude + accel for ONE tick every _SPIKE_S seconds
+        # (deterministic schedule so the stored corner-case traces reproduce). Exercises the control
+        # loop's rejection of a sudden bad sample -- the fin trace shows the kick, the trajectory should
+        # barely move.
+        if spike and int(t / _SPIKE_S) != int((t - dt) / _SPIKE_S):
+            roll_m *= 2.0
+            pitch_m *= 2.0
+            accel_m *= 2.0
 
         # --- stage machine (mirrors tasks/sequencer.py; separation off -> boost timeout drives glide) ---
         if stage == 'setting':
@@ -208,7 +218,8 @@ def main():
     parser = argparse.ArgumentParser(description='Fly a virtual Coludo mission and emit a recorder capture.')
     parser.add_argument('--motor', default='F15', choices=sorted(sim_model.MOTORS), help='motor (default F15)')
     parser.add_argument('--noise', type=float, default=0.05, help='sensor noise fraction N (default 0.05)')
-    parser.add_argument('--spike', action='store_true', help='inject occasional 2x roll spikes (g16)')
+    parser.add_argument('--spike', action='store_true',
+                        help='g16: inject a transient 2x attitude+accel glitch every ~3 s')
     parser.add_argument('--wind', type=float, default=0.0, help='steady wind speed m/s (default 0)')
     parser.add_argument('--wind-dir', type=float, default=0.0, help='wind blows TOWARD this heading deg (default 0=N)')
     parser.add_argument('--hz', type=int, default=50, help='simulation rate (default 50)')
