@@ -19,7 +19,7 @@ MOTORS: dict = {'E16': (16.1, 1.77), 'F15': (14.4, 3.45)}
 HPRC: dict = {
     'launch': (25.514379, -80.391795),    # pad (lat, lon)
     'elevation_m': 2.0,                    # pad MSL
-    'zone': [[25.514630, -80.392880], [25.514656, -80.391155]],  # TL, BR (a long E-W strip)
+    'zone': [[25.514944, -80.392972], [25.514583, -80.391111]],  # TL, BR (~40 m N-S x ~187 m E-W strip)
     'heading_deg': 30.0,                   # initial glide heading (deg) at separation
 }
 

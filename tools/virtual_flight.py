@@ -66,6 +66,8 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     mix = mixer.Mixer(cfg.get('mixer', {}))
     gains = flight_c.get('gains', {})
     stages = flight_c.get('stages', {'gliding': {'roll': 0.0, 'pitch': 0.0}})
+    bank_gain = flight_c.get('nav_bank_gain', 1.5)   # bank-to-turn (mirror tasks/flight.py)
+    bank_limit = flight_c.get('bank_limit', 30)
     pids = {axis: pid.Pid(output_limit=mix.limit, integral_limit=mix.limit, **gains.get(axis, {}))
             for axis in ('roll', 'pitch', 'yaw')}
 
@@ -116,21 +118,27 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
 
         # --- control law (mirrors flight._step): only the configured control stages actuate ---
         setpoint = stages.get(stage)
+        fins = (mix.neutral, mix.neutral, mix.neutral)   # commanded (left, right, yaw) -- neutral off-control
         if stage in ('setting', 'boosting'):
             body.boost_step(dt, thrust if t < burn_s else 0.0)
         elif setpoint is not None:                       # a control stage (gliding) -> PID -> mixer -> fins
             target = navigation.steer(sensors['position'], zone[0], zone[1])[0]  # tier-1: live fix
-            roll_cmd = pids['roll'].step(setpoint.get('roll', 0.0) - roll_m, dt)
+            heading_error = _heading_error(target, heading_m)
+            roll_setpoint = setpoint.get('roll', 0.0)
+            if bank_gain and stage == 'gliding':         # bank-to-turn toward the zone
+                roll_setpoint = navigation.bank_demand(heading_error, bank_gain, bank_limit)
+            roll_cmd = pids['roll'].step(roll_setpoint - roll_m, dt)
             pitch_cmd = pids['pitch'].step(setpoint.get('pitch', 0.0) - pitch_m, dt)
-            yaw_cmd = pids['yaw'].step(_heading_error(target, heading_m), dt)
+            yaw_cmd = pids['yaw'].step(heading_error, dt)
             angles = mix.mix(roll=round(roll_cmd), pitch=round(pitch_cmd), yaw=round(yaw_cmd))
-            left, right, yaw = (angles[f] for f in _FINS)
-            body.glide_step(dt, (left - right) / 2.0, (left + right) / 2.0 - 90.0, yaw - 90.0)
-        else:                                            # non-control stage (landing) -> coast, fins neutral
+            fins = tuple(angles[f] for f in _FINS)
+            body.glide_step(dt, (fins[0] - fins[1]) / 2.0, (fins[0] + fins[1]) / 2.0 - 90.0, fins[2] - 90.0)
+        else:                                            # non-control stage -> coast, fins neutral
             body.glide_step(dt, 0.0, 0.0, 0.0)
 
         rows.sample(t, accel_m, altitude_m, sensors['altitude'] - body.elev0, heading_m, roll_m, pitch_m,
-                    sensors['position'], agl, laser_range_m, dt)
+                    sensors['position'], agl, laser_range_m, body.speed, fins)
+        rows.health(t, stage)
         if body.gliding and body.alt <= 0.0:             # touched down
             rows.event(t, 'controller :: stage -> done')
             break
@@ -147,6 +155,7 @@ class _Capture:
     def __init__(self):
         self._lines = []
         self._last_gnss = -1.0
+        self._last_health = -1.0
 
     def _tlm(self, file: str, row: str) -> None:
         self._lines.append('@%s_%s@%s' % (self._SESSION, file, row))
@@ -157,17 +166,36 @@ class _Capture:
         self._tlm('imu_bno055.csv', 'uptime;heading;roll;pitch')
         self._tlm('gnss.csv', 'uptime;lat;lon;speed_kn;course')
         self._tlm('laser_agl.csv', 'uptime;agl')
+        self._tlm('fins.csv', 'uptime;eleron_left;eleron_right;yaw')  # commanded servo angles (deg)
+        self._tlm('health.csv', 'uptime;temp;mem_free;load')          # board vitals (board_health.py)
 
-    def sample(self, t, accel, altitude, elevation, heading, roll, pitch, position, agl, laser_range, dt):
+    def sample(self, t, accel, altitude, elevation, heading, roll, pitch, position, agl, laser_range, speed, fins):
         microseconds = int(t * 1e6)
         self._tlm('accel_adxl375.csv', '%u;0.000;0.000;%.3f' % (microseconds, accel))
         self._tlm('baro_icp10111.csv', '%u;%.2f;21.0;100000;%.2f' % (microseconds, altitude, elevation))
         self._tlm('imu_bno055.csv', '%u;%.1f;%.1f;%.1f' % (microseconds, heading, roll, pitch))
+        self._tlm('fins.csv', '%u;%d;%d;%d' % (microseconds, fins[0], fins[1], fins[2]))
         if t - self._last_gnss >= 0.1:                   # GNSS ~10 Hz
             self._last_gnss = t
-            self._tlm('gnss.csv', '%u;%.6f;%.6f;%.1f;%.1f' % (microseconds, position[0], position[1], 0.0, heading))
+            self._tlm('gnss.csv', '%u;%.6f;%.6f;%.1f;%.1f'    # speed in knots (GPS convention)
+                      % (microseconds, position[0], position[1], speed * 1.94384, heading))
         if agl <= laser_range:                           # the laser only resolves the last few metres
             self._tlm('laser_agl.csv', '%u;%.3f' % (microseconds, agl))
+
+    def health(self, t, stage):
+        """A 1 Hz board-vitals row (board_health.csv fields). SYNTHETIC + phase-modeled -- the host has no
+        real MCU -- but shaped like the board would read: load tracks the work per stage (idle on the rod,
+        high under boost sampling, steady in the glide loop, highest while the laser hammers I2C on
+        landing); temperature drifts up under load; free memory stays consistent (the firmware
+        pre-allocates and avoids churn, so GC is gentle -- only a shallow sawtooth around ~4 MB)."""
+        if t - self._last_health < 1.0:
+            return
+        self._last_health = t
+        load = {'setting': 5, 'boosting': 45, 'gliding': 30, 'landing': 60}.get(stage, 8)
+        load = max(0, min(100, load + int(6 * math.sin(t * 2.5))))
+        temp = min(63.0, 45.0 + 0.18 * t + (4.0 if stage == 'landing' else 0.0))
+        mem_free = 4_190_000 - int((t * 1000) % 30000)   # ~4 MB, a shallow GC sawtooth (memory is steady)
+        self._tlm('health.csv', '%u;%.1f;%d;%d' % (int(t * 1e6), temp, mem_free, load))
 
     def event(self, t, line: str) -> None:
         self._lines.append('%u %s' % (int(t * 1e6), line))

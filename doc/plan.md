@@ -247,8 +247,11 @@ the same site, these parameters may live in `board.config` (noted in `board-conf
 **Known launch pads** (several may be defined; the on-board GNSS and the host GPS each select the
 nearest one). First site — **HPRC** (Homestead Public Rocketry Club):
 - launch pad: `25.514379, -80.391795`
-- landing zone: top-left `25.514630, -80.392880`, bottom-right `25.514656, -80.391155`
-- constraint: landing-zone centre must be < 100 m from the pad.
+- landing zone (Google Maps, north up): top-left `25.514944, -80.392972`,
+  bottom-right `25.514583, -80.391111` — a **~40 m (N–S) × ~187 m (E–W)** strip (~7500 m²),
+  centre `25.514764, -80.392042`, ~49 m from the pad. Long axis E–W → the nav gates the short
+  (E/W) ends (`navigation.zone()`), so the glider runs in along the strip.
+- constraint: landing-zone centre must be < 100 m from the pad (49 m here ✓).
 
 If the host laptop has a GPS (GPSD), the board could take **assisted GPS** from it during setup —
 a sync loop that waits until GPS is ready.
