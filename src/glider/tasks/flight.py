@@ -63,6 +63,7 @@ class Flight(task.Task):
         self._steps: int = 0  # control steps run (self-timing for load characterization)
         self._max_step_us: int = 0
         self._last_step_us: int = 0  # ticks_us of the previous control step -> actual dt (finding 1.14.2)
+        self._fins = None  # resolved fin objects, cached on the first apply (finding g4)
         self._timer = None
         self._ok = True
         return True
@@ -126,8 +127,13 @@ class Flight(task.Task):
         return self._heading_hold  # tier 3: blind
 
     def _apply(self, angles: dict) -> None:
+        # Resolve the fin objects ONCE and cache them (finding g4 / g8.A): controller.find() is a dict
+        # search, and doing it per fin per step (100 Hz) is pure overhead. By the first apply all servo
+        # tasks are up (bring-up finishes before any run loop), so the lookup is stable.
+        if self._fins is None:
+            self._fins = {name: self.controller.find([name])[0] for name in angles}
         for name, angle in angles.items():
-            fin = self.controller.find([name])[0]
+            fin = self._fins.get(name)
             if fin is not None:
                 fin.update({'angle': angle})
 
