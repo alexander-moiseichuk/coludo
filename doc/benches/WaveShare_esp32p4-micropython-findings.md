@@ -2,7 +2,9 @@
 
 Measurements taken for the Coludo flight-controller project to validate latency and memory
 assumptions, with several results that look like general MicroPython behaviour worth sharing
-upstream. Raw data: [`WaveShare_esp32p4_micropython-1.28.0.log`](WaveShare_esp32p4_micropython-1.28.0.log) and
+upstream. Re-run 2026-06-24 (same board + firmware) — every number reproduced within measurement
+noise, so the findings below are stable. Raw data:
+[`WaveShare_esp32p4_micropython-1.28.0.log`](WaveShare_esp32p4_micropython-1.28.0.log) and
 [`WaveShare_esp32p4_micropython-1.28.0.json`](WaveShare_esp32p4_micropython-1.28.0.json). Benchmark source:
 [`../../src/glider/test/bench_asyncio.py`](../../src/glider/test/bench_asyncio.py).
 
@@ -34,7 +36,7 @@ buffer* grows, even though the number of bytes written is constant. The same 32-
 | 64 B | **4.1 µs** |
 | 4 KiB | 71.3 µs |
 | 64 KiB | 1098 µs |
-| 256 KiB | **19 670 µs** |
+| 256 KiB | **19 664 µs** |
 
 The cost tracks the buffer length (~12 MB/s, i.e. the PSRAM memcpy rate from Finding 4), which
 strongly suggests the slice-store path **memmoves the tail of the buffer past the assigned
@@ -87,8 +89,8 @@ to >1 s over 300 cycles).
 Implication for sub-10 ms control loops: don't rely on `asyncio.sleep`; use a hardware timer
 + `ThreadSafeFlag`, or busy-wait on `time.ticks_us()`.
 
-For reference, the bare scheduler round-trip `await asyncio.sleep_ms(0)` is **83.6 µs/iter**,
-and an `Event` set→wake ping-pong round-trip is **305 µs avg** (171 min / 498 max).
+For reference, the bare scheduler round-trip `await asyncio.sleep_ms(0)` is **83.4 µs/iter**,
+and an `Event` set→wake ping-pong round-trip is **306 µs avg** (172 min / 487 max).
 
 ---
 
@@ -96,8 +98,8 @@ and an `Event` set→wake ping-pong round-trip is **305 µs avg** (171 min / 498
 
 | `gc.collect()` | pause |
 |---|---|
-| clean heap | **334 µs** |
-| 10 000 small live objects (`bytearray(32)`) | **67 167 µs (67 ms)** |
+| clean heap | **318 µs** |
+| 10 000 small live objects (`bytearray(32)`) | **67 232 µs (67 ms)** |
 
 A modestly fragmented heap (10k objects, ~0.5 MB of a 33 MB heap) pushes a single collection
 to 67 ms — far beyond a 10 ms real-time loop. The collector cost is dominated by walking the
@@ -108,7 +110,7 @@ collections explicitly at safe points (or disabling GC during time-critical phas
 
 ## Finding 4 — PSRAM heap memcpy bandwidth ≈ 12 MB/s
 
-`dst[:] = src` for two 1 MiB buffers (a legitimate equal-size copy): **88 997 µs/MiB → 11.8
+`dst[:] = src` for two 1 MiB buffers (a legitimate equal-size copy): **88 996 µs/MiB → 11.8
 MB/s**. Since the whole GC heap lives in PSRAM on this board, *every* allocation and bulk copy
 pays this rate, which is what makes Finding 1's tail-memmove so expensive.
 
@@ -136,7 +138,7 @@ An out-of-range bus id should raise, not crash.
 | `time.ticks_us()` call | 3.1 µs |
 | `{}` alloc | 2.6 µs |
 | `[0]*8` alloc | 7.0 µs |
-| `bytes(256)` / `bytearray(256)` alloc | 44 / 39 µs |
+| `bytes(256)` / `bytearray(256)` alloc | 44 / 40 µs |
 
 ---
 
