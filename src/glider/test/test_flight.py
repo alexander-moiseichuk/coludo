@@ -7,6 +7,7 @@ import asyncio
 
 import config_default
 import databoard
+import pid
 import task
 from tasks import flight
 
@@ -138,6 +139,27 @@ async def amain():
     assert abs(navflight._target_heading() - 270.0) < 5.0  # current position, not the launch point
     nav_ctrl._stage = 'landing'  # nav steers only in GLIDING -> LANDING holds (straight-and-level)
     assert navflight._target_heading() == 200.0
+
+    # g6: integer-degree heading error quantises the yaw D-term -- characterise the on-device impact.
+    # A smooth turn feeds a kd-only PID (its step() output IS the D term). Float wrap gives a smooth
+    # de/dt ~= the turn rate; the production int wrap holds flat then jumps a whole degree, so the D term
+    # spikes to ~1deg/dt at each integer crossing -- larger peaks, but bounded and sparse.
+    dt = 0.01  # 100 Hz
+    sweep = [30.0 - 0.27 * i for i in range(80)]  # heading error sweeping smoothly (~27 deg/s turn)
+
+    def peak_dterm(wrap):
+        controller = pid.Pid(kd=1.0)
+        return max(abs(controller.step(wrap(e), dt)) for e in sweep)
+
+    peak_float = peak_dterm(lambda e: ((e + 180.0) % 360.0) - 180.0)  # smooth (float) heading error
+    peak_int = peak_dterm(lambda e: flight.Flight._heading_error(e, 0.0))  # the production int wrap
+    print('g6: yaw D-term peak over a smooth ~27deg/s turn @100Hz -- float=%.0f, int=%.0f deg/s'
+          % (peak_float, peak_int))
+    assert abs(peak_float - 27) < 2          # float: ~ the turn rate, no quantisation
+    assert peak_int >= 1.0 / dt - 1          # int: spikes of ~1deg/dt (~100 deg/s) at degree crossings
+    # Verdict: the spike is bounded by one degree-per-tick. With yaw kd kept small (sub-degree heading
+    # precision is irrelevant for fin authority over a 100-200 m approach) it is negligible; if a large
+    # kd is ever needed, switch the yaw error to float or low-pass the D term.
 
     print('ok: flight -- per-stage control stages, nav (3 GPS tiers), degraded->neutral, PID->mix->fins, scheduling')
 
