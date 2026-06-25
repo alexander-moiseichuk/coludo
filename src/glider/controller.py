@@ -198,9 +198,15 @@ class Controller(inspector.Inspectable):
             await closing_task.finish()
 
     async def finish(self) -> None:
-        """Shut down all tasks."""
-        for name in list(self.tasks):
-            await self.close(name)
+        """Shut down all tasks, in REVERSE bring-up order so a command PRODUCER (e.g. the flight loop,
+        which centres the fins in its finish()) closes before the actuators/resources it writes to --
+        otherwise teardown drives an already-released peripheral (PWM deinit'd -> RuntimeError). Best
+        effort: a single task's finish() error is logged, never stranding the rest of the shutdown."""
+        for name in reversed(list(self.tasks)):
+            try:
+                await self.close(name)
+            except Exception as error:  # noqa: BLE001 -- teardown must continue past one bad task
+                self.log("controller :: finish '%s' error: %r" % (name, error))
         self.stage = Stage.DONE
 
     # ------------------------------------------------------------------ stage

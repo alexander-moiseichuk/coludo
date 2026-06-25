@@ -43,6 +43,9 @@ class _StubController:
     def find(self, names):
         return [self._flight]
 
+    def stage_name(self):  # the watchdog logs this in the stall message (int-stage refactor)
+        return 'gliding'
+
 
 async def amain():
     assert task.ACTIVITIES.get('watchdog') is watchdog.Watchdog  # registered driver
