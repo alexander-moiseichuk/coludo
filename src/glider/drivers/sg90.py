@@ -34,6 +34,7 @@
 
 import asyncio
 
+import commons
 import recorder
 import servo
 import task
@@ -89,7 +90,7 @@ class SG90(task.Task):
         return None
 
     def _clamp(self, angle) -> int:
-        return min(max(round(angle), self._min_deg), self._max_deg)
+        return commons.clamp_int(self._min_deg, round(angle), self._max_deg)
 
     def _apply(self, angle, done: int = 0) -> int:
         """Clamp `angle` to integer degrees, map to a pulse width (integer math), drive the PWM, and

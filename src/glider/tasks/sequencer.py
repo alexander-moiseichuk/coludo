@@ -15,6 +15,7 @@ import gc
 import math
 import time
 
+import commons
 import controller as controller_mod
 import databoard
 import recorder
@@ -33,7 +34,7 @@ def _magnitude_sq(accel):
     if accel is None:
         return None
     ax, ay, az = accel
-    return ax * ax + ay * ay + az * az
+    return commons.magnitude_sq(ax, ay, az)
 
 
 @task.activity('sequencer')

@@ -17,6 +17,7 @@
 import asyncio
 import time
 
+import commons
 import controller as controller_mod
 import databoard
 import inspector
@@ -38,9 +39,8 @@ class Flight(task.Task):
     def _heading_error(target: float, current: float) -> int:
         """Shortest signed heading error (deg), wrapped to [-180, 180] so 350 -> 10 is +20, not -340.
         Integer degrees -- sub-degree precision is irrelevant to a servo and lets one modulo replace the
-        wrap loop."""
-        error = int(target - current)
-        return error if -180 <= error <= 180 else (error + 180) % 360 - 180
+        wrap loop. The wrap itself is the shared commons.wrap180 (g15 viper bundle)."""
+        return commons.wrap180(int(target - current))
 
     async def setup(self) -> bool:
         board = self.controller.config
