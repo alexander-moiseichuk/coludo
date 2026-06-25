@@ -122,3 +122,28 @@ def steer(position: tuple, corner_tl: tuple, corner_br: tuple) -> tuple:
         waypoint = gate_a if distance(lat, lon, *gate_a) <= distance(lat, lon, *gate_b) else gate_b
         leg = GATE
     return bearing(lat, lon, waypoint[0], waypoint[1]), waypoint, leg
+
+
+def cross_track(position: tuple, point: tuple, heading: float) -> float:
+    """Signed perpendicular distance (metres) from `position` to the line through `point` along compass
+    `heading`; positive = to the RIGHT of the line (looking along the heading)."""
+    east, north = _offset_m(point[0], point[1], position[0], position[1])
+    radians = math.radians(heading)
+    return east * math.cos(radians) - north * math.sin(radians)
+
+
+def approach(position: tuple, corner_tl: tuple, corner_br: tuple, heading: float,
+             cross_gain: float, intercept_max: float) -> float:
+    """Final-approach guidance (g8/g9): the heading to fly to TRACK the zone's long-axis CENTRELINE (the
+    strip), used low on final instead of homing to the centre POINT. The glider intercepts the line at up
+    to `intercept_max` deg (`cross_gain` deg per metre off it), then flies down it -- so a crosswind is
+    crabbed out and the touchdown holds the narrow strip. Uses the full bank authority (keep it gliding,
+    not rolling-and-dropping). (This is a banked/crab correction -- a true wing-low SLIP would need a
+    sideslip-capable airframe model; the residual at strong wind is airframe-bound, not a control gap.)"""
+    target, gate_a, gate_b = zone(corner_tl, corner_br)
+    centreline = bearing(gate_a[0], gate_a[1], gate_b[0], gate_b[1])
+    if abs(((centreline - heading + 180.0) % 360.0) - 180.0) > 90.0:  # fly the along-strip way we are going
+        centreline = (centreline + 180.0) % 360.0
+    # off to the RIGHT -> aim left of the centreline to intercept (and vice versa), capped
+    intercept = between(-intercept_max, -cross_gain * cross_track(position, target, centreline), intercept_max)
+    return (centreline + intercept) % 360.0

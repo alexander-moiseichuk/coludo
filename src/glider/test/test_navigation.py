@@ -73,9 +73,26 @@ def test_bank_demand():
     assert navigation.bank_demand(25.0, 0.0, 30.0) == 0.0     # gain 0 -> no bank
 
 
+def test_cross_track_and_approach():
+    # cross_track: signed perpendicular distance to a line. Line through (48,11) heading NORTH (0):
+    # a point due EAST is to the RIGHT (+), due WEST is left (-), on the line is ~0.
+    assert navigation.cross_track((48.0, 11.001), (48.0, 11.0), 0.0) > 50     # ~75 m east -> right +
+    assert navigation.cross_track((48.0, 10.999), (48.0, 11.0), 0.0) < -50    # west -> left -
+    assert abs(navigation.cross_track((48.001, 11.0), (48.0, 11.0), 0.0)) < 1  # ahead on the line -> ~0
+
+    # approach: track a wide zone's E-W centreline. On the line -> fly the centreline; off it -> intercept.
+    tl, br = (48.001, 11.000), (48.000, 11.010)   # wide -> centreline runs E-W (~90/270) through 48.0005
+    centre = (48.0005, 11.005)
+    assert _close(navigation.approach(centre, tl, br, 90.0, 3.0, 45.0), 90.0, 1.0)  # on line, heading E -> 90
+    south = (48.0003, 11.005)  # ~22 m south of the centreline, flying east -> aim left (north), heading < 90
+    aimed = navigation.approach(south, tl, br, 90.0, 3.0, 45.0)
+    assert 45.0 <= aimed < 90.0, aimed         # intercept toward the line (north), capped at 45 deg off
+
+
 test_bearing_distance()
 test_zone_orientation()
 test_inside_and_steer()
 test_overshoot_loop()
 test_bank_demand()
-print('ok: navigation -- bearing/distance, zone target + gates, inside, steer, overshoot loop, bank-to-turn')
+test_cross_track_and_approach()
+print('ok: navigation -- bearing/distance, zone, inside, steer, overshoot, bank-to-turn, cross-track+approach')

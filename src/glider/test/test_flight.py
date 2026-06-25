@@ -9,6 +9,7 @@ import config_default
 import databoard
 import pid
 import task
+from controller import Stage
 from tasks import flight
 
 
@@ -23,12 +24,12 @@ class _FakeFin:
 class _StubController:
     def __init__(self, stage):
         self.config = config_default.default()  # carries the mixer block
-        self._stage = stage
+        self.stage = stage  # a Stage id (int) -- the flight loop reads controller.stage, not strings
         self.armed = True  # the gate: disarmed -> the loop holds neutral (tested below)
         self.fins = {n: _FakeFin() for n in ('servo_yaw', 'servo_eleron_left', 'servo_eleron_right')}
 
     def stage_name(self):
-        return self._stage
+        return Stage.STAGES[self.stage]
 
     def find(self, names):
         return [self.fins.get(n) for n in names]
@@ -37,7 +38,7 @@ class _StubController:
 async def amain():
     assert task.ACTIVITIES.get('flight') is flight.Flight  # registered driver
 
-    ctrl = _StubController('setting')
+    ctrl = _StubController(Stage.SETTING)
     unit = flight.Flight('flight', {'schedule_hz': 0, 'period_ms': 20, 'gains': {'roll': {'kp': 1.0}}}, ctrl)
     assert await unit.setup() is True
     attitude = databoard.Databoard.provide('imu', {'attitude': {'priority': 0, 'timeout_ms': 1000}}, 'attitude')
@@ -47,31 +48,31 @@ async def amain():
     assert ctrl.fins['servo_yaw'].angle is None
 
     # gliding but attitude born-stale (not pushed) -> degraded -> fins neutral, not engaged
-    ctrl._stage = 'gliding'
+    ctrl.stage = Stage.GLIDING
     unit._step()
     assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._active is False
 
     # gliding + fresh attitude -> engage: kp=1 on roll=10 -> roll cmd -10 -> elevons differential
     attitude.push((100.0, 10.0, -5.0))  # heading, roll, pitch
     unit._step()
-    assert unit._active is True and unit._stage == 'gliding' and unit._steps == 1
+    assert unit._active is True and unit._stage == Stage.GLIDING and unit._steps == 1
     assert ctrl.fins['servo_eleron_left'].angle == 80 and ctrl.fins['servo_eleron_right'].angle == 100
     assert ctrl.fins['servo_yaw'].angle == 90  # heading hold captured at 100 -> error 0 -> rudder neutral
 
     # landing is NOT a control stage by default (only gliding) -> centre the fins + disengage
-    ctrl._stage = 'landing'
+    ctrl.stage = Stage.LANDING
     unit._step()
     assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._active is False
 
     # disarmed -> neutral even in a control stage (the arming safety gate)
-    ctrl._stage = 'gliding'
+    ctrl.stage = Stage.GLIDING
     ctrl.armed = False
     unit._step()
     assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._active is False
     ctrl.armed = True  # re-arm for the scheduling-mode checks below
 
     # asyncio mode (schedule_hz 0): run() loops and runs control steps
-    ctrl._stage = 'gliding'
+    ctrl.stage = Stage.GLIDING
     runner = asyncio.create_task(unit.run())
     await asyncio.sleep_ms(80)
     runner.cancel()
@@ -82,7 +83,7 @@ async def amain():
     assert unit._steps > 1  # the asyncio loop ticked
 
     # timer mode (schedule_hz > 0): a machine.Timer drives the step deterministically
-    timed = flight.Flight('flight', {'schedule_hz': 100, 'gains': {}}, _StubController('gliding'))
+    timed = flight.Flight('flight', {'schedule_hz': 100, 'gains': {}}, _StubController(Stage.GLIDING))
     assert await timed.setup() is True
     timer_runner = asyncio.create_task(timed.run())
     await asyncio.sleep_ms(120)
@@ -97,18 +98,18 @@ async def amain():
     # per-stage behaviour: LANDING declared as a control stage -> continuous control glide->landing
     # (stays engaged, setpoint switches), then a non-control stage centres the fins
     attitude.push((100.0, 10.0, -5.0))  # refresh
-    pctrl = _StubController('gliding')
+    pctrl = _StubController(Stage.GLIDING)
     staged = flight.Flight('flight', {'schedule_hz': 0, 'gains': {'pitch': {'kp': 1.0}},
                                       'stages': {'gliding': {'pitch': 0}, 'landing': {'pitch': 0}}}, pctrl)
     assert await staged.setup() is True
     staged._step()  # gliding -> engage
-    assert staged._active is True and staged._stage == 'gliding'
-    pctrl._stage = 'landing'
+    assert staged._active is True and staged._stage == Stage.GLIDING
+    pctrl.stage = Stage.LANDING
     staged._step()  # still a control stage -> stays engaged (no neutral between)
-    assert staged._active is True and staged._stage == 'landing'
+    assert staged._active is True and staged._stage == Stage.LANDING
     # pitch=-5, landing setpoint 0 -> error 5 -> kp=1 -> elevons 90+5 (controlling, not neutral)
     assert pctrl.fins['servo_eleron_left'].angle == 95 and pctrl.fins['servo_eleron_right'].angle == 95
-    pctrl._stage = 'boosting'
+    pctrl.stage = Stage.BOOSTING
     staged._step()  # non-control stage -> fins neutral, disengaged
     assert all(fin.angle == 90 for fin in pctrl.fins.values()) and staged._active is False
 
@@ -122,7 +123,7 @@ async def amain():
         def launch_point(self):
             return self._launch
 
-    nav_ctrl = _StubController('gliding')
+    nav_ctrl = _StubController(Stage.GLIDING)
     navflight = flight.Flight('flight', {'schedule_hz': 0, 'gains': {}}, nav_ctrl)
     assert await navflight.setup() is True
     navflight._heading_hold = 200.0  # the blind fallback heading
@@ -132,32 +133,38 @@ async def amain():
     # tier 3: no fix, no launch point -> hold the captured heading (blind)
     navflight._mission = _StubMission(launch=None)
     navflight._nav_heading = None
-    assert navflight._target_heading() == 200.0
+    assert navflight._target_heading(0.0, False) == 200.0
     # tier 2: no fix, CC-set launch point (west of the zone) -> launch->left-gate bearing (~east, 90)
     navflight._mission = _StubMission(launch=(48.0005, 10.990))
     navflight._nav_heading = None
-    assert abs(navflight._target_heading() - 90.0) < 5.0
+    assert abs(navflight._target_heading(0.0, False) - 90.0) < 5.0
     # tier 1: a fresh fix overrides -> steer from the CURRENT position (east of the zone -> right gate, ~270)
     position = databoard.Databoard.provide('gnss', {'position': {'priority': 0, 'timeout_ms': 1000}}, 'position')
     position.push((48.0005, 11.020))
     navflight._nav_heading = None
-    assert abs(navflight._target_heading() - 270.0) < 5.0  # current position, not the launch point
-    nav_ctrl._stage = 'landing'  # nav steers only in GLIDING -> LANDING holds (straight-and-level)
-    assert navflight._target_heading() == 200.0
+    assert abs(navflight._target_heading(0.0, False) - 270.0) < 5.0  # current position, not the launch point
+    # g8/g9: LANDING now STEERS too (it no longer locks straight-and-level) -> same tier-1 fix, ~270
+    nav_ctrl.stage = Stage.LANDING
+    navflight._nav_heading = None
+    assert abs(navflight._target_heading(0.0, False) - 270.0) < 5.0
+    # a NON-control stage (BOOSTING) holds the captured heading (blind)
+    nav_ctrl.stage = Stage.BOOSTING
+    navflight._nav_heading = None
+    assert navflight._target_heading(0.0, False) == 200.0
 
     # g7: a second call within nav_period returns the CACHED heading (no recompute) even if the fix moves
-    nav_ctrl._stage = 'gliding'
+    nav_ctrl.stage = Stage.GLIDING
     navflight._nav_heading = None
-    first = navflight._target_heading()           # fresh steer() from (48.0005, 11.020) -> ~270
+    first = navflight._target_heading(0.0, False)           # fresh steer() from (48.0005, 11.020) -> ~270
     position.push((48.0005, 10.980))              # move the fix west; without the cache this -> ~90
-    assert navflight._target_heading() == first   # cached -> unchanged until nav_period elapses
+    assert navflight._target_heading(0.0, False) == first   # cached -> unchanged until nav_period elapses
 
     # bank-to-turn: in GLIDING a heading error commands a BANK (roll setpoint = nav_bank_gain*error,
     # capped at bank_limit), so the glider banks into the turn (differential elevons) instead of only
     # yawing -- the fix for over-ranging the zone on a flat rudder skid.
     position.push((48.0005, 10.990))   # west of the zone -> steer ~east (90) to the left gate
     attitude.push((0.0, 0.0, 0.0))     # facing north, wings level -> a +90 heading error
-    bank_ctrl = _StubController('gliding')
+    bank_ctrl = _StubController(Stage.GLIDING)
     bankflight = flight.Flight('flight', {'schedule_hz': 0, 'gains': {'roll': {'kp': 1.0}},
                                           'nav_bank_gain': 1.5, 'bank_limit': 30}, bank_ctrl)
     assert await bankflight.setup() is True
@@ -166,6 +173,19 @@ async def amain():
     # error +90 -> bank_demand(+90, 1.5, 30) = +30 -> roll PID (kp 1) -> elevons 90+/-30 (a right bank)
     assert bank_ctrl.fins['servo_eleron_left'].angle == 120 and bank_ctrl.fins['servo_eleron_right'].angle == 60
     assert bank_ctrl.fins['servo_eleron_left'].angle != bank_ctrl.fins['servo_eleron_right'].angle  # banked
+
+    # g8/g9 crosswind landing: LANDING keeps steering to the zone (not a blind wings-level flare), using
+    # the FULL fin authority (land_bank_limit 45) to crab the crosswind out -- keep it gliding.
+    land_ctrl = _StubController(Stage.LANDING)
+    landflight = flight.Flight('flight', {'schedule_hz': 0, 'gains': {'roll': {'kp': 1.0}},
+                                          'stages': {'gliding': {}, 'landing': {}}}, land_ctrl)
+    assert await landflight.setup() is True
+    landflight._mission = _StubMission(launch=None)
+    position.push((48.0005, 10.990))   # west of the zone -> steer ~east (90); agl absent -> not 'final'
+    attitude.push((0.0, 0.0, 0.0))
+    landflight._step()
+    # error +90 -> bank_demand(+90, land_bank_gain 1.5, land_bank_limit 45) = +45 -> elevons 90+/-45 (full)
+    assert land_ctrl.fins['servo_eleron_left'].angle == 135 and land_ctrl.fins['servo_eleron_right'].angle == 45
 
     # g6: integer-degree heading error quantises the yaw D-term -- characterise the on-device impact.
     # A smooth turn feeds a kd-only PID (its step() output IS the D term). Float wrap gives a smooth

@@ -21,7 +21,8 @@ except ImportError:  # CPython (tooling / off-board checks)
 
 class Stage:
     """The flight stages, self-contained: int ids (cheap to compare/store on MicroPython) and the
-    `STAGES` id->name mapping (operator-facing names; `in Stage.STAGES` is an O(1) key check)."""
+    `STAGES` id->name mapping (operator-facing names; `in Stage.STAGES` is an O(1) key check). `NAMES`
+    is the reverse (name->id) so config that names stages by string resolves to an id once."""
 
     SETTING = const(0)
     BOOSTING = const(1)
@@ -35,6 +36,7 @@ class Stage:
         LANDING: 'landing',
         DONE: 'done',
     }
+    NAMES: dict[str, int] = {name: stage_id for stage_id, name in STAGES.items()}
 
 
 class Controller(inspector.Inspectable):
