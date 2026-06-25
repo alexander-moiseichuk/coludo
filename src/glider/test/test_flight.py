@@ -20,6 +20,10 @@ class _FakeFin:
     def update(self, props):
         self.angle = props['angle']
 
+    def set_angle(self, angle):  # the flight loop's hot-path entry (no dict; compare-and-set in sg90)
+        self.angle = angle
+        return angle
+
 
 class _StubController:
     def __init__(self, stage):

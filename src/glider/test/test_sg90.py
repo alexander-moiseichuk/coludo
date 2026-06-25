@@ -19,6 +19,14 @@ class _FakeWriter:
         pass
 
 
+class _CountTelemetry:  # swapped in to count pushes -> prove set_angle's compare-and-set skips a no-op
+    def __init__(self):
+        self.pushes = 0
+
+    def push(self, row):
+        self.pushes += 1
+
+
 class _StubController:
     config = config_default.default()
 
@@ -44,6 +52,14 @@ async def amain():
     fin.update({'angle': -50})
     assert fin.angle == 0  # clamped to min_deg
     assert fin.update({}) == []  # no 'angle' -> no-op
+
+    # set_angle (the flight hot path): clamps + returns, and compare-and-set skips a repeated command
+    fin.angle = 90  # reset to a known position (update() above left it clamped)
+    fin._telemetry = _CountTelemetry()
+    assert fin.set_angle(45) == 45 and fin.angle == 45 and fin._telemetry.pushes == 1  # changed -> wrote
+    assert fin.set_angle(45) == 45 and fin._telemetry.pushes == 1  # unchanged -> compare-and-set, skipped
+    assert fin.set_angle(999) == 180 and fin._telemetry.pushes == 2  # clamped + changed -> wrote
+    assert fin.set_angle(180) == 180 and fin._telemetry.pushes == 2  # clamp-equal -> skipped
     await fin.finish()
 
     # a limited-throw fin (min/max -30..30, neutral 0): 0 is the mid -> ~1500 us; 90 clamps to 30
@@ -71,7 +87,7 @@ async def amain():
     assert fin3.angle == 90 and isinstance(fin3.angle, int)  # ended at neutral, integer degrees
     await fin3.finish()
 
-    print('ok: sg90 int degrees/clamp/update/finish + move() (gated), feedback:None, probe() sweep')
+    print('ok: sg90 int degrees/clamp/update/set_angle(compare-and-set)/finish + move(), feedback:None, probe()')
 
 
 asyncio.run(amain())

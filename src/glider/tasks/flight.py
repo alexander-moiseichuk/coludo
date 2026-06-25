@@ -188,7 +188,7 @@ class Flight(task.Task):
         for name, angle in angles.items():
             fin = self._fins.get(name)
             if fin is not None:
-                fin.update({'angle': angle})
+                fin.set_angle(angle)  # no per-fin dict (H02) + compare-and-set: a held fin does no write
 
     def _neutral(self) -> None:
         self._apply(self._mixer.neutralise())

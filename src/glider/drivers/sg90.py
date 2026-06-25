@@ -92,10 +92,10 @@ class SG90(task.Task):
     def _clamp(self, angle) -> int:
         return commons.clamp_int(self._min_deg, round(angle), self._max_deg)
 
-    def _apply(self, angle, done: int = 0) -> int:
-        """Clamp `angle` to integer degrees, map to a pulse width (integer math), drive the PWM, and
-        record the command to telemetry (done=0 issued / 1 completed). Stores + returns the angle."""
-        angle = self._clamp(angle)
+    def _write(self, angle: int, done: int = 0) -> int:
+        """Map an ALREADY-CLAMPED integer `angle` to a pulse width (integer math), drive the PWM, and
+        record the command to telemetry (done=0 issued / 1 completed). Stores + returns the angle. The
+        clamp is the caller's job (so set_angle's compare-and-set clamps exactly once)."""
         span = self._max_deg - self._min_deg
         if span:
             self._pulse_us = self._min_us + (angle - self._min_deg) * (self._max_us - self._min_us) // span
@@ -105,6 +105,10 @@ class SG90(task.Task):
         self.angle = angle
         self._telemetry.push((angle, self._pulse_us, done))
         return angle
+
+    def _apply(self, angle, done: int = 0) -> int:
+        """Clamp `angle` to integer degrees then write it (the operator/props + move() path)."""
+        return self._write(self._clamp(angle), done)
 
     async def move(self, angle) -> int:
         """Drive to `angle` (clamped, integer degrees) through the shared slew gate -- at most
@@ -126,6 +130,17 @@ class SG90(task.Task):
             self._apply(props['angle'])
             return ['angle']
         return []
+
+    def set_angle(self, angle) -> int:
+        """The 100 Hz flight-loop hot-path command. AVOIDS update()'s per-step {'angle': ...} dict (H02:
+        ~300 dict/s of heap churn with GC disabled in flight) AND is compare-and-set: clamp, then drive
+        the PWM + push telemetry ONLY when the angle actually changed -- a held fin costs nothing. setup()
+        seeds self.angle via _apply(neutral), so it always tracks the real PWM state. update() stays the
+        operator/props path (always applies)."""
+        angle = self._clamp(angle)
+        if angle != self.angle:
+            self._write(angle)  # already clamped -> _write, not _apply (no second clamp)
+        return angle
 
     async def finish(self) -> None:
         """Release the PWM (stop driving the pin) on shutdown."""
