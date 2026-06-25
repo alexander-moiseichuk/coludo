@@ -134,9 +134,9 @@ class Flight(task.Task):
             # g8/g9 final approach / landing: track the strip centreline (set up in _target_heading) with
             # the FULL fin authority (45 deg) to crab the crosswind out -- keep it gliding, not
             # rolling-and-dropping. The residual at strong wind is airframe-bound, not a control gap.
-            roll_setpoint = navigation.bank_demand(heading_error, self._land_bank_gain, self._land_bank_limit)
+            roll_setpoint = commons.bank_demand(heading_error, self._land_bank_gain, self._land_bank_limit)
         elif self._bank_gain and self._stage == _STAGE.GLIDING:  # bank-to-turn toward the zone (vs rudder skid)
-            roll_setpoint = navigation.bank_demand(heading_error, self._bank_gain, self._bank_limit)
+            roll_setpoint = commons.bank_demand(heading_error, self._bank_gain, self._bank_limit)
         roll_cmd = self._pid['roll'].step(roll_setpoint - roll, dt)
         pitch_cmd = self._pid['pitch'].step(setpoint.get('pitch', 0.0) - pitch, dt)
         yaw_cmd = self._pid['yaw'].step(heading_error, dt)  # rudder coordinates the banked turn

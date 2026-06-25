@@ -1,15 +1,21 @@
 # commons.py — small, dependency-free primitives shared across the control-math modules (mixer / pid /
-# navigation / sequencer / flight / sg90). The bundle module for the g14/g15 plan: the hot, isolated
-# INTEGER operations are gathered here with a portable bytecode version AND a `@micropython.viper`
-# variant (integer-only native code — the on-device RV32 emitter compiles it with no FPU needed;
-# measured ~2.1x vs bytecode on the P4). `between()` stays plain bytecode (it is float-/inf-valued, which
-# viper cannot type). `select()` swaps viper<->bytecode at bring-up per board.config. Everything here is
-# pure and host-testable so both versions can be validated + benchmarked against each other.
+# navigation / sequencer / flight / sg90). The bundle module for the g14/g15 plan.
 #
-# NOTE on viper portability: `@micropython.viper` is a COMPILER directive recognised by the literal
-# `micropython.viper` decorator name — it cannot be aliased. The shim below makes the module importable
-# on CPython (tooling/tests), where the decorator degrades to an identity (the function runs as plain
-# Python); on the board it emits native integer code.
+# Naming convention:
+#   plain name                           -- a leaf with no _opt variant at all (none currently).
+#   NAME_upy / NAME_opt + `NAME = <winner>`
+#                                        -- a function with an optimised variant. NAME_upy is the
+#      portable bytecode reference; NAME_opt is the optimised build (viper for ints, native for floats,
+#      future asm). The module binds NAME to whichever the on-board bench FAVOURS -- usually _opt; switch
+#      the one alias line if a measurement changes. Both forms stay public so benchmarks/tests call them
+#      DIRECTLY (no runtime selector). Bound here: clamp_int, wrap180 (@viper, ~2.1-2.8x); between,
+#      magnitude_sq (@native, ~1.2-1.6x); bank_demand -> _upy for now (its @native measured 1.03x -- a
+#      thin wrapper over native between; switch to _opt when a bench shows a gain).
+#
+# `@micropython.viper` / `@micropython.native` are compiler directives keyed on the literal decorator
+# name (not aliasable); the shim below keeps the module importable on CPython (the decorator degrades to
+# identity, runs as plain Python). On the board the RV32 emitter compiles viper to integer-only native
+# code (~2.1-2.5x vs bytecode, no FPU) and native to FPU float code (~1.2-1.6x — float boxing caps it).
 
 try:
     import micropython  # real module on the board: micropython.viper / .native / .const
@@ -29,17 +35,54 @@ except ImportError:  # CPython (off-board tooling / tests) — decorators + cons
             return value
 
 
-def between(low, value, high):
+def between_upy(low, value, high):
     """Clamp `value` to the inclusive range [low, high]: `low` if below, `high` if above, else `value`.
     With low=-x, high=+x it is a symmetric +/-x clamp; either bound may be math.inf for an open side
-    (between(-inf, v, inf) == v). Float-/inf-valued -> stays bytecode (not viper). Assumes low <= high."""
+    (between(-inf, v, inf) == v). Float-/inf-valued (so @native, not viper). Assumes low <= high."""
     return low if value < low else (high if value > high else value)
+
+
+@micropython.native
+def between_opt(low, value, high):
+    return low if value < low else (high if value > high else value)
+
+
+between = between_opt  # @native -- the most-called primitive; a free ~1.6x (handles inf the same way)
+
+
+def magnitude_sq_upy(x, y, z):
+    """|(x, y, z)|^2 (no sqrt — callers compare against squared thresholds; g7). Pure float -> @native."""
+    return x * x + y * y + z * z
+
+
+@micropython.native
+def magnitude_sq_opt(x, y, z):
+    return x * x + y * y + z * z
+
+
+magnitude_sq = magnitude_sq_opt  # @native
+
+
+def bank_demand_upy(heading_error, gain, limit):
+    """Bank-to-turn: the roll angle (deg, right +) to hold for a heading error (deg) -- proportional with
+    a symmetric hard clamp (gain 0 -> no bank, rudder-only). A banked turn is tight (~v^2/(g*tan(bank)))
+    where a flat rudder skid is wide and weak, so the glider does not over-RANGE a small zone and the
+    overshoot loop becomes an altitude-bleeding orbit."""
+    return between(-limit, gain * heading_error, limit)
+
+
+@micropython.native
+def bank_demand_opt(heading_error, gain, limit):
+    return between(-limit, gain * heading_error, limit)
+
+
+bank_demand = bank_demand_upy  # @native measured 1.03x here -> keep _upy; switch to _opt when a bench shows a gain
 
 
 # --- clamp_int: integer clamp to [low, high]. Hot via sg90 fin clamping (round(angle), min/max deg). ---
 
 
-def _clamp_int_upy(low, value, high):
+def clamp_int_upy(low, value, high):
     if value < low:
         return low
     if value > high:
@@ -48,48 +91,29 @@ def _clamp_int_upy(low, value, high):
 
 
 @micropython.viper
-def _clamp_int_viper(low: int, value: int, high: int) -> int:
+def clamp_int_opt(low: int, value: int, high: int) -> int:
     if value < low:
         return low
     if value > high:
         return high
     return value
+
+
+clamp_int = clamp_int_opt  # viper is safe on this firmware -> bind the optimised variant
 
 
 # --- wrap180: wrap an integer-degree value to (-180, 180]. Hot via the yaw heading error each step. ---
 
 
-def _wrap180_upy(degrees):
+def wrap180_upy(degrees):
     return degrees if -180 <= degrees <= 180 else (degrees + 180) % 360 - 180
 
 
 @micropython.viper
-def _wrap180_viper(degrees: int) -> int:
+def wrap180_opt(degrees: int) -> int:
     if -180 <= degrees <= 180:
         return degrees
     return (degrees + 180) % 360 - 180
 
 
-# --- magnitude_sq: squared 3-vector magnitude |(x,y,z)|^2. FLOAT, so not viper -- kept bytecode here as
-# the centralised leaf and the prime candidate for a real-FPU C natmod (mpy-ld) later (on-device @native
-# is float-boxing-limited to ~1.2x; a C natmod with hardware FPU is the path to a worthwhile speedup). ---
-
-
-def magnitude_sq(x, y, z):
-    """|(x, y, z)|^2 (no sqrt — callers compare against squared thresholds; g7). Pure float."""
-    return x * x + y * y + z * z
-
-
-# Default to the viper variants (this firmware's RV32 emitter supports them; the CPython shim runs them
-# as plain bytecode). Consumers that reference these as module attributes (commons.clamp_int) see select().
-clamp_int = _clamp_int_viper
-wrap180 = _wrap180_viper
-
-
-def select(viper: bool) -> None:
-    """Bind clamp_int / wrap180 to the @micropython.viper variants (viper=True, the default) or the
-    portable bytecode versions (False — a board without the viper emitter, or A/B benchmarking). Call
-    once at bring-up from a board.config flag, before the control tasks start."""
-    global clamp_int, wrap180
-    clamp_int = _clamp_int_viper if viper else _clamp_int_upy
-    wrap180 = _wrap180_viper if viper else _wrap180_upy
+wrap180 = wrap180_opt  # viper is safe on this firmware -> bind the optimised variant

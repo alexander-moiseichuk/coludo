@@ -20,6 +20,7 @@ import sys
 _GLIDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'glider')
 sys.path.insert(0, _GLIDER)
 
+import commons  # noqa: E402  -- shared primitives bundle (bank_demand, ...)
 import config_hitl  # noqa: E402  -- the SAME board config the on-board HITL uses (host-importable)
 import mixer  # noqa: E402
 import navigation  # noqa: E402
@@ -146,9 +147,9 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
             heading_error = _heading_error(target, heading_m)
             roll_setpoint = setpoint.get('roll', 0.0)
             if land_bank_gain and (final or stage == 'landing'):  # final/landing: gentle, tight-capped bank
-                roll_setpoint = navigation.bank_demand(heading_error, land_bank_gain, land_bank_limit)
+                roll_setpoint = commons.bank_demand(heading_error, land_bank_gain, land_bank_limit)
             elif bank_gain and stage == 'gliding':       # high glide: bank-to-turn toward the zone
-                roll_setpoint = navigation.bank_demand(heading_error, bank_gain, bank_limit)
+                roll_setpoint = commons.bank_demand(heading_error, bank_gain, bank_limit)
             roll_cmd = pids['roll'].step(roll_setpoint - roll_m, dt)
             pitch_cmd = pids['pitch'].step(setpoint.get('pitch', 0.0) - pitch_m, dt)
             yaw_cmd = pids['yaw'].step(heading_error, dt)

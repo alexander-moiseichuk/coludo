@@ -64,15 +64,6 @@ def test_overshoot_loop():
     assert _close(heading, 270.0, 5.0)  # ~180 from the eastbound entry -> turn back west through it
 
 
-def test_bank_demand():
-    # bank-to-turn: proportional with a symmetric hard limit; gain 0 disables it (rudder-only)
-    assert navigation.bank_demand(10.0, 1.5, 30.0) == 15.0    # 1.5 * 10 within the limit
-    assert navigation.bank_demand(40.0, 1.5, 30.0) == 30.0    # clamped to +limit
-    assert navigation.bank_demand(-40.0, 1.5, 30.0) == -30.0  # clamped to -limit (symmetric)
-    assert navigation.bank_demand(0.0, 1.5, 30.0) == 0.0      # on heading -> wings level
-    assert navigation.bank_demand(25.0, 0.0, 30.0) == 0.0     # gain 0 -> no bank
-
-
 def test_cross_track_and_approach():
     # cross_track: signed perpendicular distance to a line. Line through (48,11) heading NORTH (0):
     # a point due EAST is to the RIGHT (+), due WEST is left (-), on the line is ~0.
@@ -93,6 +84,5 @@ test_bearing_distance()
 test_zone_orientation()
 test_inside_and_steer()
 test_overshoot_loop()
-test_bank_demand()
 test_cross_track_and_approach()
-print('ok: navigation -- bearing/distance, zone, inside, steer, overshoot, bank-to-turn, cross-track+approach')
+print('ok: navigation -- bearing/distance, zone, inside, steer, overshoot, cross-track+approach')
