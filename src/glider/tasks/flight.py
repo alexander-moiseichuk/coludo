@@ -17,12 +17,16 @@
 import asyncio
 import time
 
+import commons
+import controller as controller_mod
 import databoard
 import inspector
 import mixer
 import navigation
 import pid
 import task
+
+_STAGE = controller_mod.Stage
 
 
 @task.activity('flight')
@@ -35,9 +39,8 @@ class Flight(task.Task):
     def _heading_error(target: float, current: float) -> int:
         """Shortest signed heading error (deg), wrapped to [-180, 180] so 350 -> 10 is +20, not -340.
         Integer degrees -- sub-degree precision is irrelevant to a servo and lets one modulo replace the
-        wrap loop."""
-        error = int(target - current)
-        return error if -180 <= error <= 180 else (error + 180) % 360 - 180
+        wrap loop. The wrap itself is the shared commons.wrap180 (g15 viper bundle)."""
+        return commons.wrap180(int(target - current))
 
     async def setup(self) -> bool:
         board = self.controller.config
@@ -52,13 +55,27 @@ class Flight(task.Task):
                                    **gains.get(axis, {})) for axis in self._AXES}
         # per-stage behaviour: which flight stages are CONTROL stages and their attitude setpoint.
         # Stages not listed hold the fins neutral (SETTING/BOOSTING/DONE -- no actuation under thrust /
-        # on the ground). GLIDING = wings-level + heading hold; LANDING carries its own setpoint (flare).
-        self._stages: dict = self.config.get('stages', {'gliding': {'roll': 0.0, 'pitch': 0.0}})
+        # on the ground). The config names stages by string; resolve to Stage INT keys ONCE (via
+        # Stage.NAMES) so the hot loop compares integers, never strings (Stage exists for exactly this).
+        self._stages: dict = {_STAGE.NAMES[name]: setpoint
+                              for name, setpoint in self.config.get('stages', {'gliding': {}}).items()
+                              if name in _STAGE.NAMES}
         # bank-to-turn: in GLIDING the roll SETPOINT comes from the heading error (navigation.bank_demand),
         # so the glider banks into the turn toward the zone instead of skidding flat on the rudder (which
         # over-ranges a small zone). gain 0 -> rudder-only (the old wings-level steering).
         self._bank_gain: float = self.config.get('nav_bank_gain', 1.5)
         self._bank_limit: float = self.config.get('bank_limit', 30)
+        # g8/g9 final approach: below final_approach_agl the loop stops homing to the centre POINT and
+        # TRACKS the strip CENTRELINE (navigation.approach) using the FULL fin authority (45 deg) to crab
+        # the crosswind out -- keep it gliding, not rolling-and-dropping. The crosswind envelope is
+        # airframe-bound (~8 m/s onto the strip; >10 m/s is beyond a 14 m/s glider). final_approach_agl
+        # 0 -> disabled.
+        self._land_bank_gain: float = self.config.get('land_bank_gain', 1.5)
+        self._land_bank_limit: float = self.config.get('land_bank_limit', 45)
+        self._final_agl: float = self.config.get('final_approach_agl', 8)
+        self._final_cross_gain: float = self.config.get('final_cross_gain', 3.0)  # deg intercept per m off
+        self._final_intercept: float = self.config.get('final_intercept_deg', 45)  # max intercept angle
+        self._agl = databoard.Databoard.parameter('agl')  # height above ground -> final-approach trigger
         self._attitude = databoard.Databoard.parameter('attitude')  # (heading, roll, pitch)
         self._position = databoard.Databoard.parameter('position')  # (lat, lon) for landing-zone navigation
         self._mission = inspector.Inspector.get('mission')  # the landing zone lives here (may be None)
@@ -82,7 +99,7 @@ class Flight(task.Task):
         """One control update (sync, no await -> runs whole in a timer slice): gate -> read attitude ->
         PID -> mix -> apply. Self-times for the load sweep."""
         start = time.ticks_us()
-        setpoint = self._stages.get(self.controller.stage_name())  # None -> not a control stage
+        setpoint = self._stages.get(self.controller.stage)  # int key -> None if not a control stage
         if setpoint is None or not self.controller.armed:  # not a control stage, or disarmed -> neutral
             if self._active:  # left the control stages (or disarmed) -> centre the fins
                 self._neutral()
@@ -101,7 +118,7 @@ class Flight(task.Task):
             self._last_step_us = start  # so the first dt below is ~0 -> nominal (no jump from a stale gap)
             for controller in self._pid.values():
                 controller.reset()
-        self._stage = self.controller.stage_name()  # may switch between control stages (glide -> landing)
+        self._stage = self.controller.stage  # Stage id; may switch between control stages (glide -> landing)
         # ACTUAL elapsed since the last control step, not the nominal 1/schedule_hz (finding 1.14.2 / g5):
         # a GC pause or a delayed slice makes the real interval longer, and the PID I/D terms must use it
         # or they under/over-correct. The first step (dt 0) falls back to the nominal _dt.
@@ -109,10 +126,17 @@ class Flight(task.Task):
         self._last_step_us = start
         if dt <= 0:
             dt = self._dt
-        heading_error = self._heading_error(self._target_heading(), heading)
+        agl = self._agl.value()
+        final = self._final_agl and agl is not None and agl < self._final_agl  # low on final approach
+        heading_error = self._heading_error(self._target_heading(heading, final), heading)
         roll_setpoint = setpoint.get('roll', 0.0)
-        if self._bank_gain and self._stage == 'gliding':  # bank-to-turn toward the zone (vs rudder skid)
-            roll_setpoint = navigation.bank_demand(heading_error, self._bank_gain, self._bank_limit)
+        if self._land_bank_gain and (final or self._stage == _STAGE.LANDING):
+            # g8/g9 final approach / landing: track the strip centreline (set up in _target_heading) with
+            # the FULL fin authority (45 deg) to crab the crosswind out -- keep it gliding, not
+            # rolling-and-dropping. The residual at strong wind is airframe-bound, not a control gap.
+            roll_setpoint = commons.bank_demand(heading_error, self._land_bank_gain, self._land_bank_limit)
+        elif self._bank_gain and self._stage == _STAGE.GLIDING:  # bank-to-turn toward the zone (vs rudder skid)
+            roll_setpoint = commons.bank_demand(heading_error, self._bank_gain, self._bank_limit)
         roll_cmd = self._pid['roll'].step(roll_setpoint - roll, dt)
         pitch_cmd = self._pid['pitch'].step(setpoint.get('pitch', 0.0) - pitch, dt)
         yaw_cmd = self._pid['yaw'].step(heading_error, dt)  # rudder coordinates the banked turn
@@ -123,23 +147,21 @@ class Flight(task.Task):
         if elapsed > self._max_step_us:
             self._max_step_us = elapsed
 
-    def _target_heading(self) -> float:
-        """The heading to steer in GLIDING (LANDING + non-control stages just hold). Three tiers,
-        degrading gracefully as the GNSS does:
+    def _target_heading(self, heading: float, final: bool) -> float:
+        """The heading to steer in GLIDING / LANDING (non-control stages just hold). High on the glide it
+        homes to the zone (steer: gate -> centre, three GPS-degrading tiers below); low on FINAL approach
+        (g8/g9) it instead TRACKS the strip centreline (approach), so a crosswind is crabbed out before
+        the narrow touchdown. Tiers when homing:
           1. a FRESH fix -> steer from the current position (closed-loop, corrects wind drift);
-          2. no fix but a launch point (CC-set) -> hold the launch->gate bearing (open-loop, AIMED at
-             the zone but wind-uncorrected -- the GPS-denied fallback);
+          2. no fix but a launch point (CC-set) -> hold the launch->gate bearing (open-loop fallback);
           3. neither -> the captured glide heading (blind).
-        Nav steers only in GLIDING; LANDING locks straight-and-level (coludo.md).
 
-        g7 (CPU): navigation.steer() is float trig (sin/cos/atan2 x several). The GNSS fixes at ~10 Hz
-        and the zone is fixed, so recomputing the bearing every 100 Hz step is wasted work that only
-        inflates max_step_us. The steer() result is CACHED and refreshed at most every nav_period_ms;
-        the loop reads the cached float in between. The cheap tiers (not gliding / no zone) return the
-        held heading directly with no trig and no caching. g2: this caller-side throttle (not a
-        zero-alloc rewrite of navigation.py) is the right fix -- it cuts the trig rate ~10x and keeps
-        the geometry module simple and correct."""
-        if self.controller.stage_name() != 'gliding' or self._mission is None or not self._mission.zone:
+        g7 (CPU): navigation.steer()/approach() are float trig (sin/cos/atan2 x several). The GNSS fixes
+        at ~10 Hz, so recomputing every 100 Hz step is wasted work that inflates max_step_us. The result
+        is CACHED and refreshed at most every nav_period_ms (the loop reads the cached float between);
+        the final-approach value rides the same cache (position only moves at the GPS rate anyway)."""
+        if self.controller.stage not in (_STAGE.GLIDING, _STAGE.LANDING) or self._mission is None \
+                or not self._mission.zone:
             return self._heading_hold
         now = time.ticks_us()
         if self._nav_heading is not None and time.ticks_diff(now, self._nav_updated_us) < self._nav_period_us:
@@ -148,7 +170,9 @@ class Flight(task.Task):
         zone = self._mission.zone
         position, source, _age = self._position.read()
         if source is not None and position is not None:  # tier 1: live fix
-            self._nav_heading = navigation.steer(position, zone[0], zone[1])[0]
+            self._nav_heading = (navigation.approach(position, zone[0], zone[1], heading,
+                                                     self._final_cross_gain, self._final_intercept)
+                                 if final else navigation.steer(position, zone[0], zone[1])[0])
         else:
             launch = self._mission.launch_point()  # tier 2: open-loop from the launch point (CC-set)
             self._nav_heading = navigation.steer(launch, zone[0], zone[1])[0] if launch is not None \
@@ -164,7 +188,7 @@ class Flight(task.Task):
         for name, angle in angles.items():
             fin = self._fins.get(name)
             if fin is not None:
-                fin.update({'angle': angle})
+                fin.set_angle(angle)  # no per-fin dict (H02) + compare-and-set: a held fin does no write
 
     def _neutral(self) -> None:
         self._apply(self._mixer.neutralise())
@@ -204,9 +228,9 @@ class Flight(task.Task):
         """(controlling, steps, stage, updated_us) -- the public control-loop heartbeat, so the watchdog
         (and anything else) need not read private attributes (finding 3.6.1). `controlling` is True only
         in a control stage (PID engaged); `steps` advances each control update; `stage` is the current
-        control-stage name (or None); `updated_us` is time.ticks_us() of the last control step, so a
-        supervisor can judge staleness by TIME directly (not by step-count diffing against its own poll
-        cadence)."""
+        control-stage Stage id (int, or None); `updated_us` is time.ticks_us() of the last control step,
+        so a supervisor can judge staleness by TIME directly (not by step-count diffing against its own
+        poll cadence)."""
         return self._active, self._steps, self._stage, self._last_step_us
 
     def inspect(self) -> dict:
@@ -214,7 +238,7 @@ class Flight(task.Task):
         status['schedule'] = 'timer' if self._schedule_hz > 0 else 'asyncio'
         status['schedule_hz'] = self._schedule_hz if self._schedule_hz > 0 else round(1000 / self._period_ms)
         status['active'] = self._active
-        status['stage'] = self._stage
+        status['stage'] = _STAGE.STAGES.get(self._stage)  # id -> operator-facing name (None if not active)
         status['steps'] = self._steps  # load sweep: compare steps/sec + max_step_us vs board_health load
         status['max_step_us'] = self._max_step_us
         return status

@@ -21,7 +21,8 @@ except ImportError:  # CPython (tooling / off-board checks)
 
 class Stage:
     """The flight stages, self-contained: int ids (cheap to compare/store on MicroPython) and the
-    `STAGES` id->name mapping (operator-facing names; `in Stage.STAGES` is an O(1) key check)."""
+    `STAGES` id->name mapping (operator-facing names; `in Stage.STAGES` is an O(1) key check). `NAMES`
+    is the reverse (name->id) so config that names stages by string resolves to an id once."""
 
     SETTING = const(0)
     BOOSTING = const(1)
@@ -35,6 +36,7 @@ class Stage:
         LANDING: 'landing',
         DONE: 'done',
     }
+    NAMES: dict[str, int] = {name: stage_id for stage_id, name in STAGES.items()}
 
 
 class Controller(inspector.Inspectable):
@@ -196,9 +198,15 @@ class Controller(inspector.Inspectable):
             await closing_task.finish()
 
     async def finish(self) -> None:
-        """Shut down all tasks."""
-        for name in list(self.tasks):
-            await self.close(name)
+        """Shut down all tasks, in REVERSE bring-up order so a command PRODUCER (e.g. the flight loop,
+        which centres the fins in its finish()) closes before the actuators/resources it writes to --
+        otherwise teardown drives an already-released peripheral (PWM deinit'd -> RuntimeError). Best
+        effort: a single task's finish() error is logged, never stranding the rest of the shutdown."""
+        for name in reversed(list(self.tasks)):
+            try:
+                await self.close(name)
+            except Exception as error:  # noqa: BLE001 -- teardown must continue past one bad task
+                self.log("controller :: finish '%s' error: %r" % (name, error))
         self.stage = Stage.DONE
 
     # ------------------------------------------------------------------ stage

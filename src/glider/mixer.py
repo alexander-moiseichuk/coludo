@@ -8,6 +8,8 @@
 # Signs are config (`surfaces` gains + `trim`), set during bench alignment: if a surface deflects the
 # wrong way, flip its gain sign; if its neutral is off, set its trim.
 
+from commons import between
+
 _DEFAULT_SURFACES: dict = {
     'servo_yaw': {'yaw': 1},                          # rudder
     'servo_eleron_left': {'pitch': 1, 'roll': 1},     # elevon
@@ -37,16 +39,23 @@ class Mixer:
 
     def mix(self, roll: int = 0, pitch: int = 0, yaw: int = 0) -> dict:
         """Per-fin integer angle for the given axis deflections (degrees). Returns a SHARED dict REUSED
-        on every call (zero-alloc) -- apply it immediately, do not retain it across mix() calls."""
+        on every call (zero-alloc) -- apply it immediately, do not retain it across mix() calls;
+        flight._apply consumes it synchronously in the same step (g1).
+
+        This clamps only the CONTROL AUTHORITY to +/-limit. The absolute PHYSICAL endpoint is enforced
+        per-fin by sg90's `[min_deg, max_deg]` clamp (g2) -- that is the correct layer: the safe travel
+        is per-linkage, not a single global bound, so set each fin's min_deg/max_deg to its mechanical
+        range in board.config (e.g. a horn that binds at 135 deg -> max_deg=135) and the trim+deflection
+        sum can never drive it past that. Inputs are already integers (flight rounds the PID output) so
+        there is no per-call float cast (g3)."""
         limit = self.limit
+        out = self._out  # g3: hoist the attribute lookup out of the per-fin loop
         for name, base, roll_gain, pitch_gain, yaw_gain in self._surfaces:
-            deflection = roll_gain * roll + pitch_gain * pitch + yaw_gain * yaw
-            if deflection > limit:  # clamp the control deflection (authority), not the trim
-                deflection = limit
-            elif deflection < -limit:
-                deflection = -limit
-            self._out[name] = base + deflection
-        return self._out
+            # clamp the CONTROL deflection (authority) to +/-limit, then add to base (neutral+trim);
+            # the absolute physical end-stop is sg90's per-fin [min_deg, max_deg] (g2, g13)
+            deflection = between(-limit, roll_gain * roll + pitch_gain * pitch + yaw_gain * yaw, limit)
+            out[name] = base + deflection
+        return out
 
     def neutralise(self) -> dict:
         """The neutral (zero-deflection) angle per fin -- the safe / control-disabled output (shared dict)."""

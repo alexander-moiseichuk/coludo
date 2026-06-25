@@ -21,6 +21,8 @@
 
 import math
 
+from commons import between
+
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
@@ -39,9 +41,13 @@ GATE: int = const(2)     # outside the zone -> heading for the nearer short-side
 
 
 def _offset_m(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
-    """(east, north) offset in metres from point 1 to point 2 (equirectangular)."""
+    """(east, north) offset in metres from point 1 to point 2 (equirectangular). The longitude delta is
+    wrapped to [-180, 180] (g4) so a span crossing the anti-meridian (+/-180 deg) does not flip the
+    vector -- the same wrap the heading-error math uses. Coludo flies nowhere near +/-180, but it is a
+    free correctness guard and identical to the plain subtraction everywhere else."""
     lat_mid = math.radians((lat1 + lat2) / 2.0)
-    east = (lon2 - lon1) * _M_PER_DEG * math.cos(lat_mid)
+    dlon = (lon2 - lon1 + 180.0) % 360.0 - 180.0  # anti-meridian-safe longitude delta (g4)
+    east = dlon * _M_PER_DEG * math.cos(lat_mid)
     north = (lat2 - lat1) * _M_PER_DEG
     return east, north
 
@@ -61,7 +67,12 @@ def distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 def zone(corner_tl: tuple, corner_br: tuple) -> tuple:
     """Resolve the rectangle (top-left, bottom-right corners, each (lat, lon)) -> (target, gate_a,
     gate_b): the centre and the midpoints of the two SHORTER sides. A horizontally (longitude)
-    stretched zone gates on its left/right edges; a vertically (latitude) stretched one on top/bottom."""
+    stretched zone gates on its left/right edges; a vertically (latitude) stretched one on top/bottom.
+
+    g5: corner ORDER does not matter. The centre is the average, the spans use abs(), and the gates are
+    the coordinate EXTREMES (lon_l/lon_r at the centre latitude, or lat_t/lat_b at the centre longitude)
+    -- so whichever diagonal pair is passed (TL/BR or BL/TR), the two returned gates are the same two
+    side-midpoints; steer() then picks the nearer. inside() likewise uses min/max. No normalisation needed."""
     lat_t, lon_l = corner_tl
     lat_b, lon_r = corner_br
     lat_c = (lat_t + lat_b) / 2.0
@@ -83,15 +94,6 @@ def inside(position: tuple, corner_tl: tuple, corner_br: tuple) -> bool:
             min(lon_l, lon_r) <= lon <= max(lon_l, lon_r))
 
 
-def bank_demand(heading_error: float, gain: float, limit: float) -> float:
-    """Bank-to-turn: the roll angle (deg, right +) to hold for a heading error (deg). Proportional with
-    a hard limit, so the glider TURNS BY BANKING (a tight, ~v^2/(g*tan(bank)) radius coordinated turn)
-    instead of skidding flat on the rudder alone -- which is wide and weak and lets the airframe
-    over-RANGE a small zone (it sails downrange before it can come back). Re-evaluated each tick on the
-    steer() heading, a banked turn also makes the overshoot loop a tight ORBIT that bleeds excess
-    altitude over the zone rather than past it (energy management). gain 0 -> no bank (rudder-only)."""
-    bank = gain * heading_error
-    return limit if bank > limit else (-limit if bank < -limit else bank)
 
 
 def steer(position: tuple, corner_tl: tuple, corner_br: tuple) -> tuple:
@@ -112,3 +114,28 @@ def steer(position: tuple, corner_tl: tuple, corner_br: tuple) -> tuple:
         waypoint = gate_a if distance(lat, lon, *gate_a) <= distance(lat, lon, *gate_b) else gate_b
         leg = GATE
     return bearing(lat, lon, waypoint[0], waypoint[1]), waypoint, leg
+
+
+def cross_track(position: tuple, point: tuple, heading: float) -> float:
+    """Signed perpendicular distance (metres) from `position` to the line through `point` along compass
+    `heading`; positive = to the RIGHT of the line (looking along the heading)."""
+    east, north = _offset_m(point[0], point[1], position[0], position[1])
+    radians = math.radians(heading)
+    return east * math.cos(radians) - north * math.sin(radians)
+
+
+def approach(position: tuple, corner_tl: tuple, corner_br: tuple, heading: float,
+             cross_gain: float, intercept_max: float) -> float:
+    """Final-approach guidance (g8/g9): the heading to fly to TRACK the zone's long-axis CENTRELINE (the
+    strip), used low on final instead of homing to the centre POINT. The glider intercepts the line at up
+    to `intercept_max` deg (`cross_gain` deg per metre off it), then flies down it -- so a crosswind is
+    crabbed out and the touchdown holds the narrow strip. Uses the full bank authority (keep it gliding,
+    not rolling-and-dropping). (This is a banked/crab correction -- a true wing-low SLIP would need a
+    sideslip-capable airframe model; the residual at strong wind is airframe-bound, not a control gap.)"""
+    target, gate_a, gate_b = zone(corner_tl, corner_br)
+    centreline = bearing(gate_a[0], gate_a[1], gate_b[0], gate_b[1])
+    if abs(((centreline - heading + 180.0) % 360.0) - 180.0) > 90.0:  # fly the along-strip way we are going
+        centreline = (centreline + 180.0) % 360.0
+    # off to the RIGHT -> aim left of the centreline to intercept (and vice versa), capped
+    intercept = between(-intercept_max, -cross_gain * cross_track(position, target, centreline), intercept_max)
+    return (centreline + intercept) % 360.0

@@ -15,6 +15,7 @@ import gc
 import math
 import time
 
+import commons
 import controller as controller_mod
 import databoard
 import recorder
@@ -23,12 +24,17 @@ import task
 _STAGE = controller_mod.Stage
 
 
-def _magnitude(accel):
-    """|accel| in g from (ax, ay, az), or None when there is no reading."""
+def _magnitude_sq(accel):
+    """Squared magnitude |accel|^2 in g^2 from (ax, ay, az), or None when there is no reading. Squared so
+    the threshold compares skip math.sqrt() (g7) -- only the rare transition log takes the root. (At the
+    50 Hz sequencer rate, with _magnitude_sq called only in SETTING/LANDING, this is a tidy-up, not a
+    hot-path win: it is NOT on the 100 Hz control loop.) `accel is None` is guarded explicitly, not via a
+    try/except on the unpack -- raising would allocate a traceback frame exactly under launch/impact
+    vibration, the worst moment for GC churn (g9)."""
     if accel is None:
         return None
     ax, ay, az = accel
-    return math.sqrt(ax * ax + ay * ay + az * az)
+    return commons.magnitude_sq(ax, ay, az)
 
 
 @task.activity('sequencer')
@@ -45,6 +51,12 @@ class Sequencer(task.Task):
         self._land_ms: int = cfg.get('land_ms', 300)  # AGL must stay below land_agl_m this long (anti-spike)
         self._still_g: float = cfg.get('still_g', 0.3)
         self._ground_ms: int = cfg.get('ground_ms', 3000)
+        # g7: compare |accel|^2 against squared thresholds so the detect path skips math.sqrt() (only the
+        # rare transition LOG takes the root). The still-band 1 +/- still_g g maps to [lo, hi] in g^2
+        # (assumes still_g < 1, which it always is -- it is a tolerance around 1 g).
+        self._launch_g_sq: float = self._launch_g * self._launch_g
+        self._still_lo_sq: float = (1.0 - self._still_g) ** 2 if self._still_g < 1.0 else 0.0
+        self._still_hi_sq: float = (1.0 + self._still_g) ** 2
         # g14 (coludo.md GC policy): compact the heap at launch and DISABLE GC while airborne, so no GC
         # pause (0.3 ms clean .. tens of ms on a full heap) can blow a 100 Hz control slice; re-enable at
         # touchdown. Safe only because the hot paths are near-zero-alloc (g3 mixer, g7 nav cache) and the
@@ -104,19 +116,10 @@ class Sequencer(task.Task):
         if stage != self._stage_seen:  # changed (by us or by the separation driver) -> fresh timer
             self._since = None
             self._stage_seen = stage
-        if stage == _STAGE.SETTING:
-            g = _magnitude(self._accel.value())
-            if g is not None and g > self._launch_g:
-                self._since = self._since if self._since is not None else now
-                if time.ticks_diff(now, self._since) >= self._launch_ms:
-                    self._advance(_STAGE.BOOSTING, 'launch |a|=%.1fg' % g)
-            else:
-                self._since = None
-        elif stage == _STAGE.BOOSTING:
-            self._since = self._since if self._since is not None else now  # boost-entry time
-            if time.ticks_diff(now, self._since) >= self._boost_timeout_ms:
-                self._advance(_STAGE.GLIDING, 'burnout timeout (no separation)')
-        elif stage == _STAGE.GLIDING:
+        # g10: branches ordered by in-flight likelihood -- GLIDING (the long, control-critical phase)
+        # first, then BOOSTING, LANDING, and SETTING (on the pad, relaxed) last, so the airborne stages
+        # cost the fewest comparisons.
+        if stage == _STAGE.GLIDING:
             agl = self._agl.value()
             height = agl if agl is not None else self._elevation.value()
             if height is not None and height < self._land_agl_m:  # below the landing height...
@@ -125,12 +128,24 @@ class Sequencer(task.Task):
                     self._advance(_STAGE.LANDING, 'agl %.1fm' % height)
             else:
                 self._since = None  # rose back / lost reading -> reset: a single low sample never flares
+        elif stage == _STAGE.BOOSTING:
+            self._since = self._since if self._since is not None else now  # boost-entry time
+            if time.ticks_diff(now, self._since) >= self._boost_timeout_ms:
+                self._advance(_STAGE.GLIDING, 'burnout timeout (no separation)')
         elif stage == _STAGE.LANDING:
-            g = _magnitude(self._accel.value())
-            if g is not None and abs(g - 1.0) < self._still_g:
+            g_sq = _magnitude_sq(self._accel.value())
+            if g_sq is not None and self._still_lo_sq < g_sq < self._still_hi_sq:  # ~1 g, squared (g7)
                 self._since = self._since if self._since is not None else now
                 if time.ticks_diff(now, self._since) >= self._ground_ms:
-                    self._advance(_STAGE.DONE, 'stationary %.1fg' % g)
+                    self._advance(_STAGE.DONE, 'stationary %.1fg' % math.sqrt(g_sq))
+            else:
+                self._since = None
+        elif stage == _STAGE.SETTING:
+            g_sq = _magnitude_sq(self._accel.value())
+            if g_sq is not None and g_sq > self._launch_g_sq:  # |a| over launch_g, squared (g7)
+                self._since = self._since if self._since is not None else now
+                if time.ticks_diff(now, self._since) >= self._launch_ms:
+                    self._advance(_STAGE.BOOSTING, 'launch |a|=%.1fg' % math.sqrt(g_sq))
             else:
                 self._since = None
 

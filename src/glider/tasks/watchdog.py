@@ -57,7 +57,7 @@ class Watchdog(task.Task):
             await asyncio.sleep_ms(self._period_ms)
             flight = self.controller.find(['flight'])[0]  # None if the flight task is disabled
             if self._stalled(flight):
-                stalled = 'control loop stalled (stage=%s) -> reset' % flight.progress()[2]
+                stalled = 'control loop stalled (stage=%s) -> reset' % self.controller.stage_name()
                 recorder.Recorder.log(self.name, stalled)
                 self._reset()  # full HW reset; stopping the feed would also fire the WDT shortly
                 return

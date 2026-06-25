@@ -1,0 +1,119 @@
+# commons.py — small, dependency-free primitives shared across the control-math modules (mixer / pid /
+# navigation / sequencer / flight / sg90). The bundle module for the g14/g15 plan.
+#
+# Naming convention:
+#   plain name                           -- a leaf with no _opt variant at all (none currently).
+#   NAME_upy / NAME_opt + `NAME = <winner>`
+#                                        -- a function with an optimised variant. NAME_upy is the
+#      portable bytecode reference; NAME_opt is the optimised build (viper for ints, native for floats,
+#      future asm). The module binds NAME to whichever the on-board bench FAVOURS -- usually _opt; switch
+#      the one alias line if a measurement changes. Both forms stay public so benchmarks/tests call them
+#      DIRECTLY (no runtime selector). Bound here: clamp_int, wrap180 (@viper, ~2.1-2.8x); between,
+#      magnitude_sq (@native, ~1.2-1.6x); bank_demand -> _upy for now (its @native measured 1.03x -- a
+#      thin wrapper over native between; switch to _opt when a bench shows a gain).
+#
+# `@micropython.viper` / `@micropython.native` are compiler directives keyed on the literal decorator
+# name (not aliasable); the shim below keeps the module importable on CPython (the decorator degrades to
+# identity, runs as plain Python). On the board the RV32 emitter compiles viper to integer-only native
+# code (~2.1-2.5x vs bytecode, no FPU) and native to FPU float code (~1.2-1.6x — float boxing caps it).
+
+try:
+    import micropython  # real module on the board: micropython.viper / .native / .const
+except ImportError:  # CPython (off-board tooling / tests) — decorators + const become no-ops
+
+    class micropython:  # noqa: N801 — deliberately shadows the absent stdlib name with a shim
+        @staticmethod
+        def viper(function):
+            return function
+
+        @staticmethod
+        def native(function):
+            return function
+
+        @staticmethod
+        def const(value):
+            return value
+
+
+def between_upy(low, value, high):
+    """Clamp `value` to the inclusive range [low, high]: `low` if below, `high` if above, else `value`.
+    With low=-x, high=+x it is a symmetric +/-x clamp; either bound may be math.inf for an open side
+    (between(-inf, v, inf) == v). Float-/inf-valued (so @native, not viper). Assumes low <= high."""
+    return low if value < low else (high if value > high else value)
+
+
+@micropython.native
+def between_opt(low, value, high):
+    return low if value < low else (high if value > high else value)
+
+
+between = between_opt  # @native -- the most-called primitive; a free ~1.6x (handles inf the same way)
+
+
+def magnitude_sq_upy(x, y, z):
+    """|(x, y, z)|^2 (no sqrt — callers compare against squared thresholds; g7). Pure float -> @native."""
+    return x * x + y * y + z * z
+
+
+@micropython.native
+def magnitude_sq_opt(x, y, z):
+    return x * x + y * y + z * z
+
+
+magnitude_sq = magnitude_sq_opt  # @native
+
+
+def bank_demand_upy(heading_error, gain, limit):
+    """Bank-to-turn: the roll angle (deg, right +) to hold for a heading error (deg) -- proportional with
+    a symmetric hard clamp (gain 0 -> no bank, rudder-only). A banked turn is tight (~v^2/(g*tan(bank)))
+    where a flat rudder skid is wide and weak, so the glider does not over-RANGE a small zone and the
+    overshoot loop becomes an altitude-bleeding orbit."""
+    return between(-limit, gain * heading_error, limit)
+
+
+@micropython.native
+def bank_demand_opt(heading_error, gain, limit):
+    return between(-limit, gain * heading_error, limit)
+
+
+bank_demand = bank_demand_upy  # @native measured 1.03x here -> keep _upy; switch to _opt when a bench shows a gain
+
+
+# --- clamp_int: integer clamp to [low, high]. Hot via sg90 fin clamping (round(angle), min/max deg). ---
+
+
+def clamp_int_upy(low, value, high):
+    if value < low:
+        return low
+    if value > high:
+        return high
+    return value
+
+
+@micropython.viper
+def clamp_int_opt(low: int, value: int, high: int) -> int:
+    if value < low:
+        return low
+    if value > high:
+        return high
+    return value
+
+
+clamp_int = clamp_int_opt  # viper is safe on this firmware -> bind the optimised variant
+
+
+# --- wrap180: wrap an integer-degree value to (-180, 180]. Hot via the yaw heading error each step. ---
+
+
+def wrap180_upy(degrees):
+    return degrees if -180 <= degrees <= 180 else (degrees + 180) % 360 - 180
+
+
+@micropython.viper
+def wrap180_opt(degrees: int) -> int:
+    if -180 <= degrees <= 180:
+        return degrees
+    return (degrees + 180) % 360 - 180
+
+
+wrap180 = wrap180_opt  # viper is safe on this firmware -> bind the optimised variant

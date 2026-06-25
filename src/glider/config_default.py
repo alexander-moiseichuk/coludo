@@ -195,6 +195,11 @@ def default() -> dict:
              # capped at bank_limit deg) so the turn is tight and orbits the zone to bleed altitude
              # rather than over-ranging it on a flat rudder skid. nav_bank_gain 0 -> rudder-only.
              'nav_bank_gain': 1.5, 'bank_limit': 30,
+             # g8/g9 final approach: below final_approach_agl, track the strip CENTRELINE (not the centre
+             # point) using the FULL fin authority (45 deg) to crab a crosswind out -- keep it gliding,
+             # not rolling-and-dropping. final_approach_agl 0 -> off.
+             'land_bank_gain': 1.5, 'land_bank_limit': 45,
+             'final_approach_agl': 8, 'final_cross_gain': 3.0, 'final_intercept_deg': 45,
              # per-stage attitude setpoint; stages absent here hold the fins neutral. GLIDING =
              # bank-to-turn heading hold; LANDING pitch is the flare knob (0 = none until tuned).
              'stages': {'gliding': {'roll': 0, 'pitch': 0}, 'landing': {'roll': 0, 'pitch': 0}}},

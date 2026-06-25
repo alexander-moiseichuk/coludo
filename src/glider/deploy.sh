@@ -16,7 +16,14 @@ PORT="${PORT:-/dev/ttyACM0}"
 if [ -t 1 ]; then G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; N=$'\e[0m'; else G=; R=; Y=; N=; fi
 command -v mpremote >/dev/null || { echo "${R}mpremote not found${N}"; exit 2; }
 have_ruff=1; command -v ruff >/dev/null      || { have_ruff=0; echo "${Y}warning: ruff not found${N}"; }
-have_mpy=1;  command -v mpy-cross >/dev/null || { have_mpy=0;  echo "${Y}warning: mpy-cross not found${N}"; }
+# mpy-cross gate: prefer the repo-built tools/mpy-cross.v1.29.0 with -march=rv32imc so @micropython.viper
+# modules (commons.py, g15) compile-check -- the stock mpy-cross lacks the RV32 native emitter and errors
+# ("invalid arch") on them. The gate only VALIDATES; the board compiles the deployed .py on-device (the
+# firmware's emitter does the real codegen, with the FPU). -march is harmless on plain bytecode files.
+MPYX="$HERE/../../tools/mpy-cross.v1.29.0"; MARCH=(-march=rv32imc)
+if [ -x "$MPYX" ]; then have_mpy=1
+elif command -v mpy-cross >/dev/null; then MPYX=mpy-cross; MARCH=(); have_mpy=1
+else have_mpy=0; echo "${Y}warning: mpy-cross not found${N}"; fi
 
 tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' EXIT
 
@@ -39,7 +46,7 @@ for f in "${files[@]}"; do
     case "$f" in
         *.py)
             if [ "$have_ruff" = 1 ] && ! ruff check "$f"; then echo "${R}ruff failed: $f${N}"; exit 1; fi
-            if [ "$have_mpy" = 1 ] && ! mpy-cross -O3 "$f" -o "$tmp/c.mpy" 2>"$tmp/err"; then
+            if [ "$have_mpy" = 1 ] && ! "$MPYX" -O3 "${MARCH[@]}" "$f" -o "$tmp/c.mpy" 2>"$tmp/err"; then
                 echo "${R}mpy-cross failed: $f${N}"; sed 's/^/    /' "$tmp/err"; exit 1
             fi
             ;;

@@ -5,6 +5,8 @@
 
 import math
 
+from commons import between
+
 
 class Pid:
     """error -> control output. step(error, dt): kp*e + ki*integral(e) + kd*de/dt, each clamped."""
@@ -23,8 +25,9 @@ class Pid:
 
     @staticmethod
     def _clamp(value: float, limit: float) -> float:
-        """Symmetric clamp of `value` to +/- `limit` (limit inf -> a no-op)."""
-        return -limit if value < -limit else (limit if value > limit else value)
+        """Symmetric clamp of `value` to +/- `limit` (limit inf -> a no-op). Thin wrapper over the shared
+        between() primitive (g13)."""
+        return between(-limit, value, limit)
 
     def reset(self) -> None:
         """Clear the integral + derivative history -- on entering a control phase, so a fresh glide

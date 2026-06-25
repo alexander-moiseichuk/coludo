@@ -20,6 +20,7 @@ import sys
 _GLIDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'glider')
 sys.path.insert(0, _GLIDER)
 
+import commons  # noqa: E402  -- shared primitives bundle (bank_demand, ...)
 import config_hitl  # noqa: E402  -- the SAME board config the on-board HITL uses (host-importable)
 import mixer  # noqa: E402
 import navigation  # noqa: E402
@@ -41,7 +42,7 @@ def _component(cfg: dict, name: str) -> dict:
 
 
 def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
-        wind: float = 0.0, wind_dir: float = 0.0) -> str:
+        wind: float = 0.0, wind_dir: float = 0.0, final_agl_override: float = None) -> str:
     """Run the closed loop and return a recorder capture (text). Reuses config_hitl so the gains, mixer,
     sequencer thresholds and scenario are byte-for-byte what the board flies."""
     cfg = config_hitl.default(motor=motor, noise=noise, spike=spike)
@@ -69,6 +70,11 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     stages = flight_c.get('stages', {'gliding': {'roll': 0.0, 'pitch': 0.0}})
     bank_gain = flight_c.get('nav_bank_gain', 1.5)   # bank-to-turn (mirror tasks/flight.py)
     bank_limit = flight_c.get('bank_limit', 30)
+    land_bank_gain = flight_c.get('land_bank_gain', 1.5)     # g8/g9 (mirror tasks/flight.py)
+    land_bank_limit = flight_c.get('land_bank_limit', 45)
+    final_agl = final_agl_override if final_agl_override is not None else flight_c.get('final_approach_agl', 8)
+    final_cross_gain = flight_c.get('final_cross_gain', 3.0)
+    final_intercept = flight_c.get('final_intercept_deg', 45)
     pids = {axis: pid.Pid(output_limit=mix.limit, integral_limit=mix.limit, **gains.get(axis, {}))
             for axis in ('roll', 'pitch', 'yaw')}
 
@@ -132,11 +138,18 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         if stage in ('setting', 'boosting'):
             body.boost_step(dt, thrust if t < burn_s else 0.0)
         elif setpoint is not None:                       # a control stage (gliding) -> PID -> mixer -> fins
-            target = navigation.steer(sensors['position'], zone[0], zone[1])[0]  # tier-1: live fix
+            final = final_agl and agl < final_agl        # g8/g9: low on final -> track the strip centreline
+            if final:
+                target = navigation.approach(sensors['position'], zone[0], zone[1], heading_m,
+                                             final_cross_gain, final_intercept)
+            else:
+                target = navigation.steer(sensors['position'], zone[0], zone[1])[0]  # tier-1: live fix
             heading_error = _heading_error(target, heading_m)
             roll_setpoint = setpoint.get('roll', 0.0)
-            if bank_gain and stage == 'gliding':         # bank-to-turn toward the zone
-                roll_setpoint = navigation.bank_demand(heading_error, bank_gain, bank_limit)
+            if land_bank_gain and (final or stage == 'landing'):  # final/landing: gentle, tight-capped bank
+                roll_setpoint = commons.bank_demand(heading_error, land_bank_gain, land_bank_limit)
+            elif bank_gain and stage == 'gliding':       # high glide: bank-to-turn toward the zone
+                roll_setpoint = commons.bank_demand(heading_error, bank_gain, bank_limit)
             roll_cmd = pids['roll'].step(roll_setpoint - roll_m, dt)
             pitch_cmd = pids['pitch'].step(setpoint.get('pitch', 0.0) - pitch_m, dt)
             yaw_cmd = pids['yaw'].step(heading_error, dt)
@@ -222,12 +235,15 @@ def main():
                         help='g16: inject a transient 2x attitude+accel glitch every ~3 s')
     parser.add_argument('--wind', type=float, default=0.0, help='steady wind speed m/s (default 0)')
     parser.add_argument('--wind-dir', type=float, default=0.0, help='wind blows TOWARD this heading deg (default 0=N)')
+    parser.add_argument('--final-agl', type=float, default=None,
+                        help='g8/g9 final-approach trigger AGL override (0 = disabled / old blind flare)')
     parser.add_argument('--hz', type=int, default=50, help='simulation rate (default 50)')
     parser.add_argument('--seconds', type=float, default=240.0, help='max flight time (default 240)')
     parser.add_argument('-o', '--out', help='write capture here (default stdout)')
     args = parser.parse_args()
 
-    capture = fly(args.motor, args.noise, args.spike, args.hz, args.seconds, args.wind, args.wind_dir)
+    capture = fly(args.motor, args.noise, args.spike, args.hz, args.seconds, args.wind, args.wind_dir,
+                  args.final_agl)
     if args.out:
         with open(args.out, 'w') as handle:
             handle.write(capture)

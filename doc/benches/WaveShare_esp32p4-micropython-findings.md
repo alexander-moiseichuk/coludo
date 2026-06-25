@@ -26,6 +26,33 @@ mpremote connect /dev/ttyACM0 run src/glider/test/bench_asyncio.py
 
 ---
 
+## Update — MicroPython 1.29.0-preview (2026-06-24, g16)
+
+Re-ran on **`v1.29.0-preview.414.g533a154c8a`** (raw:
+[`…-1.29.0-preview.log`](WaveShare_esp32p4_micropython-1.29.0-preview.log) /
+[`.json`](WaveShare_esp32p4_micropython-1.29.0-preview.json)). The board was moved to 1.29.0 because it
+**fixes a 1.28.0 `asyncio.Lock` `async with` bug** (`'NoneType' object has no attribute '__aexit__'` under
+contention — it broke the shared-i2c-bus drivers). The headline below is a **major PSRAM speed-up**:
+
+| metric | 1.28.0 | 1.29.0-preview | change |
+|---|---|---|---|
+| PSRAM heap memcpy (1 MiB) | 11.8 MB/s | **33.5 MB/s** | **2.85× faster** |
+| slice-assign 32 B into 256 KiB | 19 664 µs | **6 152 µs** | **3.2× faster** |
+| `gc.collect()` 10k live objects | 67 ms | **33 ms** | **2.0× faster** |
+| `gc.collect()` clean heap | 318 µs | 318 µs | — |
+| `ticks_us()` / `sleep_ms(0)` / Event ping-pong | 3.08 / 83 / 306 µs | 2.95 / 81 / 301 µs | ~same |
+| `asyncio.sleep_ms` ~10 ms floor | yes | **yes** (unchanged) | — |
+| `gc.mem_free()` at start | 33.08 MB | 32.03 MB | ~1 MB more firmware |
+
+The PSRAM memcpy rate roughly **tripled**, which cascades into everything PSRAM-bound: the O(buflen) slice
+store and the fragmented-GC walk are both ~2–3× cheaper. **Design impact:** the fragmented-GC pause that
+motivated *GC-disabled-in-flight* (g14) is now ~33 ms — still well past the 10 ms control budget, so the
+policy stands, but the worst case is half as bad. The ~10 ms `asyncio.sleep` floor is **unchanged**, so
+the hardware-timer-paced control loop is still required. The 1.28.0 numbers below remain the reference
+text; deltas above supersede them on 1.29.0.
+
+---
+
 ## Finding 1 — `bytearray`/`memoryview` slice-assignment is O(len(buffer)), not O(len(slice))
 
 Assigning an **equal-length** slice (no resize) gets dramatically slower as the *destination

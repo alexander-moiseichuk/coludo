@@ -104,9 +104,9 @@ async def amain():
     seq._tick(3200)  # well past launch_ms
     assert ctrl.stage == Stage.SETTING  # held -> no auto-advance
 
-    # missing accel reading: _magnitude returns None (guarded, no raise) and _tick skips via an explicit
-    # is-not-None check -- a dropped sample does not advance, no crash, no GC-churning exception (g9).
-    assert sequencer._magnitude(None) is None
+    # missing accel reading: _magnitude_sq returns None (guarded, no raise) and _tick skips via an
+    # explicit is-not-None check -- a dropped sample does not advance, no crash, no GC exception (g9).
+    assert sequencer._magnitude_sq(None) is None
 
     class _NoReading:
         def value(self):
