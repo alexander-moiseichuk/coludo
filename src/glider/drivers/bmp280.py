@@ -123,8 +123,9 @@ class Bmp280(task.Task):
                 self._pressure.push(pressure)
                 self._elevation.push(elevation)
                 self._telemetry.push((altitude, temp_c, pressure, elevation))
+                self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
-                print('bmp280 :: read %r' % error)
+                self.note('bmp280 :: read %r' % error)  # deduped: a persistent error logs once, not every tick
             await asyncio.sleep_ms(self._period_ms)
 
     def update(self, props: dict) -> list:

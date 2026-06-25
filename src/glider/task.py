@@ -49,6 +49,18 @@ class Task(inspector.Inspectable):
         self.controller = controller  # back-reference for find()/query()/notify()
         self._ok: bool = False
         self._subs: list = []
+        self._last_note = None  # last message passed to note() -> dedup a repeating run-loop error
+
+    def note(self, message: str) -> None:
+        """Print `message` only when it CHANGES from the previous note -- a de-duplicated best-effort
+        log for run() loops. A persistently-failing read (a flaky/absent sensor, a missing CC hub) would
+        otherwise log every iteration: a 50 Hz sensor floods the USB-CDC and wedges the REPL. So use this
+        instead of a bare print() inside `while True` -- the first occurrence + any change/recovery show,
+        the repeats are dropped. Call note(None) on a healthy pass so the next error logs afresh."""
+        if message != self._last_note:
+            self._last_note = message
+            if message is not None:
+                print(message)
 
     async def setup(self) -> bool:
         """Initialize or reset. Override. Return True on success, False otherwise."""

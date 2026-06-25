@@ -127,8 +127,9 @@ class Adxl375(task.Task):
                 accel = await self.sample()
                 self._accel.push(accel)  # one step: push our channel directly
                 self._telemetry.push(accel)
+                self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
-                print('adxl375 :: read %r' % error)
+                self.note('adxl375 :: read %r' % error)  # deduped: a persistent error logs once, not every tick
 
     async def probe(self) -> str:
         """On-demand self-test: the device id reads back, then one sample succeeds (each step logged)."""

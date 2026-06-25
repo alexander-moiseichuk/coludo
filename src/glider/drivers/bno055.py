@@ -85,8 +85,9 @@ class Bno055(task.Task):
                 self._attitude.push(attitude)  # one step: push our channels directly
                 self._accel.push(accel)  # low-g backup to the ADXL375
                 self._telemetry.push(attitude + accel)
+                self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
-                print('bno055 :: read %r' % error)
+                self.note('bno055 :: read %r' % error)  # deduped: a persistent error logs once, not at 50 Hz
             await asyncio.sleep_ms(self._period_ms)
 
     async def probe(self) -> str:
