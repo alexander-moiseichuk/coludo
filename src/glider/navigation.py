@@ -21,6 +21,8 @@
 
 import math
 
+from commons import between
+
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
@@ -99,8 +101,7 @@ def bank_demand(heading_error: float, gain: float, limit: float) -> float:
     over-RANGE a small zone (it sails downrange before it can come back). Re-evaluated each tick on the
     steer() heading, a banked turn also makes the overshoot loop a tight ORBIT that bleeds excess
     altitude over the zone rather than past it (energy management). gain 0 -> no bank (rudder-only)."""
-    bank = gain * heading_error
-    return limit if bank > limit else (-limit if bank < -limit else bank)
+    return between(-limit, gain * heading_error, limit)  # symmetric bank clamp (g13)
 
 
 def steer(position: tuple, corner_tl: tuple, corner_br: tuple) -> tuple:

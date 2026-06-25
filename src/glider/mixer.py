@@ -8,6 +8,8 @@
 # Signs are config (`surfaces` gains + `trim`), set during bench alignment: if a surface deflects the
 # wrong way, flip its gain sign; if its neutral is off, set its trim.
 
+from commons import between
+
 _DEFAULT_SURFACES: dict = {
     'servo_yaw': {'yaw': 1},                          # rudder
     'servo_eleron_left': {'pitch': 1, 'roll': 1},     # elevon
@@ -49,11 +51,9 @@ class Mixer:
         limit = self.limit
         out = self._out  # g3: hoist the attribute lookup out of the per-fin loop
         for name, base, roll_gain, pitch_gain, yaw_gain in self._surfaces:
-            deflection = roll_gain * roll + pitch_gain * pitch + yaw_gain * yaw
-            if deflection > limit:  # clamp the control deflection (authority), not the trim
-                deflection = limit
-            elif deflection < -limit:
-                deflection = -limit
+            # clamp the CONTROL deflection (authority) to +/-limit, then add to base (neutral+trim);
+            # the absolute physical end-stop is sg90's per-fin [min_deg, max_deg] (g2, g13)
+            deflection = between(-limit, roll_gain * roll + pitch_gain * pitch + yaw_gain * yaw, limit)
             out[name] = base + deflection
         return out
 
