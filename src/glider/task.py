@@ -50,13 +50,18 @@ class Task(inspector.Inspectable):
         self._ok: bool = False
         self._subs: list = []
         self._last_note = None  # last message passed to note() -> dedup a repeating run-loop error
+        self._healthy: bool = True  # A03: RUNTIME read health (distinct from _ok = setup ok); note() tracks it
 
     def note(self, message: str) -> None:
         """Print `message` only when it CHANGES from the previous note -- a de-duplicated best-effort
         log for run() loops. A persistently-failing read (a flaky/absent sensor, a missing CC hub) would
         otherwise log every iteration: a 50 Hz sensor floods the USB-CDC and wedges the REPL. So use this
         instead of a bare print() inside `while True` -- the first occurrence + any change/recovery show,
-        the repeats are dropped. Call note(None) on a healthy pass so the next error logs afresh."""
+        the repeats are dropped. Call note(None) on a healthy pass so the next error logs afresh.
+
+        A03: also tracks runtime health -- an error message marks the task unhealthy, note(None) clears it,
+        so inspect()['healthy'] shows a flaky/failing run loop that _ok (setup-time) cannot."""
+        self._healthy = message is None
         if message != self._last_note:
             self._last_note = message
             if message is not None:
@@ -122,4 +127,4 @@ class Task(inspector.Inspectable):
     # --- Inspectable ---
     def inspect(self) -> dict:
         """Status dict. Subclasses extend it."""
-        return {'name': self.name, 'ok': self._ok}
+        return {'name': self.name, 'ok': self._ok, 'healthy': self._healthy}
