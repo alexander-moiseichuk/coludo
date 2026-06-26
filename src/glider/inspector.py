@@ -52,6 +52,18 @@ class Inspector:
         return cls._objects.get(name)
 
     @classmethod
+    async def probe_all(cls) -> dict:
+        """Run probe() on every registered inspectable that implements it; return {name: result} (result
+        None = passed). The shared probe-all sweep: cc arm/verify keep the non-None failures,
+        `probe all` reports every result."""
+        results = {}
+        for name in cls.names():
+            run = getattr(cls.get(name), 'probe', None)
+            if run is not None:
+                results[name] = await run()
+        return results
+
+    @classmethod
     def inspect(cls, name: str) -> dict:
         return cls._require(name).inspect()
 

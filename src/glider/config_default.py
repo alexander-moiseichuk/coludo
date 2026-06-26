@@ -20,7 +20,7 @@ def default() -> dict:
         'board': {'id': 'taster', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION},
         'setup_retries': 3,  # re-attempt a flaky device setup at boot (breadboard contacts; 1 = no retry)
         'max_range_m': 200,  # landing zone must be within this of the launch point -- the AIRFRAME glide
-        #                      range (a bigger glider reaches farther); the mission range-gate uses it
+        # range (a bigger glider reaches farther); the mission range-gate uses it
         'wifi': {  # STA — the board joins the Control network
             'mode': 'sta',
             'ssid': 'panda',
@@ -65,6 +65,10 @@ def default() -> dict:
         # Max fin servos allowed to SLEW at once via servo.move() -- caps the boost-rail current
         # transient. 3 (== fin count) = no limit; drop to 2/1 if the rail sags on the built airframe.
         'servo_concurrency': 3,
+        # Dynamic-pressure fin governor (coludo.md "Fin authority"): the flight loop caps fin control
+        # deflection by airspeed (commons.fin_deflection_limit, ∝ 1/v²); this scales the whole schedule.
+        # 1.0 = nominal; drop (e.g. 0.5) if a flight starts losing fins / control authority in the air.
+        'fin_limit_multiplier': 1.0,
         # Control-surface mixing (Phase 3): elevons (the two elerons move together for pitch,
         # differentially for roll) + a rudder (the yaw fin). Flip a gain sign if a surface deflects the
         # wrong way; set `trim` (deg) for mechanical neutral. limit_deg bounds control deflection.
@@ -141,9 +145,9 @@ def default() -> dict:
             },
             # GNSS. Primary: ATGM336H (CASIC) at 10 Hz. Backup: GY-NEO6MV2 (u-blox NEO-6M) -- same
             # uart:2, both share gnss.py. To run the NEO-6M instead:
-            #   1. power the board off, swap the module onto uart:2 (keep board-TX -> module-RX wired:
-            #      without it the NEO ignores config and free-runs all sentences at 1 Hz),
-            #   2. set 'driver' to 'neo6mv2' and 'hz' to 5 (the NEO-6M tops out near 5 Hz).
+            # 1. power the board off, swap the module onto uart:2 (keep board-TX -> module-RX wired:
+            # without it the NEO ignores config and free-runs all sentences at 1 Hz),
+            # 2. set 'driver' to 'neo6mv2' and 'hz' to 5 (the NEO-6M tops out near 5 Hz).
             # Live-verified on the NEO: RMC 5 Hz (position) + GGA ~1 Hz (altitude/elevation).
             {
                 'name': 'gnss',
@@ -154,6 +158,7 @@ def default() -> dict:
                 'enabled': True,
                 'provides': {
                     'position': {'priority': 0, 'timeout_ms': 200},  # 10 Hz -> 2x period
+                    'speed': {'priority': 0, 'timeout_ms': 500},  # GNSS ground speed (m/s) -> airspeed governor
                     # altitude/elevation are a deep baro backup: high priority number (low rank), and a
                     # generous window since GGA runs at ~1 Hz to stay within 9600 baud.
                     'altitude': {'priority': 3, 'timeout_ms': 2000},
@@ -195,14 +200,19 @@ def default() -> dict:
              # capped at bank_limit deg) so the turn is tight and orbits the zone to bleed altitude
              # rather than over-ranging it on a flat rudder skid. nav_bank_gain 0 -> rudder-only.
              'nav_bank_gain': 1.5, 'bank_limit': 30,
-             # g8/g9 final approach: below final_approach_agl, track the strip CENTRELINE (not the centre
+             # final approach: below final_approach_agl, track the strip CENTRELINE (not the centre
              # point) using the FULL fin authority (45 deg) to crab a crosswind out -- keep it gliding,
              # not rolling-and-dropping. final_approach_agl 0 -> off.
              'land_bank_gain': 1.5, 'land_bank_limit': 45,
              'final_approach_agl': 8, 'final_cross_gain': 3.0, 'final_intercept_deg': 45,
-             # per-stage attitude setpoint; stages absent here hold the fins neutral. GLIDING =
-             # bank-to-turn heading hold; LANDING pitch is the flare knob (0 = none until tuned).
-             'stages': {'gliding': {'roll': 0, 'pitch': 0}, 'landing': {'roll': 0, 'pitch': 0}}},
+             # boost: BOOSTING holds the rod-vertical attitude captured at stage entry, but only once
+             # PAST THE ROD (airspeed > boost_engage_speed m/s) -- the 3-point rod keeps it vertical and the
+             # fins have no authority below that. The speed governor caps the throw the whole way up.
+             'boost_engage_speed': 15.0,
+             # per-stage attitude setpoint; stages absent here hold the fins neutral. BOOSTING = hold the
+             # captured rod-vertical attitude (no config setpoint); GLIDING = bank-to-turn heading hold;
+             # LANDING pitch is the flare knob (0 = none until tuned).
+             'stages': {'boosting': {}, 'gliding': {'roll': 0, 'pitch': 0}, 'landing': {'roll': 0, 'pitch': 0}}},
             # Watchdog + heartbeat (Phase 3): feeds a hardware WDT (a total event-loop wedge -> hard
             # reset) and supervises the control loop (stall in a control stage -> full reset; boot
             # re-centres the fins). Disabled by default -- a live WDT also resets the board when you

@@ -8,6 +8,13 @@
 # The pin uses an internal pull-down so an open (separated) circuit reads LOW reliably; while nested
 # the pads override it HIGH. A separation while not Boosting (e.g. a ground test in Setting) is
 # logged but does not transition -- the guard keeps go/no-go correct.
+#
+# this transition calls controller.set_stage() directly, NOT the sequencer's _advance(), so it
+# does not write a row to sequencer.csv. That is deliberate -- separation is the PRIMARY Boosting ->
+# Gliding trigger and separation.csv (event + stage, durable) is its authoritative telemetry record;
+# the sequencer's burnout-timeout is only the fallback, and sequencer.csv records that fallback path.
+# A post-flight tool reading the BOOSTING->GLIDING reason must consult separation.csv first. (GC policy
+# is unaffected: gc.disable() already fired on the SETTING->BOOSTING transition.)
 
 import asyncio
 

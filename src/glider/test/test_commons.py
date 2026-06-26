@@ -1,4 +1,4 @@
-# On-board test for the shared primitives bundle (commons.py, g13/g15). For each function with an
+# On-board test for the shared primitives bundle (commons.py). For each function with an
 # optimised variant, the _opt build (@micropython.viper for ints, @micropython.native for floats) must
 # return EXACTLY what the _upy bytecode reference does -- across ranges, bounds, and (for between) the
 # inf-open sides. Also: the plain name binds the _opt variant. Run by `make test`.
@@ -50,6 +50,18 @@ def test_wrap180():
     assert commons.wrap180_upy(200) == -160 and commons.wrap180_upy(-200) == 160
 
 
+def test_fin_deflection_limit():
+    # dynamic-pressure governor (coludo.md): full 45 at low speed, 5 floor at high, clamped + monotonic
+    assert commons.fin_deflection_limit(0) == 45 and commons.fin_deflection_limit(15) == 45
+    assert commons.fin_deflection_limit(30) == 14 and commons.fin_deflection_limit(50) == 5
+    assert commons.fin_deflection_limit(200) == 5 and commons.fin_deflection_limit(-5) == 45  # saturate/guard
+    previous = 45
+    for speed in range(81):
+        limit = commons.fin_deflection_limit(speed)
+        assert 5 <= limit <= 45 and limit <= previous  # in range + non-increasing with speed
+        previous = limit
+
+
 def test_alias():
     # each plain name binds its optimised variant (viper for ints, native for floats)
     assert commons.clamp_int is commons.clamp_int_opt and commons.wrap180 is commons.wrap180_opt
@@ -62,5 +74,6 @@ test_magnitude_sq()
 test_bank_demand()
 test_clamp_int()
 test_wrap180()
+test_fin_deflection_limit()
 test_alias()
 print('ok: commons -- between, magnitude_sq, bank_demand (@native), clamp_int, wrap180 (@viper); _opt==_upy')

@@ -9,7 +9,7 @@ This document is intended to provide a top-level architectural overview of the `
 > has **no SD card** (logs/telemetry/video go to the Recorder over UART), and the **camera
 > lives on the Recorder**, not the controller.
 
-The core concept of `Coludo` stems from the idea that traditional active-control rocket launches can be made significantly more engaging by introducing a secondary phase: at apogee, a glider deploys from the booster stage to achieve a controlled, gentle recovery back to earth. 
+The core concept of `Coludo` stems from the idea that traditional active-control rocket launches can be made significantly more engaging by introducing a secondary phase: at apogee, a glider deploys from the booster stage to achieve a controlled, gentle recovery back to earth.
 
 The lower booster stage has already been successfully test-flown using E16 and F15 model rocket engines. The current phase of development focuses on replacing the standard nosecone with an autonomous glider capable of piggyback deployment, drawing inspiration from vehicles like the [Spiral space plane](https://russianspaceweb.com/spiral_development.html) and the [X-37B glider](https://en.wikipedia.org/wiki/Boeing_X-37).
 
@@ -17,7 +17,7 @@ The lower booster stage has already been successfully test-flown using E16 and F
 
 ## Limitations
 
-To optimize weight distribution in future iterations, `Coludo` may eventually transition into a single-stage glider. However, the current airframe is strictly limited to a payload capacity of 100–150 grams, as documented in the [hardware components specifications](../doc/hardware.md) where everything fits under 100 grams. The video recording and telemetry recording module was implemented separately with its own power supply. 
+To optimize weight distribution in future iterations, `Coludo` may eventually transition into a single-stage glider. However, the current airframe is strictly limited to a payload capacity of 100–150 grams, as documented in the [hardware components specifications](../doc/hardware.md) where everything fits under 100 grams. The video recording and telemetry recording module was implemented separately with its own power supply.
 
 This rigid weight constraint severely limits the onboard power supply. The current physical envelope can accommodate a 800 mAh single cell LiPo battery with a power booster or a LiPo 6F22 9V battery paired with a power down regulator. To avoid any power shocks controller and engine regulators must be separated. Consequently, the maximum target power consumption for the electronics suite must remain under 3.5W (approximately 5V @ 700mA). To achieve this safely, a high-efficiency 5V switching regulator (such as a UBEC or buck converter) must be used; a traditional linear [LM7805 voltage stabilizer](https://www.amazon.com/dp/B00LTQTZYQ) cannot reliably handle the transient current spikes drawn by the control servos without inducing thermal shutdown.
 
@@ -25,7 +25,7 @@ The software architecture relies on MicroPython to manage this hardware stack, p
 * **Hardware Constraints:** The weight and power limitations restrict the primary flight controller to the [eSBC esp32-p4](https://wiki.dfrobot.com/FireBeetle_2_ESP32_P4_Development_Board_IO_Expansion_Kit) development platform.
 * **Language Choice:** While a compiled C/C++ codebase offers raw execution efficiency, MicroPython is preferred due to rapid prototyping familiarity.
 * **Concurrency:** To circumvent MicroPython's single-thread affinity, [asyncio](https://github.com/peterhinch/micropython-async) is heavily utilized. This ensures non-blocking cooperative multitasking, supplemented by hardware interrupts and selective multi-threading to leverage the ESP32's second core where necessary.
-* **Phased Rollout:** Phase one focuses entirely on validating sensor fusion and telemetry acquisition to guarantee data integrity. Active control surfaces and motorized actuation loops will only be enabled after these telemetry baselines are proven in flight trials. 
+* **Phased Rollout:** Phase one focuses entirely on validating sensor fusion and telemetry acquisition to guarantee data integrity. Active control surfaces and motorized actuation loops will only be enabled after these telemetry baselines are proven in flight trials.
 
 There is some problems with micropython in general (measured on the target board — see the
 [benchmark findings](../doc/benches/WaveShare_esp32p4-micropython-findings.md)):
@@ -46,7 +46,7 @@ There are several improvements planned to mitigate those problems:
    on `ticks_us()`, not `asyncio.sleep`; if needed it moves to its own core thread.
 4. If that is not enough, native code is used for the flight controller and servo control.
 
-### Garbage collection in flight — implemented (perf cluster g2/g3/g7/g14)
+### Garbage collection in flight — implemented (perf cluster)
 
 The GC policy above is implemented in `tasks/sequencer.py`, gated behind the stage machine:
 
@@ -59,19 +59,28 @@ The GC policy above is implemented in `tasks/sequencer.py`, gated behind the sta
   pause at the end. GC is held off through the flare and the collect is paid only once stopped.
 
 Disabling GC for the entire flight is only safe because the hot paths are near-zero-alloc: the mixer
-pre-resolves its surfaces and rewrites a shared output dict (**g3**, ~0 bytes/call), and the flight loop
+pre-resolves its surfaces and rewrites a shared output dict (, ~0 bytes/call), and the flight loop
 caches the landing-zone steering heading at GPS cadence instead of running `navigation.steer()` trig
-(~174 µs) every 100 Hz step (**g7/g2**). A HITL heap soak (F15, ~36 s flight) measured **~12 MB consumed
-with GC off, low-water ~20 MB free of 32 MB** (≈2.5× margin); the pre- and post-flight collect durations
-are **logged** (`gc pre-/post-flight collect <us>`) for post-flight analysis.
+(~174 µs) every 100 Hz step. On-board HITL flights — current firmware, which also streams the
+simulated sensors, so it churns *more* than a bare run — measured **~15 MB consumed with GC off, low-water
+~17 MB free of ~32 MB** on a ~47 s F15-4 flight (the shorter ~32 s E16-4 bottoms out ~23 MB), with
+`mem_free` snapping back to ~32 MB at touchdown when GC re-enables. The full sawtooth is visible in the
+committed device `board_health.csv` (`doc/sims/TMS-7-guarded_fins/`); the pre- and post-flight collect
+durations are also **logged** (`gc pre-/post-flight collect <us>`).
 
-Side effect (g14): the CPU-load probe in `tasks/board_health.py` was changed from a `sleep_ms(0)`
+Side effect: the CPU-load probe in `tasks/board_health.py` was changed from a `sleep_ms(0)`
 busy-spin to a sleeping probe that measures wake-up lateness — the core now idles between samples,
 cutting draw markedly (measured **7.2 W → 3.6 W** with all servos active) at no loss of the load signal.
 
+Measured board vitals from those on-board HITL flights: MCU temperature **31–33 °C** (steady, far below
+the synthetic ~45–63 °C the host sim had assumed), and CPU **load 0–~50 %** cruising with the peak at the
+landing stage (the laser hammering I²C) — the single P4 core is mostly idle between 50 Hz steps, so there
+is ample headroom. The asyncio loop runs **~3× faster than the 50 Hz sim rate** under this load, which is
+why `tasks/hitl.py` drives the model from a wall-clock accumulator rather than a fixed dt (see Phase-5).
+
 ## Flight envelope (E16 / F15 estimates)
 
-Approximate, **basic-fidelity** numbers to seed modelling and the HITL simulation (Phase-5 `g15`), and
+Approximate, **basic-fidelity** numbers to seed modelling and the HITL simulation (Phase-5), and
 to sanity-check sensor ranges and the launch-detect threshold. Derived from the TMS-7 masses in
 [`hardware.md`](../doc/hardware.md) (booster airframe ~93 g + glider airframe 112.6 g + electronics
 ~125 g, mid of the 100–150 g budget) and the printed models in [`models/TMS-7`](../models/TMS-7).
@@ -109,6 +118,14 @@ model-analysis notes). Real flights will differ — these are seeds, not guarant
   landing-zone gate (`max_range_m`): the glider has ample range to return, which is what the
   navigation spends it on.
 
+**Cross-check — on-board HITL (Phase-5).** `sim_model` integrates the same thrust/mass/drag, and the
+on-board HITL flights land where this table predicts at the boost end: **F15-4 apogee ~344 m** (E16-4
+lower, from its shorter burn) and early-boost **~3.5 g** (launch detected at |a|=3.7 g). The *glide*,
+though, is a deliberately simplified control-test model — steeper than the optimistic L/D-5 row here — so
+the device flights run **~47 s (F15-4) / ~32 s (E16-4)** total rather than the analytical ~160 s / ~80 s.
+The high wing loading in the airframe notes below points the same way: the real glide will be fast, not
+L/D-5. Traces + reports: [`../doc/sims/TMS-7-guarded_fins`](../doc/sims/TMS-7-guarded_fins).
+
 ### Airframe notes from the printed models (`models/TMS-7`)
 
 Measured from the meshes (bbox / volume): glider 394 (span) × 121 (folded height) × 388 mm (length);
@@ -140,9 +157,9 @@ The operational lifecycle of the glider is brief and divided into four distinct 
 * **Gliding (Passive Stage):** Triggered at apogee when the rocket motor's built-in black powder ejection charge fires (following a designated 4–6 second delay after burnout). The resulting internal pressure forces the glider clear of the booster, initiating autonomous wing deployment and navigation back to the designated landing zone.
 * **Landing:** The final approach matrix where the glider flares, stabilizes horizontal velocity, and touches down.
 
-## Setting 
+## Setting
 
-The Setting phase begins at system power-on and terminates immediately upon engine ignition (transition to Boosting). The expected ground pad duration is approximately 15 minutes. 
+The Setting phase begins at system power-on and terminates immediately upon engine ignition (transition to Boosting). The expected ground pad duration is approximately 15 minutes.
 
 Upon electronic initialization, the following sequential operations are executed:
 * **Physical Orientation:** The airframe must be kept horizontal and oriented toward true North for baseline indexing.
@@ -220,6 +237,53 @@ Final step when coming to LandingZone or nearby on low altitude, no time for man
 direct flight when vertical fin set to 0 and left and right fins keep pitch horizontal
 small corrections to left turn when vertical fin turned right to target direction and left/right fins keep horizont
 right turn when vertical fin turned left for up to target direction and left/right fins keep horizont
+
+## Fin authority — dynamic-pressure limiting
+
+Each of the three fins is driven **individually and directly by its own SG90 servo — there is no transmission, linkage, or reduction gearing** (no screw-gear or rack: those add mechanical complexity, backlash, and weight the airframe cannot spare). The fin angle *is* the servo angle, mapped 1:1. The upside is mechanical simplicity and one fewer failure mode; the cost is that nothing mechanical limits the throw, so the deflection limit must be enforced in **software**.
+
+This matters because aerodynamic torque on a fin scales with **dynamic pressure** `q = ½·ρ·v²`, i.e. with the **square of airspeed**. The *same* fin angle produces ~`v²` more torque at high speed: a deflection that is a gentle nudge at 14 m/s is a violent, stack-flipping moment near burnout. A fixed angle limit is therefore wrong at one end or the other — too weak to control at low speed (where the fins are also aerodynamically soft and most authority is needed), too violent at high speed (risking loss of control, servo stall, or shearing a fin off).
+
+The controller instead **schedules the maximum fin deflection by airspeed** to hold roughly *constant angular authority* (deflection ∝ 1/q ∝ 1/v²):
+
+```
+deflection_limit(v) = clamp(K / v², 5°, 45°) × fin_limit_multiplier      (K ≈ 12500, anchored at 50 m/s → 5°)
+```
+
+| airspeed (m/s) | ≤16 | 20 | 25 | 30 | 35 | 40 | 45 | ≥50 |
+|---|---|---|---|---|---|---|---|---|
+| max fin deflection | 45° | 31° | 20° | 14° | 10° | 8° | 6° | 5° |
+
+* **Flight-wide, not boost-only.** Ignition can end off-vertical and fast, and a glide can build speed in a dive, so the governor caps the fins through **every** stage (boosting, gliding, landing). It is the final actuator clamp, applied after the per-stage control law and the mixer.
+* **45° floor of authority at low speed** (≤16 m/s): low `q` means weak fins *and* low kinetic energy = low risk, so full mechanical throw is allowed — the "trade speed for altitude with gentle uplift" regime.
+* **5° ceiling of restraint near burnout** (≥50 m/s): high `q`, highest consequence — but never 0°, so some authority always remains.
+* **`fin_limit_multiplier` (board.config, default 1.0)** scales the whole schedule. It is the safety dial: if a flight starts **losing fins or control in the air** (flutter, servo stall, structural failure), drop it (e.g. 0.5) to halve authority everywhere without re-deriving the table.
+* Stored as a **precomputed lookup table** indexed by integer m/s, so the 100 Hz path does a table read, not a `1/v²` division.
+* **Airspeed estimate** (no pitot tube): integrated vertical acceleration during boost; GNSS ground speed once gliding. The estimate is biased to *over*-read when uncertain — over-estimating airspeed tightens the cap, which is the safe direction.
+
+During boosting the **wings are folded inside the booster body tube** (rubber-band deployed to the flight position only after separation), so the fins here steer the slim *booster + folded-glider stack* — the CG and ~146 mm fin moment arm in the `models/TMS-7` analysis are the stack's, which is why the boost-torque numbers come out as they do. After separation the same fins control the deployed glider.
+
+### Servo torque — why direct-drive SG90 is enough (and why the cap is not about torque)
+
+Each fin is an **all-moving surface, 37 cm², 58 mm chord** (span ~64 mm, aspect ratio ~1.1), hinged near its aerodynamic centre (~25% chord), driven **directly (1:1) by an SG90** — no reduction gearing, so the servo carries the aerodynamic hinge moment one-for-one. A real SG90 at 5 V gives **1.3–1.5 kg·cm = 128–147 mN·m** of stall torque.
+
+Because the surface is near-aero-balanced (hinge ≈ CoP), the hinge moment is small and grows ~linearly with deflection and with `q`:
+
+```
+H ≈ 0.37 · δ[°] · (v / 30 m/s)²   mN·m        (anchored on ±45° / 30 m/s = 16.6 mN·m)
+```
+
+**In governed flight the servo is barely loaded — and flat across the envelope.** The deflection cap holds `δ·v² ≈ K`, and the hinge moment is itself ~`δ·v²`, so it stays near-constant at **~5 mN·m everywhere = 3–4 % of SG90 stall (~25–30× margin):**
+
+| airspeed | governed δ | hinge moment | % of SG90 stall (1.3–1.5 kg·cm) |
+|---|---|---|---|
+| ≤16 m/s | 45° | 4.7 mN·m | 3.2–3.7 % |
+| 30 m/s  | 14° | 5.2 mN·m | 3.5–4.0 % |
+| 50 m/s  |  5° | 5.1 mN·m | 3.5–4.0 % |
+
+So **torque is never the binding constraint** — the plastic-gear SG90, direct-driven, holds the governed fin cool, and the `1/v²` cap is precisely what keeps the moment tiny despite there being no *mechanical* limit on the throw. This is the key point: **the cap exists for control authority and structure, not for servo torque.** The schedule holds `δ·v² ≈ K ≈ 12500`, i.e. *constant angular control moment* — 45°/16 m/s and 5°/50 m/s deliver the same authority. Relaxing the high-speed end does not "recover lost authority" (there is none lost); it multiplies the control moment by the relaxation factor → over-control / stack-flip, the very failure the governor prevents.
+
+**The one stress case is an un-governed hardover to ±45°** (a control fault, or relaxing the cap): there `H = 0.0185·v²` reaches the 128–147 mN·m stall at **~83–89 m/s** (attached flow). At large deflection the flow separates and the centre of pressure moves aft, **~doubling** the moment and pulling the stall speed down to **~59–63 m/s**. Burnout is ~70 m/s, so a 45° hardover *near burnout* sits right in the back-drive/stall band — a concrete, SG90-specific reason the high-speed cap must not be relaxed. At that hardover it is the output-shaft **bending** load, not torque, that bounds things, which is the only reason to prefer the metal-gear **MG90S** (~+3 g) — a shock/robustness choice, not a torque one.
 
 ## Boosting
 
@@ -318,7 +382,7 @@ Task creation orders and internal dependencies are explicitly hardcoded within t
 
 ## Degraded Mode
 
-Incase of complete sensor faliure or other critical errors the degraded mode will be enabled: 
+Incase of complete sensor faliure or other critical errors the degraded mode will be enabled:
 
 - When IMU degraded/produced invalid data the glider must fly straight or minimize turns
 - If GNSS is lost - glide in current heading, prioritize gentle descent
@@ -338,7 +402,7 @@ Example: for altitude the queue of selection could be the following
 - backup sensor 2 could be accelerometer
 - backup sensor 3 could be navigation - it has rate 10 Hz/100ms but real elevation data update ~10m which leads to 1 second to timeout
 
-Proper cross-analysis for initial fusion (backing) should be performed by documentation and can be tweaked later after trials. Sensor disagreements will be handled during timeouts and limits per each individually and switching to backup sensor. For example, the controller expects GPS data every 100 ms and if there is no data or repetative data for at least 200 ms then it will switch to the IMU.  
+Proper cross-analysis for initial fusion (backing) should be performed by documentation and can be tweaked later after trials. Sensor disagreements will be handled during timeouts and limits per each individually and switching to backup sensor. For example, the controller expects GPS data every 100 ms and if there is no data or repetative data for at least 200 ms then it will switch to the IMU.
 
 ## Tasks
 
@@ -351,8 +415,8 @@ One task must be created explicitly - the Controller, it creates the rest of the
 - finish() - to shutdown task
 - validate() - to evaluate current task status and return True if everything is fine or false otherwise
 
-The testing part per each task can be implemented in test/ subfolder separately from the main code: 
-- testing() - async call performs basic functionality testing e.g. as a part of setup() 
+The testing part per each task can be implemented in test/ subfolder separately from the main code:
+- testing() - async call performs basic functionality testing e.g. as a part of setup()
 
 For the Task's common scope, more calls might be required, for example:
 
@@ -360,7 +424,7 @@ For the Task's common scope, more calls might be required, for example:
 - create() - to create specified tasks by name if Settings allows for task class name and returns task reference or None
 - close() - deactivate some task and cleanup resources, might be require after landing
 - active() - query another active task or tasks (if None passed) by name e.g. camera may query Storage (SD card)
- here is the activation command of important tasks 
+ here is the activation command of important tasks
 .....
  here is the activation command of non-important tasks
 
@@ -433,11 +497,11 @@ Log strings append system uptime values in milliseconds alongside a standard des
 
 ## Telemetry
 
-Telemetry mirrors the logging architecture but outputs data in structured, semicolon-separated CSV profiles streamed to the Recorder (e.g., the Recorder stores `telemetry/date_time.cpu.csv` on its SD card):
-uptime;utilization;temperature
-111;40;51
-2222;45;52
-5555;48;55
+Telemetry mirrors the logging architecture but outputs structured, semicolon-separated CSV profiles streamed to the Recorder, which the Luckfox demuxes into one file per stream (`<session>_<file>.csv`). For example the board-vitals stream `board_health.csv` — real rows from an on-board flight (`uptime` µs; `temp` °C; `mem_free` bytes, showing the GC-off sawtooth; `load` %, peaking at the landing work):
+uptime;temp;mem_free;load
+4940864;32;32612240;0
+11591868;31;31532800;47
+14650552;31;32537888;6
 
 Post-flight parsing arrays can extract these files to compile automated 3D spatial flight path models in standard GPX formatting.
 
@@ -479,7 +543,7 @@ This sensor serves as the primary trigger source for transitioning from the Sett
 
 ## Gyroscope
 
-The rotational tracking loops rely on the integrated bno055 gyroscope to sample yaw, pitch, and roll rates. The driver issues asynchronous callbacks to the flight controller whenever angular rates cross a defined deadband threshold. To eliminate sensor drift errors, the module must be physically aligned as closely as possible to the physical center of gravity of the airframe. Due to the low G tolerance of the BNO055, the ADXL375 is better to use. 
+The rotational tracking loops rely on the integrated bno055 gyroscope to sample yaw, pitch, and roll rates. The driver issues asynchronous callbacks to the flight controller whenever angular rates cross a defined deadband threshold. To eliminate sensor drift errors, the module must be physically aligned as closely as possible to the physical center of gravity of the airframe. Due to the low G tolerance of the BNO055, the ADXL375 is better to use.
 
 ## Geomagnetic
 
@@ -499,7 +563,7 @@ To scale the data processing up to the 10 Hz threshold without overflowing the s
 
 - The serial interface speed (Baud Rate) escalates from 9600 to 115200 bits per second via a $PCAS01,5*19\r\n control string.
 
-- Unnecessary NMEA sentences (such as GSV or GSA) are suppressed using the $PCAS03 mask to minimize data packet sizes, leaving only GNGGA and GNRMC strings active. 
+- Unnecessary NMEA sentences (such as GSV or GSA) are suppressed using the $PCAS03 mask to minimize data packet sizes, leaving only GNGGA and GNRMC strings active.
 
 $PCAS10,3*1F<cr><lf>    # Enforces factory cold restart
 $PCAS01,5*19<cr><lf>    # Escalates interface speed to 115200 baud
@@ -513,7 +577,7 @@ The Flight Controller continually correlates accelerometer vectors alongside GNS
 
 ## Altimeter
 
-High-resolution altitude tracking uses a Gravity: ICP-10111 Pressure Sensor, selected for its 8.5cm operational accuracy and low 2mA current consumption. Barometric calculations are cross-checked against a secondary onboard BMP280 Digital Pressure Sensor and incoming GNSS elevation metrics.A verified vertical delta $\le 3\text{ meters}$ AGL acts as the absolute trigger to drop the master stage machine from Gliding to Landing mode. Due to low altitude mode not working very well on the barometer the laser range finder is mandatory for safety. 
+High-resolution altitude tracking uses a Gravity: ICP-10111 Pressure Sensor, selected for its 8.5cm operational accuracy and low 2mA current consumption. Barometric calculations are cross-checked against a secondary onboard BMP280 Digital Pressure Sensor and incoming GNSS elevation metrics.A verified vertical delta $\le 3\text{ meters}$ AGL acts as the absolute trigger to drop the master stage machine from Gliding to Landing mode. Due to low altitude mode not working very well on the barometer the laser range finder is mandatory for safety.
 
 ## Separation Sensor (Switch or Breakaway Wire)
 
@@ -522,7 +586,7 @@ The physical booster separation event is handled via an explicit electrical disc
 - Pressure Micro-Switch: A Gravity Digital Crash Sensor mounted to the airframe that springs open immediately as the glider leaves the booster body tube.
 - Breakaway Pin/Socket: A physical wire loop plugged into a dedicated port on the flight computer. When the motor's black powder ejection charge pops the glider out of the body tube, the tethered wire pulls free from the socket.
 
-The resulting state transition instantly alters the input pin logic to HIGH, invoking an unblock event via a hardware interrupt. This forces the master Flight Controller to transition immediately from Boosting to Gliding state. For separation detection, sensor or termination wire and IMU can be used simultaneously to ensure proper separation detection: 
+The resulting state transition instantly alters the input pin logic to HIGH, invoking an unblock event via a hardware interrupt. This forces the master Flight Controller to transition immediately from Boosting to Gliding state. For separation detection, sensor or termination wire and IMU can be used simultaneously to ensure proper separation detection:
 1. Separation sensor triggered
 2. IMU detects sudden pitch/roll change
 3. Altimeter shows positive vertical deceleration
@@ -556,10 +620,10 @@ Audio is captured (if at all) by the Recorder module alongside its video, not by
 
 # Overall Design Risks and Mitigations
 
-- First flights will be with telemetry ONLY collection without active control to understand potential locking and sensor problems which will be mitigated later by adding more functional components like watchdog, heartbeat, or runtime health monitor service. 
+- First flights will be with telemetry ONLY collection without active control to understand potential locking and sensor problems which will be mitigated later by adding more functional components like watchdog, heartbeat, or runtime health monitor service.
 - Assume by aerodynamics that the minimum effective airspeed to control the glider is about 10 meters per second.
 - Having GPS accuracy target as 10 meters, I will asign the landing zone's sides at atleast 50 meters.
-- To not overload the system with current and keep the battery safe, at least 800 mAh battary will be used with seperate voltage boosters for the controller and engines. Additionally, the servos' positioning / adjusting will be done sequentially. 
+- To not overload the system with current and keep the battery safe, at least 800 mAh battary will be used with seperate voltage boosters for the controller and engines. Additionally, the servos' positioning / adjusting will be done sequentially.
 - Definition of "no control" will be clarified through trials with a telemtry only glider, preliminary
 
 | Subsystem / Loop            | Target Frequency | Max Allowed Latency | Notes / Rationale |

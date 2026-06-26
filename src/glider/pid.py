@@ -26,7 +26,7 @@ class Pid:
     @staticmethod
     def _clamp(value: float, limit: float) -> float:
         """Symmetric clamp of `value` to +/- `limit` (limit inf -> a no-op). Thin wrapper over the shared
-        between() primitive (g13)."""
+        between() primitive."""
         return between(-limit, value, limit)
 
     def reset(self) -> None:

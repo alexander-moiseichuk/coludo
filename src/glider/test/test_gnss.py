@@ -61,6 +61,8 @@ async def amain():
     unit._parse(_line('GPRMC,123519,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W'))
     latitude, longitude = databoard.Databoard.value('position')
     assert abs(latitude - 48.1173) < 1e-3 and abs(longitude - 11.5167) < 1e-3 and unit._fix
+    # RMC field-7 speed (knots) -> 'speed' channel in m/s for the airspeed governor (022.4 kn ~= 11.52 m/s)
+    assert abs(databoard.Databoard.value('speed') - 22.4 * 0.514444) < 1e-2
 
     # GGA -> altitude + elevation: the first valid GGA fixes the ground (elevation 0), next is the delta
     unit._parse(_line('GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,'))
@@ -76,7 +78,7 @@ async def amain():
     unit._parse('$GPRMC,123521,A,1234.000,N,01234.000,E,0,0,230394,,*00')  # bad checksum
     assert databoard.Databoard.value('position') == previous
 
-    print('ok: gnss base -- NMEA helpers; RMC->position, GGA->altitude+elevation(ground); void/bad ignored')
+    print('ok: gnss base -- NMEA helpers; RMC->position+speed, GGA->altitude+elevation(ground); void/bad ignored')
 
 
 asyncio.run(amain())

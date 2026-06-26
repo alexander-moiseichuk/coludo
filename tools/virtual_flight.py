@@ -8,9 +8,9 @@
 # flight movie before any real one. The trajectory (position) is the body's TRUE path, which already
 # reflects the noisy control, so a degraded run visibly wanders / spirals over the zone.
 #
-#   python3 virtual_flight.py --motor F15 --noise 0.05 -o clean.txt
-#   python3 virtual_flight.py --motor F15 --noise 0.50 -o ratty.txt
-#   python3 flight_report.py clean.txt -o clean.html      # pip install plotly
+# python3 virtual_flight.py --motor F15 --noise 0.05 -o clean.txt
+# python3 virtual_flight.py --motor F15 --noise 0.50 -o ratty.txt
+# python3 flight_report.py clean.txt -o clean.html # pip install plotly
 
 import argparse
 import math
@@ -20,15 +20,15 @@ import sys
 _GLIDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'glider')
 sys.path.insert(0, _GLIDER)
 
-import commons  # noqa: E402  -- shared primitives bundle (bank_demand, ...)
-import config_hitl  # noqa: E402  -- the SAME board config the on-board HITL uses (host-importable)
+import commons  # noqa: E402 -- shared primitives bundle (bank_demand, ...)
+import config_hitl  # noqa: E402 -- the SAME board config the on-board HITL uses (host-importable)
 import mixer  # noqa: E402
 import navigation  # noqa: E402
 import pid  # noqa: E402
 import sim_model  # noqa: E402
 
 _FINS = ('servo_eleron_left', 'servo_eleron_right', 'servo_yaw')
-_SPIKE_S = 3.0  # g16: a transient 2x sensor glitch fires once every this many seconds (within 2-5 s)
+_SPIKE_S = 3.0  # a transient 2x sensor glitch fires once every this many seconds (within 2-5 s)
 
 
 def _heading_error(target: float, current: float) -> int:
@@ -70,17 +70,20 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     stages = flight_c.get('stages', {'gliding': {'roll': 0.0, 'pitch': 0.0}})
     bank_gain = flight_c.get('nav_bank_gain', 1.5)   # bank-to-turn (mirror tasks/flight.py)
     bank_limit = flight_c.get('bank_limit', 30)
-    land_bank_gain = flight_c.get('land_bank_gain', 1.5)     # g8/g9 (mirror tasks/flight.py)
+    land_bank_gain = flight_c.get('land_bank_gain', 1.5)     # (mirror tasks/flight.py)
     land_bank_limit = flight_c.get('land_bank_limit', 45)
     final_agl = final_agl_override if final_agl_override is not None else flight_c.get('final_approach_agl', 8)
     final_cross_gain = flight_c.get('final_cross_gain', 3.0)
     final_intercept = flight_c.get('final_intercept_deg', 45)
+    fin_limit_multiplier = cfg.get('fin_limit_multiplier', 1.0)   # dynamic-pressure governor (board)
+    boost_engage = flight_c.get('boost_engage_speed', 15.0)       # boost rod-exit airspeed (m/s)
     pids = {axis: pid.Pid(output_limit=mix.limit, integral_limit=mix.limit, **gains.get(axis, {}))
             for axis in ('roll', 'pitch', 'yaw')}
 
     dt = 1.0 / sim_hz
     stage = 'setting'
     since = 0.0          # time the current sustained-detect window started
+    boost_hold = None    # captured rod-vertical (roll, pitch) to hold through the climb
     rows = _Capture()
     rows.header()
 
@@ -96,7 +99,7 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         altitude_m = sim_model.noisy(sensors['altitude'], noise, -100.0, 10000.0)
         agl = sensors['agl']
 
-        # g16: inject a transient 2x glitch on the attitude + accel for ONE tick every _SPIKE_S seconds
+        # inject a transient 2x glitch on the attitude + accel for ONE tick every _SPIKE_S seconds
         # (deterministic schedule so the stored corner-case traces reproduce). Exercises the control
         # loop's rejection of a sudden bad sample -- the fin trace shows the kick, the trajectory should
         # barely move.
@@ -132,13 +135,28 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
                 rows.event(t, 'controller :: stage -> done')
                 break
 
+        # --- dynamic-pressure fin governor: cap fin authority by airspeed (the sim's true airspeed) ---
+        airspeed = (body.vu * body.vu + body.speed * body.speed) ** 0.5
+        mix.limit = max(1, int(commons.fin_deflection_limit(airspeed) * fin_limit_multiplier))
         # --- control law (mirrors flight._step): only the configured control stages actuate ---
         setpoint = stages.get(stage)
         fins = (mix.neutral, mix.neutral, mix.neutral)   # commanded (left, right, yaw) -- neutral off-control
-        if stage in ('setting', 'boosting'):
+        if stage == 'setting':
             body.boost_step(dt, thrust if t < burn_s else 0.0)
+        elif stage == 'boosting':                        # hold the captured rod-vertical, past the rod
+            if boost_hold is None:
+                boost_hold = (roll_m, pitch_m)           # capture the vertical attitude at boost entry
+            burn = thrust if t < burn_s else 0.0
+            if airspeed < boost_engage:                  # still on the rod -> no fin authority, just climb
+                body.boost_step(dt, burn)
+            else:                                        # past the rod -> guarded fins fight the weathercock
+                roll_cmd = pids['roll'].step(boost_hold[0] - roll_m, dt)
+                pitch_cmd = pids['pitch'].step(boost_hold[1] - pitch_m, dt)
+                angles = mix.mix(roll=round(roll_cmd), pitch=round(pitch_cmd), yaw=0)
+                fins = tuple(angles[f] for f in _FINS)
+                body.boost_step(dt, burn, (fins[0] + fins[1]) / 2.0 - 90.0, (fins[0] - fins[1]) / 2.0)
         elif setpoint is not None:                       # a control stage (gliding) -> PID -> mixer -> fins
-            final = final_agl and agl < final_agl        # g8/g9: low on final -> track the strip centreline
+            final = final_agl and agl < final_agl        #/low on final -> track the strip centreline
             if final:
                 target = navigation.approach(sensors['position'], zone[0], zone[1], heading_m,
                                              final_cross_gain, final_intercept)
@@ -232,11 +250,11 @@ def main():
     parser.add_argument('--motor', default='F15', choices=sorted(sim_model.MOTORS), help='motor (default F15)')
     parser.add_argument('--noise', type=float, default=0.05, help='sensor noise fraction N (default 0.05)')
     parser.add_argument('--spike', action='store_true',
-                        help='g16: inject a transient 2x attitude+accel glitch every ~3 s')
+                        help='inject a transient 2x attitude+accel glitch every ~3 s')
     parser.add_argument('--wind', type=float, default=0.0, help='steady wind speed m/s (default 0)')
     parser.add_argument('--wind-dir', type=float, default=0.0, help='wind blows TOWARD this heading deg (default 0=N)')
     parser.add_argument('--final-agl', type=float, default=None,
-                        help='g8/g9 final-approach trigger AGL override (0 = disabled / old blind flare)')
+                        help=' final-approach trigger AGL override (0 = disabled / old blind flare)')
     parser.add_argument('--hz', type=int, default=50, help='simulation rate (default 50)')
     parser.add_argument('--seconds', type=float, default=240.0, help='max flight time (default 240)')
     parser.add_argument('-o', '--out', help='write capture here (default stdout)')

@@ -1,14 +1,14 @@
 # Task base class and driver registry — the unit the Controller creates and supervises.
 #
 # Every component/system task follows the common lifecycle from specs/coludo.md:
-#   setup()    async; initialize or reset; return True on success
-#   probe()    async; ON-DEMAND self-test (the CC `probe` command, never at boot) -> None if healthy,
-#              else an error string. Default None; a sensor reports 'X not found on i2c:0', an actuator
-#              exercises itself (the servo sweeps its range) -- so a mid-flight reboot never sweeps fins.
-#   run()      async; the task's main activity loop
-#   notify()   subscribe a callback for this task's updates
-#   validate() return True if the task is currently healthy
-#   finish()   async; shut down and release resources
+# setup() async; initialize or reset; return True on success
+# probe() async; ON-DEMAND self-test (the CC `probe` command, never at boot) -> None if healthy,
+# else an error string. Default None; a sensor reports 'X not found on i2c:0', an actuator
+# exercises itself (the servo sweeps its range) -- so a mid-flight reboot never sweeps fins.
+# run() async; the task's main activity loop
+# notify() subscribe a callback for this task's updates
+# validate() return True if the task is currently healthy
+# finish() async; shut down and release resources
 # A Task is Inspectable: inspect()/update()/stats() expose it to the operator (the Controller
 # registers each task with the Inspector), so there is no separate report().
 #
@@ -50,13 +50,18 @@ class Task(inspector.Inspectable):
         self._ok: bool = False
         self._subs: list = []
         self._last_note = None  # last message passed to note() -> dedup a repeating run-loop error
+        self._healthy: bool = True  # RUNTIME read health (distinct from _ok = setup ok); note() tracks it
 
     def note(self, message: str) -> None:
         """Print `message` only when it CHANGES from the previous note -- a de-duplicated best-effort
         log for run() loops. A persistently-failing read (a flaky/absent sensor, a missing CC hub) would
         otherwise log every iteration: a 50 Hz sensor floods the USB-CDC and wedges the REPL. So use this
         instead of a bare print() inside `while True` -- the first occurrence + any change/recovery show,
-        the repeats are dropped. Call note(None) on a healthy pass so the next error logs afresh."""
+        the repeats are dropped. Call note(None) on a healthy pass so the next error logs afresh.
+
+        also tracks runtime health -- an error message marks the task unhealthy, note(None) clears it,
+        so inspect()['healthy'] shows a flaky/failing run loop that _ok (setup-time) cannot."""
+        self._healthy = message is None
         if message != self._last_note:
             self._last_note = message
             if message is not None:
@@ -122,4 +127,4 @@ class Task(inspector.Inspectable):
     # --- Inspectable ---
     def inspect(self) -> dict:
         """Status dict. Subclasses extend it."""
-        return {'name': self.name, 'ok': self._ok}
+        return {'name': self.name, 'ok': self._ok, 'healthy': self._healthy}

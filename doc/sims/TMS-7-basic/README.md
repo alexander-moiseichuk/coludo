@@ -100,17 +100,17 @@ because LANDING rolls wings-level and lets it drift off on short final. Nailing 
 final-approach / flare (or a smaller orbit radius); and the high-noise (≥50 %) robustness of the bank
 loop is the other open thread.
 
-## Corner cases — spike injection (g16)
+## Corner cases — spike injection
 
 `--spike` injects a **transient 2× glitch** on the attitude + accel for *one tick* every ~3 s
 (deterministic, so the stored traces reproduce exactly) — a sudden bad sensor sample. The same `spike`
 flag exists in the on-board HITL config (`config_hitl`), so these are repeatable inputs for either the
-host sim or an on-board replay. Two corner cases are stored in full and committed as references:
+host sim or an on-board replay. Two corner cases are committed as `report_corner_*` references:
 
-- **`vf_corner_spike.txt`** / `report_corner_spike.{html,svg}` — F15, 10 % noise, spikes. Shows the loop
+- **corner_spike** (`report_corner_spike.{html,svg}`) — F15, 10 % noise, spikes. Shows the loop
   **rejecting** glitches: at each spike tick the elevons kick to the limit for one frame (e.g. roll
   −13°→−26°, elevons (72,120)→(135,56)) then recover the next frame — the trajectory barely moves.
-- **`vf_corner_stress.txt`** / `report_corner_stress.{html,svg}` — F15, **50 % noise + 12 m/s wind +
+- **corner_stress** (`report_corner_stress.{html,svg}`) — F15, **50 % noise + 12 m/s wind +
   spikes** together, the everything-degraded case: how the controller copes when noise, wind and
   glitches all stack up.
 
@@ -124,10 +124,12 @@ python3 tools/virtual_flight.py --motor F15 --noise 0.50 --wind 12 --wind-dir 21
 
 ## Files
 
-- `vf_noise{05,10,25,50,100}.txt`, `vf_wind{00,03,06,09,12}.txt` — recorder captures (all rounds)
-- `vf_corner_{spike,stress}.txt` + `report_corner_{spike,stress}.{html,svg}` — the two g16 corner cases (committed in full)
+- `report_corner_{spike,stress}.{html,svg}` — the two corner cases
 - `report_{noise05,noise50,wind00}.html` — **three committed interactive reports** kept as reference
   points (clean sensors / degraded sensors / calm baseline); the full set regenerates for any round with
   the `flight_report.py` command above — the other rounds are summarised in the tables and `compare_*.svg`
 - `report_*.svg` — dependency-free per-flight look (plan view + altitude/roll), all rounds
 - `compare_noise.svg`, `compare_wind.svg` — sweep overlays (all tracks on one plan view)
+
+The raw `vf_*.txt` captures are not committed (the reports carry them); regenerate any round with the
+`virtual_flight.py` commands above.

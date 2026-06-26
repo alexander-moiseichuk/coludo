@@ -65,7 +65,7 @@ async def amain():
     seq._tick(1620)  # 510 ms > boost_timeout 500
     assert ctrl.stage == Stage.GLIDING
 
-    # GLIDING: out of laser range holds; below land_agl must be SUSTAINED land_ms (g12: not a spike)
+    # GLIDING: out of laser range holds; below land_agl must be SUSTAINED land_ms (not a spike)
     seq._tick(1630)
     assert ctrl.stage == Stage.GLIDING
     agl.push(2.0)
@@ -105,7 +105,7 @@ async def amain():
     assert ctrl.stage == Stage.SETTING  # held -> no auto-advance
 
     # missing accel reading: _magnitude_sq returns None (guarded, no raise) and _tick skips via an
-    # explicit is-not-None check -- a dropped sample does not advance, no crash, no GC exception (g9).
+    # explicit is-not-None check -- a dropped sample does not advance, no crash, no GC exception.
     assert sequencer._magnitude_sq(None) is None
 
     class _NoReading:
@@ -119,7 +119,7 @@ async def amain():
     seq._tick(4000)  # accel absent -> guarded -> tick does nothing
     assert ctrl.stage == Stage.SETTING  # no crash, no advance
 
-    # g14: GC policy -- compacted + DISABLED at BOOSTING, re-enabled at LANDING (coludo.md), and finish()
+    # GC policy -- compacted + DISABLED at BOOSTING, re-enabled at LANDING (coludo.md), and finish()
     # never leaves it off. gc_flight True here (the only test that exercises the toggle).
     import gc
     gseq = sequencer.Sequencer('sequencer', {'gc_flight': True}, _StubController())

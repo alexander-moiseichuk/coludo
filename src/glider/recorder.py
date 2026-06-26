@@ -194,6 +194,17 @@ class Recorder:
         return cls._session
 
     @classmethod
+    def _enqueue(cls, ring, tee, data: bytes) -> bool:
+        """Queue `data` to `ring` (the UART/Luckfox primary sink), signal the drain loop on success, and
+        tee it to the CC mirror -- the extra route, which never gates the primary result. Returns
+        whether it was stored, so the caller picks best-effort drop (log) vs raise (tlm)."""
+        stored = ring.write(data)
+        if stored:
+            cls._flag.set()
+        tee(data)
+        return stored
+
+    @classmethod
     def log(cls, descriptor: str, message: str) -> bool:
         """Best-effort log line "<ts> <descriptor> :: <message>" (-> recorder.log). Truncated to
         fit a cell; dropped (returns False) when the buffer is full or the Recorder is not set up."""
@@ -202,11 +213,7 @@ class Recorder:
         data = ('%u %s :: %s\n' % (cls.timestamp(), descriptor, message)).encode()
         if len(data) > cls._log.max_payload:
             data = data[: cls._log.max_payload]
-        stored = cls._log.write(data)  # UART/Luckfox is the primary sink -> write it first
-        if stored:
-            cls._flag.set()
-        cls._cc_log.tee(data)  # CC mirror is the extra route -> never gates the primary return code
-        return stored
+        return cls._enqueue(cls._log, cls._cc_log.tee, data)
 
     @classmethod
     def cc_logs(cls, duration_ms: int) -> dict:
@@ -226,10 +233,8 @@ class Recorder:
         """Important telemetry line "@<session>_<filename>@<content>". Raises if the record will
         not fit or there is no room -- telemetry must not be lost silently."""
         data = ('@%s_%s@%s\n' % (cls.session(), filename, content)).encode()
-        cls._cc_tlm.tee(data)  # CC mirror (best-effort, independent of the primary telemetry ring)
-        if not cls._tlm.write(data):
+        if not cls._enqueue(cls._tlm, cls._cc_tlm.tee, data):  # CC mirror + primary ring
             raise _RecorderError('telemetry dropped (%d bytes)' % len(data))
-        cls._flag.set()
 
     @classmethod
     async def drain(cls) -> int:

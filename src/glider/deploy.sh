@@ -6,18 +6,18 @@
 # as packages (cp -r merges, no nesting); test/*.py -> :test/; *.creds pushed as-is. Lives in
 # src/glider, so the source dir is the script's dir.
 #
-# Usage:  ./deploy.sh [file ...]      # default: every module + packages + *.creds + test/*.py
-# Env:    PORT (default /dev/ttyACM0)
+# Usage: ./deploy.sh [file ...] # default: every module + packages + *.creds + test/*.py
+# Env: PORT (default /dev/ttyACM0)
 
 set -u
-HERE="$(cd "$(dirname "$0")" && pwd)"   # absolute (handles relative invocation); = src/glider
+HERE="$(cd "$(dirname "$0")" && pwd)" # absolute (handles relative invocation); = src/glider
 PORT="${PORT:-/dev/ttyACM0}"
 
 if [ -t 1 ]; then G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; N=$'\e[0m'; else G=; R=; Y=; N=; fi
 command -v mpremote >/dev/null || { echo "${R}mpremote not found${N}"; exit 2; }
-have_ruff=1; command -v ruff >/dev/null      || { have_ruff=0; echo "${Y}warning: ruff not found${N}"; }
+have_ruff=1; command -v ruff >/dev/null || { have_ruff=0; echo "${Y}warning: ruff not found${N}"; }
 # mpy-cross gate: prefer the repo-built tools/mpy-cross.v1.29.0 with -march=rv32imc so @micropython.viper
-# modules (commons.py, g15) compile-check -- the stock mpy-cross lacks the RV32 native emitter and errors
+# modules (commons.py) compile-check -- the stock mpy-cross lacks the RV32 native emitter and errors
 # ("invalid arch") on them. The gate only VALIDATES; the board compiles the deployed .py on-device (the
 # firmware's emitter does the real codegen, with the FPU). -march is harmless on plain bytecode files.
 MPYX="$HERE/../../tools/mpy-cross.v1.29.0"; MARCH=(-march=rv32imc)
@@ -47,7 +47,7 @@ for f in "${files[@]}"; do
         *.py)
             if [ "$have_ruff" = 1 ] && ! ruff check "$f"; then echo "${R}ruff failed: $f${N}"; exit 1; fi
             if [ "$have_mpy" = 1 ] && ! "$MPYX" -O3 "${MARCH[@]}" "$f" -o "$tmp/c.mpy" 2>"$tmp/err"; then
-                echo "${R}mpy-cross failed: $f${N}"; sed 's/^/    /' "$tmp/err"; exit 1
+                echo "${R}mpy-cross failed: $f${N}"; sed 's/^/ /' "$tmp/err"; exit 1
             fi
             ;;
     esac
@@ -59,15 +59,15 @@ cmd=(); sep=; pkg_done=
 add() { cmd+=($sep "$@"); sep=+; }
 for f in "${files[@]}"; do
     case "$f" in
-        */test/*)              add cp "$f" ":test/$(basename "$f")" ;;
+        */test/*) add cp "$f" ":test/$(basename "$f")" ;;
         */drivers/*|*/tasks/*) [ -z "$pkg_done" ] && { add cp -r "$HERE/drivers" "$HERE/tasks" :; pkg_done=1; } ;;
-        *)                     add cp "$f" ":$(basename "$f")" ;;
+        *) add cp "$f" ":$(basename "$f")" ;;
     esac
 done
 
 for _ in 1 2 3 4 5; do
     if mpremote connect "$PORT" "${cmd[@]}" >/dev/null 2>&1; then
-        echo "  ${G}deployed${N} ${#files[@]} files (modules + drivers/ tasks/ + test/)"; exit 0
+        echo " ${G}deployed${N} ${#files[@]} files (modules + drivers/ tasks/ + test/)"; exit 0
     fi
     sleep 1.5
 done

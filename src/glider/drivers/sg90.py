@@ -19,11 +19,11 @@
 # live here for now; factor them into a servo base when a second type lands.
 #
 # Two ways to command a fin:
-#   update {"angle": d}  -- IMMEDIATE, ungated: the operator override (sync, returns at once).
-#   await move(d)        -- GATED + settle-aware: passes through a SHARED slew gate so at most
-#                           `servo_concurrency` (board config, default 3 = no limit) fins slew at
-#                           once, then awaits the estimated travel so the caller knows it has (open-
-#                           loop, no feedback) arrived. The flight control loop uses this.
+# update {"angle": d} -- IMMEDIATE, ungated: the operator override (sync, returns at once).
+# await move(d) -- GATED + settle-aware: passes through a SHARED slew gate so at most
+# `servo_concurrency` (board config, default 3 = no limit) fins slew at
+# once, then awaits the estimated travel so the caller knows it has (open-
+# loop, no feedback) arrived. The flight control loop uses this.
 # Both record the command to per-fin telemetry (<name>.csv: angle, pulse_us, done) -- done=0 when a
 # command is ISSUED, done=1 when a move() has (estimated) COMPLETED. probe() is the on-demand self-
 # test (CC `probe`, pre-flight -- never at boot, so a reboot never sweeps fins): it sweeps the full
@@ -40,6 +40,7 @@ import servo
 import task
 
 _PERIOD_US: int = 20000  # 50 Hz servo frame (20 ms)
+_DUTY_U16_MAX: int = 65535  # full 16-bit PWM duty
 _SLEW_MS_PER_60: int = 150  # ~0.15 s / 60deg SG90 slew estimate (open-loop -- no position feedback)
 _SETTLE_MARGIN_MS: int = 60  # added to the slew estimate so move() returns after it has settled
 _DEFAULT_CONCURRENCY: int = 3  # fins allowed to slew at once (== fin count -> no limit)
@@ -101,7 +102,7 @@ class SG90(task.Task):
             self._pulse_us = self._min_us + (angle - self._min_deg) * (self._max_us - self._min_us) // span
         else:
             self._pulse_us = self._min_us
-        self._pwm.duty_u16(self._pulse_us * 65535 // _PERIOD_US)
+        self._pwm.duty_u16(self._pulse_us * _DUTY_U16_MAX // _PERIOD_US)
         self.angle = angle
         self._telemetry.push((angle, self._pulse_us, done))
         return angle
@@ -132,7 +133,7 @@ class SG90(task.Task):
         return []
 
     def set_angle(self, angle) -> int:
-        """The 100 Hz flight-loop hot-path command. AVOIDS update()'s per-step {'angle': ...} dict (H02:
+        """The 100 Hz flight-loop hot-path command. AVOIDS update()'s per-step {'angle': ...} dict (
         ~300 dict/s of heap churn with GC disabled in flight) AND is compare-and-set: clamp, then drive
         the PWM + push telemetry ONLY when the angle actually changed -- a held fin costs nothing. setup()
         seeds self.angle via _apply(neutral), so it always tracks the real PWM state. update() stays the

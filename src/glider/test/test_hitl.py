@@ -1,4 +1,4 @@
-# On-board test for the HITL simulator (tasks/hitl.py + config_hitl.py, 6/23 g15): the pure flight
+# On-board test for the HITL simulator (tasks/hitl.py + config_hitl.py): the pure flight
 # Body physics (boost -> apogee -> fin-controlled glide, a roll command turns the heading) and that the
 # Hitl task is registered and config_hitl produces a valid, correctly-wired config. Run by `make test`.
 

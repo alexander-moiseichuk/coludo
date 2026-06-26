@@ -27,7 +27,7 @@ class Mixer:
         self.limit: int = config.get('limit_deg', 45)  # max control deflection from neutral, per surface
         self.surfaces: dict = config.get('surfaces', _DEFAULT_SURFACES)
         self.trim: dict = config.get('trim', {})  # per-fin neutral offset (deg)
-        # g3 (zero-alloc hot path): pre-resolve each surface to (name, base, roll_gain, pitch_gain,
+        # (zero-alloc hot path): pre-resolve each surface to (name, base, roll_gain, pitch_gain,
         # yaw_gain) where base = neutral + trim, and pre-allocate the output dict ONCE. mix() then runs
         # at 100 Hz with NO per-call allocation -- it rewrites the shared `_out` in place (the nested
         # axis-dict + per-axis `.get()` of the old version are gone). Under the GC-disabled-in-flight
@@ -40,19 +40,19 @@ class Mixer:
     def mix(self, roll: int = 0, pitch: int = 0, yaw: int = 0) -> dict:
         """Per-fin integer angle for the given axis deflections (degrees). Returns a SHARED dict REUSED
         on every call (zero-alloc) -- apply it immediately, do not retain it across mix() calls;
-        flight._apply consumes it synchronously in the same step (g1).
+        flight._apply consumes it synchronously in the same step.
 
         This clamps only the CONTROL AUTHORITY to +/-limit. The absolute PHYSICAL endpoint is enforced
-        per-fin by sg90's `[min_deg, max_deg]` clamp (g2) -- that is the correct layer: the safe travel
+        per-fin by sg90's `[min_deg, max_deg]` clamp -- that is the correct layer: the safe travel
         is per-linkage, not a single global bound, so set each fin's min_deg/max_deg to its mechanical
         range in board.config (e.g. a horn that binds at 135 deg -> max_deg=135) and the trim+deflection
         sum can never drive it past that. Inputs are already integers (flight rounds the PID output) so
-        there is no per-call float cast (g3)."""
+        there is no per-call float cast."""
         limit = self.limit
-        out = self._out  # g3: hoist the attribute lookup out of the per-fin loop
+        out = self._out  # hoist the attribute lookup out of the per-fin loop
         for name, base, roll_gain, pitch_gain, yaw_gain in self._surfaces:
             # clamp the CONTROL deflection (authority) to +/-limit, then add to base (neutral+trim);
-            # the absolute physical end-stop is sg90's per-fin [min_deg, max_deg] (g2, g13)
+            # the absolute physical end-stop is sg90's per-fin [min_deg, max_deg]
             deflection = between(-limit, roll_gain * roll + pitch_gain * pitch + yaw_gain * yaw, limit)
             out[name] = base + deflection
         return out

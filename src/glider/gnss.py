@@ -9,18 +9,29 @@ import asyncio
 
 import config
 import databoard
+import micropython
 import recorder
 import task
 
+_KNOTS_TO_MS: float = 0.514444  # NMEA RMC speed is in knots; the airspeed governor wants m/s
+
+
+@micropython.viper
+def _xor_checksum(data: ptr8, start: int, end: int) -> int:  # noqa: F821 -- ptr8 is a viper builtin type
+    """XOR of the bytes data[start:end] -- the NMEA checksum inner loop as native integer code (/
+    a viper pointer walk, no per-char str iterator + ord()). `data` is a bytes-like (callers .encode())."""
+    checksum = 0
+    for index in range(start, end):
+        checksum ^= int(data[index])
+    return checksum
+
 
 def checksum_ok(sentence: str) -> bool:
-    """Verify the NMEA `*hh` XOR checksum (over the chars between '$' and '*')."""
+    """Verify the NMEA `*hh` XOR checksum (over the chars between '$' and '*'); inner loop = _xor_checksum."""
     star = sentence.rfind('*')
     if star < 0:
         return False
-    got = 0
-    for character in sentence[1:star]:
-        got ^= ord(character)
+    got = _xor_checksum(sentence.encode(), 1, star)
     try:
         return got == int(sentence[star + 1:star + 3], 16)
     except ValueError:
@@ -38,9 +49,7 @@ def degrees(value: str, hemisphere: str):
 
 def nmea(body: str) -> bytes:
     """Wrap a command body in `$...*hh\\r\\n` with its XOR checksum (PCAS/PMTK/PUBX config sentences)."""
-    checksum = 0
-    for character in body:
-        checksum ^= ord(character)
+    checksum = _xor_checksum(body.encode(), 0, len(body))
     return ('$%s*%02X\r\n' % (body, checksum)).encode()
 
 
@@ -59,8 +68,8 @@ class Gnss(task.Task):
         self._uart = UART(bus_id, baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
         self._reader = asyncio.StreamReader(self._uart)
         await self._configure(self.config.get('hz', 1))
-        self._position, self._altitude, self._elevation = databoard.Databoard.provide(
-            self.name, self.config.get('provides', {}), 'position', 'altitude', 'elevation')
+        self._position, self._altitude, self._elevation, self._speed = databoard.Databoard.provide(
+            self.name, self.config.get('provides', {}), 'position', 'altitude', 'elevation', 'speed')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('lat', 'lon', 'speed_kn', 'course'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._fix: bool = False
@@ -85,8 +94,9 @@ class Gnss(task.Task):
             longitude = degrees(fields[5], fields[6])
             if self._fix and latitude is not None and longitude is not None:
                 self._position.push((latitude, longitude))
-                speed = float(fields[7]) if fields[7] else 0.0
+                speed = float(fields[7]) if fields[7] else 0.0  # knots (RMC field 7)
                 course = float(fields[8]) if fields[8] else 0.0
+                self._speed.push(speed * _KNOTS_TO_MS)  # m/s -> airspeed governor corrector (fix-gated)
                 self._telemetry.push((latitude, longitude, speed, course))
         elif kind == 'GGA' and len(fields) > 9 and fields[9]:
             altitude = float(fields[9])  # metres MSL
@@ -131,4 +141,5 @@ class Gnss(task.Task):
         status['position'] = self._position.value()  # (lat, lon) or None until a fix
         status['altitude_m'] = self._altitude.value()
         status['elevation_m'] = self._elevation.value()
+        status['speed_ms'] = self._speed.value()  # GNSS ground speed (m/s) or None until a fix
         return status

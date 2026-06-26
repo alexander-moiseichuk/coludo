@@ -1,16 +1,16 @@
 # commons.py — small, dependency-free primitives shared across the control-math modules (mixer / pid /
-# navigation / sequencer / flight / sg90). The bundle module for the g14/g15 plan.
+# navigation / sequencer / flight / sg90). The bundle module for the plan.
 #
 # Naming convention:
-#   plain name                           -- a leaf with no _opt variant at all (none currently).
-#   NAME_upy / NAME_opt + `NAME = <winner>`
-#                                        -- a function with an optimised variant. NAME_upy is the
-#      portable bytecode reference; NAME_opt is the optimised build (viper for ints, native for floats,
-#      future asm). The module binds NAME to whichever the on-board bench FAVOURS -- usually _opt; switch
-#      the one alias line if a measurement changes. Both forms stay public so benchmarks/tests call them
-#      DIRECTLY (no runtime selector). Bound here: clamp_int, wrap180 (@viper, ~2.1-2.8x); between,
-#      magnitude_sq (@native, ~1.2-1.6x); bank_demand -> _upy for now (its @native measured 1.03x -- a
-#      thin wrapper over native between; switch to _opt when a bench shows a gain).
+# plain name -- a leaf with no _opt variant at all (none currently).
+# NAME_upy / NAME_opt + `NAME = <winner>`
+# -- a function with an optimised variant. NAME_upy is the
+# portable bytecode reference; NAME_opt is the optimised build (viper for ints, native for floats,
+# future asm). The module binds NAME to whichever the on-board bench FAVOURS -- usually _opt; switch
+# the one alias line if a measurement changes. Both forms stay public so benchmarks/tests call them
+# DIRECTLY (no runtime selector). Bound here: clamp_int, wrap180 (@viper, ~2.1-2.8x); between,
+# magnitude_sq (@native, ~1.2-1.6x); bank_demand -> _upy for now (its @native measured 1.03x -- a
+# thin wrapper over native between; switch to _opt when a bench shows a gain).
 #
 # `@micropython.viper` / `@micropython.native` are compiler directives keyed on the literal decorator
 # name (not aliasable); the shim below keeps the module importable on CPython (the decorator degrades to
@@ -35,6 +35,10 @@ except ImportError:  # CPython (off-board tooling / tests) — decorators + cons
             return value
 
 
+M_PER_DEG = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat)); shared
+                      # by navigation + sim_model (flat-earth geo) -- one definition, not three.
+
+
 def between_upy(low, value, high):
     """Clamp `value` to the inclusive range [low, high]: `low` if below, `high` if above, else `value`.
     With low=-x, high=+x it is a symmetric +/-x clamp; either bound may be math.inf for an open side
@@ -51,7 +55,7 @@ between = between_opt  # @native -- the most-called primitive; a free ~1.6x (han
 
 
 def magnitude_sq_upy(x, y, z):
-    """|(x, y, z)|^2 (no sqrt — callers compare against squared thresholds; g7). Pure float -> @native."""
+    """|(x, y, z)|^2 (no sqrt — callers compare against squared thresholds). Pure float -> @native."""
     return x * x + y * y + z * z
 
 
@@ -77,6 +81,42 @@ def bank_demand_opt(heading_error, gain, limit):
 
 
 bank_demand = bank_demand_upy  # @native measured 1.03x here -> keep _upy; switch to _opt when a bench shows a gain
+
+
+# --- fin_deflection_limit: the dynamic-pressure fin governor (coludo.md "Fin authority"). Max fin
+# deflection (deg from neutral) the airframe can safely take at a given airspeed. Aero torque scales with
+# dynamic pressure q ∝ v², so a fixed angle is too weak slow / too violent fast; the cap goes ∝ 1/v² to
+# hold ~constant angular authority, clamped to [5°, 45°] (always-some authority / fin mechanical throw).
+# K=12500 anchors 50 m/s -> 5°. Precomputed ONCE at import (no per-step 1/v² on the 100 Hz path); the
+# board.config `fin_limit_multiplier` (default 1.0) is applied by the caller, not baked into the table. ---
+_FIN_VMAX = 80  # m/s -- table saturates here (well past any expected airspeed)
+_FIN_LIMIT = tuple(45 if v == 0 else min(45, max(5, round(12500 / (v * v)))) for v in range(_FIN_VMAX + 1))
+
+
+def fin_deflection_limit(speed_ms):
+    """Max fin deflection in degrees for airspeed `speed_ms` (m/s) -- the dynamic-pressure governor table
+    lookup (saturates at _FIN_VMAX). Multiply by the config fin_limit_multiplier at the caller."""
+    return _FIN_LIMIT[max(0, min(int(speed_ms), _FIN_VMAX))]
+
+
+def atomic_write_json(path, data):
+    """Persist `data` as JSON to `path` atomically (shared by config.save + mission.save): write a
+    temp file then rename it over the target, with a remove-then-rename fallback for a VFS (FAT) that
+    won't rename onto an existing file. os/json are imported lazily so the hot-path importers of commons
+    do not pull them in."""
+    import json
+    import os
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as handle:
+        handle.write(json.dumps(data))
+    try:
+        os.rename(tmp, path)
+    except OSError:  # some VFS (FAT) won't rename onto an existing file
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        os.rename(tmp, path)
 
 
 # --- clamp_int: integer clamp to [low, high]. Hot via sg90 fin clamping (round(angle), min/max deg). ---

@@ -5,9 +5,9 @@
 # entrance"). steer() picks the nearer gate, heads for it until inside the zone, then for the centre.
 # Equirectangular (flat-earth) math -- "not exact but about", which is plenty at zone scale (<~1 km).
 #
-# g2 (perf analysis): steer()/bearing()/distance() use float trig and allocate a few small tuples per
+# (perf analysis): steer()/bearing()/distance() use float trig and allocate a few small tuples per
 # call. The concern was GC churn from calling them at the 100 Hz control rate. Resolution: the fix is on
-# the CALLER side, not here -- flight._target_heading() caches steer() at GPS cadence (~10 Hz, g7), so
+# the CALLER side, not here -- flight._target_heading() caches steer() at GPS cadence (~10 Hz), so
 # the trig/alloc rate drops ~10x. With the hot-path pressure removed, a zero-allocation rewrite here
 # would only cost clarity for no measurable gain, so navigation stays simple, pure and correct.
 #
@@ -21,7 +21,7 @@
 
 import math
 
-from commons import between
+from commons import M_PER_DEG, between
 
 try:
     from micropython import const
@@ -31,7 +31,6 @@ except ImportError:  # CPython (tooling / off-board checks)
         return value
 
 
-_M_PER_DEG: float = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat))
 
 # steer() leg -- which waypoint the returned heading aims at this tick. Named integer codes rather
 # than bare strings (cheaper to compare, no typo-prone literals at the call sites).
@@ -42,13 +41,13 @@ GATE: int = const(2)     # outside the zone -> heading for the nearer short-side
 
 def _offset_m(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
     """(east, north) offset in metres from point 1 to point 2 (equirectangular). The longitude delta is
-    wrapped to [-180, 180] (g4) so a span crossing the anti-meridian (+/-180 deg) does not flip the
+    wrapped to [-180, 180] so a span crossing the anti-meridian (+/-180 deg) does not flip the
     vector -- the same wrap the heading-error math uses. Coludo flies nowhere near +/-180, but it is a
     free correctness guard and identical to the plain subtraction everywhere else."""
     lat_mid = math.radians((lat1 + lat2) / 2.0)
-    dlon = (lon2 - lon1 + 180.0) % 360.0 - 180.0  # anti-meridian-safe longitude delta (g4)
-    east = dlon * _M_PER_DEG * math.cos(lat_mid)
-    north = (lat2 - lat1) * _M_PER_DEG
+    dlon = (lon2 - lon1 + 180.0) % 360.0 - 180.0  # anti-meridian-safe longitude delta
+    east = dlon * M_PER_DEG * math.cos(lat_mid)
+    north = (lat2 - lat1) * M_PER_DEG
     return east, north
 
 
@@ -69,7 +68,7 @@ def zone(corner_tl: tuple, corner_br: tuple) -> tuple:
     gate_b): the centre and the midpoints of the two SHORTER sides. A horizontally (longitude)
     stretched zone gates on its left/right edges; a vertically (latitude) stretched one on top/bottom.
 
-    g5: corner ORDER does not matter. The centre is the average, the spans use abs(), and the gates are
+    corner ORDER does not matter. The centre is the average, the spans use abs(), and the gates are
     the coordinate EXTREMES (lon_l/lon_r at the centre latitude, or lat_t/lat_b at the centre longitude)
     -- so whichever diagonal pair is passed (TL/BR or BL/TR), the two returned gates are the same two
     side-midpoints; steer() then picks the nearer. inside() likewise uses min/max. No normalisation needed."""
@@ -78,8 +77,8 @@ def zone(corner_tl: tuple, corner_br: tuple) -> tuple:
     lat_c = (lat_t + lat_b) / 2.0
     lon_c = (lon_l + lon_r) / 2.0
     target = (lat_c, lon_c)
-    lat_span = abs(lat_t - lat_b) * _M_PER_DEG
-    lon_span = abs(lon_r - lon_l) * _M_PER_DEG * math.cos(math.radians(lat_c))
+    lat_span = abs(lat_t - lat_b) * M_PER_DEG
+    lon_span = abs(lon_r - lon_l) * M_PER_DEG * math.cos(math.radians(lat_c))
     if lon_span >= lat_span:  # wider than tall -> short sides are the left/right edges
         return target, (lat_c, lon_l), (lat_c, lon_r)
     return target, (lat_t, lon_c), (lat_b, lon_c)  # taller than wide -> top/bottom edges
@@ -126,7 +125,7 @@ def cross_track(position: tuple, point: tuple, heading: float) -> float:
 
 def approach(position: tuple, corner_tl: tuple, corner_br: tuple, heading: float,
              cross_gain: float, intercept_max: float) -> float:
-    """Final-approach guidance (g8/g9): the heading to fly to TRACK the zone's long-axis CENTRELINE (the
+    """Final-approach guidance: the heading to fly to TRACK the zone's long-axis CENTRELINE (the
     strip), used low on final instead of homing to the centre POINT. The glider intercepts the line at up
     to `intercept_max` deg (`cross_gain` deg per metre off it), then flies down it -- so a crosswind is
     crabbed out and the touchdown holds the narrow strip. Uses the full bank authority (keep it gliding,
