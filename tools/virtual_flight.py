@@ -75,12 +75,15 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     final_agl = final_agl_override if final_agl_override is not None else flight_c.get('final_approach_agl', 8)
     final_cross_gain = flight_c.get('final_cross_gain', 3.0)
     final_intercept = flight_c.get('final_intercept_deg', 45)
+    fin_limit_multiplier = cfg.get('fin_limit_multiplier', 1.0)   # g12 dynamic-pressure governor (board)
+    boost_engage = flight_c.get('boost_engage_speed', 15.0)       # g12 boost rod-exit airspeed (m/s)
     pids = {axis: pid.Pid(output_limit=mix.limit, integral_limit=mix.limit, **gains.get(axis, {}))
             for axis in ('roll', 'pitch', 'yaw')}
 
     dt = 1.0 / sim_hz
     stage = 'setting'
     since = 0.0          # time the current sustained-detect window started
+    boost_hold = None    # g12: captured rod-vertical (roll, pitch) to hold through the climb
     rows = _Capture()
     rows.header()
 
@@ -132,11 +135,26 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
                 rows.event(t, 'controller :: stage -> done')
                 break
 
+        # --- g12 dynamic-pressure fin governor: cap fin authority by airspeed (the sim's true airspeed) ---
+        airspeed = (body.vu * body.vu + body.speed * body.speed) ** 0.5
+        mix.limit = max(1, int(commons.fin_deflection_limit(airspeed) * fin_limit_multiplier))
         # --- control law (mirrors flight._step): only the configured control stages actuate ---
         setpoint = stages.get(stage)
         fins = (mix.neutral, mix.neutral, mix.neutral)   # commanded (left, right, yaw) -- neutral off-control
-        if stage in ('setting', 'boosting'):
+        if stage == 'setting':
             body.boost_step(dt, thrust if t < burn_s else 0.0)
+        elif stage == 'boosting':                        # g12: hold the captured rod-vertical, past the rod
+            if boost_hold is None:
+                boost_hold = (roll_m, pitch_m)           # capture the vertical attitude at boost entry
+            burn = thrust if t < burn_s else 0.0
+            if airspeed < boost_engage:                  # still on the rod -> no fin authority, just climb
+                body.boost_step(dt, burn)
+            else:                                        # past the rod -> guarded fins fight the weathercock
+                roll_cmd = pids['roll'].step(boost_hold[0] - roll_m, dt)
+                pitch_cmd = pids['pitch'].step(boost_hold[1] - pitch_m, dt)
+                angles = mix.mix(roll=round(roll_cmd), pitch=round(pitch_cmd), yaw=0)
+                fins = tuple(angles[f] for f in _FINS)
+                body.boost_step(dt, burn, (fins[0] + fins[1]) / 2.0 - 90.0, (fins[0] - fins[1]) / 2.0)
         elif setpoint is not None:                       # a control stage (gliding) -> PID -> mixer -> fins
             final = final_agl and agl < final_agl        # g8/g9: low on final -> track the strip centreline
             if final:
