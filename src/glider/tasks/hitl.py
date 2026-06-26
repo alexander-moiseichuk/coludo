@@ -8,9 +8,10 @@
 # config_hitl (real sensors off, this on, flight + sequencer enabled, watchdog off). The physics live in
 # sim_model.py (pure, shared with the host-side tools/virtual_flight.py -- same model, both worlds).
 #
-# Fidelity: boost + coast are 1-DoF vertical (only |accel| and altitude matter there -- launch detect
-# and apogee); the GLIDE is a rigid body with roll/pitch/yaw state driven by the elevon/rudder
-# deflections the flight loop commands (that is where control happens). Aero is simplified and the
+# Fidelity: BOOST adds attitude under thrust (g12) -- a crosswind weathercocks the stack and the boost
+# stage's guarded fins fight to hold it vertical, on top of the vertical 1-DoF that drives launch detect +
+# apogee; the GLIDE is a rigid body with roll/pitch/yaw state driven by the elevon/rudder deflections the
+# flight loop commands (that is where the rest of control happens). Aero is simplified and the
 # coefficients are deliberately tunable -- the point is a stable, closed loop that exercises the control
 # code, not aerodynamic truth. Outputs are perturbed by a noise level N (g15) and optional 2x spikes
 # (g16) to study sensor-quality degradation (e.g. the laser dropping out beyond its range).
@@ -55,7 +56,7 @@ class Hitl(task.Task):
                             'altitude': scenario['elevation_m'], 'zone': scenario['zone']})
         # provide the sim's sensor quantities to the databoard (priority 0 -> the control code reads these)
         provided = {q: {'priority': 0, 'timeout_ms': 1000} for q in
-                    ('accel', 'attitude', 'agl', 'altitude', 'elevation', 'position')}
+                    ('accel', 'attitude', 'agl', 'altitude', 'elevation', 'position', 'speed')}
         self._ch = databoard.Databoard.provide(self.name, provided)
         self._ok = True
         return True
@@ -81,6 +82,7 @@ class Hitl(task.Task):
         self._ch['altitude'].push(_noisy(s['altitude'], n, -100.0, 10000.0))
         self._ch['elevation'].push(_noisy(s['altitude'] - self._body.elev0, n, -100.0, 10000.0))
         self._ch['position'].push(s['position'])
+        self._ch['speed'].push(_noisy(s['speed'], n, 0.0, 200.0))  # true airspeed (m/s) -> fin governor (g12)
 
     async def run(self) -> None:
         dt = 1.0 / self._sim_hz
@@ -90,7 +92,8 @@ class Hitl(task.Task):
             # follow the REAL stage machine: SETTING/BOOSTING -> 1-DoF boost/coast (provides the launch
             # accel + altitude that drive the sequencer); GLIDING/LANDING -> fin-controlled 6-DoF glide.
             if self.controller.stage < _STAGE.GLIDING:
-                self._body.boost_step(dt, self._thrust if t < self._burn_s else 0.0)
+                roll, pitch, _yaw = self._read_fins()  # g12: the boost stage holds vertical via the fins
+                self._body.boost_step(dt, self._thrust if t < self._burn_s else 0.0, pitch, roll)
             else:
                 if not self._body.gliding:
                     self._body.begin_glide()                 # BOOSTING -> GLIDING: deploy + glide
