@@ -7,9 +7,10 @@
 import math
 import random
 
+import commons
+
 _G = 9.81
 _RHO = 1.225            # sea-level air density (kg/m^3)
-_M_PER_DEG = 111320.0   # metres per degree latitude (matches navigation.py)
 _CDA = 0.6 * 0.0017     # Cd * frontal area (m^2) from the coludo.md envelope (~46 mm, ~17 cm^2)
 # boost-attitude model (g12): crosswind WEATHERCOCK vs CONTROL-fin restore, both scaled by dynamic
 # pressure (kPa), with aero damping -- so the guarded fins are seen fighting the wind during the climb.
@@ -109,8 +110,8 @@ class Body:
         self.accel_g = 1.0 / max(0.3, math.cos(math.radians(self.roll)))  # load factor rises in a bank
 
     def position(self) -> tuple:
-        lat = self.lat0 + self.pn / _M_PER_DEG
-        lon = self.lon0 + self.pe / (_M_PER_DEG * math.cos(math.radians(self.lat0)))
+        lat = self.lat0 + self.pn / commons.M_PER_DEG
+        lon = self.lon0 + self.pe / (commons.M_PER_DEG * math.cos(math.radians(self.lat0)))
         return (lat, lon)
 
     def sensors(self) -> dict:

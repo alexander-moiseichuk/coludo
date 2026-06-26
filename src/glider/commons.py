@@ -35,6 +35,10 @@ except ImportError:  # CPython (off-board tooling / tests) — decorators + cons
             return value
 
 
+M_PER_DEG = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat)); A09 shared
+                      # by navigation + sim_model (flat-earth geo) -- one definition, not three.
+
+
 def between_upy(low, value, high):
     """Clamp `value` to the inclusive range [low, high]: `low` if below, `high` if above, else `value`.
     With low=-x, high=+x it is a symmetric +/-x clamp; either bound may be math.inf for an open side

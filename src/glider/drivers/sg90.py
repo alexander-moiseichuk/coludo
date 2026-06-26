@@ -40,6 +40,7 @@ import servo
 import task
 
 _PERIOD_US: int = 20000  # 50 Hz servo frame (20 ms)
+_DUTY_U16_MAX: int = 65535  # full 16-bit PWM duty (A11)
 _SLEW_MS_PER_60: int = 150  # ~0.15 s / 60deg SG90 slew estimate (open-loop -- no position feedback)
 _SETTLE_MARGIN_MS: int = 60  # added to the slew estimate so move() returns after it has settled
 _DEFAULT_CONCURRENCY: int = 3  # fins allowed to slew at once (== fin count -> no limit)
@@ -101,7 +102,7 @@ class SG90(task.Task):
             self._pulse_us = self._min_us + (angle - self._min_deg) * (self._max_us - self._min_us) // span
         else:
             self._pulse_us = self._min_us
-        self._pwm.duty_u16(self._pulse_us * 65535 // _PERIOD_US)
+        self._pwm.duty_u16(self._pulse_us * _DUTY_U16_MAX // _PERIOD_US)
         self.angle = angle
         self._telemetry.push((angle, self._pulse_us, done))
         return angle

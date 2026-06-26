@@ -21,7 +21,7 @@
 
 import math
 
-from commons import between
+from commons import M_PER_DEG, between
 
 try:
     from micropython import const
@@ -31,7 +31,6 @@ except ImportError:  # CPython (tooling / off-board checks)
         return value
 
 
-_M_PER_DEG: float = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat))
 
 # steer() leg -- which waypoint the returned heading aims at this tick. Named integer codes rather
 # than bare strings (cheaper to compare, no typo-prone literals at the call sites).
@@ -47,8 +46,8 @@ def _offset_m(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
     free correctness guard and identical to the plain subtraction everywhere else."""
     lat_mid = math.radians((lat1 + lat2) / 2.0)
     dlon = (lon2 - lon1 + 180.0) % 360.0 - 180.0  # anti-meridian-safe longitude delta (g4)
-    east = dlon * _M_PER_DEG * math.cos(lat_mid)
-    north = (lat2 - lat1) * _M_PER_DEG
+    east = dlon * M_PER_DEG * math.cos(lat_mid)
+    north = (lat2 - lat1) * M_PER_DEG
     return east, north
 
 
@@ -78,8 +77,8 @@ def zone(corner_tl: tuple, corner_br: tuple) -> tuple:
     lat_c = (lat_t + lat_b) / 2.0
     lon_c = (lon_l + lon_r) / 2.0
     target = (lat_c, lon_c)
-    lat_span = abs(lat_t - lat_b) * _M_PER_DEG
-    lon_span = abs(lon_r - lon_l) * _M_PER_DEG * math.cos(math.radians(lat_c))
+    lat_span = abs(lat_t - lat_b) * M_PER_DEG
+    lon_span = abs(lon_r - lon_l) * M_PER_DEG * math.cos(math.radians(lat_c))
     if lon_span >= lat_span:  # wider than tall -> short sides are the left/right edges
         return target, (lat_c, lon_l), (lat_c, lon_r)
     return target, (lat_t, lon_c), (lat_b, lon_c)  # taller than wide -> top/bottom edges
