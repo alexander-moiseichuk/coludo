@@ -212,7 +212,32 @@ async def amain():
     # precision is irrelevant for fin authority over a 100-200 m approach) it is negligible; if a large
     # kd is ever needed, switch the yaw error to float or low-pass the D term.
 
-    print('ok: flight -- per-stage control stages, nav (3 GPS tiers), degraded->neutral, PID->mix->fins, scheduling')
+    # g12 dynamic-pressure fin governor: the airspeed estimate caps mixer.limit EVERY step (even in a
+    # non-control stage), scaled by fin_limit_multiplier. The estimator itself is covered by test_airspeed;
+    # here we drive its value directly (a steady 1 g -> zero net accel -> predict adds nothing) and check
+    # the cap wiring: commons.fin_deflection_limit(v) * multiplier -> mixer.limit.
+    gov = flight.Flight('flight', {'schedule_hz': 0, 'gains': {}}, _StubController(Stage.SETTING))
+    assert await gov.setup() is True
+    accel = databoard.Databoard.provide('accel_gov', {'accel': {'priority': 0, 'timeout_ms': 1000}}, 'accel')
+    accel.push((0.0, 0.0, 1.0))  # exactly 1 g -> net accel 0 -> predict() is a no-op, value() = what we set
+    gov._airspeed._speed = 0.0
+    gov._step()
+    assert gov._mixer.limit == 45  # 0 m/s -> full 45 deg authority (and SETTING still ran the governor)
+    gov._airspeed._speed = 40.0
+    gov._step()
+    assert gov._mixer.limit == 8  # fin_deflection_limit(40) -> 8 deg
+    gov._fin_limit_multiplier = 0.5  # the safety dial halves the whole schedule
+    gov._airspeed._speed = 0.0
+    gov._step()
+    assert gov._mixer.limit == 22  # int(45 * 0.5)
+    # the accel channel feeds the integral: a sustained >1 g reading builds airspeed up from zero
+    gov._fin_limit_multiplier = 1.0
+    gov._airspeed._speed = 0.0
+    accel.push((0.0, 0.0, 6.0))  # 6 g -> ~49 m/s^2 net along the path
+    gov._step()
+    assert gov._airspeed.value() > 0.0  # integrated off zero
+
+    print('ok: flight -- control stages, nav tiers, degraded->neutral, PID->mix->fins, fin governor, scheduling')
 
 
 asyncio.run(amain())

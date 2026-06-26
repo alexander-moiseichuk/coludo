@@ -65,6 +65,10 @@ def default() -> dict:
         # Max fin servos allowed to SLEW at once via servo.move() -- caps the boost-rail current
         # transient. 3 (== fin count) = no limit; drop to 2/1 if the rail sags on the built airframe.
         'servo_concurrency': 3,
+        # Dynamic-pressure fin governor (g12, coludo.md "Fin authority"): the flight loop caps fin control
+        # deflection by airspeed (commons.fin_deflection_limit, ∝ 1/v²); this scales the whole schedule.
+        # 1.0 = nominal; drop (e.g. 0.5) if a flight starts losing fins / control authority in the air.
+        'fin_limit_multiplier': 1.0,
         # Control-surface mixing (Phase 3): elevons (the two elerons move together for pitch,
         # differentially for roll) + a rudder (the yaw fin). Flip a gain sign if a surface deflects the
         # wrong way; set `trim` (deg) for mechanical neutral. limit_deg bounds control deflection.

@@ -17,6 +17,7 @@
 import asyncio
 import time
 
+import airspeed
 import commons
 import controller as controller_mod
 import databoard
@@ -78,6 +79,13 @@ class Flight(task.Task):
         self._agl = databoard.Databoard.parameter('agl')  # height above ground -> final-approach trigger
         self._attitude = databoard.Databoard.parameter('attitude')  # (heading, roll, pitch)
         self._position = databoard.Databoard.parameter('position')  # (lat, lon) for landing-zone navigation
+        # g12 dynamic-pressure fin governor (coludo.md "Fin authority"): cap fin control deflection by
+        # airspeed (torque ∝ v²). Airspeed is fused from the accel backbone + the GNSS speed corrector;
+        # the multiplier (board.config, default 1.0) scales the whole 1/v² schedule -- the safety dial.
+        self._accel = databoard.Databoard.parameter('accel')  # (x, y, z) in g -> airspeed integration
+        self._gnss_speed = databoard.Databoard.parameter('speed')  # GNSS ground speed (m/s) corrector
+        self._airspeed = airspeed.AirspeedEstimator()
+        self._fin_limit_multiplier: float = board.get('fin_limit_multiplier', 1.0)
         self._mission = inspector.Inspector.get('mission')  # the landing zone lives here (may be None)
         # g7: throttle navigation.steer() (sin/cos/atan2) to GPS cadence -- recompute the target heading
         # every nav_period_ms, cache the float, and read the cache at schedule_hz (see _target_heading).
@@ -96,9 +104,29 @@ class Flight(task.Task):
         return True
 
     def _step(self) -> None:
-        """One control update (sync, no await -> runs whole in a timer slice): gate -> read attitude ->
-        PID -> mix -> apply. Self-times for the load sweep."""
+        """One control update (sync, no await -> runs whole in a timer slice). The airspeed estimate + fin
+        governor run EVERY step (even when NOT in a control stage) so the deflection cap is warm the instant
+        control begins -- e.g. straight off a fast, off-vertical boost. Then gate -> attitude -> PID -> mix
+        -> apply. Self-times for the load sweep."""
         start = time.ticks_us()
+        # ACTUAL elapsed since the previous step -- every step now, so always fresh (finding 1.14.2 / g5):
+        # a GC pause or a delayed slice makes the real interval longer and the PID I/D + airspeed integral
+        # must use it. A long gap (>0.5 s) or the first step falls back to the nominal slice.
+        dt = time.ticks_diff(start, self._last_step_us) / 1000000.0
+        self._last_step_us = start
+        if dt <= 0 or dt > 0.5:
+            dt = self._dt
+        # g12 dynamic-pressure fin governor: integrate airspeed (accel backbone) + blend a sane GNSS fix,
+        # then cap the mixer's control authority by it (commons.fin_deflection_limit ∝ 1/v², × the safety
+        # multiplier). Runs unconditionally so boost speed carries into the glide cap (coludo.md).
+        accel = self._accel.value()
+        if accel is not None:
+            self._airspeed.predict((commons.magnitude_sq(accel[0], accel[1], accel[2]) ** 0.5 - 1.0) * 9.81, dt)
+        speed, speed_source, _speed_age = self._gnss_speed.read()
+        self._airspeed.correct(speed if speed is not None else 0.0, speed_source is not None)
+        cap = commons.fin_deflection_limit(self._airspeed.value()) * self._fin_limit_multiplier
+        self._mixer.limit = max(1, int(cap))
+
         setpoint = self._stages.get(self.controller.stage)  # int key -> None if not a control stage
         if setpoint is None or not self.controller.armed:  # not a control stage, or disarmed -> neutral
             if self._active:  # left the control stages (or disarmed) -> centre the fins
@@ -115,17 +143,9 @@ class Flight(task.Task):
             self._active = True
             self._heading_hold = heading
             self._nav_heading = None  # force a fresh steer() on the first controlled step (g7 cache)
-            self._last_step_us = start  # so the first dt below is ~0 -> nominal (no jump from a stale gap)
             for controller in self._pid.values():
                 controller.reset()
         self._stage = self.controller.stage  # Stage id; may switch between control stages (glide -> landing)
-        # ACTUAL elapsed since the last control step, not the nominal 1/schedule_hz (finding 1.14.2 / g5):
-        # a GC pause or a delayed slice makes the real interval longer, and the PID I/D terms must use it
-        # or they under/over-correct. The first step (dt 0) falls back to the nominal _dt.
-        dt = time.ticks_diff(start, self._last_step_us) / 1000000.0
-        self._last_step_us = start
-        if dt <= 0:
-            dt = self._dt
         agl = self._agl.value()
         final = self._final_agl and agl is not None and agl < self._final_agl  # low on final approach
         heading_error = self._heading_error(self._target_heading(heading, final), heading)
