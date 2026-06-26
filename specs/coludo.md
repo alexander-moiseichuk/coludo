@@ -61,13 +61,22 @@ The GC policy above is implemented in `tasks/sequencer.py`, gated behind the sta
 Disabling GC for the entire flight is only safe because the hot paths are near-zero-alloc: the mixer
 pre-resolves its surfaces and rewrites a shared output dict (**g3**, ~0 bytes/call), and the flight loop
 caches the landing-zone steering heading at GPS cadence instead of running `navigation.steer()` trig
-(~174 µs) every 100 Hz step (**g7/g2**). A HITL heap soak (F15, ~36 s flight) measured **~12 MB consumed
-with GC off, low-water ~20 MB free of 32 MB** (≈2.5× margin); the pre- and post-flight collect durations
-are **logged** (`gc pre-/post-flight collect <us>`) for post-flight analysis.
+(~174 µs) every 100 Hz step (**g7/g2**). On-board HITL flights — current firmware, which also streams the
+simulated sensors, so it churns *more* than a bare run — measured **~15 MB consumed with GC off, low-water
+~17 MB free of ~32 MB** on a ~47 s F15-4 flight (the shorter ~32 s E16-4 bottoms out ~23 MB), with
+`mem_free` snapping back to ~32 MB at touchdown when GC re-enables. The full sawtooth is visible in the
+committed device `board_health.csv` (`doc/sims/TMS-7-guarded_fins/`); the pre- and post-flight collect
+durations are also **logged** (`gc pre-/post-flight collect <us>`).
 
 Side effect (g14): the CPU-load probe in `tasks/board_health.py` was changed from a `sleep_ms(0)`
 busy-spin to a sleeping probe that measures wake-up lateness — the core now idles between samples,
 cutting draw markedly (measured **7.2 W → 3.6 W** with all servos active) at no loss of the load signal.
+
+Measured board vitals from those on-board HITL flights: MCU temperature **31–33 °C** (steady, far below
+the synthetic ~45–63 °C the host sim had assumed), and CPU **load 0–~50 %** cruising with the peak at the
+landing stage (the laser hammering I²C) — the single P4 core is mostly idle between 50 Hz steps, so there
+is ample headroom. The asyncio loop runs **~3× faster than the 50 Hz sim rate** under this load, which is
+why `tasks/hitl.py` drives the model from a wall-clock accumulator rather than a fixed dt (see Phase-5).
 
 ## Flight envelope (E16 / F15 estimates)
 
@@ -480,11 +489,11 @@ Log strings append system uptime values in milliseconds alongside a standard des
 
 ## Telemetry
 
-Telemetry mirrors the logging architecture but outputs data in structured, semicolon-separated CSV profiles streamed to the Recorder (e.g., the Recorder stores `telemetry/date_time.cpu.csv` on its SD card):
-uptime;utilization;temperature
-111;40;51
-2222;45;52
-5555;48;55
+Telemetry mirrors the logging architecture but outputs structured, semicolon-separated CSV profiles streamed to the Recorder, which the Luckfox demuxes into one file per stream (`<session>_<file>.csv`). For example the board-vitals stream `board_health.csv` — real rows from an on-board flight (`uptime` µs; `temp` °C; `mem_free` bytes, showing the GC-off sawtooth; `load` %, peaking at the landing work):
+uptime;temp;mem_free;load
+4940864;32;32612240;0
+11591868;31;31532800;47
+14650552;31;32537888;6
 
 Post-flight parsing arrays can extract these files to compile automated 3D spatial flight path models in standard GPX formatting.
 
