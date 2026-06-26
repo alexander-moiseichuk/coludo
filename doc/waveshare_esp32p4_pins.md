@@ -27,10 +27,10 @@ silk-printed on each header pin**, so locating a pin is trivial.
 The board's default I²C is **SDA = GPIO7, SCL = GPIO8**, broken out on the header and also used
 by the ES8311 codec. Our sensors share this bus (distinct addresses), so no extra pins are needed.
 
-Addresses on I²C0 (no conflicts): BNO055 `0x28`, VL53L4CX `0x29`, ICP-10111 `0x63`, LSM6DSO32
-`0x6A` (SA0/SDO low; `0x6B` if SA0 high), BMP280 `0x76`. The high-g ADXL375 is the one IMU **off**
-this bus — it has its own SPI1 (clean high-rate reads). So the "i²c PCB" carries BNO055 + LSM6DSO32
-+ the baros + laser; the "spi PCB" carries the ADXL375.
+Addresses on I²C0 (no conflicts): BNO055 `0x28`, VL53L4CX `0x29`, ICP-10111 `0x63`, BMP280 `0x76`.
+The two **raw high-rate IMUs share SPI1** instead — ADXL375 and LSM6DSO32, each on its own
+chip-select (see SPI below) — so the fast accel/gyro reads never wait on the shared I²C bus. The
+"i²c PCB" carries BNO055 + the baros + laser; the "spi PCB" carries ADXL375 + LSM6DSO32.
 
 ## Free header GPIOs
 
@@ -52,29 +52,30 @@ GPIO16–23 and GPIO49–54 — so a spare free pin in 20–23 or 49–52 can do
 
 A conflict-free starting assignment (drop into `board.config`):
 
-| Function | GPIO | Notes |
-|---|---|---|
-| I²C0 SDA | 7 | sensors: BNO055, LSM6DSO32, ICP-10111, BMP280, laser AGL (shared) |
-| I²C0 SCL | 8 | |
-| LSM6DSO32 INT1 | 28 | 6-DoF data-ready (`lsm6dso32_int1`) — drives the IMU sampling |
-| LSM6DSO32 INT2 | 29 | optional second interrupt (`lsm6dso32_int2`); leave NC if unused |
-| SPI1 SCK | 48 | ADXL375 (its own bus, mode 3, 5 MHz — off I²C for clean high-rate reads) |
-| SPI1 MOSI | 47 | ADXL375 SDA/SDI |
-| SPI1 MISO | 46 | ADXL375 SDO |
-| ADXL375 CS | 49 | SPI chip-select (`adxl375_cs`), active low |
-| ADXL375 INT1 | 4 | DATA_READY (`adxl375_int`) — drives interrupt sampling |
-| VL53L4CX XSHUT | 5 | laser enable/reset (`laser_xshut`), active low |
-| VL53L4CX GPIO1 | 3 | laser data-ready interrupt (`laser_int`) |
-| UART → Recorder TX | 20 | to Luckfox RX, 921600 baud (logs/telemetry sink) |
-| UART → Recorder RX | 21 | optional (one-way link only needs TX) |
-| UART ↔ GNSS TX | 22 | to ATGM336H RX (send `$PCAS…` config) |
-| UART ↔ GNSS RX | 23 | from ATGM336H TX (NMEA in) |
-| Servo — yaw (vertical fin) | 26 | LEDC PWM |
-| Servo — left eleron | 27 | LEDC PWM (`servo_eleron_left`) |
-| Servo — right eleron | 32 | LEDC PWM (`servo_eleron_right`) |
-| Separation switch | 33 | input, `PULL_UP`, IRQ (LOW=nested, HIGH=separated) |
-| Status LED (external) | 2 | **no onboard user LED** — wire an external LED+resistor |
-| Spare / expansion | 30, 31, 50, 51, 52 | future sensors, second I²C, etc. |
+| Bus | Function | GPIO | Device.pin | Note |
+|---|---|---|---|---|
+| `i2c.0` | SDA | 7 | bno055.sda · icp10111.sda · bmp280.sda · vl53l4cx.sda | shared bus |
+| `i2c.0` | SCL | 8 | bno055.scl · icp10111.scl · bmp280.scl · vl53l4cx.scl | shared bus |
+| `spi.1` | SCK | 48 | adxl375.scl · lsm6dso32.scl | shared clock, mode 3, 5 MHz |
+| `spi.1` | MOSI | 47 | adxl375.sdi · lsm6dso32.sdi | shared |
+| `spi.1` | MISO | 46 | adxl375.sdo · lsm6dso32.sdo | shared |
+| `spi.1` | CS | 49 | adxl375.cs | `adxl375_cs`, active low |
+| `spi.1` | CS | 50 | lsm6dso32.cs | `lsm6dso32_cs`, active low |
+| `gpio` | INT | 4 | adxl375.int1 | `adxl375_int`, DATA_READY → sampling |
+| `gpio` | INT | 28 | lsm6dso32.int1 | `lsm6dso32_int1`, data-ready → sampling |
+| `gpio` | INT | 29 | lsm6dso32.int2 | `lsm6dso32_int2`, optional — NC if polling INT1 |
+| `gpio` | enable | 5 | vl53l4cx.xshut | `laser_xshut`, active low |
+| `gpio` | INT | 3 | vl53l4cx.gpio1 | `laser_int`, data-ready |
+| `uart.1` | TX | 20 | luckfox.rx | Recorder sink, 921600 baud |
+| `uart.1` | RX | 21 | luckfox.tx | optional (one-way link needs only TX) |
+| `uart.2` | TX | 22 | atgm336h.rx | GNSS config out (`$PCAS…`) |
+| `uart.2` | RX | 23 | atgm336h.tx | NMEA in |
+| `pwm` | signal | 26 | servo_yaw.sig | LEDC, yaw (vertical fin) |
+| `pwm` | signal | 27 | servo_eleron_left.sig | LEDC |
+| `pwm` | signal | 32 | servo_eleron_right.sig | LEDC |
+| `gpio` | switch | 33 | separation.pad | `PULL_DOWN`, IRQ (HIGH=nested, LOW=separated) |
+| `gpio` | LED | 2 | led.anode | external LED + resistor (no onboard user LED) |
+| — | spare | 30, 31, 51, 52 | — | future sensors, 2nd I²C, battery sense |
 
 ### Caveats
 
@@ -86,91 +87,92 @@ A conflict-free starting assignment (drop into `board.config`):
   play — keep them out of the free pool then.
 - Never assign GPIO6/14–19/54 (Wi-Fi) or GPIO37/38 (console) in `board.config`.
 
-## LSM6DSO32 — 6-DoF IMU: per-pin wiring (assembly sheet)
+## Per-device wiring — device.pin → connection
 
-The LSM6DSO32 (±32 g accel + ±2000 dps gyro, the g12 telemetry IMU) goes on the **shared I²C0 bus**
-— it joins the BNO055/baro/laser "i²c PCB", while the high-g ADXL375 stays alone on SPI1. I²C is the
-right call for tomorrow's bring-up: at ≤200 Hz the board only needs a ~12-byte burst read per sample
-(~0.3 ms on the 400 kHz bus), assembly is two wires onto an existing bus, and the address (`0x6A`)
-is free. (If a later launch wants raw multi-kHz logging, move it to SPI1 — see the alternative below.)
+The reverse of the pin map above: grab one device, walk down its pins, wire each where the **→**
+column says (a GPIO, the **3V3** rail, the **5V/BEC** rail, **GND**, or **NC** = leave unconnected).
+Breakout silk varies, so each pin lists the aliases you may see printed. `NC` pins stay open.
 
-**Wire every pad as follows.** Breakout silk varies (Adafruit 4692, DFRobot, generic GY-boards), so
-each row lists the aliases you may see printed; a 6-DoF that does both I²C and SPI gates the *mode* on
-the **CS** pin, which is the one non-obvious connection — it MUST be tied HIGH for I²C.
+The two **raw IMUs (ADXL375 + LSM6DSO32) share SPI1** — same SCK/MOSI/MISO, one chip-select each.
+SPI mode 3 (CPOL=CPHA=1) suits both; bus runs at 5 MHz (ADXL375's ceiling; LSM6DSO32 does 10 MHz, so
+no limit hit). On a SPI part, **CS is the real active-low select** (no "tie it high" as in I²C) and
+**SDO is plain MISO** (not an address pin) — so neither IMU needs an address strap.
 
-| Device pad (silk aliases) | What it is | Wire to (MCU / rail) | Notes |
+| Device | Pin (aliases) | → | Note |
 |---|---|---|---|
-| `VIN` / `VCC` / `VDD` | power in | **3V3 rail** | Adafruit VIN accepts 3–5 V (onboard reg + level-shift); bare-chip VDD is 1.71–3.6 V — 3V3 is safe for both |
-| `3V` / `3Vo` | regulated 3.3 V **out** | **leave NC** | breakout output, do not drive |
-| `GND` | ground | **GND rail** | common ground with the MCU |
-| `SCL` / `SPC` | I²C clock (SPI clock) | **GPIO8** (I²C0 SCL) | shared with the other I²C sensors |
-| `SDA` / `SDI` / `SDIO` | I²C data (SPI MOSI) | **GPIO7** (I²C0 SDA) | shared with the other I²C sensors |
-| `SDO` / `SA0` | **I²C address LSB** (SPI MISO) | **GND** | GND → `0x6A` (our default); 3V3 → `0x6B`. Tie it explicitly even if the breakout has a pull |
-| `CS` / `CS̅` / `NCS` | chip / mode select | **3V3 rail** | **must be HIGH for I²C.** LOW would switch the part into SPI mode. Tie/pull to 3V3 |
-| `INT1` / `I1` | interrupt 1 (data-ready / FIFO / wake) | **GPIO28** (`lsm6dso32_int1`) | primary — drives interrupt-paced sampling |
-| `INT2` / `I2` | interrupt 2 | **GPIO29** (`lsm6dso32_int2`) or NC | optional; leave open if the driver polls one INT |
-| `SDX` / `OCS` | sensor-hub **aux-master** SDA (Mode 2) | **leave NC** | for mastering an external slave; unused |
-| `SCX` | sensor-hub aux-master SCL | **leave NC** | unused |
-| `DEN` | data-enable / external sync stamp | **leave NC** | edge-stamp trigger; unused |
+| **adxl375** (SPI, ±200 g) | VIN / VDD | 3V3 | breakout takes 3–5 V |
+| | GND | GND | |
+| | SCL / SCK | GPIO48 | `spi.1` SCK (shared) |
+| | SDI / SDA / MOSI | GPIO47 | `spi.1` MOSI (shared) |
+| | SDO / MISO | GPIO46 | `spi.1` MISO (shared) |
+| | CS / NCS | GPIO49 | `adxl375_cs`, active low |
+| | INT1 | GPIO4 | `adxl375_int`, DATA_READY |
+| | INT2 | NC | unused |
+| **lsm6dso32** (SPI, 6-DoF) | VIN / VDD | 3V3 | breakout 3–5 V; bare chip 1.71–3.6 V |
+| | GND | GND | |
+| | SCL / SPC / SCK | GPIO48 | `spi.1` SCK (shared) |
+| | SDA / SDI / MOSI | GPIO47 | `spi.1` MOSI (shared) |
+| | SDO / MISO | GPIO46 | `spi.1` MISO — data out in SPI, **not** an address pin |
+| | CS / NCS | GPIO50 | `lsm6dso32_cs`, active low (LOW = SPI mode, which we want) |
+| | INT1 / I1 | GPIO28 | `lsm6dso32_int1`, data-ready |
+| | INT2 / I2 | GPIO29 | `lsm6dso32_int2`, optional — NC if polling INT1 |
+| | SDX / SCX | NC | sensor-hub aux master, unused |
+| | DEN | NC | external sync stamp, unused |
+| | 3V / 3Vo | NC | regulator output, do not drive |
+| **bno055** (I²C, fused IMU) | VIN | 3V3 | |
+| | GND | GND | |
+| | SDA | GPIO7 | `i2c.0` (shared) |
+| | SCL | GPIO8 | `i2c.0` (shared) |
+| | ADR / ADDR | GND | addr **0x28** (3V3 → 0x29, which collides with the laser — keep low) |
+| | PS0 / PS1 | GND | I²C mode select (both low); fixed on Adafruit boards |
+| | RST / INT | NC | unused |
+| **icp10111** (I²C, baro) | VIN | 3V3 | DFRobot SEN0517 |
+| | GND | GND | |
+| | SDA | GPIO7 | `i2c.0` (shared); fixed addr **0x63**, no INT |
+| | SCL | GPIO8 | `i2c.0` (shared) |
+| **bmp280** (I²C, baro) | VIN / VCC | 3V3 | |
+| | GND | GND | |
+| | SDA / SDI | GPIO7 | `i2c.0` (shared) |
+| | SCL / SCK | GPIO8 | `i2c.0` (shared) |
+| | SDO | GND | addr **0x76** (3V3 → 0x77) |
+| | CSB | 3V3 | tie HIGH to select I²C (LOW = SPI) |
+| **vl53l4cx** (I²C, laser AGL) | VIN | 3V3 | |
+| | GND | GND | |
+| | SDA | GPIO7 | `i2c.0` (shared), addr **0x29** |
+| | SCL | GPIO8 | `i2c.0` (shared) |
+| | XSHUT | GPIO5 | `laser_xshut`, enable/reset (active low) |
+| | GPIO1 / INT | GPIO3 | `laser_int`, data-ready |
+| **atgm336h** (UART, GNSS) | VCC | 3V3 | |
+| | GND | GND | |
+| | TX | GPIO23 | → board `uart.2` RX (NMEA in) |
+| | RX | GPIO22 | ← board `uart.2` TX (`$PCAS…` config out) |
+| | PPS | NC | unused |
+| **luckfox** (UART, Recorder) | RX | GPIO20 | ← board `uart.1` TX (log/telemetry sink, 921600) |
+| | TX | GPIO21 | → board `uart.1` RX (optional) |
+| | GND | GND | common ground with the MCU |
+| **servo ×3** (SG90, fins) | VCC (red) | 5V / BEC | **own servo rail, NOT 3V3** |
+| | GND (brown) | GND | common with the MCU |
+| | signal (orange) | GPIO26 / 27 / 32 | yaw / left-eleron / right-eleron PWM |
+| **separation** (copper pads) | hot pad | 3V3 | routed to the sense pin while nested |
+| | sense pad | GPIO33 | `separation_switch`, internal `PULL_DOWN`: **HIGH=nested, LOW=separated** |
+| **status LED** (external) | anode | GPIO2 | via series resistor |
+| | cathode | GND | |
 
-So the minimum buildable set is **seven wires**: VIN→3V3, GND→GND, SCL→GPIO8, SDA→GPIO7, SDO→GND,
-CS→3V3, INT1→GPIO28 (INT2→GPIO29 optional). SDX/SCX/DEN/3Vo stay unconnected.
-
-**Config (drop into `board.config` when the `lsm6dso32` driver lands).** The bus already exists; add
-the INT pin name(s) and a sensor entry:
+**LSM6DSO32 config** (drop into `board.config` when the `lsm6dso32` driver lands tomorrow):
 
 ```python
-# buses.i2c.0 unchanged — shared bus
-'pins': { ..., 'lsm6dso32_int1': 28, 'lsm6dso32_int2': 29 },
+'pins': { ..., 'lsm6dso32_cs': 50, 'lsm6dso32_int1': 28, 'lsm6dso32_int2': 29 },
 'sensors': [ ...,
     { 'name': 'imu_lsm6dso32', 'driver': 'lsm6dso32',
-      'bus': 'i2c', 'id': 0,
-      'addr': 0x6A,                    # SA0/SDO low; 0x6B if SA0 tied high
-      'int_pin': 'lsm6dso32_int1',     # INT1 data-ready paces the sampling
-      'telemetry_us': 10000,           # ~100 Hz raw 6-DoF, decimated in imu_lsm6dso32.csv
+      'bus': 'spi', 'id': 1,             # shares ADXL375's SPI1 (mode 3, 5 MHz)
+      'cs_pin': 'lsm6dso32_cs',          # its own chip-select (GPIO50)
+      'int_pin': 'lsm6dso32_int1',       # INT1 data-ready paces the sampling
+      'telemetry_us': 10000,             # ~100 Hz raw 6-DoF, decimated in imu_lsm6dso32.csv
       'enabled': True,
       'provides': { 'accel': {'priority': 2, 'timeout_ms': 20},   # behind adxl375(0), bno055(1)
                     'rate':  {'priority': 0, 'timeout_ms': 20} } },  # gyro: the only rate provider
 ]
 ```
-
-**SPI alternative (only if a launch needs raw multi-kHz).** Share ADXL375's SPI1 with a *second*
-chip-select: `CS`→a free pin (e.g. GPIO50, `lsm6dso32_cs`), `SCL`→GPIO48 (SCK), `SDA`→GPIO47 (MOSI),
-`SDO`→GPIO46 (MISO), VIN/GND as above, INT1→GPIO28. Then the config entry is `'bus': 'spi', 'id': 1,
-'cs_pin': 'lsm6dso32_cs'`. Not needed for tomorrow.
-
-## Reverse wiring table — MCU pin → device pad (whole board)
-
-Assembly check, going header-pin by header-pin: every MCU connection and which device pad lands on it.
-Power rails first, then GPIOs in number order.
-
-| MCU pin / rail | Goes to (device : pad) |
-|---|---|
-| **3V3** | BNO055 VIN · **LSM6DSO32 VIN** · **LSM6DSO32 CS (HIGH = I²C mode)** · ICP-10111 VIN · BMP280 VIN · VL53L4CX VIN · ADXL375 VIN · ATGM336H VCC · external-LED anode (via resistor) |
-| **GND** | every device GND · **LSM6DSO32 SDO/SA0 (= addr 0x6A)** · separation-switch pad return · LED cathode |
-| **GPIO7** (I²C0 SDA) | BNO055 SDA · **LSM6DSO32 SDA/SDI** · ICP-10111 SDA · BMP280 SDA · VL53L4CX SDA |
-| **GPIO8** (I²C0 SCL) | BNO055 SCL · **LSM6DSO32 SCL/SPC** · ICP-10111 SCL · BMP280 SCL · VL53L4CX SCL |
-| **GPIO48** (SPI1 SCK) | ADXL375 SCL/SCK |
-| **GPIO47** (SPI1 MOSI) | ADXL375 SDA/SDI |
-| **GPIO46** (SPI1 MISO) | ADXL375 SDO |
-| **GPIO49** | ADXL375 CS |
-| **GPIO4** | ADXL375 INT1 |
-| **GPIO5** | VL53L4CX XSHUT (enable/reset) |
-| **GPIO3** | VL53L4CX GPIO1 (data-ready INT) |
-| **GPIO28** | **LSM6DSO32 INT1** |
-| **GPIO29** | **LSM6DSO32 INT2** (optional) |
-| **GPIO20** (UART1 TX) | Recorder (Luckfox) RX |
-| **GPIO21** (UART1 RX) | Recorder TX (optional — one-way link only needs TX) |
-| **GPIO22** (UART2 TX) | ATGM336H RX (`$PCAS…` config out) |
-| **GPIO23** (UART2 RX) | ATGM336H TX (NMEA in) |
-| **GPIO26** | servo — yaw fin (signal) |
-| **GPIO27** | servo — left eleron (signal) |
-| **GPIO32** | servo — right eleron (signal) |
-| **GPIO33** | separation switch (pad: HIGH=nested, LOW=separated) |
-| **GPIO2** | external status LED (anode via resistor) |
-
-Servos take their **own 5 V/BEC power and ground** (not the 3V3 sensor rail) — only the signal pin
-lands on the MCU; tie the servo ground to the MCU GND.
 
 ## Firmware peripheral defaults — do not rely on them
 
@@ -192,8 +194,8 @@ arbitrary GPIOs via the matrix.
 
 **Validated on hardware** (MicroPython v1.28.0): the recommended map all constructs cleanly —
 `I2C(0, scl=8, sda=7)`, `UART(1, tx=20, rx=21, 921600)` (comes up ~922190 baud, within UART
-tolerance), `UART(2, tx=22, rx=23, 9600)`, `PWM` on 26/27/32 at 50 Hz, `Pin(33, IN, PULL_UP)`
-reading HIGH (= separated), and `Pin(2, OUT)` for the status LED.
+tolerance), `UART(2, tx=22, rx=23, 9600)`, `PWM` on 26/27/32 at 50 Hz, `Pin(33, IN, PULL_DOWN)`
+reading LOW when the pads are open (= separated; HIGH while nested), and `Pin(2, OUT)` for the status LED.
 
 ## Sources
 
