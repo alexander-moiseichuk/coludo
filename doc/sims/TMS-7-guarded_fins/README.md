@@ -64,9 +64,10 @@ reads out together** (`hovermode: x unified`):
 4. **attitude (deg)** — heading, roll, pitch (watch it stay **nearer vertical through boost** here)
 5. **fins — commanded (deg)** — `eleron_left`, `eleron_right`, `yaw`: the guarded headline — the elevons
    are **working through boost** (differential = roll/bank, common = pitch), not just in the glide
-6. **board health** — `load %`, `temp °C`, `mem MB` (`board_health.csv`). *In these sims the health row is
-   synthetic and phase-modeled* (the host has no MCU) — shaped like the board would read. On a real board
-   capture this panel shows the measured vitals.
+6. **board health** — `load %`, `temp °C`, `mem MB` (`board_health.csv`). *In these host sims the health row is
+   synthetic and phase-modeled* (the host has no MCU) — shaped like the board would read. **For the real
+   thing see [`device/`](device/)**: load/temp/mem pulled off the ESP32-P4 over a real on-board HITL flight
+   (the board runs much cooler / emptier / more idle than this model assumed).
 7. **agl (m)** — the laser, only within range near the ground
 
 (The `report_*.svg` files are a quick dependency-free look: plan-view ground track + altitude/roll.)
