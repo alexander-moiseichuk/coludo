@@ -50,6 +50,8 @@ def default() -> dict:
             'separation_switch': 33,  # copper pads: HIGH=nested (3v3 routed), LOW=separated
             'adxl375_int': 4,  # ADXL375 INT1 (free spare) — DATA_READY drives the accel sampling
             'adxl375_cs': 49,  # ADXL375 SPI chip-select (free spare)
+            'lsm6dso32_cs': 50,  # LSM6DSO32 SPI chip-select (shares SPI1 with the ADXL375)
+            'lsm6dso32_int1': 28,  # LSM6DSO32 INT1 accel data-ready (INT2/GPIO29 not wired)
             'laser_xshut': 5,  # VL53L4CX XSHUT enable/reset (free spare)
             'laser_int': 3,  # VL53L4CX GPIO1 data-ready interrupt (free spare)
             'servo_yaw': 26,
@@ -94,7 +96,19 @@ def default() -> dict:
                 'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — drives the sampling
                 'telemetry_us': 20000,  # ~100 Hz sampling decimated to 50 Hz in accel_adxl375.csv
                 'enabled': True,
-                'provides': {'accel': {'priority': 0, 'timeout_ms': 20}},
+                'provides': {'accel': {'priority': 1, 'timeout_ms': 20}},  # >32 g backstop behind lsm6dso32
+            },
+            {
+                'name': 'imu_lsm6dso32',
+                'driver': 'lsm6dso32',
+                'bus': 'spi', 'id': 1,  # shares the ADXL375 SPI1, own chip-select (mode 3, 5 MHz)
+                'addr': 0x6A,  # kept for an i2c fallback (set bus 'i2c', id 0)
+                'cs_pin': 'lsm6dso32_cs',  # SPI chip-select (GPIO50)
+                'int_pin': 'lsm6dso32_int1',  # INT1 accel data-ready drives the sampling
+                'telemetry_us': 20000,  # ~100 Hz sampling decimated to 50 Hz in imu_lsm6dso32.csv
+                'enabled': True,
+                'provides': {'accel': {'priority': 0, 'timeout_ms': 20},   # PRIMARY accel (±32 g)
+                             'rate': {'priority': 0, 'timeout_ms': 20}},    # sole gyro `rate` source
             },
             {
                 'name': 'imu_bno055',
@@ -104,7 +118,7 @@ def default() -> dict:
                 'telemetry_us': 40000,  # ~50 Hz sampling decimated to 25 Hz in imu_bno055.csv
                 'enabled': True,
                 'provides': {'attitude': {'priority': 0, 'timeout_ms': 40},
-                             'accel': {'priority': 1, 'timeout_ms': 40}},
+                             'accel': {'priority': 2, 'timeout_ms': 40}},  # fused fallback behind lsm/adxl
             },
             {
                 'name': 'baro_icp10111',

@@ -14,14 +14,16 @@ class _Device:
     """A register window for one chip-select on a shared SPI bus, with the same interface as
     i2cbus.Bus.device so a driver works over either bus. The command byte is (0x80 if read) | (the
     multi-byte bit if the transfer spans >1 register) | reg -- the convention of the ADXL/LSM family.
-    `mb_bit` is the multi-byte/auto-increment bit position (6 for the ADXL family)."""
+    `mb_bit` is the multi-byte/auto-increment bit position (6 for the ADXL family); pass None for chips
+    that auto-increment from a config bit instead of an address bit (e.g. LSM6DSO32 via CTRL3_C.IF_INC),
+    so the command byte is just (0x80 if read) | reg with no spurious address bit set."""
 
     def __init__(self, bus, cs: int, mb_bit: int = 6):
         from machine import Pin
 
         self._bus = bus
         self._cs = Pin(cs, Pin.OUT, value=1)  # idle high; pulled low only during a transaction
-        self._multi = 1 << mb_bit
+        self._multi = (1 << mb_bit) if mb_bit is not None else 0
 
     async def read(self, reg: int, count: int) -> bytes:
         buf = bytearray(count)
