@@ -118,6 +118,14 @@ model-analysis notes). Real flights will differ — these are seeds, not guarant
   landing-zone gate (`max_range_m`): the glider has ample range to return, which is what the
   navigation spends it on.
 
+**Cross-check — on-board HITL (Phase-5).** `sim_model` integrates the same thrust/mass/drag, and the
+on-board HITL flights land where this table predicts at the boost end: **F15-4 apogee ~344 m** (E16-4
+lower, from its shorter burn) and early-boost **~3.5 g** (launch detected at |a|=3.7 g). The *glide*,
+though, is a deliberately simplified control-test model — steeper than the optimistic L/D-5 row here — so
+the device flights run **~47 s (F15-4) / ~32 s (E16-4)** total rather than the analytical ~160 s / ~80 s.
+The high wing loading in the airframe notes below points the same way: the real glide will be fast, not
+L/D-5. Traces + reports: [`../doc/sims/TMS-7-guarded_fins`](../doc/sims/TMS-7-guarded_fins).
+
 ### Airframe notes from the printed models (`models/TMS-7`)
 
 Measured from the meshes (bbox / volume): glider 394 (span) × 121 (folded height) × 388 mm (length);
