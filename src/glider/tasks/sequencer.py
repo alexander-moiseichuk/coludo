@@ -101,6 +101,14 @@ class Sequencer(task.Task):
     async def finish(self) -> None:
         gc.enable()  # never leave GC disabled if the task stops mid-flight (defensive)
 
+    def _sustained(self, now: int, threshold_ms: int) -> bool:
+        """Dwell timer shared by every stage branch (D30): start it on the first call after a reset, then
+        return True once `now` is at least `threshold_ms` past the start -- so a single sample never
+        triggers a transition. Callers clear self._since (the start) when their condition lapses."""
+        if self._since is None:
+            self._since = now
+        return time.ticks_diff(now, self._since) >= threshold_ms
+
     def _tick(self, now: int) -> None:
         """One stage-machine step. `now` is ticks_ms. Forward-only: each branch only advances, and the
         sustained-detect timer resets whenever the stage changes (so a separation-driven hop is clean).
@@ -123,28 +131,24 @@ class Sequencer(task.Task):
             agl = self._agl.value()
             height = agl if agl is not None else self._elevation.value()
             if height is not None and height < self._land_agl_m:  # below the landing height...
-                self._since = self._since if self._since is not None else now
-                if time.ticks_diff(now, self._since) >= self._land_ms:  # ...SUSTAINED (g12: not a spike)
+                if self._sustained(now, self._land_ms):  # ...and SUSTAINED (g12: not a single spike)
                     self._advance(_STAGE.LANDING, 'agl %.1fm' % height)
             else:
                 self._since = None  # rose back / lost reading -> reset: a single low sample never flares
         elif stage == _STAGE.BOOSTING:
-            self._since = self._since if self._since is not None else now  # boost-entry time
-            if time.ticks_diff(now, self._since) >= self._boost_timeout_ms:
+            if self._sustained(now, self._boost_timeout_ms):  # burnout fallback if separation never fires
                 self._advance(_STAGE.GLIDING, 'burnout timeout (no separation)')
         elif stage == _STAGE.LANDING:
             g_sq = _magnitude_sq(self._accel.value())
             if g_sq is not None and self._still_lo_sq < g_sq < self._still_hi_sq:  # ~1 g, squared (g7)
-                self._since = self._since if self._since is not None else now
-                if time.ticks_diff(now, self._since) >= self._ground_ms:
+                if self._sustained(now, self._ground_ms):
                     self._advance(_STAGE.DONE, 'stationary %.1fg' % math.sqrt(g_sq))
             else:
                 self._since = None
         elif stage == _STAGE.SETTING:
             g_sq = _magnitude_sq(self._accel.value())
             if g_sq is not None and g_sq > self._launch_g_sq:  # |a| over launch_g, squared (g7)
-                self._since = self._since if self._since is not None else now
-                if time.ticks_diff(now, self._since) >= self._launch_ms:
+                if self._sustained(now, self._launch_ms):
                     self._advance(_STAGE.BOOSTING, 'launch |a|=%.1fg' % math.sqrt(g_sq))
             else:
                 self._since = None
