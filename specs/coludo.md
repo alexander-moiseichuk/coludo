@@ -221,6 +221,31 @@ direct flight when vertical fin set to 0 and left and right fins keep pitch hori
 small corrections to left turn when vertical fin turned right to target direction and left/right fins keep horizont
 right turn when vertical fin turned left for up to target direction and left/right fins keep horizont
 
+## Fin authority — dynamic-pressure limiting
+
+Each of the three fins is driven **individually and directly by its own SG90 servo — there is no transmission, linkage, or reduction gearing** (no screw-gear or rack: those add mechanical complexity, backlash, and weight the airframe cannot spare). The fin angle *is* the servo angle, mapped 1:1. The upside is mechanical simplicity and one fewer failure mode; the cost is that nothing mechanical limits the throw, so the deflection limit must be enforced in **software**.
+
+This matters because aerodynamic torque on a fin scales with **dynamic pressure** `q = ½·ρ·v²`, i.e. with the **square of airspeed**. The *same* fin angle produces ~`v²` more torque at high speed: a deflection that is a gentle nudge at 14 m/s is a violent, stack-flipping moment near burnout. A fixed angle limit is therefore wrong at one end or the other — too weak to control at low speed (where the fins are also aerodynamically soft and most authority is needed), too violent at high speed (risking loss of control, servo stall, or shearing a fin off).
+
+The controller instead **schedules the maximum fin deflection by airspeed** to hold roughly *constant angular authority* (deflection ∝ 1/q ∝ 1/v²):
+
+```
+deflection_limit(v) = clamp(K / v², 5°, 45°) × fin_limit_multiplier      (K ≈ 12500, anchored at 50 m/s → 5°)
+```
+
+| airspeed (m/s) | ≤16 | 20 | 25 | 30 | 35 | 40 | 45 | ≥50 |
+|---|---|---|---|---|---|---|---|---|
+| max fin deflection | 45° | 31° | 20° | 14° | 10° | 8° | 6° | 5° |
+
+* **Flight-wide, not boost-only.** Ignition can end off-vertical and fast, and a glide can build speed in a dive, so the governor caps the fins through **every** stage (boosting, gliding, landing). It is the final actuator clamp, applied after the per-stage control law and the mixer.
+* **45° floor of authority at low speed** (≤16 m/s): low `q` means weak fins *and* low kinetic energy = low risk, so full mechanical throw is allowed — the "trade speed for altitude with gentle uplift" regime.
+* **5° ceiling of restraint near burnout** (≥50 m/s): high `q`, highest consequence — but never 0°, so some authority always remains.
+* **`fin_limit_multiplier` (board.config, default 1.0)** scales the whole schedule. It is the safety dial: if a flight starts **losing fins or control in the air** (flutter, servo stall, structural failure), drop it (e.g. 0.5) to halve authority everywhere without re-deriving the table.
+* Stored as a **precomputed lookup table** indexed by integer m/s, so the 100 Hz path does a table read, not a `1/v²` division.
+* **Airspeed estimate** (no pitot tube): integrated vertical acceleration during boost; GNSS ground speed once gliding. The estimate is biased to *over*-read when uncertain — over-estimating airspeed tightens the cap, which is the safe direction.
+
+During boosting the **wings are folded inside the booster body tube** (rubber-band deployed to the flight position only after separation), so the fins here steer the slim *booster + folded-glider stack* — the CG and ~146 mm fin moment arm in the `models/TMS-7` analysis are the stack's, which is why the boost-torque numbers come out as they do. After separation the same fins control the deployed glider.
+
 ## Boosting
 
 The Boosting phase spans engine ignition through booster separation. While a zero-delay motor (like an F15-0) would trigger instantly, the operational profile utilizes motors featuring a built-in 4–6 second delay tracking element to coast cleanly to apogee:

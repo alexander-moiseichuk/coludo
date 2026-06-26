@@ -79,6 +79,22 @@ def bank_demand_opt(heading_error, gain, limit):
 bank_demand = bank_demand_upy  # @native measured 1.03x here -> keep _upy; switch to _opt when a bench shows a gain
 
 
+# --- fin_deflection_limit: the dynamic-pressure fin governor (coludo.md "Fin authority"). Max fin
+# deflection (deg from neutral) the airframe can safely take at a given airspeed. Aero torque scales with
+# dynamic pressure q ∝ v², so a fixed angle is too weak slow / too violent fast; the cap goes ∝ 1/v² to
+# hold ~constant angular authority, clamped to [5°, 45°] (always-some authority / fin mechanical throw).
+# K=12500 anchors 50 m/s -> 5°. Precomputed ONCE at import (no per-step 1/v² on the 100 Hz path); the
+# board.config `fin_limit_multiplier` (default 1.0) is applied by the caller, not baked into the table. ---
+_FIN_VMAX = 80  # m/s -- table saturates here (well past any expected airspeed)
+_FIN_LIMIT = tuple(45 if v == 0 else min(45, max(5, round(12500 / (v * v)))) for v in range(_FIN_VMAX + 1))
+
+
+def fin_deflection_limit(speed_ms):
+    """Max fin deflection in degrees for airspeed `speed_ms` (m/s) -- the dynamic-pressure governor table
+    lookup (saturates at _FIN_VMAX). Multiply by the config fin_limit_multiplier at the caller."""
+    return _FIN_LIMIT[max(0, min(int(speed_ms), _FIN_VMAX))]
+
+
 # --- clamp_int: integer clamp to [low, high]. Hot via sg90 fin clamping (round(angle), min/max deg). ---
 
 
