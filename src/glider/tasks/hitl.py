@@ -18,6 +18,7 @@
 
 import asyncio
 import random
+import time
 
 import controller as controller_mod
 import databoard
@@ -44,6 +45,10 @@ class Hitl(task.Task):
         self._noise: float = cfg.get('noise', 0.0)             # N: 0.0 / 0.05 / 0.10 / 0.25 / 0.50
         self._laser_range_m: float = cfg.get('laser_range_m', 4.0)  # agl drops out beyond this (g15)
         self._spike: bool = cfg.get('spike', False)            # g16: occasional 2x spikes
+        # which accelerometer axis carries the boost |a|: on the rod the IMU long-axis (often X or Y,
+        # since the board's Z is normal to the PCB) reads the thrust. Launch-detect is magnitude-based
+        # (axis-agnostic), so this is for matching the real mounting / exercising per-axis code.
+        self._axis_index: int = {'x': 0, 'y': 1, 'z': 2}.get(cfg.get('boost_axis', 'z'), 2)
         motor = _MOTORS.get(cfg.get('motor', 'F15'), _MOTORS['F15'])
         self._thrust, self._burn_s = motor
         mass = cfg.get('liftoff_g', 430) / 1000.0
@@ -73,7 +78,9 @@ class Hitl(task.Task):
         """Push the (noised) simulated sensors onto the databoard."""
         s = self._body.sensors()
         n = self._noise
-        self._ch['accel'].push((0.0, 0.0, _noisy(s['accel'], n, -200.0, 200.0)))  # |a| on z (g)
+        accel = [0.0, 0.0, 0.0]
+        accel[self._axis_index] = _noisy(s['accel'], n, -200.0, 200.0)  # |a| on the configured boost axis (g)
+        self._ch['accel'].push((accel[0], accel[1], accel[2]))
         self._ch['attitude'].push((_noisy(s['heading'], n, 0.0, 360.0),
                                    _noisy(s['roll'], n, -180.0, 180.0), _noisy(s['pitch'], n, -180.0, 180.0)))
         agl = s['agl']
@@ -85,25 +92,45 @@ class Hitl(task.Task):
         self._ch['speed'].push(_noisy(s['speed'], n, 0.0, 200.0))  # true airspeed (m/s) -> fin governor (g12)
 
     async def run(self) -> None:
-        dt = 1.0 / self._sim_hz
-        t = 0.0
+        # FIXED-TIMESTEP ACCUMULATOR. The sim must track the WALL clock, because the sequencer's stage
+        # timeouts (launch dwell, the boost->glide burnout/ejection timeout, ground dwell) are wall-clock
+        # (ticks_ms) -- if sim-time and wall-time drift, the stages fire at the wrong altitude (a fixed dt
+        # per iteration flew the model ~3x realtime, past apogee and underground before the 6 s timeout;
+        # naively clamping the measured dt does the reverse, throttling the sim below wall-time so the
+        # glide never reaches the ground). So each iteration measures the real elapsed time and advances
+        # the model in stable `fixed`-size sub-steps to COVER it: integration stays at sim_hz (accurate),
+        # while the number of sub-steps floats with the loop rate so 1 sim-second == 1 wall-second. A big
+        # one-off stall is capped so it cannot inject a burst of catch-up steps.
         period = max(1, 1000 // self._sim_hz)
+        fixed = 1.0 / self._sim_hz
+        max_catchup = 0.5            # s: cap a scheduling stall's catch-up (<= 0.5 s of sub-steps)
+        t = 0.0
+        accumulator = 0.0
+        last = time.ticks_ms()
         while True:
+            await asyncio.sleep_ms(period)
+            now = time.ticks_ms()
+            elapsed = time.ticks_diff(now, last) / 1000.0
+            last = now
+            accumulator += elapsed if elapsed < max_catchup else max_catchup
             # follow the REAL stage machine: SETTING/BOOSTING -> 1-DoF boost/coast (provides the launch
             # accel + altitude that drive the sequencer); GLIDING/LANDING -> fin-controlled 6-DoF glide.
-            if self.controller.stage < _STAGE.GLIDING:
+            boosting = self.controller.stage < _STAGE.GLIDING
+            if boosting:
                 roll, pitch, _yaw = self._read_fins()  # g12: the boost stage holds vertical via the fins
-                self._body.boost_step(dt, self._thrust if t < self._burn_s else 0.0, pitch, roll)
             else:
                 if not self._body.gliding:
                     self._body.begin_glide()                 # BOOSTING -> GLIDING: deploy + glide
                 roll, pitch, yaw = self._read_fins()
-                if self._spike and random.random() < dt / 3.0:   # g16: a 2x roll spike every ~3 s
-                    roll *= 2.0
-                self._body.glide_step(dt, roll, pitch, yaw)
+            while accumulator >= fixed:                      # advance enough sub-steps to cover real time
+                if boosting:
+                    self._body.boost_step(fixed, self._thrust if t < self._burn_s else 0.0, pitch, roll)
+                else:
+                    spiked = roll * 2.0 if (self._spike and random.random() < fixed / 3.0) else roll
+                    self._body.glide_step(fixed, spiked, pitch, yaw)  # g16: occasional 2x roll spike
+                accumulator -= fixed
+                t += fixed
             self._publish()
-            t += dt
-            await asyncio.sleep_ms(period)
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
