@@ -57,9 +57,9 @@ def default() -> dict:
             'servo_eleron_right': 32,
         },
         'recorder': {  # PSRAM ring sizes + stats cadence (Recorder)
-            'tlm_capacity': 512,
-            'log_capacity': 512,
-            'cell_size': 256,  # power-of-two cell; ~128 KB/ring, nothing on 32 MB PSRAM
+            'tlm_capacity': 256,  # measured peak ~16 buffered records -> 256 is ~16x headroom
+            'log_capacity': 256,
+            'cell_size': 256,  # power-of-two cell; ~64 KB/ring, nothing on 32 MB PSRAM
             'stats_ms': 1000,
         },
         # Max fin servos allowed to SLEW at once via servo.move() -- caps the boost-rail current
