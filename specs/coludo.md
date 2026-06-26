@@ -246,6 +246,28 @@ deflection_limit(v) = clamp(K / v², 5°, 45°) × fin_limit_multiplier      (K 
 
 During boosting the **wings are folded inside the booster body tube** (rubber-band deployed to the flight position only after separation), so the fins here steer the slim *booster + folded-glider stack* — the CG and ~146 mm fin moment arm in the `models/TMS-7` analysis are the stack's, which is why the boost-torque numbers come out as they do. After separation the same fins control the deployed glider.
 
+### Servo torque — why direct-drive SG90 is enough (and why the cap is not about torque)
+
+Each fin is an **all-moving surface, 37 cm², 58 mm chord** (span ~64 mm, aspect ratio ~1.1), hinged near its aerodynamic centre (~25% chord), driven **directly (1:1) by an SG90** — no reduction gearing, so the servo carries the aerodynamic hinge moment one-for-one. A real SG90 at 5 V gives **1.3–1.5 kg·cm = 128–147 mN·m** of stall torque.
+
+Because the surface is near-aero-balanced (hinge ≈ CoP), the hinge moment is small and grows ~linearly with deflection and with `q`:
+
+```
+H ≈ 0.37 · δ[°] · (v / 30 m/s)²   mN·m        (anchored on ±45° / 30 m/s = 16.6 mN·m)
+```
+
+**In governed flight the servo is barely loaded — and flat across the envelope.** The deflection cap holds `δ·v² ≈ K`, and the hinge moment is itself ~`δ·v²`, so it stays near-constant at **~5 mN·m everywhere = 3–4 % of SG90 stall (~25–30× margin):**
+
+| airspeed | governed δ | hinge moment | % of SG90 stall (1.3–1.5 kg·cm) |
+|---|---|---|---|
+| ≤16 m/s | 45° | 4.7 mN·m | 3.2–3.7 % |
+| 30 m/s  | 14° | 5.2 mN·m | 3.5–4.0 % |
+| 50 m/s  |  5° | 5.1 mN·m | 3.5–4.0 % |
+
+So **torque is never the binding constraint** — the plastic-gear SG90, direct-driven, holds the governed fin cool, and the `1/v²` cap is precisely what keeps the moment tiny despite there being no *mechanical* limit on the throw. This is the key point: **the cap exists for control authority and structure, not for servo torque.** The schedule holds `δ·v² ≈ K ≈ 12500`, i.e. *constant angular control moment* — 45°/16 m/s and 5°/50 m/s deliver the same authority. Relaxing the high-speed end does not "recover lost authority" (there is none lost); it multiplies the control moment by the relaxation factor → over-control / stack-flip, the very failure the governor prevents.
+
+**The one stress case is an un-governed hardover to ±45°** (a control fault, or relaxing the cap): there `H = 0.0185·v²` reaches the 128–147 mN·m stall at **~83–89 m/s** (attached flow). At large deflection the flow separates and the centre of pressure moves aft, **~doubling** the moment and pulling the stall speed down to **~59–63 m/s**. Burnout is ~70 m/s, so a 45° hardover *near burnout* sits right in the back-drive/stall band — a concrete, SG90-specific reason the high-speed cap must not be relaxed. At that hardover it is the output-shaft **bending** load, not torque, that bounds things, which is the only reason to prefer the metal-gear **MG90S** (~+3 g) — a shock/robustness choice, not a torque one.
+
 ## Boosting
 
 The Boosting phase spans engine ignition through booster separation. While a zero-delay motor (like an F15-0) would trigger instantly, the operational profile utilizes motors featuring a built-in 4–6 second delay tracking element to coast cleanly to apogee:

@@ -167,21 +167,11 @@ drive the servos **sequentially** (not all at once) most likely is not feasible 
 
 **Required, weight 10.6g per each engine and wires, at least 2 are required**
 
-**Hinge-moment check** — can the SG90 be overpowered by airflow? The fin is an all-moving
-surface (37 cm², 58 mm chord), hinged near its aerodynamic centre (~25% chord). Computed
-for the 1.4 kg·cm variant (metal-gear MG90S-class):
-
-| Deflection | Max airspeed before stall | Moment at 30 m/s | % of servo |
-|---|---|---|---|
-| ±5° (boost phase) | 259 m/s (931 km/h) | 1.8 mN·m | 1.3% |
-| ±30° (bank limit) | 106 m/s (380 km/h) | 11.1 mN·m | 8.1% |
-| ±45° (hardover) | 86 m/s (310 km/h) | 16.6 mN·m | 12.1% |
-
-The servo has >8× margin at every flight-relevant deflection and speed — the fin
-will **never** stall from air pressure. The practical limit is the output shaft's
-bending load at a sudden hardover at max dive (~50 m/s), where the hinge moment
-is ~46 mN·m (34% of stall). A metal-gear variant is recommended for this reason,
-not for torque. Weight difference SG90→MG90S is ~3 g per unit.
+**Torque / hinge moment.** The SG90 is **direct-driven** (1:1, no gearing) and at 5 V (1.3–1.5 kg·cm)
+runs the *governed* fin at ~3–4 % of stall — **~25–30× torque margin, no gearing needed**. The only
+stress case is an un-governed ±45° hardover near burnout (servo back-drives at ~60–90 m/s), where the
+output-shaft **bending** load is the limit, not torque — the sole reason to prefer the metal-gear
+**MG90S** (~+3 g). Derivation: [`../specs/coludo.md`](../specs/coludo.md) → "Fin authority → Servo torque".
 
 ## SD card
 Any suitable by size and throughput as code, videos and logs will be written here. 
