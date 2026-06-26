@@ -12,7 +12,6 @@
 # Position is metres / decimal degrees; it is a known origin now and seeds the GNSS driver later.
 
 import json
-import os
 import time
 
 try:
@@ -20,6 +19,7 @@ try:
 except ImportError:  # CPython tooling / off-board lint+compile only
     RTC = None
 
+import commons
 import databoard
 import inspector
 import navigation
@@ -220,15 +220,4 @@ class Mission(inspector.Inspectable):
     def save(self) -> None:
         """Persist the stored mission fields to launch.config (atomic temp+rename) so the launch
         identity survives a pre-flight reboot. The clock is never persisted -- it is the RTC's."""
-        data = self.persisted()
-        tmp = self.path + '.tmp'
-        with open(tmp, 'w') as handle:
-            handle.write(json.dumps(data))
-        try:
-            os.rename(tmp, self.path)
-        except OSError:  # some VFS won't rename onto an existing file
-            try:
-                os.remove(self.path)
-            except OSError:
-                pass
-            os.rename(tmp, self.path)
+        commons.atomic_write_json(self.path, self.persisted())  # D04

@@ -12,6 +12,8 @@
 import json
 import os
 
+import commons
+
 try:
     import binascii
     import hashlib
@@ -256,17 +258,7 @@ def save(cfg, path: str = 'board.config') -> str:
     errs = validate(cfg)
     if errs:
         raise ValueError('invalid config: ' + '; '.join(errs))
-    tmp = path + '.tmp'
-    with open(tmp, 'w') as f:
-        f.write(json.dumps(cfg))
-    try:
-        os.rename(tmp, path)
-    except OSError:  # some VFS (FAT) won't rename onto an existing file
-        try:
-            os.remove(path)
-        except OSError:
-            pass
-        os.rename(tmp, path)
+    commons.atomic_write_json(path, cfg)  # validated above -> persist the snapshot atomically (D04)
     return config_id(cfg)
 
 

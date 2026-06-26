@@ -95,6 +95,26 @@ def fin_deflection_limit(speed_ms):
     return _FIN_LIMIT[max(0, min(int(speed_ms), _FIN_VMAX))]
 
 
+def atomic_write_json(path, data):
+    """Persist `data` as JSON to `path` atomically (D04, shared by config.save + mission.save): write a
+    temp file then rename it over the target, with a remove-then-rename fallback for a VFS (FAT) that
+    won't rename onto an existing file. os/json are imported lazily so the hot-path importers of commons
+    do not pull them in."""
+    import json
+    import os
+    tmp = path + '.tmp'
+    with open(tmp, 'w') as handle:
+        handle.write(json.dumps(data))
+    try:
+        os.rename(tmp, path)
+    except OSError:  # some VFS (FAT) won't rename onto an existing file
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+        os.rename(tmp, path)
+
+
 # --- clamp_int: integer clamp to [low, high]. Hot via sg90 fin clamping (round(angle), min/max deg). ---
 
 
