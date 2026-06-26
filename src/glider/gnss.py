@@ -9,20 +9,29 @@ import asyncio
 
 import config
 import databoard
+import micropython
 import recorder
 import task
 
 _KNOTS_TO_MS: float = 0.514444  # NMEA RMC speed is in knots; the airspeed governor (g12) wants m/s
 
 
+@micropython.viper
+def _xor_checksum(data: ptr8, start: int, end: int) -> int:  # noqa: F821 -- ptr8 is a viper builtin type
+    """XOR of the bytes data[start:end] -- the NMEA checksum inner loop as native integer code (g18/D23:
+    a viper pointer walk, no per-char str iterator + ord()). `data` is a bytes-like (callers .encode())."""
+    checksum = 0
+    for index in range(start, end):
+        checksum ^= int(data[index])
+    return checksum
+
+
 def checksum_ok(sentence: str) -> bool:
-    """Verify the NMEA `*hh` XOR checksum (over the chars between '$' and '*')."""
+    """Verify the NMEA `*hh` XOR checksum (over the chars between '$' and '*'); inner loop = _xor_checksum."""
     star = sentence.rfind('*')
     if star < 0:
         return False
-    got = 0
-    for character in sentence[1:star]:
-        got ^= ord(character)
+    got = _xor_checksum(sentence.encode(), 1, star)
     try:
         return got == int(sentence[star + 1:star + 3], 16)
     except ValueError:
@@ -40,9 +49,7 @@ def degrees(value: str, hemisphere: str):
 
 def nmea(body: str) -> bytes:
     """Wrap a command body in `$...*hh\\r\\n` with its XOR checksum (PCAS/PMTK/PUBX config sentences)."""
-    checksum = 0
-    for character in body:
-        checksum ^= ord(character)
+    checksum = _xor_checksum(body.encode(), 0, len(body))
     return ('$%s*%02X\r\n' % (body, checksum)).encode()
 
 
