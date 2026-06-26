@@ -162,10 +162,26 @@ Candidates (SG90 expected primary — cheap, compact, light):
 **60° looks interesting** (gives **±30°** of fin throw at ~4× torque); 45° (±22.5°) is too little angle.
 
 **Power**: servos run from their **own boost rail** (expected 5V, can be 7/9/12V if needed), separate from the
-controller; **per-pin diode protection** is required. In case of high current peaks, drive the servos **sequentially**
-(not all at once).
+controller; **per-pin diode protection** is NOT required for 5V. In case of high current peaks, 
+drive the servos **sequentially** (not all at once) most likely is not feasible due to slow reactions of such mode.
 
 **Required, weight 10.6g per each engine and wires, at least 2 are required**
+
+**Hinge-moment check** — can the SG90 be overpowered by airflow? The fin is an all-moving
+surface (37 cm², 58 mm chord), hinged near its aerodynamic centre (~25% chord). Computed
+for the 1.4 kg·cm variant (metal-gear MG90S-class):
+
+| Deflection | Max airspeed before stall | Moment at 30 m/s | % of servo |
+|---|---|---|---|
+| ±5° (boost phase) | 259 m/s (931 km/h) | 1.8 mN·m | 1.3% |
+| ±30° (bank limit) | 106 m/s (380 km/h) | 11.1 mN·m | 8.1% |
+| ±45° (hardover) | 86 m/s (310 km/h) | 16.6 mN·m | 12.1% |
+
+The servo has >8× margin at every flight-relevant deflection and speed — the fin
+will **never** stall from air pressure. The practical limit is the output shaft's
+bending load at a sudden hardover at max dive (~50 m/s), where the hinge moment
+is ~46 mN·m (34% of stall). A metal-gear variant is recommended for this reason,
+not for torque. Weight difference SG90→MG90S is ~3 g per unit.
 
 ## SD card
 Any suitable by size and throughput as code, videos and logs will be written here. 

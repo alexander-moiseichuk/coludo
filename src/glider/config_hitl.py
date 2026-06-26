@@ -12,12 +12,13 @@ _SIM_SENSORS = ('accel_adxl375', 'imu_bno055', 'baro_icp10111', 'baro_bmp280', '
 _OFF = ('separation', 'watchdog', 'wifi', 'cc', 'bluetooth')
 
 
-def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False,
-            eject_delay_s: float = 4.0, boost_axis: str = 'z') -> dict:
+def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: float = 0.0,
+            wind_dir: float = 0.0, eject_delay_s: float = 4.0, boost_axis: str = 'z') -> dict:
     """Build a HITL config. `eject_delay_s` is the motor's ejection delay (the '-4' in F15-4/E16-4 ~=
     4 s after burnout, near apogee); since separation is off in HITL, the sequencer's boost->glide
     timeout stands in for that ejection charge, so set it to burn + delay (otherwise a generic timeout
-    glides from the wrong altitude). `boost_axis` picks which accel axis carries the boost |a|."""
+    glides from the wrong altitude). `wind`/`wind_dir` set a steady cross-wind (m/s, toward deg) the
+    glide must crab against. `boost_axis` picks which accel axis carries the boost |a|."""
     cfg = config_default.default()
     for sensor in cfg['sensors']:
         if sensor['name'] in _SIM_SENSORS:
@@ -39,6 +40,6 @@ def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False,
     cfg['components'].append({
         'name': 'hitl', 'activity': 'hitl', 'enabled': True,
         'sim_hz': 50, 'motor': motor, 'noise': noise, 'spike': spike, 'liftoff_g': 430,
-        'boost_axis': boost_axis,
+        'wind': wind, 'wind_dir': wind_dir, 'boost_axis': boost_axis,
     })
     return cfg
