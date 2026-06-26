@@ -1,4 +1,4 @@
-# On-board test for sim_model.Body boost-attitude dynamics (g12): a crosswind weathercocks the stack off
+# On-board test for sim_model.Body boost-attitude dynamics: a crosswind weathercocks the stack off
 # vertical, control fins restore it, calm air stays vertical, and the new 'speed' sensor reports true
 # airspeed. Pure math (deterministic -- no noise()), runs identically on host + board. Run by `make test`.
 

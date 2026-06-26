@@ -13,12 +13,12 @@ import micropython
 import recorder
 import task
 
-_KNOTS_TO_MS: float = 0.514444  # NMEA RMC speed is in knots; the airspeed governor (g12) wants m/s
+_KNOTS_TO_MS: float = 0.514444  # NMEA RMC speed is in knots; the airspeed governor wants m/s
 
 
 @micropython.viper
 def _xor_checksum(data: ptr8, start: int, end: int) -> int:  # noqa: F821 -- ptr8 is a viper builtin type
-    """XOR of the bytes data[start:end] -- the NMEA checksum inner loop as native integer code (g18/D23:
+    """XOR of the bytes data[start:end] -- the NMEA checksum inner loop as native integer code (/
     a viper pointer walk, no per-char str iterator + ord()). `data` is a bytes-like (callers .encode())."""
     checksum = 0
     for index in range(start, end):

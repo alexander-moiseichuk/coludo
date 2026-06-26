@@ -131,7 +131,7 @@ async def amain():
     navflight = flight.Flight('flight', {'schedule_hz': 0, 'gains': {}}, nav_ctrl)
     assert await navflight.setup() is True
     navflight._heading_hold = 200.0  # the blind fallback heading
-    # the g7 cache holds the steer() result for nav_period_ms; this test changes the inputs faster than
+    # the cache holds the steer() result for nav_period_ms; this test changes the inputs faster than
     # that on purpose, so it clears _nav_heading before each tier to force a fresh recompute.
 
     # tier 3: no fix, no launch point -> hold the captured heading (blind)
@@ -147,7 +147,7 @@ async def amain():
     position.push((48.0005, 11.020))
     navflight._nav_heading = None
     assert abs(navflight._target_heading(0.0, False) - 270.0) < 5.0  # current position, not the launch point
-    # g8/g9: LANDING now STEERS too (it no longer locks straight-and-level) -> same tier-1 fix, ~270
+    #/LANDING now STEERS too (it no longer locks straight-and-level) -> same tier-1 fix, ~270
     nav_ctrl.stage = Stage.LANDING
     navflight._nav_heading = None
     assert abs(navflight._target_heading(0.0, False) - 270.0) < 5.0
@@ -156,7 +156,7 @@ async def amain():
     navflight._nav_heading = None
     assert navflight._target_heading(0.0, False) == 200.0
 
-    # g7: a second call within nav_period returns the CACHED heading (no recompute) even if the fix moves
+    # a second call within nav_period returns the CACHED heading (no recompute) even if the fix moves
     nav_ctrl.stage = Stage.GLIDING
     navflight._nav_heading = None
     first = navflight._target_heading(0.0, False)           # fresh steer() from (48.0005, 11.020) -> ~270
@@ -178,7 +178,7 @@ async def amain():
     assert bank_ctrl.fins['servo_eleron_left'].angle == 120 and bank_ctrl.fins['servo_eleron_right'].angle == 60
     assert bank_ctrl.fins['servo_eleron_left'].angle != bank_ctrl.fins['servo_eleron_right'].angle  # banked
 
-    # g8/g9 crosswind landing: LANDING keeps steering to the zone (not a blind wings-level flare), using
+    # crosswind landing: LANDING keeps steering to the zone (not a blind wings-level flare), using
     # the FULL fin authority (land_bank_limit 45) to crab the crosswind out -- keep it gliding.
     land_ctrl = _StubController(Stage.LANDING)
     landflight = flight.Flight('flight', {'schedule_hz': 0, 'gains': {'roll': {'kp': 1.0}},
@@ -191,7 +191,7 @@ async def amain():
     # error +90 -> bank_demand(+90, land_bank_gain 1.5, land_bank_limit 45) = +45 -> elevons 90+/-45 (full)
     assert land_ctrl.fins['servo_eleron_left'].angle == 135 and land_ctrl.fins['servo_eleron_right'].angle == 45
 
-    # g6: integer-degree heading error quantises the yaw D-term -- characterise the on-device impact.
+    # integer-degree heading error quantises the yaw D-term -- characterise the on-device impact.
     # A smooth turn feeds a kd-only PID (its step() output IS the D term). Float wrap gives a smooth
     # de/dt ~= the turn rate; the production int wrap holds flat then jumps a whole degree, so the D term
     # spikes to ~1deg/dt at each integer crossing -- larger peaks, but bounded and sparse.
@@ -204,7 +204,7 @@ async def amain():
 
     peak_float = peak_dterm(lambda e: ((e + 180.0) % 360.0) - 180.0)  # smooth (float) heading error
     peak_int = peak_dterm(lambda e: flight.Flight._heading_error(e, 0.0))  # the production int wrap
-    print('g6: yaw D-term peak over a smooth ~27deg/s turn @100Hz -- float=%.0f, int=%.0f deg/s'
+    print('yaw D-term peak over a smooth ~27deg/s turn @100Hz -- float=%.0f, int=%.0f deg/s'
           % (peak_float, peak_int))
     assert abs(peak_float - 27) < 2          # float: ~ the turn rate, no quantisation
     assert peak_int >= 1.0 / dt - 1          # int: spikes of ~1deg/dt (~100 deg/s) at degree crossings
@@ -212,7 +212,7 @@ async def amain():
     # precision is irrelevant for fin authority over a 100-200 m approach) it is negligible; if a large
     # kd is ever needed, switch the yaw error to float or low-pass the D term.
 
-    # g12 dynamic-pressure fin governor: the airspeed estimate caps mixer.limit EVERY step (even in a
+    # dynamic-pressure fin governor: the airspeed estimate caps mixer.limit EVERY step (even in a
     # non-control stage), scaled by fin_limit_multiplier. The estimator itself is covered by test_airspeed;
     # here we drive its value directly (a steady 1 g -> zero net accel -> predict adds nothing) and check
     # the cap wiring: commons.fin_deflection_limit(v) * multiplier -> mixer.limit.
@@ -237,7 +237,7 @@ async def amain():
     gov._step()
     assert gov._airspeed.value() > 0.0  # integrated off zero
 
-    # g12 boost stage: BOOSTING is a control stage that holds the captured rod-vertical attitude, but only
+    # boost stage: BOOSTING is a control stage that holds the captured rod-vertical attitude, but only
     # PAST THE ROD (airspeed > boost_engage); below it the fins stay neutral (the rod holds it vertical).
     boost_ctrl = _StubController(Stage.BOOSTING)
     boostflight = flight.Flight('flight', {'schedule_hz': 0, 'boost_engage_speed': 15.0,

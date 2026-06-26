@@ -74,7 +74,7 @@ null the miss**, so the spread is wider and noisier than F15-4 (clean still reac
 hit-or-miss). Same ≥25 % noise breakdown and landing-detect timeout as F15-4. The short anomalous runs
 (e.g. noise10 10.8 s) are early-DONE: a noise coincidence trips the stationary-1 g detect mid-glide.
 
-## Corner cases (g16 spike injection)
+## Corner cases (spike injection)
 
 `--spike` injects a transient 2× attitude/accel glitch every ~3 s (`report_corner_*` per engine):
 
@@ -84,13 +84,13 @@ hit-or-miss). Same ≥25 % noise breakdown and landing-detect timeout as F15-4. 
   LANDING (F15-4 287 m, E16-4 285 m from the centre, contained ≤ ~255 m).
 
 Open `report_corner_*.html` (plotly) and watch the **fins** + **attitude** panels through the boost +
-glide; the boost-phase elevon activity is the g12 guarded-fins behaviour.
+glide; the boost-phase elevon activity is the guarded-fins behaviour.
 
 ## Real board vitals
 
 Every `report_*.html` health panel is **real** (`board_health`, not the host's synthetic model): the P4
 runs **31–33 °C** and the control loop loads it **0–~50 %** cruising with a peak at the landing work — and
-`mem_free` swings (down through the flight, recovered at touchdown) show the **g14 GC-off-in-flight**
+`mem_free` swings (down through the flight, recovered at touchdown) show the **GC-off-in-flight**
 policy in real data, where the synthetic model assumed a flat ~4 MB.
 
 ## Files

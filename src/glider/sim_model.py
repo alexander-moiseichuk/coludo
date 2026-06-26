@@ -12,7 +12,7 @@ import commons
 _G = 9.81
 _RHO = 1.225            # sea-level air density (kg/m^3)
 _CDA = 0.6 * 0.0017     # Cd * frontal area (m^2) from the coludo.md envelope (~46 mm, ~17 cm^2)
-# boost-attitude model (g12): crosswind WEATHERCOCK vs CONTROL-fin restore, both scaled by dynamic
+# boost-attitude model: crosswind WEATHERCOCK vs CONTROL-fin restore, both scaled by dynamic
 # pressure (kPa), with aero damping -- so the guarded fins are seen fighting the wind during the climb.
 _BOOST_COCK = 2.0       # deg/s^2 per (kPa * deg AoA) -- passive tilt of the nose toward the relative wind
 _BOOST_FIN = 2.0        # deg/s^2 per (kPa * deg deflection) -- corrective fin authority

@@ -1,7 +1,7 @@
-# g15 Step 0 -- TOOLCHAIN GATE. Before any native/viper work: does THIS firmware's emitter compile and
+# Step 0 -- TOOLCHAIN GATE. Before any native/viper work: does THIS firmware's emitter compile and
 # run @micropython.native (keeps float semantics) and @micropython.viper (int-only) on the P4 (RISC-V
 # rv32)? Defines both next to a bytecode baseline, checks they return identical results, and times them.
-# If the emitter is absent the @decorator raises at compile -> this test fails -> g15 falls back to a C
+# If the emitter is absent the @decorator raises at compile -> this test fails -> falls back to a C
 # natmod (mpy_ld.py). Run by run_tests_board.sh; the printed speedups feed doc/benches/.
 
 import time

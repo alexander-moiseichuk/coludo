@@ -196,7 +196,7 @@ class Recorder:
     @classmethod
     def _enqueue(cls, ring, tee, data: bytes) -> bool:
         """Queue `data` to `ring` (the UART/Luckfox primary sink), signal the drain loop on success, and
-        tee it to the CC mirror -- the extra route, which never gates the primary result (D19). Returns
+        tee it to the CC mirror -- the extra route, which never gates the primary result. Returns
         whether it was stored, so the caller picks best-effort drop (log) vs raise (tlm)."""
         stored = ring.write(data)
         if stored:
@@ -233,7 +233,7 @@ class Recorder:
         """Important telemetry line "@<session>_<filename>@<content>". Raises if the record will
         not fit or there is no room -- telemetry must not be lost silently."""
         data = ('@%s_%s@%s\n' % (cls.session(), filename, content)).encode()
-        if not cls._enqueue(cls._tlm, cls._cc_tlm.tee, data):  # CC mirror + primary ring (D19)
+        if not cls._enqueue(cls._tlm, cls._cc_tlm.tee, data):  # CC mirror + primary ring
             raise _RecorderError('telemetry dropped (%d bytes)' % len(data))
 
     @classmethod

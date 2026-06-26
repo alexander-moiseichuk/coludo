@@ -100,7 +100,7 @@ because LANDING rolls wings-level and lets it drift off on short final. Nailing 
 final-approach / flare (or a smaller orbit radius); and the high-noise (≥50 %) robustness of the bank
 loop is the other open thread.
 
-## Corner cases — spike injection (g16)
+## Corner cases — spike injection
 
 `--spike` injects a **transient 2× glitch** on the attitude + accel for *one tick* every ~3 s
 (deterministic, so the stored traces reproduce exactly) — a sudden bad sensor sample. The same `spike`
@@ -124,7 +124,7 @@ python3 tools/virtual_flight.py --motor F15 --noise 0.50 --wind 12 --wind-dir 21
 
 ## Files
 
-- `report_corner_{spike,stress}.{html,svg}` — the two g16 corner cases
+- `report_corner_{spike,stress}.{html,svg}` — the two corner cases
 - `report_{noise05,noise50,wind00}.html` — **three committed interactive reports** kept as reference
   points (clean sensors / degraded sensors / calm baseline); the full set regenerates for any round with
   the `flight_report.py` command above — the other rounds are summarised in the tables and `compare_*.svg`

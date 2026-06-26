@@ -31,8 +31,8 @@ Required hardware and the phased development roadmap. Architecture lives in
   review, code-audit follow-ups, Phase 5 prep, and enabling the **6-DoF IMU** (LSM6DSO32).
 - **Simulation & performance — done.** On-board **HITL simulator** (closed-loop, no production-code
   changes) + host **virtual-flight** tool with interactive HTML/SVG reports (`doc/sims/TMS-7/`:
-  noise/wind/spike sweeps + corner cases); **perf cluster g2/g3/g7/g14** (nav-heading cache, zero-alloc
-  mixer, GC-disabled-in-flight, sleeping CPU-load probe → **7.2 W → 3.6 W**); **g16** spike injection;
+  noise/wind/spike sweeps + corner cases); **perf cluster** (nav-heading cache, zero-alloc
+  mixer, GC-disabled-in-flight, sleeping CPU-load probe → **7.2 W → 3.6 W**); spike injection;
   the TMS-7 flight envelope + airframe notes in `coludo.md`. Bench re-run + numbers refreshed.
 - **Phase 5 — field testing (next).** Staged ladder: maket walk-test → telemetry launch → powered
   launch, likely on the wider **TMS-8** airframe. See below.
@@ -48,7 +48,7 @@ flight on real hardware (extends the flight-test-plan):
    - **`launchpad` config outdoors** — real GNSS fix at the pad, mission zone loaded;
    - **walk-around "flight simulation"** — flight loop in GLIDING (manual stage hold), armed: carry it
      like a glider and watch the **fins react** to the live attitude + landing-zone heading, Luckfox
-     capturing telemetry for a `flight_report`. No 58 m/s sprint required ;) — the loop flies at
+     capturing telemetry for a `flight_report`. No 58 m/s sprint required ) — the loop flies at
      walking pace;
    - **trip "separation" by hand** — confirm the switch drives `BOOSTING → GLIDING` and the loop engages.
 2. **Telemetry launch** — passive electronics-only flight (no SG90 actuation): fly E16/F15, record the
@@ -287,15 +287,15 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
 - ✅ **HITL simulator** (`tasks/hitl.py` + `sim_model.py` + `config_hitl.py`) — closed-loop on the board
   with no production-code changes: reads the commanded fins, steps a flight model, and provides the
   simulated sensors on the databoard at priority 0 so `sequencer`/`flight`/`pid`/`mixer`/`navigation`
-  can't tell it is not real. Controlled noise N (5/10/25/50/100 %) + spikes (g15/g16).
+  can't tell it is not real. Controlled noise N (5/10/25/50/100 %) + spikes.
 - ✅ **Virtual flight** (`tools/virtual_flight.py`) — the same model + real control code on the host,
   emitting recorder captures; `tools/flight_report.py` (interactive plotly: 3D track + accel/altitude/
   speed/attitude/**fins**/board-health/agl, unified hover) and `tools/flight_svg.py` (dependency-free).
   Experiments + corner cases stored in [`sims/TMS-7/`](sims/TMS-7/).
-- ✅ **Energy management** (bank-to-turn, Phase 4) and the **perf cluster g2/g3/g7/g14** — measured on
+- ✅ **Energy management** (bank-to-turn, Phase 4) and the **perf cluster** — measured on
   the board (`steer()` 174 µs cached off the hot loop; mixer zero-alloc; GC-off-flight 20 MB headroom;
   load probe 7.2 W → 3.6 W).
-- ✅ **g16** spike injection + two stored corner-case traces (glitch-rejection; everything-degraded).
+- ✅ spike injection + two stored corner-case traces (glitch-rejection; everything-degraded).
 
 ### `launch.config` (mission config)
 A separate config document, same layered/validated/save+reactivate form as `board.config`

@@ -54,7 +54,7 @@ class Inspector:
     @classmethod
     async def probe_all(cls) -> dict:
         """Run probe() on every registered inspectable that implements it; return {name: result} (result
-        None = passed). The shared probe-all sweep (D08): cc arm/verify keep the non-None failures,
+        None = passed). The shared probe-all sweep: cc arm/verify keep the non-None failures,
         `probe all` reports every result."""
         results = {}
         for name in cls.names():

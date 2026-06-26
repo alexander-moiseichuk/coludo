@@ -1,9 +1,9 @@
 # Board configuration loader / validator — the Phase 0 foundation.
 #
 # Implements the three-layer model from specs/board-config.md:
-#   config_default.py  (firmware default / fallback)
-#   board.config         (saved active config, a full snapshot)
-#   in-memory dict     (validated, what the Controller builds tasks from)
+# config_default.py (firmware default / fallback)
+# board.config (saved active config, a full snapshot)
+# in-memory dict (validated, what the Controller builds tasks from)
 #
 # Runs on MicroPython on the board. Validation here is config-file *integrity* (structure,
 # types, pin uniqueness, bus refs, reserved pins) — NOT hardware health, which is checked at
@@ -258,7 +258,7 @@ def save(cfg, path: str = 'board.config') -> str:
     errs = validate(cfg)
     if errs:
         raise ValueError('invalid config: ' + '; '.join(errs))
-    commons.atomic_write_json(path, cfg)  # validated above -> persist the snapshot atomically (D04)
+    commons.atomic_write_json(path, cfg)  # validated above -> persist the snapshot atomically
     return config_id(cfg)
 
 

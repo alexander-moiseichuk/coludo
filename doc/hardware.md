@@ -9,7 +9,7 @@ To have good enough performance (as micropython is running on single core) the e
 solution: [FireBeetle 2 ESP32-P4 AI Development Kit MIPI CSI DSI Wi-Fi 6 and IO Expansion Board](https://www.dfrobot.com/product-2950.html).
 WiFi is a nice option to have remote (telnet) console before and for some period of time during launch.
 
-If this unit will be not enough [low-end ARM](https://www.cnx-software.com/2025/10/31/sakura-pi-rk3308b-sbc-offers-rgb-lcd-interface-supports-mainline-linux/) 
+If this unit will be not enough [low-end ARM](https://www.cnx-software.com/2025/10/31/sakura-pi-rk3308b-sbc-offers-rgb-lcd-interface-supports-mainline-linux/)
 could be an option but may lead too much battery pack weigh.
 
 **Required, weight 30.5g**
@@ -66,12 +66,12 @@ The leanest flyable sensor set is therefore **LSM6DSO32 (accel + gyro) + BNO055 
 
 ## Accelerometer and Gyro
 
-Something like [MPU6050](https://www.amazon.com/dp/B0BMY15TC4?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_13) highly not recommended due to noise for high moving cases. [HPR Rocket Flight Computer](https://github.com/SparkyVT/HPR-Rocket-Flight-Computer) points the best `LSM6DSOX` keeping wide range as acceptable including `MPU6050`. 
+Something like [MPU6050](https://www.amazon.com/dp/B0BMY15TC4?ref_=ppx_hzsearch_conn_dt_b_fed_asin_title_13) highly not recommended due to noise for high moving cases. [HPR Rocket Flight Computer](https://github.com/SparkyVT/HPR-Rocket-Flight-Computer) points the best `LSM6DSOX` keeping wide range as acceptable including `MPU6050`.
 
 Three parts split the IMU job; the roles do **not** overlap, so dropping one is not free:
 
 - **LSM6DSO32 — primary 6-DoF (accel + gyro).** ±32 g covers the 8–12 g boost without clipping and
-  still gives ~1 mg resolution at 1 g, so it is the lead `accel` for the g12 airspeed integrator and
+  still gives ~1 mg resolution at 1 g, so it is the lead `accel` for the airspeed integrator and
   boost detect, and the sole `rate` (gyro) source. The LSM6DSOX-family part the HPR computer favours.
 - **BNO055 — attitude/heading (flight-critical).** Its own accelerometer is only ±16 g, but that is
   not why it is on board: it is the **only** device that outputs **fused 9-DoF orientation +
@@ -162,7 +162,7 @@ Candidates (SG90 expected primary — cheap, compact, light):
 **60° looks interesting** (gives **±30°** of fin throw at ~4× torque); 45° (±22.5°) is too little angle.
 
 **Power**: servos run from their **own boost rail** (expected 5V, can be 7/9/12V if needed), separate from the
-controller; **per-pin diode protection** is NOT required for 5V. In case of high current peaks, 
+controller; **per-pin diode protection** is NOT required for 5V. In case of high current peaks,
 drive the servos **sequentially** (not all at once) most likely is not feasible due to slow reactions of such mode.
 
 **Required, weight 10.6g per each engine and wires, at least 2 are required**
@@ -174,7 +174,7 @@ output-shaft **bending** load is the limit, not torque — the sole reason to pr
 **MG90S** (~+3 g). Derivation: [`../specs/coludo.md`](../specs/coludo.md) → "Fin authority → Servo torque".
 
 ## SD card
-Any suitable by size and throughput as code, videos and logs will be written here. 
+Any suitable by size and throughput as code, videos and logs will be written here.
 
 **Optional (only for camera), weight 1g**
 
@@ -184,13 +184,13 @@ Any suitable by size and throughput as code, videos and logs will be written her
 Just a popular and sufficient unit to check what is happening [HiLetgo USB Logic Analyzer Device with EMI Ferrite Ring USB Cable 24MHz 8CH 24MHz 8 Channel UART IIC SPI Debug](https://www.amazon.com/dp/B077LSG5P2)
 Some set of [Goupchn SMD IC Test Hook Clips 10PCS 10 Colors for Logic Analyzer](https://www.amazon.com/dp/B0D3ZWTCW4) will speedup process.
 
-## Power meter 
+## Power meter
 For periodic checks during development how much power consumed something like [USB C Tester Power Meter](https://www.amazon.com/dp/B0DFBSFL38).
 If device allow to pass commands over USB it will be much better as will allow to control situation when wifi console is off.
 
 # 3D model data
 
-These numbers are coming from the printed TMS-7 models. 
+These numbers are coming from the printed TMS-7 models.
 
 |Component|Count|Weight [g]|
 | ------------------- | --- | ---- |

@@ -1,4 +1,4 @@
-# config_hitl.py — a HITL board config derived from config_default (6/23 g15). The real sensor drivers
+# config_hitl.py — a HITL board config derived from config_default (). The real sensor drivers
 # are turned OFF and the `hitl` task supplies accel/attitude/agl/altitude/elevation/position at priority
 # 0, so the control code reads the simulation. flight is enabled with test gains, the watchdog and the
 # radios are off (self-contained sim), and separation is off (the boost-timeout drives BOOSTING ->

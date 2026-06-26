@@ -1,16 +1,16 @@
 # commons.py — small, dependency-free primitives shared across the control-math modules (mixer / pid /
-# navigation / sequencer / flight / sg90). The bundle module for the g14/g15 plan.
+# navigation / sequencer / flight / sg90). The bundle module for the plan.
 #
 # Naming convention:
-#   plain name                           -- a leaf with no _opt variant at all (none currently).
-#   NAME_upy / NAME_opt + `NAME = <winner>`
-#                                        -- a function with an optimised variant. NAME_upy is the
-#      portable bytecode reference; NAME_opt is the optimised build (viper for ints, native for floats,
-#      future asm). The module binds NAME to whichever the on-board bench FAVOURS -- usually _opt; switch
-#      the one alias line if a measurement changes. Both forms stay public so benchmarks/tests call them
-#      DIRECTLY (no runtime selector). Bound here: clamp_int, wrap180 (@viper, ~2.1-2.8x); between,
-#      magnitude_sq (@native, ~1.2-1.6x); bank_demand -> _upy for now (its @native measured 1.03x -- a
-#      thin wrapper over native between; switch to _opt when a bench shows a gain).
+# plain name -- a leaf with no _opt variant at all (none currently).
+# NAME_upy / NAME_opt + `NAME = <winner>`
+# -- a function with an optimised variant. NAME_upy is the
+# portable bytecode reference; NAME_opt is the optimised build (viper for ints, native for floats,
+# future asm). The module binds NAME to whichever the on-board bench FAVOURS -- usually _opt; switch
+# the one alias line if a measurement changes. Both forms stay public so benchmarks/tests call them
+# DIRECTLY (no runtime selector). Bound here: clamp_int, wrap180 (@viper, ~2.1-2.8x); between,
+# magnitude_sq (@native, ~1.2-1.6x); bank_demand -> _upy for now (its @native measured 1.03x -- a
+# thin wrapper over native between; switch to _opt when a bench shows a gain).
 #
 # `@micropython.viper` / `@micropython.native` are compiler directives keyed on the literal decorator
 # name (not aliasable); the shim below keeps the module importable on CPython (the decorator degrades to
@@ -35,7 +35,7 @@ except ImportError:  # CPython (off-board tooling / tests) — decorators + cons
             return value
 
 
-M_PER_DEG = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat)); A09 shared
+M_PER_DEG = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat)); shared
                       # by navigation + sim_model (flat-earth geo) -- one definition, not three.
 
 
@@ -55,7 +55,7 @@ between = between_opt  # @native -- the most-called primitive; a free ~1.6x (han
 
 
 def magnitude_sq_upy(x, y, z):
-    """|(x, y, z)|^2 (no sqrt — callers compare against squared thresholds; g7). Pure float -> @native."""
+    """|(x, y, z)|^2 (no sqrt — callers compare against squared thresholds). Pure float -> @native."""
     return x * x + y * y + z * z
 
 
@@ -100,7 +100,7 @@ def fin_deflection_limit(speed_ms):
 
 
 def atomic_write_json(path, data):
-    """Persist `data` as JSON to `path` atomically (D04, shared by config.save + mission.save): write a
+    """Persist `data` as JSON to `path` atomically (shared by config.save + mission.save): write a
     temp file then rename it over the target, with a remove-then-rename fallback for a VFS (FAT) that
     won't rename onto an existing file. os/json are imported lazily so the hot-path importers of commons
     do not pull them in."""

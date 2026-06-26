@@ -1,4 +1,4 @@
-# On-board test for the shared primitives bundle (commons.py, g13/g15). For each function with an
+# On-board test for the shared primitives bundle (commons.py). For each function with an
 # optimised variant, the _opt build (@micropython.viper for ints, @micropython.native for floats) must
 # return EXACTLY what the _upy bytecode reference does -- across ranges, bounds, and (for between) the
 # inf-open sides. Also: the plain name binds the _opt variant. Run by `make test`.

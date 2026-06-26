@@ -24,7 +24,7 @@ class Stage:
     `STAGES` id->name mapping (operator-facing names; `in Stage.STAGES` is an O(1) key check). `NAMES`
     is the reverse (name->id) so config that names stages by string resolves to an id once.
 
-    A12: kept here, in the stage machine's own module. flight/sequencer/hitl/led import it from
+    kept here, in the stage machine's own module. flight/sequencer/hitl/led import it from
     controller -- a LIGHT coupling (the module loads fast, no heavy deps pulled just for the enum). It
     could move to commons.py as the shared domain enum to drop even that import, but the gain is marginal
     versus the cross-file churn; revisit only if importing controller solely for Stage ever bites."""

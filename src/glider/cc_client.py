@@ -133,7 +133,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         if controller is None:
             return cc.build('err', ['unsupported', 'no controller'])
         problems = dict(controller.failures)  # not-connected devices
-        for name, result in (await inspector.Inspector.probe_all()).items():  # D08
+        for name, result in (await inspector.Inspector.probe_all()).items():  #
             if result is not None:
                 problems[name] = result
         if problems:
@@ -180,9 +180,9 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
 
     # The named configs the operator can read/write through one pair of commands (get-config <name> /
     # set-config <name> <json>), instead of a get-/save- pair per config:
-    #   board    the running board config (hardware; config.py, validated + atomically saved)
-    #   default  the built-in board default (read-only)
-    #   launch   the per-launch mission (launch.config; mission.py, merge-applied + saved)
+    # board the running board config (hardware; config.py, validated + atomically saved)
+    # default the built-in board default (read-only)
+    # launch the per-launch mission (launch.config; mission.py, merge-applied + saved)
     async def get_config(msg) -> str:
         """`get-config [name]` -- the named config (default `board`)."""
         name = msg.args[0] if msg.args else 'board'
@@ -236,7 +236,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         Sequential, so fins self-test one at a time."""
         target = msg.args[0] if msg.args else 'all'
         if target == 'all':
-            results = await inspector.Inspector.probe_all()  # D08
+            results = await inspector.Inspector.probe_all()  #
             if controller is not None:  # devices that failed setup aren't inspectable -> not connected
                 for name, reason in controller.failures.items():
                     results.setdefault(name, 'not connected: ' + reason)
@@ -257,7 +257,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
                           else 'down: ' + controller.failures.get(name, '?'))
                    for name in controller.directory()}
         problems = dict(controller.failures)  # not-connected devices
-        for name, result in (await inspector.Inspector.probe_all()).items():  # D08
+        for name, result in (await inspector.Inspector.probe_all()).items():  #
             if result is not None:
                 problems[name] = result
         return cc.build('ok', [json.dumps({'pass': not problems, 'devices': devices, 'problems': problems})])

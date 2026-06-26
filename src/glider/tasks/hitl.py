@@ -1,4 +1,4 @@
-# tasks/hitl.py — Hardware-In-The-Loop flight simulator (Phase-5, 6/23 g15). @task.activity('hitl').
+# tasks/hitl.py — Hardware-In-The-Loop flight simulator (Phase-5). @task.activity('hitl').
 #
 # Closes the control loop ON THE BOARD without changing any production code: it reads the commanded fin
 # angles from the cached servo tasks, steps a flight-dynamics model (sim_model.Body), and PROVIDES the
@@ -8,13 +8,13 @@
 # config_hitl (real sensors off, this on, flight + sequencer enabled, watchdog off). The physics live in
 # sim_model.py (pure, shared with the host-side tools/virtual_flight.py -- same model, both worlds).
 #
-# Fidelity: BOOST adds attitude under thrust (g12) -- a crosswind weathercocks the stack and the boost
+# Fidelity: BOOST adds attitude under thrust -- a crosswind weathercocks the stack and the boost
 # stage's guarded fins fight to hold it vertical, on top of the vertical 1-DoF that drives launch detect +
 # apogee; the GLIDE is a rigid body with roll/pitch/yaw state driven by the elevon/rudder deflections the
 # flight loop commands (that is where the rest of control happens). Aero is simplified and the
 # coefficients are deliberately tunable -- the point is a stable, closed loop that exercises the control
-# code, not aerodynamic truth. Outputs are perturbed by a noise level N (g15) and optional 2x spikes
-# (g16) to study sensor-quality degradation (e.g. the laser dropping out beyond its range).
+# code, not aerodynamic truth. Outputs are perturbed by a noise level N and optional 2x spikes
+# to study sensor-quality degradation (e.g. the laser dropping out beyond its range).
 #
 # The simulated sensors are ALSO recorded as telemetry under the SAME csv names/fields as the real
 # drivers (accel_adxl375 / imu_bno055 / baro_icp10111 / gnss / laser_agl + a combined fins), so an
@@ -51,8 +51,8 @@ class Hitl(task.Task):
         scenario.update(cfg.get('scenario', {}))
         self._sim_hz: int = cfg.get('sim_hz', 50)
         self._noise: float = cfg.get('noise', 0.0)             # N: 0.0 / 0.05 / 0.10 / 0.25 / 0.50
-        self._laser_range_m: float = cfg.get('laser_range_m', 4.0)  # agl drops out beyond this (g15)
-        self._spike: bool = cfg.get('spike', False)            # g16: occasional 2x spikes
+        self._laser_range_m: float = cfg.get('laser_range_m', 4.0)  # agl drops out beyond this
+        self._spike: bool = cfg.get('spike', False)            # occasional 2x spikes
         # which accelerometer axis carries the boost |a|: on the rod the IMU long-axis (often X or Y,
         # since the board's Z is normal to the PCB) reads the thrust. Launch-detect is magnitude-based
         # (axis-agnostic), so this is for matching the real mounting / exercising per-axis code.
@@ -119,7 +119,7 @@ class Hitl(task.Task):
         # databoard -> the control loop
         self._ch['accel'].push((accel[0], accel[1], accel[2]))
         self._ch['attitude'].push((heading, roll, pitch))
-        in_range = agl_clean <= self._laser_range_m  # laser only sees the ground within its range (g15)
+        in_range = agl_clean <= self._laser_range_m  # laser only sees the ground within its range
         if in_range:
             self._ch['agl'].push(_noisy(agl_clean, n, 0.0, 1000.0))
         self._ch['altitude'].push(altitude)
@@ -163,7 +163,7 @@ class Hitl(task.Task):
             # accel + altitude that drive the sequencer); GLIDING/LANDING -> fin-controlled 6-DoF glide.
             boosting = self.controller.stage < _STAGE.GLIDING
             if boosting:
-                roll, pitch, _yaw = self._read_fins()  # g12: the boost stage holds vertical via the fins
+                roll, pitch, _yaw = self._read_fins()  # the boost stage holds vertical via the fins
             else:
                 if not self._body.gliding:
                     self._body.begin_glide()                 # BOOSTING -> GLIDING: deploy + glide
@@ -173,7 +173,7 @@ class Hitl(task.Task):
                     self._body.boost_step(fixed, self._thrust if t < self._burn_s else 0.0, pitch, roll)
                 else:
                     spiked = roll * 2.0 if (self._spike and random.random() < fixed / 3.0) else roll
-                    self._body.glide_step(fixed, spiked, pitch, yaw)  # g16: occasional 2x roll spike
+                    self._body.glide_step(fixed, spiked, pitch, yaw)  # occasional 2x roll spike
                 accumulator -= fixed
                 t += fixed
             self._publish()

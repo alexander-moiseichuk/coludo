@@ -1,11 +1,11 @@
-# g17 -- telemetry-collection mode validation: bring up the FULL stack with the flight control loop
+# -- telemetry-collection mode validation: bring up the FULL stack with the flight control loop
 # ENABLED, with NO engines/servos/booster physically plugged, and prove it (a) boots every enabled task
 # (hardware-absent ones skip gracefully, by design), (b) runs with no unhandled error, and (c) PRODUCES
 # fin commands once gliding -- the control path a telemetry launch exercises.
 #
 # Integration test (itest_, not auto-run by run_tests.sh): enables flight + runs the real task loops for
 # a few seconds. Bring-up is inlined (mirrors main.bringup) so main.py need not be on the board (no kiosk).
-# Run on-board:  boardrun.py PORT runfile test/itest_telemetry.py 25
+# Run on-board: boardrun.py PORT runfile test/itest_telemetry.py 25
 
 import asyncio
 

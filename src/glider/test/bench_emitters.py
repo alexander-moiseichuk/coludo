@@ -1,6 +1,6 @@
-# g15 exploration: push past viper -- measure @micropython.native on the FLOAT hot path and a
+# exploration: push past viper -- measure @micropython.native on the FLOAT hot path and a
 # hand-written @micropython.asm_rv32 integer clamp, both vs bytecode/viper, with correctness asserts.
-# Run on-board:  boardrun.py PORT runfile test/bench_emitters.py 40
+# Run on-board: boardrun.py PORT runfile test/bench_emitters.py 40
 # ruff: noqa: F821 -- the asm_rv32 body uses bare RV32 mnemonics/registers the inline assembler provides.
 import time
 
@@ -54,7 +54,7 @@ for low, value, high in ((0, 5, 10), (0, -3, 10), (0, 99, 10), (-45, 60, 45), (-
     assert _clamp_viper(low, value, high) == _clamp_upy(low, value, high), (low, value, high)
 assert abs(_axis_native(10.0, 2.0, -1.0) - _axis_upy(10.0, 2.0, -1.0)) < 1e-9
 
-print('g15 emitter bench -- %d calls each, ns/call:' % _N)
+print(' emitter bench -- %d calls each, ns/call:' % _N)
 print('  clamp_int  bytecode=%4d  viper=%4d ns (int)'
       % (_bench3(_clamp_upy, 0, 5, 10), _bench3(_clamp_viper, 0, 5, 10)))
 print('  pid-axis   bytecode=%4d  native=%4d ns (float mul-chain)'

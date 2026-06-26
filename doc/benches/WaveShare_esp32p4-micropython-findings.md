@@ -26,7 +26,7 @@ mpremote connect /dev/ttyACM0 run src/glider/test/bench_asyncio.py
 
 ---
 
-## Update — MicroPython 1.29.0-preview (2026-06-24, g16)
+## Update — MicroPython 1.29.0-preview (2026-06-24)
 
 Re-ran on **`v1.29.0-preview.414.g533a154c8a`** (raw:
 [`…-1.29.0-preview.log`](WaveShare_esp32p4_micropython-1.29.0-preview.log) /
@@ -46,7 +46,7 @@ contention — it broke the shared-i2c-bus drivers). The headline below is a **m
 
 The PSRAM memcpy rate roughly **tripled**, which cascades into everything PSRAM-bound: the O(buflen) slice
 store and the fragmented-GC walk are both ~2–3× cheaper. **Design impact:** the fragmented-GC pause that
-motivated *GC-disabled-in-flight* (g14) is now ~33 ms — still well past the 10 ms control budget, so the
+motivated *GC-disabled-in-flight* is now ~33 ms — still well past the 10 ms control budget, so the
 policy stands, but the worst case is half as bad. The ~10 ms `asyncio.sleep` floor is **unchanged**, so
 the hardware-timer-paced control loop is still required. The 1.28.0 numbers below remain the reference
 text; deltas above supersede them on 1.29.0.

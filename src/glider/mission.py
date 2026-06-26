@@ -4,10 +4,10 @@
 # lives in its own file, `launch.config`, and is edited live through the Inspector.
 #
 # Mission is a singleton Inspectable:
-#   inspect mission                              -> launch id / site / position + the board clock
-#   update mission base64:{"launch_id":"t1"}     -> set the launch id for this flight
-#   update mission base64:{"epoch":1750170000}   -> set the board RTC (time sync; Unix seconds)
-#   get-config launch / set-config launch        -> read / save (merge + persist) launch.config
+# inspect mission -> launch id / site / position + the board clock
+# update mission base64:{"launch_id":"t1"} -> set the launch id for this flight
+# update mission base64:{"epoch":1750170000} -> set the board RTC (time sync; Unix seconds)
+# get-config launch / set-config launch -> read / save (merge + persist) launch.config
 #
 # Position is metres / decimal degrees; it is a known origin now and seeds the GNSS driver later.
 
@@ -220,4 +220,4 @@ class Mission(inspector.Inspectable):
     def save(self) -> None:
         """Persist the stored mission fields to launch.config (atomic temp+rename) so the launch
         identity survives a pre-flight reboot. The clock is never persisted -- it is the RTC's."""
-        commons.atomic_write_json(self.path, self.persisted())  # D04
+        commons.atomic_write_json(self.path, self.persisted())  #
