@@ -133,12 +133,9 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         if controller is None:
             return cc.build('err', ['unsupported', 'no controller'])
         problems = dict(controller.failures)  # not-connected devices
-        for name in inspector.Inspector.names():
-            run = getattr(inspector.Inspector.get(name), 'probe', None)
-            if run is not None:
-                result = await run()
-                if result is not None:
-                    problems[name] = result
+        for name, result in (await inspector.Inspector.probe_all()).items():  # D08
+            if result is not None:
+                problems[name] = result
         if problems:
             return cc.build('err', ['unsafe', json.dumps(problems)])  # refuse to arm
         controller.arm()
@@ -239,11 +236,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         Sequential, so fins self-test one at a time."""
         target = msg.args[0] if msg.args else 'all'
         if target == 'all':
-            results = {}
-            for name in inspector.Inspector.names():
-                run = getattr(inspector.Inspector.get(name), 'probe', None)
-                if run is not None:
-                    results[name] = await run()
+            results = await inspector.Inspector.probe_all()  # D08
             if controller is not None:  # devices that failed setup aren't inspectable -> not connected
                 for name, reason in controller.failures.items():
                     results.setdefault(name, 'not connected: ' + reason)
@@ -264,12 +257,9 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
                           else 'down: ' + controller.failures.get(name, '?'))
                    for name in controller.directory()}
         problems = dict(controller.failures)  # not-connected devices
-        for name in inspector.Inspector.names():
-            run = getattr(inspector.Inspector.get(name), 'probe', None)
-            if run is not None:
-                result = await run()
-                if result is not None:
-                    problems[name] = result
+        for name, result in (await inspector.Inspector.probe_all()).items():  # D08
+            if result is not None:
+                problems[name] = result
         return cc.build('ok', [json.dumps({'pass': not problems, 'devices': devices, 'problems': problems})])
 
     async def log(msg) -> str:
