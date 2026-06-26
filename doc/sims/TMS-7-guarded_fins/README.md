@@ -76,11 +76,11 @@ hit-or-miss). Same ≥25 % noise breakdown and landing-detect timeout as F15-4. 
 
 ## Corner cases (g16 spike injection)
 
-`--spike` injects a transient 2× attitude/accel glitch every ~3 s. Raw captures kept for both engines:
+`--spike` injects a transient 2× attitude/accel glitch every ~3 s (`report_corner_*` per engine):
 
-- **`corner_spike.txt`** (10 % noise + spikes) — the loop rejects glitches; F15-4 still lands in zone
+- **corner_spike** (10 % noise + spikes) — the loop rejects glitches; F15-4 still lands in zone
   (miss 3 m), E16-4 holds ~227 m.
-- **`corner_stress.txt`** (50 % noise + 12 m/s wind + spikes) — everything-degraded; both run the cap in
+- **corner_stress** (50 % noise + 12 m/s wind + spikes) — everything-degraded; both run the cap in
   LANDING (F15-4 287 m, E16-4 285 m from the centre, contained ≤ ~255 m).
 
 Open `report_corner_*.html` (plotly) and watch the **fins** + **attitude** panels through the boost +
@@ -100,7 +100,6 @@ Per engine (`f15-4/`, `e16-4/`):
 - `report_{corner_spike,corner_stress,noise05,noise50,wind00}.html` — interactive plotly reports
   (3D trajectory + linked accel/altitude/speed/attitude/**fins**/**health**/agl panels)
 - `compare_noise.svg`, `compare_wind.svg` — sweep overlays (all tracks on one plan view)
-- `corner_spike.txt`, `corner_stress.txt` — the raw device captures for the two corner cases
 
-The bulk per-flight raw captures are not kept (the reports carry them); regenerate any round on the board
-with the rshell-run / adb-take workflow.
+The raw per-flight captures are not kept (the reports carry them); regenerate any round on the board with
+`tools/hitl_matrix.sh <F15|E16>` (rshell-run → adb-take → assemble → render).
