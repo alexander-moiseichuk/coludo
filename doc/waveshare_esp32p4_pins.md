@@ -169,10 +169,14 @@ no limit hit). On a SPI part, **CS is the real active-low select** (no "tie it h
       'int_pin': 'lsm6dso32_int1',       # INT1 data-ready paces the sampling
       'telemetry_us': 10000,             # ~100 Hz raw 6-DoF, decimated in imu_lsm6dso32.csv
       'enabled': True,
-      'provides': { 'accel': {'priority': 2, 'timeout_ms': 20},   # behind adxl375(0), bno055(1)
-                    'rate':  {'priority': 0, 'timeout_ms': 20} } },  # gyro: the only rate provider
-]
-```
+      'provides': { 'accel': {'priority': 0, 'timeout_ms': 20},   # PRIMARY: +-32 g covers the ~12 g
+                    'rate':  {'priority': 0, 'timeout_ms': 20} } },  # boost without clipping AND has
+]                                                                    # fine low-g resolution for the
+```                                                                  # glide integrator; gyro = sole rate
+
+# This makes LSM6DSO32 the lead accel. Bump the existing entries to match: adxl375 accel -> priority 1
+# (the >+-32 g high-g backstop), bno055 accel -> priority 2 (fused fallback). The +-200 g ADXL375 is
+# ~50x coarser at 1 g, so it should NOT lead the glide-phase airspeed integrator.
 
 ## Firmware peripheral defaults — do not rely on them
 
