@@ -86,6 +86,11 @@ class Flight(task.Task):
         self._gnss_speed = databoard.Databoard.parameter('speed')  # GNSS ground speed (m/s) corrector
         self._airspeed = airspeed.AirspeedEstimator()
         self._fin_limit_multiplier: float = board.get('fin_limit_multiplier', 1.0)
+        # g12 boost stage: hold the rod-vertical attitude captured at BOOSTING entry, engaging only PAST
+        # the rod (airspeed > boost_engage_speed); below that the fins stay neutral (the rod holds it).
+        self._boost_engage: float = self.config.get('boost_engage_speed', 15.0)
+        self._roll_hold: float = 0.0  # captured rod-vertical roll/pitch (set on entering BOOSTING)
+        self._pitch_hold: float = 0.0
         self._mission = inspector.Inspector.get('mission')  # the landing zone lives here (may be None)
         # g7: throttle navigation.steer() (sin/cos/atan2) to GPS cadence -- recompute the target heading
         # every nav_period_ms, cache the float, and read the cache at schedule_hz (see _target_heading).
@@ -142,24 +147,38 @@ class Flight(task.Task):
         if not self._active:  # entering control (from a non-control stage): capture heading, reset PIDs
             self._active = True
             self._heading_hold = heading
+            self._roll_hold = roll  # g12 boost: the rod-vertical attitude to hold through the climb
+            self._pitch_hold = pitch
             self._nav_heading = None  # force a fresh steer() on the first controlled step (g7 cache)
             for controller in self._pid.values():
                 controller.reset()
-        self._stage = self.controller.stage  # Stage id; may switch between control stages (glide -> landing)
+        self._stage = self.controller.stage  # Stage id; may switch between control stages
         agl = self._agl.value()
         final = self._final_agl and agl is not None and agl < self._final_agl  # low on final approach
-        heading_error = self._heading_error(self._target_heading(heading, final), heading)
-        roll_setpoint = setpoint.get('roll', 0.0)
-        if self._land_bank_gain and (final or self._stage == _STAGE.LANDING):
-            # g8/g9 final approach / landing: track the strip centreline (set up in _target_heading) with
-            # the FULL fin authority (45 deg) to crab the crosswind out -- keep it gliding, not
-            # rolling-and-dropping. The residual at strong wind is airframe-bound, not a control gap.
-            roll_setpoint = commons.bank_demand(heading_error, self._land_bank_gain, self._land_bank_limit)
-        elif self._bank_gain and self._stage == _STAGE.GLIDING:  # bank-to-turn toward the zone (vs rudder skid)
-            roll_setpoint = commons.bank_demand(heading_error, self._bank_gain, self._bank_limit)
+        if self._stage == _STAGE.BOOSTING:
+            # g12 boost: hold the captured rod-vertical attitude; engage ONLY past the rod (airspeed >
+            # boost_engage) -- below that the fins have no q to bite and the 3-point rod holds it vertical.
+            # Heading is ill-defined near vertical -> no nav/yaw steering; the speed governor caps the throw.
+            if self._airspeed.value() < self._boost_engage:
+                self._neutral()  # still on/near the rod -> no actuation
+                return
+            roll_setpoint = self._roll_hold
+            pitch_setpoint = self._pitch_hold
+            heading_error = 0
+        else:
+            heading_error = self._heading_error(self._target_heading(heading, final), heading)
+            roll_setpoint = setpoint.get('roll', 0.0)
+            pitch_setpoint = setpoint.get('pitch', 0.0)
+            if self._land_bank_gain and (final or self._stage == _STAGE.LANDING):
+                # g8/g9 final approach / landing: track the strip centreline (set up in _target_heading) with
+                # the FULL fin authority (45 deg) to crab the crosswind out -- keep it gliding, not
+                # rolling-and-dropping. The residual at strong wind is airframe-bound, not a control gap.
+                roll_setpoint = commons.bank_demand(heading_error, self._land_bank_gain, self._land_bank_limit)
+            elif self._bank_gain and self._stage == _STAGE.GLIDING:  # bank-to-turn toward the zone (vs skid)
+                roll_setpoint = commons.bank_demand(heading_error, self._bank_gain, self._bank_limit)
         roll_cmd = self._pid['roll'].step(roll_setpoint - roll, dt)
-        pitch_cmd = self._pid['pitch'].step(setpoint.get('pitch', 0.0) - pitch, dt)
-        yaw_cmd = self._pid['yaw'].step(heading_error, dt)  # rudder coordinates the banked turn
+        pitch_cmd = self._pid['pitch'].step(pitch_setpoint - pitch, dt)
+        yaw_cmd = self._pid['yaw'].step(heading_error, dt)  # rudder coordinates the banked turn (0 in boost)
         # positional (not roll=...) so no kwargs dict is built on the hot path (g3)
         self._apply(self._mixer.mix(round(roll_cmd), round(pitch_cmd), round(yaw_cmd)))
         self._steps += 1

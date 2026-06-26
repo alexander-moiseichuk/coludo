@@ -205,9 +205,14 @@ def default() -> dict:
              # not rolling-and-dropping. final_approach_agl 0 -> off.
              'land_bank_gain': 1.5, 'land_bank_limit': 45,
              'final_approach_agl': 8, 'final_cross_gain': 3.0, 'final_intercept_deg': 45,
-             # per-stage attitude setpoint; stages absent here hold the fins neutral. GLIDING =
-             # bank-to-turn heading hold; LANDING pitch is the flare knob (0 = none until tuned).
-             'stages': {'gliding': {'roll': 0, 'pitch': 0}, 'landing': {'roll': 0, 'pitch': 0}}},
+             # g12 boost: BOOSTING holds the rod-vertical attitude captured at stage entry, but only once
+             # PAST THE ROD (airspeed > boost_engage_speed m/s) -- the 3-point rod keeps it vertical and the
+             # fins have no authority below that. The speed governor caps the throw the whole way up.
+             'boost_engage_speed': 15.0,
+             # per-stage attitude setpoint; stages absent here hold the fins neutral. BOOSTING = hold the
+             # captured rod-vertical attitude (no config setpoint); GLIDING = bank-to-turn heading hold;
+             # LANDING pitch is the flare knob (0 = none until tuned).
+             'stages': {'boosting': {}, 'gliding': {'roll': 0, 'pitch': 0}, 'landing': {'roll': 0, 'pitch': 0}}},
             # Watchdog + heartbeat (Phase 3): feeds a hardware WDT (a total event-loop wedge -> hard
             # reset) and supervises the control loop (stall in a control stage -> full reset; boot
             # re-centres the fins). Disabled by default -- a live WDT also resets the board when you

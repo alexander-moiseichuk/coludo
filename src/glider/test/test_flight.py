@@ -237,7 +237,27 @@ async def amain():
     gov._step()
     assert gov._airspeed.value() > 0.0  # integrated off zero
 
-    print('ok: flight -- control stages, nav tiers, degraded->neutral, PID->mix->fins, fin governor, scheduling')
+    # g12 boost stage: BOOSTING is a control stage that holds the captured rod-vertical attitude, but only
+    # PAST THE ROD (airspeed > boost_engage); below it the fins stay neutral (the rod holds it vertical).
+    boost_ctrl = _StubController(Stage.BOOSTING)
+    boostflight = flight.Flight('flight', {'schedule_hz': 0, 'boost_engage_speed': 15.0,
+                                           'gains': {'roll': {'kp': 1.0}, 'pitch': {'kp': 1.0}},
+                                           'stages': {'boosting': {}, 'gliding': {}}}, boost_ctrl)
+    assert await boostflight.setup() is True
+    accel.push((0.0, 0.0, 1.0))  # 1 g -> net 0 -> predict() no-op so the poked airspeed survives
+    attitude.push((0.0, 0.0, 90.0))  # vertical on the rod (heading 0, roll 0, pitch 90)
+    boostflight._airspeed._speed = 5.0  # still on the rod (below boost_engage)
+    boostflight._step()
+    assert all(fin.angle == 90 for fin in boost_ctrl.fins.values())  # rod gate -> neutral
+    assert boostflight._pitch_hold == 90.0 and boostflight._roll_hold == 0.0  # captured the vertical hold
+    # past the rod + leaned 10 deg off vertical -> elevons deflect to restore pitch toward the hold
+    boostflight._airspeed._speed = 30.0
+    attitude.push((0.0, 0.0, 80.0))
+    boostflight._step()
+    # pitch error = hold(90) - 80 = +10 -> kp 1 -> pitch_cmd 10 -> elevons 90+10, capped by the governor
+    assert boost_ctrl.fins['servo_eleron_left'].angle == 100 and boost_ctrl.fins['servo_yaw'].angle == 90
+
+    print('ok: flight -- control stages, nav, degraded->neutral, PID->mix->fins, fin governor, boost hold, scheduling')
 
 
 asyncio.run(amain())
