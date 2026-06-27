@@ -154,7 +154,29 @@ All Control code lives in `src/control/` and is plain **CPython 3.12** for the h
 2. `./deploy.sh` — ruff-checks + `mpy-cross`-compiles each Python file and pushes to `/pyboard/`
    (non-Python as-is); fails before touching the board if lint or compile fails.
 3. Run the tests on-device: `cd src/glider/test && make test` (or `./run_tests.sh`).
-5. Observe live behaviour through CC (telnet on 1235, browser on 8080) over the `panda` network.
+4. Observe live behaviour through CC (telnet on 1235, browser on 8080) over the `panda` network.
+
+## Scripting a board over CC (`tools/cc.py`)
+
+For anything past a one-off poke, drive the board over CC instead of the interactive console — it
+is the *designed* control channel (the dispatcher already answers `verify`/`probe`/`inspect`/
+`update`/`arm`/`tlm`/`get-config`/`set-config`/...), and it sidesteps the flaky USB-CDC/rshell path
+for complex bring-up. Start the hub once (`cd src/control && python3 main.py`); the board joins
+`panda` and dials in. Then each command is one scriptable line with a verdict exit code:
+
+```
+tools/cc.py taster verify                 # pre-flight pass/fail — exit 0 == clean, 1 == problems
+tools/cc.py taster probe imu_lsm6dso32    # one device self-test
+tools/cc.py taster inspect mission        # an inspectable's snapshot (pretty-printed JSON)
+tools/cc.py taster tlm 2000               # telemetry rows buffered since the last tlm
+tools/cc.py taster set-config launch @launch.config   # @path -> file contents (config push)
+tools/cc.py taster update mission '{"launch_id":"flight.8"}'
+```
+
+It talks to the hub's `POST /api/cmd` (web port 8080; `--host`/`--port` to point elsewhere). Exit
+code is the board's verdict (`0` only on `ok`/`pong`/`iam`), so on-device tests chain in bash:
+`until tools/cc.py taster ping; do sleep 2; done && tools/cc.py taster verify`. Note: it bypasses
+any `http_proxy` (the hub is LAN/localhost — a system proxy would otherwise hijack the request).
 
 ## Working effectively with the AI agent
 
