@@ -65,6 +65,8 @@ class Bus:
     def __init__(self, bus_id: int, spec: dict):
         from machine import SPI, Pin
 
+        self._bus_id: int = bus_id
+        self._spec: dict = spec
         mode = spec.get('mode', 3)  # SPI mode; ADXL375 = mode 3 (CPOL=1, CPHA=1)
         self._spi = SPI(bus_id, baudrate=spec.get('baud', 5_000_000), polarity=mode >> 1, phase=mode & 1,
                         sck=Pin(spec['sck']), mosi=Pin(spec['mosi']), miso=Pin(spec['miso']))
@@ -73,6 +75,18 @@ class Bus:
     def device(self, cs: int, mb_bit: int = 6) -> _Device:
         """A register window for one chip-select on this bus (matches i2cbus.Bus.device)."""
         return _Device(self, cs, mb_bit)
+
+    async def retune(self, freq: int) -> None:
+        """Re-init this SPI peripheral at `freq` Hz in place (bench frequency calibration; no reboot).
+        Held under the lock so it never swaps mid-transaction -- the shared device windows keep working,
+        they transact through self._spi which now runs at the new baud. Not persisted: the CC-side sweep
+        finds the ceiling, then saves the chosen freq to board.config + reboots."""
+        async with self._lock:
+            from machine import SPI, Pin
+            mode = self._spec.get('mode', 3)
+            self._spi = SPI(self._bus_id, baudrate=freq, polarity=mode >> 1, phase=mode & 1,
+                            sck=Pin(self._spec['sck']), mosi=Pin(self._spec['mosi']),
+                            miso=Pin(self._spec['miso']))
 
 
 def get(bus_id: int, spec: dict) -> Bus:

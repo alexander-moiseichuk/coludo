@@ -29,7 +29,12 @@ async def amain():
     if 0x28 in devices:  # BNO055 wired -> CHIP_ID 0xA0 at reg 0x00 reads back -> 'present'
         assert 'present' in await bus.device(0x28).diagnose(0x00, 0xA0)
 
-    print('ok: i2cbus shared/cached per id, scan/locked-read, diagnose, devices=%s' % [hex(a) for a in devices])
+    # retune() re-inits the peripheral at a new freq in place (bench calibration); the bus stays usable
+    await bus.retune(1000000)
+    assert isinstance(bus.scan(), list)  # still scans after the in-place re-init
+    await bus.retune(spec.get('freq', 400000))  # restore the configured freq
+
+    print('ok: i2cbus shared/cached per id, scan/locked-read, diagnose, retune, devices=%s' % [hex(a) for a in devices])
 
 
 asyncio.run(amain())

@@ -46,8 +46,19 @@ class Bus:
     def __init__(self, bus_id: int, spec: dict):
         from machine import I2C, Pin
 
+        self._bus_id: int = bus_id
+        self._spec: dict = spec
         self._i2c = I2C(bus_id, scl=Pin(spec['scl']), sda=Pin(spec['sda']), freq=spec.get('freq', 400000))
         self._lock = asyncio.Lock()
+
+    async def retune(self, freq: int) -> None:
+        """Re-init this I2C peripheral at `freq` Hz in place (bench frequency calibration; no reboot).
+        Held under the lock so it never swaps mid-transaction -- the shared device windows keep working.
+        Not persisted: the CC-side sweep finds the ceiling, then saves the chosen freq to board.config +
+        reboots."""
+        async with self._lock:
+            from machine import I2C, Pin
+            self._i2c = I2C(self._bus_id, scl=Pin(self._spec['scl']), sda=Pin(self._spec['sda']), freq=freq)
 
     async def read(self, addr: int, reg: int, count: int, addrsize: int = 8) -> bytes:
         async with self._lock:

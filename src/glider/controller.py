@@ -193,6 +193,38 @@ class Controller(inspector.Inspectable):
             return '%s [diagnose raised %r]' % (reason, error)
         return '%s -- %s' % (reason, detail) if detail else reason
 
+    async def bustune(self, kind: str, ident, freq: int) -> dict:
+        """Bench frequency-calibration primitive the CC-side sweep drives: retune sensor bus
+        <kind>:<ident> to <freq> Hz IN PLACE (no reboot), then report which of its devices stay healthy
+        -- each up device's probe() (id reads back + a sample succeeds). Returns the per-device verdicts
+        + all_ok, so the host can find the bus ceiling AND the limiting device (whoever drops out first
+        as freq climbs). Nothing is persisted here: CC saves the chosen freq via set-config board +
+        reboot. i2c/spi only (uart/pwm are not frequency-swept)."""
+        import config as config_mod
+
+        modules = {'i2c': 'i2cbus', 'spi': 'spibus'}
+        if kind not in modules:
+            return {'error': "bus kind '%s' is not tunable (i2c/spi only)" % kind}
+        spec = config_mod.bus(self.config, kind, ident)
+        if spec is None:
+            return {'error': 'bus %s:%s not defined' % (kind, ident)}
+        bus = __import__(modules[kind]).get(int(ident), spec)
+        await bus.retune(freq)
+        devices = {}
+        for item in self.config.get('sensors', []) + self.config.get('components', []):
+            if item.get('bus') != kind or str(item.get('id')) != str(ident):
+                continue
+            name = item.get('name')
+            running = self.active(name)
+            if running is None:
+                devices[name] = 'down: ' + self.failures.get(name, 'not up')
+            elif hasattr(running, 'probe'):
+                devices[name] = await running.probe() or 'ok'  # probe() -> None when healthy
+            else:
+                devices[name] = 'no probe'
+        return {'kind': kind, 'id': ident, 'freq': freq, 'devices': devices,
+                'all_ok': bool(devices) and all(verdict == 'ok' for verdict in devices.values())}
+
     async def start(self) -> None:
         """Launch each task's run() loop as a supervised asyncio task."""
         for name, pending_task in self.tasks.items():

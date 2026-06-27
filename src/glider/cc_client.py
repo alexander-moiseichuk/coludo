@@ -308,8 +308,24 @@ def _register_diagnostics(dispatcher, ctx) -> None:
                 problems[name] = result
         return cc.build('ok', [json.dumps({'pass': not problems, 'devices': devices, 'problems': problems})])
 
+    async def bustune(msg) -> str:
+        """`bustune <kind> <id> <freq>` -- retune a sensor bus (i2c/spi) to <freq> Hz live (no reboot)
+        and report which devices on it stay healthy. The CC-side `calibrate` sweep drives this to find
+        each bus's max stable frequency + the limiting device; it never persists (CC saves the chosen
+        freq via set-config board + reboot)."""
+        if ctx.controller is None:
+            return cc.build('err', ['unsupported', 'no controller'])
+        if len(msg.args) < 3:
+            return cc.build('err', ['badargs', 'bustune <kind> <id> <freq>'])
+        try:
+            freq = int(msg.args[2])
+        except ValueError:
+            return cc.build('err', ['badargs', 'freq must be an int (Hz)'])
+        return cc.build('ok', [json.dumps(await ctx.controller.bustune(msg.args[0], msg.args[1], freq))])
+
     dispatcher.on('probe', probe)
     dispatcher.on('verify', verify)
+    dispatcher.on('bustune', bustune)
 
 
 def _register_streaming(dispatcher) -> None:
