@@ -65,31 +65,40 @@ class Client:
                 await writer.drain()
 
 
-def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
-                      config_path: str = 'board.config') -> Dispatcher:
-    """Build a Dispatcher with the standard command handlers, wired to the running config, the
-    Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset."""
+class _Context:
+    """Shared state the CC handlers close over: the running config, the optional Controller, the
+    reboot hook, the config path, and the board id (cached from the config). The _register_*
+    groups below each take one of these instead of a long argument list."""
+
+    def __init__(self, cfg: dict, controller, on_reboot, config_path: str):
+        self.cfg = cfg
+        self.controller = controller
+        self.on_reboot = on_reboot
+        self.config_path = config_path
+        self.board_id = cfg['board']['id']
+
+    def stage(self) -> str:
+        """Current stage name, or 'setting' when running without a Controller (unit tests)."""
+        return self.controller.stage_name() if self.controller is not None else 'setting'
+
+
+def _register_identity(dispatcher, ctx) -> None:
+    """whoami / ping / health -- who the board is and how it is doing."""
     import gc
     import time
 
     import config as config_mod
     import databoard
 
-    board_id = cfg['board']['id']
-    dispatcher = Dispatcher()
-
-    def stage() -> str:
-        return controller.stage_name() if controller is not None else 'setting'
-
     async def whoami(msg) -> str:
         info = {
-            'mcu': cfg['board'].get('mcu'),
-            'firmware_version': cfg['board'].get('firmware_version', 'dev'),
-            'config_id': config_mod.config_id(cfg),
-            'stage': stage(),
+            'mcu': ctx.cfg['board'].get('mcu'),
+            'firmware_version': ctx.cfg['board'].get('firmware_version', 'dev'),
+            'config_id': config_mod.config_id(ctx.cfg),
+            'stage': ctx.stage(),
             'uptime': time.ticks_ms(),
         }
-        return cc.build('iam', [board_id, json.dumps(info)])  # the one reply carrying the id
+        return cc.build('iam', [ctx.board_id, json.dumps(info)])  # the one reply carrying the id
 
     async def ping(msg) -> str:
         return cc.build('pong')
@@ -101,7 +110,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
             temp = esp32.mcu_temperature()
         except Exception:
             temp = None
-        info = {'temp': temp, 'mem_free': gc.mem_free(), 'uptime': time.ticks_ms(), 'stage': stage()}
+        info = {'temp': temp, 'mem_free': gc.mem_free(), 'uptime': time.ticks_ms(), 'stage': ctx.stage()}
         position = databoard.Databoard.parameter('position')  # board GNSS fix -> dashboard (None until a fix)
         if position is not None:
             value, source, _age = position.read()
@@ -110,45 +119,62 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         if mission is not None:  # the board wall-clock (RTC) -> the dashboard top table shows it live
             info['clock'] = mission.clock()
             info['epoch'] = mission.epoch()
-        if controller is not None:
-            info['tasks'] = [{'name': t.name, 'ok': t.validate()} for t in controller.active()]
+        if ctx.controller is not None:
+            info['tasks'] = [{'name': t.name, 'ok': t.validate()} for t in ctx.controller.active()]
         return cc.build('ok', [json.dumps(info)])
+
+    dispatcher.on('whoami', whoami)
+    dispatcher.on('ping', ping)
+    dispatcher.on('health', health)
+
+
+def _register_control(dispatcher, ctx) -> None:
+    """stage / arm / disarm / report -- flight-stage hold + actuation enable."""
 
     async def get_stage(msg) -> str:
         """`stage` -> the current stage; `stage <name>` holds it (operator override, pauses the
         sequencer -- ground test); `stage auto` resumes auto-sequencing."""
-        manual = controller.manual if controller is not None else False
-        if msg.args and controller is not None:
+        manual = ctx.controller.manual if ctx.controller is not None else False
+        if msg.args and ctx.controller is not None:
             if msg.args[0] == 'auto':
-                controller.resume()
-            elif not controller.hold(msg.args[0]):
+                ctx.controller.resume()
+            elif not ctx.controller.hold(msg.args[0]):
                 return cc.build('err', ['badargs', 'no stage ' + msg.args[0]])
-            manual = controller.manual
-        return cc.build('ok', [json.dumps({'stage': stage(), 'manual': manual})])
+            manual = ctx.controller.manual
+        return cc.build('ok', [json.dumps({'stage': ctx.stage(), 'manual': manual})])
 
     async def arm(msg) -> str:
         """Enable actuation -- but only when board verify is clean (every device up + probe healthy,
         incl. the mission launch-position): a refused arm returns the problems. Disarmed by default;
         the control loop holds the fins neutral until armed."""
-        if controller is None:
+        if ctx.controller is None:
             return cc.build('err', ['unsupported', 'no controller'])
-        problems = dict(controller.failures)  # not-connected devices
+        problems = dict(ctx.controller.failures)  # not-connected devices
         for name, result in (await inspector.Inspector.probe_all()).items():  #
             if result is not None:
                 problems[name] = result
         if problems:
             return cc.build('err', ['unsafe', json.dumps(problems)])  # refuse to arm
-        controller.arm()
+        ctx.controller.arm()
         return cc.build('ok', [json.dumps({'armed': True})])
 
     async def disarm(msg) -> str:
-        if controller is None:
+        if ctx.controller is None:
             return cc.build('err', ['unsupported', 'no controller'])
-        controller.disarm()
+        ctx.controller.disarm()
         return cc.build('ok', [json.dumps({'armed': False})])
 
     async def report(msg) -> str:
-        return cc.build('ok', [json.dumps(controller.stats() if controller is not None else {})])
+        return cc.build('ok', [json.dumps(ctx.controller.stats() if ctx.controller is not None else {})])
+
+    dispatcher.on('stage', get_stage)
+    dispatcher.on('arm', arm)
+    dispatcher.on('disarm', disarm)
+    dispatcher.on('report', report)
+
+
+def _register_inspection(dispatcher, ctx) -> None:
+    """objects / inspect / update / stats -- the Inspector surface for operator-facing objects."""
 
     async def objects(msg) -> str:
         return cc.build('ok', [json.dumps(inspector.Inspector.names())])
@@ -178,16 +204,25 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         except KeyError:
             return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
 
-    # The named configs the operator can read/write through one pair of commands (get-config <name> /
-    # set-config <name> <json>), instead of a get-/save- pair per config:
-    # board the running board config (hardware; config.py, validated + atomically saved)
-    # default the built-in board default (read-only)
-    # launch the per-launch mission (launch.config; mission.py, merge-applied + saved)
+    dispatcher.on('objects', objects)
+    dispatcher.on('inspect', inspect)
+    dispatcher.on('update', update)
+    dispatcher.on('stats', stats)
+
+
+def _register_config(dispatcher, ctx) -> None:
+    """get-config / set-config / reset-config -- read/write the named configs through one command
+    pair (get-config <name> / set-config <name> <json>), instead of a get-/save- pair per config:
+      board   the running board config (hardware; config.py, validated + atomically saved)
+      default the built-in board default (read-only)
+      launch  the per-launch mission (launch.config; mission.py, merge-applied + saved)"""
+    import config as config_mod
+
     async def get_config(msg) -> str:
         """`get-config [name]` -- the named config (default `board`)."""
         name = msg.args[0] if msg.args else 'board'
         if name in ('board', 'running'):
-            return cc.build('ok', [json.dumps(cfg)])
+            return cc.build('ok', [json.dumps(ctx.cfg)])
         if name == 'default':
             return cc.build('ok', [json.dumps(config_mod._builtin_default())])
         if name == 'launch':
@@ -209,7 +244,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
             return cc.build('err', ['badargs', 'bad json'])
         if name == 'board':
             try:
-                config_id = config_mod.save(payload, config_path)
+                config_id = config_mod.save(payload, ctx.config_path)
             except ValueError as error:
                 return cc.build('err', ['invalid', str(error)])
             return cc.build('ok', [json.dumps({'config_id': config_id})])
@@ -223,8 +258,16 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         return cc.build('err', ['badargs', 'unknown config %s' % name])
 
     async def reset_config(msg) -> str:
-        config_mod.reset(config_path)
+        config_mod.reset(ctx.config_path)
         return cc.build('ok')
+
+    dispatcher.on('get-config', get_config)
+    dispatcher.on('set-config', set_config)
+    dispatcher.on('reset-config', reset_config)
+
+
+def _register_diagnostics(dispatcher, ctx) -> None:
+    """probe / verify -- on-demand self-tests + the pre-flight pass/fail check."""
 
     async def probe(msg) -> str:
         """Run self-tests ON DEMAND over the inspectable objects (tasks + mission + ...) that implement
@@ -237,8 +280,8 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         target = msg.args[0] if msg.args else 'all'
         if target == 'all':
             results = await inspector.Inspector.probe_all()  #
-            if controller is not None:  # devices that failed setup aren't inspectable -> not connected
-                for name, reason in controller.failures.items():
+            if ctx.controller is not None:  # devices that failed setup aren't inspectable -> not connected
+                for name, reason in ctx.controller.failures.items():
                     results.setdefault(name, 'not connected: ' + reason)
             return cc.build('ok', [json.dumps(results)])
         run = getattr(inspector.Inspector.get(target), 'probe', None)
@@ -251,16 +294,23 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         down) and run the probe self-tests, with an overall `pass`. The on-the-pad / pre-flight
         re-check -- catches anything disconnected in transport. Needs the Controller (the configured
         device list + setup failures). NOTE: probe is active (sweeps the servos)."""
-        if controller is None:
+        if ctx.controller is None:
             return cc.build('err', ['unsupported', 'no controller'])
-        devices = {name: ('up' if controller.active(name) is not None
-                          else 'down: ' + controller.failures.get(name, '?'))
-                   for name in controller.directory()}
-        problems = dict(controller.failures)  # not-connected devices
+        devices = {name: ('up' if ctx.controller.active(name) is not None
+                          else 'down: ' + ctx.controller.failures.get(name, '?'))
+                   for name in ctx.controller.directory()}
+        problems = dict(ctx.controller.failures)  # not-connected devices
         for name, result in (await inspector.Inspector.probe_all()).items():  #
             if result is not None:
                 problems[name] = result
         return cc.build('ok', [json.dumps({'pass': not problems, 'devices': devices, 'problems': problems})])
+
+    dispatcher.on('probe', probe)
+    dispatcher.on('verify', verify)
+
+
+def _register_streaming(dispatcher) -> None:
+    """log / tlm -- poll-model log + telemetry streaming (recorder only; no controller/config)."""
 
     async def log(msg) -> str:
         """`log <duration_ms>` -- poll-model log streaming. Reply with the log lines the board buffered
@@ -289,8 +339,15 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
             return cc.build('err', ['badargs', 'tlm <duration_ms>'])
         return cc.build('ok', [json.dumps(recorder.Recorder.cc_telemetry(duration_ms))])
 
+    dispatcher.on('log', log)
+    dispatcher.on('tlm', tlm)
+
+
+def _register_system(dispatcher, ctx) -> None:
+    """reboot -- restart the board (delayed so the `ok` reply flushes before the reset)."""
+
     async def reboot(msg) -> str:
-        reset = on_reboot or (lambda: __import__('machine').reset())  # imported only when it fires
+        reset = ctx.on_reboot or (lambda: __import__('machine').reset())  # imported only when it fires
 
         async def do_reset() -> None:
             await asyncio.sleep_ms(200)
@@ -299,23 +356,22 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
         asyncio.create_task(do_reset())
         return cc.build('ok')
 
-    dispatcher.on('whoami', whoami)
-    dispatcher.on('ping', ping)
-    dispatcher.on('health', health)
-    dispatcher.on('stage', get_stage)
-    dispatcher.on('arm', arm)
-    dispatcher.on('disarm', disarm)
-    dispatcher.on('report', report)
-    dispatcher.on('objects', objects)
-    dispatcher.on('inspect', inspect)
-    dispatcher.on('update', update)
-    dispatcher.on('stats', stats)
-    dispatcher.on('probe', probe)
-    dispatcher.on('verify', verify)
-    dispatcher.on('log', log)
-    dispatcher.on('tlm', tlm)
-    dispatcher.on('get-config', get_config)
-    dispatcher.on('set-config', set_config)
-    dispatcher.on('reset-config', reset_config)
     dispatcher.on('reboot', reboot)
+
+
+def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
+                      config_path: str = 'board.config') -> Dispatcher:
+    """Build a Dispatcher with the standard command handlers, wired to the running config, the
+    Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset. The
+    handlers are grouped by concern into the _register_* helpers; each closes over one shared
+    _Context, so this stays a short orchestrator."""
+    dispatcher = Dispatcher()
+    ctx = _Context(cfg, controller, on_reboot, config_path)
+    _register_identity(dispatcher, ctx)
+    _register_control(dispatcher, ctx)
+    _register_inspection(dispatcher, ctx)
+    _register_config(dispatcher, ctx)
+    _register_diagnostics(dispatcher, ctx)
+    _register_streaming(dispatcher)
+    _register_system(dispatcher, ctx)
     return dispatcher
