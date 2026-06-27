@@ -62,6 +62,18 @@ def test_fin_deflection_limit():
         previous = limit
 
 
+def test_id_classify():
+    # the bus-driver diagnose() classifier: present vs each wire-fault signature (None == read failed)
+    assert 'present' in commons.id_classify(0xE5, 0xE5)  # id matches -> device there, init failed after detect
+    assert 'no bus response' in commons.id_classify(None, 0xE5)  # read raised (no I2C ack / SPI error)
+    cs_dead = commons.id_classify(0x00, 0x6C)
+    assert '0x00' in cs_dead and 'chip-select' in cs_dead  # CS not asserting / unpowered
+    floating = commons.id_classify(0xFF, 0x6C)
+    assert '0xFF' in floating and 'idle-high' in floating  # MISO floating / absent
+    wrong = commons.id_classify(0xE5, 0x6C)  # ADXL answering on the LSM's select (crosswired)
+    assert 'wrong device' in wrong and '0xE5' in wrong and '0x6C' in wrong
+
+
 def test_alias():
     # each plain name binds its optimised variant (viper for ints, native for floats)
     assert commons.clamp_int is commons.clamp_int_opt and commons.wrap180 is commons.wrap180_opt
@@ -75,5 +87,6 @@ test_bank_demand()
 test_clamp_int()
 test_wrap180()
 test_fin_deflection_limit()
+test_id_classify()
 test_alias()
-print('ok: commons -- between, magnitude_sq, bank_demand (@native), clamp_int, wrap180 (@viper); _opt==_upy')
+print('ok: commons -- between, magnitude_sq, bank_demand, clamp_int, wrap180, id_classify; _opt==_upy')

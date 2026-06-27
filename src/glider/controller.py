@@ -167,6 +167,8 @@ class Controller(inspector.Inspectable):
             except Exception as error:
                 reason = repr(error)
                 self.log("controller :: task '%s' setup raised: %r" % (name, error))
+            if attempt == attempts:  # final try -> deeper wire-level analysis while the transport is still alive
+                reason = await self._diagnose(new_task, reason)
             try:  # clean up the half-set-up device; a cleanup failure must NOT abort the rest of boot (1.2.1)
                 await new_task.finish()
             except Exception as error:
@@ -176,6 +178,20 @@ class Controller(inspector.Inspectable):
                 await asyncio.sleep_ms(200)  # let a flaky contact settle before the retry
         self.failures[name] = reason
         return None
+
+    async def _diagnose(self, new_task, reason: str) -> str:
+        """Fold a driver's optional diagnose() into the failure reason -- a deeper, wire-level analysis
+        (chip-select dead / MISO floating / wrong device / present-but-init-failed) that the operator
+        sees in `verify`/`probe`. Best-effort: a driver without diagnose(), or one that raises, just
+        keeps the generic reason."""
+        analyse = getattr(new_task, 'diagnose', None)
+        if analyse is None:
+            return reason
+        try:
+            detail = await analyse()
+        except Exception as error:
+            return '%s [diagnose raised %r]' % (reason, error)
+        return '%s -- %s' % (reason, detail) if detail else reason
 
     async def start(self) -> None:
         """Launch each task's run() loop as a supervised asyncio task."""

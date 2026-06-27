@@ -56,6 +56,18 @@ class FlakySensor(task.Task):
         await asyncio.sleep_ms(1)
 
 
+class DiagnosingSensor(task.Task):
+    """Fails setup, but offers diagnose() -- the controller must fold the deeper wire-level analysis
+    into the recorded failure reason (the bus drivers' adxl375/lsm6dso32/... pattern, surfaced to
+    verify/probe)."""
+
+    async def setup(self):
+        return False
+
+    async def diagnose(self):
+        return 'id reads 0x00 -- chip-select not asserting'
+
+
 def make_config():
     return {
         'board': {'id': 't', 'mcu': 'esp32p4'},
@@ -108,6 +120,16 @@ async def amain():
     assert await mc.setup() is True  # boot completes despite the messy cleanup raise
     assert 'ok' in mc.tasks and 'messy' in mc.failures  # good task up, messy one recorded (not crashed)
     await mc.finish()
+
+    # diagnose(): a failed device that offers diagnose() gets the deeper wire-level reason folded into
+    # its failure -- the operator sees 'why' (CS dead / wrong device / ...), not just 'absent / miswired?'
+    diag_cfg = {'board': {'id': 'd', 'mcu': 'esp32p4'},
+                'components': [{'name': 'diag', 'driver': 'diag', 'enabled': True}]}
+    dc = controller.Controller(diag_cfg, registry={'diag': DiagnosingSensor}, log=lambda m: None)
+    assert await dc.setup() is True
+    assert 'setup failed' in dc.failures['diag']  # the generic reason ...
+    assert 'chip-select not asserting' in dc.failures['diag']  # ... plus the folded-in diagnose()
+    await dc.finish()
 
     # active()
     assert c.active('s1') is c.tasks['s1']

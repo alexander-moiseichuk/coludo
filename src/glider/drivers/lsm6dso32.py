@@ -161,6 +161,16 @@ class Lsm6dso32(task.Task):
             return message
         return None
 
+    async def diagnose(self) -> str:
+        """Deeper analysis when setup() failed: the bus reads WHO_AM_I and classifies the wire-level
+        fault (CS dead / MISO floating / wrong device / present-but-init). The Controller folds it into
+        the failure reason so `verify`/`probe` show the 'why', not just 'absent / miswired?'. A None
+        transport means setup never built it -- a config fault (bus undefined / cs_pin unwired)."""
+        if getattr(self, '_dev', None) is None:
+            return 'no transport -- bus %s:%s undefined or cs_pin %s unwired' % (
+                self.config.get('bus'), self.config.get('id'), self.config.get('cs_pin'))
+        return await self._dev.diagnose(_WHO_AM_I, _WHOAMI)
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['interrupt'] = self._int is not None

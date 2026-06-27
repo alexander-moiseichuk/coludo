@@ -22,7 +22,14 @@ async def amain():
     if 0x53 in devices:
         assert (await bus.read(0x53, 0x00, 1))[0] == 0xE5
 
-    print('ok: i2cbus shared/cached per id, scan/locked-read, devices=%s' % [hex(a) for a in devices])
+    # _Device.diagnose() -- the bus-level wire-fault classifier a failed driver's diagnose() awaits.
+    # An address that never acks -> 'no bus response'; a present chip with the right id -> 'present'.
+    absent = next((addr for addr in range(0x08, 0x78) if addr not in devices), 0x09)
+    assert 'no bus response' in await bus.device(absent).diagnose(0x00, 0xA0)  # no ack -> read fails -> None
+    if 0x28 in devices:  # BNO055 wired -> CHIP_ID 0xA0 at reg 0x00 reads back -> 'present'
+        assert 'present' in await bus.device(0x28).diagnose(0x00, 0xA0)
+
+    print('ok: i2cbus shared/cached per id, scan/locked-read, diagnose, devices=%s' % [hex(a) for a in devices])
 
 
 asyncio.run(amain())

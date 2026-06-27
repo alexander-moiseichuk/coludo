@@ -119,6 +119,23 @@ def atomic_write_json(path, data):
         os.rename(tmp, path)
 
 
+def id_classify(read, expected: int) -> str:
+    """Classify a chip WHO_AM_I / device-id byte against the expected value into an operator-readable
+    wire-level diagnosis. The deeper 'why' a bus driver's diagnose() returns when setup() failed, so
+    `verify`/`probe` report e.g. 'chip-select not asserting' instead of just 'absent / miswired?'.
+    `read` is None when the bus read itself failed (no I2C ack / SPI error). Shared by every ID-based
+    driver (adxl375 / lsm6dso32 / bno055 / bmp280), so it lives here, not in one driver."""
+    if read is None:
+        return 'no bus response -- device not acking (absent / unpowered / miswired)'
+    if read == expected:
+        return 'id 0x%02X ok -- device present; setup failed AFTER detect (init / config / timing)' % read
+    if read == 0x00:
+        return 'id reads 0x00 -- chip-select not asserting, or device unpowered'
+    if read == 0xFF:
+        return 'id reads 0xFF -- bus idle-high: no device driving MISO (absent / MISO miswired)'
+    return 'id reads 0x%02X, expected 0x%02X -- wrong device on this bus/select (crosswired)' % (read, expected)
+
+
 # --- clamp_int: integer clamp to [low, high]. Hot via sg90 fin clamping (round(angle), min/max deg). ---
 
 

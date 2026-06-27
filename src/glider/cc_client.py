@@ -286,6 +286,9 @@ def _register_diagnostics(dispatcher, ctx) -> None:
             return cc.build('ok', [json.dumps(results)])
         run = getattr(inspector.Inspector.get(target), 'probe', None)
         if run is None:
+            # a device that failed setup isn't inspectable -> surface its (diagnosed) failure reason
+            if ctx.controller is not None and target in ctx.controller.failures:
+                return cc.build('ok', [json.dumps({target: 'not connected: ' + ctx.controller.failures[target]})])
             return cc.build('err', ['badargs', 'no probe for ' + target])
         return cc.build('ok', [json.dumps({target: await run()})])
 

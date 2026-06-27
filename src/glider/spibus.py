@@ -7,6 +7,8 @@
 
 import asyncio
 
+import commons
+
 _buses: dict = {}  # bus id -> Bus
 
 
@@ -44,6 +46,17 @@ class _Device:
             self._cs(0)
             self._bus._spi.write(bytes((cmd,)) + bytes(data))
             self._cs(1)
+
+    async def diagnose(self, reg: int, expected: int) -> str:
+        """Read this chip's id/WHO_AM_I register and classify the wire-level result for a failed setup()
+        (commons.id_classify: chip-select not asserting / MISO floating / wrong device / present-but-
+        init). A driver's diagnose() just awaits this with its id register + expected value -- the read
+        and the verdict live with the bus, not duplicated in every driver."""
+        try:
+            read = (await self.read(reg, 1))[0]
+        except Exception:
+            read = None
+        return commons.id_classify(read, expected)
 
 
 class Bus:
