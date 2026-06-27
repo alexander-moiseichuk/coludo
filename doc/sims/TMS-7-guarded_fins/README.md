@@ -10,6 +10,11 @@ telemetry. `../TMS-7-basic` remains the host-sim reference (bank-to-turn glide, 
 **Site (HPRC):** pad `25.514379, -80.391795`; zone TL `25.514944,-80.392972` / BR `25.514583,-80.391111`
 — a ~40 m (N–S) × ~187 m (E–W) strip, centre ~49 m from the pad.
 
+🎬 **[`TMS-7-guarded_fins_simulation.mp4`](TMS-7-guarded_fins_simulation.mp4)** — a narrated FHD animation of
+the 5 %-noise / calm runs for **E16-4 then F15-4**: top-down field with the landing zone + corner trees,
+the glider tracking its real trajectory, a live telemetry panel, and prompter captions
+(ignition → climb → apogee/eject → glide → touchdown). Rendered by `tools/flight_video.py`.
+
 ## How it was collected
 
 - **rshell** deploys a runner; **`boardrun runfile`** flies it (soft-resets first → fresh modules); the

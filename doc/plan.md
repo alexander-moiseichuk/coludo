@@ -13,7 +13,8 @@ Required hardware and the phased development roadmap. Architecture lives in
 - **Phase 2 — done (bench-verified).** All sensors (ADXL375/BNO055/BMP280/ICP-10111/ATGM336H/
   VL53L4CX) → `databoard` read-time fusion, per-sensor telemetry, board health, separation switch,
   `probe` self-tests, servos, and CC log streaming with auto hub discovery. 26/26 board + 3/3
-  control. Deferred (not blocking): LSM6DSO32 (not arrived), outdoor GNSS fix.
+  control. The **LSM6DSO32 6-DoF IMU is now integrated** (±32 g accel as the primary channel + the
+  sole gyro `rate`, on SPI1, on-board verified). Deferred (not blocking): outdoor GNSS fix.
 - **Control hub — done.** `src/control/` split into `board.py` (Board, 10 s exchange timeout),
   `server.py` (the hub: board listener + ~2 s heartbeat + telnet operator console, drop-in
   `commands/`, `all`-only broadcast) and `main.py` (CLI: `--host 0.0.0.0` / `--port` / `--help`),
@@ -27,8 +28,14 @@ Required hardware and the phased development roadmap. Architecture lives in
   `sequencer`, per-phase behaviour, `watchdog` + heartbeat, arming/ground-test safety. 36/36 board.
 - **Phase 4 — in progress.** *Done:* landing-zone `navigation` (heading-to-home, 3 GPS-degrading tiers)
   + **bank-to-turn energy management** (the airframe was over-*ranging* the 100 m zone ~456 m downrange;
-  it now orbits the target to bleed altitude, contained to ≤ ~224 m from the pad). *Open:* flight-log
-  review, code-audit follow-ups, Phase 5 prep, and enabling the **6-DoF IMU** (LSM6DSO32).
+  it now orbits the target to bleed altitude, contained to ≤ ~224 m from the pad); the **LSM6DSO32
+  6-DoF IMU** integrated + verified; **boot hardening** (Wi-Fi never blocks boot — radio comes up lazily,
+  retries until ignition; HPRC launch default so a fresh board is field-ready); and a **bring-up /
+  diagnostics layer** — per-device `diagnose()` (wire-level fault when setup fails: chip-select dead /
+  MISO floating / wrong device, surfaced by `verify`/`probe`) and per-board **bus-frequency `calibrate`**
+  (CC sweeps each i2c/spi bus to its stable ceiling and names the limiting device — bench: i2c 400k→1 MHz,
+  spi 5→16 MHz, ADXL375-bound). *Open:* flight-log review, the **code-audit follow-ups** (findings.md,
+  re-iterated — `config.validate` + `cc_client.create_dispatcher` decomposed so far), and Phase 5 prep.
 - **Simulation & performance — done.** On-board **HITL simulator** (closed-loop, no production-code
   changes) + host **virtual-flight** tool with interactive HTML/SVG reports (`doc/sims/TMS-7/`:
   noise/wind/spike sweeps + corner cases); **perf cluster** (nav-heading cache, zero-alloc

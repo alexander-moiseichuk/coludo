@@ -159,6 +159,15 @@ class Bmp280(task.Task):
             return message
         return None
 
+    async def diagnose(self) -> str:
+        """Deeper analysis when setup() failed: the bus reads the chip id and classifies the fault (no
+        ack / wrong device / present-but-init). The Controller folds it into the failure reason, so
+        `verify`/`probe` show the 'why', not just 'absent / miswired?'."""
+        bus = getattr(self, '_bus', None)
+        if bus is None:  # setup never built the bus -> a config fault
+            return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)
+        return await bus.device(self._addr).diagnose(_REG_CHIP_ID, _CHIP_ID)
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)  # our channels' latest (no hot-path I2C here)
         status['altitude_m'] = self._altitude.value()

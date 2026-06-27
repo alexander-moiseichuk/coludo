@@ -31,18 +31,18 @@ def test_number():
 
 def test_load_missing():
     _cleanup()
-    assert mission._load(PATH) == {}  # missing file -> empty mission, never raises
+    assert mission._load(PATH) == mission._HPRC_DEFAULT  # missing file -> HPRC default, never raises
     with open(PATH, 'w') as f:
         f.write('{ not json')
-    assert mission._load(PATH) == {}  # corrupt file -> empty too
+    assert mission._load(PATH) == mission._HPRC_DEFAULT  # corrupt file -> HPRC default too
     _cleanup()
 
 
 def test_defaults_and_register():
     _cleanup()
     launch = mission.Mission(PATH)
-    assert launch.launch_id == '' and launch.site == ''
-    assert launch.latitude is None and launch.longitude is None
+    assert launch.launch_id == '' and launch.site == 'HPRC'  # no file -> HPRC pad default
+    assert launch.latitude == 25.514379 and launch.longitude == -80.391795 and launch.zone is not None
     # self-registered for `inspect mission`
     assert 'mission' in inspector.Inspector.names()
     assert inspector.Inspector.get('mission') is launch

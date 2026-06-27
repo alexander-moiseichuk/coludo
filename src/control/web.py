@@ -6,6 +6,7 @@
 #   GET  /             -> the one-page dashboard (static/index.html)
 #   GET  /api/boards   -> hub.board_rows() as JSON (same data as the `list` command)
 #   POST /api/cmd      -> {board, command, params} -> run it on the board, reply as JSON
+#   POST /api/op       -> {line} -> run an operator-console line (calibrate, ...) -> {lines}
 #   GET  /events       -> Server-Sent Events: the board list pushed every heartbeat (live table)
 
 import asyncio
@@ -86,6 +87,8 @@ class Web:
             return await self._api_board(route[len('/api/board/'):], writer)
         if method == 'POST' and route == '/api/cmd':
             return await self._api_cmd(body, writer)
+        if method == 'POST' and route == '/api/op':
+            return await self._api_op(body, writer)
         if method == 'POST' and route == '/api/log':
             return await self._api_log(body, writer)
         if method == 'POST' and route == '/api/assist':
@@ -119,6 +122,21 @@ class Web:
         if resp is None:
             return await _send_json(writer, 502, {'board': board.id, 'error': 'offline'})
         return await _send_json(writer, 200, {'board': board.id, 'status': resp.command, 'args': resp.args})
+
+    async def _api_op(self, body: bytes, writer) -> None:
+        """Run one operator-console line through the same dispatch the telnet console uses, so EVERY
+        operator command (calibrate, list, ...) is reachable from the browser without a bespoke route
+        per command. Body: {line: "calibrate taster i2c 0"}. Returns {lines: [...]} (the `from ...`
+        replies). A board-id-first line still routes to that board -- this is the console over HTTP."""
+        try:
+            request = json.loads(body or b'{}')
+        except ValueError:
+            return await _send_json(writer, 400, {'error': 'bad json'})
+        line = (request.get('line') or '').strip()
+        if not line:
+            return await _send_json(writer, 400, {'error': 'no line'})
+        lines = await self.hub._dispatch(line, {'selected': None})
+        return await _send_json(writer, 200, {'lines': lines})
 
     async def _api_assist(self, body: bytes, writer) -> None:
         """Push the host GPS position into a board's launch config (the dashboard 'gps' button) -- the

@@ -63,7 +63,6 @@ A conflict-free starting assignment (drop into `board.config`):
 | `spi.1` | CS | 50 | lsm6dso32.cs | `lsm6dso32_cs`, active low |
 | `gpio` | INT | 4 | adxl375.int1 | `adxl375_int`, DATA_READY → sampling |
 | `gpio` | INT | 28 | lsm6dso32.int1 | `lsm6dso32_int1`, data-ready → sampling |
-| `gpio` | INT | 29 | lsm6dso32.int2 | `lsm6dso32_int2`, optional — NC if polling INT1 |
 | `gpio` | enable | 5 | vl53l4cx.xshut | `laser_xshut`, active low |
 | `gpio` | INT | 3 | vl53l4cx.gpio1 | `laser_int`, data-ready |
 | `uart.1` | TX | 20 | luckfox.rx | Recorder sink, 921600 baud |
@@ -75,7 +74,7 @@ A conflict-free starting assignment (drop into `board.config`):
 | `pwm` | signal | 32 | servo_eleron_right.sig | LEDC |
 | `gpio` | switch | 33 | separation.pad | `PULL_DOWN`, IRQ (HIGH=nested, LOW=separated) |
 | `gpio` | LED | 2 | led.anode | external LED + resistor (no onboard user LED) |
-| — | spare | 30, 31, 51, 52 | — | future sensors, 2nd I²C, battery sense |
+| — | spare | 29, 30, 31, 51, 52 | — | future sensors, 2nd I²C, battery sense (29 = LSM6DSO32 INT2, unwired) |
 
 ### Caveats
 
@@ -115,7 +114,7 @@ no limit hit). On a SPI part, **CS is the real active-low select** (no "tie it h
 | | SDO / MISO | GPIO46 | `spi.1` MISO — data out in SPI, **not** an address pin |
 | | CS / NCS | GPIO50 | `lsm6dso32_cs`, active low (LOW = SPI mode, which we want) |
 | | INT1 / I1 | GPIO28 | `lsm6dso32_int1`, data-ready |
-| | INT2 / I2 | GPIO29 | `lsm6dso32_int2`, optional — NC if polling INT1 |
+| | INT2 / I2 | **NC** | not wired (polling INT1); GPIO29 stays in the spare pool |
 | | SDX / SCX | NC | sensor-hub aux master, unused |
 | | DEN | NC | external sync stamp, unused |
 | | 3V / 3Vo | NC | regulator output, do not drive |
@@ -161,7 +160,7 @@ no limit hit). On a SPI part, **CS is the real active-low select** (no "tie it h
 **LSM6DSO32 config** (drop into `board.config` when the `lsm6dso32` driver lands tomorrow):
 
 ```python
-'pins': { ..., 'lsm6dso32_cs': 50, 'lsm6dso32_int1': 28, 'lsm6dso32_int2': 29 },
+'pins': { ..., 'lsm6dso32_cs': 50, 'lsm6dso32_int1': 28 },   # INT2 not wired (GPIO29 free)
 'sensors': [ ...,
     { 'name': 'imu_lsm6dso32', 'driver': 'lsm6dso32',
       'bus': 'spi', 'id': 1,             # shares ADXL375's SPI1 (mode 3, 5 MHz)

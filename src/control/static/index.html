@@ -85,6 +85,19 @@
 <textarea id="config" rows="14" placeholder="config draft — pick board/launch, click load to fetch it as an editable draft, then save (board config needs a reboot to take effect)"></textarea>
 <pre id="cfgresult"></pre>
 
+<h2>bus tuning</h2>
+<p>
+  <input id="tuneboard" placeholder="board id" size="10">
+  <select id="tunekind" title="sensor bus to calibrate">
+    <option value="i2c">i2c</option>
+    <option value="spi">spi</option>
+  </select>
+  <input id="tuneid" value="0" size="3" title="bus id">
+  <button id="calibrate">calibrate</button>
+  <span class="muted">sweep the bus to its max stable frequency; the tuned <b>board config</b> is loaded into the editor above for you to review, then <b>Save + Reboot</b> to apply (your call)</span>
+</p>
+<pre id="tuneresult"></pre>
+
 <h2>inspect</h2>
 <p>
   <input id="inspboard" placeholder="board id" size="10">
@@ -141,6 +154,7 @@ function selectBoard(id) {
   document.getElementById('cfgboard').value = id;
   document.getElementById('inspboard').value = id;
   document.getElementById('logboard').value = id;
+  document.getElementById('tuneboard').value = id;
 }
 
 // uptime is milliseconds since boot (board ticks); show it as Hh MMm SSs.
@@ -248,6 +262,62 @@ document.getElementById('reboot').onclick = async () => {
 
 document.getElementById('reset').onclick = async () => {
   cfgOut.textContent = prettyResult(await cmd(cfgBoard(), 'reset-config'));
+};
+
+// --- bus tuning: calibrate a sensor bus -> show the sweep -> load the TUNED board config into the
+// editor above. Applying it (Save + Reboot) stays the operator's decision -- nothing auto-reboots. ---
+const tuneOut = document.getElementById('tuneresult');
+const tuneBoard = () => document.getElementById('tuneboard').value.trim();
+const hz = (n) => (n == null ? '?' : n.toLocaleString() + ' Hz');
+
+// run one operator-console line through the hub (calibrate, ...) -> reply lines
+async function op(line) {
+  const res = await fetch('/api/op', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ line }),
+  });
+  return res.json();
+}
+
+document.getElementById('calibrate').onclick = async () => {
+  const board = tuneBoard();
+  const kind = document.getElementById('tunekind').value;
+  const id = document.getElementById('tuneid').value.trim() || '0';
+  if (!board) { tuneOut.textContent = 'enter a board id'; return; }
+  const btn = document.getElementById('calibrate');
+  btn.disabled = true;
+  tuneOut.textContent = `sweeping ${kind}:${id} on ${board} … running the bus up a frequency ladder (a few seconds)`;
+  try {
+    const r = await op(`calibrate ${board} ${kind} ${id}`);
+    const reply = (r.lines && r.lines[0]) || JSON.stringify(r);
+    const m = reply.match(/^from \S+ ok (.*)$/);
+    if (!m) { tuneOut.textContent = reply; return; }  // e.g. 'from cc err ...'
+    const out = JSON.parse(m[1]);
+    const rungs = (out.ladder || []).map((x) => `  ${hz(x.freq).padEnd(12)} ${x.all_ok ? '✓' : '✗ FAIL'}`).join('\n');
+    const lim = out.limiter
+      ? `limited by ${out.limiter.failed.join(', ')} at ${hz(out.limiter.freq)}`
+      : 'no device limit reached in the ladder';
+    const text = `bus ${out.bus}  (configured ${hz(out.configured)})\n${rungs}\n` +
+                 `ceiling ${hz(out.ceiling)} · ${lim}\n→ chosen ${hz(out.chosen)}${out.note ? '  (' + out.note + ')' : ''}`;
+    if (out.chosen == null) { tuneOut.textContent = text + '\n\n(no stable frequency found — nothing to load)'; return; }
+    // patch the chosen freq into the board config and load it into the editor above
+    const cfg = await cmd(board, 'get-config', ['board']);
+    const data = (cfg.status === 'ok') ? JSON.parse(cfg.args[0]) : null;
+    const key = kind === 'i2c' ? 'freq' : 'baud';
+    if (!data || !data.buses || !data.buses[kind] || !data.buses[kind][id]) {
+      tuneOut.textContent = text + `\n\n(could not load board config to patch buses.${kind}.${id})`;
+      return;
+    }
+    data.buses[kind][id][key] = out.chosen;
+    cfgArea.value = JSON.stringify(data, null, 2);
+    document.getElementById('cfgboard').value = board;
+    document.getElementById('cfgtarget').value = 'board';
+    cfgOut.textContent = `tuned ${out.bus} → ${hz(out.chosen)} loaded into the draft above — review, then Save + Reboot to apply`;
+    tuneOut.textContent = text + `\n\n✓ tuned config loaded into the editor above (buses.${kind}.${id}.${key} = ${out.chosen}). Apply is yours: Save + Reboot.`;
+  } catch (err) {
+    tuneOut.textContent = 'error: ' + err;
+  } finally {
+    btn.disabled = false;
+  }
 };
 
 // --- inspect: list objects, then inspect each -> a per-object editor (update -> green ✓) ---

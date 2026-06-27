@@ -167,6 +167,8 @@ class Controller(inspector.Inspectable):
             except Exception as error:
                 reason = repr(error)
                 self.log("controller :: task '%s' setup raised: %r" % (name, error))
+            if attempt == attempts:  # final try -> deeper wire-level analysis while the transport is still alive
+                reason = await self._diagnose(new_task, reason)
             try:  # clean up the half-set-up device; a cleanup failure must NOT abort the rest of boot (1.2.1)
                 await new_task.finish()
             except Exception as error:
@@ -176,6 +178,52 @@ class Controller(inspector.Inspectable):
                 await asyncio.sleep_ms(200)  # let a flaky contact settle before the retry
         self.failures[name] = reason
         return None
+
+    async def _diagnose(self, new_task, reason: str) -> str:
+        """Fold a driver's optional diagnose() into the failure reason -- a deeper, wire-level analysis
+        (chip-select dead / MISO floating / wrong device / present-but-init-failed) that the operator
+        sees in `verify`/`probe`. Best-effort: a driver without diagnose(), or one that raises, just
+        keeps the generic reason."""
+        analyse = getattr(new_task, 'diagnose', None)
+        if analyse is None:
+            return reason
+        try:
+            detail = await analyse()
+        except Exception as error:
+            return '%s [diagnose raised %r]' % (reason, error)
+        return '%s -- %s' % (reason, detail) if detail else reason
+
+    async def bustune(self, kind: str, ident, freq: int) -> dict:
+        """Bench frequency-calibration primitive the CC-side sweep drives: retune sensor bus
+        <kind>:<ident> to <freq> Hz IN PLACE (no reboot), then report which of its devices stay healthy
+        -- each up device's probe() (id reads back + a sample succeeds). Returns the per-device verdicts
+        + all_ok, so the host can find the bus ceiling AND the limiting device (whoever drops out first
+        as freq climbs). Nothing is persisted here: CC saves the chosen freq via set-config board +
+        reboot. i2c/spi only (uart/pwm are not frequency-swept)."""
+        import config as config_mod
+
+        modules = {'i2c': 'i2cbus', 'spi': 'spibus'}
+        if kind not in modules:
+            return {'error': "bus kind '%s' is not tunable (i2c/spi only)" % kind}
+        spec = config_mod.bus(self.config, kind, ident)
+        if spec is None:
+            return {'error': 'bus %s:%s not defined' % (kind, ident)}
+        bus = __import__(modules[kind]).get(int(ident), spec)
+        await bus.retune(freq)
+        devices = {}
+        for item in self.config.get('sensors', []) + self.config.get('components', []):
+            if item.get('bus') != kind or str(item.get('id')) != str(ident):
+                continue
+            name = item.get('name')
+            running = self.active(name)
+            if running is None:
+                devices[name] = 'down: ' + self.failures.get(name, 'not up')
+            elif hasattr(running, 'probe'):
+                devices[name] = await running.probe() or 'ok'  # probe() -> None when healthy
+            else:
+                devices[name] = 'no probe'
+        return {'kind': kind, 'id': ident, 'freq': freq, 'devices': devices,
+                'all_ok': bool(devices) and all(verdict == 'ok' for verdict in devices.values())}
 
     async def start(self) -> None:
         """Launch each task's run() loop as a supervised asyncio task."""
