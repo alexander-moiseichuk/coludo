@@ -63,7 +63,12 @@ class Lsm6dso32(task.Task):
         self._ready = asyncio.ThreadSafeFlag()
         self._int = None
         try:
-            if (await self._dev.read(_WHO_AM_I, 1))[0] != _WHOAMI:
+            whoami = 0
+            for _ in range(5):  # the first SPI read after bus bring-up can glitch; retry the id check
+                whoami = (await self._dev.read(_WHO_AM_I, 1))[0]
+                if whoami == _WHOAMI:
+                    break
+            if whoami != _WHOAMI:
                 return False  # not an LSM6DSO32 at this chip-select / address
             await self._dev.write(_CTRL3_C, bytes([_CFG_C]))   # BDU + auto-increment first
             await self._dev.write(_CTRL1_XL, bytes([_CFG_XL]))  # accel +/-32 g @ 104 Hz
