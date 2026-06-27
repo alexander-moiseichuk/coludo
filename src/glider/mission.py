@@ -38,16 +38,29 @@ _FIELDS: tuple = ('launch_id', 'site', 'latitude', 'longitude', 'altitude')
 # glider reaches farther), so it lives in the board config, not the per-launch mission.
 _DEFAULT_MAX_RANGE_M: float = 200.0
 
+# Default launch site when no launch.config has been set yet: HPRC (Homestead Public Rocketry Club), the
+# documented test pad + landing zone (doc/plan.md, specs/coludo.md, sim_model.HPRC). So a fresh board
+# already has a valid pad + zone for HPRC field tests; the operator overrides it live via `update mission`
+# / `set-config launch` for any other site.
+_HPRC_DEFAULT: dict = {
+    'site': 'HPRC',
+    'latitude': 25.514379,
+    'longitude': -80.391795,
+    'altitude': 2.0,
+    'zone': [[25.514944, -80.392972], [25.514583, -80.391111]],
+}
+
 
 def _load(path: str) -> dict:
-    """Read launch.config (a JSON object) if present and valid, else an empty mission. Never
-    raises -- a missing/corrupt file just means 'no launch set yet', the board stays usable."""
+    """Read launch.config (a JSON object) if present and valid, else the HPRC default mission (the
+    documented test pad). Never raises -- a missing/corrupt file just falls back to HPRC, the board
+    stays usable."""
     try:
         with open(path) as handle:
             data = json.loads(handle.read())
     except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
+        return dict(_HPRC_DEFAULT)
+    return data if isinstance(data, dict) else dict(_HPRC_DEFAULT)
 
 
 def _number(value, low: float, high: float):
