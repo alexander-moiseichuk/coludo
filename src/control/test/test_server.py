@@ -227,6 +227,16 @@ async def _web():
                                        json.dumps({'board': 'ghost', 'command': 'ping'}))
         assert status == 404
 
+        # POST /api/op runs an operator-console line through the registry (calibrate, list, ...) over the
+        # same dispatch the telnet console uses -- so an operator command runs, and a board-id-first line
+        # still routes to the board.
+        status, payload = await _http(WEB_PORT, 'POST', '/api/op', json.dumps({'line': 'list'}))
+        assert status == 200 and json.loads(payload)['lines'][0].startswith('from cc ok ')  # `list` ran
+        status, payload = await _http(WEB_PORT, 'POST', '/api/op', json.dumps({'line': 'glider9 ping'}))
+        assert json.loads(payload)['lines'] == ['from glider9 pong']  # board routing via /api/op
+        status, _payload = await _http(WEB_PORT, 'POST', '/api/op', json.dumps({}))
+        assert status == 400  # an empty line is rejected
+
         # dashboard config flow over /api/cmd: get-config <name> -> edit the draft -> set-config <name> -> reboot
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',
                                       json.dumps({'board': 'glider9', 'command': 'get-config', 'params': ['board']}))
