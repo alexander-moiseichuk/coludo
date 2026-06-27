@@ -37,6 +37,7 @@ async def amain():
                                        'provides': {'accel': {'priority': 0}, 'rate': {'priority': 0}}},
                                _StubController())
     if await real.setup():
+        await asyncio.sleep_ms(50)  # let the first 104 Hz conversion land before sampling
         (ax, ay, az), (gx, gy, gz) = await real.sample()
         magnitude = (ax * ax + ay * ay + az * az) ** 0.5
         assert 0.5 < magnitude < 2.0, 'accel |a|=%.2f g not ~1 g at rest' % magnitude  # gravity
