@@ -22,8 +22,8 @@ _COSLAT = math.cos(math.radians(_PAD[0]))
 _W, _H, _FPS = 1920, 1080, 50
 _GREEN, _ZONE, _SKY = (78, 128, 64), (98, 152, 80), (24, 28, 36)
 _KH, _KN = 1.0, 0.55
-_MAP = (44, 100, 1190, 968)
-_PANEL_X = 1320
+_MAP = (44, 100, 1390, 968)
+_PANEL_X = 1520
 _CAP_Y = 990
 _PS = 19.0
 _BURN = {'F15': 3.45, 'E16': 1.77}
@@ -130,7 +130,7 @@ _V = [
     (-0.5, 2.8, 0.05),     # 15 right wing tip TE
     (-0.6, 0.0, 0.20),     # 16 vert fin root front
     (-1.6, 0.0, 0.0),      # 17 vert fin root rear
-    (-0.9, 0.0, 0.70),     # 18 vert fin tip
+    (-0.9, 0.0, 1.40),     # 18 vert fin tip (tall tail fin)
     (-1.4, -0.50, 0.05),   # 19 left tailplane tip
     (-1.4, 0.50, 0.05),    # 20 right tailplane tip
     (-1.7, -0.30, 0.05),   # 21 left tailplane root
@@ -181,20 +181,25 @@ _FACES = [
 _WING_LEFT = (8, 9, 10, 11)
 _WING_RIGHT = (12, 13, 14, 15)
 _ROOT_Y = 0.35
+_HINGE_X = 0.4         # wing pivot x (between root LE 0.8 and TE 0.0) for the sweep
 
 
 def _fold_wing_verts(v, fold_frac):
-    """Butterfly-knife fold: rotate both wings up alongside the body."""
-    theta = fold_frac * math.pi / 2
-    c, s = math.cos(theta), math.sin(theta)
-    for i in _WING_LEFT:
-        vx, vy, vz = v[i]
-        rel = abs(vy) - _ROOT_Y
-        v[i] = (vx, -(rel * c + _ROOT_Y), vz + rel * s)
-    for i in _WING_RIGHT:
-        vx, vy, vz = v[i]
-        rel = vy - _ROOT_Y
-        v[i] = (vx, rel * c + _ROOT_Y, vz + rel * s)
+    """Stow/deploy the wings the way Coludo really does it: during boost the wings are swept AFT and
+    tucked UNDER the fuselage (folded back along the body, not raised up like a bird); when the booster
+    drops and the hook releases them they SWEEP OUT to the flying position. fold_frac 1 = stowed, 0 =
+    deployed. The sweep is a rotation about the root's vertical axis so each tip swings from lateral
+    (+/-y) toward the tail (-x), plus a small downward tuck under the body line."""
+    phi = fold_frac * math.radians(88)     # 0 deployed (full span) -> 88 stowed (swept back along body)
+    c, s = math.cos(phi), math.sin(phi)
+    tuck = -0.30 * fold_frac               # drop under the body centreline when stowed
+    for side, idx in ((1, _WING_RIGHT), (-1, _WING_LEFT)):
+        for i in idx:
+            vx, vy, vz = v[i]
+            ox = vx - _HINGE_X
+            v[i] = (_HINGE_X + ox * c - side * vy * s,   # tip swings aft (-x) as it folds
+                    side * ox * s + vy * c,              # ... and inboard toward the centreline
+                    vz + tuck)                           # ... tucked just under the body
     return v
 
 
