@@ -15,12 +15,19 @@ the 5 %-noise / calm runs for **E16-4 then F15-4**: top-down field with the land
 the glider tracking its real trajectory, a live telemetry panel, and prompter captions
 (ignition → climb → apogee/eject → glide → touchdown). Rendered by `tools/flight_video.py`.
 
+> **Refreshed (TMS-7 v2):** the video above is re-rendered from fresh on-board 5 %/calm re-flies using the
+> measured TMS-7 v2 stack masses (E16 451 g / F15 468 g → apogee ~135 m / ~291 m, see `models/TMS-7/readme.md`)
+> and the improved renderer (follow-cam, wings stowing under/aft then sweeping out, taller fin, wider field).
+> The matrix tables below are the prior sweep (qualitatively unchanged — the mass shift only lowers apogee
+> a little); a full-matrix re-fly with the v2 masses is the next step.
+
 ## How it was collected
 
-- **rshell** deploys a runner; **`boardrun runfile`** flies it (soft-resets first → fresh modules); the
-  runner brings up `config_hitl`, **arms** the controller, and flies to `DONE`. The Recorder streams over
-  UART:1 to the Luckfox (`/userdata/recordings/<session>_<file>.csv`); **adb** pulls the session, which is
-  re-assembled into the recorder wire-format capture the report tools read.
+- A clean board reboot (`tools/board_reboot.py`) then **`mpremote run`** flies a one-line launcher
+  (`tools/hitl_collect.sh`; **boardrun is retired**): the runner brings up `config_hitl`, **arms** the
+  controller, and flies to `DONE`. The Recorder streams over UART:1 to the Luckfox
+  (`/userdata/recordings/<session>_<file>.csv`); **adb** pulls the session, which is re-assembled into the
+  recorder wire-format capture the report tools read.
 - The `hitl` task now **records the simulated sensors as telemetry** (accel/imu/baro/gnss/laser + a
   combined fins, same CSV names/fields as the real drivers), so an on-board run yields a *complete*,
   renderable capture — `health` is the real `board_health`, the fins are the real commanded servo angles.

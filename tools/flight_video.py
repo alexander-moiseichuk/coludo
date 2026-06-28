@@ -299,6 +299,10 @@ def load(label, path):
     stages = [(us / 1e6, line.split('stage -> ')[1].split()[0]) for us, line in logs
               if us and 'stage -> ' in line]
     launch = next((t for t, s in stages if s == 'boosting'), 0.0)
+    # Make the whole timeline flight-relative (t=0 at ignition). rel() subtracts `launch` from the stream
+    # DATA; the stage times must be offset to match, else end/glide/land stay at the board's absolute
+    # uptime (large after soft-reboots -- ticks_ms doesn't reset) and the render pads dead air to ~uptime.
+    stages = [(t - launch, s) for t, s in stages]
     gnss, baro, imu = streams.get('gnss.csv'), streams.get('baro_icp10111.csv'), streams.get('imu_bno055.csv')
 
     def rel(stream, field):
