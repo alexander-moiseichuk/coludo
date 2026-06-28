@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
-# Run the on-board MicroPython tests via tools/boardrun.py (pyserial paste mode) -- the reliable
-# non-interactive counterpart to test/run_tests.sh (which drives mpremote). Modules must already be
-# deployed (tools/deploy_board.sh). Each test is run with a fresh soft-reset for isolation; a test
-# PASSES if its output has an 'ok:' line and no Traceback/Error/FAIL.
+# Run the on-board MicroPython tests via `mpremote run` (boardrun is retired). Modules must already be
+# deployed (./deploy.sh). Each test is preceded by board_reboot for a fresh-VM isolation; a test PASSES
+# if its output has an 'ok:' line and no Traceback/Error/FAIL.
 #
 # Usage:  run_tests_board.sh [test_name ...]    # names like test_flight (default: all test/test_*.py)
 # Env:    PORT (default /dev/ttyACM0)  TIMEOUT secs (default 60)
@@ -24,7 +23,8 @@ echo "== coludo board tests ==  port=$PORT  timeout=${TIMEOUT}s  ($(${VPY} -c 'i
 for name in "${names[@]}"; do
     printf "%-32s " "$name"
     log="$LOGDIR/$name.log"
-    "$VPY" "$ROOT/tools/boardrun.py" "$PORT" runfile "test/$name.py" "$TIMEOUT" > "$log" 2>&1
+    python3 "$ROOT/tools/board_reboot.py" "$PORT" >/dev/null 2>&1 || true  # fresh VM per test (isolation)
+    timeout "$TIMEOUT" mpremote connect "$PORT" run "$ROOT/src/glider/test/$name.py" > "$log" 2>&1
     rc=$?
     if [ "$rc" -eq 0 ] && grep -qa 'ok:' "$log"; then
         echo "PASS"; pass=$((pass+1))

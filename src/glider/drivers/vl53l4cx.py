@@ -13,6 +13,7 @@
 import asyncio
 import struct
 
+import commons
 import config
 import databoard
 import i2cbus
@@ -199,6 +200,18 @@ class Vl53l4cx(task.Task):
             recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
             return message
         return None
+
+    async def diagnose(self) -> str:
+        """Deeper analysis when setup() failed: re-read the 16-bit MODEL_ID and classify it
+        (commons.id_classify vs 0xEB, the high byte of the 0xEBAA VL53L4CD/L4CX silicon). The Controller
+        folds this into the failure reason so verify/probe show the 'why', not just 'absent / miswired?'."""
+        if getattr(self, '_bus', None) is None:
+            return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)
+        try:
+            read = (await self._read(_REG_MODEL_ID, 1))[0]
+        except Exception:
+            read = None
+        return commons.id_classify(read, 0xEB)
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)

@@ -14,10 +14,11 @@ PAD=25.514379,-80.391795
 ZONE=25.514944,-80.392972,25.514583,-80.391111
 SCENARIOS='noise05 noise10 noise25 noise50 noise100 wind00 wind03 wind06 wind09 wind12 corner_spike corner_stress'
 
-rshell -p "$PORT" -b 115200 --quiet cp "$ROOT/tools/hitl_run.py" /pyboard/hitl_run.py >/dev/null 2>&1
+mpremote connect "$PORT" cp "$ROOT/tools/hitl_run.py" : >/dev/null 2>&1   # deploy the runner (boardrun retired)
 while read -r name noise wind dir spike; do
   [ -z "$name" ] && continue
-  bash "$ROOT/tools/hitl_collect.sh" "$motor" "$name" "$noise" "$wind" "$dir" "$spike" "$outdir"
+  bash "$ROOT/tools/hitl_collect.sh" "$motor" "$name" "$noise" "$wind" "$dir" "$spike" "$outdir" \
+    || echo "skip $motor/$name (flight failed)"   # one flaky flight must not abort the matrix
 done <<'SCN'
 noise05 0.05 0.0 210.0 False
 noise10 0.10 0.0 210.0 False

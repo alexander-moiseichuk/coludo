@@ -1,6 +1,6 @@
 # exploration: push past viper -- measure @micropython.native on the FLOAT hot path and a
 # hand-written @micropython.asm_rv32 integer clamp, both vs bytecode/viper, with correctness asserts.
-# Run on-board: boardrun.py PORT runfile test/bench_emitters.py 40
+# Run on-board: mpremote connect PORT run test/bench_emitters.py
 # ruff: noqa: F821 -- the asm_rv32 body uses bare RV32 mnemonics/registers the inline assembler provides.
 import time
 

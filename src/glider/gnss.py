@@ -135,6 +135,32 @@ class Gnss(task.Task):
             return message
         return None
 
+    async def diagnose(self) -> str:
+        """Deeper analysis when setup() failed: is NMEA arriving on the UART? Open the port and listen
+        briefly. Silence = GNSS unpowered / TX-RX swapped / no module; lines = the link is alive (a fix
+        still needs sky view). Shared by atgm336h + neo6mv2. The Controller folds this into the reason."""
+        bus_id = self.config.get('id', 2)
+        spec = config.bus(self.controller.config, self.config.get('bus', 'uart'), bus_id)
+        if spec is None:
+            return 'no transport -- uart bus %s undefined in config' % bus_id
+        uart = getattr(self, '_uart', None)
+        if uart is None:
+            from machine import UART
+
+            uart = UART(bus_id, baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
+        reader = asyncio.StreamReader(uart)
+        seen = 0
+        try:
+            for _ in range(8):  # ~2 s window (longer than one NMEA interval)
+                raw = await asyncio.wait_for_ms(reader.readline(), 250)
+                if raw:
+                    seen += 1
+        except asyncio.TimeoutError:
+            pass
+        if seen == 0:
+            return 'no NMEA on uart:%s -- GNSS unpowered / TX-RX swapped / no module' % bus_id
+        return 'NMEA flowing (%d lines) on uart:%s -- link alive (a fix needs sky view)' % (seen, bus_id)
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['fix'] = self._fix

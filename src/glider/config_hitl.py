@@ -11,6 +11,11 @@ import sim_model
 _SIM_SENSORS = ('accel_adxl375', 'imu_bno055', 'baro_icp10111', 'baro_bmp280', 'laser_agl', 'gnss')
 _OFF = ('separation', 'watchdog', 'wifi', 'cc', 'bluetooth')
 
+# Full-stack liftoff mass (g) per motor, measured on the printed TMS-7 v2 with ~100 g electronics
+# (models/TMS-7/readme.md): booster+engine+glider. Heavier than the old 430 g guess, so the boost is
+# a touch lower (matches the analysis apogee ~140 m E16 / ~290 m F15).
+_LIFTOFF_G = {'E16': 451, 'F15': 468}
+
 
 def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: float = 0.0,
             wind_dir: float = 0.0, eject_delay_s: float = 4.0, boost_axis: str = 'z') -> dict:
@@ -39,7 +44,7 @@ def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: f
         sequencer['boost_timeout_ms'] = round((burn_s + eject_delay_s) * 1000)
     cfg['components'].append({
         'name': 'hitl', 'activity': 'hitl', 'enabled': True,
-        'sim_hz': 50, 'motor': motor, 'noise': noise, 'spike': spike, 'liftoff_g': 430,
+        'sim_hz': 50, 'motor': motor, 'noise': noise, 'spike': spike, 'liftoff_g': _LIFTOFF_G.get(motor, 451),
         'wind': wind, 'wind_dir': wind_dir, 'boost_axis': boost_axis,
     })
     return cfg

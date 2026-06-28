@@ -80,6 +80,20 @@ class Separation(task.Task):
             return message
         return None
 
+    async def diagnose(self) -> str:
+        """Deeper analysis: read the separation pin -- during a pre-flight check it should be HIGH (the
+        pads are nested, routing 3V3). LOW means the pads are open (already separated) or miswired. The
+        Controller folds this into the failure reason."""
+        gpio = self.controller.config.get('pins', {}).get(self.config.get('pin', 'separation_switch'))
+        if gpio is None:
+            return 'no pin -- %r not defined in config pins' % self.config.get('pin', 'separation_switch')
+        from machine import Pin
+
+        level = Pin(gpio, Pin.IN, Pin.PULL_DOWN).value()
+        if level == 1:
+            return 'pin GPIO%d HIGH (nested) -- switch ok; setup failed elsewhere' % gpio
+        return 'pin GPIO%d LOW -- expected HIGH (nested) at check: pads open / not contacting / miswired' % gpio
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['separated'] = self._separated
