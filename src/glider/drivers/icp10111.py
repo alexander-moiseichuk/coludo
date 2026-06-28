@@ -152,6 +152,22 @@ class Icp10111(task.Task):
             return message
         return None
 
+    async def diagnose(self) -> str:
+        """Deeper analysis when setup() failed: re-issue the product-id command and classify. icp10111 is
+        command-based (not register-mapped, so no shared id helper): id word & 0x3F should be 0x08. The
+        Controller folds this into the failure reason."""
+        if getattr(self, '_bus', None) is None:
+            return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)
+        try:
+            await self._bus.writeto(self._addr, _CMD_ID)
+            ident = await self._bus.readfrom(self._addr, 3)
+        except Exception:
+            return 'no I2C response at 0x%02X -- absent / unpowered / miswired' % self._addr
+        word = (((ident[0] << 8) | ident[1]) & _ID_MASK)
+        if word == _ID_VALUE:
+            return 'product id 0x%02X ok -- device present; setup failed after detect' % word
+        return 'product id 0x%02X != 0x%02X -- wrong device at 0x%02X' % (word, _ID_VALUE, self._addr)
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)  # our channels' latest (no hot-path I2C here)
         status['altitude_m'] = self._altitude.value()

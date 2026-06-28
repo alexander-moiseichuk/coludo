@@ -148,6 +148,22 @@ class SG90(task.Task):
         self._pwm.deinit()
         await task.Task.finish(self)
 
+    async def diagnose(self) -> str:
+        """Deeper analysis when setup() failed: is the pin PWM-capable? Resolve the pin and try to bring a
+        PWM up on it (released immediately). A 3-wire SG90 has no feedback, so this is the only check the
+        board can make. The Controller folds it into the failure reason."""
+        gpio = self.controller.config.get('pins', {}).get(self.config.get('pin'))
+        if gpio is None:
+            return 'no PWM -- pin %r not defined in config pins' % self.config.get('pin')
+        try:
+            from machine import PWM, Pin
+
+            pwm = PWM(Pin(gpio), freq=50, duty_u16=0)
+            pwm.deinit()
+        except Exception as error:
+            return 'PWM init failed on GPIO%d: %r' % (gpio, error)
+        return 'pin GPIO%d PWM alive -- setup failed elsewhere' % gpio
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['angle'] = self.angle  # COMMANDED, not measured -- SG90 is open-loop

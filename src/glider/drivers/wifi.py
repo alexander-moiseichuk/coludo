@@ -13,6 +13,7 @@ import asyncio
 import time
 
 import controller as controller_mod
+import recorder
 import task
 
 
@@ -122,6 +123,19 @@ class Wifi(task.Task):
             return True
         except Exception:
             return False
+
+    async def diagnose(self) -> str:
+        """Dump the Wi-Fi link state to the console AND the recorder log, and return the one-line summary.
+        Wi-Fi setup never fails (it is non-blocking and the radio comes up lazily in run()), so this is an
+        on-demand link check rather than a setup-failure analysis -- it brings the radio up if needed."""
+        if not await self._ensure_radio():
+            summary = 'wifi :: no radio -- no Wi-Fi interface on this board (flying standalone)'
+        else:
+            summary = 'wifi :: ssid=%r connected=%s ip=%s rssi=%s tx_power=%s' % (
+                self.ssid, self.isconnected(), self.ip(), self.rssi(), self.tx_power)
+        print(summary)
+        recorder.Recorder.log(self.name, summary)
+        return summary
 
     # --- Inspectable ---
     def inspect(self) -> dict:
