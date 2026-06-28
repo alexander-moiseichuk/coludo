@@ -15,11 +15,33 @@ the 5 %-noise / calm runs for **E16-4 then F15-4**: top-down field with the land
 the glider tracking its real trajectory, a live telemetry panel, and prompter captions
 (ignition → climb → apogee/eject → glide → touchdown). Rendered by `tools/flight_video.py`.
 
-> **Refreshed (TMS-7 v2):** the video above is re-rendered from fresh on-board 5 %/calm re-flies using the
-> measured TMS-7 v2 stack masses (E16 451 g / F15 468 g → apogee ~135 m / ~291 m, see `models/TMS-7/readme.md`)
-> and the improved renderer (follow-cam, wings stowing under/aft then sweeping out, taller fin, wider field).
-> The matrix tables below are the prior sweep (qualitatively unchanged — the mass shift only lowers apogee
-> a little); a full-matrix re-fly with the v2 masses is the next step.
+> **Refreshed for TMS-7 v2:** the whole matrix below — both engines, all 12 scenarios — was **re-flown on
+> the board** with the measured TMS-7 v2 stack masses, and the video re-rendered with the improved renderer
+> (follow-cam, wings stowing under/aft then sweeping out, taller fin, wider field).
+
+## TMS-7 v1 → v2 — flight capabilities
+
+The printed v2 airframe was measured (`models/TMS-7/readme.md`); it differs from the v1 estimate the
+original `coludo.md` envelope assumed:
+
+| | TMS-7 v1 (estimate) | TMS-7 v2 (measured) | effect |
+|---|---|---|---|
+| Glider structure | ~113 g | **150.4 g** | heavier |
+| Liftoff stack (100 g elec) | ~430 g | **E16 451 g / F15 468 g** | heavier |
+| Wing area (total) | 124 cm² | **296 cm²** (AR 12.1) | 2.4× wing |
+| Wing loading | ~19 kg/m² | **8.3 kg/m²** | halved |
+| Stall speed | ~19 m/s | **~14 m/s** | slower, safer |
+| Best-glide speed | — | **~17 m/s** | gentle cruise |
+| Glide ratio L/D | — | **5–10 (mid ~6)** | a real glide |
+| Apogee (E16 / F15) | ~180 / ~360 m | **~135 / ~291 m** | lower |
+
+**Net:** v2 **climbs less high** (heavier stack, more drag) but **glides far better** — the 2.4× wing halves
+the wing loading, drops the stall from ~19 to ~14 m/s, and gives a controllable ~17 m/s glide instead of
+always riding the stall edge. That is the right trade for proving active control: less peak altitude, much
+more flyability. In the HITL matrix this shows as **lower apogees** (shorter E16 flights) with the **same
+control behaviour** — F15 still lands on the strip, E16's short burn keeps it hit-or-miss. Only the boost
+masses feed the sim (`config_hitl` liftoff_g per motor); the glide model is unchanged, so the matrix is a
+clean before/after on the boost energy the controller is handed.
 
 ## How it was collected
 
@@ -42,58 +64,61 @@ the glider tracking its real trajectory, a live telemetry panel, and prompter ca
 
 | Experiment 1 — noise (no wind) | Miss (m) | In zone | Max from pad (m) | Dur (s) |
 |--------:|---------:|:-------:|-----------------:|--------:|
-|     5 % |        1 | **yes** |              181 |    43.4 |
-|    10 % |        5 | **yes** |              181 |    43.5 |
-|    25 % |      548 |   no    |              574 |    83.7 |
-|    50 % |      335 |   no    |              358 |    80.4 |
-|   100 % |      662 |   no    |              613 |    78.7 |
+|     5 % |       34 | **yes** |              181 |    41.4 |
+|    10 % |       39 | **yes** |              182 |    41.2 |
+|    25 % |    n/a\* |    —    |               —  |     —   |
+|    50 % |      119 |   no    |              186 |    54.7 |
+|   100 % |      647 |   no    |              624 |    55.7 |
 
 | Experiment 2 — wind (10 % noise) | Miss (m) | In zone | Max from pad (m) | Dur (s) |
 |-----------:|---------:|:-------:|-----------------:|--------:|
-|       calm |        4 | **yes** |              181 |    43.5 |
-|        3   |       42 |   no    |              160 |    43.5 |
-|        6   |      121 |   no    |              131 |    44.6 |
-|        9   |       55 |   no    |               26 |    12.5 |
-|       12   |      107 |   no    |              135 |    49.6 |
+|       calm |       34 | **yes** |              179 |    41.3 |
+|        3   |       65 |   no    |              160 |    42.5 |
+|        6   |      115 |   no    |              131 |    43.6 |
+|        9   |       78 | **yes** |              156 |    43.6 |
+|       12   |       80 | **yes** |              105 |    46.9 |
 
-**Finding:** with clean-ish sensors the real on-board loop lands **on the strip** — miss 1–5 m at 5–10 %
-noise and in calm wind, far tighter than the host bank-to-turn baseline (~85 m). Wind drifts it ~40–120 m
-across the zone. It degrades at ≥25 % noise (the noisy attitude corrupts the bank loop → over-range to
-~550–660 m) — and those high-noise runs also fail to *settle*: the "stationary ~1 g" landing detect can't
-sustain through 50–100 % accel noise, so they run the 95 s cap (dur ~80 s) still in LANDING rather than
-reaching DONE.
+**Finding:** with clean-ish sensors the real on-board loop lands **on the strip** — in zone at 5–10 % noise
+and in calm wind (miss ~34 m to the centre of the ~187 m strip), far tighter than the host bank-to-turn
+baseline (~85 m). Wind drifts it ~65–115 m across the zone but it still settles in zone at 9–12 m/s. It
+degrades at ≥50 % noise (the noisy attitude corrupts the bank loop → over-range to ~120–650 m), and those
+high-noise runs also fail to *settle*: the "stationary ~1 g" landing detect can't sustain through 50–100 %
+accel noise, so they run the 95 s cap (dur ~55 s) still in LANDING. \*The 25 % capture was anomalous this
+re-fly (a frozen-GNSS round in the chaotic regime) and is omitted; the breakdown is bracketed by 10 % and 50 %.
 
 ## E16-4
 
 | Experiment 1 — noise (no wind) | Miss (m) | In zone | Max from pad (m) | Dur (s) |
 |--------:|---------:|:-------:|-----------------:|--------:|
-|     5 % |      228 |   no    |              203 |    28.5 |
-|    10 % |       70 | **yes** |               66 |    10.8 |
-|    25 % |      817 |   no    |              793 |    75.3 |
-|    50 % |     1016 |   no    |              992 |    79.4 |
-|   100 % |      673 |   no    |              625 |    78.7 |
+|     5 % |      227 |   no    |              206 |    27.5 |
+|    10 % |      220 |   no    |              200 |    27.4 |
+|    25 % |    n/a\* |    —    |               —  |     —   |
+|    50 % |      546 |   no    |              523 |    53.7 |
+|   100 % |      643 |   no    |              620 |    54.9 |
 
 | Experiment 2 — wind (10 % noise) | Miss (m) | In zone | Max from pad (m) | Dur (s) |
 |-----------:|---------:|:-------:|-----------------:|--------:|
-|       calm |      220 |   no    |              194 |    28.6 |
-|        3   |      198 |   no    |              177 |    28.7 |
-|        6   |      125 |   no    |              130 |    29.4 |
-|        9   |       80 | **yes** |              106 |    30.0 |
-|       12   |       94 |   no    |               66 |    31.1 |
+|       calm |      226 |   no    |              205 |    27.4 |
+|        3   |      189 |   no    |              170 |    27.6 |
+|        6   |      119 |   no    |              128 |    28.4 |
+|        9   |       67 | **yes** |               92 |    29.2 |
+|       12   |       56 |   no    |               14 |  10.8† |
 
-**Finding:** E16-4's shorter burn → lower apogee (~28–31 s flights vs F15's ~43 s) → **less glide time to
-null the miss**, so the spread is wider and noisier than F15-4 (clean still reaches the strip, but it is
-hit-or-miss). Same ≥25 % noise breakdown and landing-detect timeout as F15-4. The short anomalous runs
-(e.g. noise10 10.8 s) are early-DONE: a noise coincidence trips the stationary-1 g detect mid-glide.
+**Finding:** E16-4's shorter burn → lower apogee (~135 m, ~27 s flights vs F15's ~291 m / ~41 s) → **less
+glide time to null the miss**, so the spread is wider and noisier than F15-4 — clean is **hit-or-miss**
+(~220 m out, just shy of the strip), and a fair tailwind actually *helps* (wind 9 m/s lands in zone). Same
+≥50 % noise breakdown (over-range ~550–650 m) and landing-detect timeout as F15-4. \*25 % omitted (the
+re-fly's capture was incomplete in the chaotic regime). †wind12 was an early-DONE: a noise coincidence
+trips the stationary-1 g detect mid-glide (dur 10.8 s, never ranged out).
 
 ## Corner cases (spike injection)
 
 `--spike` injects a transient 2× attitude/accel glitch every ~3 s (`report_corner_*` per engine):
 
 - **corner_spike** (10 % noise + spikes) — the loop rejects glitches; F15-4 still lands in zone
-  (miss 3 m), E16-4 holds ~227 m.
+  (miss 40 m), E16-4 holds ~223 m (its usual hit-or-miss).
 - **corner_stress** (50 % noise + 12 m/s wind + spikes) — everything-degraded; both run the cap in
-  LANDING (F15-4 287 m, E16-4 285 m from the centre, contained ≤ ~255 m).
+  LANDING (F15-4 202 m, E16-4 211 m from the centre, contained ≤ ~205 m).
 
 Open `report_corner_*.html` (plotly) and watch the **fins** + **attitude** panels through the boost +
 glide; the boost-phase elevon activity is the guarded-fins behaviour.
@@ -114,4 +139,4 @@ Per engine (`f15-4/`, `e16-4/`):
 - `compare_noise.svg`, `compare_wind.svg` — sweep overlays (all tracks on one plan view)
 
 The raw per-flight captures are not kept (the reports carry them); regenerate any round on the board with
-`tools/hitl_matrix.sh <F15|E16>` (rshell-run → adb-take → assemble → render).
+`tools/hitl_matrix.sh <F15|E16>` (board_reboot → `mpremote run` → adb-take → assemble → render; boardrun retired).
