@@ -1,8 +1,8 @@
 # tools/hitl_run.py -- board-side HITL flight runner (MicroPython, runs ON the board). Deploy it with
-# rshell (`rshell -p PORT cp tools/hitl_run.py /pyboard/`) and fly a scenario via boardrun + a one-line
-# launcher, e.g.:
-#   printf 'import hitl_run\nhitl_run.fly("F15", 0.10, 12.0, 210.0, False)\n' > launch.py
-#   rshell -p PORT cp launch.py /pyboard/ && tools/boardrun.py PORT runfile launch.py 125
+# `mpremote cp tools/hitl_run.py :` and fly a scenario via `mpremote run` + a one-line launcher, e.g.:
+#   printf 'import hitl_run\nhitl_run.fly("F15", 0.10, 12.0, 210.0, False)\n' > /tmp/launch.py
+#   tools/board_reboot.py PORT && mpremote connect PORT run /tmp/launch.py
+# (hitl_collect.sh wraps this.) boardrun is retired.
 # It brings up config_hitl (real sensors off; the hitl sim feeds the REAL sequencer/flight/pid/mixer/nav),
 # ARMS the controller (else the flight loop holds the fins neutral -> no bank -> no descent), and flies to
 # DONE (or a 95 s cap). The Recorder streams every stream to the Luckfox (/userdata/recordings/<session>_*

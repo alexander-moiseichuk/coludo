@@ -1,6 +1,6 @@
 # performance bench for the commons primitives: each function's _opt (viper int / native float) vs
 # its _upy bytecode reference, ns/call + speedup. NOT a correctness test (see test_commons). Run
-# on-board: boardrun.py PORT runfile test/bench_commons.py 40
+# on-board: mpremote connect PORT run test/bench_commons.py
 import time
 
 import commons

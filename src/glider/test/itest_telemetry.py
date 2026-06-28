@@ -5,7 +5,7 @@
 #
 # Integration test (itest_, not auto-run by run_tests.sh): enables flight + runs the real task loops for
 # a few seconds. Bring-up is inlined (mirrors main.bringup) so main.py need not be on the board (no kiosk).
-# Run on-board: boardrun.py PORT runfile test/itest_telemetry.py 25
+# Run on-board: mpremote connect PORT run test/itest_telemetry.py
 
 import asyncio
 
