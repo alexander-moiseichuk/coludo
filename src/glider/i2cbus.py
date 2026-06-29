@@ -19,8 +19,8 @@ class _Device:
         self._bus = bus
         self._addr = addr
 
-    async def read(self, reg: int, count: int) -> bytes:
-        return await self._bus.read(self._addr, reg, count)
+    async def read(self, reg: int, count: int, addrsize: int = 8) -> bytes:
+        return await self._bus.read(self._addr, reg, count, addrsize=addrsize)
 
     async def read_into(self, reg: int, buf) -> None:
         await self._bus.read_into(self._addr, reg, buf)
@@ -28,13 +28,14 @@ class _Device:
     async def write(self, reg: int, data: bytes) -> None:
         await self._bus.write(self._addr, reg, data)
 
-    async def diagnose(self, reg: int, expected: int) -> str:
+    async def diagnose(self, reg: int, expected: int, addrsize: int = 8) -> str:
         """Read this chip's id/WHO_AM_I register and classify the wire-level result for a failed setup()
         (commons.id_classify: no I2C ack / wrong device / present-but-init). A driver's diagnose() just
         awaits this with its id register + expected value -- the read and verdict live with the bus,
-        mirroring spibus._Device.diagnose."""
+        mirroring spibus._Device.diagnose. `addrsize` is passed through for 16-bit register devices
+        (e.g. VL53L4CX); default is 8."""
         try:
-            read = (await self.read(reg, 1))[0]
+            read = (await self.read(reg, 1, addrsize=addrsize))[0]
         except Exception:
             read = None
         return commons.id_classify(read, expected)
