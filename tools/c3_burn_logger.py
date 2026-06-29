@@ -29,6 +29,22 @@
 # battery brownout NEVER overwrites a captured flight. Pull them over USB afterwards:
 #   mpremote connect /dev/ttyACM1 fs ls                                   # list burn.NN.csv
 #   mpremote connect /dev/ttyACM1 cp :burn.00.csv burn.00.csv            # pull each one
+#
+# ---- Output CSV + a VALIDATED example (manual shake + separate bench run) ----
+# Columns: t_us, phase, sep, n, dt_us, then min/avg/max of adxl_g, lsm_g, lsm_dps.
+#   phase: start (boot state) | idle (1 row/s, decimated) | sep (a separation edge) | flight (full rate)
+#   sep:   1 = nested (switch HIGH) / 0 = open    n,dt_us = samples in the row / their real span (-> ~Hz)
+# A bench run (boot nested -> shake -> pull separation -> shake again) produced, e.g.:
+#   0,start,1,1,0,0.110,0.110,0.110,0.997,0.997,0.997,...      <- boot: NESTED, LSM = 1 g (gravity)
+#   1006850,idle,1,159,986466,...                              <- idle: ~1 row/s, ~160 samples decimated
+#   12476710,flight,1,10,52267,0.000,8.629,24.444,1.201,6.944,14.463,...   <- LAUNCH (shake1): 24 g / 14 g
+#   14277405,sep,0,1,0,0.550,0.550,0.550,1.908,1.908,1.908,... <- SEPARATION edge (sep 1->0), timestamped
+#   15741660,flight,0,10,55526,2.528,9.415,40.393,6.059,10.922,15.715,470.825,1346.848,2111.386
+#                                                             <- shake2: ADXL 40 g, LSM 16 g, gyro 2111 dps
+# Validated end-to-end: boot state + the separation edge are both logged, shakes captured at ~175 Hz
+# (the data-ready INTs fire), auto-stopped 5 s after separation. LSM6DSO32 is the clean low-g channel
+# (1.00 g at rest); the ADXL375 (49 mg/LSB, ~0.1-0.3 g offset at rest) is the high-g backstop -- it caught
+# the sharp 40 g transient the LSM filtered to 16 g.
 
 import asyncio
 import math
