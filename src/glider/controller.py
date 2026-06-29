@@ -14,9 +14,7 @@ import task
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
-
-    def const(value):
-        return value
+    from commons import const
 
 
 class Stage:

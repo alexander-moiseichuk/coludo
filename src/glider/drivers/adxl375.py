@@ -25,9 +25,7 @@ import task
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
-
-    def const(value):
-        return value
+    from commons import const
 
 
 _REG_DEVID = const(0x00)  # reads 0xE5 on the whole ADXL34x/375 family

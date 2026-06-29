@@ -22,9 +22,7 @@ import task
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
-
-    def const(value):
-        return value
+    from commons import const
 
 
 _REG_FIRMWARE_STATUS = const(0x00E5)  # reads 0x03 once the firmware has booted

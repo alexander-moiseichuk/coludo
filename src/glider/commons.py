@@ -35,6 +35,13 @@ except ImportError:  # CPython (off-board tooling / tests) — decorators + cons
             return value
 
 
+try:
+    from micropython import const  # real on the board; compiler catches this one for any
+except ImportError:                # module that does `from commons import const` on CPython
+    def const(value):
+        """CPython const fallback — identity function."""
+        return value
+
 M_PER_DEG = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat)); shared
                       # by navigation + sim_model (flat-earth geo) -- one definition, not three.
 

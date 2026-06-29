@@ -24,9 +24,7 @@ import task
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
-
-    def const(value):
-        return value
+    from commons import const
 
 
 _WHO_AM_I = const(0x0F)   # reads 0x6C on the LSM6DSO32

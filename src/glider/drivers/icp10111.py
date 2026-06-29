@@ -20,9 +20,7 @@ import task
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
-
-    def const(value):
-        return value
+    from commons import const
 
 
 _CMD_ID = b'\xef\xc8'  # read product id -> (word & 0x3f) == 0x08 for ICP-101xx
