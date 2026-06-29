@@ -31,11 +31,12 @@
 #   mpremote connect /dev/ttyACM1 cp :burn.00.csv burn.00.csv            # pull each one
 #
 # ---- Output CSV + a VALIDATED example (manual shake + separate bench run) ----
-# Columns: t_us, phase, sep, n, dt_us, then min/avg/max of adxl_g, lsm_g, lsm_dps.
+# Columns: t_us (DEVICE UPTIME -- us since power-up), phase, sep, n, dt_us, then min/avg/max of
+#   adxl_g, lsm_g, lsm_dps.
 #   phase: start (boot state) | idle (1 row/s, decimated) | sep (a separation edge) | flight (full rate)
 #   sep:   1 = nested (switch HIGH) / 0 = open    n,dt_us = samples in the row / their real span (-> ~Hz)
-# A bench run (boot nested -> shake -> pull separation -> shake again) produced, e.g.:
-#   0,start,1,1,0,0.110,0.110,0.110,0.997,0.997,0.997,...      <- boot: NESTED, LSM = 1 g (gravity)
+# A bench run (boot nested -> shake -> pull separation -> shake again) produced, e.g. (t_us = uptime):
+#   318000,start,1,1,0,0.110,0.110,0.110,0.997,0.997,0.997,... <- start (~0.3 s after power-up): NESTED, 1 g
 #   1006850,idle,1,159,986466,...                              <- idle: ~1 row/s, ~160 samples decimated
 #   12476710,flight,1,10,52267,0.000,8.629,24.444,1.201,6.944,14.463,...   <- LAUNCH (shake1): 24 g / 14 g
 #   14277405,sep,0,1,0,0.550,0.550,0.550,1.908,1.908,1.908,... <- SEPARATION edge (sep 1->0), timestamped
@@ -230,25 +231,27 @@ async def main():
     handle.flush()
     print('logging to %s -- ignite within ~%ds' % (out, _MAX_RUN_MS // 1000))
 
-    start_us = time.ticks_us()
+    # t_us in every row is the DEVICE UPTIME (us since power-up): ticks_us() is esp_timer us-since-boot,
+    # exact below its ~17.9 min wrap -- fine for a < 5 min run. Run-relative timing uses ticks_diff deltas.
+    t0 = time.ticks_us()                   # uptime when logging began (~boot + main.py import)
     sec_acc, win_acc = _new(), _new()      # idle 1 s rows / flight 100 ms rows
     n = 0
-    last_idle_us = 0
+    last_idle_us = t0
     phase = 'idle'
     launch_us = sep_us = None
     # record the separation state at startup -- if the switch is dead/miswired we see it now; and every
     # edge below. No 'sep' row after this means it never changed (the switch did not fire).
     adxl_g, lsm_g, lsm_dps, prev_sep = sample(adxl_ok, lsm_ok)
-    _event(handle, 0, 'start', adxl_g, lsm_g, lsm_dps, prev_sep)
+    _event(handle, t0, 'start', adxl_g, lsm_g, lsm_dps, prev_sep)
     rows = 1
     while True:
         adxl_g, lsm_g, lsm_dps, sep = sample(adxl_ok, lsm_ok)
-        t_us = time.ticks_diff(time.ticks_us(), start_us)  # us since start, per sample
+        t_us = time.ticks_us()             # device uptime (us since power-up), per sample
         _add(sec_acc, adxl_g, lsm_g, lsm_dps, t_us)
         _add(win_acc, adxl_g, lsm_g, lsm_dps, t_us)
         n += 1
 
-        if sep != prev_sep:                 # record EVERY separation edge with its timestamp
+        if sep != prev_sep:                 # record EVERY separation edge with its (uptime) timestamp
             _event(handle, t_us, 'sep', adxl_g, lsm_g, lsm_dps, sep)
             prev_sep = sep
             rows += 1
@@ -257,30 +260,30 @@ async def main():
             phase = 'flight'
             launch_us = t_us
             win_acc = _new()                # drop the pre-launch idle samples from the first flight row
-            print('LAUNCH +%dms |a|=%.1fg' % (t_us // 1000, max(adxl_g, lsm_g)))
-        if sep == 0 and sep_us is None and t_us > _SEP_DEFER_US:
+            print('LAUNCH at %dms uptime |a|=%.1fg' % (t_us // 1000, max(adxl_g, lsm_g)))
+        if sep == 0 and sep_us is None and time.ticks_diff(t_us, t0) > _SEP_DEFER_US:
             sep_us = t_us
             if phase == 'idle':
                 phase = 'flight'
                 win_acc = _new()
-            print('SEPARATION +%dms' % (t_us // 1000))
+            print('SEPARATION at %dms uptime' % (t_us // 1000))
 
         if phase == 'flight' and n % _WINDOW == 0:
             _row(handle, t_us, 'flight', sep, win_acc)
             win_acc = _new()
             rows += 1
-        elif phase == 'idle' and t_us - last_idle_us >= _IDLE_WRITE_MS * 1000:
+        elif phase == 'idle' and time.ticks_diff(t_us, last_idle_us) >= _IDLE_WRITE_MS * 1000:
             _row(handle, t_us, 'idle', sep, sec_acc)
             sec_acc = _new()
             last_idle_us = t_us
             rows += 1
 
-        if sep_us is not None and t_us - sep_us > _STOP_AFTER_SEP_MS * 1000:
+        if sep_us is not None and time.ticks_diff(t_us, sep_us) > _STOP_AFTER_SEP_MS * 1000:
             break
-        if launch_us is not None and t_us - launch_us > _STOP_AFTER_LAUNCH_MS * 1000:
+        if launch_us is not None and time.ticks_diff(t_us, launch_us) > _STOP_AFTER_LAUNCH_MS * 1000:
             print('LAUNCH timeout -- separation not seen, stopping')
             break
-        if t_us > _MAX_RUN_MS * 1000:
+        if time.ticks_diff(t_us, t0) > _MAX_RUN_MS * 1000:
             print('timeout -- no launch/separation seen')
             break
         try:
