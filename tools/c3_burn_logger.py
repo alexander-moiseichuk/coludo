@@ -22,6 +22,8 @@
 #
 # ---- Deploy + run ----  (the P4 firmware is untouched; this lives only on the C3)
 #   mpremote connect /dev/ttyACM1 cp tools/c3_burn_logger.py :main.py     # auto-runs on every boot
+#   mpremote connect /dev/ttyACM1 exec "import main; main.verify()"       # hardware check (after deploy,
+#       3 s of live CSV to the REPL; no file). (mpremote `run` can't pass --verify -- it never sets argv.)
 #   ... power the C3 from battery, ignite within ~2 min, let it fly, then USB in to pull ...
 # Each boot writes the NEXT free file -- burn.00.csv, burn.01.csv, ... -- so an autonomous restart or a
 # battery brownout NEVER overwrites a captured flight. Pull them over USB afterwards:
@@ -32,6 +34,7 @@ import asyncio
 import math
 import os
 import struct
+import sys
 import time
 
 from machine import SPI, Pin
@@ -77,8 +80,12 @@ _WINDOW = 10               # samples per min/avg/max summary (~100 ms)
 _IDLE_WRITE_MS = 1000      # IDLE: one summary row per second
 _LAUNCH_G = 3.0            # |a| over this (either accel) latches FLIGHT (E16 peak ~7.5 g)
 _STOP_AFTER_SEP_MS = 5000  # stop this long after separation (the flight is < 5 s)
+_STOP_AFTER_LAUNCH_MS = 30000  # stop 30 s after launch even if the switch never fires
+_SEP_DEFER_US = 2000000    # ignore separation for first 2 s after boot (switch may be open pre-test)
 _MAX_RUN_MS = 300000       # safety cap: never log past 5 min even if nothing fires
 _PREFIX, _SUFFIX = 'burn.', '.csv'   # each boot writes the next free burn.NN.csv (NEVER overwrites)
+
+_3H = '<3h'                          # precomputed format string for 3-channel struct.unpack
 
 
 def _rd(cs, cmd, n):
@@ -129,20 +136,21 @@ def setup_sensors():
     return adxl_ok, lsm_ok
 
 
-def _mag(raw, scale, count):
-    """|vector| of the first `count` int16 LE samples in `raw`, scaled."""
-    vals = struct.unpack('<%dh' % count, raw[:count * 2])
+def _mag(raw, scale):
+    """|vector| of three int16 LE samples in `raw`, scaled."""
+    buf = raw[:6]
+    vals = struct.unpack(_3H, buf)
     return math.sqrt(sum((v * scale) ** 2 for v in vals))
 
 
 def sample(adxl_ok, lsm_ok):
     """One reading: (adxl |a| g, lsm |a| g, lsm |gyro| dps, sep 0/1). Absent sensor -> 0.0."""
-    adxl_g = _mag(_rd(_cs_adxl, 0xC0 | _ADXL_DATAX0, 6), _ADXL_SCALE_G, 3) if adxl_ok else 0.0
+    adxl_g = _mag(_rd(_cs_adxl, 0xC0 | _ADXL_DATAX0, 6), _ADXL_SCALE_G) if adxl_ok else 0.0
     lsm_g = lsm_dps = 0.0
     if lsm_ok:
         raw = _rd(_cs_lsm, 0x80 | _LSM_OUTX_L_G, 12)   # gyro x,y,z then accel x,y,z
-        lsm_dps = _mag(raw[0:6], _LSM_SCALE_G, 3)
-        lsm_g = _mag(raw[6:12], _LSM_SCALE_A, 3)
+        lsm_dps = _mag(raw[:6], _LSM_SCALE_G)
+        lsm_g = _mag(raw[6:12], _LSM_SCALE_A)
     return adxl_g, lsm_g, lsm_dps, _sep.value()
 
 
@@ -173,7 +181,10 @@ def _row(handle, t_us, phase, sep, acc):
     for b in (0, 3, 6):
         cells += ['%.3f' % acc[b], '%.3f' % (acc[b + 2] / n), '%.3f' % acc[b + 1]]
     handle.write(','.join(cells) + '\n')
-    handle.flush()
+    try:
+        handle.flush()        # the file handle flushes (durability vs brownout); sys.stdout (verify) has none
+    except (AttributeError, OSError):
+        pass
 
 
 def _event(handle, t_us, phase, adxl_g, lsm_g, lsm_dps, sep):
@@ -231,7 +242,7 @@ async def main():
             launch_us = t_us
             win_acc = _new()                # drop the pre-launch idle samples from the first flight row
             print('LAUNCH +%dms |a|=%.1fg' % (t_us // 1000, max(adxl_g, lsm_g)))
-        if sep == 0 and sep_us is None:
+        if sep == 0 and sep_us is None and t_us > _SEP_DEFER_US:
             sep_us = t_us
             if phase == 'idle':
                 phase = 'flight'
@@ -250,6 +261,9 @@ async def main():
 
         if sep_us is not None and t_us - sep_us > _STOP_AFTER_SEP_MS * 1000:
             break
+        if launch_us is not None and t_us - launch_us > _STOP_AFTER_LAUNCH_MS * 1000:
+            print('LAUNCH timeout -- separation not seen, stopping')
+            break
         if t_us > _MAX_RUN_MS * 1000:
             print('timeout -- no launch/separation seen')
             break
@@ -262,4 +276,32 @@ async def main():
     print('done: %d rows -> %s (launch=%s sep=%s)' % (rows, out, launch_us is not None, sep_us is not None))
 
 
-asyncio.run(main())
+def verify():
+    """Quick hardware verification: sample for ~3 s, print CSV to REPL. Returns True if all sensors OK."""
+    adxl_ok, lsm_ok = setup_sensors()
+    if not adxl_ok and not lsm_ok:
+        print('VERIFY FAIL: no sensors responsive')
+        return False
+    print('VERIFY: sampling for ~3 s...')
+    print('t_us,phase,sep,n,dt_us,adxl_g_min,adxl_g_avg,adxl_g_max,'
+          'lsm_g_min,lsm_g_avg,lsm_g_max,lsm_dps_min,lsm_dps_avg,lsm_dps_max')
+    start = time.ticks_us()
+    win = _new()
+    rows = 0
+    while time.ticks_diff(time.ticks_us(), start) < 3_000_000:
+        adxl_g, lsm_g, lsm_dps, sep = sample(adxl_ok, lsm_ok)
+        t_us = time.ticks_diff(time.ticks_us(), start)
+        _add(win, adxl_g, lsm_g, lsm_dps, t_us)
+        if win[9] >= _WINDOW:
+            _row(sys.stdout, t_us, 'verify', sep, win)
+            win = _new()
+            rows += 1
+    print('VERIFY OK: %d rows (%d sensors)' % (rows, (1 if adxl_ok else 0) + (1 if lsm_ok else 0)))
+    return True
+
+
+if __name__ == '__main__':
+    if len(sys.argv) > 1 and sys.argv[1] == '--verify':
+        verify()
+    else:
+        asyncio.run(main())
