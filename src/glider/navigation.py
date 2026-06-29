@@ -26,9 +26,7 @@ from commons import M_PER_DEG, between
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
-
-    def const(value):
-        return value
+    from commons import const
 
 
 

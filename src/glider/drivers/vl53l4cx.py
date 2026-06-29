@@ -13,7 +13,6 @@
 import asyncio
 import struct
 
-import commons
 import config
 import databoard
 import i2cbus
@@ -23,9 +22,7 @@ import task
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
-
-    def const(value):
-        return value
+    from commons import const
 
 
 _REG_FIRMWARE_STATUS = const(0x00E5)  # reads 0x03 once the firmware has booted
@@ -107,7 +104,7 @@ class Vl53l4cx(task.Task):
     async def _reset(self) -> None:
         """Drive XSHUT low->high to reset the sensor (recovers a wedged ToF without a board reboot),
         then wait for the firmware to boot. With no xshut_pin the sensor is assumed always-on."""
-        gpio = self.controller.config.get('pins', {}).get(self.config.get('xshut_pin'))
+        gpio = self._pin_gpio('xshut_pin')
         if gpio is not None:
             from machine import Pin
 
@@ -148,7 +145,7 @@ class Vl53l4cx(task.Task):
 
     def _setup_interrupt(self) -> None:
         """Wire GPIO1 -> data-ready (active-low in continuous mode) if an int_pin is declared."""
-        gpio = self.controller.config.get('pins', {}).get(self.config.get('int_pin'))
+        gpio = self._pin_gpio('int_pin')
         if gpio is None:
             return
         from machine import Pin
@@ -202,16 +199,12 @@ class Vl53l4cx(task.Task):
         return None
 
     async def diagnose(self) -> str:
-        """Deeper analysis when setup() failed: re-read the 16-bit MODEL_ID and classify it
-        (commons.id_classify vs 0xEB, the high byte of the 0xEBAA VL53L4CD/L4CX silicon). The Controller
-        folds this into the failure reason so verify/probe show the 'why', not just 'absent / miswired?'."""
+        """Deeper analysis when setup() failed: re-read the 16-bit MODEL_ID high byte (0xEB) and
+        classify it via the i2cbus _Device helper. The Controller folds this into the failure reason so
+        verify/probe show the 'why', not just 'absent / miswired?'."""
         if getattr(self, '_bus', None) is None:
             return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)
-        try:
-            read = (await self._read(_REG_MODEL_ID, 1))[0]
-        except Exception:
-            read = None
-        return commons.id_classify(read, 0xEB)
+        return await self._bus.device(self._addr).diagnose(_REG_MODEL_ID, 0xEB, addrsize=16)
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)

@@ -41,7 +41,7 @@ async def amain():
     assert 'no transport' in await icp10111.Icp10111('b', {'bus': 'i2c', 'id': 9}, stub).diagnose()
     icp = icp10111.Icp10111('b', {'bus': 'i2c', 'id': 0, 'addr': 0x7F}, stub)
     icp._bus, icp._addr = _bus0(), 0x7F
-    assert 'no I2C response' in await icp.diagnose()
+    assert 'no bus response' in await icp.diagnose()  # unified via commons.id_classify (like vl53 below)
 
     # vl53l4cx -- 16-bit MODEL_ID via commons.id_classify: undefined bus / dead address
     assert 'no transport' in await vl53l4cx.Vl53l4cx('l', {'bus': 'i2c', 'id': 9}, stub).diagnose()

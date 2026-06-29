@@ -10,6 +10,7 @@
 import asyncio
 import struct
 
+import commons
 import config
 import databoard
 import i2cbus
@@ -19,9 +20,7 @@ import task
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
-
-    def const(value):
-        return value
+    from commons import const
 
 
 _CMD_ID = b'\xef\xc8'  # read product id -> (word & 0x3f) == 0x08 for ICP-101xx
@@ -153,20 +152,20 @@ class Icp10111(task.Task):
         return None
 
     async def diagnose(self) -> str:
-        """Deeper analysis when setup() failed: re-issue the product-id command and classify. icp10111 is
-        command-based (not register-mapped, so no shared id helper): id word & 0x3F should be 0x08. The
-        Controller folds this into the failure reason."""
+        """Deeper analysis when setup() failed: re-issue the product-id command and classify via
+        commons.id_classify (masked 2-byte word & 0x3F, expecting 0x08). icp10111 is command-based (not
+        register-mapped) so it cannot use i2cbus._Device.diagnose(), but the shared classifier still
+        produces the same wire-level categories."""
         if getattr(self, '_bus', None) is None:
             return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)
         try:
             await self._bus.writeto(self._addr, _CMD_ID)
             ident = await self._bus.readfrom(self._addr, 3)
         except Exception:
-            return 'no I2C response at 0x%02X -- absent / unpowered / miswired' % self._addr
-        word = (((ident[0] << 8) | ident[1]) & _ID_MASK)
-        if word == _ID_VALUE:
-            return 'product id 0x%02X ok -- device present; setup failed after detect' % word
-        return 'product id 0x%02X != 0x%02X -- wrong device at 0x%02X' % (word, _ID_VALUE, self._addr)
+            read = None
+        else:
+            read = (((ident[0] << 8) | ident[1]) & _ID_MASK)
+        return commons.id_classify(read, _ID_VALUE)
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)  # our channels' latest (no hot-path I2C here)

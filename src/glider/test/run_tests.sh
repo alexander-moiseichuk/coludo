@@ -24,8 +24,14 @@ mkdir -p "$LOGDIR"
 if [ -t 1 ]; then G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; B=$'\e[1m'; N=$'\e[0m'; else G=; R=; Y=; B=; N=; fi
 
 command -v mpremote >/dev/null || { echo "${R}error: mpremote not found${N}"; exit 2; }
-have_mpycross=1
-command -v mpy-cross >/dev/null || { have_mpycross=0; echo "${Y}warning: mpy-cross not found - skipping compile step${N}"; }
+# mpy-cross gate: prefer the repo-built RV32 cross so @micropython.native/viper tests (test_native_gate)
+# compile-check with the right -march -- without it mpy-cross errors 'invalid arch' on the native emitter.
+# -march is harmless on plain bytecode. Mirrors ../deploy.sh.
+MPYX="$HERE/../../../tools/mpy-cross.v1.29.0"; MARCH=(-march=rv32imc); have_mpycross=1
+if [ ! -x "$MPYX" ]; then
+    if command -v mpy-cross >/dev/null; then MPYX=mpy-cross
+    else have_mpycross=0; echo "${Y}warning: mpy-cross not found - skipping compile step${N}"; fi
+fi
 
 if [ "$#" -gt 0 ]; then tests=("$@"); else tests=("$HERE"/test_*.py); fi
 if [ ! -e "${tests[0]}" ]; then echo "${Y}no tests found in $HERE (test_*.py)${N}"; exit 0; fi
@@ -44,7 +50,7 @@ for t in "${tests[@]}"; do
     printf "%-34s " "$name"
 
     if [ "$have_mpycross" = 1 ]; then
-        if ! err="$(mpy-cross -O3 "$t" -o "$tmpmpy" 2>&1)"; then
+        if ! err="$("$MPYX" -O3 "${MARCH[@]}" "$t" -o "$tmpmpy" 2>&1)"; then
             echo "${R}FAIL${N} (compile)"; printf '%s\n' "$err" | sed 's/^/    /'
             fail=$((fail+1)); failed+=("$name (compile)"); continue
         fi

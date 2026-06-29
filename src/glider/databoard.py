@@ -52,9 +52,7 @@ import inspector
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
-
-    def const(value):
-        return value
+    from commons import const
 
 
 _DEFAULT_EXPIRE_US: int = const(1000_000)  # default + upper bound on a freshness window (~2x slowest sensor)

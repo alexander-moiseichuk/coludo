@@ -12,9 +12,7 @@ import task
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
-
-    def const(value):
-        return value
+    from commons import const
 
 
 _BLINK_ERROR_MS = const(100)  # fast: a task is unhealthy

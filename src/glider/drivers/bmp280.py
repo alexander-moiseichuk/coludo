@@ -19,9 +19,7 @@ import task
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
-
-    def const(value):
-        return value
+    from commons import const
 
 
 _REG_CHIP_ID = const(0xD0)  # = 0x58 for BMP280

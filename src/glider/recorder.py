@@ -18,9 +18,7 @@ import inspector
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
-
-    def const(value):
-        return value
+    from commons import const
 
 
 _DEFAULT_CELL_SIZE = const(256)  # bytes per ring cell (record + 2-byte length header)
