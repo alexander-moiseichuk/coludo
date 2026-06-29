@@ -32,6 +32,9 @@ class Bluetooth(task.Task):
         self._ok = True
         return True
 
+    async def run(self) -> None:
+        """Setup-only: no run loop. `update()` is the runtime entry point."""
+
     def _apply(self, on: bool):
         """Set BLE active to `on`; return the resulting state, or None if there is no BLE here."""
         try:

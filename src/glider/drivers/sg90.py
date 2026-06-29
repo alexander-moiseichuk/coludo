@@ -75,6 +75,9 @@ class SG90(task.Task):
         self._ok = True
         return True
 
+    async def run(self) -> None:
+        """Command-driven: no run loop. `move()` / `update()` are the entry points."""
+
     async def probe(self) -> str:
         """On-demand self-test (CC `probe`, pre-flight -- never at boot): sweep min -> max -> neutral so
         the fin is seen to travel, logging each step. Open-loop (no feedback) -> a step can only fail

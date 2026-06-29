@@ -69,8 +69,7 @@ class Task(inspector.Inspectable):
 
     async def setup(self) -> bool:
         """Initialize or reset. Override. Return True on success, False otherwise."""
-        self._ok = True
-        return True
+        raise NotImplementedError('Task.setup() must be overridden')
 
     async def probe(self) -> str:
         """On-demand self-test (the CC `probe` command, NOT run at boot): return None when healthy, or
@@ -94,8 +93,10 @@ class Task(inspector.Inspectable):
         return None
 
     async def run(self) -> None:
-        """Main activity loop. Override. Default returns immediately."""
-        pass
+        """Main activity loop. Override. Default raises to catch missing overrides (the Controller
+        catches the exception and logs the crash). Command-driven tasks with no loop (SG90,
+        Bluetooth) override explicitly with `pass`."""
+        raise NotImplementedError('Task.run() must be overridden')
 
     def notify(self, callback) -> None:
         """Register callback(task, event) to be invoked on this task's updates."""
