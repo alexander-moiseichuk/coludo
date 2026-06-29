@@ -97,18 +97,27 @@ def _wr(cs, reg, value):
     cs(1)
 
 
+def _verify_id(cs, reg, expected, tries=5):
+    """Read an id register, retrying -- the FIRST SPI read after bus bring-up can glitch (~10 % miss on
+    this family, seen on the P4 too). Returns (last_value, ok)."""
+    value = 0
+    for _ in range(tries):
+        value = _rd(cs, 0x80 | reg, 1)[0]
+        if value == expected:
+            return value, True
+    return value, False
+
+
 def setup_sensors():
     """Configure both parts; print + return (adxl_ok, lsm_ok) so the operator sees go/no-go before igniting."""
-    adxl_id = _rd(_cs_adxl, 0x80 | _ADXL_DEVID, 1)[0]
-    adxl_ok = adxl_id == _ADXL_ID
+    adxl_id, adxl_ok = _verify_id(_cs_adxl, _ADXL_DEVID, _ADXL_ID)
     if adxl_ok:
         _wr(_cs_adxl, 0x31, 0x0B)   # DATA_FORMAT: full-res, 4-wire SPI
         _wr(_cs_adxl, 0x2C, 0x0A)   # BW_RATE: 100 Hz
         _wr(_cs_adxl, 0x2F, 0x00)   # INT_MAP: DATA_READY -> INT1
         _wr(_cs_adxl, 0x2E, 0x80)   # INT_ENABLE: DATA_READY
         _wr(_cs_adxl, 0x2D, 0x08)   # POWER_CTL: measure
-    lsm_id = _rd(_cs_lsm, 0x80 | _LSM_WHOAMI, 1)[0]
-    lsm_ok = lsm_id == _LSM_ID
+    lsm_id, lsm_ok = _verify_id(_cs_lsm, _LSM_WHOAMI, _LSM_ID)
     if lsm_ok:
         _wr(_cs_lsm, 0x12, 0x44)    # CTRL3_C: BDU + IF_INC (auto-increment)
         _wr(_cs_lsm, 0x10, 0x44)    # CTRL1_XL: 104 Hz, +/-32 g
@@ -167,6 +176,14 @@ def _row(handle, t_us, phase, sep, acc):
     handle.flush()
 
 
+def _event(handle, t_us, phase, adxl_g, lsm_g, lsm_dps, sep):
+    """Write a single-sample marker row -- the startup separation state ('start') or a separation edge
+    ('sep') -- so the switch's history is explicit even between the decimated idle summaries."""
+    acc = _new()
+    _add(acc, adxl_g, lsm_g, lsm_dps, t_us)
+    _row(handle, t_us, phase, sep, acc)
+
+
 def _next_path():
     """The next free burn.NN.csv -- the device is autonomous on battery, so a restart/brownout must NOT
     overwrite a captured flight. Each boot picks the lowest unused index (00, 01, 02, ...)."""
@@ -192,13 +209,22 @@ async def main():
     last_idle_us = 0
     phase = 'idle'
     launch_us = sep_us = None
-    rows = 0
+    # record the separation state at startup -- if the switch is dead/miswired we see it now; and every
+    # edge below. No 'sep' row after this means it never changed (the switch did not fire).
+    adxl_g, lsm_g, lsm_dps, prev_sep = sample(adxl_ok, lsm_ok)
+    _event(handle, 0, 'start', adxl_g, lsm_g, lsm_dps, prev_sep)
+    rows = 1
     while True:
         adxl_g, lsm_g, lsm_dps, sep = sample(adxl_ok, lsm_ok)
         t_us = time.ticks_diff(time.ticks_us(), start_us)  # us since start, per sample
         _add(sec_acc, adxl_g, lsm_g, lsm_dps, t_us)
         _add(win_acc, adxl_g, lsm_g, lsm_dps, t_us)
         n += 1
+
+        if sep != prev_sep:                 # record EVERY separation edge with its timestamp
+            _event(handle, t_us, 'sep', adxl_g, lsm_g, lsm_dps, sep)
+            prev_sep = sep
+            rows += 1
 
         if phase == 'idle' and (adxl_g > _LAUNCH_G or lsm_g > _LAUNCH_G):
             phase = 'flight'
