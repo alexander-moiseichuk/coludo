@@ -12,16 +12,24 @@
 # ---- Wiring (ESP32-C3 supermini; left header 5,6,7,8,9,10,20,21 / right 4,3,2,1,0 + 5V,G,3V3) ----
 #   SPI (shared):  SCK = GPIO4    MOSI = GPIO6    MISO = GPIO5
 #   ADXL375    CS = GPIO7         LSM6DSO32 CS = GPIO10
+#   data-ready INTs (OPTIONAL):  ADXL375 INT1 = GPIO0    LSM6DSO32 INT1 = GPIO1
 #   separation switch = GPIO3  (pads route 3V3 -> GPIO3 when NESTED = HIGH; internal pull-down -> open = LOW)
 #   sensors powered from 3V3 + G. Avoid GPIO2/8/9 (strapping) and GPIO20/21 (USB-serial REPL).
 #
+# The INT pins are OPTIONAL: wired, the loop reads exactly when a fresh conversion lands (~104 Hz, never
+# misses a peak); unwired, it falls back to polling every ~15 ms. Wire them for a clean burn/landing capture.
+#
 # ---- Deploy + run ----  (the P4 firmware is untouched; this lives only on the C3)
 #   mpremote connect /dev/ttyACM1 cp tools/c3_burn_logger.py :main.py     # auto-runs on every boot
-#   ... power the C3, watch the REPL for 'setup', ignite within ~2 min, let it fly ...
-#   mpremote connect /dev/ttyACM1 cp :burn.csv burn.csv                   # pull the log afterwards
+#   ... power the C3 from battery, ignite within ~2 min, let it fly, then USB in to pull ...
+# Each boot writes the NEXT free file -- burn.00.csv, burn.01.csv, ... -- so an autonomous restart or a
+# battery brownout NEVER overwrites a captured flight. Pull them over USB afterwards:
+#   mpremote connect /dev/ttyACM1 fs ls                                   # list burn.NN.csv
+#   mpremote connect /dev/ttyACM1 cp :burn.00.csv burn.00.csv            # pull each one
 
 import asyncio
 import math
+import os
 import struct
 import time
 
@@ -30,14 +38,15 @@ from machine import SPI, Pin
 # --- wiring + tuning (edit here) ---
 _PIN_SCK, _PIN_MOSI, _PIN_MISO = 4, 6, 5
 _PIN_CS_ADXL, _PIN_CS_LSM, _PIN_SEP = 7, 10, 3
+_PIN_INT_ADXL, _PIN_INT_LSM = 0, 1   # data-ready INT1 (optional -- poll fallback if unwired)
 _SPI_HZ = 5_000_000      # both parts ran clean at 10 MHz on the P4; 5 MHz is the safe ground-test choice
-_SAMPLE_MS = 10          # ~100 Hz sample loop
+_FALLBACK_MS = 15        # sample-loop wait when no data-ready INT fires (sensors run ~104 Hz, ~9.6 ms)
 _WINDOW = 10             # samples per min/avg/max summary (~100 ms)
 _IDLE_WRITE_MS = 1000    # IDLE: one summary row per second
 _LAUNCH_G = 3.0          # |a| over this (either accel) latches FLIGHT (E16 peak ~7.5 g)
 _STOP_AFTER_SEP_MS = 5000  # stop this long after separation (the flight is < 5 s)
 _MAX_RUN_MS = 300000     # safety cap: never log past 5 min even if nothing fires
-_OUT = 'burn.csv'
+_PREFIX, _SUFFIX = 'burn.', '.csv'   # each boot writes the next free burn.NN.csv (NEVER overwrites)
 
 # --- sensor registers (from the P4 drivers, simplified) ---
 _ADXL_DEVID, _ADXL_ID = 0x00, 0xE5
@@ -53,6 +62,20 @@ _spi = SPI(1, baudrate=_SPI_HZ, polarity=1, phase=1,  # SPI mode 3 (ADXL/LSM)
 _cs_adxl = Pin(_PIN_CS_ADXL, Pin.OUT, value=1)
 _cs_lsm = Pin(_PIN_CS_LSM, Pin.OUT, value=1)
 _sep = Pin(_PIN_SEP, Pin.IN, Pin.PULL_DOWN)
+
+# data-ready: either sensor's INT1 wakes the sample loop. Unwired pins sit LOW (pull-down) -> no edge ->
+# the loop falls back to a _FALLBACK_MS poll. ThreadSafeFlag.set() is safe from the IRQ.
+_ready = asyncio.ThreadSafeFlag()
+
+
+def _on_ready(pin):
+    _ready.set()
+
+
+_int_adxl = Pin(_PIN_INT_ADXL, Pin.IN, Pin.PULL_DOWN)
+_int_lsm = Pin(_PIN_INT_LSM, Pin.IN, Pin.PULL_DOWN)
+_int_adxl.irq(_on_ready, Pin.IRQ_RISING)
+_int_lsm.irq(_on_ready, Pin.IRQ_RISING)
 
 
 def _rd(cs, cmd, n):
@@ -78,6 +101,8 @@ def setup_sensors():
     if adxl_ok:
         _wr(_cs_adxl, 0x31, 0x0B)   # DATA_FORMAT: full-res, 4-wire SPI
         _wr(_cs_adxl, 0x2C, 0x0A)   # BW_RATE: 100 Hz
+        _wr(_cs_adxl, 0x2F, 0x00)   # INT_MAP: DATA_READY -> INT1
+        _wr(_cs_adxl, 0x2E, 0x80)   # INT_ENABLE: DATA_READY
         _wr(_cs_adxl, 0x2D, 0x08)   # POWER_CTL: measure
     lsm_id = _rd(_cs_lsm, 0x80 | _LSM_WHOAMI, 1)[0]
     lsm_ok = lsm_id == _LSM_ID
@@ -85,6 +110,7 @@ def setup_sensors():
         _wr(_cs_lsm, 0x12, 0x44)    # CTRL3_C: BDU + IF_INC (auto-increment)
         _wr(_cs_lsm, 0x10, 0x44)    # CTRL1_XL: 104 Hz, +/-32 g
         _wr(_cs_lsm, 0x11, 0x4C)    # CTRL2_G: 104 Hz, +/-2000 dps
+        _wr(_cs_lsm, 0x0D, 0x01)    # INT1_CTRL: accel data-ready -> INT1
     print('setup: ADXL375 id=0x%02X %s | LSM6DSO32 id=0x%02X %s | sep=%s' % (
         adxl_id, 'OK' if adxl_ok else 'FAIL', lsm_id, 'OK' if lsm_ok else 'FAIL',
         'NESTED' if _sep.value() else 'OPEN'))
@@ -109,11 +135,12 @@ def sample(adxl_ok, lsm_ok):
 
 
 def _new():
-    """A fresh min/avg/max accumulator for the 3 metrics: [min,max,sum] x3 + count."""
-    return [1e9, -1e9, 0.0, 1e9, -1e9, 0.0, 1e9, -1e9, 0.0, 0]
+    """Fresh accumulator: [min,max,sum] x3 metrics, then count, first-sample us, last-sample us -- the
+    us pair lets each row carry the window's REAL span (n / dt_us = the true sample rate, with jitter)."""
+    return [1e9, -1e9, 0.0, 1e9, -1e9, 0.0, 1e9, -1e9, 0.0, 0, 0, 0]
 
 
-def _add(acc, adxl_g, lsm_g, lsm_dps):
+def _add(acc, adxl_g, lsm_g, lsm_dps, t_us):
     for i, v in enumerate((adxl_g, lsm_g, lsm_dps)):
         b = i * 3
         if v < acc[b]:
@@ -121,72 +148,89 @@ def _add(acc, adxl_g, lsm_g, lsm_dps):
         if v > acc[b + 1]:
             acc[b + 1] = v
         acc[b + 2] += v
+    if acc[9] == 0:
+        acc[10] = t_us       # first sample of the window
+    acc[11] = t_us           # last sample of the window
     acc[9] += 1
 
 
-def _row(handle, t_ms, phase, sep, acc):
-    """Write one CSV row: t,phase,sep + min/avg/max of adxl_g, lsm_g, lsm_dps."""
+def _row(handle, t_us, phase, sep, acc):
+    """Write one CSV row: t_us, phase, sep, n, dt_us (window span) + min/avg/max of adxl_g, lsm_g, lsm_dps."""
     n = acc[9] or 1
-    cells = [str(t_ms), phase, str(sep)]
+    cells = [str(t_us), phase, str(sep), str(acc[9]), str(time.ticks_diff(acc[11], acc[10]))]
     for b in (0, 3, 6):
         cells += ['%.3f' % acc[b], '%.3f' % (acc[b + 2] / n), '%.3f' % acc[b + 1]]
     handle.write(','.join(cells) + '\n')
     handle.flush()
 
 
+def _next_path():
+    """The next free burn.NN.csv -- the device is autonomous on battery, so a restart/brownout must NOT
+    overwrite a captured flight. Each boot picks the lowest unused index (00, 01, 02, ...)."""
+    have = set(f for f in os.listdir() if f.startswith(_PREFIX) and f.endswith(_SUFFIX))
+    n = 0
+    while ('%s%02d%s' % (_PREFIX, n, _SUFFIX)) in have:
+        n += 1
+    return '%s%02d%s' % (_PREFIX, n, _SUFFIX)
+
+
 async def main():
     adxl_ok, lsm_ok = setup_sensors()
-    handle = open(_OUT, 'w')
-    handle.write('t_ms,phase,sep,adxl_g_min,adxl_g_avg,adxl_g_max,'
+    out = _next_path()
+    handle = open(out, 'w')
+    handle.write('t_us,phase,sep,n,dt_us,adxl_g_min,adxl_g_avg,adxl_g_max,'
                  'lsm_g_min,lsm_g_avg,lsm_g_max,lsm_dps_min,lsm_dps_avg,lsm_dps_max\n')
     handle.flush()
-    print('logging to %s -- ignite within ~%ds' % (_OUT, _MAX_RUN_MS // 1000))
+    print('logging to %s -- ignite within ~%ds' % (out, _MAX_RUN_MS // 1000))
 
-    start = time.ticks_ms()
+    start_us = time.ticks_us()
     sec_acc, win_acc = _new(), _new()      # idle 1 s rows / flight 100 ms rows
     n = 0
-    last_idle = start
+    last_idle_us = 0
     phase = 'idle'
-    launch_ms = sep_ms = None
+    launch_us = sep_us = None
     rows = 0
     while True:
         adxl_g, lsm_g, lsm_dps, sep = sample(adxl_ok, lsm_ok)
-        now = time.ticks_ms()
-        _add(sec_acc, adxl_g, lsm_g, lsm_dps)
-        _add(win_acc, adxl_g, lsm_g, lsm_dps)
+        t_us = time.ticks_diff(time.ticks_us(), start_us)  # us since start, per sample
+        _add(sec_acc, adxl_g, lsm_g, lsm_dps, t_us)
+        _add(win_acc, adxl_g, lsm_g, lsm_dps, t_us)
         n += 1
 
         if phase == 'idle' and (adxl_g > _LAUNCH_G or lsm_g > _LAUNCH_G):
             phase = 'flight'
-            launch_ms = now
+            launch_us = t_us
             win_acc = _new()                # drop the pre-launch idle samples from the first flight row
-            print('LAUNCH +%dms |a|=%.1fg' % (time.ticks_diff(now, start), max(adxl_g, lsm_g)))
-        if sep == 0 and sep_ms is None:
-            sep_ms = now
+            print('LAUNCH +%dms |a|=%.1fg' % (t_us // 1000, max(adxl_g, lsm_g)))
+        if sep == 0 and sep_us is None:
+            sep_us = t_us
             if phase == 'idle':
                 phase = 'flight'
                 win_acc = _new()
-            print('SEPARATION +%dms' % time.ticks_diff(now, start))
+            print('SEPARATION +%dms' % (t_us // 1000))
 
         if phase == 'flight' and n % _WINDOW == 0:
-            _row(handle, time.ticks_diff(now, start), 'flight', sep, win_acc)
+            _row(handle, t_us, 'flight', sep, win_acc)
             win_acc = _new()
             rows += 1
-        elif phase == 'idle' and time.ticks_diff(now, last_idle) >= _IDLE_WRITE_MS:
-            _row(handle, time.ticks_diff(now, start), 'idle', sep, sec_acc)
+        elif phase == 'idle' and t_us - last_idle_us >= _IDLE_WRITE_MS * 1000:
+            _row(handle, t_us, 'idle', sep, sec_acc)
             sec_acc = _new()
-            last_idle = now
+            last_idle_us = t_us
             rows += 1
 
-        if sep_ms is not None and time.ticks_diff(now, sep_ms) > _STOP_AFTER_SEP_MS:
+        if sep_us is not None and t_us - sep_us > _STOP_AFTER_SEP_MS * 1000:
             break
-        if time.ticks_diff(now, start) > _MAX_RUN_MS:
+        if t_us > _MAX_RUN_MS * 1000:
             print('timeout -- no launch/separation seen')
             break
-        await asyncio.sleep_ms(_SAMPLE_MS)
+        try:
+            await asyncio.wait_for_ms(_ready.wait(), _FALLBACK_MS)  # wake on data-ready (~104 Hz) ...
+        except asyncio.TimeoutError:
+            pass  # ... else poll (INT unwired / silent)
 
     handle.close()
-    print('done: %d rows -> %s (launch=%s sep=%s)' % (rows, _OUT, launch_ms is not None, sep_ms is not None))
+    print('done: %d rows -> %s (launch=%s sep=%s)' % (rows, out, launch_us is not None, sep_us is not None))
 
 
 asyncio.run(main())
