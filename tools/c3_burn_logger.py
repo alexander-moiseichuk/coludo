@@ -11,8 +11,9 @@
 #
 # ---- Wiring (ESP32-C3 supermini; left header 5,6,7,8,9,10,20,21 / right 4,3,2,1,0 + 5V,G,3V3) ----
 #   SPI (shared):  SCK = GPIO4    MOSI = GPIO6    MISO = GPIO5
-#   ADXL375    CS = GPIO7         LSM6DSO32 CS = GPIO10
-#   data-ready INTs (OPTIONAL):  ADXL375 INT1 = GPIO0    LSM6DSO32 INT1 = GPIO1
+#   ADXL375    CS = GPIO7         LSM6DSO32 CS = GPIO1
+#   data-ready INTs (OPTIONAL):  ADXL375 INT1 = GPIO10   LSM6DSO32 INT1 = GPIO0
+#   (each sensor's CS+INT are grouped on one header -- ADXL on the left 7/10, LSM on the right 1/0)
 #   separation switch = GPIO3  (pads route 3V3 -> GPIO3 when NESTED = HIGH; internal pull-down -> open = LOW)
 #   sensors powered from 3V3 + G. Avoid GPIO2/8/9 (strapping) and GPIO20/21 (USB-serial REPL).
 #
@@ -35,36 +36,14 @@ import time
 
 from machine import SPI, Pin
 
-# --- wiring + tuning (edit here) ---
-_PIN_SCK, _PIN_MOSI, _PIN_MISO = 4, 6, 5
-_PIN_CS_ADXL, _PIN_CS_LSM, _PIN_SEP = 7, 10, 3
-_PIN_INT_ADXL, _PIN_INT_LSM = 0, 1   # data-ready INT1 (optional -- poll fallback if unwired)
-_SPI_HZ = 5_000_000      # both parts ran clean at 10 MHz on the P4; 5 MHz is the safe ground-test choice
-_FALLBACK_MS = 15        # sample-loop wait when no data-ready INT fires (sensors run ~104 Hz, ~9.6 ms)
-_WINDOW = 10             # samples per min/avg/max summary (~100 ms)
-_IDLE_WRITE_MS = 1000    # IDLE: one summary row per second
-_LAUNCH_G = 3.0          # |a| over this (either accel) latches FLIGHT (E16 peak ~7.5 g)
-_STOP_AFTER_SEP_MS = 5000  # stop this long after separation (the flight is < 5 s)
-_MAX_RUN_MS = 300000     # safety cap: never log past 5 min even if nothing fires
-_PREFIX, _SUFFIX = 'burn.', '.csv'   # each boot writes the next free burn.NN.csv (NEVER overwrites)
+# --- config (edit here), grouped per device ---
 
-# --- sensor registers (from the P4 drivers, simplified) ---
-_ADXL_DEVID, _ADXL_ID = 0x00, 0xE5
-_ADXL_DATAX0 = 0x32             # X,Y,Z = 6 bytes, int16 LE
-_ADXL_SCALE_G = 0.049          # ADXL375 ~49 mg/LSB
-_LSM_WHOAMI, _LSM_ID = 0x0F, 0x6C
-_LSM_OUTX_L_G = 0x22           # gyro(6) + accel(6) = 12 bytes, int16 LE
-_LSM_SCALE_A = 0.000976        # g/LSB at +/-32 g
-_LSM_SCALE_G = 0.070           # dps/LSB at +/-2000 dps
+# shared SPI bus, mode 3 -- both parts ran clean at 10 MHz on the P4; 5 MHz is the safe ground choice
+_SCK, _MOSI, _MISO, _SPI_HZ = 4, 6, 5, 5_000_000
+_spi = SPI(1, baudrate=_SPI_HZ, polarity=1, phase=1, sck=Pin(_SCK), mosi=Pin(_MOSI), miso=Pin(_MISO))
 
-_spi = SPI(1, baudrate=_SPI_HZ, polarity=1, phase=1,  # SPI mode 3 (ADXL/LSM)
-           sck=Pin(_PIN_SCK), mosi=Pin(_PIN_MOSI), miso=Pin(_PIN_MISO))
-_cs_adxl = Pin(_PIN_CS_ADXL, Pin.OUT, value=1)
-_cs_lsm = Pin(_PIN_CS_LSM, Pin.OUT, value=1)
-_sep = Pin(_PIN_SEP, Pin.IN, Pin.PULL_DOWN)
-
-# data-ready: either sensor's INT1 wakes the sample loop. Unwired pins sit LOW (pull-down) -> no edge ->
-# the loop falls back to a _FALLBACK_MS poll. ThreadSafeFlag.set() is safe from the IRQ.
+# data-ready: either sensor's INT1 wakes the sample loop. An unwired INT pin sits LOW (pull-down) -> no
+# edge -> the loop falls back to a _FALLBACK_MS poll. ThreadSafeFlag.set() is safe from the IRQ.
 _ready = asyncio.ThreadSafeFlag()
 
 
@@ -72,10 +51,34 @@ def _on_ready(pin):
     _ready.set()
 
 
-_int_adxl = Pin(_PIN_INT_ADXL, Pin.IN, Pin.PULL_DOWN)
-_int_lsm = Pin(_PIN_INT_LSM, Pin.IN, Pin.PULL_DOWN)
+# ADXL375 -- +/-200 g high-g accel. CS + data-ready INT1 on the LEFT header.
+_ADXL_CS, _ADXL_INT = 7, 10
+_ADXL_ID, _ADXL_DEVID, _ADXL_DATAX0 = 0xE5, 0x00, 0x32   # id; X,Y,Z data = 6 bytes int16 LE
+_ADXL_SCALE_G = 0.049                                    # ~49 mg/LSB
+_cs_adxl = Pin(_ADXL_CS, Pin.OUT, value=1)
+_int_adxl = Pin(_ADXL_INT, Pin.IN, Pin.PULL_DOWN)
 _int_adxl.irq(_on_ready, Pin.IRQ_RISING)
+
+# LSM6DSO32 -- +/-32 g accel + +/-2000 dps gyro. CS + data-ready INT1 on the RIGHT header.
+_LSM_CS, _LSM_INT = 1, 0
+_LSM_ID, _LSM_WHOAMI, _LSM_OUTX_L_G = 0x6C, 0x0F, 0x22   # id; gyro(6)+accel(6) = 12 bytes int16 LE
+_LSM_SCALE_A, _LSM_SCALE_G = 0.000976, 0.070            # g/LSB @ +/-32 g ; dps/LSB @ +/-2000 dps
+_cs_lsm = Pin(_LSM_CS, Pin.OUT, value=1)
+_int_lsm = Pin(_LSM_INT, Pin.IN, Pin.PULL_DOWN)
 _int_lsm.irq(_on_ready, Pin.IRQ_RISING)
+
+# separation switch -- pads route 3V3 -> this pin when NESTED (HIGH); pull-down so open = LOW
+_SEP = 3
+_sep = Pin(_SEP, Pin.IN, Pin.PULL_DOWN)
+
+# logging / behaviour
+_FALLBACK_MS = 15          # loop wait when no data-ready INT fires (sensors ~104 Hz / ~9.6 ms)
+_WINDOW = 10               # samples per min/avg/max summary (~100 ms)
+_IDLE_WRITE_MS = 1000      # IDLE: one summary row per second
+_LAUNCH_G = 3.0            # |a| over this (either accel) latches FLIGHT (E16 peak ~7.5 g)
+_STOP_AFTER_SEP_MS = 5000  # stop this long after separation (the flight is < 5 s)
+_MAX_RUN_MS = 300000       # safety cap: never log past 5 min even if nothing fires
+_PREFIX, _SUFFIX = 'burn.', '.csv'   # each boot writes the next free burn.NN.csv (NEVER overwrites)
 
 
 def _rd(cs, cmd, n):
