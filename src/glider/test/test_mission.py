@@ -106,7 +106,10 @@ def test_time_setup():
 def test_save_roundtrip():
     _cleanup()
     launch = mission.Mission(PATH)
-    launch.update({'launch_id': 'save-me', 'latitude': 1.0, 'longitude': 2.0, 'altitude': 5})
+    # set every persisted field explicitly, incl. zone -- a cleaned file falls back to the HPRC default
+    # mission (which carries a zone), so do not assume a blank start; assert the values we set round-trip.
+    launch.update({'launch_id': 'save-me', 'latitude': 1.0, 'longitude': 2.0, 'altitude': 5,
+                   'zone': [[1.0, 2.0], [0.0, 3.0]]})
     launch.save()
     # a fresh Mission reads the persisted launch.config back
     reloaded = mission.Mission(PATH)
@@ -119,7 +122,8 @@ def test_save_roundtrip():
     # persisted() is the editable launch.config the dashboard loads (get-config launch): the launch fields
     # + zone, no computed geometry/clock; and it round-trips through save()
     snapshot = launch.persisted()
-    assert snapshot['launch_id'] == 'save-me' and snapshot['latitude'] == 1.0 and snapshot['zone'] is None
+    assert snapshot['launch_id'] == 'save-me' and snapshot['latitude'] == 1.0
+    assert snapshot['zone'] == [[1.0, 2.0], [0.0, 3.0]]  # zone round-trips as plain lists
     assert 'clock' not in snapshot and 'target' not in snapshot
     with open(PATH) as f:
         assert json.load(f) == snapshot  # save() writes exactly persisted()
@@ -129,7 +133,7 @@ def test_save_roundtrip():
 def test_landing_zone():
     _cleanup()
     launch = mission.Mission(PATH)
-    assert launch.zone is None  # unset by default
+    assert launch.zone is not None  # a cleaned (missing) file falls back to the HPRC default, which has a zone
 
     # a valid 2-corner rectangle is stored (tuples) + reported changed
     assert launch.update({'zone': [[48.001, 11.000], [48.000, 11.010]]}) == ['zone']
@@ -172,6 +176,9 @@ def test_zone_geometry_and_range():
 
 def test_launch_point_from_gnss():
     _cleanup()
+    # present-but-empty config -> blank mission (a MISSING file loads the HPRC default, which has a position)
+    with open(PATH, 'w') as f:
+        json.dump({}, f)
     launch = mission.Mission(PATH)  # no CC-set position
     assert launch.launch_point() is None  # nothing from CC, no fix yet
     channel = databoard.Databoard.provide('gnss', {'position': {'priority': 0, 'timeout_ms': 1000}}, 'position')
