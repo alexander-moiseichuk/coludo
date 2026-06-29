@@ -78,13 +78,13 @@ class Adxl375(task.Task):
         """A register window over I2C (by address) or SPI (by chip-select), so the rest of the driver
         is bus-agnostic. SPI needs a `cs_pin` in the component; returns None if it is missing."""
         if kind == 'spi':
-            cs = self.controller.config.get('pins', {}).get(self.config.get('cs_pin'))
+            cs = self._pin_gpio('cs_pin')
             return spibus.get(bus_id, spec).device(cs) if cs is not None else None
         return i2cbus.get(bus_id, spec).device(self.config.get('addr', 0x53))
 
     async def _setup_interrupt(self) -> None:
         """Wire INT1 -> DATA_READY if the component declares an int_pin; else stay poll-only."""
-        gpio = self.controller.config.get('pins', {}).get(self.config.get('int_pin'))
+        gpio = self._pin_gpio('int_pin')
         if gpio is None:
             return
         from machine import Pin

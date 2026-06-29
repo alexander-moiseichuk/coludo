@@ -104,7 +104,7 @@ class Vl53l4cx(task.Task):
     async def _reset(self) -> None:
         """Drive XSHUT low->high to reset the sensor (recovers a wedged ToF without a board reboot),
         then wait for the firmware to boot. With no xshut_pin the sensor is assumed always-on."""
-        gpio = self.controller.config.get('pins', {}).get(self.config.get('xshut_pin'))
+        gpio = self._pin_gpio('xshut_pin')
         if gpio is not None:
             from machine import Pin
 
@@ -145,7 +145,7 @@ class Vl53l4cx(task.Task):
 
     def _setup_interrupt(self) -> None:
         """Wire GPIO1 -> data-ready (active-low in continuous mode) if an int_pin is declared."""
-        gpio = self.controller.config.get('pins', {}).get(self.config.get('int_pin'))
+        gpio = self._pin_gpio('int_pin')
         if gpio is None:
             return
         from machine import Pin

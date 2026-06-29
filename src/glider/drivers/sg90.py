@@ -57,7 +57,7 @@ class SG90(task.Task):
     shared slew gate; probe() sweeps it on demand."""
 
     async def setup(self) -> bool:
-        gpio = self.controller.config.get('pins', {}).get(self.config.get('pin'))
+        gpio = self._pin_gpio('pin')
         if gpio is None:
             return False
         from machine import PWM, Pin
@@ -155,7 +155,7 @@ class SG90(task.Task):
         """Deeper analysis when setup() failed: is the pin PWM-capable? Resolve the pin and try to bring a
         PWM up on it (released immediately). A 3-wire SG90 has no feedback, so this is the only check the
         board can make. The Controller folds it into the failure reason."""
-        gpio = self.controller.config.get('pins', {}).get(self.config.get('pin'))
+        gpio = self._pin_gpio('pin')
         if gpio is None:
             return 'no PWM -- pin %r not defined in config pins' % self.config.get('pin')
         try:

@@ -86,7 +86,7 @@ class Lsm6dso32(task.Task):
         """A register window over SPI (by chip-select) or I2C (by address). LSM6DSO32 auto-increments via
         IF_INC, so the SPI device uses mb_bit=None (no address multi-byte bit)."""
         if kind == 'spi':
-            cs = self.controller.config.get('pins', {}).get(self.config.get('cs_pin'))
+            cs = self._pin_gpio('cs_pin')
             return spibus.get(bus_id, spec).device(cs, mb_bit=None) if cs is not None else None
         return i2cbus.get(bus_id, spec).device(self.config.get('addr', 0x6A))
 
@@ -94,7 +94,7 @@ class Lsm6dso32(task.Task):
         """Route accel data-ready to INT1 if the component declares an int_pin; else stay poll-only.
         Arm the IRQ before the first clearing read so a conversion that landed during config is a clean
         rising edge (the same ordering as the ADXL375 driver)."""
-        gpio = self.controller.config.get('pins', {}).get(self.config.get('int_pin'))
+        gpio = self._pin_gpio('int_pin')
         if gpio is None:
             return
         from machine import Pin

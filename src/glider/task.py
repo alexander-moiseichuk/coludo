@@ -67,6 +67,14 @@ class Task(inspector.Inspectable):
             if message is not None:
                 print(message)
 
+    def _pin_gpio(self, field: str, default: str = None) -> int:
+        """The board GPIO NUMBER for this component's `field` pin (None if absent) -- look the
+        component's pin name (config[field], or `default` when the component omits it) up in the board
+        `pins` map. Returns a number, not a machine.Pin: chip-select / PWM sites consume the number
+        directly, and the Pin-building sites (int / xshut / separation) each need their own mode + IRQ.
+        One resolver for the cs_pin / int_pin / xshut_pin / pin lookup shared across drivers."""
+        return self.controller.config.get('pins', {}).get(self.config.get(field, default))
+
     async def setup(self) -> bool:
         """Initialize or reset. Override. Return True on success, False otherwise."""
         raise NotImplementedError('Task.setup() must be overridden')

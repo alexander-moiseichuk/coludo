@@ -145,6 +145,17 @@ async def amain():
     assert await c.query(['s1'], waiting=False) == [c.tasks['s1']]
     assert await c.tasks['s1'].query(['s2']) == [c.tasks['s2']]
 
+    # Task._pin_gpio: resolve a component's pin field -> board GPIO number (None if absent). One lookup
+    # shared by adxl375 / lsm6dso32 / vl53l4cx / separation / sg90 for cs_pin / int_pin / xshut_pin / pin.
+    class _PinCtl:
+        config = {'pins': {'adxl_cs': 49, 'sep_sw': 33}}
+    pc = _PinCtl()
+    assert task.Task('p', {'cs_pin': 'adxl_cs'}, pc)._pin_gpio('cs_pin') == 49     # field -> name -> gpio
+    assert task.Task('p', {'cs_pin': 'adxl_cs'}, pc)._pin_gpio('int_pin') is None  # component omits the field
+    assert task.Task('p', {'cs_pin': 'nope'}, pc)._pin_gpio('cs_pin') is None      # name not in the pins map
+    assert task.Task('p', {}, pc)._pin_gpio('pin', 'sep_sw') == 33                 # default pin name when omitted
+    assert task.Task('p', {}, pc)._pin_gpio('pin') is None                         # no field and no default
+
     # query(waiting=True) parks until a not-yet-present task appears
     late = FakeSensor('late', {}, c)
 
@@ -202,7 +213,7 @@ async def amain():
     assert c.tasks == {}
     assert c.stage == controller.Stage.DONE
 
-    print('ok: controller directory/create/setup/run/active/inspect/stats/validate/close/finish')
+    print('ok: controller directory/create/setup/run/active/inspect/stats/validate/close/finish + pin_gpio')
 
 
 asyncio.run(amain())
