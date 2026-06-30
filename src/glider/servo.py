@@ -25,7 +25,14 @@ class Gate:
         else:
             event = asyncio.Event()
             self._waiters.append(event)
-            await event.wait()  # release() hands this waiter the permit directly; _free unchanged
+            try:
+                await event.wait()  # release() hands this waiter the permit directly; _free unchanged
+            except:  # cancelled: clean up WITHOUT leaking a permit
+                if event in self._waiters:
+                    self._waiters.remove(event)  # still queued -- we never held a permit
+                else:
+                    self.release()  # release() already handed us the permit -- pass it on, do not lose it
+                raise
 
     def release(self) -> None:
         if self._waiters:

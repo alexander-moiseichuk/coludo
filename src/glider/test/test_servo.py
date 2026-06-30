@@ -46,6 +46,43 @@ async def amain():
     await gate3.acquire()  # the permit is back -> acquires without blocking
     gate3.release()
 
+    # cancellation must NOT leak a permit (else the gate bleeds to 0 over a board's reconfigures).
+    # (a) cancelled while still QUEUED -> just dequeues, the held permit count is unchanged
+    gatec = servo.Gate(1)
+    await gatec.acquire()                       # holder takes the only permit
+    queued = asyncio.create_task(gatec.acquire())
+    await asyncio.sleep_ms(5)                    # let it queue
+    queued.cancel()
+    try:
+        await queued
+    except asyncio.CancelledError:
+        pass
+    gatec.release()                             # holder releases -> permit back in the pool
+    await asyncio.wait_for_ms(gatec.acquire(), 50)  # acquires at once -> no leak from the queued-cancel
+    gatec.release()
+
+    # (b) the grant/cancel race: release() hands a waiter the permit, but it is cancelled before it
+    # resumes -> it must PASS THE PERMIT ON, not leak it
+    gated = servo.Gate(1)
+    await gated.acquire()                       # holder takes the only permit
+    racer = asyncio.create_task(gated.acquire())
+    await asyncio.sleep_ms(5)                    # let it queue
+    gated.release()                             # hand the permit to the racer (event.set), then...
+    racer.cancel()                              # ...cancel before it can resume -> must release the permit
+    try:
+        await racer
+    except asyncio.CancelledError:
+        pass
+    got = []
+
+    async def _take():
+        await gated.acquire()
+        got.append('ok')
+
+    await asyncio.wait_for_ms(_take(), 50)       # would time out (FAIL) if the permit leaked
+    assert got == ['ok'], 'permit leaked on the grant/cancel race'
+    gated.release()
+
     # Gate.slew() is process-wide: created once (first permits win), Gate.reset() rebuilds it
     servo.Gate.reset()
     shared = servo.Gate.slew(3)
