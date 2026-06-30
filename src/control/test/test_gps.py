@@ -71,6 +71,13 @@ def main():
     assert no_alt.fix.usable and no_alt.position() == {'latitude': no_alt.fix.latitude,
                                                        'longitude': no_alt.fix.longitude}
 
+    # serve() on a missing device REPORTS it and returns -- it must NOT raise (it is gathered with
+    # hub.run(), so an unhandled open failure would take the whole hub down).
+    import asyncio
+    reported = []
+    asyncio.run(gps.Gps(log=reported.append).serve('/dev/coludo-no-such-gps', 9600))
+    assert any('unavailable' in message for message in reported), reported
+
     print('ok: gps NMEA parse (GGA/GSA), usable=3D+4sat, hemisphere signs, checksum/malformed robustness')
 
 

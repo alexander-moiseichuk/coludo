@@ -209,8 +209,12 @@ class Server:
             return await self._route(first, tokens[1:])
         spec = self.commands.get(first)
         if spec is not None:
-            result = spec.handler(self, tokens, session)
-            return await result if asyncio.iscoroutine(result) else result
+            try:
+                result = spec.handler(self, tokens, session)
+                return await result if asyncio.iscoroutine(result) else result
+            except Exception as error:
+                self.log('handler %s crashed: %r' % (first, error))
+                return ['from cc err internal %s crashed: %s' % (first, error)]
         if session['selected']:
             return await self._route(session['selected'], tokens)
         return ['from cc err badcmd %s' % first]
