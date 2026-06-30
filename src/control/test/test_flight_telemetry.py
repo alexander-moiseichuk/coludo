@@ -34,6 +34,11 @@ def test_fixture():
 
     assert streams['atgm336h.csv'].column('lat')[1][0] == 48.1173  # GNSS numeric parse
     assert flight_telemetry.parse('@20260609_101715_x.csv@1;notanumber')[0]['x.csv'].rows[0][1] == 'notanumber'
+    # a non-numeric UPTIME drops the whole row (else column() would divide a str by 1e6 -> TypeError)
+    gated = flight_telemetry.parse('@20260609_101715_x.csv@uptime;v\n'
+                                   '@20260609_101715_x.csv@badtime;5\n'
+                                   '@20260609_101715_x.csv@2000000;7')[0]['x.csv']
+    assert len(gated.rows) == 1 and gated.rows[0][0] == 2000000  # bad-uptime row skipped, good one kept
 
     assert logs[0] == (161221274, FIXTURE.splitlines()[5])  # log line with its ticks_us
     assert any('stage -> gliding' in line for _ts, line in logs)

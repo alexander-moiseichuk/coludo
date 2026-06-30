@@ -45,6 +45,10 @@ except ImportError:                # module that does `from commons import const
 M_PER_DEG = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat)); shared
                       # by navigation + sim_model (flat-earth geo) -- one definition, not three.
 
+SERVO_NEUTRAL_DEG: int = 90  # default fin/servo neutral angle (deg): the zero-deflection centre the mixer
+                             # holds when disarmed/degraded and the HITL sim assumes when recovering fin
+                             # deflections. A board may override per surface via config `mixer.neutral_deg`.
+
 
 def between_upy(low, value, high):
     """Clamp `value` to the inclusive range [low, high]: `low` if below, `high` if above, else `value`.

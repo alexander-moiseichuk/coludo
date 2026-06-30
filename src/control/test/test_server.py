@@ -425,12 +425,27 @@ def _gps_device_resolve():
     assert auto is None or auto.startswith('/dev/ttyUSB'), auto
 
 
+async def _handler_crash():
+    """A registered command handler that raises must return an error reply, NOT drop the operator
+    session -- server.py _dispatch wraps the handler call, logs the crash, and replies with an err line."""
+    import types
+    hub = server.Server(log=lambda message: None)
+
+    def boom(_hub, _tokens, _session):
+        raise RuntimeError('boom')
+
+    hub.commands['kaboom'] = types.SimpleNamespace(handler=boom)
+    reply = await hub._dispatch('kaboom', {'selected': None})
+    assert any('crashed' in line for line in reply), reply
+
+
 async def main():
     await _loopback()
     await _operator_console()
     await _web()
     await _gps_assist()
     await _log_stream()
+    await _handler_crash()
     _gps_device_resolve()
     print('ok: server accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) '
           '+ gps assist/compare + log streaming + gps auto-detect')

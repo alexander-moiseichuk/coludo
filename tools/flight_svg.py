@@ -149,7 +149,10 @@ def main():
 
     pad = tuple(float(v) for v in args.pad.split(',')) if args.pad else None
     zone = tuple(float(v) for v in args.zone.split(',')) if args.zone else None
-    streams_list = [flight_telemetry.parse(open(c).read())[0] for c in args.captures]
+    streams_list = []
+    for c in args.captures:
+        with open(c) as handle:
+            streams_list.append(flight_telemetry.parse(handle.read())[0])
 
     if args.overlay or len(streams_list) > 1:
         labels = args.labels.split(',') if args.labels else [os.path.basename(c) for c in args.captures]

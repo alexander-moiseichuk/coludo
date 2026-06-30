@@ -22,12 +22,13 @@ def _meters(a: tuple, b: tuple) -> float:
 
 def _track(path: str) -> list:
     gnss = []
-    for line in open(path):
-        if 'gnss.csv@' in line:
-            row = line.strip().split('gnss.csv@', 1)[1]
-            if not row.startswith('uptime'):
-                fields = row.split(';')
-                gnss.append((int(fields[0]), float(fields[1]), float(fields[2])))
+    with open(path) as handle:
+        for line in handle:
+            if 'gnss.csv@' in line:
+                row = line.strip().split('gnss.csv@', 1)[1]
+                if not row.startswith('uptime'):
+                    fields = row.split(';')
+                    gnss.append((int(fields[0]), float(fields[1]), float(fields[2])))
     return gnss
 
 

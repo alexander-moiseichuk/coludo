@@ -123,8 +123,12 @@ class SG90(task.Task):
         travel_ms = abs(target - self.angle) * _SLEW_MS_PER_60 // 60 + _SETTLE_MARGIN_MS
         async with self._gate:
             self._apply(target)  # done=0: commanded
+            completed = (target, self._pulse_us, 1)  # snapshot the WHOLE completion record before any await:
+            # a set_angle() from the 100 Hz loop during the slew or the gate release must never re-pair
+            # done=1 with a later angle/pulse. Capturing the tuple (not self._*) keeps that true even if a
+            # future edit reshapes the push below.
             await asyncio.sleep_ms(travel_ms)
-        self._telemetry.push((target, self._pulse_us, 1))  # done=1: (estimated) completed
+        self._telemetry.push(completed)  # done=1: (estimated) completed
         return target
 
     def update(self, props: dict) -> list:

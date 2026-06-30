@@ -54,6 +54,10 @@ for f in "${files[@]}"; do
 done
 
 # 2) ensure dest dirs, then push everything in one chained mpremote session (packages via cp -r)
+# `cp -r drivers tasks` copies the dir wholesale -- strip host __pycache__ first (a CPython bytecode
+# cache, gitignored) so it is not pushed to the board (it has no place there and the loader would
+# otherwise have to skip it). mpremote cp -r has no exclude flag.
+rm -rf "$HERE"/drivers/__pycache__ "$HERE"/tasks/__pycache__
 for d in test drivers tasks; do mpremote connect "$PORT" mkdir ":$d" >/dev/null 2>&1 || true; done
 cmd=(); sep=; pkg_done=
 add() { cmd+=($sep "$@"); sep=+; }

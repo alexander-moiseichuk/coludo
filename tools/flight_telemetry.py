@@ -67,7 +67,7 @@ def parse(text: str):
                 try:
                     values[0] = int(float(values[0]))  # uptime as integer microseconds
                 except (ValueError, TypeError, IndexError):
-                    pass
+                    continue  # skip the row -- bad uptime would crash column() downstream
                 stream.rows.append(values)
         else:  # a log line: '<ticks_us> <descriptor> :: <message>'
             first = line.split(' ', 1)[0]

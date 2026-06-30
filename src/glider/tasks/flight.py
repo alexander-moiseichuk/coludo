@@ -95,6 +95,13 @@ class Flight(task.Task):
         # throttle navigation.steer() (sin/cos/atan2) to GPS cadence -- recompute the target heading
         # every nav_period_ms, cache the float, and read the cache at schedule_hz (see _target_heading).
         self._nav_period_us: int = self.config.get('nav_period_ms', 100) * 1000
+        # navigation steers only from a position fix THIS fresh. Default to the GNSS channels' own
+        # freshness windows (max of the position + speed timeout_ms -- the same point the databoard drops
+        # `source` to None), so it tracks the GNSS rate instead of a magic number; set TIGHTER in config to
+        # distrust GNSS sooner than the databoard does. (Looser than the window is a no-op: source is
+        # already None past it.)
+        self._position_age_max_ms: int = self.config.get(
+            'position_age_max_ms', max(self._position.window_us, self._gnss_speed.window_us) // 1000)
         self._nav_heading = None  # cached target heading (None -> recompute on the next step)
         self._nav_updated_us: int = 0
         self._heading_hold = None  # captured on entering a control stage -> hold that heading
@@ -191,7 +198,8 @@ class Flight(task.Task):
         homes to the zone (steer: gate -> centre, three GPS-degrading tiers below); low on FINAL approach
         it instead TRACKS the strip centreline (approach), so a crosswind is crabbed out before
         the narrow touchdown. Tiers when homing:
-          1. a FRESH fix -> steer from the current position (closed-loop, corrects wind drift);
+          1. a FRESH fix (< position_age_max_ms) -> steer from the current position (closed-loop,
+             corrects wind drift);
           2. no fix but a launch point (CC-set) -> hold the launch->gate bearing (open-loop fallback);
           3. neither -> the captured glide heading (blind).
 
@@ -207,8 +215,8 @@ class Flight(task.Task):
             return self._nav_heading  # cached -- skip the trig this step
         self._nav_updated_us = now
         zone = self._mission.zone
-        position, source, _age = self._position.read()
-        if source is not None and position is not None:  # tier 1: live fix
+        position, source, age_ms = self._position.read()
+        if source is not None and position is not None and age_ms < self._position_age_max_ms:  # tier 1: fresh fix
             self._nav_heading = (navigation.approach(position, zone[0], zone[1], heading,
                                                      self._final_cross_gain, self._final_intercept)
                                  if final else navigation.steer(position, zone[0], zone[1])[0])

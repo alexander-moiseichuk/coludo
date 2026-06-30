@@ -121,8 +121,14 @@ class Gps:
             self.feed(raw.decode('ascii', 'ignore'))
 
     async def serve(self, device: str, baud: int = 9600) -> None:
-        """Open the serial GPS and feed it forever (the wired host-assist path)."""
-        reader = await open_serial(device, baud)
+        """Open the serial GPS and feed it forever (the wired host-assist path). A device that cannot be
+        opened is REPORTED to the operator and skipped -- host GPS is an optional assist, so its failure
+        must not take down the hub (serve() is gathered with hub.run(); an unhandled raise cancels both)."""
+        try:
+            reader = await open_serial(device, baud)
+        except OSError as error:
+            self.log('host gps unavailable: %s' % error)
+            return
         self.log('host gps on %s @ %d' % (device, baud))
         await self.run(reader)
 
@@ -133,13 +139,20 @@ async def open_serial(device: str, baud: int = 9600) -> asyncio.StreamReader:
     import os
     import termios
 
-    descriptor = os.open(device, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
-    iflag, oflag, cflag, lflag, _ispeed, _ospeed, control = termios.tcgetattr(descriptor)
-    speed = getattr(termios, 'B%d' % baud)
-    cflag = (cflag | termios.CLOCAL | termios.CREAD | termios.CS8) & ~termios.PARENB & ~termios.CSTOPB
-    termios.tcsetattr(descriptor, termios.TCSANOW, [0, 0, cflag, 0, speed, speed, control])  # raw
-    reader = asyncio.StreamReader()
-    loop = asyncio.get_event_loop()
-    await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader),
-                                 os.fdopen(descriptor, 'rb', buffering=0))
+    try:
+        descriptor = os.open(device, os.O_RDWR | os.O_NOCTTY | os.O_NONBLOCK)
+    except OSError as error:
+        raise FileNotFoundError('cannot open %s: %s' % (device, error)) from None
+    try:
+        iflag, oflag, cflag, lflag, _ispeed, _ospeed, control = termios.tcgetattr(descriptor)
+        speed = getattr(termios, 'B%d' % baud)
+        cflag = (cflag | termios.CLOCAL | termios.CREAD | termios.CS8) & ~termios.PARENB & ~termios.CSTOPB
+        termios.tcsetattr(descriptor, termios.TCSANOW, [0, 0, cflag, 0, speed, speed, control])  # raw
+        reader = asyncio.StreamReader()
+        loop = asyncio.get_event_loop()
+        await loop.connect_read_pipe(lambda: asyncio.StreamReaderProtocol(reader),
+                                     os.fdopen(descriptor, 'rb', buffering=0))
+    except:
+        os.close(descriptor)
+        raise
     return reader
