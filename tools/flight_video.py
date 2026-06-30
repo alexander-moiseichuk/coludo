@@ -29,6 +29,12 @@ _PS = 19.0
 _BURN = {'F15': 3.45, 'E16': 1.77}
 _LIGHT = (0.36, -0.45, 0.82)
 _FONTS = '/usr/share/fonts/truetype/dejavu/'
+_FALLBACK_FONTS = (
+    '/usr/share/fonts/truetype/dejavu/',                     # Debian/Ubuntu
+    '/usr/share/fonts/dejavu/',                               # Fedora
+    '/usr/share/fonts/TTF/',                                  # Arch
+    '/System/Library/Fonts/',                                 # macOS
+)
 _TRAIL_SEC = 2.0
 _TRAIL_POINTS_MAX = 200
 _TARGET_GX = 0.35
@@ -36,10 +42,13 @@ _TARGET_GY = 0.40
 
 
 def _font(name, size):
-    try:
-        return ImageFont.truetype(_FONTS + name, size)
-    except OSError:
-        return ImageFont.load_default()
+    paths = [(_FONTS, name)] + [(d, name) for d in _FALLBACK_FONTS if d != _FONTS]
+    for root, fname in paths:
+        try:
+            return ImageFont.truetype(root + fname, size)
+        except OSError:
+            continue
+    return ImageFont.load_default()
 
 
 F_HEAD = _font('DejaVuSans-Bold.ttf', 38)
@@ -295,7 +304,8 @@ def _draw_exhaust(d, bx, by, dx, dy, intensity):
 
 
 def load(label, path):
-    streams, logs = flight_telemetry.parse(open(path).read())
+    with open(path) as handle:
+        streams, logs = flight_telemetry.parse(handle.read())
     stages = [(us / 1e6, line.split('stage -> ')[1].split()[0]) for us, line in logs
               if us and 'stage -> ' in line]
     launch = next((t for t, s in stages if s == 'boosting'), 0.0)
@@ -382,10 +392,13 @@ def _calc_zoom():
 
 
 def render(flights, out):
-    proc = subprocess.Popen(
-        ['ffmpeg', '-y', '-f', 'rawvideo', '-pixel_format', 'rgb24', '-video_size', '%dx%d' % (_W, _H),
-         '-framerate', str(_FPS), '-i', '-', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '20', out],
-        stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    try:
+        proc = subprocess.Popen(
+            ['ffmpeg', '-y', '-f', 'rawvideo', '-pixel_format', 'rgb24', '-video_size', '%dx%d' % (_W, _H),
+             '-framerate', str(_FPS), '-i', '-', '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', '20', out],
+            stdin=subprocess.PIPE, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except FileNotFoundError:
+        sys.exit('ffmpeg not found -- install ffmpeg or check your PATH')
     corners = [(_TL[0], _TL[1]), (_TL[0], _BR[1]), (_BR[0], _BR[1]), (_BR[0], _TL[1])]
     cmid = ((_TL[0] + _BR[0]) / 2, (_TL[1] + _BR[1]) / 2)
     map_cx = (_MAP[0] + _MAP[2]) / 2
@@ -581,7 +594,9 @@ def render(flights, out):
                    font=F_BIG, fill=(255, 255, 255))
             proc.stdin.write(img.tobytes())
     proc.stdin.close()
-    proc.wait()
+    ret = proc.wait()
+    if ret != 0:
+        sys.exit('ffmpeg exited with code %d -- check ffmpeg arguments and codec support' % ret)
 
 
 if __name__ == '__main__':

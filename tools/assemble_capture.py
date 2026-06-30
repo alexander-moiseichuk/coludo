@@ -14,15 +14,17 @@ def assemble(session: str, indir: str, out: str) -> int:
     lines = []
     for path in sorted(glob.glob(os.path.join(indir, session + '_*.csv'))):
         name = os.path.basename(path)[len(session) + 1:]  # strip the '<session>_' prefix
-        for row in open(path):
-            row = row.rstrip('\r\n')
-            if row:
-                lines.append('@%s_%s@%s' % (session, name, row))
+        with open(path) as handle:
+            for row in handle:
+                row = row.rstrip('\r\n')
+                if row:
+                    lines.append('@%s_%s@%s' % (session, name, row))
         if name == 'sequencer.csv':  # synthesize stage-event log lines for the report markers
-            for row in open(path):
-                fields = row.strip().split(';')
-                if len(fields) >= 2 and fields[0].isdigit():
-                    lines.append('%s controller :: stage -> %s' % (fields[0], fields[1]))
+            with open(path) as handle:
+                for row in handle:
+                    fields = row.strip().split(';')
+                    if len(fields) >= 2 and fields[0].isdigit():
+                        lines.append('%s controller :: stage -> %s' % (fields[0], fields[1]))
     with open(out, 'w') as handle:
         handle.write('\n'.join(lines) + '\n')
     return len(lines)
