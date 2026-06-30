@@ -159,6 +159,19 @@ def default() -> dict:
                 # ~30 Hz continuous ranging -> 100 ms freshness (tune the timing budget on the bench).
                 'provides': {'agl': {'priority': 0, 'timeout_ms': 100}},
             },
+            {
+                'name': 'power_ina226',
+                'driver': 'ina226',
+                'bus': 'i2c', 'id': 0,
+                'addr': 0x40,  # INA226, A0=A1=GND (scan-confirmed: mfr 0x5449 / die 0x2260)
+                'shunt_ohms': 0.01,  # installed 2512 R010; calibrate vs a known current for <1% absolute
+                'max_current_a': 5,  # Current_LSB = 5/2^15 ≈ 153 µA -> CAL = 0.00512/(LSB·shunt) ≈ 3355
+                'period_ms': 100,  # 10 Hz poll (conversion ~9 ms at 4-sample averaging)
+                'enabled': True,
+                'provides': {'voltage': {'priority': 0, 'timeout_ms': 500},
+                             'current': {'priority': 0, 'timeout_ms': 500},
+                             'power': {'priority': 0, 'timeout_ms': 500}},
+            },
             # GNSS. Primary: ATGM336H (CASIC) at 10 Hz. Backup: GY-NEO6MV2 (u-blox NEO-6M) -- same
             # uart:2, both share gnss.py. To run the NEO-6M instead:
             # 1. power the board off, swap the module onto uart:2 (keep board-TX -> module-RX wired:
