@@ -8,7 +8,7 @@
 # Signs are config (`surfaces` gains + `trim`), set during bench alignment: if a surface deflects the
 # wrong way, flip its gain sign; if its neutral is off, set its trim.
 
-from commons import between
+from commons import SERVO_NEUTRAL_DEG, between
 
 _DEFAULT_SURFACES: dict = {
     'servo_yaw': {'yaw': 1},                          # rudder
@@ -23,7 +23,7 @@ class Mixer:
 
     def __init__(self, config: dict = None):
         config = config or {}
-        self.neutral: int = config.get('neutral_deg', 90)
+        self.neutral: int = config.get('neutral_deg', SERVO_NEUTRAL_DEG)
         self.limit: int = config.get('limit_deg', 45)  # max control deflection from neutral, per surface
         self.surfaces: dict = config.get('surfaces', _DEFAULT_SURFACES)
         self.trim: dict = config.get('trim', {})  # per-fin neutral offset (deg)

@@ -9,6 +9,8 @@
 # providers fused by quantity + priority (several may provide the same quantity with different
 # drivers/priorities); `components` are the consumers/actuators (recorder, ...).
 
+import commons
+
 try:
     from version import VERSION as _FIRMWARE_VERSION  # generated at deploy/install (git commit sha)
 except ImportError:
@@ -75,7 +77,7 @@ def default() -> dict:
         # differentially for roll) + a rudder (the yaw fin). Flip a gain sign if a surface deflects the
         # wrong way; set `trim` (deg) for mechanical neutral. limit_deg bounds control deflection.
         'mixer': {
-            'neutral_deg': 90,
+            'neutral_deg': commons.SERVO_NEUTRAL_DEG,
             'limit_deg': 45,
             'surfaces': {
                 'servo_yaw': {'yaw': 1},

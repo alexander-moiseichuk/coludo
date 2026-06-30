@@ -26,6 +26,7 @@ import math
 import random
 import time
 
+import commons
 import controller as controller_mod
 import databoard
 import inspector
@@ -94,13 +95,15 @@ class Hitl(task.Task):
         tasks the flight loop writes (90 = neutral). (90, 90, 90) before the servos are found."""
         if self._fins is None:
             self._fins = self.controller.find(['servo_eleron_left', 'servo_eleron_right', 'servo_yaw'])
-        return tuple(getattr(f, 'angle', 90) or 90 for f in self._fins)
+        return tuple(getattr(f, 'angle', commons.SERVO_NEUTRAL_DEG) or commons.SERVO_NEUTRAL_DEG
+                     for f in self._fins)
 
     def _read_fins(self) -> tuple:
         """The commanded (roll, pitch, yaw) deflections in degrees from neutral (90), recovered from the
         cached servo angles the flight loop wrote (mixer: elevons common=pitch, differential=roll)."""
         left, right, yaw = self._fin_angles()
-        return ((left - right) / 2.0, (left + right) / 2.0 - 90.0, yaw - 90.0)
+        return ((left - right) / 2.0, (left + right) / 2.0 - commons.SERVO_NEUTRAL_DEG,
+                yaw - commons.SERVO_NEUTRAL_DEG)
 
     def _publish(self) -> None:
         """Push the (noised) simulated sensors onto the databoard every step (the control loop reads
