@@ -43,6 +43,16 @@ Required hardware and the phased development roadmap. Architecture lives in
   the TMS-7 flight envelope + airframe notes in `coludo.md`. Bench re-run + numbers refreshed.
 - **Phase 5 — field testing (next).** Staged ladder: maket walk-test → telemetry launch → powered
   launch, likely on the wider **TMS-8** airframe. See below.
+- **Firmware / toolchain — PINNED at `v1.29.0-preview.414.g533a154c8a`** for Phase 5 (repo `mpy-cross`
+  gate at `preview.417`, same mpy v6.3; `deploy.sh` ships `.py`, the board compiles on-device). This
+  build already carries the **PSRAM speed-up** — heap memcpy 11.8 → **33.5 MB/s (2.85×)**
+  (`doc/benches/WaveShare_esp32p4-micropython-findings.md`) — which cascades into every PSRAM-bound path
+  (slice-assign, the Recorder rings). **Do not chase newer previews.** Reviewed 414→434 (20 commits): all
+  but one are irrelevant to us (Seeed boards / Wi-Fi CSI / `machine.SDCard` — no SD here / other ports /
+  formatting); the `int`/`struct` overflow change is a no-op in V1 (checks off outside unittest); the one
+  delta that touches us flips the **esp32 `i2c_master` driver default at IDF ≥ 5.5.2** — a regression risk
+  to the four `i2c:0` sensors (bmp280/bno055/icp10111/vl53l4cx) with **no benefit**. Only bump for a
+  concrete upstream fix, and re-qualify every I2C sensor on hardware (`verify`/`probe`) before trusting it.
 
 ## Phase 5 — field testing
 
