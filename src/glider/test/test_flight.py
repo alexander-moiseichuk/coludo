@@ -147,6 +147,12 @@ async def amain():
     position.push((48.0005, 11.020))
     navflight._nav_heading = None
     assert abs(navflight._target_heading(0.0, False) - 270.0) < 5.0  # current position, not the launch point
+    # tier-1 freshness gate: a position_age_max_ms below the fix age skips tier 1 even on a LIVE fix,
+    # falling to the launch-point bearing (tier 2). 0 ms rejects even a just-pushed fix (~270 -> ~90).
+    navflight._position_age_max_ms = 0
+    navflight._nav_heading = None
+    assert abs(navflight._target_heading(0.0, False) - 90.0) < 5.0  # gated off tier-1 -> tier 2 launch bearing
+    navflight._position_age_max_ms = max(navflight._position.window_us, navflight._gnss_speed.window_us) // 1000
     #/LANDING now STEERS too (it no longer locks straight-and-level) -> same tier-1 fix, ~270
     nav_ctrl.stage = Stage.LANDING
     navflight._nav_heading = None
