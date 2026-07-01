@@ -54,7 +54,7 @@ class Wifi(task.Task):
             self.note(None)
             return True
         except Exception as error:  # no Wi-Fi interface on this board -> stay idle, fly standalone
-            self.note('wifi :: no Wi-Fi interface (%r)' % error)
+            self.note('wifi :: no Wi-Fi interface (%r)', error)
             return False
 
     async def run(self) -> None:

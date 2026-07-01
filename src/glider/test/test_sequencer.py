@@ -95,6 +95,20 @@ async def amain():
     seq._tick(2050)
     assert ctrl.stage == Stage.SETTING
 
+    # launch BACKUP: the baro climbing past launch_alt_m (10 m) trips BOOSTING even with a marginal,
+    # sub-launch_g accel -- a heavy stack boosting near the threshold still detects once it left the pad.
+    ctrl.stage = Stage.SETTING
+    seq._stage_seen = None
+    elevation = databoard.Databoard.provide(
+        'baro', {'elevation': {'priority': 0, 'timeout_ms': 1000}}, 'elevation')
+    accel.push((0.0, 0.0, 2.0))  # only 2 g -- below this SPEC's 3 g launch_g
+    elevation.push(3.0)          # still on/near the pad
+    seq._tick(2100)
+    assert ctrl.stage == Stage.SETTING  # neither signal trips
+    elevation.push(15.0)         # climbed 15 m off the pad -> launched (no accel sustain needed)
+    seq._tick(2110)
+    assert ctrl.stage == Stage.BOOSTING
+
     # operator hold (ground test): manual pauses auto-sequencing -- a sustained launch is ignored
     ctrl.stage = Stage.SETTING
     ctrl.manual = True
@@ -116,7 +130,8 @@ async def amain():
     ctrl.manual = False
     seq._stage_seen = None
     seq._accel = _NoReading()
-    seq._tick(4000)  # accel absent -> guarded -> tick does nothing
+    seq._elevation = _NoReading()  # both launch signals absent -> no advance
+    seq._tick(4000)  # accel + elevation absent -> guarded -> tick does nothing
     assert ctrl.stage == Stage.SETTING  # no crash, no advance
 
     # GC policy -- compacted + DISABLED at BOOSTING, re-enabled at LANDING (coludo.md), and finish()

@@ -25,6 +25,7 @@ _DEFAULT_CELL_SIZE = const(256)  # bytes per ring cell (record + 2-byte length h
 _DEFAULT_CAPACITY = const(1024)  # cells per ring
 _LENGTH_BYTES = const(2)  # uint16 record-length header
 _STATS_PERIOD_MS = const(1000)  # how often run() logs a buffer-stats line
+_DEFAULT_TELEMETRY_US = const(20000)  # global telemetry decimation default (50 Hz); a stream's 0 -> this
 
 
 class _RecorderError(ValueError):
@@ -146,6 +147,10 @@ class Recorder:
     _log_max: int = 0  # high-water mark of queued log records
     _stats_ms: int = _STATS_PERIOD_MS
     _last_stats_ms: int = 0
+    # global telemetry decimation (µs between emitted rows): every Telemetry stream whose own decimate_us
+    # is 0 uses this, so `recorder.telemetry_us` in the board config prorates ALL streams at once, while a
+    # stream that sets a non-zero telemetry_us keeps its individual rate. Default 50 Hz.
+    telemetry_decimate_us: int = _DEFAULT_TELEMETRY_US
 
     @classmethod
     def setup(cls, config: dict, uart=None) -> None:
@@ -161,6 +166,7 @@ class Recorder:
         cls._flag = asyncio.ThreadSafeFlag()
         cls._stats_ms = recorder.get('stats_ms', _STATS_PERIOD_MS)
         cls._last_stats_ms = time.ticks_ms()
+        cls.telemetry_decimate_us = recorder.get('telemetry_us', _DEFAULT_TELEMETRY_US)  # global rate knob
         if uart is None:
             import config as config_mod
             from machine import UART
@@ -306,23 +312,30 @@ class Telemetry:
     first push emits the CSV header (uptime + fields), then each push emits a timestamped row.
     All streams in one boot share the Recorder session prefix, so file names are stable.
 
-    `decimate_us` rate-limits the stream: with it 0 every push() emits; with it set, push() emits
-    only when at least `decimate_us` microseconds have passed since the last emitted row (a fast
-    sensor can push every sample and have its telemetry decimated to a sane rate)."""
+    `decimate_us` rate-limits the stream: push() emits only when at least `decimate_us` microseconds
+    have passed since the last emitted row (a fast sensor can push every sample and have its telemetry
+    decimated to a sane rate). `decimate_us=0` (the default) inherits the Recorder GLOBAL rate
+    (`Recorder.telemetry_decimate_us`, 50 Hz) -- so a stream opts into an individual rate by passing a
+    non-zero value, else the board-wide `recorder.telemetry_us` prorates it."""
 
     def __init__(self, filename: str, fields: tuple, decimate_us: int = 0):
         self.filename: str = filename
         self.fields: tuple = fields
-        self.decimate_us = decimate_us  # min gap between emitted rows (0 = emit every push)
+        self.decimate_us = decimate_us or Recorder.telemetry_decimate_us  # 0 -> the global default rate
+        self._header: str = 'uptime;' + ';'.join(fields)  # constant CSV header, built once
+        self._row_fmt: str = '%u;' + ';'.join('%s' for _ in fields)  # one reusable row-format string
         self._header_sent: bool = False
-        self._last_us: int = Recorder.timestamp() - decimate_us  # one window back -> first push emits
+        self._last_us: int = Recorder.timestamp() - self.decimate_us  # one window back -> first push emits
 
     def push(self, values) -> None:
         if not self._header_sent:
-            Recorder.tlm(self.filename, 'uptime;' + ';'.join(self.fields))
+            Recorder.tlm(self.filename, self._header)
             self._header_sent = True
         now = Recorder.timestamp()
         if time.ticks_diff(now, self._last_us) < self.decimate_us:
             return  # too soon since the last row -> decimate
-        Recorder.tlm(self.filename, '%u;%s' % (now, ';'.join(str(v) for v in values)))
+        # one % pass over a precomputed format string: no per-field str() generator, no intermediate
+        # ';'.join list -- a GC-off flight decimates to ~10 Hz/stream, so trim the per-row allocations.
+        # ((now,) + tuple(values), not (now, *values): this compiler rejects display star-unpack.)
+        Recorder.tlm(self.filename, self._row_fmt % ((now,) + tuple(values)))
         self._last_us = now

@@ -35,6 +35,7 @@
 import asyncio
 
 import commons
+import databoard
 import recorder
 import servo
 import task
@@ -68,8 +69,14 @@ class SG90(task.Task):
         self._max_deg: int = self.config.get('max_deg', 180)
         self._neutral: int = (self._min_deg + self._max_deg) // 2  # the zero position
         self._gate = servo.Gate.slew(self.controller.config.get('servo_concurrency', _DEFAULT_CONCURRENCY))
+        # probe() closes the open loop when an INA226 'power' channel is live: a working/wired/powered
+        # servo draws this extra power on a sweep. Below the floor -> dead / PWM pin lost / rail unpowered.
+        # The ceiling is a HIGH-draw flag only (stall/binding), not a fail -- rail-voltage dependent (a
+        # single SG90 peaks ~3 W on a 3.7 V pack, ~3.7 W on 5 V), so it warns rather than false-fails.
+        self._engine_min_w: float = self.config.get('engine_min_w', 0.5)
+        self._engine_max_w: float = self.config.get('engine_max_w', 3.5)
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('angle', 'pulse_us', 'done'),
-                                       decimate_us=self.config.get('telemetry_us', 0))
+                                       decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
         self._pwm = PWM(Pin(gpio), freq=50, duty_u16=0)
         self._apply(self.config.get('angle', self._neutral))  # neutral by default
         self._ok = True
@@ -80,15 +87,34 @@ class SG90(task.Task):
 
     async def probe(self) -> str:
         """On-demand self-test (CC `probe`, pre-flight -- never at boot): sweep min -> max -> neutral so
-        the fin is seen to travel, logging each step. Open-loop (no feedback) -> a step can only fail
-        on a PWM/hardware error, and returns that step's message."""
+        the fin is seen to travel. Open-loop by nature, BUT when an INA226 'power' channel is live it
+        becomes a CLOSED-LOOP go/no-go: a working / wired / powered servo draws a transient over the
+        resting baseline, a dead servo / a lost PWM pin / an unpowered rail draws nothing -- so this
+        catches exactly the 'no pins lost' case. Returns a PWM-error step message, or the no-draw verdict."""
+        watch = databoard.Databoard.value('power') is not None  # INA present -> measure the actual draw
+        self._apply(self._neutral)
+        if watch:
+            await asyncio.sleep_ms(300)  # settle -> resting baseline (nonzero on battery: MCU + devices)
+        baseline = databoard.Databoard.value('power') if watch else 0.0
+        peak_rise = 0.0
         for label, target in (('min', self._min_deg), ('max', self._max_deg), ('neutral', self._neutral)):
             try:
                 recorder.Recorder.log(self.name, 'probe: sweep to %s %d ...' % (label, target))
-                await self.move(target)
+                self._apply(target)  # command the travel directly (single-servo self-test -- no slew gate)
+                for _ in range(24):  # ~travel window; sample the INA draw WHILE the servo is moving
+                    if watch:
+                        peak_rise = max(peak_rise, (databoard.Databoard.value('power') or baseline) - baseline)
+                    await asyncio.sleep_ms(20)
                 recorder.Recorder.log(self.name, 'probe: at %s %d ok' % (label, target))
             except Exception as error:
                 message = 'sweep to %s %d: %s' % (label, target, error)
+                recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
+                return message
+        if watch:
+            recorder.Recorder.log(self.name, 'probe: peak draw %.2f W over %.2f W baseline%s' % (
+                peak_rise, baseline, '' if peak_rise <= self._engine_max_w else ' (HIGH -- stall/binding?)'))
+            if peak_rise < self._engine_min_w:
+                message = 'no current draw (%.2f W rise) -- servo dead / PWM pin lost / rail unpowered?' % peak_rise
                 recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
                 return message
         return None

@@ -19,11 +19,12 @@ import recorder
 import tasks
 
 
-async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: bool) -> None:
+async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: bool,
+              glider_g: int, inject_hz: int) -> None:
     drivers.load()
     tasks.load()
     mission.Mission(max_range_m=200)
-    cfg = config_hitl.default(motor, noise, spike, wind, wind_dir)
+    cfg = config_hitl.default(motor, noise, spike, wind, wind_dir, glider_g=glider_g, inject_hz=inject_hz)
     flight = controller.Controller(cfg, log=lambda message: None)
     await flight.setup()
     await flight.start()
@@ -49,7 +50,11 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
     print('RUN_END')
 
 
-def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0,
-        wind_dir: float = 210.0, spike: bool = False) -> None:
-    """Fly one HITL scenario to completion (or a 95 s cap), recording every stream to the Luckfox."""
-    asyncio.run(_go(motor, noise, wind, wind_dir, spike))
+def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0, wind_dir: float = 210.0,
+        spike: bool = False, glider_g: int = 300, inject_hz: int = 0) -> None:
+    """Fly one HITL scenario to completion (or a 95 s cap), recording every stream to the Luckfox.
+    `glider_g` is the glider (glide) mass in grams (300 full, 150 the half-weight target); the booster
+    adds to it for boost then ejects, so a lighter glider glides longer -- the memory-leak stress case.
+    `inject_hz` > 0 slims the sim's sensor publish rate (physics still integrate at sim_hz) so the
+    on-board HITL leak reflects real flight -- pass e.g. 10 for a memory-measurement run."""
+    asyncio.run(_go(motor, noise, wind, wind_dir, spike, glider_g, inject_hz))

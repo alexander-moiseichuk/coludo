@@ -70,7 +70,7 @@ class Adxl375(task.Task):
             return False
         self._accel = databoard.Databoard.provide(self.name, self.config.get('provides', {}), 'accel')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('ax', 'ay', 'az'),
-                                       decimate_us=self.config.get('telemetry_us', 100000))  # default 10 Hz
+                                       decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
         self._ok = True
         return True
 
@@ -127,7 +127,7 @@ class Adxl375(task.Task):
                 self._telemetry.push(accel)
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
-                self.note('adxl375 :: read %r' % error)  # deduped: a persistent error logs once, not every tick
+                self.note('adxl375 :: read %r', error)  # deduped: a persistent error logs once, not every tick
 
     async def probe(self) -> str:
         """On-demand self-test: the device id reads back, then one sample succeeds (each step logged)."""

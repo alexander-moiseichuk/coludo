@@ -59,6 +59,7 @@ def default() -> dict:
             'servo_yaw': 26,
             'servo_eleron_left': 27,
             'servo_eleron_right': 32,
+            'ina226_alert': 30,  # INA226 ALERT (open-drain, active-low) -- hardware over-current trip
         },
         'recorder': {  # PSRAM ring sizes + stats cadence (Recorder)
             'tlm_capacity': 256,  # measured peak ~16 buffered records -> 256 is ~16x headroom
@@ -96,7 +97,7 @@ def default() -> dict:
                 'addr': 0x53,  # kept for an i2c fallback (set bus 'i2c', id 0)
                 'cs_pin': 'adxl375_cs',  # SPI chip-select
                 'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — drives the sampling
-                'telemetry_us': 20000,  # ~100 Hz sampling decimated to 50 Hz in accel_adxl375.csv
+                'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
                 'enabled': True,
                 'provides': {'accel': {'priority': 1, 'timeout_ms': 20}},  # >32 g backstop behind lsm6dso32
             },
@@ -107,7 +108,7 @@ def default() -> dict:
                 'addr': 0x6A,  # kept for an i2c fallback (set bus 'i2c', id 0)
                 'cs_pin': 'lsm6dso32_cs',  # SPI chip-select (GPIO50)
                 'int_pin': 'lsm6dso32_int1',  # INT1 accel data-ready drives the sampling
-                'telemetry_us': 20000,  # ~100 Hz sampling decimated to 50 Hz in imu_lsm6dso32.csv
+                'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
                 'enabled': True,
                 'provides': {'accel': {'priority': 0, 'timeout_ms': 20},   # PRIMARY accel (±32 g)
                              'rate': {'priority': 0, 'timeout_ms': 20}},    # sole gyro `rate` source
@@ -117,7 +118,7 @@ def default() -> dict:
                 'driver': 'bno055',
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x28,
-                'telemetry_us': 40000,  # ~50 Hz sampling decimated to 25 Hz in imu_bno055.csv
+                'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
                 'enabled': True,
                 'provides': {'attitude': {'priority': 0, 'timeout_ms': 40},
                              'accel': {'priority': 2, 'timeout_ms': 40}},  # fused fallback behind lsm/adxl
@@ -158,6 +159,21 @@ def default() -> dict:
                 # laser gives AGL (ground distance), not AMSL altitude, so it provides 'agl' only;
                 # ~30 Hz continuous ranging -> 100 ms freshness (tune the timing budget on the bench).
                 'provides': {'agl': {'priority': 0, 'timeout_ms': 100}},
+            },
+            {
+                'name': 'power_ina226',
+                'driver': 'ina226',
+                'bus': 'i2c', 'id': 0,
+                'addr': 0x40,  # INA226, A0=A1=GND (scan-confirmed: mfr 0x5449 / die 0x2260)
+                'shunt_ohms': 0.01,  # installed 2512 R010; calibrate vs a known current for <1% absolute
+                'max_current_a': 5,  # Current_LSB = 5/2^15 ≈ 153 µA -> CAL = 0.00512/(LSB·shunt) ≈ 3355
+                'period_ms': 100,  # 10 Hz poll (conversion ~9 ms at 4-sample averaging)
+                'alert_pin': 'ina226_alert',  # INA226 ALERT (open-drain) -> GPIO30: hardware over-current trip
+                'alert_a': 3.0,  # ALERT fires above this (A) -- over the ~2.4 A 3-servo peak: a stall/short flag
+                'enabled': True,
+                'provides': {'voltage': {'priority': 0, 'timeout_ms': 500},
+                             'current': {'priority': 0, 'timeout_ms': 500},
+                             'power': {'priority': 0, 'timeout_ms': 500}},
             },
             # GNSS. Primary: ATGM336H (CASIC) at 10 Hz. Backup: GY-NEO6MV2 (u-blox NEO-6M) -- same
             # uart:2, both share gnss.py. To run the NEO-6M instead:
@@ -204,8 +220,12 @@ def default() -> dict:
             # (+ sequencer.csv). Enabled -- safe on the passive flights (the flight task is the actuator
             # and stays disabled), and it captures the stage timeline. Tune launch_g/launch_ms from the
             # first powered flights.
+            # launch_g 2.5: the measured v2 F15 stack (517 g) boosts at only ~2.84 g (specific force =
+            # thrust/mass), so the old 3.0 g would MISS launch on the real airframe. launch_alt_m 10 is an
+            # independent backup -- the baro climbing 10 m off the pad trips BOOSTING regardless of the accel
+            # threshold (a heavy/marginal boost, or a dropped accel window, still detects).
             {'name': 'sequencer', 'activity': 'sequencer', 'enabled': True, 'period_ms': 50,
-             'launch_g': 3.0, 'launch_ms': 100, 'boost_timeout_ms': 6000,
+             'launch_g': 2.5, 'launch_ms': 100, 'launch_alt_m': 10.0, 'boost_timeout_ms': 6000,
              'land_agl_m': 5.0, 'land_ms': 300, 'still_g': 0.3, 'ground_ms': 3000},
             # Phase 3 stabilization loop (off by default -- no actuation until enabled + tuned on the
             # airframe). schedule_hz > 0 -> machine.Timer (deterministic slice, ~1 m/step at 100 Hz/100 m/s);

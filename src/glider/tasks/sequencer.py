@@ -1,6 +1,7 @@
 # tasks/sequencer.py — Phase 3 flight-stage automation. @task.activity('sequencer'). Watches the
 # databoard and drives the guarded, forward-only stage machine that the control loop gates on:
-# SETTING -> BOOSTING : |accel| over launch_g sustained launch_ms (motor ignition)
+# SETTING -> BOOSTING : |accel| over launch_g sustained launch_ms (motor ignition), OR the baro climbing
+#                       past launch_alt_m off the pad (an independent, threshold-robust backup)
 # BOOSTING -> GLIDING : the separation switch (drivers/separation.py) is primary; this is the
 # burnout-timeout FALLBACK if the switch never fires
 # GLIDING -> LANDING : agl below land_agl_m (the laser sees the ground; elevation is the fallback)
@@ -44,8 +45,9 @@ class Sequencer(task.Task):
     async def setup(self) -> bool:
         cfg = self.config
         self._period_ms: int = cfg.get('period_ms', 50)
-        self._launch_g: float = cfg.get('launch_g', 3.0)
+        self._launch_g: float = cfg.get('launch_g', 2.5)
         self._launch_ms: int = cfg.get('launch_ms', 100)
+        self._launch_alt_m: float = cfg.get('launch_alt_m', 10.0)  # OR-trigger: clearly climbed off the pad
         self._boost_timeout_ms: int = cfg.get('boost_timeout_ms', 6000)
         self._land_agl_m: float = cfg.get('land_agl_m', 5.0)
         self._land_ms: int = cfg.get('land_ms', 300)  # AGL must stay below land_agl_m this long (anti-spike)
@@ -146,8 +148,14 @@ class Sequencer(task.Task):
             else:
                 self._since = None
         elif stage == _STAGE.SETTING:
+            # launch = a sustained boost |a| (fast, primary) OR the baro clearly climbing off the pad
+            # (slower, but unambiguous and threshold-independent -- a heavy stack that boosts near the
+            # launch_g line, or a missed accel window, still trips once it has left the rod).
+            elevation = self._elevation.value()
             g_sq = _magnitude_sq(self._accel.value())
-            if g_sq is not None and g_sq > self._launch_g_sq:  # |a| over launch_g, squared
+            if elevation is not None and elevation > self._launch_alt_m:
+                self._advance(_STAGE.BOOSTING, 'launch alt=%.0fm' % elevation)
+            elif g_sq is not None and g_sq > self._launch_g_sq:  # |a| over launch_g, squared
                 if self._sustained(now, self._launch_ms):
                     self._advance(_STAGE.BOOSTING, 'launch |a|=%.1fg' % math.sqrt(g_sq))
             else:

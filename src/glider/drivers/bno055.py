@@ -65,27 +65,27 @@ class Bno055(task.Task):
             self.name, self.config.get('provides', {}), 'attitude', 'accel')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
                                              ('heading', 'roll', 'pitch', 'ax', 'ay', 'az'),
-                                             decimate_us=self.config.get('telemetry_us', 100000))  # default 10 Hz
+                                             decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
         self._ok = True
         return True
 
     async def sample(self) -> tuple:
-        """Read the block and return (attitude (heading, roll, pitch) deg, accel (x, y, z) g)."""
+        """Read the block and return a FLAT (heading, roll, pitch) deg + (x, y, z) g 6-tuple (run() slices)."""
         await self._bus.read_into(self._addr, _REG_DATA, self._buf)
         ax, ay, az = struct.unpack_from('<hhh', self._buf, 0)
         heading, roll, pitch = struct.unpack_from('<hhh', self._buf, _OFF_EUL)
-        return ((heading * _DEG, roll * _DEG, pitch * _DEG), (ax * _ACC_G, ay * _ACC_G, az * _ACC_G))
+        return (heading * _DEG, roll * _DEG, pitch * _DEG, ax * _ACC_G, ay * _ACC_G, az * _ACC_G)
 
     async def run(self) -> None:
         while True:
             try:
-                attitude, accel = await self.sample()
-                self._attitude.push(attitude)  # one step: push our channels directly
-                self._accel.push(accel)  # low-g backup to the ADXL375
-                self._telemetry.push(attitude + accel)
+                sample = await self.sample()  # flat 6-tuple
+                self._attitude.push(sample[:3])  # one step: push our channels directly
+                self._accel.push(sample[3:])  # low-g backup to the ADXL375
+                self._telemetry.push(sample)  # no attitude + accel concatenation
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
-                self.note('bno055 :: read %r' % error)  # deduped: a persistent error logs once, not at 50 Hz
+                self.note('bno055 :: read %r', error)  # deduped: a persistent error logs once, not at 50 Hz
             await asyncio.sleep_ms(self._period_ms)
 
     async def probe(self) -> str:
@@ -103,8 +103,8 @@ class Bno055(task.Task):
             return message
         try:
             recorder.Recorder.log(self.name, 'probe: sample ...')
-            attitude, _accel = await self.sample()
-            recorder.Recorder.log(self.name, 'probe: sample ok heading=%.1f deg' % attitude[0])
+            sample = await self.sample()
+            recorder.Recorder.log(self.name, 'probe: sample ok heading=%.1f deg' % sample[0])
         except Exception as error:
             message = 'sample: %s' % error
             recorder.Recorder.log(self.name, 'probe FAILED: ' + message)

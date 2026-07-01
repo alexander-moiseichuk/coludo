@@ -66,7 +66,7 @@ class Bmp280(task.Task):
             self.name, self.config.get('provides', {}), 'altitude', 'temperature', 'pressure', 'elevation')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
                                              ('altitude', 'temperature', 'pressure', 'elevation'),
-                                             decimate_us=self.config.get('telemetry_us', 0))
+                                             decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
         self._ok = True
         return True
 
@@ -123,7 +123,7 @@ class Bmp280(task.Task):
                 self._telemetry.push((altitude, temp_c, pressure, elevation))
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
-                self.note('bmp280 :: read %r' % error)  # deduped: a persistent error logs once, not every tick
+                self.note('bmp280 :: read %r', error)  # deduped: a persistent error logs once, not every tick
             await asyncio.sleep_ms(self._period_ms)
 
     def update(self, props: dict) -> list:

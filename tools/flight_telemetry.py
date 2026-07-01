@@ -72,4 +72,16 @@ def parse(text: str):
         else:  # a log line: '<ticks_us> <descriptor> :: <message>'
             first = line.split(' ', 1)[0]
             logs.append((int(first) if first.isdigit() else None, line))
+    # Normalise every timestamp to a flight-relative origin. The recorder stamps raw board uptime
+    # (ticks_us), which starts wherever the board happened to be at boot -- so an un-normalised plot reads
+    # ~600 s at boost, not 0. Subtract the earliest stamp seen so the capture (and every renderer keyed on
+    # these times) starts at t=0.
+    stamps = [row[0] for stream in streams.values() for row in stream.rows]
+    stamps += [ts for ts, _ in logs if ts is not None]
+    if stamps:
+        origin = min(stamps)
+        for stream in streams.values():
+            for row in stream.rows:
+                row[0] -= origin
+        logs = [((ts - origin) if ts is not None else None, line) for ts, line in logs]
     return streams, logs

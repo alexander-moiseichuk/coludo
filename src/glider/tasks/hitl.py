@@ -51,6 +51,12 @@ class Hitl(task.Task):
         scenario = dict(_HPRC)
         scenario.update(cfg.get('scenario', {}))
         self._sim_hz: int = cfg.get('sim_hz', 50)
+        # INJECT rate = how often sensors are published to the databoard + telemetry (the sim's per-tick
+        # allocation). Decoupled from sim_hz (the physics INTEGRATION rate, kept for boost/apogee
+        # fidelity): the accumulator covers wall time with sim_hz sub-steps regardless of the loop rate.
+        # Default = sim_hz (publish every step, as before); lower it (e.g. 10) to slim the sim's own
+        # heap churn so an on-board HITL leak reflects real flight -- see doc/sims/TMS-7-memory_refactoring.
+        self._inject_hz: int = cfg.get('inject_hz', self._sim_hz)
         self._noise: float = cfg.get('noise', 0.0)             # N: 0.0 / 0.05 / 0.10 / 0.25 / 0.50
         self._laser_range_m: float = cfg.get('laser_range_m', 4.0)  # agl drops out beyond this
         self._spike: bool = cfg.get('spike', False)            # occasional 2x spikes
@@ -60,8 +66,10 @@ class Hitl(task.Task):
         self._axis_index: int = {'x': 0, 'y': 1, 'z': 2}.get(cfg.get('boost_axis', 'z'), 2)
         motor = _MOTORS.get(cfg.get('motor', 'F15'), _MOTORS['F15'])
         self._thrust, self._burn_s = motor
-        mass = cfg.get('liftoff_g', 430) / 1000.0
-        self._body = Body(mass, tuple(scenario['launch']), scenario['elevation_m'], scenario['heading_deg'])
+        mass = cfg.get('liftoff_g', 517) / 1000.0            # boost: whole stack (booster + glider)
+        glide_mass = cfg.get('glider_g', 300) / 1000.0       # glide: glider alone (booster ejected)
+        self._body = Body(mass, tuple(scenario['launch']), scenario['elevation_m'], scenario['heading_deg'],
+                          glide_mass=glide_mass)
         # steady wind the glide must crab against (m/s, toward wind_dir degrees) -- a glide disturbance
         wind = cfg.get('wind', 0.0)
         wind_dir = cfg.get('wind_dir', 0.0)
@@ -106,19 +114,21 @@ class Hitl(task.Task):
                 yaw - commons.SERVO_NEUTRAL_DEG)
 
     def _publish(self) -> None:
-        """Push the (noised) simulated sensors onto the databoard every step (the control loop reads
-        them), and record them as decimated telemetry (the recorder rate-limits each stream)."""
-        s = self._body.sensors()
+        """Push the (noised) simulated sensors onto the databoard every inject step (the control loop
+        reads them), and record them as decimated telemetry (the recorder rate-limits each stream).
+        Reads the Body state directly (not the sensors() dict) so no dict is allocated per tick."""
+        body = self._body
         n = self._noise
         accel = [0.0, 0.0, 0.0]
-        accel[self._axis_index] = _noisy(s['accel'], n, -200.0, 200.0)  # |a| on the configured boost axis (g)
-        heading = _noisy(s['heading'], n, 0.0, 360.0)
-        roll = _noisy(s['roll'], n, -180.0, 180.0)
-        pitch = _noisy(s['pitch'], n, -180.0, 180.0)
-        altitude = _noisy(s['altitude'], n, -100.0, 10000.0)
-        elevation = _noisy(s['altitude'] - self._body.elev0, n, -100.0, 10000.0)
-        speed = _noisy(s['speed'], n, 0.0, 200.0)
-        agl_clean = s['agl']
+        accel[self._axis_index] = _noisy(body.accel_g, n, -200.0, 200.0)  # |a| on the boost axis (g)
+        heading = _noisy(body.heading % 360.0, n, 0.0, 360.0)
+        roll = _noisy(body.roll, n, -180.0, 180.0)
+        pitch = _noisy(body.pitch, n, -180.0, 180.0)
+        altitude = _noisy(body.elev0 + body.alt, n, -100.0, 10000.0)
+        elevation = _noisy(body.alt, n, -100.0, 10000.0)  # altitude above the pad (= altitude - elev0)
+        speed = _noisy((body.vu * body.vu + body.speed * body.speed) ** 0.5, n, 0.0, 200.0)  # true airspeed
+        agl_clean = max(0.0, body.alt)
+        position = body.position()
         # databoard -> the control loop
         self._ch['accel'].push((accel[0], accel[1], accel[2]))
         self._ch['attitude'].push((heading, roll, pitch))
@@ -127,7 +137,7 @@ class Hitl(task.Task):
             self._ch['agl'].push(_noisy(agl_clean, n, 0.0, 1000.0))
         self._ch['altitude'].push(altitude)
         self._ch['elevation'].push(elevation)
-        self._ch['position'].push(s['position'])
+        self._ch['position'].push(position)
         self._ch['speed'].push(speed)
         # telemetry -> the Luckfox (decimate_us rate-limits each stream so this can run every step)
         self._tlm_accel.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3)))
@@ -137,7 +147,7 @@ class Hitl(task.Task):
             self._tlm_laser.push((round(agl_clean, 3),))
         left, right, yaw = self._fin_angles()
         self._tlm_fins.push((int(left), int(right), int(yaw)))
-        lat, lon = s['position']
+        lat, lon = position
         self._tlm_gnss.push(('%.6f' % lat, '%.6f' % lon, round(speed * _KNOTS, 1), round(heading, 1)))
 
     async def run(self) -> None:
@@ -150,8 +160,8 @@ class Hitl(task.Task):
         # the model in stable `fixed`-size sub-steps to COVER it: integration stays at sim_hz (accurate),
         # while the number of sub-steps floats with the loop rate so 1 sim-second == 1 wall-second. A big
         # one-off stall is capped so it cannot inject a burst of catch-up steps.
-        period = max(1, 1000 // self._sim_hz)
-        fixed = 1.0 / self._sim_hz
+        period = max(1, 1000 // self._inject_hz)  # loop + publish cadence (inject rate)
+        fixed = 1.0 / self._sim_hz                 # physics sub-step (integration rate, wall-time covered)
         max_catchup = 0.5            # s: cap a scheduling stall's catch-up (<= 0.5 s of sub-steps)
         t = 0.0
         accumulator = 0.0
