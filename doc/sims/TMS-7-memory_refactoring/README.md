@@ -81,6 +81,31 @@ any plausible glide (a 90 s flight leaks ~2.2 MB). The original worry — "~60 s
 glide kills the board" — is resolved: the budget is now ~10 min. **Green.** This matches findings §18.3's
 source-analysis budget (~40 KB/s pre-F05, ~29 KB/s after).
 
+## Slimmed HITL — the gate is now measurable *and green* on-device
+
+The raw HITL number above (~76 s) was so sim-dominated it could not be used as a gate. Three fixes made
+the on-board HITL leak reflect real flight:
+
+1. **LSM-mask bug** — `imu_lsm6dso32` was missing from `config_hitl`'s sim-sensor mask, so the real IMU
+   ran on the bench, provided `accel` as a co-primary (competing with the sim), *and* churned ~104 Hz of
+   SPI reads + float scaling + telemetry into every prior HITL capture. (It also broke launch detect once
+   the sim published slower than the always-fresh bench IMU — the sim's 3 g went stale between publishes
+   and the IMU's resting ~1 g won the fusion.) Now masked.
+2. **`inject_hz`** — the sensor publish rate is decoupled from the physics integration rate (`sim_hz`) and
+   made configurable (default = `sim_hz`; the memory run passes 10). Physics still integrate at 50 Hz via
+   the wall-clock accumulator, but sensors publish + telemetry at 10 Hz.
+3. **No `sensors()` dict per tick** + `noise=0` for the measurement run (real drivers don't run `noisy()`).
+
+| round (inject 10 Hz, LSM masked) | flight | leak | low-water free | **time-to-OOM** |
+|---|---|---|---|---|
+| normal (468 g) | 40.0 s | **176 KB/s** | 24.9 MB | **~184 s** |
+| half (234 g)   | 57.3 s | **175 KB/s** | 22.1 MB | **~186 s** |
+
+**The on-device HITL now clears the 180 s gate** (was ~76 s), a 2.4× leak cut (429→176 KB/s). It is still
+above the ~24 KB/s real-flight figure — the `glide_step` physics at 50 Hz is inherent, host-shared float
+and stays — but the gate is now meaningful and passes on the board. Regenerate with `inject_hz=10`,
+`noise=0` (see below); the committed traces here are those runs.
+
 ## Remaining lever — deferred by design
 
 The one real leak left is the **airspeed accel chain** (128 B/step, 61 % of the residual). Cutting it means
@@ -89,17 +114,19 @@ storage rewire touching fusion. At ~10 min-to-OOM that margin is not needed, so 
 **accepted as tolerable headroom**, not pursued. Binary telemetry is likewise **not** pursued: it mainly
 de-churns the *sim*, not real flight.
 
-Re-run this HITL pair if the sim is ever slimmed (decimated sim telemetry) to make the gate directly
-measurable on-device; otherwise the real-flight budget above is the number that matters.
+The real-flight budget (~24 KB/s) is the number that governs the airframe; the slimmed HITL above is the
+on-device confirmation of the gate.
 
 ## Regenerate
 
+The committed traces use the slimmed sim: `inject_hz=10` (6th/7th `fly()` args are `mass_scale`,
+`inject_hz`), `noise=0` (deterministic; real drivers don't run `noisy()`).
+
 ```sh
+mpremote connect /dev/ttyACM0 cp src/glider/config_hitl.py src/glider/tasks/hitl.py tools/hitl_run.py :
 # normal weight
-tools/hitl_collect.sh F15 mem_normal 0.05 0.0 210.0 False /tmp/hitl_mem
-# 50 % weight (mass_scale=0.5 via a one-line launcher)
-mpremote connect /dev/ttyACM0 cp src/glider/config_hitl.py tools/hitl_run.py :
-printf 'import hitl_run\nhitl_run.fly("F15", 0.05, 0.0, 210.0, False, 0.5)\n' > /tmp/launch_half.py
-tools/board_reboot.py /dev/ttyACM0 && mpremote connect /dev/ttyACM0 run /tmp/launch_half.py
-adb pull /userdata/recordings/<session>_health.csv .
+printf 'import hitl_run\nhitl_run.fly("F15", 0.0, 0.0, 210.0, False, 1.0, 10)\n' > /tmp/launch.py
+# 50 % weight: ...fly("F15", 0.0, 0.0, 210.0, False, 0.5, 10)
+tools/board_reboot.py /dev/ttyACM0 && mpremote connect /dev/ttyACM0 run /tmp/launch.py
+adb pull /userdata/recordings/<session>_health.csv .   # leak = mem_free slope over BOOSTING->DONE
 ```

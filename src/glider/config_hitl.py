@@ -8,7 +8,8 @@
 import config_default
 import sim_model
 
-_SIM_SENSORS = ('accel_adxl375', 'imu_bno055', 'baro_icp10111', 'baro_bmp280', 'laser_agl', 'gnss')
+_SIM_SENSORS = ('accel_adxl375', 'imu_lsm6dso32', 'imu_bno055', 'baro_icp10111', 'baro_bmp280',
+                'laser_agl', 'gnss')
 _OFF = ('separation', 'watchdog', 'wifi', 'cc', 'bluetooth')
 
 # Full-stack liftoff mass (g) per motor, measured on the printed TMS-7 v2 with ~100 g electronics
@@ -19,14 +20,16 @@ _LIFTOFF_G = {'E16': 451, 'F15': 468}
 
 def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: float = 0.0,
             wind_dir: float = 0.0, eject_delay_s: float = 4.0, boost_axis: str = 'z',
-            mass_scale: float = 1.0) -> dict:
+            mass_scale: float = 1.0, inject_hz: int = 0) -> dict:
     """Build a HITL config. `eject_delay_s` is the motor's ejection delay (the '-4' in F15-4/E16-4 ~=
     4 s after burnout, near apogee); since separation is off in HITL, the sequencer's boost->glide
     timeout stands in for that ejection charge, so set it to burn + delay (otherwise a generic timeout
     glides from the wrong altitude). `wind`/`wind_dir` set a steady cross-wind (m/s, toward deg) the
     glide must crab against. `boost_axis` picks which accel axis carries the boost |a|. `mass_scale`
     multiplies the liftoff mass (0.5 = a 50%-lighter build -> higher apogee + a longer, slower glide,
-    the worst case for the GC-off memory leak)."""
+    the worst case for the GC-off memory leak). `inject_hz` > 0 sets the sensor publish rate (default
+    0 -> the sim's sim_hz); lower it (e.g. 10) to slim the sim's own heap churn so an on-board HITL
+    leak reflects real flight -- the physics still integrate at sim_hz."""
     cfg = config_default.default()
     for sensor in cfg['sensors']:
         if sensor['name'] in _SIM_SENSORS:
@@ -45,10 +48,13 @@ def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: f
     sequencer = by_name.get('sequencer')
     if sequencer is not None:
         sequencer['boost_timeout_ms'] = round((burn_s + eject_delay_s) * 1000)
-    cfg['components'].append({
+    hitl = {
         'name': 'hitl', 'activity': 'hitl', 'enabled': True,
         'sim_hz': 50, 'motor': motor, 'noise': noise, 'spike': spike,
         'liftoff_g': round(_LIFTOFF_G.get(motor, 451) * mass_scale),
         'wind': wind, 'wind_dir': wind_dir, 'boost_axis': boost_axis,
-    })
+    }
+    if inject_hz:  # 0 -> omit -> hitl.py defaults the publish rate to sim_hz (avoid a 0 loop period)
+        hitl['inject_hz'] = inject_hz
+    cfg['components'].append(hitl)
     return cfg

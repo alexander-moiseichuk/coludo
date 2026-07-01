@@ -20,11 +20,11 @@ import tasks
 
 
 async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: bool,
-              mass_scale: float) -> None:
+              mass_scale: float, inject_hz: int) -> None:
     drivers.load()
     tasks.load()
     mission.Mission(max_range_m=200)
-    cfg = config_hitl.default(motor, noise, spike, wind, wind_dir, mass_scale=mass_scale)
+    cfg = config_hitl.default(motor, noise, spike, wind, wind_dir, mass_scale=mass_scale, inject_hz=inject_hz)
     flight = controller.Controller(cfg, log=lambda message: None)
     await flight.setup()
     await flight.start()
@@ -50,8 +50,10 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
     print('RUN_END')
 
 
-def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0,
-        wind_dir: float = 210.0, spike: bool = False, mass_scale: float = 1.0) -> None:
+def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0, wind_dir: float = 210.0,
+        spike: bool = False, mass_scale: float = 1.0, inject_hz: int = 0) -> None:
     """Fly one HITL scenario to completion (or a 95 s cap), recording every stream to the Luckfox.
-    `mass_scale` < 1 flies a lighter build (longer glide) -- the memory-leak stress case."""
-    asyncio.run(_go(motor, noise, wind, wind_dir, spike, mass_scale))
+    `mass_scale` < 1 flies a lighter build (longer glide) -- the memory-leak stress case. `inject_hz`
+    > 0 slims the sim's sensor publish rate (physics still integrate at sim_hz) so the on-board HITL
+    leak reflects real flight -- pass e.g. 10 for a memory-measurement run."""
+    asyncio.run(_go(motor, noise, wind, wind_dir, spike, mass_scale, inject_hz))
