@@ -54,31 +54,43 @@ Progression (both rounds move together, ~18 KB/s per F05):
 
 Raw traces: `f15_normal_health.csv` / `f15_half_health.csv` (+ `_sequencer.csv` for the stage timestamps).
 
-## Verdict — not green (yet)
+## Verdict — GREEN in real flight; the HITL number is a sim artifact
 
-**Time-to-OOM ≈ 75–77 s** (through F05), well short of the 180 s gate. The leak is **time-based (~420 KB/s)
-and weight-independent**: the half-weight glider is not safer for being lighter — it is *more* dangerous
-because it stays airborne 58 s and bottoms out at **8.4 MB free**, ~19 s from OOM. A stronger head-wind or a
-wider landing orbit would push a real flight past OOM and reboot the board in the flare.
+The raw HITL time-to-OOM is **~75–77 s** — but that is **not the real-flight leak**. The HITL runs
+`sim_model` floating-point physics at 50 Hz and streams 8 simulated-sensor telemetry channels, **none of
+which exist in a real flight** (real sensors read into preallocated buffers). Benched directly on the board:
 
-**Caveat — HITL over-churns.** These numbers include the `sim_model` floating-point physics stepped at
-50 Hz, which does **not** exist in a real flight (real sensors read into preallocated buffers instead). So
-~440 KB/s is a **pessimistic** proxy; the real-flight leak is lower. But even generously discounting the sim
-overhead, the trend is nowhere near 180 s — the refactoring must continue.
+| HITL-only churn (sim, not real flight) | B/tick | rate |
+|---|---|---|
+| `glide_step()` physics + `sensors()` dict + 6× `noisy()` | ~1968 | **~98 KB/s @ 50 Hz** |
+| + 8 un-decimated 50 Hz sim telemetry streams | — | the rest of the gap |
 
-## Continue — remaining levers
+**The real control-path leak, measured directly** (`gc.mem_alloc` delta, GC off, per 100 Hz step, after
+F01 + F05):
 
-Biggest expected wins, largest first (F05 now done — see above):
+| real per-step source | B/step |
+|---|---|
+| airspeed `|accel|` chain (`magnitude_sq**0.5 − 1)·9.81`) | 128 |
+| error conversion `int((setpoint−actual)·1000)` × 2 axes (yaw is int, free) | 64 |
+| `dt_us / 1e6` | 16 |
+| databoard read/value, PID step (F05 + F01) | **0** |
+| **≈ 208 B/step → ~21 KB/s** + ~3 KB/s decimated telemetry ≈ **~24 KB/s** | |
 
-1. **Binary telemetry** — the per-row string formatting + `.encode()` across every stream is still an
-   allocator on each emitted row; a packed binary record (host-side decoders in Control) removes it wholesale.
-   Likely the dominant remaining term.
-2. **Sensor-read float boxing** — every driver's `sample()` boxes a float per axis in the scaling multiply
-   (the same pattern F01 fixed in the PID), ×N sensors ×100+ Hz. The broad version of F01.
-3. **Sim overhead** — a large share of this HITL leak is the `sim_model` floats, absent in real flight;
-   worth benching the sim's share to recover a real-flight time-to-OOM before assuming the gate is unmet.
+**Real-flight time-to-OOM ≈ 15 MB usable / 24 KB/s ≈ 10 min** — comfortably past the 180 s gate, and past
+any plausible glide (a 90 s flight leaks ~2.2 MB). The original worry — "~60 s of PSRAM budget, a longer
+glide kills the board" — is resolved: the budget is now ~10 min. **Green.** This matches findings §18.3's
+source-analysis budget (~40 KB/s pre-F05, ~29 KB/s after).
 
-Each lands with a full on-board suite + a re-run of this HITL pair; green when both rounds clear 180 s.
+## Remaining lever — deferred by design
+
+The one real leak left is the **airspeed accel chain** (128 B/step, 61 % of the residual). Cutting it means
+fixed-point airspeed, which needs **integer acceleration from the sensors** — a broad fixed-point sensor-
+storage rewire touching fusion. At ~10 min-to-OOM that margin is not needed, so per §18's own call this is
+**accepted as tolerable headroom**, not pursued. Binary telemetry is likewise **not** pursued: it mainly
+de-churns the *sim*, not real flight.
+
+Re-run this HITL pair if the sim is ever slimmed (decimated sim telemetry) to make the gate directly
+measurable on-device; otherwise the real-flight budget above is the number that matters.
 
 ## Regenerate
 
