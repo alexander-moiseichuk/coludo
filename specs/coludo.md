@@ -61,7 +61,33 @@ The GC policy above is implemented in `tasks/sequencer.py`, gated behind the sta
 Disabling GC for the entire flight is only safe because the hot paths are near-zero-alloc: the mixer
 pre-resolves its surfaces and rewrites a shared output dict (, ~0 bytes/call), and the flight loop
 caches the landing-zone steering heading at GPS cadence instead of running `navigation.steer()` trig
-(~174 µs) every 100 Hz step. On-board HITL flights — current firmware, which also streams the
+(~174 µs) every 100 Hz step. The **PID is fixed-point** (`pid.py`): every MicroPython float `*`/`+`/`/`
+boxes a heap float, so the old float PID leaked a **measured 176 bytes/step** — ×3 axes ×100 Hz ≈
+**56 KB/s** with GC off. Rewritten in integer millidegrees (error) / integer-ms (dt) / millidegree
+output, a step measures **0 bytes** even at a ±180° heading swing (products stay under the RV32 2³⁰
+small-int ceiling, so nothing promotes to a 16-byte mpz); the only residual is the isolated
+`int((setpoint−actual)·1000)` float conversion at the sensor boundary (~16–32 B/axis, and 0 for yaw
+whose heading error is already integer). **Net ≈ 47 KB/s off the leak.** Telemetry rows likewise
+precompute a single `%`-format string (no per-row generator/join).
+
+Measured on the ESP32-P4 with GC disabled, so the allocation delta *is* the in-flight leak
+(`test/bench_pid_alloc.py`):
+
+| per PID step            | float `Pid.step` | fixed millidegree | fixed centidegree |
+| ----------------------- | ---------------: | ----------------: | ----------------: |
+| error = 5°              |          176 B   |             0 B   |             0 B   |
+| error = 180°            |          176 B   |             0 B   |             0 B   |
+| ±180° swing (worst D)   |          176 B   |             0 B   |             0 B   |
+
+| per-axis error conversion (runtime floats) | bytes |
+| ------------------------------------------ | ----: |
+| float today: `setpoint − actual`           |  16 B |
+| fixed: `int((setpoint − actual) × 1000)`   |  32 B |
+| yaw: `heading_error × 1000` (already int°) |   0 B |
+
+Millidegrees are alloc-free even worst-case, so we keep full 0.001° resolution (no need to drop to
+centidegrees); the float PID boxes 176 B regardless of magnitude. On-board HITL flights — current
+firmware, which also streams the
 simulated sensors, so it churns *more* than a bare run — measured **~15 MB consumed with GC off, low-water
 ~17 MB free of ~32 MB** on a ~47 s F15-4 flight (the shorter ~32 s E16-4 bottoms out ~23 MB), with
 `mem_free` snapping back to ~32 MB at touchdown when GC re-enables. The full sawtooth is visible in the

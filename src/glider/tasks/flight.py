@@ -49,6 +49,7 @@ class Flight(task.Task):
         self._schedule_hz: int = self.config.get('schedule_hz', 100)  # > 0 -> timer; 0 -> asyncio at period_ms
         self._period_ms: int = self.config.get('period_ms', 20)
         self._dt: float = (1.0 / self._schedule_hz) if self._schedule_hz > 0 else (self._period_ms / 1000.0)
+        self._dt_us: int = int(self._dt * 1000000)  # nominal slice in µs -> float dt + integer dt_ms fallback
         gains = self.config.get('gains', {})
         limit = self._mixer.limit
         self._pid = {axis: pid.Pid(output_limit=limit,
@@ -124,10 +125,12 @@ class Flight(task.Task):
         # ACTUAL elapsed since the previous step -- every step now, so always fresh (finding 1.14.2 /):
         # a GC pause or a delayed slice makes the real interval longer and the PID I/D + airspeed integral
         # must use it. A long gap (>0.5 s) or the first step falls back to the nominal slice.
-        dt = time.ticks_diff(start, self._last_step_us) / 1000000.0
+        dt_us = time.ticks_diff(start, self._last_step_us)
         self._last_step_us = start
-        if dt <= 0 or dt > 0.5:
-            dt = self._dt
+        if dt_us <= 0 or dt_us > 500000:  # first step / long gap (GC pause, delayed slice) -> nominal slice
+            dt_us = self._dt_us
+        dt = dt_us / 1000000.0  # float seconds: the airspeed integrator (an isolated float, off the PID path)
+        dt_ms = dt_us // 1000  # integer ms: the fixed-point PID (no float box)
         # dynamic-pressure fin governor: integrate airspeed (accel backbone) + blend a sane GNSS fix,
         # then cap the mixer's control authority by it (commons.fin_deflection_limit ∝ 1/v², × the safety
         # multiplier). Runs unconditionally so boost speed carries into the glide cap (coludo.md).
@@ -183,11 +186,14 @@ class Flight(task.Task):
                 roll_setpoint = commons.bank_demand(heading_error, self._land_bank_gain, self._land_bank_limit)
             elif self._bank_gain and self._stage == _STAGE.GLIDING:  # bank-to-turn toward the zone (vs skid)
                 roll_setpoint = commons.bank_demand(heading_error, self._bank_gain, self._bank_limit)
-        roll_cmd = self._pid['roll'].step(roll_setpoint - roll, dt)
-        pitch_cmd = self._pid['pitch'].step(pitch_setpoint - pitch, dt)
-        yaw_cmd = self._pid['yaw'].step(heading_error, dt)  # rudder coordinates the banked turn (0 in boost)
+        # fixed-point PID: errors -> integer millidegrees at the sensor boundary (the sole boxed float on
+        # this path), output millidegrees -> integer degrees for the mixer. heading_error is already an int
+        # (deg), so ×1000 stays a small int (no box); roll/pitch cost one float subtract+multiply per axis.
+        roll_cmd = self._pid['roll'].step(int((roll_setpoint - roll) * 1000), dt_ms)
+        pitch_cmd = self._pid['pitch'].step(int((pitch_setpoint - pitch) * 1000), dt_ms)
+        yaw_cmd = self._pid['yaw'].step(heading_error * 1000, dt_ms)  # rudder coordinates the turn (0 in boost)
         # positional (not roll=...) so no kwargs dict is built on the hot path
-        self._apply(self._mixer.mix(round(roll_cmd), round(pitch_cmd), round(yaw_cmd)))
+        self._apply(self._mixer.mix(roll_cmd // 1000, pitch_cmd // 1000, yaw_cmd // 1000))
         self._steps += 1
         elapsed = time.ticks_diff(time.ticks_us(), start)
         if elapsed > self._max_step_us:
