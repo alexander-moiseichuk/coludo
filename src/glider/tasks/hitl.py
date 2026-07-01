@@ -66,8 +66,10 @@ class Hitl(task.Task):
         self._axis_index: int = {'x': 0, 'y': 1, 'z': 2}.get(cfg.get('boost_axis', 'z'), 2)
         motor = _MOTORS.get(cfg.get('motor', 'F15'), _MOTORS['F15'])
         self._thrust, self._burn_s = motor
-        mass = cfg.get('liftoff_g', 430) / 1000.0
-        self._body = Body(mass, tuple(scenario['launch']), scenario['elevation_m'], scenario['heading_deg'])
+        mass = cfg.get('liftoff_g', 517) / 1000.0            # boost: whole stack (booster + glider)
+        glide_mass = cfg.get('glider_g', 300) / 1000.0       # glide: glider alone (booster ejected)
+        self._body = Body(mass, tuple(scenario['launch']), scenario['elevation_m'], scenario['heading_deg'],
+                          glide_mass=glide_mass)
         # steady wind the glide must crab against (m/s, toward wind_dir degrees) -- a glide disturbance
         wind = cfg.get('wind', 0.0)
         wind_dir = cfg.get('wind_dir', 0.0)

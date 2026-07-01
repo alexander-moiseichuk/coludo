@@ -35,8 +35,10 @@ class Body:
     apogee `begin_glide()` hands over to `glide_step()` (fin-controlled); `sensors()` returns what the
     on-board sensors would read."""
 
-    def __init__(self, mass: float, launch: tuple, elevation_m: float, glide_heading: float):
-        self.mass = mass
+    def __init__(self, mass: float, launch: tuple, elevation_m: float, glide_heading: float,
+                 glide_mass: float = None):
+        self.mass = mass  # boost mass (whole stack: booster + glider); drops to glide_mass at separation
+        self.glide_mass = glide_mass if glide_mass else mass  # glider-only mass after the booster ejects
         self.lat0, self.lon0 = launch
         self.elev0 = elevation_m
         self.glide_heading = glide_heading
@@ -81,7 +83,9 @@ class Body:
         self.roll += self.roll_rate * dt
 
     def begin_glide(self) -> None:
-        """Apogee hand-over: nose down to a shallow glide on the configured heading at ~trim speed."""
+        """Apogee hand-over: the booster ejects (mass drops to the glider-only glide_mass), then nose down
+        to a shallow glide on the configured heading at ~trim speed."""
+        self.mass = self.glide_mass  # separation: shed the booster -> the glider glides on its own mass
         self.gliding = True
         self.pitch = -6.0
         self.roll = 0.0

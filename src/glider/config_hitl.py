@@ -12,24 +12,31 @@ _SIM_SENSORS = ('accel_adxl375', 'imu_lsm6dso32', 'imu_bno055', 'baro_icp10111',
                 'laser_agl', 'gnss')
 _OFF = ('separation', 'watchdog', 'wifi', 'cc', 'bluetooth')
 
-# Full-stack liftoff mass (g) per motor, measured on the printed TMS-7 v2 with ~100 g electronics
-# (models/TMS-7/readme.md): booster+engine+glider. Heavier than the old 430 g guess, so the boost is
-# a touch lower (matches the analysis apogee ~140 m E16 / ~290 m F15).
-_LIFTOFF_G = {'E16': 451, 'F15': 468}
+# TMS-7 v2 masses (g). The BOOSTER (motor + casing) ejects at separation, so the boost phase carries the
+# whole stack (booster + glider) and the glide carries the glider alone. The glider is the airframe +
+# electronics: 300 g today, ~150 g the weight-optimisation target (lighter carbon wings + a single C25
+# 1-cell battery). Whole-stack liftoff = booster + glider: E16 500/350 g, F15 517/370 g (full/half glider).
+_BOOSTER_G = {'E16': 200, 'F15': 217}
+_GLIDER_G = 300  # full glider; pass glider_g=150 for the half-weight (optimised) build
+# Heavier v2 stacks read a LOWER boost |a| (specific force = thrust/mass): F15 at 517 g ≈ 2.84 g, so the
+# stock 3.0 g launch threshold would miss it. Trip at 2.0 g -- safely above the ~1 g rest + noise, below
+# every config's boost. (config_default's real launch_g likely wants the same review for the v2 stack.)
+_LAUNCH_G = 2.0
 
 
 def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: float = 0.0,
             wind_dir: float = 0.0, eject_delay_s: float = 4.0, boost_axis: str = 'z',
-            mass_scale: float = 1.0, inject_hz: int = 0) -> dict:
+            glider_g: int = _GLIDER_G, inject_hz: int = 0) -> dict:
     """Build a HITL config. `eject_delay_s` is the motor's ejection delay (the '-4' in F15-4/E16-4 ~=
     4 s after burnout, near apogee); since separation is off in HITL, the sequencer's boost->glide
     timeout stands in for that ejection charge, so set it to burn + delay (otherwise a generic timeout
     glides from the wrong altitude). `wind`/`wind_dir` set a steady cross-wind (m/s, toward deg) the
-    glide must crab against. `boost_axis` picks which accel axis carries the boost |a|. `mass_scale`
-    multiplies the liftoff mass (0.5 = a 50%-lighter build -> higher apogee + a longer, slower glide,
-    the worst case for the GC-off memory leak). `inject_hz` > 0 sets the sensor publish rate (default
-    0 -> the sim's sim_hz); lower it (e.g. 10) to slim the sim's own heap churn so an on-board HITL
-    leak reflects real flight -- the physics still integrate at sim_hz."""
+    glide must crab against. `boost_axis` picks which accel axis carries the boost |a|. `glider_g` is the
+    glider (glide) mass in grams (default 300, the full build; 150 = the half-weight optimisation target)
+    -- the booster adds to it for the boost phase, then ejects at separation so the glide runs on
+    `glider_g` alone (a lighter glider -> a longer, slower glide, the worst case for the GC-off leak).
+    `inject_hz` > 0 sets the sensor publish rate (default 0 -> the sim's sim_hz); lower it (e.g. 10) to
+    slim the sim's own heap churn so an on-board HITL leak reflects real flight -- physics stay at sim_hz."""
     cfg = config_default.default()
     for sensor in cfg['sensors']:
         if sensor['name'] in _SIM_SENSORS:
@@ -48,10 +55,12 @@ def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: f
     sequencer = by_name.get('sequencer')
     if sequencer is not None:
         sequencer['boost_timeout_ms'] = round((burn_s + eject_delay_s) * 1000)
+        sequencer['launch_g'] = _LAUNCH_G  # heavier v2 stacks boost below the stock 3.0 g threshold
+    liftoff_g = _BOOSTER_G.get(motor, 217) + glider_g  # boost mass = booster + glider; glide = glider alone
     hitl = {
         'name': 'hitl', 'activity': 'hitl', 'enabled': True,
         'sim_hz': 50, 'motor': motor, 'noise': noise, 'spike': spike,
-        'liftoff_g': round(_LIFTOFF_G.get(motor, 451) * mass_scale),
+        'liftoff_g': liftoff_g, 'glider_g': glider_g,  # boost then glide masses (booster ejects at apogee)
         'wind': wind, 'wind_dir': wind_dir, 'boost_axis': boost_axis,
     }
     if inject_hz:  # 0 -> omit -> hitl.py defaults the publish rate to sim_hz (avoid a 0 loop period)

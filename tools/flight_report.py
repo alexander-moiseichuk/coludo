@@ -56,6 +56,28 @@ def _nearest(times, values, targets):
     return out
 
 
+def leak_estimate(health, events):
+    """GC-off PSRAM leak from the mem_free slope over BOOSTING->DONE (GC is disabled airborne, so mem_free
+    falls monotonically), and the extrapolated time-to-OOM (free-at-boost / leak). Returns
+    (leak_kbps, oom_s, free_boost_mb, free_low_mb) or None when there is no health/stage data."""
+    if health is None or 'mem_free' not in health.fields:
+        return None
+    boost = next((t for t, label in events if 'boosting' in label.lower()), None)
+    done = next((t for t, label in events if 'done' in label.lower()), None)
+    times, mem = health.column('mem_free')
+    if boost is None or not times:
+        return None
+    end = done if done is not None else times[-1]
+    window = [(t, m) for t, m in zip(times, mem) if boost <= t <= end - 1.0]  # drop the DONE snap-back
+    if len(window) < 2:
+        return None
+    (t0, m0), (t1, m1) = window[0], window[-1]
+    span = t1 - t0
+    leak_bps = (m0 - m1) / span if span > 0 else 0.0
+    oom_s = m0 / leak_bps if leak_bps > 0 else float('inf')
+    return (leak_bps / 1000.0, oom_s, m0 / 1e6, m1 / 1e6)
+
+
 def build(streams, logs, go, make_subplots):
     accel = find_stream(streams, 'ax', 'ay', 'az', prefer='adxl')  # high-g, not the IMU's low-g accel
     attitude = find_stream(streams, 'roll', 'pitch', prefer='bno')  # BNO055 emits heading/roll/pitch
@@ -64,6 +86,7 @@ def build(streams, logs, go, make_subplots):
     gnss = find_stream(streams, 'lat', 'lon')
     fins = find_stream(streams, 'eleron_left', 'eleron_right', 'yaw')  # commanded servo angles (sim/board)
     health = find_stream(streams, 'load')  # board_health.csv: temp (C), mem_free (bytes), load (%)
+    power = find_stream(streams, 'voltage', 'current', 'power')  # power_ina226.csv: real servo-rail draw
 
     trajectory = go.Figure()
     if gnss is not None:
@@ -86,10 +109,11 @@ def build(streams, logs, go, make_subplots):
     else:
         trajectory.update_layout(title='trajectory — no GNSS fix in this capture')
 
-    series = make_subplots(rows=7, cols=1, shared_xaxes=True, vertical_spacing=0.025,
+    series = make_subplots(rows=8, cols=1, shared_xaxes=True, vertical_spacing=0.022,
                            subplot_titles=('|accel| (g)', 'altitude / elevation (m)', 'speed (m/s)',
                                            'attitude (deg)', 'fins — commanded (deg)',
-                                           'board health — load %, temp °C, mem MB', 'agl (m)'))
+                                           'board health — load %, temp °C, mem MB', 'agl (m)',
+                                           'engine — V / A / W / over-current alerts (INA226)'))
     if accel is not None:
         times, ax = accel.column('ax')
         _, ay = accel.column('ay')
@@ -127,12 +151,30 @@ def build(streams, logs, go, make_subplots):
     if laser is not None:
         times, values = laser.column('agl')
         series.add_trace(go.Scatter(x=times, y=values, name='agl', mode='markers'), row=7, col=1)
-    for time_s, label in stage_events(logs):
+    if power is not None:  # real INA226 servo-rail draw (the servos physically move during HITL)
+        for field in ('voltage', 'current', 'power', 'alerts'):  # alerts = cumulative over-current trips
+            if field in power.fields:
+                times, values = power.column(field)
+                series.add_trace(go.Scatter(x=times, y=values, name=field), row=8, col=1)
+    events = stage_events(logs)
+    for time_s, label in events:
         series.add_vline(x=time_s, line_dash='dash', line_color='crimson',
                          annotation_text=label, annotation_position='top left')
+    # GC-off leak + time-to-OOM headline (mem_free slope over the airborne, GC-disabled window)
+    leak = leak_estimate(health, events)
+    title = 'flight parameters'
+    if leak is not None:
+        leak_kbps, oom_s, free_boost, free_low = leak
+        oom_txt = '%.0f s' % oom_s if oom_s != float('inf') else 'n/a'
+        title = ('flight parameters — GC-off leak %.0f KB/s, time-to-OOM ~%s '
+                 '(free %.1f→%.1f MB)' % (leak_kbps, oom_txt, free_boost, free_low))
+        series.add_annotation(row=6, col=1, x=0.0, xref='x domain', y=1.0, yref='y6 domain',
+                              text='leak %.0f KB/s · OOM ~%s' % (leak_kbps, oom_txt),
+                              showarrow=False, xanchor='left', yanchor='bottom',
+                              font=dict(color='crimson', size=12))
     # 'x unified' -> hovering (or clicking) any time shows every panel's value at that instant
-    series.update_layout(height=1450, title='flight parameters', showlegend=True, hovermode='x unified')
-    series.update_xaxes(title_text='time (s)', row=7, col=1)
+    series.update_layout(height=1650, title=title, showlegend=True, hovermode='x unified')
+    series.update_xaxes(title_text='time (s)', row=8, col=1)
     return trajectory, series
 
 
