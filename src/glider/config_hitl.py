@@ -18,10 +18,6 @@ _OFF = ('separation', 'watchdog', 'wifi', 'cc', 'bluetooth')
 # 1-cell battery). Whole-stack liftoff = booster + glider: E16 500/350 g, F15 517/370 g (full/half glider).
 _BOOSTER_G = {'E16': 200, 'F15': 217}
 _GLIDER_G = 300  # full glider; pass glider_g=150 for the half-weight (optimised) build
-# Heavier v2 stacks read a LOWER boost |a| (specific force = thrust/mass): F15 at 517 g ≈ 2.84 g, so the
-# stock 3.0 g launch threshold would miss it. Trip at 2.0 g -- safely above the ~1 g rest + noise, below
-# every config's boost. (config_default's real launch_g likely wants the same review for the v2 stack.)
-_LAUNCH_G = 2.0
 
 
 def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: float = 0.0,
@@ -55,7 +51,8 @@ def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: f
     sequencer = by_name.get('sequencer')
     if sequencer is not None:
         sequencer['boost_timeout_ms'] = round((burn_s + eject_delay_s) * 1000)
-        sequencer['launch_g'] = _LAUNCH_G  # heavier v2 stacks boost below the stock 3.0 g threshold
+        # launch_g / launch_alt_m are inherited from config_default (2.5 g + the 10 m baro backup) so HITL
+        # exercises the REAL launch thresholds against the v2 boost profiles.
     liftoff_g = _BOOSTER_G.get(motor, 217) + glider_g  # boost mass = booster + glider; glide = glider alone
     hitl = {
         'name': 'hitl', 'activity': 'hitl', 'enabled': True,

@@ -135,9 +135,11 @@ model-analysis notes). Real flights will differ — these are seeds, not guarant
 - *Accelerometer:* it reads **specific force** = kinematic acceleration **+ 1 g**. Peak is only ~6–9 g,
   so even the BNO055 (±16 g) would not clip — but the ADXL375 (±200 g) stays the boost source for
   headroom/noise margin (clones and the airframe vary; a spike can exceed the published peak).
-- *Launch detect:* the early-boost reading (~3.4–4.2 g, before drag builds) sits above `launch_g = 3.0`
-  and the ignition spike (~6–9 g) confirms — so `launch_g`/`launch_ms` are in range for both motors
-  (these passive E16/F15 flights are exactly where they get tuned from real data).
+- *Launch detect:* the accelerometer reads **specific force = thrust/mass**, so the heavier measured v2
+  stacks read a LOWER boost |a| — E16 (500 g) ≈ 3.3 g, F15 (517 g) ≈ **2.84 g**. `launch_g` is therefore
+  **2.5** (the old 3.0 would MISS the real F15), plus an independent **`launch_alt_m = 10 m`** backup: the
+  baro climbing 10 m off the pad trips BOOSTING regardless of the accel threshold, so a heavy/marginal
+  boost or a dropped accel window still detects. These passive E16/F15 flights tune both from real data.
 - *Mission profile:* the F15 roughly **doubles apogee** and gives **~2×** the descent time — far more
   glide/nav window — so it is the better motor for exercising active control once the passive flights
   validate the data pipeline. The ideal glide range (~0.9–1.8 km at L/D 5) dwarfs the 200 m

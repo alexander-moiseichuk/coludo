@@ -220,8 +220,12 @@ def default() -> dict:
             # (+ sequencer.csv). Enabled -- safe on the passive flights (the flight task is the actuator
             # and stays disabled), and it captures the stage timeline. Tune launch_g/launch_ms from the
             # first powered flights.
+            # launch_g 2.5: the measured v2 F15 stack (517 g) boosts at only ~2.84 g (specific force =
+            # thrust/mass), so the old 3.0 g would MISS launch on the real airframe. launch_alt_m 10 is an
+            # independent backup -- the baro climbing 10 m off the pad trips BOOSTING regardless of the accel
+            # threshold (a heavy/marginal boost, or a dropped accel window, still detects).
             {'name': 'sequencer', 'activity': 'sequencer', 'enabled': True, 'period_ms': 50,
-             'launch_g': 3.0, 'launch_ms': 100, 'boost_timeout_ms': 6000,
+             'launch_g': 2.5, 'launch_ms': 100, 'launch_alt_m': 10.0, 'boost_timeout_ms': 6000,
              'land_agl_m': 5.0, 'land_ms': 300, 'still_g': 0.3, 'ground_ms': 3000},
             # Phase 3 stabilization loop (off by default -- no actuation until enabled + tuned on the
             # airframe). schedule_hz > 0 -> machine.Timer (deterministic slice, ~1 m/step at 100 Hz/100 m/s);
