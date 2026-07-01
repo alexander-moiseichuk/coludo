@@ -49,23 +49,24 @@ class Task(inspector.Inspectable):
         self.controller = controller  # back-reference for find()/query()/notify()
         self._ok: bool = False
         self._subs: list = []
-        self._last_note = None  # last message passed to note() -> dedup a repeating run-loop error
         self._healthy: bool = True  # RUNTIME read health (distinct from _ok = setup ok); note() tracks it
 
-    def note(self, message: str) -> None:
-        """Print `message` only when it CHANGES from the previous note -- a de-duplicated best-effort
-        log for run() loops. A persistently-failing read (a flaky/absent sensor, a missing CC hub) would
-        otherwise log every iteration: a 50 Hz sensor floods the USB-CDC and wedges the REPL. So use this
-        instead of a bare print() inside `while True` -- the first occurrence + any change/recovery show,
-        the repeats are dropped. Call note(None) on a healthy pass so the next error logs afresh.
-
-        also tracks runtime health -- an error message marks the task unhealthy, note(None) clears it,
-        so inspect()['healthy'] shows a flaky/failing run loop that _ok (setup-time) cannot."""
-        self._healthy = message is None
-        if message != self._last_note:
-            self._last_note = message
-            if message is not None:
-                print(message)
+    def note(self, template: str = None, arg=None) -> None:
+        """De-duplicated best-effort run-loop log + runtime-health flag. Call `note()` (template None) on a
+        healthy pass; call `note('x :: %r', error)` on a failure. The failure is printed ONCE per healthy->
+        error transition, and -- critically -- the `template % arg` is formatted only on that transition.
+        `note('x :: %r' % error)` would instead format EAGERLY at the call site every tick, so a
+        persistently-failing read in a GC-OFF flight loop leaks a string each iteration (and a 50 Hz sensor
+        floods the USB-CDC, wedging the REPL). Pass the template literal + a single by-reference `arg`
+        (fixed 2-arg signature, no *args tuple) so nothing allocates while the fault repeats. A healthy
+        note() re-arms the next error to log afresh, and tracks _healthy so inspect()['healthy'] shows a
+        flaky run loop that _ok (setup-time) cannot."""
+        if template is None:  # healthy pass -> clear the fault, re-arm the next error
+            self._healthy = True
+            return
+        if self._healthy:  # first failure after a healthy pass -> format + print once
+            print(template % arg if arg is not None else template)
+        self._healthy = False
 
     def _pin_gpio(self, field: str, default: str = None) -> int:
         """The board GPIO NUMBER for this component's `field` pin (None if absent) -- look the

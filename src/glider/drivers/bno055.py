@@ -85,7 +85,7 @@ class Bno055(task.Task):
                 self._telemetry.push(sample)  # no attitude + accel concatenation
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
-                self.note('bno055 :: read %r' % error)  # deduped: a persistent error logs once, not at 50 Hz
+                self.note('bno055 :: read %r', error)  # deduped: a persistent error logs once, not at 50 Hz
             await asyncio.sleep_ms(self._period_ms)
 
     async def probe(self) -> str:

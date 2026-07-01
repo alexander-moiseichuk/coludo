@@ -123,7 +123,7 @@ class Icp10111(task.Task):
                 self._telemetry.push((altitude, temp_c, pressure, elevation))
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
-                self.note('icp10111 :: read %r' % error)  # deduped: a persistent error logs once, not every tick
+                self.note('icp10111 :: read %r', error)  # deduped: a persistent error logs once, not every tick
             await asyncio.sleep_ms(self._period_ms)
 
     def update(self, props: dict) -> list:

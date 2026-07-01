@@ -125,7 +125,7 @@ class Ina226(task.Task):
                     self._logged_alerts = self._alerts
                 self.note(None)  # healthy pass -> the next error logs afresh
             except Exception as error:
-                self.note('ina226 :: read %r' % error)  # deduped: a persistent error logs once
+                self.note('ina226 :: read %r', error)  # deduped: a persistent error logs once
             await asyncio.sleep_ms(self._period_ms)
 
     async def probe(self) -> str:

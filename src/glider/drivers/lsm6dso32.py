@@ -134,7 +134,7 @@ class Lsm6dso32(task.Task):
                 self._telemetry.push(sample)  # no accel + rate concatenation
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
-                self.note('lsm6dso32 :: read %r' % error)  # deduped: a persistent error logs once
+                self.note('lsm6dso32 :: read %r', error)  # deduped: a persistent error logs once
 
     async def probe(self) -> str:
         """On-demand self-test: WHO_AM_I reads back, then one sample succeeds (each step logged)."""
