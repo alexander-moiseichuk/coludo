@@ -1,132 +1,75 @@
-# TMS-7 memory refactoring — GC-off leak, on-board HITL (F15-4)
+# TMS-7 memory-refactoring — on-board HITL capture set (E16 / F15 × full / half glider)
 
-The airborne phase runs with **GC disabled** (`tasks/sequencer.py` calls `gc.disable()` at BOOSTING, and
-`gc.enable()` + `gc.collect()` only at DONE — see `specs/coludo.md` "Garbage collection in flight"), so
-every heap byte allocated in flight accumulates until the board runs out of PSRAM and the watchdog reboots
-it **mid-air**. The PSRAM budget is only good for ~60 s of flight; a lighter build, a head-wind, or a wider
-orbit all make the glide *longer*, so the leak — not the airframe — becomes the thing that kills the board.
+A complete on-board HITL capture of the **post-memory-refactoring firmware** (fixed-point PID, zero-alloc
+databoard, deferred logging, global telemetry rate), flown over the corrected **TMS-7 v2 weight matrix**.
+Every trace here — trajectory, attitude, fins, **real INA226 servo-rail power**, and **board vitals with the
+GC-off leak** — is device telemetry from `config_hitl` (real sensors off; the `hitl` task feeds the *real*
+`sequencer` + `flight` + `pid` + `mixer` + `navigation` a simulated 6-DoF body). Calm wind, 5 % sensor
+noise, sim sensor rate 25 Hz (`inject_hz=25` — mid-way between the original 50 Hz and the slim 10 Hz).
 
-This capture measures the leak **after** the Phase-3 memory refactoring, on the real ESP32-P4 via
-`config_hitl` (real sensor drivers off; the `hitl` task feeds the *real* `sequencer` + `flight` + `pid` +
-`mixer` + `navigation` a simulated 6-DoF body). The metric is the slope of `mem_free` in `board_health.csv`
-over the GC-off window (BOOSTING → DONE); **time-to-OOM = free-at-boost / leak-rate**.
+## Weight model — booster + glider, separation drop
 
-**Gate:** time-to-OOM ≥ **180 s** (3 min) → green. Otherwise the refactoring continues.
+The **booster (motor + casing) ejects at separation**, so the boost phase carries the whole stack and the
+glide carries the glider alone (`sim_model.Body` drops to the glide mass at `begin_glide()`). The glider is
+airframe + electronics: **300 g today, ~150 g the weight-optimisation target**. Heavier v2 stacks read a
+lower boost |a| (specific force = thrust/mass): F15 at 517 g ≈ 2.84 g, so the HITL launch threshold is
+dropped to **`launch_g` 2.0** (config_default's real launch_g wants the same review for the v2 stack).
 
-## What changed going in
+| motor | booster | glider (full / half) | whole stack (full / half) |
+|---|---|---|---|
+| E16 (16.1 N, 1.77 s) | 200 g | 300 / 150 g | **500 / 350 g** |
+| F15 (14.4 N, 3.45 s) | 217 g | 300 / 150 g | **517 / 370 g** |
 
-The hot-path allocation work landed before this capture (all `src/glider`, full suite 43/43):
+## The four flights (calm, 5 % noise, 25 Hz)
 
-| item | change | measured |
-|---|---|---|
-| F02 | SG90 telemetry decimation | ~48 KB/s |
-| F03 | flat IMU sample tuples (no accel+rate concat) | ~9 KB/s |
-| U02 | INA226 telemetry decimation | — |
-| `note()` | deferred error format — no eager `'%r' % e` on the hot path | leak-on-fault |
-| Telemetry | precomputed row-format string — one `%` pass, no per-row generator/join | per-row |
-| **F01** | **fixed-point PID** — integer millidegrees, **176 → 0 B/step** | **~47 KB/s** |
-| **F05** | **databoard `value()`/`read()` zero-alloc** — no internal tuples, reused read buffer, exception-free `_extrapolate` | **~18 KB/s** |
+| config | whole | apogee | glide (boost→done) | GC-off leak | time-to-OOM | peak servo P | mean V | over-current alerts |
+|---|---|---|---|---|---|---|---|---|
+| [E16 full](e16_full.html) | 500 g | 112 m | 24.0 s | 253 KB/s | ~129 s | 7.0 W | 4.92 V | 0 |
+| [E16 half](e16_half.html) | 350 g | 203 m | 31.7 s | 265 KB/s | ~123 s | 7.0 W | 4.86 V | 0 |
+| [F15 full](f15_full.html) | 517 g | 253 m | 37.1 s | 249 KB/s | ~131 s | 7.2 W | 4.92 V | 0 |
+| [F15 half](f15_half.html) | 370 g | 395 m | 47.6 s | 248 KB/s | ~131 s | 7.0 W | 4.93 V | 0 |
 
-## Method
+A lighter glider **climbs higher and glides longer** — the worst case for a time-based leak (F15 half glides
+48 s). Each flight is a full interactive report (`<config>.html`, plotly 3D trajectory + linked series) and a
+dependency-free SVG (`<config>.svg`, plan view + altitude/roll). 🎬 **[`tms7_memory.mp4`](tms7_memory.mp4)**
+is a narrated follow-cam animation of all four.
 
-Two rounds, same scenario (F15-4, 5 % sensor noise, calm), differing only in glider mass:
+**Each report's series panel adds two things over the standard capture:**
+- **engine (INA226)** — real voltage / current / power / cumulative over-current alerts on the servo rail
+  (the SG90s physically slew during HITL, so this is real draw: ~7 W peaks, ~4.9 V, 0 alerts here).
+- a **GC-off leak headline** — the `mem_free` slope over BOOSTING→DONE and the extrapolated time-to-OOM,
+  computed by `flight_report.leak_estimate()` and printed in the panel title.
 
-- **normal** — the measured TMS-7 v2 stack (468 g).
-- **half** — `mass_scale=0.5` (234 g): a 50 %-lighter build climbs higher (6.4 g vs 3.2 g boost) and glides
-  **longer** — the worst case for a time-based leak. Added a `mass_scale` knob to `config_hitl.default()` /
-  `hitl_run.fly()` for exactly this.
+## Memory verdict
 
-## Results
+These HITL leaks (~250 KB/s → ~130 s) are **still sim-inflated** — the `sim_model` float physics run every
+tick and don't exist in a real flight. The **directly-measured real control-path leak is ~24 KB/s** (after
+F01 fixed-point PID + F05 zero-alloc databoard; airspeed `|accel|` chain 128 B/step + error conv 64 B + dt
+16 B, PID/databoard now 0), giving **real-flight time-to-OOM ≈ 10 min** — comfortably past the 180 s gate,
+for any config in the matrix. The `inject_hz` knob trades sim fidelity for a tighter proxy: 10 Hz gave a
+176 KB/s / ~185 s on-device reading; 25 Hz here keeps smoother control + denser data at ~250 KB/s. The
+biggest correctness win along the way was masking `imu_lsm6dso32` in `config_hitl` (it had been running on
+the bench and competing with the sim's accel in every prior capture).
 
-Current (with F05), committed traces are these runs:
+## Weight optimisation context
 
-| round | flight (boost→done) | leak rate | free @ boost | low-water free | **time-to-OOM** |
-|---|---|---|---|---|---|
-| normal (468 g) | 40.2 s | **429 KB/s** | 30.5 MB | 15.6 MB | **~75 s** |
-| half (234 g)   | 58.5 s | **417 KB/s** | 30.5 MB | **8.4 MB** | **~77 s** |
-
-Progression (both rounds move together, ~18 KB/s per F05):
-
-| stage | normal leak → t-OOM | half leak → t-OOM |
-|---|---|---|
-| through F01 (commit 770956c) | 447 KB/s → 71 s | 435 KB/s → 73 s |
-| **+ F05 (commit 718eb77)** | **429 KB/s → 75 s** | **417 KB/s → 77 s** |
-
-Raw traces: `f15_normal_health.csv` / `f15_half_health.csv` (+ `_sequencer.csv` for the stage timestamps).
-
-## Verdict — GREEN in real flight; the HITL number is a sim artifact
-
-The raw HITL time-to-OOM is **~75–77 s** — but that is **not the real-flight leak**. The HITL runs
-`sim_model` floating-point physics at 50 Hz and streams 8 simulated-sensor telemetry channels, **none of
-which exist in a real flight** (real sensors read into preallocated buffers). Benched directly on the board:
-
-| HITL-only churn (sim, not real flight) | B/tick | rate |
-|---|---|---|
-| `glide_step()` physics + `sensors()` dict + 6× `noisy()` | ~1968 | **~98 KB/s @ 50 Hz** |
-| + 8 un-decimated 50 Hz sim telemetry streams | — | the rest of the gap |
-
-**The real control-path leak, measured directly** (`gc.mem_alloc` delta, GC off, per 100 Hz step, after
-F01 + F05):
-
-| real per-step source | B/step |
-|---|---|
-| airspeed `|accel|` chain (`magnitude_sq**0.5 − 1)·9.81`) | 128 |
-| error conversion `int((setpoint−actual)·1000)` × 2 axes (yaw is int, free) | 64 |
-| `dt_us / 1e6` | 16 |
-| databoard read/value, PID step (F05 + F01) | **0** |
-| **≈ 208 B/step → ~21 KB/s** + ~3 KB/s decimated telemetry ≈ **~24 KB/s** | |
-
-**Real-flight time-to-OOM ≈ 15 MB usable / 24 KB/s ≈ 10 min** — comfortably past the 180 s gate, and past
-any plausible glide (a 90 s flight leaks ~2.2 MB). The original worry — "~60 s of PSRAM budget, a longer
-glide kills the board" — is resolved: the budget is now ~10 min. **Green.** This matches findings §18.3's
-source-analysis budget (~40 KB/s pre-F05, ~29 KB/s after).
-
-## Slimmed HITL — the gate is now measurable *and green* on-device
-
-The raw HITL number above (~76 s) was so sim-dominated it could not be used as a gate. Three fixes made
-the on-board HITL leak reflect real flight:
-
-1. **LSM-mask bug** — `imu_lsm6dso32` was missing from `config_hitl`'s sim-sensor mask, so the real IMU
-   ran on the bench, provided `accel` as a co-primary (competing with the sim), *and* churned ~104 Hz of
-   SPI reads + float scaling + telemetry into every prior HITL capture. (It also broke launch detect once
-   the sim published slower than the always-fresh bench IMU — the sim's 3 g went stale between publishes
-   and the IMU's resting ~1 g won the fusion.) Now masked.
-2. **`inject_hz`** — the sensor publish rate is decoupled from the physics integration rate (`sim_hz`) and
-   made configurable (default = `sim_hz`; the memory run passes 10). Physics still integrate at 50 Hz via
-   the wall-clock accumulator, but sensors publish + telemetry at 10 Hz.
-3. **No `sensors()` dict per tick** + `noise=0` for the measurement run (real drivers don't run `noisy()`).
-
-| round (inject 10 Hz, LSM masked) | flight | leak | low-water free | **time-to-OOM** |
-|---|---|---|---|---|
-| normal (468 g) | 40.0 s | **176 KB/s** | 24.9 MB | **~184 s** |
-| half (234 g)   | 57.3 s | **175 KB/s** | 22.1 MB | **~186 s** |
-
-**The on-device HITL now clears the 180 s gate** (was ~76 s), a 2.4× leak cut (429→176 KB/s). It is still
-above the ~24 KB/s real-flight figure — the `glide_step` physics at 50 Hz is inherent, host-shared float
-and stays — but the gate is now meaningful and passes on the board. Regenerate with `inject_hz=10`,
-`noise=0` (see below); the committed traces here are those runs.
-
-## Remaining lever — deferred by design
-
-The one real leak left is the **airspeed accel chain** (128 B/step, 61 % of the residual). Cutting it means
-fixed-point airspeed, which needs **integer acceleration from the sensors** — a broad fixed-point sensor-
-storage rewire touching fusion. At ~10 min-to-OOM that margin is not needed, so per §18's own call this is
-**accepted as tolerable headroom**, not pursued. Binary telemetry is likewise **not** pursued: it mainly
-de-churns the *sim*, not real flight.
-
-The real-flight budget (~24 KB/s) is the number that governs the airframe; the slimmed HITL above is the
-on-device confirmation of the gate.
+The full/half columns bracket **current (300 g glider) to target (~150 g)**: lighter carbon wings (shrinkable)
+plus electronics consolidation (2× 1-cell batteries → one C25-rated 1-cell, etc.). The matrix will be
+re-pinned once **TMS-7 v3** is measured with the final electronics — which needs 5 PCBs built per device.
 
 ## Regenerate
 
-The committed traces use the slimmed sim: `inject_hz=10` (6th/7th `fly()` args are `mass_scale`,
-`inject_hz`), `noise=0` (deterministic; real drivers don't run `noisy()`).
-
 ```sh
-mpremote connect /dev/ttyACM0 cp src/glider/config_hitl.py src/glider/tasks/hitl.py tools/hitl_run.py :
-# normal weight
-printf 'import hitl_run\nhitl_run.fly("F15", 0.0, 0.0, 210.0, False, 1.0, 10)\n' > /tmp/launch.py
-# 50 % weight: ...fly("F15", 0.0, 0.0, 210.0, False, 0.5, 10)
-tools/board_reboot.py /dev/ttyACM0 && mpremote connect /dev/ttyACM0 run /tmp/launch.py
-adb pull /userdata/recordings/<session>_health.csv .   # leak = mem_free slope over BOOSTING->DONE
+mpremote connect /dev/ttyACM0 cp src/glider/config_hitl.py src/glider/sim_model.py \
+  src/glider/tasks/hitl.py tools/hitl_run.py :
+# fly(motor, noise, wind, wind_dir, spike, glider_g, inject_hz); 300 full / 150 half glider
+printf 'import hitl_run\nhitl_run.fly("F15", 0.05, 0.0, 210.0, False, 300, 25)\n' > /tmp/cap.py
+tools/board_reboot.py /dev/ttyACM0 && mpremote connect /dev/ttyACM0 run /tmp/cap.py
+# pull every stream (incl. power_ina226 + health) then assemble + render:
+adb pull /userdata/recordings/<session>_<stream>.csv <dir>/   # accel_adxl375 baro_icp10111 imu_bno055
+                                          # gnss laser_agl fins health sequencer power_ina226
+python3 tools/assemble_capture.py <session> <dir> f15_full.txt
+PLOTLY_PY tools/flight_report.py f15_full.txt -o f15_full.html --cdn   # 3D + engine + leak
+python3 tools/flight_svg.py f15_full.txt -o f15_full.svg --pad <pad> --zone <zone>
+python3 tools/flight_video.py tms7_memory.mp4 F15-full f15_full.txt ...   # movie
 ```
