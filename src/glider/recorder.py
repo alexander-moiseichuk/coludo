@@ -314,15 +314,20 @@ class Telemetry:
         self.filename: str = filename
         self.fields: tuple = fields
         self.decimate_us = decimate_us  # min gap between emitted rows (0 = emit every push)
+        self._header: str = 'uptime;' + ';'.join(fields)  # constant CSV header, built once
+        self._row_fmt: str = '%u;' + ';'.join('%s' for _ in fields)  # one reusable row-format string
         self._header_sent: bool = False
         self._last_us: int = Recorder.timestamp() - decimate_us  # one window back -> first push emits
 
     def push(self, values) -> None:
         if not self._header_sent:
-            Recorder.tlm(self.filename, 'uptime;' + ';'.join(self.fields))
+            Recorder.tlm(self.filename, self._header)
             self._header_sent = True
         now = Recorder.timestamp()
         if time.ticks_diff(now, self._last_us) < self.decimate_us:
             return  # too soon since the last row -> decimate
-        Recorder.tlm(self.filename, '%u;%s' % (now, ';'.join(str(v) for v in values)))
+        # one % pass over a precomputed format string: no per-field str() generator, no intermediate
+        # ';'.join list -- a GC-off flight decimates to ~10 Hz/stream, so trim the per-row allocations.
+        # ((now,) + tuple(values), not (now, *values): this compiler rejects display star-unpack.)
+        Recorder.tlm(self.filename, self._row_fmt % ((now,) + tuple(values)))
         self._last_us = now
