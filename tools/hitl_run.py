@@ -19,11 +19,12 @@ import recorder
 import tasks
 
 
-async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: bool) -> None:
+async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: bool,
+              mass_scale: float) -> None:
     drivers.load()
     tasks.load()
     mission.Mission(max_range_m=200)
-    cfg = config_hitl.default(motor, noise, spike, wind, wind_dir)
+    cfg = config_hitl.default(motor, noise, spike, wind, wind_dir, mass_scale=mass_scale)
     flight = controller.Controller(cfg, log=lambda message: None)
     await flight.setup()
     await flight.start()
@@ -50,6 +51,7 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
 
 
 def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0,
-        wind_dir: float = 210.0, spike: bool = False) -> None:
-    """Fly one HITL scenario to completion (or a 95 s cap), recording every stream to the Luckfox."""
-    asyncio.run(_go(motor, noise, wind, wind_dir, spike))
+        wind_dir: float = 210.0, spike: bool = False, mass_scale: float = 1.0) -> None:
+    """Fly one HITL scenario to completion (or a 95 s cap), recording every stream to the Luckfox.
+    `mass_scale` < 1 flies a lighter build (longer glide) -- the memory-leak stress case."""
+    asyncio.run(_go(motor, noise, wind, wind_dir, spike, mass_scale))

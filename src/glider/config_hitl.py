@@ -18,12 +18,15 @@ _LIFTOFF_G = {'E16': 451, 'F15': 468}
 
 
 def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: float = 0.0,
-            wind_dir: float = 0.0, eject_delay_s: float = 4.0, boost_axis: str = 'z') -> dict:
+            wind_dir: float = 0.0, eject_delay_s: float = 4.0, boost_axis: str = 'z',
+            mass_scale: float = 1.0) -> dict:
     """Build a HITL config. `eject_delay_s` is the motor's ejection delay (the '-4' in F15-4/E16-4 ~=
     4 s after burnout, near apogee); since separation is off in HITL, the sequencer's boost->glide
     timeout stands in for that ejection charge, so set it to burn + delay (otherwise a generic timeout
     glides from the wrong altitude). `wind`/`wind_dir` set a steady cross-wind (m/s, toward deg) the
-    glide must crab against. `boost_axis` picks which accel axis carries the boost |a|."""
+    glide must crab against. `boost_axis` picks which accel axis carries the boost |a|. `mass_scale`
+    multiplies the liftoff mass (0.5 = a 50%-lighter build -> higher apogee + a longer, slower glide,
+    the worst case for the GC-off memory leak)."""
     cfg = config_default.default()
     for sensor in cfg['sensors']:
         if sensor['name'] in _SIM_SENSORS:
@@ -44,7 +47,8 @@ def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: f
         sequencer['boost_timeout_ms'] = round((burn_s + eject_delay_s) * 1000)
     cfg['components'].append({
         'name': 'hitl', 'activity': 'hitl', 'enabled': True,
-        'sim_hz': 50, 'motor': motor, 'noise': noise, 'spike': spike, 'liftoff_g': _LIFTOFF_G.get(motor, 451),
+        'sim_hz': 50, 'motor': motor, 'noise': noise, 'spike': spike,
+        'liftoff_g': round(_LIFTOFF_G.get(motor, 451) * mass_scale),
         'wind': wind, 'wind_dir': wind_dir, 'boost_axis': boost_axis,
     })
     return cfg
