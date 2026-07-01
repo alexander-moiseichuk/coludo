@@ -109,11 +109,12 @@ class Lsm6dso32(task.Task):
         self._ready.set()
 
     async def sample(self) -> tuple:
-        """Read and return ((ax, ay, az) g, (gx, gy, gz) deg/s); one 12-byte read clears data-ready."""
+        """Read and return a FLAT (ax, ay, az) g + (gx, gy, gz) deg/s 6-tuple (run() slices it, no concat);
+        one 12-byte read clears data-ready."""
         await self._dev.read_into(_OUTX_L_G, self._buf)
         gx, gy, gz, ax, ay, az = struct.unpack('<hhhhhh', self._buf)
-        return ((ax * _SCALE_A, ay * _SCALE_A, az * _SCALE_A),
-                (gx * _SCALE_G, gy * _SCALE_G, gz * _SCALE_G))
+        return (ax * _SCALE_A, ay * _SCALE_A, az * _SCALE_A,
+                gx * _SCALE_G, gy * _SCALE_G, gz * _SCALE_G)
 
     async def run(self) -> None:
         """Sample on INT1 data-ready (or every fallback_ms if interrupts go silent; plain poll with no
@@ -127,10 +128,10 @@ class Lsm6dso32(task.Task):
             else:
                 await asyncio.sleep_ms(self._period_ms)
             try:
-                accel, rate = await self.sample()
-                self._accel.push(accel)
-                self._rate.push(rate)
-                self._telemetry.push(accel + rate)
+                sample = await self.sample()  # flat 6-tuple
+                self._accel.push(sample[:3])
+                self._rate.push(sample[3:])
+                self._telemetry.push(sample)  # no accel + rate concatenation
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
                 self.note('lsm6dso32 :: read %r' % error)  # deduped: a persistent error logs once
@@ -150,7 +151,7 @@ class Lsm6dso32(task.Task):
             return message
         try:
             recorder.Recorder.log(self.name, 'probe: sample ...')
-            (ax, ay, az), (gx, gy, gz) = await self.sample()
+            ax, ay, az, gx, gy, gz = await self.sample()
             recorder.Recorder.log(self.name, 'probe: sample ok %.2fg (%.0f,%.0f,%.0f) dps' % (
                 (ax * ax + ay * ay + az * az) ** 0.5, gx, gy, gz))
         except Exception as error:
