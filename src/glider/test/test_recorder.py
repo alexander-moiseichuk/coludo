@@ -57,6 +57,7 @@ async def test_recorder():
 
     # Telemetry: header first (uptime + fields), then timestamped rows
     recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
+    recorder.Recorder.telemetry_decimate_us = 0  # this block tests row FORMAT -> emit every push
     stream = recorder.Telemetry('imu.csv', ('yaw', 'pitch', 'roll'))
     stream.push((1.0, 2.0, 3.0))
     stream.push((4, 5, 6))
@@ -76,6 +77,16 @@ async def test_recorder():
     await recorder.Recorder.drain()
     out = recorder.Recorder._uart.items
     assert len(out) == 2 and out[0].endswith(b'uptime;v\n') and out[1].endswith(b';1\n'), out
+
+    # global rate: a stream with decimate_us=0 inherits Recorder.telemetry_decimate_us (the board-wide knob)
+    recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
+    recorder.Recorder.telemetry_decimate_us = 50000
+    glob = recorder.Telemetry('g.csv', ('v',))  # no per-stream rate -> the global
+    assert glob.decimate_us == 50000
+    glob.push((1,))  # header + first row
+    glob.push((2,))  # within the global window -> decimated
+    await recorder.Recorder.drain()
+    assert len(recorder.Recorder._uart.items) == 2, recorder.Recorder._uart.items
 
 
 async def test_error_policy():

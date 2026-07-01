@@ -91,7 +91,7 @@ class Vl53l4cx(task.Task):
             return False
         self._agl = databoard.Databoard.provide(self.name, self.config.get('provides', {}), 'agl')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('agl',),
-                                       decimate_us=self.config.get('telemetry_us', 100000))  # default 10 Hz
+                                       decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
         self._ok = True
         return True
 

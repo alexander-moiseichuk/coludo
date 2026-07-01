@@ -73,7 +73,7 @@ class Ina226(task.Task):
         self._voltage, self._current, self._power = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'voltage', 'current', 'power')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('voltage', 'current', 'power', 'alerts'),
-                                             decimate_us=self.config.get('telemetry_us', 100000))  # 10 Hz default
+                                             decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
         # optional hardware over-current ALERT (config `alert_pin` -> a GPIO): the INA asserts it
         # (open-drain, active-low) each time the shunt voltage crosses the trip -- a stall / short flag
         # independent of the poll rate. Transient (no latch), and the IRQ COUNTS every trip: the running

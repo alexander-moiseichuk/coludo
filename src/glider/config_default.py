@@ -97,7 +97,7 @@ def default() -> dict:
                 'addr': 0x53,  # kept for an i2c fallback (set bus 'i2c', id 0)
                 'cs_pin': 'adxl375_cs',  # SPI chip-select
                 'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — drives the sampling
-                'telemetry_us': 20000,  # ~100 Hz sampling decimated to 50 Hz in accel_adxl375.csv
+                'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
                 'enabled': True,
                 'provides': {'accel': {'priority': 1, 'timeout_ms': 20}},  # >32 g backstop behind lsm6dso32
             },
@@ -108,7 +108,7 @@ def default() -> dict:
                 'addr': 0x6A,  # kept for an i2c fallback (set bus 'i2c', id 0)
                 'cs_pin': 'lsm6dso32_cs',  # SPI chip-select (GPIO50)
                 'int_pin': 'lsm6dso32_int1',  # INT1 accel data-ready drives the sampling
-                'telemetry_us': 20000,  # ~100 Hz sampling decimated to 50 Hz in imu_lsm6dso32.csv
+                'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
                 'enabled': True,
                 'provides': {'accel': {'priority': 0, 'timeout_ms': 20},   # PRIMARY accel (±32 g)
                              'rate': {'priority': 0, 'timeout_ms': 20}},    # sole gyro `rate` source
@@ -118,7 +118,7 @@ def default() -> dict:
                 'driver': 'bno055',
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x28,
-                'telemetry_us': 40000,  # ~50 Hz sampling decimated to 25 Hz in imu_bno055.csv
+                'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
                 'enabled': True,
                 'provides': {'attitude': {'priority': 0, 'timeout_ms': 40},
                              'accel': {'priority': 2, 'timeout_ms': 40}},  # fused fallback behind lsm/adxl
