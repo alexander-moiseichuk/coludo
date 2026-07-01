@@ -59,6 +59,7 @@ def default() -> dict:
             'servo_yaw': 26,
             'servo_eleron_left': 27,
             'servo_eleron_right': 32,
+            'ina226_alert': 30,  # INA226 ALERT (open-drain, active-low) -- hardware over-current trip
         },
         'recorder': {  # PSRAM ring sizes + stats cadence (Recorder)
             'tlm_capacity': 256,  # measured peak ~16 buffered records -> 256 is ~16x headroom
@@ -167,6 +168,8 @@ def default() -> dict:
                 'shunt_ohms': 0.01,  # installed 2512 R010; calibrate vs a known current for <1% absolute
                 'max_current_a': 5,  # Current_LSB = 5/2^15 ≈ 153 µA -> CAL = 0.00512/(LSB·shunt) ≈ 3355
                 'period_ms': 100,  # 10 Hz poll (conversion ~9 ms at 4-sample averaging)
+                'alert_pin': 'ina226_alert',  # INA226 ALERT (open-drain) -> GPIO30: hardware over-current trip
+                'alert_a': 3.0,  # ALERT fires above this (A) -- over the ~2.4 A 3-servo peak: a stall/short flag
                 'enabled': True,
                 'provides': {'voltage': {'priority': 0, 'timeout_ms': 500},
                              'current': {'priority': 0, 'timeout_ms': 500},

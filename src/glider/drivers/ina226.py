@@ -37,6 +37,10 @@ _CONFIG_DEFAULT = const(0x4327)  # continuous shunt+bus, 4-sample average, 1.1 m
 _CAL_CONST = 0.00512        # INA226 fixed calibration constant (datasheet)
 _BUS_V_LSB = 0.00125        # 1.25 mV per bus-voltage bit
 _POWER_LSB_RATIO = const(25)  # Power_LSB = 25 * Current_LSB
+_REG_MASK = const(0x06)      # Mask/Enable: which condition drives ALERT, plus the read-back flags
+_REG_ALERT_LIM = const(0x07)
+_MASK_SOL = const(0x8000)    # ALERT on Shunt-Over-Voltage (== over-current: rail-voltage independent)
+_SHUNT_V_LSB = 0.0000025     # 2.5 uV per shunt-voltage bit
 
 
 @task.driver('ina226')
@@ -68,10 +72,35 @@ class Ina226(task.Task):
             return False
         self._voltage, self._current, self._power = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'voltage', 'current', 'power')
-        self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('voltage', 'current', 'power'),
+        self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('voltage', 'current', 'power', 'alerts'),
                                              decimate_us=self.config.get('telemetry_us', 0))
+        # optional hardware over-current ALERT (config `alert_pin` -> a GPIO): the INA asserts it
+        # (open-drain, active-low) each time the shunt voltage crosses the trip -- a stall / short flag
+        # independent of the poll rate. Transient (no latch), and the IRQ COUNTS every trip: the running
+        # total over a flight (in telemetry + inspect) is the statistic, not the fact of a single alert.
+        self._alerts: int = 0
+        self._logged_alerts: int = 0
+        self._alert_a: float = 0.0
+        gpio = self._pin_gpio('alert_pin')
+        if gpio is not None:
+            try:
+                self._alert_a = self.config.get('alert_a', 3.0)
+                limit = round(self._alert_a * shunt_ohms / _SHUNT_V_LSB)  # amps -> shunt-voltage LSBs
+                await self._bus.write(self._addr, _REG_ALERT_LIM, struct.pack('>H', limit))
+                await self._bus.write(self._addr, _REG_MASK, struct.pack('>H', _MASK_SOL))  # transient, no latch
+                from machine import Pin
+                self._alert_pin = Pin(gpio, Pin.IN, Pin.PULL_UP)  # ALERT is open-drain, active-low
+                self._alert_pin.irq(self._on_alert, Pin.IRQ_FALLING)
+            except Exception as error:  # a bad alert wire must not sink the whole monitor -> poll-only
+                print('ina226 :: alert setup failed, poll-only: %r' % error)
+                self._alert_a = 0.0
         self._ok = True
         return True
+
+    def _on_alert(self, pin) -> None:
+        """IRQ: the ALERT line fell -- current crossed the over-current trip. COUNT it (the per-flight
+        total is the value; a soft IRQ so the small-int increment is safe -- only run() reads it)."""
+        self._alerts += 1
 
     async def _read(self) -> tuple:
         """Read (bus voltage V, current A, power W) from the live registers. Current is signed (a
@@ -89,7 +118,11 @@ class Ina226(task.Task):
                 self._voltage.push(voltage)  # push our channels directly
                 self._current.push(current)
                 self._power.push(power)
-                self._telemetry.push((voltage, current, power))
+                self._telemetry.push((voltage, current, power, self._alerts))  # count is a per-flight series
+                if self._alerts != self._logged_alerts:  # new over-current since the last pass -> log once
+                    recorder.Recorder.log(self.name, 'OVER-CURRENT alerts: %d (> %.2f A) -- servo stall / short?'
+                                          % (self._alerts, self._alert_a))
+                    self._logged_alerts = self._alerts
                 self.note(None)  # healthy pass -> the next error logs afresh
             except Exception as error:
                 self.note('ina226 :: read %r' % error)  # deduped: a persistent error logs once
@@ -131,4 +164,5 @@ class Ina226(task.Task):
         status['voltage_v'] = self._voltage.value()
         status['current_a'] = self._current.value()
         status['power_w'] = self._power.value()
+        status['alerts'] = self._alerts  # over-current ALERT trips since boot (0 if no alert pin / none)
         return status
