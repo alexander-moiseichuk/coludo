@@ -18,21 +18,25 @@ class Gate:
     def __init__(self, permits: int):
         self._free: int = permits
         self._waiters: list = []
+        self._pool: list = []  # spent Events, reused -> no per-acquire alloc while the gate is contended
 
     async def acquire(self) -> None:
         if self._free > 0:
             self._free -= 1
-        else:
-            event = asyncio.Event()
-            self._waiters.append(event)
-            try:
-                await event.wait()  # release() hands this waiter the permit directly; _free unchanged
-            except:  # cancelled: clean up WITHOUT leaking a permit
-                if event in self._waiters:
-                    self._waiters.remove(event)  # still queued -- we never held a permit
-                else:
-                    self.release()  # release() already handed us the permit -- pass it on, do not lose it
-                raise
+            return
+        event = self._pool.pop() if self._pool else asyncio.Event()  # reuse a spent Event if we have one
+        event.clear()
+        self._waiters.append(event)
+        try:
+            await event.wait()  # release() hands this waiter the permit directly; _free unchanged
+        except:  # cancelled: clean up WITHOUT leaking a permit
+            if event in self._waiters:
+                self._waiters.remove(event)  # still queued -- we never held a permit
+            else:
+                self.release()  # release() already handed us the permit -- pass it on, do not lose it
+            raise
+        finally:
+            self._pool.append(event)  # return it for reuse (single-threaded: never live in two places)
 
     def release(self) -> None:
         if self._waiters:
