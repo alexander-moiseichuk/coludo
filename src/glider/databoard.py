@@ -91,13 +91,18 @@ class _Channel:
 
 
 def _extrapolate(chan: _Channel, now: int):
-    """Linear projection of a channel's two slots to `now`. With only one reading, a zero span, or a
-    non-scalar value (a stale vector), the math raises and we return the latest as-is (None if the
-    channel never pushed)."""
-    try:
-        return chan.v1 + (chan.v1 - chan.v0) * time.ticks_diff(now, chan.t1) / time.ticks_diff(chan.t1, chan.t0)
-    except Exception:  # TypeError (None / vector), ZeroDivisionError -> latest reading, no projection
-        return chan.v1
+    """Linear projection of a channel's two slots to `now`. With only one reading (v0 None), a
+    non-scalar value (a stale vector), or a zero span, there is no linear model -- return the latest
+    as-is (None if the channel never pushed). Explicit guards, NOT try/except: a caught exception
+    allocates its object, and this runs every step for a stale channel with GC off (e.g. accel dropped
+    -> airspeed integrator) -- the degraded path must not leak."""
+    v1, v0 = chan.v1, chan.v0
+    if v0 is None or not isinstance(v1, (int, float)):
+        return v1  # one reading, or a vector (no scalar linear model) -> latest as-is, no alloc
+    span = time.ticks_diff(chan.t1, chan.t0)
+    if span == 0:
+        return v1
+    return v1 + (v1 - v0) * time.ticks_diff(now, chan.t1) / span  # scalar projection (boxes floats: inherent)
 
 
 class Parameter:
@@ -111,6 +116,7 @@ class Parameter:
         self._primary_rank: int = 1 << 30  # rank of the current primary tier (for window tracking)
         self.reconcile: bool = False  # offset reconciliation on? (a provider declares it)
         self._learned_t1 = None  # primary.t1 at the last offset update (learn once per new reading)
+        self._read_buf: list = [None, None, None]  # reused (value, source, age_ms) -> no per-read() alloc
 
     def _channel(self, source: str) -> _Channel:
         for channel in self.channels:
@@ -149,20 +155,20 @@ class Parameter:
         except AttributeError:
             self.add_source(source, 0, _DEFAULT_EXPIRE_US).push(value)
 
-    def _resolve(self, now: int) -> tuple:
-        """Forward scan over the rank-ordered channels: (winner, primary). winner = the first fresh
-        channel (lowest rank wins; same-rank channels are equivalent) or None; primary = channels[0],
-        the designated source extrapolated when nothing is fresh. IndexError if no sources yet."""
+    def _winner(self, now: int):
+        """The first fresh channel in rank order (lowest rank wins; same-rank channels are equivalent),
+        or None. The primary is always channels[0], so value()/read() read it directly -- no (winner,
+        primary) tuple is built on the hot path (a GC-off flight allocates nothing here)."""
         for channel in self.channels:
             if channel.fresh(now, self.window_us):
-                return channel, self.channels[0]
-        return None, self.channels[0]
+                return channel
+        return None
 
     def _learn(self, now: int, primary: _Channel) -> None:
         """While the primary (channels[0]) is fresh it is truth; learn each fresh backup's bias
         against it (EMA) -- once per new primary reading, so the rate is set by data, not by reads.
         Co-primaries (same rank) are not reconciled. Offsets FREEZE while the primary is stale; they
-        are applied on fallback in _estimate()."""
+        are applied on fallback in value()/read()."""
         if primary.t1 == self._learned_t1 or not primary.fresh(now, self.window_us):
             return
         self._learned_t1 = primary.t1
@@ -177,34 +183,48 @@ class Parameter:
             except TypeError:
                 pass  # a non-scalar slipped into a reconciled param -> skip, never crash
 
-    def _estimate(self, now: int) -> tuple:
-        """(value, winner) of the fused estimate. winner None -> the value is the primary extrapolated
-        to now (or None if it never pushed). With reconciliation on, a fresh non-primary winner is
-        bias-corrected by its learned offset so the handover off the primary is seamless."""
-        try:
-            winner, primary = self._resolve(now)
-        except IndexError:
-            return (None, None)  # no sources registered yet (a consumer touched the param early)
+    def value(self):
+        """The fused estimate (offset-reconciled when enabled); None if nothing was ever written.
+        Allocation-free on the hot path: returns the fresh winner's STORED value directly (or the
+        primary extrapolated to now when nothing is fresh -- that fallback boxes floats, but it is the
+        rare degraded case)."""
+        if not self.channels:
+            return None  # no sources registered yet (a consumer touched the param early)
+        now = time.ticks_us()
+        primary = self.channels[0]
         if self.reconcile:
             self._learn(now, primary)
+        winner = self._winner(now)
         if winner is None:
-            return (_extrapolate(primary, now), None)
+            return _extrapolate(primary, now)
         if self.reconcile and winner is not primary and winner.offset is not None:
-            return (winner.v1 + winner.offset, winner)
-        return (winner.v1, winner)
+            return winner.v1 + winner.offset  # reconciled scalar -> a boxed float (altitude/pressure only)
+        return winner.v1
 
-    def value(self):
-        """The fused estimate (offset-reconciled when enabled); None if nothing was ever written."""
-        return self._estimate(time.ticks_us())[0]
-
-    def read(self) -> tuple:
-        """(value, source, age_ms) of the fused estimate; `source` is None when extrapolated. A
-        reconciled value is offset-corrected, but `source` still names the raw provider it came from."""
+    def read(self) -> list:
+        """[value, source, age_ms] of the fused estimate; `source` is None when extrapolated, else the
+        raw provider even for a reconciled (offset-corrected) value. Returns a REUSED 3-slot buffer
+        (mutated each call), NOT a fresh tuple -- so a GC-off flight allocates nothing here. Safe because
+        every caller unpacks it immediately (`a, b, c = param.read()`); do NOT retain the result across
+        another read() of the same parameter (they alias one buffer)."""
+        buf = self._read_buf
+        if not self.channels:
+            buf[0] = buf[1] = buf[2] = None
+            return buf
         now = time.ticks_us()
-        value, winner = self._estimate(now)
+        primary = self.channels[0]
+        if self.reconcile:
+            self._learn(now, primary)
+        winner = self._winner(now)
         if winner is None:
-            return (value, None, None)
-        return (value, winner.source, time.ticks_diff(now, winner.t1) // 1000)
+            buf[0] = _extrapolate(primary, now)
+            buf[1] = buf[2] = None
+            return buf
+        buf[0] = winner.v1 + winner.offset if (
+            self.reconcile and winner is not primary and winner.offset is not None) else winner.v1
+        buf[1] = winner.source
+        buf[2] = time.ticks_diff(now, winner.t1) // 1000
+        return buf
 
     def offsets(self) -> dict:
         """Learned bias per source (source -> offset) for diagnostics; empty until reconciled."""
