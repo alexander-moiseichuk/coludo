@@ -109,6 +109,15 @@ async def amain():
     seq._tick(2110)
     assert ctrl.stage == Stage.BOOSTING
 
+    # apogee detect: in BOOSTING the baro peaks then falls apogee_drop_m (5 m) -> deploy at the TOP of the
+    # arc (mass/motor-independent), before the long burnout-timeout fallback.
+    elevation.push(150.0); seq._tick(2200)   # climbing -> peak tracks up
+    elevation.push(240.0); seq._tick(2210)   # new peak
+    elevation.push(233.0); seq._tick(2220)   # fell 7 m below the 240 m peak -> the apogee dwell starts
+    assert ctrl.stage == Stage.BOOSTING      # not yet SUSTAINED (a single dip is not apogee)
+    elevation.push(232.0); seq._tick(2330)   # still down, >100 ms later -> deploy
+    assert ctrl.stage == Stage.GLIDING
+
     # operator hold (ground test): manual pauses auto-sequencing -- a sustained launch is ignored
     ctrl.stage = Stage.SETTING
     ctrl.manual = True

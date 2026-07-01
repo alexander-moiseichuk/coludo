@@ -40,6 +40,7 @@ _MOTORS = sim_model.MOTORS  # thrust/burn per motor
 Body = sim_model.Body       # the pure flight-dynamics model
 _noisy = sim_model.noisy    # the sensor-noise helper
 _KNOTS = 1.94384            # m/s -> knots (GNSS speed convention)
+_BARO_NOISE_SCALE = 0.05    # baro is ~20x more precise than the IMU/GNSS -> its noise is this x the nominal
 
 
 @task.activity('hitl')
@@ -124,8 +125,12 @@ class Hitl(task.Task):
         heading = _noisy(body.heading % 360.0, n, 0.0, 360.0)
         roll = _noisy(body.roll, n, -180.0, 180.0)
         pitch = _noisy(body.pitch, n, -180.0, 180.0)
-        altitude = _noisy(body.elev0 + body.alt, n, -100.0, 10000.0)
-        elevation = _noisy(body.alt, n, -100.0, 10000.0)  # altitude above the pad (= altitude - elev0)
+        # the baro is far more precise than the IMU/GNSS -- its noise is ~sub-metre absolute, not the
+        # nominal % of the reading. Scale it down (5 % nominal -> ~0.25 %, ~0.6 m at 250 m) so the reading
+        # is realistic AND the sequencer's baro apogee-detect is not swamped by fake ±10 m jitter.
+        baro_n = n * _BARO_NOISE_SCALE
+        altitude = _noisy(body.elev0 + body.alt, baro_n, -100.0, 10000.0)
+        elevation = _noisy(body.alt, baro_n, -100.0, 10000.0)  # altitude above the pad (= altitude - elev0)
         speed = _noisy((body.vu * body.vu + body.speed * body.speed) ** 0.5, n, 0.0, 200.0)  # true airspeed
         agl_clean = max(0.0, body.alt)
         position = body.position()

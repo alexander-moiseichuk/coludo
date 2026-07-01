@@ -2,8 +2,8 @@
 # databoard and drives the guarded, forward-only stage machine that the control loop gates on:
 # SETTING -> BOOSTING : |accel| over launch_g sustained launch_ms (motor ignition), OR the baro climbing
 #                       past launch_alt_m off the pad (an independent, threshold-robust backup)
-# BOOSTING -> GLIDING : the separation switch (drivers/separation.py) is primary; this is the
-# burnout-timeout FALLBACK if the switch never fires
+# BOOSTING -> GLIDING : the separation switch (drivers/separation.py) is primary; else the baro APOGEE
+# detect (peak - apogee_drop_m, at the top of the arc, mass/motor-independent); burnout timeout last
 # GLIDING -> LANDING : agl below land_agl_m (the laser sees the ground; elevation is the fallback)
 # LANDING -> done : |accel| ~1 g (stationary) sustained ground_ms (on the ground)
 # Each transition fires once (the stage check + reset-on-change is the guard), logs the reason and a
@@ -49,6 +49,7 @@ class Sequencer(task.Task):
         self._launch_ms: int = cfg.get('launch_ms', 100)
         self._launch_alt_m: float = cfg.get('launch_alt_m', 10.0)  # OR-trigger: clearly climbed off the pad
         self._boost_timeout_ms: int = cfg.get('boost_timeout_ms', 6000)
+        self._apogee_drop_m: float = cfg.get('apogee_drop_m', 5.0)  # baro fall below its peak -> deploy at apogee
         self._land_agl_m: float = cfg.get('land_agl_m', 5.0)
         self._land_ms: int = cfg.get('land_ms', 300)  # AGL must stay below land_agl_m this long (anti-spike)
         self._still_g: float = cfg.get('still_g', 0.3)
@@ -71,6 +72,8 @@ class Sequencer(task.Task):
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('stage', 'reason'))
         self._since = None  # start of the current pending condition (sustained-detect timer)
         self._stage_seen = None  # last stage observed -> reset the timer on any change (incl. separation)
+        self._apogee_max = None  # peak elevation seen in BOOSTING (apogee detect); reset on BOOSTING entry
+        self._apogee_since = None  # start of the descending-past-peak dwell (rejects a baro noise dip)
         self._ok = True
         return True
 
@@ -126,6 +129,9 @@ class Sequencer(task.Task):
         if stage != self._stage_seen:  # changed (by us or by the separation driver) -> fresh timer
             self._since = None
             self._stage_seen = stage
+            if stage == _STAGE.BOOSTING:  # start apogee peak-tracking fresh for this flight
+                self._apogee_max = None
+                self._apogee_since = None
         # branches ordered by in-flight likelihood -- GLIDING (the long, control-critical phase)
         # first, then BOOSTING, LANDING, and SETTING (on the pad, relaxed) last, so the airborne stages
         # cost the fewest comparisons.
@@ -138,7 +144,22 @@ class Sequencer(task.Task):
             else:
                 self._since = None  # rose back / lost reading -> reset: a single low sample never flares
         elif stage == _STAGE.BOOSTING:
-            if self._sustained(now, self._boost_timeout_ms):  # burnout fallback if separation never fires
+            # deploy at APOGEE: track the baro peak and fire once it has fallen apogee_drop_m below it
+            # (mass/motor-independent -- the top of the arc, not a fixed burn+delay). The burnout timeout
+            # is the SECONDARY fallback (a flat/absent baro, or apogee never clearly detected).
+            elevation = self._elevation.value()
+            if elevation is not None:
+                if self._apogee_max is None or elevation > self._apogee_max:
+                    self._apogee_max = elevation  # still climbing -> raise the peak, reset the dwell
+                    self._apogee_since = None
+                elif elevation < self._apogee_max - self._apogee_drop_m:  # fallen off the peak -> descending
+                    self._apogee_since = now if self._apogee_since is None else self._apogee_since
+                    if time.ticks_diff(now, self._apogee_since) >= self._launch_ms:  # sustained (not a dip)
+                        self._advance(_STAGE.GLIDING, 'apogee %.0fm' % self._apogee_max)
+                        return
+                else:
+                    self._apogee_since = None  # within the drop band (noise) -> not yet descending
+            if self._sustained(now, self._boost_timeout_ms):  # burnout timeout fallback (from BOOSTING entry)
                 self._advance(_STAGE.GLIDING, 'burnout timeout (no separation)')
         elif stage == _STAGE.LANDING:
             g_sq = _magnitude_sq(self._accel.value())

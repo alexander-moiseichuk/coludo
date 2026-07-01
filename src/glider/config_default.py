@@ -224,8 +224,12 @@ def default() -> dict:
             # thrust/mass), so the old 3.0 g would MISS launch on the real airframe. launch_alt_m 10 is an
             # independent backup -- the baro climbing 10 m off the pad trips BOOSTING regardless of the accel
             # threshold (a heavy/marginal boost, or a dropped accel window, still detects).
+            # deploy at apogee: apogee_drop_m (baro fell 5 m off its peak) is the primary boost->glide
+            # trigger after the separation switch; boost_timeout_ms is the LAST-RESORT fallback, set past
+            # the slowest v2 apogee (~11 s, F15 half-glider) so it never pre-empts the apogee detect.
             {'name': 'sequencer', 'activity': 'sequencer', 'enabled': True, 'period_ms': 50,
-             'launch_g': 2.5, 'launch_ms': 100, 'launch_alt_m': 10.0, 'boost_timeout_ms': 6000,
+             'launch_g': 2.5, 'launch_ms': 100, 'launch_alt_m': 10.0,
+             'apogee_drop_m': 5.0, 'boost_timeout_ms': 12000,
              'land_agl_m': 5.0, 'land_ms': 300, 'still_g': 0.3, 'ground_ms': 3000},
             # Phase 3 stabilization loop (off by default -- no actuation until enabled + tuned on the
             # airframe). schedule_hz > 0 -> machine.Timer (deterministic slice, ~1 m/step at 100 Hz/100 m/s);
