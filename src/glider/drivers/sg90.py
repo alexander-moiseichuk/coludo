@@ -73,8 +73,8 @@ class SG90(task.Task):
         # servo draws this extra power on a sweep. Below the floor -> dead / PWM pin lost / rail unpowered.
         # The ceiling is a HIGH-draw flag only (stall/binding), not a fail -- rail-voltage dependent (a
         # single SG90 peaks ~3 W on a 3.7 V pack, ~3.7 W on 5 V), so it warns rather than false-fails.
-        self._engine_min_w: float = self.config.get('engine_min_w', 0.5)
-        self._engine_max_w: float = self.config.get('engine_max_w', 3.5)
+        self._engine_min_mw: int = self.config.get('engine_min_mw', 500)  # INA226 'power' is mW (integer)
+        self._engine_max_mw: int = self.config.get('engine_max_mw', 3500)
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('angle', 'pulse_us', 'done'),
                                        decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
         self._pwm = PWM(Pin(gpio), freq=50, duty_u16=0)
@@ -95,8 +95,8 @@ class SG90(task.Task):
         self._apply(self._neutral)
         if watch:
             await asyncio.sleep_ms(300)  # settle -> resting baseline (nonzero on battery: MCU + devices)
-        baseline = databoard.Databoard.value('power') if watch else 0.0
-        peak_rise = 0.0
+        baseline = databoard.Databoard.value('power') if watch else 0  # mW (integer)
+        peak_rise = 0
         for label, target in (('min', self._min_deg), ('max', self._max_deg), ('neutral', self._neutral)):
             try:
                 recorder.Recorder.log(self.name, 'probe: sweep to %s %d ...' % (label, target))
@@ -111,10 +111,10 @@ class SG90(task.Task):
                 recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
                 return message
         if watch:
-            recorder.Recorder.log(self.name, 'probe: peak draw %.2f W over %.2f W baseline%s' % (
-                peak_rise, baseline, '' if peak_rise <= self._engine_max_w else ' (HIGH -- stall/binding?)'))
-            if peak_rise < self._engine_min_w:
-                message = 'no current draw (%.2f W rise) -- servo dead / PWM pin lost / rail unpowered?' % peak_rise
+            recorder.Recorder.log(self.name, 'probe: peak draw %d mW over %d mW baseline%s' % (
+                peak_rise, baseline, '' if peak_rise <= self._engine_max_mw else ' (HIGH -- stall/binding?)'))
+            if peak_rise < self._engine_min_mw:
+                message = 'no current draw (%d mW rise) -- servo dead / PWM pin lost / rail unpowered?' % peak_rise
                 recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
                 return message
         return None

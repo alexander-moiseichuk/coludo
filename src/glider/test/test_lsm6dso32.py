@@ -6,6 +6,7 @@
 import asyncio
 
 import config_default
+import fixed
 import task
 from drivers import lsm6dso32
 
@@ -41,7 +42,9 @@ async def amain():
         ax, ay, az, gx, gy, gz = await real.sample()  # flat 6-tuple
         magnitude = (ax * ax + ay * ay + az * az) ** 0.5
         assert 0.5 < magnitude < 2.0, 'accel |a|=%.2f g not ~1 g at rest' % magnitude  # gravity
-        assert max(abs(gx), abs(gy), abs(gz)) < 100.0, 'gyro %r dps too high at rest' % ((gx, gy, gz),)
+        # gyro is centideg/s fixnum now -> compare in dps (to_float), SCALE-agnostic
+        rest_dps = max(abs(fixed.to_float(gx)), abs(fixed.to_float(gy)), abs(fixed.to_float(gz)))
+        assert rest_dps < 100.0, 'gyro %.1f dps too high at rest' % rest_dps
         assert await real.probe() is None  # who_am_i + sample self-test clean
         print('ok: lsm6dso32 registered; graceful absent; REAL device |a|=%.2f g, gyro ok' % magnitude)
     else:

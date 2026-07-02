@@ -34,8 +34,19 @@ Required hardware and the phased development roadmap. Architecture lives in
   diagnostics layer** — per-device `diagnose()` (wire-level fault when setup fails: chip-select dead /
   MISO floating / wrong device, surfaced by `verify`/`probe`) and per-board **bus-frequency `calibrate`**
   (CC sweeps each i2c/spi bus to its stable ceiling and names the limiting device — bench: i2c 400k→1 MHz,
-  spi 5→16 MHz, ADXL375-bound). *Open:* flight-log review, the **code-audit follow-ups** (findings.md,
-  re-iterated — `config.validate` + `cc_client.create_dispatcher` decomposed so far), and Phase 5 prep.
+  spi 5→16 MHz, ADXL375-bound); the real-airframe **launch-g fix** (config shipped 3.0 g but the v2 F15
+  stack boosts at ~2.84 g → sat in SETTING) + **apogee-timed deploy** (baro peak-detect, mass/motor-
+  independent, burnout timeout as fallback); a **fixed-point (`fixnum`) control path** (centidegree
+  integer PID + attitude + driver internals — measured 0 B/step in flight); and the **gyro-rate PID D
+  term** — the LSM6DSO32 `rate` now damps every axis (derivative-on-measurement), so the paid-for gyro is
+  finally consumed end-to-end (driver → databoard → PID, and rendered in flight reports). *Open:* flight-log
+  review, the **code-audit follow-ups** (findings.md, re-iterated — `config.validate` +
+  `cc_client.create_dispatcher` decomposed so far), optional **viperization** of the now-integer hot path
+  (DEFERRED on `bench_flight` evidence: a control step is only ~4% of the 100 Hz budget, and no single
+  component dominates — 3× `pid.step` is ~22% of a step, the biggest single slice is `_apply`/fin-writes
+  ~25% which is not viperizable arithmetic, and `navigation.steer` is throttled to ~24 µs amortized/step;
+  `pid.step` also can't be `@viper` wholesale — object attrs + `None` sentinels — only a leaf extraction
+  would help, for a fraction of that 22%), and Phase 5 prep.
 - **Simulation & performance — done.** On-board **HITL simulator** (closed-loop, no production-code
   changes) + host **virtual-flight** tool with interactive HTML/SVG reports (`doc/sims/TMS-7/`:
   noise/wind/spike sweeps + corner cases); **perf cluster** (nav-heading cache, zero-alloc

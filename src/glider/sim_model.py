@@ -50,8 +50,9 @@ class Body:
         self.heading = glide_heading  # deg (0 = north)
         self.roll = 0.0        # deg
         self.pitch = 90.0      # deg; start nose-up (on the rod, vertical)
-        self.pitch_rate = 0.0  # deg/s -- boost-attitude angular rate (pitch lean off vertical)
-        self.roll_rate = 0.0   # deg/s -- boost-attitude angular rate (roll lean off vertical)
+        self.pitch_rate = 0.0  # deg/s -- body angular rate (boost pitch lean + glide response) -> gyro
+        self.roll_rate = 0.0   # deg/s -- body angular rate (boost roll lean + glide response) -> gyro
+        self.yaw_rate = 0.0    # deg/s -- heading rate in the glide (coordinated turn) -> gyro
         self.accel_g = 1.0     # |specific force| the accelerometer reads (g)
         self.gliding = False
         self.wind_e = 0.0      # steady wind advecting the body (m/s, east +) -- a glide disturbance
@@ -91,6 +92,7 @@ class Body:
         self.roll = 0.0
         self.pitch_rate = 0.0
         self.roll_rate = 0.0
+        self.yaw_rate = 0.0
         self.heading = self.glide_heading
         self.speed = 14.0                              # trim airspeed (m/s)
         self.vu = self.speed * math.sin(math.radians(self.pitch))
@@ -99,11 +101,15 @@ class Body:
         """Rigid-body glide. Fin deflections (deg from neutral) command roll/pitch; bank turns the
         heading (coordinated turn); a shallow nose-down trim holds the descent. First-order responses
         keep it stable. Eases the airspeed back toward trim."""
+        roll0, pitch0 = self.roll, self.pitch  # for the gyro angular rates (finite difference, honours clamp)
         self.roll += (1.2 * roll_cmd - 2.0 * self.roll) * dt        # ailerons -> bank, leveling
         self.pitch += (0.8 * pitch_cmd - 1.5 * (self.pitch + 6.0)) * dt  # elevator -> pitch about -6 trim
         self.roll = max(-60.0, min(60.0, self.roll))
         turn = _G * math.tan(math.radians(self.roll)) / max(self.speed, 5.0)  # rad/s heading rate from bank
-        self.heading = (self.heading + math.degrees(turn) * dt + 0.05 * yaw_cmd * dt) % 360.0
+        self.yaw_rate = math.degrees(turn) + 0.05 * yaw_cmd  # deg/s (pre-wrap, so no 360->0 discontinuity)
+        self.roll_rate = (self.roll - roll0) / dt   # deg/s the gyro would read
+        self.pitch_rate = (self.pitch - pitch0) / dt
+        self.heading = (self.heading + self.yaw_rate * dt) % 360.0
         self.speed += (14.0 - self.speed) * 0.5 * dt
         self.vu += ((-_G + _G * math.cos(math.radians(self.roll))) - 0.1 * self.vu) * dt  # sink, more in a bank
         self.vu = self.vu - 0.4 * (self.pitch + 6.0) * dt            # pitch trims the sink rate
@@ -124,6 +130,7 @@ class Body:
             'accel': self.accel_g, 'heading': self.heading % 360.0, 'roll': self.roll, 'pitch': self.pitch,
             'agl': max(0.0, self.alt), 'altitude': self.elev0 + self.alt, 'position': self.position(),
             'speed': math.sqrt(self.vu * self.vu + self.speed * self.speed),  # true airspeed (m/s) -> governor
+            'roll_rate': self.roll_rate, 'pitch_rate': self.pitch_rate, 'yaw_rate': self.yaw_rate,  # gyro (deg/s)
         }
 
 
