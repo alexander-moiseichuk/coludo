@@ -80,6 +80,7 @@ class Flight(task.Task):
         self._final_intercept: float = self.config.get('final_intercept_deg', 45)  # max intercept angle
         self._agl = databoard.Databoard.parameter('agl')  # height above ground -> final-approach trigger
         self._attitude = databoard.Databoard.parameter('attitude')  # (heading, roll, pitch)
+        self._rate = databoard.Databoard.parameter('rate')  # (roll, pitch, yaw) angular rate -> PID D term
         self._position = databoard.Databoard.parameter('position')  # (lat, lon) for landing-zone navigation
         # dynamic-pressure fin governor (coludo.md "Fin authority"): cap fin control deflection by
         # airspeed (torque ∝ v²). Airspeed is fused from the accel backbone + the GNSS speed corrector;
@@ -215,10 +216,15 @@ class Flight(task.Task):
         roll/pitch setpoints AND the measured roll/pitch are both centidegree fixnum (bno055 reads them
         that way), so the error is a plain INT SUBTRACT -- no per-axis float conversion in the PID (the
         setpoint's from_float happened once in _compute_setpoints). Output fixnum -> whole degrees for the
-        mixer via // fixed.SCALE. heading_err is int degrees, so × SCALE stays a small int (no box)."""
-        roll_cmd = self._pid['roll'].step(self._roll_sp - roll, dt_ms)
-        pitch_cmd = self._pid['pitch'].step(self._pitch_sp - pitch, dt_ms)
-        yaw_cmd = self._pid['yaw'].step(self._heading_err * fixed.SCALE, dt_ms)  # coordinates the turn (0 in boost)
+        mixer via // fixed.SCALE. heading_err is int degrees, so × SCALE stays a small int (no box).
+        The gyro 'rate' (centideg/s fixnum, same unit as the error) feeds each PID's D term directly
+        (derivative-on-measurement -- clean, no setpoint kick); None when no gyro -> the PID differentiates
+        the error instead. Axis mapping assumes the IMU mounted gx->roll, gy->pitch, gz->yaw."""
+        rate = self._rate.value()  # (roll, pitch, yaw) rate or None -- no box: the gyro's stored tuple
+        roll_rate, pitch_rate, yaw_rate = rate if rate is not None else (None, None, None)
+        roll_cmd = self._pid['roll'].step(self._roll_sp - roll, dt_ms, roll_rate)
+        pitch_cmd = self._pid['pitch'].step(self._pitch_sp - pitch, dt_ms, pitch_rate)
+        yaw_cmd = self._pid['yaw'].step(self._heading_err * fixed.SCALE, dt_ms, yaw_rate)  # coordinate turn
         # positional (not roll=...) so no kwargs dict is built on the hot path
         self._apply(self._mixer.mix(roll_cmd // fixed.SCALE, pitch_cmd // fixed.SCALE, yaw_cmd // fixed.SCALE))
 

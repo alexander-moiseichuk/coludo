@@ -33,8 +33,10 @@ _UNBOUNDED_DEG = const(1000000)  # default 'no limit' -- ×SCALE stays a small i
 
 
 class Pid:
-    """error (fixnum, degrees × SCALE) -> control output (fixnum). step(error, dt_ms):
-    kp*e + ki*integral(e) + kd*de/dt, each clamped -- all integer, no heap allocation."""
+    """error (fixnum, degrees × SCALE) -> control output (fixnum). step(error, dt_ms[, rate]):
+    kp*e + ki*integral(e) + kd*derivative, each clamped -- all integer, no heap allocation. The
+    derivative is the measured `rate` (gyro, SCALE-deg/s) when given -- derivative-on-measurement, clean
+    + no setpoint kick -- else d(error)/dt (differentiated on the error)."""
 
     def __init__(self, kp: float = 0.0, ki: float = 0.0, kd: float = 0.0,
                  integral_limit: int = _UNBOUNDED_DEG, output_limit: int = _UNBOUNDED_DEG):
@@ -56,15 +58,20 @@ class Pid:
         self._integral = 0
         self._previous = None
 
-    def step(self, error: fixnum, dt_ms: int) -> fixnum:
+    def step(self, error: fixnum, dt_ms: int, rate: fixnum = None) -> fixnum:
         # integral += error*dt in SCALE-degree-seconds (the //1000 is TIME, ms -> s); clamped for anti-windup
         integral = clamp(-self.integral_limit, self._integral + error * dt_ms // 1000, self.integral_limit)
         self._integral = integral
-        previous = self._previous
-        if previous is None or dt_ms <= 0:  # first step after reset (or a sub-ms slice) -> no derivative
+        if rate is not None:
+            # DERIVATIVE-ON-MEASUREMENT: the gyro's angular rate (SCALE-deg/s), used directly. For a
+            # constant setpoint d(error)/dt = -d(measured)/dt, so the D term is -rate -- but the gyro is
+            # far cleaner than differentiating a customer-level attitude signal, and it has no derivative
+            # kick when the setpoint steps. Always valid, so no first-step guard.
+            derivative = -rate
+        elif self._previous is None or dt_ms <= 0:  # no gyro -> derivative on error; skip the first step
             derivative = 0
         else:
-            derivative = (error - previous) * 1000 // dt_ms  # SCALE-degrees per second (the 1000 is TIME)
+            derivative = (error - self._previous) * 1000 // dt_ms  # SCALE-degrees per second (1000 is TIME)
         self._previous = error
         output = (self.kp * error + self.ki * integral + self.kd * derivative) // _KU
         return clamp(-self.output_limit, output, self.output_limit)

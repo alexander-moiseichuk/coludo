@@ -21,6 +21,12 @@ def test_terms():
     deriv.step(0, 100)  # prime previous = 0 (100 ms slice)
     assert deriv.step(fixed.from_float(1), 100) == fixed.from_float(10)
 
+    # derivative-on-measurement: a supplied gyro rate feeds the D term directly (negated), no
+    # attitude differentiation and no first-step guard needed
+    rated = pid.Pid(kd=1.0)
+    assert rated.step(0, 100, rate=fixed.from_float(10)) == fixed.from_float(-10)   # kd·(-10 °/s) = -10
+    assert rated.step(0, 100, rate=fixed.from_float(-4)) == fixed.from_float(4)
+
     # first step after init/reset takes NO derivative -> no spike from a 0 baseline (finding 1.14.1)
     spike = pid.Pid(kd=1.0)
     assert spike.step(fixed.from_float(5), 100) == 0

@@ -85,7 +85,7 @@ class Hitl(task.Task):
                             'altitude': scenario['elevation_m'], 'zone': scenario['zone']})
         # provide the sim's sensor quantities to the databoard (priority 0 -> the control code reads these)
         provided = {q: {'priority': 0, 'timeout_ms': 1000} for q in
-                    ('accel', 'attitude', 'agl', 'altitude', 'elevation', 'position', 'speed')}
+                    ('accel', 'attitude', 'rate', 'agl', 'altitude', 'elevation', 'position', 'speed')}
         self._ch = databoard.Databoard.provide(self.name, provided)
         # record the simulated sensors as telemetry (same names/fields as the real drivers + the host
         # tool) -> a complete renderable capture on the Luckfox. Decimated to keep the link sane.
@@ -139,6 +139,11 @@ class Hitl(task.Task):
         # stays float for the nav trig); the sim's float physics wraps to fixnum once, here at the boundary.
         self._ch['accel'].push((accel[0], accel[1], accel[2]))
         self._ch['attitude'].push((heading, from_float(roll), from_float(pitch)))
+        # gyro rate -> the PID D term (rate damping). centideg/s fixnum, same unit + mapping as the
+        # LSM6DSO32 (roll, pitch, yaw); noised like the other IMU channels so the D term sees real jitter.
+        self._ch['rate'].push((from_float(_noisy(body.roll_rate, n, -2000.0, 2000.0)),
+                               from_float(_noisy(body.pitch_rate, n, -2000.0, 2000.0)),
+                               from_float(_noisy(body.yaw_rate, n, -2000.0, 2000.0))))
         in_range = agl_clean <= self._laser_range_m  # laser only sees the ground within its range
         if in_range:
             self._ch['agl'].push(_noisy(agl_clean, n, 0.0, 1000.0))
