@@ -22,6 +22,11 @@ def test_convert():
     assert fixed.to_str(0) == '0.00'
     assert fixed.to_str(-1) == '-0.01'
 
+    # millis: fixnum (×SCALE) -> milli-int (×1000), pure integer rescale (no float)
+    assert fixed.millis(fixed.from_float(1.23)) == fixed.from_float(1.23) * (1000 // fixed.SCALE)
+    assert fixed.millis(fixed.from_float(1.0)) == 1000  # 1.0 unit -> 1000 milli, any SCALE that divides 1000
+    assert isinstance(fixed.millis(500), int)
+
     # clamp: symmetric ±x and one-sided
     assert fixed.clamp(-100, 250, 100) == 100
     assert fixed.clamp(-100, -250, 100) == -100

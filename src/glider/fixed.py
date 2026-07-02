@@ -43,6 +43,13 @@ def to_float(scaled: fixnum) -> float:
     return scaled / SCALE
 
 
+def millis(value: fixnum) -> int:
+    """A fixnum (×SCALE) -> integer MILLI-units (×1000), independent of SCALE -- e.g. at SCALE=100 a
+    centidegree fixnum becomes millidegrees. For telemetry/logs that fix a milli representation regardless
+    of the control SCALE. Pure integer rescale (SCALE divides 1000), so no float is boxed."""
+    return value * (1000 // SCALE)
+
+
 def to_str(scaled: fixnum) -> str:
     """fixnum -> its decimal string ('12.34' at SCALE 100) via INTEGER divmod -- NO float is boxed. For
     telemetry / display: a scaled value prints as its true decimal without a float round-trip."""
