@@ -42,8 +42,11 @@ Required hardware and the phased development roadmap. Architecture lives in
   finally consumed end-to-end (driver → databoard → PID, and rendered in flight reports). *Open:* flight-log
   review, the **code-audit follow-ups** (findings.md, re-iterated — `config.validate` +
   `cc_client.create_dispatcher` decomposed so far), optional **viperization** of the now-integer hot path
-  (foundation ready; the shared `clamp_int` is already `@viper` and the PID is alloc-free, so gated on a
-  benchmark showing the integer path — not the nav trig — is the bottleneck), and Phase 5 prep.
+  (DEFERRED on `bench_flight` evidence: a control step is only ~4% of the 100 Hz budget, and no single
+  component dominates — 3× `pid.step` is ~22% of a step, the biggest single slice is `_apply`/fin-writes
+  ~25% which is not viperizable arithmetic, and `navigation.steer` is throttled to ~24 µs amortized/step;
+  `pid.step` also can't be `@viper` wholesale — object attrs + `None` sentinels — only a leaf extraction
+  would help, for a fraction of that 22%), and Phase 5 prep.
 - **Simulation & performance — done.** On-board **HITL simulator** (closed-loop, no production-code
   changes) + host **virtual-flight** tool with interactive HTML/SVG reports (`doc/sims/TMS-7/`:
   noise/wind/spike sweeps + corner cases); **perf cluster** (nav-heading cache, zero-alloc
