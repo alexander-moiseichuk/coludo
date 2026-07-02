@@ -1,12 +1,14 @@
 # F01 allocation benchmark (not a make-test case; run by hand via mpremote).
 # Measures GROSS heap allocation per PID step with GC DISABLED -- i.e. the exact in-flight leak
-# rate (gc.disable() on BOOSTING, so nothing is freed and every alloc accumulates to OOM). Compares
-# the current float Pid against integer fixed-point candidates (millidegree + centidegree), at both
-# a realistic error and the worst case (180 deg heading error), and prices the call-site float->int
-# conversion. Goal: pick the scale that (a) cuts the leak and (b) never spills into 16-byte mpz.
+# rate (gc.disable() on BOOSTING, so nothing is freed and every alloc accumulates to OOM). The
+# fixed-point Pid shipped (SCALE=100, centidegrees), so this now measures the SHIPPED pid.Pid
+# (expect ~0 B/step, the win we chose) -- including the gyro-rate D term -- against the two integer
+# candidates (mdeg + cdeg) that priced the scale, at a realistic error and the ±180 deg worst case.
+# The old float baseline is gone: pid.Pid IS the fixed-point one now, so it takes fixnum error/int dt.
 
 import gc
 
+import fixed
 import pid
 
 _N = 2000  # samples per measurement
@@ -66,13 +68,16 @@ class _FixedPid:
 def main():
     print('N = %d samples/measurement; GC disabled (flight leak rate)\n' % _N)
 
-    # ---- baseline: the real float Pid, steady (derivative primed) ----
+    # ---- the SHIPPED fixed-point Pid (SCALE-unit error/int dt), steady (derivative primed) ----
     fp = pid.Pid(kp=1.5, ki=0.2, kd=0.05, integral_limit=100.0, output_limit=45.0)
-    fp.step(1.0, 0.01)
-    print('float Pid.step   err=5deg   : %6.1f B/step' % per_step(lambda: fp.step(5.0, 0.01)))
-    print('float Pid.step   err=180deg : %6.1f B/step' % per_step(lambda: fp.step(180.0, 0.01)))
-    # call site today already does one float subtract (setpoint - actual) before step:
-    print('float call-site  (s-a)      : %6.1f B/axis' % per_step(lambda: 30.0 - 25.0) + '\n')
+    e_small, e_swing = fixed.from_float(5), fixed.from_float(180)
+    rate = fixed.from_float(10)  # a gyro rate (SCALE-deg/s) -> the D term reads it directly
+    fp.step(fixed.from_float(1), 10)
+    print('shipped Pid.step err=5deg   : %6.1f B/step' % per_step(lambda: fp.step(e_small, 10)))
+    print('shipped Pid.step err=180deg : %6.1f B/step' % per_step(lambda: fp.step(e_swing, 10)))
+    print('shipped Pid.step +gyro rate : %6.1f B/step' % per_step(lambda: fp.step(e_small, 10, rate)))
+    # the call site does one boundary conversion (fixed.from_float(setpoint - actual)) before step:
+    print('call-site from_float(s-a)   : %6.1f B/axis' % per_step(lambda: fixed.from_float(30.0 - 25.0)) + '\n')
 
     bench_unit(1000, 'mdeg')
     bench_unit(100, 'cdeg')
