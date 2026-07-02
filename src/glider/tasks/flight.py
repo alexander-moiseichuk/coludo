@@ -108,6 +108,9 @@ class Flight(task.Task):
         self._heading_hold = None  # captured on entering a control stage -> hold that heading
         self._active: bool = False  # in a control stage (PID engaged)
         self._stage = None  # the current control-stage name (for inspect)
+        self._roll_sp: float = 0.0  # current control targets: _compute_setpoints writes, _run_pid reads
+        self._pitch_sp: float = 0.0  # (instance slots, not a per-step tuple -> no hot-path allocation)
+        self._heading_err: int = 0
         self._steps: int = 0  # control steps run (self-timing for load characterization)
         self._max_step_us: int = 0
         self._last_step_us: int = 0  # ticks_us of the previous control step -> actual dt (finding 1.14.2)
@@ -117,31 +120,14 @@ class Flight(task.Task):
         return True
 
     def _step(self) -> None:
-        """One control update (sync, no await -> runs whole in a timer slice). The airspeed estimate + fin
-        governor run EVERY step (even when NOT in a control stage) so the deflection cap is warm the instant
-        control begins -- e.g. straight off a fast, off-vertical boost. Then gate -> attitude -> PID -> mix
-        -> apply. Self-times for the load sweep."""
+        """One control update (sync, no await -> runs whole in a timer slice). A pipeline: dt -> airspeed
+        governor (EVERY step, so the deflection cap is warm the instant control begins) -> stage gate ->
+        attitude -> first-entry init -> stage-dependent setpoints -> PID -> mix -> apply. The extracted
+        helpers set/read instance slots rather than return tuples -- decomposed WITHOUT adding a per-step
+        heap allocation (GC is off in flight). Self-times for the load sweep."""
         start = time.ticks_us()
-        # ACTUAL elapsed since the previous step -- every step now, so always fresh (finding 1.14.2 /):
-        # a GC pause or a delayed slice makes the real interval longer and the PID I/D + airspeed integral
-        # must use it. A long gap (>0.5 s) or the first step falls back to the nominal slice.
-        dt_us = time.ticks_diff(start, self._last_step_us)
-        self._last_step_us = start
-        if dt_us <= 0 or dt_us > 500000:  # first step / long gap (GC pause, delayed slice) -> nominal slice
-            dt_us = self._dt_us
-        dt = dt_us / 1000000.0  # float seconds: the airspeed integrator (an isolated float, off the PID path)
-        dt_ms = dt_us // 1000  # integer ms: the fixed-point PID (no float box)
-        # dynamic-pressure fin governor: integrate airspeed (accel backbone) + blend a sane GNSS fix,
-        # then cap the mixer's control authority by it (commons.fin_deflection_limit ∝ 1/v², × the safety
-        # multiplier). Runs unconditionally so boost speed carries into the glide cap (coludo.md).
-        accel = self._accel.value()
-        if accel is not None:
-            self._airspeed.predict((commons.magnitude_sq(accel[0], accel[1], accel[2]) ** 0.5 - 1.0) * 9.81, dt)
-        speed, speed_source, _speed_age = self._gnss_speed.read()
-        self._airspeed.correct(speed if speed is not None else 0.0, speed_source is not None)
-        cap = commons.fin_deflection_limit(self._airspeed.value()) * self._fin_limit_multiplier
-        self._mixer.limit = max(1, int(cap))
-
+        dt_ms = self._compute_dt(start)  # also stores self._dt (float s) for the airspeed integrator
+        self._update_airspeed(self._dt)
         setpoint = self._stages.get(self.controller.stage)  # int key -> None if not a control stage
         if setpoint is None or not self.controller.armed:  # not a control stage, or disarmed -> neutral
             if self._active:  # left the control stages (or disarmed) -> centre the fins
@@ -165,39 +151,72 @@ class Flight(task.Task):
         self._stage = self.controller.stage  # Stage id; may switch between control stages
         agl = self._agl.value()
         final = self._final_agl and agl is not None and agl < self._final_agl  # low on final approach
-        if self._stage == _STAGE.BOOSTING:
-            # boost: hold the captured rod-vertical attitude; engage ONLY past the rod (airspeed >
-            # boost_engage) -- below that the fins have no q to bite and the 3-point rod holds it vertical.
-            # Heading is ill-defined near vertical -> no nav/yaw steering; the speed governor caps the throw.
-            if self._airspeed.value() < self._boost_engage:
-                self._neutral()  # still on/near the rod -> no actuation
-                return
-            roll_setpoint = self._roll_hold
-            pitch_setpoint = self._pitch_hold
-            heading_error = 0
-        else:
-            heading_error = self._heading_error(self._target_heading(heading, final), heading)
-            roll_setpoint = setpoint.get('roll', 0.0)
-            pitch_setpoint = setpoint.get('pitch', 0.0)
-            if self._land_bank_gain and (final or self._stage == _STAGE.LANDING):
-                # final approach / landing: track the strip centreline (set up in _target_heading) with
-                # the FULL fin authority (45 deg) to crab the crosswind out -- keep it gliding, not
-                # rolling-and-dropping. The residual at strong wind is airframe-bound, not a control gap.
-                roll_setpoint = commons.bank_demand(heading_error, self._land_bank_gain, self._land_bank_limit)
-            elif self._bank_gain and self._stage == _STAGE.GLIDING:  # bank-to-turn toward the zone (vs skid)
-                roll_setpoint = commons.bank_demand(heading_error, self._bank_gain, self._bank_limit)
-        # fixed-point PID: errors -> integer millidegrees at the sensor boundary (the sole boxed float on
-        # this path), output millidegrees -> integer degrees for the mixer. heading_error is already an int
-        # (deg), so ×1000 stays a small int (no box); roll/pitch cost one float subtract+multiply per axis.
-        roll_cmd = self._pid['roll'].step(int((roll_setpoint - roll) * 1000), dt_ms)
-        pitch_cmd = self._pid['pitch'].step(int((pitch_setpoint - pitch) * 1000), dt_ms)
-        yaw_cmd = self._pid['yaw'].step(heading_error * 1000, dt_ms)  # rudder coordinates the turn (0 in boost)
-        # positional (not roll=...) so no kwargs dict is built on the hot path
-        self._apply(self._mixer.mix(roll_cmd // 1000, pitch_cmd // 1000, yaw_cmd // 1000))
+        if not self._compute_setpoints(setpoint, heading, roll, pitch, final):
+            self._neutral()  # boost still on the rod (no q to bite) -> no actuation
+            return
+        self._run_pid(roll, pitch, dt_ms)
         self._steps += 1
         elapsed = time.ticks_diff(time.ticks_us(), start)
         if elapsed > self._max_step_us:
             self._max_step_us = elapsed
+
+    def _compute_dt(self, start: int) -> int:
+        """Integer-ms slice since the last step, and stash self._dt (float s) for the airspeed integrator.
+        ACTUAL elapsed -- a GC pause / delayed slice makes it longer, and the PID I/D + airspeed integral
+        must use the real interval (finding 1.14.2). First step or a long gap (>0.5 s) -> nominal slice."""
+        dt_us = time.ticks_diff(start, self._last_step_us)
+        self._last_step_us = start
+        if dt_us <= 0 or dt_us > 500000:  # first step / long gap (GC pause, delayed slice) -> nominal slice
+            dt_us = self._dt_us
+        self._dt = dt_us / 1000000.0  # float seconds: airspeed integrator (the isolated float, off the PID path)
+        return dt_us // 1000  # integer ms: the fixed-point PID (no float box)
+
+    def _update_airspeed(self, dt: float) -> None:
+        """Dynamic-pressure fin governor, run unconditionally so boost speed carries into the glide cap:
+        integrate |accel|-g (backbone) + blend a sane GNSS fix, then cap the mixer authority by it
+        (commons.fin_deflection_limit ∝ 1/v², × the safety multiplier)."""
+        accel = self._accel.value()
+        if accel is not None:
+            self._airspeed.predict((commons.magnitude_sq(accel[0], accel[1], accel[2]) ** 0.5 - 1.0) * 9.81, dt)
+        speed, speed_source, _speed_age = self._gnss_speed.read()
+        self._airspeed.correct(speed if speed is not None else 0.0, speed_source is not None)
+        self._mixer.limit = max(1, int(commons.fin_deflection_limit(self._airspeed.value()) * self._fin_limit_multiplier))
+
+    def _compute_setpoints(self, setpoint: dict, heading: float, roll: float, pitch: float,
+                           final: bool) -> bool:
+        """The stage-dependent control law -> the roll/pitch setpoints + heading error in self._roll_sp/
+        _pitch_sp/_heading_err (instance slots, not a returned tuple -> no per-step alloc). Returns False
+        to hold neutral: BOOSTING engages ONLY past the rod (airspeed > boost_engage) -- below that the
+        fins have no q to bite and heading is ill-defined near vertical, so no nav/yaw steering."""
+        if self._stage == _STAGE.BOOSTING:
+            if self._airspeed.value() < self._boost_engage:
+                return False  # still on/near the rod -> caller neutrals
+            self._roll_sp = self._roll_hold  # hold the captured rod-vertical attitude through the climb
+            self._pitch_sp = self._pitch_hold
+            self._heading_err = 0
+            return True
+        self._heading_err = self._heading_error(self._target_heading(heading, final), heading)
+        self._roll_sp = setpoint.get('roll', 0.0)
+        self._pitch_sp = setpoint.get('pitch', 0.0)
+        if self._land_bank_gain and (final or self._stage == _STAGE.LANDING):
+            # final approach / landing: track the strip centreline (set up in _target_heading) with the
+            # FULL fin authority (45 deg) to crab the crosswind out -- keep it gliding, not rolling-and-
+            # dropping. The residual at strong wind is airframe-bound, not a control gap.
+            self._roll_sp = commons.bank_demand(self._heading_err, self._land_bank_gain, self._land_bank_limit)
+        elif self._bank_gain and self._stage == _STAGE.GLIDING:  # bank-to-turn toward the zone (vs skid)
+            self._roll_sp = commons.bank_demand(self._heading_err, self._bank_gain, self._bank_limit)
+        return True
+
+    def _run_pid(self, roll: float, pitch: float, dt_ms: int) -> None:
+        """Fixed-point PID (self._roll_sp/_pitch_sp/_heading_err vs the measured attitude) -> mixer -> fins.
+        Errors -> integer millidegrees at the sensor boundary (the sole boxed float on this path), output
+        millidegrees -> integer degrees for the mixer. heading_err is already int deg, so ×1000 stays a
+        small int (no box); roll/pitch cost one float subtract+multiply per axis."""
+        roll_cmd = self._pid['roll'].step(int((self._roll_sp - roll) * 1000), dt_ms)
+        pitch_cmd = self._pid['pitch'].step(int((self._pitch_sp - pitch) * 1000), dt_ms)
+        yaw_cmd = self._pid['yaw'].step(self._heading_err * 1000, dt_ms)  # rudder coordinates the turn (0 in boost)
+        # positional (not roll=...) so no kwargs dict is built on the hot path
+        self._apply(self._mixer.mix(roll_cmd // 1000, pitch_cmd // 1000, yaw_cmd // 1000))
 
     def _target_heading(self, heading: float, final: bool) -> float:
         """The heading to steer in GLIDING / LANDING (non-control stages just hold). High on the glide it
