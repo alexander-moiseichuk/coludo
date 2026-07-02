@@ -21,6 +21,7 @@ import airspeed
 import commons
 import controller as controller_mod
 import databoard
+import fixed
 import inspector
 import mixer
 import navigation
@@ -209,14 +210,14 @@ class Flight(task.Task):
 
     def _run_pid(self, roll: float, pitch: float, dt_ms: int) -> None:
         """Fixed-point PID (self._roll_sp/_pitch_sp/_heading_err vs the measured attitude) -> mixer -> fins.
-        Errors -> integer millidegrees at the sensor boundary (the sole boxed float on this path), output
-        millidegrees -> integer degrees for the mixer. heading_err is already int deg, so ×1000 stays a
-        small int (no box); roll/pitch cost one float subtract+multiply per axis."""
-        roll_cmd = self._pid['roll'].step(int((self._roll_sp - roll) * 1000), dt_ms)
-        pitch_cmd = self._pid['pitch'].step(int((self._pitch_sp - pitch) * 1000), dt_ms)
-        yaw_cmd = self._pid['yaw'].step(self._heading_err * 1000, dt_ms)  # rudder coordinates the turn (0 in boost)
+        Errors -> fixnum at the sensor boundary via fixed.from_float (the sole boxed float on this path),
+        output fixnum -> whole degrees for the mixer via // fixed.SCALE. heading_err is already int deg, so
+        × SCALE stays a small int (no box); roll/pitch cost one float subtract+multiply per axis."""
+        roll_cmd = self._pid['roll'].step(fixed.from_float(self._roll_sp - roll), dt_ms)
+        pitch_cmd = self._pid['pitch'].step(fixed.from_float(self._pitch_sp - pitch), dt_ms)
+        yaw_cmd = self._pid['yaw'].step(self._heading_err * fixed.SCALE, dt_ms)  # coordinates the turn (0 in boost)
         # positional (not roll=...) so no kwargs dict is built on the hot path
-        self._apply(self._mixer.mix(roll_cmd // 1000, pitch_cmd // 1000, yaw_cmd // 1000))
+        self._apply(self._mixer.mix(roll_cmd // fixed.SCALE, pitch_cmd // fixed.SCALE, yaw_cmd // fixed.SCALE))
 
     def _target_heading(self, heading: float, final: bool) -> float:
         """The heading to steer in GLIDING / LANDING (non-control stages just hold). High on the glide it

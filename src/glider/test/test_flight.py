@@ -7,6 +7,7 @@ import asyncio
 
 import config_default
 import databoard
+import fixed
 import pid
 import task
 from controller import Stage
@@ -205,8 +206,8 @@ async def amain():
     sweep = [30.0 - 0.27 * i for i in range(80)]  # heading error sweeping smoothly (~27 deg/s turn)
 
     def peak_dterm(wrap):
-        controller = pid.Pid(kd=1.0)  # step(): mdeg error in, mdeg out -> /1000 back to deg/s
-        return max(abs(controller.step(int(wrap(e) * 1000), dt_ms)) for e in sweep) / 1000
+        controller = pid.Pid(kd=1.0)  # step(): fixnum error in, fixnum out -> / fixed.SCALE back to deg/s
+        return max(abs(controller.step(fixed.from_float(wrap(e)), dt_ms)) for e in sweep) / fixed.SCALE
 
     peak_float = peak_dterm(lambda e: ((e + 180.0) % 360.0) - 180.0)  # smooth (float) heading error
     peak_int = peak_dterm(lambda e: flight.Flight._heading_error(e, 0.0))  # the production int wrap
