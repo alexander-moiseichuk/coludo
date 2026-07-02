@@ -16,6 +16,7 @@ import databoard
 import i2cbus
 import recorder
 import task
+from fixed import SCALE, to_str  # attitude roll/pitch -> centidegree fixnum; to_str for float-free telemetry
 
 try:
     from micropython import const
@@ -70,19 +71,24 @@ class Bno055(task.Task):
         return True
 
     async def sample(self) -> tuple:
-        """Read the block and return a FLAT (heading, roll, pitch) deg + (x, y, z) g 6-tuple (run() slices)."""
+        """Read the block and return a FLAT 6-tuple (run() slices): heading in float degrees (feeds the
+        navigation trig island), roll + pitch as fixnum CENTIDEGREES (raw·SCALE//16, exact -- 16 LSB/deg;
+        they feed the fixed-point PID with no float conversion), and accel (x, y, z) in float g."""
         await self._bus.read_into(self._addr, _REG_DATA, self._buf)
         ax, ay, az = struct.unpack_from('<hhh', self._buf, 0)
         heading, roll, pitch = struct.unpack_from('<hhh', self._buf, _OFF_EUL)
-        return (heading * _DEG, roll * _DEG, pitch * _DEG, ax * _ACC_G, ay * _ACC_G, az * _ACC_G)
+        return (heading * _DEG, roll * SCALE // 16, pitch * SCALE // 16,
+                ax * _ACC_G, ay * _ACC_G, az * _ACC_G)
 
     async def run(self) -> None:
         while True:
             try:
-                sample = await self.sample()  # flat 6-tuple
-                self._attitude.push(sample[:3])  # one step: push our channels directly
+                sample = await self.sample()  # flat 6-tuple (heading°, roll_cd, pitch_cd, ax, ay, az g)
+                self._attitude.push(sample[:3])  # one step: push our channels directly (roll/pitch fixnum)
                 self._accel.push(sample[3:])  # low-g backup to the ADXL375
-                self._telemetry.push(sample)  # no attitude + accel concatenation
+                # roll/pitch are centidegree fixnum -> to_str for a human-readable, float-free CSV column
+                self._telemetry.push((sample[0], to_str(sample[1]), to_str(sample[2]),
+                                      sample[3], sample[4], sample[5]))
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
                 self.note('bno055 :: read %r', error)  # deduped: a persistent error logs once, not at 50 Hz

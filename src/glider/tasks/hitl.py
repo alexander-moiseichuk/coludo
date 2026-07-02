@@ -33,6 +33,7 @@ import inspector
 import recorder
 import sim_model
 import task
+from fixed import from_float  # attitude roll/pitch -> centidegree fixnum at the sim->control boundary
 
 _STAGE = controller_mod.Stage
 _HPRC = sim_model.HPRC      # default scenario (HPRC launch site + landing zone)
@@ -40,6 +41,7 @@ _MOTORS = sim_model.MOTORS  # thrust/burn per motor
 Body = sim_model.Body       # the pure flight-dynamics model
 _noisy = sim_model.noisy    # the sensor-noise helper
 _KNOTS = 1.94384            # m/s -> knots (GNSS speed convention)
+_BARO_NOISE_SCALE = 0.05    # baro is ~20x more precise than the IMU/GNSS -> its noise is this x the nominal
 
 
 @task.activity('hitl')
@@ -83,13 +85,14 @@ class Hitl(task.Task):
                             'altitude': scenario['elevation_m'], 'zone': scenario['zone']})
         # provide the sim's sensor quantities to the databoard (priority 0 -> the control code reads these)
         provided = {q: {'priority': 0, 'timeout_ms': 1000} for q in
-                    ('accel', 'attitude', 'agl', 'altitude', 'elevation', 'position', 'speed')}
+                    ('accel', 'attitude', 'rate', 'agl', 'altitude', 'elevation', 'position', 'speed')}
         self._ch = databoard.Databoard.provide(self.name, provided)
         # record the simulated sensors as telemetry (same names/fields as the real drivers + the host
         # tool) -> a complete renderable capture on the Luckfox. Decimated to keep the link sane.
         sensor_us = int(1_000_000 / cfg.get('record_hz', 25))   # sensor telemetry cadence
         self._tlm_accel = recorder.Telemetry('accel_adxl375.csv', ('ax', 'ay', 'az'), sensor_us)
         self._tlm_imu = recorder.Telemetry('imu_bno055.csv', ('heading', 'roll', 'pitch'), sensor_us)
+        self._tlm_gyro = recorder.Telemetry('imu_lsm6dso32.csv', ('ax', 'ay', 'az', 'gx', 'gy', 'gz'), sensor_us)
         self._tlm_baro = recorder.Telemetry('baro_icp10111.csv',
                                             ('altitude', 'temperature', 'pressure', 'elevation'), sensor_us)
         self._tlm_gnss = recorder.Telemetry('gnss.csv', ('lat', 'lon', 'speed_kn', 'course'), 100_000)  # 10 Hz
@@ -124,14 +127,26 @@ class Hitl(task.Task):
         heading = _noisy(body.heading % 360.0, n, 0.0, 360.0)
         roll = _noisy(body.roll, n, -180.0, 180.0)
         pitch = _noisy(body.pitch, n, -180.0, 180.0)
-        altitude = _noisy(body.elev0 + body.alt, n, -100.0, 10000.0)
-        elevation = _noisy(body.alt, n, -100.0, 10000.0)  # altitude above the pad (= altitude - elev0)
+        # the baro is far more precise than the IMU/GNSS -- its noise is ~sub-metre absolute, not the
+        # nominal % of the reading. Scale it down (5 % nominal -> ~0.25 %, ~0.6 m at 250 m) so the reading
+        # is realistic AND the sequencer's baro apogee-detect is not swamped by fake ±10 m jitter.
+        baro_n = n * _BARO_NOISE_SCALE
+        altitude = _noisy(body.elev0 + body.alt, baro_n, -100.0, 10000.0)
+        elevation = _noisy(body.alt, baro_n, -100.0, 10000.0)  # altitude above the pad (= altitude - elev0)
         speed = _noisy((body.vu * body.vu + body.speed * body.speed) ** 0.5, n, 0.0, 200.0)  # true airspeed
         agl_clean = max(0.0, body.alt)
         position = body.position()
-        # databoard -> the control loop
+        # databoard -> the control loop. roll/pitch are centidegree fixnum for the fixed-point PID (heading
+        # stays float for the nav trig); the sim's float physics wraps to fixnum once, here at the boundary.
         self._ch['accel'].push((accel[0], accel[1], accel[2]))
-        self._ch['attitude'].push((heading, roll, pitch))
+        self._ch['attitude'].push((heading, from_float(roll), from_float(pitch)))
+        # gyro rate -> the PID D term (rate damping). Noised deg/s (like the other IMU channels so the D
+        # term sees real jitter), pushed as centideg/s fixnum -- same unit + mapping as the LSM6DSO32
+        # (roll, pitch, yaw). The same noised values feed the imu_lsm6dso32 telemetry below (board parity).
+        roll_rate = _noisy(body.roll_rate, n, -2000.0, 2000.0)
+        pitch_rate = _noisy(body.pitch_rate, n, -2000.0, 2000.0)
+        yaw_rate = _noisy(body.yaw_rate, n, -2000.0, 2000.0)
+        self._ch['rate'].push((from_float(roll_rate), from_float(pitch_rate), from_float(yaw_rate)))
         in_range = agl_clean <= self._laser_range_m  # laser only sees the ground within its range
         if in_range:
             self._ch['agl'].push(_noisy(agl_clean, n, 0.0, 1000.0))
@@ -142,6 +157,10 @@ class Hitl(task.Task):
         # telemetry -> the Luckfox (decimate_us rate-limits each stream so this can run every step)
         self._tlm_accel.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3)))
         self._tlm_imu.push((round(heading, 1), round(roll, 1), round(pitch, 1)))
+        # the LSM6DSO32 stream a real board flight produces: low-g accel (reuse the boost-axis accel) +
+        # the gyro rate (deg/s) the PID reads. Same fields as drivers/lsm6dso32 so flight_report keys on it.
+        self._tlm_gyro.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3),
+                             round(roll_rate, 1), round(pitch_rate, 1), round(yaw_rate, 1)))
         self._tlm_baro.push((round(altitude, 2), 21.0, 100000, round(elevation, 2)))
         if in_range:
             self._tlm_laser.push((round(agl_clean, 3),))

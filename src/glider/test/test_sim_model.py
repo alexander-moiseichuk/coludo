@@ -37,6 +37,23 @@ def test_speed_sensor():
     assert abs(body.sensors()['speed'] - body.vu) < 0.5  # vertical climb -> airspeed ~ vertical speed
 
 
+def test_gyro_rates():
+    # glide angular rates (feed the PID D term): a roll fin command drives a roll rate of the sign of the
+    # command, and a bank turns the heading -> a yaw rate. Right roll (+ cmd) -> + roll_rate -> + yaw_rate.
+    body = sim_model.Body(0.43, (25.5, -80.4), 2.0, 30.0)
+    body.begin_glide()
+    body.speed = 14.0
+    for _ in range(50):
+        body.glide_step(0.02, 20.0, 0.0, 0.0)  # steady right-roll command
+    sensors = body.sensors()
+    assert body.roll > 5.0, body.roll                       # banked right
+    assert sensors['yaw_rate'] > 0.0, sensors['yaw_rate']   # bank -> coordinated turn (+ heading rate)
+    assert 'roll_rate' in sensors and 'pitch_rate' in sensors
+    # rate ~ the modelled first-order response, finite (no NaN/huge); leveled bank -> small residual rate
+    assert abs(sensors['roll_rate']) < 200.0, sensors['roll_rate']
+
+
 test_weathercock_and_control()
 test_speed_sensor()
-print('ok: sim_model -- boost weathercock vs fin restore, calm stays vertical, speed sensor')
+test_gyro_rates()
+print('ok: sim_model -- boost weathercock vs fin restore, calm stays vertical, speed sensor, gyro rates')

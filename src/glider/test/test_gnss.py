@@ -68,6 +68,8 @@ async def amain():
     unit._parse(_line('GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,'))
     assert abs(databoard.Databoard.value('altitude') - 545.4) < 1e-3
     assert abs(databoard.Databoard.value('elevation')) < 1e-3 and abs(unit._ground - 545.4) < 1e-3
+    # GGA also carries the signal quality (for antenna/sky checks): fix quality 1, 8 satellites, HDOP 0.9
+    assert unit._fix_quality == 1 and unit._satellites == 8 and abs(unit._hdop - 0.9) < 1e-3
     unit._parse(_line('GPGGA,123520,4807.038,N,01131.000,E,1,08,0.9,550.4,M,46.9,M,,'))
     assert abs(databoard.Databoard.value('elevation') - 5.0) < 1e-3  # 550.4 - 545.4 ground
 

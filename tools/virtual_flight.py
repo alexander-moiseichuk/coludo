@@ -22,6 +22,7 @@ sys.path.insert(0, _GLIDER)
 
 import commons  # noqa: E402 -- shared primitives bundle (bank_demand, ...)
 import config_hitl  # noqa: E402 -- the SAME board config the on-board HITL uses (host-importable)
+import fixed  # noqa: E402 -- fixed-point convention: PID error/output in centidegree fixnum (board parity)
 import mixer  # noqa: E402
 import navigation  # noqa: E402
 import pid  # noqa: E402
@@ -81,6 +82,7 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
             for axis in ('roll', 'pitch', 'yaw')}
 
     dt = 1.0 / sim_hz
+    dt_ms = max(1, int(round(dt * 1000)))   # integer-ms slice the fixed-point PID expects (mirror flight.py)
     stage = 'setting'
     since = 0.0          # time the current sustained-detect window started
     boost_hold = None    # captured rod-vertical (roll, pitch) to hold through the climb
@@ -98,6 +100,14 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         pitch_m = sim_model.noisy(sensors['pitch'], noise, -180.0, 180.0)
         altitude_m = sim_model.noisy(sensors['altitude'], noise, -100.0, 10000.0)
         agl = sensors['agl']
+        # gyro angular rates the PID D term reads -- noised deg/s (recorded to imu_lsm6dso32, board parity),
+        # converted once to centideg/s fixnum for the PID (same unit + mapping as tasks/hitl + the driver)
+        roll_rate_dps = sim_model.noisy(sensors['roll_rate'], noise, -2000.0, 2000.0)
+        pitch_rate_dps = sim_model.noisy(sensors['pitch_rate'], noise, -2000.0, 2000.0)
+        yaw_rate_dps = sim_model.noisy(sensors['yaw_rate'], noise, -2000.0, 2000.0)
+        roll_rate = fixed.from_float(roll_rate_dps)
+        pitch_rate = fixed.from_float(pitch_rate_dps)
+        yaw_rate = fixed.from_float(yaw_rate_dps)
 
         # inject a transient 2x glitch on the attitude + accel for ONE tick every _SPIKE_S seconds
         # (deterministic schedule so the stored corner-case traces reproduce). Exercises the control
@@ -150,9 +160,10 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
             if airspeed < boost_engage:                  # still on the rod -> no fin authority, just climb
                 body.boost_step(dt, burn)
             else:                                        # past the rod -> guarded fins fight the weathercock
-                roll_cmd = pids['roll'].step(boost_hold[0] - roll_m, dt)
-                pitch_cmd = pids['pitch'].step(boost_hold[1] - pitch_m, dt)
-                angles = mix.mix(roll=round(roll_cmd), pitch=round(pitch_cmd), yaw=0)
+                # fixed-point PID (mirror flight._run_pid): centideg error, integer-ms dt, gyro-rate D term
+                roll_cmd = pids['roll'].step(fixed.from_float(boost_hold[0] - roll_m), dt_ms, roll_rate)
+                pitch_cmd = pids['pitch'].step(fixed.from_float(boost_hold[1] - pitch_m), dt_ms, pitch_rate)
+                angles = mix.mix(roll=roll_cmd // fixed.SCALE, pitch=pitch_cmd // fixed.SCALE, yaw=0)
                 fins = tuple(angles[f] for f in _FINS)
                 body.boost_step(dt, burn, (fins[0] + fins[1]) / 2.0 - 90.0, (fins[0] - fins[1]) / 2.0)
         elif setpoint is not None:                       # a control stage (gliding) -> PID -> mixer -> fins
@@ -168,17 +179,20 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
                 roll_setpoint = commons.bank_demand(heading_error, land_bank_gain, land_bank_limit)
             elif bank_gain and stage == 'gliding':       # high glide: bank-to-turn toward the zone
                 roll_setpoint = commons.bank_demand(heading_error, bank_gain, bank_limit)
-            roll_cmd = pids['roll'].step(roll_setpoint - roll_m, dt)
-            pitch_cmd = pids['pitch'].step(setpoint.get('pitch', 0.0) - pitch_m, dt)
-            yaw_cmd = pids['yaw'].step(heading_error, dt)
-            angles = mix.mix(roll=round(roll_cmd), pitch=round(pitch_cmd), yaw=round(yaw_cmd))
+            # fixed-point PID (mirror flight._run_pid): centideg error (from_float once), integer-ms dt,
+            # gyro-rate D term; heading_error is int deg -> *SCALE to centideg. Output // SCALE -> deg mixer.
+            roll_cmd = pids['roll'].step(fixed.from_float(roll_setpoint - roll_m), dt_ms, roll_rate)
+            pitch_cmd = pids['pitch'].step(fixed.from_float(setpoint.get('pitch', 0.0) - pitch_m), dt_ms, pitch_rate)
+            yaw_cmd = pids['yaw'].step(heading_error * fixed.SCALE, dt_ms, yaw_rate)
+            angles = mix.mix(roll=roll_cmd // fixed.SCALE, pitch=pitch_cmd // fixed.SCALE, yaw=yaw_cmd // fixed.SCALE)
             fins = tuple(angles[f] for f in _FINS)
             body.glide_step(dt, (fins[0] - fins[1]) / 2.0, (fins[0] + fins[1]) / 2.0 - 90.0, fins[2] - 90.0)
         else:                                            # non-control stage -> coast, fins neutral
             body.glide_step(dt, 0.0, 0.0, 0.0)
 
         rows.sample(t, accel_m, altitude_m, sensors['altitude'] - body.elev0, heading_m, roll_m, pitch_m,
-                    sensors['position'], agl, laser_range_m, body.speed, fins)
+                    sensors['position'], agl, laser_range_m, body.speed, fins,
+                    (roll_rate_dps, pitch_rate_dps, yaw_rate_dps))
         rows.health(t, stage)
         if body.gliding and body.alt <= 0.0:             # touched down
             rows.event(t, 'controller :: stage -> done')
@@ -205,16 +219,21 @@ class _Capture:
         self._tlm('accel_adxl375.csv', 'uptime;ax;ay;az')
         self._tlm('baro_icp10111.csv', 'uptime;altitude;temperature;pressure;elevation')
         self._tlm('imu_bno055.csv', 'uptime;heading;roll;pitch')
+        self._tlm('imu_lsm6dso32.csv', 'uptime;ax;ay;az;gx;gy;gz')   # low-g accel + gyro rate (deg/s)
         self._tlm('gnss.csv', 'uptime;lat;lon;speed_kn;course')
         self._tlm('laser_agl.csv', 'uptime;agl')
         self._tlm('fins.csv', 'uptime;eleron_left;eleron_right;yaw')  # commanded servo angles (deg)
         self._tlm('health.csv', 'uptime;temp;mem_free;load')          # board vitals (board_health.py)
 
-    def sample(self, t, accel, altitude, elevation, heading, roll, pitch, position, agl, laser_range, speed, fins):
+    def sample(self, t, accel, altitude, elevation, heading, roll, pitch, position, agl, laser_range, speed,
+               fins, rate):
         microseconds = int(t * 1e6)
         self._tlm('accel_adxl375.csv', '%u;0.000;0.000;%.3f' % (microseconds, accel))
         self._tlm('baro_icp10111.csv', '%u;%.2f;21.0;100000;%.2f' % (microseconds, altitude, elevation))
         self._tlm('imu_bno055.csv', '%u;%.1f;%.1f;%.1f' % (microseconds, heading, roll, pitch))
+        # imu_lsm6dso32: the boost-axis low-g accel + the gyro rate (deg/s) the PID reads (board parity)
+        self._tlm('imu_lsm6dso32.csv', '%u;0.000;0.000;%.3f;%.1f;%.1f;%.1f'
+                  % (microseconds, accel, rate[0], rate[1], rate[2]))
         self._tlm('fins.csv', '%u;%d;%d;%d' % (microseconds, fins[0], fins[1], fins[2]))
         if t - self._last_gnss >= 0.1:                   # GNSS ~10 Hz
             self._last_gnss = t

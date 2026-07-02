@@ -20,6 +20,7 @@ import i2cbus
 import recorder
 import spibus
 import task
+from fixed import SCALE, to_float, to_str  # gyro rate -> centideg/s fixnum; to_str/to_float for out
 
 try:
     from micropython import const
@@ -38,8 +39,8 @@ _DRDY_XL = const(0x01)    # INT1_CTRL: accel data-ready -> INT1
 _CFG_XL = const(0x44)     # 104 Hz ODR, FS_XL = 01 = +/-32 g
 _CFG_G = const(0x4C)      # 104 Hz ODR, FS_G = 11 = +/-2000 dps
 _CFG_C = const(0x44)      # BDU=1, IF_INC=1, SIM=0 (4-wire)
-_SCALE_A = 0.000976       # g/LSB at +/-32 g (0.976 mg)
-_SCALE_G = 0.070          # deg/s per LSB at +/-2000 dps (70 mdps)
+_SCALE_A = 0.000976       # g/LSB at +/-32 g (0.976 mg) -- accel stays float g (feeds sqrt magnitude math)
+_MDPS = const(70)         # gyro milli-deg/s per LSB at +/-2000 dps -> rate = raw * _MDPS * SCALE // 1000
 
 
 @task.driver('lsm6dso32')
@@ -77,8 +78,9 @@ class Lsm6dso32(task.Task):
             return False
         self._accel, self._rate = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'accel', 'rate')
-        self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('ax', 'ay', 'az', 'gx', 'gy', 'gz'),
-                                             decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
+        self._telemetry = recorder.Telemetry(
+            '%s.csv' % self.name, ('ax', 'ay', 'az', 'gx', 'gy', 'gz'),
+            decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
         self._ok = True
         return True
 
@@ -109,12 +111,13 @@ class Lsm6dso32(task.Task):
         self._ready.set()
 
     async def sample(self) -> tuple:
-        """Read and return a FLAT (ax, ay, az) g + (gx, gy, gz) deg/s 6-tuple (run() slices it, no concat);
-        one 12-byte read clears data-ready."""
+        """Read and return a FLAT 6-tuple (run() slices it, no concat): accel (ax, ay, az) in float g, then
+        gyro (gx, gy, gz) as fixnum CENTIDEG/S (raw·_MDPS·SCALE//1000, exact -- the PID's rate-damping D
+        term reads these). One 12-byte read clears data-ready."""
         await self._dev.read_into(_OUTX_L_G, self._buf)
         gx, gy, gz, ax, ay, az = struct.unpack('<hhhhhh', self._buf)
         return (ax * _SCALE_A, ay * _SCALE_A, az * _SCALE_A,
-                gx * _SCALE_G, gy * _SCALE_G, gz * _SCALE_G)
+                gx * _MDPS * SCALE // 1000, gy * _MDPS * SCALE // 1000, gz * _MDPS * SCALE // 1000)
 
     async def run(self) -> None:
         """Sample on INT1 data-ready (or every fallback_ms if interrupts go silent; plain poll with no
@@ -130,8 +133,10 @@ class Lsm6dso32(task.Task):
             try:
                 sample = await self.sample()  # flat 6-tuple
                 self._accel.push(sample[:3])
-                self._rate.push(sample[3:])
-                self._telemetry.push(sample)  # no accel + rate concatenation
+                self._rate.push(sample[3:])  # (roll, pitch, yaw) rate in centideg/s fixnum -> PID D term
+                # accel float g; gyro is centideg/s fixnum -> to_str for a human-readable, float-free column
+                self._telemetry.push((sample[0], sample[1], sample[2],
+                                      to_str(sample[3]), to_str(sample[4]), to_str(sample[5])))
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
                 self.note('lsm6dso32 :: read %r', error)  # deduped: a persistent error logs once
@@ -152,8 +157,8 @@ class Lsm6dso32(task.Task):
         try:
             recorder.Recorder.log(self.name, 'probe: sample ...')
             ax, ay, az, gx, gy, gz = await self.sample()
-            recorder.Recorder.log(self.name, 'probe: sample ok %.2fg (%.0f,%.0f,%.0f) dps' % (
-                (ax * ax + ay * ay + az * az) ** 0.5, gx, gy, gz))
+            recorder.Recorder.log(self.name, 'probe: sample ok %.2fg (%.1f,%.1f,%.1f) dps' % (
+                (ax * ax + ay * ay + az * az) ** 0.5, to_float(gx), to_float(gy), to_float(gz)))
         except Exception as error:
             message = 'sample: %s' % error
             recorder.Recorder.log(self.name, 'probe FAILED: ' + message)

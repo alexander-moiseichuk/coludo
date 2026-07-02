@@ -6,7 +6,6 @@
 # dict -- mutate freely. Run it instead of config_default for a simulation; the flight config is untouched.
 
 import config_default
-import sim_model
 
 _SIM_SENSORS = ('accel_adxl375', 'imu_lsm6dso32', 'imu_bno055', 'baro_icp10111', 'baro_bmp280',
                 'laser_agl', 'gnss')
@@ -21,18 +20,17 @@ _GLIDER_G = 300  # full glider; pass glider_g=150 for the half-weight (optimised
 
 
 def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: float = 0.0,
-            wind_dir: float = 0.0, eject_delay_s: float = 4.0, boost_axis: str = 'z',
+            wind_dir: float = 0.0, boost_axis: str = 'z',
             glider_g: int = _GLIDER_G, inject_hz: int = 0) -> dict:
-    """Build a HITL config. `eject_delay_s` is the motor's ejection delay (the '-4' in F15-4/E16-4 ~=
-    4 s after burnout, near apogee); since separation is off in HITL, the sequencer's boost->glide
-    timeout stands in for that ejection charge, so set it to burn + delay (otherwise a generic timeout
-    glides from the wrong altitude). `wind`/`wind_dir` set a steady cross-wind (m/s, toward deg) the
-    glide must crab against. `boost_axis` picks which accel axis carries the boost |a|. `glider_g` is the
-    glider (glide) mass in grams (default 300, the full build; 150 = the half-weight optimisation target)
-    -- the booster adds to it for the boost phase, then ejects at separation so the glide runs on
-    `glider_g` alone (a lighter glider -> a longer, slower glide, the worst case for the GC-off leak).
-    `inject_hz` > 0 sets the sensor publish rate (default 0 -> the sim's sim_hz); lower it (e.g. 10) to
-    slim the sim's own heap churn so an on-board HITL leak reflects real flight -- physics stay at sim_hz."""
+    """Build a HITL config. Separation is off here, so boost->glide deploy rides the sequencer's baro
+    APOGEE detect (mass/motor-independent -- the top of the arc), with config_default's long boost_timeout
+    as the last-resort fallback; the sim's reduced baro noise keeps the peak-detect clean. `wind`/`wind_dir`
+    set a steady cross-wind (m/s, toward deg) the glide must crab against. `boost_axis` picks which accel
+    axis carries the boost |a|. `glider_g` is the glider (glide) mass in grams (default 300, the full build;
+    150 = the half-weight optimisation target) -- the booster adds to it for the boost phase, then ejects
+    at separation so the glide runs on `glider_g` alone (a lighter glider -> a longer glide, the worst case
+    for the GC-off leak). `inject_hz` > 0 sets the sensor publish rate (default 0 -> the sim's sim_hz);
+    lower it (e.g. 10) to slim the sim's own heap churn so an on-board HITL leak reflects real flight."""
     cfg = config_default.default()
     for sensor in cfg['sensors']:
         if sensor['name'] in _SIM_SENSORS:
@@ -44,13 +42,6 @@ def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: f
     flight = by_name['flight']
     flight['enabled'] = True  # the loop under test
     flight['gains'] = {'roll': {'kp': 2.0, 'kd': 0.2}, 'pitch': {'kp': 1.5}, 'yaw': {'kp': 1.5, 'kd': 0.1}}
-    # separation is off here, so the boost->glide FALLBACK timeout emulates the ejection charge firing
-    # ~eject_delay_s after burnout (near apogee). Tie it to the motor burn so HITL deploys at apogee, not
-    # at a generic 6 s. Needs hitl.py's wall-clock sim for the wall-clock timeout to line up.
-    burn_s = sim_model.MOTORS.get(motor, sim_model.MOTORS['F15'])[1]
-    sequencer = by_name.get('sequencer')
-    if sequencer is not None:
-        sequencer['boost_timeout_ms'] = round((burn_s + eject_delay_s) * 1000)
         # launch_g / launch_alt_m are inherited from config_default (2.5 g + the 10 m baro backup) so HITL
         # exercises the REAL launch thresholds against the v2 boost profiles.
     liftoff_g = _BOOSTER_G.get(motor, 217) + glider_g  # boost mass = booster + glider; glide = glider alone

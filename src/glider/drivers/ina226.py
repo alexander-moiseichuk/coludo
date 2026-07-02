@@ -34,21 +34,26 @@ _REG_DIE_ID = const(0xFF)   # = 0x2260 on the INA226
 _DIE_ID = const(0x2260)
 _DIE_HI = const(0x22)       # die-id high byte -- the 8-bit value the bus diagnose() reads back
 _CONFIG_DEFAULT = const(0x4327)  # continuous shunt+bus, 4-sample average, 1.1 ms conv (~9 ms/update)
-_CAL_CONST = 0.00512        # INA226 fixed calibration constant (datasheet)
-_BUS_V_LSB = 0.00125        # 1.25 mV per bus-voltage bit
+# INTEGER milli-unit scaling (no float): the driver reads/reports mV, mA, mW. Derived from the datasheet:
+#   bus:  1.25 mV/LSB           -> mV  = bus_raw * 5 // 4
+#   cur:  Current_LSB = max/2^15 -> mA  = current_raw * max_current_ma // 32768
+#   pow:  Power_LSB = 25*Cur_LSB -> mW  = power_raw * max_current_ma // 32768 * 25   (reordered: no 2^30 mpz)
+#   cal = 0.00512 / (Current_LSB[A] * shunt[Ω]) = 0.00512 * 2^15 * 1e6 / (max_current_ma * shunt_mohms)
+_CAL_NUM = const(167772160)  # 0.00512 * 2**15 * 1e6 -> integer cal numerator for milli-unit inputs
 _POWER_LSB_RATIO = const(25)  # Power_LSB = 25 * Current_LSB
 _REG_MASK = const(0x06)      # Mask/Enable: which condition drives ALERT, plus the read-back flags
 _REG_ALERT_LIM = const(0x07)
 _MASK_SOL = const(0x8000)    # ALERT on Shunt-Over-Voltage (== over-current: rail-voltage independent)
-_SHUNT_V_LSB = 0.0000025     # 2.5 uV per shunt-voltage bit
+# shunt-voltage LSB is 2.5 uV -> alert limit LSBs = alert_ma[mA] * shunt_mohms[mΩ] * 2 // 5 (÷2.5 µV)
 
 
 @task.driver('ina226')
 class Ina226(task.Task):
-    """High-side power monitor: bus voltage (V), current (A) and power (W) to the databoard + per-sample
-    telemetry. Current/power scale from `shunt_ohms` + `max_current_a` (the CAL register). The same
-    driver serves the 5 V USB phase and the LiPo phase -- it reports the INA's own bus voltage, so the
-    power is correct as the base rail changes. Graceful: a wrong/absent die id -> setup False."""
+    """High-side power monitor: bus voltage (mV), current (mA) and power (mW) -- INTEGER milli-units, no
+    float -- to the databoard + per-sample telemetry. Current/power scale from `shunt_mohms` +
+    `max_current_ma` (the CAL register). The same driver serves the 5 V USB phase and the LiPo phase --
+    it reports the INA's own bus voltage, so power is correct as the base rail changes. Graceful: a
+    wrong/absent die id -> setup False."""
 
     async def setup(self) -> bool:
         bus_id = self.config.get('id', 0)
@@ -58,34 +63,34 @@ class Ina226(task.Task):
         self._bus = i2cbus.get(bus_id, spec)
         self._addr: int = self.config.get('addr', 0x40)
         self._period_ms: int = self.config.get('period_ms', 100)
-        shunt_ohms: float = self.config.get('shunt_ohms', 0.01)
-        max_current: float = self.config.get('max_current_a', 5.0)
-        self._current_lsb: float = max_current / 32768.0  # amperes per current-register bit
+        shunt_mohms: int = self.config.get('shunt_mohms', 10)  # shunt resistance in milli-ohms (was shunt_ohms)
+        self._max_current_ma: int = self.config.get('max_current_ma', 5000)  # full-scale current, mA
         try:
             if struct.unpack('>H', await self._bus.read(self._addr, _REG_DIE_ID, 2))[0] != _DIE_ID:
                 return False  # not an INA226 at this address
             await self._bus.write(self._addr, _REG_CONFIG, struct.pack('>H', _CONFIG_DEFAULT))
-            cal = round(_CAL_CONST / (self._current_lsb * shunt_ohms))
+            cal = _CAL_NUM // (self._max_current_ma * shunt_mohms)  # integer, milli-unit inputs
             await self._bus.write(self._addr, _REG_CALIB, struct.pack('>H', cal))
         except Exception as error:
             print('ina226 :: %r' % error)
             return False
         self._voltage, self._current, self._power = databoard.Databoard.provide(
-            self.name, self.config.get('provides', {}), 'voltage', 'current', 'power')
-        self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('voltage', 'current', 'power', 'alerts'),
-                                             decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
+            self.name, self.config.get('provides', {}), 'voltage', 'current', 'power')  # values now mV / mA / mW
+        self._telemetry = recorder.Telemetry(
+            '%s.csv' % self.name, ('voltage_mv', 'current_ma', 'power_mw', 'alerts'),
+            decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
         # optional hardware over-current ALERT (config `alert_pin` -> a GPIO): the INA asserts it
         # (open-drain, active-low) each time the shunt voltage crosses the trip -- a stall / short flag
         # independent of the poll rate. Transient (no latch), and the IRQ COUNTS every trip: the running
         # total over a flight (in telemetry + inspect) is the statistic, not the fact of a single alert.
         self._alerts: int = 0
         self._logged_alerts: int = 0
-        self._alert_a: float = 0.0
+        self._alert_ma: int = 0
         gpio = self._pin_gpio('alert_pin')
         if gpio is not None:
             try:
-                self._alert_a = self.config.get('alert_a', 3.0)
-                limit = round(self._alert_a * shunt_ohms / _SHUNT_V_LSB)  # amps -> shunt-voltage LSBs
+                self._alert_ma = self.config.get('alert_ma', 3000)
+                limit = self._alert_ma * shunt_mohms * 2 // 5  # mA·mΩ -> shunt-voltage LSBs (÷2.5 µV)
                 await self._bus.write(self._addr, _REG_ALERT_LIM, struct.pack('>H', limit))
                 await self._bus.write(self._addr, _REG_MASK, struct.pack('>H', _MASK_SOL))  # transient, no latch
                 from machine import Pin
@@ -93,7 +98,7 @@ class Ina226(task.Task):
                 self._alert_pin.irq(self._on_alert, Pin.IRQ_FALLING)
             except Exception as error:  # a bad alert wire must not sink the whole monitor -> poll-only
                 print('ina226 :: alert setup failed, poll-only: %r' % error)
-                self._alert_a = 0.0
+                self._alert_ma = 0
         self._ok = True
         return True
 
@@ -103,25 +108,27 @@ class Ina226(task.Task):
         self._alerts += 1
 
     async def _read(self) -> tuple:
-        """Read (bus voltage V, current A, power W) from the live registers. Current is signed (a
-        reversed shunt or a charging current reads negative); power is always positive."""
+        """Read (bus voltage mV, current mA, power mW) from the live registers -- INTEGER milli-units, no
+        float. Current is signed (a reversed shunt / charging current reads negative); power is positive.
+        The power term divides by 32768 BEFORE the ×25 so the intermediate stays a small int (no mpz)."""
         bus_raw = struct.unpack('>H', await self._bus.read(self._addr, _REG_BUS_V, 2))[0]
         current_raw = struct.unpack('>h', await self._bus.read(self._addr, _REG_CURRENT, 2))[0]
         power_raw = struct.unpack('>H', await self._bus.read(self._addr, _REG_POWER, 2))[0]
-        return (bus_raw * _BUS_V_LSB, current_raw * self._current_lsb,
-                power_raw * _POWER_LSB_RATIO * self._current_lsb)
+        return (bus_raw * 5 // 4,                                             # mV (1.25 mV/LSB)
+                current_raw * self._max_current_ma // 32768,                 # mA
+                power_raw * self._max_current_ma // 32768 * _POWER_LSB_RATIO)  # mW
 
     async def run(self) -> None:
         while True:
             try:
-                voltage, current, power = await self._read()
+                voltage, current, power = await self._read()  # mV, mA, mW (integers)
                 self._voltage.push(voltage)  # push our channels directly
                 self._current.push(current)
                 self._power.push(power)
                 self._telemetry.push((voltage, current, power, self._alerts))  # count is a per-flight series
                 if self._alerts != self._logged_alerts:  # new over-current since the last pass -> log once
-                    recorder.Recorder.log(self.name, 'OVER-CURRENT alerts: %d (> %.2f A) -- servo stall / short?'
-                                          % (self._alerts, self._alert_a))
+                    recorder.Recorder.log(self.name, 'OVER-CURRENT alerts: %d (> %d mA) -- servo stall / short?'
+                                          % (self._alerts, self._alert_ma))
                     self._logged_alerts = self._alerts
                 self.note(None)  # healthy pass -> the next error logs afresh
             except Exception as error:
@@ -143,8 +150,8 @@ class Ina226(task.Task):
             return message
         try:
             recorder.Recorder.log(self.name, 'probe: read ...')
-            voltage, current, power = await self._read()
-            recorder.Recorder.log(self.name, 'probe: read ok %.2fV %.3fA %.2fW' % (voltage, current, power))
+            voltage, current, power = await self._read()  # mV, mA, mW
+            recorder.Recorder.log(self.name, 'probe: read ok %d mV %d mA %d mW' % (voltage, current, power))
         except Exception as error:
             message = 'read: %s' % error
             recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
@@ -161,8 +168,8 @@ class Ina226(task.Task):
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)  # our channels' latest (no hot-path I2C here)
-        status['voltage_v'] = self._voltage.value()
-        status['current_a'] = self._current.value()
-        status['power_w'] = self._power.value()
+        status['voltage_mv'] = self._voltage.value()
+        status['current_ma'] = self._current.value()
+        status['power_mw'] = self._power.value()
         status['alerts'] = self._alerts  # over-current ALERT trips since boot (0 if no alert pin / none)
         return status

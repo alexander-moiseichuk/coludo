@@ -2,8 +2,8 @@
 # databoard and drives the guarded, forward-only stage machine that the control loop gates on:
 # SETTING -> BOOSTING : |accel| over launch_g sustained launch_ms (motor ignition), OR the baro climbing
 #                       past launch_alt_m off the pad (an independent, threshold-robust backup)
-# BOOSTING -> GLIDING : the separation switch (drivers/separation.py) is primary; this is the
-# burnout-timeout FALLBACK if the switch never fires
+# BOOSTING -> GLIDING : the separation switch (drivers/separation.py) is primary; else the baro APOGEE
+# detect (peak - apogee_drop_m, at the top of the arc, mass/motor-independent); burnout timeout last
 # GLIDING -> LANDING : agl below land_agl_m (the laser sees the ground; elevation is the fallback)
 # LANDING -> done : |accel| ~1 g (stationary) sustained ground_ms (on the ground)
 # Each transition fires once (the stage check + reset-on-change is the guard), logs the reason and a
@@ -49,6 +49,7 @@ class Sequencer(task.Task):
         self._launch_ms: int = cfg.get('launch_ms', 100)
         self._launch_alt_m: float = cfg.get('launch_alt_m', 10.0)  # OR-trigger: clearly climbed off the pad
         self._boost_timeout_ms: int = cfg.get('boost_timeout_ms', 6000)
+        self._apogee_drop_m: float = cfg.get('apogee_drop_m', 5.0)  # baro fall below its peak -> deploy at apogee
         self._land_agl_m: float = cfg.get('land_agl_m', 5.0)
         self._land_ms: int = cfg.get('land_ms', 300)  # AGL must stay below land_agl_m this long (anti-spike)
         self._still_g: float = cfg.get('still_g', 0.3)
@@ -71,6 +72,10 @@ class Sequencer(task.Task):
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('stage', 'reason'))
         self._since = None  # start of the current pending condition (sustained-detect timer)
         self._stage_seen = None  # last stage observed -> reset the timer on any change (incl. separation)
+        self._apogee_max = None  # peak elevation seen in BOOSTING (apogee detect); reset on BOOSTING entry
+        self._apogee_since = None  # start of the descending-past-peak dwell (rejects a baro noise dip)
+        self._detect = {_STAGE.SETTING: self._detect_launch, _STAGE.BOOSTING: self._detect_apogee,
+                        _STAGE.GLIDING: self._detect_landing, _STAGE.LANDING: self._detect_stationary}
         self._ok = True
         return True
 
@@ -112,54 +117,80 @@ class Sequencer(task.Task):
         return time.ticks_diff(now, self._since) >= threshold_ms
 
     def _tick(self, now: int) -> None:
-        """One stage-machine step. `now` is ticks_ms. Forward-only: each branch only advances, and the
-        sustained-detect timer resets whenever the stage changes (so a separation-driven hop is clean).
-        Paused while the operator holds the stage (ground test).
+        """One stage-machine step (`now` is ticks_ms). Common prologue -- the operator-hold guard + a
+        fresh detect timer whenever the stage changes (so a separation-driven hop is clean) -- then
+        DISPATCH to the per-stage detector via self._detect (built in setup()). A table, not an if/elif
+        chain: the detectors are independent and unit-testable, dispatch is O(1) (no 'order by likelihood'
+        comparison tax), and a new stage is one table entry. Forward-only -- each detector only advances.
 
-        Missing sensor readings are guarded with explicit `is not None` checks -- NOT try/except. In
-        MicroPython raising allocates a traceback frame (GC churn), and the missing-accel case is most
-        frequent exactly under the launch/impact vibration that drops the most samples -- the worst
-        moment for a GC latency spike (). A dropped sample simply does not advance the timer."""
+        Detectors guard missing readings with explicit `is not None`, NOT try/except: raising allocates a
+        traceback frame (GC churn) and the dropped-sample case is most frequent under launch/impact
+        vibration -- the worst moment for a GC latency spike. A dropped sample simply does not advance."""
         if self.controller.manual:  # operator holds the stage -> do not auto-advance
             return
         stage = self.controller.stage
-        if stage != self._stage_seen:  # changed (by us or by the separation driver) -> fresh timer
+        if stage != self._stage_seen:  # changed (by us or the separation driver) -> fresh timers
             self._since = None
             self._stage_seen = stage
-        # branches ordered by in-flight likelihood -- GLIDING (the long, control-critical phase)
-        # first, then BOOSTING, LANDING, and SETTING (on the pad, relaxed) last, so the airborne stages
-        # cost the fewest comparisons.
-        if stage == _STAGE.GLIDING:
-            agl = self._agl.value()
-            height = agl if agl is not None else self._elevation.value()
-            if height is not None and height < self._land_agl_m:  # below the landing height...
-                if self._sustained(now, self._land_ms):  # ...and SUSTAINED (not a single spike)
-                    self._advance(_STAGE.LANDING, 'agl %.1fm' % height)
+            if stage == _STAGE.BOOSTING:  # start apogee peak-tracking fresh for this flight
+                self._apogee_max = None
+                self._apogee_since = None
+        handler = self._detect.get(stage)  # per-stage detector (SETTING/BOOSTING/GLIDING/LANDING)
+        if handler is not None:
+            handler(now)
+
+    def _detect_launch(self, now: int) -> None:
+        """SETTING -> BOOSTING: a sustained boost |a| (fast, primary) OR the baro clearly climbing off the
+        pad (slower but threshold-independent -- a heavy stack that boosts near the launch_g line, or a
+        missed accel window, still trips once it has left the rod)."""
+        elevation = self._elevation.value()
+        g_sq = _magnitude_sq(self._accel.value())
+        if elevation is not None and elevation > self._launch_alt_m:
+            self._advance(_STAGE.BOOSTING, 'launch alt=%.0fm' % elevation)
+        elif g_sq is not None and g_sq > self._launch_g_sq:  # |a| over launch_g, squared
+            if self._sustained(now, self._launch_ms):
+                self._advance(_STAGE.BOOSTING, 'launch |a|=%.1fg' % math.sqrt(g_sq))
+        else:
+            self._since = None
+
+    def _detect_apogee(self, now: int) -> None:
+        """BOOSTING -> GLIDING: deploy at APOGEE -- track the baro peak and fire once it has fallen
+        apogee_drop_m below it (mass/motor-independent, the top of the arc). The burnout timeout is the
+        SECONDARY fallback (a flat/absent baro, or apogee never clearly detected)."""
+        elevation = self._elevation.value()
+        if elevation is not None:
+            if self._apogee_max is None or elevation > self._apogee_max:
+                self._apogee_max = elevation  # still climbing -> raise the peak, reset the dwell
+                self._apogee_since = None
+            elif elevation < self._apogee_max - self._apogee_drop_m:  # fallen off the peak -> descending
+                self._apogee_since = now if self._apogee_since is None else self._apogee_since
+                if time.ticks_diff(now, self._apogee_since) >= self._launch_ms:  # sustained (not a dip)
+                    self._advance(_STAGE.GLIDING, 'apogee %.0fm' % self._apogee_max)
+                    return
             else:
-                self._since = None  # rose back / lost reading -> reset: a single low sample never flares
-        elif stage == _STAGE.BOOSTING:
-            if self._sustained(now, self._boost_timeout_ms):  # burnout fallback if separation never fires
-                self._advance(_STAGE.GLIDING, 'burnout timeout (no separation)')
-        elif stage == _STAGE.LANDING:
-            g_sq = _magnitude_sq(self._accel.value())
-            if g_sq is not None and self._still_lo_sq < g_sq < self._still_hi_sq:  # ~1 g, squared
-                if self._sustained(now, self._ground_ms):
-                    self._advance(_STAGE.DONE, 'stationary %.1fg' % math.sqrt(g_sq))
-            else:
-                self._since = None
-        elif stage == _STAGE.SETTING:
-            # launch = a sustained boost |a| (fast, primary) OR the baro clearly climbing off the pad
-            # (slower, but unambiguous and threshold-independent -- a heavy stack that boosts near the
-            # launch_g line, or a missed accel window, still trips once it has left the rod).
-            elevation = self._elevation.value()
-            g_sq = _magnitude_sq(self._accel.value())
-            if elevation is not None and elevation > self._launch_alt_m:
-                self._advance(_STAGE.BOOSTING, 'launch alt=%.0fm' % elevation)
-            elif g_sq is not None and g_sq > self._launch_g_sq:  # |a| over launch_g, squared
-                if self._sustained(now, self._launch_ms):
-                    self._advance(_STAGE.BOOSTING, 'launch |a|=%.1fg' % math.sqrt(g_sq))
-            else:
-                self._since = None
+                self._apogee_since = None  # within the drop band (noise) -> not yet descending
+        if self._sustained(now, self._boost_timeout_ms):  # burnout timeout fallback (from BOOSTING entry)
+            self._advance(_STAGE.GLIDING, 'burnout timeout (no separation)')
+
+    def _detect_landing(self, now: int) -> None:
+        """GLIDING -> LANDING: agl below land_agl_m (laser; baro elevation is the fallback), SUSTAINED so
+        a single low sample never flares."""
+        agl = self._agl.value()
+        height = agl if agl is not None else self._elevation.value()
+        if height is not None and height < self._land_agl_m:  # below the landing height...
+            if self._sustained(now, self._land_ms):  # ...and SUSTAINED (not a single spike)
+                self._advance(_STAGE.LANDING, 'agl %.1fm' % height)
+        else:
+            self._since = None  # rose back / lost reading -> reset: a single low sample never flares
+
+    def _detect_stationary(self, now: int) -> None:
+        """LANDING -> DONE: |accel| ~1 g (squared still-band) SUSTAINED ground_ms -- stopped on the ground."""
+        g_sq = _magnitude_sq(self._accel.value())
+        if g_sq is not None and self._still_lo_sq < g_sq < self._still_hi_sq:  # ~1 g, squared
+            if self._sustained(now, self._ground_ms):
+                self._advance(_STAGE.DONE, 'stationary %.1fg' % math.sqrt(g_sq))
+        else:
+            self._since = None
 
     async def run(self) -> None:
         while True:

@@ -73,6 +73,9 @@ class Gnss(task.Task):
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('lat', 'lon', 'speed_kn', 'course'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._fix: bool = False
+        self._fix_quality: int = 0  # GGA field 6: 0 none / 1 GPS / 2 DGPS -- signal-quality snapshot
+        self._satellites: int = 0   # GGA field 7: satellites used in the fix (more = a better antenna/sky)
+        self._hdop: float = 0.0     # GGA field 8: horizontal dilution of precision (LOWER is better)
         self._lines: int = 0  # NMEA lines seen (a liveness counter for probe(), no reader contention)
         self._ground = None  # GNSS ground-zero altitude (first valid GGA), so elevation is offset-free
         self._ok = True
@@ -98,12 +101,18 @@ class Gnss(task.Task):
                 course = float(fields[8]) if fields[8] else 0.0
                 self._speed.push(speed * _KNOTS_TO_MS)  # m/s -> airspeed governor corrector (fix-gated)
                 self._telemetry.push((latitude, longitude, speed, course))
-        elif kind == 'GGA' and len(fields) > 9 and fields[9]:
-            altitude = float(fields[9])  # metres MSL
-            self._altitude.push(altitude)
-            if self._ground is None:
-                self._ground = altitude  # first valid GGA fixes the GNSS ground reference
-            self._elevation.push(altitude - self._ground)
+        elif kind == 'GGA' and len(fields) > 9:
+            # signal quality (parsed even with no altitude yet): fix quality, satellites used, HDOP --
+            # the numbers that quantify an antenna/sky change (more sats + lower HDOP = a better antenna).
+            self._fix_quality = int(fields[6]) if fields[6] else 0
+            self._satellites = int(fields[7]) if fields[7] else 0
+            self._hdop = float(fields[8]) if fields[8] else 0.0
+            if fields[9]:  # altitude (metres MSL) -- present once there is a fix
+                altitude = float(fields[9])
+                self._altitude.push(altitude)
+                if self._ground is None:
+                    self._ground = altitude  # first valid GGA fixes the GNSS ground reference
+                self._elevation.push(altitude - self._ground)
 
     async def run(self) -> None:
         """Read NMEA lines forever and parse them; non-ASCII noise and malformed fields are skipped
@@ -127,8 +136,8 @@ class Gnss(task.Task):
             await asyncio.sleep_ms(1500)  # longer than one NMEA interval
             if self._lines == before:
                 raise ValueError('no NMEA on uart:%s in 1.5s' % self.config.get('id'))
-            recorder.Recorder.log(self.name, 'probe: nmea link ok (+%d lines, fix=%s)' % (
-                self._lines - before, self._fix))
+            recorder.Recorder.log(self.name, 'probe: nmea link ok (+%d lines, fix=%s, sats=%d, hdop=%.1f)' % (
+                self._lines - before, self._fix, self._satellites, self._hdop))
         except Exception as error:
             message = 'nmea link: %s' % error
             recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
@@ -164,6 +173,9 @@ class Gnss(task.Task):
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['fix'] = self._fix
+        status['satellites'] = self._satellites  # used in the fix -- watch this rise with a better antenna
+        status['hdop'] = self._hdop              # horizontal dilution of precision (lower = better geometry)
+        status['fix_quality'] = self._fix_quality  # 0 none / 1 GPS / 2 DGPS
         status['position'] = self._position.value()  # (lat, lon) or None until a fix
         status['altitude_m'] = self._altitude.value()
         status['elevation_m'] = self._elevation.value()

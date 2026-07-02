@@ -107,9 +107,11 @@ why `tasks/hitl.py` drives the model from a wall-clock accumulator rather than a
 ## Flight envelope (E16 / F15 estimates)
 
 Approximate, **basic-fidelity** numbers to seed modelling and the HITL simulation (Phase-5), and
-to sanity-check sensor ranges and the launch-detect threshold. Derived from the TMS-7 masses in
-[`hardware.md`](../doc/hardware.md) (booster airframe ~93 g + glider airframe 112.6 g + electronics
-~125 g, mid of the 100–150 g budget) and the printed models in [`models/TMS-7`](../models/TMS-7).
+to sanity-check sensor ranges and the launch-detect threshold. Derived from the **measured TMS-7 v2
+masses**: the **booster** (motor + casing + booster airframe) ejects at separation — E16 **200 g**,
+F15 **217 g** — and the **glider** (airframe + electronics) is **300 g** today, **~150 g** the
+weight-optimisation target. So the whole stack is **500 g (E16) / 517 g (F15)** at liftoff, and the
+*glide* runs on the glider alone. See [`hardware.md`](../doc/hardware.md) + [`models/TMS-7`](../models/TMS-7).
 
 **Assumptions (kept deliberately crude — "air quality 3"):** vertical launch, no wind; constant
 *average* motor thrust over the burn with propellant mass burning off linearly; drag `F = ½·ρ·v²·Cd·A`
@@ -120,16 +122,21 @@ wall), and the glider rides on top at ~46 mm body width — the 143 mm in the mo
 Glide phase `L/D ≈ 5` at ~12 m/s (optimistic for the current 2 mm flat-plate wings — see the
 model-analysis notes). Real flights will differ — these are seeds, not guarantees.
 
+Numbers are the **full 300 g glider** (whole stack 500/517 g); the **~150 g half-weight** target climbs
+markedly higher (E16 ~200 m, F15 ~395 m apogee — a longer glide). Verified against on-board HITL: the
+`sim_model` integration of thrust − drag − gravity matches these to within a few percent (F15-full 244 m
+analytic vs 253 m device).
+
 | Parameter | **E16** | **F15** |
 |---|---|---|
-| Liftoff mass (incl. motor) | ~390 g | ~430 g |
+| Liftoff mass (booster + 300 g glider) | ~500 g | ~517 g |
 | Total impulse / burn | 28 N·s / 1.8 s | 50 N·s / 3.5 s |
-| Peak accel — accelerometer reads (specific force) | **~8.7 g** (peak thrust 33 N) | **~5.9 g** (peak thrust 25 N) |
-| Early-boost — accelerometer reads | ~4.2 g | ~3.4 g |
-| Peak speed (at burnout) | ~57 m/s (~205 km/h) | ~79 m/s (~285 km/h) |
-| Apogee (vertical) | ~180 m @ ~7 s | ~360 m @ ~10 s |
-| Glide range / time (L/D 5) | ~0.9 km / ~75 s | ~1.8 km / ~150 s |
-| Total flight | ~80 s | ~160 s |
+| Peak accel — accelerometer reads (specific force) | **~6.7 g** (peak thrust 33 N) | **~4.9 g** (peak thrust 25 N) |
+| Early-boost — accelerometer reads | ~3.3 g | ~2.8 g |
+| Peak speed (at burnout) | ~39 m/s (~140 km/h) | ~57 m/s (~207 km/h) |
+| Apogee (vertical) | ~105 m @ ~5.5 s | ~245 m @ ~9 s |
+| Glide range / time (L/D 5) | ~0.5 km / ~45 s | ~1.2 km / ~100 s |
+| Total flight | ~50 s | ~110 s |
 
 **What this means for the design:**
 - *Accelerometer:* it reads **specific force** = kinematic acceleration **+ 1 g**. Peak is only ~6–9 g,
@@ -142,15 +149,17 @@ model-analysis notes). Real flights will differ — these are seeds, not guarant
   boost or a dropped accel window still detects. These passive E16/F15 flights tune both from real data.
 - *Mission profile:* the F15 roughly **doubles apogee** and gives **~2×** the descent time — far more
   glide/nav window — so it is the better motor for exercising active control once the passive flights
-  validate the data pipeline. The ideal glide range (~0.9–1.8 km at L/D 5) dwarfs the 200 m
+  validate the data pipeline. The ideal glide range (~0.5–1.2 km at L/D 5) dwarfs the 200 m
   landing-zone gate (`max_range_m`): the glider has ample range to return, which is what the
   navigation spends it on.
 
 **Cross-check — on-board HITL (Phase-5).** `sim_model` integrates the same thrust/mass/drag, and the
-on-board HITL flights land where this table predicts at the boost end: **F15-4 apogee ~344 m** (E16-4
-lower, from its shorter burn) and early-boost **~3.5 g** (launch detected at |a|=3.7 g). The *glide*,
-though, is a deliberately simplified control-test model — steeper than the optimistic L/D-5 row here — so
-the device flights run **~47 s (F15-4) / ~32 s (E16-4)** total rather than the analytical ~160 s / ~80 s.
+on-board HITL flights land where this table predicts at the boost end: for the v2 masses **F15-full
+apogee ~253 m** (device) vs ~244 m analytic, **E16-full ~112 m**, with early-boost **~2.8 g (F15) /
+~3.3 g (E16)** — the sim is calibrated to the envelope's drag model (Cd 0.6, A ~17 cm²), not tuned
+separately (see `doc/sims/TMS-7-memory_refactoring/`). The *glide* is a deliberately simplified
+control-test model — steeper than the optimistic L/D-5 row here — so the device flights run
+**~37 s (F15-full) / ~24 s (E16-full)** total rather than the analytical ~110 s / ~50 s.
 The high wing loading in the airframe notes below points the same way: the real glide will be fast, not
 L/D-5. Traces + reports: [`../doc/sims/TMS-7-guarded_fins`](../doc/sims/TMS-7-guarded_fins).
 

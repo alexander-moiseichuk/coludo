@@ -86,7 +86,8 @@ def build(streams, logs, go, make_subplots):
     gnss = find_stream(streams, 'lat', 'lon')
     fins = find_stream(streams, 'eleron_left', 'eleron_right', 'yaw')  # commanded servo angles (sim/board)
     health = find_stream(streams, 'load')  # board_health.csv: temp (C), mem_free (bytes), load (%)
-    power = find_stream(streams, 'voltage', 'current', 'power')  # power_ina226.csv: real servo-rail draw
+    power = find_stream(streams, 'voltage_mv', 'current_ma', 'power_mw')  # power_ina226.csv: integer mV/mA/mW
+    gyro = find_stream(streams, 'gx', 'gy', 'gz', prefer='lsm')  # imu_lsm6dso32.csv: gyro rate (deg/s) -> PID D term
 
     trajectory = go.Figure()
     if gnss is not None:
@@ -109,11 +110,12 @@ def build(streams, logs, go, make_subplots):
     else:
         trajectory.update_layout(title='trajectory — no GNSS fix in this capture')
 
-    series = make_subplots(rows=8, cols=1, shared_xaxes=True, vertical_spacing=0.022,
+    series = make_subplots(rows=9, cols=1, shared_xaxes=True, vertical_spacing=0.020,
                            subplot_titles=('|accel| (g)', 'altitude / elevation (m)', 'speed (m/s)',
                                            'attitude (deg)', 'fins — commanded (deg)',
                                            'board health — load %, temp °C, mem MB', 'agl (m)',
-                                           'engine — V / A / W / over-current alerts (INA226)'))
+                                           'engine — mV / mA / mW / over-current alerts (INA226)',
+                                           'gyro rate — LSM6DSO32 (deg/s) → PID D term'))
     if accel is not None:
         times, ax = accel.column('ax')
         _, ay = accel.column('ay')
@@ -152,10 +154,15 @@ def build(streams, logs, go, make_subplots):
         times, values = laser.column('agl')
         series.add_trace(go.Scatter(x=times, y=values, name='agl', mode='markers'), row=7, col=1)
     if power is not None:  # real INA226 servo-rail draw (the servos physically move during HITL)
-        for field in ('voltage', 'current', 'power', 'alerts'):  # alerts = cumulative over-current trips
+        for field in ('voltage_mv', 'current_ma', 'power_mw', 'alerts'):  # alerts = cumulative over-current trips
             if field in power.fields:
                 times, values = power.column(field)
                 series.add_trace(go.Scatter(x=times, y=values, name=field), row=8, col=1)
+    if gyro is not None:  # the gyro rate the PID reads as its D term (roll->gx, pitch->gy, yaw->gz)
+        for field, label in (('gx', 'roll rate'), ('gy', 'pitch rate'), ('gz', 'yaw rate')):
+            if field in gyro.fields:
+                times, values = gyro.column(field)
+                series.add_trace(go.Scatter(x=times, y=values, name=label), row=9, col=1)
     events = stage_events(logs)
     for time_s, label in events:
         series.add_vline(x=time_s, line_dash='dash', line_color='crimson',
@@ -173,8 +180,8 @@ def build(streams, logs, go, make_subplots):
                               showarrow=False, xanchor='left', yanchor='bottom',
                               font=dict(color='crimson', size=12))
     # 'x unified' -> hovering (or clicking) any time shows every panel's value at that instant
-    series.update_layout(height=1650, title=title, showlegend=True, hovermode='x unified')
-    series.update_xaxes(title_text='time (s)', row=8, col=1)
+    series.update_layout(height=1850, title=title, showlegend=True, hovermode='x unified')
+    series.update_xaxes(title_text='time (s)', row=9, col=1)
     return trajectory, series
 
 

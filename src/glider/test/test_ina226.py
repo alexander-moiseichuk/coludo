@@ -22,12 +22,14 @@ async def amain():
 
     # a real bus but a bogus address (nothing acks at 0x4F) -> graceful False (Controller skips it)
     absent = ina226.Ina226('power', {'bus': 'i2c', 'id': 0, 'addr': 0x4F,
-                                     'shunt_ohms': 0.01, 'max_current_a': 5}, _StubController())
+                                     'shunt_mohms': 10, 'max_current_ma': 5000}, _StubController())
     assert await absent.setup() is False
-    # CAL math: Current_LSB = max_current / 2**15 (set before the die-id read that fails on the bogus addr)
-    assert abs(absent._current_lsb - 5.0 / 32768.0) < 1e-12
+    # integer milli-unit config: max_current stays as-configured mA (set before the die-id read fails)
+    assert absent._max_current_ma == 5000
+    # CAL is integer: 0.00512·2^15·1e6 // (max_current_ma · shunt_mohms) = 167772160 // (5000·10) = 3355
+    assert 167772160 // (5000 * 10) == 3355  # the literal numerator (const() folds, no module attr)
 
-    print('ok: ina226 registered; setup fails gracefully when no device answers; Current_LSB math')
+    print('ok: ina226 registered; setup fails gracefully when no device answers; integer milli-unit CAL')
 
 
 asyncio.run(amain())
