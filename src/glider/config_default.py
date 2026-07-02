@@ -165,11 +165,11 @@ def default() -> dict:
                 'driver': 'ina226',
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x40,  # INA226, A0=A1=GND (scan-confirmed: mfr 0x5449 / die 0x2260)
-                'shunt_ohms': 0.01,  # installed 2512 R010; calibrate vs a known current for <1% absolute
-                'max_current_a': 5,  # Current_LSB = 5/2^15 ≈ 153 µA -> CAL = 0.00512/(LSB·shunt) ≈ 3355
+                'shunt_mohms': 10,  # installed 2512 R010 (10 mΩ); calibrate vs a known current for <1% absolute
+                'max_current_ma': 5000,  # Current_LSB = 5000mA/2^15 ≈ 153 µA -> CAL = 167772160//(mA·mΩ) ≈ 3355
                 'period_ms': 100,  # 10 Hz poll (conversion ~9 ms at 4-sample averaging)
                 'alert_pin': 'ina226_alert',  # INA226 ALERT (open-drain) -> GPIO30: hardware over-current trip
-                'alert_a': 3.0,  # ALERT fires above this (A) -- over the ~2.4 A 3-servo peak: a stall/short flag
+                'alert_ma': 3000,  # ALERT fires above this (mA) -- over the ~2.4 A 3-servo peak: a stall/short flag
                 'enabled': True,
                 'provides': {'voltage': {'priority': 0, 'timeout_ms': 500},
                              'current': {'priority': 0, 'timeout_ms': 500},
