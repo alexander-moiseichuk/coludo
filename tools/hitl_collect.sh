@@ -17,7 +17,7 @@ python3 "$ROOT/tools/board_reboot.py" "$PORT" >/dev/null 2>&1 || true   # clean 
 out=$(timeout 135 mpremote connect "$PORT" run /tmp/launch.py 2>&1) || true   # a CDC wedge must not abort (set -e)
 ses=$(echo "$out" | grep -oE 'SESSION [0-9_]+' | awk '{print $2}')
 [ -z "$ses" ] && { echo "FAIL $motor/$scen: $(echo "$out" | tail -1)"; exit 1; }
-for stream in accel_adxl375 baro_icp10111 imu_bno055 gnss laser_agl fins health sequencer; do
+for stream in accel_adxl375 baro_icp10111 imu_bno055 imu_lsm6dso32 gnss laser_agl fins health sequencer; do
   adb pull "/userdata/recordings/${ses}_${stream}.csv" "$d/" >/dev/null 2>&1 || true
 done
 python3 "$ROOT/tools/assemble_capture.py" "$ses" "$d" "$outdir/$scen.txt" >/dev/null

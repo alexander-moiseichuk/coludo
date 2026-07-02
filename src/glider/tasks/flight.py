@@ -182,7 +182,8 @@ class Flight(task.Task):
             self._airspeed.predict((commons.magnitude_sq(accel[0], accel[1], accel[2]) ** 0.5 - 1.0) * 9.81, dt)
         speed, speed_source, _speed_age = self._gnss_speed.read()
         self._airspeed.correct(speed if speed is not None else 0.0, speed_source is not None)
-        self._mixer.limit = max(1, int(commons.fin_deflection_limit(self._airspeed.value()) * self._fin_limit_multiplier))
+        self._mixer.limit = max(1, int(
+            commons.fin_deflection_limit(self._airspeed.value()) * self._fin_limit_multiplier))
 
     def _compute_setpoints(self, setpoint: dict, heading: float, roll: int, pitch: int,
                            final: bool) -> bool:
@@ -206,7 +207,8 @@ class Flight(task.Task):
             # final approach / landing: track the strip centreline (set up in _target_heading) with the
             # FULL fin authority (45 deg) to crab the crosswind out -- keep it gliding, not rolling-and-
             # dropping. The residual at strong wind is airframe-bound, not a control gap.
-            self._roll_sp = fixed.from_float(commons.bank_demand(self._heading_err, self._land_bank_gain, self._land_bank_limit))
+            self._roll_sp = fixed.from_float(
+                commons.bank_demand(self._heading_err, self._land_bank_gain, self._land_bank_limit))
         elif self._bank_gain and self._stage == _STAGE.GLIDING:  # bank-to-turn toward the zone (vs skid)
             self._roll_sp = fixed.from_float(commons.bank_demand(self._heading_err, self._bank_gain, self._bank_limit))
         return True

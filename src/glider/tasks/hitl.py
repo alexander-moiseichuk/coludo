@@ -92,6 +92,7 @@ class Hitl(task.Task):
         sensor_us = int(1_000_000 / cfg.get('record_hz', 25))   # sensor telemetry cadence
         self._tlm_accel = recorder.Telemetry('accel_adxl375.csv', ('ax', 'ay', 'az'), sensor_us)
         self._tlm_imu = recorder.Telemetry('imu_bno055.csv', ('heading', 'roll', 'pitch'), sensor_us)
+        self._tlm_gyro = recorder.Telemetry('imu_lsm6dso32.csv', ('ax', 'ay', 'az', 'gx', 'gy', 'gz'), sensor_us)
         self._tlm_baro = recorder.Telemetry('baro_icp10111.csv',
                                             ('altitude', 'temperature', 'pressure', 'elevation'), sensor_us)
         self._tlm_gnss = recorder.Telemetry('gnss.csv', ('lat', 'lon', 'speed_kn', 'course'), 100_000)  # 10 Hz
@@ -139,11 +140,13 @@ class Hitl(task.Task):
         # stays float for the nav trig); the sim's float physics wraps to fixnum once, here at the boundary.
         self._ch['accel'].push((accel[0], accel[1], accel[2]))
         self._ch['attitude'].push((heading, from_float(roll), from_float(pitch)))
-        # gyro rate -> the PID D term (rate damping). centideg/s fixnum, same unit + mapping as the
-        # LSM6DSO32 (roll, pitch, yaw); noised like the other IMU channels so the D term sees real jitter.
-        self._ch['rate'].push((from_float(_noisy(body.roll_rate, n, -2000.0, 2000.0)),
-                               from_float(_noisy(body.pitch_rate, n, -2000.0, 2000.0)),
-                               from_float(_noisy(body.yaw_rate, n, -2000.0, 2000.0))))
+        # gyro rate -> the PID D term (rate damping). Noised deg/s (like the other IMU channels so the D
+        # term sees real jitter), pushed as centideg/s fixnum -- same unit + mapping as the LSM6DSO32
+        # (roll, pitch, yaw). The same noised values feed the imu_lsm6dso32 telemetry below (board parity).
+        roll_rate = _noisy(body.roll_rate, n, -2000.0, 2000.0)
+        pitch_rate = _noisy(body.pitch_rate, n, -2000.0, 2000.0)
+        yaw_rate = _noisy(body.yaw_rate, n, -2000.0, 2000.0)
+        self._ch['rate'].push((from_float(roll_rate), from_float(pitch_rate), from_float(yaw_rate)))
         in_range = agl_clean <= self._laser_range_m  # laser only sees the ground within its range
         if in_range:
             self._ch['agl'].push(_noisy(agl_clean, n, 0.0, 1000.0))
@@ -154,6 +157,10 @@ class Hitl(task.Task):
         # telemetry -> the Luckfox (decimate_us rate-limits each stream so this can run every step)
         self._tlm_accel.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3)))
         self._tlm_imu.push((round(heading, 1), round(roll, 1), round(pitch, 1)))
+        # the LSM6DSO32 stream a real board flight produces: low-g accel (reuse the boost-axis accel) +
+        # the gyro rate (deg/s) the PID reads. Same fields as drivers/lsm6dso32 so flight_report keys on it.
+        self._tlm_gyro.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3),
+                             round(roll_rate, 1), round(pitch_rate, 1), round(yaw_rate, 1)))
         self._tlm_baro.push((round(altitude, 2), 21.0, 100000, round(elevation, 2)))
         if in_range:
             self._tlm_laser.push((round(agl_clean, 3),))

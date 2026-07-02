@@ -78,8 +78,9 @@ class Lsm6dso32(task.Task):
             return False
         self._accel, self._rate = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'accel', 'rate')
-        self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('ax', 'ay', 'az', 'gx', 'gy', 'gz'),
-                                             decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
+        self._telemetry = recorder.Telemetry(
+            '%s.csv' % self.name, ('ax', 'ay', 'az', 'gx', 'gy', 'gz'),
+            decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
         self._ok = True
         return True
 
