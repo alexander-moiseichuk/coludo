@@ -22,15 +22,20 @@ dropped to **`launch_g` 2.0** (config_default's real launch_g wants the same rev
 
 ## The four flights (calm, 5 % noise, 25 Hz)
 
-| config | whole | apogee | glide (boost→done) | GC-off leak | time-to-OOM | peak servo P | mean V | over-current alerts |
-|---|---|---|---|---|---|---|---|---|
-| [E16 full](e16_full.html) | 500 g | 112 m | 24.0 s | 253 KB/s | ~129 s | 7.0 W | 4.92 V | 0 |
-| [E16 half](e16_half.html) | 350 g | 203 m | 31.7 s | 265 KB/s | ~123 s | 7.0 W | 4.86 V | 0 |
-| [F15 full](f15_full.html) | 517 g | 253 m | 37.1 s | 249 KB/s | ~131 s | 7.2 W | 4.92 V | 0 |
-| [F15 half](f15_half.html) | 370 g | 395 m | 47.6 s | 248 KB/s | ~131 s | 7.0 W | 4.93 V | 0 |
+| config | whole | apogee | deploy @ | glide (boost→done) | GC-off leak | time-to-OOM | peak servo P |
+|---|---|---|---|---|---|---|---|
+| [E16 full](e16_full.html) | 500 g | 107 m | 6.6 s | 24.2 s | 250 KB/s | ~130 s | 7.2 W |
+| [E16 half](e16_half.html) | 350 g | 200 m | 8.0 s | 33.6 s | 250 KB/s | ~130 s | 7.1 W |
+| [F15 full](f15_full.html) | 517 g | 247 m | 9.8 s | 39.0 s | 246 KB/s | ~132 s | 7.7 W |
+| [F15 half](f15_half.html) | 370 g | 404 m | 11.1 s | 52.5 s | 244 KB/s | ~133 s | 7.4 W |
+
+Deploy now fires via the sequencer's **baro apogee-detect** (peak − 5 m) — at the top of the arc for every
+mass, e.g. F15-full apogee 247 m → deploy 9.8 s (was a fixed burn-timed ~7.4 s, 1.3 s *before* apogee).
+0 over-current alerts across all four (servo rail held). The sim's baro noise was also cut to a realistic
+sub-metre so the peak-detect is clean.
 
 A lighter glider **climbs higher and glides longer** — the worst case for a time-based leak (F15 half glides
-48 s). Each flight is a full interactive report (`<config>.html`, plotly 3D trajectory + linked series) and a
+53 s). Each flight is a full interactive report (`<config>.html`, plotly 3D trajectory + linked series) and a
 dependency-free SVG (`<config>.svg`, plan view + altitude/roll). 🎬 **[`tms7_memory.mp4`](tms7_memory.mp4)**
 is a narrated follow-cam animation of all four.
 
