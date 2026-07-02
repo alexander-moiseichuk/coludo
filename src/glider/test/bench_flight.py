@@ -11,6 +11,7 @@
 # Needs the firmware deployed (run `make test` or ../deploy.sh first). Results live in doc/plan.md.
 
 import asyncio
+import gc
 import time
 
 import config_default
@@ -47,10 +48,13 @@ async def _idler():
         await asyncio.sleep_ms(0)
 
 
-async def _pusher(attitude, rate):
-    while True:  # centidegree fixnum attitude + centideg/s fixnum gyro rate -> always fresh for the loop
-        attitude.push((100.0, fixed.from_float(5.0), fixed.from_float(-3.0)))
-        rate.push((fixed.from_float(2.0), fixed.from_float(-1.0), fixed.from_float(0.5)))
+async def _pusher(channels):
+    while True:  # keep every channel the real step reads fresh: attitude+rate (fixnum), accel, speed, position
+        channels['attitude'].push((100.0, fixed.from_float(5.0), fixed.from_float(-3.0)))
+        channels['rate'].push((fixed.from_float(2.0), fixed.from_float(-1.0), fixed.from_float(0.5)))
+        channels['accel'].push((0.1, 0.2, 1.02))   # ~1 g -> exercises the airspeed |accel| sqrt float chain
+        channels['speed'].push(14.0)               # GNSS speed corrector (m/s)
+        channels['position'].push((25.5, -80.4))
         await asyncio.sleep_ms(7)  # ~140 Hz
 
 
@@ -158,18 +162,66 @@ async def breakdown():
     print('    biggest single slice is _apply (%.0f us, fin writes) -- NOT viperizable arithmetic' % apply_us)
 
 
+async def alloc():
+    """The REAL control-path leak: run flight._step() with GC DISABLED (as in flight -- sequencer disables
+    GC on BOOSTING) and measure gross bytes allocated per step. This is the number the fixed-point work
+    moved (attitude/error now integer); the HITL capture's ~250 KB/s is sim-physics-inflated, this is not.
+    Projected to a per-second leak + time-to-OOM against ~free PSRAM at boost."""
+    task = flight.Flight('flight', {'schedule_hz': 0, 'period_ms': 20, 'gains': {'roll': {'kp': 2.0, 'kd': 0.2},
+                        'pitch': {'kp': 1.5}, 'yaw': {'kp': 1.5, 'kd': 0.1}}}, Ctrl())
+    await task.setup()
+    await asyncio.sleep_ms(50)  # let the pusher land a fresh sample on every channel before the tight loop
+    for _ in range(5):
+        task._step()  # warm caches (fins, airspeed state) so steady-state alloc is measured
+    def _alloc(fn, n=2000):
+        gc.collect()
+        gc.disable()
+        base = gc.mem_alloc()
+        for _ in range(n):
+            fn()
+        used = gc.mem_alloc() - base
+        gc.enable()
+        return used / n
+
+    per_step = _alloc(task._step)
+    # decompose: which part still boxes floats? (airspeed |accel| sqrt chain, the setpoint from_float, the PID)
+    task._heading_hold = 100.0  # set by the first-entry path in a real run; needed for _compute_setpoints
+    air_b = _alloc(lambda: task._update_airspeed(task._dt))
+    setp_b = _alloc(lambda: task._compute_setpoints(task._stages[Stage.GLIDING], 100.0,
+                                                    fixed.from_float(5.0), fixed.from_float(-3.0), False))
+    pid_b = _alloc(lambda: task._run_pid(fixed.from_float(5.0), fixed.from_float(-3.0), 10))
+    gc.collect()
+    free = gc.mem_free()
+    print('\nreal control-path leak (GC off, %d steps):' % 2000)
+    print('  _step allocation         : %6.1f B/step' % per_step)
+    print('    _update_airspeed       : %6.1f B  (|accel| sqrt + governor float chain -- unchanged by fixnum)' % air_b)
+    print('    _compute_setpoints     : %6.1f B  (setpoint from_float + bank_demand)' % setp_b)
+    print('    _run_pid (PID+mix+apply: %6.1f B  (fixed-point -> ~0; only the error boundary)' % pid_b)
+    for hz in (50, 100, 200):
+        bps = per_step * hz
+        oom = free / bps if bps > 0 else float('inf')
+        print('  @ %3d Hz                  : %6.0f B/s  -> time-to-OOM ~%s  (%.1f MB free now)' %
+              (hz, bps, ('%.0f s' % oom) if oom != float('inf') else 'never', free / 1e6))
+
+
 async def main():
-    attitude = databoard.Databoard.provide(
-        'imu', {'attitude': {'priority': 0, 'timeout_ms': 500}, 'rate': {'priority': 0, 'timeout_ms': 500}},
-        'attitude', 'rate')
+    # big freshness window: the alloc probe runs a tight GC-off loop where the async pusher can't be
+    # scheduled -- with a short timeout the channels would go stale and value() would hit the float-boxing
+    # _extrapolate fallback (a measurement artifact). In real flight concurrent tasks keep them fresh, so a
+    # wide window reproduces the fresh (zero-alloc-databoard) path the flight actually runs.
+    ch = databoard.Databoard.provide('imu', {
+        'attitude': {'priority': 0, 'timeout_ms': 30000}, 'rate': {'priority': 0, 'timeout_ms': 30000},
+        'accel': {'priority': 0, 'timeout_ms': 30000}, 'speed': {'priority': 0, 'timeout_ms': 30000},
+        'position': {'priority': 0, 'timeout_ms': 30000}})
     asyncio.create_task(_idler())
-    asyncio.create_task(_pusher(*attitude))
+    asyncio.create_task(_pusher(ch))
     await asyncio.sleep_ms(300)
     base_idle, base_ms = await _window(2000)
     base_rate = base_idle * 1000 / base_ms
     print('baseline idle rate (no flight): %.0f /s\n' % base_rate)
     await sweep(base_rate)
     await breakdown()
+    await alloc()
 
 
 asyncio.run(main())
