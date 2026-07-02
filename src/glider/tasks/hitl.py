@@ -33,6 +33,7 @@ import inspector
 import recorder
 import sim_model
 import task
+from fixed import from_float  # attitude roll/pitch -> centidegree fixnum at the sim->control boundary
 
 _STAGE = controller_mod.Stage
 _HPRC = sim_model.HPRC      # default scenario (HPRC launch site + landing zone)
@@ -134,9 +135,10 @@ class Hitl(task.Task):
         speed = _noisy((body.vu * body.vu + body.speed * body.speed) ** 0.5, n, 0.0, 200.0)  # true airspeed
         agl_clean = max(0.0, body.alt)
         position = body.position()
-        # databoard -> the control loop
+        # databoard -> the control loop. roll/pitch are centidegree fixnum for the fixed-point PID (heading
+        # stays float for the nav trig); the sim's float physics wraps to fixnum once, here at the boundary.
         self._ch['accel'].push((accel[0], accel[1], accel[2]))
-        self._ch['attitude'].push((heading, roll, pitch))
+        self._ch['attitude'].push((heading, from_float(roll), from_float(pitch)))
         in_range = agl_clean <= self._laser_range_m  # laser only sees the ground within its range
         if in_range:
             self._ch['agl'].push(_noisy(agl_clean, n, 0.0, 1000.0))

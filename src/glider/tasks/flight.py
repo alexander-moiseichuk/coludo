@@ -183,7 +183,7 @@ class Flight(task.Task):
         self._airspeed.correct(speed if speed is not None else 0.0, speed_source is not None)
         self._mixer.limit = max(1, int(commons.fin_deflection_limit(self._airspeed.value()) * self._fin_limit_multiplier))
 
-    def _compute_setpoints(self, setpoint: dict, heading: float, roll: float, pitch: float,
+    def _compute_setpoints(self, setpoint: dict, heading: float, roll: int, pitch: int,
                            final: bool) -> bool:
         """The stage-dependent control law -> the roll/pitch setpoints + heading error in self._roll_sp/
         _pitch_sp/_heading_err (instance slots, not a returned tuple -> no per-step alloc). Returns False
@@ -192,29 +192,32 @@ class Flight(task.Task):
         if self._stage == _STAGE.BOOSTING:
             if self._airspeed.value() < self._boost_engage:
                 return False  # still on/near the rod -> caller neutrals
-            self._roll_sp = self._roll_hold  # hold the captured rod-vertical attitude through the climb
+            self._roll_sp = self._roll_hold  # centidegree fixnum (roll_hold captured from the centideg roll)
             self._pitch_sp = self._pitch_hold
             self._heading_err = 0
             return True
-        self._heading_err = self._heading_error(self._target_heading(heading, final), heading)
-        self._roll_sp = setpoint.get('roll', 0.0)
-        self._pitch_sp = setpoint.get('pitch', 0.0)
+        self._heading_err = self._heading_error(self._target_heading(heading, final), heading)  # int degrees
+        # roll/pitch setpoints -> centidegree fixnum (from_float once, at this boundary) so _run_pid is a
+        # plain int subtract against the centideg roll/pitch -- no per-axis float conversion in the PID.
+        self._roll_sp = fixed.from_float(setpoint.get('roll', 0.0))
+        self._pitch_sp = fixed.from_float(setpoint.get('pitch', 0.0))
         if self._land_bank_gain and (final or self._stage == _STAGE.LANDING):
             # final approach / landing: track the strip centreline (set up in _target_heading) with the
             # FULL fin authority (45 deg) to crab the crosswind out -- keep it gliding, not rolling-and-
             # dropping. The residual at strong wind is airframe-bound, not a control gap.
-            self._roll_sp = commons.bank_demand(self._heading_err, self._land_bank_gain, self._land_bank_limit)
+            self._roll_sp = fixed.from_float(commons.bank_demand(self._heading_err, self._land_bank_gain, self._land_bank_limit))
         elif self._bank_gain and self._stage == _STAGE.GLIDING:  # bank-to-turn toward the zone (vs skid)
-            self._roll_sp = commons.bank_demand(self._heading_err, self._bank_gain, self._bank_limit)
+            self._roll_sp = fixed.from_float(commons.bank_demand(self._heading_err, self._bank_gain, self._bank_limit))
         return True
 
-    def _run_pid(self, roll: float, pitch: float, dt_ms: int) -> None:
+    def _run_pid(self, roll: int, pitch: int, dt_ms: int) -> None:
         """Fixed-point PID (self._roll_sp/_pitch_sp/_heading_err vs the measured attitude) -> mixer -> fins.
-        Errors -> fixnum at the sensor boundary via fixed.from_float (the sole boxed float on this path),
-        output fixnum -> whole degrees for the mixer via // fixed.SCALE. heading_err is already int deg, so
-        × SCALE stays a small int (no box); roll/pitch cost one float subtract+multiply per axis."""
-        roll_cmd = self._pid['roll'].step(fixed.from_float(self._roll_sp - roll), dt_ms)
-        pitch_cmd = self._pid['pitch'].step(fixed.from_float(self._pitch_sp - pitch), dt_ms)
+        roll/pitch setpoints AND the measured roll/pitch are both centidegree fixnum (bno055 reads them
+        that way), so the error is a plain INT SUBTRACT -- no per-axis float conversion in the PID (the
+        setpoint's from_float happened once in _compute_setpoints). Output fixnum -> whole degrees for the
+        mixer via // fixed.SCALE. heading_err is int degrees, so × SCALE stays a small int (no box)."""
+        roll_cmd = self._pid['roll'].step(self._roll_sp - roll, dt_ms)
+        pitch_cmd = self._pid['pitch'].step(self._pitch_sp - pitch, dt_ms)
         yaw_cmd = self._pid['yaw'].step(self._heading_err * fixed.SCALE, dt_ms)  # coordinates the turn (0 in boost)
         # positional (not roll=...) so no kwargs dict is built on the hot path
         self._apply(self._mixer.mix(roll_cmd // fixed.SCALE, pitch_cmd // fixed.SCALE, yaw_cmd // fixed.SCALE))

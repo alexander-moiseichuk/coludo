@@ -58,7 +58,7 @@ async def amain():
     assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._active is False
 
     # gliding + fresh attitude -> engage: kp=1 on roll=10 -> roll cmd -10 -> elevons differential
-    attitude.push((100.0, 10.0, -5.0))  # heading, roll, pitch
+    attitude.push((100.0, fixed.from_float(10), fixed.from_float(-5)))  # heading, roll, pitch
     unit._step()
     assert unit._active is True and unit._stage == Stage.GLIDING and unit._steps == 1
     assert ctrl.fins['servo_eleron_left'].angle == 80 and ctrl.fins['servo_eleron_right'].angle == 100
@@ -102,7 +102,7 @@ async def amain():
 
     # per-stage behaviour: LANDING declared as a control stage -> continuous control glide->landing
     # (stays engaged, setpoint switches), then a non-control stage centres the fins
-    attitude.push((100.0, 10.0, -5.0))  # refresh
+    attitude.push((100.0, fixed.from_float(10), fixed.from_float(-5)))  # refresh
     pctrl = _StubController(Stage.GLIDING)
     staged = flight.Flight('flight', {'schedule_hz': 0, 'gains': {'pitch': {'kp': 1.0}},
                                       'stages': {'gliding': {'pitch': 0}, 'landing': {'pitch': 0}}}, pctrl)
@@ -174,7 +174,7 @@ async def amain():
     # capped at bank_limit), so the glider banks into the turn (differential elevons) instead of only
     # yawing -- the fix for over-ranging the zone on a flat rudder skid.
     position.push((48.0005, 10.990))   # west of the zone -> steer ~east (90) to the left gate
-    attitude.push((0.0, 0.0, 0.0))     # facing north, wings level -> a +90 heading error
+    attitude.push((0.0, 0, 0))     # facing north, wings level -> a +90 heading error
     bank_ctrl = _StubController(Stage.GLIDING)
     bankflight = flight.Flight('flight', {'schedule_hz': 0, 'gains': {'roll': {'kp': 1.0}},
                                           'nav_bank_gain': 1.5, 'bank_limit': 30}, bank_ctrl)
@@ -193,7 +193,7 @@ async def amain():
     assert await landflight.setup() is True
     landflight._mission = _StubMission(launch=None)
     position.push((48.0005, 10.990))   # west of the zone -> steer ~east (90); agl absent -> not 'final'
-    attitude.push((0.0, 0.0, 0.0))
+    attitude.push((0.0, 0, 0))
     landflight._step()
     # error +90 -> bank_demand(+90, land_bank_gain 1.5, land_bank_limit 45) = +45 -> elevons 90+/-45 (full)
     assert land_ctrl.fins['servo_eleron_left'].angle == 135 and land_ctrl.fins['servo_eleron_right'].angle == 45
@@ -252,14 +252,14 @@ async def amain():
                                            'stages': {'boosting': {}, 'gliding': {}}}, boost_ctrl)
     assert await boostflight.setup() is True
     accel.push((0.0, 0.0, 1.0))  # 1 g -> net 0 -> predict() no-op so the poked airspeed survives
-    attitude.push((0.0, 0.0, 90.0))  # vertical on the rod (heading 0, roll 0, pitch 90)
+    attitude.push((0.0, 0, fixed.from_float(90)))  # vertical on the rod (heading 0, roll 0, pitch 90)
     boostflight._airspeed._speed = 5.0  # still on the rod (below boost_engage)
     boostflight._step()
     assert all(fin.angle == 90 for fin in boost_ctrl.fins.values())  # rod gate -> neutral
-    assert boostflight._pitch_hold == 90.0 and boostflight._roll_hold == 0.0  # captured the vertical hold
+    assert boostflight._pitch_hold == fixed.from_float(90) and boostflight._roll_hold == 0  # captured the vertical hold
     # past the rod + leaned 10 deg off vertical -> elevons deflect to restore pitch toward the hold
     boostflight._airspeed._speed = 30.0
-    attitude.push((0.0, 0.0, 80.0))
+    attitude.push((0.0, 0, fixed.from_float(80)))
     boostflight._step()
     # pitch error = hold(90) - 80 = +10 -> kp 1 -> pitch_cmd 10 -> elevons 90+10, capped by the governor
     assert boost_ctrl.fins['servo_eleron_left'].angle == 100 and boost_ctrl.fins['servo_yaw'].angle == 90
