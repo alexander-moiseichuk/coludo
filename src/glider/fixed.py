@@ -16,7 +16,7 @@
 # and stay integer in between. There is deliberately NO fixnum mul/div rescale here: a fixed-point rescale
 # invites float->fixnum->float chains mid-computation, which is exactly what this exists to remove.
 
-from commons import between
+from commons import clamp_int
 
 try:
     from micropython import const
@@ -52,6 +52,8 @@ def to_str(scaled: fixnum) -> str:
 
 
 def clamp(low: fixnum, value: fixnum, high: fixnum) -> fixnum:
-    """Integer clamp to [low, high] (a symmetric ±x clamp with low=-x, high=+x). The fixed-point
-    counterpart of the float commons.between, re-exported so the whole convention lives in one module."""
-    return between(low, value, high)
+    """Integer clamp to [low, high] (a symmetric ±x clamp with low=-x, high=+x). Routes to commons.
+    clamp_int -- the `@micropython.viper` integer clamp (~2.1-2.8x the float `between`). Safe here because
+    fixnum is always a finite int (no math.inf), which is exactly what the fixed-point transition buys:
+    the whole control-path clamp is now viper-native, not the inf-tolerant @native float path."""
+    return clamp_int(low, value, high)
