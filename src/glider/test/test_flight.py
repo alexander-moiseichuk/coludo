@@ -1,13 +1,15 @@
 # On-board test for the Phase 3 stabilization loop (tasks/flight.py): registration, GLIDING gating,
-# degraded->neutral on stale attitude, the PID->mixer->fin path, and both scheduling modes (asyncio at
-# schedule_hz=0, machine.Timer at schedule_hz>0). Uses fake fins + a stub controller; attitude comes from the
-# databoard. Run by `make test`.
+# degraded->neutral on stale attitude, the PID->mixer->fin path, both scheduling modes (asyncio at
+# schedule_hz=0, machine.Timer at schedule_hz>0), and the WIRING of the extracted governor + guidance
+# (their laws are unit-tested in test_governor.py / test_guidance.py). Uses fake fins + a stub
+# controller; attitude comes from the databoard. Run by `make test`.
 
 import asyncio
 
 import config_default
 import databoard
 import fixed
+import guidance
 import pid
 import task
 from controller import Stage
@@ -38,6 +40,16 @@ class _StubController:
 
     def find(self, names):
         return [self.fins.get(n) for n in names]
+
+
+class _StubMission:
+    zone = ((48.001, 11.000), (48.000, 11.010))  # longitude-stretched -> gates on the left/right edges
+
+    def __init__(self, launch=None):
+        self._launch = launch
+
+    def launch_point(self):
+        return self._launch
 
 
 async def amain():
@@ -118,68 +130,17 @@ async def amain():
     staged._step()  # non-control stage -> fins neutral, disengaged
     assert all(fin.angle == 90 for fin in pctrl.fins.values()) and staged._active is False
 
-    # landing-zone nav, three GPS-degrading tiers of the yaw heading setpoint (GLIDING only)
-    class _StubMission:
-        zone = ((48.001, 11.000), (48.000, 11.010))  # longitude-stretched -> gates on the left/right edges
-
-        def __init__(self, launch=None):
-            self._launch = launch
-
-        def launch_point(self):
-            return self._launch
-
-    nav_ctrl = _StubController(Stage.GLIDING)
-    navflight = flight.Flight('flight', {'schedule_hz': 0, 'gains': {}}, nav_ctrl)
-    assert await navflight.setup() is True
-    navflight._heading_hold = 200.0  # the blind fallback heading
-    # the cache holds the steer() result for nav_period_ms; this test changes the inputs faster than
-    # that on purpose, so it clears _nav_heading before each tier to force a fresh recompute.
-
-    # tier 3: no fix, no launch point -> hold the captured heading (blind)
-    navflight._mission = _StubMission(launch=None)
-    navflight._nav_heading = None
-    assert navflight._target_heading(0.0, False) == 200.0
-    # tier 2: no fix, CC-set launch point (west of the zone) -> launch->left-gate bearing (~east, 90)
-    navflight._mission = _StubMission(launch=(48.0005, 10.990))
-    navflight._nav_heading = None
-    assert abs(navflight._target_heading(0.0, False) - 90.0) < 5.0
-    # tier 1: a fresh fix overrides -> steer from the CURRENT position (east of the zone -> right gate, ~270)
+    # bank-to-turn WIRING through the whole pipeline: a heading error becomes a BANK (guidance) and
+    # the roll PID drives the elevons differentially. The tier/cache/bank law details are
+    # test_guidance.py's; here the databoard fix must reach it through the running task.
     position = databoard.Databoard.provide('gnss', {'position': {'priority': 0, 'timeout_ms': 1000}}, 'position')
-    position.push((48.0005, 11.020))
-    navflight._nav_heading = None
-    assert abs(navflight._target_heading(0.0, False) - 270.0) < 5.0  # current position, not the launch point
-    # tier-1 freshness gate: a position_age_max_ms below the fix age skips tier 1 even on a LIVE fix,
-    # falling to the launch-point bearing (tier 2). 0 ms rejects even a just-pushed fix (~270 -> ~90).
-    navflight._position_age_max_ms = 0
-    navflight._nav_heading = None
-    assert abs(navflight._target_heading(0.0, False) - 90.0) < 5.0  # gated off tier-1 -> tier 2 launch bearing
-    navflight._position_age_max_ms = max(navflight._position.window_us, navflight._gnss_speed.window_us) // 1000
-    #/LANDING now STEERS too (it no longer locks straight-and-level) -> same tier-1 fix, ~270
-    nav_ctrl.stage = Stage.LANDING
-    navflight._nav_heading = None
-    assert abs(navflight._target_heading(0.0, False) - 270.0) < 5.0
-    # a NON-control stage (BOOSTING) holds the captured heading (blind)
-    nav_ctrl.stage = Stage.BOOSTING
-    navflight._nav_heading = None
-    assert navflight._target_heading(0.0, False) == 200.0
-
-    # a second call within nav_period returns the CACHED heading (no recompute) even if the fix moves
-    nav_ctrl.stage = Stage.GLIDING
-    navflight._nav_heading = None
-    first = navflight._target_heading(0.0, False)           # fresh steer() from (48.0005, 11.020) -> ~270
-    position.push((48.0005, 10.980))              # move the fix west; without the cache this -> ~90
-    assert navflight._target_heading(0.0, False) == first   # cached -> unchanged until nav_period elapses
-
-    # bank-to-turn: in GLIDING a heading error commands a BANK (roll setpoint = nav_bank_gain*error,
-    # capped at bank_limit), so the glider banks into the turn (differential elevons) instead of only
-    # yawing -- the fix for over-ranging the zone on a flat rudder skid.
     position.push((48.0005, 10.990))   # west of the zone -> steer ~east (90) to the left gate
     attitude.push((0.0, 0, 0))     # facing north, wings level -> a +90 heading error
     bank_ctrl = _StubController(Stage.GLIDING)
     bankflight = flight.Flight('flight', {'schedule_hz': 0, 'gains': {'roll': {'kp': 1.0}},
                                           'nav_bank_gain': 1.5, 'bank_limit': 30}, bank_ctrl)
     assert await bankflight.setup() is True
-    bankflight._mission = _StubMission(launch=None)  # zone present -> tier-1 uses the live fix above
+    bankflight._guidance._mission = _StubMission(launch=None)  # zone present -> tier-1 live fix
     bankflight._step()
     # error +90 -> bank_demand(+90, 1.5, 30) = +30 -> roll PID (kp 1) -> elevons 90+/-30 (a right bank)
     assert bank_ctrl.fins['servo_eleron_left'].angle == 120 and bank_ctrl.fins['servo_eleron_right'].angle == 60
@@ -191,7 +152,7 @@ async def amain():
     landflight = flight.Flight('flight', {'schedule_hz': 0, 'gains': {'roll': {'kp': 1.0}},
                                           'stages': {'gliding': {}, 'landing': {}}}, land_ctrl)
     assert await landflight.setup() is True
-    landflight._mission = _StubMission(launch=None)
+    landflight._guidance._mission = _StubMission(launch=None)
     position.push((48.0005, 10.990))   # west of the zone -> steer ~east (90); agl absent -> not 'final'
     attitude.push((0.0, 0, 0))
     landflight._step()
@@ -210,7 +171,7 @@ async def amain():
         return max(abs(controller.step(fixed.from_float(wrap(e)), dt_ms)) for e in sweep) / fixed.SCALE
 
     peak_float = peak_dterm(lambda e: ((e + 180.0) % 360.0) - 180.0)  # smooth (float) heading error
-    peak_int = peak_dterm(lambda e: flight.Flight._heading_error(e, 0.0))  # the production int wrap
+    peak_int = peak_dterm(lambda e: guidance.heading_error(e, 0.0))  # the production int wrap
     print('yaw D-term peak over a smooth ~27deg/s turn @100Hz -- float=%.0f, int=%.0f deg/s'
           % (peak_float, peak_int))
     assert abs(peak_float - 27) < 2          # float: ~ the turn rate, no quantisation
@@ -219,58 +180,39 @@ async def amain():
     # precision is irrelevant for fin authority over a 100-200 m approach) it is negligible; if a large
     # kd is ever needed, switch the yaw error to float or low-pass the D term.
 
-    # dynamic-pressure fin governor: the airspeed estimate caps mixer.limit EVERY step (even in a
-    # non-control stage), scaled by fin_limit_multiplier. The estimator itself is covered by test_airspeed;
-    # here we drive its value directly (a steady 1 g -> zero net accel -> predict adds nothing) and check
-    # the cap wiring: commons.fin_deflection_limit(v) * multiplier -> mixer.limit.
+    # dynamic-pressure fin governor WIRING: the governor caps mixer.limit EVERY step (even in a
+    # non-control stage). The schedule/throttle/override logic is test_governor.py's; here the
+    # databoard accel channel and the step pipeline must reach it through the running task.
     gov = flight.Flight('flight', {'schedule_hz': 0, 'gains': {}}, _StubController(Stage.SETTING))
     assert await gov.setup() is True
     accel = databoard.Databoard.provide('accel_gov', {'accel': {'priority': 0, 'timeout_ms': 1000}}, 'accel')
     accel.push((0.0, 0.0, 1.0))  # exactly 1 g -> net accel 0 -> predict() is a no-op, value() = what we set
-    gov._airspeed._speed = 0.0
+    gov._governor._estimator._speed = 0.0
     gov._step()
     assert gov._mixer.limit == 45  # 0 m/s -> full 45 deg authority (and SETTING still ran the governor)
-    gov._airspeed._speed = 40.0
+    gov._governor._estimator._speed = 40.0
     gov._step()
     assert gov._mixer.limit == 8  # fin_deflection_limit(40) -> 8 deg
-    gov._fin_limit_multiplier = 0.5  # the safety dial halves the whole schedule
-    gov._airspeed._speed = 0.0
-    gov._step()
-    assert gov._mixer.limit == 22  # int(45 * 0.5)
-    # the accel channel feeds the integral: a sustained >1 g reading builds airspeed up from zero
-    gov._fin_limit_multiplier = 1.0
-    gov._airspeed._speed = 0.0
+    # the accel channel feeds the integral through the databoard handle: >1 g builds airspeed from zero
+    gov._governor._estimator._speed = 0.0
     accel.push((0.0, 0.0, 6.0))  # 6 g -> ~49 m/s^2 net along the path
     gov._step()
-    assert gov._airspeed.value() > 0.0  # integrated off zero
+    assert gov._governor.airspeed() > 0.0  # integrated off zero
 
-    # airspeed governor THROTTLE + full-rate overrides (glide only; pre-glide is always full rate). The
-    # expensive float update is skipped when settled, but re-armed the instant speed breaks the limit (any
-    # cause) or the nose drops. Observable: _airspeed_accum_s == 0 iff the update ran (it resets on update).
+    # airspeed governor THROTTLE wiring in the glide: the fresh pitch (dive detector) measured by the
+    # PREVIOUS step must reach the governor's full-rate override on the next one.
     glide_ctrl = _StubController(Stage.GLIDING)
     thr = flight.Flight('flight', {'schedule_hz': 0, 'gains': {}, 'stages': {'gliding': {}},
                         'airspeed_full_speed': 20.0, 'airspeed_dive_pitch': -45.0}, glide_ctrl)
     assert await thr.setup() is True
-    attitude.push((0.0, 0, fixed.from_float(-6)))  # normal glide attitude
+    attitude.push((0.0, 0, fixed.from_float(-60)))  # a steep nose-down the next step must pick up
     accel.push((0.0, 0.0, 1.0))  # 1 g -> net 0 -> predict() no-op
-    thr._airspeed_step_s = 1.0  # force a long throttle interval so only an override can fire the update
-    # (a) settled: low speed + normal pitch + accum under the interval -> THROTTLED (update skipped)
-    thr._airspeed._speed = 14.0
-    thr._pitch_cd = fixed.from_float(-6)
-    thr._airspeed_accum_s = 0.0
+    thr._governor._interval_s = 1.0  # long throttle interval -> only an override can fire the update
+    thr._governor._estimator._speed = 14.0  # settled low speed -> no absolute-speed override
+    thr._step()  # reads the dive pitch into _pitch_cd (this step may still be throttled)
+    thr._governor._accum_s = 0.5
     thr._step()
-    assert thr._airspeed_accum_s > 0.0, 'settled glide should throttle (skip the update)'
-    # (b) ABSOLUTE speed over the limit at a normal attitude (crosswind/gust) -> full rate restored
-    thr._airspeed._speed = 30.0
-    thr._airspeed_accum_s = 0.5
-    thr._step()
-    assert thr._airspeed_accum_s == 0.0, 'overspeed must re-arm full rate regardless of attitude'
-    # (c) a steep nose-down while the (throttled) estimate is still low -> dive override fires first
-    thr._airspeed._speed = 14.0
-    thr._pitch_cd = fixed.from_float(-60)
-    thr._airspeed_accum_s = 0.5
-    thr._step()
-    assert thr._airspeed_accum_s == 0.0, 'a dive must re-arm full rate before the estimate shows the overspeed'
+    assert thr._governor._accum_s == 0.0, 'the measured dive pitch must re-arm the governor full rate'
 
     # boost stage: BOOSTING is a control stage that holds the captured rod-vertical attitude, but only
     # PAST THE ROD (airspeed > boost_engage); below it the fins stay neutral (the rod holds it vertical).
@@ -281,19 +223,20 @@ async def amain():
     assert await boostflight.setup() is True
     accel.push((0.0, 0.0, 1.0))  # 1 g -> net 0 -> predict() no-op so the poked airspeed survives
     attitude.push((0.0, 0, fixed.from_float(90)))  # vertical on the rod (heading 0, roll 0, pitch 90)
-    boostflight._airspeed._speed = 5.0  # still on the rod (below boost_engage)
+    boostflight._governor._estimator._speed = 5.0  # still on the rod (below boost_engage)
     boostflight._step()
     assert all(fin.angle == 90 for fin in boost_ctrl.fins.values())  # rod gate -> neutral
-    assert boostflight._pitch_hold == fixed.from_float(90) and boostflight._roll_hold == 0  # captured the vertical hold
+    assert boostflight._guidance._pitch_hold == fixed.from_float(90)  # captured the vertical hold
+    assert boostflight._guidance._roll_hold == 0
     # past the rod + leaned 10 deg off vertical -> elevons deflect to restore pitch toward the hold
-    boostflight._airspeed._speed = 30.0
+    boostflight._governor._estimator._speed = 30.0
     attitude.push((0.0, 0, fixed.from_float(80)))
     boostflight._step()
     # pitch error = hold(90) - 80 = +10 -> kp 1 -> pitch_cmd 10 -> elevons 90+10, capped by the governor
     assert boost_ctrl.fins['servo_eleron_left'].angle == 100 and boost_ctrl.fins['servo_yaw'].angle == 90
 
-    print('ok: flight -- control stages, nav, degraded->neutral, PID->mix->fins, fin governor + throttle/'
-          'overspeed/dive overrides, boost hold, scheduling')
+    print('ok: flight -- control stages, degraded->neutral, PID->mix->fins, governor + guidance wiring, '
+          'boost hold, scheduling')
 
 
 asyncio.run(amain())

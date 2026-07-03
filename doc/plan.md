@@ -121,28 +121,33 @@ Top-down proposals S01–S07 live in `findings.md` §20; this is the agreed exec
 week. Architecture is largely sound — this is targeted slimming, not a rewrite. The declined
 non-goals stand (no DI container, no message bus replacing the databoard, no config micro-ORM).
 
-1. **Slim the `Flight` loop** — extract **S03 `Guidance`** (setpoints + 3-tier heading + boost hold +
-   final-approach) **and** a sibling **`Governor`** (airspeed estimator + adaptive throttle +
-   dive/overspeed full-rate overrides + fin-limit), dispatched per stage (**S04**, the proven
-   `sequencer` pattern). `Flight._step` becomes pure orchestration: dt → Governor → gate → Guidance →
-   PID → apply. **NB this supersedes §20.3's "don't extract the governor" non-goal** — that assumed a
-   thin wrapper; the adaptive-throttle/override work turned it into real policy (6 knobs + ~15 hot-loop
-   lines + the `_pitch_cd` cache). Unlocks isolated unit tests for both the control law and the
-   throttle. Effort ~1 day. **Do first** — it un-bloats exactly where this week's complexity landed.
-2. **`mixer.mix` → `_apply` fusion** (bottom-up, not in §20) — bind the resolved fin objects into the
-   mixer's `_surfaces` and `set_angle` in-loop; kills `_apply`'s per-step `.items()` iterator +
-   per-fin `.get()` (the biggest single hot-slice + a residual alloc the `bench_flight` breakdown
-   flagged). Effort ~1–2 h.
-3. **S06 databoard `FusionStrategy`** (FirstFresh / ReconcileOffsets / SingleSource) — drops the
-   per-read `isinstance` guard on the hot path (~40 µs × ~6 reads/step measured) and makes fusion
-   pluggable + testable. Effort ~2 h.
-4. **Clarity, low-effort, whenever:** **S05** split `drivers/` vs `services/` (wifi/bluetooth) vs
+1. ✅ **Slim the `Flight` loop** (7/02) — extracted **S03 `guidance.py`** (per-stage law table (**S04**,
+   the sequencer pattern): boost hold, glide/landing steering with the 3 GPS tiers + nav cache,
+   final-approach centreline; `GuidanceConfig` typed knobs) **and `governor.py`** (airspeed estimator +
+   adaptive throttle + dive/overspeed full-rate overrides + the 1/v² mixer cap; `GovernorConfig`).
+   Both are **host-runnable leaf modules** (injected databoard-style handles, `now_us` passed in,
+   `commons.ticks_diff` shim) with isolated unit tests (`test_guidance.py`, `test_governor.py`).
+   `Flight._step` is pure orchestration: dt → Governor → gate → Guidance → PID → actuate (374 → ~200
+   lines). The scoped **S02** (typed configs) landed with it for these two. Validated on-board:
+   46/46 tests + the [TMS-7-guiding_refactoring](sims/TMS-7-guiding_refactoring/) HITL set — exact
+   trajectory parity vs fixnums, real control-path leak down to ~15 KB/s settled (~36 min OOM @ 100 Hz).
+2. ✅ **`mixer.mix` → actuate fusion** (7/02) — `Mixer.bind(fins)` + `actuate(roll, pitch, yaw)`
+   drive `set_angle` inside the mixing loop; `Flight._apply` and the per-step `.items()`/`.get()`
+   pair are gone (`mix()` stays for tests/host tools).
+3. ✅ **`virtual_flight.py` de-duplication** (7/02, promoted from #5) — the host tool now drives the
+   REAL `guidance`/`governor`/`pid`/`mixer.actuate` through stub handles; only the sequencer stage
+   machine + physics remain mirrored (they are genuinely board-bound). Touchdown parity with the
+   pre-refactor tool: ~1 m on the clean F15 scenario. The governor now flies the ESTIMATED airspeed
+   on the host too (board parity, was the sim's true airspeed).
+4. ❌ **S06 databoard `FusionStrategy`** — DECLINED on re-scan (7/02): its premise went stale — the
+   `isinstance` guard sits only in `_extrapolate`, the *degraded* no-fresh-channel path, not per-read;
+   strategy classes would ADD a per-read indirection + RAM on a MicroPython hot path for pluggability
+   nobody needs yet (YAGNI). Revisit only when a new fusion behaviour (median, confidence blend) is
+   actually wanted.
+5. **Clarity, low-effort, whenever:** **S05** split `drivers/` vs `services/` (wifi/bluetooth) vs
    `bus/` (i2cbus/spibus); **S07** cluster `commons.py` along the now-natural fixnum-int vs float seam;
-   **S02** typed per-task config objects (doc-in-code, one place for defaults + cross-field validation).
-5. **`virtual_flight.py` de-duplication** (bottom-up, not in §20) — make the real control law
-   host-runnable so the host tool drives `flight`/`sequencer`/`pid` instead of re-implementing the
-   stage machine + a hand-mirrored `_run_pid`. Biggest lift, but it's the drift source that bit us
-   twice this week (fixnum, gyro D-term). Do when there's appetite.
+   **S02** typed config objects for the remaining tasks. Deliberately parked before the flight tests —
+   pure file churn.
 6. **S01 instance-ize** Databoard + Recorder, merge Inspector into Controller — highest impact + effort;
    defer until parallel testability or a hot-spare / HITL-in-HIL need forces it. **Not pre-flight.**
 

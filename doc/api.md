@@ -4,6 +4,32 @@ _Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand
 
 # glider firmware (MicroPython) — `src/glider`
 
+## `airspeed.py`
+
+_Tested by `test/test_airspeed.py`._
+
+airspeed.py — hybrid airspeed estimate for the dynamic-pressure fin governor (coludo.md "Fin
+authority"). There is NO pitot tube, so:
+* accelerometer integration is the BACKBONE (predict) — primary, and the only usable source during
+boost and right after separation, when GNSS is jittery under high dynamics;
+* a valid, sane GNSS ground speed nudges out the integrator's drift (correct) — a complementary
+filter, GNSS as the slow truth, accel as the fast signal.
+GNSS is DISTRUSTED by default: rejected without a fix and above a physical ceiling (a 100+ m/s reading
+under separation is a glitch), and only ever BLENDED (never a hard replace) so one bad-but-in-range
+sample cannot jump the estimate; repeated good fixes pull the drift out. The estimate is biased to
+over-read when uncertain — a high airspeed tightens the governor cap, which is the safe direction.
+
+### `class AirspeedEstimator`
+
+Fuse integrated body acceleration (predict) with sanity-gated GNSS ground speed (correct) into one
+airspeed estimate (m/s) for the fin governor. Stateless of HOW accel-along-path is derived — the
+caller passes it (e.g. |accel| - g during boost), so this stays unit-testable on the host.
+
+- `__init__(ceiling_ms: float=60.0, gnss_gain: float=0.2)` — constructor
+- `value() -> float` — The current airspeed estimate (m/s).
+- `predict(accel_along: float, dt: float) -> float` — Integrate net acceleration ALONG the flight path (m/s^2; pass it >= 0 / over-read to stay
+- `correct(gnss_speed: float, has_fix: bool) -> float` — Blend toward a GNSS ground speed ONLY if trustworthy: a live fix and within the physical
+
 ## `cc_client.py`
 
 _Tested by `test/test_cc_client.py`._
@@ -31,7 +57,9 @@ Maps a command to an async handler(msg) -> response line.
 ### `create_dispatcher(cfg: dict, controller=None, on_reboot=None, config_path: str='board.config') -> Dispatcher`
 
 Build a Dispatcher with the standard command handlers, wired to the running config, the
-Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset.
+Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset. The
+handlers are grouped by concern into the _register_* helpers; each closes over one shared
+_Context, so this stays a short orchestrator.
 
 ## `cc_protocol.py`
 
@@ -64,6 +92,80 @@ Parse a protocol line into a _Msg (works for requests and responses).
 
 Build a protocol line; values are encoded as needed.
 
+## `commons.py`
+
+_Tested by `test/test_commons.py`._
+
+commons.py — small, dependency-free primitives shared across the control-math modules (mixer / pid /
+navigation / sequencer / flight / sg90). The bundle module for the plan.
+
+Naming convention:
+plain name -- a leaf with no _opt variant at all (none currently).
+NAME_upy / NAME_opt + `NAME = <winner>`
+-- a function with an optimised variant. NAME_upy is the
+portable bytecode reference; NAME_opt is the optimised build (viper for ints, native for floats,
+future asm). The module binds NAME to whichever the on-board bench FAVOURS -- usually _opt; switch
+the one alias line if a measurement changes. Both forms stay public so benchmarks/tests call them
+DIRECTLY (no runtime selector). Bound here: clamp_int, wrap180 (@viper, ~2.1-2.8x); between,
+magnitude_sq (@native, ~1.2-1.6x); bank_demand -> _upy for now (its @native measured 1.03x -- a
+thin wrapper over native between; switch to _opt when a bench shows a gain).
+
+`@micropython.viper` / `@micropython.native` are compiler directives keyed on the literal decorator
+name (not aliasable); the shim below keeps the module importable on CPython (the decorator degrades to
+identity, runs as plain Python). On the board the RV32 emitter compiles viper to integer-only native
+code (~2.1-2.5x vs bytecode, no FPU) and native to FPU float code (~1.2-1.6x — float boxing caps it).
+
+### `between_upy(low, value, high)`
+
+Clamp `value` to the inclusive range [low, high]: `low` if below, `high` if above, else `value`.
+With low=-x, high=+x it is a symmetric +/-x clamp; either bound may be math.inf for an open side
+(between(-inf, v, inf) == v). Float-/inf-valued (so @native, not viper). Assumes low <= high.
+
+### `between_opt(low, value, high)`
+
+### `magnitude_sq_upy(x, y, z)`
+
+|(x, y, z)|^2 (no sqrt — callers compare against squared thresholds). Pure float -> @native.
+
+### `magnitude_sq_opt(x, y, z)`
+
+### `bank_demand_upy(heading_error, gain, limit)`
+
+Bank-to-turn: the roll angle (deg, right +) to hold for a heading error (deg) -- proportional with
+a symmetric hard clamp (gain 0 -> no bank, rudder-only). A banked turn is tight (~v^2/(g*tan(bank)))
+where a flat rudder skid is wide and weak, so the glider does not over-RANGE a small zone and the
+overshoot loop becomes an altitude-bleeding orbit.
+
+### `bank_demand_opt(heading_error, gain, limit)`
+
+### `fin_deflection_limit(speed_ms)`
+
+Max fin deflection in degrees for airspeed `speed_ms` (m/s) -- the dynamic-pressure governor table
+lookup (saturates at _FIN_VMAX). Multiply by the config fin_limit_multiplier at the caller.
+
+### `atomic_write_json(path, data)`
+
+Persist `data` as JSON to `path` atomically (shared by config.save + mission.save): write a
+temp file then rename it over the target, with a remove-then-rename fallback for a VFS (FAT) that
+won't rename onto an existing file. os/json are imported lazily so the hot-path importers of commons
+do not pull them in.
+
+### `id_classify(read, expected: int) -> str`
+
+Classify a chip WHO_AM_I / device-id byte against the expected value into an operator-readable
+wire-level diagnosis. The deeper 'why' a bus driver's diagnose() returns when setup() failed, so
+`verify`/`probe` report e.g. 'chip-select not asserting' instead of just 'absent / miswired?'.
+`read` is None when the bus read itself failed (no I2C ack / SPI error). Shared by every ID-based
+driver (adxl375 / lsm6dso32 / bno055 / bmp280), so it lives here, not in one driver.
+
+### `clamp_int_upy(low, value, high)`
+
+### `clamp_int_opt(low: int, value: int, high: int) -> int`
+
+### `wrap180_upy(degrees)`
+
+### `wrap180_opt(degrees: int) -> int`
+
 ## `config.py`
 
 _Tested by `test/test_config.py`._
@@ -71,9 +173,9 @@ _Tested by `test/test_config.py`._
 Board configuration loader / validator — the Phase 0 foundation.
 
 Implements the three-layer model from specs/board-config.md:
-config_default.py  (firmware default / fallback)
-board.config         (saved active config, a full snapshot)
-in-memory dict     (validated, what the Controller builds tasks from)
+config_default.py (firmware default / fallback)
+board.config (saved active config, a full snapshot)
+in-memory dict (validated, what the Controller builds tasks from)
 
 Runs on MicroPython on the board. Validation here is config-file *integrity* (structure,
 types, pin uniqueness, bus refs, reserved pins) — NOT hardware health, which is checked at
@@ -81,7 +183,9 @@ runtime and surfaced to the operator (the strict model).
 
 ### `validate(cfg) -> list`
 
-Return a list of human-readable error strings (empty list == valid).
+Return a list of human-readable error strings (empty list == valid). Config-file *integrity*
+only -- structure, types, pin uniqueness, bus refs, reserved pins -- NOT hardware health, which
+is checked at runtime and surfaced to the operator (the strict model).
 
 ### `config_id(cfg) -> str`
 
@@ -132,6 +236,27 @@ drivers/priorities); `components` are the consumers/actuators (recorder, ...).
 
 ### `default() -> dict`
 
+## `config_hitl.py`
+
+config_hitl.py — a HITL board config derived from config_default (). The real sensor drivers
+are turned OFF and the `hitl` task supplies accel/attitude/agl/altitude/elevation/position at priority
+0, so the control code reads the simulation. flight is enabled with test gains, the watchdog and the
+radios are off (self-contained sim), and separation is off (the boost-timeout drives BOOSTING ->
+GLIDING). Servos stay on so the sim can read the commanded fin angles. `default()` returns a fresh
+dict -- mutate freely. Run it instead of config_default for a simulation; the flight config is untouched.
+
+### `default(motor: str='F15', noise: float=0.0, spike: bool=False, wind: float=0.0, wind_dir: float=0.0, boost_axis: str='z', glider_g: int=_GLIDER_G, inject_hz: int=0) -> dict`
+
+Build a HITL config. Separation is off here, so boost->glide deploy rides the sequencer's baro
+APOGEE detect (mass/motor-independent -- the top of the arc), with config_default's long boost_timeout
+as the last-resort fallback; the sim's reduced baro noise keeps the peak-detect clean. `wind`/`wind_dir`
+set a steady cross-wind (m/s, toward deg) the glide must crab against. `boost_axis` picks which accel
+axis carries the boost |a|. `glider_g` is the glider (glide) mass in grams (default 300, the full build;
+150 = the half-weight optimisation target) -- the booster adds to it for the boost phase, then ejects
+at separation so the glide runs on `glider_g` alone (a lighter glider -> a longer glide, the worst case
+for the GC-off leak). `inject_hz` > 0 sets the sensor publish rate (default 0 -> the sim's sim_hz);
+lower it (e.g. 10) to slim the sim's own heap churn so an on-board HITL leak reflects real flight.
+
 ## `controller.py`
 
 _Tested by `test/test_controller.py`._
@@ -147,7 +272,13 @@ operator via stats()/validate().
 ### `class Stage`
 
 The flight stages, self-contained: int ids (cheap to compare/store on MicroPython) and the
-`STAGES` id->name mapping (operator-facing names; `in Stage.STAGES` is an O(1) key check).
+`STAGES` id->name mapping (operator-facing names; `in Stage.STAGES` is an O(1) key check). `NAMES`
+is the reverse (name->id) so config that names stages by string resolves to an id once.
+
+kept here, in the stage machine's own module. flight/sequencer/hitl/led import it from
+controller -- a LIGHT coupling (the module loads fast, no heavy deps pulled just for the enum). It
+could move to commons.py as the shared domain enum to drop even that import, but the gain is marginal
+versus the cross-file churn; revisit only if importing controller solely for Stage ever bites.
 
 
 ### `class Controller(inspector.Inspectable)`
@@ -159,9 +290,10 @@ The flight stages, self-contained: int ids (cheap to compare/store on MicroPytho
 - `find(names: list[str]) -> list` — Non-blocking: the active tasks for `names`, None for any not up. The fast lookup for
 - `query(names: list[str], waiting: bool=True) -> list` — Look up sibling tasks by name from the registry: `gnss, baro = await self.query(['gnss',
 - `setup() -> bool` — Create + set up every enabled task in order. Skip (and report) failures. setup() brings a
+- `bustune(kind: str, ident, freq: int) -> dict` — Bench frequency-calibration primitive the CC-side sweep drives: retune sensor bus
 - `start() -> None` — Launch each task's run() loop as a supervised asyncio task.
 - `close(name: str) -> None` — Deactivate a task and clean up its resources.
-- `finish() -> None` — Shut down all tasks.
+- `finish() -> None` — Shut down all tasks, in REVERSE bring-up order so a command PRODUCER (e.g. the flight loop,
 - `set_stage(stage: int) -> None`
 - `stage_name() -> str` — The current flight stage as its operator-facing name.
 - `arm() -> None` — Enable actuation. The pre-flight precondition (probe all clean, mission set) is enforced by
@@ -232,7 +364,7 @@ falling back to extrapolation of the primary when none is fresh.
 - `add_source(source: str, rank: int, expire_us: int, reconcile: bool=False) -> _Channel` — Register (or re-register) a source at `rank`; return its channel to push() to directly (no
 - `write(value, source: str) -> None` — Report a source's latest reading by name (convenience; sensors push() their channel). The
 - `value()` — The fused estimate (offset-reconciled when enabled); None if nothing was ever written.
-- `read() -> tuple` — (value, source, age_ms) of the fused estimate; `source` is None when extrapolated. A
+- `read() -> list` — [value, source, age_ms] of the fused estimate; `source` is None when extrapolated, else the
 - `offsets() -> dict` — Learned bias per source (source -> offset) for diagnostics; empty until reconciled.
 - `raw(source: str)` — A specific source's latest value (None if absent / unwritten).
 - `sources() -> list`
@@ -248,6 +380,56 @@ falling back to extrapolation of the primary when none is fresh.
 - `inspect() -> dict` _(classmethod)_
 - `stats() -> dict` _(classmethod)_
 
+## `fixed.py`
+
+_Tested by `test/test_fixed.py`._
+
+fixed.py — fixed-point helpers for the flight hot paths. MicroPython boxes a heap float on EVERY float
+operation, and GC is disabled through the airborne phase, so every boxed float leaks toward OOM. The
+control path therefore works in scaled integers ("fixnum") and crosses to/from float only at the
+isolated sensor boundary.
+
+`fixnum` is `int`, aliased -- a SEMANTIC marker that a value is a scaled fixed-point quantity (×SCALE),
+not a plain count and not a float. Annotating with it documents the convention and makes an accidental
+float / whole-number mix obvious at the call site; there is no runtime cost.
+
+SCALE is the fractional resolution (100 -> 0.01 unit: centidegrees / centimetres / centi-(m/s)). It is
+kept small on purpose: the RV32 small-int ceiling is 2**30, so a product of two scaled quantities is
+(val·SCALE)² -- at SCALE 100 a ±180° angle squared is 3.2e8 (safe); at 1000 it is 3.2e10 (a 16-byte
+mpz). Start at 100; raise to 1000 only if the accuracy sweep in test_fixed.py shows 0.01 is too coarse.
+
+Convert at the BOUNDARY only -- from_float once on the way in, to_float / to_str once on the way out --
+and stay integer in between. There is deliberately NO fixnum mul/div rescale here: a fixed-point rescale
+invites float->fixnum->float chains mid-computation, which is exactly what this exists to remove.
+
+### `from_float(value) -> fixnum`
+
+Whole unit (float or int: degrees / metres / m·s⁻¹) -> fixnum. The one boxed-float spot, kept at
+the sensor boundary. Truncates toward zero -- the residual is < 1/SCALE (below actuator resolution).
+
+### `to_float(scaled: fixnum) -> float`
+
+fixnum -> whole-unit float. Boxes a float, so use ONLY where a float is genuinely required (trig,
+the airspeed integrator) and keep it at the boundary -- never inside a hot loop.
+
+### `millis(value: fixnum) -> int`
+
+A fixnum (×SCALE) -> integer MILLI-units (×1000), independent of SCALE -- e.g. at SCALE=100 a
+centidegree fixnum becomes millidegrees. For telemetry/logs that fix a milli representation regardless
+of the control SCALE. Pure integer rescale (SCALE divides 1000), so no float is boxed.
+
+### `to_str(scaled: fixnum) -> str`
+
+fixnum -> its decimal string ('12.34' at SCALE 100) via INTEGER divmod -- NO float is boxed. For
+telemetry / display: a scaled value prints as its true decimal without a float round-trip.
+
+### `clamp(low: fixnum, value: fixnum, high: fixnum) -> fixnum`
+
+Integer clamp to [low, high] (a symmetric ±x clamp with low=-x, high=+x). Routes to commons.
+clamp_int -- the `@micropython.viper` integer clamp (~2.1-2.8x the float `between`). Safe here because
+fixnum is always a finite int (no math.inf), which is exactly what the fixed-point transition buys:
+the whole control-path clamp is now viper-native, not the inf-tolerant @native float path.
+
 ## `gnss.py`
 
 _Tested by `test/test_gnss.py`._
@@ -261,7 +443,7 @@ stale and consumers fall back.
 
 ### `checksum_ok(sentence: str) -> bool`
 
-Verify the NMEA `*hh` XOR checksum (over the chars between '$' and '*').
+Verify the NMEA `*hh` XOR checksum (over the chars between '$' and '*'); inner loop = _xor_checksum.
 
 ### `degrees(value: str, hemisphere: str)`
 
@@ -280,7 +462,96 @@ sentence selection + rate in _configure().
 - `setup() -> bool`
 - `run() -> None` — Read NMEA lines forever and parse them; non-ASCII noise and malformed fields are skipped
 - `probe() -> str` — On-demand self-test: NMEA is arriving on the UART (the run loop counts lines). A satellite
+- `diagnose() -> str` — Deeper analysis when setup() failed: is NMEA arriving on the UART? Open the port and listen
 - `inspect() -> dict`
+
+## `governor.py`
+
+_Tested by `test/test_governor.py`._
+
+governor.py — the dynamic-pressure fin governor (specs/coludo.md "Fin authority"), sibling of
+pid.py / mixer.py / airspeed.py. Owns the airspeed ESTIMATE (airspeed.AirspeedEstimator: accel
+backbone + GNSS corrector), the ADAPTIVE THROTTLE that keeps that float path off the GC-off hot
+loop once the glide settles, and the mixer authority cap (commons.fin_deflection_limit ∝ 1/v²,
+× the board's fin_limit_multiplier safety dial). Extracted from tasks/flight.py (doc/plan.md
+structural roadmap #1) so the throttle policy is unit-testable without a Flight task.
+
+Host-runnable by construction (tools/virtual_flight.py drives the REAL governor): the sensor
+dependencies are INJECTED databoard-style handles — `accel.value()` -> (x, y, z) in g or None,
+`gnss_speed.read()` -> (m/s, source, age_ms) — never the databoard itself, and nothing here
+touches time or the machine.
+
+Why the estimator is throttled at all: the update is a FLOAT path (sqrt magnitude, integrate,
+GNSS blend) ~ the biggest GC-off allocator measured (~22 KB/s at full rate). It matters most while
+the speed is fast-changing (boost accel + active deceleration), so it runs FULL RATE there; once
+settled it updates on an interval that adapts to the airspeed change — snap to the fast floor when
+the estimate moves, grow toward the ceiling as it settles. The estimator integrates the
+ACCUMULATED dt, so cadence never changes the integral — only how fresh the fin-authority cap is
+(the cap persists between updates).
+
+### `class GovernorConfig`
+
+The governor's knobs, resolved from the flight task's config dict ONCE (typed config: one
+place for defaults + doc-in-code; the keys keep their board.config names).
+
+- `__init__(config: dict)` — constructor
+
+### `class Governor`
+
+Cap the mixer's control authority by estimated airspeed (torque ∝ v²): step() each control
+slice decides full-rate vs throttled, updates the estimator over the accumulated dt, and writes
+the deflection cap into mixer.limit.
+
+- `__init__(config: GovernorConfig, mixer, accel, gnss_speed, fin_limit_multiplier: float=1.0)` — constructor
+- `airspeed() -> float` — The current airspeed estimate (m/s) — the boost rod gate and telemetry read it here.
+- `step(dt: float, pre_glide: bool, pitch: fixnum) -> None` — One control slice: accumulate `dt` (wall seconds since the last step) and update the
+
+## `guidance.py`
+
+_Tested by `test/test_guidance.py`._
+
+guidance.py — the stage-dependent guidance law, sibling of pid.py / mixer.py / navigation.py.
+Turns (stage, heading) into the attitude setpoints + heading error the PIDs chase: the boost
+rod-vertical hold, bank-to-turn toward the landing zone, the three GPS-degrading heading tiers,
+and the low-final-approach centreline tracker. Extracted from tasks/flight.py (doc/plan.md
+structural roadmap #1, findings §20 S03) so the control law is unit-testable without a Flight
+task; per-stage laws dispatch through a table (S04 — the proven sequencer._detect pattern), so a
+new stage is one entry + one method, not a branch in a growing if/elif.
+
+Host-runnable by construction (tools/virtual_flight.py drives the REAL law): dependencies are
+INJECTED — the mission (zone/launch_point), the governor (airspeed for the boost rod gate), and
+databoard-style handles (`position.read()` -> ((lat, lon), source, age_ms), `agl.value()` -> m or
+None). Timing comes in as `now_us` from the caller; only commons.ticks_diff touches ticks.
+
+Results land in the roll_setpoint/pitch_setpoint (centidegree fixnum) + heading_error (int
+degrees) INSTANCE SLOTS rather than a returned tuple — decomposed WITHOUT adding a per-step heap
+allocation (GC is off in flight).
+
+### `heading_error(target: float, current: float) -> int`
+
+Shortest signed heading error (deg), wrapped to [-180, 180] so 350 -> 10 is +20, not -340.
+Integer degrees — sub-degree precision is irrelevant to a servo and lets one modulo replace the
+wrap loop (commons.wrap180, viper bundle).
+
+### `class GuidanceConfig`
+
+The guidance knobs, resolved from the flight task's config dict ONCE (typed config: one place
+for defaults + doc-in-code; the keys keep their board.config names). `position_window_ms` is the
+caller's default tier-1 freshness gate — the GNSS channels' own databoard windows — so it tracks
+the GNSS rate instead of a magic number; config sets position_age_max_ms TIGHTER to distrust
+GNSS sooner (looser is a no-op: the source is already None past the window).
+
+- `__init__(config: dict, position_window_ms: int)` — constructor
+
+### `class Guidance`
+
+The per-stage control law: setpoint(stage) gates control stages; enter() captures the holds
+on entering control; compute() dispatches the stage's law and fills the setpoint slots.
+
+- `__init__(config: GuidanceConfig, mission, governor, position, agl)` — constructor
+- `setpoint(stage: int)` — The configured attitude setpoint dict for `stage`, or None when it is not a CONTROL stage
+- `enter(heading: float, roll: fixnum, pitch: fixnum) -> None` — Entering a control stage (from a non-control one): capture the heading to hold blind and
+- `compute(stage: int, setpoint: dict, heading: float, now_us: int) -> bool` — Run `stage`'s law: fill roll_setpoint/pitch_setpoint/heading_error and return True, or
 
 ## `i2cbus.py`
 
@@ -297,6 +568,7 @@ is fast and synchronous, so the lock is held only for the transaction. A glider-
 One physical I2C bus, shared by every device on it; transactions are serialized by a lock.
 
 - `__init__(bus_id: int, spec: dict)` — constructor
+- `retune(freq: int) -> None` — Re-init this I2C peripheral at `freq` Hz in place (bench frequency calibration; no reboot).
 - `read(addr: int, reg: int, count: int, addrsize: int=8) -> bytes`
 - `read_into(addr: int, reg: int, buf, addrsize: int=8) -> None`
 - `write(addr: int, reg: int, data: bytes, addrsize: int=8) -> None`
@@ -337,6 +609,7 @@ three for computed values.
 - `unregister(name: str) -> None` _(classmethod)_
 - `names() -> list` _(classmethod)_
 - `get(name: str)` _(classmethod)_
+- `probe_all() -> dict` _(classmethod)_ — Run probe() on every registered inspectable that implements it; return {name: result} (result
 - `inspect(name: str) -> dict` _(classmethod)_
 - `update(name: str, props: dict) -> list` _(classmethod)_
 - `stats(name: str) -> dict` _(classmethod)_
@@ -374,10 +647,10 @@ config (hardware; stable across flights, see config.py) the mission changes ever
 lives in its own file, `launch.config`, and is edited live through the Inspector.
 
 Mission is a singleton Inspectable:
-inspect mission                              -> launch id / site / position + the board clock
-update mission base64:{"launch_id":"t1"}     -> set the launch id for this flight
-update mission base64:{"epoch":1750170000}   -> set the board RTC (time sync; Unix seconds)
-get-config launch / set-config launch        -> read / save (merge + persist) launch.config
+inspect mission -> launch id / site / position + the board clock
+update mission base64:{"launch_id":"t1"} -> set the launch id for this flight
+update mission base64:{"epoch":1750170000} -> set the board RTC (time sync; Unix seconds)
+get-config launch / set-config launch -> read / save (merge + persist) launch.config
 
 Position is metres / decimal degrees; it is a known origin now and seeds the GNSS driver later.
 
@@ -387,7 +660,7 @@ The operator-set launch identity. One per board; registers itself so Control can
 `inspect`/`update mission`. Seeded from launch.config at construction.
 
 - `__init__(path: str=LAUNCH_PATH, max_range_m: float=_DEFAULT_MAX_RANGE_M)` — constructor
-- `set_time(epoch) -> bool` — Set the board RTC from a Unix epoch (seconds, UTC). Returns True if applied.
+- `set_time(epoch) -> bool` — Set the board RTC from a Unix epoch (seconds, UTC). Returns True if applied. Rejects a value
 - `clock() -> str` — Current board wall-clock as 'YYYY-MM-DDTHH:MM:SS' (from the RTC).
 - `epoch() -> int` — Current board clock as a Unix epoch (seconds), for Control to compare against its own.
 - `launch_point()` — The launch origin (lat, lon): the operator-set position (CC `update mission` / `assist`) if
@@ -406,8 +679,9 @@ mixer.py — control-surface mixer (sibling of servo.py / gnss.py). Maps the con
 pitch, yaw -- each a deflection command in degrees) to per-fin servo angles for the airframe's
 mixing: ELEVONS (the two elerons move together for pitch, differentially for roll) + a RUDDER (the
 yaw fin). Per-fin trim (mechanical neutral alignment) and a hard +/- limit on control deflection.
-Pure integer math, no hardware -- the flight control task (Phase 3) feeds it axis commands and
-applies the angles to the sg90 drivers; the per-driver clamp still guards the physical range.
+Pure integer math, no hardware -- the flight control task (Phase 3) binds the resolved fin driver
+objects once (bind()) and then drives them straight from the mixing loop (actuate()); the
+per-driver clamp still guards the physical range. mix() keeps the dict form for tests/host tools.
 
 Signs are config (`surfaces` gains + `trim`), set during bench alignment: if a surface deflects the
 wrong way, flip its gain sign; if its neutral is off, set its trim.
@@ -418,8 +692,10 @@ Mix (roll, pitch, yaw) deflection commands -> {fin_name: integer angle}:
 angle = neutral + trim + clamp(sum(gain * axis), +/- limit).
 
 - `__init__(config: dict=None)` — constructor
-- `mix(roll: int=0, pitch: int=0, yaw: int=0) -> dict` — Per-fin integer angle for the given axis deflections (degrees).
-- `neutralise() -> dict` — The neutral (zero-deflection) angle per fin -- the safe / control-disabled output.
+- `mix(roll: int=0, pitch: int=0, yaw: int=0) -> dict` — Per-fin integer angle for the given axis deflections (degrees). Returns a SHARED dict REUSED
+- `neutralise() -> dict` — The neutral (zero-deflection) angle per fin -- the safe / control-disabled output (shared dict).
+- `bind(fins: dict) -> None` — Fuse the resolved fin driver objects ({surface name: object with set_angle(angle)}) into the
+- `actuate(roll: int, pitch: int, yaw: int) -> None` — mix() fused with the servo write: clamp each surface's control deflection to +/- limit and
 
 ## `navigation.py`
 
@@ -431,6 +707,12 @@ The mission's landing zone is a lat/lon rectangle, top-left (TL) + bottom-right 
 sides, so the glider enters along the long axis (the documented "vector to the shortest boundary
 entrance"). steer() picks the nearer gate, heads for it until inside the zone, then for the centre.
 Equirectangular (flat-earth) math -- "not exact but about", which is plenty at zone scale (<~1 km).
+
+(perf analysis): steer()/bearing()/distance() use float trig and allocate a few small tuples per
+call. The concern was GC churn from calling them at the 100 Hz control rate. Resolution: the fix is on
+the CALLER side, not here -- guidance._target_heading() caches steer() at GPS cadence (~10 Hz), so
+the trig/alloc rate drops ~10x. With the hot-path pressure removed, a zero-allocation rewrite here
+would only cost clarity for no measurable gain, so navigation stays simple, pure and correct.
 
 SAFETY: the gates are FIXED to the short sides, and steer() will always vector to one (and turn ~180
 back through it on an overshoot) with NO knowledge of what lies beyond any side (trees / launch pad /
@@ -454,6 +736,11 @@ Resolve the rectangle (top-left, bottom-right corners, each (lat, lon)) -> (targ
 gate_b): the centre and the midpoints of the two SHORTER sides. A horizontally (longitude)
 stretched zone gates on its left/right edges; a vertically (latitude) stretched one on top/bottom.
 
+corner ORDER does not matter. The centre is the average, the spans use abs(), and the gates are
+the coordinate EXTREMES (lon_l/lon_r at the centre latitude, or lat_t/lat_b at the centre longitude)
+-- so whichever diagonal pair is passed (TL/BR or BL/TR), the two returned gates are the same two
+side-midpoints; steer() then picks the nearer. inside() likewise uses min/max. No normalisation needed.
+
 ### `inside(position: tuple, corner_tl: tuple, corner_br: tuple) -> bool`
 
 True if position (lat, lon) is within the zone rectangle (corner order-agnostic).
@@ -469,22 +756,56 @@ zone and exits the far side without landing (still high), the gate it just cross
 nearest one -> it turns back (~180deg) and re-approaches through it. No waypoint memory -- the
 spec's 'recalculate to the nearest alternative entry and loop' just happens.
 
+### `cross_track(position: tuple, point: tuple, heading: float) -> float`
+
+Signed perpendicular distance (metres) from `position` to the line through `point` along compass
+`heading`; positive = to the RIGHT of the line (looking along the heading).
+
+### `approach(position: tuple, corner_tl: tuple, corner_br: tuple, heading: float, cross_gain: float, intercept_max: float) -> float`
+
+Final-approach guidance: the heading to fly to TRACK the zone's long-axis CENTRELINE (the
+strip), used low on final instead of homing to the centre POINT. The glider intercepts the line at up
+to `intercept_max` deg (`cross_gain` deg per metre off it), then flies down it -- so a crosswind is
+crabbed out and the touchdown holds the narrow strip. Uses the full bank authority (keep it gliding,
+not rolling-and-dropping). (This is a banked/crab correction -- a true wing-low SLIP would need a
+sideslip-capable airframe model; the residual at strong wind is airframe-bound, not a control gap.)
+
 ## `pid.py`
 
 _Tested by `test/test_pid.py`._
 
-pid.py — a minimal fixed-step PID controller for the flight stabilization loop (Phase 3), sibling of
+pid.py — a minimal fixed-point PID controller for the flight stabilization loop (Phase 3), sibling of
 mixer.py. One instance per control axis. Integral anti-windup clamp + output clamp; reset() on
-(re)entering a control phase. Floats internally (gains/integral are inherently fractional); the
-caller rounds the output to integer degrees for the mixer/servos.
+(re)entering a control phase.
+
+INTEGER fixed-point (fixed.fixnum in/out, integer-millisecond dt) so a step allocates NOTHING on the
+heap. The flight loop runs with GC DISABLED (sequencer disables it on BOOSTING), so every heap byte
+accumulates toward OOM; the old float PID boxed a fresh float on every * + / -- measured 176 B/step,
+×3 axes ×100 Hz ≈ 56 KB/s of leak. This version measures 0 B/step (even at a ±180° heading swing, the
+worst case for the derivative), leaving only the isolated call-site conversion fixed.from_float(setpoint
+- actual) at the sensor boundary. Net saving ≈ 47 KB/s. See findings 17 (memory refactor).
+
+Fixed-point contract (error/output in fixed.fixnum -- degrees × fixed.SCALE; measured alloc-free):
+error   fixnum  -- the caller scales at the boundary: fixed.from_float(setpoint - actual)
+dt      ms (int)
+gains   floats (kp/ki/kd) -- scaled by _KU=100 (0.01 gain resolution) at construction
+limits  degrees -- scaled by fixed.SCALE (to the error/output unit) at construction
+output  fixnum  -- the caller reduces: output // fixed.SCALE -> integer degrees for the mixer
+The two 1000s inside step() are TIME (ms<->s), not the angle scale -- they are independent of SCALE.
+Every intermediate product stays < 2**30 (the RV32 small-int ceiling; past it boxes a 16-byte mpz): at
+SCALE=100 the worst term kp_k·e = 500·18000 = 9e6 and the derivative swing 36000·1000 = 3.6e7, both far
+under it (SCALE=100 keeps ~3x headroom even on a scaled angle², which SCALE=1000 would overflow).
 
 ### `class Pid`
 
-error -> control output. step(error, dt): kp*e + ki*integral(e) + kd*de/dt, each clamped.
+error (fixnum, degrees × SCALE) -> control output (fixnum). step(error, dt_ms[, rate]):
+kp*e + ki*integral(e) + kd*derivative, each clamped -- all integer, no heap allocation. The
+derivative is the measured `rate` (gyro, SCALE-deg/s) when given -- derivative-on-measurement, clean
++ no setpoint kick -- else d(error)/dt (differentiated on the error).
 
-- `__init__(kp: float=0.0, ki: float=0.0, kd: float=0.0, integral_limit: float=math.inf, output_limit: float=math.inf)` — constructor
-- `reset() -> None` — Clear the integral + derivative history -- on entering a control phase, so a fresh glide
-- `step(error: float, dt: float) -> float`
+- `__init__(kp: float=0.0, ki: float=0.0, kd: float=0.0, integral_limit: int=_UNBOUNDED_DEG, output_limit: int=_UNBOUNDED_DEG)` — constructor
+- `reset() -> None` — Clear the integral + derivative history -- on entering a control phase, so a fresh glide does
+- `step(error: fixnum, dt_ms: int, rate: fixnum=None) -> fixnum`
 
 ## `recorder.py`
 
@@ -536,9 +857,11 @@ A typed telemetry stream. Created with a destination file and its data field nam
 first push emits the CSV header (uptime + fields), then each push emits a timestamped row.
 All streams in one boot share the Recorder session prefix, so file names are stable.
 
-`decimate_us` rate-limits the stream: with it 0 every push() emits; with it set, push() emits
-only when at least `decimate_us` microseconds have passed since the last emitted row (a fast
-sensor can push every sample and have its telemetry decimated to a sane rate).
+`decimate_us` rate-limits the stream: push() emits only when at least `decimate_us` microseconds
+have passed since the last emitted row (a fast sensor can push every sample and have its telemetry
+decimated to a sane rate). `decimate_us=0` (the default) inherits the Recorder GLOBAL rate
+(`Recorder.telemetry_decimate_us`, 50 Hz) -- so a stream opts into an individual rate by passing a
+non-zero value, else the board-wide `recorder.telemetry_us` prorates it.
 
 - `__init__(filename: str, fields: tuple, decimate_us: int=0)` — constructor
 - `push(values) -> None`
@@ -566,6 +889,33 @@ global.
 - `slew(permits: int) -> 'Gate'` _(classmethod)_ — The process-wide slew gate, created once (the first servo's `permits` wins) and shared by
 - `reset() -> None` _(classmethod)_ — Drop the shared gate so the next Gate.slew() rebuilds it -- for tests (clean permit count)
 
+## `sim_model.py`
+
+_Tested by `test/test_sim_model.py`._
+
+sim_model.py — pure flight-dynamics model shared by the on-board HITL task (tasks/hitl.py) and the
+host-side virtual-flight tool (tools/virtual_flight.py). PURE: math + random only, no hardware, so it
+runs identically on the board (MicroPython) and on the host (CPython) -- the virtual flight and the
+HITL sim are then the SAME physics, only the harness around them differs. World frame is ENU metres
+from the launch pad; attitude is Euler degrees (roll, pitch, yaw=heading).
+
+### `class Body`
+
+Flight-dynamics state + integrator (PURE -- host-testable). `boost_step()` climbs vertically; at
+apogee `begin_glide()` hands over to `glide_step()` (fin-controlled); `sensors()` returns what the
+on-board sensors would read.
+
+- `__init__(mass: float, launch: tuple, elevation_m: float, glide_heading: float, glide_mass: float=None)` — constructor
+- `boost_step(dt: float, thrust: float, pitch_cmd: float=0.0, roll_cmd: float=0.0) -> None` — Vertical climb (1-DoF: thrust + gravity + drag) PLUS attitude under thrust: a crosswind
+- `begin_glide() -> None` — Apogee hand-over: the booster ejects (mass drops to the glider-only glide_mass), then nose down
+- `glide_step(dt: float, roll_cmd: float, pitch_cmd: float, yaw_cmd: float) -> None` — Rigid-body glide. Fin deflections (deg from neutral) command roll/pitch; bank turns the
+- `position() -> tuple`
+- `sensors() -> dict` — Clean (pre-noise) sensor readings from the current state.
+
+### `noisy(value, frac: float, lo: float, hi: float)`
+
+Perturb a scalar by +/- frac of its magnitude (uniform), clamped to [lo, hi]. frac 0 -> clean.
+
 ## `spibus.py`
 
 spibus.py — shared, lock-serialized SPI buses, mirroring i2cbus. A sensor may move off the shared
@@ -581,6 +931,7 @@ One physical SPI bus, shared by every device on it; transactions are serialized 
 
 - `__init__(bus_id: int, spec: dict)` — constructor
 - `device(cs: int, mb_bit: int=6) -> _Device` — A register window for one chip-select on this bus (matches i2cbus.Bus.device).
+- `retune(freq: int) -> None` — Re-init this SPI peripheral at `freq` Hz in place (bench frequency calibration; no reboot).
 
 ### `get(bus_id: int, spec: dict) -> Bus`
 
@@ -591,14 +942,14 @@ The shared Bus for `bus_id`, created once from `spec` (sck/mosi/miso/baud/mode) 
 Task base class and driver registry — the unit the Controller creates and supervises.
 
 Every component/system task follows the common lifecycle from specs/coludo.md:
-setup()    async; initialize or reset; return True on success
-probe()    async; ON-DEMAND self-test (the CC `probe` command, never at boot) -> None if healthy,
+setup() async; initialize or reset; return True on success
+probe() async; ON-DEMAND self-test (the CC `probe` command, never at boot) -> None if healthy,
 else an error string. Default None; a sensor reports 'X not found on i2c:0', an actuator
 exercises itself (the servo sweeps its range) -- so a mid-flight reboot never sweeps fins.
-run()      async; the task's main activity loop
-notify()   subscribe a callback for this task's updates
+run() async; the task's main activity loop
+notify() subscribe a callback for this task's updates
 validate() return True if the task is currently healthy
-finish()   async; shut down and release resources
+finish() async; shut down and release resources
 A Task is Inspectable: inspect()/update()/stats() expose it to the operator (the Controller
 registers each task with the Inspector), so there is no separate report().
 
@@ -619,9 +970,10 @@ name so the Controller can build it from a config component.
 ### `class Task(inspector.Inspectable)`
 
 - `__init__(name: str, config: dict=None, controller=None)` — constructor
+- `note(template: str=None, arg=None) -> None` — De-duplicated best-effort run-loop log + runtime-health flag. Call `note()` (template None) on a
 - `setup() -> bool` — Initialize or reset. Override. Return True on success, False otherwise.
 - `probe() -> str` — On-demand self-test (the CC `probe` command, NOT run at boot): return None when healthy, or
-- `run() -> None` — Main activity loop. Override. Default returns immediately.
+- `run() -> None` — Main activity loop. Override. Default raises to catch missing overrides (the Controller
 - `notify(callback) -> None` — Register callback(task, event) to be invoked on this task's updates.
 - `emit(event=None) -> None` — Notify all subscribers of an update.
 - `find(names: list[str]) -> list` — Non-blocking sibling lookup via the Controller (None for any not up).
@@ -656,6 +1008,7 @@ High-G accel: samples (x, y, z) in g to the databoard 'accel' slot, interrupt-dr
 - `sample() -> tuple` — Read and return (x, y, z) acceleration in g (also clears DATA_READY).
 - `run() -> None` — Sample on DATA_READY (or every fallback_ms if interrupts go silent); plain poll with no
 - `probe() -> str` — On-demand self-test: the device id reads back, then one sample succeeds (each step logged).
+- `diagnose() -> str` — Deeper analysis when setup() failed: the bus reads our DEVID and classifies the wire-level
 - `inspect() -> dict`
 
 ## `atgm336h.py`
@@ -686,6 +1039,7 @@ Apply the configured BLE radio state. Inspectable: `radio` requested, `active` a
 
 - `probe() -> str` — On-demand self-test: the BLE radio is in the requested state (or absent on this board ->
 - `setup() -> bool`
+- `run() -> None` — Setup-only: no run loop. `update()` is the runtime entry point.
 - `inspect() -> dict`
 - `update(props) -> list`
 
@@ -710,6 +1064,7 @@ startup ground zero, captured per-sensor so it is offset-free) to the databoard.
 - `run() -> None`
 - `update(props: dict) -> list` — `{"rezero": true}` re-captures ground zero from the latest altitude (sync; operator does
 - `probe() -> str` — On-demand self-test: the chip id reads back, then one conversion reads (each step logged).
+- `diagnose() -> str` — Deeper analysis when setup() failed: the bus reads the chip id and classifies the fault (no
 - `inspect() -> dict`
 
 ## `bno055.py`
@@ -730,9 +1085,10 @@ ADXL375 and BMP280.
 (g, incl gravity) -> 'accel' as a low-g backup to the ADXL375 (priority 1).
 
 - `setup() -> bool`
-- `sample() -> tuple` — Read the block and return (attitude (heading, roll, pitch) deg, accel (x, y, z) g).
+- `sample() -> tuple` — Read the block and return a FLAT 6-tuple (run() slices): heading in float degrees (feeds the
 - `run() -> None`
 - `probe() -> str` — On-demand self-test: the chip id reads back, then one fused sample succeeds (each step logged).
+- `diagnose() -> str` — Deeper analysis when setup() failed: the bus reads the chip id and classifies the fault (no
 - `inspect() -> dict`
 
 ## `icp10111.py`
@@ -756,6 +1112,35 @@ startup ground zero, captured per-sensor so it is offset-free) to the databoard.
 - `run() -> None`
 - `update(props: dict) -> list` — `{"rezero": true}` re-captures ground zero from the latest altitude (sync; operator does
 - `probe() -> str` — On-demand self-test: the run loop is producing pressure. We issue NO I2C here -- the
+- `diagnose() -> str` — Deeper analysis when setup() failed: re-issue the product-id command and classify via
+- `inspect() -> dict`
+
+## `ina226.py`
+
+drivers/ina226.py — INA226 high-side current / voltage / power monitor over the shared I2C bus:
+the battery (or 5 V) supply-line sensor for consumption tracking. @task.driver('ina226'). setup()
+verifies the die id, programs the conversion config, and computes + writes the calibration register
+from the shunt resistance + the expected max current (the only board-specific numbers); run() polls
+the bus voltage (V), current (A) and power (W) to the databoard + telemetry. Graceful: wrong/absent
+die id -> setup False -> the Controller skips it.
+
+The INA226 measures the SHUNT VOLTAGE directly (2.5 uV/LSB), so the absolute accuracy comes from the
+CAL register, not a precise resistor: Current_LSB = max_current / 2**15, CAL = 0.00512 / (Current_LSB
+* shunt_ohms). To trust the watt-hours, calibrate `shunt_ohms` against a KNOWN current once and back
+out the effective value -- a 2-wire ohmmeter cannot resolve a 0.01 ohm shunt.
+
+### `class Ina226(task.Task)`
+
+High-side power monitor: bus voltage (mV), current (mA) and power (mW) -- INTEGER milli-units, no
+float -- to the databoard + per-sample telemetry. Current/power scale from `shunt_mohms` +
+`max_current_ma` (the CAL register). The same driver serves the 5 V USB phase and the LiPo phase --
+it reports the INA's own bus voltage, so power is correct as the base rail changes. Graceful: a
+wrong/absent die id -> setup False.
+
+- `setup() -> bool`
+- `run() -> None`
+- `probe() -> str` — On-demand self-test: the die id reads back, then one live read (each step logged).
+- `diagnose() -> str` — Deeper analysis when setup() failed: the bus reads the die id and classifies the wire-level
 - `inspect() -> dict`
 
 ## `led.py`
@@ -772,6 +1157,32 @@ Blink a status pattern on one GPIO derived from the controller's state + health.
 - `setup() -> bool`
 - `run() -> None`
 - `probe() -> str` — On-demand self-test: blink the status LED a few times so it is seen to drive, then off.
+- `inspect() -> dict`
+
+## `lsm6dso32.py`
+
+drivers/lsm6dso32.py — LSM6DSO32 6-DoF IMU: the primary raw accel + the sole gyro `rate`. ±32 g accel
+(covers the 8-12 g boost without clipping, fine 1 g resolution for the airspeed integrator) + ±2000 dps
+gyro. @task.driver('lsm6dso32'). setup() checks WHO_AM_I, configures accel/gyro, and provides both the
+'accel' (x,y,z in g) and 'rate' (x,y,z in deg/s) databoard slots; run() writes the latest reading. If
+the device is absent (wrong WHO_AM_I) setup() returns False and the Controller skips it.
+
+Wired on SPI1 (its own chip-select, shared with the ADXL375) for clean high-rate reads — see
+doc/waveshare_esp32p4_pins.md. SPI is 4-wire mode 3; multi-byte reads auto-increment via CTRL3_C.IF_INC
+(so the bus device takes mb_bit=None — no address multi-byte bit). I2C (addr 0x6A) also works if the
+component sets bus 'i2c'. Sampling is interrupt-driven on INT1 (accel data-ready) when an `int_pin` is
+wired, else a plain period_ms poll, mirroring the ADXL375 driver. Gyro + accel sit in contiguous output
+registers (0x22..0x2D), so one 12-byte read fetches both.
+
+### `class Lsm6dso32(task.Task)`
+
+6-DoF IMU: samples accel (x,y,z g) -> 'accel' and gyro (x,y,z deg/s) -> 'rate', interrupt-driven.
+
+- `setup() -> bool`
+- `sample() -> tuple` — Read and return a FLAT 6-tuple (run() slices it, no concat): accel (ax, ay, az) in float g, then
+- `run() -> None` — Sample on INT1 data-ready (or every fallback_ms if interrupts go silent; plain poll with no
+- `probe() -> str` — On-demand self-test: WHO_AM_I reads back, then one sample succeeds (each step logged).
+- `diagnose() -> str` — Deeper analysis when setup() failed: the bus reads WHO_AM_I and classifies the wire-level
 - `inspect() -> dict`
 
 ## `neo6mv2.py`
@@ -801,6 +1212,13 @@ The pin uses an internal pull-down so an open (separated) circuit reads LOW reli
 the pads override it HIGH. A separation while not Boosting (e.g. a ground test in Setting) is
 logged but does not transition -- the guard keeps go/no-go correct.
 
+this transition calls controller.set_stage() directly, NOT the sequencer's _advance(), so it
+does not write a row to sequencer.csv. That is deliberate -- separation is the PRIMARY Boosting ->
+Gliding trigger and separation.csv (event + stage, durable) is its authoritative telemetry record;
+the sequencer's burnout-timeout is only the fallback, and sequencer.csv records that fallback path.
+A post-flight tool reading the BOOSTING->GLIDING reason must consult separation.csv first. (GC policy
+is unaffected: gc.disable() already fired on the SETTING->BOOSTING transition.)
+
 ### `class Separation(task.Task)`
 
 Detect stage separation (HIGH=nested -> LOW=separated) and trigger Boosting -> Gliding.
@@ -808,6 +1226,7 @@ Detect stage separation (HIGH=nested -> LOW=separated) and trigger Boosting -> G
 - `setup() -> bool`
 - `run() -> None`
 - `probe() -> str` — On-demand self-test: the separation pin reads a valid level (logged nested/separated).
+- `diagnose() -> str` — Deeper analysis: read the separation pin -- during a pre-flight check it should be HIGH (the
 - `inspect() -> dict`
 
 ## `sg90.py`
@@ -833,8 +1252,8 @@ standalone -- selected by the component's `driver` field. The shared slew gate +
 live here for now; factor them into a servo base when a second type lands.
 
 Two ways to command a fin:
-update {"angle": d}  -- IMMEDIATE, ungated: the operator override (sync, returns at once).
-await move(d)        -- GATED + settle-aware: passes through a SHARED slew gate so at most
+update {"angle": d} -- IMMEDIATE, ungated: the operator override (sync, returns at once).
+await move(d) -- GATED + settle-aware: passes through a SHARED slew gate so at most
 `servo_concurrency` (board config, default 3 = no limit) fins slew at
 once, then awaits the estimated travel so the caller knows it has (open-
 loop, no feedback) arrived. The flight control loop uses this.
@@ -854,10 +1273,13 @@ One PWM SG90 fin servo, commanded in integer degrees (clamped to [min_deg, max_d
 shared slew gate; probe() sweeps it on demand.
 
 - `setup() -> bool`
+- `run() -> None` — Command-driven: no run loop. `move()` / `update()` are the entry points.
 - `probe() -> str` — On-demand self-test (CC `probe`, pre-flight -- never at boot): sweep min -> max -> neutral so
 - `move(angle) -> int` — Drive to `angle` (clamped, integer degrees) through the shared slew gate -- at most
 - `update(props: dict) -> list` — `{"angle": d}` moves the servo IMMEDIATELY (integer degrees, clamped) -- the operator
+- `set_angle(angle) -> int` — The 100 Hz flight-loop hot-path command. AVOIDS update()'s per-step {'angle': ...} dict (
 - `finish() -> None` — Release the PWM (stop driving the pin) on shutdown.
+- `diagnose() -> str` — Deeper analysis when setup() failed: is the pin PWM-capable? Resolve the pin and try to bring a
 - `inspect() -> dict`
 
 ## `vl53l4cx.py`
@@ -882,6 +1304,7 @@ low-altitude metres where the barometer cannot resolve height. Interrupt-driven 
 - `setup() -> bool`
 - `run() -> None` — Sample on data-ready (GPIO1) or every period_ms; write AGL (m) to the databoard. Runs
 - `probe() -> str` — On-demand self-test: the model id reads back -- a single locked op, safe alongside the run
+- `diagnose() -> str` — Deeper analysis when setup() failed: re-read the 16-bit MODEL_ID high byte (0xEB) and
 - `inspect() -> dict`
 
 ## `wifi.py`
@@ -891,23 +1314,25 @@ signal/ip to the operator. HAL (it drives the radio), so @task.driver('wifi'). S
 host / TX power come from the `wifi` section of board.config, the password from <ssid>.creds
 (gitignored, deploy.sh-pushed).
 
-Optional + telemetry-first: `network` is imported in setup() so the module still loads on a board
-with no Wi-Fi (e.g. the FireBeetle 2); setup() then returns False, the Controller skips the task,
-and the board runs everything else without CC. run() is a maintain loop -- a failed join is never
-fatal, it just retries.
+Optional + telemetry-first + NON-BLOCKING BOOT: setup() never touches the radio (it only reads
+config), because bringing the STA link up can block and would stall the serial boot -- so the board
+ALWAYS boots and flies, with or without Wi-Fi. The radio comes up lazily in run(), which (re)joins on
+an interval ONLY until ignition (after BOOSTING it idles, never competing with the flight loop). A
+board with no Wi-Fi just logs once and flies standalone -- no Wi-Fi means no CC, nothing more.
 
 ### `class Wifi(task.Task)`
 
 Join + maintain the STA link; Inspectable as `wifi`.
 
-- `setup() -> bool`
-- `run() -> None` — Keep the link up: (re)join whenever disconnected. Never fatal -- the board flies without
+- `setup() -> bool` — NON-BLOCKING: only read config; the radio is brought up lazily in run(). Bringing the
+- `run() -> None` — (Re)join every `retry_ms` -- but ONLY until ignition. Once the controller reaches BOOSTING the
 - `connect(timeout_ms: int=15000) -> bool` — Join the configured network. Returns True once connected, False on timeout/error.
 - `isconnected() -> bool`
 - `ifconfig() -> tuple`
 - `ip() -> str`
 - `rssi() -> int`
 - `set_tx_power(dbm: int) -> bool` — Adjust the TX power (operator signal-level tuning). Returns True on success.
+- `diagnose() -> str` — Dump the Wi-Fi link state to the console AND the recorder log, and return the one-line summary.
 - `inspect() -> dict`
 - `update(props: dict) -> list`
 - `stats() -> dict`
@@ -920,13 +1345,14 @@ tasks/board_health.py — board vitals task: samples temperature, free memory an
 period, pushes a telemetry row (health.csv) and exposes the latest to the operator. Registered as
 @task.activity('health') so the Controller creates and supervises it.
 
-CPU load (an integer percent 0..100) is estimated from a low-priority idle task that increments a
-counter and yields (sleep_ms(0)) in a tight loop. Each period we measure the idle counter's RATE
-(counts/ms); the highest rate ever observed (`_max_rate`) is taken as the fully-idle baseline, and
-load% = round(100 * (1 - rate / _max_rate)).
-So load is RELATIVE to the busiest-idle moment seen: it self-calibrates as the board gets idle
-time (the baseline only rises), but a board that is never truly idle reads relative to its
-least-busy moment. test_board_health drives a CPU hog and asserts the load rises with real load.
+CPU load (an integer percent 0..100) is estimated WITHOUT busy-spinning: a probe task sleeps a fixed
+period (probe_ms) and measures how LATE it actually wakes. asyncio.sleep_ms only resumes once the
+event loop is free, so time other tasks spend running delays the wake-up -- the overshoot beyond the
+nominal sleep is the time the CPU was busy with other work:
+load% = round(100 * (elapsed - probe_ms) / elapsed).
+Sleeping rather than spinning on sleep_ms(0) lets the core actually idle between probes (FreeRTOS idle
+/ WFI) -- much lower idle power draw (the old spin pinned the CPU at ~100%). No calibration baseline
+is needed (it is absolute). test_board_health drives a CPU hog and asserts the load rises with it.
 
 ### `class BoardHealth(task.Task)`
 
@@ -936,7 +1362,7 @@ Periodic vitals -> telemetry (health.csv) + `inspect health`.
 - `temperature() -> float`
 - `mem_free() -> int`
 - `sample() -> dict`
-- `run() -> None` — Push a vitals row at startup, then every period_ms estimate load and push again. Runs
+- `run() -> None` — Push a vitals row at startup, then every period_ms. A probe task tracks CPU load. Runs
 - `probe() -> str` — On-demand self-test: free memory reads positive (a basic board-vitals sanity); the
 - `inspect() -> dict`
 - `stats() -> dict`
@@ -962,15 +1388,14 @@ an empty `cc_host` ('') disables CC and the board flies standalone.
 
 ## `flight.py`
 
-tasks/flight.py — Phase 3 stabilization loop. @task.activity('flight'). At `schedule_hz` it reads the
-IMU 'attitude' (heading, roll, pitch), runs a PID per axis to the current stage's setpoint (+ heading
-hold), mixes the result to the fins (mixer.py) and writes them via sg90.update(). Per-stage: the
-`stages` config names the CONTROL stages and their setpoint (GLIDING = wings-level + steer to the
-landing zone, LANDING = its own flare setpoint, straight-and-level); any other stage
-(SETTING/BOOSTING/DONE) holds the fins neutral. In GLIDING the yaw heading setpoint comes from navigation.py
-in three GPS-degrading tiers (_target_heading): live fix -> steer from the current position; no fix
-but a CC-set launch point -> hold the launch->gate bearing (open-loop); neither -> the captured glide
-heading. LANDING locks the heading. Degraded: stale/absent attitude -> neutral.
+tasks/flight.py — Phase 3 stabilization loop. @task.activity('flight'). At `schedule_hz` it runs the
+control PIPELINE: dt -> airspeed Governor (fin-authority cap, adaptively throttled) -> control-stage
+gate -> attitude -> Guidance (per-stage setpoints + heading) -> PID per axis -> mixer actuate. The
+control LAW lives in guidance.py and the airspeed/authority POLICY in governor.py (doc/plan.md
+structural roadmap #1) — this task is the orchestration: databoard reads, arming/degraded gates,
+scheduling, and the PID->mixer->servo drive. Per-stage behaviour, the GPS-degrading heading tiers,
+boost hold and final approach are guidance.py's; the adaptive estimator throttle is governor.py's.
+Degraded: stale/absent attitude -> neutral. Disarmed / non-control stage -> neutral.
 
 Scheduling: schedule_hz > 0 -> a machine.Timer ticks the step, so the control law gets a regular slice
 independent of what other asyncio tasks are doing (deterministic, e.g. while the laser hammers I2C in
@@ -985,6 +1410,40 @@ Attitude-hold stabilization: GLIDING-gated, timer- or asyncio-scheduled, fail-sa
 - `setup() -> bool`
 - `run() -> None`
 - `finish() -> None`
+- `progress() -> tuple` — (controlling, steps, stage, updated_us) -- the public control-loop heartbeat, so the watchdog
+- `inspect() -> dict`
+
+## `hitl.py`
+
+tasks/hitl.py — Hardware-In-The-Loop flight simulator (Phase-5). @task.activity('hitl').
+
+Closes the control loop ON THE BOARD without changing any production code: it reads the commanded fin
+angles from the cached servo tasks, steps a flight-dynamics model (sim_model.Body), and PROVIDES the
+resulting sensor quantities on the databoard at priority 0 -- so sequencer.py / flight.py / pid /
+mixer / navigation read it and cannot tell it is simulated. The full chain runs closed-loop: sim
+sensors -> sequencer (stage machine) -> flight (PID -> mixer -> fins) -> back into the model. Use with
+config_hitl (real sensors off, this on, flight + sequencer enabled, watchdog off). The physics live in
+sim_model.py (pure, shared with the host-side tools/virtual_flight.py -- same model, both worlds).
+
+Fidelity: BOOST adds attitude under thrust -- a crosswind weathercocks the stack and the boost
+stage's guarded fins fight to hold it vertical, on top of the vertical 1-DoF that drives launch detect +
+apogee; the GLIDE is a rigid body with roll/pitch/yaw state driven by the elevon/rudder deflections the
+flight loop commands (that is where the rest of control happens). Aero is simplified and the
+coefficients are deliberately tunable -- the point is a stable, closed loop that exercises the control
+code, not aerodynamic truth. Outputs are perturbed by a noise level N and optional 2x spikes
+to study sensor-quality degradation (e.g. the laser dropping out beyond its range).
+
+The simulated sensors are ALSO recorded as telemetry under the SAME csv names/fields as the real
+drivers (accel_adxl375 / imu_bno055 / baro_icp10111 / gnss / laser_agl + a combined fins), so an
+on-board HITL run produces a COMPLETE, renderable capture on the Luckfox (flight_report/flight_svg),
+not just health/sequencer/servo. The records are decimated so the recorder link keeps up.
+
+### `class Hitl(task.Task)`
+
+The HITL simulator task: drive the model from the commanded fins and publish simulated sensors.
+
+- `setup() -> bool`
+- `run() -> None`
 - `inspect() -> dict`
 
 ## `recorder.py`
@@ -1010,11 +1469,12 @@ keeps logging/telemetering through the global recorder.Recorder.
 
 tasks/sequencer.py — Phase 3 flight-stage automation. @task.activity('sequencer'). Watches the
 databoard and drives the guarded, forward-only stage machine that the control loop gates on:
-SETTING  -> BOOSTING : |accel| over launch_g sustained launch_ms (motor ignition)
-BOOSTING -> GLIDING  : the separation switch (drivers/separation.py) is primary; this is the
-burnout-timeout FALLBACK if the switch never fires
-GLIDING  -> LANDING  : agl below land_agl_m (the laser sees the ground; elevation is the fallback)
-LANDING  -> done     : |accel| ~1 g (stationary) sustained ground_ms (on the ground)
+SETTING -> BOOSTING : |accel| over launch_g sustained launch_ms (motor ignition), OR the baro climbing
+past launch_alt_m off the pad (an independent, threshold-robust backup)
+BOOSTING -> GLIDING : the separation switch (drivers/separation.py) is primary; else the baro APOGEE
+detect (peak - apogee_drop_m, at the top of the arc, mass/motor-independent); burnout timeout last
+GLIDING -> LANDING : agl below land_agl_m (the laser sees the ground; elevation is the fallback)
+LANDING -> done : |accel| ~1 g (stationary) sustained ground_ms (on the ground)
 Each transition fires once (the stage check + reset-on-change is the guard), logs the reason and a
 sequencer.csv telemetry marker. Thresholds are config; launch_g/launch_ms is exactly what the
 E16/F15 passive flights tune. One control-independent tick, so it runs on the passive flights too
@@ -1025,6 +1485,7 @@ E16/F15 passive flights tune. One control-independent tick, so it runs on the pa
 Drive the flight-stage machine from sensor signals (forward-only, guarded, logged).
 
 - `setup() -> bool`
+- `finish() -> None`
 - `run() -> None`
 
 ## `watchdog.py`
@@ -1106,7 +1567,7 @@ Host GPS reader: feed NMEA lines, expose the latest fix + a launch position for 
 - `status() -> dict` — Operator-facing fix snapshot: is it a usable 3D fix, how many satellites, where.
 - `position()` — The host position as a mission dict (latitude/longitude[/altitude]) when the fix is
 - `run(reader: asyncio.StreamReader) -> None` — Feed every line from an NMEA stream until it ends (the read loop, transport-agnostic).
-- `serve(device: str, baud: int=9600) -> None` — Open the serial GPS and feed it forever (the wired host-assist path).
+- `serve(device: str, baud: int=9600) -> None` — Open the serial GPS and feed it forever (the wired host-assist path). A device that cannot be
 
 ### `open_serial(device: str, baud: int=9600) -> asyncio.StreamReader`
 
@@ -1157,6 +1618,7 @@ encryption is out of scope (cc-protocol.md "Transport & ports"). Routes:
 GET  /             -> the one-page dashboard (static/index.html)
 GET  /api/boards   -> hub.board_rows() as JSON (same data as the `list` command)
 POST /api/cmd      -> {board, command, params} -> run it on the board, reply as JSON
+POST /api/op       -> {line} -> run an operator-console line (calibrate, ...) -> {lines}
 GET  /events       -> Server-Sent Events: the board list pushed every heartbeat (live table)
 
 ### `class Web`
@@ -1182,6 +1644,20 @@ board. Requires a GPS attached to the Control host (main.py --gps-device).
 health), last-known values without touching the board. Defaults to the session's selected board.
 
 ### `cache_command(hub, tokens, session) -> list`
+
+## `calibrate.py`
+
+`calibrate <board> <i2c|spi> <id> [margin-steps]` -- find a sensor bus's max stable frequency.
+
+Drives the board's `bustune` primitive (retune-in-place + per-device health) UP a frequency ladder,
+stopping at the first step any device fails. Reports the ceiling (highest all-healthy step), the
+LIMITING device (first to drop out -> the one to rewire / move off the shared bus), and a `chosen`
+freq backed off `margin` ladder steps for headroom (default 1 -- your MAX-1 rule). Restores the bus
+to its configured freq afterwards; it does NOT persist. To apply, the operator runs the printed
+`set-config board ... + reboot` (the immutable-config activation path). The sweep lives here on CC,
+the board only executes one retune-and-test step at a time.
+
+### `calibrate_command(hub, tokens, session) -> list`
 
 ## `gps.py`
 
