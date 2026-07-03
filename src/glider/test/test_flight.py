@@ -244,6 +244,34 @@ async def amain():
     gov._step()
     assert gov._airspeed.value() > 0.0  # integrated off zero
 
+    # airspeed governor THROTTLE + full-rate overrides (glide only; pre-glide is always full rate). The
+    # expensive float update is skipped when settled, but re-armed the instant speed breaks the limit (any
+    # cause) or the nose drops. Observable: _airspeed_accum_s == 0 iff the update ran (it resets on update).
+    glide_ctrl = _StubController(Stage.GLIDING)
+    thr = flight.Flight('flight', {'schedule_hz': 0, 'gains': {}, 'stages': {'gliding': {}},
+                        'airspeed_full_speed': 20.0, 'airspeed_dive_pitch': -45.0}, glide_ctrl)
+    assert await thr.setup() is True
+    attitude.push((0.0, 0, fixed.from_float(-6)))  # normal glide attitude
+    accel.push((0.0, 0.0, 1.0))  # 1 g -> net 0 -> predict() no-op
+    thr._airspeed_step_s = 1.0  # force a long throttle interval so only an override can fire the update
+    # (a) settled: low speed + normal pitch + accum under the interval -> THROTTLED (update skipped)
+    thr._airspeed._speed = 14.0
+    thr._pitch_cd = fixed.from_float(-6)
+    thr._airspeed_accum_s = 0.0
+    thr._step()
+    assert thr._airspeed_accum_s > 0.0, 'settled glide should throttle (skip the update)'
+    # (b) ABSOLUTE speed over the limit at a normal attitude (crosswind/gust) -> full rate restored
+    thr._airspeed._speed = 30.0
+    thr._airspeed_accum_s = 0.5
+    thr._step()
+    assert thr._airspeed_accum_s == 0.0, 'overspeed must re-arm full rate regardless of attitude'
+    # (c) a steep nose-down while the (throttled) estimate is still low -> dive override fires first
+    thr._airspeed._speed = 14.0
+    thr._pitch_cd = fixed.from_float(-60)
+    thr._airspeed_accum_s = 0.5
+    thr._step()
+    assert thr._airspeed_accum_s == 0.0, 'a dive must re-arm full rate before the estimate shows the overspeed'
+
     # boost stage: BOOSTING is a control stage that holds the captured rod-vertical attitude, but only
     # PAST THE ROD (airspeed > boost_engage); below it the fins stay neutral (the rod holds it vertical).
     boost_ctrl = _StubController(Stage.BOOSTING)
@@ -264,7 +292,8 @@ async def amain():
     # pitch error = hold(90) - 80 = +10 -> kp 1 -> pitch_cmd 10 -> elevons 90+10, capped by the governor
     assert boost_ctrl.fins['servo_eleron_left'].angle == 100 and boost_ctrl.fins['servo_yaw'].angle == 90
 
-    print('ok: flight -- control stages, nav, degraded->neutral, PID->mix->fins, fin governor, boost hold, scheduling')
+    print('ok: flight -- control stages, nav, degraded->neutral, PID->mix->fins, fin governor + throttle/'
+          'overspeed/dive overrides, boost hold, scheduling')
 
 
 asyncio.run(amain())

@@ -98,10 +98,19 @@ class Flight(task.Task):
         # changes the integral -- only how fresh the fin-authority cap is (it persists between updates).
         self._airspeed_full_ms: float = self.config.get('airspeed_full_speed', 20.0)  # >= this m/s -> full rate
         self._airspeed_min_s: float = self.config.get('airspeed_min_ms', 40) / 1000.0  # fast floor (~25 Hz)
-        self._airspeed_max_s: float = self.config.get('airspeed_max_ms', 200) / 1000.0  # settled ceiling (~5 Hz)
+        # settled ceiling ALSO bounds how stale the absolute-speed trigger can be: the estimate refreshes at
+        # least this often, so ANY overspeed (crosswind/gust, not just a dive) restores full rate within it.
+        # Kept low (~10 Hz) since the leak cost of a lower ceiling is tiny (~1 KB/s) but the safety gain isn't.
+        self._airspeed_max_s: float = self.config.get('airspeed_max_ms', 100) / 1000.0  # settled ceiling (~10 Hz)
         self._airspeed_settle: float = self.config.get('airspeed_settle', 0.5)  # m/s change to keep updating fast
         self._airspeed_step_s: float = self._airspeed_min_s  # current adaptive throttle interval (starts fast)
         self._airspeed_accum_s: float = 0.0  # wall time since the last airspeed update (integration dt)
+        # PROACTIVE full-rate override: a steep nose-down builds speed FAST and would outrun even the bounded
+        # estimate, so a dive forces full rate at once. Pitch is read fresh EVERY step (centidegree fixnum) --
+        # a leading indicator (the dive precedes the overspeed), complementing the absolute-speed trigger
+        # (which the max_s ceiling keeps <= max_ms stale, covering wind/gust overspeeds without a nose-down).
+        self._airspeed_dive_pitch: int = fixed.from_float(self.config.get('airspeed_dive_pitch', -45.0))
+        self._pitch_cd: int = 0  # last measured pitch (centidegrees) -> the fresh dive detector
         # boost stage: hold the rod-vertical attitude captured at BOOSTING entry, engaging only PAST
         # the rod (airspeed > boost_engage_speed); below that the fins stay neutral (the rod holds it).
         self._boost_engage: float = self.config.get('boost_engage_speed', 15.0)
@@ -148,7 +157,15 @@ class Flight(task.Task):
         # (error >= airspeed_settle), else grow the interval toward the ceiling. Integrates the accumulated
         # dt, so cadence never changes the integral -- only how fresh the (slowly-moving) fin cap is.
         self._airspeed_accum_s += self._dt
-        full_rate = self.controller.stage < _STAGE.GLIDING or self._airspeed.value() >= self._airspeed_full_ms
+        # full rate while fast-changing, so control is kept whenever airspeed breaks the limit -- any of:
+        #  - pre-glide (boost + active decel);
+        #  - ABSOLUTE speed at/over the limit -- covers a crosswind/gust overspeed at any attitude; reads the
+        #    estimate, which the max_s ceiling keeps <= airspeed_max_ms stale (bounded reaction, any cause);
+        #  - a fresh steep nose-down (self._pitch_cd, set every step below) -- a dive leads the overspeed, so
+        #    this re-arms full rate before the estimate would even show it.
+        full_rate = (self.controller.stage < _STAGE.GLIDING
+                     or self._airspeed.value() >= self._airspeed_full_ms
+                     or self._pitch_cd <= self._airspeed_dive_pitch)
         if full_rate or self._airspeed_accum_s >= self._airspeed_step_s:
             previous = self._airspeed.value()
             self._update_airspeed(self._airspeed_accum_s)
@@ -169,6 +186,7 @@ class Flight(task.Task):
             self._neutral()
             return
         heading, roll, pitch = value
+        self._pitch_cd = pitch  # fresh dive detector for next step's airspeed-governor full-rate override
         if not self._active:  # entering control (from a non-control stage): capture heading, reset PIDs
             self._active = True
             self._heading_hold = heading

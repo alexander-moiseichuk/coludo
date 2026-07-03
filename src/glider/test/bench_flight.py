@@ -197,9 +197,11 @@ async def alloc():
     base_step = _alloc(task._step)
     gc.collect()
     free = gc.mem_free()
-    # the glide throttle is ADAPTIVE: fast floor (min_ms, when airspeed moves) -> settled ceiling (max_ms).
-    air_hz_fast = 1000.0 / task.config.get('airspeed_min_ms', 40)   # moving: the conservative (worst-case) rate
-    air_hz_settled = 1000.0 / task.config.get('airspeed_max_ms', 200)  # settled glide: the best case
+    # the glide throttle is ADAPTIVE: fast floor (min, when airspeed moves) -> settled ceiling (max). Read
+    # the intervals off the task so this tracks the actual configured defaults (the ceiling also bounds how
+    # stale the absolute-speed full-rate trigger can be).
+    air_hz_fast = 1.0 / task._airspeed_min_s      # moving: the conservative (worst-case) rate
+    air_hz_settled = 1.0 / task._airspeed_max_s    # settled glide: the best case
     print('\nreal control-path leak (GC off, %d steps) -- glide phase:' % 2000)
     print('  base step (no airspeed)  : %6.1f B/step  (setpoints %.0f + PID/mix/apply %.0f)' %
           (base_step, setp_b, pid_b))
