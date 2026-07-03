@@ -114,6 +114,38 @@ Supporting precision + tooling (continue alongside / from Phase 4):
 - **`test/probe_pins.py`** — sweep pins 0..60 and UART/I2C/SPI 0..5 to auto-derive a board map;
   inspect `machine.Pin.board`. ✅ (low priority — we have a map)
 
+### Structural refactoring roadmap (findings.md §20)
+
+Top-down proposals S01–S07 live in `findings.md` §20; this is the agreed execution order
+(value / effort), reconciled with the fixnum + gyro-D-term + adaptive-airspeed work of the last
+week. Architecture is largely sound — this is targeted slimming, not a rewrite. The declined
+non-goals stand (no DI container, no message bus replacing the databoard, no config micro-ORM).
+
+1. **Slim the `Flight` loop** — extract **S03 `Guidance`** (setpoints + 3-tier heading + boost hold +
+   final-approach) **and** a sibling **`Governor`** (airspeed estimator + adaptive throttle +
+   dive/overspeed full-rate overrides + fin-limit), dispatched per stage (**S04**, the proven
+   `sequencer` pattern). `Flight._step` becomes pure orchestration: dt → Governor → gate → Guidance →
+   PID → apply. **NB this supersedes §20.3's "don't extract the governor" non-goal** — that assumed a
+   thin wrapper; the adaptive-throttle/override work turned it into real policy (6 knobs + ~15 hot-loop
+   lines + the `_pitch_cd` cache). Unlocks isolated unit tests for both the control law and the
+   throttle. Effort ~1 day. **Do first** — it un-bloats exactly where this week's complexity landed.
+2. **`mixer.mix` → `_apply` fusion** (bottom-up, not in §20) — bind the resolved fin objects into the
+   mixer's `_surfaces` and `set_angle` in-loop; kills `_apply`'s per-step `.items()` iterator +
+   per-fin `.get()` (the biggest single hot-slice + a residual alloc the `bench_flight` breakdown
+   flagged). Effort ~1–2 h.
+3. **S06 databoard `FusionStrategy`** (FirstFresh / ReconcileOffsets / SingleSource) — drops the
+   per-read `isinstance` guard on the hot path (~40 µs × ~6 reads/step measured) and makes fusion
+   pluggable + testable. Effort ~2 h.
+4. **Clarity, low-effort, whenever:** **S05** split `drivers/` vs `services/` (wifi/bluetooth) vs
+   `bus/` (i2cbus/spibus); **S07** cluster `commons.py` along the now-natural fixnum-int vs float seam;
+   **S02** typed per-task config objects (doc-in-code, one place for defaults + cross-field validation).
+5. **`virtual_flight.py` de-duplication** (bottom-up, not in §20) — make the real control law
+   host-runnable so the host tool drives `flight`/`sequencer`/`pid` instead of re-implementing the
+   stage machine + a hand-mirrored `_run_pid`. Biggest lift, but it's the drift source that bit us
+   twice this week (fixnum, gyro D-term). Do when there's appetite.
+6. **S01 instance-ize** Databoard + Recorder, merge Inspector into Controller — highest impact + effort;
+   defer until parallel testability or a hot-spare / HITL-in-HIL need forces it. **Not pre-flight.**
+
 ## Required hardware
 
 1. ESP32-P4 with Wi-Fi (or ESP32-C6 low-end variant) — Main Controller
