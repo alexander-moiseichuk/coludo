@@ -42,6 +42,12 @@ class GovernorConfig:
         # bounded estimate, so a dive (fresh pitch, centidegree fixnum) forces full rate at once — a
         # LEADING indicator (the dive precedes the overspeed), complementing the absolute trigger.
         self.dive_pitch: fixnum = fixed.from_float(config.get('airspeed_dive_pitch', -45.0))
+        # GNSS reports 2D GROUND speed: near-vertical flight (the boost climb, a steep dive) makes it
+        # under-read true airspeed, and blending an under-read LOOSENS the fin cap exactly at high q —
+        # the unsafe direction. At/steeper than this |pitch| the corrector is gated OFF (the integrator
+        # flies alone, over-read biased = safe). HITL masks this (it publishes 3D total speed); the
+        # real ATGM336H does not, so the gate is attitude-truth, not stage-truth.
+        self.steep_pitch: fixnum = fixed.from_float(config.get('gnss_steep_pitch', 45.0))
 
 
 class Governor:
@@ -83,17 +89,23 @@ class Governor:
         if not (full_rate or self._accum_s >= self._interval_s):
             return  # throttled: the cap stays warm from the last update
         previous = self._estimator.value()
-        self._update(self._accum_s)
+        self._update(self._accum_s, pitch)
         self._accum_s = 0.0
         if not full_rate:  # adapt the interval to the airspeed change since the last update
             moved = abs(self._estimator.value() - previous) >= self._config.settle
             self._interval_s = self._config.floor_s if moved else \
                 min(self._config.ceiling_s, self._interval_s + self._config.floor_s)
 
-    def _update(self, dt: float) -> None:
+    def _update(self, dt: float, pitch: fixnum) -> None:
         """Integrate |accel|-g over `dt` (the backbone) + blend a sane GNSS fix, then cap the mixer
         authority (∝ 1/v², × the safety multiplier). `dt` covers the wall time since the LAST update
         (per-step at full rate, accumulated when throttled) so the integral is cadence-independent.
+
+        The GNSS corrector is gated by ATTITUDE: at |pitch| >= steep_pitch (the boost climb, a steep
+        dive) the receiver's 2D ground speed cannot represent airspeed — blending it would drag the
+        estimate DOWN and loosen the fin cap exactly at high dynamic pressure. Near-vertical, the
+        integrator flies alone (over-read biased, the safe direction); a shallow attitude re-opens
+        the blend and repeated good fixes pull the drift out.
 
         FLOAT PATH — ~22 KB/s GC-off leak at full rate (measured 224 B/call): the sqrt, the integral
         and the GNSS blend all box floats. Kept float BY DESIGN (findings §18: a fixnum rewrite
@@ -105,6 +117,8 @@ class Governor:
             self._estimator.predict(
                 (commons.magnitude_sq(accel[0], accel[1], accel[2]) ** 0.5 - 1.0) * 9.81, dt)
         speed, speed_source, _speed_age = self._gnss_speed.read()
-        self._estimator.correct(speed if speed is not None else 0.0, speed_source is not None)
+        steep = pitch >= self._config.steep_pitch or pitch <= -self._config.steep_pitch
+        self._estimator.correct(speed if speed is not None else 0.0,
+                                speed_source is not None and not steep)
         self._mixer.limit = max(1, int(
             commons.fin_deflection_limit(self._estimator.value()) * self._multiplier))

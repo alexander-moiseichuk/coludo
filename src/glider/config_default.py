@@ -96,7 +96,8 @@ def default() -> dict:
                 'bus': 'spi', 'id': 1,  # moved off i2c:0 to its own SPI bus for clean high-rate reads
                 'addr': 0x53,  # kept for an i2c fallback (set bus 'i2c', id 0)
                 'cs_pin': 'adxl375_cs',  # SPI chip-select
-                'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — drives the sampling
+                'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — drives the sampling;
+                # fallback_ms 500 (default): a timed safety sample keeps data flowing if INT goes silent
                 'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
                 'enabled': True,
                 'provides': {'accel': {'priority': 1, 'timeout_ms': 20}},  # >32 g backstop behind lsm6dso32
@@ -107,7 +108,7 @@ def default() -> dict:
                 'bus': 'spi', 'id': 1,  # shares the ADXL375 SPI1, own chip-select (mode 3, 5 MHz)
                 'addr': 0x6A,  # kept for an i2c fallback (set bus 'i2c', id 0)
                 'cs_pin': 'lsm6dso32_cs',  # SPI chip-select (GPIO50)
-                'int_pin': 'lsm6dso32_int1',  # INT1 accel data-ready drives the sampling
+                'int_pin': 'lsm6dso32_int1',  # INT1 accel data-ready drives the sampling (fallback_ms 500 if silent)
                 'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
                 'enabled': True,
                 'provides': {'accel': {'priority': 0, 'timeout_ms': 20},   # PRIMARY accel (±32 g)
@@ -153,7 +154,7 @@ def default() -> dict:
                 'bus': 'i2c', 'id': 0,
                 'addr': 0x29,
                 'xshut_pin': 'laser_xshut',  # enable/reset
-                'int_pin': 'laser_int',  # GPIO1 data-ready
+                'int_pin': 'laser_int',  # GPIO1 data-ready (fallback_ms 500: timed safety sample if INT goes silent)
                 'timing_budget_ms': 100,  # ranging integration (10..200); higher = lower sigma, slower
                 'enabled': True,
                 # laser gives AGL (ground distance), not AMSL altitude, so it provides 'agl' only;
@@ -207,11 +208,19 @@ def default() -> dict:
             # Disabled by default -- not every board has the external LED wired; enable per board.
             {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': False},
             # Stage-separation switch (copper pads): HIGH=nested, LOW=separated -> Boosting->Gliding.
-            {'name': 'separation', 'driver': 'separation', 'pin': 'separation_switch', 'enabled': True},
+            # debounce_ms: the LOW must hold this long -- a contact bounce on the pads never deploys.
+            {'name': 'separation', 'driver': 'separation', 'pin': 'separation_switch', 'enabled': True,
+             'debounce_ms': 20},
             # Fin servos (SG90) on their PWM pins, commanded in INTEGER degrees via `update {"angle":
             # d}` / move(); neutral (mid-range) at boot. Open-loop -- no position feedback. Powered
-            # from a separate boost rail (the board drives signal only). Set min_deg/max_deg per fin to
-            # limit throw (e.g. the 60deg geared -> +-30deg). Other servo types = their own `driver`.
+            # from a separate boost rail (the board drives signal only). Other servo types = their own
+            # `driver`. Per-fin knobs (driver defaults; set per LINKAGE in the board config):
+            #   min_us 500 / max_us 2500 -- the PWM pulse endpoints (SG90 datasheet range);
+            #   min_deg 0 / max_deg 180  -- the PHYSICAL clamp (a horn that binds at 135 -> max_deg
+            #     135); the mixer's limit_deg caps control AUTHORITY, this caps absolute travel;
+            #   angle -- boot angle (default: neutral mid-range);
+            #   engine_min_mw 500 / engine_max_mw 3500 -- the INA226 servo-rail draw window the probe
+            #     sweep must stay inside (stall / no-load detection during the pre-flight self-test).
             {'name': 'servo_yaw', 'driver': 'sg90', 'pin': 'servo_yaw', 'enabled': True},
             {'name': 'servo_eleron_left', 'driver': 'sg90', 'pin': 'servo_eleron_left', 'enabled': True},
             {'name': 'servo_eleron_right', 'driver': 'sg90', 'pin': 'servo_eleron_right', 'enabled': True},
@@ -227,10 +236,14 @@ def default() -> dict:
             # deploy at apogee: apogee_drop_m (baro fell 5 m off its peak) is the primary boost->glide
             # trigger after the separation switch; boost_timeout_ms is the LAST-RESORT fallback, set past
             # the slowest v2 apogee (~11 s, F15 half-glider) so it never pre-empts the apogee detect.
+            # disable_gc_flight: compact the heap at BOOSTING and hold GC OFF for the WHOLE airborne phase
+            # (re-enable + collect only at DONE, stationary on the ground) so no GC pause can blow a
+            # 100 Hz control slice (sequencer._gc_transition). False keeps GC on -- ground benches.
             {'name': 'sequencer', 'activity': 'sequencer', 'enabled': True, 'period_ms': 50,
              'launch_g': 2.5, 'launch_ms': 100, 'launch_alt_m': 10.0,
              'apogee_drop_m': 5.0, 'boost_timeout_ms': 12000,
-             'land_agl_m': 5.0, 'land_ms': 300, 'still_g': 0.3, 'ground_ms': 3000},
+             'land_agl_m': 5.0, 'land_ms': 300, 'still_g': 0.3, 'ground_ms': 3000,
+             'disable_gc_flight': True},
             # Phase 3 stabilization loop (off by default -- no actuation until enabled + tuned on the
             # airframe). schedule_hz > 0 -> machine.Timer (deterministic slice, ~1 m/step at 100 Hz/100 m/s);
             # schedule_hz 0 -> asyncio at period_ms. Gains/setpoint are airframe tuning; gates to GLIDING.
@@ -249,6 +262,26 @@ def default() -> dict:
              # PAST THE ROD (airspeed > boost_engage_speed m/s) -- the 3-point rod keeps it vertical and the
              # fins have no authority below that. The speed governor caps the throw the whole way up.
              'boost_engage_speed': 15.0,
+             # airspeed governor (governor.py): the estimator runs FULL RATE pre-glide, on any
+             # overspeed (estimate >= airspeed_full_speed m/s) or on a steep dive (pitch <=
+             # airspeed_dive_pitch deg -- a LEADING indicator, the dive precedes the overspeed);
+             # otherwise ADAPTIVELY throttled: snap to the airspeed_min_ms floor when the estimate
+             # moved >= airspeed_settle m/s since the last update, grow toward the airspeed_max_ms
+             # ceiling as it settles. The ceiling ALSO bounds how stale the overspeed trigger can be.
+             'airspeed_full_speed': 20.0, 'airspeed_min_ms': 40, 'airspeed_max_ms': 100,
+             'airspeed_settle': 0.5, 'airspeed_dive_pitch': -45.0,
+             # GNSS corrector gate: at |pitch| >= this (deg) the receiver's 2D GROUND speed cannot
+             # represent airspeed (vertical boost climb, steep dive) -- blending it would loosen the
+             # fin cap at high q. Past the gate the accel integrator flies alone (over-read = safe).
+             'gnss_steep_pitch': 45.0,
+             # navigation cadence: steer()/approach() float trig recomputes at most every
+             # nav_period_ms; the loop reads the cached heading between (GNSS fixes ~10 Hz anyway).
+             # Omitted-but-supported knobs (their defaults are DERIVED, do not pin them here):
+             #   position_age_max_ms -- tier-1 freshness gate, defaults to the GNSS channels' own
+             #   databoard windows (set TIGHTER to distrust a stale fix sooner);
+             #   integral_limit -- PID anti-windup, defaults to the mixer deflection limit.
+             'nav_period_ms': 100,
+             'timer_id': 0,  # the machine.Timer instance the schedule_hz timer mode claims
              # per-stage attitude setpoint; stages absent here hold the fins neutral. BOOSTING = hold the
              # captured rod-vertical attitude (no config setpoint); GLIDING = bank-to-turn heading hold;
              # LANDING pitch is the flare knob (0 = none until tuned).
@@ -259,8 +292,9 @@ def default() -> dict:
             # drop the running firmware to the REPL for bench work; enable it for flight.
             {'name': 'watchdog', 'activity': 'watchdog', 'enabled': False,
              'wdt_timeout_ms': 1000, 'period_ms': 200, 'stall_ms': 500},
-            # Board vitals (temperature/memory/load) -> telemetry every period_ms.
-            {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'enabled': True},
+            # Board vitals (temperature/memory/load) -> telemetry every period_ms. probe_ms is the
+            # load probe's sleep slice (measures wake-up lateness; the core idles between probes).
+            {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'probe_ms': 10, 'enabled': True},
             # Apply the BLE radio state at boot: off by default to save power (BLE is unused).
             {'name': 'bluetooth', 'driver': 'bluetooth', 'radio': False, 'enabled': True},
             # Connectivity (optional): join Wi-Fi (HAL driver), then serve the CC hub (activity). A

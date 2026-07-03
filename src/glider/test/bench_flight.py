@@ -186,7 +186,7 @@ async def alloc():
     # over-state the win. Instead measure a base step with the governor's update forced off, then amortize
     # it by its REAL glide cadence (the adaptive interval) against the control rate -- the honest flight leak.
     task._guidance.enter(100.0, 0, 0)  # the first-entry capture a real run does; guidance needs the hold
-    air_b = _alloc(lambda: task._governor._update(task._dt))
+    air_b = _alloc(lambda: task._governor._update(task._dt, 0))  # shallow pitch: GNSS corrector active
     glide_setpoint = task._guidance.setpoint(Stage.GLIDING)
     setp_b = _alloc(lambda: task._guidance.compute(Stage.GLIDING, glide_setpoint, 100.0, time.ticks_us()))
     pid_b = _alloc(lambda: task._run_pid(fixed.from_float(5.0), fixed.from_float(-3.0), 10))

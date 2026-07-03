@@ -63,9 +63,9 @@ class Sequencer(task.Task):
         # (coludo.md GC policy): compact the heap at launch and DISABLE GC while airborne, so no GC
         # pause (0.3 ms clean .. tens of ms on a full heap) can blow a 100 Hz control slice; re-enable at
         # touchdown. Safe only because the hot paths are near-zero-alloc (mixer, nav cache) and the
-        # ~12 MB PSRAM absorbs the rest of the flight -- verified by a HITL heap soak. gc_flight False
+        # ~12 MB PSRAM absorbs the rest of the flight -- verified by a HITL heap soak. disable_gc_flight False
         # keeps GC on (ground tests, and the unit test below).
-        self._gc_flight: bool = cfg.get('gc_flight', True)
+        self._disable_gc_flight: bool = cfg.get('disable_gc_flight', True)
         self._accel = databoard.Databoard.parameter('accel')
         self._agl = databoard.Databoard.parameter('agl')
         self._elevation = databoard.Databoard.parameter('elevation')
@@ -84,7 +84,7 @@ class Sequencer(task.Task):
         recorder.Recorder.log(self.name, 'stage -> %s (%s)' % (_STAGE.STAGES[to_stage], reason))
         self._telemetry.push((_STAGE.STAGES[to_stage], reason))
         self._since = None
-        if self._gc_flight:  # clean heap into the flight, GC OFF for the WHOLE airborne phase
+        if self._disable_gc_flight:  # clean heap into the flight, GC OFF for the WHOLE airborne phase
             self._gc_transition(to_stage)
 
     def _gc_transition(self, to_stage: int) -> None:

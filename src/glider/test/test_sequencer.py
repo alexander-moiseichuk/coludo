@@ -32,10 +32,10 @@ class _StubController:
         self.stage = stage
 
 
-# small thresholds for a fast, deterministic test; gc_flight off here so the stage-logic checks do not
+# small thresholds for a fast, deterministic test; disable_gc_flight off here so the stage-logic checks do not
 # also toggle the interpreter's GC (the GC policy has its own focused test below)
 SPEC = {'period_ms': 10, 'launch_g': 3.0, 'launch_ms': 100, 'boost_timeout_ms': 500,
-        'land_agl_m': 5.0, 'land_ms': 100, 'still_g': 0.3, 'ground_ms': 300, 'gc_flight': False}
+        'land_agl_m': 5.0, 'land_ms': 100, 'still_g': 0.3, 'ground_ms': 300, 'disable_gc_flight': False}
 
 
 async def amain():
@@ -148,9 +148,9 @@ async def amain():
     assert ctrl.stage == Stage.SETTING  # no crash, no advance
 
     # GC policy -- compacted + DISABLED at BOOSTING, re-enabled at LANDING (coludo.md), and finish()
-    # never leaves it off. gc_flight True here (the only test that exercises the toggle).
+    # never leaves it off. disable_gc_flight True here (the only test that exercises the toggle).
     import gc
-    gseq = sequencer.Sequencer('sequencer', {'gc_flight': True}, _StubController())
+    gseq = sequencer.Sequencer('sequencer', {'disable_gc_flight': True}, _StubController())
     assert await gseq.setup() is True
     assert gc.isenabled()
     gseq._advance(Stage.BOOSTING, 'launch')

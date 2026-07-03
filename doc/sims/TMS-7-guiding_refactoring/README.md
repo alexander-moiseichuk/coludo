@@ -87,6 +87,20 @@ to cost 35.6 µs before a separate `_apply` walk on top).
   airspeed path, already throttled.
 - **CPU:** unchanged headroom (450 µs step, load 14–26 % mean / 64 % landing peak).
 
+## Post-set delta (7/03)
+
+Firmware since this capture set adds ONE behavioural change: the **attitude-gated GNSS corrector**
+(`gnss_steep_pitch`, default 45°) — at a steeper |pitch| (the vertical boost climb, a steep dive) the
+receiver's 2D ground speed cannot represent airspeed, so the estimator flies on the accel integrator
+alone (over-read biased = tighter fin cap = safe). HITL masks the underlying hazard (it publishes 3D
+total speed; the real ATGM336H does not), so the gate itself is proven by `test_governor.py`; its
+flight-neutrality was validated against THIS set's F15-full with a dedicated capture
+(`f15_full_gate`): apogee 245 vs 246 m, deploy 9.9 vs 9.8 s, glide 39.0 s identical, servo energy
+21.9 vs 22.0 J (0.54 W both), touchdown 68.1 vs 65.6 m — both in-zone. Everything else since the set
+(governor/sequencer naming + extraction, config_default key documentation, `disable_gc_flight`
+rename) is behaviour-free by construction. Next full re-capture: the next control-law change, the
+TMS-8 airframe, or the pre-field-flight campaign — whichever lands first.
+
 ## Regenerate
 
 ```sh

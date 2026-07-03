@@ -131,8 +131,31 @@ def test_interval_adaptation():
     assert unit._interval_s == unit._config.ceiling_s
 
 
+def test_gnss_steep_pitch_gate():
+    """Near-vertical flight gates the GNSS corrector OFF: the receiver's 2D ground speed reads ~0 in
+    a vertical boost climb (and under-reads in a steep dive), and blending that would drag the
+    estimate down -> a LOOSER fin cap at high q, the unsafe direction. Shallow attitude re-opens it."""
+    unit, _mix, _accel, gnss_speed = _build()
+    gnss_speed.reading = (0.0, 'gnss', 0)  # live fix, 2D ground speed ~0 (what a vertical climb reads)
+    unit._estimator._speed = 30.0
+    unit.step(0.1, True, fixed.from_float(85.0))  # near-vertical boost climb
+    assert unit.airspeed() == 30.0, 'a bogus 2D ground speed must not drag the estimate in a climb'
+    unit.step(0.1, True, fixed.from_float(-80.0))  # steep dive: same physics, same gate
+    assert unit.airspeed() == 30.0, 'a steep dive must keep the integrator alone (over-read = safe)'
+    unit.step(0.1, True, fixed.from_float(-6.0))  # shallow glide -> ground speed is representative again
+    assert unit.airspeed() < 30.0, 'a shallow attitude must re-open the GNSS blend'
+    # the gate threshold is config: a tighter gnss_steep_pitch gates earlier
+    tight, _mix, _accel, tight_speed = _build({'gnss_steep_pitch': 10.0})
+    tight_speed.reading = (0.0, 'gnss', 0)
+    tight._estimator._speed = 30.0
+    tight.step(0.1, True, fixed.from_float(-15.0))  # steeper than 10 deg -> gated even at a mild dive
+    assert tight.airspeed() == 30.0
+
+
 test_authority_cap()
 test_estimator_wiring()
 test_adaptive_throttle_and_overrides()
 test_interval_adaptation()
-print('ok: governor -- 1/v2 authority cap, estimator wiring, adaptive throttle, full-rate overrides')
+test_gnss_steep_pitch_gate()
+print('ok: governor -- 1/v2 authority cap, estimator wiring, adaptive throttle, full-rate overrides, '
+      'steep-pitch GNSS gate')
