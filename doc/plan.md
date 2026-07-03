@@ -39,14 +39,20 @@ Required hardware and the phased development roadmap. Architecture lives in
   independent, burnout timeout as fallback); a **fixed-point (`fixnum`) control path** (centidegree
   integer PID + attitude + driver internals — measured 0 B/step in flight); and the **gyro-rate PID D
   term** — the LSM6DSO32 `rate` now damps every axis (derivative-on-measurement), so the paid-for gyro is
-  finally consumed end-to-end (driver → databoard → PID, and rendered in flight reports). *Open:* flight-log
-  review, the **code-audit follow-ups** (findings.md, re-iterated — `config.validate` +
-  `cc_client.create_dispatcher` decomposed so far), optional **viperization** of the now-integer hot path
-  (DEFERRED on `bench_flight` evidence: a control step is only ~4% of the 100 Hz budget, and no single
-  component dominates — 3× `pid.step` is ~22% of a step, the biggest single slice is `_apply`/fin-writes
-  ~25% which is not viperizable arithmetic, and `navigation.steer` is throttled to ~24 µs amortized/step;
-  `pid.step` also can't be `@viper` wholesale — object attrs + `None` sentinels — only a leaf extraction
-  would help, for a fraction of that 22%), and Phase 5 prep.
+  finally consumed end-to-end (driver → databoard → PID, and rendered in flight reports); the
+  **structural refactoring** (7/02–7/03, roadmap below: `guidance.py` + `governor.py` extracted as
+  host-runnable unit-tested leaves, the mixer FUSED into the servo write via `bind()`/`actuate()`,
+  `virtual_flight` driving the REAL law — validated by the
+  [TMS-7-guiding_refactoring](sims/TMS-7-guiding_refactoring/) HITL set: exact trajectory parity, real
+  control-path leak 15.0 KB/s settled → ~36 min OOM, ~10–16 % less servo work); the **attitude-gated
+  GNSS corrector** (`gnss_steep_pitch` — near-vertical flight must not blend 2D ground speed into the
+  airspeed estimate; HITL-neutral, unit-proven); `flight_kpi.py` (guidance-effectiveness KPIs, the
+  per-capture-set regression practice); and `config_default` documenting **every runtime knob** where
+  it is consumed. *Open:* flight-log review, optional **viperization** of the now-integer hot path
+  (DEFERRED on `bench_flight` evidence: a control step is ~4.5% of the 100 Hz budget and no single
+  slice dominates — 3× `pid.step` ~20%, the fused `mixer.actuate` ~15%, `navigation.steer` throttled
+  to ~23 µs amortized/step; `pid.step` can't be `@viper` wholesale — object attrs + `None` sentinels),
+  and Phase 5 prep.
 - **Simulation & performance — done.** On-board **HITL simulator** (closed-loop, no production-code
   changes) + host **virtual-flight** tool with interactive HTML/SVG reports (`doc/sims/TMS-7/`:
   noise/wind/spike sweeps + corner cases); **perf cluster** (nav-heading cache, zero-alloc
@@ -113,6 +119,91 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   periodic Telemetry every ~1 s. ✅
 - **`test/probe_pins.py`** — sweep pins 0..60 and UART/I2C/SPI 0..5 to auto-derive a board map;
   inspect `machine.Pin.board`. ✅ (low priority — we have a map)
+
+### Structural refactoring roadmap (findings.md §20)
+
+Top-down proposals S01–S07 live in `findings.md` §20; this is the agreed execution order
+(value / effort), reconciled with the fixnum + gyro-D-term + adaptive-airspeed work of the last
+week. Architecture is largely sound — this is targeted slimming, not a rewrite. The declined
+non-goals stand (no DI container, no message bus replacing the databoard, no config micro-ORM).
+
+1. ✅ **Slim the `Flight` loop** (7/02) — extracted **S03 `guidance.py`** (per-stage law table (**S04**,
+   the sequencer pattern): boost hold, glide/landing steering with the 3 GPS tiers + nav cache,
+   final-approach centreline; `GuidanceConfig` typed knobs) **and `governor.py`** (airspeed estimator +
+   adaptive throttle + dive/overspeed full-rate overrides + the 1/v² mixer cap; `GovernorConfig`).
+   Both are **host-runnable leaf modules** (injected databoard-style handles, `now_us` passed in,
+   `commons.ticks_diff` shim) with isolated unit tests (`test_guidance.py`, `test_governor.py`).
+   `Flight._step` is pure orchestration: dt → Governor → gate → Guidance → PID → actuate (374 → ~200
+   lines). The scoped **S02** (typed configs) landed with it for these two. Validated on-board:
+   46/46 tests + the [TMS-7-guiding_refactoring](sims/TMS-7-guiding_refactoring/) HITL set — exact
+   trajectory parity vs fixnums, real control-path leak down to ~15 KB/s settled (~36 min OOM @ 100 Hz).
+2. ✅ **`mixer.mix` → actuate fusion** (7/02) — `Mixer.bind(fins)` + `actuate(roll, pitch, yaw)`
+   drive `set_angle` inside the mixing loop; `Flight._apply` and the per-step `.items()`/`.get()`
+   pair are gone (`mix()` stays for tests/host tools).
+3. ✅ **`virtual_flight.py` de-duplication** (7/02, promoted from #5) — the host tool now drives the
+   REAL `guidance`/`governor`/`pid`/`mixer.actuate` through stub handles; only the sequencer stage
+   machine + physics remain mirrored (they are genuinely board-bound). Touchdown parity with the
+   pre-refactor tool: ~1 m on the clean F15 scenario. The governor now flies the ESTIMATED airspeed
+   on the host too (board parity, was the sim's true airspeed).
+4. ❌ **S06 databoard `FusionStrategy`** — DECLINED on re-scan (7/02): its premise went stale — the
+   `isinstance` guard sits only in `_extrapolate`, the *degraded* no-fresh-channel path, not per-read;
+   strategy classes would ADD a per-read indirection + RAM on a MicroPython hot path for pluggability
+   nobody needs yet (YAGNI). Revisit only when a new fusion behaviour (median, confidence blend) is
+   actually wanted.
+5. **Clarity, low-effort, whenever:** **S05** split `drivers/` vs `services/` (wifi/bluetooth) vs
+   `bus/` (i2cbus/spibus); **S07** cluster `commons.py` along the now-natural fixnum-int vs float seam;
+   **S02** typed config objects for the remaining tasks. Deliberately parked before the flight tests —
+   pure file churn.
+6. **S01 instance-ize** Databoard + Recorder, merge Inspector into Controller — highest impact + effort;
+   defer until parallel testability or a hot-spare / HITL-in-HIL need forces it. **Not pre-flight.**
+
+### Feasible next work — control / stability / hardening (assessed 7/03)
+
+The structural phase is closed (roadmap above); remaining risk is physical calibration + field
+robustness. Ranked by value ÷ effort, glider and Control side together. None started — pick per
+appetite; the KPI regression practice (`flight_kpi.py` vs the previous capture set) gates every
+control change.
+
+**Pre-flight hardening (small, do before the first field day):**
+
+1. **Flight-readiness gate in `verify`** — flag the field-dangerous configs in one pre-flight command:
+   watchdog disabled, radios enabled (reconnect churn allocates through the whole GC-off flight),
+   flight task disabled or zero gains while armed, mission zone unset / beyond `max_range_m`,
+   `fin_limit_multiplier` ≠ 1. One dispatcher command; pairs with the `launch.config` autogen below.
+2. **Stage-aware radio quiescence** — `wifi`/`cc_link` stop reconnect attempts while stage is
+   BOOSTING..LANDING, so the airborne phase stays allocation-free even if a field config leaves the
+   radios on (defence in depth vs #1).
+3. **Launch-point auto-capture on `arm`** — mission grabs the current GNSS fix as `launch_point` when
+   unset, so the tier-2 open-loop heading fallback always exists in the field (today it needs a CC set).
+
+**Control & stability (medium, sim-validated before the board):**
+
+4. **Attitude redundancy** — BNO055 is the SOLE attitude source; losing it mid-flight degrades to
+   neutral fins (ballistic). A complementary filter over the LSM6DSO32 (gyro integrate + accel gravity
+   vector) publishing `attitude` at priority 1 gives a real backup — the databoard fusion handover
+   already exists. The single biggest stability win on the table.
+5. **Steering noise filter** (the ≥50 %-noise robustness item above) — a fixnum EMA / rate limit on the
+   heading error or bank demand; cheap, integer, validated in the virtual-flight noise sweep + KPI.
+6. **Landing precision** (the "nail the strip" item above) — sweep `final_cross_gain`/`final_intercept`
+   + a LANDING flare pitch setpoint in `virtual_flight`; KPI = miss + in-zone across the noise matrix.
+7. **Reachability telemetry** — live glide-ratio estimate vs zone distance ("zone reachable: y/n") in
+   telemetry; the operator sees an unreachable zone early, and it is the groundwork for a deliberate
+   land-short decision later.
+
+**Bigger, spec-first (docs before code):**
+
+8. **Warm-restart recovery** — after a watchdog reset mid-air the board boots to SETTING with neutral
+   fins (ballistic to the ground). A boot-time in-flight detect (baro falling + |a| not still) could
+   re-enter GLIDING and re-engage control. Safety-critical semantics → write the spec section first.
+
+**Control (CC) side:**
+
+9. **`launch.config` autogen** (already above) — should now also: quiesce/disable radios, enable the
+   watchdog, enable flight with the tuned gains — i.e. produce exactly what #1 verifies.
+10. **Live flight panel** on the SSE dashboard — stage, AGL, airspeed estimate, fin cap, armed: the
+    operator's go/no-go glance during the ladder tests.
+11. **One-shot field capture pull** — generalize `hitl_collect.sh`'s pull+assemble+report+KPI chain
+    into a `flight_pull` for real-flight sessions (today it is hand-run per stream).
 
 ## Required hardware
 

@@ -1,0 +1,205 @@
+# On-board test for the stage-dependent guidance law (guidance.py): control-stage gating, the boost
+# rod gate + vertical hold, the three GPS-degrading heading tiers with the nav cache, bank-to-turn
+# vs the full-authority landing/final-approach bank, and the strip-centreline final approach. Pure
+# logic with injected stubs -- no Flight task, no databoard. Run by `make test`.
+
+import fixed
+import guidance
+from controller import Stage
+
+_ZONE = ((48.001, 11.000), (48.000, 11.010))  # longitude-stretched -> gates on the left/right edges
+
+
+class _PositionHandle:
+    """read() stand-in for the databoard position Parameter."""
+
+    def __init__(self):
+        self.reading = (None, None, None)  # (position, source, age_ms)
+
+    def read(self):
+        return self.reading
+
+
+class _AglHandle:
+    """value() stand-in for the databoard agl Parameter."""
+
+    def __init__(self, value=None):
+        self.value_now = value
+
+    def value(self):
+        return self.value_now
+
+
+class _StubGovernor:
+    def __init__(self, speed=0.0):
+        self.speed = speed
+
+    def airspeed(self):
+        return self.speed
+
+
+class _StubMission:
+    def __init__(self, zone=None, launch=None):
+        self.zone = zone
+        self._launch = launch
+
+    def launch_point(self):
+        return self._launch
+
+
+def _build(config=None, zone=_ZONE, launch=None, airspeed=0.0):
+    """A guidance unit over fresh stubs; returns (guidance, position, agl, governor)."""
+    position = _PositionHandle()
+    agl = _AglHandle()
+    gov = _StubGovernor(airspeed)
+    unit = guidance.Guidance(guidance.GuidanceConfig(config or {}, 1000),
+                             _StubMission(zone, launch), gov, position, agl)
+    return unit, position, agl, gov
+
+
+def test_heading_error():
+    """Shortest signed wrap: 350 -> 10 is +20, not -340; the +/-180 boundary keeps its sign."""
+    assert guidance.heading_error(10.0, 350.0) == 20
+    assert guidance.heading_error(350.0, 10.0) == -20
+    assert guidance.heading_error(100.0, 100.0) == 0
+    assert guidance.heading_error(180.0, 0.0) == 180
+
+
+def test_control_stage_gate():
+    """setpoint() names the CONTROL stages from config (default: gliding only); everything else is
+    None -> the caller holds neutral."""
+    unit, _p, _a, _g = _build()
+    assert unit.setpoint(Stage.GLIDING) == {}
+    assert unit.setpoint(Stage.BOOSTING) is None and unit.setpoint(Stage.SETTING) is None
+    staged, _p, _a, _g = _build({'stages': {'gliding': {'pitch': 0}, 'landing': {'pitch': -2}}})
+    assert staged.setpoint(Stage.LANDING) == {'pitch': -2}
+    assert staged.setpoint(Stage.DONE) is None
+
+
+def test_boost_hold():
+    """BOOSTING engages only PAST the rod (airspeed > boost_engage) and then holds the attitude
+    captured at enter(); no yaw steering near vertical."""
+    unit, _p, _a, gov = _build({'stages': {'boosting': {}, 'gliding': {}}, 'boost_engage_speed': 15.0})
+    unit.enter(0.0, 0, fixed.from_float(90.0))  # rod-vertical capture (heading, roll, pitch)
+    gov.speed = 5.0  # still on the rod
+    assert unit.compute(Stage.BOOSTING, {}, 0.0, 0) is False  # caller neutrals
+    gov.speed = 30.0  # past the rod
+    assert unit.compute(Stage.BOOSTING, {}, 0.0, 0) is True
+    assert unit.pitch_setpoint == fixed.from_float(90.0) and unit.roll_setpoint == 0
+    assert unit.heading_error == 0  # heading ill-defined near vertical -> no nav/yaw steering
+
+
+def test_heading_tiers():
+    """The three GPS-degrading tiers of the glide target heading, and the freshness gate."""
+    # tier 3: no fix, no launch point -> hold the heading captured at enter() (blind)
+    unit, position, _a, _g = _build()
+    unit.enter(200.0, 0, 0)
+    assert unit.compute(Stage.GLIDING, {}, 0.0, 0) is True
+    assert unit.heading_error == guidance.heading_error(200.0, 0.0)
+    # tier 2: no fix, CC-set launch point (west of the zone) -> launch->left-gate bearing (~east, 90)
+    unit, position, _a, _g = _build(launch=(48.0005, 10.990))
+    unit.enter(200.0, 0, 0)
+    unit.compute(Stage.GLIDING, {}, 0.0, 0)
+    assert abs(unit.heading_error - 90) < 5
+    # tier 1: a fresh fix overrides -> steer from the CURRENT position (east of the zone -> ~270)
+    position.reading = ((48.0005, 11.020), 'gnss', 0)
+    unit._nav_heading = None  # invalidate the cache (inputs changed faster than nav_period on purpose)
+    unit.compute(Stage.GLIDING, {}, 0.0, 0)
+    assert abs(unit.heading_error - (-90)) < 5  # ~270 -> wrapped -90 from a 0 heading
+    # tier-1 freshness gate: an age past position_age_max_ms skips tier 1 even on a live fix
+    unit._config.position_age_max_ms = 0
+    unit._nav_heading = None
+    unit.compute(Stage.GLIDING, {}, 0.0, 0)
+    assert abs(unit.heading_error - 90) < 5  # gated off tier 1 -> tier 2 launch bearing
+    # no zone at all -> blind hold regardless of the fix
+    blind, position, _a, _g = _build(zone=None)
+    position.reading = ((48.0005, 11.020), 'gnss', 0)
+    blind.enter(200.0, 0, 0)
+    blind.compute(Stage.GLIDING, {}, 0.0, 0)
+    assert blind.heading_error == guidance.heading_error(200.0, 0.0)
+
+
+def test_nav_cache():
+    """The steer() trig is cached for nav_period_us: a second compute within the period returns the
+    cached heading even if the fix moves; enter() invalidates."""
+    unit, position, _a, _g = _build({'nav_period_ms': 100})
+    unit.enter(200.0, 0, 0)
+    position.reading = ((48.0005, 11.020), 'gnss', 0)  # east of the zone -> ~270
+    unit.compute(Stage.GLIDING, {}, 0.0, 0)
+    first = unit._nav_heading
+    position.reading = ((48.0005, 10.980), 'gnss', 0)  # move the fix west; uncached this -> ~90
+    unit.compute(Stage.GLIDING, {}, 0.0, 50000)  # 50 ms < nav_period -> cached
+    assert unit._nav_heading == first
+    unit.compute(Stage.GLIDING, {}, 0.0, 150000)  # past the period -> recomputed from the new fix
+    assert unit._nav_heading != first
+    unit.enter(200.0, 0, 0)  # entering control invalidates the cache outright
+    assert unit._nav_heading is None
+
+
+def test_bank_to_turn():
+    """GLIDING banks into the turn (roll setpoint = nav_bank_gain * heading error, capped at
+    bank_limit); LANDING and low FINAL use the land gains with the FULL fin authority."""
+    unit, position, agl, _g = _build({'nav_bank_gain': 1.5, 'bank_limit': 30,
+                                      'stages': {'gliding': {}, 'landing': {}}})
+    unit.enter(0.0, 0, 0)
+    position.reading = ((48.0005, 10.990), 'gnss', 0)  # west of the zone -> steer ~east (+90 error)
+    unit.compute(Stage.GLIDING, {}, 0.0, 0)
+    assert unit.roll_setpoint == fixed.from_float(30.0)  # bank_demand(+90, 1.5, 30) hit the cap
+    # LANDING: the land bank limit (45) opens the full authority for the crosswind crab
+    unit._nav_heading = None
+    unit.compute(Stage.LANDING, {}, 0.0, 0)
+    assert unit.roll_setpoint == fixed.from_float(45.0)  # bank_demand(+90, 1.5, 45)
+    # gain 0 -> rudder-only steering: the roll setpoint stays the configured one
+    flat, position, _a, _g = _build({'nav_bank_gain': 0, 'stages': {'gliding': {'roll': 2.0}}})
+    flat.enter(0.0, 0, 0)
+    position.reading = ((48.0005, 10.990), 'gnss', 0)
+    flat.compute(Stage.GLIDING, flat.setpoint(Stage.GLIDING), 0.0, 0)
+    assert flat.roll_setpoint == fixed.from_float(2.0)
+
+
+def test_final_approach():
+    """Below final_approach_agl the target switches from homing on the centre to TRACKING the strip
+    centreline (navigation.approach) with the land bank gains -- even while still in GLIDING."""
+    unit, position, agl, _g = _build({'final_approach_agl': 8, 'nav_bank_gain': 1.5,
+                                      'land_bank_gain': 1.5, 'land_bank_limit': 45})
+    unit.enter(0.0, 0, 0)
+    position.reading = ((48.0005, 11.020), 'gnss', 0)  # east of the zone, past the right gate
+    agl.value_now = 20.0  # high -> homing (steer)
+    unit.compute(Stage.GLIDING, {}, 270.0, 0)
+    homing = unit._nav_heading
+    agl.value_now = 4.0  # low on final -> centreline tracking (approach)
+    unit._nav_heading = None
+    unit.compute(Stage.GLIDING, {}, 270.0, 0)
+    tracking = unit._nav_heading
+    assert homing != tracking  # approach() tracks the long-axis line, not the centre point
+    assert abs(guidance.heading_error(tracking, 270.0)) <= 45  # intercept capped at final_intercept
+    # final_approach_agl 0 disables the final-approach switch (and an absent agl never triggers it)
+    off, position, agl, _g = _build({'final_approach_agl': 0})
+    off.enter(0.0, 0, 0)
+    agl.value_now = 1.0
+    position.reading = ((48.0005, 11.020), 'gnss', 0)
+    off.compute(Stage.GLIDING, {}, 270.0, 0)
+    assert off._nav_heading is not None  # steered (homing path), no crash with the feature off
+
+
+def test_hold_law():
+    """A configured control stage with no specific law (ground tests, e.g. 'setting') holds the
+    configured setpoints and the heading captured at enter() -- no navigation."""
+    unit, position, _a, _g = _build({'stages': {'setting': {'roll': 1.0, 'pitch': -2.0}}})
+    position.reading = ((48.0005, 11.020), 'gnss', 0)  # a live fix must NOT steer this law
+    unit.enter(100.0, 0, 0)
+    assert unit.compute(Stage.SETTING, {'roll': 1.0, 'pitch': -2.0}, 90.0, 0) is True
+    assert unit.roll_setpoint == fixed.from_float(1.0)
+    assert unit.pitch_setpoint == fixed.from_float(-2.0)
+    assert unit.heading_error == 10  # vs the captured 100, not the zone
+
+
+test_heading_error()
+test_control_stage_gate()
+test_boost_hold()
+test_heading_tiers()
+test_nav_cache()
+test_bank_to_turn()
+test_final_approach()
+test_hold_law()
+print('ok: guidance -- stage gate, boost hold, GPS tiers + nav cache, bank-to-turn, final approach, hold law')

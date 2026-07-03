@@ -7,7 +7,7 @@
 #
 # (perf analysis): steer()/bearing()/distance() use float trig and allocate a few small tuples per
 # call. The concern was GC churn from calling them at the 100 Hz control rate. Resolution: the fix is on
-# the CALLER side, not here -- flight._target_heading() caches steer() at GPS cadence (~10 Hz), so
+# the CALLER side, not here -- guidance._target_heading() caches steer() at GPS cadence (~10 Hz), so
 # the trig/alloc rate drops ~10x. With the hot-path pressure removed, a zero-allocation rewrite here
 # would only cost clarity for no measurable gain, so navigation stays simple, pure and correct.
 #

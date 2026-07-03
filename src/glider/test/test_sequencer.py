@@ -32,10 +32,10 @@ class _StubController:
         self.stage = stage
 
 
-# small thresholds for a fast, deterministic test; gc_flight off here so the stage-logic checks do not
+# small thresholds for a fast, deterministic test; disable_gc_flight off here so the stage-logic checks do not
 # also toggle the interpreter's GC (the GC policy has its own focused test below)
 SPEC = {'period_ms': 10, 'launch_g': 3.0, 'launch_ms': 100, 'boost_timeout_ms': 500,
-        'land_agl_m': 5.0, 'land_ms': 100, 'still_g': 0.3, 'ground_ms': 300, 'gc_flight': False}
+        'land_agl_m': 5.0, 'land_ms': 100, 'still_g': 0.3, 'ground_ms': 300, 'disable_gc_flight': False}
 
 
 async def amain():
@@ -111,11 +111,15 @@ async def amain():
 
     # apogee detect: in BOOSTING the baro peaks then falls apogee_drop_m (5 m) -> deploy at the TOP of the
     # arc (mass/motor-independent), before the long burnout-timeout fallback.
-    elevation.push(150.0); seq._tick(2200)   # climbing -> peak tracks up
-    elevation.push(240.0); seq._tick(2210)   # new peak
-    elevation.push(233.0); seq._tick(2220)   # fell 7 m below the 240 m peak -> the apogee dwell starts
+    elevation.push(150.0)
+    seq._tick(2200)   # climbing -> peak tracks up
+    elevation.push(240.0)
+    seq._tick(2210)   # new peak
+    elevation.push(233.0)
+    seq._tick(2220)   # fell 7 m below the 240 m peak -> the apogee dwell starts
     assert ctrl.stage == Stage.BOOSTING      # not yet SUSTAINED (a single dip is not apogee)
-    elevation.push(232.0); seq._tick(2330)   # still down, >100 ms later -> deploy
+    elevation.push(232.0)
+    seq._tick(2330)   # still down, >100 ms later -> deploy
     assert ctrl.stage == Stage.GLIDING
 
     # operator hold (ground test): manual pauses auto-sequencing -- a sustained launch is ignored
@@ -144,9 +148,9 @@ async def amain():
     assert ctrl.stage == Stage.SETTING  # no crash, no advance
 
     # GC policy -- compacted + DISABLED at BOOSTING, re-enabled at LANDING (coludo.md), and finish()
-    # never leaves it off. gc_flight True here (the only test that exercises the toggle).
+    # never leaves it off. disable_gc_flight True here (the only test that exercises the toggle).
     import gc
-    gseq = sequencer.Sequencer('sequencer', {'gc_flight': True}, _StubController())
+    gseq = sequencer.Sequencer('sequencer', {'disable_gc_flight': True}, _StubController())
     assert await gseq.setup() is True
     assert gc.isenabled()
     gseq._advance(Stage.BOOSTING, 'launch')

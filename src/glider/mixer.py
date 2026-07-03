@@ -2,8 +2,9 @@
 # pitch, yaw -- each a deflection command in degrees) to per-fin servo angles for the airframe's
 # mixing: ELEVONS (the two elerons move together for pitch, differentially for roll) + a RUDDER (the
 # yaw fin). Per-fin trim (mechanical neutral alignment) and a hard +/- limit on control deflection.
-# Pure integer math, no hardware -- the flight control task (Phase 3) feeds it axis commands and
-# applies the angles to the sg90 drivers; the per-driver clamp still guards the physical range.
+# Pure integer math, no hardware -- the flight control task (Phase 3) binds the resolved fin driver
+# objects once (bind()) and then drives them straight from the mixing loop (actuate()); the
+# per-driver clamp still guards the physical range. mix() keeps the dict form for tests/host tools.
 #
 # Signs are config (`surfaces` gains + `trim`), set during bench alignment: if a surface deflects the
 # wrong way, flip its gain sign; if its neutral is off, set its trim.
@@ -24,7 +25,11 @@ class Mixer:
     def __init__(self, config: dict = None):
         config = config or {}
         self.neutral: int = config.get('neutral_deg', SERVO_NEUTRAL_DEG)
-        self.limit: int = config.get('limit_deg', 45)  # max control deflection from neutral, per surface
+        # max control deflection from neutral, per surface. OWNERSHIP: config only seeds the pre-flight
+        # value — in flight the Governor OWNS it (rewrites it every update, ∝ 1/v² of airspeed) and
+        # mix()/actuate() read it. Nothing else may write it: a "configurable limit" would silently
+        # fight the dynamic-pressure governor.
+        self.limit: int = config.get('limit_deg', 45)
         self.surfaces: dict = config.get('surfaces', _DEFAULT_SURFACES)
         self.trim: dict = config.get('trim', {})  # per-fin neutral offset (deg)
         # (zero-alloc hot path): pre-resolve each surface to (name, base, roll_gain, pitch_gain,
@@ -36,6 +41,8 @@ class Mixer:
                                  gains.get('roll', 0), gains.get('pitch', 0), gains.get('yaw', 0))
                                 for name, gains in self.surfaces.items()]
         self._out: dict = {name: base for name, base, _r, _p, _y in self._surfaces}
+        self.bound: bool = False  # bind() resolved the fin drivers -> actuate() is armed
+        self._fins: list = []  # (fin, base, roll_gain, pitch_gain, yaw_gain) per bound surface
 
     def mix(self, roll: int = 0, pitch: int = 0, yaw: int = 0) -> dict:
         """Per-fin integer angle for the given axis deflections (degrees). Returns a SHARED dict REUSED
@@ -60,3 +67,24 @@ class Mixer:
     def neutralise(self) -> dict:
         """The neutral (zero-deflection) angle per fin -- the safe / control-disabled output (shared dict)."""
         return self.mix(0, 0, 0)
+
+    def bind(self, fins: dict) -> None:
+        """Fuse the resolved fin driver objects ({surface name: object with set_angle(angle)}) into the
+        surface table, so actuate() drives the servos straight from the mixing loop -- no intermediate
+        dict, no per-step name lookup (the old flight._apply items()/get() pair, the biggest single
+        hot-slice in the bench_flight breakdown). A surface with no resolved fin is skipped (same
+        tolerance the old apply had): it is simply never written."""
+        self._fins = [(fins[name], base, roll_gain, pitch_gain, yaw_gain)
+                      for name, base, roll_gain, pitch_gain, yaw_gain in self._surfaces
+                      if fins.get(name) is not None]
+        self.bound = True
+
+    def actuate(self, roll: int, pitch: int, yaw: int) -> None:
+        """mix() fused with the servo write: clamp each surface's control deflection to +/- limit and
+        set_angle() the bound fin in the same loop (zero-alloc, no output dict). bind() first. Positional
+        args on purpose -- the 100 Hz caller must not build a kwargs dict. A held fin does no PWM write
+        (sg90.set_angle compare-and-sets)."""
+        limit = self.limit
+        for fin, base, roll_gain, pitch_gain, yaw_gain in self._fins:
+            fin.set_angle(base + between(-limit, roll_gain * roll + pitch_gain * pitch + yaw_gain * yaw,
+                                         limit))

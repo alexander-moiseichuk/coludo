@@ -1,12 +1,19 @@
 # virtual_flight.py — fly a complete Coludo mission on the HOST and emit a recorder capture (6/23
 # global4). It runs the SAME closed loop the board runs in HITL, but in CPython: the shared flight model
-# (src/glider/sim_model.Body) is driven by the REAL control code (navigation + pid + mixer) under the
-# REAL config (config_hitl), through the same stage machine thresholds the sequencer uses. Each control
-# tick reads NOISE-degraded attitude/accel (the `--noise` knob, same sim_model.noisy as the board) so
-# you can see how the loop holds the zone when the sensors are clean (5 %) vs ratty (50 %). The output is
-# the exact wire format flight_telemetry.parse() reads, so it renders with flight_report.py -- a virtual
-# flight movie before any real one. The trajectory (position) is the body's TRUE path, which already
-# reflects the noisy control, so a degraded run visibly wanders / spirals over the zone.
+# (src/glider/sim_model.Body) is driven by the REAL control code — guidance.Guidance (per-stage law,
+# GPS tiers, boost hold, final approach), governor.Governor (estimated-airspeed fin-authority cap +
+# adaptive throttle), pid.Pid and the fused mixer.actuate() — under the REAL config (config_hitl).
+# The board's databoard/mission are stood in by tiny injected handles; ONLY the sequencer's stage
+# machine and the physics are mirrored here (the sequencer is genuinely board-bound: databoard,
+# recorder, gc policy). The old hand-mirrored control law + `_run_pid` copy are GONE (doc/plan.md
+# structural roadmap #5) — a control-law change lands in this tool automatically.
+#
+# Each control tick reads NOISE-degraded attitude/accel (the `--noise` knob, same sim_model.noisy as
+# the board) so you can see how the loop holds the zone when the sensors are clean (5 %) vs ratty
+# (50 %). Note the governor now flies the ESTIMATED airspeed (accel backbone + GNSS corrector) like
+# the board — not the sim's true airspeed. The output is the exact wire format
+# flight_telemetry.parse() reads, so it renders with flight_report.py -- a virtual flight movie
+# before any real one.
 #
 # python3 virtual_flight.py --motor F15 --noise 0.05 -o clean.txt
 # python3 virtual_flight.py --motor F15 --noise 0.50 -o ratty.txt
@@ -20,22 +27,57 @@ import sys
 _GLIDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'glider')
 sys.path.insert(0, _GLIDER)
 
-import commons  # noqa: E402 -- shared primitives bundle (bank_demand, ...)
 import config_hitl  # noqa: E402 -- the SAME board config the on-board HITL uses (host-importable)
+import controller as controller_mod  # noqa: E402 -- Stage ids (host-importable)
 import fixed  # noqa: E402 -- fixed-point convention: PID error/output in centidegree fixnum (board parity)
+import governor  # noqa: E402 -- the REAL fin-authority governor (estimated airspeed + throttle)
+import guidance  # noqa: E402 -- the REAL per-stage guidance law
 import mixer  # noqa: E402
-import navigation  # noqa: E402
 import pid  # noqa: E402
 import sim_model  # noqa: E402
 
+_STAGE = controller_mod.Stage
 _FINS = ('servo_eleron_left', 'servo_eleron_right', 'servo_yaw')
 _SPIKE_S = 3.0  # a transient 2x sensor glitch fires once every this many seconds (within 2-5 s)
+_GNSS_S = 0.1  # GNSS fix cadence (~10 Hz), for both the injected handles and the capture rows
 
 
-def _heading_error(target: float, current: float) -> int:
-    """Mirror flight.Flight._heading_error: shortest signed heading error, integer degrees."""
-    error = int(target - current)
-    return error if -180 <= error <= 180 else (error + 180) % 360 - 180
+class _Fin:
+    """set_angle() stand-in for an sg90 driver: the fused mixer.actuate() writes the commanded angle
+    here and the sim reads it back (same role the servo task plays on the board)."""
+
+    def __init__(self, neutral: int):
+        self.angle = neutral
+
+    def set_angle(self, angle):
+        self.angle = angle
+        return angle
+
+
+class _Handle:
+    """Databoard-parameter stand-in: the sim publishes the live reading, the real governor/guidance
+    consume it through the same value()/read() surface the board's Parameter offers."""
+
+    def __init__(self):
+        self.value_now = None
+        self.source = None
+
+    def value(self):
+        return self.value_now
+
+    def read(self):
+        return (self.value_now, self.source, 0)  # age 0: the sim publishes fresh (board: databoard ages)
+
+
+class _Mission:
+    """Mission stand-in: the landing zone from the HITL scenario; no CC-set launch point, so the
+    guidance tiers exercise tier 1 (live fix) and tier 3 (blind) exactly as a real flight would."""
+
+    def __init__(self, zone):
+        self.zone = zone
+
+    def launch_point(self):
+        return None
 
 
 def _component(cfg: dict, name: str) -> dict:
@@ -66,26 +108,29 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
                           tuple(scenario['launch']), scenario['elevation_m'], scenario['heading_deg'])
     body.wind_e = wind * math.sin(math.radians(wind_dir))   # steady wind the glider must crab against
     body.wind_n = wind * math.cos(math.radians(wind_dir))
+
+    # the REAL control stack, exactly as tasks/flight.py builds it -- mixer with bound fins, the
+    # governor and guidance over injected handles, one fixed-point PID per axis.
     mix = mixer.Mixer(cfg.get('mixer', {}))
+    fins_by_name = {name: _Fin(mix.neutral) for name in _FINS}
+    mix.bind(fins_by_name)
+    accel_handle, speed_handle, position_handle, agl_handle = _Handle(), _Handle(), _Handle(), _Handle()
+    fin_governor = governor.Governor(governor.GovernorConfig(flight_c), mix, accel_handle, speed_handle,
+                                     cfg.get('fin_limit_multiplier', 1.0))
+    law = guidance.Guidance(guidance.GuidanceConfig(flight_c, int(_GNSS_S * 2000)), _Mission(zone),
+                            fin_governor, position_handle, agl_handle)
+    if final_agl_override is not None:
+        law._config.final_agl = final_agl_override
     gains = flight_c.get('gains', {})
-    stages = flight_c.get('stages', {'gliding': {'roll': 0.0, 'pitch': 0.0}})
-    bank_gain = flight_c.get('nav_bank_gain', 1.5)   # bank-to-turn (mirror tasks/flight.py)
-    bank_limit = flight_c.get('bank_limit', 30)
-    land_bank_gain = flight_c.get('land_bank_gain', 1.5)     # (mirror tasks/flight.py)
-    land_bank_limit = flight_c.get('land_bank_limit', 45)
-    final_agl = final_agl_override if final_agl_override is not None else flight_c.get('final_approach_agl', 8)
-    final_cross_gain = flight_c.get('final_cross_gain', 3.0)
-    final_intercept = flight_c.get('final_intercept_deg', 45)
-    fin_limit_multiplier = cfg.get('fin_limit_multiplier', 1.0)   # dynamic-pressure governor (board)
-    boost_engage = flight_c.get('boost_engage_speed', 15.0)       # boost rod-exit airspeed (m/s)
     pids = {axis: pid.Pid(output_limit=mix.limit, integral_limit=mix.limit, **gains.get(axis, {}))
             for axis in ('roll', 'pitch', 'yaw')}
 
     dt = 1.0 / sim_hz
-    dt_ms = max(1, int(round(dt * 1000)))   # integer-ms slice the fixed-point PID expects (mirror flight.py)
+    dt_ms = max(1, int(round(dt * 1000)))   # integer-ms slice the fixed-point PID expects (board parity)
     stage = 'setting'
     since = 0.0          # time the current sustained-detect window started
-    boost_hold = None    # captured rod-vertical (roll, pitch) to hold through the climb
+    active = False       # in a control stage (mirrors flight._active: enter() + PID reset on entry)
+    last_gnss = -1.0     # last GNSS publish into the injected handles (~10 Hz, board cadence)
     rows = _Capture()
     rows.header()
 
@@ -130,8 +175,6 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
             if (t - since) * 1000.0 >= boost_timeout_ms:
                 stage, since = 'gliding', t
                 body.begin_glide()
-                for controller in pids.values():
-                    controller.reset()
                 rows.event(t, 'controller :: stage -> gliding')
         elif stage == 'gliding':
             if agl < land_agl_m:
@@ -145,49 +188,52 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
                 rows.event(t, 'controller :: stage -> done')
                 break
 
-        # --- dynamic-pressure fin governor: cap fin authority by airspeed (the sim's true airspeed) ---
-        airspeed = (body.vu * body.vu + body.speed * body.speed) ** 0.5
-        mix.limit = max(1, int(commons.fin_deflection_limit(airspeed) * fin_limit_multiplier))
-        # --- control law (mirrors flight._step): only the configured control stages actuate ---
-        setpoint = stages.get(stage)
-        fins = (mix.neutral, mix.neutral, mix.neutral)   # commanded (left, right, yaw) -- neutral off-control
-        if stage == 'setting':
-            body.boost_step(dt, thrust if t < burn_s else 0.0)
-        elif stage == 'boosting':                        # hold the captured rod-vertical, past the rod
-            if boost_hold is None:
-                boost_hold = (roll_m, pitch_m)           # capture the vertical attitude at boost entry
+        # --- publish the sim readings into the injected handles (what the databoard does on-board) ---
+        accel_handle.value_now = (0.0, 0.0, accel_m)   # boost-axis |a| in g (magnitude parity)
+        accel_handle.source = 'sim'
+        agl_handle.value_now = agl
+        agl_handle.source = 'sim'
+        if t - last_gnss >= _GNSS_S:                    # GNSS ~10 Hz, the board's fix cadence
+            last_gnss = t
+            # total speed (vertical + horizontal), matching what tasks/hitl publishes on 'speed' --
+            # the estimator's corrector sees the same signal the on-board HITL feeds it
+            speed_handle.value_now = (body.vu * body.vu + body.speed * body.speed) ** 0.5
+            speed_handle.source = 'gnss'
+            position_handle.value_now = sensors['position']
+            position_handle.source = 'gnss'
+
+        # --- the REAL control pipeline (mirrors flight._step): governor -> gate -> guidance -> PID ---
+        stage_id = _STAGE.NAMES[stage]
+        roll_cd = fixed.from_float(roll_m)
+        pitch_cd = fixed.from_float(pitch_m)
+        fin_governor.step(dt, stage_id < _STAGE.GLIDING, pitch_cd)
+        setpoint = law.setpoint(stage_id)
+        if setpoint is None:                            # non-control stage -> fins neutral
+            if active:
+                active = False
+            mix.actuate(0, 0, 0)
+        else:
+            if not active:                              # entering control: capture holds, reset PIDs
+                active = True
+                law.enter(heading_m, roll_cd, pitch_cd)
+                for axis_pid in pids.values():
+                    axis_pid.reset()
+            if law.compute(stage_id, setpoint, heading_m, int(t * 1e6)):
+                roll_cmd = pids['roll'].step(law.roll_setpoint - roll_cd, dt_ms, roll_rate)
+                pitch_cmd = pids['pitch'].step(law.pitch_setpoint - pitch_cd, dt_ms, pitch_rate)
+                yaw_cmd = pids['yaw'].step(law.heading_error * fixed.SCALE, dt_ms, yaw_rate)
+                mix.actuate(roll_cmd // fixed.SCALE, pitch_cmd // fixed.SCALE, yaw_cmd // fixed.SCALE)
+            else:                                       # boost still on the rod -> neutral
+                mix.actuate(0, 0, 0)
+        fins = tuple(fins_by_name[name].angle for name in _FINS)
+
+        # --- physics: fly the body with the commanded fins (left, right, yaw) ---
+        if stage in ('setting', 'boosting'):
             burn = thrust if t < burn_s else 0.0
-            if airspeed < boost_engage:                  # still on the rod -> no fin authority, just climb
-                body.boost_step(dt, burn)
-            else:                                        # past the rod -> guarded fins fight the weathercock
-                # fixed-point PID (mirror flight._run_pid): centideg error, integer-ms dt, gyro-rate D term
-                roll_cmd = pids['roll'].step(fixed.from_float(boost_hold[0] - roll_m), dt_ms, roll_rate)
-                pitch_cmd = pids['pitch'].step(fixed.from_float(boost_hold[1] - pitch_m), dt_ms, pitch_rate)
-                angles = mix.mix(roll=roll_cmd // fixed.SCALE, pitch=pitch_cmd // fixed.SCALE, yaw=0)
-                fins = tuple(angles[f] for f in _FINS)
-                body.boost_step(dt, burn, (fins[0] + fins[1]) / 2.0 - 90.0, (fins[0] - fins[1]) / 2.0)
-        elif setpoint is not None:                       # a control stage (gliding) -> PID -> mixer -> fins
-            final = final_agl and agl < final_agl        #/low on final -> track the strip centreline
-            if final:
-                target = navigation.approach(sensors['position'], zone[0], zone[1], heading_m,
-                                             final_cross_gain, final_intercept)
-            else:
-                target = navigation.steer(sensors['position'], zone[0], zone[1])[0]  # tier-1: live fix
-            heading_error = _heading_error(target, heading_m)
-            roll_setpoint = setpoint.get('roll', 0.0)
-            if land_bank_gain and (final or stage == 'landing'):  # final/landing: gentle, tight-capped bank
-                roll_setpoint = commons.bank_demand(heading_error, land_bank_gain, land_bank_limit)
-            elif bank_gain and stage == 'gliding':       # high glide: bank-to-turn toward the zone
-                roll_setpoint = commons.bank_demand(heading_error, bank_gain, bank_limit)
-            # fixed-point PID (mirror flight._run_pid): centideg error (from_float once), integer-ms dt,
-            # gyro-rate D term; heading_error is int deg -> *SCALE to centideg. Output // SCALE -> deg mixer.
-            roll_cmd = pids['roll'].step(fixed.from_float(roll_setpoint - roll_m), dt_ms, roll_rate)
-            pitch_cmd = pids['pitch'].step(fixed.from_float(setpoint.get('pitch', 0.0) - pitch_m), dt_ms, pitch_rate)
-            yaw_cmd = pids['yaw'].step(heading_error * fixed.SCALE, dt_ms, yaw_rate)
-            angles = mix.mix(roll=roll_cmd // fixed.SCALE, pitch=pitch_cmd // fixed.SCALE, yaw=yaw_cmd // fixed.SCALE)
-            fins = tuple(angles[f] for f in _FINS)
+            body.boost_step(dt, burn, (fins[0] + fins[1]) / 2.0 - 90.0, (fins[0] - fins[1]) / 2.0)
+        elif setpoint is not None:                      # a control stage (gliding/landing)
             body.glide_step(dt, (fins[0] - fins[1]) / 2.0, (fins[0] + fins[1]) / 2.0 - 90.0, fins[2] - 90.0)
-        else:                                            # non-control stage -> coast, fins neutral
+        else:                                           # non-control stage -> coast, fins neutral
             body.glide_step(dt, 0.0, 0.0, 0.0)
 
         rows.sample(t, accel_m, altitude_m, sensors['altitude'] - body.elev0, heading_m, roll_m, pitch_m,
@@ -235,7 +281,7 @@ class _Capture:
         self._tlm('imu_lsm6dso32.csv', '%u;0.000;0.000;%.3f;%.1f;%.1f;%.1f'
                   % (microseconds, accel, rate[0], rate[1], rate[2]))
         self._tlm('fins.csv', '%u;%d;%d;%d' % (microseconds, fins[0], fins[1], fins[2]))
-        if t - self._last_gnss >= 0.1:                   # GNSS ~10 Hz
+        if t - self._last_gnss >= _GNSS_S:               # GNSS ~10 Hz
             self._last_gnss = t
             self._tlm('gnss.csv', '%u;%.6f;%.6f;%.1f;%.1f'    # speed in knots (GPS convention)
                       % (microseconds, position[0], position[1], speed * 1.94384, heading))

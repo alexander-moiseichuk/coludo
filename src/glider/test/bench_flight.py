@@ -5,7 +5,7 @@
 # per-step latency (worst max_step_us) and CPU load (a free-running idle counter vs a no-flight baseline).
 #
 # The BREAKDOWN section then prices where a step's time goes -- the whole _step vs its _run_pid (the
-# fixed-point PID: 3x pid.step + mix + apply) vs navigation.steer (the float haversine/atan2 homing trig,
+# fixed-point PID: 3x pid.step + the fused mixer.actuate) vs navigation.steer (the float homing trig,
 # recomputed only every nav_period_ms in flight). This is the evidence for 7/01 wish #6 (viperize): if the
 # integer PID is a small slice and the float trig dominates, viperizing the alloc-free PID is churn.
 # Needs the firmware deployed (run `make test` or ../deploy.sh first). Results live in doc/plan.md.
@@ -111,7 +111,7 @@ async def breakdown():
     task = flight.Flight('flight', {'schedule_hz': 0, 'period_ms': 20, 'gains': {'roll': {'kp': 2.0, 'kd': 0.2},
                         'pitch': {'kp': 1.5}, 'yaw': {'kp': 1.5, 'kd': 0.1}}}, Ctrl())
     await task.setup()
-    task._step()  # warm: resolve+cache the fins and set _roll_sp/_pitch_sp/_heading_err for _run_pid
+    task._step()  # warm: bind the fins into the mixer and fill the guidance setpoint slots for _run_pid
 
     # representative coords: a position ~200 m off a 100 m landing zone (the homing trig's real inputs)
     position = (25.5000, -80.4000)
@@ -134,14 +134,13 @@ async def breakdown():
         pitch_pid.step(err, 10, rate_arg)
         yaw_pid.step(err, 10, rate_arg)
     three_step_us = _per_op(_three)
-    mix_us = _per_op(lambda: task._mixer.mix(1, 1, 1))
     rate_us = _per_op(task._rate.value)
-    neutral = task._mixer.neutralise()
-    apply_us = _per_op(lambda: task._apply(neutral))
+    actuate_us = _per_op(lambda: task._actuate(1, 1, 1))  # the fused mix+set_angle loop (bound fins)
+    mix_us = _per_op(lambda: task._mixer.mix(1, 1, 1))  # reference: the old dict path (host tools only)
 
     print('\nstep-time breakdown (us/call, %d samples):' % 2000)
     print('  whole _step (nav cached) : %7.1f us' % step_us)
-    print('  _run_pid (PID+mix+apply) : %7.1f us  (%.0f%% of a step)' % (pid_us, 100 * pid_us / step_us))
+    print('  _run_pid (PID+actuate)   : %7.1f us  (%.0f%% of a step)' % (pid_us, 100 * pid_us / step_us))
     print('  navigation.steer (trig)  : %7.1f us  (throttled ~1 in %d steps -> ~%.0f us amortized/step)' %
           (nav_us, max(1, task.config.get('nav_period_ms', 100) // 10),
            nav_us / max(1, task.config.get('nav_period_ms', 100) // 10)))
@@ -149,17 +148,16 @@ async def breakdown():
     print('    1x pid.step (integer)  : %7.1f us  <- the VIPERIZABLE arithmetic' % one_step_us)
     print('    3x pid.step            : %7.1f us  (%.0f%% of _run_pid)' % (three_step_us,
                                                                           100 * three_step_us / pid_us))
-    print('    mixer.mix              : %7.1f us' % mix_us)
     print('    rate.value (databoard) : %7.1f us' % rate_us)
-    print('    _apply (find+set fins) : %7.1f us' % apply_us)
+    print('    mixer.actuate (fused)  : %7.1f us  (vs old mix->dict->apply; mix alone %.1f us)' %
+          (actuate_us, mix_us))
     # viper verdict: viper can only speed pid.step's integer ARITHMETIC, not the Python method/attr/clamp
-    # overhead, dict work in mix/apply, or the databoard read. So its ceiling is a fraction of the 3x
+    # overhead, the fused actuate loop, or the databoard read. So its ceiling is a fraction of the 3x
     # pid.step slice. And a step is a small part of the 100 Hz budget -> headroom, not a deadline.
     budget_us = 10000  # 100 Hz
     print('  -- viper #6 verdict --')
     print('    3x pid.step = %.0f%% of a step; a step = %.1f%% of the 100 Hz budget (%d us)' %
           (100 * three_step_us / step_us, 100 * step_us / budget_us, budget_us))
-    print('    biggest single slice is _apply (%.0f us, fin writes) -- NOT viperizable arithmetic' % apply_us)
 
 
 async def alloc():
@@ -183,25 +181,37 @@ async def alloc():
         gc.enable()
         return used / n
 
-    per_step = _alloc(task._step)
-    # decompose: which part still boxes floats? (airspeed |accel| sqrt chain, the setpoint from_float, the PID)
-    task._heading_hold = 100.0  # set by the first-entry path in a real run; needed for _compute_setpoints
-    air_b = _alloc(lambda: task._update_airspeed(task._dt))
-    setp_b = _alloc(lambda: task._compute_setpoints(task._stages[Stage.GLIDING], 100.0,
-                                                    fixed.from_float(5.0), fixed.from_float(-3.0), False))
+    # per-CALL component costs (each measured in isolation). The tight GC-off loop runs _step back-to-back
+    # (dt ~ us), so the glide airspeed THROTTLE almost never fires here -- measuring per_step directly would
+    # over-state the win. Instead measure a base step with the governor's update forced off, then amortize
+    # it by its REAL glide cadence (the adaptive interval) against the control rate -- the honest flight leak.
+    task._guidance.enter(100.0, 0, 0)  # the first-entry capture a real run does; guidance needs the hold
+    air_b = _alloc(lambda: task._governor._update(task._dt, 0))  # shallow pitch: GNSS corrector active
+    glide_setpoint = task._guidance.setpoint(Stage.GLIDING)
+    setp_b = _alloc(lambda: task._guidance.compute(Stage.GLIDING, glide_setpoint, 100.0, time.ticks_us()))
     pid_b = _alloc(lambda: task._run_pid(fixed.from_float(5.0), fixed.from_float(-3.0), 10))
+    task._governor._interval_s = 1e9  # force the adaptive throttle to never fire -> a base step without airspeed
+    task._governor._accum_s = 0.0
+    base_step = _alloc(task._step)
     gc.collect()
     free = gc.mem_free()
-    print('\nreal control-path leak (GC off, %d steps):' % 2000)
-    print('  _step allocation         : %6.1f B/step' % per_step)
-    print('    _update_airspeed       : %6.1f B  (|accel| sqrt + governor float chain -- unchanged by fixnum)' % air_b)
-    print('    _compute_setpoints     : %6.1f B  (setpoint from_float + bank_demand)' % setp_b)
-    print('    _run_pid (PID+mix+apply: %6.1f B  (fixed-point -> ~0; only the error boundary)' % pid_b)
+    # the glide throttle is ADAPTIVE: fast floor (when airspeed moves) -> settled ceiling. Read the
+    # intervals off the governor's config so this tracks the actual configured defaults (the ceiling also
+    # bounds how stale the absolute-speed full-rate trigger can be).
+    air_hz_fast = 1.0 / task._governor._config.floor_s      # moving: the conservative (worst-case) rate
+    air_hz_settled = 1.0 / task._governor._config.ceiling_s  # settled glide: the best case
+    print('\nreal control-path leak (GC off, %d steps) -- glide phase:' % 2000)
+    print('  base step (no airspeed)  : %6.1f B/step  (setpoints %.0f + PID/mix/apply %.0f)' %
+          (base_step, setp_b, pid_b))
+    print('  governor._update         : %6.1f B/call, adaptive %.0f Hz (moving) -> %.0f Hz (settled glide)' %
+          (air_b, air_hz_fast, air_hz_settled))
     for hz in (50, 100, 200):
-        bps = per_step * hz
-        oom = free / bps if bps > 0 else float('inf')
-        print('  @ %3d Hz                  : %6.0f B/s  -> time-to-OOM ~%s  (%.1f MB free now)' %
-              (hz, bps, ('%.0f s' % oom) if oom != float('inf') else 'never', free / 1e6))
+        for tag, a_hz in (('moving', min(hz, air_hz_fast)), ('settled', min(hz, air_hz_settled))):
+            bps = base_step * hz + air_b * a_hz
+            oom = free / bps if bps > 0 else float('inf')
+            print('  @ %3d Hz control, %-7s : %6.0f B/s (base %.0f + air %.0f@%.0fHz) -> OOM ~%s' %
+                  (hz, tag, bps, base_step * hz, air_b * a_hz, a_hz,
+                   ('%.0f s' % oom) if oom != float('inf') else 'never'))
 
 
 async def main():

@@ -1,8 +1,12 @@
 # commons.py — small, dependency-free primitives shared across the control-math modules (mixer / pid /
-# navigation / sequencer / flight / sg90). The bundle module for the plan.
+# navigation / guidance / governor / sequencer / flight / sg90). The bundle module for the plan.
+#
+# Layout, one banner per concern: COMPATIBILITY (every MicroPython/CPython shim, in one place) ->
+# CONSTANTS -> INTEGER MATH (viper) -> FLOAT MATH (native) -> FIN GOVERNOR -> PERSISTENCE ->
+# WIRE DIAGNOSTICS.
 #
 # Naming convention:
-# plain name -- a leaf with no _opt variant at all (none currently).
+# plain name -- a leaf with no _opt variant at all.
 # NAME_upy / NAME_opt + `NAME = <winner>`
 # -- a function with an optimised variant. NAME_upy is the
 # portable bytecode reference; NAME_opt is the optimised build (viper for ints, native for floats,
@@ -11,15 +15,19 @@
 # DIRECTLY (no runtime selector). Bound here: clamp_int, wrap180 (@viper, ~2.1-2.8x); between,
 # magnitude_sq (@native, ~1.2-1.6x); bank_demand -> _upy for now (its @native measured 1.03x -- a
 # thin wrapper over native between; switch to _opt when a bench shows a gain).
-#
+
+# ------------------------------------------------------------------ MicroPython/CPython compatibility
 # `@micropython.viper` / `@micropython.native` are compiler directives keyed on the literal decorator
-# name (not aliasable); the shim below keeps the module importable on CPython (the decorator degrades to
+# name (not aliasable); the shim keeps the module importable on CPython (the decorator degrades to
 # identity, runs as plain Python). On the board the RV32 emitter compiles viper to integer-only native
 # code (~2.1-2.5x vs bytecode, no FPU) and native to FPU float code (~1.2-1.6x — float boxing caps it).
 
 try:
+    from time import ticks_diff  # wrap-safe tick difference (guidance nav cache)
+
     import micropython  # real module on the board: micropython.viper / .native / .const
-except ImportError:  # CPython (off-board tooling / tests) — decorators + const become no-ops
+    from micropython import const  # the form the compiler folds for `from commons import const` users
+except ImportError:  # CPython (off-board tooling / tests) — everything degrades to plain Python
 
     class micropython:  # noqa: N801 — deliberately shadows the absent stdlib name with a shim
         @staticmethod
@@ -34,51 +42,87 @@ except ImportError:  # CPython (off-board tooling / tests) — decorators + cons
         def const(value):
             return value
 
-
-try:
-    from micropython import const  # real on the board; compiler catches this one for any
-except ImportError:                # module that does `from commons import const` on CPython
     def const(value):
         """CPython const fallback — identity function."""
         return value
 
-M_PER_DEG = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat)); shared
-                      # by navigation + sim_model (flat-earth geo) -- one definition, not three.
+    def ticks_diff(new: int, old: int) -> int:
+        """CPython ticks_diff fallback — plain difference (host tick counters do not wrap)."""
+        return new - old
+
+
+# ------------------------------------------------------------------------------------ shared constants
+
+M_PER_DEG: float = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat));
+                             # shared by navigation + sim_model (flat-earth geo) -- one definition.
 
 SERVO_NEUTRAL_DEG: int = 90  # default fin/servo neutral angle (deg): the zero-deflection centre the mixer
                              # holds when disarmed/degraded and the HITL sim assumes when recovering fin
                              # deflections. A board may override per surface via config `mixer.neutral_deg`.
 
 
-def between_upy(low, value, high):
+# ------------------------------------------------------------------------------- integer math (@viper)
+
+# clamp_int: integer clamp to [low, high]. Hot via sg90 fin clamping (round(angle), min/max deg).
+
+def clamp_int_upy(low: int, value: int, high: int) -> int:
+    return low if value < low else (high if value > high else value)
+
+
+@micropython.viper
+def clamp_int_opt(low: int, value: int, high: int) -> int:
+    return low if value < low else (high if value > high else value)
+
+
+clamp_int = clamp_int_opt  # viper is safe on this firmware -> bind the optimised variant
+
+
+# wrap180: wrap an integer-degree value to (-180, 180]. Hot via the yaw heading error each step.
+
+def wrap180_upy(degrees: int) -> int:
+    return degrees if -180 <= degrees <= 180 else (degrees + 180) % 360 - 180
+
+
+@micropython.viper
+def wrap180_opt(degrees: int) -> int:
+    return degrees if -180 <= degrees <= 180 else (degrees + 180) % 360 - 180
+
+
+wrap180 = wrap180_opt  # viper is safe on this firmware -> bind the optimised variant
+
+
+# ------------------------------------------------------------------------------- float math (@native)
+
+def between_upy(low: float, value: float, high: float) -> float:
     """Clamp `value` to the inclusive range [low, high]: `low` if below, `high` if above, else `value`.
     With low=-x, high=+x it is a symmetric +/-x clamp; either bound may be math.inf for an open side
-    (between(-inf, v, inf) == v). Float-/inf-valued (so @native, not viper). Assumes low <= high."""
+    (between(-inf, v, inf) == v). Float-/inf-valued (so @native, not viper); plain ints pass through
+    unconverted. Assumes low <= high."""
     return low if value < low else (high if value > high else value)
 
 
 @micropython.native
-def between_opt(low, value, high):
+def between_opt(low: float, value: float, high: float) -> float:
     return low if value < low else (high if value > high else value)
 
 
 between = between_opt  # @native -- the most-called primitive; a free ~1.6x (handles inf the same way)
 
 
-def magnitude_sq_upy(x, y, z):
+def magnitude_sq_upy(x: float, y: float, z: float) -> float:
     """|(x, y, z)|^2 (no sqrt — callers compare against squared thresholds). Pure float -> @native."""
     return x * x + y * y + z * z
 
 
 @micropython.native
-def magnitude_sq_opt(x, y, z):
+def magnitude_sq_opt(x: float, y: float, z: float) -> float:
     return x * x + y * y + z * z
 
 
 magnitude_sq = magnitude_sq_opt  # @native
 
 
-def bank_demand_upy(heading_error, gain, limit):
+def bank_demand_upy(heading_error: int, gain: float, limit: float) -> float:
     """Bank-to-turn: the roll angle (deg, right +) to hold for a heading error (deg) -- proportional with
     a symmetric hard clamp (gain 0 -> no bank, rudder-only). A banked turn is tight (~v^2/(g*tan(bank)))
     where a flat rudder skid is wide and weak, so the glider does not over-RANGE a small zone and the
@@ -87,30 +131,35 @@ def bank_demand_upy(heading_error, gain, limit):
 
 
 @micropython.native
-def bank_demand_opt(heading_error, gain, limit):
+def bank_demand_opt(heading_error: int, gain: float, limit: float) -> float:
     return between(-limit, gain * heading_error, limit)
 
 
 bank_demand = bank_demand_upy  # @native measured 1.03x here -> keep _upy; switch to _opt when a bench shows a gain
 
 
-# --- fin_deflection_limit: the dynamic-pressure fin governor (coludo.md "Fin authority"). Max fin
-# deflection (deg from neutral) the airframe can safely take at a given airspeed. Aero torque scales with
-# dynamic pressure q ∝ v², so a fixed angle is too weak slow / too violent fast; the cap goes ∝ 1/v² to
-# hold ~constant angular authority, clamped to [5°, 45°] (always-some authority / fin mechanical throw).
-# K=12500 anchors 50 m/s -> 5°. Precomputed ONCE at import (no per-step 1/v² on the 100 Hz path); the
-# board.config `fin_limit_multiplier` (default 1.0) is applied by the caller, not baked into the table. ---
-_FIN_VMAX = 80  # m/s -- table saturates here (well past any expected airspeed)
-_FIN_LIMIT = tuple(45 if v == 0 else min(45, max(5, round(12500 / (v * v)))) for v in range(_FIN_VMAX + 1))
+# ------------------------------------------------------------------------------------- fin governor
+# The dynamic-pressure fin deflection table (coludo.md "Fin authority"): max fin deflection (deg from
+# neutral) the airframe can safely take at a given airspeed. Aero torque scales with dynamic pressure
+# q ∝ v², so a fixed angle is too weak slow / too violent fast; the cap goes ∝ 1/v² to hold ~constant
+# angular authority, clamped to [5°, 45°] (always-some authority / fin mechanical throw). K=12500
+# anchors 50 m/s -> 5°. Precomputed ONCE at import (no per-step 1/v² on the 100 Hz path); the
+# board.config `fin_limit_multiplier` (default 1.0) is applied by the caller, not baked into the table.
+
+_FIN_VMAX: int = const(80)  # m/s -- table saturates here (well past any expected airspeed)
+_FIN_LIMIT: tuple = tuple(45 if v == 0 else min(45, max(5, round(12500 / (v * v))))
+                          for v in range(_FIN_VMAX + 1))
 
 
-def fin_deflection_limit(speed_ms):
+def fin_deflection_limit(speed_ms: float) -> int:
     """Max fin deflection in degrees for airspeed `speed_ms` (m/s) -- the dynamic-pressure governor table
     lookup (saturates at _FIN_VMAX). Multiply by the config fin_limit_multiplier at the caller."""
     return _FIN_LIMIT[max(0, min(int(speed_ms), _FIN_VMAX))]
 
 
-def atomic_write_json(path, data):
+# -------------------------------------------------------------------------------------- persistence
+
+def atomic_write_json(path: str, data) -> None:
     """Persist `data` as JSON to `path` atomically (shared by config.save + mission.save): write a
     temp file then rename it over the target, with a remove-then-rename fallback for a VFS (FAT) that
     won't rename onto an existing file. os/json are imported lazily so the hot-path importers of commons
@@ -130,6 +179,8 @@ def atomic_write_json(path, data):
         os.rename(tmp, path)
 
 
+# --------------------------------------------------------------------------------- wire diagnostics
+
 def id_classify(read, expected: int) -> str:
     """Classify a chip WHO_AM_I / device-id byte against the expected value into an operator-readable
     wire-level diagnosis. The deeper 'why' a bus driver's diagnose() returns when setup() failed, so
@@ -145,43 +196,3 @@ def id_classify(read, expected: int) -> str:
     if read == 0xFF:
         return 'id reads 0xFF -- bus idle-high: no device driving MISO (absent / MISO miswired)'
     return 'id reads 0x%02X, expected 0x%02X -- wrong device on this bus/select (crosswired)' % (read, expected)
-
-
-# --- clamp_int: integer clamp to [low, high]. Hot via sg90 fin clamping (round(angle), min/max deg). ---
-
-
-def clamp_int_upy(low, value, high):
-    if value < low:
-        return low
-    if value > high:
-        return high
-    return value
-
-
-@micropython.viper
-def clamp_int_opt(low: int, value: int, high: int) -> int:
-    if value < low:
-        return low
-    if value > high:
-        return high
-    return value
-
-
-clamp_int = clamp_int_opt  # viper is safe on this firmware -> bind the optimised variant
-
-
-# --- wrap180: wrap an integer-degree value to (-180, 180]. Hot via the yaw heading error each step. ---
-
-
-def wrap180_upy(degrees):
-    return degrees if -180 <= degrees <= 180 else (degrees + 180) % 360 - 180
-
-
-@micropython.viper
-def wrap180_opt(degrees: int) -> int:
-    if -180 <= degrees <= 180:
-        return degrees
-    return (degrees + 180) % 360 - 180
-
-
-wrap180 = wrap180_opt  # viper is safe on this firmware -> bind the optimised variant
