@@ -89,6 +89,19 @@ class Flight(task.Task):
         self._gnss_speed = databoard.Databoard.parameter('speed')  # GNSS ground speed (m/s) corrector
         self._airspeed = airspeed.AirspeedEstimator()
         self._fin_limit_multiplier: float = board.get('fin_limit_multiplier', 1.0)
+        # the airspeed governor + estimator is a FLOAT path (sqrt magnitude, integrate, GNSS blend) ~ the
+        # biggest remaining GC-off allocator (~22 KB/s @ full rate). It matters most while the speed is fast-
+        # changing (boost accel + active deceleration), so run it FULL RATE there -- stage < GLIDING, or any
+        # speed >= airspeed_full_ms (a glide dive back up through it). Once settled below that, THROTTLE with
+        # an interval that adapts to the airspeed change (error): snap to the fast floor when it moves, grow
+        # toward the ceiling as it settles. The estimator integrates the ACCUMULATED dt, so cadence never
+        # changes the integral -- only how fresh the fin-authority cap is (it persists between updates).
+        self._airspeed_full_ms: float = self.config.get('airspeed_full_speed', 20.0)  # >= this m/s -> full rate
+        self._airspeed_min_s: float = self.config.get('airspeed_min_ms', 40) / 1000.0  # fast floor (~25 Hz)
+        self._airspeed_max_s: float = self.config.get('airspeed_max_ms', 200) / 1000.0  # settled ceiling (~5 Hz)
+        self._airspeed_settle: float = self.config.get('airspeed_settle', 0.5)  # m/s change to keep updating fast
+        self._airspeed_step_s: float = self._airspeed_min_s  # current adaptive throttle interval (starts fast)
+        self._airspeed_accum_s: float = 0.0  # wall time since the last airspeed update (integration dt)
         # boost stage: hold the rod-vertical attitude captured at BOOSTING entry, engaging only PAST
         # the rod (airspeed > boost_engage_speed); below that the fins stay neutral (the rod holds it).
         self._boost_engage: float = self.config.get('boost_engage_speed', 15.0)
@@ -123,13 +136,27 @@ class Flight(task.Task):
 
     def _step(self) -> None:
         """One control update (sync, no await -> runs whole in a timer slice). A pipeline: dt -> airspeed
-        governor (EVERY step, so the deflection cap is warm the instant control begins) -> stage gate ->
-        attitude -> first-entry init -> stage-dependent setpoints -> PID -> mix -> apply. The extracted
-        helpers set/read instance slots rather than return tuples -- decomposed WITHOUT adding a per-step
-        heap allocation (GC is off in flight). Self-times for the load sweep."""
+        governor (full rate pre-glide, throttled in the glide -> the deflection cap stays warm) -> stage
+        gate -> attitude -> first-entry init -> stage-dependent setpoints -> PID -> mix -> apply. The
+        extracted helpers set/read instance slots rather than return tuples -- decomposed WITHOUT adding a
+        per-step heap allocation (GC is off in flight). Self-times for the load sweep."""
         start = time.ticks_us()
         dt_ms = self._compute_dt(start)  # also stores self._dt (float s) for the airspeed integrator
-        self._update_airspeed(self._dt)
+        # airspeed governor (float sqrt/integrate/blend, the top GC-off allocator): full rate while the
+        # speed is fast-changing -- boost + active decel (stage < GLIDING) or any speed >= airspeed_full_ms
+        # -- then an ADAPTIVE throttle once settled below it: snap to the fast floor when the estimate moves
+        # (error >= airspeed_settle), else grow the interval toward the ceiling. Integrates the accumulated
+        # dt, so cadence never changes the integral -- only how fresh the (slowly-moving) fin cap is.
+        self._airspeed_accum_s += self._dt
+        full_rate = self.controller.stage < _STAGE.GLIDING or self._airspeed.value() >= self._airspeed_full_ms
+        if full_rate or self._airspeed_accum_s >= self._airspeed_step_s:
+            previous = self._airspeed.value()
+            self._update_airspeed(self._airspeed_accum_s)
+            self._airspeed_accum_s = 0.0
+            if not full_rate:  # adapt the throttle interval to the airspeed change since the last update
+                moved = abs(self._airspeed.value() - previous) >= self._airspeed_settle
+                self._airspeed_step_s = self._airspeed_min_s if moved else \
+                    min(self._airspeed_max_s, self._airspeed_step_s + self._airspeed_min_s)
         setpoint = self._stages.get(self.controller.stage)  # int key -> None if not a control stage
         if setpoint is None or not self.controller.armed:  # not a control stage, or disarmed -> neutral
             if self._active:  # left the control stages (or disarmed) -> centre the fins
@@ -174,9 +201,10 @@ class Flight(task.Task):
         return dt_us // 1000  # integer ms: the fixed-point PID (no float box)
 
     def _update_airspeed(self, dt: float) -> None:
-        """Dynamic-pressure fin governor, run unconditionally so boost speed carries into the glide cap:
-        integrate |accel|-g (backbone) + blend a sane GNSS fix, then cap the mixer authority by it
-        (commons.fin_deflection_limit ∝ 1/v², × the safety multiplier)."""
+        """Dynamic-pressure fin governor: integrate |accel|-g over `dt` (the backbone) + blend a sane GNSS
+        fix, then cap the mixer authority by it (commons.fin_deflection_limit ∝ 1/v², × the safety
+        multiplier). `dt` is the wall time since the LAST call (per-step pre-glide, accumulated when
+        throttled in the glide) so the integral covers the same time regardless of the call cadence."""
         accel = self._accel.value()
         if accel is not None:
             self._airspeed.predict((commons.magnitude_sq(accel[0], accel[1], accel[2]) ** 0.5 - 1.0) * 9.81, dt)

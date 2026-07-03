@@ -183,25 +183,35 @@ async def alloc():
         gc.enable()
         return used / n
 
-    per_step = _alloc(task._step)
-    # decompose: which part still boxes floats? (airspeed |accel| sqrt chain, the setpoint from_float, the PID)
+    # per-CALL component costs (each measured in isolation). The tight GC-off loop runs _step back-to-back
+    # (dt ~ us), so the glide airspeed THROTTLE almost never fires here -- measuring per_step directly would
+    # over-state the win. Instead measure a base step with airspeed forced off, then amortize _update_airspeed
+    # by its REAL glide cadence (airspeed_period_ms) against the control rate -- the honest flight leak.
     task._heading_hold = 100.0  # set by the first-entry path in a real run; needed for _compute_setpoints
     air_b = _alloc(lambda: task._update_airspeed(task._dt))
     setp_b = _alloc(lambda: task._compute_setpoints(task._stages[Stage.GLIDING], 100.0,
                                                     fixed.from_float(5.0), fixed.from_float(-3.0), False))
     pid_b = _alloc(lambda: task._run_pid(fixed.from_float(5.0), fixed.from_float(-3.0), 10))
+    task._airspeed_step_s = 1e9  # force the adaptive throttle to never fire -> a base step without airspeed
+    task._airspeed_accum_s = 0.0
+    base_step = _alloc(task._step)
     gc.collect()
     free = gc.mem_free()
-    print('\nreal control-path leak (GC off, %d steps):' % 2000)
-    print('  _step allocation         : %6.1f B/step' % per_step)
-    print('    _update_airspeed       : %6.1f B  (|accel| sqrt + governor float chain -- unchanged by fixnum)' % air_b)
-    print('    _compute_setpoints     : %6.1f B  (setpoint from_float + bank_demand)' % setp_b)
-    print('    _run_pid (PID+mix+apply: %6.1f B  (fixed-point -> ~0; only the error boundary)' % pid_b)
+    # the glide throttle is ADAPTIVE: fast floor (min_ms, when airspeed moves) -> settled ceiling (max_ms).
+    air_hz_fast = 1000.0 / task.config.get('airspeed_min_ms', 40)   # moving: the conservative (worst-case) rate
+    air_hz_settled = 1000.0 / task.config.get('airspeed_max_ms', 200)  # settled glide: the best case
+    print('\nreal control-path leak (GC off, %d steps) -- glide phase:' % 2000)
+    print('  base step (no airspeed)  : %6.1f B/step  (setpoints %.0f + PID/mix/apply %.0f)' %
+          (base_step, setp_b, pid_b))
+    print('  _update_airspeed         : %6.1f B/call, adaptive %.0f Hz (moving) -> %.0f Hz (settled glide)' %
+          (air_b, air_hz_fast, air_hz_settled))
     for hz in (50, 100, 200):
-        bps = per_step * hz
-        oom = free / bps if bps > 0 else float('inf')
-        print('  @ %3d Hz                  : %6.0f B/s  -> time-to-OOM ~%s  (%.1f MB free now)' %
-              (hz, bps, ('%.0f s' % oom) if oom != float('inf') else 'never', free / 1e6))
+        for tag, a_hz in (('moving', min(hz, air_hz_fast)), ('settled', min(hz, air_hz_settled))):
+            bps = base_step * hz + air_b * a_hz
+            oom = free / bps if bps > 0 else float('inf')
+            print('  @ %3d Hz control, %-7s : %6.0f B/s (base %.0f + air %.0f@%.0fHz) -> OOM ~%s' %
+                  (hz, tag, bps, base_step * hz, air_b * a_hz, a_hz,
+                   ('%.0f s' % oom) if oom != float('inf') else 'never'))
 
 
 async def main():
