@@ -97,10 +97,14 @@ Build a protocol line; values are encoded as needed.
 _Tested by `test/test_commons.py`._
 
 commons.py — small, dependency-free primitives shared across the control-math modules (mixer / pid /
-navigation / sequencer / flight / sg90). The bundle module for the plan.
+navigation / guidance / governor / sequencer / flight / sg90). The bundle module for the plan.
+
+Layout, one banner per concern: COMPATIBILITY (every MicroPython/CPython shim, in one place) ->
+CONSTANTS -> INTEGER MATH (viper) -> FLOAT MATH (native) -> FIN GOVERNOR -> PERSISTENCE ->
+WIRE DIAGNOSTICS.
 
 Naming convention:
-plain name -- a leaf with no _opt variant at all (none currently).
+plain name -- a leaf with no _opt variant at all.
 NAME_upy / NAME_opt + `NAME = <winner>`
 -- a function with an optimised variant. NAME_upy is the
 portable bytecode reference; NAME_opt is the optimised build (viper for ints, native for floats,
@@ -110,40 +114,44 @@ DIRECTLY (no runtime selector). Bound here: clamp_int, wrap180 (@viper, ~2.1-2.8
 magnitude_sq (@native, ~1.2-1.6x); bank_demand -> _upy for now (its @native measured 1.03x -- a
 thin wrapper over native between; switch to _opt when a bench shows a gain).
 
-`@micropython.viper` / `@micropython.native` are compiler directives keyed on the literal decorator
-name (not aliasable); the shim below keeps the module importable on CPython (the decorator degrades to
-identity, runs as plain Python). On the board the RV32 emitter compiles viper to integer-only native
-code (~2.1-2.5x vs bytecode, no FPU) and native to FPU float code (~1.2-1.6x — float boxing caps it).
+### `clamp_int_upy(low: int, value: int, high: int) -> int`
 
-### `between_upy(low, value, high)`
+### `clamp_int_opt(low: int, value: int, high: int) -> int`
+
+### `wrap180_upy(degrees: int) -> int`
+
+### `wrap180_opt(degrees: int) -> int`
+
+### `between_upy(low: float, value: float, high: float) -> float`
 
 Clamp `value` to the inclusive range [low, high]: `low` if below, `high` if above, else `value`.
 With low=-x, high=+x it is a symmetric +/-x clamp; either bound may be math.inf for an open side
-(between(-inf, v, inf) == v). Float-/inf-valued (so @native, not viper). Assumes low <= high.
+(between(-inf, v, inf) == v). Float-/inf-valued (so @native, not viper); plain ints pass through
+unconverted. Assumes low <= high.
 
-### `between_opt(low, value, high)`
+### `between_opt(low: float, value: float, high: float) -> float`
 
-### `magnitude_sq_upy(x, y, z)`
+### `magnitude_sq_upy(x: float, y: float, z: float) -> float`
 
 |(x, y, z)|^2 (no sqrt — callers compare against squared thresholds). Pure float -> @native.
 
-### `magnitude_sq_opt(x, y, z)`
+### `magnitude_sq_opt(x: float, y: float, z: float) -> float`
 
-### `bank_demand_upy(heading_error, gain, limit)`
+### `bank_demand_upy(heading_error: int, gain: float, limit: float) -> float`
 
 Bank-to-turn: the roll angle (deg, right +) to hold for a heading error (deg) -- proportional with
 a symmetric hard clamp (gain 0 -> no bank, rudder-only). A banked turn is tight (~v^2/(g*tan(bank)))
 where a flat rudder skid is wide and weak, so the glider does not over-RANGE a small zone and the
 overshoot loop becomes an altitude-bleeding orbit.
 
-### `bank_demand_opt(heading_error, gain, limit)`
+### `bank_demand_opt(heading_error: int, gain: float, limit: float) -> float`
 
-### `fin_deflection_limit(speed_ms)`
+### `fin_deflection_limit(speed_ms: float) -> int`
 
 Max fin deflection in degrees for airspeed `speed_ms` (m/s) -- the dynamic-pressure governor table
 lookup (saturates at _FIN_VMAX). Multiply by the config fin_limit_multiplier at the caller.
 
-### `atomic_write_json(path, data)`
+### `atomic_write_json(path: str, data) -> None`
 
 Persist `data` as JSON to `path` atomically (shared by config.save + mission.save): write a
 temp file then rename it over the target, with a remove-then-rename fallback for a VFS (FAT) that
@@ -157,14 +165,6 @@ wire-level diagnosis. The deeper 'why' a bus driver's diagnose() returns when se
 `verify`/`probe` report e.g. 'chip-select not asserting' instead of just 'absent / miswired?'.
 `read` is None when the bus read itself failed (no I2C ack / SPI error). Shared by every ID-based
 driver (adxl375 / lsm6dso32 / bno055 / bmp280), so it lives here, not in one driver.
-
-### `clamp_int_upy(low, value, high)`
-
-### `clamp_int_opt(low: int, value: int, high: int) -> int`
-
-### `wrap180_upy(degrees)`
-
-### `wrap180_opt(degrees: int) -> int`
 
 ## `config.py`
 

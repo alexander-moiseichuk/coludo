@@ -37,6 +37,29 @@ The HITL leak is **down ~8–12 %** even with the sim's own churn unchanged — 
 per-step output-dict iteration and the guidance slots replaced the last per-step temporaries. Peak servo
 power flat (real INA226; the servos physically slew).
 
+## Guidance-effectiveness KPIs (`tools/flight_kpi.py`, raw Luckfox captures, both sets)
+
+Commanded fin activity (fins.csv; a "move" = the commanded angle changed between samples — sg90
+compare-and-sets, so an unchanged command is no PWM write), the **real INA226 servo energy** with the
+average power = energy / flight duration, and the touchdown miss from the zone centre:
+
+| flight | fin moves (guiding → fixnums) | yaw moves | servo energy | average power | miss from centre |
+|---|---|---|---|---|---|
+| F15 full | 1350 vs 1553 (−13 %) | **176 vs 300 (−41 %)** | **22.0 vs 26.2 J (−16 %)** | 0.54 vs 0.65 W | 65.6 vs 68.0 m (both in-zone) |
+| F15 half | 1740 vs 1915 (−9 %) | 246 vs 371 (−34 %) | 22.0 vs 26.1 J (−16 %) | 0.41 vs 0.49 W | 89.1 vs 87.5 m |
+| E16 full | 816 vs 835 (−2 %) | ≈ | 16.5 vs 15.5 J (+6 %) | 0.65 vs 0.61 W | 209.1 vs 210.0 m |
+| E16 half | 1115 vs 1195 (−7 %) | ≈ | 13.6 vs 16.5 J (−18 %) | 0.39 vs 0.47 W | 113.2 vs 113.2 m |
+
+**Same guidance outcome, ~10–16 % less servo work.** Miss distances match within GPS noise on all four
+(E16-full's ~210 m is physics — a 105 m apogee cannot reach the zone). The saving concentrates in the
+**rudder** (yaw moves −34…−41 % on the F15 flights, elevons unchanged): the fixnums captures pre-date the
+adaptive airspeed throttle, so their fin-authority cap (`mixer.limit`) refreshed at the full 100 Hz and
+estimate noise made the clamp jitter — the rudder, saturated at that clamp through the orbit, flickered
+with it. The throttled governor holds a steadier cap. E16-full is the one +6 % outlier: the shortest
+flight, dominated by boost, where the governor legitimately runs full rate. Average servo power
+(energy ÷ duration, INA226-measured) is the single best efficiency KPI; miss-distance the effectiveness
+one.
+
 ## The real control-path leak (masked-sensor, `test/bench_flight.py`, GC off, 2000 steps)
 
 ```
