@@ -83,6 +83,8 @@ class Flight(task.Task):
         off in flight). Self-times for the load sweep."""
         start = time.ticks_us()
         dt_ms = self._compute_dt(start)  # also stores self._dt (float s) for the governor's integrator
+        # stage authority stays with the task: pre-glide (boost + active decel) FORCES the governor to
+        # full rate from outside; its own speed/dive triggers decide the rest (governor.step docstring)
         self._governor.step(self._dt, self.controller.stage < _STAGE.GLIDING, self._pitch_cd)
         setpoint = self._guidance.setpoint(self.controller.stage)  # int key -> None if not control
         if setpoint is None or not self.controller.armed:  # not a control stage, or disarmed -> neutral

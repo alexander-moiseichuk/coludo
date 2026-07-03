@@ -98,11 +98,11 @@ def test_adaptive_throttle_and_overrides():
     unit._accum_s = 0.5
     unit.step(0.01, False, fixed.from_float(-60.0))
     assert unit._accum_s == 0.0, 'a dive must re-arm full rate before the estimate shows the overspeed'
-    # (d) pre-glide always runs full rate, even settled
+    # (d) the caller's full_rate_override (the flight task's pre-glide) always runs full rate
     unit._estimator._speed = 0.0
     unit._accum_s = 0.0
     unit.step(0.01, True, 0)
-    assert unit._accum_s == 0.0, 'pre-glide (boost + active decel) must never throttle'
+    assert unit._accum_s == 0.0, 'the full-rate override (pre-glide) must never throttle'
 
 
 def test_interval_adaptation():

@@ -64,11 +64,13 @@ class Governor:
         """The current airspeed estimate (m/s) — the boost rod gate and telemetry read it here."""
         return self._estimator.value()
 
-    def step(self, dt: float, pre_glide: bool, pitch: fixnum) -> None:
+    def step(self, dt: float, full_rate_override: bool, pitch: fixnum) -> None:
         """One control slice: accumulate `dt` (wall seconds since the last step) and update the
         estimator + fin cap when due. Full rate while the speed is fast-changing — so control is kept
         whenever airspeed may break the limit — on any of:
-          - `pre_glide` (boost + active deceleration, stage < GLIDING);
+          - `full_rate_override` — the CALLER forces full rate from its own authority (the flight
+            task passes stage < GLIDING: boost + active deceleration; stage stays the task's call,
+            the governor only decides by its own speed/attitude rules below);
           - the ABSOLUTE estimate at/over full_speed — covers a crosswind/gust overspeed at any
             attitude; the ceiling keeps this trigger's staleness bounded (reaction within ceiling_s);
           - a fresh steep nose-down (`pitch` <= dive_pitch) — a dive leads the overspeed, so this
@@ -76,7 +78,7 @@ class Governor:
         Otherwise adapt the throttle: update when the interval elapsed, snapping the interval to the
         floor when the estimate moved (>= settle) and growing it toward the ceiling as it settles."""
         self._accum_s += dt
-        full_rate = (pre_glide or self._estimator.value() >= self._config.full_speed
+        full_rate = (full_rate_override or self._estimator.value() >= self._config.full_speed
                      or pitch <= self._config.dive_pitch)
         if not (full_rate or self._accum_s >= self._interval_s):
             return  # throttled: the cap stays warm from the last update
@@ -91,7 +93,13 @@ class Governor:
     def _update(self, dt: float) -> None:
         """Integrate |accel|-g over `dt` (the backbone) + blend a sane GNSS fix, then cap the mixer
         authority (∝ 1/v², × the safety multiplier). `dt` covers the wall time since the LAST update
-        (per-step at full rate, accumulated when throttled) so the integral is cadence-independent."""
+        (per-step at full rate, accumulated when throttled) so the integral is cadence-independent.
+
+        FLOAT PATH — ~22 KB/s GC-off leak at full rate (measured 224 B/call): the sqrt, the integral
+        and the GNSS blend all box floats. Kept float BY DESIGN (findings §18: a fixnum rewrite
+        captures ~1/3 of the saving and inverts the safety over-read bias — floor rounding under-reads
+        speed → a looser fin cap, the unsafe direction); the adaptive throttle in step() amortizes it
+        instead (25 Hz moving → 10 Hz settled)."""
         accel = self._accel.value()
         if accel is not None:
             self._estimator.predict(
