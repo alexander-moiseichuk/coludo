@@ -6,13 +6,13 @@ Measured on printed model without holder.
 
 |Component|Measured Size in mm|
 | ------------------- | --- | 
-|Booster Body Length  |  290  | 
-|Glider Body Lnegth   |  390  |
-|Full length of Coludo|  680  |
-|Wing Span Extended   |  598  |
+|Booster Body Length  |  294  | 
+|Glider Body Length   |  398  |
+|Full length of Coludo|  710  |
+|Wing Span Extended   |  605  |
 |Wing Span Closed Near Holder  |  76  |
 |Wing Span Closed Near Locker  |  108  |
-|Fin Span             |  198  |
+|Fin Span             |  190.5  |
 
 These numbers are coming from the printed TMS-7 models.
 Coludo consists of an upper part that is a glider and the lower part that is a booster. 
@@ -26,14 +26,16 @@ Booster is the lower part of Coludo which may have E16 or F15 solid rocket prope
 
 |Component|Count|Weight [g]|
 | ------------------- | --- | ---- |
-|Body Tube  |  1  |  77.7  |
-|Holder and Cap|  1  |  35  |
+|Body Tube  |  1  |  50.3  |
+|Holder|  1  |  21.0  |
+|Cap|  1  |  6.6  |
 |Parachute and cord|  1  |   5  |
 |E16-4 Engine         |  1  | 82.5 |
 |F15-4 Engine         |  1  | 98.9 |
 | ------------------- | --- | ---- |
-|Full Booster With E16-4 Engine|  1  | 200 |
-|Full Booster With F15-4 Engine|  1  | 217 |
+|Full Booster Without Engine|  1  | 82.6 |
+|Full Booster With E16-4 Engine|  1  | 165.1 |
+|Full Booster With F15-4 Engine|  1  | 181.5 |
 
 ## Glider
 
@@ -41,17 +43,16 @@ The Glider is seated on top of the Booster and its wings are in a folded state u
 
 |Component|Count|Weight [g]|
 | ------------------- | --- | ---- |
-|Back Upper Body     |  1  |  2.0 |
-|Front Lower Body    |  3  |   8.0|
-|Front Upper Body    |  1  | 16.1 |
-|Back Lower Body     |  1  | 30.3 |
-|Left Fin            |  1  | 8.0  |
-|Right fin           |  1  | 8.0  |
-|Top Fin             |  1  | 8.0  |
-|Left Wing           |  1  | 35.0 |
-|Right Wing          |  1  | 35.0 |
+|Front Lower Body    |  1  |  8.4 |
+|Front Upper Body    |  1  | 12.0 |
+|Back Lower Body     |  1  | 27.3 |
+|Left Fin            |  1  | 6.4  |
+|Right fin           |  1  | 6.4  |
+|Top Fin             |  1  | 6.4  |
+|Left Wing           |  1  | 26.7 |
+|Right Wing          |  1  | 26.7 |
 | ------------------- | --- | ---- |
-|Glider Construction with all of the above | 1 | 150.4 |
+|Glider Construction with all of the above | 1 | 134.8 |
 
 ## Coludo assembled
 
@@ -59,10 +60,11 @@ Weight with whole assembly having around 100-150 grams of electronics on board.
 
 |Component|Weight [g]|
 | ------------------- | ---- |
-|Coludo 100 g electronics E16-4 engine |  451 |
-|Coludo 100 g electronics F15-4 engine |  468 |
-|Coludo 150 g electronics E16-4 engine |  501 |
-|Coludo 150 g electronics F15-4 engine |  518 |
+|Coludo as Glider and Booster without engine |  212.5 |
+|Coludo 100 g electronics E16-4 engine |  395.0 |
+|Coludo 100 g electronics F15-4 engine |  411.4 |
+|Coludo 150 g electronics E16-4 engine |  445.0 |
+|Coludo 150 g electronics F15-4 engine |  461.4 |
 
 ## Derived geometry (from STL analysis)
 
