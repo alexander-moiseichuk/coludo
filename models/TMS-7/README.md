@@ -76,16 +76,16 @@ STL coordinates are in mm; planform = one-side projected area.
 | Left Wing | 299 (semi) | 79 | 20 | 148 | trapezoidal, nearly unswept |
 | Right Wing | 299 (semi) | 79 | 20 | 148 | mirror of left |
 | **Total wing** | **598** | — | — | **296** | **AR 12.1** |
-| Left Fin | 77 | 69 | ~15 | 26 | vertical surface |
-| Right Fin | 77 | 69 | ~15 | 21 | |
-| Top Fin | 77 | 69 | ~15 | 24 | |
-| **Total fins (3)** | — | — | — | **71** | |
+| Left Fin | 77 | 69 | ~24 | 35.6 | vertical surface |
+| Right Fin | 77 | 69 | ~24 | 35.6 | mirror of left |
+| Top Fin | 77 | 69 | ~24 | 35.6 | vertical surface |
+| **Total fins (3)** | — | — | — | **107** | all 35.6 cm² each |
 
 Wing thickness is 2.4 mm (from Y-span of STL bbox), giving a thickness/chord ratio of ~3 %
 at root and ~12 % at tip. Aspect ratio (AR) = b²/S = 0.598² / 0.0296 = 12.1 — high,
-favourable for induced-drag efficiency. The fins are roughly trapezoidal with ~69 mm
-chord along the body; their combined area is ~24 % of the wing, adequate for directional
-authority.
+favourable for induced-drag efficiency. The fins are trapezoidal with 77 mm span and
+69 mm root chord, tapering to ~24 mm at the tip; their combined area is ~36 % of the wing,
+providing generous directional and pitch authority.
 
 ## Performance estimates
 
@@ -158,6 +158,7 @@ control.
 ### Speeds at a glance
 
 All values for the 250.4 g glider (100 g electronics) unless noted.
+CdA updated to reflect corrected fin planform (107 cm² total vs earlier 71 cm²).
 
 | Speed | Value | Notes |
 |---|---|---|
@@ -165,10 +166,10 @@ All values for the 250.4 g glider (100 g electronics) unless noted.
 | Best L/D speed | **~17 m/s** (~61 km/h) | CL 0.4, mid-range of L/D polar |
 | Manoeuvring speed (Va) | **~31 m/s** (~112 km/h) | Full deflection × limit load (5 g); above this, full throw overstresses the wing |
 | Maximum level speed | **~30–37 m/s** (108–133 km/h) | At minimum usable CL ≈ 0.1–0.2 in a glide |
-| Maximum dive speed (E16 launch) | **~38 m/s** (137 km/h) | Achievable from 140 m apogee in a steep dive (70 % of Vt) |
+| Maximum dive speed (E16 launch) | **~37 m/s** (133 km/h) | Achievable from 140 m apogee in a steep dive (70 % of Vt) |
 | Maximum dive speed (F15 launch) | **~45 m/s** (162 km/h) | Achievable from 290 m apogee (approaches Vt) |
-| Terminal velocity (Vt, vertical) | **~49 m/s** (177 km/h) | Limit of drag = weight; glider cannot exceed this regardless of starting height |
-| Never-exceed speed (Vne) | **~47 m/s** (~170 km/h) | 1.5× Va; above this, a gust or full pull-up may exceed 5 g |
+| Terminal velocity (Vt, vertical) | **~48 m/s** (173 km/h) | Limit of drag = weight; glider cannot exceed this regardless of starting height |
+| Never-exceed speed (Vne) | **~47 m/s** (~169 km/h) | 1.5× Va; above this, a gust or full pull-up may exceed 5 g |
 | Fin full-authority ceiling | ≤16 m/s | ±45° available |
 | Fin reduced-authority floor | ≥50 m/s | ±5° only; see schedule in coludo.md |
 
@@ -186,16 +187,16 @@ CL_max = 0.7 is conservative for a thin flat-plate wing at Re ≈ 50 000–100 0
 A smoother carbon surface may raise it to 0.8–0.9, lowering Vs to ~12–13 m/s.
 
 **Terminal velocity** — drag = weight in a vertical dive. Total effective drag area
-CdA ≈ 0.00165 m² is the sum of fuselage (Cd 0.4 × 0.0023 m²), wing profile (CD0 0.02 ×
-0.0296 m²), and fin profile (CD0 0.02 × 0.0071 m²), all referenced to 1.225 kg/m³:
+CdA ≈ 0.00173 m² is the sum of fuselage (Cd 0.4 × 0.0023 m²), wing profile (CD0 0.02 ×
+0.0296 m²), and fin profile (CD0 0.02 × 0.0107 m²), all referenced to 1.225 kg/m³:
 
 ```
 Vt = sqrt(2 × W / (ρ × CdA))
-   = sqrt(2 × 0.250 × 9.81 / (1.225 × 0.00165))
-   = 49.3 m/s  → ~49 m/s
+   = sqrt(2 × 0.250 × 9.81 / (1.225 × 0.00173))
+   = 48.2 m/s  → ~48 m/s
 ```
 
-For the heavier 300 g glider: Vt ≈ 54 m/s (194 km/h).
+For the heavier 300 g glider: Vt ≈ 53 m/s (190 km/h).
 
 **Manoeuvring speed Va** — the speed at which the wing reaches CL_max = 0.7 at the
 limit load factor n_lim = 5 g (typical for small RC gliders; the actual structural
@@ -216,21 +217,21 @@ v / Vt = sqrt(1 − exp(−2 × g × h / Vt²))
 ```
 
 | Apogee | h (fall distance) | v / Vt | Max dive speed |
-|---|---|---|---|
-| E16: 140 m | 100 m | 0.70 | 0.70 × 49 = **34 m/s** |
-| E16: 140 m | 130 m | 0.76 | 0.76 × 49 = **37 m/s** |
-| F15: 290 m | 250 m | 0.86 | 0.86 × 49 = **42 m/s** |
-| F15: 290 m | 280 m | 0.88 | 0.88 × 49 = **43 m/s** |
+|---|---|---|---|---|
+| E16: 140 m | 100 m | 0.75 | 0.75 × 48 = **36 m/s** |
+| E16: 140 m | 130 m | 0.82 | 0.82 × 48 = **39 m/s** |
+| F15: 290 m | 250 m | 0.94 | 0.94 × 48 = **45 m/s** |
+| F15: 290 m | 280 m | 0.95 | 0.95 × 48 = **46 m/s** |
 
 But the dive is not perfectly vertical in practice — the glider must also navigate.
-Maximum speed reached in a steep (60°) dive is ~38 m/s (E16) or ~45 m/s (F15)
+Maximum speed reached in a steep (60°) dive is ~37 m/s (E16) or ~44 m/s (F15)
 at the heavier (300 g) configuration.
 
 ## Wind speed limitations
 
 ### Crosswind component
 
-The glider's three all-moving fins (total area 0.0071 m²) can deflect ±45° at low
+The glider's three all-moving fins (total area 0.0107 m²) can deflect ±45° at low
 speed, providing yaw authority to crab into a crosswind. The practical crosswind
 limit is set by landing-phase considerations (approach speed 1.3 × Vs ≈ 18 m/s),
 not by fin stall:
@@ -479,3 +480,23 @@ spring is embedded in the hinge joint.
 | **P2** | Tip chord increase | Better aileron authority | Medium (area +5 %) |
 | **P3** | Keel fuselage | Landing stability | Medium (v2 airframe) |
 | **P3** | Torsion-spring hinge | Deployment redundancy | Medium (mechanical detail) |
+
+## Version log
+
+### v3 (2026-07-03) — memory-optimised STL files
+- **Wings & fins:** aerofoil geometry identical to v2; triangle count halved (wings 3614→1666,
+  fins 424→408) for slicing performance.
+- **Body:** three separate STL parts (Back Lower, Front Lower, Front Upper) replace missing
+  v2 files. Total body volume: **140 cm³**.
+- **Booster:** three separate STL parts (Body Tube, Holder, Cap) in a dedicated `booster/`
+  directory. Volumes: body tube 137 cm³, holder 20 cm³, cap 7.4 cm³.
+- **Fin planform corrected:** 35.6 cm² per fin (107 cm² total), confirmed by STL measurement.
+  Previously recorded as 26+21+24 = 71 cm². Performance impact: Vt shifts 49→48 m/s,
+  L/D at CL=0.4 shifts 6.5→6.3.
+- **Printed weights:** glider structure 134.8 g, booster structure 82.6 g (unchanged from v2).
+  Body tube alone 50.3 g, holder 21.0 g, cap 6.6 g, parachute + cord 5 g.
+
+### v2 — initial printed model
+- First STL release with wing and fin geometry.
+- Body geometry not available as STL (empty files).
+- Planform areas originally estimated from trapezoidal formula; fin areas unverified.
