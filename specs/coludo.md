@@ -446,6 +446,64 @@ Incase of complete sensor faliure or other critical errors the degraded mode wil
 - When IMU degraded/produced invalid data the glider must fly straight or minimize turns
 - If GNSS is lost - glide in current heading, prioritize gentle descent
 
+## Field operation without CC (design, 7/04)
+
+The board must be able to power up, configure itself and fly with **no Control hub present** —
+a phone hotspot or laptop is a convenience, never a dependency.
+
+* **Site selection by on-board GPS only.** `launch.config` carries a list of known sites
+  (`sites: [{name, pad: [lat, lon], zone: [[TL], [BR]]}, …]` — the zone list is small and fixed,
+  "like Cape Canaveral"). At boot, the first GNSS fix selects the site whose pad is nearest,
+  gated by `max_range_m` (200 m). On a match: that site's zone becomes the mission zone and the
+  **live fix** (not the stored pad) becomes the launch point.
+* **No site within 200 m → the spiral-landing fallback.** The mission SYNTHESIZES a zone centred
+  `fallback_offset_m` (default 50 m) from the launch fix at a configured bearing
+  (`fallback_bearing_deg` — the operator points it at the clear sector during setup), sized like
+  the standard strip. The existing bank-to-turn law then orbits that centre bleeding altitude —
+  the spiral landing emerges from the normal overshoot-orbit behaviour with zero new control
+  code. The +50 m offset keeps the orbit focus OFF the pad (people stand there). Not the safest
+  conceivable choice, but after ignition the alternatives are worse; the field brief must keep
+  the fallback sector clear.
+* **Arming without CC** — `auto_arm` in launch.config (default OFF): arm once GNSS has a fix AND
+  the board has been stationary (|a| ≈ 1 g sustained) for `auto_arm_dwell_s` (60 s) after boot.
+  The long dwell makes a bench arm unlikely; the flight loop's control-stage gating still holds
+  the fins neutral on the ground either way. CC `arm` keeps working when a hub is present.
+* **Wi-Fi policy** — the `wifi` config gains `mode: on | auto | disabled` and a `networks:` list
+  (several SSIDs). `auto` scans every `scan_period_s` (10 s — pro-rated from today's continuous
+  retry), alternating through the list; scanning STOPS at BOOSTING (no reconnect churn under
+  GC-off) and resumes at DONE. `disabled` keeps the radio off for the whole session.
+
+## In-flight reboot & warm start (design, 7/04)
+
+Today a watchdog (or any) reset mid-air boots into SETTING with neutral fins — ballistic. The
+warm start restores GLIDING within one boot (~2–4 s ≈ 20–40 m of lost altitude — expensive, but
+against a guaranteed lawn-dart).
+
+* **Breadcrumb in NVS, never a file.** A VFS write mid-flight locks the scheduler and wears the
+  data flash; `esp32.NVS('coludo')` commits a few small key/values in milliseconds to the
+  dedicated NVS partition. Written ONCE at BOOSTING entry (on the rod, next to the pre-flight
+  `gc.collect()` we already pay): `flight=1`, launch fix (2× i32, deg×1e7), the active zone
+  (4× i32), pad baro altitude, boost RTC stamp. Cleared (`flight=0`) at DONE and on orderly
+  finish.
+* **Warm-start gate at boot — ALL of, defense in depth:**
+  1. NVS `flight == 1` (we were airborne when the reset hit);
+  2. the **separation switch reads SEPARATED** — the physical latch no software state can fake
+     (post-separation it stays LOW for the whole glide);
+  3. baro elevation reads ≥ ~15 m above the NVS pad altitude (or clearly falling).
+  Corroborating (logged, not required): `machine.reset_cause()` is WDT/soft — a pad power-cycle
+  reads PWRON and blocks the warm start; the RTC still carries a real (synced) date across a
+  soft reset, so a plausible datetime (> the build epoch) also indicates "we were already
+  running" — the user's uptime/RTC signal, kept as a cross-check because a battery brownout
+  loses it.
+* **Warm-start actions:** restore mission zone + launch point from NVS → stage := GLIDING →
+  arm → `gc.collect()` + `gc.disable()` (the sequencer's BOOSTING hook was skipped) → the flight
+  loop engages and re-captures the heading hold from the live attitude. The RSO
+  `flight_timeout_ms` keeps bounding the restored flight (its clock restarts at the warm start —
+  acceptable: the backstop stays bounded, just re-based).
+* **Any gate missing → normal cold boot** in SETTING, breadcrumb cleared, event logged.
+* **Validation:** HITL flight with a forced `machine.reset()` mid-glide (and a pulled USB on the
+  bench): the board must come back armed, in GLIDING, steering to the same zone.
+
 ## Sensors and Interrupts
 
 If a hardware component can be linked to an interrupt, that interrupt must be utilized to reduce reaction time. Of course, interrupts must be properly connected to asyncio as specified in guides

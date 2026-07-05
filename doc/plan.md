@@ -190,11 +190,17 @@ control change.
    telemetry; the operator sees an unreachable zone early, and it is the groundwork for a deliberate
    land-short decision later.
 
-**Bigger, spec-first (docs before code):**
+**Bigger, spec agreed 7/04 (specs/coludo.md — implement as own sessions):**
 
-8. **Warm-restart recovery** — after a watchdog reset mid-air the board boots to SETTING with neutral
-   fins (ballistic to the ground). A boot-time in-flight detect (baro falling + |a| not still) could
-   re-enter GLIDING and re-engage control. Safety-critical semantics → write the spec section first.
+8. **Warm-restart recovery** — SPEC WRITTEN ("In-flight reboot & warm start"): NVS breadcrumb at
+   BOOSTING entry (never a file — VFS writes lock the scheduler), warm-start gate = NVS flag AND
+   the separation switch's physical latch AND baro-above-pad, reset-cause/RTC as corroborators;
+   restore GLIDING + arm + GC-off in one boot. Validate with a forced mid-glide reset in HITL.
+9. **CC-less field operation** — SPEC WRITTEN ("Field operation without CC"): on-board-GPS-only
+   nearest-site selection from a launch.config sites list (200 m gate); no match → the synthesized
+   spiral-landing zone +50 m off the launch fix at a configured bearing (the orbit law does the
+   rest); dwell-gated `auto_arm`; wifi `mode on|auto|disabled` + networks list, 10 s pro-rated
+   scanning, quiescent BOOSTING→DONE. Absorbs items ② and ③ above.
 
 **Control (CC) side:**
 
