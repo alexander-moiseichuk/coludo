@@ -19,8 +19,10 @@ import time
 import commons
 import controller as controller_mod
 import databoard
+import inspector
 import recorder
 import task
+import warmstart
 
 _STAGE = controller_mod.Stage
 
@@ -80,6 +82,8 @@ class Sequencer(task.Task):
         self._accel = databoard.Databoard.parameter('accel')
         self._agl = databoard.Databoard.parameter('agl')
         self._elevation = databoard.Databoard.parameter('elevation')
+        self._altitude = databoard.Databoard.parameter('altitude')  # ABSOLUTE (breadcrumb pad ref)
+        self._mission = inspector.Inspector.get('mission')  # zone + launch for the breadcrumb (may be None)
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('stage', 'reason'))
         self._since = None  # start of the current pending condition (sustained-detect timer)
         self._stage_seen = None  # last stage observed -> reset the timer on any change (incl. separation)
@@ -98,8 +102,28 @@ class Sequencer(task.Task):
         self._telemetry.push((_STAGE.STAGES[to_stage], reason))
         self._since = None
         self._advanced_to = to_stage  # our own move: _tick's change-detect must not re-log it
+        if to_stage == _STAGE.BOOSTING:
+            self._drop_breadcrumb()  # BEFORE GC goes off (an NVS commit is a few ms, on the rod)
+        elif to_stage == _STAGE.DONE:
+            warmstart.clear()  # flight over -> the next boot is cold
         if self._disable_gc_flight:  # clean heap into the flight, GC OFF for the WHOLE airborne phase
             self._gc_transition(to_stage)
+
+    def _drop_breadcrumb(self) -> None:
+        """The warm-start breadcrumb (specs/coludo.md "In-flight reboot & warm start"): the launch
+        fix, the active zone and the pad ABSOLUTE altitude into NVS, once, at BOOSTING entry. Only
+        an ARMED flight with a zone is worth restoring — a passive telemetry flight must never
+        warm-start into an armed GLIDING. warmstart.save() never raises (a full NVS must not block
+        a launch); the drop is logged so the flight record shows recovery was available."""
+        if not self.controller.armed or self._mission is None or not self._mission.zone:
+            return
+        zone = self._mission.zone
+        launch = self._mission.launch_point()
+        if launch is None:  # no fix/CC point: the zone centre keeps the crumb usable (tier-2 fallback)
+            launch = ((zone[0][0] + zone[1][0]) / 2, (zone[0][1] + zone[1][1]) / 2)
+        altitude = self._altitude.value()
+        if warmstart.save(launch, zone, altitude if altitude is not None else 0.0, time.time()):
+            recorder.Recorder.log(self.name, 'warm-start breadcrumb saved')
 
     def _gc_transition(self, to_stage: int) -> None:
         """The in-flight GC policy (coludo.md, the most safety-critical piece of the sequencer, so a
@@ -161,6 +185,11 @@ class Sequencer(task.Task):
                 self._apogee_max = None
                 self._apogee_since = None
                 self._boost_entry_ms = now  # arms the apogee detector + starts the flight timeout
+            elif self._boost_entry_ms is None and (stage == _STAGE.GLIDING or stage == _STAGE.LANDING):
+                # jumped straight into an airborne stage without ever seeing BOOSTING (a warm start,
+                # or an external/operator move): base the RSO flight timeout HERE so it still bounds
+                # the restored flight (spec: the backstop re-bases, it never disappears).
+                self._boost_entry_ms = now
         # the RSO backstop: any airborne stage this long after BOOSTING entry forces DONE (15.6)
         if self._boost_entry_ms is not None and stage != _STAGE.DONE \
                 and time.ticks_diff(now, self._boost_entry_ms) >= self._flight_timeout_ms:

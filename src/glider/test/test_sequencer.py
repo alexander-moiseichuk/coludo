@@ -27,6 +27,7 @@ class _StubController:
         self.config = config_default.default()
         self.stage = Stage.SETTING
         self.manual = False  # operator hold -> the sequencer pauses (tested below)
+        self.armed = False  # only an ARMED flight drops the warm-start breadcrumb (tested below)
 
     def set_stage(self, stage):
         self.stage = stage
@@ -203,6 +204,44 @@ async def amain():
     eseq._tick(10)
     assert eseq._telemetry.rows[-1] == ('gliding', 'test')  # ...is NOT double-logged as external
 
+    # warm-start breadcrumb (specs/coludo.md): an ARMED flight with a zone drops it at BOOSTING and
+    # clears it at DONE; unarmed (passive telemetry) flights never do -- a warm start must not arm
+    # a flight that was never armed. Round-trips the real NVS on the board (no-op on CPython).
+    import warmstart
+
+    class _StubMission:
+        zone = ((48.001, 11.000), (48.000, 11.010))
+
+        def launch_point(self):
+            return (48.0005, 11.005)
+
+    crumb_ctrl = _StubController()
+    cseq = sequencer.Sequencer('sequencer', SPEC, crumb_ctrl)
+    assert await cseq.setup() is True
+    cseq._mission = _StubMission()
+    warmstart.clear()
+    cseq._advance(Stage.BOOSTING, 'launch')  # NOT armed -> no breadcrumb
+    assert warmstart.load() is None
+    crumb_ctrl.armed = True
+    cseq._advance(Stage.BOOSTING, 'launch')  # armed + zone -> the breadcrumb drops
+    crumb = warmstart.load()
+    if warmstart._nvs is not None:  # board: round-trip the real NVS
+        assert crumb is not None and abs(crumb['launch'][0] - 48.0005) < 1e-6
+        assert abs(crumb['zone'][1][1] - 11.010) < 1e-6 and crumb['pad_altitude'] == 0.0
+        cseq._advance(Stage.DONE, 'stationary')  # flight over -> the next boot is cold
+        assert warmstart.load() is None
+    # the warm-start gate itself is pure (host + board): ALL five signals must agree
+    made = {'launch': [48.0, 11.0], 'zone': [[48.001, 11.0], [48.0, 11.01]],
+            'pad_altitude': 500.0, 'stamp': 0}
+    assert warmstart.should_restore(None, True, 600.0, True, 30)[0] is False   # no breadcrumb
+    assert warmstart.should_restore(made, False, 600.0, True, 30)[0] is False  # switch reads nested
+    assert warmstart.should_restore(made, True, None, True, 30)[0] is False    # baro never came up
+    assert warmstart.should_restore(made, True, 505.0, True, 30)[0] is False   # too close to the pad
+    assert warmstart.should_restore(made, True, 560.0, False, 30)[0] is False  # power-on = human hands
+    assert warmstart.should_restore(made, True, 560.0, True, -5)[0] is False   # RTC restarted (power cycle)
+    assert warmstart.should_restore(made, True, 560.0, True, 700)[0] is False  # crumb older than a flight
+    assert warmstart.should_restore(made, True, 560.0, True, 30)[0] is True    # the genuine mid-air reset
+
     # GC policy -- compacted + DISABLED at BOOSTING, re-enabled at LANDING (coludo.md), and finish()
     # never leaves it off. disable_gc_flight True here (the only test that exercises the toggle).
     import gc
@@ -220,7 +259,8 @@ async def amain():
     assert gc.isenabled()               # defensive: a mid-flight stop must not leave GC disabled
 
     print('ok: sequencer -- launch detect, boost-timeout, agl landing, on-ground, guard, manual hold, '
-          'no-accel skip, apogee arming, RSO flight timeout, external-transition log, GC flight policy')
+          'no-accel skip, apogee arming, RSO flight timeout, external-transition log, warm-start '
+          'breadcrumb, GC flight policy')
 
 
 asyncio.run(amain())

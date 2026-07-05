@@ -489,12 +489,18 @@ against a guaranteed lawn-dart).
   1. NVS `flight == 1` (we were airborne when the reset hit);
   2. the **separation switch reads SEPARATED** — the physical latch no software state can fake
      (post-separation it stays LOW for the whole glide);
-  3. baro elevation reads ≥ ~15 m above the NVS pad altitude (or clearly falling).
-  Corroborating (logged, not required): `machine.reset_cause()` is WDT/soft — a pad power-cycle
-  reads PWRON and blocks the warm start; the RTC still carries a real (synced) date across a
-  soft reset, so a plausible datetime (> the build epoch) also indicates "we were already
-  running" — the user's uptime/RTC signal, kept as a cross-check because a battery brownout
-  loses it.
+  3. baro ABSOLUTE altitude reads ≥ ~15 m above the NVS pad altitude;
+  4. `machine.reset_cause()` is **WDT/SOFT/HARD** — a battery insertion or power switch reads
+     PWRON, which is exactly what a RECOVERY CREW's hands do to a glider that crash-landed on a
+     rise above the pad (where gate 3 alone would pass). A mid-air brownout also reads PWRON and
+     stays cold — a browning-out battery cannot be trusted to finish the glide anyway;
+  5. the **crumb age** (RTC now − boost stamp) is positive and < ~10 min. The RTC survives
+     soft/WDT resets, so the arithmetic holds exactly when a warm start is legitimate (even an
+     unsynced RTC — continuity matters, not absolute truth); a power cycle restarts the RTC and
+     breaks it → cold.
+  The breadcrumb is CLEARED at DONE (the stationary |a|≈1 g detect / the RSO timeout — not zero
+  speed or zero elevation, which are unreliable on the ground) and by any rejected warm start, so
+  the next boot is unambiguously cold.
 * **Warm-start actions:** restore mission zone + launch point from NVS → stage := GLIDING →
   arm → `gc.collect()` + `gc.disable()` (the sequencer's BOOSTING hook was skipped) → the flight
   loop engages and re-captures the heading hold from the live attitude. The RSO

@@ -128,7 +128,12 @@ class Icp10111(task.Task):
 
     def update(self, props: dict) -> list:
         """`{"rezero": true}` re-captures ground zero from the latest altitude (sync; operator does
-        it when the reading is stable)."""
+        it when the reading is stable). `{"ground": <m>}` SETS the zero directly -- the warm start
+        rebases a rebooted baro to the breadcrumb's pad altitude (a mid-air re-zero would make
+        `elevation` read ~0 at altitude, faking an immediate landing)."""
+        if 'ground' in props:
+            self._ground = float(props['ground'])
+            return ['ground']
         if props.get('rezero') and self._altitude.value() is not None:
             self._ground = self._altitude.value()
             return ['ground']

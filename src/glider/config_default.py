@@ -21,6 +21,10 @@ def default() -> dict:
     return {
         'board': {'id': 'taster', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION},
         'setup_retries': 3,  # re-attempt a flaky device setup at boot (breadboard contacts; 1 = no retry)
+        # warm start (specs/coludo.md "In-flight reboot & warm start"): a mid-air reset restores
+        # GLIDING when the NVS breadcrumb + the separation latch + baro-above-pad all agree.
+        # False -> every boot is cold (bench work with a separated stack on the desk).
+        'warm_start': True,
         'max_range_m': 200,  # landing zone must be within this of the launch point -- the AIRFRAME glide
         # range (a bigger glider reaches farther); the mission range-gate uses it
         'wifi': {  # STA — the board joins the Control network
