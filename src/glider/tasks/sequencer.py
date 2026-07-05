@@ -50,6 +50,17 @@ class Sequencer(task.Task):
         self._launch_alt_m: float = cfg.get('launch_alt_m', 10.0)  # OR-trigger: clearly climbed off the pad
         self._boost_timeout_ms: int = cfg.get('boost_timeout_ms', 6000)
         self._apogee_drop_m: float = cfg.get('apogee_drop_m', 5.0)  # baro fall below its peak -> deploy at apogee
+        # the apogee detector ARMS this long after BOOSTING entry (finding 15.5): the motor exhaust
+        # pressure wave can spike/dip the in-airframe baro DURING BURN -- an unarmed detector could
+        # either fire GLIDING while still under thrust (wings folded, fins steering the stack) or
+        # poison the peak tracker with a spike the real apogee never reads 5 m below. Default covers
+        # the longest motor burn (F15 3.45 s) + margin; the burnout timeout keeps running regardless.
+        self._apogee_arm_ms: int = cfg.get('apogee_arm_ms', 4000)
+        # the RSO backstop (finding 15.6): with every landing sensor dead (baro + laser + accel) the
+        # glider would circle in GLIDING until the battery dies. This bounds ANY flight: this long
+        # after BOOSTING entry the stage forces DONE (GC re-enable + neutral fins -- at 5 min default,
+        # long after any physically possible TMS flight has ended).
+        self._flight_timeout_ms: int = cfg.get('flight_timeout_ms', 300000)
         self._land_agl_m: float = cfg.get('land_agl_m', 5.0)
         self._land_ms: int = cfg.get('land_ms', 300)  # AGL must stay below land_agl_m this long (anti-spike)
         self._still_g: float = cfg.get('still_g', 0.3)
@@ -72,8 +83,10 @@ class Sequencer(task.Task):
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('stage', 'reason'))
         self._since = None  # start of the current pending condition (sustained-detect timer)
         self._stage_seen = None  # last stage observed -> reset the timer on any change (incl. separation)
+        self._advanced_to = None  # the stage _advance() itself set -> _tick tells self- from external moves
         self._apogee_max = None  # peak elevation seen in BOOSTING (apogee detect); reset on BOOSTING entry
         self._apogee_since = None  # start of the descending-past-peak dwell (rejects a baro noise dip)
+        self._boost_entry_ms = None  # _tick time of BOOSTING entry -> apogee arming + the flight timeout
         self._detect = {_STAGE.SETTING: self._detect_launch, _STAGE.BOOSTING: self._detect_apogee,
                         _STAGE.GLIDING: self._detect_landing, _STAGE.LANDING: self._detect_stationary}
         self._ok = True
@@ -84,6 +97,7 @@ class Sequencer(task.Task):
         recorder.Recorder.log(self.name, 'stage -> %s (%s)' % (_STAGE.STAGES[to_stage], reason))
         self._telemetry.push((_STAGE.STAGES[to_stage], reason))
         self._since = None
+        self._advanced_to = to_stage  # our own move: _tick's change-detect must not re-log it
         if self._disable_gc_flight:  # clean heap into the flight, GC OFF for the WHOLE airborne phase
             self._gc_transition(to_stage)
 
@@ -137,9 +151,21 @@ class Sequencer(task.Task):
         if stage != self._stage_seen:  # changed (by us or the separation driver) -> fresh timers
             self._since = None
             self._stage_seen = stage
+            if stage != self._advanced_to:  # EXTERNAL move (separation driver / operator command):
+                # record it in sequencer.csv too (finding 15.8) -- post-flight tooling keeps ONE
+                # stage-event source instead of cross-referencing separation.csv (which the field
+                # capture pull may not even fetch).
+                self._telemetry.push((_STAGE.STAGES.get(stage, str(stage)), 'external'))
+            self._advanced_to = None
             if stage == _STAGE.BOOSTING:  # start apogee peak-tracking fresh for this flight
                 self._apogee_max = None
                 self._apogee_since = None
+                self._boost_entry_ms = now  # arms the apogee detector + starts the flight timeout
+        # the RSO backstop: any airborne stage this long after BOOSTING entry forces DONE (15.6)
+        if self._boost_entry_ms is not None and stage != _STAGE.DONE \
+                and time.ticks_diff(now, self._boost_entry_ms) >= self._flight_timeout_ms:
+            self._advance(_STAGE.DONE, 'flight timeout')
+            return
         handler = self._detect.get(stage)  # per-stage detector (SETTING/BOOSTING/GLIDING/LANDING)
         if handler is not None:
             handler(now)
@@ -160,9 +186,14 @@ class Sequencer(task.Task):
 
     def _detect_apogee(self, now: int) -> None:
         """BOOSTING -> GLIDING: deploy at APOGEE -- track the baro peak and fire once it has fallen
-        apogee_drop_m below it (mass/motor-independent, the top of the arc). The burnout timeout is the
+        apogee_drop_m below it (mass/motor-independent, the top of the arc). The detector (peak
+        tracking INCLUDED) is blind until apogee_arm_ms past BOOSTING entry -- the motor exhaust
+        pressure wave corrupts the in-airframe baro during burn (15.5) and no motor reaches apogee
+        before burnout anyway. The burnout timeout below runs from BOOSTING entry regardless -- the
         SECONDARY fallback (a flat/absent baro, or apogee never clearly detected)."""
-        elevation = self._elevation.value()
+        armed = self._boost_entry_ms is not None and \
+            time.ticks_diff(now, self._boost_entry_ms) >= self._apogee_arm_ms
+        elevation = self._elevation.value() if armed else None
         if elevation is not None:
             if self._apogee_max is None or elevation > self._apogee_max:
                 self._apogee_max = elevation  # still climbing -> raise the peak, reset the dwell

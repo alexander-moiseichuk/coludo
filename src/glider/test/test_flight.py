@@ -235,8 +235,25 @@ async def amain():
     # pitch error = hold(90) - 80 = +10 -> kp 1 -> pitch_cmd 10 -> elevons 90+10, capped by the governor
     assert boost_ctrl.fins['servo_eleron_left'].angle == 100 and boost_ctrl.fins['servo_yaw'].angle == 90
 
+    # crash safety (15.3): an uncaught exception inside the control step must CENTRE the fins on the
+    # way out (run()'s finally -> finish()), never leave the last deflection standing through the
+    # watchdog window.
+    crash_ctrl = _StubController(Stage.GLIDING)
+    crashing = flight.Flight('flight', {'schedule_hz': 0, 'period_ms': 10,
+                                        'gains': {'roll': {'kp': 1.0}}}, crash_ctrl)
+    assert await crashing.setup() is True
+    attitude.push((100.0, fixed.from_float(10), fixed.from_float(-5)))
+    crashing._step()  # engage: the elevons leave neutral
+    assert crash_ctrl.fins['servo_eleron_left'].angle != 90
+    crashing._guidance = None  # poison the pipeline -> the next step raises AttributeError
+    try:
+        await crashing.run()  # awaited directly (a bg task would print 'exception wasn't retrieved')
+    except AttributeError:
+        pass  # the run loop died on the poisoned step...
+    assert all(fin.angle == 90 for fin in crash_ctrl.fins.values())  # ...and centred the fins going out
+
     print('ok: flight -- control stages, degraded->neutral, PID->mix->fins, governor + guidance wiring, '
-          'boost hold, scheduling')
+          'boost hold, scheduling, crash->neutral')
 
 
 asyncio.run(amain())

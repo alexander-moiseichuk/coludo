@@ -111,6 +111,9 @@ def default() -> dict:
                 'int_pin': 'lsm6dso32_int1',  # INT1 accel data-ready drives the sampling (fallback_ms 500 if silent)
                 'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
                 'enabled': True,
+                # `rate` has NO backup source: on LSM6DSO32 loss the PID D term degrades to
+                # d(error)/dt (noisier, no setpoint-kick immunity) -- flies, but less crisply. A
+                # BNO055 raw-gyro backup provider is planned with the IMU-redundancy work.
                 'provides': {'accel': {'priority': 0, 'timeout_ms': 20},   # PRIMARY accel (±32 g)
                              'rate': {'priority': 0, 'timeout_ms': 20}},    # sole gyro `rate` source
             },
@@ -239,11 +242,18 @@ def default() -> dict:
             # disable_gc_flight: compact the heap at BOOSTING and hold GC OFF for the WHOLE airborne phase
             # (re-enable + collect only at DONE, stationary on the ground) so no GC pause can blow a
             # 100 Hz control slice (sequencer._gc_transition). False keeps GC on -- ground benches.
+            # apogee_arm_ms: the apogee detector (peak tracking included) is blind this long after
+            # BOOSTING entry -- the motor exhaust pressure wave corrupts the in-airframe baro during
+            # burn (a false peak could deploy GLIDING under thrust, wings still folded). Covers the
+            # longest burn (F15 3.45 s) + margin; no motor reaches apogee before burnout.
+            # flight_timeout_ms: the RSO backstop -- this long after BOOSTING entry the stage forces
+            # DONE (GC + neutral fins) even with every landing sensor dead, so a blind glider cannot
+            # circle until the battery dies. 5 min >> any physically possible TMS flight.
             {'name': 'sequencer', 'activity': 'sequencer', 'enabled': True, 'period_ms': 50,
              'launch_g': 2.5, 'launch_ms': 100, 'launch_alt_m': 10.0,
-             'apogee_drop_m': 5.0, 'boost_timeout_ms': 12000,
+             'apogee_drop_m': 5.0, 'apogee_arm_ms': 4000, 'boost_timeout_ms': 12000,
              'land_agl_m': 5.0, 'land_ms': 300, 'still_g': 0.3, 'ground_ms': 3000,
-             'disable_gc_flight': True},
+             'flight_timeout_ms': 300000, 'disable_gc_flight': True},
             # Phase 3 stabilization loop (off by default -- no actuation until enabled + tuned on the
             # airframe). schedule_hz > 0 -> machine.Timer (deterministic slice, ~1 m/step at 100 Hz/100 m/s);
             # schedule_hz 0 -> asyncio at period_ms. Gains/setpoint are airframe tuning; gates to GLIDING.

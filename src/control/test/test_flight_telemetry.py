@@ -28,9 +28,11 @@ def test_fixture():
 
     accel = streams['accel.csv']
     assert accel.fields == ['ax', 'ay', 'az']  # header row consumed, not data
-    assert len(accel.rows) == 2 and accel.rows[0][0] == 1000000  # uptime is integer us
+    # parse() NORMALISES all stamps to a flight-relative origin (the earliest stamp seen -> t=0),
+    # so the first accel row reads 0 us, and the 10 ms gap to the second row is preserved.
+    assert len(accel.rows) == 2 and accel.rows[0][0] == 0 and accel.rows[1][0] == 10000
     times, az = accel.column('az')
-    assert az == [1.0, 1.0] and abs(times[0] - 1.0) < 1e-9  # us -> seconds
+    assert az == [1.0, 1.0] and abs(times[0] - 0.0) < 1e-9 and abs(times[1] - 0.01) < 1e-9  # us -> s
 
     assert streams['atgm336h.csv'].column('lat')[1][0] == 48.1173  # GNSS numeric parse
     assert flight_telemetry.parse('@20260609_101715_x.csv@1;notanumber')[0]['x.csv'].rows[0][1] == 'notanumber'
@@ -38,9 +40,10 @@ def test_fixture():
     gated = flight_telemetry.parse('@20260609_101715_x.csv@uptime;v\n'
                                    '@20260609_101715_x.csv@badtime;5\n'
                                    '@20260609_101715_x.csv@2000000;7')[0]['x.csv']
-    assert len(gated.rows) == 1 and gated.rows[0][0] == 2000000  # bad-uptime row skipped, good one kept
+    assert len(gated.rows) == 1 and gated.rows[0][0] == 0  # bad-uptime row skipped; survivor is the origin
 
-    assert logs[0] == (161221274, FIXTURE.splitlines()[5])  # log line with its ticks_us
+    # logs ride the same flight-relative origin (min stamp = the first accel row at 1000000 us)
+    assert logs[0] == (161221274 - 1000000, FIXTURE.splitlines()[5])
     assert any('stage -> gliding' in line for _ts, line in logs)
 
 

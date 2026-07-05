@@ -33,9 +33,11 @@ class _StubController:
 
 
 # small thresholds for a fast, deterministic test; disable_gc_flight off here so the stage-logic checks do not
-# also toggle the interpreter's GC (the GC policy has its own focused test below)
+# also toggle the interpreter's GC (the GC policy has its own focused test below). apogee_arm_ms is
+# tiny so the apogee checks run promptly; the arming window has its own focused test below.
 SPEC = {'period_ms': 10, 'launch_g': 3.0, 'launch_ms': 100, 'boost_timeout_ms': 500,
-        'land_agl_m': 5.0, 'land_ms': 100, 'still_g': 0.3, 'ground_ms': 300, 'disable_gc_flight': False}
+        'apogee_arm_ms': 50, 'land_agl_m': 5.0, 'land_ms': 100, 'still_g': 0.3, 'ground_ms': 300,
+        'disable_gc_flight': False}
 
 
 async def amain():
@@ -110,9 +112,14 @@ async def amain():
     assert ctrl.stage == Stage.BOOSTING
 
     # apogee detect: in BOOSTING the baro peaks then falls apogee_drop_m (5 m) -> deploy at the TOP of the
-    # arc (mass/motor-independent), before the long burnout-timeout fallback.
+    # arc (mass/motor-independent), before the long burnout-timeout fallback. The detector ARMS
+    # apogee_arm_ms (50 here) after the entry TICK -- a reading inside the window is ignored.
+    seq._tick(2120)   # BOOSTING entry seen -> the arming clock starts here
+    elevation.push(80.0)
+    seq._tick(2140)   # 20 ms in: a burn spike INSIDE the arming window...
+    assert seq._apogee_max is None           # ...does not poison the peak tracker
     elevation.push(150.0)
-    seq._tick(2200)   # climbing -> peak tracks up
+    seq._tick(2200)   # armed (80 ms past entry): climbing -> peak tracks up
     elevation.push(240.0)
     seq._tick(2210)   # new peak
     elevation.push(233.0)
@@ -147,6 +154,55 @@ async def amain():
     seq._tick(4000)  # accel + elevation absent -> guarded -> tick does nothing
     assert ctrl.stage == Stage.SETTING  # no crash, no advance
 
+    # apogee ARMING window (15.5): the motor exhaust pressure wave corrupts the in-airframe baro
+    # DURING BURN, so the whole detector (peak tracking included) is blind for apogee_arm_ms after
+    # BOOSTING entry -- a burn spike must neither deploy GLIDING under thrust nor poison the peak.
+    burn_ctrl = _StubController()
+    bseq = sequencer.Sequencer('sequencer', dict(SPEC, apogee_arm_ms=100000), burn_ctrl)
+    assert await bseq.setup() is True
+    burn_ctrl.stage = Stage.BOOSTING
+    bseq._tick(5000)   # BOOSTING entry seen -> the arming clock starts
+    elevation.push(80.0)
+    bseq._tick(5010)   # exhaust pressure spike reads +80 m...
+    elevation.push(20.0)
+    bseq._tick(5020)   # ...then a 60 m 'drop' -- a textbook false apogee
+    bseq._tick(5150)   # past the detect dwell: unarmed, this WOULD have deployed
+    assert burn_ctrl.stage == Stage.BOOSTING  # blind during burn -> no deploy under thrust
+    assert bseq._apogee_max is None           # and the spike did not poison the peak tracker
+
+    # RSO flight timeout (15.6): with every landing sensor dead the glider must not circle until
+    # the battery dies -- flight_timeout_ms after BOOSTING entry the stage forces DONE.
+    rso_ctrl = _StubController()
+    rseq = sequencer.Sequencer('sequencer', dict(SPEC, flight_timeout_ms=1000), rso_ctrl)
+    assert await rseq.setup() is True
+    rso_ctrl.stage = Stage.BOOSTING
+    rseq._tick(0)      # entry -> the flight clock starts
+    rso_ctrl.stage = Stage.GLIDING  # separation happened; then all landing sensors go silent
+    rseq._tick(500)
+    assert rso_ctrl.stage == Stage.GLIDING  # under the timeout -> untouched
+    rseq._tick(1100)
+    assert rso_ctrl.stage == Stage.DONE     # the backstop landed the stage machine
+
+    # externally-driven transitions land in sequencer.csv too (15.8): the separation driver (or an
+    # operator command) moves the stage outside _advance() -- post-flight tooling needs ONE source.
+    class _TelemetryLog:
+        def __init__(self):
+            self.rows = []
+
+        def push(self, row):
+            self.rows.append(row)
+
+    ext_ctrl = _StubController()
+    eseq = sequencer.Sequencer('sequencer', SPEC, ext_ctrl)
+    assert await eseq.setup() is True
+    eseq._telemetry = _TelemetryLog()
+    ext_ctrl.stage = Stage.BOOSTING  # moved from OUTSIDE the sequencer
+    eseq._tick(0)
+    assert eseq._telemetry.rows[-1] == ('boosting', 'external')
+    eseq._advance(Stage.GLIDING, 'test')  # the sequencer's own move...
+    eseq._tick(10)
+    assert eseq._telemetry.rows[-1] == ('gliding', 'test')  # ...is NOT double-logged as external
+
     # GC policy -- compacted + DISABLED at BOOSTING, re-enabled at LANDING (coludo.md), and finish()
     # never leaves it off. disable_gc_flight True here (the only test that exercises the toggle).
     import gc
@@ -164,7 +220,7 @@ async def amain():
     assert gc.isenabled()               # defensive: a mid-flight stop must not leave GC disabled
 
     print('ok: sequencer -- launch detect, boost-timeout, agl landing, on-ground, guard, manual hold, '
-          'no-accel skip, GC flight policy')
+          'no-accel skip, apogee arming, RSO flight timeout, external-transition log, GC flight policy')
 
 
 asyncio.run(amain())
