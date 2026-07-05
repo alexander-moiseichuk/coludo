@@ -18,7 +18,7 @@ d="$outdir/$scen"; mkdir -p "$d"; rm -f "$d"/*
 printf 'import hitl_run\nhitl_run.fly("%s", %s, %s, %s, %s, %s, %s, %s, %s)\n' \
   "$motor" "$noise" "$wind" "$dir" "$spike" "$glider_g" "$inject_hz" "$reboot_s" "$no_cc" > /tmp/launch.py
 python3 "$ROOT/tools/board_reboot.py" "$PORT" >/dev/null 2>&1 || true   # clean VM -> fresh recorder session
-out=$(timeout 135 mpremote connect "$PORT" run /tmp/launch.py 2>&1) || true   # a CDC wedge must not abort (set -e)
+out=$(timeout 190 mpremote connect "$PORT" run /tmp/launch.py 2>&1) || true   # a CDC wedge must not abort (set -e)
 ses=$(echo "$out" | grep -oE 'SESSION [0-9_]+' | awk '{print $2}')
 [ -z "$ses" ] && { echo "FAIL $motor/$scen: $(echo "$out" | tail -1)"; exit 1; }
 for stream in accel_adxl375 baro_icp10111 imu_bno055 imu_lsm6dso32 gnss laser_agl fins health sequencer power_ina226; do

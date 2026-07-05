@@ -354,7 +354,17 @@ the ejected glider landed **1.5 m** downrange from a **0.8 m** height, and the w
 
 ## Gliding
 
-Following booster separation, the Gliding phase executes for approximately 40 seconds, maneuvering the aircraft toward the target coordinates:
+**Glide objectives, in strict priority order (7/05):**
+1. **FLY AS LONG AS POSSIBLE** — hold the trim attitude (field-measured; the pitch PID damps, never
+   forces an off-trim descent) and spend altitude only through the orbit's banked turns.
+2. **Land INSIDE the landing zone.**
+3. **Land as close to the zone midpoint as possible.**
+
+A lower-priority objective must never be bought with a higher one — the glider does NOT dive at the
+midpoint to improve #3 at the cost of #1; it overflies, turns, comes back, and repeats until the
+energy is gone, with the endgame steering (#2/#3) tightening only as the altitude runs out.
+
+Following booster separation, the Gliding phase executes, maneuvering the aircraft toward the target coordinates:
 * **Attitude Recovery:** The glider must immediately execute an pitch/roll correction to transition from a vertical posture to a stable, horizontal gliding envelope, maintaining a "top-fin-up" orientation using real-time gyroscope vectors.
 * **Navigation Architecture:** A streamlined gliding approach minimizes processing overhead:
   * The system computes a vector pointing to the shortest boundary entrance of the rectangular landing zone.

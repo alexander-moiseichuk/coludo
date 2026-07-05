@@ -564,7 +564,7 @@ def render(flights, out):
             d.rectangle([0, _CAP_Y - 8, _W, _H], fill=_SKY)
             d.rectangle([_PANEL_X - 30, 92, _W, _CAP_Y - 16], fill=(18, 40, 28))
             spd = max(0.0, _at(fl['speed'][0], fl['speed'][1], tc) or 0.0)
-            d.text((_PANEL_X, 112), '%s   -   5%% noise, calm' % fl['label'], font=F_TITLE, fill=(245, 245, 185))
+            d.text((_PANEL_X, 112), '5% noise, calm', font=F_TITLE, fill=(245, 245, 185))
 
             metrics = [
                 ('time', '%5.1f s' % tc),
@@ -589,7 +589,9 @@ def render(flights, out):
                 col = (255, 212, 120) if (done and tc - et < 1.2) else ((150, 230, 150) if done else (120, 140, 120))
                 d.text((_PANEL_X, schedule_y + 32 + i * 34), '%4.1fs  %s' % (et, lab), font=F_SCH, fill=col)
 
-            d.text((30, 16), 'Coludo TMS-7  --  guarded-fins HITL simulation', font=F_HEAD, fill=(232, 232, 242))
+            # the header names WHAT IS FLYING in this segment (the CLI label carries airframe /
+            # weight / engine / scenario), not a fixed campaign slogan
+            d.text((30, 16), 'Coludo %s  --  HITL' % fl['label'], font=F_HEAD, fill=(232, 232, 242))
             d.text((40, _CAP_Y + 22), next((c[2] for c in cards if c[0] <= t < c[1]), ''),
                    font=F_BIG, fill=(255, 255, 255))
             proc.stdin.write(img.tobytes())

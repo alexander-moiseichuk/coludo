@@ -69,7 +69,7 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
         if stage == stages.DONE:
             print('DONE')
             break
-        if time.ticks_diff(time.ticks_ms(), started) > 95000:
+        if time.ticks_diff(time.ticks_ms(), started) > 150000:  # trim-glide flights run ~2x longer
             print('TIMEOUT', stage)
             break
         await asyncio.sleep_ms(200)

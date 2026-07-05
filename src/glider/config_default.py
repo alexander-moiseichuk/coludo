@@ -305,9 +305,16 @@ def default() -> dict:
              'nav_period_ms': 100,
              'timer_id': 0,  # the machine.Timer instance the schedule_hz timer mode claims
              # per-stage attitude setpoint; stages absent here hold the fins neutral. BOOSTING = hold the
-             # captured rod-vertical attitude (no config setpoint); GLIDING = bank-to-turn heading hold;
-             # LANDING pitch is the flare knob (0 = none until tuned).
-             'stages': {'boosting': {}, 'gliding': {'roll': 0, 'pitch': 0}, 'landing': {'roll': 0, 'pitch': 0}}},
+             # captured rod-vertical attitude (no config setpoint); GLIDING = bank-to-turn heading hold.
+             # pitch = the TRIM glide attitude: hold it and the glider flies as LONG as possible,
+             # bleeding altitude through the orbit's bank, not through a forced off-trim descent (a
+             # pitch-0 'level attitude' setpoint fought the trim and tripled the sink to ~10 m/s).
+             # -6 is the SIM's trim, NOT the airframe's: FIELD-TUNE it -- set the mixer `trim` so the
+             # elevator neutral matches the built airframe, then read the hands-off steady-glide pitch
+             # from the walk-test / passive-flight telemetry and put THAT number here (at true trim the
+             # pitch PID rides ~zero and the fins stay near neutral). LANDING keeps trim; the flare is
+             # a field-tuning knob on top.
+             'stages': {'boosting': {}, 'gliding': {'roll': 0, 'pitch': -6}, 'landing': {'roll': 0, 'pitch': -6}}},
             # Watchdog + heartbeat (Phase 3): feeds a hardware WDT (a total event-loop wedge -> hard
             # reset) and supervises the control loop (stall in a control stage -> full reset; boot
             # re-centres the fins). Disabled by default -- a live WDT also resets the board when you
