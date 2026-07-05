@@ -130,7 +130,10 @@ class Gps:
             self.log('host gps unavailable: %s' % error)
             return
         self.log('host gps on %s @ %d' % (device, baud))
-        await self.run(reader)
+        try:
+            await self.run(reader)
+        except OSError as error:  # mid-read serial teardown (USB unplug / driver drop): the optional
+            self.log('host gps lost: %s' % error)  # assist dies quietly -- never the gathered hub
 
 
 async def open_serial(device: str, baud: int = 9600) -> asyncio.StreamReader:

@@ -330,9 +330,41 @@ The Boosting phase spans engine ignition through booster separation. While a zer
 * **Dynamic Stabilization:** The Flight Controller actively manipulates the control surfaces to counteract wind shear and aerodynamic instability.
 * **Separation Matrix:** At peak altitude, the motor's integrated black powder ejection charge fires, pressurizing the interior of the booster body tube. This pressure forces the glider upward and out of the booster. During the boosting phase, the glider’s wingtips are nested inside the booster's main body tube to hold them securely folded against aerodynamic drag. As the glider is pushed clear of the airframe, tension from rubber bands anchored at the front of the airplane automatically pulls the wings outward into their locked, deployed flight configuration. Concurrently, a dedicated separation loop—monitored via a physical pressure switch or a breakaway wire pulled from a flight computer socket—flags the physical separation event, outputting a digital logic change to instantly transition the software into Gliding mode.
 
+### Separation dynamics — measured (TMS-7 v3 static burn, 7/03)
+
+The first static burn fired the ejection charge with the **194.4 g glider** (v3 construction 134.8 g +
+partial electronics) seated horizontally; the flight computer failed to power (battery → IO-shield
+incompatibility), so these numbers are reconstructed **ballistically from the video**, not telemetry:
+the ejected glider landed **1.5 m** downrange from a **0.8 m** height, and the wings snapped open
+**0.5–0.6 m** after clearing the tube.
+
+* **Separation velocity ≈ 3.7 m/s** (fall time √(2·0.8/g) = 0.40 s over 1.5 m; drag negligible at
+  this speed). Ejection energy ≈ **1.3 J**.
+* **Ejection acceleration 3.5–7 g** (stroke-length bound: v²/2L for a 0.10–0.20 m nested overlap),
+  i.e. **7–13 N** on the glider over a **55–110 ms** stroke — a sharp but modest transient, well
+  inside the ±32 g accel range and far from any structural limit.
+* **Wings locked open ≈ 135–160 ms after exit** (0.5–0.6 m at 3.7 m/s). Control relevance: the fins
+  are aerodynamically useless until the wings deploy, which is comfortably inside the boost-engage /
+  attitude-recovery window — no software change needed, but the flight loop must not expect roll
+  authority in the first ~0.2 s after the separation switch fires.
+* **Flight-weight scaling:** the full Coludo glider flies heavier (~235–285 g with complete
+  electronics). The same charge then separates at **≈ 2.5–3.4 m/s** (impulse- vs energy-conserving
+  bounds) and the wings-open delay stretches to **≈ 150–240 ms** — still within the same control
+  window, but the margin shrinks with mass: re-measure on the first full-weight burn.
+
 ## Gliding
 
-Following booster separation, the Gliding phase executes for approximately 40 seconds, maneuvering the aircraft toward the target coordinates:
+**Glide objectives, in strict priority order (7/05):**
+1. **FLY AS LONG AS POSSIBLE** — hold the trim attitude (field-measured; the pitch PID damps, never
+   forces an off-trim descent) and spend altitude only through the orbit's banked turns.
+2. **Land INSIDE the landing zone.**
+3. **Land as close to the zone midpoint as possible.**
+
+A lower-priority objective must never be bought with a higher one — the glider does NOT dive at the
+midpoint to improve #3 at the cost of #1; it overflies, turns, comes back, and repeats until the
+energy is gone, with the endgame steering (#2/#3) tightening only as the altitude runs out.
+
+Following booster separation, the Gliding phase executes, maneuvering the aircraft toward the target coordinates:
 * **Attitude Recovery:** The glider must immediately execute an pitch/roll correction to transition from a vertical posture to a stable, horizontal gliding envelope, maintaining a "top-fin-up" orientation using real-time gyroscope vectors.
 * **Navigation Architecture:** A streamlined gliding approach minimizes processing overhead:
   * The system computes a vector pointing to the shortest boundary entrance of the rectangular landing zone.
@@ -423,6 +455,71 @@ Incase of complete sensor faliure or other critical errors the degraded mode wil
 
 - When IMU degraded/produced invalid data the glider must fly straight or minimize turns
 - If GNSS is lost - glide in current heading, prioritize gentle descent
+
+## Field operation without CC (design, 7/04)
+
+The board must be able to power up, configure itself and fly with **no Control hub present** —
+a phone hotspot or laptop is a convenience, never a dependency.
+
+* **Site selection by on-board GPS only.** `launch.config` carries a list of known sites
+  (`sites: [{name, pad: [lat, lon], zone: [[TL], [BR]]}, …]` — the zone list is small and fixed,
+  "like Cape Canaveral"). At boot, the first GNSS fix selects the site whose pad is nearest,
+  gated by `max_range_m` (200 m). On a match: that site's zone becomes the mission zone and the
+  **live fix** (not the stored pad) becomes the launch point.
+* **No site within 200 m → the spiral-landing fallback.** The mission SYNTHESIZES a zone centred
+  `fallback_offset_m` (default 50 m) from the launch fix at a configured bearing
+  (`fallback_bearing_deg` — the operator points it at the clear sector during setup), sized like
+  the standard strip. The existing bank-to-turn law then orbits that centre bleeding altitude —
+  the spiral landing emerges from the normal overshoot-orbit behaviour with zero new control
+  code. The +50 m offset keeps the orbit focus OFF the pad (people stand there). Not the safest
+  conceivable choice, but after ignition the alternatives are worse; the field brief must keep
+  the fallback sector clear.
+* **Arming without CC** — `auto_arm` in launch.config (default OFF): arm once GNSS has a fix AND
+  the board has been stationary (|a| ≈ 1 g sustained) for `auto_arm_dwell_s` (60 s) after boot.
+  The long dwell makes a bench arm unlikely; the flight loop's control-stage gating still holds
+  the fins neutral on the ground either way. CC `arm` keeps working when a hub is present.
+* **Wi-Fi policy** — the `wifi` config gains `policy: auto | disabled` (distinct from the radio
+  `mode: sta` key) and a `networks:` list (several SSIDs). `auto` retries every `retry_ms` (10 s
+  default), alternating through the list one candidate per attempt; scanning STOPS at BOOSTING
+  (no reconnect churn under GC-off) and RESUMES at DONE (the recovery-crew hotspot). `disabled`
+  keeps the radio off for the whole session.
+
+## In-flight reboot & warm start (design, 7/04)
+
+Today a watchdog (or any) reset mid-air boots into SETTING with neutral fins — ballistic. The
+warm start restores GLIDING within one boot (~2–4 s ≈ 20–40 m of lost altitude — expensive, but
+against a guaranteed lawn-dart).
+
+* **Breadcrumb in NVS, never a file.** A VFS write mid-flight locks the scheduler and wears the
+  data flash; `esp32.NVS('coludo')` commits a few small key/values in milliseconds to the
+  dedicated NVS partition. Written ONCE at BOOSTING entry (on the rod, next to the pre-flight
+  `gc.collect()` we already pay): `flight=1`, launch fix (2× i32, deg×1e7), the active zone
+  (4× i32), pad baro altitude, boost RTC stamp. Cleared (`flight=0`) at DONE and on orderly
+  finish.
+* **Warm-start gate at boot — ALL of, defense in depth:**
+  1. NVS `flight == 1` (we were airborne when the reset hit);
+  2. the **separation switch reads SEPARATED** — the physical latch no software state can fake
+     (post-separation it stays LOW for the whole glide);
+  3. baro ABSOLUTE altitude reads ≥ ~15 m above the NVS pad altitude;
+  4. `machine.reset_cause()` is **WDT/SOFT/HARD** — a battery insertion or power switch reads
+     PWRON, which is exactly what a RECOVERY CREW's hands do to a glider that crash-landed on a
+     rise above the pad (where gate 3 alone would pass). A mid-air brownout also reads PWRON and
+     stays cold — a browning-out battery cannot be trusted to finish the glide anyway;
+  5. the **crumb age** (RTC now − boost stamp) is positive and < ~10 min. The RTC survives
+     soft/WDT resets, so the arithmetic holds exactly when a warm start is legitimate (even an
+     unsynced RTC — continuity matters, not absolute truth); a power cycle restarts the RTC and
+     breaks it → cold.
+  The breadcrumb is CLEARED at DONE (the stationary |a|≈1 g detect / the RSO timeout — not zero
+  speed or zero elevation, which are unreliable on the ground) and by any rejected warm start, so
+  the next boot is unambiguously cold.
+* **Warm-start actions:** restore mission zone + launch point from NVS → stage := GLIDING →
+  arm → `gc.collect()` + `gc.disable()` (the sequencer's BOOSTING hook was skipped) → the flight
+  loop engages and re-captures the heading hold from the live attitude. The RSO
+  `flight_timeout_ms` keeps bounding the restored flight (its clock restarts at the warm start —
+  acceptable: the backstop stays bounded, just re-based).
+* **Any gate missing → normal cold boot** in SETTING, breadcrumb cleared, event logged.
+* **Validation:** HITL flight with a forced `machine.reset()` mid-glide (and a pulled USB on the
+  bench): the board must come back armed, in GLIDING, steering to the same zone.
 
 ## Sensors and Interrupts
 

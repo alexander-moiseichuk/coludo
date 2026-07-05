@@ -11,12 +11,14 @@ _SIM_SENSORS = ('accel_adxl375', 'imu_lsm6dso32', 'imu_bno055', 'baro_icp10111',
                 'laser_agl', 'gnss')
 _OFF = ('separation', 'watchdog', 'wifi', 'cc', 'bluetooth')
 
-# TMS-7 v2 masses (g). The BOOSTER (motor + casing) ejects at separation, so the boost phase carries the
-# whole stack (booster + glider) and the glide carries the glider alone. The glider is the airframe +
-# electronics: 300 g today, ~150 g the weight-optimisation target (lighter carbon wings + a single C25
-# 1-cell battery). Whole-stack liftoff = booster + glider: E16 500/350 g, F15 517/370 g (full/half glider).
-_BOOSTER_G = {'E16': 200, 'F15': 217}
-_GLIDER_G = 300  # full glider; pass glider_g=150 for the half-weight (optimised) build
+# TMS-7 v3 masses (g), MEASURED on the printed airframe (models/TMS-7 README, 7/03). The BOOSTER
+# (motor + casing) ejects at separation, so the boost phase carries the whole stack and the glide
+# carries the glider alone. Booster WITH engine: E16 165.1 g, F15 181.5 g. The glider construction
+# weighs 134.8 g bare; electronics add ~100-150 g -> 285 g full (150 g electronics) / 235 g light
+# (the 100 g floor). Whole-stack liftoff: E16 450/400 g, F15 467/417 g (full/light glider). The
+# static-burn test glider (partial electronics) measured 194.4 g -- between bare and light.
+_BOOSTER_G = {'E16': 165, 'F15': 182}
+_GLIDER_G = 285  # full glider (150 g electronics); pass glider_g=235 for the light build
 
 
 def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: float = 0.0,

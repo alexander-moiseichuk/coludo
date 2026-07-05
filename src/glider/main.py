@@ -31,10 +31,68 @@ async def bringup(cfg: dict, log=print) -> controller.Controller:
     return flight
 
 
+async def _restore_flight(flight: controller.Controller, cfg: dict, log=print) -> bool:
+    """Warm start (specs/coludo.md "In-flight reboot & warm start"): a mid-air reset must not turn
+    the glider ballistic. Restore GLIDING when the NVS breadcrumb AND two physical signals agree —
+    the separation switch's latch (post-separation it stays LOW) and the baro ABSOLUTE altitude
+    clearly above the breadcrumb's pad. Any doubt -> the breadcrumb is cleared and this is a normal
+    cold boot. Cold-path imports stay inside the function (nothing here on a plain boot)."""
+    import warmstart
+    crumb = warmstart.load()
+    if crumb is None:
+        return False  # no flight was in progress: the normal boot, zero extra work
+    if not cfg.get('warm_start', True):
+        warmstart.clear()
+        log('main :: warm start disabled by config')
+        return False
+    import time
+
+    import databoard
+    import inspector
+    import machine
+    gpio = cfg.get('pins', {}).get('separation_switch')
+    separated = gpio is not None and machine.Pin(gpio, machine.Pin.IN, machine.Pin.PULL_DOWN).value() == 0
+    altitude_parameter = databoard.Databoard.parameter('altitude')
+    deadline = time.ticks_add(time.ticks_ms(), 5000)  # give the baro task time for a first reading
+    altitude = altitude_parameter.value()
+    while altitude is None and time.ticks_diff(deadline, time.ticks_ms()) > 0:
+        await asyncio.sleep_ms(100)
+        altitude = altitude_parameter.value()
+    cause = machine.reset_cause()
+    cause_is_reset = cause in (machine.WDT_RESET, machine.SOFT_RESET, machine.HARD_RESET)
+    restore, reason = warmstart.should_restore(crumb, separated, altitude, cause_is_reset,
+                                               time.time() - crumb['stamp'])
+    log('main :: warm-start gate: %s (reset_cause %d)' % (reason, cause))
+    if not restore:
+        warmstart.clear()  # rejected -> make the NEXT boot unambiguously cold
+        return False
+    launch = crumb['launch']
+    zone = crumb['zone']
+    mission_obj = inspector.Inspector.get('mission')
+    if mission_obj is not None:
+        mission_obj.update({'latitude': launch[0], 'longitude': launch[1],
+                            'zone': [list(zone[0]), list(zone[1])]})
+    # rebase the rebooted baros to the breadcrumb's pad altitude: their setup re-zeroed mid-air, so
+    # without this `elevation` reads ~0 up there and the landing detect would flare immediately.
+    baro_names = [sensor['name'] for sensor in cfg.get('sensors', [])
+                  if sensor.get('driver') in ('icp10111', 'bmp280')]
+    for baro in flight.find(baro_names):
+        if baro is not None:
+            baro.update({'ground': crumb['pad_altitude']})
+    flight.set_stage(controller.Stage.GLIDING)
+    flight.arm()  # we were armed when the breadcrumb dropped (the sequencer only saves armed flights)
+    import gc
+    gc.collect()  # the sequencer's BOOSTING GC hook was skipped: compact + GC OFF for the descent
+    gc.disable()
+    log('main :: WARM START -> gliding, armed (%.0fm above pad)' % (altitude - crumb['pad_altitude']))
+    return True
+
+
 async def main() -> None:
     cfg, source, errors = config.load()
     print('main :: config %s%s' % (source, '' if not errors else ' ERRORS=%s' % errors))
-    await bringup(cfg)
+    flight = await bringup(cfg)
+    await _restore_flight(flight, cfg)
     while True:  # the supervised tasks do the work; keep the event loop alive
         await asyncio.sleep_ms(10000)
 

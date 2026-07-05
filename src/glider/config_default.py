@@ -21,11 +21,24 @@ def default() -> dict:
     return {
         'board': {'id': 'taster', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION},
         'setup_retries': 3,  # re-attempt a flaky device setup at boot (breadboard contacts; 1 = no retry)
+        # warm start (specs/coludo.md "In-flight reboot & warm start"): a mid-air reset restores
+        # GLIDING when the NVS breadcrumb + the separation latch + baro-above-pad all agree.
+        # False -> every boot is cold (bench work with a separated stack on the desk).
+        'warm_start': True,
         'max_range_m': 200,  # landing zone must be within this of the launch point -- the AIRFRAME glide
         # range (a bigger glider reaches farther); the mission range-gate uses it
         'wifi': {  # STA — the board joins the Control network
             'mode': 'sta',
+            # policy (CC-less field ops, specs/coludo.md "Field operation without CC"): 'auto'
+            # joins/rejoins every retry_ms on the ground, goes SILENT from BOOSTING through LANDING
+            # (no reconnect churn under GC-off) and resumes at DONE (recovery-crew hotspot);
+            # 'disabled' never touches the radio this session.
+            'policy': 'auto',
             'ssid': 'panda',
+            # networks: candidate SSIDs tried round-robin, one per retry (field kit: a phone
+            # hotspot + the lab AP). Omit/empty -> just `ssid`. Passwords per SSID from
+            # <ssid>.creds as always; `password` is the shared fallback.
+            'networks': ['panda'],
             'password': '',
             # no cc_host -> the board dials the `.1` of whatever subnet it joins (the hub by
             # convention); set an explicit address to override, or '' to disable CC (fly standalone).
@@ -111,6 +124,9 @@ def default() -> dict:
                 'int_pin': 'lsm6dso32_int1',  # INT1 accel data-ready drives the sampling (fallback_ms 500 if silent)
                 'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
                 'enabled': True,
+                # `rate` has NO backup source: on LSM6DSO32 loss the PID D term degrades to
+                # d(error)/dt (noisier, no setpoint-kick immunity) -- flies, but less crisply. A
+                # BNO055 raw-gyro backup provider is planned with the IMU-redundancy work.
                 'provides': {'accel': {'priority': 0, 'timeout_ms': 20},   # PRIMARY accel (±32 g)
                              'rate': {'priority': 0, 'timeout_ms': 20}},    # sole gyro `rate` source
             },
@@ -239,11 +255,18 @@ def default() -> dict:
             # disable_gc_flight: compact the heap at BOOSTING and hold GC OFF for the WHOLE airborne phase
             # (re-enable + collect only at DONE, stationary on the ground) so no GC pause can blow a
             # 100 Hz control slice (sequencer._gc_transition). False keeps GC on -- ground benches.
+            # apogee_arm_ms: the apogee detector (peak tracking included) is blind this long after
+            # BOOSTING entry -- the motor exhaust pressure wave corrupts the in-airframe baro during
+            # burn (a false peak could deploy GLIDING under thrust, wings still folded). Covers the
+            # longest burn (F15 3.45 s) + margin; no motor reaches apogee before burnout.
+            # flight_timeout_ms: the RSO backstop -- this long after BOOSTING entry the stage forces
+            # DONE (GC + neutral fins) even with every landing sensor dead, so a blind glider cannot
+            # circle until the battery dies. 5 min >> any physically possible TMS flight.
             {'name': 'sequencer', 'activity': 'sequencer', 'enabled': True, 'period_ms': 50,
              'launch_g': 2.5, 'launch_ms': 100, 'launch_alt_m': 10.0,
-             'apogee_drop_m': 5.0, 'boost_timeout_ms': 12000,
+             'apogee_drop_m': 5.0, 'apogee_arm_ms': 4000, 'boost_timeout_ms': 12000,
              'land_agl_m': 5.0, 'land_ms': 300, 'still_g': 0.3, 'ground_ms': 3000,
-             'disable_gc_flight': True},
+             'flight_timeout_ms': 300000, 'disable_gc_flight': True},
             # Phase 3 stabilization loop (off by default -- no actuation until enabled + tuned on the
             # airframe). schedule_hz > 0 -> machine.Timer (deterministic slice, ~1 m/step at 100 Hz/100 m/s);
             # schedule_hz 0 -> asyncio at period_ms. Gains/setpoint are airframe tuning; gates to GLIDING.
@@ -262,14 +285,13 @@ def default() -> dict:
              # PAST THE ROD (airspeed > boost_engage_speed m/s) -- the 3-point rod keeps it vertical and the
              # fins have no authority below that. The speed governor caps the throw the whole way up.
              'boost_engage_speed': 15.0,
-             # airspeed governor (governor.py): the estimator runs FULL RATE pre-glide, on any
-             # overspeed (estimate >= airspeed_full_speed m/s) or on a steep dive (pitch <=
-             # airspeed_dive_pitch deg -- a LEADING indicator, the dive precedes the overspeed);
-             # otherwise ADAPTIVELY throttled: snap to the airspeed_min_ms floor when the estimate
-             # moved >= airspeed_settle m/s since the last update, grow toward the airspeed_max_ms
-             # ceiling as it settles. The ceiling ALSO bounds how stale the overspeed trigger can be.
-             'airspeed_full_speed': 20.0, 'airspeed_min_ms': 40, 'airspeed_max_ms': 100,
-             'airspeed_settle': 0.5, 'airspeed_dive_pitch': -45.0,
+             # airspeed governor (governor.py): the estimator runs FULL RATE pre-glide and on a
+             # steep dive (pitch <= airspeed_dive_pitch deg -- a LEADING indicator, the dive
+             # precedes the overspeed); otherwise the DISTANCE-CONSTANT throttle updates it at
+             # clamp(speed, floor, ceiling) Hz = one update per ~1 m of travel at any speed (the
+             # floor bounds time-staleness near stall, the ceiling caps the float-path cost at
+             # speed). Staleness self-scales -- an overspeed shrinks its own next interval.
+             'airspeed_floor_hz': 5, 'airspeed_ceiling_hz': 50, 'airspeed_dive_pitch': -45.0,
              # GNSS corrector gate: at |pitch| >= this (deg) the receiver's 2D GROUND speed cannot
              # represent airspeed (vertical boost climb, steep dive) -- blending it would loosen the
              # fin cap at high q. Past the gate the accel integrator flies alone (over-read = safe).
@@ -283,9 +305,16 @@ def default() -> dict:
              'nav_period_ms': 100,
              'timer_id': 0,  # the machine.Timer instance the schedule_hz timer mode claims
              # per-stage attitude setpoint; stages absent here hold the fins neutral. BOOSTING = hold the
-             # captured rod-vertical attitude (no config setpoint); GLIDING = bank-to-turn heading hold;
-             # LANDING pitch is the flare knob (0 = none until tuned).
-             'stages': {'boosting': {}, 'gliding': {'roll': 0, 'pitch': 0}, 'landing': {'roll': 0, 'pitch': 0}}},
+             # captured rod-vertical attitude (no config setpoint); GLIDING = bank-to-turn heading hold.
+             # pitch = the TRIM glide attitude: hold it and the glider flies as LONG as possible,
+             # bleeding altitude through the orbit's bank, not through a forced off-trim descent (a
+             # pitch-0 'level attitude' setpoint fought the trim and tripled the sink to ~10 m/s).
+             # -6 is the SIM's trim, NOT the airframe's: FIELD-TUNE it -- set the mixer `trim` so the
+             # elevator neutral matches the built airframe, then read the hands-off steady-glide pitch
+             # from the walk-test / passive-flight telemetry and put THAT number here (at true trim the
+             # pitch PID rides ~zero and the fins stay near neutral). LANDING keeps trim; the flare is
+             # a field-tuning knob on top.
+             'stages': {'boosting': {}, 'gliding': {'roll': 0, 'pitch': -6}, 'landing': {'roll': 0, 'pitch': -6}}},
             # Watchdog + heartbeat (Phase 3): feeds a hardware WDT (a total event-loop wedge -> hard
             # reset) and supervises the control loop (stall in a control stage -> full reset; boot
             # re-centres the fins). Disabled by default -- a live WDT also resets the board when you
@@ -295,6 +324,15 @@ def default() -> dict:
             # Board vitals (temperature/memory/load) -> telemetry every period_ms. probe_ms is the
             # load probe's sleep slice (measures wake-up lateness; the core idles between probes).
             {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'probe_ms': 10, 'enabled': True},
+            # CC-less field agent (specs/coludo.md "Field operation without CC"), OFF by default:
+            # on the pad it selects the mission site by the first GNSS fix (nearest launch.config
+            # site within max_range_m; none -> the spiral-landing fallback zone fallback_offset_m
+            # from the fix at fallback_bearing_deg -- point that bearing at the CLEAR sector), and
+            # optionally AUTO-ARMS after auto_arm_dwell_s stationary with a live fix. Enable for a
+            # field day with no hub; every decision stays operator-overridable via CC.
+            {'name': 'field', 'activity': 'field', 'enabled': False, 'period_ms': 1000,
+             'site_select': True, 'fallback_bearing_deg': 0.0, 'fallback_offset_m': 50.0,
+             'auto_arm': False, 'auto_arm_dwell_s': 60, 'still_g': 0.3},
             # Apply the BLE radio state at boot: off by default to save power (BLE is unused).
             {'name': 'bluetooth', 'driver': 'bluetooth', 'radio': False, 'enabled': True},
             # Connectivity (optional): join Wi-Fi (HAL driver), then serve the CC hub (activity). A

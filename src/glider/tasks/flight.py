@@ -158,10 +158,18 @@ class Flight(task.Task):
         self._actuate(0, 0, 0)
 
     async def run(self) -> None:
-        if self._schedule_hz > 0:
-            await self._run_timer()
-        else:
-            await self._run_asyncio()
+        # finally covers BOTH exits -- a crash out of _step (uncaught exception in a control stage)
+        # and an orderly cancel -- so the fins NEVER hold a live deflection while nobody is flying
+        # them (finding 15.3: uncaught crash used to leave the last command standing for the ~1-2 s
+        # watchdog window). finish() is idempotent (timer None check), so the Controller's own
+        # finish() on shutdown is a harmless second call. Zero cost on the hot path.
+        try:
+            if self._schedule_hz > 0:
+                await self._run_timer()
+            else:
+                await self._run_asyncio()
+        finally:
+            await self.finish()
 
     async def _run_timer(self) -> None:
         """A machine.Timer ticks a ThreadSafeFlag at schedule_hz; the step runs in this task (not the ISR).

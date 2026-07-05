@@ -77,58 +77,50 @@ def test_estimator_wiring():
     assert unit.airspeed() == before  # nothing moved, nothing raised
 
 
-def test_adaptive_throttle_and_overrides():
-    """Settled glide skips the float update on the adaptive interval; the pre-glide / absolute
-    overspeed / dive triggers each restore full rate at once. Observable: _accum_s == 0 iff the
-    update ran (it resets on update)."""
-    unit, _mix, _accel, _speed = _build({'airspeed_full_speed': 20.0, 'airspeed_dive_pitch': -45.0})
+def test_throttle_and_overrides():
+    """The distance-constant throttle skips the float update between intervals; the pre-glide and
+    dive overrides force full rate at once. Observable: _accum_s == 0 iff the update ran."""
+    unit, _mix, _accel, _speed = _build({'airspeed_dive_pitch': -45.0})
     unit._interval_s = 1.0  # force a long throttle interval so only an override can fire the update
-    # (a) settled: low speed + normal pitch + accum under the interval -> THROTTLED (update skipped)
+    # (a) glide: normal pitch + accum under the interval -> THROTTLED (update skipped)
     unit._estimator._speed = 14.0
     unit._accum_s = 0.0
     unit.step(0.01, False, fixed.from_float(-6.0))
     assert unit._accum_s > 0.0, 'settled glide should throttle (skip the update)'
-    # (b) ABSOLUTE speed over the limit at a normal attitude (crosswind/gust) -> full rate restored
-    unit._estimator._speed = 30.0
-    unit._accum_s = 0.5
-    unit.step(0.01, False, fixed.from_float(-6.0))
-    assert unit._accum_s == 0.0, 'overspeed must re-arm full rate regardless of attitude'
-    # (c) a steep nose-down while the (throttled) estimate is still low -> dive override fires first
-    unit._estimator._speed = 14.0
+    # (b) a steep nose-down while the (throttled) estimate is still low -> dive override fires first
     unit._accum_s = 0.5
     unit.step(0.01, False, fixed.from_float(-60.0))
-    assert unit._accum_s == 0.0, 'a dive must re-arm full rate before the estimate shows the overspeed'
-    # (d) the caller's full_rate_override (the flight task's pre-glide) always runs full rate
+    assert unit._accum_s == 0.0, 'a dive must force full rate before the estimate shows the overspeed'
+    # (c) the caller's full_rate_override (the flight task's pre-glide) always runs full rate
     unit._estimator._speed = 0.0
     unit._accum_s = 0.0
     unit.step(0.01, True, 0)
     assert unit._accum_s == 0.0, 'the full-rate override (pre-glide) must never throttle'
 
 
-def test_interval_adaptation():
-    """The throttle interval snaps to the floor when the estimate moves and grows toward the ceiling
-    as it settles; the accumulated dt reaches the integrator either way (cadence-independent)."""
-    unit, _mix, accel, gnss_speed = _build(
-        {'airspeed_min_ms': 40, 'airspeed_max_ms': 100, 'airspeed_settle': 0.5})
-    gnss_speed.reading = (None, None, None)
-    # settled: net-zero accel, due interval -> the interval GROWS toward the ceiling
-    unit._estimator._speed = 5.0
-    unit._interval_s = unit._config.floor_s
-    unit._accum_s = unit._config.floor_s  # due now
-    unit.step(0.0, False, 0)
-    assert unit._interval_s == min(unit._config.ceiling_s, 2 * unit._config.floor_s)
-    grown = unit._interval_s
-    # moving: a hard acceleration between updates -> the interval SNAPS back to the floor
-    accel.value_now = (0.0, 0.0, 6.0)  # ~49 m/s^2 -> the estimate moves >> settle over 0.1 s
-    unit._accum_s = grown  # due now
-    unit.step(0.0, False, 0)
-    assert unit._interval_s == unit._config.floor_s
-    # ceiling clamp: repeated settled updates never grow past the ceiling
-    accel.value_now = (0.0, 0.0, 1.0)
-    for _ in range(10):
-        unit._accum_s = unit._interval_s
-        unit.step(0.0, False, 0)
-    assert unit._interval_s == unit._config.ceiling_s
+def test_distance_constant_interval():
+    """The update interval follows clamp(speed, floor, ceiling) Hz — one update per ~1 m of travel:
+    the table maps floor below 5 m/s, speed-proportional across 5..50, ceiling past 50; and after
+    every update the interval re-derives from the FRESH estimate (staleness self-scales)."""
+    unit, _mix, _accel, gnss_speed = _build({'airspeed_floor_hz': 5, 'airspeed_ceiling_hz': 50})
+    config = unit._config
+    assert config.update_interval(0.0) == 0.2  # at rest: the 5 Hz floor bounds time-staleness
+    assert config.update_interval(4.0) == 0.2  # below the floor band -> still 5 Hz
+    assert config.update_interval(14.0) == 1.0 / 14  # glide trim: 14 Hz = 1 m per check
+    assert config.update_interval(30.0) == 1.0 / 30  # dive: 30 Hz, still 1 m per check
+    assert config.update_interval(50.0) == 0.02  # ceiling
+    assert config.update_interval(75.0) == 0.02  # past the ceiling -> clamped (never faster)
+    # one update per ~1 m of travel across the proportional band
+    for speed in (5, 10, 20, 35, 50):
+        assert abs(speed * config.update_interval(float(speed)) - 1.0) < 1e-9
+    # the interval RE-DERIVES from the fresh estimate after an update (self-scaling staleness)
+    gnss_speed.reading = (30.0, 'gnss', 0)  # a live fix pulls the estimate up on the next update
+    unit._estimator._speed = 14.0
+    unit._interval_s = config.update_interval(14.0)
+    unit._accum_s = unit._interval_s  # due now
+    unit.step(0.0, False, fixed.from_float(-6.0))
+    assert unit._estimator.value() > 14.0  # the blend moved the estimate up...
+    assert unit._interval_s == config.update_interval(unit._estimator.value())  # ...and the interval followed
 
 
 def test_gnss_steep_pitch_gate():
@@ -154,8 +146,8 @@ def test_gnss_steep_pitch_gate():
 
 test_authority_cap()
 test_estimator_wiring()
-test_adaptive_throttle_and_overrides()
-test_interval_adaptation()
+test_throttle_and_overrides()
+test_distance_constant_interval()
 test_gnss_steep_pitch_gate()
-print('ok: governor -- 1/v2 authority cap, estimator wiring, adaptive throttle, full-rate overrides, '
-      'steep-pitch GNSS gate')
+print('ok: governor -- 1/v2 authority cap, estimator wiring, distance-constant throttle, full-rate '
+      'overrides, steep-pitch GNSS gate')

@@ -195,11 +195,11 @@ async def alloc():
     base_step = _alloc(task._step)
     gc.collect()
     free = gc.mem_free()
-    # the glide throttle is ADAPTIVE: fast floor (when airspeed moves) -> settled ceiling. Read the
-    # intervals off the governor's config so this tracks the actual configured defaults (the ceiling also
-    # bounds how stale the absolute-speed full-rate trigger can be).
-    air_hz_fast = 1.0 / task._governor._config.floor_s      # moving: the conservative (worst-case) rate
-    air_hz_settled = 1.0 / task._governor._config.ceiling_s  # settled glide: the best case
+    # the glide throttle is DISTANCE-CONSTANT: clamp(speed, floor, ceiling) Hz = ~1 m of travel per
+    # update. Read the intervals off the governor's config so this tracks the configured defaults;
+    # report the ceiling (worst case, >= 50 m/s dive) and the glide-trim rate (~14 m/s).
+    air_hz_fast = task._governor._config.ceiling_hz             # >= ceiling m/s: the worst-case rate
+    air_hz_settled = 1.0 / task._governor._config.update_interval(14.0)  # glide trim ~14 m/s
     print('\nreal control-path leak (GC off, %d steps) -- glide phase:' % 2000)
     print('  base step (no airspeed)  : %6.1f B/step  (setpoints %.0f + PID/mix/apply %.0f)' %
           (base_step, setp_b, pid_b))

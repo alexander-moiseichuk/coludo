@@ -6,3 +6,4 @@ __pycache__/
 version.py
 wishes.txt
 findings.md
+session-*.md

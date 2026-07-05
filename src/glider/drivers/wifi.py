@@ -28,8 +28,19 @@ class Wifi(task.Task):
         leaving the flight stack down if Wi-Fi is slow/absent. Always returns True so the run() loop
         exists to (re)try; a board with no Wi-Fi just logs once and flies standalone."""
         wifi = self.controller.config.get('wifi', {})
+        # policy (CC-less field ops, specs/coludo.md): 'auto' (default) joins/rejoins on the retry
+        # interval, quiescent while airborne; 'disabled' never touches the radio this session. (Distinct
+        # from the radio 'mode' key, which stays 'sta'.)
+        self._policy: str = wifi.get('policy', 'auto')
         self.ssid: str = wifi.get('ssid', '')
-        self.password: str = self._read_password(wifi.get('password', ''))
+        # networks: several candidate SSIDs tried round-robin, one per retry (a field kit may carry
+        # a phone hotspot + the lab AP). Falls back to the single `ssid`; passwords come per-SSID
+        # from <ssid>.creds as before (the config `password` is the shared fallback).
+        self._networks: list = [name for name in wifi.get('networks', []) if name] or \
+            ([self.ssid] if self.ssid else [])
+        self._network_index: int = 0
+        self._password_fallback: str = wifi.get('password', '')
+        self.password: str = self._read_password(self._password_fallback)
         self.tx_power = wifi.get('tx_power_dbm')
         self._retry_ms: int = wifi.get('retry_ms', 10000)  # join attempt interval before ignition
         self.wlan = None  # the radio object; created on first use in run()
@@ -58,14 +69,28 @@ class Wifi(task.Task):
             return False
 
     async def run(self) -> None:
-        """(Re)join every `retry_ms` -- but ONLY until ignition. Once the controller reaches BOOSTING the
-        radio work stops: it must not compete with the 100 Hz flight loop, and the link is whatever was
-        established on the pad (CC is a pre-flight convenience). Never fatal -- no Wi-Fi just means no CC."""
+        """(Re)join every `retry_ms` -- but ONLY on the ground. From BOOSTING through LANDING the
+        radio work stops: it must not compete with the 100 Hz flight loop or allocate under GC-off;
+        the link is whatever was established on the pad. At DONE scanning RESUMES (post-flight
+        recovery telemetry: the crew walks up with the hotspot). Several configured networks are
+        tried round-robin, one candidate per retry. `policy: disabled` never touches the radio.
+        Never fatal -- no Wi-Fi just means no CC."""
+        if self._policy == 'disabled':
+            self.note('wifi :: disabled by config (policy)', None)
+            while True:
+                await asyncio.sleep_ms(60000)  # keep the supervised loop alive, radio untouched
         while True:
-            if self.controller.stage >= controller_mod.Stage.BOOSTING:
-                await asyncio.sleep_ms(5000)  # ignition: stop initiating connections, just idle
+            stage = self.controller.stage
+            if controller_mod.Stage.BOOSTING <= stage < controller_mod.Stage.DONE:
+                await asyncio.sleep_ms(5000)  # airborne: stop initiating connections, just idle
                 continue
             if await self._ensure_radio() and not self.isconnected():
+                if len(self._networks) > 1:  # rotate the candidate BEFORE the attempt
+                    self._network_index = (self._network_index + 1) % len(self._networks)
+                candidate = self._networks[self._network_index] if self._networks else ''
+                if candidate and candidate != self.ssid:
+                    self.ssid = candidate
+                    self.password = self._read_password(self._password_fallback)
                 await self.connect()
             await asyncio.sleep_ms(self._retry_ms)
 

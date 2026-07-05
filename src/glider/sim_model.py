@@ -111,7 +111,17 @@ class Body:
         self.pitch_rate = (self.pitch - pitch0) / dt
         self.heading = (self.heading + self.yaw_rate * dt) % 360.0
         self.speed += (14.0 - self.speed) * 0.5 * dt
-        self.vu += ((-_G + _G * math.cos(math.radians(self.roll))) - 0.1 * self.vu) * dt  # sink, more in a bank
+        # sink: the straight-TRIM glide settles at ~-7 m/s = "air quality 2", the WORST-CASE polar
+        # (14 m/s / L/D 2: 200 m of altitude buys ~400 m of air path). Deliberately pessimistic:
+        # the real airframe is expected at quality 4-6 (capacity ~10 min aloft), but simulating
+        # that makes every HITL campaign crazy long -- the sim stays conservative and the polar
+        # RE-CALIBRATES from the first real glide telemetry. A bank raises sink by the induced-drag
+        # law (load factor n^1.5: x1.24 at 30 deg, x1.68 at 45) -- the physical cost, replacing the
+        # old raw G*(1-cos) term (~10x too harsh, every turn hemorrhaged what trim saved). An
+        # off-trim pitch still adds sink, so holding trim flies longest and altitude bleeds through
+        # the TURNS -- the designed energy management (fly-long is objective #1, see coludo.md).
+        load = 1.0 / max(0.3, math.cos(math.radians(self.roll)))
+        self.vu += -0.1 * (self.vu + 7.0 * load ** 1.5) * dt
         self.vu = self.vu - 0.4 * (self.pitch + 6.0) * dt            # pitch trims the sink rate
         self.alt += self.vu * dt
         # ground track = airspeed along the heading + the wind (the glider is blown with the air mass)
