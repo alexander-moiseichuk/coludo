@@ -29,7 +29,16 @@ def default() -> dict:
         # range (a bigger glider reaches farther); the mission range-gate uses it
         'wifi': {  # STA — the board joins the Control network
             'mode': 'sta',
+            # policy (CC-less field ops, specs/coludo.md "Field operation without CC"): 'auto'
+            # joins/rejoins every retry_ms on the ground, goes SILENT from BOOSTING through LANDING
+            # (no reconnect churn under GC-off) and resumes at DONE (recovery-crew hotspot);
+            # 'disabled' never touches the radio this session.
+            'policy': 'auto',
             'ssid': 'panda',
+            # networks: candidate SSIDs tried round-robin, one per retry (field kit: a phone
+            # hotspot + the lab AP). Omit/empty -> just `ssid`. Passwords per SSID from
+            # <ssid>.creds as always; `password` is the shared fallback.
+            'networks': ['panda'],
             'password': '',
             # no cc_host -> the board dials the `.1` of whatever subnet it joins (the hub by
             # convention); set an explicit address to override, or '' to disable CC (fly standalone).
@@ -308,6 +317,15 @@ def default() -> dict:
             # Board vitals (temperature/memory/load) -> telemetry every period_ms. probe_ms is the
             # load probe's sleep slice (measures wake-up lateness; the core idles between probes).
             {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'probe_ms': 10, 'enabled': True},
+            # CC-less field agent (specs/coludo.md "Field operation without CC"), OFF by default:
+            # on the pad it selects the mission site by the first GNSS fix (nearest launch.config
+            # site within max_range_m; none -> the spiral-landing fallback zone fallback_offset_m
+            # from the fix at fallback_bearing_deg -- point that bearing at the CLEAR sector), and
+            # optionally AUTO-ARMS after auto_arm_dwell_s stationary with a live fix. Enable for a
+            # field day with no hub; every decision stays operator-overridable via CC.
+            {'name': 'field', 'activity': 'field', 'enabled': False, 'period_ms': 1000,
+             'site_select': True, 'fallback_bearing_deg': 0.0, 'fallback_offset_m': 50.0,
+             'auto_arm': False, 'auto_arm_dwell_s': 60, 'still_g': 0.3},
             # Apply the BLE radio state at boot: off by default to save power (BLE is unused).
             {'name': 'bluetooth', 'driver': 'bluetooth', 'radio': False, 'enabled': True},
             # Connectivity (optional): join Wi-Fi (HAL driver), then serve the CC hub (activity). A

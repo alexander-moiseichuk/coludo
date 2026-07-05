@@ -468,10 +468,11 @@ a phone hotspot or laptop is a convenience, never a dependency.
   the board has been stationary (|a| ≈ 1 g sustained) for `auto_arm_dwell_s` (60 s) after boot.
   The long dwell makes a bench arm unlikely; the flight loop's control-stage gating still holds
   the fins neutral on the ground either way. CC `arm` keeps working when a hub is present.
-* **Wi-Fi policy** — the `wifi` config gains `mode: on | auto | disabled` and a `networks:` list
-  (several SSIDs). `auto` scans every `scan_period_s` (10 s — pro-rated from today's continuous
-  retry), alternating through the list; scanning STOPS at BOOSTING (no reconnect churn under
-  GC-off) and resumes at DONE. `disabled` keeps the radio off for the whole session.
+* **Wi-Fi policy** — the `wifi` config gains `policy: auto | disabled` (distinct from the radio
+  `mode: sta` key) and a `networks:` list (several SSIDs). `auto` retries every `retry_ms` (10 s
+  default), alternating through the list one candidate per attempt; scanning STOPS at BOOSTING
+  (no reconnect churn under GC-off) and RESUMES at DONE (the recovery-crew hotspot). `disabled`
+  keeps the radio off for the whole session.
 
 ## In-flight reboot & warm start (design, 7/04)
 

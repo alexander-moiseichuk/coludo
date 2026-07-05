@@ -187,6 +187,41 @@ def test_launch_point_from_gnss():
     _cleanup()
 
 
+def test_sites_and_fallback():
+    # CC-less site selection (specs/coludo.md "Field operation without CC"): sites parse (invalid
+    # entries dropped), the nearest in-range pad wins, none in range -> None; the fallback zone is
+    # centred offset_m from the fix at bearing_deg and adopted as the mission zone.
+    _cleanup()
+    with open(PATH, 'w') as f:
+        f.write(json.dumps({'sites': [
+            {'name': 'north', 'pad': [48.0010, 11.0], 'zone': [[48.0020, 10.999], [48.0015, 11.001]]},
+            {'name': 'south', 'pad': [48.0000, 11.0], 'zone': [[47.9990, 10.999], [47.9985, 11.001]]},
+            {'pad': [200.0, 11.0], 'zone': [[1, 1], [2, 2]]},   # bad latitude -> dropped
+            {'name': 'no-zone', 'pad': [48.0, 11.0]},           # missing zone -> dropped
+        ]}))
+    launch = mission.Mission(PATH, max_range_m=200)
+    assert len(launch.sites) == 2  # the two invalid entries never made the list
+    # a fix ~55 m south of 'south': south (~55 m) beats north (~166 m) -> south's zone adopted
+    assert launch.select_site((47.9995, 11.0)) == 'south'
+    assert launch.site == 'south' and abs(launch.zone[0][0] - 47.9990) < 1e-9
+    assert launch.latitude is None  # the launch POINT stays the live fix (not the stored pad)
+    # a fix 1 km away: nothing within max_range_m -> None, the zone is untouched
+    before = launch.zone
+    assert launch.select_site((48.0090, 11.0)) is None and launch.zone == before
+    # fallback: a zone synthesized 50 m NORTH of the fix (bearing 0), centred off the pad
+    fix = (48.0, 11.0)
+    zone = launch.fallback_zone(fix, bearing_deg=0.0, offset_m=50.0)
+    assert launch.site == 'fallback' and launch.zone == zone
+    centre_lat = (zone[0][0] + zone[1][0]) / 2
+    centre_lon = (zone[0][1] + zone[1][1]) / 2
+    import navigation
+    span = navigation.distance(fix[0], fix[1], centre_lat, centre_lon)
+    assert abs(span - 50.0) < 1.0  # the orbit focus sits ~50 m from the pad, not on it
+    assert centre_lat > fix[0] and abs(centre_lon - fix[1]) < 1e-9  # due north
+    assert navigation.inside((centre_lat, centre_lon), zone[0], zone[1])
+    _cleanup()
+
+
 def main():
     assert mission._EPOCH_OFFSET == 946684800
     try:
@@ -201,9 +236,11 @@ def main():
         test_landing_zone()
         test_zone_geometry_and_range()
         test_launch_point_from_gnss()
+        test_sites_and_fallback()
     finally:
         _cleanup()
-    print('ok: mission load/update/time/save + landing-zone geometry/range + GNSS launch-point + Inspector')
+    print('ok: mission load/update/time/save + landing-zone geometry/range + GNSS launch-point + '
+          'site-by-GPS + fallback zone + Inspector')
 
 
 main()

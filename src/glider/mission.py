@@ -12,6 +12,7 @@
 # Position is metres / decimal degrees; it is a known origin now and seeds the GNSS driver later.
 
 import json
+import math
 import time
 
 try:
@@ -90,6 +91,29 @@ def _zone(value):
     return (corners[0], corners[1])
 
 
+def _sites(value) -> list:
+    """Validate launch.config `sites` — the known launch locations for CC-less field operation
+    (specs/coludo.md "Field operation without CC"): [{name, pad: [lat, lon], zone: [[TL], [BR]]},
+    ...] -> [(name, (lat, lon), zone), ...]. Invalid entries are dropped, never raised — a typo in
+    one site must not cost the list."""
+    out = []
+    if not isinstance(value, (list, tuple)):
+        return out
+    for entry in value:
+        if not isinstance(entry, dict):
+            continue
+        pad = entry.get('pad')
+        if not isinstance(pad, (list, tuple)) or len(pad) != 2:
+            continue
+        latitude = _number(pad[0], -90.0, 90.0)
+        longitude = _number(pad[1], -180.0, 180.0)
+        zone = _zone(entry.get('zone'))
+        if latitude is None or longitude is None or zone is None:
+            continue
+        out.append((str(entry.get('name', 'site%d' % len(out))), (latitude, longitude), zone))
+    return out
+
+
 class Mission(inspector.Inspectable):
     """The operator-set launch identity. One per board; registers itself so Control can
     `inspect`/`update mission`. Seeded from launch.config at construction."""
@@ -107,6 +131,7 @@ class Mission(inspector.Inspectable):
         self.longitude = _number(data.get('longitude'), -180.0, 180.0)
         self.altitude = data.get('altitude')  # launch-site elevation, metres (None unset)
         self.zone = _zone(data.get('zone'))  # landing zone ((lat,lon) TL, (lat,lon) BR) or None
+        self.sites: list = _sites(data.get('sites'))  # known launch locations (CC-less site-by-GPS)
         inspector.Inspector.register(self)
 
     def set_time(self, epoch) -> bool:
@@ -137,6 +162,42 @@ class Mission(inspector.Inspectable):
             return (self.latitude, self.longitude)
         value, source, _age = databoard.Databoard.parameter('position').read()
         return value if source is not None and value is not None else None  # only a FRESH fix
+
+    def select_site(self, fix: tuple):
+        """CC-less site selection (specs/coludo.md "Field operation without CC"): the nearest known
+        site whose pad is within max_range_m of the live GNSS `fix` becomes the mission (site name +
+        zone). The launch POINT stays the LIVE fix — latitude/longitude are left unset so
+        launch_point() keeps falling through to GNSS. Returns the site name, or None when no site is
+        in range (the caller synthesizes the fallback zone)."""
+        best = None
+        best_distance = self.max_range_m
+        for name, pad, zone in self.sites:
+            span = navigation.distance(fix[0], fix[1], pad[0], pad[1])
+            if span <= best_distance:
+                best = (name, zone)
+                best_distance = span
+        if best is None:
+            return None
+        self.site, self.zone = best
+        return best[0]
+
+    def fallback_zone(self, fix: tuple, bearing_deg: float = 0.0, offset_m: float = 50.0,
+                      length_m: float = 100.0, width_m: float = 40.0) -> tuple:
+        """The spiral-landing fallback (spec): no known site in range after ignition is already
+        committed -> synthesize and ADOPT a zone centred `offset_m` from the launch fix at
+        `bearing_deg` (the operator's clear sector). The offset keeps the orbit focus OFF the pad
+        (people stand there); the existing bank-to-turn overshoot orbit does the spiral with zero
+        new control code. The box is axis-aligned (long axis east-west): the gates land on its
+        short sides either way, and an emergency orbit cares about the CENTRE, not runway
+        orientation. Returns the adopted zone."""
+        lat = fix[0] + offset_m * math.cos(math.radians(bearing_deg)) / commons.M_PER_DEG
+        lon = fix[1] + offset_m * math.sin(math.radians(bearing_deg)) / (
+            commons.M_PER_DEG * math.cos(math.radians(fix[0])))
+        half_lat = (width_m / 2.0) / commons.M_PER_DEG
+        half_lon = (length_m / 2.0) / (commons.M_PER_DEG * math.cos(math.radians(lat)))
+        self.site = 'fallback'
+        self.zone = ((lat + half_lat, lon - half_lon), (lat - half_lat, lon + half_lon))
+        return self.zone
 
     def geometry(self) -> dict:
         """The landing zone resolved against the launch point: the target (centre) + both gates
