@@ -330,6 +330,28 @@ The Boosting phase spans engine ignition through booster separation. While a zer
 * **Dynamic Stabilization:** The Flight Controller actively manipulates the control surfaces to counteract wind shear and aerodynamic instability.
 * **Separation Matrix:** At peak altitude, the motor's integrated black powder ejection charge fires, pressurizing the interior of the booster body tube. This pressure forces the glider upward and out of the booster. During the boosting phase, the glider’s wingtips are nested inside the booster's main body tube to hold them securely folded against aerodynamic drag. As the glider is pushed clear of the airframe, tension from rubber bands anchored at the front of the airplane automatically pulls the wings outward into their locked, deployed flight configuration. Concurrently, a dedicated separation loop—monitored via a physical pressure switch or a breakaway wire pulled from a flight computer socket—flags the physical separation event, outputting a digital logic change to instantly transition the software into Gliding mode.
 
+### Separation dynamics — measured (TMS-7 v3 static burn, 7/03)
+
+The first static burn fired the ejection charge with the **194.4 g glider** (v3 construction 134.8 g +
+partial electronics) seated horizontally; the flight computer failed to power (battery → IO-shield
+incompatibility), so these numbers are reconstructed **ballistically from the video**, not telemetry:
+the ejected glider landed **1.5 m** downrange from a **0.8 m** height, and the wings snapped open
+**0.5–0.6 m** after clearing the tube.
+
+* **Separation velocity ≈ 3.7 m/s** (fall time √(2·0.8/g) = 0.40 s over 1.5 m; drag negligible at
+  this speed). Ejection energy ≈ **1.3 J**.
+* **Ejection acceleration 3.5–7 g** (stroke-length bound: v²/2L for a 0.10–0.20 m nested overlap),
+  i.e. **7–13 N** on the glider over a **55–110 ms** stroke — a sharp but modest transient, well
+  inside the ±32 g accel range and far from any structural limit.
+* **Wings locked open ≈ 135–160 ms after exit** (0.5–0.6 m at 3.7 m/s). Control relevance: the fins
+  are aerodynamically useless until the wings deploy, which is comfortably inside the boost-engage /
+  attitude-recovery window — no software change needed, but the flight loop must not expect roll
+  authority in the first ~0.2 s after the separation switch fires.
+* **Flight-weight scaling:** the full Coludo glider flies heavier (~235–285 g with complete
+  electronics). The same charge then separates at **≈ 2.5–3.4 m/s** (impulse- vs energy-conserving
+  bounds) and the wings-open delay stretches to **≈ 150–240 ms** — still within the same control
+  window, but the margin shrinks with mass: re-measure on the first full-weight burn.
+
 ## Gliding
 
 Following booster separation, the Gliding phase executes for approximately 40 seconds, maneuvering the aircraft toward the target coordinates:

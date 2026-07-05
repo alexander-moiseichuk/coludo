@@ -188,6 +188,13 @@ Some set of [Goupchn SMD IC Test Hook Clips 10PCS 10 Colors for Logic Analyzer](
 For periodic checks during development how much power consumed something like [USB C Tester Power Meter](https://www.amazon.com/dp/B0DFBSFL38).
 If device allow to pass commands over USB it will be much better as will allow to control situation when wifi console is off.
 
+## Printed parts longevity
+
+The **engine holder is a consumable** — it takes the motor's heat plus the clamp/thrust stress on
+every burn (the 7/03 static burn confirmed it as the wear item), so print spares per flight campaign.
+All other printed parts (body tubes, wings, fins, cap) are **long-living**: they see only aerodynamic
+and handling loads and survive many flights unless crashed.
+
 # 3D model data
 
 The detailed numbers are avaliable in the [TMS-7 readme.md file](../models/TMS-7/readme.md).
