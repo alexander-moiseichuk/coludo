@@ -203,7 +203,7 @@ async def amain():
     # PREVIOUS step must reach the governor's full-rate override on the next one.
     glide_ctrl = _StubController(Stage.GLIDING)
     thr = flight.Flight('flight', {'schedule_hz': 0, 'gains': {}, 'stages': {'gliding': {}},
-                        'airspeed_full_speed': 20.0, 'airspeed_dive_pitch': -45.0}, glide_ctrl)
+                        'airspeed_dive_pitch': -45.0}, glide_ctrl)
     assert await thr.setup() is True
     attitude.push((0.0, 0, fixed.from_float(-60)))  # a steep nose-down the next step must pick up
     accel.push((0.0, 0.0, 1.0))  # 1 g -> net 0 -> predict() no-op

@@ -262,14 +262,13 @@ def default() -> dict:
              # PAST THE ROD (airspeed > boost_engage_speed m/s) -- the 3-point rod keeps it vertical and the
              # fins have no authority below that. The speed governor caps the throw the whole way up.
              'boost_engage_speed': 15.0,
-             # airspeed governor (governor.py): the estimator runs FULL RATE pre-glide, on any
-             # overspeed (estimate >= airspeed_full_speed m/s) or on a steep dive (pitch <=
-             # airspeed_dive_pitch deg -- a LEADING indicator, the dive precedes the overspeed);
-             # otherwise ADAPTIVELY throttled: snap to the airspeed_min_ms floor when the estimate
-             # moved >= airspeed_settle m/s since the last update, grow toward the airspeed_max_ms
-             # ceiling as it settles. The ceiling ALSO bounds how stale the overspeed trigger can be.
-             'airspeed_full_speed': 20.0, 'airspeed_min_ms': 40, 'airspeed_max_ms': 100,
-             'airspeed_settle': 0.5, 'airspeed_dive_pitch': -45.0,
+             # airspeed governor (governor.py): the estimator runs FULL RATE pre-glide and on a
+             # steep dive (pitch <= airspeed_dive_pitch deg -- a LEADING indicator, the dive
+             # precedes the overspeed); otherwise the DISTANCE-CONSTANT throttle updates it at
+             # clamp(speed, floor, ceiling) Hz = one update per ~1 m of travel at any speed (the
+             # floor bounds time-staleness near stall, the ceiling caps the float-path cost at
+             # speed). Staleness self-scales -- an overspeed shrinks its own next interval.
+             'airspeed_floor_hz': 5, 'airspeed_ceiling_hz': 50, 'airspeed_dive_pitch': -45.0,
              # GNSS corrector gate: at |pitch| >= this (deg) the receiver's 2D GROUND speed cannot
              # represent airspeed (vertical boost climb, steep dive) -- blending it would loosen the
              # fin cap at high q. Past the gate the accel integrator flies alone (over-read = safe).
