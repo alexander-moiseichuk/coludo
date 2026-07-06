@@ -69,7 +69,7 @@ Watch it live with `mpremote connect /dev/ttyACM1 run main.py` (or attach any se
 **Copyright (c) 2024 Teeraphat Kullanankanjana**
 
 ### Buttons
-- two capacitive buttons: **pin 0 = left (`-`)**, **pin 1 = right (`+`)** (active-high; flip
+- two capacitive buttons: **pin 4 = left (`-`)**, **pin 1 = right (`+`)** (active-high; flip
   `_BUTTON_ACTIVE` if your module is active-low)
 
 ### Servo
