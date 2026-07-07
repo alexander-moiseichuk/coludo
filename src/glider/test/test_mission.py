@@ -181,9 +181,20 @@ def test_launch_point_from_gnss():
         json.dump({}, f)
     launch = mission.Mission(PATH)  # no CC-set position
     assert launch.launch_point() is None  # nothing from CC, no fix yet
+    launch.freeze_launch()  # arming without a fix freezes nothing (stays live-fallthrough)
+    assert launch.latitude is None and launch.longitude is None
     channel = databoard.Databoard.provide('gnss', {'position': {'priority': 0, 'timeout_ms': 1000}}, 'position')
     channel.push((48.0, 11.0))
     assert launch.launch_point() == (48.0, 11.0)  # set by GPS (databoard) when CC has not
+
+    # freeze_launch (at arm): the live fix becomes the PERSISTENT launch point, so a mid-flight fix
+    # loss no longer costs the tier-2 heading; an operator-set position is never overwritten
+    launch.freeze_launch()
+    assert (launch.latitude, launch.longitude) == (48.0, 11.0)
+    channel.push((49.0, 12.0))  # the fix moves on -- the frozen pad point holds
+    assert launch.launch_point() == (48.0, 11.0)
+    launch.freeze_launch()  # a second arm never overwrites (operator-set wins the same way)
+    assert (launch.latitude, launch.longitude) == (48.0, 11.0)
     _cleanup()
 
 

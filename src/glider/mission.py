@@ -163,11 +163,25 @@ class Mission(inspector.Inspectable):
         value, source, _age = databoard.Databoard.parameter('position').read()
         return value if source is not None and value is not None else None  # only a FRESH fix
 
+    def freeze_launch(self) -> None:
+        """Pin the live GNSS fix as the persistent launch point (called at arm -- the last moment
+        the board is known to be ON the pad). Mid-flight the fix can drop, and launch_point()'s
+        live-GNSS fallthrough drops with it -- freezing keeps the tier-2 open-loop heading (and the
+        warm-start crumb's launch field) available for the whole flight. An operator-set position
+        always wins; no fix -> stays unset (launch_point() keeps falling through)."""
+        if self.latitude is not None and self.longitude is not None:
+            return  # CC-set -- never overwrite the operator
+        value, source, _age = databoard.Databoard.parameter('position').read()
+        if source is not None and value is not None:
+            self.latitude, self.longitude = value[0], value[1]
+            recorder.Recorder.log(self.name, 'launch point frozen (%.5f, %.5f)' % (value[0], value[1]))
+
     def select_site(self, fix: tuple):
         """CC-less site selection (specs/coludo.md "Field operation without CC"): the nearest known
         site whose pad is within max_range_m of the live GNSS `fix` becomes the mission (site name +
         zone). The launch POINT stays the LIVE fix — latitude/longitude are left unset so
-        launch_point() keeps falling through to GNSS. Returns the site name, or None when no site is
+        launch_point() keeps falling through to GNSS (freeze_launch pins it at arm). Returns the
+        site name, or None when no site is
         in range (the caller synthesizes the fallback zone)."""
         best = None
         best_distance = self.max_range_m

@@ -11,6 +11,35 @@ import cc_protocol as cc
 import inspector
 
 
+def _readiness(cfg: dict) -> dict:
+    """The flight-readiness gate (doc/plan.md pre-flight hardening #1): the field-dangerous CONFIG
+    states no device probe can see -- watchdog off (a wedged flight loop never reboots), flight loop
+    off or zero gains (fins hold neutral: ballistic), a bench fin derating left applied, no landing
+    zone and no CC-less sites to pick one from. {check: problem} -- empty means flight-ready. Bench
+    and HITL sessions legitimately trip these, so `verify` reports them as a separate `ready`
+    verdict without failing the hardware `pass`."""
+    problems = {}
+    tasks = {task.get('name'): task for task in cfg.get('components', [])}
+    for name, danger in (('watchdog', 'a wedged flight loop never reboots'),
+                         ('flight', 'fins hold neutral -- ballistic')):
+        task = tasks.get(name)
+        if task is None or not task.get('enabled'):
+            problems[name] = 'disabled: ' + danger
+    flight = tasks.get('flight')
+    if flight is not None and flight.get('enabled'):
+        gains = flight.get('gains', {})
+        slack = [axis for axis in ('roll', 'pitch', 'yaw') if not any(gains.get(axis, {}).values())]
+        if slack:
+            problems['gains'] = 'zero/unset on ' + ', '.join(slack) + ' -- the loop computes but cannot act'
+    multiplier = cfg.get('fin_limit_multiplier', 1.0)
+    if multiplier != 1.0:
+        problems['fin_limit_multiplier'] = '%g: a bench derating is still applied' % multiplier
+    mission = inspector.Inspector.get('mission')
+    if mission is not None and mission.zone is None and not mission.sites:
+        problems['zone'] = 'no landing zone set and no CC-less sites to select one from'
+    return problems
+
+
 class Dispatcher:
     """Maps a command to an async handler(msg) -> response line."""
 
@@ -294,9 +323,11 @@ def _register_diagnostics(dispatcher, ctx) -> None:
 
     async def verify(msg) -> str:
         """Verify board setup and report PASS or the problems: dump every configured device (up vs
-        down) and run the probe self-tests, with an overall `pass`. The on-the-pad / pre-flight
-        re-check -- catches anything disconnected in transport. Needs the Controller (the configured
-        device list + setup failures). NOTE: probe is active (sweeps the servos)."""
+        down) and run the probe self-tests, with an overall `pass` -- plus the flight-readiness
+        CONFIG gate as a separate `ready`/`readiness` verdict (a bench session is healthy but not
+        flight-ready). The on-the-pad / pre-flight re-check -- catches anything disconnected in
+        transport. Needs the Controller (the configured device list + setup failures). NOTE: probe
+        is active (sweeps the servos)."""
         if ctx.controller is None:
             return cc.build('err', ['unsupported', 'no controller'])
         devices = {name: ('up' if ctx.controller.active(name) is not None
@@ -306,7 +337,9 @@ def _register_diagnostics(dispatcher, ctx) -> None:
         for name, result in (await inspector.Inspector.probe_all()).items():  #
             if result is not None:
                 problems[name] = result
-        return cc.build('ok', [json.dumps({'pass': not problems, 'devices': devices, 'problems': problems})])
+        readiness = _readiness(ctx.cfg)
+        return cc.build('ok', [json.dumps({'pass': not problems, 'devices': devices, 'problems': problems,
+                                           'ready': not readiness, 'readiness': readiness})])
 
     async def bustune(msg) -> str:
         """`bustune <kind> <id> <freq>` -- retune a sensor bus (i2c/spi) to <freq> Hz live (no reboot)

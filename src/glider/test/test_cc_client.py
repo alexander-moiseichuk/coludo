@@ -178,7 +178,34 @@ async def amain():
     assert report['devices']['imu_bno055'] == 'up'
     assert report['devices']['baro_icp10111'].startswith('down: ')  # configured but not connected
     assert 'baro_icp10111' in report['problems'] and report['pass'] is False  # a problem -> not PASS
+    # the flight-readiness config gate rides along: the DEFAULT config is a bench config -- watchdog
+    # and flight both disabled -> not ready, each named (hardware `pass` is judged separately)
+    assert report['ready'] is False
+    assert report['readiness']['watchdog'].startswith('disabled') and 'flight' in report['readiness']
     assert 'unsupported' in await cc_client.create_dispatcher(config_default.default()).handle('verify')
+
+    # a flight-ready config (watchdog + flight on, gains set, nominal fin limit, a zone source) is
+    # clean; each field-dangerous knob then trips its own named flag
+    ready_cfg = config_default.default()
+    tasks = {task['name']: task for task in ready_cfg['components']}
+    tasks['watchdog']['enabled'] = True
+    tasks['flight']['enabled'] = True
+    tasks['flight']['gains'] = {axis: {'kp': 1.0} for axis in ('roll', 'pitch', 'yaw')}
+
+    class _SitedMission:
+        name = 'mission'
+        zone = None
+        sites = [('field', ((48.001, 11.0), (48.0, 11.01)))]
+
+    inspector.Inspector.register(_SitedMission())
+    assert cc_client._readiness(ready_cfg) == {}
+    tasks['flight']['gains']['yaw'] = {'kp': 0.0}  # a zero gain on one axis -> named
+    assert 'yaw' in cc_client._readiness(ready_cfg)['gains']
+    tasks['flight']['gains']['yaw'] = {'kp': 1.0}
+    ready_cfg['fin_limit_multiplier'] = 0.5  # a bench derating left applied
+    assert '0.5' in cc_client._readiness(ready_cfg)['fin_limit_multiplier']
+    _SitedMission.sites = []  # no zone AND no sites to select one from -> named
+    assert 'zone' in cc_client._readiness(ready_cfg)
 
     # log streaming: `log <ms>` arms collection + returns the batch buffered since the last call.
     # Poll model -- the operator re-sends `log` each tick; the batch rides back as one base64 token.
