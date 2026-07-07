@@ -27,18 +27,23 @@ def default() -> dict:
         'warm_start': True,
         'max_range_m': 200,  # landing zone must be within this of the launch point -- the AIRFRAME glide
         # range (a bigger glider reaches farther); the mission range-gate uses it
-        'wifi': {  # STA — the board joins the Control network
-            'mode': 'sta',
+        'wifi': {  # STA-only (the sole supported radio mode; no `mode` knob exists)
             # policy (CC-less field ops, specs/coludo.md "Field operation without CC"): 'auto'
             # joins/rejoins every retry_ms on the ground, goes SILENT from BOOSTING through LANDING
             # (no reconnect churn under GC-off) and resumes at DONE (recovery-crew hotspot);
             # 'disabled' never touches the radio this session.
             'policy': 'auto',
             'ssid': 'panda',
-            # networks: candidate SSIDs tried round-robin, one per retry (field kit: a phone
-            # hotspot + the lab AP). Omit/empty -> just `ssid`. Passwords per SSID from
-            # <ssid>.creds as always; `password` is the shared fallback.
-            'networks': ['panda'],
+            # networks: FULL per-network configs, each entry the proven panda shape replicated --
+            # ssid + optional enabled (default true) / policy / mode / retry_ms / tx_power_dbm /
+            # password, missing keys inherited from this top-level section. retry_ms is THAT
+            # network's own minimal re-attempt interval (per-network backoff). Scanning runs
+            # through SETTING, silent BOOSTING->LANDING, resumes at DONE. Passwords per SSID from
+            # <ssid>.creds (panda.creds, coludo.creds); `password` is the shared fallback.
+            'networks': [
+                {'ssid': 'panda', 'enabled': True, 'retry_ms': 10000},
+                {'ssid': 'coludo', 'enabled': True, 'retry_ms': 10000},
+            ],
             'password': '',
             # no cc_host -> the board dials the `.1` of whatever subnet it joins (the hub by
             # convention); set an explicit address to override, or '' to disable CC (fly standalone).

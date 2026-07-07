@@ -19,19 +19,42 @@ async def amain():
     radio = wifi.Wifi('wifi', {}, _StubController())
     assert await radio.setup() is True and radio.validate()
 
-    # params come from the `wifi` config section
-    assert radio.ssid == 'panda' and radio.tx_power == 11
-    assert radio._policy == 'auto' and radio._networks == ['panda']  # the CC-less field policy defaults
+    # params come from the `wifi` config section; the default networks are the panda+coludo pair,
+    # each a FULL entry inheriting the top-level keys (the proven panda shape, replicated)
+    assert radio.ssid == 'panda' and radio.tx_power == 11 and radio._policy == 'auto'
+    assert [n['ssid'] for n in radio._networks] == ['panda', 'coludo']
+    assert radio._networks[0]['retry_ms'] == 10000 and radio._networks[0]['tx_power_dbm'] == 11
 
-    # several networks: parsed in order (round-robin candidates), empties dropped; the single-ssid
-    # fallback covers a config without a list; policy 'disabled' is carried to run()'s guard
+    # per-network parsing: strings are ssid sugar, missing keys inherit the top level, entry keys
+    # override, enabled:false and policy:'disabled' park an entry, empty ssids are dropped
     class _ManyController:
         config = dict(config_default.default(),
-                      wifi={'ssid': 'lab', 'networks': ['hotspot', '', 'lab'], 'policy': 'disabled', 'mode': 'sta'})
+                      wifi={'ssid': 'lab', 'policy': 'disabled', 'retry_ms': 7000,
+                            'tx_power_dbm': 9, 'networks': [
+                                'hotspot',
+                                {'ssid': 'field', 'retry_ms': 30000, 'tx_power_dbm': 5},
+                                {'ssid': 'parked', 'enabled': False},
+                                {'ssid': 'off', 'policy': 'disabled'},
+                                {'ssid': ''},
+                            ]})
 
     many = wifi.Wifi('wifi', {}, _ManyController())
     assert await many.setup() is True
-    assert many._networks == ['hotspot', 'lab'] and many._policy == 'disabled'
+    assert many._policy == 'disabled'  # the SESSION policy (run() never touches the radio)
+    assert [n['ssid'] for n in many._networks] == ['hotspot', 'field']  # parked/off/empty dropped
+    assert many._networks[0]['retry_ms'] == 7000  # inherited from the top level...
+    assert many._networks[1]['retry_ms'] == 30000 and many._networks[1]['tx_power_dbm'] == 5  # ...or overridden
+
+    # per-network backoff clocks: never-tried is eligible at once; a tried network is quiet until
+    # ITS OWN retry_ms elapsed; rotation round-robins the eligible ones; None while all backing off
+    first = many._next_network(1000)
+    assert first['ssid'] == 'hotspot' and first['last_ms'] == 1000
+    second = many._next_network(1500)
+    assert second['ssid'] == 'field'  # round-robin advanced (hotspot inside its 7 s window anyway)
+    assert many._next_network(2000) is None  # both inside their windows -> nothing eligible
+    assert many._next_network(8100)['ssid'] == 'hotspot'  # hotspot's 7 s elapsed; field's 30 s has not
+    assert many._next_network(9000) is None  # hotspot re-stamped at 8100, field still quiet
+    assert many._next_network(31600)['ssid'] == 'field'  # field's 30 s from 1500 finally elapsed
 
     # interface up but not joined (no connect() called) -> inspect reflects it
     assert radio.isconnected() is False
