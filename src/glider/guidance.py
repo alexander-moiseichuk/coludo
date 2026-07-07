@@ -74,6 +74,11 @@ class GuidanceConfig:
         # boost: engage only PAST the rod (airspeed > boost_engage) — below it the fins have no q to
         # bite and heading is ill-defined near vertical.
         self.boost_engage: float = config.get('boost_engage_speed', 15.0)
+        # steering noise filter: an integer EMA on the heading ERROR (the measured heading jitters
+        # at the control rate under sensor noise; the nav target is already 10 Hz-cached), shift =
+        # the EMA divisor power (3 -> alpha 1/8, tau ~80 ms at 100 Hz). Kills the bank flapping
+        # that wobbled the endgame spiral at >=25 % noise. 0 -> off. All-int -> zero alloc (GC-off).
+        self.steer_filter_shift: int = config.get('steer_filter_shift', 3)
         # navigation.steer()/approach() are float trig; the GNSS fixes at ~10 Hz, so the target
         # heading is cached and recomputed at most every nav_period_ms (see _target_heading).
         self.nav_period_us: int = config.get('nav_period_ms', 100) * 1000
@@ -105,6 +110,7 @@ class Guidance:
         self._pitch_hold: fixnum = 0  # held through the boost climb)
         self._nav_heading = None  # cached target heading (None -> recompute on the next compute)
         self._nav_updated_us: int = 0
+        self._error_filtered16 = None  # the heading-error EMA state, x16 fixed (None -> seed next)
 
     def setpoint(self, stage: int):
         """The configured attitude setpoint dict for `stage`, or None when it is not a CONTROL stage
@@ -119,6 +125,7 @@ class Guidance:
         self._roll_hold = roll
         self._pitch_hold = pitch
         self._nav_heading = None
+        self._error_filtered16 = None  # a fresh control entry seeds the error filter anew
 
     def compute(self, stage: int, setpoint: dict, heading: float, now_us: int) -> bool:
         """Run `stage`'s law: fill roll_setpoint/pitch_setpoint/heading_error and return True, or
@@ -152,8 +159,8 @@ class Guidance:
         endgame = None
         if config.endgame_alt_m and elevation is not None and elevation < config.endgame_alt_m:
             endgame = max(0.0, elevation / config.endgame_alt_m)
-        self.heading_error = heading_error(self._target_heading(heading, final, now_us, endgame),
-                                           heading)
+        raw_error = heading_error(self._target_heading(heading, final, now_us, endgame), heading)
+        self.heading_error = self._filter_error(raw_error)
         self.roll_setpoint = fixed.from_float(setpoint.get('roll', 0.0))
         self.pitch_setpoint = fixed.from_float(setpoint.get('pitch', 0.0))
         if config.land_bank_gain and (final or endgame is not None or stage == _STAGE.LANDING):
@@ -173,6 +180,21 @@ class Guidance:
         self.roll_setpoint = fixed.from_float(setpoint.get('roll', 0.0))
         self.pitch_setpoint = fixed.from_float(setpoint.get('pitch', 0.0))
         return True
+
+    def _filter_error(self, error: int) -> int:
+        """The steering noise filter: an all-integer EMA (state x16 fixed, alpha = 1/2^shift) on the
+        heading error. A GENUINE target change (|jump| > 90 deg: an overfly flip, a law handover)
+        resets the state so steering follows at once -- only per-step sensor jitter is smoothed.
+        Zero heap allocation (GC is off in flight); shift 0 disables."""
+        shift = self._config.steer_filter_shift
+        if not shift:
+            return error
+        error16 = error * 16
+        if self._error_filtered16 is None or abs(error16 - self._error_filtered16) > 90 * 16:
+            self._error_filtered16 = error16  # seed / follow a real change immediately
+            return error
+        self._error_filtered16 += (error16 - self._error_filtered16) >> shift
+        return self._error_filtered16 // 16
 
     def _target_heading(self, heading: float, final: bool, now_us: int,
                         endgame=None) -> float:

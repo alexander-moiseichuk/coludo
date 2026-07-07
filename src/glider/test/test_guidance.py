@@ -235,6 +235,21 @@ def test_loiter_and_endgame_spiral():
     assert abs(guidance.heading_error(gate_heading, unit._nav_heading)) <= 1
 
 
+def test_steering_filter():
+    """The heading-error EMA: seeds on the first sample (raw through), smooths jitter with
+    alpha 1/2^shift, follows a genuine >90-deg change at once, and shift 0 disables."""
+    unit, _p, _a, _g = _build({'steer_filter_shift': 3})
+    assert unit._filter_error(40) == 40  # first sample seeds -> raw
+    smoothed = unit._filter_error(48)  # +8 jitter -> moves 1/8 of the way
+    assert smoothed == 41
+    for _ in range(60):  # converges onto a steady value
+        smoothed = unit._filter_error(48)
+    assert abs(smoothed - 48) <= 1
+    assert unit._filter_error(-120) == -120  # a >90 deg flip (overfly) resets -> follow at once
+    off, _p, _a, _g = _build({'steer_filter_shift': 0})
+    assert off._filter_error(40) == 40 and off._filter_error(48) == 48  # disabled -> passthrough
+
+
 def test_hold_law():
     """A configured control stage with no specific law (ground tests, e.g. 'setting') holds the
     configured setpoints and the heading captured at enter() -- no navigation."""
@@ -255,6 +270,7 @@ test_nav_cache()
 test_bank_to_turn()
 test_final_approach()
 test_loiter_and_endgame_spiral()
+test_steering_filter()
 test_hold_law()
 print('ok: guidance -- stage gate, boost hold, GPS tiers + nav cache, bank-to-turn, loiter orbit + '
       'endgame spiral, final approach, hold law')

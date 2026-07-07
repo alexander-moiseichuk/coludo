@@ -35,7 +35,7 @@ def default() -> dict:
             'policy': 'auto',
             'ssid': 'panda',
             # networks: FULL per-network configs, each entry the proven panda shape replicated --
-            # ssid + optional enabled (default true) / policy / mode / retry_ms / tx_power_dbm /
+            # ssid + optional enabled (default true) / policy / retry_ms / tx_power_dbm /
             # password, missing keys inherited from this top-level section. retry_ms is THAT
             # network's own minimal re-attempt interval (per-network backoff). Scanning runs
             # through SETTING, silent BOOSTING->LANDING, resumes at DONE. Passwords per SSID from
@@ -315,6 +315,10 @@ def default() -> dict:
              #   position_age_max_ms -- tier-1 freshness gate, defaults to the GNSS channels' own
              #   databoard windows (set TIGHTER to distrust a stale fix sooner);
              #   integral_limit -- PID anti-windup, defaults to the mixer deflection limit.
+             # steering noise filter: integer EMA on the heading error (shift 3 = alpha 1/8,
+             # tau ~80 ms @ 100 Hz) -- smooths per-step sensor jitter out of the bank command
+             # without touching genuine target changes (>90 deg jumps follow at once). 0 -> off.
+             'steer_filter_shift': 3,
              'nav_period_ms': 100,
              'timer_id': 0,  # the machine.Timer instance the schedule_hz timer mode claims
              # per-stage attitude setpoint; stages absent here hold the fins neutral. BOOSTING = hold the
