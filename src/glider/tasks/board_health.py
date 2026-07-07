@@ -15,6 +15,8 @@ import asyncio
 import gc
 import time
 
+import controller as controller_mod
+import databoard
 import recorder
 import task
 
@@ -31,8 +33,20 @@ class BoardHealth(task.Task):
     async def setup(self) -> bool:
         self.period_ms: int = self.config.get('period_ms', 1000)
         self._probe_ms: int = self.config.get('probe_ms', 10)  # idle-probe sleep -> CPU relaxes between probes
+        # all-integer bookkeeping (fixed-point convention): the floor in cm, slopes in bytes/s
+        # and cm/s, predictions in whole seconds; the float baro elevation converts to cm once,
+        # at the boundary. rescue_agl_m 0 disables the rescue.
+        self._rescue_agl_cm: int = int(self.config.get('rescue_agl_m', 10)) * 100
+        self._elevation = databoard.Databoard.parameter('elevation')  # rescue safety gate (baro height)
         self.load: int = 0  # CPU load as an integer percent 0..100 (from probe wake-up lateness)
-        self._telemetry = recorder.Telemetry('health.csv', ('temp', 'mem_free', 'load'))
+        self.rescues: int = 0  # emergency in-flight collects performed (operator-visible)
+        self._leak_bps: int = 0  # EMA of the mem_free decay (bytes/s; 0 = not shrinking)
+        self._last_free: int = 0
+        self._last_us: int = time.ticks_us()
+        self._descent_cm_s: int = 0  # EMA of the elevation decay (cm/s down; 0 = not descending)
+        self._last_elevation_cm = None
+        self._last_elevation_us: int = time.ticks_us()
+        self._telemetry = recorder.Telemetry('health.csv', ('temp', 'mem_free', 'load', 'oom_s', 'land_s'))
         self._ok = True
         return True
 
@@ -48,11 +62,90 @@ class BoardHealth(task.Task):
         return gc.mem_free()
 
     def sample(self) -> dict:
-        return {'temp': self.temperature(), 'mem_free': self.mem_free(), 'load': self.load}
+        return {'temp': self.temperature(), 'mem_free': self.mem_free(), 'load': self.load,
+                'oom_s': self.oom_s(), 'land_s': self.land_s(), 'rescues': self.rescues}
+
+    def oom_s(self):
+        """Predicted seconds to memory exhaustion from the current decay slope, or None while the
+        heap is not shrinking. Telemetry + `inspect health`; one side of the rescue decision."""
+        if self._leak_bps <= 0:
+            return None
+        return self._last_free // self._leak_bps
+
+    def land_s(self):
+        """Predicted seconds until the glider sinks to the rescue floor (rescue_agl_m), from the
+        elevation-decay slope, or None while not descending / no elevation. The other side of the
+        rescue decision, and the operator's landing countdown."""
+        if self._descent_cm_s <= 0 or self._last_elevation_cm is None:
+            return None
+        return max(0, self._last_elevation_cm - self._rescue_agl_cm) // self._descent_cm_s
+
+    def _track(self, free: int, elevation) -> None:
+        """Update the memory-decay and elevation-decay EMAs (alpha 1/4, all-int) behind
+        oom_s()/land_s(). Whole-second elapsed keeps every product inside small ints (a 1 Hz
+        sampler; the EMA absorbs the rounding). Growth resets a slope -- a completed collect /
+        a climb invalidates the old trend."""
+        now = time.ticks_us()
+        elapsed_s = max(1, time.ticks_diff(now, self._last_us) // 1000000)
+        if self._last_free:
+            slope = (self._last_free - free) // elapsed_s  # bytes/s, positive = shrinking
+            self._leak_bps = (self._leak_bps * 3 + slope) // 4 if slope > 0 else 0
+        self._last_free = free
+        self._last_us = now
+        if elevation is not None:
+            elevation_cm = int(elevation * 100)  # the float sensor value -> int cm, boundary-only
+            elapsed_s = max(1, time.ticks_diff(now, self._last_elevation_us) // 1000000)
+            if self._last_elevation_cm is not None:
+                sink = (self._last_elevation_cm - elevation_cm) // elapsed_s  # cm/s down
+                self._descent_cm_s = (self._descent_cm_s * 3 + sink) // 4 if sink > 0 else 0
+            self._last_elevation_cm = elevation_cm
+            self._last_elevation_us = now
+
+    def _rescue(self, free: int, elevation) -> None:
+        """The pre-OOM memory rescue (coludo.md "In-flight reboot"): with GC off for the airborne
+        phase the leak is GARBAGE, so an emergency collect (the fins hold their last write through
+        the pause) reclaims the flight -- vastly cheaper than the OOM chain (~1.4 s frozen fins +
+        ~7 s reboot + a warm-start gamble). Called every period: the rescue RE-FIRES for as long
+        as the trigger holds, so a persistent leak gets a collect per second while the altitude
+        allows. The decision is physics, not a byte
+        threshold: collect when memory dies BEFORE the flight is safely over -- predicted
+        oom_s < 2x the time left to sink to the rescue floor (land_s) -- and only with proven
+        safe altitude (a known elevation above rescue_agl_m ~ 2x the landing gate: a 0.2 s pause
+        costs ~2 m), in BOOSTING/GLIDING (never LANDING). No descent trend yet -> no rescue:
+        the glide always descends, so land_s exists exactly where a rescue is meaningful."""
+        if not self._rescue_agl_cm:
+            return  # no safe-altitude floor configured -> the rescue is off
+        if elevation is None or int(elevation * 100) <= self._rescue_agl_cm:
+            return  # safe altitude must be PROVEN, not assumed
+        stage = self.controller.stage
+        if not (controller_mod.Stage.BOOSTING <= stage < controller_mod.Stage.LANDING):
+            return
+        oom = self.oom_s()
+        if oom is None:
+            return
+        land = self.land_s()
+        if land is None or oom >= 2 * land:
+            return  # not descending yet, or we land long before memory dies -- no pause needed
+        watchdog = self.controller.active('watchdog')  # None when the watchdog is disabled
+        if watchdog is not None:
+            watchdog.kick()  # the collect is atomic and unfeedable -- start it on a FULL WDT budget
+        started = time.ticks_us()
+        gc.collect()
+        paused_ms = time.ticks_diff(time.ticks_us(), started) // 1000
+        if watchdog is not None:
+            watchdog.kick()  # and hand the feed loop a fresh window on the way out
+        self.rescues += 1
+        self._leak_bps = 0  # the old trend is gone with the garbage
+        recorder.Recorder.log(self.name, 'memory rescue: collect %d ms, %d -> %d KB free (oom %ss, land %ss)' % (
+            paused_ms, free // 1024, gc.mem_free() // 1024, oom, land))
 
     def _row(self) -> None:
         vitals = self.sample()
-        self._telemetry.push((vitals['temp'], vitals['mem_free'], vitals['load']))
+        elevation = self._elevation.value()
+        self._track(vitals['mem_free'], elevation)
+        self._rescue(vitals['mem_free'], elevation)
+        self._telemetry.push((vitals['temp'], vitals['mem_free'], vitals['load'],
+                              self.oom_s(), self.land_s()))
 
     async def _probe_loop(self) -> None:
         """Estimate CPU load from how late a fixed sleep wakes (other tasks delay the event loop). The

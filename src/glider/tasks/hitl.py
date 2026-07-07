@@ -106,8 +106,8 @@ class Hitl(task.Task):
         tasks the flight loop writes (90 = neutral). (90, 90, 90) before the servos are found."""
         if self._fins is None:
             self._fins = self.controller.find(['servo_eleron_left', 'servo_eleron_right', 'servo_yaw'])
-        return tuple(getattr(f, 'angle', commons.SERVO_NEUTRAL_DEG) or commons.SERVO_NEUTRAL_DEG
-                     for f in self._fins)
+        neutral = commons.SERVO_NEUTRAL_DEG
+        return tuple(neutral if f is None else (f.angle or neutral) for f in self._fins)
 
     def _read_fins(self) -> tuple:
         """The commanded (roll, pitch, yaw) deflections in degrees from neutral (90), recovered from the

@@ -33,19 +33,51 @@ class Wifi(task.Task):
         # from the radio 'mode' key, which stays 'sta'.)
         self._policy: str = wifi.get('policy', 'auto')
         self.ssid: str = wifi.get('ssid', '')
-        # networks: several candidate SSIDs tried round-robin, one per retry (a field kit may carry
-        # a phone hotspot + the lab AP). Falls back to the single `ssid`; passwords come per-SSID
-        # from <ssid>.creds as before (the config `password` is the shared fallback).
-        self._networks: list = [name for name in wifi.get('networks', []) if name] or \
-            ([self.ssid] if self.ssid else [])
+        # networks: full per-network configs, each entry ORGANIZED LIKE THE WORKING top-level wifi
+        # section (the proven panda shape, replicated): ssid + optional enabled/policy/retry_ms/
+        # tx_power_dbm/password, every missing key INHERITED from the top level. STA is the ONLY
+        # radio mode -- there is no `mode` knob, the driver hardcodes STA_IF (the validator still
+        # rejects a stray non-'sta' mode key so a typo cannot silently mean nothing). A bare string
+        # is sugar for {'ssid': name}. Per-network `retry_ms` is the MINIMAL time between attempts
+        # of THAT network (its own backoff clock), so a flaky hotspot is polled gently while the
+        # lab AP retries fast. Passwords: <ssid>.creds wins, the entry/top-level `password` is the
+        # fallback. `enabled: false` / policy 'disabled' parks an entry.
+        defaults = {'policy': 'auto', 'enabled': True,
+                    'retry_ms': wifi.get('retry_ms', 10000),
+                    'tx_power_dbm': wifi.get('tx_power_dbm'),
+                    'password': wifi.get('password', '')}
+        raw = wifi.get('networks') or ([{'ssid': self.ssid}] if self.ssid else [])
+        self._networks: list = []
+        for entry in raw:
+            if isinstance(entry, str):
+                entry = {'ssid': entry}
+            network = dict(defaults)
+            network.update(entry)
+            if network.get('ssid') and network.get('enabled', True) \
+                    and network.get('policy', 'auto') != 'disabled':
+                network['last_ms'] = None  # this network's own retry clock (never attempted yet)
+                self._networks.append(network)
         self._network_index: int = 0
-        self._password_fallback: str = wifi.get('password', '')
-        self.password: str = self._read_password(self._password_fallback)
+        self.password: str = self._read_password(wifi.get('password', ''))
         self.tx_power = wifi.get('tx_power_dbm')
-        self._retry_ms: int = wifi.get('retry_ms', 10000)  # join attempt interval before ignition
         self.wlan = None  # the radio object; created on first use in run()
         self._ok = True
         return True
+
+    def _next_network(self, now: int):
+        """The next candidate to attempt: round-robin from the current index over the networks
+        whose OWN retry_ms has elapsed since their last attempt (None = never tried -> eligible at
+        once). Stamps the winner's clock and advances the rotation; returns None while every
+        network is still inside its backoff window."""
+        count = len(self._networks)
+        for step in range(count):
+            network = self._networks[(self._network_index + step) % count]
+            last = network['last_ms']
+            if last is None or time.ticks_diff(now, last) >= network['retry_ms']:
+                network['last_ms'] = now
+                self._network_index = (self._network_index + step + 1) % count
+                return network
+        return None
 
     async def _ensure_radio(self) -> bool:
         """Bring the STA radio up on first use (deferred from setup so boot never blocks on it). Returns
@@ -84,15 +116,20 @@ class Wifi(task.Task):
             if controller_mod.Stage.BOOSTING <= stage < controller_mod.Stage.DONE:
                 await asyncio.sleep_ms(5000)  # airborne: stop initiating connections, just idle
                 continue
-            if await self._ensure_radio() and not self.isconnected():
-                if len(self._networks) > 1:  # rotate the candidate BEFORE the attempt
-                    self._network_index = (self._network_index + 1) % len(self._networks)
-                candidate = self._networks[self._network_index] if self._networks else ''
-                if candidate and candidate != self.ssid:
-                    self.ssid = candidate
-                    self.password = self._read_password(self._password_fallback)
-                await self.connect()
-            await asyncio.sleep_ms(self._retry_ms)
+            if self._networks and await self._ensure_radio() and not self.isconnected():
+                network = self._next_network(time.ticks_ms())  # per-network backoff decides
+                if network is not None:
+                    self.ssid = network['ssid']
+                    self.password = self._read_password(network.get('password', ''))
+                    if network.get('tx_power_dbm') is not None \
+                            and network['tx_power_dbm'] != self.tx_power:
+                        self.set_tx_power(network['tx_power_dbm'])
+                    await self.connect()
+            # CONNECTED -> the hunt stops entirely (no rotation, no attempts): only this status
+            # poll remains, relaxed to 5 s. Hunting keeps the 1 s tick so each network's retry_ms
+            # schedules responsively. A dropped link re-enters the hunt with the backoff clocks
+            # still remembering their last attempts.
+            await asyncio.sleep_ms(5000 if self.isconnected() else 1000)
 
     def _read_password(self, fallback: str) -> str:
         """Read the password from <ssid>.creds (gitignored, deploy.sh-pushed), else `fallback`."""

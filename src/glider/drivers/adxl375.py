@@ -44,6 +44,8 @@ _SCALE_G = 0.049  # ADXL375 ≈ 49 mg/LSB (full-resolution, fixed ±200 g)
 class Adxl375(task.Task):
     """High-G accel: samples (x, y, z) in g to the databoard 'accel' slot, interrupt-driven."""
 
+    _dev = None  # class default: no transport until setup() builds it (diagnose reads directly)
+
     async def setup(self) -> bool:
         kind = self.config.get('bus', 'i2c')
         bus_id = self.config.get('id', 0)
@@ -157,7 +159,7 @@ class Adxl375(task.Task):
         fault (CS dead / MISO floating / wrong device / present-but-init). The Controller folds it into
         the failure reason so `verify`/`probe` show the 'why', not just 'absent / miswired?'. A None
         transport means setup never built it -- a config fault (bus undefined / cs_pin unwired)."""
-        if getattr(self, '_dev', None) is None:
+        if self._dev is None:  # setup never built the transport
             return 'no transport -- bus %s:%s undefined or cs_pin %s unwired' % (
                 self.config.get('bus'), self.config.get('id'), self.config.get('cs_pin'))
         return await self._dev.diagnose(_REG_DEVID, _DEVID)

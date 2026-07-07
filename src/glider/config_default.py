@@ -27,18 +27,23 @@ def default() -> dict:
         'warm_start': True,
         'max_range_m': 200,  # landing zone must be within this of the launch point -- the AIRFRAME glide
         # range (a bigger glider reaches farther); the mission range-gate uses it
-        'wifi': {  # STA — the board joins the Control network
-            'mode': 'sta',
+        'wifi': {  # STA-only (the sole supported radio mode; no `mode` knob exists)
             # policy (CC-less field ops, specs/coludo.md "Field operation without CC"): 'auto'
             # joins/rejoins every retry_ms on the ground, goes SILENT from BOOSTING through LANDING
             # (no reconnect churn under GC-off) and resumes at DONE (recovery-crew hotspot);
             # 'disabled' never touches the radio this session.
             'policy': 'auto',
             'ssid': 'panda',
-            # networks: candidate SSIDs tried round-robin, one per retry (field kit: a phone
-            # hotspot + the lab AP). Omit/empty -> just `ssid`. Passwords per SSID from
-            # <ssid>.creds as always; `password` is the shared fallback.
-            'networks': ['panda'],
+            # networks: FULL per-network configs, each entry the proven panda shape replicated --
+            # ssid + optional enabled (default true) / policy / retry_ms / tx_power_dbm /
+            # password, missing keys inherited from this top-level section. retry_ms is THAT
+            # network's own minimal re-attempt interval (per-network backoff). Scanning runs
+            # through SETTING, silent BOOSTING->LANDING, resumes at DONE. Passwords per SSID from
+            # <ssid>.creds (panda.creds, coludo.creds); `password` is the shared fallback.
+            'networks': [
+                {'ssid': 'panda', 'enabled': True, 'retry_ms': 10000},
+                {'ssid': 'coludo', 'enabled': True, 'retry_ms': 10000},
+            ],
             'password': '',
             # no cc_host -> the board dials the `.1` of whatever subnet it joins (the hub by
             # convention); set an explicit address to override, or '' to disable CC (fly standalone).
@@ -279,7 +284,22 @@ def default() -> dict:
              # final approach: below final_approach_agl, track the strip CENTRELINE (not the centre
              # point) using the FULL fin authority (45 deg) to crab a crosswind out -- keep it gliding,
              # not rolling-and-dropping. final_approach_agl 0 -> off.
-             'land_bank_gain': 1.5, 'land_bank_limit': 45,
+             # land_bank_gain 3.0: the endgame spiral must actually REACH the 45-deg bank -- at
+             # 1.5 the rotating-target P-loop saturated near 25 deg and the orbit froze at ~44 m
+             # (the 25-deg turn radius); 45 deg gives the R_min ~20 m the <=30 m miss target needs.
+             'land_bank_gain': 3.0, 'land_bank_limit': 45,
+             # the LOITER orbit (tuned 7/06, coludo.md "Gliding"): within loiter_capture_m of
+             # the zone centre the heading command becomes the circle tangent + loiter_gain deg
+             # of inward cut per metre off the loiter_radius_m circle -- a stable constant-radius
+             # orbit that bleeds altitude through the banked turn (objective #1's energy
+             # management). The radius must stay ABOVE the cruise-bank minimum (~34 m at 30 deg)
+             # or the orbit destabilizes.
+             'loiter_radius_m': 30, 'loiter_capture_m': 120, 'loiter_gain': 3.0,
+             # the ENDGAME band: below this baro elevation the glide steering opens the full
+             # land-bank authority (turn radius halves) so the last seconds SPIRAL around the zone
+             # instead of racetracking past it -- objective #2/#3 tightening that leaves #1 (fly
+             # long) untouched up high. 0 -> off.
+             'endgame_alt_m': 50,
              'final_approach_agl': 8, 'final_cross_gain': 3.0, 'final_intercept_deg': 45,
              # boost: BOOSTING holds the rod-vertical attitude captured at stage entry, but only once
              # PAST THE ROD (airspeed > boost_engage_speed m/s) -- the 3-point rod keeps it vertical and the
@@ -302,6 +322,10 @@ def default() -> dict:
              #   position_age_max_ms -- tier-1 freshness gate, defaults to the GNSS channels' own
              #   databoard windows (set TIGHTER to distrust a stale fix sooner);
              #   integral_limit -- PID anti-windup, defaults to the mixer deflection limit.
+             # steering noise filter: integer EMA on the heading error (shift 3 = alpha 1/8,
+             # tau ~80 ms @ 100 Hz) -- smooths per-step sensor jitter out of the bank command
+             # without touching genuine target changes (>90 deg jumps follow at once). 0 -> off.
+             'steer_filter_shift': 3,
              'nav_period_ms': 100,
              'timer_id': 0,  # the machine.Timer instance the schedule_hz timer mode claims
              # per-stage attitude setpoint; stages absent here hold the fins neutral. BOOSTING = hold the
@@ -319,11 +343,28 @@ def default() -> dict:
             # reset) and supervises the control loop (stall in a control stage -> full reset; boot
             # re-centres the fins). Disabled by default -- a live WDT also resets the board when you
             # drop the running firmware to the REPL for bench work; enable it for flight.
+            # wdt_timeout 1000: the frozen-fin bound at a hard OOM (7/06 soak: ~1.4 s to reset).
+            # NOT lower: a rescue gc.collect() is atomic (nothing can feed mid-sweep) and its cost
+            # scales with heap FILL -- ~65-260 ms on a mostly-free heap (the real-anomaly rescue
+            # case) but measured 3.4 s on a ballast-full one; 500 ms killed the rescue in HITL.
+            # Fast control-loop-death detection is stall_ms below, independent of this timeout.
             {'name': 'watchdog', 'activity': 'watchdog', 'enabled': False,
              'wdt_timeout_ms': 1000, 'period_ms': 200, 'stall_ms': 500},
             # Board vitals (temperature/memory/load) -> telemetry every period_ms. probe_ms is the
             # load probe's sleep slice (measures wake-up lateness; the core idles between probes).
-            {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'probe_ms': 10, 'enabled': True},
+            # Memory rescue (the pre-OOM safety net, measured 7/06): with GC off in flight the
+            # leak is garbage, an emergency gc.collect() (fins hold through the pause)
+            # reclaims the flight -- vastly cheaper than the OOM chain (~1.4 s frozen fins +
+            # ~7 s reboot) -- and it re-fires EVERY health period for as long as the trigger
+            # holds (a fast leak gets a collect per second, altitude allowing; the HITL soak
+            # logged 8). One knob, the rest is physics: collect when the predicted
+            # time-to-OOM < 2x the time left to sink to the rescue floor (memory-decay vs
+            # elevation-decay slopes), with PROVEN safe altitude (elevation > rescue_agl_m ~ 2x
+            # the 5 m landing gate: a 0.2 s pause costs ~2 m), in BOOSTING/GLIDING only (never
+            # LANDING; no descent trend yet -> no rescue -- boost is 3.5 s of peak dynamics).
+            # rescue_agl_m 0 disables. oom_s + land_s ride health.csv + `inspect health`.
+            {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'probe_ms': 10, 'enabled': True,
+             'rescue_agl_m': 10},
             # CC-less field agent (specs/coludo.md "Field operation without CC"), OFF by default:
             # on the pad it selects the mission site by the first GNSS fix (nearest launch.config
             # site within max_range_m; none -> the spiral-landing fallback zone fallback_offset_m

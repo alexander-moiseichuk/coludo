@@ -55,6 +55,8 @@ class Ina226(task.Task):
     it reports the INA's own bus voltage, so power is correct as the base rail changes. Graceful: a
     wrong/absent die id -> setup False."""
 
+    _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
+
     async def setup(self) -> bool:
         bus_id = self.config.get('id', 0)
         spec = config.bus(self.controller.config, self.config.get('bus', 'i2c'), bus_id)
@@ -161,7 +163,7 @@ class Ina226(task.Task):
     async def diagnose(self) -> str:
         """Deeper analysis when setup() failed: the bus reads the die id and classifies the wire-level
         fault (no ack / wrong device / present-but-init). The Controller folds it into the reason."""
-        bus = getattr(self, '_bus', None)
+        bus = self._bus  # None until setup builds the transport
         if bus is None:  # setup never built the bus -> a config fault
             return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)
         return await bus.device(self._addr).diagnose(_REG_DIE_ID, _DIE_HI)

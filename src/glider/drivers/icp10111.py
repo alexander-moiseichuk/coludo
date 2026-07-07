@@ -24,9 +24,12 @@ except ImportError:  # CPython (tooling / off-board checks)
 
 
 _CMD_ID = b'\xef\xc8'  # read product id -> (word & 0x3f) == 0x08 for ICP-101xx
+_GENERAL_CALL_RESET = b'\x06'  # I2C general-call reset (to addr 0x00): reaches a wedged core
 _CMD_OTP_UNLOCK = b'\xc5\x95\x00\x66\x9c'  # unlock OTP, then 4x read
 _CMD_OTP_READ = b'\xc7\xf7'
 _CMD_MEASURE = b'\x48\xa3'  # "measure pressure first", normal mode (6.3 ms, 1.6 Pa RMS)
+_RESET_TRIES = const(4)  # first-touch attempts spanning one max-length conversion window (~95 ms)
+_RESET_RETRY_MS = const(30)
 _MEASURE_MS = const(12)  # conversion wait for normal mode (with margin)
 _ID_MASK = const(0x3F)
 _ID_VALUE = const(0x08)
@@ -45,6 +48,8 @@ class Icp10111(task.Task):
     startup ground zero, captured per-sensor so it is offset-free) to the databoard. `update`
     {"rezero": true} re-captures ground zero (e.g. after warm-up, just before launch)."""
 
+    _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
+
     async def setup(self) -> bool:
         bus_id = self.config.get('id', 0)
         spec = config.bus(self.controller.config, self.config.get('bus', 'i2c'), bus_id)
@@ -53,6 +58,29 @@ class Icp10111(task.Task):
         self._bus = i2cbus.get(bus_id, spec)
         self._addr: int = self.config.get('addr', 0x63)
         self._period_ms: int = self.config.get('period_ms', 100)  # ~10 Hz
+        # OSError(19) hardening (measured after the 7/06 OOM-soak panic): a mid-conversion
+        # sensor NAKs until the conversion drains, and an unclean reboot can LATCH the digital
+        # core -- the address still acks (scan sees 0x63) but every command NAKs. The addressed
+        # soft reset (0x805d) RE-WEDGED the latched bench part; the I2C GENERAL-CALL reset
+        # (0x00 0x06) fully recovered it (5/5 measures after). So: touch the part plainly (a
+        # clean boot never needs a reset), drain a possible busy window on the first NAK, and
+        # only from the second NAK fire the general call. It also resets peers that honour it
+        # (bmp280, ina226) -- acceptable: they re-apply their config-declared state when set up
+        # after us, and it fires only when the PRIMARY baro would otherwise be lost.
+        for attempt in range(_RESET_TRIES):
+            try:
+                await self._bus.writeto(self._addr, _CMD_ID)
+                await self._bus.readfrom(self._addr, 3)  # drain -- the real id read follows
+                break
+            except OSError:
+                if attempt == _RESET_TRIES - 1:
+                    break  # truly absent / dead -- the id read below reports it as before
+                if attempt:  # not just busy -- assume latched, escalate
+                    try:
+                        await self._bus.writeto(0x00, _GENERAL_CALL_RESET)
+                    except OSError:
+                        pass  # nothing honours general call -- keep waiting it out
+                await asyncio.sleep_ms(_RESET_RETRY_MS)
         try:
             await self._bus.writeto(self._addr, _CMD_ID)
             ident = await self._bus.readfrom(self._addr, 3)
@@ -65,10 +93,12 @@ class Icp10111(task.Task):
                 word = await self._bus.readfrom(self._addr, 3)
                 otp.append(struct.unpack('>h', word[0:2])[0])  # signed 16-bit
             self._otp = otp
+            # inside the try: a half-recovered part (id/OTP ack, first measure NAKs -- the
+            # post-latch-up state needing a power cycle) must fail setup GRACEFULLY, not crash it
+            self._ground = await self._ground_zero()
         except Exception as error:
             print('icp10111 :: %r' % error)
             return False
-        self._ground = await self._ground_zero()
         self._altitude, self._temperature, self._pressure, self._elevation = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'altitude', 'temperature', 'pressure', 'elevation')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
@@ -161,7 +191,7 @@ class Icp10111(task.Task):
         commons.id_classify (masked 2-byte word & 0x3F, expecting 0x08). icp10111 is command-based (not
         register-mapped) so it cannot use i2cbus._Device.diagnose(), but the shared classifier still
         produces the same wire-level categories."""
-        if getattr(self, '_bus', None) is None:
+        if self._bus is None:  # setup never built the transport
             return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)
         try:
             await self._bus.writeto(self._addr, _CMD_ID)

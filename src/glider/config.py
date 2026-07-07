@@ -78,7 +78,8 @@ def _validate_board(board, errs: list):
 
 
 def _validate_wifi(wifi, errs: list) -> None:
-    """Validate the optional `wifi` section (STA-only, string ssid)."""
+    """Validate the optional `wifi` section (STA-only, string ssid) and its `networks` list --
+    full per-network entries (the top-level shape replicated), a bare string as ssid sugar."""
     if wifi is None:
         return
     if not isinstance(wifi, dict):
@@ -88,6 +89,20 @@ def _validate_wifi(wifi, errs: list) -> None:
         errs.append("wifi.mode must be 'sta'")
     if not isinstance(wifi.get('ssid', ''), str):
         errs.append('wifi.ssid must be a string')
+    networks = wifi.get('networks')
+    if networks is None:
+        return
+    if not isinstance(networks, (list, tuple)):
+        errs.append('wifi.networks must be a list')
+        return
+    for index, entry in enumerate(networks):
+        if isinstance(entry, str):
+            continue  # sugar for {'ssid': entry}
+        if not isinstance(entry, dict) or not entry.get('ssid') \
+                or not isinstance(entry.get('ssid'), str):
+            errs.append('wifi.networks[%d] needs a string ssid' % index)
+        elif entry.get('mode') not in ('sta', None):
+            errs.append("wifi.networks[%d].mode must be 'sta'" % index)
 
 
 def _validate_buses(buses, errs: list, pin_owner: dict, bus_refs: set) -> None:

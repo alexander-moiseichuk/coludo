@@ -57,6 +57,11 @@ class Body:
         self.gliding = False
         self.wind_e = 0.0      # steady wind advecting the body (m/s, east +) -- a glide disturbance
         self.wind_n = 0.0      # steady wind advecting the body (m/s, north +)
+        # weight-imbalance / thrust-misalignment disturbance (deg/s^2), applied while the motor
+        # burns: a CG offset or a canted nozzle torques the stack CONSTANTLY, unlike the
+        # weathercock which needs wind. Pitch = the top-to-bottom lean axis, roll = side-to-side.
+        self.imbalance_pitch = 0.0
+        self.imbalance_roll = 0.0
 
     def boost_step(self, dt: float, thrust: float, pitch_cmd: float = 0.0, roll_cmd: float = 0.0) -> None:
         """Vertical climb (1-DoF: thrust + gravity + drag) PLUS attitude under thrust: a crosswind
@@ -76,10 +81,13 @@ class Body:
         climb = max(self.vu, 1.0)
         aoa_pitch = math.degrees(math.atan2(self.wind_e, climb))  # crosswind angle of attack (deg)
         aoa_roll = math.degrees(math.atan2(self.wind_n, climb))
+        burn = 1.0 if thrust else 0.0  # imbalance torque acts only while the motor pushes
         self.pitch_rate += (-_BOOST_COCK * q * aoa_pitch + _BOOST_FIN * q * pitch_cmd
-                            - _BOOST_DAMP * self.pitch_rate) * dt   # cock leans off 90, fins restore
+                            - _BOOST_DAMP * self.pitch_rate
+                            + burn * self.imbalance_pitch) * dt   # cock leans off 90, fins restore
         self.roll_rate += (-_BOOST_COCK * q * aoa_roll + _BOOST_FIN * q * roll_cmd
-                           - _BOOST_DAMP * self.roll_rate) * dt
+                           - _BOOST_DAMP * self.roll_rate
+                           + burn * self.imbalance_roll) * dt
         self.pitch += self.pitch_rate * dt             # 90 = vertical
         self.roll += self.roll_rate * dt
 

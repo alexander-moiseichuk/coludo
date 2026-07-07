@@ -121,7 +121,7 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `ping` | — | `pong` | liveness |
 | `health` | — | `ok {temp,mem_free,uptime,stage,clock,epoch,tasks[]}` | vitals; `clock`/`epoch` = the board RTC (for the dashboard); `tasks[]` carries `{name, ok}` |
 | `stage` | `[name\|auto]` | `ok {stage,manual}` | get the stage; `<name>` holds it (pauses the sequencer — ground test); `auto` resumes |
-| `arm` | — | `ok {armed:true}` / `err unsafe {problems}` | enable actuation — only when verify is clean (every device up + probe healthy, incl. mission launch-position) |
+| `arm` | — | `ok {armed:true}` / `err unsafe {problems}` | enable actuation — only when verify is clean (every device up + probe healthy, incl. mission launch-position); arming pins the live GNSS fix as the launch point (freeze — tier-2 heading survives a mid-flight fix loss) |
 | `disarm` | — | `ok {armed:false}` | disable actuation (the control loop holds the fins neutral) |
 | `log` | `<ms>` | `ok {lines:[...]}` | poll-model: lines buffered since the last `log`; re-arm teeing for `ms` (`0` stops) |
 | `tlm` | `<ms>` | `ok {samples:[...]}` | poll-model: telemetry rows buffered since the last `tlm`; re-arm teeing for `ms` (`0` stops) |
@@ -131,7 +131,7 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `update` | `<object> <json>` | `ok {changed:[...]}` | `Inspectable.update()` — names of properties actually changed |
 | `stats` | `<object>` | `ok {stats}` | `Inspectable.stats()` of a named object |
 | `probe` | `[name\|all]` | `ok {name: null\|error}` | on-demand device self-tests; `all` also lists devices that never set up (not connected). Active — sweeps servos |
-| `verify` | — | `ok {pass, devices, problems}` | verify board setup: every configured device up/down + probe, with an overall PASS — the launch-pad re-check (catches anything disconnected in transport) |
+| `verify` | — | `ok {pass, devices, problems, ready, readiness}` | verify board setup: every configured device up/down + probe, with an overall hardware PASS, plus the flight-readiness CONFIG gate as a separate `ready` verdict (`readiness` names each field-dangerous setting: watchdog off, flight loop off / zero gains, fin derating applied, no zone source) — the launch-pad re-check |
 | `get-config` | `[name]` | `ok {config}` | fetch a named config: `board` (running, default), `default` (built-in board default), `launch` (the mission) |
 | `set-config` | `<name> <json>` | `ok {config_id}` / `err invalid <msg>` | save a named config: `board` validates + replaces the full snapshot (running config unchanged until reboot); `launch` merge-applies the fields into the mission + persists `launch.config` |
 | `reset-config` | — | `ok` | delete `board.config`; next boot uses `config_default.py` |

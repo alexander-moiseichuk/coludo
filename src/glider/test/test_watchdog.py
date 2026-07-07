@@ -55,8 +55,11 @@ async def amain():
                            _StubController(flight))
     assert await wd.setup() is True
     resets = []
+    wd.kick()  # kick() before the WDT is armed: a safe no-op (the rescue may run watchdog-less)
     wd._wdt = StubWDT()
     wd._reset = lambda: resets.append(1)
+    wd.kick()  # armed: an out-of-band feed (the memory rescue brackets its collect with these)
+    assert wd._wdt.feeds == 1
 
     # not in a control stage -> nothing to supervise (never "stalled")
     flight._active = False

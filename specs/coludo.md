@@ -104,64 +104,67 @@ landing stage (the laser hammering I²C) — the single P4 core is mostly idle b
 is ample headroom. The asyncio loop runs **~3× faster than the 50 Hz sim rate** under this load, which is
 why `tasks/hitl.py` drives the model from a wall-clock accumulator rather than a fixed dt (see Phase-5).
 
-## Flight envelope (E16 / F15 estimates)
+## Flight envelope (E16 / F15 — measured v3 masses)
 
-Approximate, **basic-fidelity** numbers to seed modelling and the HITL simulation (Phase-5), and
-to sanity-check sensor ranges and the launch-detect threshold. Derived from the **measured TMS-7 v2
-masses**: the **booster** (motor + casing + booster airframe) ejects at separation — E16 **200 g**,
-F15 **217 g** — and the **glider** (airframe + electronics) is **300 g** today, **~150 g** the
-weight-optimisation target. So the whole stack is **500 g (E16) / 517 g (F15)** at liftoff, and the
-*glide* runs on the glider alone. See [`hardware.md`](../doc/hardware.md) + [`models/TMS-7`](../models/TMS-7).
+Numbers to seed modelling and the HITL simulation (Phase-5), and to sanity-check sensor ranges and
+the launch-detect threshold. Derived from the **measured TMS-7 v3 masses**: the **booster with the
+motor** (ejects at separation) — E16 **165 g**, F15 **182 g** — and the **glider** (airframe +
+electronics) **285 g** as built, **235 g** the light build. So the full stack is **450 g (E16) /
+467 g (F15)** at liftoff (400/417 g light), and the *glide* runs on the glider alone. See
+[`hardware.md`](../doc/hardware.md) + [`models/TMS-7`](../models/TMS-7).
 
-**Assumptions (kept deliberately crude — "air quality 3"):** vertical launch, no wind; constant
-*average* motor thrust over the burn with propellant mass burning off linearly; drag `F = ½·ρ·v²·Cd·A`
-with sea-level `ρ = 1.225 kg/m³`, `Cd ≈ 0.6`. Frontal area from a **~46 mm effective diameter**
+**Boost assumptions (deliberately crude):** vertical launch, no wind; constant *average* motor
+thrust over the burn with propellant mass burning off linearly; drag `F = ½·ρ·v²·Cd·A` with
+sea-level `ρ = 1.225 kg/m³`, `Cd ≈ 0.6`. Frontal area from a **~46 mm effective diameter**
 (`A ≈ 17 cm²`): the booster tube is only ~40 mm (motor 29 mm + holder + a ~3 mm ultra-light-filament
 wall), and the glider rides on top at ~46 mm body width — the 143 mm in the model bbox is the
 *deployed wing/fin span*, which is thin and edge-on to the airflow so it adds little frontal drag.
-Glide phase `L/D ≈ 5` at ~12 m/s (optimistic for the current 2 mm flat-plate wings — see the
-model-analysis notes). Real flights will differ — these are seeds, not guarantees.
+The **glide** rows are no longer an L/D guess: they are the fly-long trim law measured on-board
+(HITL, `doc/sims/TMS-7-warm_reboot`) over the polar pinned at **air quality 2** — the worst case
+(−7 m/s trim sink), so every glide duration is a FLOOR; the real airframe is expected at
+quality 4–6 and the polar re-calibrates from the first real glide telemetry.
 
-Numbers are the **full 300 g glider** (whole stack 500/517 g); the **~150 g half-weight** target climbs
-markedly higher (E16 ~200 m, F15 ~395 m apogee — a longer glide). Verified against on-board HITL: the
-`sim_model` integration of thrust − drag − gravity matches these to within a few percent (F15-full 244 m
-analytic vs 253 m device).
+Numbers are the **full 285 g glider** (stack 450/467 g); the **235 g light build** climbs higher —
+E16 **161 m**, F15 **345 m** apogee measured (159/357 m analytic) — and flies longer (40.5/71.3 s
+at the quality-2 floor). The `sim_model` integration of thrust − drag − gravity matches the analytic
+model to a few percent at the v3 masses too (E16-full 128 m analytic vs 130 m device, F15-full
+304 vs 292 m).
 
 | Parameter | **E16** | **F15** |
 |---|---|---|
-| Liftoff mass (booster + 300 g glider) | ~500 g | ~517 g |
+| Liftoff mass (booster + 285 g glider) | ~450 g | ~467 g |
 | Total impulse / burn | 28 N·s / 1.8 s | 50 N·s / 3.5 s |
-| Peak accel — accelerometer reads (specific force) | **~6.7 g** (peak thrust 33 N) | **~4.9 g** (peak thrust 25 N) |
-| Early-boost — accelerometer reads | ~3.3 g | ~2.8 g |
-| Peak speed (at burnout) | ~39 m/s (~140 km/h) | ~57 m/s (~207 km/h) |
-| Apogee (vertical) | ~105 m @ ~5.5 s | ~245 m @ ~9 s |
-| Glide range / time (L/D 5) | ~0.5 km / ~45 s | ~1.2 km / ~100 s |
-| Total flight | ~50 s | ~110 s |
+| Peak accel — accelerometer reads (specific force) | **~7.8 g** (peak thrust 33 N) | **~5.8 g** (peak thrust 25 N) |
+| Early-boost — accelerometer reads | ~3.5 g | ~3.1 g |
+| Peak speed (at burnout) | ~44 m/s (~160 km/h) | ~68 m/s (~245 km/h) |
+| Apogee (vertical) | ~128 m @ ~6 s (130 m device) | ~304 m @ ~9.3 s (292 m device) |
+| Flight time BOOSTING→DONE, quality-2 FLOOR (device) | 35.2 s | 62.9 s |
+| At the quality-5 calibration (device) | — | 101 s / 1.42 km air path |
 
 **What this means for the design:**
 - *Accelerometer:* it reads **specific force** = kinematic acceleration **+ 1 g**. Peak is only ~6–9 g,
   so even the BNO055 (±16 g) would not clip — but the ADXL375 (±200 g) stays the boost source for
   headroom/noise margin (clones and the airframe vary; a spike can exceed the published peak).
-- *Launch detect:* the accelerometer reads **specific force = thrust/mass**, so the heavier measured v2
-  stacks read a LOWER boost |a| — E16 (500 g) ≈ 3.3 g, F15 (517 g) ≈ **2.84 g**. `launch_g` is therefore
-  **2.5** (the old 3.0 would MISS the real F15), plus an independent **`launch_alt_m = 10 m`** backup: the
-  baro climbing 10 m off the pad trips BOOSTING regardless of the accel threshold, so a heavy/marginal
-  boost or a dropped accel window still detects. These passive E16/F15 flights tune both from real data.
-- *Mission profile:* the F15 roughly **doubles apogee** and gives **~2×** the descent time — far more
-  glide/nav window — so it is the better motor for exercising active control once the passive flights
-  validate the data pipeline. The ideal glide range (~0.5–1.2 km at L/D 5) dwarfs the 200 m
-  landing-zone gate (`max_range_m`): the glider has ample range to return, which is what the
-  navigation spends it on.
+- *Launch detect:* the accelerometer reads **specific force = thrust/mass** — at the v3 masses
+  early boost is E16 (450 g) ≈ 3.5 g, F15 (467 g) ≈ **3.1 g**. `launch_g` stays **2.5**: sized for
+  the heavier v2 stack (F15 read 2.84 g), it keeps ~20 % margin below the lightest real boost, plus
+  an independent **`launch_alt_m = 10 m`** backup — the baro climbing 10 m off the pad trips
+  BOOSTING regardless of the accel threshold, so a heavy/marginal boost or a dropped accel window
+  still detects. The passive E16/F15 flights tune both from real data.
+- *Mission profile:* the F15 more than **doubles apogee** and gives **~2×** the glide window — the
+  better motor for exercising active control once the passive flights validate the data pipeline.
+  Under the fly-long law even the E16's 130–160 m apogee is enough to reach the 200 m
+  landing-zone gate (`max_range_m`): the E16 landed IN-ZONE on the quality-2 HITL floor
+  (77 m full / 13.5 m light from the centre), where the old dive-at-the-midpoint law fell
+  150–220 m short.
 
-**Cross-check — on-board HITL (Phase-5).** `sim_model` integrates the same thrust/mass/drag, and the
-on-board HITL flights land where this table predicts at the boost end: for the v2 masses **F15-full
-apogee ~253 m** (device) vs ~244 m analytic, **E16-full ~112 m**, with early-boost **~2.8 g (F15) /
-~3.3 g (E16)** — the sim is calibrated to the envelope's drag model (Cd 0.6, A ~17 cm²), not tuned
-separately (see `doc/sims/TMS-7-memory_refactoring/`). The *glide* is a deliberately simplified
-control-test model — steeper than the optimistic L/D-5 row here — so the device flights run
-**~37 s (F15-full) / ~24 s (E16-full)** total rather than the analytical ~110 s / ~50 s.
-The high wing loading in the airframe notes below points the same way: the real glide will be fast, not
-L/D-5. Traces + reports: [`../doc/sims/TMS-7-guarded_fins`](../doc/sims/TMS-7-guarded_fins).
+**Cross-check — on-board HITL (Phase-5).** `sim_model` integrates the same thrust/mass/drag, and
+the on-board HITL flights land where this table predicts at the boost end — v3 device apogees
+130/161 m (E16 full/light) and 292/345 m (F15) vs 128/159 and 304/357 m analytic — the sim is
+calibrated to the envelope's drag model (Cd 0.6, A ~17 cm²), not tuned separately. The glide rows
+are the same captures (fly-long trim law over the quality-2 worst-case polar); the high wing
+loading in the airframe notes below is why the polar is modelled fast and steep rather than L/D-5.
+Traces + reports: [`../doc/sims/TMS-7-warm_reboot`](../doc/sims/TMS-7-warm_reboot).
 
 ### Airframe notes from the printed models (`models/TMS-7`)
 
@@ -172,9 +175,9 @@ Solid-PLA volumes are 2–3× the measured part masses → ~30–42 % effective 
 [`hardware.md`](../doc/hardware.md). Geometry is **symmetric** (L/R wings and fins identical) — good for
 roll/trim balance. Structural / aerodynamic items to weigh before the active-control flights:
 
-1. **Wing loading is high** — ~124 cm² total wing for a ~237 g glider ≈ **~19 kg/m²**, giving a stall
-   of **~19 m/s** (CL_max ~0.9 for a flat plate). The glider therefore has to glide *fast* (~20–25 m/s)
-   and lands hot; the envelope's 12 m/s glide is in fact below stall. **Bigger wings (1.5–2× area)** are
+1. **Wing loading is high** — ~124 cm² total wing for the measured 285 g glider ≈ **~23 kg/m²**
+   (light build 235 g ≈ 19 kg/m²), giving a stall of **~19–20 m/s** (CL_max ~0.9 for a flat plate).
+   The glider therefore has to glide *fast* (~20–25 m/s) and lands hot. **Bigger wings (1.5–2× area)** are
    the single most impactful change — they drop the stall speed, make the glide controllable and the
    landing flare survivable, and improve the realistic L/D.
 2. **Wings/fins are 2.0 mm flat plates** — over a 222 mm span this flexes/flutters, is fragile, and
@@ -330,6 +333,36 @@ The Boosting phase spans engine ignition through booster separation. While a zer
 * **Dynamic Stabilization:** The Flight Controller actively manipulates the control surfaces to counteract wind shear and aerodynamic instability.
 * **Separation Matrix:** At peak altitude, the motor's integrated black powder ejection charge fires, pressurizing the interior of the booster body tube. This pressure forces the glider upward and out of the booster. During the boosting phase, the glider’s wingtips are nested inside the booster's main body tube to hold them securely folded against aerodynamic drag. As the glider is pushed clear of the airframe, tension from rubber bands anchored at the front of the airplane automatically pulls the wings outward into their locked, deployed flight configuration. Concurrently, a dedicated separation loop—monitored via a physical pressure switch or a breakaway wire pulled from a flight computer socket—flags the physical separation event, outputting a digital logic change to instantly transition the software into Gliding mode.
 
+### Boost disturbance rejection — simulated (7/06)
+
+Host sweep of the guarded-fin boost hold (real `guidance`/`pid`/`mixer` over the sim, F15 v3
+masses, 5 % noise): constant **weight-imbalance / thrust-misalignment torque** vs **steady
+crosswind**, on both lean axes.
+
+| disturbance | worst lean off vertical | verdict |
+|---|---|---|
+| imbalance torque 10 °/s², pitch (top-to-bottom) | 10.5° | **controlled** — the hold absorbs a strong constant bias |
+| imbalance torque 10 °/s², roll (side-to-side) | 6.8° | **controlled** |
+| crosswind 6 m/s (either axis) | ~30° | partially resisted |
+| crosswind 12 m/s (either axis) | 61–67° | the hold loses — physics, not firmware |
+| combined 9 m/s @ 45° + both imbalances | 43.6° | between the pure cases |
+
+Readings:
+* **Imbalance is a solved problem** — the controllable disturbance class stays within ~10° of
+  vertical on both axes; pitch- and roll-axis behaviour is symmetric.
+* **Strong wind is weathercocking**: tail fins are weathervanes — the same passive stability that
+  keeps the stack straight aligns it into the relative wind, and disturbance and fin authority
+  both scale with q, so the ratio never improves with speed. The response is OPERATIONAL, not
+  control gains: **launch wind limit ≤ 6 m/s** (lean ≤ ~30°, the classic model-rocketry
+  threshold) for the flight campaigns.
+* **Model caveat**: the boost sim integrates altitude 1-DoF vertically, so its apogee is
+  LEAN-BLIND (every case reads the same apogee). A real 60° lean at burnout costs roughly half
+  the vertical impulse plus a long downrange arc — the 12 m/s rows UNDERSTATE the consequence,
+  which argues the wind limit even more strongly. A lean-aware boost model is a known
+  improvement for later.
+* The stage machine deployed at apogee and landed in every case — robust to all disturbances
+  tried.
+
 ### Separation dynamics — measured (TMS-7 v3 static burn, 7/03)
 
 The first static burn fired the ejection charge with the **194.4 g glider** (v3 construction 134.8 g +
@@ -361,8 +394,36 @@ the ejected glider landed **1.5 m** downrange from a **0.8 m** height, and the w
 3. **Land as close to the zone midpoint as possible.**
 
 A lower-priority objective must never be bought with a higher one — the glider does NOT dive at the
-midpoint to improve #3 at the cost of #1; it overflies, turns, comes back, and repeats until the
-energy is gone, with the endgame steering (#2/#3) tightening only as the altitude runs out.
+midpoint to improve #3 at the cost of #1; the endgame steering (#2/#3) tightens only as the
+altitude runs out.
+
+**The glide law that delivers this (tuned 7/06, `guidance.py`):**
+* **Travel** (far from the zone): steer to the nearer short-side gate, as always.
+* **Loiter** (within `loiter_capture_m` = 120 m of the centre): the heading command becomes the
+  CIRCLE TANGENT plus an inward correction (`bearing_to_centre + 90° − gain·(distance − R)`,
+  R = 30 m, gain 3), so the glider CAPTURES a constant-radius orbit around the centre instead of
+  bang-banging between overfly and U-turn (the old point-steer law swung 184 m racetrack legs and
+  landed on phase luck). The ~26° orbit bank sits inside the cruise `bank_limit`; altitude bleeds
+  through the turn at the induced-drag rate — this IS objective #1's energy management. R must not
+  be set below the cruise-bank minimum radius (~34 m at 30°) or the orbit destabilizes.
+* **Endgame spiral** (below `endgame_alt_m` = 50 m): the loiter radius scales with the remaining
+  altitude fraction, collapsing the orbit onto the centre exactly as the energy runs out, with the
+  full `land_bank_limit` 45° available (`land_bank_gain` 3.0 — at 1.5 the rotating-target P-loop
+  saturated near 25° and the spiral froze at that bank's 44 m radius; 45° gives the ~20 m minimum
+  the miss target needs).
+* **Final approach** (below `final_approach_agl`): the strip-centreline tracker, unchanged.
+* **Steering noise filter** (all laws): the heading error runs through an all-integer EMA
+  (`steer_filter_shift` 3 = alpha 1/8, τ ≈ 80 ms at 100 Hz; zero-alloc under GC-off) so per-step
+  sensor jitter never reaches the bank command; a genuine target change (> 90° — an overfly flip, a
+  law handover) resets the filter so steering follows at once. At 25 % noise this halves the fin
+  travel (−56 %) and pulls the E16 touchdown in-zone.
+
+Measured on the worst-case quality-2 polar (host sweep, 24 cases): time aloft 121–148 % of the
+straight-trim ceiling in every case (objective #1 never regressed through the whole tuning);
+calm/5 %-noise touchdowns **17–18 m from the centre, in-zone, both motors** (the untuned racetrack
+baseline: 129 m median); with the steering filter the calm/25 %-noise miss is 17 m (E16, in-zone) /
+37 m (F15) — median 31 m against the ≤ 30 m acceptance line, the residual being run variance for
+field calibration; wind ≥ 6 m/s remains physics-bounded for a 14 m/s glider.
 
 Following booster separation, the Gliding phase executes, maneuvering the aircraft toward the target coordinates:
 * **Attitude Recovery:** The glider must immediately execute an pitch/roll correction to transition from a vertical posture to a stable, horizontal gliding envelope, maintaining a "top-fin-up" orientation using real-time gyroscope vectors.
@@ -465,7 +526,9 @@ a phone hotspot or laptop is a convenience, never a dependency.
   (`sites: [{name, pad: [lat, lon], zone: [[TL], [BR]]}, …]` — the zone list is small and fixed,
   "like Cape Canaveral"). At boot, the first GNSS fix selects the site whose pad is nearest,
   gated by `max_range_m` (200 m). On a match: that site's zone becomes the mission zone and the
-  **live fix** (not the stored pad) becomes the launch point.
+  **live fix** (not the stored pad) becomes the launch point — kept live until **arm**, which
+  FREEZES the fix as the persistent launch point (so the tier-2 open-loop heading and the
+  warm-start crumb's launch field survive a mid-flight fix loss; a CC-set position always wins).
 * **No site within 200 m → the spiral-landing fallback.** The mission SYNTHESIZES a zone centred
   `fallback_offset_m` (default 50 m) from the launch fix at a configured bearing
   (`fallback_bearing_deg` — the operator points it at the clear sector during setup), sized like
@@ -520,6 +583,40 @@ against a guaranteed lawn-dart).
 * **Any gate missing → normal cold boot** in SETTING, breadcrumb cleared, event logged.
 * **Validation:** HITL flight with a forced `machine.reset()` mid-glide (and a pulled USB on the
   bench): the board must come back armed, in GLIDING, steering to the same zone.
+* **Measured — the in-flight OOM soak (7/06, `tools/oom_soak.py`):** a HITL glide ballasted to
+  566 KB free hit a REAL mid-glide OOM (GC-off burn ~140 KB/s with the sim's own churn on top of
+  the ~15–18 KB/s control-path leak). What actually happens at exhaustion: the asyncio runtime
+  dies wholesale (every task supervisor aborts) — the watchdog TASK dies with it, so the graceful
+  stall-detect path never runs, and the crash→neutral `finally` cannot execute either: **the fins
+  freeze at the last commanded deflection** (~1.4 s from the last servo write to the reset), then
+  the STARVED hardware `machine.WDT` panics the chip (`rst SW_CPU_RESET`, `reset_cause 3` = WDT).
+  main.py then ran the five-signal gate against the genuine WDT cause and correctly REFUSED on
+  the bench (`separation switch reads nested`), cleared the crumb, came up cold, rejoined the
+  wifi and the CC hub. So the recovery chain is proven with one amendment to the outage model:
+  the ~1.4 s pre-reset segment flies at the last banked deflection, not neutral — the backstop
+  behind the backstop (hardware WDT outliving the watchdog task) is what carries the reset.
+* **The memory-rescue layer (7/06, `board_health`):** the in-flight GC disable buys
+  *predictability* (no pause the control loop did not schedule), not abstinence — an explicit
+  collect at a known-safe moment is legitimate. Because the GC-off leak is *garbage*, the
+  vitals task defuses the OOM before it lands — re-firing every health period for as long as the
+  trigger holds (a persistent leak gets a collect per second, altitude allowing). The decision is
+  physics, not a byte threshold — collect when memory dies before the flight is safely over: predicted **`oom_s` < 2 ×
+  `land_s`** (time-to-exhaustion from the memory-decay slope vs time to sink to the rescue floor
+  from the elevation-decay slope; no descent trend yet → no rescue — the glide always
+  descends, so `land_s` exists exactly where a rescue is meaningful), with **proven safe
+  altitude** (known elevation above `rescue_agl_m` = 10 m ≈
+  2× the 5 m landing gate — a 0.2 s pause costs ~2 m), in BOOSTING/GLIDING only, never LANDING.
+  The collect is bracketed by watchdog `kick()`s (it is atomic and unfeedable, so it starts on a
+  full WDT budget). Both predictions ride `health.csv` + `inspect health` — the operator's OOM
+  countdown and landing countdown. All-integer bookkeeping (cm, bytes/s, whole seconds).
+  **Measured pause costs:** ~65–260 ms on a mostly-free heap (the real anomaly-rescue case — the
+  trigger fires early, while collects are still cheap) but **3.4 s on a ballast-full 32 MB
+  heap** — which is why `wdt_timeout_ms` stays 1000 (500 killed the rescue in HITL) and why a
+  rescue near true exhaustion may still lose to the watchdog: the reset + warm-start chain below
+  remains the layer behind it. **Validated on-board (the OOM soak re-flown, watchdog off):** the
+  same ballasted scenario that hard-panicked the board now lands — 8 rescues, each logged with
+  its decision pair (`oom 58s, land 58s` narrowing to `22s/12s`), the sawtooth visible in
+  `mem_free`, rescues standing down at LANDING per the gates, flight to DONE.
 
 ## Sensors and Interrupts
 

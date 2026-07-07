@@ -58,6 +58,8 @@ class Vl53l4cx(task.Task):
     """Laser ToF: writes above-ground-level distance (m) to the databoard 'agl' slot, for the final
     low-altitude metres where the barometer cannot resolve height. Interrupt-driven when GPIO1 wired."""
 
+    _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
+
     async def setup(self) -> bool:
         bus_id = self.config.get('id', 0)
         spec = config.bus(self.controller.config, self.config.get('bus', 'i2c'), bus_id)
@@ -202,7 +204,7 @@ class Vl53l4cx(task.Task):
         """Deeper analysis when setup() failed: re-read the 16-bit MODEL_ID high byte (0xEB) and
         classify it via the i2cbus _Device helper. The Controller folds this into the failure reason so
         verify/probe show the 'why', not just 'absent / miswired?'."""
-        if getattr(self, '_bus', None) is None:
+        if self._bus is None:  # setup never built the transport
             return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)
         return await self._bus.device(self._addr).diagnose(_REG_MODEL_ID, 0xEB, addrsize=16)
 

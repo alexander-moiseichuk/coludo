@@ -35,7 +35,7 @@ _I2C_ID: int = const(0)
 _PIN_SDA: int = const(5)
 _PIN_SCL: int = const(6)
 _PIN_SERVO: int = const(3)  # GPIO3 (lastminuteengineers ESP32-C3 super-mini pinout: a safe, free PWM pin)
-_PIN_LEFT: int = const(0)   # '-' button
+_PIN_LEFT: int = const(4)   # '-' button
 _PIN_RIGHT: int = const(1)  # '+' button
 _BUTTON_ACTIVE: int = const(1)  # capacitive module reads 1 when touched; set 0 for an active-low module
 

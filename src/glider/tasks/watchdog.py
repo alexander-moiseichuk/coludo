@@ -42,6 +42,14 @@ class Watchdog(task.Task):
             return False
         return time.ticks_diff(time.ticks_us(), updated_us) > self._stall_us
 
+    def kick(self) -> None:
+        """Out-of-band feed for a caller about to LEGITIMATELY block the loop -- the memory
+        rescue's gc.collect() is atomic and unfeedable, so kicking first gives the block the FULL
+        timeout budget instead of whatever remains of the current feed window. No-op until the
+        WDT is armed."""
+        if self._wdt is not None:
+            self._wdt.feed()
+
     def _arm(self) -> None:
         """Create the hardware WDT on the first run() tick -- NOT in setup(): the timeout starts
         counting the moment the WDT exists, so it must not arm until the feed loop is actually live
@@ -53,9 +61,9 @@ class Watchdog(task.Task):
 
     async def run(self) -> None:
         self._arm()
-        while True:
+        flight = self.controller.find(['flight'])[0]  # None if disabled; the task set is fixed
+        while True:  # after bring-up, so resolve ONCE -- find() would allocate every tick, GC-off
             await asyncio.sleep_ms(self._period_ms)
-            flight = self.controller.find(['flight'])[0]  # None if the flight task is disabled
             if self._stalled(flight):
                 stalled = 'control loop stalled (stage=%s) -> reset' % self.controller.stage_name()
                 recorder.Recorder.log(self.name, stalled)

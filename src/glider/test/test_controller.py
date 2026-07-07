@@ -195,10 +195,22 @@ async def amain():
         raised = True
     assert raised
 
-    # arming + manual hold (the actuation safety gate + ground-test override)
+    # arming + manual hold (the actuation safety gate + ground-test override); arm() also pins the
+    # launch point through a registered mission's freeze_launch (bare stubs are tolerated)
+    class _FreezableMission:
+        name = 'mission'
+        frozen = False
+
+        def freeze_launch(self):
+            self.frozen = True
+
+    field_mission = _FreezableMission()
+    inspector.Inspector.register(field_mission)
     assert c.armed is False and c.manual is False  # disarmed / auto by default
     c.arm()
     assert c.armed is True and c.inspect()['armed'] is True
+    assert field_mission.frozen is True  # arm pinned the launch point
+    inspector.Inspector.unregister('mission')
     c.disarm()
     assert c.armed is False
     assert c.hold('gliding') is True and c.stage_name() == 'gliding' and c.manual is True
