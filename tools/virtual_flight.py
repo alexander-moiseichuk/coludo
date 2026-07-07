@@ -85,7 +85,8 @@ def _component(cfg: dict, name: str) -> dict:
 
 
 def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
-        wind: float = 0.0, wind_dir: float = 0.0, final_agl_override: float = None) -> str:
+        wind: float = 0.0, wind_dir: float = 0.0, final_agl_override: float = None,
+        imbalance_pitch: float = 0.0, imbalance_roll: float = 0.0) -> str:
     """Run the closed loop and return a recorder capture (text). Reuses config_hitl so the gains, mixer,
     sequencer thresholds and scenario are byte-for-byte what the board flies."""
     cfg = config_hitl.default(motor=motor, noise=noise, spike=spike)
@@ -99,6 +100,10 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     launch_g = seq_c.get('launch_g', 3.0)
     launch_ms = seq_c.get('launch_ms', 100)
     boost_timeout_ms = seq_c.get('boost_timeout_ms', 6000)
+    apogee_arm_ms = seq_c.get('apogee_arm_ms', 4000)  # the detector is blind through the burn
+    apogee_drop_m = seq_c.get('apogee_drop_m', 5.0)
+    apogee_max = None  # baro peak tracking (one boost per run, no reset needed)
+    apogee_since = None
     land_agl_m = seq_c.get('land_agl_m', 5.0)
     land_ms = seq_c.get('land_ms', 300)
     laser_range_m = hitl_c.get('laser_range_m', 4.0)
@@ -106,6 +111,8 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
 
     body = sim_model.Body(hitl_c.get('liftoff_g', 430) / 1000.0,
                           tuple(scenario['launch']), scenario['elevation_m'], scenario['heading_deg'])
+    body.imbalance_pitch = imbalance_pitch  # weight-imbalance torque during burn (deg/s^2)
+    body.imbalance_roll = imbalance_roll
     body.wind_e = wind * math.sin(math.radians(wind_dir))   # steady wind the glider must crab against
     body.wind_n = wind * math.cos(math.radians(wind_dir))
 
@@ -172,7 +179,23 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
             else:
                 since = t
         elif stage == 'boosting':
-            if (t - since) * 1000.0 >= boost_timeout_ms:
+            # APOGEE detect (mirror of sequencer._detect_apogee -- the mirror had DRIFTED to
+            # timeout-only deploy, and a low arc could be back underground by the timeout): blind
+            # for apogee_arm_ms after entry (burn pressure wave), then track the noised baro peak
+            # and deploy once it falls apogee_drop_m below, sustained; the timeout stays fallback.
+            elevation_now = altitude_m - body.elev0
+            if (t - since) * 1000.0 >= apogee_arm_ms:
+                if apogee_max is None or elevation_now > apogee_max:
+                    apogee_max, apogee_since = elevation_now, None
+                elif elevation_now < apogee_max - apogee_drop_m:
+                    apogee_since = t if apogee_since is None else apogee_since
+                    if (t - apogee_since) * 1000.0 >= launch_ms:
+                        stage, since = 'gliding', t
+                        body.begin_glide()
+                        rows.event(t, 'controller :: stage -> gliding')
+                else:
+                    apogee_since = None
+            if stage == 'boosting' and (t - since) * 1000.0 >= boost_timeout_ms:
                 stage, since = 'gliding', t
                 body.begin_glide()
                 rows.event(t, 'controller :: stage -> gliding')
@@ -318,6 +341,10 @@ def main():
                         help='inject a transient 2x attitude+accel glitch every ~3 s')
     parser.add_argument('--wind', type=float, default=0.0, help='steady wind speed m/s (default 0)')
     parser.add_argument('--wind-dir', type=float, default=0.0, help='wind blows TOWARD this heading deg (default 0=N)')
+    parser.add_argument('--imbalance-pitch', type=float, default=0.0,
+                        help='weight-imbalance torque on the PITCH axis during burn (deg/s^2)')
+    parser.add_argument('--imbalance-roll', type=float, default=0.0,
+                        help='weight-imbalance torque on the ROLL axis during burn (deg/s^2)')
     parser.add_argument('--final-agl', type=float, default=None,
                         help=' final-approach trigger AGL override (0 = disabled / old blind flare)')
     parser.add_argument('--hz', type=int, default=50, help='simulation rate (default 50)')
@@ -326,7 +353,7 @@ def main():
     args = parser.parse_args()
 
     capture = fly(args.motor, args.noise, args.spike, args.hz, args.seconds, args.wind, args.wind_dir,
-                  args.final_agl)
+                  args.final_agl, args.imbalance_pitch, args.imbalance_roll)
     if args.out:
         with open(args.out, 'w') as handle:
             handle.write(capture)

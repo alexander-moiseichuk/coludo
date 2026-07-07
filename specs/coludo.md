@@ -330,6 +330,36 @@ The Boosting phase spans engine ignition through booster separation. While a zer
 * **Dynamic Stabilization:** The Flight Controller actively manipulates the control surfaces to counteract wind shear and aerodynamic instability.
 * **Separation Matrix:** At peak altitude, the motor's integrated black powder ejection charge fires, pressurizing the interior of the booster body tube. This pressure forces the glider upward and out of the booster. During the boosting phase, the glider’s wingtips are nested inside the booster's main body tube to hold them securely folded against aerodynamic drag. As the glider is pushed clear of the airframe, tension from rubber bands anchored at the front of the airplane automatically pulls the wings outward into their locked, deployed flight configuration. Concurrently, a dedicated separation loop—monitored via a physical pressure switch or a breakaway wire pulled from a flight computer socket—flags the physical separation event, outputting a digital logic change to instantly transition the software into Gliding mode.
 
+### Boost disturbance rejection — simulated (7/06)
+
+Host sweep of the guarded-fin boost hold (real `guidance`/`pid`/`mixer` over the sim, F15 v3
+masses, 5 % noise): constant **weight-imbalance / thrust-misalignment torque** vs **steady
+crosswind**, on both lean axes.
+
+| disturbance | worst lean off vertical | verdict |
+|---|---|---|
+| imbalance torque 10 °/s², pitch (top-to-bottom) | 10.5° | **controlled** — the hold absorbs a strong constant bias |
+| imbalance torque 10 °/s², roll (side-to-side) | 6.8° | **controlled** |
+| crosswind 6 m/s (either axis) | ~30° | partially resisted |
+| crosswind 12 m/s (either axis) | 61–67° | the hold loses — physics, not firmware |
+| combined 9 m/s @ 45° + both imbalances | 43.6° | between the pure cases |
+
+Readings:
+* **Imbalance is a solved problem** — the controllable disturbance class stays within ~10° of
+  vertical on both axes; pitch- and roll-axis behaviour is symmetric.
+* **Strong wind is weathercocking**: tail fins are weathervanes — the same passive stability that
+  keeps the stack straight aligns it into the relative wind, and disturbance and fin authority
+  both scale with q, so the ratio never improves with speed. The response is OPERATIONAL, not
+  control gains: **launch wind limit ≤ 6 m/s** (lean ≤ ~30°, the classic model-rocketry
+  threshold) for the flight campaigns.
+* **Model caveat**: the boost sim integrates altitude 1-DoF vertically, so its apogee is
+  LEAN-BLIND (every case reads the same apogee). A real 60° lean at burnout costs roughly half
+  the vertical impulse plus a long downrange arc — the 12 m/s rows UNDERSTATE the consequence,
+  which argues the wind limit even more strongly. A lean-aware boost model is a known
+  improvement for later.
+* The stage machine deployed at apogee and landed in every case — robust to all disturbances
+  tried.
+
 ### Separation dynamics — measured (TMS-7 v3 static burn, 7/03)
 
 The first static burn fired the ejection charge with the **194.4 g glider** (v3 construction 134.8 g +
