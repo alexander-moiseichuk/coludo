@@ -595,6 +595,24 @@ against a guaranteed lawn-dart).
   wifi and the CC hub. So the recovery chain is proven with one amendment to the outage model:
   the ~1.4 s pre-reset segment flies at the last banked deflection, not neutral — the backstop
   behind the backstop (hardware WDT outliving the watchdog task) is what carries the reset.
+* **The memory-rescue layer (7/06, `board_health`):** because the GC-off leak is *garbage*, the
+  vitals task defuses the OOM before it lands. The decision is physics, not a byte threshold —
+  collect when memory dies before the flight is safely over: predicted **`oom_s` < 2 ×
+  `land_s`** (time-to-exhaustion from the memory-decay slope vs time to sink to the rescue floor
+  from the elevation-decay slope; the `rescue_horizon_s` = 300 s flight bound stands in while
+  not descending), with **proven safe altitude** (known elevation above `rescue_agl_m` = 10 m ≈
+  2× the 5 m landing gate — a 0.2 s pause costs ~2 m), in BOOSTING/GLIDING only, never LANDING.
+  The collect is bracketed by watchdog `kick()`s (it is atomic and unfeedable, so it starts on a
+  full WDT budget). Both predictions ride `health.csv` + `inspect health` — the operator's OOM
+  countdown and landing countdown. All-integer bookkeeping (cm, bytes/s, whole seconds).
+  **Measured pause costs:** ~65–260 ms on a mostly-free heap (the real anomaly-rescue case — the
+  trigger fires early, while collects are still cheap) but **3.4 s on a ballast-full 32 MB
+  heap** — which is why `wdt_timeout_ms` stays 1000 (500 killed the rescue in HITL) and why a
+  rescue near true exhaustion may still lose to the watchdog: the reset + warm-start chain below
+  remains the layer behind it. **Validated on-board (the OOM soak re-flown, watchdog off):** the
+  same ballasted scenario that hard-panicked the board now lands — 8 rescues, each logged with
+  its decision pair (`oom 58s, land 58s` narrowing to `22s/12s`), the sawtooth visible in
+  `mem_free`, rescues standing down at LANDING per the gates, flight to DONE.
 
 ## Sensors and Interrupts
 

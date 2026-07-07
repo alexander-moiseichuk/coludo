@@ -336,11 +336,26 @@ def default() -> dict:
             # reset) and supervises the control loop (stall in a control stage -> full reset; boot
             # re-centres the fins). Disabled by default -- a live WDT also resets the board when you
             # drop the running firmware to the REPL for bench work; enable it for flight.
+            # wdt_timeout 1000: the frozen-fin bound at a hard OOM (7/06 soak: ~1.4 s to reset).
+            # NOT lower: a rescue gc.collect() is atomic (nothing can feed mid-sweep) and its cost
+            # scales with heap FILL -- ~65-260 ms on a mostly-free heap (the real-anomaly rescue
+            # case) but measured 3.4 s on a ballast-full one; 500 ms killed the rescue in HITL.
+            # Fast control-loop-death detection is stall_ms below, independent of this timeout.
             {'name': 'watchdog', 'activity': 'watchdog', 'enabled': False,
              'wdt_timeout_ms': 1000, 'period_ms': 200, 'stall_ms': 500},
             # Board vitals (temperature/memory/load) -> telemetry every period_ms. probe_ms is the
             # load probe's sleep slice (measures wake-up lateness; the core idles between probes).
-            {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'probe_ms': 10, 'enabled': True},
+            # Memory rescue (the pre-OOM safety net, measured 7/06): with GC off in flight the
+            # leak is garbage, so ONE emergency gc.collect() (~0.1-0.3 s pause the fins hold
+            # through) reclaims the flight -- vastly cheaper than the OOM chain (~1.4 s frozen
+            # fins + ~7 s reboot). The trigger is physics, not a byte threshold: collect when the
+            # predicted time-to-OOM < 2x the time left to sink to the rescue floor (from the
+            # elevation-decay slope; rescue_horizon_s = the RSO flight bound stands in while not
+            # descending), with PROVEN safe altitude (elevation > rescue_agl_m ~ 2x the 5 m
+            # landing gate: a 0.2 s pause costs ~2 m), in BOOSTING/GLIDING only (never LANDING).
+            # rescue_agl_m 0 disables. oom_s + land_s ride health.csv + `inspect health`.
+            {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'probe_ms': 10, 'enabled': True,
+             'rescue_agl_m': 10, 'rescue_horizon_s': 300},
             # CC-less field agent (specs/coludo.md "Field operation without CC"), OFF by default:
             # on the pad it selects the mission site by the first GNSS fix (nearest launch.config
             # site within max_range_m; none -> the spiral-landing fallback zone fallback_offset_m

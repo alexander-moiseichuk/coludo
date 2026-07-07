@@ -80,17 +80,26 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
 
 async def _simulated_reboot(flight, boot_s: float) -> None:
     """A mid-glide reboot with the REAL warm-start code: the outage (disarm + SETTING under a manual
-    hold -- fins neutral, the sim keeps flying ballistic) lasts `boot_s` like a real boot, then the
-    real breadcrumb is loaded and the real five-signal gate decides; a pass restores GLIDING + arm
-    exactly as main._restore_flight does. Only the physical inputs are simulated: separated=True
-    (post-separation by construction here), the sim's absolute baro altitude, cause=reset."""
+    hold) lasts `boot_s` like a real boot, then the real breadcrumb is loaded and the real
+    five-signal gate decides; a pass restores GLIDING + arm exactly as main._restore_flight does.
+    Only the physical inputs are simulated: separated=True (post-separation by construction here),
+    the sim's absolute baro altitude, cause=reset. The fins stay FROZEN at their last commanded
+    deflection through the outage -- the OOM soak measured that a dying runtime never reaches the
+    crash->neutral path, and a rebooting MCU drives no PWM (the servos hold mechanically) -- so the
+    flight task's _neutral is stubbed out for the outage (disarmed -> it is the only writer)."""
     import databoard
     import warmstart
-    print('REBOOT: outage %.1fs (disarmed, neutral fins, stage SETTING)' % boot_s)
+    print('REBOOT: outage %.1fs (disarmed, FROZEN fins, stage SETTING)' % boot_s)
+    flight_task = flight.active('flight')
+    real_neutral = flight_task._neutral if flight_task is not None else None
+    if flight_task is not None:
+        flight_task._neutral = lambda: None  # outage: no writes at all -> the sim reads frozen fins
     flight.disarm()
     flight.manual = True  # a real reboot has no sequencer either
     flight.set_stage(controller.Stage.SETTING)
     await asyncio.sleep_ms(int(boot_s * 1000))
+    if flight_task is not None:
+        flight_task._neutral = real_neutral  # boot done: the real fail-safe is back
     crumb = warmstart.load()
     altitude = databoard.Databoard.value('altitude')
     age = time.time() - crumb['stamp'] if crumb is not None else -1

@@ -40,22 +40,27 @@ async def _ballast(target_kb: int) -> list:
     try:
         while gc.mem_free() > target_kb * 1024 + 2 * _BIG:
             hold.append(bytearray(_BIG))
-            await asyncio.sleep_ms(0)
+            await asyncio.sleep_ms(10)  # a real slot for the WDT feeder: a chunk (~100 ms of
+            # PSRAM zeroing) plus the full-heap mem_free() scan outpaces a sleep_ms(0) yield
+            # against the 500 ms watchdog
         while gc.mem_free() > target_kb * 1024:
             hold.append(bytearray(_FINE))
-            await asyncio.sleep_ms(0)
+            await asyncio.sleep_ms(10)
     except MemoryError:  # overshoot on a fragmented tail -- close enough, keep what we hold
         pass
     return hold
 
 
-async def _go(motor: str, target_kb: int) -> None:
+async def _go(motor: str, target_kb: int, watchdog: bool) -> None:
     drivers.load()
     tasks.load()
     mission.Mission(max_range_m=200)
     cfg = config_hitl.default(motor, 0.05, False, 0.0, 0.0, glider_g=285, inject_hz=25)
     by_name = {component['name']: component for component in cfg['components']}
-    by_name['watchdog']['enabled'] = True  # the reset half of the chain under test (HITL default: off)
+    # watchdog True = the OOM RESET chain under test (rescue collects on the ballast-full heap
+    # take ~3.4 s and starve any WDT -- expect the panic/reboot). watchdog False = the memory
+    # RESCUE under test: the physics trigger collects and the flight must complete to DONE.
+    by_name['watchdog']['enabled'] = watchdog
     flight = controller.Controller(cfg, log=lambda message: None)
     await flight.setup()
     await flight.start()
@@ -90,5 +95,5 @@ async def _go(motor: str, target_kb: int) -> None:
     print('RUN_END')  # reaching here means NO reset happened -- the soak failed to fire
 
 
-def soak(motor: str = 'F15', target_kb: int = 600) -> None:
-    asyncio.run(_go(motor, target_kb))
+def soak(motor: str = 'F15', target_kb: int = 600, watchdog: bool = True) -> None:
+    asyncio.run(_go(motor, target_kb, watchdog))

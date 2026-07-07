@@ -118,6 +118,9 @@ class Sequencer(task.Task):
         if not self.controller.armed or self._mission is None or not self._mission.zone:
             return
         zone = self._mission.zone
+        freeze = getattr(self._mission, 'freeze_launch', None)
+        if freeze is not None:  # a fix that arrived AFTER arm pins here -- the last ground moment
+            freeze()
         launch = self._mission.launch_point()
         if launch is None:  # no fix/CC point: the zone centre keeps the crumb usable (tier-2 fallback)
             launch = ((zone[0][0] + zone[1][0]) / 2, (zone[0][1] + zone[1][1]) / 2)
