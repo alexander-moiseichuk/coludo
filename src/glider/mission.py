@@ -251,12 +251,20 @@ class Mission(inspector.Inspectable):
 
     # --- Inspectable ---
     def inspect(self) -> dict:
+        origin = self.launch_point()
         snapshot = {
             'launch_id': self.launch_id,
             'site': self.site,
             'latitude': self.latitude,
             'longitude': self.longitude,
             'altitude': self.altitude,
+            # the EFFECTIVE origin launch_point() resolves right now: latitude/longitude when
+            # CC-set or frozen at arm (then launch_source 'set'), else the live GNSS fix
+            # ('gnss'), else None -- so the operator sees the origin the board would fly with
+            # even before arm, when latitude/longitude legitimately read null
+            'launch_point': origin,
+            'launch_source': ('set' if self.latitude is not None and self.longitude is not None
+                              else 'gnss' if origin is not None else None),
             'zone': self.zone,
             'clock': self.clock(),
             'epoch': self.epoch(),

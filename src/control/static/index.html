@@ -38,9 +38,9 @@
 <table id="boards">
   <thead><tr>
     <th>board</th><th>online</th><th>stage</th><th>version</th><th>config</th><th>uptime</th>
-    <th>board time</th><th></th><th>position</th><th></th>
+    <th>board time</th><th></th><th>position</th><th>launchpad</th><th></th>
   </tr></thead>
-  <tbody><tr><td colspan="10" class="muted">waiting for boards…</td></tr></tbody>
+  <tbody><tr><td colspan="11" class="muted">waiting for boards…</td></tr></tbody>
 </table>
 <p class="muted">click a board to target it below · <span id="boardmsg"></span></p>
 
@@ -164,6 +164,14 @@ function fmtUptime(ms) {
   return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, '0')}m${String(s % 60).padStart(2, '0')}s`;
 }
 const fmtPos = (p) => (p ? `${p[0].toFixed(5)}, ${p[1].toFixed(5)}` : 'N/A');
+// Launchpad safety cell: the origin the board would FLY with. Red when there is none (tier-2
+// heading + warm start both need it); a live-fix origin is marked with how it becomes persistent.
+function fmtPad(b) {
+  if (!b.launchpad) return '<b style="color:#c22">no launchpad</b>';
+  const where = fmtPos(b.launchpad) + (b.site ? ` (${b.site})` : '');
+  if (b.launchpad_set) return `${where} <span class="muted">· set</span>`;
+  return `${where} <span class="muted">· ${b.armed ? 'live fix?!' : 'freezes on arm'}</span>`;
+}
 // CC GPS: N/A when no device, No FIX until a usable fix, else the coordinates.
 function ccGps(gps) {
   if (!gps) return 'N/A';
@@ -177,7 +185,7 @@ new EventSource('/events').onmessage = (event) => {
   document.getElementById('ccstatus').textContent = `CC ${(cc.time || '').replace('T', ' ')} · GPS ${ccGps(cc.gps)}`;
   const ccHasFix = !!(cc.gps && cc.gps.usable);  // 'sync CC GPS' is offered only when CC has a fix
   if (!boards.length) {
-    tbody.innerHTML = '<tr><td colspan="10" class="muted">no boards connected</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="11" class="muted">no boards connected</td></tr>';
     return;
   }
   tbody.innerHTML = boards.map((b) => `
@@ -191,6 +199,7 @@ new EventSource('/events').onmessage = (event) => {
       <td>${(b.clock || '').replace('T', ' ')}</td>
       <td><button onclick="event.stopPropagation(); syncTime('${b.id}')" title="set the board RTC to the CC clock">sync CC time</button></td>
       <td>${fmtPos(b.position)}</td>
+      <td>${fmtPad(b)}</td>
       <td>${ccHasFix
         ? `<button onclick="event.stopPropagation(); gpsAssist('${b.id}')" title="push the CC GPS fix to the board launch config">sync CC GPS</button>`
         : '<span class="muted">—</span>'}</td>

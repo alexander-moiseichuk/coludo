@@ -111,9 +111,11 @@ async def amain():
     assert 'unsupported' in await sd.handle(cc.build('set-config', ['launch', '{}']))
     mission.Mission('test_cc_launch.config').update({'launch_id': 'cc-t1'})  # registers itself
 
-    # health now carries the board wall-clock (RTC) for the dashboard top table
+    # health now carries the board wall-clock (RTC) for the dashboard top table, plus the
+    # launchpad safety fields (the effective origin / persistent-vs-live / selected site)
     vitals = json.loads(cc.parse(await sd.handle('health')).args[0])
     assert 'clock' in vitals and 'epoch' in vitals
+    assert 'launchpad' in vitals and 'launchpad_set' in vitals and 'site' in vitals
 
     # get-config launch returns the editable launch.config (persisted fields only, no computed geometry)
     got = json.loads(cc.parse(await sd.handle('get-config launch')).args[0])

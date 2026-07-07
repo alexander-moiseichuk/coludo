@@ -148,7 +148,14 @@ def _register_identity(dispatcher, ctx) -> None:
         if mission is not None:  # the board wall-clock (RTC) -> the dashboard top table shows it live
             info['clock'] = mission.clock()
             info['epoch'] = mission.epoch()
+            # the launchpad the board would fly with, for the dashboard safety cell: the effective
+            # origin (CC-set/frozen, else the live fix -- which freeze_launch pins at arm), whether
+            # it is already persistent, and the selected site name (CC-less site-by-GPS)
+            info['launchpad'] = mission.launch_point()
+            info['launchpad_set'] = mission.latitude is not None and mission.longitude is not None
+            info['site'] = mission.site or None
         if ctx.controller is not None:
+            info['armed'] = ctx.controller.armed
             info['tasks'] = [{'name': t.name, 'ok': t.validate()} for t in ctx.controller.active()]
         return cc.build('ok', [json.dumps(info)])
 

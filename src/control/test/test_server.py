@@ -48,7 +48,9 @@ async def _fake_board(reader, writer):
         elif msg.command == 'health':  # the heartbeat polls this; carries the vitals + board clock + position
             reply = cc.build('ok', [json.dumps({'temp': 40, 'mem_free': 1000, 'uptime': 12345,
                                                 'stage': 'setting', 'clock': '2026-06-22T20:00:00',
-                                                'position': [48.117, 11.517]})])
+                                                'position': [48.117, 11.517],
+                                                'launchpad': [48.117, 11.517], 'launchpad_set': False,
+                                                'site': 'field', 'armed': False})])
         elif msg.command == 'inspect':
             reply = cc.build('ok', [json.dumps({'name': msg.args[0], 'ok': True})])
         elif msg.command == 'get-config':
@@ -216,6 +218,9 @@ async def _web():
             await asyncio.sleep(0.02)
         assert rows[0]['uptime'] == 12345 and rows[0]['clock'] == '2026-06-22T20:00:00', rows[0]
         assert rows[0]['version'] == 'a1b2c3' and rows[0]['position'] == [48.117, 11.517], rows[0]
+        # the launchpad safety cell fields ride the same heartbeat (dashboard 'no launchpad' warning)
+        assert rows[0]['launchpad'] == [48.117, 11.517] and rows[0]['launchpad_set'] is False, rows[0]
+        assert rows[0]['site'] == 'field' and rows[0]['armed'] is False, rows[0]
 
         # POST /api/cmd routes to the board and returns its reply
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',

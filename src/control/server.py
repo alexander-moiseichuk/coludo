@@ -59,6 +59,10 @@ class Server:
                 'config_id': client.info.get('config_id'),
                 'uptime': health.get('uptime'), 'clock': health.get('clock'),
                 'position': health.get('position'),  # board GNSS fix (lat, lon) or None
+                # launchpad safety cell: the effective launch origin the board would fly with,
+                # whether it is persistent (CC-set / frozen at arm) vs the live fix, and armed
+                'launchpad': health.get('launchpad'), 'launchpad_set': health.get('launchpad_set'),
+                'site': health.get('site'), 'armed': health.get('armed'),
                 'temp': health.get('temp'), 'mem_free': health.get('mem_free'),
             })
         return rows
