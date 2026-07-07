@@ -284,7 +284,15 @@ def default() -> dict:
              # final approach: below final_approach_agl, track the strip CENTRELINE (not the centre
              # point) using the FULL fin authority (45 deg) to crab a crosswind out -- keep it gliding,
              # not rolling-and-dropping. final_approach_agl 0 -> off.
-             'land_bank_gain': 1.5, 'land_bank_limit': 45,
+             # land_bank_gain 3.0: the endgame spiral must actually REACH the 45-deg bank -- at
+             # 1.5 the rotating-target P-loop saturated near 25 deg and the orbit froze at ~44 m
+             # (the 25-deg turn radius); 45 deg gives the R_min ~20 m the <=30 m miss target needs.
+             'land_bank_gain': 3.0, 'land_bank_limit': 45,
+             # the ENDGAME band: below this baro elevation the glide steering opens the full
+             # land-bank authority (turn radius halves) so the last seconds SPIRAL around the zone
+             # instead of racetracking past it -- objective #2/#3 tightening that leaves #1 (fly
+             # long) untouched up high. 0 -> off.
+             'endgame_alt_m': 50,
              'final_approach_agl': 8, 'final_cross_gain': 3.0, 'final_intercept_deg': 45,
              # boost: BOOSTING holds the rod-vertical attitude captured at stage entry, but only once
              # PAST THE ROD (airspeed > boost_engage_speed m/s) -- the 3-point rod keeps it vertical and the

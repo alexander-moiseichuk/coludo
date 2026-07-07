@@ -61,10 +61,11 @@ class Flight(task.Task):
         # point the databoard drops `source` to None), so it tracks the GNSS rate, not a magic number.
         position = databoard.Databoard.parameter('position')  # (lat, lon) for landing-zone navigation
         agl = databoard.Databoard.parameter('agl')  # height above ground -> final-approach trigger
+        elevation = databoard.Databoard.parameter('elevation')  # baro height -> the endgame band
         window_ms = max(position.window_us, gnss_speed.window_us) // 1000
         self._mission = inspector.Inspector.get('mission')  # the landing zone lives here (may be None)
         self._guidance = guidance.Guidance(guidance.GuidanceConfig(self.config, window_ms),
-                                           self._mission, self._governor, position, agl)
+                                           self._mission, self._governor, position, agl, elevation)
         self._pitch_cd: int = 0  # last measured pitch (centidegrees) -> the governor's dive detector
         self._active: bool = False  # in a control stage (PID engaged)
         self._stage = None  # the current control-stage name (for inspect)

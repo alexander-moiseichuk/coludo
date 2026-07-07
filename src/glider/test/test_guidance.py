@@ -182,6 +182,59 @@ def test_final_approach():
     assert off._nav_heading is not None  # steered (homing path), no crash with the feature off
 
 
+def test_loiter_and_endgame_spiral():
+    """The loiter orbit + endgame spiral (the fly-long glide law): within loiter_capture_m the
+    heading command is the circle TANGENT corrected inward/outward by the radius error; in the
+    endgame band the radius scales with the remaining-altitude fraction (spiral-in); far outside
+    the capture radius the gate steering stays in charge."""
+    import navigation
+
+    class _Elevation:
+        def __init__(self):
+            self.value_now = None
+
+        def value(self):
+            return self.value_now
+
+    elevation = _Elevation()
+    unit, position, _agl, _gov = _build({'loiter_radius_m': 30, 'loiter_capture_m': 120,
+                                         'loiter_gain': 3.0, 'endgame_alt_m': 50,
+                                         'nav_bank_gain': 1.5, 'land_bank_gain': 3.0})
+    unit._elevation = elevation
+    unit.enter(0.0, 0, 0)
+    centre = ((48.001 + 48.000) / 2, (11.000 + 11.010) / 2)  # the _ZONE centre
+    # ~60 m due south of the centre, HIGH (no endgame): tangent + inward cut (d=60 > R=30)
+    south = (centre[0] - 60 / 111320.0, centre[1])
+    position.reading = (south, 'gnss', 0)
+    elevation.value_now = 200.0
+    unit.compute(Stage.GLIDING, {}, 0.0, 0)
+    bearing_centre = navigation.bearing(south[0], south[1], centre[0], centre[1])  # ~0 (north)
+    expected = (bearing_centre + 90.0 - 60.0) % 360.0  # tangent +90, inward cut 3*(60-30) CAPPED at 60
+    assert abs(guidance.heading_error(expected, unit._nav_heading)) <= 1
+    # ON the circle (d == R): pure tangent, no correction
+    on_circle = (centre[0] - 30 / 111320.0, centre[1])
+    position.reading = (on_circle, 'gnss', 0)
+    unit._nav_heading = None
+    unit.compute(Stage.GLIDING, {}, 0.0, 0)
+    tangent = (navigation.bearing(on_circle[0], on_circle[1], centre[0], centre[1]) + 90.0) % 360.0
+    assert abs(guidance.heading_error(tangent, unit._nav_heading)) <= 1
+    # ENDGAME at half the band: the commanded radius halves -> a deeper inward cut from d=30
+    elevation.value_now = 25.0  # 25/50 -> radius 15
+    unit._nav_heading = None
+    unit.compute(Stage.GLIDING, {}, 0.0, 0)
+    spiral = (navigation.bearing(on_circle[0], on_circle[1], centre[0], centre[1])
+              + 90.0 - 3.0 * (30 - 15)) % 360.0
+    assert abs(guidance.heading_error(spiral, unit._nav_heading)) <= 1
+    # far OUTSIDE the capture radius: the gate steering stays in charge (not the tangent law)
+    far = (centre[0] - 500 / 111320.0, centre[1])
+    position.reading = (far, 'gnss', 0)
+    elevation.value_now = 200.0
+    unit._nav_heading = None
+    unit.compute(Stage.GLIDING, {}, 0.0, 0)
+    gate_heading = navigation.steer(far, (48.001, 11.000), (48.000, 11.010))[0]
+    assert abs(guidance.heading_error(gate_heading, unit._nav_heading)) <= 1
+
+
 def test_hold_law():
     """A configured control stage with no specific law (ground tests, e.g. 'setting') holds the
     configured setpoints and the heading captured at enter() -- no navigation."""
@@ -201,5 +254,7 @@ test_heading_tiers()
 test_nav_cache()
 test_bank_to_turn()
 test_final_approach()
+test_loiter_and_endgame_spiral()
 test_hold_law()
-print('ok: guidance -- stage gate, boost hold, GPS tiers + nav cache, bank-to-turn, final approach, hold law')
+print('ok: guidance -- stage gate, boost hold, GPS tiers + nav cache, bank-to-turn, loiter orbit + '
+      'endgame spiral, final approach, hold law')

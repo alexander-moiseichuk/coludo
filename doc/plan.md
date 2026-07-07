@@ -184,26 +184,19 @@ control change.
    already exists. The single biggest stability win on the table.
 5. **Steering noise filter** (the ≥50 %-noise robustness item above) — a fixnum EMA / rate limit on the
    heading error or bank demand; cheap, integer, validated in the virtual-flight noise sweep + KPI.
-6. **Glide energy management — the fly-long behaviour (finalized HITL plan, 7/05).** Objectives in
-   strict priority order (specs/coludo.md "Gliding"): **① fly as long as possible, ② land in-zone,
-   ③ land near the midpoint** — never buy a lower one with a higher one. Background: the 7/04 trim
-   fix (stages pitch 0 → −6 + the physical bank-sink law) took the F15 sim from 33 s / 10.2 m/s
-   sink to 101 s / 2.9 m/s at quality-5, proving ①; the sim polar is then pinned at **quality 2
-   (worst-case, −7 m/s trim sink)** so campaigns stay short — the real airframe (capacity ~10 min)
-   re-calibrates it from the first glide telemetry. The plan:
-   1. **Host sweep** (`virtual_flight`): noise {5, 25, 50 %} × wind {0, 3, 6, 9 m/s} × motor
-      {E16, F15} on the quality-2 polar. KPIs per priority: time aloft ÷ polar ceiling
-      (apogee/trim-sink), in-zone rate, median miss-to-centre.
-   2. **Endgame tuning** on the same sweep: low-AGL orbit tightening (land-gain switchover
-      altitude), `final_cross_gain`/`final_intercept`, the LANDING flare knob — pick new defaults
-      that recover ②/③ WITHOUT touching ① (time-aloft must not regress).
-   3. **On-board confirmation**: the 8-case HITL matrix at the tuned defaults; `flight_kpi` vs the
-      sweep predictions.
-   4. **Acceptance targets**: time aloft ≥ 85 % of the polar ceiling; in-zone ≥ 80 % at ≤ 25 %
-      noise, calm; median miss ≤ 30 m. Misses must land OUTSIDE the pad sector.
-   5. **Field**: the trim procedure — mixer `trim` to the built elevator neutral, then the measured
-      hands-off glide pitch replaces −6 in the stage setpoints (at true trim the pitch PID rides
-      ~zero and the fins stay near neutral); repeat the KPIs on real captures.
+6. **Glide energy management — the fly-long behaviour (tuned 7/06; program of 7/05).** Objectives
+   in strict priority order (specs/coludo.md "Gliding"): **① fly as long as possible, ② land
+   in-zone, ③ land near the midpoint**. Steps 1–2 DONE: six tuning iterations on the 24-case host
+   sweep replaced the racetrack (steer-at-point + bank cap: 184 m leg swings, 129 m median,
+   phase-luck landings) with the **loiter orbit + endgame spiral** (capture the tangent circle at
+   R 30 m within 120 m of the centre; below 50 m elevation the radius scales with remaining
+   altitude and `land_bank_gain` 3.0 unlocks the full 45° bank → R_min ~20 m). Results: **calm/5 %
+   in-zone at 17–18 m for BOTH motors** (E16 included); ① never regressed (121–148 % of the polar
+   ceiling in every case, every iteration). Acceptance scorecard: calm/5 % ✅; calm/25 % at
+   35–37 m vs the ≤ 30 m target — the residual is the spiral's noise sensitivity, which lands on
+   item 5's steering filter; wind ≥ 6 m/s physics-bounded (launch wind limit rule, coludo.md).
+   Remaining: **step 3 on-board confirmation matrix** at the tuned defaults, the noise-filter
+   polish, and **step 5 the field trim procedure** (unchanged).
 7. **Reachability telemetry** — live glide-ratio estimate vs zone distance ("zone reachable: y/n") in
    telemetry; the operator sees an unreachable zone early, and it is the groundwork for a deliberate
    land-short decision later.

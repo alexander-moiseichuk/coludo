@@ -391,8 +391,30 @@ the ejected glider landed **1.5 m** downrange from a **0.8 m** height, and the w
 3. **Land as close to the zone midpoint as possible.**
 
 A lower-priority objective must never be bought with a higher one — the glider does NOT dive at the
-midpoint to improve #3 at the cost of #1; it overflies, turns, comes back, and repeats until the
-energy is gone, with the endgame steering (#2/#3) tightening only as the altitude runs out.
+midpoint to improve #3 at the cost of #1; the endgame steering (#2/#3) tightens only as the
+altitude runs out.
+
+**The glide law that delivers this (tuned 7/06, `guidance.py`):**
+* **Travel** (far from the zone): steer to the nearer short-side gate, as always.
+* **Loiter** (within `loiter_capture_m` = 120 m of the centre): the heading command becomes the
+  CIRCLE TANGENT plus an inward correction (`bearing_to_centre + 90° − gain·(distance − R)`,
+  R = 30 m, gain 3), so the glider CAPTURES a constant-radius orbit around the centre instead of
+  bang-banging between overfly and U-turn (the old point-steer law swung 184 m racetrack legs and
+  landed on phase luck). The ~26° orbit bank sits inside the cruise `bank_limit`; altitude bleeds
+  through the turn at the induced-drag rate — this IS objective #1's energy management. R must not
+  be set below the cruise-bank minimum radius (~34 m at 30°) or the orbit destabilizes.
+* **Endgame spiral** (below `endgame_alt_m` = 50 m): the loiter radius scales with the remaining
+  altitude fraction, collapsing the orbit onto the centre exactly as the energy runs out, with the
+  full `land_bank_limit` 45° available (`land_bank_gain` 3.0 — at 1.5 the rotating-target P-loop
+  saturated near 25° and the spiral froze at that bank's 44 m radius; 45° gives the ~20 m minimum
+  the miss target needs).
+* **Final approach** (below `final_approach_agl`): the strip-centreline tracker, unchanged.
+
+Measured on the worst-case quality-2 polar (host sweep, 24 cases): time aloft 121–148 % of the
+straight-trim ceiling in every case (objective #1 never regressed through the whole tuning);
+calm/5 %-noise touchdowns **17–18 m from the centre, in-zone, both motors** (the untuned racetrack
+baseline: 129 m median); calm/25 %-noise 35–37 m (the spiral's noise sensitivity — the open
+steering-filter work item); wind ≥ 6 m/s remains physics-bounded for a 14 m/s glider.
 
 Following booster separation, the Gliding phase executes, maneuvering the aircraft toward the target coordinates:
 * **Attitude Recovery:** The glider must immediately execute an pitch/roll correction to transition from a vertical posture to a stable, horizontal gliding envelope, maintaining a "top-fin-up" orientation using real-time gyroscope vectors.
