@@ -166,15 +166,20 @@ control change.
 
 **Pre-flight hardening (small, do before the first field day):**
 
-1. **Flight-readiness gate in `verify`** — flag the field-dangerous configs in one pre-flight command:
-   watchdog disabled, radios enabled (reconnect churn allocates through the whole GC-off flight),
-   flight task disabled or zero gains while armed, mission zone unset / beyond `max_range_m`,
-   `fin_limit_multiplier` ≠ 1. One dispatcher command; pairs with the `launch.config` autogen below.
-2. **Stage-aware radio quiescence** — `wifi`/`cc_link` stop reconnect attempts while stage is
-   BOOSTING..LANDING, so the airborne phase stays allocation-free even if a field config leaves the
-   radios on (defence in depth vs #1).
-3. **Launch-point auto-capture on `arm`** — mission grabs the current GNSS fix as `launch_point` when
-   unset, so the tier-2 open-loop heading fallback always exists in the field (today it needs a CC set).
+1. ✅ **Flight-readiness gate in `verify`** (7/06) — `cc_client._readiness()`: the field-dangerous
+   CONFIG states no device probe can see, reported by `verify` as a separate `ready`/`readiness`
+   verdict (hardware `pass` unchanged — a bench session is healthy but not flight-ready): watchdog
+   disabled, flight task disabled or zero/unset gains per axis, `fin_limit_multiplier` ≠ 1, no
+   landing zone AND no CC-less sites to select one from. Zone-beyond-range and launch-position
+   checks were already `mission.probe` (runs inside the same `verify`). The radios-enabled hazard
+   was retired structurally by #2. Pairs with the `launch.config` autogen below.
+2. ✅ **Stage-aware radio quiescence** (7/04) — wifi holds reconnects from BOOSTING through LANDING
+   (resumes at DONE), so the airborne phase stays allocation-free even with the radios configured on.
+3. ✅ **Launch-point auto-capture on `arm`** (7/06) — `mission.freeze_launch()` from
+   `Controller.arm()` (both the CC `arm` and field auto-arm paths): the live GNSS fix is pinned as
+   the persistent launch point at the last on-the-pad moment, so the tier-2 open-loop heading (and
+   the warm-start crumb's `launch` field) survives a mid-flight fix loss. Operator-set positions
+   are never overwritten; no fix → the live-fallthrough behaviour is unchanged.
 
 **Control & stability (medium, sim-validated before the board):**
 
@@ -182,8 +187,13 @@ control change.
    neutral fins (ballistic). A complementary filter over the LSM6DSO32 (gyro integrate + accel gravity
    vector) publishing `attitude` at priority 1 gives a real backup — the databoard fusion handover
    already exists. The single biggest stability win on the table.
-5. **Steering noise filter** (the ≥50 %-noise robustness item above) — a fixnum EMA / rate limit on the
-   heading error or bank demand; cheap, integer, validated in the virtual-flight noise sweep + KPI.
+5. ✅ **Steering noise filter** (7/06) — `guidance._filter_error()`: an all-integer EMA on the
+   heading error (state ×16 fixed, `steer_filter_shift` 3 = alpha 1/8, τ ≈ 80 ms @ 100 Hz; a
+   > 90° jump — an overfly flip, a law handover — resets the state so steering follows at once;
+   0 disables). Zero-alloc, GC-off safe. Validated on the calm host sweep: **fin travel −56 %**
+   at 25 % noise (66 217 → 29 419 deg over the F15 flight) and E16 in-zone at both 5 % and 25 %
+   noise (16/17 m); calm median 31 m ≈ the ≤ 30 m target (residual is run variance — field
+   calibration territory).
 6. **Glide energy management — the fly-long behaviour (tuned 7/06; program of 7/05).** Objectives
    in strict priority order (specs/coludo.md "Gliding"): **① fly as long as possible, ② land
    in-zone, ③ land near the midpoint**. Steps 1–2 DONE: six tuning iterations on the 24-case host
@@ -193,10 +203,11 @@ control change.
    altitude and `land_bank_gain` 3.0 unlocks the full 45° bank → R_min ~20 m). Results: **calm/5 %
    in-zone at 17–18 m for BOTH motors** (E16 included); ① never regressed (121–148 % of the polar
    ceiling in every case, every iteration). Acceptance scorecard: calm/5 % ✅; calm/25 % at
-   35–37 m vs the ≤ 30 m target — the residual is the spiral's noise sensitivity, which lands on
-   item 5's steering filter; wind ≥ 6 m/s physics-bounded (launch wind limit rule, coludo.md).
-   Remaining: **step 3 on-board confirmation matrix** at the tuned defaults, the noise-filter
-   polish, and **step 5 the field trim procedure** (unchanged).
+   35–37 m vs the ≤ 30 m target — closed by item 5's steering filter (7/06: calm median 31 m,
+   E16 in-zone at 25 % noise, fin travel −56 %); wind ≥ 6 m/s physics-bounded (launch wind limit
+   rule, coludo.md). Remaining: **step 3 on-board confirmation matrix** at the tuned defaults, and
+   **step 5 the field trim procedure (FIELD-GATED** — the real trim pitch and the polar quality
+   come from the first glide telemetry, nothing more to do on the bench).
 7. **Reachability telemetry** — live glide-ratio estimate vs zone distance ("zone reachable: y/n") in
    telemetry; the operator sees an unreachable zone early, and it is the groundwork for a deliberate
    land-short decision later.
@@ -207,8 +218,10 @@ control change.
    at BOOSTING entry for armed flights, cleared at DONE; `main._restore_flight()` restores
    GLIDING + arm + baro-ground rebase + GC-off behind the FIVE-signal gate (crumb, separation
    latch, baro ≥ pad+15 m, reset-cause WDT/SOFT/HARD, crumb age 0–10 min by the surviving RTC).
-   **Still owed:** the positive end-to-end rig — forced mid-glide reset with the separation pin
-   held low (Phase-5 validation checklist).
+   **Still owed (FIELD-GATED):** the mid-glide restore ran on-board in the TMS-7-warm_reboot HITL
+   set (both reboot flights recovered through the five-signal gate); what remains needs the built
+   airframe — the PHYSICAL separation-switch latch held low through a real reset, on the bench rig
+   before the first field day.
 9. ✅ **CC-less field operation** — `mission.select_site`/`fallback_zone` (nearest launch.config
    site within 200 m; else the spiral-landing zone +50 m at the clear-sector bearing),
    `tasks/field.py` (site-once + dwell-gated `auto_arm`, disabled by default), wifi
