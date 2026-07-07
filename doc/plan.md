@@ -180,6 +180,28 @@ control change.
    the persistent launch point at the last on-the-pad moment, so the tier-2 open-loop heading (and
    the warm-start crumb's `launch` field) survives a mid-flight fix loss. Operator-set positions
    are never overwritten; no fix → the live-fallthrough behaviour is unchanged.
+3a. ✅ **In-flight OOM soak** (7/06, `tools/oom_soak.py` — wishes 7/06 #2) — a real mid-glide OOM
+   forced by heap ballast (566 KB free at GLIDING entry, ~140 KB/s GC-off burn with the HITL sim's
+   churn on top of the control path). Finding: at exhaustion the asyncio runtime dies wholesale —
+   watchdog task AND crash→neutral included — the fins freeze at the last commanded deflection for
+   ~1.4 s, then the starved hardware `machine.WDT` panics the chip (`reset_cause 3`); main.py ran
+   the five-signal gate against the genuine WDT cause, refused on the bench (separation nested),
+   cleared the crumb and rejoined wifi + CC. Full chain spec'd in coludo.md "In-flight reboot".
+3b. **HARDWARE power-cycle supervisor (future, airframe electronics)** — the soak proved a WDT
+   chip reset does NOT clear peripheral latch-up: the ICP-10111 came back from the panic acking
+   its address but NAK-ing every command, survived the addressed soft reset (which re-wedged it)
+   and the I2C general-call, and only a rail power cycle fully restores it. Proposal (user, 7/06):
+   the ESP32-P4 emits a heartbeat pulse on a GPIO (fed by the existing watchdog task's loop); a
+   tiny external supervisor (retriggerable monostable / TPL5010-class watchdog / CH32V003 driving
+   a P-FET on the main rail) cuts board power for ~200 ms when pulses stop. Two design tensions
+   to solve before building: (a) **boot-gap tolerance** — a cold boot emits no pulses for ~7 s,
+   so a naive 2 s window power-cycles forever; the supervisor needs a post-cut re-arm delay
+   (~20 s) or a first-pulse-armed design, with the pulse-loss window then safely 2–3 s;
+   (b) **warm-start age gate** — a power cycle kills the RTC (NVS survives, the clock does not),
+   and gate #5 judges crumb age by RTC continuity, so power-cycle recovery needs either a backed
+   RTC (coin cell / supercap) or an age-gate alternative for the cold-clock case. Sequencing
+   stays escalatory: the chip WDT reset (~1 s, RTC survives) remains the FIRST responder; the
+   rail cut is the deeper layer for exactly the latch-up class the soak exposed.
 
 **Control & stability (medium, sim-validated before the board):**
 

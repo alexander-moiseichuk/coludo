@@ -583,6 +583,18 @@ against a guaranteed lawn-dart).
 * **Any gate missing → normal cold boot** in SETTING, breadcrumb cleared, event logged.
 * **Validation:** HITL flight with a forced `machine.reset()` mid-glide (and a pulled USB on the
   bench): the board must come back armed, in GLIDING, steering to the same zone.
+* **Measured — the in-flight OOM soak (7/06, `tools/oom_soak.py`):** a HITL glide ballasted to
+  566 KB free hit a REAL mid-glide OOM (GC-off burn ~140 KB/s with the sim's own churn on top of
+  the ~15–18 KB/s control-path leak). What actually happens at exhaustion: the asyncio runtime
+  dies wholesale (every task supervisor aborts) — the watchdog TASK dies with it, so the graceful
+  stall-detect path never runs, and the crash→neutral `finally` cannot execute either: **the fins
+  freeze at the last commanded deflection** (~1.4 s from the last servo write to the reset), then
+  the STARVED hardware `machine.WDT` panics the chip (`rst SW_CPU_RESET`, `reset_cause 3` = WDT).
+  main.py then ran the five-signal gate against the genuine WDT cause and correctly REFUSED on
+  the bench (`separation switch reads nested`), cleared the crumb, came up cold, rejoined the
+  wifi and the CC hub. So the recovery chain is proven with one amendment to the outage model:
+  the ~1.4 s pre-reset segment flies at the last banked deflection, not neutral — the backstop
+  behind the backstop (hardware WDT outliving the watchdog task) is what carries the reset.
 
 ## Sensors and Interrupts
 
