@@ -40,6 +40,8 @@ class Bmp280(task.Task):
     startup ground zero, captured per-sensor so it is offset-free) to the databoard. `update`
     {"rezero": true} re-captures ground zero (e.g. after warm-up, just before launch)."""
 
+    _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
+
     async def setup(self) -> bool:
         bus_id = self.config.get('id', 0)
         spec = config.bus(self.controller.config, self.config.get('bus', 'i2c'), bus_id)
@@ -166,7 +168,7 @@ class Bmp280(task.Task):
         """Deeper analysis when setup() failed: the bus reads the chip id and classifies the fault (no
         ack / wrong device / present-but-init). The Controller folds it into the failure reason, so
         `verify`/`probe` show the 'why', not just 'absent / miswired?'."""
-        bus = getattr(self, '_bus', None)
+        bus = self._bus  # None until setup builds the transport
         if bus is None:  # setup never built the bus -> a config fault
             return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)
         return await bus.device(self._addr).diagnose(_REG_CHIP_ID, _CHIP_ID)

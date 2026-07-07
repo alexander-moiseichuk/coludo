@@ -88,8 +88,8 @@ async def test_load_tracking():
 
 async def test_memory_rescue():
     # the physics-based pre-OOM rescue: collect when the predicted time-to-OOM < 2x the time
-    # left to sink to the rescue floor (land_s; the horizon bound while not descending), with a
-    # PROVEN safe altitude (elevation > rescue_agl_m), in BOOSTING..GLIDING only.
+    # left to sink to the rescue floor (land_s), with a PROVEN safe altitude
+    # (elevation > rescue_agl_m), in BOOSTING..GLIDING only; no descent trend -> no rescue.
     import controller as controller_mod
 
     class _StubController:
@@ -100,7 +100,7 @@ async def test_memory_rescue():
 
     recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
     rig = _StubController()
-    health = board_health.BoardHealth('health', {'rescue_agl_m': 10, 'rescue_horizon_s': 300}, rig)
+    health = board_health.BoardHealth('health', {'rescue_agl_m': 10}, rig)
     assert await health.setup() is True
 
     # build the two trends (the tracker clamps elapsed to whole seconds -> deltas ARE the
@@ -121,26 +121,28 @@ async def test_memory_rescue():
     health._rescue(health.mem_free(), 98.5)
     assert health.rescues == 1
 
-    # not descending yet (boost): the horizon bound stands in for land_s
+    # not descending yet (boost/climb): NO rescue even under a catastrophic burn -- the glide
+    # always descends, so the rescue waits for a land_s it can weigh the pause against
     health._descent_cm_s = 0
     health._last_free = 0
     health._track(1_000_000, None)
     await asyncio.sleep_ms(20)
-    health._track(0, None)  # catastrophic burn -> oom_s ~0 < 2x horizon
+    health._track(0, None)  # catastrophic burn -> oom_s ~0, but no descent trend
     assert health.land_s() is None and health.oom_s() is not None
     rig.stage = controller_mod.Stage.BOOSTING
     health._rescue(health.mem_free(), 50.0)
-    assert health.rescues == 2
+    assert health.rescues == 1
 
     # the gates: LANDING / at-or-below the floor / UNKNOWN elevation / rescue_agl_m 0 -> never
-    health._track(1_000_000, None)
-    await asyncio.sleep_ms(20)
-    health._track(0, None)
+    health._descent_cm_s = 25  # descending again (land_s finite) -- isolate each gate
+    health._last_elevation_cm = 10000
     rig.stage = controller_mod.Stage.LANDING
     health._rescue(health.mem_free(), 100.0)
     rig.stage = controller_mod.Stage.GLIDING
     health._rescue(health.mem_free(), 10.0)  # at the floor: not proven safe
     health._rescue(health.mem_free(), None)  # unknown elevation: not proven safe
+    assert health.rescues == 1
+    health._rescue(health.mem_free(), 100.0)  # control: the same trends DO rescue past the gates
     assert health.rescues == 2
     off = board_health.BoardHealth('health', {'rescue_agl_m': 0}, rig)
     assert await off.setup() is True

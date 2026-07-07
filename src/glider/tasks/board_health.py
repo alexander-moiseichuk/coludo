@@ -37,7 +37,6 @@ class BoardHealth(task.Task):
         # and cm/s, predictions in whole seconds; the float baro elevation converts to cm once,
         # at the boundary. rescue_agl_m 0 disables the rescue.
         self._rescue_agl_cm: int = int(self.config.get('rescue_agl_m', 10)) * 100
-        self._horizon_s: int = int(self.config.get('rescue_horizon_s', 300))  # no-descent flight bound
         self._elevation = databoard.Databoard.parameter('elevation')  # rescue safety gate (baro height)
         self.load: int = 0  # CPU load as an integer percent 0..100 (from probe wake-up lateness)
         self.rescues: int = 0  # emergency in-flight collects performed (operator-visible)
@@ -104,14 +103,16 @@ class BoardHealth(task.Task):
 
     def _rescue(self, free: int, elevation) -> None:
         """The pre-OOM memory rescue (coludo.md "In-flight reboot"): with GC off for the airborne
-        phase the leak is GARBAGE, so one emergency collect (~0.1-0.3 s pause; the fins hold their
-        last write through it) reclaims the flight -- vastly cheaper than the OOM chain (~1.4 s
-        frozen fins + ~7 s reboot + a warm-start gamble). The decision is physics, not a byte
+        phase the leak is GARBAGE, so an emergency collect (the fins hold their last write through
+        the pause) reclaims the flight -- vastly cheaper than the OOM chain (~1.4 s frozen fins +
+        ~7 s reboot + a warm-start gamble). Called every period: the rescue RE-FIRES for as long
+        as the trigger holds, so a persistent leak gets a collect per second while the altitude
+        allows. The decision is physics, not a byte
         threshold: collect when memory dies BEFORE the flight is safely over -- predicted
-        oom_s < 2x the time left to sink to the rescue floor (land_s; without a descent estimate
-        yet, the rescue_horizon_s flight bound stands in) -- and only with proven safe altitude
-        (a known elevation above rescue_agl_m ~ 2x the landing gate: a 0.2 s pause costs ~2 m),
-        in BOOSTING/GLIDING (never LANDING)."""
+        oom_s < 2x the time left to sink to the rescue floor (land_s) -- and only with proven
+        safe altitude (a known elevation above rescue_agl_m ~ 2x the landing gate: a 0.2 s pause
+        costs ~2 m), in BOOSTING/GLIDING (never LANDING). No descent trend yet -> no rescue:
+        the glide always descends, so land_s exists exactly where a rescue is meaningful."""
         if not self._rescue_agl_cm:
             return  # no safe-altitude floor configured -> the rescue is off
         if elevation is None or int(elevation * 100) <= self._rescue_agl_cm:
@@ -123,8 +124,8 @@ class BoardHealth(task.Task):
         if oom is None:
             return
         land = self.land_s()
-        if oom >= 2 * (land if land is not None else self._horizon_s):
-            return  # we land (or the flight ends) long before memory does -- no pause needed
+        if land is None or oom >= 2 * land:
+            return  # not descending yet, or we land long before memory dies -- no pause needed
         watchdog = self.controller.active('watchdog')  # None when the watchdog is disabled
         if watchdog is not None:
             watchdog.kick()  # the collect is atomic and unfeedable -- start it on a FULL WDT budget

@@ -288,6 +288,13 @@ def default() -> dict:
              # 1.5 the rotating-target P-loop saturated near 25 deg and the orbit froze at ~44 m
              # (the 25-deg turn radius); 45 deg gives the R_min ~20 m the <=30 m miss target needs.
              'land_bank_gain': 3.0, 'land_bank_limit': 45,
+             # the LOITER orbit (tuned 7/06, coludo.md "Gliding"): within loiter_capture_m of
+             # the zone centre the heading command becomes the circle tangent + loiter_gain deg
+             # of inward cut per metre off the loiter_radius_m circle -- a stable constant-radius
+             # orbit that bleeds altitude through the banked turn (objective #1's energy
+             # management). The radius must stay ABOVE the cruise-bank minimum (~34 m at 30 deg)
+             # or the orbit destabilizes.
+             'loiter_radius_m': 30, 'loiter_capture_m': 120, 'loiter_gain': 3.0,
              # the ENDGAME band: below this baro elevation the glide steering opens the full
              # land-bank authority (turn radius halves) so the last seconds SPIRAL around the zone
              # instead of racetracking past it -- objective #2/#3 tightening that leaves #1 (fly
@@ -346,16 +353,18 @@ def default() -> dict:
             # Board vitals (temperature/memory/load) -> telemetry every period_ms. probe_ms is the
             # load probe's sleep slice (measures wake-up lateness; the core idles between probes).
             # Memory rescue (the pre-OOM safety net, measured 7/06): with GC off in flight the
-            # leak is garbage, so ONE emergency gc.collect() (~0.1-0.3 s pause the fins hold
-            # through) reclaims the flight -- vastly cheaper than the OOM chain (~1.4 s frozen
-            # fins + ~7 s reboot). The trigger is physics, not a byte threshold: collect when the
-            # predicted time-to-OOM < 2x the time left to sink to the rescue floor (from the
-            # elevation-decay slope; rescue_horizon_s = the RSO flight bound stands in while not
-            # descending), with PROVEN safe altitude (elevation > rescue_agl_m ~ 2x the 5 m
-            # landing gate: a 0.2 s pause costs ~2 m), in BOOSTING/GLIDING only (never LANDING).
+            # leak is garbage, an emergency gc.collect() (fins hold through the pause)
+            # reclaims the flight -- vastly cheaper than the OOM chain (~1.4 s frozen fins +
+            # ~7 s reboot) -- and it re-fires EVERY health period for as long as the trigger
+            # holds (a fast leak gets a collect per second, altitude allowing; the HITL soak
+            # logged 8). One knob, the rest is physics: collect when the predicted
+            # time-to-OOM < 2x the time left to sink to the rescue floor (memory-decay vs
+            # elevation-decay slopes), with PROVEN safe altitude (elevation > rescue_agl_m ~ 2x
+            # the 5 m landing gate: a 0.2 s pause costs ~2 m), in BOOSTING/GLIDING only (never
+            # LANDING; no descent trend yet -> no rescue -- boost is 3.5 s of peak dynamics).
             # rescue_agl_m 0 disables. oom_s + land_s ride health.csv + `inspect health`.
             {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'probe_ms': 10, 'enabled': True,
-             'rescue_agl_m': 10, 'rescue_horizon_s': 300},
+             'rescue_agl_m': 10},
             # CC-less field agent (specs/coludo.md "Field operation without CC"), OFF by default:
             # on the pad it selects the mission site by the first GNSS fix (nearest launch.config
             # site within max_range_m; none -> the spiral-landing fallback zone fallback_offset_m

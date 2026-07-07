@@ -276,9 +276,9 @@ class Controller(inspector.Inspectable):
         """Enable actuation. The pre-flight precondition (probe all clean, mission set) is enforced by
         the caller (the CC `arm` command / field auto-arm); arming also pins the live GNSS fix as the
         launch point (mission.freeze_launch) so the tier-2 heading survives a mid-flight fix loss."""
-        freeze = getattr(inspector.Inspector.get('mission'), 'freeze_launch', None)
-        if freeze is not None:  # unit rigs register bare mission stubs -- same guard as probe()
-            freeze()
+        mission = inspector.Inspector.get('mission')
+        if mission is not None:  # None only in unit rigs without a mission
+            mission.freeze_launch()
         self.armed = True
         self.log('controller :: armed')
 

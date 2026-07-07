@@ -48,6 +48,8 @@ class Icp10111(task.Task):
     startup ground zero, captured per-sensor so it is offset-free) to the databoard. `update`
     {"rezero": true} re-captures ground zero (e.g. after warm-up, just before launch)."""
 
+    _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
+
     async def setup(self) -> bool:
         bus_id = self.config.get('id', 0)
         spec = config.bus(self.controller.config, self.config.get('bus', 'i2c'), bus_id)
@@ -189,7 +191,7 @@ class Icp10111(task.Task):
         commons.id_classify (masked 2-byte word & 0x3F, expecting 0x08). icp10111 is command-based (not
         register-mapped) so it cannot use i2cbus._Device.diagnose(), but the shared classifier still
         produces the same wire-level categories."""
-        if getattr(self, '_bus', None) is None:
+        if self._bus is None:  # setup never built the transport
             return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)
         try:
             await self._bus.writeto(self._addr, _CMD_ID)

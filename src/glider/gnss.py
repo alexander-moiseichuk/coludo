@@ -58,6 +58,8 @@ class Gnss(task.Task):
     + 'elevation' (m above the GNSS ground zero, a baro backup). Subclasses set the module-specific
     sentence selection + rate in _configure()."""
 
+    _uart = None  # class default: no transport until setup() opens it (diagnose reads directly)
+
     async def setup(self) -> bool:
         bus_id = self.config.get('id', 2)
         spec = config.bus(self.controller.config, self.config.get('bus', 'uart'), bus_id)
@@ -152,7 +154,7 @@ class Gnss(task.Task):
         spec = config.bus(self.controller.config, self.config.get('bus', 'uart'), bus_id)
         if spec is None:
             return 'no transport -- uart bus %s undefined in config' % bus_id
-        uart = getattr(self, '_uart', None)
+        uart = self._uart  # None until setup opens the port
         if uart is None:
             from machine import UART
 

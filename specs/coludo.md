@@ -595,12 +595,16 @@ against a guaranteed lawn-dart).
   wifi and the CC hub. So the recovery chain is proven with one amendment to the outage model:
   the ~1.4 s pre-reset segment flies at the last banked deflection, not neutral — the backstop
   behind the backstop (hardware WDT outliving the watchdog task) is what carries the reset.
-* **The memory-rescue layer (7/06, `board_health`):** because the GC-off leak is *garbage*, the
-  vitals task defuses the OOM before it lands. The decision is physics, not a byte threshold —
-  collect when memory dies before the flight is safely over: predicted **`oom_s` < 2 ×
+* **The memory-rescue layer (7/06, `board_health`):** the in-flight GC disable buys
+  *predictability* (no pause the control loop did not schedule), not abstinence — an explicit
+  collect at a known-safe moment is legitimate. Because the GC-off leak is *garbage*, the
+  vitals task defuses the OOM before it lands — re-firing every health period for as long as the
+  trigger holds (a persistent leak gets a collect per second, altitude allowing). The decision is
+  physics, not a byte threshold — collect when memory dies before the flight is safely over: predicted **`oom_s` < 2 ×
   `land_s`** (time-to-exhaustion from the memory-decay slope vs time to sink to the rescue floor
-  from the elevation-decay slope; the `rescue_horizon_s` = 300 s flight bound stands in while
-  not descending), with **proven safe altitude** (known elevation above `rescue_agl_m` = 10 m ≈
+  from the elevation-decay slope; no descent trend yet → no rescue — the glide always
+  descends, so `land_s` exists exactly where a rescue is meaningful), with **proven safe
+  altitude** (known elevation above `rescue_agl_m` = 10 m ≈
   2× the 5 m landing gate — a 0.2 s pause costs ~2 m), in BOOSTING/GLIDING only, never LANDING.
   The collect is bracketed by watchdog `kick()`s (it is atomic and unfeedable, so it starts on a
   full WDT budget). Both predictions ride `health.csv` + `inspect health` — the operator's OOM

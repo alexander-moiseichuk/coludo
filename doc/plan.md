@@ -190,7 +190,7 @@ control change.
 3a'. ✅ **Memory rescue + OOM/landing forecast** (7/06, `board_health` — user proposal, physics
    trigger per user redesign) — collect when memory dies before the flight is safely over:
    predicted `oom_s` < 2 × `land_s` (memory-decay vs elevation-decay slopes, all-integer EMAs;
-   `rescue_horizon_s` 300 stands in while not descending), with PROVEN safe altitude
+   no descent trend yet → no rescue), with PROVEN safe altitude
    (elevation > `rescue_agl_m` 10 m ≈ 2× the landing gate), BOOSTING/GLIDING only. The collect
    is bracketed by watchdog `kick()`s. Both forecasts ride health.csv + `inspect health`.
    Measured: collects 65–260 ms on a mostly-free heap (the real anomaly case) but SECONDS on a

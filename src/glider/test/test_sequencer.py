@@ -215,6 +215,9 @@ async def amain():
         def launch_point(self):
             return (48.0005, 11.005)
 
+        def freeze_launch(self):
+            pass  # the real Mission pins a late fix here; nothing to pin in the rig
+
     crumb_ctrl = _StubController()
     cseq = sequencer.Sequencer('sequencer', SPEC, crumb_ctrl)
     assert await cseq.setup() is True

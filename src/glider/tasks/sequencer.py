@@ -118,9 +118,7 @@ class Sequencer(task.Task):
         if not self.controller.armed or self._mission is None or not self._mission.zone:
             return
         zone = self._mission.zone
-        freeze = getattr(self._mission, 'freeze_launch', None)
-        if freeze is not None:  # a fix that arrived AFTER arm pins here -- the last ground moment
-            freeze()
+        self._mission.freeze_launch()  # a fix that arrived AFTER arm pins here -- last ground moment
         launch = self._mission.launch_point()
         if launch is None:  # no fix/CC point: the zone centre keeps the crumb usable (tier-2 fallback)
             launch = ((zone[0][0] + zone[1][0]) / 2, (zone[0][1] + zone[1][1]) / 2)
@@ -137,7 +135,11 @@ class Sequencer(task.Task):
         would land at <land_agl_m (<5 m), possibly mid-flare -- the worst place for a control-loop
         stall (it would be wrong to fly the whole descent and then crash on a GC pause at the end).
         Both collect pauses are logged: the pre-flight one for the launch record, the post-flight one
-        as the actual cost the airborne phase deferred."""
+        as the actual cost the airborne phase deferred.
+
+        The disable buys PREDICTABILITY, not abstinence: no pause the loop did not schedule. An
+        EXPLICIT collect at a known-safe moment stays legitimate -- board_health's memory rescue
+        spends one (fins holding, altitude proven) whenever the leak physics demands it."""
         if to_stage == _STAGE.BOOSTING:
             start = time.ticks_us()
             gc.collect()    # compact + free before the flight (a known pause, on the rod)
