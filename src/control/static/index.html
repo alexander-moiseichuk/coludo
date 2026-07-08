@@ -37,10 +37,10 @@
 
 <table id="boards">
   <thead><tr>
-    <th>board</th><th>online</th><th>stage</th><th>version</th><th>config</th><th>uptime</th>
+    <th>board</th><th>online</th><th>stage</th><th>flight</th><th>version</th><th>config</th><th>uptime</th>
     <th>board time</th><th></th><th>position</th><th>launchpad</th><th></th>
   </tr></thead>
-  <tbody><tr><td colspan="11" class="muted">waiting for boards…</td></tr></tbody>
+  <tbody><tr><td colspan="12" class="muted">waiting for boards…</td></tr></tbody>
 </table>
 <p class="muted">click a board to target it below · <span id="boardmsg"></span></p>
 
@@ -166,6 +166,20 @@ function fmtUptime(ms) {
 const fmtPos = (p) => (p ? `${p[0].toFixed(5)}, ${p[1].toFixed(5)}` : 'N/A');
 // Launchpad safety cell: the origin the board would FLY with. Red when there is none (tier-2
 // heading + warm start both need it); a live-fix origin is marked with how it becomes persistent.
+// Live flight panel: the operator's go/no-go glance -- armed dot, airspeed, AGL, fin-authority cap.
+// Shows the vitals only when the flight loop reports them (armed / airborne); a bench board is quiet.
+function fmtFlight(b) {
+  const armed = b.armed
+    ? '<b style="color:#c22">● ARMED</b>'
+    : '<span class="muted">○ safe</span>';
+  const f = b.flight;
+  if (!f) return armed;
+  const bits = [`${f.airspeed ?? '–'} m/s`];
+  if (b.agl != null) bits.push(`agl ${b.agl.toFixed ? b.agl.toFixed(1) : b.agl} m`);
+  if (f.fin_cap != null) bits.push(`fin ±${f.fin_cap}°`);
+  const engaged = f.active ? '' : ' <span class="muted">idle</span>';
+  return `${armed}<br><span class="muted">${bits.join(' · ')}</span>${engaged}`;
+}
 function fmtPad(b) {
   if (!b.launchpad) return '<b style="color:#c22">no launchpad</b>';
   const where = fmtPos(b.launchpad) + (b.site ? ` (${b.site})` : '');
@@ -185,7 +199,7 @@ new EventSource('/events').onmessage = (event) => {
   document.getElementById('ccstatus').textContent = `CC ${(cc.time || '').replace('T', ' ')} · GPS ${ccGps(cc.gps)}`;
   const ccHasFix = !!(cc.gps && cc.gps.usable);  // 'sync CC GPS' is offered only when CC has a fix
   if (!boards.length) {
-    tbody.innerHTML = '<tr><td colspan="11" class="muted">no boards connected</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="muted">no boards connected</td></tr>';
     return;
   }
   tbody.innerHTML = boards.map((b) => `
@@ -193,6 +207,7 @@ new EventSource('/events').onmessage = (event) => {
       <td>${b.id}</td>
       <td><span class="dot">${b.online ? '●' : '○'}</span></td>
       <td>${b.stage || ''}</td>
+      <td>${fmtFlight(b)}</td>
       <td>${b.version || ''}</td>
       <td>${b.config_id || ''}</td>
       <td>${fmtUptime(b.uptime)}</td>

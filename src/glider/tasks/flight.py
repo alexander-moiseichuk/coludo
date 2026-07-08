@@ -206,6 +206,13 @@ class Flight(task.Task):
         poll cadence)."""
         return self._active, self._steps, self._stage, self._last_step_us
 
+    def vitals(self) -> dict:
+        """The live flight-panel readout (CC dashboard): the governor's airspeed estimate + the
+        dynamic-pressure fin-authority cap it set, and whether the control loop is engaged. Called at
+        the ~0.5 Hz health rate, so the airspeed float box is off the hot path."""
+        return {'airspeed': round(self._governor.airspeed(), 1), 'fin_cap': self._governor.cap(),
+                'active': self._active}
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['schedule'] = 'timer' if self._schedule_hz > 0 else 'asyncio'

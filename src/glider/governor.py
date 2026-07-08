@@ -93,6 +93,11 @@ class Governor:
         """The current airspeed estimate (m/s) — the boost rod gate and telemetry read it here."""
         return self._estimator.value()
 
+    def cap(self) -> int:
+        """The dynamic-pressure fin-authority cap (deg) the governor last set on the mixer — the
+        operator's live 'how much fin the loop may use' readout for the flight panel."""
+        return self._mixer.limit
+
     def step(self, dt: float, full_rate_override: bool, pitch: fixnum) -> None:
         """One control slice: accumulate `dt` (wall seconds since the last step) and update the
         estimator + fin cap when due. Full rate (every step) on either of:

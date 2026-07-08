@@ -282,10 +282,13 @@ control change.
    banner says VERIFY on the first glide. Self-verifies (validate + `_readiness`) before emitting;
    `set-config board @flight.config` pushes it. Pair with a launch.config (site/zone) for the zone
    half of the gate. Control suite covers it (6/6).
-10. **Live flight panel** on the SSE dashboard — stage, AGL, airspeed estimate, fin cap, armed: the
-    operator's go/no-go glance during the ladder tests.
-11. **One-shot field capture pull** — generalize `hitl_collect.sh`'s pull+assemble+report+KPI chain
-    into a `flight_pull` for real-flight sessions (today it is hand-run per stream).
+10. ✅ **Live flight panel** (7/07) — the SSE dashboard's `flight` column: armed dot + the governor's
+    airspeed estimate + fin-authority cap + AGL, engaged/idle. `flight.vitals()` (airspeed + `governor.cap()`
+    + active) rides the health heartbeat alongside stage/armed; `board_rows` passes it through; the
+    dashboard shows the operator's go/no-go glance during the ladder tests. Board + control suites cover it.
+11. ✅ **One-shot field capture pull** (7/07, `tools/flight_pull.sh`) — pulls ONE recorder session off
+    the Luckfox (default: the latest), assembles the capture, and renders the SVG + HTML report + KPIs
+    in one command (was hand-run per stream). Tested end-to-end against a live session.
 
 ## Required hardware
 

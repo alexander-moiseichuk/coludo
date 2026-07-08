@@ -63,6 +63,8 @@ class Server:
                 # whether it is persistent (CC-set / frozen at arm) vs the live fix, and armed
                 'launchpad': health.get('launchpad'), 'launchpad_set': health.get('launchpad_set'),
                 'site': health.get('site'), 'armed': health.get('armed'),
+                # live flight panel: low-altitude AGL + the governor's airspeed / fin-authority cap
+                'agl': health.get('agl'), 'flight': health.get('flight'),
                 'temp': health.get('temp'), 'mem_free': health.get('mem_free'),
             })
         return rows
