@@ -247,9 +247,12 @@ control change.
    ceiling in every case, every iteration). Acceptance scorecard: calm/5 % ✅; calm/25 % at
    35–37 m vs the ≤ 30 m target — closed by item 5's steering filter (7/06: calm median 31 m,
    E16 in-zone at 25 % noise, fin travel −56 %); wind ≥ 6 m/s physics-bounded (launch wind limit
-   rule, coludo.md). Remaining: **step 3 on-board confirmation matrix** at the tuned defaults, and
-   **step 5 the field trim procedure (FIELD-GATED** — the real trim pitch and the polar quality
-   come from the first glide telemetry, nothing more to do on the bench).
+   rule, coludo.md). ✅ **Step 3 on-board confirmation DONE (7/07, `doc/sims/TMS-7-attitude`)** —
+   the tuned loiter law flown on the board, in-zone all four (E16/F15 × full/light, miss 52–61 m);
+   provenance caveat: the host set's 17–18 m near-midpoint does not fully reproduce at `inject_hz=25`
+   (in-zone yes, near-midpoint not always — a real endgame-tuning datum). Remaining: **step 5 the
+   field trim procedure (FIELD-GATED** — the real trim pitch and polar quality come from the first
+   glide telemetry, nothing more to do on the bench).
 7. **Reachability telemetry** — live glide-ratio estimate vs zone distance ("zone reachable: y/n") in
    telemetry; the operator sees an unreachable zone early, and it is the groundwork for a deliberate
    land-short decision later.
