@@ -275,8 +275,13 @@ control change.
 
 **Control (CC) side:**
 
-9. **`launch.config` autogen** (already above) — should now also: quiesce/disable radios, enable the
-   watchdog, enable flight with the tuned gains — i.e. produce exactly what #1 verifies.
+9. ✅ **Flight-ready config autogen** (7/07, `tools/launch_config.py`) — emits a board.config that
+   passes the `verify` readiness gate: watchdog ON, flight ON with gains, radios quiesced (policy
+   `auto` — silent airborne, live pre-launch/post-land), fin cap 1.0. Gains are SIM-derived proposals
+   (sourced from `config_hitl` so they stay in sync), so the board arms out of the box but a loud
+   banner says VERIFY on the first glide. Self-verifies (validate + `_readiness`) before emitting;
+   `set-config board @flight.config` pushes it. Pair with a launch.config (site/zone) for the zone
+   half of the gate. Control suite covers it (6/6).
 10. **Live flight panel** on the SSE dashboard — stage, AGL, airspeed estimate, fin cap, armed: the
     operator's go/no-go glance during the ladder tests.
 11. **One-shot field capture pull** — generalize `hitl_collect.sh`'s pull+assemble+report+KPI chain
