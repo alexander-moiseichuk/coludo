@@ -71,7 +71,6 @@ def default() -> dict:
             },
         },
         'pins': {
-            'led_status': 2,  # external LED (board has no user LED)
             'separation_switch': 33,  # copper pads: HIGH=nested (3v3 routed), LOW=separated
             'adxl375_int': 4,  # ADXL375 INT1 (free spare) — DATA_READY drives the accel sampling
             'adxl375_cs': 49,  # ADXL375 SPI chip-select (free spare)
@@ -231,9 +230,6 @@ def default() -> dict:
         'components': [
             # Recorder drain loop: a thin activity over the global Recorder, using uart:1.
             {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True},
-            # Status LED on the led_status pin: blinks the board state (error/standby/flying).
-            # Disabled by default -- not every board has the external LED wired; enable per board.
-            {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': False},
             # Stage-separation switch (copper pads): HIGH=nested, LOW=separated -> Boosting->Gliding.
             # debounce_ms: the LOW must hold this long -- a contact bounce on the pads never deploys.
             {'name': 'separation', 'driver': 'separation', 'pin': 'separation_switch', 'enabled': True,

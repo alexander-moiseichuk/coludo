@@ -123,10 +123,21 @@ like the real thing for the Phase-5 walk-test (plan.md → Phase 5 · 1):
 5. **Drop tests (2–3 m)** — the low-altitude landing path (laser AGL → LANDING → stationary), the
    final stage of the ladder.
 
+## Disabling an optional pin
+
+To turn an optional feature off on a board that does not wire it, set its `pins` entry to **`null`**
+(preferred — the row stays as a documented placeholder) or any **negative** number. It resolves to
+"no pin" exactly like an absent entry: the driver skips the feature (poll instead of INT, no XSHUT
+toggle, no hardware ALERT). E.g. `"laser_xshut": null` runs the laser always-on; `"adxl375_int":
+null` polls the ADXL on its `fallback_ms` timer. A non-negative GPIO is the only "wired" value, so a
+disabled pin never collides in `verify`.
+
 ## Open items
 
 - ~~I2C1 SDA/SCL GPIOs~~ — **DONE (7/07)**: i2c:1 = sda 31 / scl 30, ALERT 29; INA226 on `id:1`,
   scan-confirmed (mfr TI, Vbus ~5 V).
-- **Firmware to match this map:** set ADXL375 / VL53L4CX to their `fallback_ms` timed path by
-  default (INT optional-if-wired), strap-high XSHUT in the vl53l4cx driver, regenerate the pin doc
-  from `config_default` and retire `waveshare_esp32p4_pins.md`. 47/47 gate as usual.
+- ~~Disabled-pin convention + generated pin doc~~ — **DONE (7/07)**: `null`/negative → feature off
+  (`task._pin_gpio` + validator); `doc/waveshare_esp32p4_pins.md` is now **generated** from
+  `config_default` by `tools/gen_pinmap.py` (`--check` gates staleness); GPIO 2 / LED removed.
+- **When you wire it:** the debug INTs (ADXL 4, VL53 3) are on by default and self-poll if silent;
+  set them (and `laser_xshut`) to `null` per board once you finalise which are physically connected.

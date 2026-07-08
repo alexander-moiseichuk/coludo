@@ -73,8 +73,14 @@ class Task(inspector.Inspectable):
         component's pin name (config[field], or `default` when the component omits it) up in the board
         `pins` map. Returns a number, not a machine.Pin: chip-select / PWM sites consume the number
         directly, and the Pin-building sites (int / xshut / separation) each need their own mode + IRQ.
-        One resolver for the cs_pin / int_pin / xshut_pin / pin lookup shared across drivers."""
-        return self.controller.config.get('pins', {}).get(self.config.get(field, default))
+        One resolver for the cs_pin / int_pin / xshut_pin / pin lookup shared across drivers.
+
+        DISABLED optional pin: a pins-map value of `null` (None) -- or `-1` -- means the feature is
+        wired off on this board. Both resolve to None, exactly like an absent pin, so every
+        optional-pin driver's `is None` guard skips the feature (poll instead of INT, no XSHUT
+        toggle, no hardware ALERT). `null` is the preferred, self-documenting form."""
+        gpio = self.controller.config.get('pins', {}).get(self.config.get(field, default))
+        return gpio if isinstance(gpio, int) and gpio >= 0 else None
 
     async def setup(self) -> bool:
         """Initialize or reset. Override. Return True on success, False otherwise."""

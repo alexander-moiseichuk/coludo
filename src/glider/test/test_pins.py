@@ -16,7 +16,6 @@ SPI_SCK, SPI_MOSI, SPI_MISO = 48, 47, 46  # ADXL375 on SPI(1)
 PIN_ADXL_CS, PIN_ADXL_INT = 49, 4
 SERVOS = (('yaw', 26), ('elevon_l', 27), ('elevon_r', 32))
 PIN_SEPARATION = 33
-PIN_LED = 2
 
 
 def main():
@@ -48,10 +47,6 @@ def main():
     val = sw.value()
     assert val in (0, 1)
     print('separation sw : GPIO%d pull-up = %d (1=separated)' % (PIN_SEPARATION, val))
-
-    led = Pin(PIN_LED, Pin.OUT)
-    led.value(0)
-    print('status LED    : GPIO%d out ok' % PIN_LED)
 
     print('ok: all recommended pins constructed')
 
