@@ -46,6 +46,7 @@
 | `accel_adxl375` | spi:1 @ 0x53 | cs_pin=adxl375_cs (GPIO49), int_pin=adxl375_int (GPIO4) |
 | `imu_lsm6dso32` | spi:1 @ 0x6A | cs_pin=lsm6dso32_cs (GPIO50), int_pin=lsm6dso32_int1 (GPIO28) |
 | `imu_bno055` | i2c:0 @ 0x28 | - |
+| `attitude` | - | - |
 | `baro_icp10111` | i2c:0 @ 0x63 | - |
 | `baro_bmp280` | i2c:0 @ 0x76 | - |
 | `laser_agl` | i2c:0 @ 0x29 | int_pin=laser_int (GPIO3), xshut_pin=laser_xshut (GPIO5) |

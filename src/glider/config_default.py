@@ -150,6 +150,24 @@ def default() -> dict:
                 'provides': {'attitude': {'priority': 0, 'timeout_ms': 40},
                              'accel': {'priority': 2, 'timeout_ms': 40}},  # fused fallback behind lsm/adxl
             },
+            # Attitude REDUNDANCY (tasks/attitude.py): a complementary-filter backup that derives
+            # (heading, roll, pitch) from the LSM6DSO32 gyro `rate` + accel gravity vector and provides
+            # it at PRIORITY 1, so the databoard swaps to it if the BNO055 (priority 0) stops -- losing
+            # the sole attitude source would otherwise go ballistic. Mirrors the BNO055 while it is fresh
+            # (warm handoff, no math); free-runs the filter only once it is lost. corr_shift = the accel
+            # pull strength (err >> shift); grav band = the |accel| window (g) where the gravity vector
+            # is trusted (reject thrust/manoeuvre). Cheap while the BNO055 is alive; enable by default.
+            {
+                'name': 'attitude', 'activity': 'attitude', 'enabled': True,
+                'period_ms': 20, 'accel_period_ms': 50, 'corr_shift': 4,
+                'grav_low_g': 0.7, 'grav_high_g': 1.3,
+                # turn_gate: suppress the accel gravity-vector correction above this yaw rate (deg/s) --
+                # in a coordinated turn the accel points down the body axis (looks level at any bank),
+                # so past the gate the filter trusts the gyro alone; below it, straight-ish flight lets
+                # the gravity vector re-anchor roll/pitch and cancel gyro drift.
+                'turn_gate_deg_s': 4,
+                'provides': {'attitude': {'priority': 1, 'timeout_ms': 40}},
+            },
             {
                 'name': 'baro_icp10111',
                 'driver': 'icp10111',

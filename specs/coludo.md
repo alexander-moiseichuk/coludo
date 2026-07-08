@@ -635,6 +635,23 @@ Example: for altitude the queue of selection could be the following
 
 Proper cross-analysis for initial fusion (backing) should be performed by documentation and can be tweaked later after trials. Sensor disagreements will be handled during timeouts and limits per each individually and switching to backup sensor. For example, the controller expects GPS data every 100 ms and if there is no data or repetative data for at least 200 ms then it will switch to the IMU.
 
+**Attitude backup (implemented 7/07, `tasks/attitude.py`).** `attitude` is the one quantity with a
+single hardware source — the BNO055 (fused 9-DoF, priority 0). Losing it mid-flight would hand the
+control loop stale/absent attitude → neutral fins → ballistic, so a **complementary-filter backup**
+derives (heading, roll, pitch) from the LSM6DSO32 gyro `rate` + accel gravity vector and provides it
+at **priority 1**; the databoard's timeout handoff (40 ms) then swaps to it automatically the moment
+the BNO055 stops — the same priority/timeout mechanism as every other fused quantity. It **mirrors**
+the BNO055 while that is fresh (warm, so the handoff has no transient), and **free-runs** only once
+the BNO055 is lost: gyro integration for the short-term motion, with the accel gravity vector
+re-anchoring roll/pitch (drift-free) — but **gated off in turns** (`turn_gate` on the yaw rate),
+because in a coordinated turn the accelerometer reads gravity+centripetal down the body axis and
+would look wings-level at any bank; there the gyro carries the true bank. Heading is gyro-z only (it
+drifts — the LSM6DSO32 has no magnetometer), so nav heading degrades gracefully while roll/pitch stay
+solid and the glider holds bank + pitch. All-integer (an integer-CORDIC `atan2` + `isqrt` in
+`fixed.py`, viper, no float boxed but the heading the channel requires). Validated closed-loop on the
+board (`tools/attitude_soak.py` drops the sim attitude mid-glide): the backup tracks truth to ~1°
+roll / ~0.5° pitch through the loiter and flies the descent to a controlled landing on its own.
+
 ## Tasks
 
 One task must be created explicitly - the Controller, it creates the rest of the tasks which are located in the tasks folder and support some common API e.g.:

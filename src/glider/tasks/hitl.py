@@ -87,6 +87,10 @@ class Hitl(task.Task):
         provided = {q: {'priority': 0, 'timeout_ms': 1000} for q in
                     ('accel', 'attitude', 'rate', 'agl', 'altitude', 'elevation', 'position', 'speed')}
         self._ch = databoard.Databoard.provide(self.name, provided)
+        # attitude-redundancy validation: a runner flips this True mid-glide to simulate a BNO055 death
+        # (stop publishing the sim `attitude`); accel + rate keep flowing, so the priority-1 attitude
+        # backup (tasks/attitude.py) must take over the fused slot and keep the glider controllable.
+        self.drop_attitude: bool = False
         # record the simulated sensors as telemetry (same names/fields as the real drivers + the host
         # tool) -> a complete renderable capture on the Luckfox. Decimated to keep the link sane.
         sensor_us = int(1_000_000 / cfg.get('record_hz', 25))   # sensor telemetry cadence
@@ -139,7 +143,8 @@ class Hitl(task.Task):
         # databoard -> the control loop. roll/pitch are centidegree fixnum for the fixed-point PID (heading
         # stays float for the nav trig); the sim's float physics wraps to fixnum once, here at the boundary.
         self._ch['accel'].push((accel[0], accel[1], accel[2]))
-        self._ch['attitude'].push((heading, from_float(roll), from_float(pitch)))
+        if not self.drop_attitude:  # simulated BNO055 death -> the priority-1 backup must carry attitude
+            self._ch['attitude'].push((heading, from_float(roll), from_float(pitch)))
         # gyro rate -> the PID D term (rate damping). Noised deg/s (like the other IMU channels so the D
         # term sees real jitter), pushed as centideg/s fixnum -- same unit + mapping as the LSM6DSO32
         # (roll, pitch, yaw). The same noised values feed the imu_lsm6dso32 telemetry below (board parity).
