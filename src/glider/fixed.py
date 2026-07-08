@@ -16,12 +16,16 @@
 # and stay integer in between. There is deliberately NO fixnum mul/div rescale here: a fixed-point rescale
 # invites float->fixnum->float chains mid-computation, which is exactly what this exists to remove.
 
+import array
+
 from commons import clamp_int
 
 try:
+    import micropython  # real module on the board (micropython.viper)
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
-    from commons import const
+    from commons import const, micropython  # the shim: @viper degrades to plain Python
+    ptr32 = int  # dummy so the shim'd @viper function's `ptr32` annotation evaluates (unused off-board)
 
 
 fixnum = int  # a scaled fixed-point integer (×SCALE); NOT a plain count and NOT a float
@@ -64,3 +68,97 @@ def clamp(low: fixnum, value: fixnum, high: fixnum) -> fixnum:
     fixnum is always a finite int (no math.inf), which is exactly what the fixed-point transition buys:
     the whole control-path clamp is now viper-native, not the inf-tolerant @native float path."""
     return clamp_int(low, value, high)
+
+
+# ------------------------------------------------------------------------- integer trig (@viper)
+#
+# The attitude-backup complementary filter (tasks/attitude.py) turns the accel gravity vector into
+# roll/pitch EVERY control step with GC off, so it must not box a float. atan2_cd is an integer CORDIC
+# (vectoring mode: ~0.17 deg over 12 iterations) and isqrt a division-free integer square root (the
+# pitch denominator sqrt(ay^2+az^2)). Both @micropython.viper, both zero-alloc. Angles are centidegree
+# fixnum like the rest of the control path.
+
+_ATAN_CD = array.array('i', (4500, 2657, 1404, 713, 358, 179, 90, 45, 22, 11, 6, 3))  # atan(2^-i), cd
+
+
+def _cordic_vec_upy(y: int, x: int, atan) -> int:
+    """CORDIC vectoring reference: rotate (x, y) onto +x, accumulating the angle (cd). x must be >= 0."""
+    z = 0
+    for i in range(12):
+        if y < 0:
+            x, y, z = x - (y >> i), y + (x >> i), z - atan[i]
+        else:
+            x, y, z = x + (y >> i), y - (x >> i), z + atan[i]
+    return z
+
+
+@micropython.viper
+def _cordic_vec_opt(y: int, x: int, atan: ptr32) -> int:
+    z = 0
+    i = 0
+    while i < 12:
+        if y < 0:
+            nx = x - (y >> i)
+            ny = y + (x >> i)
+            z = z - atan[i]
+        else:
+            nx = x + (y >> i)
+            ny = y - (x >> i)
+            z = z + atan[i]
+        x = nx
+        y = ny
+        i += 1
+    return z
+
+
+_cordic_vec = _cordic_vec_opt  # viper is safe on this firmware -> bind the optimised variant
+
+
+def atan2_cd(y: int, x: int) -> int:
+    """atan2(y, x) in CENTIDEGREES (fixnum), four-quadrant, via integer CORDIC -- NO float boxed. y and
+    x are any consistent integer unit (only the RATIO matters -- e.g. accel scaled x1000). Range
+    (-18000, 18000]; worst-case error ~17 cd (0.17 deg). CORDIC needs x >= 0, so x < 0 reflects into
+    the right half-plane and the 180 deg is added back per quadrant."""
+    if x >= 0:
+        return _cordic_vec(y, x, _ATAN_CD) if (x or y) else 0  # (0, 0) is undefined -> 0
+    base = _cordic_vec(y, -x, _ATAN_CD)
+    return (18000 - base) if y >= 0 else (-18000 - base)
+
+
+def isqrt_upy(n: int) -> int:
+    """Integer floor(sqrt(n)) reference, division-free (bit-by-bit); n < 2**31."""
+    if n <= 0:
+        return 0
+    res = 0
+    bit = 1 << 30
+    while bit > n:
+        bit >>= 2
+    while bit:
+        if n >= res + bit:
+            n -= res + bit
+            res = (res >> 1) + bit
+        else:
+            res >>= 1
+        bit >>= 2
+    return res
+
+
+@micropython.viper
+def isqrt_opt(n: int) -> int:
+    if n <= 0:
+        return 0
+    res = 0
+    bit = int(1 << 30)  # int() cast: viper constant-folds `1 << 30` to a Python object otherwise
+    while bit > n:
+        bit = bit >> 2
+    while bit != 0:
+        if n >= res + bit:
+            n = n - res - bit
+            res = (res >> 1) + bit
+        else:
+            res = res >> 1
+        bit = bit >> 2
+    return res
+
+
+isqrt = isqrt_opt  # viper is safe on this firmware -> bind the optimised variant

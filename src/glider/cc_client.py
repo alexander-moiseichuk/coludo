@@ -154,8 +154,14 @@ def _register_identity(dispatcher, ctx) -> None:
             info['launchpad'] = mission.launch_point()
             info['launchpad_set'] = mission.latitude is not None and mission.longitude is not None
             info['site'] = mission.site or None
+        agl = databoard.Databoard.parameter('agl')  # low-altitude laser AGL -> the flight panel
+        if agl is not None:
+            info['agl'] = agl.value()
         if ctx.controller is not None:
             info['armed'] = ctx.controller.armed
+            flight = ctx.controller.active('flight')  # live flight panel: airspeed + fin cap + engaged
+            if flight is not None and hasattr(flight, 'vitals'):
+                info['flight'] = flight.vitals()
             info['tasks'] = [{'name': t.name, 'ok': t.validate()} for t in ctx.controller.active()]
         return cc.build('ok', [json.dumps(info)])
 

@@ -27,6 +27,16 @@ def main():
     res['pins']['servo_yaw'] = 18
     assert any('reserved GPIO18' in e for e in config.validate(res))
 
+    # DISABLED optional pins: null (kept as a placeholder) or ANY negative -> feature wired off,
+    # not a GPIO claim -> validates clean; a real collision is still caught alongside them
+    off = config_default.default()
+    off['pins']['laser_xshut'] = None  # placeholder kept, feature off
+    off['pins']['laser_int'] = -1
+    off['pins']['adxl375_int'] = -7    # any negative, not just -1
+    assert config.validate(off) == [], config.validate(off)
+    off['pins']['servo_yaw'] = off['buses']['i2c']['0']['sda']  # a genuine collide still flagged
+    assert any('used by both' in e for e in config.validate(off))
+
     # unknown bus reference on a sensor (a valid kind, but an id with no defined bus)
     badref = config_default.default()
     badref['sensors'][0]['id'] = 9  # i2c:9 is not defined

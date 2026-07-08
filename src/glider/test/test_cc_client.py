@@ -117,6 +117,32 @@ async def amain():
     assert 'clock' in vitals and 'epoch' in vitals
     assert 'launchpad' in vitals and 'launchpad_set' in vitals and 'site' in vitals
 
+    # the live flight panel: with a controller reporting a flight task, health carries its vitals
+    # (airspeed / fin cap / active) + agl for the dashboard glance
+    class _FlightTask:
+        name = 'flight'
+
+        def validate(self):
+            return True
+
+        def vitals(self):
+            return {'airspeed': 14.2, 'fin_cap': 30, 'active': True}
+
+    class _FlightController:
+        armed = True
+        failures = {}
+
+        def stage_name(self):
+            return 'gliding'
+
+        def active(self, name=None):
+            return [_FlightTask()] if name is None else (_FlightTask() if name == 'flight' else None)
+
+    sd_flight = cc_client.create_dispatcher(config_default.default(), controller=_FlightController())
+    panel = json.loads(cc.parse(await sd_flight.handle('health')).args[0])
+    assert panel['armed'] is True and panel['flight'] == {'airspeed': 14.2, 'fin_cap': 30, 'active': True}
+    assert 'agl' in panel  # low-altitude laser AGL rides the same heartbeat
+
     # get-config launch returns the editable launch.config (persisted fields only, no computed geometry)
     got = json.loads(cc.parse(await sd.handle('get-config launch')).args[0])
     assert got['launch_id'] == 'cc-t1' and 'zone' in got and 'target' not in got and 'clock' not in got

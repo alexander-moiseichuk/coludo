@@ -216,10 +216,19 @@ control change.
 
 **Control & stability (medium, sim-validated before the board):**
 
-4. **Attitude redundancy** — BNO055 is the SOLE attitude source; losing it mid-flight degrades to
-   neutral fins (ballistic). A complementary filter over the LSM6DSO32 (gyro integrate + accel gravity
-   vector) publishing `attitude` at priority 1 gives a real backup — the databoard fusion handover
-   already exists. The single biggest stability win on the table.
+4. ✅ **Attitude redundancy** (7/07) — `tasks/attitude.py`: a complementary-filter backup deriving
+   (heading, roll, pitch) from the LSM6DSO32 gyro `rate` + accel gravity vector, published at
+   **priority 1** so the databoard's timeout-handoff swaps to it the moment the BNO055 (priority 0)
+   stops — no `flight.py` change. Mirrors the BNO055 while it is the fused source (warm, zero math),
+   free-runs only once lost. All-integer: roll/pitch from an **integer CORDIC `atan2` + `isqrt` in
+   `fixed.py`** (viper, ~0.17° over 12 iterations, zero float boxed); the only float is the heading
+   the channel format requires. The accel gravity correction is gated OFF in turns (`turn_gate` on
+   yaw rate) — in a coordinated turn the accel points down the body axis (looks level at any bank),
+   so the gyro carries the bank and the accel only re-anchors in straight-ish flight. Heading is
+   gyro-z only (drifts — no magnetometer); roll/pitch stay solid. **Validated closed-loop on the
+   board** (`tools/attitude_soak.py`: drop the sim attitude mid-glide): handover is seamless, the
+   backup tracks truth to ~1° roll / ~0.5° pitch through the loiter, and the flight reaches DONE
+   flown entirely on the backup. The single biggest stability win on the table — done.
 5. ✅ **Steering noise filter** (7/06) — `guidance._filter_error()`: an all-integer EMA on the
    heading error (state ×16 fixed, `steer_filter_shift` 3 = alpha 1/8, τ ≈ 80 ms @ 100 Hz; a
    > 90° jump — an overfly flip, a law handover — resets the state so steering follows at once;
@@ -238,9 +247,12 @@ control change.
    ceiling in every case, every iteration). Acceptance scorecard: calm/5 % ✅; calm/25 % at
    35–37 m vs the ≤ 30 m target — closed by item 5's steering filter (7/06: calm median 31 m,
    E16 in-zone at 25 % noise, fin travel −56 %); wind ≥ 6 m/s physics-bounded (launch wind limit
-   rule, coludo.md). Remaining: **step 3 on-board confirmation matrix** at the tuned defaults, and
-   **step 5 the field trim procedure (FIELD-GATED** — the real trim pitch and the polar quality
-   come from the first glide telemetry, nothing more to do on the bench).
+   rule, coludo.md). ✅ **Step 3 on-board confirmation DONE (7/07, `doc/sims/TMS-7-attitude`)** —
+   the tuned loiter law flown on the board, in-zone all four (E16/F15 × full/light, miss 52–61 m);
+   provenance caveat: the host set's 17–18 m near-midpoint does not fully reproduce at `inject_hz=25`
+   (in-zone yes, near-midpoint not always — a real endgame-tuning datum). Remaining: **step 5 the
+   field trim procedure (FIELD-GATED** — the real trim pitch and polar quality come from the first
+   glide telemetry, nothing more to do on the bench).
 7. **Reachability telemetry** — live glide-ratio estimate vs zone distance ("zone reachable: y/n") in
    telemetry; the operator sees an unreachable zone early, and it is the groundwork for a deliberate
    land-short decision later.
@@ -263,12 +275,20 @@ control change.
 
 **Control (CC) side:**
 
-9. **`launch.config` autogen** (already above) — should now also: quiesce/disable radios, enable the
-   watchdog, enable flight with the tuned gains — i.e. produce exactly what #1 verifies.
-10. **Live flight panel** on the SSE dashboard — stage, AGL, airspeed estimate, fin cap, armed: the
-    operator's go/no-go glance during the ladder tests.
-11. **One-shot field capture pull** — generalize `hitl_collect.sh`'s pull+assemble+report+KPI chain
-    into a `flight_pull` for real-flight sessions (today it is hand-run per stream).
+9. ✅ **Flight-ready config autogen** (7/07, `tools/launch_config.py`) — emits a board.config that
+   passes the `verify` readiness gate: watchdog ON, flight ON with gains, radios quiesced (policy
+   `auto` — silent airborne, live pre-launch/post-land), fin cap 1.0. Gains are SIM-derived proposals
+   (sourced from `config_hitl` so they stay in sync), so the board arms out of the box but a loud
+   banner says VERIFY on the first glide. Self-verifies (validate + `_readiness`) before emitting;
+   `set-config board @flight.config` pushes it. Pair with a launch.config (site/zone) for the zone
+   half of the gate. Control suite covers it (6/6).
+10. ✅ **Live flight panel** (7/07) — the SSE dashboard's `flight` column: armed dot + the governor's
+    airspeed estimate + fin-authority cap + AGL, engaged/idle. `flight.vitals()` (airspeed + `governor.cap()`
+    + active) rides the health heartbeat alongside stage/armed; `board_rows` passes it through; the
+    dashboard shows the operator's go/no-go glance during the ladder tests. Board + control suites cover it.
+11. ✅ **One-shot field capture pull** (7/07, `tools/flight_pull.sh`) — pulls ONE recorder session off
+    the Luckfox (default: the latest), assembles the capture, and renders the SVG + HTML report + KPIs
+    in one command (was hand-run per stream). Tested end-to-end against a live session.
 
 ## Required hardware
 

@@ -28,7 +28,9 @@ async def amain():
     # registered as a driver the Controller can build
     assert task.ACTIVITIES.get('led') is led.LedStatus
 
+    # the default config no longer wires an LED (GPIO2 freed) -> the driver test provides its own pin
     cfg = config_default.default()
+    cfg['pins']['led_status'] = 2
     component = {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': True}
 
     # setup resolves the pin from config.pins and comes up healthy

@@ -50,7 +50,9 @@ async def _fake_board(reader, writer):
                                                 'stage': 'setting', 'clock': '2026-06-22T20:00:00',
                                                 'position': [48.117, 11.517],
                                                 'launchpad': [48.117, 11.517], 'launchpad_set': False,
-                                                'site': 'field', 'armed': False})])
+                                                'site': 'field', 'armed': False,
+                                                'agl': 3.2, 'flight': {'airspeed': 14.2, 'fin_cap': 30,
+                                                                       'active': True}})])
         elif msg.command == 'inspect':
             reply = cc.build('ok', [json.dumps({'name': msg.args[0], 'ok': True})])
         elif msg.command == 'get-config':
@@ -221,6 +223,9 @@ async def _web():
         # the launchpad safety cell fields ride the same heartbeat (dashboard 'no launchpad' warning)
         assert rows[0]['launchpad'] == [48.117, 11.517] and rows[0]['launchpad_set'] is False, rows[0]
         assert rows[0]['site'] == 'field' and rows[0]['armed'] is False, rows[0]
+        # the live flight panel fields ride the heartbeat (dashboard airspeed / fin-cap / agl)
+        assert rows[0]['agl'] == 3.2 and rows[0]['flight']['airspeed'] == 14.2, rows[0]
+        assert rows[0]['flight']['fin_cap'] == 30 and rows[0]['flight']['active'] is True, rows[0]
 
         # POST /api/cmd routes to the board and returns its reply
         status, payload = await _http(WEB_PORT, 'POST', '/api/cmd',

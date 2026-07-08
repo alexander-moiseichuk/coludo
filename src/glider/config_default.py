@@ -57,6 +57,11 @@ def default() -> dict:
             },
             'i2c': {
                 '0': {'sda': 7, 'scl': 8, 'freq': 400000},
+                # i2c:1 -- the ESP32-P4's second I2C (audio-codec bus, codec unused). Hosts the
+                # INA226 on the aft power board on its own short local bus, so i2c:0 (the forward
+                # sensor cluster) stays short/fast (see doc/board_layout.md). GPIOs 30/31 are real
+                # header pins (the codec's own 9-13 are not broken out on this board).
+                '1': {'sda': 31, 'scl': 30, 'freq': 400000},
             },
             'spi': {
                 # ADXL375 on its own SPI bus (mode 3, 5 MHz). NOTE the Adafruit 5374 breakout labels
@@ -66,7 +71,6 @@ def default() -> dict:
             },
         },
         'pins': {
-            'led_status': 2,  # external LED (board has no user LED)
             'separation_switch': 33,  # copper pads: HIGH=nested (3v3 routed), LOW=separated
             'adxl375_int': 4,  # ADXL375 INT1 (free spare) — DATA_READY drives the accel sampling
             'adxl375_cs': 49,  # ADXL375 SPI chip-select (free spare)
@@ -77,7 +81,8 @@ def default() -> dict:
             'servo_yaw': 26,
             'servo_eleron_left': 27,
             'servo_eleron_right': 32,
-            'ina226_alert': 30,  # INA226 ALERT (open-drain, active-low) -- hardware over-current trip
+            'ina226_alert': 29,  # INA226 ALERT (open-drain, active-low) -- hardware over-current trip
+            # (GPIO30 became i2c:1 SCL when the INA226 moved to the aft power bus; ALERT -> 29)
         },
         'recorder': {  # PSRAM ring sizes + stats cadence (Recorder)
             'tlm_capacity': 256,  # measured peak ~16 buffered records -> 256 is ~16x headroom
@@ -145,6 +150,24 @@ def default() -> dict:
                 'provides': {'attitude': {'priority': 0, 'timeout_ms': 40},
                              'accel': {'priority': 2, 'timeout_ms': 40}},  # fused fallback behind lsm/adxl
             },
+            # Attitude REDUNDANCY (tasks/attitude.py): a complementary-filter backup that derives
+            # (heading, roll, pitch) from the LSM6DSO32 gyro `rate` + accel gravity vector and provides
+            # it at PRIORITY 1, so the databoard swaps to it if the BNO055 (priority 0) stops -- losing
+            # the sole attitude source would otherwise go ballistic. Mirrors the BNO055 while it is fresh
+            # (warm handoff, no math); free-runs the filter only once it is lost. corr_shift = the accel
+            # pull strength (err >> shift); grav band = the |accel| window (g) where the gravity vector
+            # is trusted (reject thrust/manoeuvre). Cheap while the BNO055 is alive; enable by default.
+            {
+                'name': 'attitude', 'activity': 'attitude', 'enabled': True,
+                'period_ms': 20, 'accel_period_ms': 50, 'corr_shift': 4,
+                'grav_low_g': 0.7, 'grav_high_g': 1.3,
+                # turn_gate: suppress the accel gravity-vector correction above this yaw rate (deg/s) --
+                # in a coordinated turn the accel points down the body axis (looks level at any bank),
+                # so past the gate the filter trusts the gyro alone; below it, straight-ish flight lets
+                # the gravity vector re-anchor roll/pitch and cancel gyro drift.
+                'turn_gate_deg_s': 4,
+                'provides': {'attitude': {'priority': 1, 'timeout_ms': 40}},
+            },
             {
                 'name': 'baro_icp10111',
                 'driver': 'icp10111',
@@ -185,12 +208,12 @@ def default() -> dict:
             {
                 'name': 'power_ina226',
                 'driver': 'ina226',
-                'bus': 'i2c', 'id': 0,
-                'addr': 0x40,  # INA226, A0=A1=GND (scan-confirmed: mfr 0x5449 / die 0x2260)
+                'bus': 'i2c', 'id': 1,  # aft power bus (i2c:1, sda 31 / scl 30); off the forward i2c:0
+                'addr': 0x40,  # INA226, A0=A1=GND (scan-confirmed on i2c:1: mfr 'TI', Vbus ~5 V)
                 'shunt_mohms': 10,  # installed 2512 R010 (10 mΩ); calibrate vs a known current for <1% absolute
                 'max_current_ma': 5000,  # Current_LSB = 5000mA/2^15 ≈ 153 µA -> CAL = 167772160//(mA·mΩ) ≈ 3355
                 'period_ms': 100,  # 10 Hz poll (conversion ~9 ms at 4-sample averaging)
-                'alert_pin': 'ina226_alert',  # INA226 ALERT (open-drain) -> GPIO30: hardware over-current trip
+                'alert_pin': 'ina226_alert',  # INA226 ALERT (open-drain) -> GPIO29: hardware over-current trip
                 'alert_ma': 3000,  # ALERT fires above this (mA) -- over the ~2.4 A 3-servo peak: a stall/short flag
                 'enabled': True,
                 'provides': {'voltage': {'priority': 0, 'timeout_ms': 500},
@@ -225,9 +248,6 @@ def default() -> dict:
         'components': [
             # Recorder drain loop: a thin activity over the global Recorder, using uart:1.
             {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True},
-            # Status LED on the led_status pin: blinks the board state (error/standby/flying).
-            # Disabled by default -- not every board has the external LED wired; enable per board.
-            {'name': 'led', 'driver': 'led', 'pin': 'led_status', 'enabled': False},
             # Stage-separation switch (copper pads): HIGH=nested, LOW=separated -> Boosting->Gliding.
             # debounce_ms: the LOW must hold this long -- a contact bounce on the pads never deploys.
             {'name': 'separation', 'driver': 'separation', 'pin': 'separation_switch', 'enabled': True,

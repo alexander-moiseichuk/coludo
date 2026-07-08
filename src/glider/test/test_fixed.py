@@ -3,7 +3,40 @@
 # accuracy + overflow SWEEP over the real control-path ranges, reported so we pick SCALE (100 vs 1000)
 # from data. Run by `make test`.
 
+import math
+
 import fixed
+
+
+def test_atan2_cd():
+    """Integer CORDIC atan2 (centidegrees) tracks math.atan2 to <= ~0.2 deg over all four quadrants,
+    and the accel-gravity-vector -> roll/pitch composition (with isqrt) reproduces banked/pitched
+    attitudes -- the attitude-backup filter's core, zero float boxed."""
+    # cardinal + quadrant sanity
+    assert fixed.atan2_cd(0, 0) == 0
+    assert abs(fixed.atan2_cd(0, 1000) - 0) <= 17       # +x axis -> 0
+    assert abs(fixed.atan2_cd(1000, 0) - 9000) <= 17    # +y axis -> +90
+    assert abs(fixed.atan2_cd(0, -1000) - 18000) <= 17  # -x, y>=0 -> +180
+    assert abs(fixed.atan2_cd(-1000, 0) + 9000) <= 17   # -y axis -> -90
+    # full sweep vs math.atan2 (accel scaled x1000)
+    worst = 0
+    for adeg in range(-179, 181):
+        a = math.radians(adeg)
+        got = fixed.atan2_cd(round(math.sin(a) * 1000), round(math.cos(a) * 1000))
+        ref = round(adeg * 100)
+        worst = max(worst, abs(((got - ref + 18000) % 36000) - 18000))
+    assert worst <= 20, worst  # ~0.2 deg -- plenty for a backup attitude
+    # isqrt exact vs the reference across the range the filter feeds it
+    for n in (0, 1, 2, 4, 1000000, 1999999, 2000000):
+        assert fixed.isqrt(n) == fixed.isqrt_upy(n) == int(n ** 0.5)
+    # accel -> roll/pitch at a banked, nose-down attitude (glide): recovers to ~0.1 deg
+    for roll_d, pitch_d in ((45, -6), (-30, 5), (0, 20)):
+        r, p = math.radians(roll_d), math.radians(pitch_d)
+        ax, ay, az = -math.sin(p), math.cos(p) * math.sin(r), math.cos(p) * math.cos(r)
+        axi, ayi, azi = round(ax * 1000), round(ay * 1000), round(az * 1000)
+        roll_cd = fixed.atan2_cd(ayi, azi)
+        pitch_cd = fixed.atan2_cd(-axi, fixed.isqrt(ayi * ayi + azi * azi))
+        assert abs(roll_cd - roll_d * 100) <= 20 and abs(pitch_cd - pitch_d * 100) <= 20
 
 
 def test_convert():
@@ -59,4 +92,6 @@ def test_limits():
 
 test_convert()
 test_limits()
-print('ok: fixed -- from_float/to_float round-trip, to_str integer formatting, clamp, SCALE limit sweep')
+test_atan2_cd()
+print('ok: fixed -- from_float/to_float round-trip, to_str integer formatting, clamp, SCALE limit sweep, '
+      'CORDIC atan2 + isqrt')

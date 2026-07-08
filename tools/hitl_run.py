@@ -20,7 +20,8 @@ import tasks
 
 
 async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: bool,
-              glider_g: int, inject_hz: int, reboot_s: float, no_cc: bool) -> None:
+              glider_g: int, inject_hz: int, reboot_s: float, no_cc: bool,
+              attitude_drop_s: float = 0.0) -> None:
     drivers.load()
     tasks.load()
     launch = mission.Mission(max_range_m=200)
@@ -51,6 +52,8 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
     last = -1
     reboot_at_ms = None  # picked at GLIDING entry when reboot_s > 0
     rebooted = False
+    drop_at_ms = None  # picked at GLIDING entry when attitude_drop_s > 0
+    dropped = False
     while True:
         stage = flight.stage
         if stage != last:
@@ -61,11 +64,18 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
                 # separation latch reads nested -- so the restorable window starts here.
                 import random
                 reboot_at_ms = time.ticks_add(time.ticks_ms(), int((1.0 + random.random() * 5.0) * 1000))
+            if stage == stages.GLIDING and attitude_drop_s > 0 and not dropped:
+                drop_at_ms = time.ticks_add(time.ticks_ms(), int(attitude_drop_s * 1000))
             last = stage
         if reboot_at_ms is not None and not rebooted \
                 and time.ticks_diff(time.ticks_ms(), reboot_at_ms) >= 0 and stage == stages.GLIDING:
             rebooted = True
             await _simulated_reboot(flight, reboot_s)
+        if drop_at_ms is not None and not dropped \
+                and time.ticks_diff(time.ticks_ms(), drop_at_ms) >= 0 and stage == stages.GLIDING:
+            dropped = True
+            flight.active('hitl').drop_attitude = True  # simulated BNO055 death -> priority-1 backup flies
+            print('ATTITUDE DROP: BNO055 off, attitude backup carries the glide')
         if stage == stages.DONE:
             print('DONE')
             break
@@ -116,7 +126,7 @@ async def _simulated_reboot(flight, boot_s: float) -> None:
 
 def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0, wind_dir: float = 210.0,
         spike: bool = False, glider_g: int = 285, inject_hz: int = 0,
-        reboot_s: float = 0.0, no_cc: bool = False) -> None:
+        reboot_s: float = 0.0, no_cc: bool = False, attitude_drop_s: float = 0.0) -> None:
     """Fly one HITL scenario to completion (or a 95 s cap), recording every stream to the Luckfox.
     `glider_g` is the glider (glide) mass in grams (TMS-7 v3: 285 full, 235 light); the booster adds
     to it for boost then ejects, so a lighter glider glides longer -- the memory-leak stress case.
@@ -124,5 +134,8 @@ def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0, wind_dir: fl
     on-board HITL leak reflects real flight -- pass e.g. 10 for a memory-measurement run.
     `reboot_s` > 0 simulates a mid-glide reboot: a boot-long outage (neutral fins) at a RANDOM
     early-glide moment, then the real warm-start gate + restore. `no_cc` flies the CC-less scenario:
-    no zone/sites -- the field agent synthesizes the spiral-landing fallback from the GNSS fix."""
-    asyncio.run(_go(motor, noise, wind, wind_dir, spike, glider_g, inject_hz, reboot_s, no_cc))
+    no zone/sites -- the field agent synthesizes the spiral-landing fallback from the GNSS fix.
+    `attitude_drop_s` > 0 kills the sim `attitude` this many seconds into GLIDING (a BNO055 death):
+    the priority-1 complementary-filter backup must carry the glide to a controlled landing."""
+    asyncio.run(_go(motor, noise, wind, wind_dir, spike, glider_g, inject_hz, reboot_s, no_cc,
+                    attitude_drop_s))

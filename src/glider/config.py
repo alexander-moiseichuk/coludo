@@ -136,6 +136,8 @@ def _validate_pins(pins, errs: list, pin_owner: dict) -> None:
         errs.append("missing or invalid 'pins' section")
         return
     for pname, pin in pins.items():
+        if pin is None or (_is_int(pin) and pin < 0):
+            continue  # DISABLED optional pin (null / any negative -> feature wired off; see task._pin_gpio)
         _claim(errs, pin_owner, 'pins.' + pname, pin)
 
 
