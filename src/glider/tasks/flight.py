@@ -67,6 +67,7 @@ class Flight(task.Task):
         self._guidance = guidance.Guidance(guidance.GuidanceConfig(self.config, window_ms),
                                            self._mission, self._governor, position, agl, elevation)
         self._pitch_cd: int = 0  # last measured pitch (centidegrees) -> the governor's dive detector
+        self._glide_ratio: float = self.config.get('glide_ratio', 3.0)  # nominal L/D for the reach estimate
         self._active: bool = False  # in a control stage (PID engaged)
         self._stage = None  # the current control-stage name (for inspect)
         self._steps: int = 0  # control steps run (self-timing for load characterization)
@@ -208,10 +209,11 @@ class Flight(task.Task):
 
     def vitals(self) -> dict:
         """The live flight-panel readout (CC dashboard): the governor's airspeed estimate + the
-        dynamic-pressure fin-authority cap it set, and whether the control loop is engaged. Called at
-        the ~0.5 Hz health rate, so the airspeed float box is off the hot path."""
+        dynamic-pressure fin-authority cap it set, whether the control loop is engaged, and the
+        zone-reachability estimate (glide_ratio × elevation vs distance-to-zone). Called at the
+        ~0.5 Hz health rate, so the airspeed / nav-trig float boxes are off the hot path."""
         return {'airspeed': round(self._governor.airspeed(), 1), 'fin_cap': self._governor.cap(),
-                'active': self._active}
+                'active': self._active, 'reach': self._guidance.reachability(self._glide_ratio)}
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)

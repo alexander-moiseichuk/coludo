@@ -84,6 +84,7 @@ async def _restore_flight(flight: controller.Controller, cfg: dict, log=print) -
     import gc
     gc.collect()  # the sequencer's BOOSTING GC hook was skipped: compact + GC OFF for the descent
     gc.disable()
+    flight.warm_started = True  # degraded-mode annunciation: this flight was recovered from a reset
     log('main :: WARM START -> gliding, armed (%.0fm above pad)' % (altitude - crumb['pad_altitude']))
     return True
 

@@ -58,6 +58,7 @@ class Controller(inspector.Inspectable):
         self.stage: int = Stage.SETTING
         self.armed: bool = False  # actuation gate -- the control loop holds fins neutral until armed
         self.manual: bool = False  # operator holds the stage (ground test) -> sequencer pauses
+        self.warm_started: bool = False  # a mid-air reset was recovered by the warm-start gate (degraded)
         inspector.Inspector.register(self)
 
     # ------------------------------------------------------------------ scope

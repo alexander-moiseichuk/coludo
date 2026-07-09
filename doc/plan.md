@@ -253,9 +253,14 @@ control change.
    (in-zone yes, near-midpoint not always — a real endgame-tuning datum). Remaining: **step 5 the
    field trim procedure (FIELD-GATED** — the real trim pitch and polar quality come from the first
    glide telemetry, nothing more to do on the bench).
-7. **Reachability telemetry** — live glide-ratio estimate vs zone distance ("zone reachable: y/n") in
-   telemetry; the operator sees an unreachable zone early, and it is the groundwork for a deliberate
-   land-short decision later.
+7. ✅ **Reachability telemetry** (7/08) — `guidance.reachability(glide_ratio)`: reach = `glide_ratio`
+   × elevation vs the distance from the live fix to the zone target → {reachable, margin_m,
+   distance_m}, on the flight-panel heartbeat via `flight.vitals()`. The dashboard shows **zone ✓
+   +Nm** (green) / **zone ✗ −Nm** (red) so the operator sees an unreachable zone early — groundwork
+   for a deliberate land-short decision. `glide_ratio` config (nominal L/D, default 3.0, field-tuned
+   from real glide telemetry). Plus **degraded-mode annunciation**: `health.degraded` gathers the
+   non-nominal states (attitude-backup active, memory-rescued, warm-started, CC-less fallback) into
+   one ⚠ signal in the panel, so a glance shows the board is not flying clean. Board + control suites.
 
 **Spec'd and IMPLEMENTED 7/04 (specs/coludo.md; 47/47 on-board):**
 

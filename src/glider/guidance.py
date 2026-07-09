@@ -117,6 +117,25 @@ class Guidance:
         (SETTING/BOOSTING/DONE by default — no actuation under thrust / on the ground)."""
         return self._config.stages.get(stage)
 
+    def reachability(self, glide_ratio: float):
+        """Can the glider still glide to the zone from here? The reach = elevation × glide_ratio (how
+        far it can travel spending the current height at a nominal L/D); compare to the distance from
+        the live fix to the zone target. Returns {reachable, margin_m, distance_m}, or None with no
+        fix / zone / elevation. The operator's EARLY warning of an unreachable zone (flight panel) —
+        and the groundwork for a deliberate land-short decision instead of a doomed stretch."""
+        if self._mission is None or not self._mission.zone or self._elevation is None:
+            return None
+        elevation = self._elevation.value()          # baro height above the pad (m)
+        position, source, _age = self._position.read()
+        geometry = self._mission.geometry()
+        if elevation is None or position is None or source is None or geometry is None:
+            return None
+        target = geometry['target']
+        distance = navigation.distance(position[0], position[1], target[0], target[1])
+        reach = elevation * glide_ratio
+        return {'reachable': reach >= distance, 'margin_m': round(reach - distance),
+                'distance_m': round(distance)}
+
     def enter(self, heading: float, roll: fixnum, pitch: fixnum) -> None:
         """Entering a control stage (from a non-control one): capture the heading to hold blind and
         the rod-vertical attitude for the boost hold; invalidate the nav cache so the first

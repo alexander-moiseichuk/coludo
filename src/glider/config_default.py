@@ -321,6 +321,10 @@ def default() -> dict:
              # long) untouched up high. 0 -> off.
              'endgame_alt_m': 50,
              'final_approach_agl': 8, 'final_cross_gain': 3.0, 'final_intercept_deg': 45,
+             # reachability (flight panel): nominal glide ratio (L/D) -> reach = glide_ratio * elevation
+             # vs the distance to the zone -> 'zone reachable y/n'. Conservative default (the quality-2
+             # polar is ~2; a real airframe re-derives it from the first glide telemetry).
+             'glide_ratio': 3.0,
              # boost: BOOSTING holds the rod-vertical attitude captured at stage entry, but only once
              # PAST THE ROD (airspeed > boost_engage_speed m/s) -- the 3-point rod keeps it vertical and the
              # fins have no authority below that. The speed governor caps the throw the whole way up.
