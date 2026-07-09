@@ -28,7 +28,7 @@ except ImportError:  # CPython (tooling / off-board checks)
     ptr32 = int  # dummy so the shim'd @viper function's `ptr32` annotation evaluates (unused off-board)
 
 
-fixnum = int  # a scaled fixed-point integer (×SCALE); NOT a plain count and NOT a float
+fixnum = int  # a scaled fixed-point integer (×SCALE=100, centi-units); NOT a plain count and NOT a float
 SCALE: int = const(100)  # sub-units per unit -> fractional resolution 0.01 (centidegrees / centimetres / ...)
 
 _FRAC: int = len(str(SCALE - 1))  # fractional digits for to_str: 2 at SCALE 100, 3 at 1000
@@ -47,7 +47,7 @@ def to_float(scaled: fixnum) -> float:
     return scaled / SCALE
 
 
-def millis(value: fixnum) -> int:
+def to_millis(value: fixnum) -> int:
     """A fixnum (×SCALE) -> integer MILLI-units (×1000), independent of SCALE -- e.g. at SCALE=100 a
     centidegree fixnum becomes millidegrees. For telemetry/logs that fix a milli representation regardless
     of the control SCALE. Pure integer rescale (SCALE divides 1000), so no float is boxed."""
@@ -114,15 +114,43 @@ def _cordic_vec_opt(y: int, x: int, atan: ptr32) -> int:
 _cordic_vec = _cordic_vec_opt  # viper is safe on this firmware -> bind the optimised variant
 
 
-def atan2_cd(y: int, x: int) -> int:
-    """atan2(y, x) in CENTIDEGREES (fixnum), four-quadrant, via integer CORDIC -- NO float boxed. y and
-    x are any consistent integer unit (only the RATIO matters -- e.g. accel scaled x1000). Range
-    (-18000, 18000]; worst-case error ~17 cd (0.17 deg). CORDIC needs x >= 0, so x < 0 reflects into
-    the right half-plane and the 180 deg is added back per quadrant."""
+def atan2_cd(y: int, x: int) -> fixnum:
+    """atan2(y, x) as a CENTIDEGREE fixnum, four-quadrant, via integer CORDIC -- NO float boxed. y and x
+    are a RATIO-FREE integer direction vector: only their ratio sets the angle, and their MAGNITUDE only
+    trades precision (the CORDIC's right-shifts discard low bits, so bigger inputs keep more). Fed the
+    control's centi-fixnum scale (accel g via from_float, ~x100) the error is ~0.5 deg typical / 1.8 deg
+    worst over the glide envelope -- fine for the attitude backup; x1000 would tighten to ~0.16 deg if a
+    caller ever needs it. Range (-18000, 18000]. CORDIC needs x >= 0, so x < 0 reflects into the right
+    half-plane and the 180 deg is added back per quadrant."""
     if x >= 0:
         return _cordic_vec(y, x, _ATAN_CD) if (x or y) else 0  # (0, 0) is undefined -> 0
     base = _cordic_vec(y, -x, _ATAN_CD)
     return (18000 - base) if y >= 0 else (-18000 - base)
+
+
+def _blend_upy(state: int, delta: int, target: int, shift: int, correct: int) -> int:
+    """Reference: advance a filter state by `delta` (gyro integration), then, when `correct`, pull it
+    `1/2^shift` of the way toward `target` (the accel gravity angle) -- one complementary-filter step."""
+    state += delta
+    return state + ((target - state) >> shift) if correct else state
+
+
+@micropython.viper
+def _blend_opt(state: int, delta: int, target: int, shift: int, correct: int) -> int:
+    state = state + delta
+    if correct:
+        state = state + ((target - state) >> shift)
+    return state
+
+
+blend = _blend_opt  # viper is safe on this firmware -> bind the optimised variant
+
+
+def blend_cd(state: fixnum, delta: fixnum, target: fixnum, shift: int, correct: bool) -> fixnum:
+    """One complementary-filter step in centidegrees (viper): `state + delta` (gyro integration), then
+    optionally a `1/2^shift` pull toward `target` (the accel angle). Pure integer -> zero float boxed;
+    the attitude backup runs it per axis each control step (tasks/attitude.py)."""
+    return blend(state, delta, target, shift, 1 if correct else 0)
 
 
 def isqrt_upy(n: int) -> int:

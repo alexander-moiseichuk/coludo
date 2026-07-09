@@ -25,6 +25,7 @@ import inspector
 import mixer
 import pid
 import task
+import wind
 
 _STAGE = controller_mod.Stage
 
@@ -56,6 +57,15 @@ class Flight(task.Task):
         gnss_speed = databoard.Databoard.parameter('speed')  # GNSS ground speed (m/s) corrector
         self._governor = governor.Governor(governor.GovernorConfig(self.config), self._mixer,
                                            accel, gnss_speed, board.get('fin_limit_multiplier', 1.0))
+        # wind estimation (wind.py): the GNSS ground velocity vs the air velocity (airspeed × heading).
+        # Fed at ~GNSS rate (throttled off the hot loop); the loiter enables its airspeed-free average.
+        self._gnss_speed = gnss_speed
+        self._course = databoard.Databoard.parameter('course')  # GNSS ground-track bearing (deg)
+        self._wind = wind.WindEstimator(self.config.get('wind_triangle_alpha', 0.05))
+        self._wind_min_speed: float = self.config.get('wind_min_speed', 3.0)  # meaningful ground speed
+        # the wind estimator is fed once per NEW GNSS sample (see _step): track the course channel's last
+        # push stamp so it self-tunes to the receiver's rate (1/5/25 Hz) with no hardcoded feed period.
+        self._wind_stamp = None
         # the guidance law (guidance.py): per-stage setpoints + the three-tier heading resolution.
         # The default tier-1 freshness gate is the GNSS channels' own databoard windows (the same
         # point the databoard drops `source` to None), so it tracks the GNSS rate, not a magic number.
@@ -67,6 +77,7 @@ class Flight(task.Task):
         self._guidance = guidance.Guidance(guidance.GuidanceConfig(self.config, window_ms),
                                            self._mission, self._governor, position, agl, elevation)
         self._pitch_cd: int = 0  # last measured pitch (centidegrees) -> the governor's dive detector
+        self._glide_ratio: float = self.config.get('glide_ratio', 3.0)  # nominal L/D for the reach estimate
         self._active: bool = False  # in a control stage (PID engaged)
         self._stage = None  # the current control-stage name (for inspect)
         self._steps: int = 0  # control steps run (self-timing for load characterization)
@@ -111,9 +122,22 @@ class Flight(task.Task):
             return
         self._run_pid(roll, pitch, dt_ms)
         self._steps += 1
+        stamp = self._course.stamp()  # feed the wind estimator at the GNSS rate: once per new fix, no magic period
+        if stamp is not None and stamp != self._wind_stamp:
+            self._wind_stamp = stamp
+            self._feed_wind(heading)
         elapsed = time.ticks_diff(time.ticks_us(), start)
         if elapsed > self._max_step_us:
             self._max_step_us = elapsed
+
+    def _feed_wind(self, heading: float) -> None:
+        """One GNSS-rate wind update: the straight-flight triangle (ground velocity − airspeed × heading)
+        plus the in-turn min/max ground-speed method. Needs a fresh course + a meaningful ground speed
+        (a crawl gives a noisy course)."""
+        course = self._course.value()
+        speed = self._gnss_speed.value()
+        if course is not None and speed is not None and speed > self._wind_min_speed:
+            self._wind.update(course, speed, self._governor.airspeed(), heading)
 
     def _compute_dt(self, start: int) -> int:
         """Integer-ms slice since the last step, and stash self._dt (float s) for the governor's airspeed
@@ -208,10 +232,14 @@ class Flight(task.Task):
 
     def vitals(self) -> dict:
         """The live flight-panel readout (CC dashboard): the governor's airspeed estimate + the
-        dynamic-pressure fin-authority cap it set, and whether the control loop is engaged. Called at
-        the ~0.5 Hz health rate, so the airspeed float box is off the hot path."""
+        dynamic-pressure fin-authority cap it set, whether the control loop is engaged, and the
+        zone-reachability estimate (glide_ratio × elevation vs distance-to-zone). Called at the
+        ~0.5 Hz health rate, so the airspeed / nav-trig float boxes are off the hot path."""
+        wind_e, wind_n = self._wind.components()
+        reach = self._guidance.reachability(self._glide_ratio, wind_e, wind_n, self._governor.airspeed())
         return {'airspeed': round(self._governor.airspeed(), 1), 'fin_cap': self._governor.cap(),
-                'active': self._active}
+                'active': self._active, 'reach': reach,
+                'wind': {'speed': round(self._wind.speed(), 1), 'from': round(self._wind.direction())}}
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)

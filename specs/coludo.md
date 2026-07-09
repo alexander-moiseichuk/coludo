@@ -529,14 +529,16 @@ a phone hotspot or laptop is a convenience, never a dependency.
   **live fix** (not the stored pad) becomes the launch point — kept live until **arm**, which
   FREEZES the fix as the persistent launch point (so the tier-2 open-loop heading and the
   warm-start crumb's launch field survive a mid-flight fix loss; a CC-set position always wins).
-* **No site within 200 m → the spiral-landing fallback.** The mission SYNTHESIZES a zone centred
-  `fallback_offset_m` (default 50 m) from the launch fix at a configured bearing
-  (`fallback_bearing_deg` — the operator points it at the clear sector during setup), sized like
-  the standard strip. The existing bank-to-turn law then orbits that centre bleeding altitude —
-  the spiral landing emerges from the normal overshoot-orbit behaviour with zero new control
-  code. The +50 m offset keeps the orbit focus OFF the pad (people stand there). Not the safest
-  conceivable choice, but after ignition the alternatives are worse; the field brief must keep
-  the fallback sector clear.
+* **No site within 200 m → the spiral-landing fallback.** The mission SYNTHESIZES a GENEROUS box
+  the spiral just has to land INSIDE — we always know the pad, so this trades objective #3
+  (near-centre) for #2 (in-zone) and needs no tight midpoint: a `fallback_width_m` (100 m, the
+  WIDE side facing the pad — a broad left-to-right entrance) × `fallback_depth_m` (90 m) box, its
+  near edge `fallback_near_m` (50 m) out from the pad (people stand there), so the CENTRE sits
+  ~95 m off at `fallback_bearing_deg` (the operator points it at the clear sector). The existing
+  bank-to-turn law orbits that centre bleeding altitude — the spiral landing emerges from the
+  normal overshoot-orbit behaviour with zero new control code, and the ~55 m turn-radius-limited
+  endgame miss fits the ±50 m box. Axis-aligned (an emergency orbit cares about the centre, not
+  orientation). The field brief must keep the fallback sector clear.
 * **Arming without CC** — `auto_arm` in launch.config (default OFF): arm once GNSS has a fix AND
   the board has been stationary (|a| ≈ 1 g sustained) for `auto_arm_dwell_s` (60 s) after boot.
   The long dwell makes a bench arm unlikely; the flight loop's control-stage gating still holds
@@ -645,12 +647,20 @@ the BNO055 while that is fresh (warm, so the handoff has no transient), and **fr
 the BNO055 is lost: gyro integration for the short-term motion, with the accel gravity vector
 re-anchoring roll/pitch (drift-free) — but **gated off in turns** (`turn_gate` on the yaw rate),
 because in a coordinated turn the accelerometer reads gravity+centripetal down the body axis and
-would look wings-level at any bank; there the gyro carries the true bank. Heading is gyro-z only (it
-drifts — the LSM6DSO32 has no magnetometer), so nav heading degrades gracefully while roll/pitch stay
-solid and the glider holds bank + pitch. All-integer (an integer-CORDIC `atan2` + `isqrt` in
-`fixed.py`, viper, no float boxed but the heading the channel requires). Validated closed-loop on the
-board (`tools/attitude_soak.py` drops the sim attitude mid-glide): the backup tracks truth to ~1°
-roll / ~0.5° pitch through the loiter and flies the descent to a controlled landing on its own.
+would look wings-level at any bank; there the gyro carries the true bank. Heading (yaw) has no
+magnetometer, so it gyro-integrates — but when moving it is pulled toward the **GNSS ground-track
+bearing** (`course`, a weak `course_shift` blend gated on ground speed), an absolute reference that
+bounds the drift; and the track is what the nav steers by anyway, so a crosswind crab averages out.
+So nav heading degrades gracefully while roll/pitch stay
+solid and the glider holds bank + pitch. All-integer (`fixed.atan2_cd` + `isqrt` + `blend_cd`, viper,
+no float boxed but the heading the channel requires); the accel gravity vector feeds the CORDIC at the
+control's centi-fixnum scale (via `from_float`, one scale everywhere — no separate milli type), which
+costs **~0.5° typical / ~1.8° worst** attitude vs a finer ×1000 scaling's 0.16° — a deliberate trade:
+the error is a *bounded bias* (it settles, does not accumulate — each `atan2` is independent and the
+filter re-anchors), it is re-synced by the accel anchor + BNO055 recovery, and 1.8° is well inside both
+the BNO055's own ~1–2° and the ≤300 m / ≤1500 m flight envelope. Validated closed-loop on the board
+(`tools/attitude_soak.py` drops the sim attitude mid-glide): the backup tracks truth to ~1° roll (×1000)
+/ ~1.8° roll (×100) and ≤0.7° pitch through the loiter, flying the descent to a controlled landing.
 
 ## Tasks
 

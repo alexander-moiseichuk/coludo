@@ -33,6 +33,7 @@ async def amain():
 
     comp = {'name': 'attitude', 'activity': 'attitude', 'period_ms': 20, 'accel_period_ms': 0,
             'corr_shift': 2, 'grav_low_g': 0.7, 'grav_high_g': 1.3, 'turn_gate_deg_s': 4,
+            'course_gate_mps': 5.0, 'course_shift': 2,  # fast blend for the test (default 5 is weaker)
             'provides': {'attitude': {'priority': 1, 'timeout_ms': 40}}}
     unit = attitude.Attitude('attitude', comp, _Stub())
     assert await unit.setup() is True
@@ -60,7 +61,9 @@ async def amain():
     unit._roll_cd = unit._pitch_cd = 0
     for _ in range(40):
         unit._integrate(20)
-    assert abs(unit._roll_cd - 3000) <= 30 and abs(unit._pitch_cd) <= 30, (unit._roll_cd, unit._pitch_cd)
+    # tolerance 100 cd (1 deg): the accel->angle runs at the control's centi-fixnum scale (from_float),
+    # ~0.5 deg typical / <2 deg worst over the glide envelope (coludo.md) -- fine for the backup
+    assert abs(unit._roll_cd - 3000) <= 100 and abs(unit._pitch_cd) <= 100, (unit._roll_cd, unit._pitch_cd)
 
     # a HIGH-g reading (boost/manoeuvre) is REJECTED -- gravity vector untrustworthy, no correction
     accel_ch.push((0.0, 3.0, 3.0))  # |a| ~ 4.2 g, well outside the band
@@ -78,7 +81,32 @@ async def amain():
     rate_ch.push((0, 0, 100))        # yaw rate 1 deg/s -> straight-ish -> accel re-anchors toward level
     for _ in range(40):
         unit._integrate(20)
-    assert abs(unit._roll_cd) <= 30  # gravity vector now pulls roll back to ~0
+    assert abs(unit._roll_cd) <= 100  # gravity vector now pulls roll back to ~0 (centi-scale tolerance)
+
+    # YAW from the GNSS course: moving, the gyro-integrated yaw pulls toward the ground track (an
+    # absolute reference -- no magnetometer); below the speed gate the course is ignored (gyro-only)
+    course_ch, speed_ch = databoard.Databoard.provide(
+        'gps', {'course': {'priority': 0, 'timeout_ms': 100000}, 'speed': {'priority': 0, 'timeout_ms': 100000}},
+        'course', 'speed')
+    accel_ch.push(_accel_for(0, 0))  # level -> roll/pitch settle at 0, isolate the yaw behaviour
+    rate_ch.push((0, 0, 0))
+    course_ch.push(90.0)
+    speed_ch.push(14.0)               # moving -> course is meaningful
+    unit._yaw_cd = 0
+    for _ in range(40):
+        unit._integrate(20)
+    assert abs(((unit._yaw_cd - 9000 + 18000) % 36000) - 18000) <= 100  # yaw pulled to the ~90 deg track
+    # below the speed gate the course is ignored -> pure gyro (here 0) holds
+    speed_ch.push(1.0)
+    unit._yaw_cd = 4500
+    unit._integrate(20)
+    assert unit._yaw_cd == 4500  # no gyro motion + course gated off -> yaw unchanged
+    # the wrap is handled: track just past north pulls a near-360 yaw forward, not backward
+    speed_ch.push(14.0)
+    course_ch.push(2.0)
+    unit._yaw_cd = 35800  # 358 deg -> the +4 deg error must nudge it UP through 360, not down
+    unit._integrate(20)
+    assert unit._yaw_cd > 35800 or unit._yaw_cd < 200  # moved toward 360/0, not toward 358-... backward
 
     # publish format matches the BNO055 slot: (heading FLOAT deg, roll cd, pitch cd). Let the
     # priority-0 primary (timeout 40 ms) go stale so the backup's priority-1 push is the fused winner.

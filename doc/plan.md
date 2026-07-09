@@ -224,11 +224,13 @@ control change.
    `fixed.py`** (viper, ~0.17° over 12 iterations, zero float boxed); the only float is the heading
    the channel format requires. The accel gravity correction is gated OFF in turns (`turn_gate` on
    yaw rate) — in a coordinated turn the accel points down the body axis (looks level at any bank),
-   so the gyro carries the bank and the accel only re-anchors in straight-ish flight. Heading is
-   gyro-z only (drifts — no magnetometer); roll/pitch stay solid. **Validated closed-loop on the
-   board** (`tools/attitude_soak.py`: drop the sim attitude mid-glide): handover is seamless, the
-   backup tracks truth to ~1° roll / ~0.5° pitch through the loiter, and the flight reaches DONE
-   flown entirely on the backup. The single biggest stability win on the table — done.
+   so the gyro carries the bank and the accel only re-anchors in straight-ish flight. Heading (yaw)
+   gyro-integrates (no magnetometer) but is pulled toward the **GNSS ground-track** (`course`) when
+   moving — an absolute reference that bounds the drift (7/08 #3); roll/pitch stay solid. **Validated
+   closed-loop on the board** (`tools/attitude_soak.py`: drop the sim attitude mid-glide): handover is
+   seamless, the backup tracks truth to ~1° roll (×1000) / ~1.8° roll (×100 fixnum) / ≤0.7° pitch
+   through the loiter, and the flight reaches DONE flown entirely on the backup. The single biggest
+   stability win on the table — done.
 5. ✅ **Steering noise filter** (7/06) — `guidance._filter_error()`: an all-integer EMA on the
    heading error (state ×16 fixed, `steer_filter_shift` 3 = alpha 1/8, τ ≈ 80 ms @ 100 Hz; a
    > 90° jump — an overfly flip, a law handover — resets the state so steering follows at once;
@@ -249,13 +251,38 @@ control change.
    E16 in-zone at 25 % noise, fin travel −56 %); wind ≥ 6 m/s physics-bounded (launch wind limit
    rule, coludo.md). ✅ **Step 3 on-board confirmation DONE (7/07, `doc/sims/TMS-7-attitude`)** —
    the tuned loiter law flown on the board, in-zone all four (E16/F15 × full/light, miss 52–61 m);
-   provenance caveat: the host set's 17–18 m near-midpoint does not fully reproduce at `inject_hz=25`
-   (in-zone yes, near-midpoint not always — a real endgame-tuning datum). Remaining: **step 5 the
-   field trim procedure (FIELD-GATED** — the real trim pitch and polar quality come from the first
-   glide telemetry, nothing more to do on the bench).
-7. **Reachability telemetry** — live glide-ratio estimate vs zone distance ("zone reachable: y/n") in
-   telemetry; the operator sees an unreachable zone early, and it is the groundwork for a deliberate
-   land-short decision later.
+   provenance caveat: board misses run 52–61 m vs the host's 17–18 m. **Root cause found (7/08):**
+   the miss is almost entirely ALONG the strip's long axis (N–S tight ±2–20 m), because the endgame
+   spiral commands a radius below the physical **minimum turn radius** (~20 m at the 45° bank limit,
+   `v²/(g·tanφ)`) so it cannot collapse tighter than ~20 m, and the final-approach centreline tracker
+   then lands the glider along the strip. NOT a nav-recompute-rate issue (a faster endgame
+   `nav_period` was measured — no change, reverted). Objective #2 (in-zone) is met; tightening #3
+   (midpoint) needs a final-approach redesign (aim at the midpoint) — a scoped future control task.
+   **For the CC-less case this is moot (7/08):** the fallback zone is now a GENEROUS 100 × 90 m box
+   the spiral just lands INSIDE (validated: 31.8 m from centre, in-box) — objective #2 over #3, no
+   tight midpoint needed. Remaining: **step 5 the field trim procedure (FIELD-GATED**).
+7. ✅ **Reachability telemetry** (7/08) — `guidance.reachability(glide_ratio, wind_e, wind_n, airspeed)`:
+   reach = `glide_ratio` × elevation, WIND-ADJUSTED by the component along the bearing to target
+   (`reach × (1 + w_along/airspeed)`; tailwind extends, headwind shrinks), vs the distance from the live
+   fix to the zone target → {reachable, margin_m, distance_m, headwind_mps}, on the flight-panel
+   heartbeat via `flight.vitals()`. The dashboard shows **zone ✓ +Nm** (green) / **zone ✗ −Nm** (red) so
+   the operator sees an unreachable zone early — groundwork for a deliberate land-short decision.
+   `glide_ratio` config (nominal L/D, default 3.0, field-tuned from real glide telemetry). Plus
+   **degraded-mode annunciation**: `health.degraded` gathers the non-nominal states (attitude-backup
+   active, memory-rescued, warm-started, CC-less fallback) into one ⚠ signal in the panel, so a glance
+   shows the board is not flying clean. Board + control suites.
+7b. ✅ **Wind estimation** (7/09, wishes #6 — `wind.py`) — the MINIMAL wind triangle (`wind =
+   ground_velocity − airspeed × heading`, EMA-smoothed), fed once per NEW GNSS fix off
+   `databoard.Parameter.stamp()` (self-tunes to the receiver rate 1/5/25 Hz, wrap-safe — no magic
+   period; replaces a `ticks_diff(start, 0)` throttle that silently died once board uptime passed 2^29 µs
+   ~9 min). On the flight panel + feeding the reachability headwind. HITL-validated: tracks a 6 m/s
+   crosswind to ~0.5 m/s in slow/wide/straight flight (collapses in the tight loiter — EMA smear — but
+   that is off both use points). The airspeed-free min/max-ground-speed method was built then STRIPPED
+   as premature. Also fixed sim fidelity: the HITL GNSS `speed` was 3D airspeed, now 2D ground speed WITH
+   wind (`sim_model.ground_speed()`). **Final-approach CRAB DECLINED on data**: wind_soak touchdown miss
+   is IDENTICAL closest-approach with/without wind (~15 m — the position feedback already rejects steady
+   wind); the +15 m touchdown growth is free-drift in the last low-authority descent (≈ wind × descent
+   time), which a controlled-approach crab cannot fix. Board suite green (49/49).
 
 **Spec'd and IMPLEMENTED 7/04 (specs/coludo.md; 47/47 on-board):**
 

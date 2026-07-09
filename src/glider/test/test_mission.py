@@ -225,16 +225,22 @@ def test_sites_and_fallback():
     # a fix 1 km away: nothing within max_range_m -> None, the zone is untouched
     before = launch.zone
     assert launch.select_site((48.0090, 11.0)) is None and launch.zone == before
-    # fallback: a zone synthesized 50 m NORTH of the fix (bearing 0), centred off the pad
+    # fallback: a GENEROUS 100 m (wide, E-W) x 90 m (deep, N-S) box NORTH of the fix (bearing 0),
+    # near edge 50 m out (safety), centre near+depth/2 = 95 m from the pad
+    import navigation
     fix = (48.0, 11.0)
-    zone = launch.fallback_zone(fix, bearing_deg=0.0, offset_m=50.0)
+    zone = launch.fallback_zone(fix, bearing_deg=0.0, near_m=50.0, width_m=100.0, depth_m=90.0)
     assert launch.site == 'fallback' and launch.zone == zone
     centre_lat = (zone[0][0] + zone[1][0]) / 2
     centre_lon = (zone[0][1] + zone[1][1]) / 2
-    import navigation
-    span = navigation.distance(fix[0], fix[1], centre_lat, centre_lon)
-    assert abs(span - 50.0) < 1.0  # the orbit focus sits ~50 m from the pad, not on it
+    assert abs(navigation.distance(fix[0], fix[1], centre_lat, centre_lon) - 95.0) < 1.0  # centre ~95 m N
     assert centre_lat > fix[0] and abs(centre_lon - fix[1]) < 1e-9  # due north
+    # near edge (south) ~50 m from the pad; box ~90 m deep (N-S) x ~100 m wide (E-W)
+    near = navigation.distance(fix[0], fix[1], zone[1][0], centre_lon)  # BR lat = south edge
+    assert abs(near - 50.0) < 1.0
+    depth = navigation.distance(zone[0][0], centre_lon, zone[1][0], centre_lon)
+    width = navigation.distance(centre_lat, zone[0][1], centre_lat, zone[1][1])
+    assert abs(depth - 90.0) < 1.0 and abs(width - 100.0) < 1.0
     assert navigation.inside((centre_lat, centre_lon), zone[0], zone[1])
     _cleanup()
 

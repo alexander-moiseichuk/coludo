@@ -15,6 +15,8 @@
 # degrees) INSTANCE SLOTS rather than a returned tuple — decomposed WITHOUT adding a per-step heap
 # allocation (GC is off in flight).
 
+import math
+
 import commons
 import controller as controller_mod
 import fixed
@@ -116,6 +118,34 @@ class Guidance:
         """The configured attitude setpoint dict for `stage`, or None when it is not a CONTROL stage
         (SETTING/BOOSTING/DONE by default — no actuation under thrust / on the ground)."""
         return self._config.stages.get(stage)
+
+    def reachability(self, glide_ratio: float, wind_e: float = 0.0, wind_n: float = 0.0,
+                     airspeed: float = 0.0):
+        """Can the glider still glide to the zone from here? The still-air reach = elevation × glide_ratio
+        (how far it travels spending the current height at a nominal L/D). The wind component ALONG the
+        bearing to target scales the GROUND range -- ground_range = reach × (1 + w_along/airspeed): a
+        tailwind toward the zone extends it, a headwind shrinks it. Compared to the distance from the live
+        fix to the zone target. Returns {reachable, margin_m, distance_m, headwind_mps}, or None with no
+        fix / zone / elevation. The operator's EARLY warning of an unreachable zone (flight panel) — and
+        the groundwork for a deliberate land-short decision instead of a doomed stretch."""
+        if self._mission is None or not self._mission.zone or self._elevation is None:
+            return None
+        elevation = self._elevation.value()          # baro height above the pad (m)
+        position, source, _age = self._position.read()
+        geometry = self._mission.geometry()
+        if elevation is None or position is None or source is None or geometry is None:
+            return None
+        target = geometry['target']
+        distance = navigation.distance(position[0], position[1], target[0], target[1])
+        reach = elevation * glide_ratio
+        headwind = 0.0
+        if airspeed > 0.0:  # project the wind onto the bearing to target (+ = tailwind, extends the reach)
+            bearing_r = math.radians(navigation.bearing(position[0], position[1], target[0], target[1]))
+            along = wind_e * math.sin(bearing_r) + wind_n * math.cos(bearing_r)
+            reach *= max(0.0, 1.0 + along / airspeed)
+            headwind = -along                        # report the HEADWIND (opposing) component, signed
+        return {'reachable': reach >= distance, 'margin_m': round(reach - distance),
+                'distance_m': round(distance), 'headwind_mps': round(headwind, 1)}
 
     def enter(self, heading: float, roll: fixnum, pitch: fixnum) -> None:
         """Entering a control stage (from a non-control one): capture the heading to hold blind and

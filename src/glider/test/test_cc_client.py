@@ -119,6 +119,9 @@ async def amain():
 
     # the live flight panel: with a controller reporting a flight task, health carries its vitals
     # (airspeed / fin cap / active) + agl for the dashboard glance
+    _VITALS = {'airspeed': 14.2, 'fin_cap': 30, 'active': True,
+               'reach': {'reachable': True, 'margin_m': 120, 'distance_m': 40}}
+
     class _FlightTask:
         name = 'flight'
 
@@ -126,10 +129,11 @@ async def amain():
             return True
 
         def vitals(self):
-            return {'airspeed': 14.2, 'fin_cap': 30, 'active': True}
+            return _VITALS
 
     class _FlightController:
         armed = True
+        warm_started = True  # a degraded state -> annunciated
         failures = {}
 
         def stage_name(self):
@@ -140,8 +144,12 @@ async def amain():
 
     sd_flight = cc_client.create_dispatcher(config_default.default(), controller=_FlightController())
     panel = json.loads(cc.parse(await sd_flight.handle('health')).args[0])
-    assert panel['armed'] is True and panel['flight'] == {'airspeed': 14.2, 'fin_cap': 30, 'active': True}
+    assert panel['armed'] is True and panel['flight'] == _VITALS  # airspeed / fin cap / reach ride along
     assert 'agl' in panel  # low-altitude laser AGL rides the same heartbeat
+    # degraded-mode annunciation: warm-started (from the controller flag) is surfaced
+    assert 'warm-started' in panel['degraded']
+    # a clean board (no controller) reports an empty degraded list
+    assert json.loads(cc.parse(await sd.handle('health')).args[0])['degraded'] == []
 
     # get-config launch returns the editable launch.config (persisted fields only, no computed geometry)
     got = json.loads(cc.parse(await sd.handle('get-config launch')).args[0])

@@ -46,6 +46,13 @@ class _StubMission:
     def launch_point(self):
         return self._launch
 
+    def geometry(self):
+        if self.zone is None:
+            return None
+        import navigation
+        target, _gate_a, _gate_b = navigation.zone(self.zone[0], self.zone[1])
+        return {'target': target}
+
 
 def _build(config=None, zone=_ZONE, launch=None, airspeed=0.0):
     """A guidance unit over fresh stubs; returns (guidance, position, agl, governor)."""
@@ -262,6 +269,37 @@ def test_hold_law():
     assert unit.heading_error == 10  # vs the captured 100, not the zone
 
 
+def test_reachability():
+    """reach = glide_ratio × elevation vs distance-to-zone -> reachable y/n + margin; None when a fix,
+    zone, or elevation is missing (the flight panel's zone-reachable signal)."""
+    position = _PositionHandle()
+    elevation = _AglHandle(100.0)  # 100 m above the pad
+    unit = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(_ZONE),
+                             _StubGovernor(), position, _AglHandle(), elevation)
+    assert unit.reachability(3.0) is None  # no fix yet -> None
+    position.reading = ((48.0005, 11.005), 'gnss', 0)  # near the zone centre
+    good = unit.reachability(3.0)  # 100 m × 3 = 300 m reach, near the zone -> reachable with margin
+    assert good['reachable'] is True and good['margin_m'] > 0 and good['distance_m'] >= 0
+    position.reading = ((48.020, 11.005), 'gnss', 0)  # ~1.7 km north of the zone -> target is SOUTH
+    far = unit.reachability(3.0)  # 300 m reach << ~1700 m distance -> not reachable, negative margin
+    assert far['reachable'] is False and far['margin_m'] < 0
+    assert far['headwind_mps'] == 0.0  # no airspeed passed -> no wind adjustment
+    # headwind adjustment: flying south to the zone, a NORTH-blowing wind opposes (headwind, shrinks the
+    # reach); a SOUTH-blowing wind helps (tailwind, extends it) -- still air brackets the two
+    head = unit.reachability(3.0, 0.0, 8.0, 14.0)   # wind toward the north = away from target -> headwind
+    tail = unit.reachability(3.0, 0.0, -8.0, 14.0)  # wind toward the south = toward target -> tailwind
+    assert tail['margin_m'] > far['margin_m'] > head['margin_m']
+    assert head['headwind_mps'] > 0.0 > tail['headwind_mps']  # headwind positive, tailwind negative
+    # missing elevation -> None (can't estimate reach)
+    blind = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(_ZONE),
+                              _StubGovernor(), position, _AglHandle(), _AglHandle(None))
+    assert blind.reachability(3.0) is None
+    # no zone -> None
+    nozone = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(None),
+                               _StubGovernor(), position, _AglHandle(), elevation)
+    assert nozone.reachability(3.0) is None
+
+
 test_heading_error()
 test_control_stage_gate()
 test_boost_hold()
@@ -271,6 +309,7 @@ test_bank_to_turn()
 test_final_approach()
 test_loiter_and_endgame_spiral()
 test_steering_filter()
+test_reachability()
 test_hold_law()
 print('ok: guidance -- stage gate, boost hold, GPS tiers + nav cache, bank-to-turn, loiter orbit + '
-      'endgame spiral, final approach, hold law')
+      'endgame spiral, final approach, reachability, hold law')

@@ -195,20 +195,23 @@ class Mission(inspector.Inspectable):
         self.site, self.zone = best
         return best[0]
 
-    def fallback_zone(self, fix: tuple, bearing_deg: float = 0.0, offset_m: float = 50.0,
-                      length_m: float = 100.0, width_m: float = 40.0) -> tuple:
-        """The spiral-landing fallback (spec): no known site in range after ignition is already
-        committed -> synthesize and ADOPT a zone centred `offset_m` from the launch fix at
-        `bearing_deg` (the operator's clear sector). The offset keeps the orbit focus OFF the pad
-        (people stand there); the existing bank-to-turn overshoot orbit does the spiral with zero
-        new control code. The box is axis-aligned (long axis east-west): the gates land on its
-        short sides either way, and an emergency orbit cares about the CENTRE, not runway
-        orientation. Returns the adopted zone."""
-        lat = fix[0] + offset_m * math.cos(math.radians(bearing_deg)) / commons.M_PER_DEG
-        lon = fix[1] + offset_m * math.sin(math.radians(bearing_deg)) / (
+    def fallback_zone(self, fix: tuple, bearing_deg: float = 0.0, near_m: float = 50.0,
+                      width_m: float = 100.0, depth_m: float = 90.0) -> tuple:
+        """The spiral-landing fallback (spec, simplified 7/08): no known site in range after ignition
+        is already committed -> synthesize and ADOPT a GENEROUS box the spiral just has to land
+        INSIDE. We always know the pad, so precise midpoint accuracy is not needed here -- objective
+        #2 (in-zone) over #3 (near-centre); the ~55 m endgame miss (turn-radius-limited) fits a
+        ±50 m box. The box's WIDE (width_m) side faces the pad -- a broad left-to-right entrance --
+        its NEAR edge `near_m` out (people stand at the pad), running `depth_m` away; the CENTRE is
+        `near_m + depth_m/2` from the fix at `bearing_deg` (the operator's clear sector). Axis-aligned
+        (an emergency orbit cares about the CENTRE, not orientation; the default north clear sector
+        puts the wide side across the pad). Returns the adopted zone."""
+        centre = near_m + depth_m / 2.0
+        lat = fix[0] + centre * math.cos(math.radians(bearing_deg)) / commons.M_PER_DEG
+        lon = fix[1] + centre * math.sin(math.radians(bearing_deg)) / (
             commons.M_PER_DEG * math.cos(math.radians(fix[0])))
-        half_lat = (width_m / 2.0) / commons.M_PER_DEG
-        half_lon = (length_m / 2.0) / (commons.M_PER_DEG * math.cos(math.radians(lat)))
+        half_lat = (depth_m / 2.0) / commons.M_PER_DEG                                  # along the bearing
+        half_lon = (width_m / 2.0) / (commons.M_PER_DEG * math.cos(math.radians(lat)))  # the wide side
         self.site = 'fallback'
         self.zone = ((lat + half_lat, lon - half_lon), (lat - half_lat, lon + half_lon))
         return self.zone

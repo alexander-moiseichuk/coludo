@@ -38,8 +38,8 @@ class _StubMission:
         self.zone = ((48.001, 11.0), (48.0, 11.001))
         return 'hit'
 
-    def fallback_zone(self, fix, bearing_deg, offset_m):
-        self.fallback = (fix, bearing_deg, offset_m)
+    def fallback_zone(self, fix, bearing_deg, near_m, width_m, depth_m):
+        self.fallback = (fix, bearing_deg, near_m, width_m, depth_m)
         self.zone = ((48.001, 11.0), (48.0, 11.001))
         return self.zone
 
@@ -67,13 +67,14 @@ async def amain():
 
     # no site in range -> the fallback zone is synthesized from the fix + configured sector
     miss_ctrl = _StubController()
-    miss = field.Field('field', {'fallback_bearing_deg': 90.0, 'fallback_offset_m': 60.0}, miss_ctrl)
+    miss = field.Field('field', {'fallback_bearing_deg': 90.0, 'fallback_near_m': 60.0,
+                                  'fallback_width_m': 100.0, 'fallback_depth_m': 90.0}, miss_ctrl)
     assert await miss.setup() is True
     miss._mission = _StubMission(site_hit=False)
     miss._site_done = False
     position.push((48.0, 11.0))
     miss._tick(0)
-    assert miss._mission.fallback == ((48.0, 11.0), 90.0, 60.0)
+    assert miss._mission.fallback == ((48.0, 11.0), 90.0, 60.0, 100.0, 90.0)  # fix, bearing, near, width, depth
 
     # auto-arm: stationary + live fix for the WHOLE dwell; motion or a lost fix restarts it; a
     # missing zone blocks it outright (a blind flight is a human decision)

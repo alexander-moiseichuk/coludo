@@ -157,12 +157,28 @@ def _register_identity(dispatcher, ctx) -> None:
         agl = databoard.Databoard.parameter('agl')  # low-altitude laser AGL -> the flight panel
         if agl is not None:
             info['agl'] = agl.value()
+        # degraded-mode annunciation: the non-nominal states, gathered into one operator signal so a
+        # glance shows the board is NOT flying clean (attitude on the backup, memory rescued, warm
+        # restart, CC-less fallback zone). Empty list = nominal.
+        degraded = []
+        attitude = databoard.Databoard.parameter('attitude')
+        if attitude is not None and attitude.read()[1] == 'attitude':  # fused source IS the backup
+            degraded.append('attitude-backup')
+        health = inspector.Inspector.get('health')
+        if getattr(health, 'rescues', 0) > 0:
+            degraded.append('memory-rescued')
+        mission = inspector.Inspector.get('mission')
+        if mission is not None and mission.site == 'fallback':
+            degraded.append('cc-less-fallback')
         if ctx.controller is not None:
             info['armed'] = ctx.controller.armed
-            flight = ctx.controller.active('flight')  # live flight panel: airspeed + fin cap + engaged
+            if getattr(ctx.controller, 'warm_started', False):
+                degraded.append('warm-started')
+            flight = ctx.controller.active('flight')  # live flight panel: airspeed + fin cap + reach
             if flight is not None and hasattr(flight, 'vitals'):
                 info['flight'] = flight.vitals()
             info['tasks'] = [{'name': t.name, 'ok': t.validate()} for t in ctx.controller.active()]
+        info['degraded'] = degraded
         return cc.build('ok', [json.dumps(info)])
 
     dispatcher.on('whoami', whoami)

@@ -85,7 +85,8 @@ class Hitl(task.Task):
                             'altitude': scenario['elevation_m'], 'zone': scenario['zone']})
         # provide the sim's sensor quantities to the databoard (priority 0 -> the control code reads these)
         provided = {q: {'priority': 0, 'timeout_ms': 1000} for q in
-                    ('accel', 'attitude', 'rate', 'agl', 'altitude', 'elevation', 'position', 'speed')}
+                    ('accel', 'attitude', 'rate', 'agl', 'altitude', 'elevation', 'position', 'speed',
+                     'course')}
         self._ch = databoard.Databoard.provide(self.name, provided)
         # attitude-redundancy validation: a runner flips this True mid-glide to simulate a BNO055 death
         # (stop publishing the sim `attitude`); accel + rate keep flowing, so the priority-1 attitude
@@ -137,9 +138,10 @@ class Hitl(task.Task):
         baro_n = n * _BARO_NOISE_SCALE
         altitude = _noisy(body.elev0 + body.alt, baro_n, -100.0, 10000.0)
         elevation = _noisy(body.alt, baro_n, -100.0, 10000.0)  # altitude above the pad (= altitude - elev0)
-        speed = _noisy((body.vu * body.vu + body.speed * body.speed) ** 0.5, n, 0.0, 200.0)  # true airspeed
+        speed = _noisy(body.ground_speed(), n, 0.0, 200.0)  # GNSS ground speed (2D, WITH wind) -> governor + wind
         agl_clean = max(0.0, body.alt)
         position = body.position()
+        course = _noisy(body.track(), n, 0.0, 360.0)  # ground-track bearing -> attitude-backup yaw ref
         # databoard -> the control loop. roll/pitch are centidegree fixnum for the fixed-point PID (heading
         # stays float for the nav trig); the sim's float physics wraps to fixnum once, here at the boundary.
         self._ch['accel'].push((accel[0], accel[1], accel[2]))
@@ -159,6 +161,7 @@ class Hitl(task.Task):
         self._ch['elevation'].push(elevation)
         self._ch['position'].push(position)
         self._ch['speed'].push(speed)
+        self._ch['course'].push(course)
         # telemetry -> the Luckfox (decimate_us rate-limits each stream so this can run every step)
         self._tlm_accel.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3)))
         self._tlm_imu.push((round(heading, 1), round(roll, 1), round(pitch, 1)))
