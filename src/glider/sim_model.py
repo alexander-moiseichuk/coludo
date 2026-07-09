@@ -142,6 +142,14 @@ class Body:
         lon = self.lon0 + self.pe / (commons.M_PER_DEG * math.cos(math.radians(self.lat0)))
         return (lat, lon)
 
+    def track(self) -> float:
+        """Ground-track bearing (deg) -- the direction the glider MOVES over the ground: air velocity
+        along the heading PLUS the wind. In no wind it equals the heading; a crosswind adds a crab
+        angle. This is what a GNSS receiver reports as course (the attitude backup's absolute yaw ref)."""
+        east = self.speed * math.sin(math.radians(self.heading)) + self.wind_e
+        north = self.speed * math.cos(math.radians(self.heading)) + self.wind_n
+        return math.degrees(math.atan2(east, north)) % 360.0 if (east or north) else self.heading % 360.0
+
     def sensors(self) -> dict:
         """Clean (pre-noise) sensor readings from the current state."""
         return {

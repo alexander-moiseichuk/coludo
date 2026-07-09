@@ -70,8 +70,10 @@ class Gnss(task.Task):
         self._uart = UART(bus_id, baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
         self._reader = asyncio.StreamReader(self._uart)
         await self._configure(self.config.get('hz', 1))
-        self._position, self._altitude, self._elevation, self._speed = databoard.Databoard.provide(
-            self.name, self.config.get('provides', {}), 'position', 'altitude', 'elevation', 'speed')
+        (self._position, self._altitude, self._elevation, self._speed,
+         self._course) = databoard.Databoard.provide(
+            self.name, self.config.get('provides', {}),
+            'position', 'altitude', 'elevation', 'speed', 'course')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('lat', 'lon', 'speed_kn', 'course'),
                                        decimate_us=self.config.get('telemetry_us', 0))
         self._fix: bool = False
@@ -102,6 +104,8 @@ class Gnss(task.Task):
                 speed = float(fields[7]) if fields[7] else 0.0  # knots (RMC field 7)
                 course = float(fields[8]) if fields[8] else 0.0
                 self._speed.push(speed * _KNOTS_TO_MS)  # m/s -> airspeed governor corrector (fix-gated)
+                if fields[8]:  # ground-track bearing (deg) -> the attitude backup's absolute yaw ref
+                    self._course.push(course)
                 self._telemetry.push((latitude, longitude, speed, course))
         elif kind == 'GGA' and len(fields) > 9:
             # signal quality (parsed even with no altitude yet): fix quality, satellites used, HDOP --

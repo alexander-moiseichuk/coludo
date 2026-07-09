@@ -38,6 +38,8 @@ class Attitude(task.Task):
         self._accel_period_us: int = cfg.get('accel_period_ms', 50) * 1000  # accel correction throttle
         self._corr_shift: int = cfg.get('corr_shift', 4)  # accel pull = err >> shift (4 -> 1/16 per step)
         self._turn_gate: int = int(cfg.get('turn_gate_deg_s', 4) * fixed.SCALE)  # |yaw rate| cd/s -> gate accel
+        self._course_gate: float = cfg.get('course_gate_mps', 5.0)  # min ground speed for a meaningful course
+        self._course_shift: int = cfg.get('course_shift', 5)  # yaw pull toward the GNSS track (weak: 1/32)
         # trust the accel gravity vector only near 1 g -- store the squared centi-g band (no per-cycle sqrt)
         low = fixed.from_float(cfg.get('grav_low_g', 0.7))    # g -> centi-g fixnum (the standard boundary)
         high = fixed.from_float(cfg.get('grav_high_g', 1.3))
@@ -53,6 +55,8 @@ class Attitude(task.Task):
         self._attitude_param = databoard.Databoard.parameter('attitude')  # the FUSED attitude (source check)
         self._accel = databoard.Databoard.parameter('accel')
         self._rate = databoard.Databoard.parameter('rate')
+        self._course = databoard.Databoard.parameter('course')  # GNSS ground-track bearing -> absolute yaw
+        self._speed = databoard.Databoard.parameter('speed')    # ground speed -> course only when moving
         self._attitude = databoard.Databoard.provide(self.name, cfg.get('provides', {}), 'attitude')
         self._ok = True
         return True
@@ -83,7 +87,15 @@ class Attitude(task.Task):
             pitch_d = rate[1] * dt_ms // 1000
             yaw_d = rate[2] * dt_ms // 1000
             turning = abs(rate[2]) > self._turn_gate  # |yaw rate| -> coordinated-turn detector
-        self._yaw_cd = fixed.blend_cd(self._yaw_cd, yaw_d, 0, 0, False)  # yaw: gyro-only (no absolute ref)
+        # yaw: gyro-integrate (wrapped), then pull toward the GNSS ground track when moving -- an
+        # ABSOLUTE reference that bounds the gyro drift (no magnetometer), and it is the TRACK, which is
+        # what the nav steers by anyway. Weak blend (course_shift) so a crosswind crab averages out.
+        self._yaw_cd = (self._yaw_cd + yaw_d) % 36000
+        course = self._course.value()
+        speed = self._speed.value()
+        if course is not None and speed is not None and speed > self._course_gate:
+            err = ((fixed.from_float(course) - self._yaw_cd + 18000) % 36000) - 18000  # wrapped (-180,180] cd
+            self._yaw_cd = (self._yaw_cd + (err >> self._course_shift)) % 36000
         roll_accel: fixnum = 0
         pitch_accel: fixnum = 0
         correct = False

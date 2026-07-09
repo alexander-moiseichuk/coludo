@@ -645,8 +645,11 @@ the BNO055 while that is fresh (warm, so the handoff has no transient), and **fr
 the BNO055 is lost: gyro integration for the short-term motion, with the accel gravity vector
 re-anchoring roll/pitch (drift-free) — but **gated off in turns** (`turn_gate` on the yaw rate),
 because in a coordinated turn the accelerometer reads gravity+centripetal down the body axis and
-would look wings-level at any bank; there the gyro carries the true bank. Heading is gyro-z only (it
-drifts — the LSM6DSO32 has no magnetometer), so nav heading degrades gracefully while roll/pitch stay
+would look wings-level at any bank; there the gyro carries the true bank. Heading (yaw) has no
+magnetometer, so it gyro-integrates — but when moving it is pulled toward the **GNSS ground-track
+bearing** (`course`, a weak `course_shift` blend gated on ground speed), an absolute reference that
+bounds the drift; and the track is what the nav steers by anyway, so a crosswind crab averages out.
+So nav heading degrades gracefully while roll/pitch stay
 solid and the glider holds bank + pitch. All-integer (`fixed.atan2_cd` + `isqrt` + `blend_cd`, viper,
 no float boxed but the heading the channel requires); the accel gravity vector feeds the CORDIC at the
 control's centi-fixnum scale (via `from_float`, one scale everywhere — no separate milli type), which

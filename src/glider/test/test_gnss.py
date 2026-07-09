@@ -63,6 +63,8 @@ async def amain():
     assert abs(latitude - 48.1173) < 1e-3 and abs(longitude - 11.5167) < 1e-3 and unit._fix
     # RMC field-7 speed (knots) -> 'speed' channel in m/s for the airspeed governor (022.4 kn ~= 11.52 m/s)
     assert abs(databoard.Databoard.value('speed') - 22.4 * 0.514444) < 1e-2
+    # RMC field-8 course (deg) -> 'course' channel: the attitude backup's absolute yaw reference
+    assert abs(databoard.Databoard.value('course') - 84.4) < 1e-2
 
     # GGA -> altitude + elevation: the first valid GGA fixes the ground (elevation 0), next is the delta
     unit._parse(_line('GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,'))

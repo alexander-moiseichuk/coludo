@@ -236,6 +236,7 @@ def default() -> dict:
                 'provides': {
                     'position': {'priority': 0, 'timeout_ms': 200},  # 10 Hz -> 2x period
                     'speed': {'priority': 0, 'timeout_ms': 500},  # GNSS ground speed (m/s) -> airspeed governor
+                    'course': {'priority': 0, 'timeout_ms': 500},  # ground-track bearing -> attitude-backup yaw
                     # altitude/elevation are a deep baro backup: high priority number (low rank), and a
                     # generous window since GGA runs at ~1 Hz to stay within 9600 baud.
                     'altitude': {'priority': 3, 'timeout_ms': 2000},

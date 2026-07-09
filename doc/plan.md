@@ -224,11 +224,13 @@ control change.
    `fixed.py`** (viper, ~0.17° over 12 iterations, zero float boxed); the only float is the heading
    the channel format requires. The accel gravity correction is gated OFF in turns (`turn_gate` on
    yaw rate) — in a coordinated turn the accel points down the body axis (looks level at any bank),
-   so the gyro carries the bank and the accel only re-anchors in straight-ish flight. Heading is
-   gyro-z only (drifts — no magnetometer); roll/pitch stay solid. **Validated closed-loop on the
-   board** (`tools/attitude_soak.py`: drop the sim attitude mid-glide): handover is seamless, the
-   backup tracks truth to ~1° roll / ~0.5° pitch through the loiter, and the flight reaches DONE
-   flown entirely on the backup. The single biggest stability win on the table — done.
+   so the gyro carries the bank and the accel only re-anchors in straight-ish flight. Heading (yaw)
+   gyro-integrates (no magnetometer) but is pulled toward the **GNSS ground-track** (`course`) when
+   moving — an absolute reference that bounds the drift (7/08 #3); roll/pitch stay solid. **Validated
+   closed-loop on the board** (`tools/attitude_soak.py`: drop the sim attitude mid-glide): handover is
+   seamless, the backup tracks truth to ~1° roll (×1000) / ~1.8° roll (×100 fixnum) / ≤0.7° pitch
+   through the loiter, and the flight reaches DONE flown entirely on the backup. The single biggest
+   stability win on the table — done.
 5. ✅ **Steering noise filter** (7/06) — `guidance._filter_error()`: an all-integer EMA on the
    heading error (state ×16 fixed, `steer_filter_shift` 3 = alpha 1/8, τ ≈ 80 ms @ 100 Hz; a
    > 90° jump — an overfly flip, a law handover — resets the state so steering follows at once;
