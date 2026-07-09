@@ -261,14 +261,28 @@ control change.
    **For the CC-less case this is moot (7/08):** the fallback zone is now a GENEROUS 100 × 90 m box
    the spiral just lands INSIDE (validated: 31.8 m from centre, in-box) — objective #2 over #3, no
    tight midpoint needed. Remaining: **step 5 the field trim procedure (FIELD-GATED**).
-7. ✅ **Reachability telemetry** (7/08) — `guidance.reachability(glide_ratio)`: reach = `glide_ratio`
-   × elevation vs the distance from the live fix to the zone target → {reachable, margin_m,
-   distance_m}, on the flight-panel heartbeat via `flight.vitals()`. The dashboard shows **zone ✓
-   +Nm** (green) / **zone ✗ −Nm** (red) so the operator sees an unreachable zone early — groundwork
-   for a deliberate land-short decision. `glide_ratio` config (nominal L/D, default 3.0, field-tuned
-   from real glide telemetry). Plus **degraded-mode annunciation**: `health.degraded` gathers the
-   non-nominal states (attitude-backup active, memory-rescued, warm-started, CC-less fallback) into
-   one ⚠ signal in the panel, so a glance shows the board is not flying clean. Board + control suites.
+7. ✅ **Reachability telemetry** (7/08) — `guidance.reachability(glide_ratio, wind_e, wind_n, airspeed)`:
+   reach = `glide_ratio` × elevation, WIND-ADJUSTED by the component along the bearing to target
+   (`reach × (1 + w_along/airspeed)`; tailwind extends, headwind shrinks), vs the distance from the live
+   fix to the zone target → {reachable, margin_m, distance_m, headwind_mps}, on the flight-panel
+   heartbeat via `flight.vitals()`. The dashboard shows **zone ✓ +Nm** (green) / **zone ✗ −Nm** (red) so
+   the operator sees an unreachable zone early — groundwork for a deliberate land-short decision.
+   `glide_ratio` config (nominal L/D, default 3.0, field-tuned from real glide telemetry). Plus
+   **degraded-mode annunciation**: `health.degraded` gathers the non-nominal states (attitude-backup
+   active, memory-rescued, warm-started, CC-less fallback) into one ⚠ signal in the panel, so a glance
+   shows the board is not flying clean. Board + control suites.
+7b. ✅ **Wind estimation** (7/09, wishes #6 — `wind.py`) — the MINIMAL wind triangle (`wind =
+   ground_velocity − airspeed × heading`, EMA-smoothed), fed once per NEW GNSS fix off
+   `databoard.Parameter.stamp()` (self-tunes to the receiver rate 1/5/25 Hz, wrap-safe — no magic
+   period; replaces a `ticks_diff(start, 0)` throttle that silently died once board uptime passed 2^29 µs
+   ~9 min). On the flight panel + feeding the reachability headwind. HITL-validated: tracks a 6 m/s
+   crosswind to ~0.5 m/s in slow/wide/straight flight (collapses in the tight loiter — EMA smear — but
+   that is off both use points). The airspeed-free min/max-ground-speed method was built then STRIPPED
+   as premature. Also fixed sim fidelity: the HITL GNSS `speed` was 3D airspeed, now 2D ground speed WITH
+   wind (`sim_model.ground_speed()`). **Final-approach CRAB DECLINED on data**: wind_soak touchdown miss
+   is IDENTICAL closest-approach with/without wind (~15 m — the position feedback already rejects steady
+   wind); the +15 m touchdown growth is free-drift in the last low-authority descent (≈ wind × descent
+   time), which a controlled-approach crab cannot fix. Board suite green (49/49).
 
 **Spec'd and IMPLEMENTED 7/04 (specs/coludo.md; 47/47 on-board):**
 
