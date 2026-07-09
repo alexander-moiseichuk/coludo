@@ -13,6 +13,7 @@ import config_hitl
 import controller
 import drivers
 import mission
+import navigation
 import tasks
 
 
@@ -31,11 +32,21 @@ async def _go(motor: str, wind_mps: float, wind_dir: float) -> None:
     stages = controller.Stage
     started = time.ticks_ms()
     last = -1
+    target = None          # zone-centre (lat, lon), fetched once the guidance has a fix/zone
+    last_miss = None       # TRUE distance from the body to the target (removes GNSS noise from the metric)
+    min_miss = None        # closest approach through the glide
     while True:
         stage = flight.stage
         if stage != last:
             print('STAGE', stages.STAGES.get(stage))
             last = stage
+        if target is None and ft._guidance._mission is not None:
+            geo = ft._guidance._mission.geometry()
+            target = geo['target'] if geo else None
+        if target is not None:  # track the touchdown miss every iteration (crab-need measurement)
+            pos = body.position()
+            last_miss = navigation.distance(pos[0], pos[1], target[0], target[1])
+            min_miss = last_miss if min_miss is None else min(min_miss, last_miss)
         if stage == stages.GLIDING:
             st = ft._wind.stats()  # method + estimate + the raw triangle components (see wind.stats())
             true_spd = math.sqrt(body.wind_e * body.wind_e + body.wind_n * body.wind_n)
@@ -48,6 +59,8 @@ async def _go(motor: str, wind_mps: float, wind_dir: float) -> None:
             await asyncio.sleep_ms(2000)
             continue
         if stage == stages.DONE:
+            print('MISS final=%.1f min=%.1f m | wind %.1f toward %.0f'
+                  % (last_miss or -1, min_miss or -1, wind_mps, wind_dir))
             print('DONE')
             break
         if time.ticks_diff(time.ticks_ms(), started) > 150000:
