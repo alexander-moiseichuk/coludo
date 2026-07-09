@@ -647,10 +647,15 @@ re-anchoring roll/pitch (drift-free) — but **gated off in turns** (`turn_gate`
 because in a coordinated turn the accelerometer reads gravity+centripetal down the body axis and
 would look wings-level at any bank; there the gyro carries the true bank. Heading is gyro-z only (it
 drifts — the LSM6DSO32 has no magnetometer), so nav heading degrades gracefully while roll/pitch stay
-solid and the glider holds bank + pitch. All-integer (an integer-CORDIC `atan2` + `isqrt` in
-`fixed.py`, viper, no float boxed but the heading the channel requires). Validated closed-loop on the
-board (`tools/attitude_soak.py` drops the sim attitude mid-glide): the backup tracks truth to ~1°
-roll / ~0.5° pitch through the loiter and flies the descent to a controlled landing on its own.
+solid and the glider holds bank + pitch. All-integer (`fixed.atan2_cd` + `isqrt` + `blend_cd`, viper,
+no float boxed but the heading the channel requires); the accel gravity vector feeds the CORDIC at the
+control's centi-fixnum scale (via `from_float`, one scale everywhere — no separate milli type), which
+costs **~0.5° typical / ~1.8° worst** attitude vs a finer ×1000 scaling's 0.16° — a deliberate trade:
+the error is a *bounded bias* (it settles, does not accumulate — each `atan2` is independent and the
+filter re-anchors), it is re-synced by the accel anchor + BNO055 recovery, and 1.8° is well inside both
+the BNO055's own ~1–2° and the ≤300 m / ≤1500 m flight envelope. Validated closed-loop on the board
+(`tools/attitude_soak.py` drops the sim attitude mid-glide): the backup tracks truth to ~1° roll (×1000)
+/ ~1.8° roll (×100) and ≤0.7° pitch through the loiter, flying the descent to a controlled landing.
 
 ## Tasks
 

@@ -25,8 +25,7 @@ import databoard
 import fixed
 import recorder
 import task
-
-_MDEG = 1000  # accel g -> integer milli-g for the CORDIC (only the ratio matters; keeps isqrt inputs small)
+from fixed import fixnum  # centidegree fixed-point -- the one control scale (roll/pitch/yaw AND accel)
 
 
 @task.activity('attitude')
@@ -39,14 +38,14 @@ class Attitude(task.Task):
         self._accel_period_us: int = cfg.get('accel_period_ms', 50) * 1000  # accel correction throttle
         self._corr_shift: int = cfg.get('corr_shift', 4)  # accel pull = err >> shift (4 -> 1/16 per step)
         self._turn_gate: int = int(cfg.get('turn_gate_deg_s', 4) * fixed.SCALE)  # |yaw rate| cd/s -> gate accel
-        # trust the accel gravity vector only near 1 g -- store the squared milli-g band (no per-cycle sqrt)
-        low = int(cfg.get('grav_low_g', 0.7) * _MDEG)
-        high = int(cfg.get('grav_high_g', 1.3) * _MDEG)
-        self._grav_lo_sq: int = low * low
+        # trust the accel gravity vector only near 1 g -- store the squared centi-g band (no per-cycle sqrt)
+        low = fixed.from_float(cfg.get('grav_low_g', 0.7))    # g -> centi-g fixnum (the standard boundary)
+        high = fixed.from_float(cfg.get('grav_high_g', 1.3))
+        self._grav_lo_sq: int = low * low  # a centi-g SQUARED magnitude (not a fixnum itself)
         self._grav_hi_sq: int = high * high
-        self._roll_cd: int = 0   # fixnum centidegrees (matches the BNO055 attitude slot)
-        self._pitch_cd: int = 0
-        self._yaw_cd: int = 0
+        self._roll_cd: fixnum = 0   # centidegree fixnum (matches the BNO055 attitude slot)
+        self._pitch_cd: fixnum = 0
+        self._yaw_cd: fixnum = 0
         self._seeded: bool = False  # has the primary ever seeded us? (else free-run from 0)
         self._free: bool = False    # currently free-running (primary lost) -> inspect/telemetry
         self._last_us: int = time.ticks_us()
@@ -58,50 +57,51 @@ class Attitude(task.Task):
         self._ok = True
         return True
 
-    def _mirror(self, value) -> None:
+    def _mirror(self, value: tuple) -> None:
         """Track the higher-priority source while it is the fused winner (the BNO055 in flight, the sim's
         attitude in HITL): copy its (already-fixnum) roll/pitch and heading, so we stay fresh and hand
-        over seamlessly if it dies next cycle."""
+        over seamlessly if it dies next cycle. value = (heading FLOAT deg, roll cd, pitch cd)."""
         heading, roll_cd, pitch_cd = value
-        self._roll_cd = roll_cd
+        self._roll_cd = roll_cd            # already a centidegree fixnum
         self._pitch_cd = pitch_cd
-        self._yaw_cd = fixed.from_float(heading)  # heading (float deg) -> centidegrees for our state
+        self._yaw_cd = fixed.from_float(heading)  # heading (float deg) -> centidegree fixnum for our state
         self._seeded = True
 
     def _integrate(self, dt_ms: int) -> None:
-        """Free-run: gyro-integrate roll/pitch/yaw (integer centidegrees), then pull roll/pitch toward the
-        accel gravity vector -- but ONLY when that vector is trustworthy: near 1 g AND not in a turn.
-        In a coordinated turn the accel reads gravity+centripetal DOWN THE BODY AXIS, so its roll/pitch
-        look level however hard the glider is banked; correcting to that would roll the estimate flat.
-        The gyro integrates the true bank through the turn, so the accel correction is gated off there
-        (yaw rate over turn_gate) and only re-anchors roll/pitch in straight-ish flight."""
+        """Free-run: gyro-integrate roll/pitch/yaw (centidegrees), then pull roll/pitch toward the accel
+        gravity vector -- but ONLY when that vector is trustworthy: near 1 g AND not in a turn. In a
+        coordinated turn the accel reads gravity+centripetal DOWN THE BODY AXIS, so its roll/pitch look
+        level however hard the glider is banked; correcting to that would roll the estimate flat. The
+        gyro integrates the true bank through the turn, so the accel correction is gated off there (yaw
+        rate over turn_gate) and only re-anchors roll/pitch in straight-ish flight. The per-axis
+        gyro-integrate + accel-blend is fixed.blend_cd (viper, zero float boxed)."""
         rate = self._rate.value()  # (gx, gy, gz) centideg/s fixnum, or None
+        roll_d = pitch_d = yaw_d = 0  # gyro-integration deltas this step (centidegree fixnum)
         turning = True
         if rate is not None:
-            self._roll_cd += rate[0] * dt_ms // 1000
-            self._pitch_cd += rate[1] * dt_ms // 1000
-            self._yaw_cd += rate[2] * dt_ms // 1000
+            roll_d = rate[0] * dt_ms // 1000
+            pitch_d = rate[1] * dt_ms // 1000
+            yaw_d = rate[2] * dt_ms // 1000
             turning = abs(rate[2]) > self._turn_gate  # |yaw rate| -> coordinated-turn detector
-        if turning:
-            return  # in a turn (or no gyro) -> gyro-only; the gravity vector is corrupted by centripetal a
+        self._yaw_cd = fixed.blend_cd(self._yaw_cd, yaw_d, 0, 0, False)  # yaw: gyro-only (no absolute ref)
+        roll_accel: fixnum = 0
+        pitch_accel: fixnum = 0
+        correct = False
         now = time.ticks_us()
-        if time.ticks_diff(now, self._accel_us) < self._accel_period_us:
-            return
-        self._accel_us = now
-        accel = self._accel.value()  # (ax, ay, az) float g, or None
-        if accel is None:
-            return
-        axi = int(accel[0] * _MDEG)  # the one float boundary: g -> integer milli-g for the CORDIC
-        ayi = int(accel[1] * _MDEG)
-        azi = int(accel[2] * _MDEG)
-        planar = ayi * ayi + azi * azi
-        magnitude_sq = axi * axi + planar
-        if not self._grav_lo_sq <= magnitude_sq <= self._grav_hi_sq:
-            return  # accel is not ~1 g (thrust / manoeuvre / impact) -> gravity vector untrustworthy
-        roll_accel = fixed.atan2_cd(ayi, azi)
-        pitch_accel = fixed.atan2_cd(-axi, fixed.isqrt(planar))
-        self._roll_cd += (roll_accel - self._roll_cd) >> self._corr_shift
-        self._pitch_cd += (pitch_accel - self._pitch_cd) >> self._corr_shift
+        if not turning and time.ticks_diff(now, self._accel_us) >= self._accel_period_us:
+            self._accel_us = now
+            accel = self._accel.value()  # (ax, ay, az) float g, or None
+            if accel is not None:
+                axi = fixed.from_float(accel[0])  # the one float boundary: g -> centi-g fixnum for the CORDIC
+                ayi = fixed.from_float(accel[1])  # (~0.5 deg typical over the glide envelope -- coludo.md)
+                azi = fixed.from_float(accel[2])
+                planar = ayi * ayi + azi * azi  # the (ay,az) magnitude squared, centi-g^2
+                if self._grav_lo_sq <= axi * axi + planar <= self._grav_hi_sq:  # near 1 g -> trustworthy
+                    roll_accel = fixed.atan2_cd(ayi, azi)
+                    pitch_accel = fixed.atan2_cd(-axi, fixed.isqrt(planar))
+                    correct = True
+        self._roll_cd = fixed.blend_cd(self._roll_cd, roll_d, roll_accel, self._corr_shift, correct)
+        self._pitch_cd = fixed.blend_cd(self._pitch_cd, pitch_d, pitch_accel, self._corr_shift, correct)
 
     async def run(self) -> None:
         """Mirror the primary while it is the fused source; free-run the complementary filter when it is

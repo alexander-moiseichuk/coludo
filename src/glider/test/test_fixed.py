@@ -29,6 +29,10 @@ def test_atan2_cd():
     # isqrt exact vs the reference across the range the filter feeds it
     for n in (0, 1, 2, 4, 1000000, 1999999, 2000000):
         assert fixed.isqrt(n) == fixed.isqrt_upy(n) == int(n ** 0.5)
+    # blend_cd: one complementary-filter step -- gyro delta always, accel pull only when correct
+    assert fixed.blend_cd(1000, 200, 0, 4, False) == 1200  # gyro-only: state + delta, no correction
+    assert fixed.blend_cd(1200, 0, 4000, 2, True) == 1200 + ((4000 - 1200) >> 2)  # pull 1/4 toward target
+    assert fixed.blend_cd(1200, 0, 4000, 2, True) == fixed._blend_upy(1200, 0, 4000, 2, 1)  # viper==reference
     # accel -> roll/pitch at a banked, nose-down attitude (glide): recovers to ~0.1 deg
     for roll_d, pitch_d in ((45, -6), (-30, 5), (0, 20)):
         r, p = math.radians(roll_d), math.radians(pitch_d)
@@ -55,10 +59,10 @@ def test_convert():
     assert fixed.to_str(0) == '0.00'
     assert fixed.to_str(-1) == '-0.01'
 
-    # millis: fixnum (×SCALE) -> milli-int (×1000), pure integer rescale (no float)
-    assert fixed.millis(fixed.from_float(1.23)) == fixed.from_float(1.23) * (1000 // fixed.SCALE)
-    assert fixed.millis(fixed.from_float(1.0)) == 1000  # 1.0 unit -> 1000 milli, any SCALE that divides 1000
-    assert isinstance(fixed.millis(500), int)
+    # to_millis: fixnum (×SCALE) -> integer milli-units (×1000), pure integer rescale (no float)
+    assert fixed.to_millis(fixed.from_float(1.23)) == fixed.from_float(1.23) * (1000 // fixed.SCALE)
+    assert fixed.to_millis(fixed.from_float(1.0)) == 1000  # 1.0 unit -> 1000 milli (SCALE divides 1000)
+    assert isinstance(fixed.to_millis(500), int)
 
     # clamp: symmetric ±x and one-sided
     assert fixed.clamp(-100, 250, 100) == 100
