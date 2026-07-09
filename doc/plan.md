@@ -251,10 +251,16 @@ control change.
    E16 in-zone at 25 % noise, fin travel −56 %); wind ≥ 6 m/s physics-bounded (launch wind limit
    rule, coludo.md). ✅ **Step 3 on-board confirmation DONE (7/07, `doc/sims/TMS-7-attitude`)** —
    the tuned loiter law flown on the board, in-zone all four (E16/F15 × full/light, miss 52–61 m);
-   provenance caveat: the host set's 17–18 m near-midpoint does not fully reproduce at `inject_hz=25`
-   (in-zone yes, near-midpoint not always — a real endgame-tuning datum). Remaining: **step 5 the
-   field trim procedure (FIELD-GATED** — the real trim pitch and polar quality come from the first
-   glide telemetry, nothing more to do on the bench).
+   provenance caveat: board misses run 52–61 m vs the host's 17–18 m. **Root cause found (7/08):**
+   the miss is almost entirely ALONG the strip's long axis (N–S tight ±2–20 m), because the endgame
+   spiral commands a radius below the physical **minimum turn radius** (~20 m at the 45° bank limit,
+   `v²/(g·tanφ)`) so it cannot collapse tighter than ~20 m, and the final-approach centreline tracker
+   then lands the glider along the strip. NOT a nav-recompute-rate issue (a faster endgame
+   `nav_period` was measured — no change, reverted). Objective #2 (in-zone) is met; tightening #3
+   (midpoint) needs a final-approach redesign (aim at the midpoint) — a scoped future control task.
+   **For the CC-less case this is moot (7/08):** the fallback zone is now a GENEROUS 100 × 90 m box
+   the spiral just lands INSIDE (validated: 31.8 m from centre, in-box) — objective #2 over #3, no
+   tight midpoint needed. Remaining: **step 5 the field trim procedure (FIELD-GATED**).
 7. ✅ **Reachability telemetry** (7/08) — `guidance.reachability(glide_ratio)`: reach = `glide_ratio`
    × elevation vs the distance from the live fix to the zone target → {reachable, margin_m,
    distance_m}, on the flight-panel heartbeat via `flight.vitals()`. The dashboard shows **zone ✓

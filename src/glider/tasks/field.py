@@ -30,7 +30,9 @@ class Field(task.Task):
         self._period_ms: int = cfg.get('period_ms', 1000)
         self._site_select: bool = cfg.get('site_select', True)
         self._fallback_bearing: float = cfg.get('fallback_bearing_deg', 0.0)  # the clear sector
-        self._fallback_offset: float = cfg.get('fallback_offset_m', 50.0)  # orbit focus OFF the pad
+        self._fallback_near: float = cfg.get('fallback_near_m', 50.0)    # near edge from the pad (safety)
+        self._fallback_width: float = cfg.get('fallback_width_m', 100.0)  # wide side facing the pad (L-R)
+        self._fallback_depth: float = cfg.get('fallback_depth_m', 90.0)   # near-far extent
         self._auto_arm: bool = cfg.get('auto_arm', False)  # opt-in: arming is normally a human act
         self._arm_dwell_ms: int = int(cfg.get('auto_arm_dwell_s', 60) * 1000)
         self._still_g: float = cfg.get('still_g', 0.3)  # the stationary band, same as the sequencer
@@ -59,7 +61,8 @@ class Field(task.Task):
             if name is not None:
                 recorder.Recorder.log(self.name, 'site by GPS: %s' % name)
             else:
-                self._mission.fallback_zone(fix, self._fallback_bearing, self._fallback_offset)
+                self._mission.fallback_zone(fix, self._fallback_bearing, self._fallback_near,
+                                            self._fallback_width, self._fallback_depth)
                 recorder.Recorder.log(self.name, 'no site within %.0fm -> fallback zone (bearing %.0f)'
                                       % (self._mission.max_range_m, self._fallback_bearing))
         if not self._auto_arm or self.controller.armed:

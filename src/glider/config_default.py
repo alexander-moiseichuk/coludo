@@ -392,12 +392,14 @@ def default() -> dict:
              'rescue_agl_m': 10},
             # CC-less field agent (specs/coludo.md "Field operation without CC"), OFF by default:
             # on the pad it selects the mission site by the first GNSS fix (nearest launch.config
-            # site within max_range_m; none -> the spiral-landing fallback zone fallback_offset_m
-            # from the fix at fallback_bearing_deg -- point that bearing at the CLEAR sector), and
-            # optionally AUTO-ARMS after auto_arm_dwell_s stationary with a live fix. Enable for a
-            # field day with no hub; every decision stays operator-overridable via CC.
+            # site within max_range_m; none -> a GENEROUS spiral-landing fallback box the spiral just
+            # lands inside: fallback_width_m (the wide side facing the pad, left-right) x
+            # fallback_depth_m, its near edge fallback_near_m from the pad (safety), at
+            # fallback_bearing_deg -- point that bearing at the CLEAR sector). Optionally AUTO-ARMS
+            # after auto_arm_dwell_s stationary with a live fix. Enable for a field day with no hub.
             {'name': 'field', 'activity': 'field', 'enabled': False, 'period_ms': 1000,
-             'site_select': True, 'fallback_bearing_deg': 0.0, 'fallback_offset_m': 50.0,
+             'site_select': True, 'fallback_bearing_deg': 0.0,
+             'fallback_near_m': 50.0, 'fallback_width_m': 100.0, 'fallback_depth_m': 90.0,
              'auto_arm': False, 'auto_arm_dwell_s': 60, 'still_g': 0.3},
             # Apply the BLE radio state at boot: off by default to save power (BLE is unused).
             {'name': 'bluetooth', 'driver': 'bluetooth', 'radio': False, 'enabled': True},

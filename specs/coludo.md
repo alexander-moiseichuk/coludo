@@ -529,14 +529,16 @@ a phone hotspot or laptop is a convenience, never a dependency.
   **live fix** (not the stored pad) becomes the launch point — kept live until **arm**, which
   FREEZES the fix as the persistent launch point (so the tier-2 open-loop heading and the
   warm-start crumb's launch field survive a mid-flight fix loss; a CC-set position always wins).
-* **No site within 200 m → the spiral-landing fallback.** The mission SYNTHESIZES a zone centred
-  `fallback_offset_m` (default 50 m) from the launch fix at a configured bearing
-  (`fallback_bearing_deg` — the operator points it at the clear sector during setup), sized like
-  the standard strip. The existing bank-to-turn law then orbits that centre bleeding altitude —
-  the spiral landing emerges from the normal overshoot-orbit behaviour with zero new control
-  code. The +50 m offset keeps the orbit focus OFF the pad (people stand there). Not the safest
-  conceivable choice, but after ignition the alternatives are worse; the field brief must keep
-  the fallback sector clear.
+* **No site within 200 m → the spiral-landing fallback.** The mission SYNTHESIZES a GENEROUS box
+  the spiral just has to land INSIDE — we always know the pad, so this trades objective #3
+  (near-centre) for #2 (in-zone) and needs no tight midpoint: a `fallback_width_m` (100 m, the
+  WIDE side facing the pad — a broad left-to-right entrance) × `fallback_depth_m` (90 m) box, its
+  near edge `fallback_near_m` (50 m) out from the pad (people stand there), so the CENTRE sits
+  ~95 m off at `fallback_bearing_deg` (the operator points it at the clear sector). The existing
+  bank-to-turn law orbits that centre bleeding altitude — the spiral landing emerges from the
+  normal overshoot-orbit behaviour with zero new control code, and the ~55 m turn-radius-limited
+  endgame miss fits the ±50 m box. Axis-aligned (an emergency orbit cares about the centre, not
+  orientation). The field brief must keep the fallback sector clear.
 * **Arming without CC** — `auto_arm` in launch.config (default OFF): arm once GNSS has a fix AND
   the board has been stationary (|a| ≈ 1 g sustained) for `auto_arm_dwell_s` (60 s) after boot.
   The long dwell makes a bench arm unlikely; the flight loop's control-stage gating still holds
