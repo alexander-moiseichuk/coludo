@@ -326,6 +326,9 @@ def default() -> dict:
              # vs the distance to the zone -> 'zone reachable y/n'. Conservative default (the quality-2
              # polar is ~2; a real airframe re-derives it from the first glide telemetry).
              'glide_ratio': 3.0,
+             # wind estimation (wind.py): the wind triangle, triangle_alpha EMA-smooths the per-fix
+             # estimate; wind_min_speed gates a noisy course at a crawl.
+             'wind_triangle_alpha': 0.05, 'wind_min_speed': 3.0,
              # boost: BOOSTING holds the rod-vertical attitude captured at stage entry, but only once
              # PAST THE ROD (airspeed > boost_engage_speed m/s) -- the 3-point rod keeps it vertical and the
              # fins have no authority below that. The speed governor caps the throw the whole way up.

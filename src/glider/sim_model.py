@@ -142,20 +142,31 @@ class Body:
         lon = self.lon0 + self.pe / (commons.M_PER_DEG * math.cos(math.radians(self.lat0)))
         return (lat, lon)
 
+    def _ground_velocity(self) -> tuple:
+        """Horizontal ground velocity (east, north m/s) = air velocity along the heading + the wind."""
+        return (self.speed * math.sin(math.radians(self.heading)) + self.wind_e,
+                self.speed * math.cos(math.radians(self.heading)) + self.wind_n)
+
     def track(self) -> float:
         """Ground-track bearing (deg) -- the direction the glider MOVES over the ground: air velocity
         along the heading PLUS the wind. In no wind it equals the heading; a crosswind adds a crab
         angle. This is what a GNSS receiver reports as course (the attitude backup's absolute yaw ref)."""
-        east = self.speed * math.sin(math.radians(self.heading)) + self.wind_e
-        north = self.speed * math.cos(math.radians(self.heading)) + self.wind_n
+        east, north = self._ground_velocity()
         return math.degrees(math.atan2(east, north)) % 360.0 if (east or north) else self.heading % 360.0
+
+    def ground_speed(self) -> float:
+        """Horizontal GNSS GROUND speed (m/s) -- the magnitude of the ground velocity, WITH the wind
+        (a real GNSS reports ground speed, not airspeed). In a turn it swings +/- the wind around the
+        airspeed, which is what the wind estimator's min/max reads."""
+        east, north = self._ground_velocity()
+        return math.sqrt(east * east + north * north)
 
     def sensors(self) -> dict:
         """Clean (pre-noise) sensor readings from the current state."""
         return {
             'accel': self.accel_g, 'heading': self.heading % 360.0, 'roll': self.roll, 'pitch': self.pitch,
             'agl': max(0.0, self.alt), 'altitude': self.elev0 + self.alt, 'position': self.position(),
-            'speed': math.sqrt(self.vu * self.vu + self.speed * self.speed),  # true airspeed (m/s) -> governor
+            'speed': self.ground_speed(),  # GNSS ground speed (2D horizontal, WITH wind) -> governor + wind
             'roll_rate': self.roll_rate, 'pitch_rate': self.pitch_rate, 'yaw_rate': self.yaw_rate,  # gyro (deg/s)
         }
 

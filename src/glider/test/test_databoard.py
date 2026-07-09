@@ -59,6 +59,13 @@ def main():
     assert Databoard.value('pa') == 1.0 and Databoard.value('pb') == 2.0
     assert 'pc' in Databoard.provide('s3', {'pc': {'priority': 0, 'timeout_ms': 100}})  # no want -> dict
 
+    # stamp(): the primary's last-push tick -> change-detection for GNSS-rate consumers. None with no
+    # source, then advances on each push (a fresh push is a strictly later tick).
+    assert Databoard.parameter('not_stamped').stamp() is None  # no source yet -> None
+    before = Databoard.parameter('p1').stamp()
+    one.push(6.0)
+    assert Databoard.parameter('p1').stamp() != before  # a new push -> a new stamp (consumer feeds once)
+
     # parameter() is the dependency accessor: get-or-create read handles, order-independent of setup
     dep = Databoard.parameter('pa')  # an existing param
     pending = Databoard.parameter('not_yet')  # created on first touch though no source exists yet

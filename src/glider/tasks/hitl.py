@@ -138,7 +138,7 @@ class Hitl(task.Task):
         baro_n = n * _BARO_NOISE_SCALE
         altitude = _noisy(body.elev0 + body.alt, baro_n, -100.0, 10000.0)
         elevation = _noisy(body.alt, baro_n, -100.0, 10000.0)  # altitude above the pad (= altitude - elev0)
-        speed = _noisy((body.vu * body.vu + body.speed * body.speed) ** 0.5, n, 0.0, 200.0)  # true airspeed
+        speed = _noisy(body.ground_speed(), n, 0.0, 200.0)  # GNSS ground speed (2D, WITH wind) -> governor + wind
         agl_clean = max(0.0, body.alt)
         position = body.position()
         course = _noisy(body.track(), n, 0.0, 360.0)  # ground-track bearing -> attitude-backup yaw ref

@@ -201,6 +201,13 @@ class Parameter:
             return winner.v1 + winner.offset  # reconciled scalar -> a boxed float (altitude/pressure only)
         return winner.v1
 
+    def stamp(self):
+        """ticks_us of the primary source's latest push, or None if nothing was ever written. For
+        change-detection: a consumer feeds once per NEW reading by watching this advance, so it
+        self-tunes to the provider's native rate (a 1/5/25 Hz GNSS) with no polling-period constant.
+        Equality-compared, so it is wrap-safe -- unlike a ticks_diff against a fixed origin."""
+        return self.channels[0].t1 if self.channels else None
+
     def read(self) -> list:
         """[value, source, age_ms] of the fused estimate; `source` is None when extrapolated, else the
         raw provider even for a reconciled (offset-corrected) value. Returns a REUSED 3-slot buffer

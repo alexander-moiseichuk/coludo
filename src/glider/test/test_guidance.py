@@ -280,9 +280,16 @@ def test_reachability():
     position.reading = ((48.0005, 11.005), 'gnss', 0)  # near the zone centre
     good = unit.reachability(3.0)  # 100 m × 3 = 300 m reach, near the zone -> reachable with margin
     assert good['reachable'] is True and good['margin_m'] > 0 and good['distance_m'] >= 0
-    position.reading = ((48.020, 11.005), 'gnss', 0)  # ~1.7 km north of the zone
+    position.reading = ((48.020, 11.005), 'gnss', 0)  # ~1.7 km north of the zone -> target is SOUTH
     far = unit.reachability(3.0)  # 300 m reach << ~1700 m distance -> not reachable, negative margin
     assert far['reachable'] is False and far['margin_m'] < 0
+    assert far['headwind_mps'] == 0.0  # no airspeed passed -> no wind adjustment
+    # headwind adjustment: flying south to the zone, a NORTH-blowing wind opposes (headwind, shrinks the
+    # reach); a SOUTH-blowing wind helps (tailwind, extends it) -- still air brackets the two
+    head = unit.reachability(3.0, 0.0, 8.0, 14.0)   # wind toward the north = away from target -> headwind
+    tail = unit.reachability(3.0, 0.0, -8.0, 14.0)  # wind toward the south = toward target -> tailwind
+    assert tail['margin_m'] > far['margin_m'] > head['margin_m']
+    assert head['headwind_mps'] > 0.0 > tail['headwind_mps']  # headwind positive, tailwind negative
     # missing elevation -> None (can't estimate reach)
     blind = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(_ZONE),
                               _StubGovernor(), position, _AglHandle(), _AglHandle(None))

@@ -1,6 +1,6 @@
 # On-board test for sim_model.Body boost-attitude dynamics: a crosswind weathercocks the stack off
-# vertical, control fins restore it, calm air stays vertical, and the new 'speed' sensor reports true
-# airspeed. Pure math (deterministic -- no noise()), runs identically on host + board. Run by `make test`.
+# vertical, control fins restore it, calm air stays vertical, and the 'speed' sensor reports the GNSS 2D
+# GROUND speed (with wind). Pure math (deterministic -- no noise()), runs identically host + board.
 
 import sim_model
 
@@ -30,11 +30,19 @@ def test_weathercock_and_control():
 
 
 def test_speed_sensor():
+    # the GNSS 'speed' is 2D GROUND speed (with wind), NOT 3D airspeed: a vertical boost has ~no
+    # horizontal travel -> ground speed ~0 even climbing fast (what a real receiver reports on the rod).
     body = sim_model.Body(0.43, (25.5, -80.4), 2.0, 30.0)
     thrust, _burn = sim_model.MOTORS['F15']
     for _ in range(100):
         body.boost_step(0.01, thrust)
-    assert abs(body.sensors()['speed'] - body.vu) < 0.5  # vertical climb -> airspeed ~ vertical speed
+    assert body.vu > 5.0                          # climbing fast (vertical speed)
+    assert body.sensors()['speed'] < 0.5          # but the GROUND speed is ~0 -- no horizontal motion
+    # a glide heading east at 14 m/s in a 6 m/s east (along-track) wind -> ground speed = 14 + 6 = 20
+    glide = sim_model.Body(0.43, (25.5, -80.4), 2.0, 90.0)
+    glide.begin_glide()
+    glide.speed, glide.heading, glide.wind_e = 14.0, 90.0, 6.0
+    assert abs(glide.sensors()['speed'] - 20.0) < 0.1  # ground speed = airspeed + along-track wind
 
 
 def test_gyro_rates():
