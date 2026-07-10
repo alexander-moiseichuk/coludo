@@ -40,6 +40,10 @@ class Body:
         self.mass = mass  # boost mass (whole stack: booster + glider); drops to glide_mass at separation
         self.glide_mass = glide_mass if glide_mass else mass  # glider-only mass after the booster ejects
         self.lat0, self.lon0 = launch
+        # metres per degree of LONGITUDE at the (fixed) pad latitude -- precomputed once, not per
+        # position() sample: cos(radians(lat0)) is constant for the whole flight (saves a per-call
+        # radians()+cos() box on the sim's publish-rate ground-track math).
+        self._m_per_deg_lon = commons.M_PER_DEG * math.cos(math.radians(self.lat0))
         self.elev0 = elevation_m
         self.glide_heading = glide_heading
         self.pe = 0.0          # position east (m from pad)
@@ -157,7 +161,7 @@ class Body:
 
     def position(self) -> tuple:
         lat = self.lat0 + self.pn / commons.M_PER_DEG
-        lon = self.lon0 + self.pe / (commons.M_PER_DEG * math.cos(math.radians(self.lat0)))
+        lon = self.lon0 + self.pe / self._m_per_deg_lon  # precomputed constant divisor (see __init__)
         return (lat, lon)
 
     def _ground_velocity(self) -> tuple:
