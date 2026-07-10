@@ -75,9 +75,28 @@ def test_gnss_drift():
     assert abs(body.ground_speed() - (14.3 ** 2 + 0.4 ** 2) ** 0.5) < 1e-6  # 14 + 0.3 E, 0.4 N
 
 
+def test_stall():
+    # the stall floor: a coordinated turn needs airspeed >= V_stall_1g*sqrt(load); below it the
+    # wing stalls -> a hard sink break on top of induced drag.
+    def _sink_after(bank, speed):  # vu after ONE step at a fixed bank/speed (a clean isolation)
+        body = sim_model.Body(0.285, (48.0, 11.0), 100.0, 90.0)
+        body.begin_glide()
+        body.alt = 100.0  # above ground -> no ground-contact reset of vu
+        body.roll, body.speed, body.vu = bank, speed, -7.0
+        body.glide_step(0.02, 0.0, 0.0, 0.0)
+        return body.vu
+
+    # NEGATIVE: a trimmed straight glide (14 m/s, level) is ~1.5x above the 1-g stall -> normal trim sink.
+    assert _sink_after(0.0, 14.0) > -7.5  # not stalled, no break
+    # POSITIVE: a 45deg bank (stall speed ~10.7 m/s) flown at 8 m/s is STALLED and sinks HARDER than the
+    # same bank flown at 14 m/s (above stall) -- the extra drop is the stall break, not just the load.
+    assert _sink_after(45.0, 8.0) < _sink_after(45.0, 14.0) - 0.02, (_sink_after(45.0, 8.0), _sink_after(45.0, 14.0))
+
+
 test_weathercock_and_control()
 test_speed_sensor()
 test_gyro_rates()
 test_gnss_drift()
+test_stall()
 print('ok: sim_model -- boost weathercock vs fin restore, calm stays vertical, speed sensor, gyro rates, '
       'gnss drift')

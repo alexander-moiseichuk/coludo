@@ -12,6 +12,14 @@ import commons
 _G = 9.81
 _RHO = 1.225            # sea-level air density (kg/m^3)
 _CDA = 0.6 * 0.0017     # Cd * frontal area (m^2) from the coludo.md envelope (~46 mm, ~17 cm^2)
+# STALL floor: the 1-g stall speed. A coordinated turn pulls load n = 1/cos(bank), and the wing needs
+# airspeed >= _V_STALL_1G*sqrt(n) to hold it; below that it stalls (lift collapses -> a hard sink break,
+# controls go mushy). Trim is ~14 m/s so a straight glide sits ~1.5x above stall; it bites only at steep
+# bank (>~66 deg at trim) or when a degraded speed sags. This is the physical limit the airspeed-gated
+# endgame bank (in guidance) is gated to respect -- the sim PENALISES a gate that over-commands.
+_V_STALL_1G = 9.0       # m/s -- 1-g stall speed (below the 14 m/s trim)
+_STALL_SINK = 1.0       # 1/s -- extra sink (m/s per m/s of speed deficit) once stalled, on top of drag
+_ROLL_MAX = 70.0        # deg -- structural bank clamp (raised from 60 to give the gated bank room)
 # boost-attitude model: crosswind WEATHERCOCK vs CONTROL-fin restore, both scaled by dynamic
 # pressure (kPa), with aero damping -- so the guarded fins are seen fighting the wind during the climb.
 _BOOST_COCK = 2.0       # deg/s^2 per (kPa * deg AoA) -- passive tilt of the nose toward the relative wind
@@ -121,9 +129,15 @@ class Body:
         heading (coordinated turn); a shallow nose-down trim holds the descent. First-order responses
         keep it stable. Eases the airspeed back toward trim."""
         roll0, pitch0 = self.roll, self.pitch  # for the gyro angular rates (finite difference, honours clamp)
-        self.roll += (1.2 * roll_cmd - 2.0 * self.roll) * dt        # ailerons -> bank, leveling
-        self.pitch += (0.8 * pitch_cmd - 1.5 * (self.pitch + 6.0)) * dt  # elevator -> pitch about -6 trim
-        self.roll = max(-60.0, min(60.0, self.roll))
+        # STALL check for THIS step, from the bank we are flying: load n = 1/cos(roll), stall speed rises
+        # as sqrt(n). A stalled wing loses lift (a sink break, below) and bites at half control authority.
+        load0 = 1.0 / max(0.3, math.cos(math.radians(roll0)))
+        stall_speed = _V_STALL_1G * load0 ** 0.5
+        stalled = self.speed < stall_speed
+        authority = 0.5 if stalled else 1.0                        # mushy controls in the stall
+        self.roll += (1.2 * authority * roll_cmd - 2.0 * self.roll) * dt   # ailerons -> bank, leveling
+        self.pitch += (0.8 * authority * pitch_cmd - 1.5 * (self.pitch + 6.0)) * dt  # elevator -> pitch -6 trim
+        self.roll = max(-_ROLL_MAX, min(_ROLL_MAX, self.roll))
         roll_rad = math.radians(self.roll)  # cached: turn + the load factor reuse it (was 3 radians() calls)
         turn = _G * math.tan(roll_rad) / max(self.speed, 5.0)  # rad/s heading rate from bank
         self.yaw_rate = math.degrees(turn) + 0.05 * yaw_cmd  # deg/s (pre-wrap, so no 360->0 discontinuity)
@@ -143,6 +157,8 @@ class Body:
         # the TURNS -- the designed energy management (fly-long is objective #1, see coludo.md).
         load = 1.0 / max(0.3, math.cos(roll_rad))  # load factor n (clamped); the accel_g below reuses it
         self.vu += -0.1 * (self.vu + 7.0 * load ** 1.5) * dt
+        if stalled:  # lift lost -> a hard sink break on TOP of induced drag; deeper deficit, harder drop
+            self.vu -= _STALL_SINK * (stall_speed - self.speed) * dt
         # ANY off-trim pitch adds sink (ABS -- both a nose-down dive and a nose-up mush cost energy), so
         # holding trim flies longest. The old signed term let a sustained nose-DOWN pitch (< -6) REDUCE
         # sink and even CLIMB -- unphysical for an unpowered glider (found by the combined-degradation

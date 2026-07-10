@@ -61,6 +61,15 @@ class GuidanceConfig:
         # seconds spiral tightly around the zone instead of racetracking past it. High up the
         # gentler bank_limit preserves objective #1 (a tight bank costs sink ~load^1.5); 0 -> off.
         self.endgame_alt_m: float = config.get('endgame_alt_m', 50)
+        # ENDGAME airspeed-gated bank (specs/coludo.md "Turn-radius limit"): instead of the fixed
+        # land_bank_limit, the endgame spiral banks as steep as the LIVE airspeed safely allows and no
+        # steeper. A coordinated turn at bank phi pulls load n=1/cos(phi), which raises the stall speed to
+        # stall_speed_1g*sqrt(n); holding airspeed >= stall_margin*that bounds phi -- steeper than 45 deg
+        # when there is energy (a tighter R_min -> closer touchdown), collapsing to level as speed decays.
+        # Capped at endgame_max_bank (structural). stall_speed_1g 0 -> off (fall back to land_bank_limit).
+        self.stall_speed_1g: float = config.get('stall_speed_1g', 9.0)  # 1-g stall speed (m/s)
+        self.stall_margin: float = config.get('stall_margin', 1.2)      # airspeed cushion above stall
+        self.endgame_max_bank: float = config.get('endgame_max_bank', 60)  # structural bank ceiling (deg)
         # the LOITER orbit (the "orbit the target to bleed altitude" the docs always intended):
         # within loiter_capture_m of the zone centre the heading command becomes the CIRCLE TANGENT
         # plus an inward correction (bearing + 90 - gain*(distance - radius)) -- the glider CAPTURES
@@ -160,6 +169,23 @@ class Guidance:
             return 0.0
         return airspeed * airspeed / (_G * tan_bank)
 
+    def endgame_bank(self) -> float:
+        """The steepest bank the ENDGAME spiral may hold at the LIVE airspeed while keeping a stall
+        margin. A coordinated turn at bank phi pulls load n = 1/cos(phi), which raises the stall speed to
+        stall_speed_1g*sqrt(n); requiring airspeed >= stall_margin*stall_speed_1g*sqrt(n) bounds phi to
+        acos((stall_margin*stall_speed_1g / airspeed)^2). Steeper than the fixed land_bank_limit when the
+        airspeed allows (a tighter R_min -> a closer touchdown), collapsing toward wings-level as speed
+        decays toward stall. Capped at the structural endgame_max_bank. Falls back to land_bank_limit when
+        disabled (stall_speed_1g 0) or the airspeed estimate is unusable."""
+        config = self._config
+        floor = config.stall_speed_1g * config.stall_margin  # min airspeed to hold a 1-g turn with margin
+        if floor <= 0.0:
+            return config.land_bank_limit  # gate disabled -> the fixed conservative limit
+        airspeed = self._governor.airspeed()
+        if airspeed <= floor:
+            return 0.0  # too slow to bank without stalling -> hold the wings level until speed recovers
+        return min(config.endgame_max_bank, math.degrees(math.acos((floor / airspeed) ** 2)))
+
     def landing_turn_radius(self) -> float:
         """The endgame turn-radius floor at the LAND-bank limit — the precision bound reported for a
         land-short-vs-stretch decision (flight-panel telemetry)."""
@@ -212,10 +238,13 @@ class Guidance:
         self.roll_setpoint = fixed.from_float(setpoint.get('roll', 0.0))
         self.pitch_setpoint = fixed.from_float(setpoint.get('pitch', 0.0))
         if config.land_bank_gain and (final or endgame is not None or stage == _STAGE.LANDING):
-            # endgame / final approach / landing: FULL fin authority -- spiral tight, crab the
-            # crosswind out; the residual at strong wind is airframe-bound, not a control gap.
+            # endgame / final approach / landing: FULL fin authority -- spiral tight, crab the crosswind
+            # out; the residual at strong wind is airframe-bound, not a control gap. In the ENDGAME the
+            # ceiling is the airspeed-gated bank (steeper than land_bank_limit when energy allows);
+            # final/LANDING keep the fixed land_bank_limit (a straight crabbed approach, not a spiral).
+            limit = self.endgame_bank() if endgame is not None else config.land_bank_limit
             self.roll_setpoint = fixed.from_float(commons.bank_demand(
-                self.heading_error, config.land_bank_gain, config.land_bank_limit))
+                self.heading_error, config.land_bank_gain, limit))
         elif config.bank_gain and stage == _STAGE.GLIDING:  # bank-to-turn toward the zone (vs skid)
             self.roll_setpoint = fixed.from_float(commons.bank_demand(
                 self.heading_error, config.bank_gain, config.bank_limit))
@@ -284,8 +313,8 @@ class Guidance:
                     # collapses toward the centre as the energy runs out, but CLAMPED to the
                     # physical min turn radius at the phase's bank (endgame opens the land-bank,
                     # cruise uses bank_limit): commanding tighter than R_min asks for a turn the
-                    # airframe cannot fly, so honour the floor (bounds landing accuracy -- 5.1).
-                    bank = config.land_bank_limit if endgame is not None else config.bank_limit
+                    # airframe cannot fly, so honour the floor (it bounds the landing accuracy).
+                    bank = self.endgame_bank() if endgame is not None else config.bank_limit
                     radius = max(config.loiter_radius_m * (endgame if endgame is not None else 1.0),
                                  self.min_turn_radius(bank))
                     correction = commons.between(

@@ -318,6 +318,27 @@ def test_min_turn_radius():
     assert stalled.min_turn_radius(45.0) == 0.0  # no airspeed -> no estimate (guarded)
 
 
+def test_endgame_bank():
+    """The airspeed-gated endgame bank: steeper than the fixed 45 deg land limit when the airspeed
+    allows (a tighter R_min), capped at endgame_max_bank, level when too slow, fixed limit when disabled."""
+    def _g(speed, cfg=None):
+        return guidance.Guidance(guidance.GuidanceConfig(cfg or {}, 1000), _StubMission(_ZONE),
+                                 _StubGovernor(speed), _PositionHandle(), _AglHandle(), _AglHandle(100.0))
+
+    # trim 14 m/s (floor = 9*1.2 = 10.8): acos((10.8/14)^2) ~ 53.5 deg -- steeper than the fixed 45
+    assert abs(_g(14.0).endgame_bank() - 53.5) < 1.0, _g(14.0).endgame_bank()
+    assert _g(14.0).endgame_bank() > 45.0  # the whole point: bank harder than land_bank_limit when able
+    # faster -> even steeper, but clamped to the structural endgame_max_bank (60)
+    assert _g(20.0).endgame_bank() == 60.0
+    # the steeper gated bank yields a TIGHTER R_min than the fixed 45 deg limit
+    unit = _g(14.0)
+    assert unit.min_turn_radius(unit.endgame_bank()) < unit.min_turn_radius(45.0)
+    # at/under the stall floor -> too slow to bank -> wings level (stall avoidance)
+    assert _g(10.0).endgame_bank() == 0.0
+    # disabled (stall_speed_1g 0) -> falls back to the fixed conservative land-bank limit
+    assert _g(14.0, {'stall_speed_1g': 0}).endgame_bank() == 45.0
+
+
 test_heading_error()
 test_control_stage_gate()
 test_boost_hold()
@@ -329,6 +350,7 @@ test_loiter_and_endgame_spiral()
 test_steering_filter()
 test_reachability()
 test_min_turn_radius()
+test_endgame_bank()
 test_hold_law()
 print('ok: guidance -- stage gate, boost hold, GPS tiers + nav cache, bank-to-turn, loiter orbit + '
-      'endgame spiral, final approach, reachability, min turn radius, hold law')
+      'endgame spiral, final approach, reachability, min turn radius, airspeed-gated bank, hold law')
