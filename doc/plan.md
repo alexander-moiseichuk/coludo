@@ -198,21 +198,16 @@ control change.
    stall detect is `stall_ms` 500, independent). VALIDATED on-board: the soak that hard-panicked
    the board now lands (8 rescues, sawtooth in mem_free, stand-down at LANDING, DONE).
    Defence-in-depth stack: rescue → WDT reset → warm start → the 3b hardware supervisor below.
-3b. **HARDWARE power-cycle supervisor (future, airframe electronics)** — the soak proved a WDT
-   chip reset does NOT clear peripheral latch-up: the ICP-10111 came back from the panic acking
-   its address but NAK-ing every command, survived the addressed soft reset (which re-wedged it)
-   and the I2C general-call, and only a rail power cycle fully restores it. Proposal (user, 7/06):
-   the ESP32-P4 emits a heartbeat pulse on a GPIO (fed by the existing watchdog task's loop); a
-   tiny external supervisor (retriggerable monostable / TPL5010-class watchdog / CH32V003 driving
-   a P-FET on the main rail) cuts board power for ~200 ms when pulses stop. Two design tensions
-   to solve before building: (a) **boot-gap tolerance** — a cold boot emits no pulses for ~7 s,
-   so a naive 2 s window power-cycles forever; the supervisor needs a post-cut re-arm delay
-   (~20 s) or a first-pulse-armed design, with the pulse-loss window then safely 2–3 s;
-   (b) **warm-start age gate** — a power cycle kills the RTC (NVS survives, the clock does not),
-   and gate #5 judges crumb age by RTC continuity, so power-cycle recovery needs either a backed
-   RTC (coin cell / supercap) or an age-gate alternative for the cold-clock case. Sequencing
-   stays escalatory: the chip WDT reset (~1 s, RTC survives) remains the FIRST responder; the
-   rail cut is the deeper layer for exactly the latch-up class the soak exposed.
+3b. ❌ **HARDWARE power-cycle supervisor — DECLINED (7/09, user).** The soak proved a WDT chip reset
+   does NOT clear the ICP-10111 latch-up (only a rail power cycle does), which motivated an external
+   heartbeat-watchdog + P-FET rail-cut supervisor. Not necessary: the existing defense-in-depth already
+   covers it — the **memory rescue** (`board_health`) catches the majority (pre-OOM), the **HW WDT +
+   warm start** recover a hang/OOM, and critically **bmp280 is a hardware backup for the icp10111** (the
+   databoard fuses baro altitude by priority), so a single-baro latch-up loses nothing — the glide
+   continues on bmp280 + the laser AGL. A rail-cut supervisor only clears that one latch-up, which the
+   sensor redundancy already tolerates, so the added part + its two design tensions (boot-gap re-arm,
+   the RTC dying on a power cut) are not worth carrying. Escalation stays: memory rescue → WDT reset +
+   warm start → sensor redundancy.
 
 **Control & stability (medium, sim-validated before the board):**
 
