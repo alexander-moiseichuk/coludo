@@ -68,7 +68,7 @@ class Flight(task.Task):
         self._course = databoard.Databoard.parameter('course')  # GNSS ground-track bearing (deg)
         self._wind = wind.WindEstimator(self.config.get('wind_triangle_alpha', 0.05))
         self._wind_min_speed: float = self.config.get('wind_min_speed', 3.0)  # meaningful ground speed
-        # the wind estimator is fed once per NEW GNSS sample (see _step): track the course channel's last
+        # the wind estimator is fed once per NEW GNSS sample (see _tick): track the course channel's last
         # push stamp so it self-tunes to the receiver's rate (1/5/25 Hz) with no hardcoded feed period.
         self._wind_stamp = None
         # the guidance law (guidance.py): per-stage setpoints + the three-tier heading resolution.
@@ -92,8 +92,9 @@ class Flight(task.Task):
         self._ok = True
         return True
 
-    def _step(self) -> None:
-        """One control update (sync, no await -> runs whole in a timer slice). The pipeline: dt ->
+    def _tick(self) -> None:
+        """One scheduled control cycle (sync, no await -> runs whole in a timer slice). The unified name
+        for a task's per-cycle scheduled work (cf. sequencer/field `_tick`). The pipeline: dt ->
         governor (full rate pre-glide, throttled in the glide -> the deflection cap stays warm) -> stage
         gate -> attitude -> first-entry init -> guidance -> PID -> actuate. Guidance sets/reads instance
         slots rather than returning tuples -- decomposed WITHOUT adding a per-step heap allocation (GC is
@@ -188,7 +189,7 @@ class Flight(task.Task):
         self._actuate(0, 0, 0)
 
     async def run(self) -> None:
-        # finally covers BOTH exits -- a crash out of _step (uncaught exception in a control stage)
+        # finally covers BOTH exits -- a crash out of _tick (uncaught exception in a control stage)
         # and an orderly cancel -- so the fins NEVER hold a live deflection while nobody is flying
         # them (finding 15.3: uncaught crash used to leave the last command standing for the ~1-2 s
         # watchdog window). finish() is idempotent (timer None check), so the Controller's own
@@ -210,13 +211,13 @@ class Flight(task.Task):
         self._timer.init(freq=self._schedule_hz, mode=Timer.PERIODIC, callback=lambda t: flag.set())
         while True:
             await flag.wait()
-            self._step()
+            self._tick()
 
     async def _run_asyncio(self) -> None:
         """The escape hatch (schedule_hz == 0): a plain asyncio loop -- reconfigure / debug, no timer."""
         while True:
             await asyncio.sleep_ms(self._period_ms)
-            self._step()
+            self._tick()
 
     async def finish(self) -> None:
         if self._timer is not None:

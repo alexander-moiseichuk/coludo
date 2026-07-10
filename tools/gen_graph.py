@@ -4,7 +4,7 @@
 # and no third-party tool is needed). Three views + one analysis:
 #   1. Module dependency graph — who imports whom, layered (leaves first), + a fan-in/fan-out table.
 #   2. Class hierarchy — base -> subclasses across modules (the task.Task fleet, driver/mixin bases).
-#   3. Flight-control HOT PATH — the call tree from Flight._step() (the 100 Hz, GC-off control step),
+#   3. Flight-control HOT PATH — the call tree from Flight._tick() (the 100 Hz, GC-off control step),
 #      resolved across objects (self._x is typed from `self._x = module.Class(...)`), with per-function
 #      FLAGS for the patterns that hurt a GC-off real-time loop: heap allocations (dict/list/set/tuple
 #      literals, comprehensions, f-strings, %-format, .items/.values/.keys), float trig (math.sin/cos/
@@ -21,7 +21,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GLIDER_DIRS = ['src/glider', 'src/glider/drivers', 'src/glider/tasks']
 SKIP_PREFIXES = ('test_', 'itest_', 'bench_', '__init__', 'version', 'example_', 'gen_')
-HOT_ENTRY = ('flight', 'Flight', '_step')  # the 100 Hz control step -> the hot-path trace root
+HOT_ENTRY = ('flight', 'Flight', '_tick')  # the 100 Hz control step -> the hot-path trace root
 MAX_DEPTH = 8
 
 _TRIG = frozenset(('sin', 'cos', 'tan', 'atan2', 'atan', 'asin', 'acos', 'sqrt', 'isqrt',
@@ -272,7 +272,7 @@ def _node_for(modules, module_name, qualname):
 
 
 def trace_hot_path(modules, out):
-    out.append('## Flight-control hot path — `Flight._step()` (100 Hz, GC-off)\n')
+    out.append('## Flight-control hot path — `Flight._tick()` (100 Hz, GC-off)\n')
     out.append('The resolved call tree from the control step, with GC-off risk flags per function '
                '(⚠alloc = heap literal/format, ∿trig = float trig, ⌕lookup = dynamic find/get). '
                'Cross-object calls are resolved via each `self._x`\'s constructed type; a leaf with no '

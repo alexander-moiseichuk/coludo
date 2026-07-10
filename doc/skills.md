@@ -97,6 +97,11 @@ so it must run on both.
 - **No abbreviations**, and an argument's name matches the field it sets: `capacity`/`cell_size`
   not `slots`, `max_payload` not `maxpay`, `storage` not `buf`, `servo_eleron_left` not `..._l`.
 - **PEP8**; module-internal names and classes start with `_` (e.g. `_Msg`, `_is_simple`).
+- **Scheduled per-cycle method = `_tick()`**: a task's periodic scheduled work (timer- or run-loop-
+  driven, 1–100 Hz) lives in a single `_tick()` method — one name across tasks (`flight`, `sequencer`,
+  `field`), and `_`-protected so it is never reachable from outside the task. The signature varies by
+  need (the 100 Hz `flight._tick()` self-times off `ticks_us`; the slower `sequencer`/`field` take the
+  loop's `now`). `tools/gen_graph.py` roots the hot-path trace at `Flight._tick()`.
 - **Qualify project-module references**: import our own modules whole and call *through* them —
   `import cc_client` then `cc_client.create_dispatcher()`, not `from cc_client import create_dispatcher`.
   The module scope stays visible at the call site (which catches edit errors) and a module's external
