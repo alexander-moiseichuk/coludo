@@ -21,7 +21,7 @@ import tasks
 
 async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: bool,
               glider_g: int, inject_hz: int, reboot_s: float, no_cc: bool,
-              attitude_drop_s: float = 0.0) -> None:
+              attitude_drop_s: float = 0.0, gnss_drop_s: float = 0.0) -> None:
     drivers.load()
     tasks.load()
     launch = mission.Mission(max_range_m=200)
@@ -49,15 +49,21 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
     print('SESSION', recorder.Recorder.session(), motor, 'noise', noise, 'wind', wind)
     stages = controller.Stage
     started = time.ticks_ms()
+    last_trace = started
     last = -1
     reboot_at_ms = None  # picked at GLIDING entry when reboot_s > 0
     rebooted = False
     drop_at_ms = None  # picked at GLIDING entry when attitude_drop_s > 0
     dropped = False
+    gnss_drop_at_ms = None  # picked at GLIDING entry when gnss_drop_s > 0
+    gnss_recover_at_ms = None
     while True:
         stage = flight.stage
         if stage != last:
             print('STAGE', stage, stages.STAGES.get(stage))
+            if stage == stages.GLIDING and gnss_drop_s > 0 and gnss_drop_at_ms is None:
+                import random
+                gnss_drop_at_ms = time.ticks_add(time.ticks_ms(), int((2.0 + random.random() * 4.0) * 1000))
             if stage == stages.GLIDING and reboot_s > 0 and not rebooted:
                 # a RANDOM early-to-mid-glide moment (never LANDING: too little altitude to prove
                 # anything but luck). A boost-phase reset is NON-restorable by design -- the
@@ -76,12 +82,27 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
             dropped = True
             flight.active('hitl').drop_attitude = True  # simulated BNO055 death -> priority-1 backup flies
             print('ATTITUDE DROP: BNO055 off, attitude backup carries the glide')
+        if gnss_drop_at_ms is not None and gnss_recover_at_ms is None \
+                and time.ticks_diff(time.ticks_ms(), gnss_drop_at_ms) >= 0:
+            gnss_recover_at_ms = time.ticks_add(time.ticks_ms(), int(gnss_drop_s * 1000))
+            flight.active('hitl').drop_gnss = True  # GNSS out -> open-loop heading tiers + wind feed stalls
+            print('GNSS DROP: position/speed/course out for %.1fs' % gnss_drop_s)
+        if gnss_recover_at_ms is not None and flight.active('hitl').drop_gnss \
+                and time.ticks_diff(time.ticks_ms(), gnss_recover_at_ms) >= 0:
+            flight.active('hitl').drop_gnss = False  # fix reacquired
+            print('GNSS RECOVER: fix reacquired')
         if stage == stages.DONE:
             print('DONE')
             break
         if time.ticks_diff(time.ticks_ms(), started) > 150000:  # trim-glide flights run ~2x longer
             print('TIMEOUT', stage)
             break
+        if stage == stages.GLIDING and time.ticks_diff(time.ticks_ms(), last_trace) >= 5000:
+            last_trace = time.ticks_ms()
+            body = flight.active('hitl')._body
+            print('  t=%ds alt=%.0f roll=%.0f pitch=%.0f hdg=%.0f dropgnss=%s'
+                  % (time.ticks_diff(time.ticks_ms(), started) // 1000, body.alt, body.roll,
+                     body.pitch, body.heading, flight.active('hitl').drop_gnss))
         await asyncio.sleep_ms(200)
     await asyncio.sleep_ms(1200)  # let the recorder flush the tail to the Luckfox
     await flight.finish()
@@ -125,7 +146,8 @@ async def _simulated_reboot(flight, boot_s: float) -> None:
 
 def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0, wind_dir: float = 210.0,
         spike: bool = False, glider_g: int = 285, inject_hz: int = 0,
-        reboot_s: float = 0.0, no_cc: bool = False, attitude_drop_s: float = 0.0) -> None:
+        reboot_s: float = 0.0, no_cc: bool = False, attitude_drop_s: float = 0.0,
+        gnss_drop_s: float = 0.0) -> None:
     """Fly one HITL scenario to completion (or a 95 s cap), recording every stream to the Luckfox.
     `glider_g` is the glider (glide) mass in grams (TMS-7 v3: 285 full, 235 light); the booster adds
     to it for boost then ejects, so a lighter glider glides longer -- the memory-leak stress case.
@@ -135,6 +157,9 @@ def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0, wind_dir: fl
     early-glide moment, then the real warm-start gate + restore. `no_cc` flies the CC-less scenario:
     no zone/sites -- the field agent synthesizes the spiral-landing fallback from the GNSS fix.
     `attitude_drop_s` > 0 kills the sim `attitude` this many seconds into GLIDING (a BNO055 death):
-    the priority-1 complementary-filter backup must carry the glide to a controlled landing."""
+    the priority-1 complementary-filter backup must carry the glide to a controlled landing.
+    `gnss_drop_s` > 0 drops position/speed/course for that many seconds at a random glide moment (a
+    tunnel / antenna knock): the guidance falls to its open-loop heading tiers, then recovers. All the
+    degradations COMBINE -- pass several at once for the interaction stress (combined-degradation)."""
     asyncio.run(_go(motor, noise, wind, wind_dir, spike, glider_g, inject_hz, reboot_s, no_cc,
-                    attitude_drop_s))
+                    attitude_drop_s, gnss_drop_s))

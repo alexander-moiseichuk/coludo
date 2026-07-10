@@ -101,6 +101,9 @@ class Hitl(task.Task):
         # (stop publishing the sim `attitude`); accel + rate keep flowing, so the priority-1 attitude
         # backup (tasks/attitude.py) must take over the fused slot and keep the glider controllable.
         self.drop_attitude: bool = False
+        # simulated GNSS dropout (tunnel / antenna knock): stop publishing position/speed/course so the
+        # guidance falls to its open-loop heading tiers and the wind feed stalls -- baro (altitude) stays.
+        self.drop_gnss: bool = False
         # record the simulated sensors as telemetry (same names/fields as the real drivers + the host
         # tool) -> a complete renderable capture on the Luckfox. Decimated to keep the link sane.
         sensor_us = int(1_000_000 / cfg.get('record_hz', 25))   # sensor telemetry cadence
@@ -168,9 +171,10 @@ class Hitl(task.Task):
             self._ch['agl'].push(_noisy(agl_clean, n, 0.0, 1000.0))
         self._ch['altitude'].push(altitude)
         self._ch['elevation'].push(elevation)
-        self._ch['position'].push(position)
-        self._ch['speed'].push(speed)
-        self._ch['course'].push(course)
+        if not self.drop_gnss:  # simulated GNSS dropout -> position/speed/course go stale (baro stays)
+            self._ch['position'].push(position)
+            self._ch['speed'].push(speed)
+            self._ch['course'].push(course)
         # telemetry -> the Luckfox (decimate_us rate-limits each stream so this can run every step)
         self._tlm_accel.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3)))
         self._tlm_imu.push((round(heading, 1), round(roll, 1), round(pitch, 1)))

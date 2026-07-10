@@ -137,12 +137,21 @@ class Body:
         # the TURNS -- the designed energy management (fly-long is objective #1, see coludo.md).
         load = 1.0 / max(0.3, math.cos(math.radians(self.roll)))
         self.vu += -0.1 * (self.vu + 7.0 * load ** 1.5) * dt
-        self.vu = self.vu - 0.4 * (self.pitch + 6.0) * dt            # pitch trims the sink rate
+        # ANY off-trim pitch adds sink (ABS -- both a nose-down dive and a nose-up mush cost energy), so
+        # holding trim flies longest. The old signed term let a sustained nose-DOWN pitch (< -6) REDUCE
+        # sink and even CLIMB -- unphysical for an unpowered glider (found by the combined-degradation
+        # HITL, where degraded control drove the pitch off-trim and the glider climbed instead of landing).
+        self.vu = self.vu - 0.4 * abs(self.pitch + 6.0) * dt
         self.alt += self.vu * dt
         # ground track = airspeed along the heading + the wind (the glider is blown with the air mass)
         self.pe += (self.speed * math.sin(math.radians(self.heading)) + self.wind_e) * dt
         self.pn += (self.speed * math.cos(math.radians(self.heading)) + self.wind_n) * dt
         self.accel_g = 1.0 / max(0.3, math.cos(math.radians(self.roll)))  # load factor rises in a bank
+        if self.alt <= 0.0:  # GROUND CONTACT: the glider is down -> stops (was gliding underground forever,
+            self.alt = 0.0   # so a degraded flight that never levelled never went 'stationary' -> no DONE)
+            self.vu = 0.0
+            self.speed *= 0.5          # bleed the ground roll-out toward rest
+            self.accel_g = 1.0         # stationary -> the sequencer's still-detect fires -> LANDING -> DONE
 
     def position(self) -> tuple:
         lat = self.lat0 + self.pn / commons.M_PER_DEG
