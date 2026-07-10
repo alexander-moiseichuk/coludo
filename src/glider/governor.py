@@ -66,6 +66,11 @@ class GovernorConfig:
         # flies alone, over-read biased = safe). HITL masks this (it publishes 3D total speed); the
         # real ATGM336H does not, so the gate is attitude-truth, not stage-truth.
         self.steep_pitch: fixnum = fixed.from_float(config.get('gnss_steep_pitch', 45.0))
+        # a real ground speed differs from airspeed only by the WIND, which is physically bounded: a GNSS
+        # fix whose speed is more than max_wind off the current estimate is a JUMP, not wind -> reject it
+        # (blending a spurious low speed loosens the fin cap, the unsafe direction). Shares the estimator's
+        # `wind` config subtree so the envelope ceiling is set in one place.
+        self.max_wind: float = config.get('wind', {}).get('max_speed', 15.0)
 
     def update_interval(self, speed: float) -> float:
         """The estimator update interval (s) for `speed` (m/s) — the distance-constant table lookup
@@ -141,7 +146,11 @@ class Governor:
                 (commons.magnitude_sq(accel[0], accel[1], accel[2]) ** 0.5 - 1.0) * 9.81, dt)
         speed, speed_source, _speed_age = self._gnss_speed.read()
         steep = pitch >= self._config.steep_pitch or pitch <= -self._config.steep_pitch
+        # reject a GNSS JUMP: a real ground speed is within max_wind of the airspeed (their difference IS
+        # the wind, which is bounded). Before the first estimate (value 0) accept it as the seed.
+        estimate = self._estimator.value()
+        plausible = speed is not None and (estimate <= 0.0 or abs(speed - estimate) <= self._config.max_wind)
         self._estimator.correct(speed if speed is not None else 0.0,
-                                speed_source is not None and not steep)
+                                speed_source is not None and plausible and not steep)
         self._mixer.limit = max(1, int(
             commons.fin_deflection_limit(self._estimator.value()) * self._multiplier))

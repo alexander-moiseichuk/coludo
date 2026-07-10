@@ -77,6 +77,25 @@ def test_estimator_wiring():
     assert unit.airspeed() == before  # nothing moved, nothing raised
 
 
+def test_gnss_jump_rejected():
+    """A GNSS ground-speed JUMP (more than one max_wind off the airspeed estimate) is rejected, not
+    blended -- a spurious low speed would loosen the fin cap (the unsafe direction). A fix WITHIN the
+    max-wind band still blends."""
+    unit, _mix, accel, gnss_speed = _build({'wind': {'max_speed': 15.0}})
+    accel.value_now = (0.0, 0.0, 3.0)  # integrate the accel backbone up to a real airspeed
+    for _ in range(8):
+        unit.step(0.1, True, 0)
+    accel.value_now = (0.0, 0.0, 1.0)  # net ~0 -> only the corrector could move the estimate now
+    settled = unit.airspeed()
+    assert settled > 5.0
+    gnss_speed.reading = (settled + 60.0, 'gnss', 0)  # a jump 60 m/s off -> beyond max_wind -> rejected
+    unit.step(0.1, True, 0)
+    assert unit.airspeed() == settled  # the jump did not move the estimate
+    gnss_speed.reading = (settled - 4.0, 'gnss', 0)  # within max_wind -> a plausible fix DOES blend
+    unit.step(0.1, True, 0)
+    assert unit.airspeed() != settled
+
+
 def test_throttle_and_overrides():
     """The distance-constant throttle skips the float update between intervals; the pre-glide and
     dive overrides force full rate at once. Observable: _accum_s == 0 iff the update ran."""
@@ -114,7 +133,7 @@ def test_distance_constant_interval():
     for speed in (5, 10, 20, 35, 50):
         assert abs(speed * config.update_interval(float(speed)) - 1.0) < 1e-9
     # the interval RE-DERIVES from the fresh estimate after an update (self-scaling staleness)
-    gnss_speed.reading = (30.0, 'gnss', 0)  # a live fix pulls the estimate up on the next update
+    gnss_speed.reading = (28.0, 'gnss', 0)  # a live fix (within max_wind of 14) pulls the estimate up
     unit._estimator._speed = 14.0
     unit._interval_s = config.update_interval(14.0)
     unit._accum_s = unit._interval_s  # due now
@@ -129,19 +148,19 @@ def test_gnss_steep_pitch_gate():
     estimate down -> a LOOSER fin cap at high q, the unsafe direction. Shallow attitude re-opens it."""
     unit, _mix, _accel, gnss_speed = _build()
     gnss_speed.reading = (0.0, 'gnss', 0)  # live fix, 2D ground speed ~0 (what a vertical climb reads)
-    unit._estimator._speed = 30.0
+    unit._estimator._speed = 14.0  # within max_wind of 0 (a 14 m/s headwind) -> only the STEEP gate can reject
     unit.step(0.1, True, fixed.from_float(85.0))  # near-vertical boost climb
-    assert unit.airspeed() == 30.0, 'a bogus 2D ground speed must not drag the estimate in a climb'
+    assert unit.airspeed() == 14.0, 'a bogus 2D ground speed must not drag the estimate in a climb'
     unit.step(0.1, True, fixed.from_float(-80.0))  # steep dive: same physics, same gate
-    assert unit.airspeed() == 30.0, 'a steep dive must keep the integrator alone (over-read = safe)'
+    assert unit.airspeed() == 14.0, 'a steep dive must keep the integrator alone (over-read = safe)'
     unit.step(0.1, True, fixed.from_float(-6.0))  # shallow glide -> ground speed is representative again
-    assert unit.airspeed() < 30.0, 'a shallow attitude must re-open the GNSS blend'
+    assert unit.airspeed() < 14.0, 'a shallow attitude must re-open the GNSS blend'
     # the gate threshold is config: a tighter gnss_steep_pitch gates earlier
     tight, _mix, _accel, tight_speed = _build({'gnss_steep_pitch': 10.0})
     tight_speed.reading = (0.0, 'gnss', 0)
-    tight._estimator._speed = 30.0
+    tight._estimator._speed = 14.0
     tight.step(0.1, True, fixed.from_float(-15.0))  # steeper than 10 deg -> gated even at a mild dive
-    assert tight.airspeed() == 30.0
+    assert tight.airspeed() == 14.0
 
 
 test_authority_cap()
@@ -149,5 +168,6 @@ test_estimator_wiring()
 test_throttle_and_overrides()
 test_distance_constant_interval()
 test_gnss_steep_pitch_gate()
+test_gnss_jump_rejected()
 print('ok: governor -- 1/v2 authority cap, estimator wiring, distance-constant throttle, full-rate '
-      'overrides, steep-pitch GNSS gate')
+      'overrides, steep-pitch GNSS gate, GNSS jump rejection')

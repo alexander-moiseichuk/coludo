@@ -66,8 +66,10 @@ class Flight(task.Task):
         # Fed at ~GNSS rate (throttled off the hot loop); the loiter enables its airspeed-free average.
         self._gnss_speed = gnss_speed
         self._course = databoard.Databoard.parameter('course')  # GNSS ground-track bearing (deg)
-        self._wind = wind.WindEstimator(self.config.get('wind_triangle_alpha', 0.05))
-        self._wind_min_speed: float = self.config.get('wind_min_speed', 3.0)  # meaningful ground speed
+        wind_cfg = self.config.get('wind', {})  # the estimator owns this subtree (Inspectable, CC-tunable)
+        self._wind = wind.WindEstimator(wind_cfg)
+        inspector.Inspector.register(self._wind)  # operator can inspect/retune the wind envelope via CC
+        self._wind_min_speed: float = wind_cfg.get('min_speed', 3.0)  # meaningful ground speed for a course
         # the wind estimator is fed once per NEW GNSS sample (see _tick): track the course channel's last
         # push stamp so it self-tunes to the receiver's rate (1/5/25 Hz) with no hardcoded feed period.
         self._wind_stamp = None
@@ -143,7 +145,7 @@ class Flight(task.Task):
         course = self._course.value()
         speed = self._gnss_speed.value()
         if course is not None and speed is not None and speed > self._wind_min_speed:
-            self._wind.update(course, speed, self._governor.airspeed(), heading)
+            self._wind.observe(course, speed, self._governor.airspeed(), heading)
 
     def _compute_dt(self, start: int) -> int:
         """Integer-ms slice since the last step, and stash self._dt (float s) for the governor's airspeed
