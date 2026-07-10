@@ -9,6 +9,11 @@ import asyncio
 
 import commons
 
+try:
+    from machine import SPI, Pin
+except ImportError:  # host (CPython): board-only; buses/devices are constructed only on the board
+    SPI = Pin = None
+
 _buses: dict = {}  # bus id -> Bus
 
 
@@ -21,8 +26,6 @@ class _Device:
     so the command byte is just (0x80 if read) | reg with no spurious address bit set."""
 
     def __init__(self, bus, cs: int, mb_bit: int = 6):
-        from machine import Pin
-
         self._bus = bus
         self._cs = Pin(cs, Pin.OUT, value=1)  # idle high; pulled low only during a transaction
         self._multi = (1 << mb_bit) if mb_bit is not None else 0
@@ -63,8 +66,6 @@ class Bus:
     """One physical SPI bus, shared by every device on it; transactions are serialized by a lock."""
 
     def __init__(self, bus_id: int, spec: dict):
-        from machine import SPI, Pin
-
         self._bus_id: int = bus_id
         self._spec: dict = spec
         mode = spec.get('mode', 3)  # SPI mode; ADXL375 = mode 3 (CPOL=1, CPHA=1)
@@ -82,7 +83,6 @@ class Bus:
         they transact through self._spi which now runs at the new baud. Not persisted: the CC-side sweep
         finds the ceiling, then saves the chosen freq to board.config + reboots."""
         async with self._lock:
-            from machine import SPI, Pin
             mode = self._spec.get('mode', 3)
             self._spi = SPI(self._bus_id, baudrate=freq, polarity=mode >> 1, phase=mode & 1,
                             sck=Pin(self._spec['sck']), mosi=Pin(self._spec['mosi']),

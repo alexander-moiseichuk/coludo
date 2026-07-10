@@ -13,12 +13,18 @@ import random
 import struct
 import time
 
+import config as config_mod
 import inspector
 
 try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
     from commons import const
+
+try:
+    from machine import UART
+except ImportError:  # host (CPython): board-only; the Luckfox UART is opened only on the board
+    UART = None
 
 
 _DEFAULT_CELL_SIZE = const(256)  # bytes per ring cell (record + 2-byte length header)
@@ -168,9 +174,6 @@ class Recorder:
         cls._last_stats_ms = time.ticks_ms()
         cls.telemetry_decimate_us = recorder.get('telemetry_us', _DEFAULT_TELEMETRY_US)  # global rate knob
         if uart is None:
-            import config as config_mod
-            from machine import UART
-
             entry = config_mod.device(config, driver='recorder') or {'bus': 'uart', 'id': 1}
             kind, bus_id = entry.get('bus', 'uart'), entry.get('id', 1)
             spec = config_mod.bus(config, kind, bus_id) or {'tx': 20, 'rx': 21, 'baud': 921600}

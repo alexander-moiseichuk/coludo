@@ -16,6 +16,7 @@ import controller
 import drivers
 import mission
 import tasks
+import warmstart
 
 
 async def bringup(cfg: dict, log=print) -> controller.Controller:
@@ -35,7 +36,6 @@ async def main() -> None:
     cfg, source, errors = config.load()
     print('main :: config %s%s' % (source, '' if not errors else ' ERRORS=%s' % errors))
     flight = await bringup(cfg)
-    import warmstart
     await warmstart.restore(flight, cfg)  # warm start after a mid-air reset (no-op on a cold boot)
     while True:  # the supervised tasks do the work; keep the event loop alive
         await asyncio.sleep_ms(10000)

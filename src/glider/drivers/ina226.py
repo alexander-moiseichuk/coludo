@@ -24,6 +24,11 @@ try:
 except ImportError:  # CPython (tooling / off-board checks)
     from commons import const
 
+try:
+    from machine import Pin
+except ImportError:  # host (CPython): board-only; the ALERT pin is wired only on the board
+    Pin = None
+
 
 _REG_CONFIG = const(0x00)
 _REG_BUS_V = const(0x02)    # u16, 1.25 mV/LSB
@@ -95,7 +100,6 @@ class Ina226(task.Task):
                 limit = self._alert_ma * shunt_mohms * 2 // 5  # mA·mΩ -> shunt-voltage LSBs (÷2.5 µV)
                 await self._bus.write(self._addr, _REG_ALERT_LIM, struct.pack('>H', limit))
                 await self._bus.write(self._addr, _REG_MASK, struct.pack('>H', _MASK_SOL))  # transient, no latch
-                from machine import Pin
                 self._alert_pin = Pin(gpio, Pin.IN, Pin.PULL_UP)  # ALERT is open-drain, active-low
                 self._alert_pin.irq(self._on_alert, Pin.IRQ_FALLING)
             except Exception as error:  # a bad alert wire must not sink the whole monitor -> poll-only

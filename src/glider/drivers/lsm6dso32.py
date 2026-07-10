@@ -27,6 +27,11 @@ try:
 except ImportError:  # CPython (tooling / off-board checks)
     from commons import const
 
+try:
+    from machine import Pin
+except ImportError:  # host (CPython): board-only; the INT1 pin is wired only on the board
+    Pin = None
+
 
 _WHO_AM_I = const(0x0F)   # reads 0x6C on the LSM6DSO32
 _CTRL1_XL = const(0x10)   # accel: ODR + full-scale
@@ -101,8 +106,6 @@ class Lsm6dso32(task.Task):
         gpio = self._pin_gpio('int_pin')
         if gpio is None:
             return
-        from machine import Pin
-
         await self._dev.write(_INT1_CTRL, bytes([_DRDY_XL]))  # accel data-ready -> INT1
         self._int = Pin(gpio, Pin.IN)
         self._int.irq(self._on_data_ready, Pin.IRQ_RISING)

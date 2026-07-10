@@ -36,9 +36,13 @@ class Bluetooth(task.Task):
         """Setup-only: no run loop. `update()` is the runtime entry point."""
 
     def _apply(self, on: bool):
-        """Set BLE active to `on`; return the resulting state, or None if there is no BLE here."""
+        """Set BLE active to `on`; return the resulting state, or None if there is no BLE here. The
+        `import bluetooth` stays IN-FUNCTION deliberately: this file is drivers/bluetooth.py, so a
+        top-level `import bluetooth` is a filename/module-name collision whose resolution (self vs the
+        board's builtin BLE) is build-dependent -- and this is a setup-only path, so there is no
+        hot-call cost to move it. The only in-function import kept on-device."""
         try:
-            import bluetooth
+            import bluetooth  # the board's builtin BLE radio (NOT this driver module)
 
             radio = bluetooth.BLE()
             radio.active(on)

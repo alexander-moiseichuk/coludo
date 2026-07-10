@@ -5,10 +5,20 @@
 # the thin networking that reads lines and writes responses.
 
 import asyncio
+import gc
 import json
+import time
 
 import cc_protocol as cc
+import config as config_mod
+import databoard
 import inspector
+import recorder
+
+try:
+    import esp32
+except ImportError:  # host (CPython): board-only; the health MCU-temp read degrades to None
+    esp32 = None
 
 
 def _readiness(cfg: dict) -> dict:
@@ -113,12 +123,6 @@ class _Context:
 
 def _register_identity(dispatcher, ctx) -> None:
     """whoami / ping / health -- who the board is and how it is doing."""
-    import gc
-    import time
-
-    import config as config_mod
-    import databoard
-
     async def whoami(msg) -> str:
         info = {
             'mcu': ctx.cfg['board'].get('mcu'),
@@ -134,10 +138,8 @@ def _register_identity(dispatcher, ctx) -> None:
 
     async def health(msg) -> str:
         try:
-            import esp32
-
             temp = esp32.mcu_temperature()
-        except Exception:
+        except Exception:  # host (esp32 None) or a probe failure -> no temperature
             temp = None
         info = {'temp': temp, 'mem_free': gc.mem_free(), 'uptime': time.ticks_ms(), 'stage': ctx.stage()}
         position = databoard.Databoard.parameter('position')  # board GNSS fix -> dashboard (None until a fix)
@@ -274,8 +276,6 @@ def _register_config(dispatcher, ctx) -> None:
       board   the running board config (hardware; config.py, validated + atomically saved)
       default the built-in board default (read-only)
       launch  the per-launch mission (launch.config; mission.py, merge-applied + saved)"""
-    import config as config_mod
-
     async def get_config(msg) -> str:
         """`get-config [name]` -- the named config (default `board`)."""
         name = msg.args[0] if msg.args else 'board'
@@ -399,8 +399,6 @@ def _register_streaming(dispatcher) -> None:
         each tick; `log 0` stops, default 1000 ms). The batch rides back as one base64 token (a JSON
         list). An EXTRA route: the UART/Luckfox log path is untouched, and with no `log` request the
         board collects nothing -- a lost link cannot grow memory once the window lapses."""
-        import recorder
-
         try:
             duration_ms = int(msg.args[0]) if msg.args else 1000
         except ValueError:
@@ -412,8 +410,6 @@ def _register_streaming(dispatcher) -> None:
         telemetry rows the board buffered since the last `tlm`, and keep teeing tlm() for another
         `duration_ms` (`tlm 0` stops, default 1000 ms). One base64 JSON token. An EXTRA route: the
         UART/Luckfox telemetry is untouched, and with no `tlm` request the board collects nothing."""
-        import recorder
-
         try:
             duration_ms = int(msg.args[0]) if msg.args else 1000
         except ValueError:

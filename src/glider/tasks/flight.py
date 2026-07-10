@@ -27,6 +27,11 @@ import pid
 import task
 import wind
 
+try:
+    from machine import Timer
+except ImportError:  # host (CPython): board-only; the timer-scheduled path runs only on the board
+    Timer = None
+
 _STAGE = controller_mod.Stage
 
 
@@ -200,8 +205,6 @@ class Flight(task.Task):
         """A machine.Timer ticks a ThreadSafeFlag at schedule_hz; the step runs in this task (not the ISR).
         A regular slice regardless of other tasks. The flag coalesces, so an overrun runs the latest
         step (no backlog)."""
-        from machine import Timer
-
         flag = asyncio.ThreadSafeFlag()
         self._timer = Timer(self.config.get('timer_id', 0))
         self._timer.init(freq=self._schedule_hz, mode=Timer.PERIODIC, callback=lambda t: flag.set())

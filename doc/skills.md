@@ -107,6 +107,19 @@ so it must run on both.
   renaming any instance variable that would otherwise shadow the module. Give the rename a
   **problem-specific** name that reads (`launch = mission.Mission(...)`; a Controller Task becomes
   `new_task` / `pending_task` / `closing_task` by lifecycle phase) — never a bare `task_` disambiguator.
+- **Imports at the module top (on-device)**: in `src/glider/` collect *all* imports at the top so
+  every module is fully linked at load — never defer an import into a function, because a lazy import
+  can stall a critical-path call. Board-only modules CPython lacks (`machine`, `esp32`, `network`,
+  `bluetooth`) are guarded at the top so the module still imports on the host (which runs the HITL sim
+  and the `tools/`), as a *separate* try/except from the `const` shim:
+  ```python
+  try:
+      from machine import Pin, I2C
+  except ImportError:  # host (CPython): board-only; the setup/run paths never execute off-board
+      Pin = I2C = None
+  ```
+  Tests (`test_*.py`) and host code (`src/control/`, `tools/`) MAY defer imports — placement laxness
+  there is fine.
 - **Type annotations** on every non-local: module constants, class variables, function arguments
   and return types (both CPython 3.12 and MicroPython 1.28 accept them).
 - **Constants** via `micropython.const`, with a portable shim at the top of shared/board modules:

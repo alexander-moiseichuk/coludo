@@ -22,14 +22,17 @@ import controller
 import recorder
 import task
 
+try:
+    from machine import Pin
+except ImportError:  # host (CPython): board-only; the latch pin is read only on the board
+    Pin = None
+
 
 @task.driver('separation')
 class Separation(task.Task):
     """Detect stage separation (HIGH=nested -> LOW=separated) and trigger Boosting -> Gliding."""
 
     async def setup(self) -> bool:
-        from machine import Pin
-
         gpio = self._pin_gpio('pin', 'separation_switch')
         if gpio is None:
             return False
@@ -87,8 +90,6 @@ class Separation(task.Task):
         gpio = self._pin_gpio('pin', 'separation_switch')
         if gpio is None:
             return 'no pin -- %r not defined in config pins' % self.config.get('pin', 'separation_switch')
-        from machine import Pin
-
         level = Pin(gpio, Pin.IN, Pin.PULL_DOWN).value()
         if level == 1:
             return 'pin GPIO%d HIGH (nested) -- switch ok; setup failed elsewhere' % gpio

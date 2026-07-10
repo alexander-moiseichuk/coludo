@@ -16,6 +16,11 @@ import controller as controller_mod
 import recorder
 import task
 
+try:
+    import network
+except ImportError:  # host (CPython): board-only; _ensure_radio() then reports no Wi-Fi interface
+    network = None
+
 
 @task.driver('wifi')
 class Wifi(task.Task):
@@ -85,9 +90,7 @@ class Wifi(task.Task):
         if self.wlan is not None:
             return True
         try:
-            import network
-
-            self.wlan = network.WLAN(network.STA_IF)
+            self.wlan = network.WLAN(network.STA_IF)  # AttributeError if network is None (no interface)
             self.wlan.active(True)
             if self.tx_power is not None:
                 try:

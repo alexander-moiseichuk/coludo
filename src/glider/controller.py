@@ -8,6 +8,7 @@
 
 import asyncio
 
+import config as config_mod
 import inspector
 import task
 
@@ -199,8 +200,6 @@ class Controller(inspector.Inspectable):
         + all_ok, so the host can find the bus ceiling AND the limiting device (whoever drops out first
         as freq climbs). Nothing is persisted here: CC saves the chosen freq via set-config board +
         reboot. i2c/spi only (uart/pwm are not frequency-swept)."""
-        import config as config_mod
-
         modules = {'i2c': 'i2cbus', 'spi': 'spibus'}
         if kind not in modules:
             return {'error': "bus kind '%s' is not tunable (i2c/spi only)" % kind}

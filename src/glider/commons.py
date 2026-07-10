@@ -51,6 +51,9 @@ except ImportError:  # CPython (off-board tooling / tests) — everything degrad
         return new - old
 
 
+import json
+import os
+
 # ------------------------------------------------------------------------------------ shared constants
 
 M_PER_DEG: float = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat));
@@ -162,10 +165,7 @@ def fin_deflection_limit(speed_ms: float) -> int:
 def atomic_write_json(path: str, data) -> None:
     """Persist `data` as JSON to `path` atomically (shared by config.save + mission.save): write a
     temp file then rename it over the target, with a remove-then-rename fallback for a VFS (FAT) that
-    won't rename onto an existing file. os/json are imported lazily so the hot-path importers of commons
-    do not pull them in."""
-    import json
-    import os
+    won't rename onto an existing file."""
     tmp = path + '.tmp'
     with open(tmp, 'w') as handle:
         handle.write(json.dumps(data))

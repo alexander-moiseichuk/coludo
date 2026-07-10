@@ -10,13 +10,24 @@
 # dict entry rather than an NVS schema change. The module degrades to no-ops off-board (CPython).
 
 import asyncio
+import gc
+import json
 import time
+
+import controller
+import databoard
+import inspector
 
 try:
     from esp32 import NVS
     _nvs = NVS('coludo')
 except ImportError:  # CPython (host tools / sim): warm start is board-only, everything no-ops
     _nvs = None
+
+try:
+    import machine
+except ImportError:  # host (CPython): board-only; restore()'s reset-cause read never runs off-board
+    machine = None
 
 _BLOB_MAX: int = 512  # read buffer for the crumb blob (the JSON is ~150 B; headroom for new fields)
 
@@ -29,7 +40,6 @@ def save(launch: tuple, zone: tuple, pad_altitude: float, stamp: int) -> bool:
     absent or full — a failed breadcrumb must not block a launch."""
     if _nvs is None:
         return False
-    import json
     try:
         crumb = {'launch': [launch[0], launch[1]],
                  'zone': [[zone[0][0], zone[0][1]], [zone[1][0], zone[1][1]]],
@@ -59,7 +69,6 @@ def load():
     when no flight was in progress (flag absent/0) or the blob is missing/torn (-> cold boot)."""
     if _nvs is None:
         return None
-    import json
     try:
         if _nvs.get_i32('flight') != 1:
             return None
@@ -127,8 +136,6 @@ def _apply_restore(flight, crumb, cfg: dict) -> None:
     flag. Controller/mission mutations ONLY — the hardware reads + gc live in restore() — so this is
     host-testable with stubs. The gate guarantees `pad_altitude`; `launch`/`zone` are guarded (a torn
     crumb could carry pad_altitude+stamp yet drop them)."""
-    import controller
-    import inspector
     mission_obj = inspector.Inspector.get('mission')
     launch = crumb.get('launch')
     zone = crumb.get('zone')
@@ -150,8 +157,7 @@ async def restore(flight, cfg: dict, log=print) -> bool:
     here so main.py stays a thin bring-up. A mid-air reset must not turn the glider ballistic: restore
     GLIDING when the NVS breadcrumb AND two physical signals agree — the separation latch (read via the
     separation DRIVER, not a raw Pin) and the baro absolute altitude clearly above the crumb's pad. Any
-    doubt -> the crumb is cleared and this is a normal cold boot. Heavy imports stay inside (nothing
-    beyond the cheap load() runs on a plain boot)."""
+    doubt -> the crumb is cleared and this is a normal cold boot."""
     crumb = load()
     if crumb is None:
         return False  # no flight was in progress: the normal boot, zero extra work
@@ -159,8 +165,6 @@ async def restore(flight, cfg: dict, log=print) -> bool:
         clear()
         log('warmstart :: disabled by config')
         return False
-    import databoard
-    import machine
     separation = flight.find(['separation'])[0]  # the driver's own latch reading (no second Pin)
     separated = separation.separated() if separation is not None else False
     altitude = await _await_altitude(databoard.Databoard.parameter('altitude'))
@@ -172,7 +176,6 @@ async def restore(flight, cfg: dict, log=print) -> bool:
         clear()  # rejected -> make the NEXT boot unambiguously cold
         return False
     _apply_restore(flight, crumb, cfg)
-    import gc
     gc.collect()  # the sequencer's BOOSTING GC hook was skipped: compact + GC OFF for the descent
     gc.disable()
     log('warmstart :: WARM START -> gliding, armed (%.0fm above pad)'

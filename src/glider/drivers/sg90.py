@@ -40,6 +40,11 @@ import recorder
 import servo
 import task
 
+try:
+    from machine import PWM, Pin
+except ImportError:  # host (CPython): board-only; the PWM pin is driven only on the board
+    PWM = Pin = None
+
 _PERIOD_US: int = 20000  # 50 Hz servo frame (20 ms)
 _DUTY_U16_MAX: int = 65535  # full 16-bit PWM duty
 _SLEW_MS_PER_60: int = 150  # ~0.15 s / 60deg SG90 slew estimate (open-loop -- no position feedback)
@@ -61,8 +66,6 @@ class SG90(task.Task):
         gpio = self._pin_gpio('pin')
         if gpio is None:
             return False
-        from machine import PWM, Pin
-
         self._min_us: int = self.config.get('min_us', 500)  # pulse at min_deg (SG90 ~500..2500 us)
         self._max_us: int = self.config.get('max_us', 2500)  # pulse at max_deg
         self._min_deg: int = self.config.get('min_deg', 0)
@@ -189,8 +192,6 @@ class SG90(task.Task):
         if gpio is None:
             return 'no PWM -- pin %r not defined in config pins' % self.config.get('pin')
         try:
-            from machine import PWM, Pin
-
             pwm = PWM(Pin(gpio), freq=50, duty_u16=0)
             pwm.deinit()
         except Exception as error:

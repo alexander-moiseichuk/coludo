@@ -12,6 +12,7 @@ import databoard
 import micropython
 import recorder
 import task
+from machine import UART  # board-only, like `micropython` above (this module never imports off-board)
 
 _KNOTS_TO_MS: float = 0.514444  # NMEA RMC speed is in knots; the airspeed governor wants m/s
 
@@ -65,8 +66,6 @@ class Gnss(task.Task):
         spec = config.bus(self.controller.config, self.config.get('bus', 'uart'), bus_id)
         if spec is None:
             return False
-        from machine import UART
-
         self._uart = UART(bus_id, baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
         self._reader = asyncio.StreamReader(self._uart)
         await self._configure(self.config.get('hz', 1))
@@ -160,8 +159,6 @@ class Gnss(task.Task):
             return 'no transport -- uart bus %s undefined in config' % bus_id
         uart = self._uart  # None until setup opens the port
         if uart is None:
-            from machine import UART
-
             uart = UART(bus_id, baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
         reader = asyncio.StreamReader(uart)
         seen = 0

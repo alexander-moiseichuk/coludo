@@ -8,6 +8,11 @@ import asyncio
 
 import commons
 
+try:
+    from machine import I2C, Pin
+except ImportError:  # host (CPython): board-only; the bus is constructed only on the board
+    I2C = Pin = None
+
 _buses: dict = {}  # bus id -> Bus
 
 
@@ -45,8 +50,6 @@ class Bus:
     """One physical I2C bus, shared by every device on it; transactions are serialized by a lock."""
 
     def __init__(self, bus_id: int, spec: dict):
-        from machine import I2C, Pin
-
         self._bus_id: int = bus_id
         self._spec: dict = spec
         self._i2c = I2C(bus_id, scl=Pin(spec['scl']), sda=Pin(spec['sda']), freq=spec.get('freq', 400000))
@@ -58,7 +61,6 @@ class Bus:
         Not persisted: the CC-side sweep finds the ceiling, then saves the chosen freq to board.config +
         reboots."""
         async with self._lock:
-            from machine import I2C, Pin
             self._i2c = I2C(self._bus_id, scl=Pin(self._spec['scl']), sda=Pin(self._spec['sda']), freq=freq)
 
     async def read(self, addr: int, reg: int, count: int, addrsize: int = 8) -> bytes:

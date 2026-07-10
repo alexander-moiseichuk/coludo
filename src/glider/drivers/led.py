@@ -14,6 +14,11 @@ try:
 except ImportError:  # CPython (tooling / off-board checks)
     from commons import const
 
+try:
+    from machine import Pin
+except ImportError:  # host (CPython): board-only; the status LED pin is driven only on the board
+    Pin = None
+
 
 _BLINK_ERROR_MS = const(100)  # fast: a task is unhealthy
 _BLINK_SETTING_MS = const(500)  # slow: setting up / standby
@@ -25,8 +30,6 @@ class LedStatus(task.Task):
     """Blink a status pattern on one GPIO derived from the controller's state + health."""
 
     async def setup(self) -> bool:
-        from machine import Pin
-
         pins = self.controller.config.get('pins', {})
         gpio = pins.get(self.config.get('pin', 'led_status'))
         if gpio is None:

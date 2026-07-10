@@ -27,6 +27,11 @@ try:
 except ImportError:  # CPython (tooling / off-board checks)
     from commons import const
 
+try:
+    from machine import Pin
+except ImportError:  # host (CPython): board-only; the INT1 pin is wired only on the board
+    Pin = None
+
 
 _REG_DEVID = const(0x00)  # reads 0xE5 on the whole ADXL34x/375 family
 _REG_BW_RATE = const(0x2C)  # output data rate
@@ -89,8 +94,6 @@ class Adxl375(task.Task):
         gpio = self._pin_gpio('int_pin')
         if gpio is None:
             return
-        from machine import Pin
-
         await self._dev.write(_REG_INT_MAP, b'\x00')  # DATA_READY -> INT1
         await self._dev.write(_REG_INT_ENABLE, bytes([_DATA_READY]))
         # Arm the IRQ BEFORE clearing the pending DATA_READY (finding 2.4.1): if a conversion landed

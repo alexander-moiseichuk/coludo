@@ -24,6 +24,11 @@ try:
 except ImportError:  # CPython (tooling / off-board checks)
     from commons import const
 
+try:
+    from machine import Pin
+except ImportError:  # host (CPython): board-only; the XSHUT/INT pins are wired only on the board
+    Pin = None
+
 
 _REG_FIRMWARE_STATUS = const(0x00E5)  # reads 0x03 once the firmware has booted
 _REG_MODEL_ID = const(0x010F)  # 2 bytes: 0xEBAA for the VL53L4CD/L4CX silicon
@@ -108,8 +113,6 @@ class Vl53l4cx(task.Task):
         then wait for the firmware to boot. With no xshut_pin the sensor is assumed always-on."""
         gpio = self._pin_gpio('xshut_pin')
         if gpio is not None:
-            from machine import Pin
-
             xshut = Pin(gpio, Pin.OUT, value=0)  # active-low shutdown
             await asyncio.sleep_ms(2)
             xshut.value(1)  # enable
@@ -150,8 +153,6 @@ class Vl53l4cx(task.Task):
         gpio = self._pin_gpio('int_pin')
         if gpio is None:
             return
-        from machine import Pin
-
         self._int = Pin(gpio, Pin.IN, Pin.PULL_UP)
         self._int.irq(lambda pin: self._ready.set(), Pin.IRQ_FALLING)
 

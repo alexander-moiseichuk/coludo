@@ -16,6 +16,11 @@ import time
 import recorder
 import task
 
+try:
+    from machine import WDT
+except ImportError:  # host (CPython): board-only; the hardware WDT is armed only on the board
+    WDT = None
+
 
 @task.activity('watchdog')
 class Watchdog(task.Task):
@@ -55,8 +60,6 @@ class Watchdog(task.Task):
         counting the moment the WDT exists, so it must not arm until the feed loop is actually live
         (bring-up of later tasks could otherwise outlast the timeout and reset the board)."""
         if self._wdt is None:
-            from machine import WDT
-
             self._wdt = WDT(timeout=self._timeout_ms)
 
     async def run(self) -> None:

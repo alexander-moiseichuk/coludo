@@ -13,6 +13,7 @@ import json
 import os
 
 import commons
+import config_default
 
 try:
     import binascii
@@ -265,8 +266,6 @@ def config_id(cfg) -> str:
 
 
 def _builtin_default() -> dict:
-    import config_default
-
     return config_default.default()
 
 
