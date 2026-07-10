@@ -50,7 +50,9 @@ def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: f
     liftoff_g = _BOOSTER_G.get(motor, 217) + glider_g  # boost mass = booster + glider; glide = glider alone
     hitl = {
         'name': 'hitl', 'activity': 'hitl', 'enabled': True,
-        'sim_hz': 50, 'motor': motor, 'noise': noise, 'spike': spike,
+        # 25 Hz physics (was 50) -- halves the sim's per-second glide_step float churn; the slow glide +
+        # the ~1 s boost are fine at 25 Hz, and inject/record already run 25 Hz, so the whole sim is 25 Hz.
+        'sim_hz': 25, 'motor': motor, 'noise': noise, 'spike': spike,
         'liftoff_g': liftoff_g, 'glider_g': glider_g,  # boost then glide masses (booster ejects at apogee)
         'wind': wind, 'wind_dir': wind_dir, 'boost_axis': boost_axis,
         'gnss_drift': gnss_drift, 'gnss_drift_dir': gnss_drift_dir, 'pad_dwell_s': pad_dwell_s,  # (#2)

@@ -120,11 +120,13 @@ class Body:
         self.roll += (1.2 * roll_cmd - 2.0 * self.roll) * dt        # ailerons -> bank, leveling
         self.pitch += (0.8 * pitch_cmd - 1.5 * (self.pitch + 6.0)) * dt  # elevator -> pitch about -6 trim
         self.roll = max(-60.0, min(60.0, self.roll))
-        turn = _G * math.tan(math.radians(self.roll)) / max(self.speed, 5.0)  # rad/s heading rate from bank
+        roll_rad = math.radians(self.roll)  # cached: turn + the load factor reuse it (was 3 radians() calls)
+        turn = _G * math.tan(roll_rad) / max(self.speed, 5.0)  # rad/s heading rate from bank
         self.yaw_rate = math.degrees(turn) + 0.05 * yaw_cmd  # deg/s (pre-wrap, so no 360->0 discontinuity)
         self.roll_rate = (self.roll - roll0) / dt   # deg/s the gyro would read
         self.pitch_rate = (self.pitch - pitch0) / dt
         self.heading = (self.heading + self.yaw_rate * dt) % 360.0
+        heading_rad = math.radians(self.heading)  # cached: pe + pn reuse it (was 2 radians() calls)
         self.speed += (14.0 - self.speed) * 0.5 * dt
         # sink: the straight-TRIM glide settles at ~-7 m/s = "air quality 2", the WORST-CASE polar
         # (14 m/s / L/D 2: 200 m of altitude buys ~400 m of air path). Deliberately pessimistic:
@@ -135,7 +137,7 @@ class Body:
         # old raw G*(1-cos) term (~10x too harsh, every turn hemorrhaged what trim saved). An
         # off-trim pitch still adds sink, so holding trim flies longest and altitude bleeds through
         # the TURNS -- the designed energy management (fly-long is objective #1, see coludo.md).
-        load = 1.0 / max(0.3, math.cos(math.radians(self.roll)))
+        load = 1.0 / max(0.3, math.cos(roll_rad))  # load factor n (clamped); the accel_g below reuses it
         self.vu += -0.1 * (self.vu + 7.0 * load ** 1.5) * dt
         # ANY off-trim pitch adds sink (ABS -- both a nose-down dive and a nose-up mush cost energy), so
         # holding trim flies longest. The old signed term let a sustained nose-DOWN pitch (< -6) REDUCE
@@ -144,9 +146,9 @@ class Body:
         self.vu = self.vu - 0.4 * abs(self.pitch + 6.0) * dt
         self.alt += self.vu * dt
         # ground track = airspeed along the heading + the wind (the glider is blown with the air mass)
-        self.pe += (self.speed * math.sin(math.radians(self.heading)) + self.wind_e) * dt
-        self.pn += (self.speed * math.cos(math.radians(self.heading)) + self.wind_n) * dt
-        self.accel_g = 1.0 / max(0.3, math.cos(math.radians(self.roll)))  # load factor rises in a bank
+        self.pe += (self.speed * math.sin(heading_rad) + self.wind_e) * dt
+        self.pn += (self.speed * math.cos(heading_rad) + self.wind_n) * dt
+        self.accel_g = load  # the load factor rises in a bank -- identical to `load` above (n = 1/cos roll)
         if self.alt <= 0.0:  # GROUND CONTACT: the glider is down -> stops (was gliding underground forever,
             self.alt = 0.0   # so a degraded flight that never levelled never went 'stationary' -> no DONE)
             self.vu = 0.0

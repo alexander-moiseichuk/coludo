@@ -393,14 +393,14 @@ def default() -> dict:
             # reclaims the flight -- vastly cheaper than the OOM chain (~1.4 s frozen fins +
             # ~7 s reboot) -- and it re-fires EVERY health period for as long as the trigger
             # holds (a fast leak gets a collect per second, altitude allowing; the HITL soak
-            # logged 8). One knob, the rest is physics: collect when the predicted
-            # time-to-OOM < 2x the time left to sink to the rescue floor (memory-decay vs
-            # elevation-decay slopes), with PROVEN safe altitude (elevation > rescue_agl_m ~ 2x
-            # the 5 m landing gate: a 0.2 s pause costs ~2 m), in BOOSTING/GLIDING only (never
-            # LANDING; no descent trend yet -> no rescue -- boost is 3.5 s of peak dynamics).
-            # rescue_agl_m 0 disables. oom_s + land_s ride health.csv + `inspect health`.
-            {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'probe_ms': 10, 'enabled': True,
-             'rescue_agl_m': 10},
+            # logged 8). No knob: the rest is physics. Collect when the predicted time-to-OOM < 2x the
+            # time left to sink to the ground (memory-decay vs elevation-decay slopes), with a proven safe
+            # altitude. The safe floor is FULLY DYNAMIC (no fixed/base altitude): 2x the descent a ~200 ms
+            # collect pause costs, computed from the live sink rate -- so the rescue fires as low as physics
+            # allows and the doubled pause never sinks the glider to the ground. BOOSTING/GLIDING only
+            # (never LANDING -- the stage gate excludes the flare; no descent -> no rescue). `rescue: false`
+            # disables it (memory tests). oom_s + land_s ride health.csv + `inspect health`.
+            {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'probe_ms': 10, 'enabled': True},
             # CC-less field agent (specs/coludo.md "Field operation without CC"), OFF by default:
             # on the pad it selects the mission site by the first GNSS fix (nearest launch.config
             # site within max_range_m; none -> a GENEROUS spiral-landing fallback box the spiral just

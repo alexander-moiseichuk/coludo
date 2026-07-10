@@ -88,8 +88,8 @@ async def test_load_tracking():
 
 async def test_memory_rescue():
     # the physics-based pre-OOM rescue: collect when the predicted time-to-OOM < 2x the time
-    # left to sink to the rescue floor (land_s), with a PROVEN safe altitude
-    # (elevation > rescue_agl_m), in BOOSTING..GLIDING only; no descent trend -> no rescue.
+    # left to sink to the ground (land_s), with a PROVEN safe altitude (elevation above the dynamic
+    # floor = 2x the descent a ~200 ms pause costs), in BOOSTING..GLIDING only; no descent -> no rescue.
     import controller as controller_mod
 
     class _StubController:
@@ -100,7 +100,7 @@ async def test_memory_rescue():
 
     recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
     rig = _StubController()
-    health = board_health.BoardHealth('health', {'rescue_agl_m': 10}, rig)
+    health = board_health.BoardHealth('health', {}, rig)
     assert await health.setup() is True
 
     # build the two trends (the tracker clamps elapsed to whole seconds -> deltas ARE the
@@ -123,7 +123,7 @@ async def test_memory_rescue():
 
     # not descending yet (boost/climb): NO rescue even under a catastrophic burn -- the glide
     # always descends, so the rescue waits for a land_s it can weigh the pause against
-    health._descent_cm_s = 0
+    health._descent = 0
     health._last_free = 0
     health._track(1_000_000, None)
     await asyncio.sleep_ms(20)
@@ -133,18 +133,28 @@ async def test_memory_rescue():
     health._rescue(health.mem_free(), 50.0)
     assert health.rescues == 1
 
-    # the gates: LANDING / at-or-below the floor / UNKNOWN elevation / rescue_agl_m 0 -> never
-    health._descent_cm_s = 25  # descending again (land_s finite) -- isolate each gate
-    health._last_elevation_cm = 10000
+    # the gates: LANDING stage / UNKNOWN elevation / `rescue: false` -> never
+    health._descent = 25  # slow sink -> a ~0.1 m floor, so altitude never gates here -- isolate stage
+    health._last_elevation = 10000
     rig.stage = controller_mod.Stage.LANDING
-    health._rescue(health.mem_free(), 100.0)
+    health._rescue(health.mem_free(), 100.0)  # LANDING -> never (no pause into the flare)
     rig.stage = controller_mod.Stage.GLIDING
-    health._rescue(health.mem_free(), 10.0)  # at the floor: not proven safe
-    health._rescue(health.mem_free(), None)  # unknown elevation: not proven safe
+    health._rescue(health.mem_free(), None)  # unknown elevation -> not proven safe
     assert health.rescues == 1
     health._rescue(health.mem_free(), 100.0)  # control: the same trends DO rescue past the gates
     assert health.rescues == 2
-    off = board_health.BoardHealth('health', {'rescue_agl_m': 0}, rig)
+    # the DYNAMIC floor = 2x the descent a ~200 ms pause costs (NO base): a fast sink raises it, gating an
+    # altitude a slow sink clears. Pin oom_s tiny + land_s large so only the floor varies.
+    health._leak_bps = 1_000_000
+    health._last_free = 1_000_000       # oom_s ~1 s (dying fast)
+    health._last_elevation = 100_000  # 1000 m -> land_s huge, so oom < 2*land at any sink here
+    health._descent = 2500  # 25 m/s -> floor = 2 * 0.2 s * 25 = 10 m
+    health._rescue(health.mem_free(), 8.0)   # 8 m < 10 m -> gated by the pause margin
+    assert health.rescues == 2
+    health._descent = 25    # 0.25 m/s -> floor ~0.1 m -> 8 m clears it easily
+    health._rescue(health.mem_free(), 8.0)
+    assert health.rescues == 3   # the SAME altitude passes when sinking slowly
+    off = board_health.BoardHealth('health', {'rescue': False}, rig)
     assert await off.setup() is True
     off._rescue(0, 100.0)
     assert off.rescues == 0

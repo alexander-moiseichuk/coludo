@@ -17,6 +17,7 @@ import time
 
 import controller as controller_mod
 import databoard
+import fixed
 import recorder
 import task
 
@@ -24,6 +25,11 @@ try:
     import esp32
 except ImportError:
     esp32 = None
+
+_RESCUE_PAUSE_MS: int = 200  # a CONSERVATIVE gc.collect() pause estimate (the typical collect is ~67 ms).
+                             # The rescue's whole safe-altitude floor is 2x THIS worth of descent (dynamic,
+                             # from the live sink rate -- no fixed base): so the doubled, already-generous
+                             # pause still leaves the glider clear of the ground after the collect.
 
 
 @task.activity('health')
@@ -33,18 +39,22 @@ class BoardHealth(task.Task):
     async def setup(self) -> bool:
         self.period_ms: int = self.config.get('period_ms', 1000)
         self._probe_ms: int = self.config.get('probe_ms', 10)  # idle-probe sleep -> CPU relaxes between probes
-        # all-integer bookkeeping (fixed-point convention): the floor in cm, slopes in bytes/s
-        # and cm/s, predictions in whole seconds; the float baro elevation converts to cm once,
-        # at the boundary. rescue_agl_m 0 disables the rescue.
-        self._rescue_agl_cm: int = int(self.config.get('rescue_agl_m', 10)) * 100
+        # all-integer bookkeeping (fixed-point convention): the leak slope is a plain bytes/s count, the
+        # descent slope + elevation are fixnums (m/s, m -- the SCALE-100 centi-representation is internal),
+        # predictions are whole seconds; the float baro elevation converts to a fixnum once, at the boundary.
+        # The rescue's
+        # safe-altitude floor is FULLY DYNAMIC (see _rescue) -- 2x the descent a ~200 ms collect pause
+        # costs, so the pause never sinks the glider to the ground. No fixed/base altitude: the stage gate
+        # already excludes the LANDING flare, and 2x keeps the glider ~200 ms clear of the ground after.
+        self._rescue_on: bool = self.config.get('rescue', True)  # explicit off for memory-behaviour tests
         self._elevation = databoard.Databoard.parameter('elevation')  # rescue safety gate (baro height)
         self.load: int = 0  # CPU load as an integer percent 0..100 (from probe wake-up lateness)
         self.rescues: int = 0  # emergency in-flight collects performed (operator-visible)
         self._leak_bps: int = 0  # EMA of the mem_free decay (bytes/s; 0 = not shrinking)
         self._last_free: int = 0
         self._last_us: int = time.ticks_us()
-        self._descent_cm_s: int = 0  # EMA of the elevation decay (cm/s down; 0 = not descending)
-        self._last_elevation_cm = None
+        self._descent: fixed.fixnum = 0  # EMA of the sink rate (fixnum m/s down; 0 = not descending)
+        self._last_elevation = None  # last baro elevation as a fixnum (m), for the sink slope + land_s
         self._last_elevation_us: int = time.ticks_us()
         self._telemetry = recorder.Telemetry('health.csv', ('temp', 'mem_free', 'load', 'oom_s', 'land_s'))
         self._ok = True
@@ -73,12 +83,12 @@ class BoardHealth(task.Task):
         return self._last_free // self._leak_bps
 
     def land_s(self):
-        """Predicted seconds until the glider sinks to the rescue floor (rescue_agl_m), from the
-        elevation-decay slope, or None while not descending / no elevation. The other side of the
-        rescue decision, and the operator's landing countdown."""
-        if self._descent_cm_s <= 0 or self._last_elevation_cm is None:
+        """Predicted seconds until the glider sinks to the ground, from the elevation-decay slope, or
+        None while not descending / no elevation. The other side of the rescue decision, and the
+        operator's landing countdown."""
+        if self._descent <= 0 or self._last_elevation is None:
             return None
-        return max(0, self._last_elevation_cm - self._rescue_agl_cm) // self._descent_cm_s
+        return max(0, self._last_elevation) // self._descent  # seconds to sink to the ground
 
     def _track(self, free: int, elevation) -> None:
         """Update the memory-decay and elevation-decay EMAs (alpha 1/4, all-int) behind
@@ -93,12 +103,12 @@ class BoardHealth(task.Task):
         self._last_free = free
         self._last_us = now
         if elevation is not None:
-            elevation_cm = int(elevation * 100)  # the float sensor value -> int cm, boundary-only
+            elevation_fx = fixed.from_float(elevation)  # the float sensor value -> a fixnum (m), boundary-only
             elapsed_s = max(1, time.ticks_diff(now, self._last_elevation_us) // 1000000)
-            if self._last_elevation_cm is not None:
-                sink = (self._last_elevation_cm - elevation_cm) // elapsed_s  # cm/s down
-                self._descent_cm_s = (self._descent_cm_s * 3 + sink) // 4 if sink > 0 else 0
-            self._last_elevation_cm = elevation_cm
+            if self._last_elevation is not None:
+                sink = (self._last_elevation - elevation_fx) // elapsed_s  # fixnum m/s down
+                self._descent = (self._descent * 3 + sink) // 4 if sink > 0 else 0
+            self._last_elevation = elevation_fx
             self._last_elevation_us = now
 
     def _rescue(self, free: int, elevation) -> None:
@@ -109,14 +119,20 @@ class BoardHealth(task.Task):
         as the trigger holds, so a persistent leak gets a collect per second while the altitude
         allows. The decision is physics, not a byte
         threshold: collect when memory dies BEFORE the flight is safely over -- predicted
-        oom_s < 2x the time left to sink to the rescue floor (land_s) -- and only with proven
-        safe altitude (a known elevation above rescue_agl_m ~ 2x the landing gate: a 0.2 s pause
-        costs ~2 m), in BOOSTING/GLIDING (never LANDING). No descent trend yet -> no rescue:
-        the glide always descends, so land_s exists exactly where a rescue is meaningful."""
-        if not self._rescue_agl_cm:
-            return  # no safe-altitude floor configured -> the rescue is off
-        if elevation is None or int(elevation * 100) <= self._rescue_agl_cm:
+        oom_s < 2x the time left to sink to the ground (land_s) -- and only with proven safe
+        altitude (a known elevation above the DYNAMIC floor = 2x the descent a ~200 ms pause costs),
+        in BOOSTING/GLIDING (never LANDING). No descent trend yet -> no rescue: the glide always
+        descends, so land_s exists exactly where a rescue is meaningful."""
+        if not self._rescue_on:
+            return  # the rescue is disabled (config)
+        if elevation is None:
             return  # safe altitude must be PROVEN, not assumed
+        # DYNAMIC floor, no base: 2x the descent the ~pause would cost. A faster sink needs more headroom,
+        # and doubling a pause estimate that is ALREADY conservative (typical collect ~67 ms) leaves the
+        # glider ~200 ms clear of the ground after the collect. The stage gate excludes the LANDING flare.
+        floor = self._descent * 2 * _RESCUE_PAUSE_MS // 1000  # fixnum m: same SCALE as the elevation below
+        if fixed.from_float(elevation) <= floor:  # elevation (m) -> fixnum at the boundary, then compare
+            return
         stage = self.controller.stage
         if not (controller_mod.Stage.BOOSTING <= stage < controller_mod.Stage.LANDING):
             return

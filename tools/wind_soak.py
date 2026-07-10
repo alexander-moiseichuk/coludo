@@ -51,14 +51,11 @@ async def _go(motor: str, wind_mps: float, wind_dir: float,
             last_miss = navigation.distance(pos[0], pos[1], target[0], target[1])
             min_miss = last_miss if min_miss is None else min(min_miss, last_miss)
         if stage == stages.GLIDING:
+            import gc
             st = ft._wind.stats()  # method + estimate + the raw triangle components (see wind.stats())
-            true_spd = math.sqrt(body.wind_e * body.wind_e + body.wind_n * body.wind_n)
-            true_from = math.degrees(math.atan2(-body.wind_e, -body.wind_n)) % 360.0 if true_spd else 0.0
-            print('WIND est %.1f from %3d (%-8s) | true %.1f from %3d | air %.1f hdg %3d gs %.1f '
-                  '| we %.1f wn %.1f'
-                  % (st['speed'], st['from'], st['method'], true_spd, true_from,
-                     body.speed, int(body.heading), body.ground_speed(),
-                     st['we'], st['wn']))
+            print('MEM free=%d gc_on=%s | air %.1f hdg %3d wind %.1f from %3d'
+                  % (gc.mem_free(), gc.isenabled(), body.speed, int(body.heading),
+                     st['speed'], st['from']))
             await asyncio.sleep_ms(2000)
             continue
         if stage == stages.DONE:
