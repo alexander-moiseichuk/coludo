@@ -2,6 +2,8 @@
 
 _Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand; run `python3 tools/gen_docs.py` to regenerate._
 
+See [`architecture.md`](architecture.md) for the module dependency graph, class hierarchy, and the annotated `Flight._step()` hot-path call tree (`tools/gen_graph.py`).
+
 # glider firmware (MicroPython) — `src/glider`
 
 ## `airspeed.py`
@@ -364,6 +366,7 @@ falling back to extrapolation of the primary when none is fresh.
 - `add_source(source: str, rank: int, expire_us: int, reconcile: bool=False) -> _Channel` — Register (or re-register) a source at `rank`; return its channel to push() to directly (no
 - `write(value, source: str) -> None` — Report a source's latest reading by name (convenience; sensors push() their channel). The
 - `value()` — The fused estimate (offset-reconciled when enabled); None if nothing was ever written.
+- `stamp()` — ticks_us of the primary source's latest push, or None if nothing was ever written. For
 - `read() -> list` — [value, source, age_ms] of the fused estimate; `source` is None when extrapolated, else the
 - `offsets() -> dict` — Learned bias per source (source -> offset) for diagnostics; empty until reconciled.
 - `raw(source: str)` — A specific source's latest value (None if absent / unwritten).
@@ -412,7 +415,7 @@ the sensor boundary. Truncates toward zero -- the residual is < 1/SCALE (below a
 fixnum -> whole-unit float. Boxes a float, so use ONLY where a float is genuinely required (trig,
 the airspeed integrator) and keep it at the boundary -- never inside a hot loop.
 
-### `millis(value: fixnum) -> int`
+### `to_millis(value: fixnum) -> int`
 
 A fixnum (×SCALE) -> integer MILLI-units (×1000), independent of SCALE -- e.g. at SCALE=100 a
 centidegree fixnum becomes millidegrees. For telemetry/logs that fix a milli representation regardless
@@ -429,6 +432,28 @@ Integer clamp to [low, high] (a symmetric ±x clamp with low=-x, high=+x). Route
 clamp_int -- the `@micropython.viper` integer clamp (~2.1-2.8x the float `between`). Safe here because
 fixnum is always a finite int (no math.inf), which is exactly what the fixed-point transition buys:
 the whole control-path clamp is now viper-native, not the inf-tolerant @native float path.
+
+### `atan2_cd(y: int, x: int) -> fixnum`
+
+atan2(y, x) as a CENTIDEGREE fixnum, four-quadrant, via integer CORDIC -- NO float boxed. y and x
+are a RATIO-FREE integer direction vector: only their ratio sets the angle, and their MAGNITUDE only
+trades precision (the CORDIC's right-shifts discard low bits, so bigger inputs keep more). Fed the
+control's centi-fixnum scale (accel g via from_float, ~x100) the error is ~0.5 deg typical / 1.8 deg
+worst over the glide envelope -- fine for the attitude backup; x1000 would tighten to ~0.16 deg if a
+caller ever needs it. Range (-18000, 18000]. CORDIC needs x >= 0, so x < 0 reflects into the right
+half-plane and the 180 deg is added back per quadrant.
+
+### `blend_cd(state: fixnum, delta: fixnum, target: fixnum, shift: int, correct: bool) -> fixnum`
+
+One complementary-filter step in centidegrees (viper): `state + delta` (gyro integration), then
+optionally a `1/2^shift` pull toward `target` (the accel angle). Pure integer -> zero float boxed;
+the attitude backup runs it per axis each control step (tasks/attitude.py).
+
+### `isqrt_upy(n: int) -> int`
+
+Integer floor(sqrt(n)) reference, division-free (bit-by-bit); n < 2**31.
+
+### `isqrt_opt(n: int) -> int`
 
 ## `gnss.py`
 
@@ -482,12 +507,21 @@ dependencies are INJECTED databoard-style handles — `accel.value()` -> (x, y, 
 touches time or the machine.
 
 Why the estimator is throttled at all: the update is a FLOAT path (sqrt magnitude, integrate,
-GNSS blend) ~ the biggest GC-off allocator measured (~22 KB/s at full rate). It matters most while
-the speed is fast-changing (boost accel + active deceleration), so it runs FULL RATE there; once
-settled it updates on an interval that adapts to the airspeed change — snap to the fast floor when
-the estimate moves, grow toward the ceiling as it settles. The estimator integrates the
-ACCUMULATED dt, so cadence never changes the integral — only how fresh the fin-authority cap is
-(the cap persists between updates).
+GNSS blend) ~ the biggest GC-off allocator measured (~22 KB/s at 100 Hz). It runs FULL RATE where
+the estimate cannot be trusted to pace itself (pre-glide boost/decel, a fresh dive); everywhere
+else the DISTANCE-CONSTANT law paces it: update at clamp(speed, floor, ceiling) Hz = one update
+per ~1 m of TRAVEL. Probed 1..60 m/s against the previous error-adaptive law (7/04):
+* consistency — exactly 1.00 m/check across the whole 5..50 m/s envelope (old: 0.04..1.90 m
+with a 9.5x discontinuity at its 20 m/s full-rate trigger);
+* safety — the old law's WORST staleness (1.9 m at 19 m/s) sat right below its own trigger;
+here staleness self-scales, an overspeed shrinks its own next interval, so the absolute-speed
+trigger is gone entirely;
+* leak — same class at glide trim (3.1 vs 2.2..5.6 KB/s), 3.3x LESS in a 30 m/s dive (6.7 vs
+22.4 KB/s: no more 100 Hz above 20 m/s for granularity nothing needs);
+* simplicity — 4 knobs -> 2 (floor/ceiling Hz) and the adaptation state machine becomes the
+same precomputed integer-indexed table as commons.fin_deflection_limit.
+The estimator integrates the ACCUMULATED dt, so cadence never changes the integral — only how
+fresh the fin-authority cap is (the cap persists between updates).
 
 ### `class GovernorConfig`
 
@@ -495,6 +529,7 @@ The governor's knobs, resolved from the flight task's config dict ONCE (typed co
 place for defaults + doc-in-code; the keys keep their board.config names).
 
 - `__init__(config: dict)` — constructor
+- `update_interval(speed: float) -> float` — The estimator update interval (s) for `speed` (m/s) — the distance-constant table lookup
 
 ### `class Governor`
 
@@ -504,7 +539,8 @@ the deflection cap into mixer.limit.
 
 - `__init__(config: GovernorConfig, mixer, accel, gnss_speed, fin_limit_multiplier: float=1.0)` — constructor
 - `airspeed() -> float` — The current airspeed estimate (m/s) — the boost rod gate and telemetry read it here.
-- `step(dt: float, pre_glide: bool, pitch: fixnum) -> None` — One control slice: accumulate `dt` (wall seconds since the last step) and update the
+- `cap() -> int` — The dynamic-pressure fin-authority cap (deg) the governor last set on the mixer — the
+- `step(dt: float, full_rate_override: bool, pitch: fixnum) -> None` — One control slice: accumulate `dt` (wall seconds since the last step) and update the
 
 ## `guidance.py`
 
@@ -548,8 +584,9 @@ GNSS sooner (looser is a no-op: the source is already None past the window).
 The per-stage control law: setpoint(stage) gates control stages; enter() captures the holds
 on entering control; compute() dispatches the stage's law and fills the setpoint slots.
 
-- `__init__(config: GuidanceConfig, mission, governor, position, agl)` — constructor
+- `__init__(config: GuidanceConfig, mission, governor, position, agl, elevation=None)` — constructor
 - `setpoint(stage: int)` — The configured attitude setpoint dict for `stage`, or None when it is not a CONTROL stage
+- `reachability(glide_ratio: float, wind_e: float=0.0, wind_n: float=0.0, airspeed: float=0.0)` — Can the glider still glide to the zone from here? The still-air reach = elevation × glide_ratio
 - `enter(heading: float, roll: fixnum, pitch: fixnum) -> None` — Entering a control stage (from a non-control one): capture the heading to hold blind and
 - `compute(stage: int, setpoint: dict, heading: float, now_us: int) -> bool` — Run `stage`'s law: fill roll_setpoint/pitch_setpoint/heading_error and return True, or
 
@@ -664,6 +701,9 @@ The operator-set launch identity. One per board; registers itself so Control can
 - `clock() -> str` — Current board wall-clock as 'YYYY-MM-DDTHH:MM:SS' (from the RTC).
 - `epoch() -> int` — Current board clock as a Unix epoch (seconds), for Control to compare against its own.
 - `launch_point()` — The launch origin (lat, lon): the operator-set position (CC `update mission` / `assist`) if
+- `freeze_launch() -> None` — Pin the live GNSS fix as the persistent launch point (called at arm -- the last moment
+- `select_site(fix: tuple)` — CC-less site selection (specs/coludo.md "Field operation without CC"): the nearest known
+- `fallback_zone(fix: tuple, bearing_deg: float=0.0, near_m: float=50.0, width_m: float=100.0, depth_m: float=90.0) -> tuple` — The spiral-landing fallback (spec, simplified 7/08): no known site in range after ignition
 - `geometry() -> dict` — The landing zone resolved against the launch point: the target (centre) + both gates
 - `probe() -> str` — On-demand self-test: a launch position is set (CC or GNSS) and, if a landing zone is set, all
 - `inspect() -> dict`
@@ -910,6 +950,8 @@ on-board sensors would read.
 - `begin_glide() -> None` — Apogee hand-over: the booster ejects (mass drops to the glider-only glide_mass), then nose down
 - `glide_step(dt: float, roll_cmd: float, pitch_cmd: float, yaw_cmd: float) -> None` — Rigid-body glide. Fin deflections (deg from neutral) command roll/pitch; bank turns the
 - `position() -> tuple`
+- `track() -> float` — Ground-track bearing (deg) -- the direction the glider MOVES over the ground: air velocity
+- `ground_speed() -> float` — Horizontal GNSS GROUND speed (m/s) -- the magnitude of the ground velocity, WITH the wind
 - `sensors() -> dict` — Clean (pre-noise) sensor readings from the current state.
 
 ### `noisy(value, frac: float, lo: float, hi: float)`
@@ -981,6 +1023,96 @@ name so the Controller can build it from a config component.
 - `validate() -> bool` — Return True if the task is currently healthy.
 - `finish() -> None` — Shut down and release resources.
 - `inspect() -> dict` — Status dict. Subclasses extend it.
+
+## `warmstart.py`
+
+_Tested by `test/test_warmstart.py`._
+
+warmstart.py — in-flight reboot recovery (specs/coludo.md "In-flight reboot & warm start").
+A mid-air reset (watchdog, brownout-survivor, crash) must not turn the glider ballistic: the
+sequencer drops a tiny BREADCRUMB into NVS at BOOSTING entry (never a VFS file — a filesystem
+write locks the scheduler and wears the data flash; esp32.NVS commits to its own partition in
+milliseconds) and clears it at DONE. At boot, main.py restores GLIDING when the breadcrumb AND
+two physical signals agree — see should_restore() for the gate.
+
+Storage layout: `flight` is a bare i32 flag (cheap to flip on the clear path), the payload is ONE
+JSON blob (`crumb`) — full float precision, no per-field key bookkeeping, and a new field is a
+dict entry rather than an NVS schema change. The module degrades to no-ops off-board (CPython).
+
+### `save(launch: tuple, zone: tuple, pad_altitude: float, stamp: int) -> bool`
+
+Drop the breadcrumb (called ONCE at BOOSTING entry, on the rod, before GC goes off).
+`launch` = (lat, lon) of the live fix; `zone` = ((lat, lon) TL, (lat, lon) BR); `pad_altitude`
+= the baro ABSOLUTE altitude at the pad (m — NOT the boot-relative elevation, a rebooted baro
+re-zeroes mid-air); `stamp` = RTC epoch seconds. Returns False (and never raises) when NVS is
+absent or full — a failed breadcrumb must not block a launch.
+
+### `clear() -> None`
+
+Down the flag (at DONE / after a rejected warm start). The blob stays — the flag alone
+decides, so the clear is a single fast i32 write. Never raises.
+
+### `load()`
+
+The breadcrumb dict ({launch: [lat, lon], zone: [[TL], [BR]], pad_altitude, stamp}), or None
+when no flight was in progress (flag absent/0) or the blob is missing/torn (-> cold boot).
+
+### `should_restore(crumb, separated: bool, altitude, cause_is_reset: bool, now_s, min_height_m: float=15.0, max_age_s: int=600) -> tuple`
+
+The warm-start gate — ALL must agree (defense in depth; any doubt -> cold boot):
+  1. a breadcrumb exists AND carries its `pad_altitude` + `stamp` (a torn/partial JSON blob with a
+     missing key REFUSES here rather than crashing the boot -- findings §21.1);
+  2. the separation switch reads SEPARATED — the physical latch no software state can fake
+     (post-separation it stays LOW for the whole glide; a stack on the pad reads nested);
+  3. the baro ABSOLUTE altitude reads at least `min_height_m` above the breadcrumb's pad —
+     still clearly in the air (None = baro not up in time -> refuse);
+  4. `cause_is_reset` — machine.reset_cause() was WDT/SOFT/HARD. A battery insertion or power
+     switch reads PWRON — exactly what a RECOVERY CREW's hands do to a glider that crash-landed
+     on a rise above the pad (where gate 3 alone would pass). A mid-air brownout also reads
+     PWRON and stays cold: a browning-out battery cannot be trusted to finish the glide;
+  5. `age_s` = `now_s` - crumb stamp is positive and under `max_age_s`. The RTC survives soft/WDT
+     resets, so the arithmetic holds exactly when a warm start is legitimate (even an unsynced
+     RTC — continuity matters, not absolute truth); a power cycle restarts the RTC and breaks
+     it -> cold. Age is computed HERE from the crumb's stamp, so a missing stamp refuses cleanly.
+Pure function of its inputs (host-testable). Returns (restore, reason).
+
+### `restore(flight, cfg: dict, log=print) -> bool`
+
+Warm start (specs/coludo.md "In-flight reboot & warm start") — was main._restore_flight, moved
+here so main.py stays a thin bring-up. A mid-air reset must not turn the glider ballistic: restore
+GLIDING when the NVS breadcrumb AND two physical signals agree — the separation latch (read via the
+separation DRIVER, not a raw Pin) and the baro absolute altitude clearly above the crumb's pad. Any
+doubt -> the crumb is cleared and this is a normal cold boot. Heavy imports stay inside (nothing
+beyond the cheap load() runs on a plain boot).
+
+## `wind.py`
+
+_Tested by `test/test_wind.py`._
+
+wind.py — wind estimation from GNSS (plan #6). The MINIMAL method, proven first: the WIND TRIANGLE.
+
+The GNSS reports the ground velocity (course + ground speed); the attitude gives the heading; the
+governor gives the airspeed. The air mass the glider flies through is moving, so
+wind = ground_velocity - air_velocity = (ground along course) - (airspeed along heading).
+An EMA smooths the per-fix estimate. The CROSSWIND component is bias-free; the ALONG-heading component
+inherits the governor's airspeed error (an over-read biases head/tailwind) -- acceptable for the rough
+uses (reachability margin, approach crab). If the field data shows that bias hurts, the airspeed-free
+GPS-only min/max-ground-speed method is the next layer (kept out until a corner case earns it).
+
+Float trig, fed once per GNSS fix (off the hot loop), like navigation -- a telemetry + reachability /
+approach input, not a fixnum control quantity.
+
+### `class WindEstimator`
+
+Estimate the wind (east/north m/s) from the GNSS ground velocity vs the air velocity (the wind
+triangle, EMA-smoothed). update() once per GNSS fix; speed()/direction()/components() read it.
+
+- `__init__(alpha: float=0.05)` — constructor
+- `update(course: float, ground_speed: float, airspeed: float, heading: float) -> None` — One GNSS-fix update. `course`/`heading` deg, `ground_speed`/`airspeed` m/s.
+- `components() -> tuple` — (east, north) m/s.
+- `speed() -> float`
+- `direction() -> float` — Where the wind blows FROM (meteorological convention), degrees. 0 when calm.
+- `stats() -> dict` — Diagnostics for the wind soak / telemetry: the method, the estimate, and the raw components.
 
 # glider HAL drivers — `drivers/` — `src/glider/drivers`
 
@@ -1227,6 +1359,7 @@ Detect stage separation (HIGH=nested -> LOW=separated) and trigger Boosting -> G
 - `run() -> None`
 - `probe() -> str` — On-demand self-test: the separation pin reads a valid level (logged nested/separated).
 - `diagnose() -> str` — Deeper analysis: read the separation pin -- during a pre-flight check it should be HIGH (the
+- `separated() -> bool` — The last debounced latch level as a bool (True = pads open = separated). The AUTHORITATIVE
 - `inspect() -> dict`
 
 ## `sg90.py`
@@ -1325,7 +1458,7 @@ board with no Wi-Fi just logs once and flies standalone -- no Wi-Fi means no CC,
 Join + maintain the STA link; Inspectable as `wifi`.
 
 - `setup() -> bool` — NON-BLOCKING: only read config; the radio is brought up lazily in run(). Bringing the
-- `run() -> None` — (Re)join every `retry_ms` -- but ONLY until ignition. Once the controller reaches BOOSTING the
+- `run() -> None` — (Re)join every `retry_ms` -- but ONLY on the ground. From BOOSTING through LANDING the
 - `connect(timeout_ms: int=15000) -> bool` — Join the configured network. Returns True once connected, False on timeout/error.
 - `isconnected() -> bool`
 - `ifconfig() -> tuple`
@@ -1338,6 +1471,38 @@ Join + maintain the STA link; Inspectable as `wifi`.
 - `stats() -> dict`
 
 # glider subsystem tasks — `tasks/` — `src/glider/tasks`
+
+## `attitude.py`
+
+tasks/attitude.py — attitude REDUNDANCY: a complementary-filter backup for the BNO055 (plan item 4;
+coludo.md "Sensors Fusion/Backup"). The BNO055 is the sole fused-attitude source; losing it mid-flight
+would leave the flight loop with stale/absent attitude -> neutral fins -> ballistic. This task derives
+(heading, roll, pitch) from the LSM6DSO32 gyro `rate` + accel gravity vector and PROVIDES it on the
+databoard at PRIORITY 1, so the existing timeout-handoff fusion swaps to it automatically the moment the
+BNO055 (priority 0) stops -- no change to flight.py.
+
+@task.activity('attitude'). Two regimes, checked each cycle by the fused-attitude SOURCE:
+* BNO055 alive (it is the fused source): MIRROR it -- copy roll/pitch (already fixnum cd) + heading,
+staying warm and FRESH so the handoff is seamless, no atan2/accel math (the BNO055 is trusted).
+* BNO055 lost (source is us / extrapolated): FREE-RUN -- integrate the gyro rate (integer) and, when
+|accel| ~ 1 g (a trustworthy gravity vector), pull roll/pitch toward the accel angle via the integer
+CORDIC fixed.atan2_cd (throttled -- drift correction is slow). Heading is gyro-z only (it drifts: the
+LSM6DSO32 has no magnetometer) -- roll/pitch stay solid (gravity-referenced), so the glider holds
+wings-level + pitch; nav heading degrades gracefully. Integer/fixnum throughout; the only boxed float
+is the heading value the channel format requires (nav consumes heading as float degrees).
+
+Mounting (the gyro-D-term convention, HITL-validated): gx->roll, gy->pitch, gz->yaw; accel roll =
+atan2(ay, az), pitch = atan2(-ax, |ay,az|). Field calibration flips a sign like the mixer gains.
+
+### `class Attitude(task.Task)`
+
+Complementary-filter attitude backup (heading, roll, pitch) at priority 1 behind the BNO055.
+
+- `setup() -> bool`
+- `run() -> None` — Mirror the primary while it is the fused source; free-run the complementary filter when it is
+- `probe() -> str` — On-demand self-test: the gyro `rate` is present (the backup's core input). A dead gyro means
+- `inspect() -> dict`
+- `stats() -> dict`
 
 ## `board_health.py`
 
@@ -1362,6 +1527,8 @@ Periodic vitals -> telemetry (health.csv) + `inspect health`.
 - `temperature() -> float`
 - `mem_free() -> int`
 - `sample() -> dict`
+- `oom_s()` — Predicted seconds to memory exhaustion from the current decay slope, or None while the
+- `land_s()` — Predicted seconds until the glider sinks to the rescue floor (rescue_agl_m), from the
 - `run() -> None` — Push a vitals row at startup, then every period_ms. A probe task tracks CPU load. Runs
 - `probe() -> str` — On-demand self-test: free memory reads positive (a basic board-vitals sanity); the
 - `inspect() -> dict`
@@ -1385,6 +1552,25 @@ an empty `cc_host` ('') disables CC and the board flies standalone.
 - `setup() -> bool`
 - `run() -> None` — Park until the Wi-Fi dependency is up, then dial CC and serve until the link drops; retry.
 - `probe() -> str` — On-demand self-test: the CC hub address resolves (explicit or derived) and the Wi-Fi
+
+## `field.py`
+
+tasks/field.py — the CC-less field agent (specs/coludo.md "Field operation without CC").
+@task.activity('field'), DISABLED by default. On the pad (SETTING) it makes at most two decisions:
+1. SITE BY GPS — on the first fresh fix, the mission adopts the nearest launch.config site
+within max_range_m; none in range -> the synthesized spiral-landing fallback zone offset
+from the fix at the configured clear-sector bearing.
+2. AUTO-ARM (opt-in) — arm once the board has sat STATIONARY with a live fix for the whole
+auto_arm_dwell_s. The long dwell makes a bench/carry arm unlikely, and the flight loop's
+control-stage gating still holds the fins neutral on the ground either way.
+Each decision fires once, then the task idles; the operator/CC can still override everything live.
+
+### `class Field(task.Task)`
+
+Site-by-GPS + optional auto-arm, so a board can fly with no Control hub present.
+
+- `setup() -> bool`
+- `run() -> None`
 
 ## `flight.py`
 
@@ -1411,6 +1597,7 @@ Attitude-hold stabilization: GLIDING-gated, timer- or asyncio-scheduled, fail-sa
 - `run() -> None`
 - `finish() -> None`
 - `progress() -> tuple` — (controlling, steps, stage, updated_us) -- the public control-loop heartbeat, so the watchdog
+- `vitals() -> dict` — The live flight-panel readout (CC dashboard): the governor's airspeed estimate + the
 - `inspect() -> dict`
 
 ## `hitl.py`
@@ -1507,6 +1694,7 @@ you drop the running firmware to the REPL for bench work; enable it for flight.
 Feed a hardware WDT (wedge backstop) + supervise the control loop (stall -> full reset).
 
 - `setup() -> bool`
+- `kick() -> None` — Out-of-band feed for a caller about to LEGITIMATELY block the loop -- the memory
 - `run() -> None`
 
 # control (CPython) — `src/control`

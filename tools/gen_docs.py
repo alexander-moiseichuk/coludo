@@ -121,7 +121,9 @@ def render_module(path: str, out: list) -> None:
 def main() -> None:
     out = ['# Coludo API reference', '',
            '_Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand;'
-           ' run `python3 tools/gen_docs.py` to regenerate._', '']
+           ' run `python3 tools/gen_docs.py` to regenerate._', '',
+           'See [`architecture.md`](architecture.md) for the module dependency graph, class hierarchy,'
+           ' and the annotated `Flight._step()` hot-path call tree (`tools/gen_graph.py`).', '']
     for rel, title in SOURCES:
         directory = os.path.join(ROOT, rel)
         files = sorted(f for f in os.listdir(directory)
