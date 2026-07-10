@@ -38,7 +38,9 @@ _FALLBACK_FONTS = (
 _TRAIL_SEC = 2.0
 _TRAIL_POINTS_MAX = 200
 _TARGET_GX = 0.35
-_TARGET_GY = 0.40
+_TARGET_GY = 0.72  # glider screen anchor, fraction from the TOP (target_sy below): high value = LOW on
+# screen, so the pad/launch sits in the lower ~quarter and the climb has the sky above it (was 0.40, which
+# put the start mid-screen)
 
 
 def _font(name, size):
@@ -358,6 +360,17 @@ def load(label, path):
         _, az = rel(accel_str, 'az')
         accel = (at, list(zip(ax, ay, az)))
 
+    # Load board vitals (mem_free / CPU load / predicted oom) from health.csv -- optional; shown live in
+    # the HUD so the operator watches the GC-off memory drain + CPU headroom as the flight progresses.
+    health = None
+    health_str = streams.get('health.csv')
+    if health_str and 'mem_free' in health_str.fields:
+        # mem_free + load are on EVERY health row (aligned) -> zip is safe. oom_s/land_s blank out when
+        # not shrinking (ragged), so they are left to the charts (flight_report), not the live HUD.
+        ht, mem = rel(health_str, 'mem_free')
+        _, load_pct = rel(health_str, 'load')
+        health = (ht, list(zip(mem, load_pct)))
+
     return {'label': label, 'motor': label.split()[0], 'pos': (lat_t, track), 'height': hgt,
             'speed': (spd_t, [k / 1.94384 for k in knots]), 'heading': rel(imu, 'heading'),
             'roll': rol, 'pitch': pit, 'stages': stages, 'launch': launch,
@@ -365,7 +378,7 @@ def load(label, path):
             'apogee': apogee, 'land_t': land_t, 'miss': math.hypot(td[0] - cm[0], td[1] - cm[1]),
             'in_zone': bool(track) and (_BR[0] <= lat[-1] <= _TL[0]) and (_TL[1] <= lon[-1] <= _BR[1]),
             'apogee_pos': _at(lat_t, track, apogee[0]) or (0.0, 0.0),
-            'fins': fins, 'accel': accel}
+            'fins': fins, 'accel': accel, 'health': health}
 
 
 def captions(fl):
@@ -412,6 +425,7 @@ def render(flights, out):
         gp, hh = fl['pos'], fl['height']
         fins_data = fl.get('fins')
         accel_data = fl.get('accel')
+        health_data = fl.get('health')
         burn_time = fl['burn']
 
         _cam = [0.0, 0.0]
@@ -564,7 +578,7 @@ def render(flights, out):
             d.rectangle([0, _CAP_Y - 8, _W, _H], fill=_SKY)
             d.rectangle([_PANEL_X - 30, 92, _W, _CAP_Y - 16], fill=(18, 40, 28))
             spd = max(0.0, _at(fl['speed'][0], fl['speed'][1], tc) or 0.0)
-            d.text((_PANEL_X, 112), '5% noise, calm', font=F_TITLE, fill=(245, 245, 185))
+            d.text((_PANEL_X, 112), 'live telemetry', font=F_TITLE, fill=(245, 245, 185))
 
             metrics = [
                 ('time', '%5.1f s' % tc),
@@ -576,13 +590,22 @@ def render(flights, out):
             ]
             if g_load is not None:
                 metrics.append(('g-load', '%5.2f g' % g_load))
+            # board vitals -- the GC-off memory drain + CPU load + time-to-OOM, live in the HUD
+            if health_data is not None:
+                vitals = _at(health_data[0], health_data[1], tc)
+                if vitals is not None:
+                    mem_mb, load_pct = vitals
+                    metrics.append(('memory', '%5.1f MB' % (mem_mb / 1e6)))
+                    metrics.append(('cpu load', '%5.0f %%' % load_pct))
 
+            # rows scale to the metric count so the added vitals never push the schedule off the panel
+            row = 72 if len(metrics) <= 7 else 58
             for i, (lab, val) in enumerate(metrics):
-                yy = 172 + i * 72
+                yy = 168 + i * row
                 d.text((_PANEL_X, yy), lab, font=F_LBL, fill=(170, 205, 170))
                 d.text((_PANEL_X, yy + 22), val, font=F_NUM, fill=(255, 255, 255))
 
-            schedule_y = 172 + len(metrics) * 72 + 20
+            schedule_y = 168 + len(metrics) * row + 16
             d.text((_PANEL_X, schedule_y), 'schedule', font=F_LBL, fill=(170, 205, 170))
             for i, (lab, et) in enumerate(sched):
                 done = tc >= et
