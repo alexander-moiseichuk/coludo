@@ -3,6 +3,8 @@
 # vs the full-authority landing/final-approach bank, and the strip-centreline final approach. Pure
 # logic with injected stubs -- no Flight task, no databoard. Run by `make test`.
 
+import math
+
 import fixed
 import guidance
 from controller import Stage
@@ -49,6 +51,16 @@ class _StubMission:
     def zone_points(self):
         import navigation
         return None if self.zone is None else navigation.zone(self.zone[0], self.zone[1])
+
+    def zone_aspect(self):
+        import navigation
+        return 1.0 if self.zone is None else navigation.zone_aspect(self.zone[0], self.zone[1])
+
+    def endgame_heading(self):
+        if self.zone is None:
+            return guidance.Heading.FIG_O
+        wide = self.zone_aspect() > guidance.Heading.OO_ASPECT
+        return guidance.Heading.FIG_OO if wide else guidance.Heading.FIG_O
 
     def geometry(self):
         if self.zone is None:
@@ -208,8 +220,8 @@ def test_loiter_and_endgame_spiral():
 
     elevation = _Elevation()
     unit, position, _agl, _gov = _build({'loiter_radius_m': 30, 'loiter_capture_m': 120,
-                                         'loiter_gain': 3.0, 'endgame_alt_m': 50,
-                                         'nav_bank_gain': 1.5, 'land_bank_gain': 3.0})
+                                         'loiter_gain': 3.0, 'endgame_alt_m': 50, 'endgame_pattern': 'o',
+                                         'nav_bank_gain': 1.5, 'land_bank_gain': 3.0})  # force the single circle
     unit._elevation = elevation
     unit.enter(0.0, 0, 0)
     centre = ((48.001 + 48.000) / 2, (11.000 + 11.010) / 2)  # the _ZONE centre
@@ -243,6 +255,56 @@ def test_loiter_and_endgame_spiral():
     unit.compute(Stage.GLIDING, {}, 0.0, 0)
     gate_heading = navigation.steer(far, (48.001, 11.000), (48.000, 11.010))[0]
     assert abs(guidance.heading_error(gate_heading, unit._nav_heading)) <= 1
+
+
+def test_endgame_pattern_selection():
+    """'auto' (default) lets the Mission pick 'o' vs 'oo' by zone shape (oo when aspect > threshold);
+    an explicit config value overrides. _ZONE is a strip (aspect ~6.7 > 2) -> auto resolves to 'oo'."""
+    import navigation
+    square = ((48.001, 11.000), (48.000, 11.0015))  # aspect ~1 -> 'o'
+    assert navigation.zone_aspect(*_ZONE) > 2.0 and navigation.zone_aspect(*square) < 2.0
+    assert _StubMission(_ZONE).endgame_heading() == guidance.Heading.FIG_OO   # strip -> oo (from the k-ratio)
+    assert _StubMission(square).endgame_heading() == guidance.Heading.FIG_O   # square -> o
+    # config strings resolve to Heading ids via guidance.Heading (to/from string, 'o-o' aliasing 'oo')
+    assert guidance.Heading.resolve('auto') == guidance.Heading.AUTO
+    assert guidance.Heading.resolve('O') == guidance.Heading.FIG_O
+    assert guidance.Heading.resolve('o-o') == guidance.Heading.FIG_OO
+    assert guidance.Heading.PATTERNS[guidance.Heading.FIG_OO] == 'oo'  # id -> name
+
+
+def test_oo_endgame():
+    """'oo' endgame: two lobes along the long axis. The lobe FLIPS at each centre crossing but the turn
+    SENSE stays fixed (unlike the divergent figure-8), and the lobes stay bounded (~loiter_radius)."""
+    class _Elevation:
+        def __init__(self):
+            self.value_now = None
+
+        def value(self):
+            return self.value_now
+
+    elevation = _Elevation()
+    # _ZONE is a strip -> 'auto' resolves to 'oo'
+    unit, position, _agl, _gov = _build({'loiter_radius_m': 30, 'loiter_capture_m': 120, 'loiter_gain': 3.0,
+                                         'endgame_alt_m': 50, 'land_bank_gain': 3.0}, airspeed=14.0)
+    unit._elevation = elevation
+    unit.enter(0.0, 0, 0)
+    centre = ((48.001 + 48.000) / 2, (11.000 + 11.010) / 2)
+    elevation.value_now = 25.0
+    # AT the centre -> a crossing flips the lobe (+1 -> -1) and latches
+    position.reading = (centre, 'gnss', 0)
+    unit._leg_dir, unit._was_near, unit._nav_heading = 1, False, None
+    unit.compute(Stage.GLIDING, {}, 0.0, 0)
+    assert unit._leg_dir == -1 and unit._was_near and 0.0 <= unit._nav_heading < 360.0
+    # staying at the centre does NOT re-flip (one flip per crossing)
+    unit._nav_heading = None
+    unit.compute(Stage.GLIDING, {}, 0.0, 0)
+    assert unit._leg_dir == -1
+    # leaving the centre clears the latch for the next crossing
+    metres_lon = 111320.0 * math.cos(math.radians(centre[0]))
+    position.reading = ((centre[0], centre[1] + 60 / metres_lon), 'gnss', 0)
+    unit._nav_heading = None
+    unit.compute(Stage.GLIDING, {}, 0.0, 0)
+    assert unit._was_near is False and 0.0 <= unit._nav_heading < 360.0
 
 
 def test_steering_filter():
@@ -347,6 +409,8 @@ test_nav_cache()
 test_bank_to_turn()
 test_final_approach()
 test_loiter_and_endgame_spiral()
+test_endgame_pattern_selection()
+test_oo_endgame()
 test_steering_filter()
 test_reachability()
 test_min_turn_radius()

@@ -101,6 +101,18 @@ def zone(corner_tl: tuple, corner_br: tuple) -> tuple:
     return target, (lat_t, lon_c), (lat_b, lon_c)  # taller than wide -> top/bottom edges
 
 
+def zone_aspect(corner_tl: tuple, corner_br: tuple) -> float:
+    """The zone rectangle's long/short side ratio (>= 1). The endgame picks its pattern from it: a
+    SQUARISH zone (ratio <= the config threshold) orbits a single circle ('o'); an ELONGATED strip flies
+    two lobes along the long axis ('oo') to cover the length without leaving the zone."""
+    lat_t, lon_l = corner_tl
+    lat_b, lon_r = corner_br
+    lat_span = abs(lat_t - lat_b) * M_PER_DEG
+    lon_span = abs(lon_r - lon_l) * M_PER_DEG * math.cos(math.radians((lat_t + lat_b) / 2.0))
+    long_side, short_side = max(lat_span, lon_span), min(lat_span, lon_span)
+    return long_side / short_side if short_side else 1.0
+
+
 def inside(position: tuple, corner_tl: tuple, corner_br: tuple) -> bool:
     """True if position (lat, lon) is within the zone rectangle (corner order-agnostic)."""
     lat, lon = position

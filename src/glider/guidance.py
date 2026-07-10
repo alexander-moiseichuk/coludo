@@ -23,8 +23,34 @@ import fixed
 import navigation
 from fixed import fixnum
 
+try:
+    from micropython import const
+except ImportError:  # CPython (tooling / off-board checks)
+    from commons import const
+
 _STAGE = controller_mod.Stage
 _G: float = 9.81  # gravity (m/s^2) -> the coordinated-turn radius R = v^2 / (g * tan(bank))
+
+
+class Heading:
+    """The endgame HOLDING pattern, self-contained like controller.Stage: int ids (cheap to compare/store
+    on MicroPython) + the `PATTERNS` id->name mapping and `NAMES` reverse. Config names the pattern by
+    string; resolve() turns 'auto'/'o'/'oo'/'o-o' (case-insensitive; 'o-o' aliases 'oo') into an id once.
+    AUTO defers the choice to the Mission (mission.endgame_heading), which decides 'o' vs 'oo' from the
+    zone's long/short aspect (a strip wider than OO_ASPECT flies the two-lobe 'oo')."""
+
+    AUTO = const(0)    # the Mission decides o vs oo from the zone shape
+    FIG_O = const(1)   # a single circle
+    FIG_OO = const(2)  # two lobes along the long axis (an elongated strip)
+    OO_ASPECT: float = 2.0  # long/short aspect above which a zone flies 'oo' (a fixed rule, not a config knob)
+    PATTERNS: dict = {AUTO: 'auto', FIG_O: 'o', FIG_OO: 'oo'}
+    NAMES: dict = {name: pattern_id for pattern_id, name in PATTERNS.items()}
+
+    @classmethod
+    def resolve(cls, name) -> int:
+        """A config string -> the pattern id: 'auto'/'o'/'oo'/'o-o', case-insensitive, 'o-o' aliasing
+        'oo'. An unknown value falls back to AUTO (the Mission decides)."""
+        return cls.NAMES.get(str(name).lower().replace('-', ''), cls.AUTO)
 
 
 def heading_error(target: float, current: float) -> int:
@@ -80,6 +106,10 @@ class GuidanceConfig:
         self.loiter_radius_m: float = config.get('loiter_radius_m', 30)
         self.loiter_capture_m: float = config.get('loiter_capture_m', 120)
         self.loiter_gain: float = config.get('loiter_gain', 3.0)  # deg of inward cut per m off-circle
+        # ENDGAME holding pattern: 'o' a single circle, 'oo'/'o-o' two lobes along the long axis (cover an
+        # elongated strip), or 'auto' (default) -- the Mission decides from the zone shape. Resolved to a
+        # Heading id ONCE (case-insensitive; the aspect threshold is Heading.OO_ASPECT, a fixed rule).
+        self.endgame_pattern: int = Heading.resolve(config.get('endgame_pattern', 'auto'))
         self.final_agl: float = config.get('final_approach_agl', 8)
         self.final_cross_gain: float = config.get('final_cross_gain', 3.0)  # deg intercept per m off
         self.final_intercept: float = config.get('final_intercept_deg', 45)  # max intercept angle
@@ -123,6 +153,8 @@ class Guidance:
         self._nav_heading = None  # cached target heading (None -> recompute on the next compute)
         self._nav_updated_us: int = 0
         self._error_filtered16 = None  # the heading-error EMA state, x16 fixed (None -> seed next)
+        self._leg_dir: int = 1  # 'oo' endgame: which lobe (+1/-1), flips at each centre crossing
+        self._was_near = False  # 'oo' hysteresis: glider was within a lobe radius of the centre last tick
 
     def setpoint(self, stage: int):
         """The configured attitude setpoint dict for `stage`, or None when it is not a CONTROL stage
@@ -306,21 +338,16 @@ class Guidance:
                 east, north = navigation.offset(position[0], position[1], target[0], target[1])
                 span = math.sqrt(east * east + north * north)
                 if endgame is not None or span <= config.loiter_capture_m:
-                    # LOITER: hold the constant-radius orbit around the centre -- the tangent
-                    # heading corrected inward/outward by the radius error. One fixed orbit
-                    # direction (+90), so noise never flips the turn into S-hunting. In the
-                    # ENDGAME the radius shrinks with the remaining altitude -> a spiral that
-                    # collapses toward the centre as the energy runs out, but CLAMPED to the
-                    # physical min turn radius at the phase's bank (endgame opens the land-bank,
-                    # cruise uses bank_limit): commanding tighter than R_min asks for a turn the
-                    # airframe cannot fly, so honour the floor (it bounds the landing accuracy).
-                    bank = self.endgame_bank() if endgame is not None else config.bank_limit
-                    radius = max(config.loiter_radius_m * (endgame if endgame is not None else 1.0),
-                                 self.min_turn_radius(bank))
-                    correction = commons.between(
-                        -60.0, config.loiter_gain * (span - radius), 60.0)
-                    bearing_centre = navigation.compass(east, north)  # reuse the offset -- no 2nd geo pass
-                    self._nav_heading = (bearing_centre + 90.0 - correction) % 360.0
+                    # ENDGAME holding pattern (Heading id) -- FIG_O (a single circle) or FIG_OO (two lobes
+                    # along the long axis, for an elongated strip). AUTO defers to the Mission, which picks
+                    # from the zone shape.
+                    pattern = config.endgame_pattern
+                    if pattern == Heading.AUTO:
+                        pattern = self._mission.endgame_heading()
+                    if pattern == Heading.FIG_OO:
+                        self._nav_heading = self._oo_heading(position, target, gate_b, endgame)
+                    else:
+                        self._nav_heading = self._circle_heading(east, north, span, endgame)
                 else:  # far out: travel to the zone through the nearer gate, as always
                     self._nav_heading = navigation.steer_to(position, zone[0], zone[1],
                                                             target, gate_a, gate_b)[0]
@@ -329,3 +356,45 @@ class Guidance:
             self._nav_heading = navigation.steer_to(launch, zone[0], zone[1], target, gate_a, gate_b)[0] \
                 if launch is not None else self._heading_hold  # tier 3: blind
         return self._nav_heading
+
+    def _circle_heading(self, east: float, north: float, span: float, endgame) -> float:
+        """'o' endgame: a single constant-radius orbit around the centre -- the tangent heading (bearing
+        + 90) corrected inward/outward by the radius error. One fixed orbit direction, so noise never
+        flips the turn into S-hunting; in the ENDGAME the radius shrinks with the altitude (a spiral
+        collapsing toward the centre), CLAMPED to the physical min turn radius at the phase's bank.
+        `east, north` is the offset glider -> centre, `span` its length."""
+        bank = self.endgame_bank() if endgame is not None else self._config.bank_limit
+        radius = max(self._config.loiter_radius_m * (endgame if endgame is not None else 1.0),
+                     self.min_turn_radius(bank))
+        correction = commons.between(-60.0, self._config.loiter_gain * (span - radius), 60.0)
+        return (navigation.compass(east, north) + 90.0 - correction) % 360.0
+
+    def _oo_heading(self, position: tuple, target: tuple, gate_b: tuple, endgame) -> float:
+        """'oo' endgame: two lobes offset along the long axis, so an elongated strip is covered by two
+        orbits rather than one central circle. Each lobe is a circle of radius r offset r along the axis
+        (so it passes through the centre); the lobe FLIPS at each centre crossing but the turn SENSE stays
+        fixed (+90) -- both loops turn the same way, so the transition is SMOOTH (the sharp sense-reversal
+        of a true figure-8 diverged). r stays bounded (~loiter_radius) and shrinks with the endgame
+        altitude, so the pair collapses toward the centre. gate_b sets the long-axis direction. (KNOWN
+        LIMITATION: on a strip narrower than ~2*r the lobes reach outside the short edges -- lands out of
+        zone in HITL on the ~40 m HPRC strip; fitting r to the width needs the steep bank whose sink then
+        drops it out anyway. 'o' stays the reliable in-zone default; 'oo' needs more geometry work.)"""
+        ce, cn = navigation.offset(target[0], target[1], gate_b[0], gate_b[1])  # centre -> gate_b (long axis)
+        half_len = math.sqrt(ce * ce + cn * cn) or 1.0
+        unit_e, unit_n = ce / half_len, cn / half_len  # unit vector along the long axis
+        bank = self.endgame_bank() if endgame is not None else self._config.bank_limit
+        r = max(self.min_turn_radius(bank),
+                self._config.loiter_radius_m * (endgame if endgame is not None else 1.0))
+        ge, gn = navigation.offset(target[0], target[1], position[0], position[1])  # glider rel. the centre
+        if ge * ge + gn * gn < r * r:  # within a lobe radius of the centre -> a crossing
+            if not self._was_near:
+                self._leg_dir = -self._leg_dir  # switch to the other lobe (turn sense unchanged)
+            self._was_near = True
+        else:
+            self._was_near = False
+        # tangent to the current lobe's circle (FIXED +90 sense) + an inward/outward cut to hold radius r
+        dx = self._leg_dir * r * unit_e - ge  # glider -> lobe centre
+        dy = self._leg_dir * r * unit_n - gn
+        dist = math.sqrt(dx * dx + dy * dy) or 1.0
+        cut = commons.between(-60.0, self._config.loiter_gain * (dist - r), 60.0)
+        return (navigation.compass(dx, dy) + 90.0 - cut) % 360.0

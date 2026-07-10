@@ -134,6 +134,7 @@ class Mission(inspector.Inspectable):
         self.sites: list = _sites(data.get('sites'))  # known launch locations (CC-less site-by-GPS)
         self._zone_key = None  # zone identity the resolved geometry below was computed from (zone_points)
         self._zone_points = None  # cached navigation.zone() -> (target, gate_a, gate_b) for the hot path
+        self._zone_aspect: float = 1.0  # cached long/short ratio -> the auto endgame pattern (o vs oo)
         inspector.Inspector.register(self)
 
     def set_time(self, epoch) -> bool:
@@ -230,7 +231,23 @@ class Mission(inspector.Inspectable):
         if zone is not self._zone_key:  # first call, or the zone was replaced -> resolve + cache
             self._zone_key = zone
             self._zone_points = navigation.zone(zone[0], zone[1])
+            self._zone_aspect = navigation.zone_aspect(zone[0], zone[1])
         return self._zone_points
+
+    def zone_aspect(self) -> float:
+        """The zone's long/short side ratio (>= 1), memoized alongside zone_points -- the endgame 'oo'
+        bounds its lobe radius to the strip WIDTH (half_len / aspect) so the lobes stay inside the zone."""
+        return 1.0 if self.zone_points() is None else self._zone_aspect
+
+    def endgame_heading(self) -> int:
+        """The endgame holding pattern (a guidance.Heading id) the AUTO setting resolves to, decided from
+        the zone SHAPE: a strip whose long/short aspect exceeds Heading.OO_ASPECT flies FIG_OO (two lobes
+        along the long axis to cover the length), everything squarer flies FIG_O (a single circle). The
+        Mission owns the zone, so it owns this decision; guidance only asks when its config is AUTO."""
+        import guidance  # local: the endgame enum lives with the control law, no top-level coupling
+        if self.zone_points() is not None and self._zone_aspect > guidance.Heading.OO_ASPECT:
+            return guidance.Heading.FIG_OO
+        return guidance.Heading.FIG_O
 
     def geometry(self) -> dict:
         """The landing zone resolved against the launch point: the target (centre) + both gates

@@ -55,6 +55,15 @@ class _StubMission:
         import navigation
         return navigation.zone(self.zone[0], self.zone[1])
 
+    def zone_aspect(self):
+        import navigation
+        return navigation.zone_aspect(self.zone[0], self.zone[1])
+
+    def endgame_heading(self):
+        import guidance
+        wide = self.zone_aspect() > guidance.Heading.OO_ASPECT
+        return guidance.Heading.FIG_OO if wide else guidance.Heading.FIG_O
+
 
 async def amain():
     assert task.ACTIVITIES.get('flight') is flight.Flight  # registered driver
