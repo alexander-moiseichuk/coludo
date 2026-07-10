@@ -51,6 +51,10 @@ class _StubMission:
     def launch_point(self):
         return self._launch
 
+    def zone_points(self):
+        import navigation
+        return navigation.zone(self.zone[0], self.zone[1])
+
 
 async def amain():
     assert task.ACTIVITIES.get('flight') is flight.Flight  # registered driver

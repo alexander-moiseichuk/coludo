@@ -46,11 +46,14 @@ class _StubMission:
     def launch_point(self):
         return self._launch
 
+    def zone_points(self):
+        import navigation
+        return None if self.zone is None else navigation.zone(self.zone[0], self.zone[1])
+
     def geometry(self):
         if self.zone is None:
             return None
-        import navigation
-        target, _gate_a, _gate_b = navigation.zone(self.zone[0], self.zone[1])
+        target, _gate_a, _gate_b = self.zone_points()
         return {'target': target}
 
 

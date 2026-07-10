@@ -266,14 +266,14 @@ class Guidance:
             return self._nav_heading  # cached — skip the trig this step
         self._nav_updated_us = now_us
         zone = self._mission.zone
+        target, gate_a, gate_b = self._mission.zone_points()  # per-flight-constant geometry, memoized
         config = self._config
         position, source, age_ms = self._position.read()
         if source is not None and position is not None and age_ms < config.position_age_max_ms:
             if final:
-                self._nav_heading = navigation.approach(position, zone[0], zone[1], heading,
-                                                        config.final_cross_gain, config.final_intercept)
+                self._nav_heading = navigation.approach_to(position, target, gate_a, gate_b, heading,
+                                                           config.final_cross_gain, config.final_intercept)
             else:
-                target, _gate_a, _gate_b = navigation.zone(zone[0], zone[1])
                 east, north = navigation.offset(position[0], position[1], target[0], target[1])
                 span = math.sqrt(east * east + north * north)
                 if endgame is not None or span <= config.loiter_capture_m:
@@ -293,9 +293,10 @@ class Guidance:
                     bearing_centre = navigation.compass(east, north)  # reuse the offset -- no 2nd geo pass
                     self._nav_heading = (bearing_centre + 90.0 - correction) % 360.0
                 else:  # far out: travel to the zone through the nearer gate, as always
-                    self._nav_heading = navigation.steer(position, zone[0], zone[1])[0]
+                    self._nav_heading = navigation.steer_to(position, zone[0], zone[1],
+                                                            target, gate_a, gate_b)[0]
         else:
             launch = self._mission.launch_point()  # tier 2: open-loop from the launch point (CC-set)
-            self._nav_heading = navigation.steer(launch, zone[0], zone[1])[0] if launch is not None \
-                else self._heading_hold  # tier 3: blind
+            self._nav_heading = navigation.steer_to(launch, zone[0], zone[1], target, gate_a, gate_b)[0] \
+                if launch is not None else self._heading_hold  # tier 3: blind
         return self._nav_heading

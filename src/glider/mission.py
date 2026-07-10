@@ -132,6 +132,8 @@ class Mission(inspector.Inspectable):
         self.altitude = data.get('altitude')  # launch-site elevation, metres (None unset)
         self.zone = _zone(data.get('zone'))  # landing zone ((lat,lon) TL, (lat,lon) BR) or None
         self.sites: list = _sites(data.get('sites'))  # known launch locations (CC-less site-by-GPS)
+        self._zone_key = None  # zone identity the resolved geometry below was computed from (zone_points)
+        self._zone_points = None  # cached navigation.zone() -> (target, gate_a, gate_b) for the hot path
         inspector.Inspector.register(self)
 
     def set_time(self, epoch) -> bool:
@@ -216,6 +218,20 @@ class Mission(inspector.Inspectable):
         self.zone = ((lat + half_lat, lon - half_lon), (lat - half_lat, lon + half_lon))
         return self.zone
 
+    def zone_points(self) -> tuple:
+        """(target, gate_a, gate_b) for the current landing zone -- navigation.zone() MEMOIZED by zone
+        identity, so the per-flight-CONSTANT geometry resolves ONCE instead of every nav tick on the hot
+        guidance path (the zone rectangle never moves in flight). None if no zone. Any zone change (a CC
+        update / the CC-less fallback / a reload) reassigns self.zone to a new object, so the identity
+        check re-resolves on its own -- no explicit invalidation to forget."""
+        zone = self.zone
+        if zone is None:
+            return None
+        if zone is not self._zone_key:  # first call, or the zone was replaced -> resolve + cache
+            self._zone_key = zone
+            self._zone_points = navigation.zone(zone[0], zone[1])
+        return self._zone_points
+
     def geometry(self) -> dict:
         """The landing zone resolved against the launch point: the target (centre) + both gates
         (short-side entrances) and the launch-point->point distances, with `in_range` False if any of
@@ -225,7 +241,7 @@ class Mission(inspector.Inspectable):
         origin = self.launch_point()
         if origin is None:
             return None
-        target, gate_a, gate_b = navigation.zone(self.zone[0], self.zone[1])
+        target, gate_a, gate_b = self.zone_points()  # the memoized resolve (identity-cached)
         distances = {name: round(navigation.distance(origin[0], origin[1], point[0], point[1]), 1)
                      for name, point in (('target', target), ('gate_a', gate_a), ('gate_b', gate_b))}
         farthest = max(distances.values())

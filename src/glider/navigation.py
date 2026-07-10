@@ -121,8 +121,15 @@ def steer(position: tuple, corner_tl: tuple, corner_br: tuple) -> tuple:
     zone and exits the far side without landing (still high), the gate it just crossed is now the
     nearest one -> it turns back (~180deg) and re-approaches through it. No waypoint memory -- the
     spec's 'recalculate to the nearest alternative entry and loop' just happens."""
+    return steer_to(position, corner_tl, corner_br, *zone(corner_tl, corner_br))
+
+
+def steer_to(position: tuple, corner_tl: tuple, corner_br: tuple,
+             target: tuple, gate_a: tuple, gate_b: tuple) -> tuple:
+    """steer() with the zone geometry (target + the two gates) ALREADY resolved, so a caller that steers
+    every nav tick resolves the per-flight-constant zone() ONCE (mission.zone_points) instead of paying
+    it here each call. inside() still takes the corners -- a cheap min/max, no trig/alloc."""
     lat, lon = position
-    target, gate_a, gate_b = zone(corner_tl, corner_br)
     if inside(position, corner_tl, corner_br):
         waypoint = target
         leg = TARGET
@@ -148,7 +155,14 @@ def approach(position: tuple, corner_tl: tuple, corner_br: tuple, heading: float
     crabbed out and the touchdown holds the narrow strip. Uses the full bank authority (keep it gliding,
     not rolling-and-dropping). (This is a banked/crab correction -- a true wing-low SLIP would need a
     sideslip-capable airframe model; the residual at strong wind is airframe-bound, not a control gap.)"""
-    target, gate_a, gate_b = zone(corner_tl, corner_br)
+    return approach_to(position, *zone(corner_tl, corner_br),
+                       heading, cross_gain, intercept_max)
+
+
+def approach_to(position: tuple, target: tuple, gate_a: tuple, gate_b: tuple,
+                heading: float, cross_gain: float, intercept_max: float) -> float:
+    """approach() with the zone geometry ALREADY resolved -- see steer_to(): the caller reuses one
+    mission.zone_points() resolve across the whole nav tick instead of each nav call recomputing zone()."""
     centreline = bearing(gate_a[0], gate_a[1], gate_b[0], gate_b[1])
     if abs(((centreline - heading + 180.0) % 360.0) - 180.0) > 90.0:  # fly the along-strip way we are going
         centreline = (centreline + 180.0) % 360.0
