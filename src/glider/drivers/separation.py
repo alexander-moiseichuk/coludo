@@ -94,6 +94,12 @@ class Separation(task.Task):
             return 'pin GPIO%d HIGH (nested) -- switch ok; setup failed elsewhere' % gpio
         return 'pin GPIO%d LOW -- expected HIGH (nested) at check: pads open / not contacting / miswired' % gpio
 
+    def separated(self) -> bool:
+        """The last debounced latch level as a bool (True = pads open = separated). The AUTHORITATIVE
+        reading for the warm-start gate -- this driver's own configured pin object, so the recovery
+        path never constructs a second machine.Pin on the same GPIO (was main._restore_flight's bug)."""
+        return self._separated
+
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['separated'] = self._separated

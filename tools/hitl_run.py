@@ -112,8 +112,7 @@ async def _simulated_reboot(flight, boot_s: float) -> None:
         flight_task._neutral = real_neutral  # boot done: the real fail-safe is back
     crumb = warmstart.load()
     altitude = databoard.Databoard.value('altitude')
-    age = time.time() - crumb['stamp'] if crumb is not None else -1
-    restore, reason = warmstart.should_restore(crumb, True, altitude, True, age)
+    restore, reason = warmstart.should_restore(crumb, True, altitude, True, time.time())
     print('WARM GATE:', restore, reason)
     if restore:
         flight.manual = False

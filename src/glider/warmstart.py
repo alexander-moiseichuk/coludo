@@ -9,6 +9,9 @@
 # JSON blob (`crumb`) — full float precision, no per-field key bookkeeping, and a new field is a
 # dict entry rather than an NVS schema change. The module degrades to no-ops off-board (CPython).
 
+import asyncio
+import time
+
 try:
     from esp32 import NVS
     _nvs = NVS('coludo')
@@ -67,10 +70,11 @@ def load():
         return None
 
 
-def should_restore(crumb, separated: bool, altitude, cause_is_reset: bool, age_s: int,
+def should_restore(crumb, separated: bool, altitude, cause_is_reset: bool, now_s,
                    min_height_m: float = 15.0, max_age_s: int = 600) -> tuple:
     """The warm-start gate — ALL must agree (defense in depth; any doubt -> cold boot):
-      1. a breadcrumb exists (we were airborne when the reset hit);
+      1. a breadcrumb exists AND carries its `pad_altitude` + `stamp` (a torn/partial JSON blob with a
+         missing key REFUSES here rather than crashing the boot -- findings §21.1);
       2. the separation switch reads SEPARATED — the physical latch no software state can fake
          (post-separation it stays LOW for the whole glide; a stack on the pad reads nested);
       3. the baro ABSOLUTE altitude reads at least `min_height_m` above the breadcrumb's pad —
@@ -79,22 +83,98 @@ def should_restore(crumb, separated: bool, altitude, cause_is_reset: bool, age_s
          switch reads PWRON — exactly what a RECOVERY CREW's hands do to a glider that crash-landed
          on a rise above the pad (where gate 3 alone would pass). A mid-air brownout also reads
          PWRON and stays cold: a browning-out battery cannot be trusted to finish the glide;
-      5. `age_s` = now - crumb stamp is positive and under `max_age_s`. The RTC survives soft/WDT
+      5. `age_s` = `now_s` - crumb stamp is positive and under `max_age_s`. The RTC survives soft/WDT
          resets, so the arithmetic holds exactly when a warm start is legitimate (even an unsynced
          RTC — continuity matters, not absolute truth); a power cycle restarts the RTC and breaks
-         it -> cold.
+         it -> cold. Age is computed HERE from the crumb's stamp, so a missing stamp refuses cleanly.
     Pure function of its inputs (host-testable). Returns (restore, reason)."""
     if crumb is None:
         return False, 'no breadcrumb'
+    pad_altitude = crumb.get('pad_altitude')
+    stamp = crumb.get('stamp')
+    if pad_altitude is None or stamp is None:
+        return False, 'breadcrumb missing pad_altitude/stamp -> cold boot'
     if not separated:
         return False, 'separation switch reads nested'
     if altitude is None:
         return False, 'no altitude reading'
-    height = altitude - crumb['pad_altitude']
+    height = altitude - pad_altitude
     if height < min_height_m:
         return False, 'altitude %.0fm above pad < %.0fm' % (height, min_height_m)
     if not cause_is_reset:
         return False, 'power-on boot (human hands), not a reset'
+    age_s = now_s - stamp
     if not 0 <= age_s <= max_age_s:
         return False, 'breadcrumb age %ds outside 0..%ds' % (age_s, max_age_s)
     return True, 'airborne %.0fm above pad, reset %ds after boost' % (height, age_s)
+
+
+async def _await_altitude(parameter, timeout_ms: int = 5000):
+    """Wait up to `timeout_ms` for the baro task's first ABSOLUTE altitude reading — its setup races the
+    reset, so on a fast reboot the parameter is briefly None. Returns the reading, or None on timeout."""
+    deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
+    altitude = parameter.value()
+    while altitude is None and time.ticks_diff(deadline, time.ticks_ms()) > 0:
+        await asyncio.sleep_ms(100)
+        altitude = parameter.value()
+    return altitude
+
+
+def _apply_restore(flight, crumb, cfg: dict) -> None:
+    """Apply a PASSED gate: restore the mission identity + zone from the crumb, rebase the rebooted
+    baros to the crumb's pad altitude (their setup re-zeroed mid-air, so `elevation` would read ~0 up
+    there and the landing detect would flare immediately), then set GLIDING + armed + the warm-started
+    flag. Controller/mission mutations ONLY — the hardware reads + gc live in restore() — so this is
+    host-testable with stubs. The gate guarantees `pad_altitude`; `launch`/`zone` are guarded (a torn
+    crumb could carry pad_altitude+stamp yet drop them)."""
+    import controller
+    import inspector
+    mission_obj = inspector.Inspector.get('mission')
+    launch = crumb.get('launch')
+    zone = crumb.get('zone')
+    if mission_obj is not None and launch and zone:
+        mission_obj.update({'latitude': launch[0], 'longitude': launch[1],
+                            'zone': [list(zone[0]), list(zone[1])]})
+    baro_names = [sensor['name'] for sensor in cfg.get('sensors', [])
+                  if sensor.get('driver') in ('icp10111', 'bmp280')]
+    for baro in flight.find(baro_names):
+        if baro is not None:
+            baro.update({'ground': crumb['pad_altitude']})
+    flight.set_stage(controller.Stage.GLIDING)
+    flight.arm()  # we were armed when the crumb dropped (the sequencer only saves armed flights)
+    flight.warm_started = True  # degraded-mode annunciation: this flight was recovered from a reset
+
+
+async def restore(flight, cfg: dict, log=print) -> bool:
+    """Warm start (specs/coludo.md "In-flight reboot & warm start") — was main._restore_flight, moved
+    here so main.py stays a thin bring-up. A mid-air reset must not turn the glider ballistic: restore
+    GLIDING when the NVS breadcrumb AND two physical signals agree — the separation latch (read via the
+    separation DRIVER, not a raw Pin) and the baro absolute altitude clearly above the crumb's pad. Any
+    doubt -> the crumb is cleared and this is a normal cold boot. Heavy imports stay inside (nothing
+    beyond the cheap load() runs on a plain boot)."""
+    crumb = load()
+    if crumb is None:
+        return False  # no flight was in progress: the normal boot, zero extra work
+    if not cfg.get('warm_start', True):
+        clear()
+        log('warmstart :: disabled by config')
+        return False
+    import databoard
+    import machine
+    separation = flight.find(['separation'])[0]  # the driver's own latch reading (no second Pin)
+    separated = separation.separated() if separation is not None else False
+    altitude = await _await_altitude(databoard.Databoard.parameter('altitude'))
+    cause = machine.reset_cause()
+    cause_is_reset = cause in (machine.WDT_RESET, machine.SOFT_RESET, machine.HARD_RESET)
+    ok, reason = should_restore(crumb, separated, altitude, cause_is_reset, time.time())
+    log('warmstart :: gate: %s (reset_cause %d)' % (reason, cause))
+    if not ok:
+        clear()  # rejected -> make the NEXT boot unambiguously cold
+        return False
+    _apply_restore(flight, crumb, cfg)
+    import gc
+    gc.collect()  # the sequencer's BOOSTING GC hook was skipped: compact + GC OFF for the descent
+    gc.disable()
+    log('warmstart :: WARM START -> gliding, armed (%.0fm above pad)'
+        % (altitude - crumb['pad_altitude']))
+    return True
