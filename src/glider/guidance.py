@@ -137,11 +137,11 @@ class Guidance:
         if elevation is None or position is None or source is None or geometry is None:
             return None
         target = geometry['target']
-        distance = navigation.distance(position[0], position[1], target[0], target[1])
+        distance, target_bearing = navigation.range_bearing(position[0], position[1], target[0], target[1])
         reach = elevation * glide_ratio
         headwind = 0.0
         if airspeed > 0.0:  # project the wind onto the bearing to target (+ = tailwind, extends the reach)
-            bearing_r = math.radians(navigation.bearing(position[0], position[1], target[0], target[1]))
+            bearing_r = math.radians(target_bearing)  # reuse the fused bearing -- no 2nd geographic pass
             along = wind_e * math.sin(bearing_r) + wind_n * math.cos(bearing_r)
             reach *= max(0.0, 1.0 + along / airspeed)
             headwind = -along                        # report the HEADWIND (opposing) component, signed
@@ -274,7 +274,8 @@ class Guidance:
                                                         config.final_cross_gain, config.final_intercept)
             else:
                 target, _gate_a, _gate_b = navigation.zone(zone[0], zone[1])
-                span = navigation.distance(position[0], position[1], target[0], target[1])
+                east, north = navigation.offset(position[0], position[1], target[0], target[1])
+                span = math.sqrt(east * east + north * north)
                 if endgame is not None or span <= config.loiter_capture_m:
                     # LOITER: hold the constant-radius orbit around the centre -- the tangent
                     # heading corrected inward/outward by the radius error. One fixed orbit
@@ -289,8 +290,7 @@ class Guidance:
                                  self.min_turn_radius(bank))
                     correction = commons.between(
                         -60.0, config.loiter_gain * (span - radius), 60.0)
-                    bearing_centre = navigation.bearing(position[0], position[1],
-                                                        target[0], target[1])
+                    bearing_centre = navigation.compass(east, north)  # reuse the offset -- no 2nd geo pass
                     self._nav_heading = (bearing_centre + 90.0 - correction) % 360.0
                 else:  # far out: travel to the zone through the nearer gate, as always
                     self._nav_heading = navigation.steer(position, zone[0], zone[1])[0]

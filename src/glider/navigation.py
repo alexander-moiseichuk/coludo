@@ -5,11 +5,14 @@
 # entrance"). steer() picks the nearer gate, heads for it until inside the zone, then for the centre.
 # Equirectangular (flat-earth) math -- "not exact but about", which is plenty at zone scale (<~1 km).
 #
-# (perf analysis): steer()/bearing()/distance() use float trig and allocate a few small tuples per
-# call. The concern was GC churn from calling them at the 100 Hz control rate. Resolution: the fix is on
-# the CALLER side, not here -- guidance._target_heading() caches steer() at GPS cadence (~10 Hz), so
-# the trig/alloc rate drops ~10x. With the hot-path pressure removed, a zero-allocation rewrite here
-# would only cost clarity for no measurable gain, so navigation stays simple, pure and correct.
+# (perf analysis): steer()/bearing()/distance() use float trig and allocate a few small tuples per call
+# -- measured GC-off (n=4000): distance ~170 B, bearing ~256, steer ~518, approach ~982. The primary
+# throttle is on the CALLER side -- guidance._target_heading() caches the result at GPS cadence (~10 Hz),
+# so the rate drops ~10x -- but at that rate the nav path is still ~5 KB/s of the ~15 KB/s glide leak, so
+# "no measurable gain" (the old note) was wrong. The lever is REDUNDANT float work, not fixnum (lat/lon
+# need ~1e-5 deg; a SCALE-100 fixnum degree is ~1 km -- far too coarse): a caller that needs both range
+# AND bearing to a point now calls range_bearing() (one offset(), not two). navigation stays pure float;
+# the geometry is computed once. (Next lever, if needed: cache the per-flight-constant zone() geometry.)
 #
 # SAFETY: the gates are FIXED to the short sides, and steer() will always vector to one (and turn ~180
 # back through it on an overshoot) with NO knowledge of what lies beyond any side (trees / launch pad /
@@ -37,11 +40,15 @@ TARGET: int = const(1)   # inside the zone -> heading for the centre (the landin
 GATE: int = const(2)     # outside the zone -> heading for the nearer short-side entrance
 
 
-def _offset_m(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
+def offset(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
     """(east, north) offset in metres from point 1 to point 2 (equirectangular). The longitude delta is
     wrapped to [-180, 180] so a span crossing the anti-meridian (+/-180 deg) does not flip the
     vector -- the same wrap the heading-error math uses. Coludo flies nowhere near +/-180, but it is a
-    free correctness guard and identical to the plain subtraction everywhere else."""
+    free correctness guard and identical to the plain subtraction everywhere else.
+
+    The one geographic primitive: distance()/bearing()/range_bearing() derive from it, so a caller that
+    needs BOTH range and bearing to the same point computes this float-trig ONCE (range_bearing) instead
+    of twice -- the measured GC-off saving that keeps the nav path off the leak (see the header note)."""
     lat_mid = math.radians((lat1 + lat2) / 2.0)
     dlon = (lon2 - lon1 + 180.0) % 360.0 - 180.0  # anti-meridian-safe longitude delta
     east = dlon * M_PER_DEG * math.cos(lat_mid)
@@ -49,16 +56,28 @@ def _offset_m(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
     return east, north
 
 
+def compass(east: float, north: float) -> float:
+    """(east, north) metre offset -> compass bearing in degrees (0 = north, 90 = east, clockwise)."""
+    return math.degrees(math.atan2(east, north)) % 360.0
+
+
 def bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Compass bearing in degrees (0 = north, 90 = east, clockwise) from point 1 to point 2."""
-    east, north = _offset_m(lat1, lon1, lat2, lon2)
-    return math.degrees(math.atan2(east, north)) % 360.0
+    return compass(*offset(lat1, lon1, lat2, lon2))
 
 
 def distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     """Distance in metres from point 1 to point 2 (equirectangular)."""
-    east, north = _offset_m(lat1, lon1, lat2, lon2)
+    east, north = offset(lat1, lon1, lat2, lon2)
     return math.sqrt(east * east + north * north)
+
+
+def range_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
+    """(distance_m, bearing_deg) from point 1 to point 2 in ONE pass -- the fused primitive for a caller
+    that needs both (loiter: orbit radius + tangent heading; reachability: range + wind projection). One
+    offset()/float-trig instead of the distance()+bearing() pair that recomputed it twice."""
+    east, north = offset(lat1, lon1, lat2, lon2)
+    return math.sqrt(east * east + north * north), compass(east, north)
 
 
 def zone(corner_tl: tuple, corner_br: tuple) -> tuple:
@@ -116,7 +135,7 @@ def steer(position: tuple, corner_tl: tuple, corner_br: tuple) -> tuple:
 def cross_track(position: tuple, point: tuple, heading: float) -> float:
     """Signed perpendicular distance (metres) from `position` to the line through `point` along compass
     `heading`; positive = to the RIGHT of the line (looking along the heading)."""
-    east, north = _offset_m(point[0], point[1], position[0], position[1])
+    east, north = offset(point[0], point[1], position[0], position[1])
     radians = math.radians(heading)
     return east * math.cos(radians) - north * math.sin(radians)
 
