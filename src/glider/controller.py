@@ -169,7 +169,7 @@ class Controller(inspector.Inspectable):
                 self.log("controller :: task '%s' setup raised: %r" % (name, error))
             if attempt == attempts:  # final try -> deeper wire-level analysis while the transport is still alive
                 reason = await self._diagnose(new_task, reason)
-            try:  # clean up the half-set-up device; a cleanup failure must NOT abort the rest of boot (1.2.1)
+            try:  # clean up the half-set-up device; a cleanup failure must NOT abort the rest of boot
                 await new_task.finish()
             except Exception as error:
                 self.log("controller :: task '%s' cleanup raised: %r" % (name, error))

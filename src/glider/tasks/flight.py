@@ -1,8 +1,8 @@
 # tasks/flight.py — Phase 3 stabilization loop. @task.activity('flight'). At `schedule_hz` it runs the
 # control PIPELINE: dt -> airspeed Governor (fin-authority cap, adaptively throttled) -> control-stage
 # gate -> attitude -> Guidance (per-stage setpoints + heading) -> PID per axis -> mixer actuate. The
-# control LAW lives in guidance.py and the airspeed/authority POLICY in governor.py (doc/plan.md
-# structural roadmap #1) — this task is the orchestration: databoard reads, arming/degraded gates,
+# control LAW lives in guidance.py and the airspeed/authority POLICY in governor.py — this task is
+# the orchestration: databoard reads, arming/degraded gates,
 # scheduling, and the PID->mixer->servo drive. Per-stage behaviour, the GPS-degrading heading tiers,
 # boost hold and final approach are guidance.py's; the adaptive estimator throttle is governor.py's.
 # Degraded: stale/absent attitude -> neutral. Disarmed / non-control stage -> neutral.
@@ -91,7 +91,7 @@ class Flight(task.Task):
         self._stage = None  # the current control-stage name (for inspect)
         self._steps: int = 0  # control steps run (self-timing for load characterization)
         self._max_step_us: int = 0
-        self._last_step_us: int = 0  # ticks_us of the previous control step -> actual dt (finding 1.14.2)
+        self._last_step_us: int = 0  # ticks_us of the previous control step -> actual dt
         self._timer = None
         self._ok = True
         return True
@@ -162,7 +162,7 @@ class Flight(task.Task):
     def _compute_dt(self, start: int) -> int:
         """Integer-ms slice since the last step, and stash self._dt (float s) for the governor's airspeed
         integrator. ACTUAL elapsed -- a GC pause / delayed slice makes it longer, and the PID I/D + the
-        airspeed integral must use the real interval (finding 1.14.2). First step or a long gap (>0.5 s)
+        airspeed integral must use the real interval. First step or a long gap (>0.5 s)
         -> nominal slice."""
         dt_us = time.ticks_diff(start, self._last_step_us)
         self._last_step_us = start
@@ -191,7 +191,7 @@ class Flight(task.Task):
 
     def _actuate(self, roll: int, pitch: int, yaw: int) -> None:
         """Drive the fins through the mixer's fused mix-and-write loop. The fin objects are resolved
-        ONCE and bound into the mixer on the first call (finding.A): controller.find() is a dict search,
+        ONCE and bound into the mixer on the first call: controller.find() is a dict search,
         pure overhead per step. By the first actuation all servo tasks are up (bring-up finishes before
         any run loop), so the lookup is stable."""
         if not self._mixer.bound:
@@ -205,7 +205,7 @@ class Flight(task.Task):
     async def run(self) -> None:
         # finally covers BOTH exits -- a crash out of _tick (uncaught exception in a control stage)
         # and an orderly cancel -- so the fins NEVER hold a live deflection while nobody is flying
-        # them (finding 15.3: uncaught crash used to leave the last command standing for the ~1-2 s
+        # them (an uncaught crash used to leave the last command standing for the ~1-2 s
         # watchdog window). finish() is idempotent (timer None check), so the Controller's own
         # finish() on shutdown is a harmless second call. Zero cost on the hot path.
         try:
@@ -241,7 +241,7 @@ class Flight(task.Task):
 
     def progress(self) -> tuple:
         """(controlling, steps, stage, updated_us) -- the public control-loop heartbeat, so the watchdog
-        (and anything else) need not read private attributes (finding 3.6.1). `controlling` is True only
+        (and anything else) need not read private attributes. `controlling` is True only
         in a control stage (PID engaged); `steps` advances each control update; `stage` is the current
         control-stage Stage id (int, or None); `updated_us` is time.ticks_us() of the last control step,
         so a supervisor can judge staleness by TIME directly (not by step-count diffing against its own

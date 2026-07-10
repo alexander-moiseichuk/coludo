@@ -1,4 +1,4 @@
-# wind.py — wind estimation from GNSS (plan #6). The MINIMAL method, proven first: the WIND TRIANGLE.
+# wind.py — wind estimation from GNSS. The MINIMAL method, proven first: the WIND TRIANGLE.
 #
 # The GNSS reports the ground velocity (course + ground speed); the attitude gives the heading; the
 # governor gives the airspeed. The air mass the glider flies through is moving, so

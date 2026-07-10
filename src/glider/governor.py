@@ -2,8 +2,8 @@
 # pid.py / mixer.py / airspeed.py. Owns the airspeed ESTIMATE (airspeed.AirspeedEstimator: accel
 # backbone + GNSS corrector), the ADAPTIVE THROTTLE that keeps that float path off the GC-off hot
 # loop once the glide settles, and the mixer authority cap (commons.fin_deflection_limit ∝ 1/v²,
-# × the board's fin_limit_multiplier safety dial). Extracted from tasks/flight.py (doc/plan.md
-# structural roadmap #1) so the throttle policy is unit-testable without a Flight task.
+# × the board's fin_limit_multiplier safety dial). Extracted from tasks/flight.py so the throttle
+# policy is unit-testable without a Flight task.
 #
 # Host-runnable by construction (tools/virtual_flight.py drives the REAL governor): the sensor
 # dependencies are INJECTED databoard-style handles — `accel.value()` -> (x, y, z) in g or None,
@@ -136,9 +136,9 @@ class Governor:
         the blend and repeated good fixes pull the drift out.
 
         FLOAT PATH — ~22 KB/s GC-off leak at full rate (measured 224 B/call): the sqrt, the integral
-        and the GNSS blend all box floats. Kept float BY DESIGN (findings §18: a fixnum rewrite
-        captures ~1/3 of the saving and inverts the safety over-read bias — floor rounding under-reads
-        speed → a looser fin cap, the unsafe direction); the adaptive throttle in step() amortizes it
+        and the GNSS blend all box floats. Kept float BY DESIGN: a fixnum rewrite captures only ~1/3
+        of the saving and inverts the safety over-read bias (floor rounding under-reads speed → a
+        looser fin cap, the unsafe direction); the adaptive throttle in step() amortizes it
         instead (25 Hz moving → 10 Hz settled)."""
         accel = self._accel.value()
         if accel is not None:

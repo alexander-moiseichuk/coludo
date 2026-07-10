@@ -83,7 +83,7 @@ def should_restore(crumb, separated: bool, altitude, cause_is_reset: bool, now_s
                    min_height_m: float = 15.0, max_age_s: int = 600) -> tuple:
     """The warm-start gate — ALL must agree (defense in depth; any doubt -> cold boot):
       1. a breadcrumb exists AND carries its `pad_altitude` + `stamp` (a torn/partial JSON blob with a
-         missing key REFUSES here rather than crashing the boot -- findings §21.1);
+         missing key REFUSES here rather than crashing the boot);
       2. the separation switch reads SEPARATED — the physical latch no software state can fake
          (post-separation it stays LOW for the whole glide; a stack on the pad reads nested);
       3. the baro ABSOLUTE altitude reads at least `min_height_m` above the breadcrumb's pad —

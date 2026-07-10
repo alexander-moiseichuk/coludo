@@ -32,7 +32,7 @@ class FailSensor(task.Task):
 
 class MessySensor(task.Task):
     """setup() raises mid-init AND finish() raises on the half-set-up device -- the controller must
-    still record the failure and bring up the rest of the board, not abort boot (finding 1.2.1)."""
+    still record the failure and bring up the rest of the board, not abort boot."""
 
     async def setup(self):
         raise RuntimeError('setup boom')

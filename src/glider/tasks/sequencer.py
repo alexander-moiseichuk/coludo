@@ -52,13 +52,13 @@ class Sequencer(task.Task):
         self._launch_alt_m: float = cfg.get('launch_alt_m', 10.0)  # OR-trigger: clearly climbed off the pad
         self._boost_timeout_ms: int = cfg.get('boost_timeout_ms', 6000)
         self._apogee_drop_m: float = cfg.get('apogee_drop_m', 5.0)  # baro fall below its peak -> deploy at apogee
-        # the apogee detector ARMS this long after BOOSTING entry (finding 15.5): the motor exhaust
+        # the apogee detector ARMS this long after BOOSTING entry: the motor exhaust
         # pressure wave can spike/dip the in-airframe baro DURING BURN -- an unarmed detector could
         # either fire GLIDING while still under thrust (wings folded, fins steering the stack) or
         # poison the peak tracker with a spike the real apogee never reads 5 m below. Default covers
         # the longest motor burn (F15 3.45 s) + margin; the burnout timeout keeps running regardless.
         self._apogee_arm_ms: int = cfg.get('apogee_arm_ms', 4000)
-        # the RSO backstop (finding 15.6): with every landing sensor dead (baro + laser + accel) the
+        # the RSO backstop: with every landing sensor dead (baro + laser + accel) the
         # glider would circle in GLIDING until the battery dies. This bounds ANY flight: this long
         # after BOOSTING entry the stage forces DONE (GC re-enable + neutral fins -- at 5 min default,
         # long after any physically possible TMS flight has ended).
@@ -181,7 +181,7 @@ class Sequencer(task.Task):
             self._since = None
             self._stage_seen = stage
             if stage != self._advanced_to:  # EXTERNAL move (separation driver / operator command):
-                # record it in sequencer.csv too (finding 15.8) -- post-flight tooling keeps ONE
+                # record it in sequencer.csv too -- post-flight tooling keeps ONE
                 # stage-event source instead of cross-referencing separation.csv (which the field
                 # capture pull may not even fetch).
                 self._telemetry.push((_STAGE.STAGES.get(stage, str(stage)), 'external'))

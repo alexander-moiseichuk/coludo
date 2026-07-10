@@ -27,7 +27,7 @@ def test_terms():
     assert rated.step(0, 100, rate=fixed.from_float(10)) == fixed.from_float(-10)   # kd·(-10 °/s) = -10
     assert rated.step(0, 100, rate=fixed.from_float(-4)) == fixed.from_float(4)
 
-    # first step after init/reset takes NO derivative -> no spike from a 0 baseline (finding 1.14.1)
+    # first step after init/reset takes NO derivative -> no spike from a 0 baseline
     spike = pid.Pid(kd=1.0)
     assert spike.step(fixed.from_float(5), 100) == 0
     spike.reset()

@@ -317,14 +317,14 @@ def default() -> dict:
              # the LOITER orbit (tuned 7/06, coludo.md "Gliding"): within loiter_capture_m of
              # the zone centre the heading command becomes the circle tangent + loiter_gain deg
              # of inward cut per metre off the loiter_radius_m circle -- a stable constant-radius
-             # orbit that bleeds altitude through the banked turn (objective #1's energy
+             # orbit that bleeds altitude through the banked turn (the fly-long objective's energy
              # management). The radius must stay ABOVE the cruise-bank minimum (~34 m at 30 deg)
              # or the orbit destabilizes.
              'loiter_radius_m': 30, 'loiter_capture_m': 120, 'loiter_gain': 3.0,
              # the ENDGAME band: below this baro elevation the glide steering opens the full
              # land-bank authority (turn radius halves) so the last seconds SPIRAL around the zone
-             # instead of racetracking past it -- objective #2/#3 tightening that leaves #1 (fly
-             # long) untouched up high. 0 -> off.
+             # instead of racetracking past it -- an in-zone/near-centre tightening that leaves the
+             # fly-long objective untouched up high. 0 -> off.
              'endgame_alt_m': 50,
              'final_approach_agl': 8, 'final_cross_gain': 3.0, 'final_intercept_deg': 45,
              # reachability (flight panel): nominal glide ratio (L/D) -> reach = glide_ratio * elevation

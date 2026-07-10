@@ -96,7 +96,7 @@ class Adxl375(task.Task):
             return
         await self._dev.write(_REG_INT_MAP, b'\x00')  # DATA_READY -> INT1
         await self._dev.write(_REG_INT_ENABLE, bytes([_DATA_READY]))
-        # Arm the IRQ BEFORE clearing the pending DATA_READY (finding 2.4.1): if a conversion landed
+        # Arm the IRQ BEFORE clearing the pending DATA_READY: if a conversion landed
         # during the writes above, INT1 is already high and stays high (DATA_READY is level, not a
         # pulse) -- clearing FIRST then arming would miss that edge and, since the line is static-high,
         # the RISING IRQ would never fire until the fallback sample. Armed first, the clear-read drops

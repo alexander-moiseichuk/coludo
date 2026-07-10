@@ -1,10 +1,10 @@
 # guidance.py — the stage-dependent guidance law, sibling of pid.py / mixer.py / navigation.py.
 # Turns (stage, heading) into the attitude setpoints + heading error the PIDs chase: the boost
 # rod-vertical hold, bank-to-turn toward the landing zone, the three GPS-degrading heading tiers,
-# and the low-final-approach centreline tracker. Extracted from tasks/flight.py (doc/plan.md
-# structural roadmap #1, findings §20 S03) so the control law is unit-testable without a Flight
-# task; per-stage laws dispatch through a table (S04 — the proven sequencer._detect pattern), so a
-# new stage is one entry + one method, not a branch in a growing if/elif.
+# and the low-final-approach centreline tracker. Extracted from tasks/flight.py so the control law
+# is unit-testable without a Flight task; per-stage laws dispatch through a table (the proven
+# sequencer._detect pattern), so a new stage is one entry + one method, not a branch in a growing
+# if/elif.
 #
 # Host-runnable by construction (tools/virtual_flight.py drives the REAL law): dependencies are
 # INJECTED — the mission (zone/launch_point), the governor (airspeed for the boost rod gate), and
@@ -59,7 +59,7 @@ class GuidanceConfig:
         # the ENDGAME band (fly-long objectives, coludo.md "Gliding"): below this ELEVATION the
         # glide steering opens the full land-bank authority, halving the turn radius so the last
         # seconds spiral tightly around the zone instead of racetracking past it. High up the
-        # gentler bank_limit preserves objective #1 (a tight bank costs sink ~load^1.5); 0 -> off.
+        # gentler bank_limit preserves the fly-long objective (a tight bank costs sink ~load^1.5); 0 -> off.
         self.endgame_alt_m: float = config.get('endgame_alt_m', 50)
         # ENDGAME airspeed-gated bank (specs/coludo.md "Turn-radius limit"): instead of the fixed
         # land_bank_limit, the endgame spiral banks as steep as the LIVE airspeed safely allows and no
@@ -108,7 +108,7 @@ class Guidance:
         self._position = position  # injected handle: read() -> ((lat, lon), source, age_ms)
         self._agl = agl  # injected handle: value() -> height above ground (m) or None
         self._elevation = elevation  # baro height above the pad (m) -> the endgame band (optional)
-        # per-stage law table (S04, the sequencer._detect pattern): dispatch is O(1) and a new
+        # per-stage law table (the sequencer._detect pattern): dispatch is O(1) and a new
         # stage's law is one entry + one method. GLIDING and LANDING share the steering law (it
         # branches on the bank gains internally); anything else configured as a control stage falls
         # back to _hold (configured setpoints + the captured heading).
@@ -226,7 +226,7 @@ class Guidance:
         final = config.final_agl and agl is not None and agl < config.final_agl  # low on final
         # the ENDGAME band: elevation below endgame_alt_m -> full land-bank authority (the turn
         # radius halves, the last seconds spiral around the zone). Costs sink only briefly at the
-        # bottom, so objective #1 (fly long) is untouched up high.
+        # bottom, so the fly-long objective is untouched up high.
         elevation = self._elevation.value() if self._elevation is not None else None
         # endgame = the remaining-altitude FRACTION of the band (None above it): the loiter radius
         # shrinks with it, so the orbit SPIRALS IN onto the centre as the energy runs out.

@@ -1,6 +1,6 @@
 # On-board test for warmstart.py (in-flight reboot recovery). Covers the pure gate should_restore() --
 # all five defenses, their accept/refuse boundaries, and a TORN crumb (missing key) refusing cleanly
-# instead of crashing the boot (findings §21.1) -- and _apply_restore(), which restores the mission,
+# instead of crashing the boot -- and _apply_restore(), which restores the mission,
 # rebases the baros, and sets an armed GLIDING (stubbed controller/mission). Run by `make test`.
 
 import controller
@@ -17,7 +17,7 @@ def test_should_restore():
     assert ok, reason
     # 1. no breadcrumb -> cold boot
     assert not warmstart.should_restore(None, True, 150.0, True, 1030)[0]
-    # 1. TORN crumb -- a missing pad_altitude or stamp REFUSES with no KeyError (findings §21.1)
+    # 1. TORN crumb -- a missing pad_altitude or stamp REFUSES with no KeyError
     assert not warmstart.should_restore({'stamp': 1000}, True, 150.0, True, 1030)[0]
     assert not warmstart.should_restore({'pad_altitude': 100.0}, True, 150.0, True, 1030)[0]
     # 2. separation switch nested (not separated) -> refuse

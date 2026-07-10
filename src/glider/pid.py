@@ -7,7 +7,7 @@
 # accumulates toward OOM; the old float PID boxed a fresh float on every * + / -- measured 176 B/step,
 # ×3 axes ×100 Hz ≈ 56 KB/s of leak. This version measures 0 B/step (even at a ±180° heading swing, the
 # worst case for the derivative), leaving only the isolated call-site conversion fixed.from_float(setpoint
-# - actual) at the sensor boundary. Net saving ≈ 47 KB/s. See findings 17 (memory refactor).
+# - actual) at the sensor boundary. Net saving ≈ 47 KB/s (from the memory-refactor work).
 #
 # Fixed-point contract (error/output in fixed.fixnum -- degrees × fixed.SCALE; measured alloc-free):
 #   error   fixnum  -- the caller scales at the boundary: fixed.from_float(setpoint - actual)
@@ -53,7 +53,7 @@ class Pid:
     def reset(self) -> None:
         """Clear the integral + derivative history -- on entering a control phase, so a fresh glide does
         not inherit wind-up from a previous one. `_previous = None` so the FIRST step after reset takes no
-        derivative term (finding 1.14.1: a 0 baseline would make de/dt = error/dt, a large spurious D kick
+        derivative term (a 0 baseline would make de/dt = error/dt, a large spurious D kick
         on entry)."""
         self._integral = 0
         self._previous = None

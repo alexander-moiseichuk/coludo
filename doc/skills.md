@@ -135,6 +135,12 @@ so it must run on both.
       def const(x): return x
   ```
 - **Docstring or comment per entry** — every class, method, and non-trivial constant.
+- **No bare cross-reference labels** in code/comments/docstrings — roadmap item numbers (`5.1`,
+  `#2`), findings/section IDs (`findings §18`, `1.2.1`), etc. They rot the moment the referenced
+  list is renumbered and force a lookup to understand the code. Write the *reason* instead: not
+  "kept float (findings §18)" but "kept float — a fixnum rewrite under-reads speed → a looser fin
+  cap (the unsafe direction)". A prose pointer to a stable spec by NAME is fine
+  (`specs/coludo.md "Turn-radius limit"`); a number that only means something against a mutable list is not.
 - **Slim classes, YAGNI**: no unused parameters or speculative flexibility. If the class already
   holds a value, don't also pass it in.
 - **Error policy by criticality**: logs are best-effort — drop silently (or truncate) when the

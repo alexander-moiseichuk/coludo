@@ -22,7 +22,7 @@ except ImportError:  # host (CPython): board-only; the health MCU-temp read degr
 
 
 def _readiness(cfg: dict) -> dict:
-    """The flight-readiness gate (doc/plan.md pre-flight hardening #1): the field-dangerous CONFIG
+    """The flight-readiness gate: the field-dangerous CONFIG
     states no device probe can see -- watchdog off (a wedged flight loop never reboots), flight loop
     off or zero gains (fins hold neutral: ballistic), a bench fin derating left applied, no landing
     zone and no CC-less sites to pick one from. {check: problem} -- empty means flight-ready. Bench

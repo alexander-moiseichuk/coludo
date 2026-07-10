@@ -138,7 +138,7 @@ class Mission(inspector.Inspectable):
 
     def set_time(self, epoch) -> bool:
         """Set the board RTC from a Unix epoch (seconds, UTC). Returns True if applied. Rejects a value
-        before 2000-01-01 (finding 1.11.1): epoch - _EPOCH_OFFSET would go negative and gmtime() would
+        before 2000-01-01: epoch - _EPOCH_OFFSET would go negative and gmtime() would
         set a pre-2000 RTC -- any real flight clock is well past 2000."""
         if RTC is None or isinstance(epoch, bool) or not isinstance(epoch, int) or epoch < _EPOCH_OFFSET:
             return False
@@ -201,8 +201,8 @@ class Mission(inspector.Inspectable):
                       width_m: float = 100.0, depth_m: float = 90.0) -> tuple:
         """The spiral-landing fallback (spec, simplified 7/08): no known site in range after ignition
         is already committed -> synthesize and ADOPT a GENEROUS box the spiral just has to land
-        INSIDE. We always know the pad, so precise midpoint accuracy is not needed here -- objective
-        #2 (in-zone) over #3 (near-centre); the ~55 m endgame miss (turn-radius-limited) fits a
+        INSIDE. We always know the pad, so precise midpoint accuracy is not needed here -- we favour
+        landing in-zone over hitting the centre; the ~55 m endgame miss (turn-radius-limited) fits a
         ±50 m box. The box's WIDE (width_m) side faces the pad -- a broad left-to-right entrance --
         its NEAR edge `near_m` out (people stand at the pad), running `depth_m` away; the CENTRE is
         `near_m + depth_m/2` from the fix at `bearing_deg` (the operator's clear sector). Axis-aligned

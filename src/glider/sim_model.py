@@ -154,7 +154,7 @@ class Body:
         # law (load factor n^1.5: x1.24 at 30 deg, x1.68 at 45) -- the physical cost, replacing the
         # old raw G*(1-cos) term (~10x too harsh, every turn hemorrhaged what trim saved). An
         # off-trim pitch still adds sink, so holding trim flies longest and altitude bleeds through
-        # the TURNS -- the designed energy management (fly-long is objective #1, see coludo.md).
+        # the TURNS -- the designed energy management (fly-long is the primary objective; see coludo.md).
         load = 1.0 / max(0.3, math.cos(roll_rad))  # load factor n (clamped); the accel_g below reuses it
         self.vu += -0.1 * (self.vu + 7.0 * load ** 1.5) * dt
         if stalled:  # lift lost -> a hard sink break on TOP of induced drag; deeper deficit, harder drop
