@@ -9,6 +9,7 @@ import asyncio
 import math
 import time
 
+import commons
 import config_hitl
 import controller
 import drivers
@@ -59,8 +60,13 @@ async def _go(motor: str, wind_mps: float, wind_dir: float) -> None:
             await asyncio.sleep_ms(2000)
             continue
         if stage == stages.DONE:
-            print('MISS final=%.1f min=%.1f m | wind %.1f toward %.0f'
-                  % (last_miss or -1, min_miss or -1, wind_mps, wind_dir))
+            pos = body.position()
+            zone = ft._guidance._mission.zone  # [[TL_lat, TL_lon], [BR_lat, BR_lon]]
+            in_zone = zone[1][0] <= pos[0] <= zone[0][0] and zone[0][1] <= pos[1] <= zone[1][1]
+            de = (pos[1] - target[1]) * commons.M_PER_DEG * math.cos(math.radians(pos[0]))  # E-W (strip long)
+            dn = (pos[0] - target[0]) * commons.M_PER_DEG                                    # N-S (strip short)
+            print('MISS final=%.1f (E %.1f N %.1f) in_zone=%s | min=%.1f | wind %.1f toward %.0f'
+                  % (last_miss or -1, de, dn, in_zone, min_miss or -1, wind_mps, wind_dir))
             print('DONE')
             break
         if time.ticks_diff(time.ticks_ms(), started) > 150000:

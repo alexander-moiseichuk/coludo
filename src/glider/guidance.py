@@ -24,6 +24,7 @@ import navigation
 from fixed import fixnum
 
 _STAGE = controller_mod.Stage
+_G: float = 9.81  # gravity (m/s^2) -> the coordinated-turn radius R = v^2 / (g * tan(bank))
 
 
 def heading_error(target: float, current: float) -> int:
@@ -147,6 +148,23 @@ class Guidance:
         return {'reachable': reach >= distance, 'margin_m': round(reach - distance),
                 'distance_m': round(distance), 'headwind_mps': round(headwind, 1)}
 
+    def min_turn_radius(self, bank_deg: float) -> float:
+        """The tightest coordinated turn the airframe can HOLD at `bank_deg` and its LIVE airspeed:
+        `R = v^2 / (g * tan(bank))`. A physical restriction, not a tuning knob — the guidance clamps the
+        commanded loiter/endgame radius to this so it never asks for a turn the airframe cannot fly (at
+        the 45deg land-bank limit and ~14 m/s trim that floor is ~20 m, and it BOUNDS landing accuracy;
+        see specs/coludo.md 'Turn-radius limit'). 0 when airspeed/bank are unusable."""
+        airspeed = self._governor.airspeed()
+        tan_bank = math.tan(math.radians(bank_deg))
+        if airspeed <= 0.0 or tan_bank <= 0.0:
+            return 0.0
+        return airspeed * airspeed / (_G * tan_bank)
+
+    def landing_turn_radius(self) -> float:
+        """The endgame turn-radius floor at the LAND-bank limit — the precision bound reported for a
+        land-short-vs-stretch decision (flight-panel telemetry)."""
+        return self.min_turn_radius(self._config.land_bank_limit)
+
     def enter(self, heading: float, roll: fixnum, pitch: fixnum) -> None:
         """Entering a control stage (from a non-control one): capture the heading to hold blind and
         the rod-vertical attitude for the boost hold; invalidate the nav cache so the first
@@ -262,8 +280,13 @@ class Guidance:
                     # heading corrected inward/outward by the radius error. One fixed orbit
                     # direction (+90), so noise never flips the turn into S-hunting. In the
                     # ENDGAME the radius shrinks with the remaining altitude -> a spiral that
-                    # collapses onto the centre exactly as the energy runs out.
-                    radius = config.loiter_radius_m * (endgame if endgame is not None else 1.0)
+                    # collapses toward the centre as the energy runs out, but CLAMPED to the
+                    # physical min turn radius at the phase's bank (endgame opens the land-bank,
+                    # cruise uses bank_limit): commanding tighter than R_min asks for a turn the
+                    # airframe cannot fly, so honour the floor (bounds landing accuracy -- 5.1).
+                    bank = config.land_bank_limit if endgame is not None else config.bank_limit
+                    radius = max(config.loiter_radius_m * (endgame if endgame is not None else 1.0),
+                                 self.min_turn_radius(bank))
                     correction = commons.between(
                         -60.0, config.loiter_gain * (span - radius), 60.0)
                     bearing_centre = navigation.bearing(position[0], position[1],

@@ -236,13 +236,14 @@ class Flight(task.Task):
 
     def vitals(self) -> dict:
         """The live flight-panel readout (CC dashboard): the governor's airspeed estimate + the
-        dynamic-pressure fin-authority cap it set, whether the control loop is engaged, and the
-        zone-reachability estimate (glide_ratio × elevation vs distance-to-zone). Called at the
-        ~0.5 Hz health rate, so the airspeed / nav-trig float boxes are off the hot path."""
+        dynamic-pressure fin-authority cap it set, whether the control loop is engaged, the
+        zone-reachability estimate (glide_ratio × elevation vs distance-to-zone), and the endgame
+        turn-radius floor (R_min = v²/(g·tan land-bank) — the physical landing-accuracy bound). Called
+        at the ~0.5 Hz health rate, so the airspeed / nav-trig float boxes are off the hot path."""
         wind_e, wind_n = self._wind.components()
         reach = self._guidance.reachability(self._glide_ratio, wind_e, wind_n, self._governor.airspeed())
         return {'airspeed': round(self._governor.airspeed(), 1), 'fin_cap': self._governor.cap(),
-                'active': self._active, 'reach': reach,
+                'active': self._active, 'reach': reach, 'r_min_m': round(self._guidance.landing_turn_radius()),
                 'wind': {'speed': round(self._wind.speed(), 1), 'from': round(self._wind.direction())}}
 
     def inspect(self) -> dict:

@@ -300,6 +300,21 @@ def test_reachability():
     assert nozone.reachability(3.0) is None
 
 
+def test_min_turn_radius():
+    """R = v²/(g·tan bank): the physical turn-radius floor guidance clamps the endgame spiral to (5.1)."""
+    slow = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(_ZONE),
+                             _StubGovernor(14.0), _PositionHandle(), _AglHandle(), _AglHandle(100.0))
+    assert abs(slow.min_turn_radius(45.0) - 20.0) < 0.5   # 14²/(9.81·tan45) ≈ 20 m -- the endgame floor
+    assert abs(slow.min_turn_radius(30.0) - 34.6) < 0.5   # a gentler bank -> a wider turn
+    assert abs(slow.landing_turn_radius() - 20.0) < 0.5   # defaults to the 45° land-bank limit
+    fast = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(_ZONE),
+                             _StubGovernor(20.0), _PositionHandle(), _AglHandle(), _AglHandle(100.0))
+    assert fast.min_turn_radius(45.0) > slow.min_turn_radius(45.0)  # R ∝ v² -> faster flight widens it
+    stalled = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(_ZONE),
+                                _StubGovernor(0.0), _PositionHandle(), _AglHandle(), _AglHandle(100.0))
+    assert stalled.min_turn_radius(45.0) == 0.0  # no airspeed -> no estimate (guarded)
+
+
 test_heading_error()
 test_control_stage_gate()
 test_boost_hold()
@@ -310,6 +325,7 @@ test_final_approach()
 test_loiter_and_endgame_spiral()
 test_steering_filter()
 test_reachability()
+test_min_turn_radius()
 test_hold_law()
 print('ok: guidance -- stage gate, boost hold, GPS tiers + nav cache, bank-to-turn, loiter orbit + '
-      'endgame spiral, final approach, reachability, hold law')
+      'endgame spiral, final approach, reachability, min turn radius, hold law')
