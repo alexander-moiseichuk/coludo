@@ -18,11 +18,13 @@ import navigation
 import tasks
 
 
-async def _go(motor: str, wind_mps: float, wind_dir: float) -> None:
+async def _go(motor: str, wind_mps: float, wind_dir: float,
+              gnss_drift: float, gnss_drift_dir: float, pad_dwell_s: float) -> None:
     drivers.load()
     tasks.load()
     mission.Mission(max_range_m=200)
-    cfg = config_hitl.default(motor, 0.05, False, wind_mps, wind_dir, glider_g=285, inject_hz=25)
+    cfg = config_hitl.default(motor, 0.05, False, wind_mps, wind_dir, glider_g=285, inject_hz=25,
+                              gnss_drift=gnss_drift, gnss_drift_dir=gnss_drift_dir, pad_dwell_s=pad_dwell_s)
     flight = controller.Controller(cfg, log=lambda message: None)
     await flight.setup()
     await flight.start()
@@ -65,8 +67,11 @@ async def _go(motor: str, wind_mps: float, wind_dir: float) -> None:
             in_zone = zone[1][0] <= pos[0] <= zone[0][0] and zone[0][1] <= pos[1] <= zone[1][1]
             de = (pos[1] - target[1]) * commons.M_PER_DEG * math.cos(math.radians(pos[0]))  # E-W (strip long)
             dn = (pos[0] - target[0]) * commons.M_PER_DEG                                    # N-S (strip short)
-            print('MISS final=%.1f (E %.1f N %.1f) in_zone=%s | min=%.1f | wind %.1f toward %.0f'
-                  % (last_miss or -1, de, dn, in_zone, min_miss or -1, wind_mps, wind_dir))
+            calib = flight.active('gnss_calib')
+            drift_e, drift_n = calib.drift() if calib is not None else (0.0, 0.0)
+            print('MISS final=%.1f (E %.1f N %.1f) in_zone=%s | min=%.1f | wind %.1f toward %.0f '
+                  '| calib_drift %.3f,%.3f m/s'
+                  % (last_miss or -1, de, dn, in_zone, min_miss or -1, wind_mps, wind_dir, drift_e, drift_n))
             print('DONE')
             break
         if time.ticks_diff(time.ticks_ms(), started) > 150000:
@@ -78,5 +83,6 @@ async def _go(motor: str, wind_mps: float, wind_dir: float) -> None:
     print('RUN_END')
 
 
-def soak(motor: str = 'F15', wind_mps: float = 6.0, wind_dir: float = 270.0) -> None:
-    asyncio.run(_go(motor, wind_mps, wind_dir))
+def soak(motor: str = 'F15', wind_mps: float = 6.0, wind_dir: float = 270.0,
+         gnss_drift: float = 0.0, gnss_drift_dir: float = 0.0, pad_dwell_s: float = 0.0) -> None:
+    asyncio.run(_go(motor, wind_mps, wind_dir, gnss_drift, gnss_drift_dir, pad_dwell_s))

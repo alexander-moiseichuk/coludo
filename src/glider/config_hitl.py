@@ -23,7 +23,8 @@ _GLIDER_G = 285  # full glider (150 g electronics); pass glider_g=235 for the li
 
 def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: float = 0.0,
             wind_dir: float = 0.0, boost_axis: str = 'z',
-            glider_g: int = _GLIDER_G, inject_hz: int = 0) -> dict:
+            glider_g: int = _GLIDER_G, inject_hz: int = 0,
+            gnss_drift: float = 0.0, gnss_drift_dir: float = 0.0, pad_dwell_s: float = 0.0) -> dict:
     """Build a HITL config. Separation is off here, so boost->glide deploy rides the sequencer's baro
     APOGEE detect (mass/motor-independent -- the top of the arc), with config_default's long boost_timeout
     as the last-resort fallback; the sim's reduced baro noise keeps the peak-detect clean. `wind`/`wind_dir`
@@ -52,6 +53,7 @@ def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: f
         'sim_hz': 50, 'motor': motor, 'noise': noise, 'spike': spike,
         'liftoff_g': liftoff_g, 'glider_g': glider_g,  # boost then glide masses (booster ejects at apogee)
         'wind': wind, 'wind_dir': wind_dir, 'boost_axis': boost_axis,
+        'gnss_drift': gnss_drift, 'gnss_drift_dir': gnss_drift_dir, 'pad_dwell_s': pad_dwell_s,  # (#2)
     }
     if inject_hz:  # 0 -> omit -> hitl.py defaults the publish rate to sim_hz (avoid a 0 loop period)
         hitl['inject_hz'] = inject_hz

@@ -157,8 +157,7 @@ lookup (saturates at _FIN_VMAX). Multiply by the config fin_limit_multiplier at 
 
 Persist `data` as JSON to `path` atomically (shared by config.save + mission.save): write a
 temp file then rename it over the target, with a remove-then-rename fallback for a VFS (FAT) that
-won't rename onto an existing file. os/json are imported lazily so the hot-path importers of commons
-do not pull them in.
+won't rename onto an existing file.
 
 ### `id_classify(read, expected: int) -> str`
 
@@ -247,7 +246,7 @@ radios are off (self-contained sim), and separation is off (the boost-timeout dr
 GLIDING). Servos stay on so the sim can read the commanded fin angles. `default()` returns a fresh
 dict -- mutate freely. Run it instead of config_default for a simulation; the flight config is untouched.
 
-### `default(motor: str='F15', noise: float=0.0, spike: bool=False, wind: float=0.0, wind_dir: float=0.0, boost_axis: str='z', glider_g: int=_GLIDER_G, inject_hz: int=0) -> dict`
+### `default(motor: str='F15', noise: float=0.0, spike: bool=False, wind: float=0.0, wind_dir: float=0.0, boost_axis: str='z', glider_g: int=_GLIDER_G, inject_hz: int=0, gnss_drift: float=0.0, gnss_drift_dir: float=0.0, pad_dwell_s: float=0.0) -> dict`
 
 Build a HITL config. Separation is off here, so boost->glide deploy rides the sequencer's baro
 APOGEE detect (mass/motor-independent -- the top of the arc), with config_default's long boost_timeout
@@ -587,6 +586,8 @@ on entering control; compute() dispatches the stage's law and fills the setpoint
 - `__init__(config: GuidanceConfig, mission, governor, position, agl, elevation=None)` — constructor
 - `setpoint(stage: int)` — The configured attitude setpoint dict for `stage`, or None when it is not a CONTROL stage
 - `reachability(glide_ratio: float, wind_e: float=0.0, wind_n: float=0.0, airspeed: float=0.0)` — Can the glider still glide to the zone from here? The still-air reach = elevation × glide_ratio
+- `min_turn_radius(bank_deg: float) -> float` — The tightest coordinated turn the airframe can HOLD at `bank_deg` and its LIVE airspeed:
+- `landing_turn_radius() -> float` — The endgame turn-radius floor at the LAND-bank limit — the precision bound reported for a
 - `enter(heading: float, roll: fixnum, pitch: fixnum) -> None` — Entering a control stage (from a non-control one): capture the heading to hold blind and
 - `compute(stage: int, setpoint: dict, heading: float, now_us: int) -> bool` — Run `stage`'s law: fill roll_setpoint/pitch_setpoint/heading_error and return True, or
 
@@ -1082,8 +1083,7 @@ Warm start (specs/coludo.md "In-flight reboot & warm start") — was main._resto
 here so main.py stays a thin bring-up. A mid-air reset must not turn the glider ballistic: restore
 GLIDING when the NVS breadcrumb AND two physical signals agree — the separation latch (read via the
 separation DRIVER, not a raw Pin) and the baro absolute altitude clearly above the crumb's pad. Any
-doubt -> the crumb is cleared and this is a normal cold boot. Heavy imports stay inside (nothing
-beyond the cheap load() runs on a plain boot).
+doubt -> the crumb is cleared and this is a normal cold boot.
 
 ## `wind.py`
 
@@ -1099,19 +1099,23 @@ inherits the governor's airspeed error (an over-read biases head/tailwind) -- ac
 uses (reachability margin, approach crab). If the field data shows that bias hurts, the airspeed-free
 GPS-only min/max-ground-speed method is the next layer (kept out until a corner case earns it).
 
-Float trig, fed once per GNSS fix (off the hot loop), like navigation -- a telemetry + reachability /
-approach input, not a fixnum control quantity.
+The estimator OWNS its config subtree (the board `wind` block) and is Inspectable: it publishes and
+accepts live tweaks of triangle_alpha + the physical envelope (calm_speed..max_speed) through
+inspect()/update(), rather than the caller wiring individual params in. Float trig, fed once per GNSS
+fix (off the hot loop) via observe() -- a telemetry + reachability/approach input, not a control fixnum.
 
-### `class WindEstimator`
+### `class WindEstimator(inspector.Inspectable)`
 
 Estimate the wind (east/north m/s) from the GNSS ground velocity vs the air velocity (the wind
-triangle, EMA-smoothed). update() once per GNSS fix; speed()/direction()/components() read it.
+triangle, EMA-smoothed). observe() folds in one GNSS fix; speed()/direction()/components() read the
+estimate; inspect()/update() publish + retune the config subtree.
 
-- `__init__(alpha: float=0.05)` — constructor
-- `update(course: float, ground_speed: float, airspeed: float, heading: float) -> None` — One GNSS-fix update. `course`/`heading` deg, `ground_speed`/`airspeed` m/s.
-- `components() -> tuple` — (east, north) m/s.
+- `__init__(config: dict=None)` — constructor
+- `observe(course: float, ground_speed: float, airspeed: float, heading: float) -> None` — Fold in one GNSS fix. `course`/`heading` deg, `ground_speed`/`airspeed` m/s. A per-fix estimate
+- `components() -> tuple` — (east, north) m/s -- floored to calm (0, 0) below the envelope's calm_speed.
 - `speed() -> float`
 - `direction() -> float` — Where the wind blows FROM (meteorological convention), degrees. 0 when calm.
+- `inspect() -> dict` — Operator-facing: the tunable config + the current estimate.
 - `stats() -> dict` — Diagnostics for the wind soak / telemetry: the method, the estimate, and the raw components.
 
 # glider HAL drivers — `drivers/` — `src/glider/drivers`
@@ -1598,6 +1602,32 @@ Attitude-hold stabilization: GLIDING-gated, timer- or asyncio-scheduled, fail-sa
 - `finish() -> None`
 - `progress() -> tuple` — (controlling, steps, stage, updated_us) -- the public control-loop heartbeat, so the watchdog
 - `vitals() -> dict` — The live flight-panel readout (CC dashboard): the governor's airspeed estimate + the
+- `inspect() -> dict`
+
+## `gnss_calib.py`
+
+tasks/gnss_calib.py — GNSS consistent-drift calibration on the pad. @task.activity('gnss_calib').
+
+A STATIONARY GNSS position walks slowly (changing satellite geometry, ionospheric delay, multipath).
+Over the ~60 s a rocket sits on the pad the walk is roughly a constant DRIFT VELOCITY, and the almanac
+barely changes through the ~60 s flight -- so the drift measured on the pad predicts the drift in the
+air. A fixed antenna is NOT carried by the wind, so on the pad the receiver's whole reported ground
+velocity IS its drift: we average it through SETTING and FREEZE it at launch. The flight loop then
+subtracts it from the GNSS ground velocity before the wind triangle -- otherwise the drift folds
+STRAIGHT into the wind estimate (wind = ground_velocity - airspeed*heading), reading as phantom wind.
+
+Position-nav is deliberately NOT corrected: the drift over a 60 s flight is a few metres, inside the
+~20 m turn-radius landing floor (specs/coludo.md), so it would not move the touchdown -- the win is a
+clean wind estimate. Slow loop (the drift is slow); Inspectable -> the operator sees the frozen drift.
+
+### `class GnssCalib(task.Task)`
+
+Average the reported ground velocity while stationary on the pad (SETTING) -> the GNSS drift, and
+freeze it at launch (BOOSTING). drift() hands it to the flight loop to de-bias the wind.
+
+- `setup() -> bool`
+- `run() -> None`
+- `drift() -> tuple` — (east, north) m/s frozen drift velocity; (0, 0) until launch freezes it (or too few samples).
 - `inspect() -> dict`
 
 ## `hitl.py`

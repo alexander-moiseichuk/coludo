@@ -62,6 +62,9 @@ class Hitl(task.Task):
         self._noise: float = cfg.get('noise', 0.0)             # N: 0.0 / 0.05 / 0.10 / 0.25 / 0.50
         self._laser_range_m: float = cfg.get('laser_range_m', 4.0)  # agl drops out beyond this
         self._spike: bool = cfg.get('spike', False)            # occasional 2x spikes
+        # PAD DWELL (s): hold the stack armed + stationary on the pad before ignition (0 = ignite at once,
+        # the default -> unchanged). A realistic pad wait, and it lets the GNSS drift calibration sample.
+        self._pad_dwell_s: float = cfg.get('pad_dwell_s', 0.0)
         # which accelerometer axis carries the boost |a|: on the rod the IMU long-axis (often X or Y,
         # since the board's Z is normal to the PCB) reads the thrust. Launch-detect is magnitude-based
         # (axis-agnostic), so this is for matching the real mounting / exercising per-axis code.
@@ -77,6 +80,12 @@ class Hitl(task.Task):
         wind_dir = cfg.get('wind_dir', 0.0)
         self._body.wind_e = wind * math.sin(math.radians(wind_dir))
         self._body.wind_n = wind * math.cos(math.radians(wind_dir))
+        # GNSS consistent drift (m/s, toward gnss_drift_dir): a stationary receiver's slow apparent motion,
+        # present in the reported ground velocity even on the pad -> the SETTING calibration measures it.
+        drift = cfg.get('gnss_drift', 0.0)
+        drift_dir = cfg.get('gnss_drift_dir', 0.0)
+        self._body.gnss_drift_e = drift * math.sin(math.radians(drift_dir))
+        self._body.gnss_drift_n = drift * math.cos(math.radians(drift_dir))
         self._fins = None
         # seed the mission with the scenario (launch point + landing zone) so the nav has a target
         mission = inspector.Inspector.get('mission')
@@ -198,6 +207,15 @@ class Hitl(task.Task):
             now = time.ticks_ms()
             elapsed = time.ticks_diff(now, last) / 1000.0
             last = now
+            # PAD DWELL: armed + stationary on the pad -> the sequencer stays in SETTING (accel 1 g < the
+            # launch threshold) while the GNSS drift calibration samples. Hold the body (no boost
+            # integration, no accumulator backlog) until the dwell elapses, then ignition proceeds.
+            if self._pad_dwell_s > 0.0 and self.controller.stage == _STAGE.SETTING and not self._body.gliding:
+                self._pad_dwell_s -= elapsed
+                self._body.accel_g = 1.0
+                accumulator = 0.0
+                self._publish()
+                continue
             accumulator += elapsed if elapsed < max_catchup else max_catchup
             # follow the REAL stage machine: SETTING/BOOSTING -> 1-DoF boost/coast (provides the launch
             # accel + altitude that drive the sequencer); GLIDING/LANDING -> fin-controlled 6-DoF glide.

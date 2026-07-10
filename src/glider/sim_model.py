@@ -57,6 +57,13 @@ class Body:
         self.gliding = False
         self.wind_e = 0.0      # steady wind advecting the body (m/s, east +) -- a glide disturbance
         self.wind_n = 0.0      # steady wind advecting the body (m/s, north +)
+        # GNSS consistent-drift velocity (m/s ENU): a stationary receiver's slow apparent motion (geometry
+        # / ionosphere / multipath). Present in the REPORTED ground velocity even on the pad (a fixed
+        # antenna, no wind) -> the calibration reads it. MEASURED (Adafruit DGPS, 8 sats, HDOP 1.01, 60 s
+        # stationary, 2026-07-09): ~0.25 m/s apparent, of which ~0.13 m/s is a CONSISTENT bias (the part
+        # the calib removes) and ~half is random walk (residual). So a realistic scenario value is ~0.15.
+        self.gnss_drift_e = 0.0
+        self.gnss_drift_n = 0.0
         # weight-imbalance / thrust-misalignment disturbance (deg/s^2), applied while the motor
         # burns: a CG offset or a canted nozzle torques the stack CONSTANTLY, unlike the
         # weathercock which needs wind. Pitch = the top-to-bottom lean axis, roll = side-to-side.
@@ -143,9 +150,14 @@ class Body:
         return (lat, lon)
 
     def _ground_velocity(self) -> tuple:
-        """Horizontal ground velocity (east, north m/s) = air velocity along the heading + the wind."""
-        return (self.speed * math.sin(math.radians(self.heading)) + self.wind_e,
-                self.speed * math.cos(math.radians(self.heading)) + self.wind_n)
+        """The GNSS-REPORTED horizontal ground velocity (east, north m/s). AIRBORNE it is the air velocity
+        along the heading + the wind (the glider drifts with the air mass) plus the receiver's consistent
+        DRIFT; on the pad / boost climb the receiver is stationary (a fixed antenna is NOT carried by the
+        wind), so it reports ONLY its drift -- exactly what the pad calibration measures over SETTING."""
+        if not self.gliding:
+            return (self.gnss_drift_e, self.gnss_drift_n)
+        return (self.speed * math.sin(math.radians(self.heading)) + self.wind_e + self.gnss_drift_e,
+                self.speed * math.cos(math.radians(self.heading)) + self.wind_n + self.gnss_drift_n)
 
     def track(self) -> float:
         """Ground-track bearing (deg) -- the direction the glider MOVES over the ground: air velocity

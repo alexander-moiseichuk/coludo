@@ -61,7 +61,23 @@ def test_gyro_rates():
     assert abs(sensors['roll_rate']) < 200.0, sensors['roll_rate']
 
 
+def test_gnss_drift():
+    # a STATIONARY receiver (not gliding) reports ONLY its GNSS drift as ground velocity -- a fixed
+    # antenna is not carried by the wind, so the wind must NOT appear (this is what the pad calib reads)
+    body = sim_model.Body(0.43, (25.5, -80.4), 2.0, 30.0)
+    body.gnss_drift_e, body.gnss_drift_n = 0.3, 0.4
+    body.wind_e = 5.0
+    assert not body.gliding
+    assert abs(body.ground_speed() - 0.5) < 1e-6  # |(0.3, 0.4)| = 0.5, wind excluded
+    # airborne (gliding): the drift ADDS to the air + wind ground velocity
+    body.begin_glide()
+    body.speed, body.heading, body.wind_e, body.wind_n = 14.0, 90.0, 0.0, 0.0
+    assert abs(body.ground_speed() - (14.3 ** 2 + 0.4 ** 2) ** 0.5) < 1e-6  # 14 + 0.3 E, 0.4 N
+
+
 test_weathercock_and_control()
 test_speed_sensor()
 test_gyro_rates()
-print('ok: sim_model -- boost weathercock vs fin restore, calm stays vertical, speed sensor, gyro rates')
+test_gnss_drift()
+print('ok: sim_model -- boost weathercock vs fin restore, calm stays vertical, speed sensor, gyro rates, '
+      'gnss drift')

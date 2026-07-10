@@ -14,6 +14,7 @@
 # task is disabled by default -- it cannot move a surface until enabled + tuned on the airframe.
 
 import asyncio
+import math
 import time
 
 import controller as controller_mod
@@ -70,6 +71,7 @@ class Flight(task.Task):
         self._wind = wind.WindEstimator(wind_cfg)
         inspector.Inspector.register(self._wind)  # operator can inspect/retune the wind envelope via CC
         self._wind_min_speed: float = wind_cfg.get('min_speed', 3.0)  # meaningful ground speed for a course
+        self._gnss_calib = None  # the pad-drift calibrator (gnss_calib task) -- resolved lazily (any order)
         # the wind estimator is fed once per NEW GNSS sample (see _tick): track the course channel's last
         # push stamp so it self-tunes to the receiver's rate (1/5/25 Hz) with no hardcoded feed period.
         self._wind_stamp = None
@@ -139,13 +141,23 @@ class Flight(task.Task):
             self._max_step_us = elapsed
 
     def _feed_wind(self, heading: float) -> None:
-        """One GNSS-rate wind update: the straight-flight triangle (ground velocity − airspeed × heading)
-        plus the in-turn min/max ground-speed method. Needs a fresh course + a meaningful ground speed
-        (a crawl gives a noisy course)."""
+        """One GNSS-rate wind update: the ground velocity (de-biased by the pad-measured GNSS drift, so
+        the drift does not read as phantom wind) vs the air velocity. Needs a fresh course + a meaningful
+        ground speed (a crawl gives a noisy course)."""
         course = self._course.value()
         speed = self._gnss_speed.value()
-        if course is not None and speed is not None and speed > self._wind_min_speed:
-            self._wind.observe(course, speed, self._governor.airspeed(), heading)
+        if course is None or speed is None or speed <= self._wind_min_speed:
+            return
+        if self._gnss_calib is None:  # resolve the pad-drift calibrator once (registered by its own task)
+            self._gnss_calib = inspector.Inspector.get('gnss_calib')
+        drift_e, drift_n = self._gnss_calib.drift() if self._gnss_calib is not None else (0.0, 0.0)
+        if drift_e or drift_n:  # subtract the frozen drift from the ground velocity before the triangle
+            course_r = math.radians(course)
+            ground_e = speed * math.sin(course_r) - drift_e
+            ground_n = speed * math.cos(course_r) - drift_n
+            speed = math.sqrt(ground_e * ground_e + ground_n * ground_n)
+            course = math.degrees(math.atan2(ground_e, ground_n)) % 360.0
+        self._wind.observe(course, speed, self._governor.airspeed(), heading)
 
     def _compute_dt(self, start: int) -> int:
         """Integer-ms slice since the last step, and stash self._dt (float s) for the governor's airspeed

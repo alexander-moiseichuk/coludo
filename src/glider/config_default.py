@@ -293,6 +293,11 @@ def default() -> dict:
              'apogee_drop_m': 5.0, 'apogee_arm_ms': 4000, 'boost_timeout_ms': 12000,
              'land_agl_m': 5.0, 'land_ms': 300, 'still_g': 0.3, 'ground_ms': 3000,
              'flight_timeout_ms': 300000, 'disable_gc_flight': True},
+            # GNSS consistent-drift calibration (gnss_calib.py): average the reported ground velocity while
+            # stationary on the pad through SETTING (min_samples floor), freeze it at launch; the flight
+            # loop de-biases the wind by it. period_ms is the slow sample cadence (the drift is slow).
+            {'name': 'gnss_calib', 'activity': 'gnss_calib', 'enabled': True,
+             'period_ms': 1000, 'min_samples': 5},
             # Phase 3 stabilization loop (off by default -- no actuation until enabled + tuned on the
             # airframe). schedule_hz > 0 -> machine.Timer (deterministic slice, ~1 m/step at 100 Hz/100 m/s);
             # schedule_hz 0 -> asyncio at period_ms. Gains/setpoint are airframe tuning; gates to GLIDING.
