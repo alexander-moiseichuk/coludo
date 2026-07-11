@@ -71,9 +71,9 @@ async def amain():
     # standard handlers
     sd = cc_client.create_dispatcher(config_default.default())
 
-    m = cc.parse(await sd.handle('whoami'))
-    assert m.command == 'iam' and m.args[0] == 'taster'
-    info = json.loads(m.args[1])
+    msg = cc.parse(await sd.handle('whoami'))
+    assert msg.command == 'iam' and msg.args[0] == 'taster'
+    info = json.loads(msg.args[1])
     assert info['mcu'] == 'esp32p4' and 'config_id' in info and info['stage'] == 'setting'
 
     assert cc.parse(await sd.handle('ping')).command == 'pong'
@@ -102,8 +102,8 @@ async def amain():
     bad = config_default.default()
     bad['pins']['servo_yaw'] = 18  # reserved Wi-Fi pin -> invalid
     assert 'invalid' in await sd2.handle(cc.build('set-config', ['board', json.dumps(bad)]))
-    ok = cc.parse(await sd2.handle(cc.build('set-config', ['board', json.dumps(config_default.default())])))
-    assert ok.command == 'ok' and 'config_id' in json.loads(ok.args[0])
+    reply = cc.parse(await sd2.handle(cc.build('set-config', ['board', json.dumps(config_default.default())])))
+    assert reply.command == 'ok' and 'config_id' in json.loads(reply.args[0])
     assert cc.parse(await sd2.handle('reset-config')).command == 'ok'
     assert 'badargs' in await sd2.handle('set-config board')  # no json
     assert 'badargs' in await sd2.handle(cc.build('set-config', ['nope', '{}']))  # unknown config name

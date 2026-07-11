@@ -57,23 +57,23 @@ async def amain():
     assert 'no transport' in await atgm336h.Atgm336h('g', {'bus': 'uart', 'id': 9}, stub).diagnose()
 
     # present devices, only when wired: the real icp (0x63) / vl53 (0x29) report present/ok
-    on = _bus0().scan()
-    if 0x63 in on:
-        d = icp10111.Icp10111('b', {'bus': 'i2c', 'id': 0, 'addr': 0x63}, stub)
-        d._bus, d._addr = _bus0(), 0x63
-        assert 'ok' in await d.diagnose()
-    if 0x29 in on:
-        d = vl53l4cx.Vl53l4cx('l', {'bus': 'i2c', 'id': 0, 'addr': 0x29}, stub)
-        d._bus, d._addr = _bus0(), 0x29
-        assert 'present' in await d.diagnose()
+    addrs = _bus0().scan()
+    if 0x63 in addrs:
+        device = icp10111.Icp10111('b', {'bus': 'i2c', 'id': 0, 'addr': 0x63}, stub)
+        device._bus, device._addr = _bus0(), 0x63
+        assert 'ok' in await device.diagnose()
+    if 0x29 in addrs:
+        device = vl53l4cx.Vl53l4cx('l', {'bus': 'i2c', 'id': 0, 'addr': 0x29}, stub)
+        device._bus, device._addr = _bus0(), 0x29
+        assert 'present' in await device.diagnose()
 
     # wifi -- dumps a 'wifi ::' summary (radio up or no-interface) to print + the recorder log
-    w = wifi.Wifi('wifi', {}, stub)
-    await w.setup()
-    assert 'wifi ::' in await w.diagnose()
+    radio = wifi.Wifi('wifi', {}, stub)
+    await radio.setup()
+    assert 'wifi ::' in await radio.diagnose()
 
     print('ok: diagnose() -- sg90 PWM / separation HIGH / icp10111 + vl53l4cx id / gnss NMEA / wifi dump',
-          '| i2c present:', [hex(a) for a in on])
+          '| i2c present:', [hex(addr) for addr in addrs])
 
 
 asyncio.run(amain())
