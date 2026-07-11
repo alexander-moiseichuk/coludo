@@ -235,8 +235,8 @@ class Mission(inspector.Inspectable):
         return self._zone_points
 
     def zone_aspect(self) -> float:
-        """The zone's long/short side ratio (>= 1), memoized alongside zone_points -- the endgame 'oo'
-        bounds its lobe radius to the strip WIDTH (half_len / aspect) so the lobes stay inside the zone."""
+        """The zone's long/short side ratio (>= 1), memoized alongside zone_points; endgame_heading()
+        reads it for the o-vs-oo auto decision. 1.0 when no zone is set."""
         return 1.0 if self.zone_points() is None else self._zone_aspect
 
     def endgame_heading(self) -> int:
@@ -245,9 +245,8 @@ class Mission(inspector.Inspectable):
         along the long axis to cover the length), everything squarer flies FIG_O (a single circle). The
         Mission owns the zone, so it owns this decision; guidance only asks when its config is AUTO."""
         import guidance  # local: the endgame enum lives with the control law, no top-level coupling
-        if self.zone_points() is not None and self._zone_aspect > guidance.Heading.OO_ASPECT:
-            return guidance.Heading.FIG_OO
-        return guidance.Heading.FIG_O
+        return guidance.Heading.FIG_OO if self.zone_aspect() > guidance.Heading.OO_ASPECT \
+            else guidance.Heading.FIG_O
 
     def geometry(self) -> dict:
         """The landing zone resolved against the launch point: the target (centre) + both gates
