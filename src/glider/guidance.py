@@ -30,6 +30,10 @@ except ImportError:  # CPython (tooling / off-board checks)
 
 _STAGE = controller_mod.Stage
 _G: float = 9.81  # gravity (m/s^2) -> the coordinated-turn radius R = v^2 / (g * tan(bank))
+# 'oo' endgame lobe: which side of the centre the current lobe sits, as a SIGN used arithmetically
+# (lobe centre = leg_dir * r along the long axis); the two flip by negation at each centre crossing.
+_LOBE_B: int = 1   # the gate_b-side lobe
+_LOBE_A: int = -1  # the gate_a-side lobe
 
 
 class Heading:
@@ -73,6 +77,13 @@ class GuidanceConfig:
         self.stages: dict = {_STAGE.NAMES[name]: setpoint
                              for name, setpoint in config.get('stages', {'gliding': {}}).items()
                              if name in _STAGE.NAMES}
+        # the configured roll/pitch setpoints as centidegree fixnums, resolved ONCE here (they are
+        # per-flight constants). _steer/_hold read these instead of `fixed.from_float(setpoint.get(...))`
+        # every tick -- that boxed a float on the 100 Hz GC-off path, and the roll box was discarded
+        # whenever bank-to-turn overwrote it.
+        self.setpoints_fx: dict = {stage_id: (fixed.from_float(sp.get('roll', 0.0)),
+                                              fixed.from_float(sp.get('pitch', 0.0)))
+                                   for stage_id, sp in self.stages.items()}
         # bank-to-turn: in GLIDING the roll SETPOINT comes from the heading error, so the glider
         # banks into the turn (tight, ~v²/(g·tan(bank))) instead of skidding flat on the rudder
         # (which over-ranges a small zone). gain 0 -> rudder-only steering.
@@ -153,7 +164,7 @@ class Guidance:
         self._nav_heading = None  # cached target heading (None -> recompute on the next compute)
         self._nav_updated_us: int = 0
         self._error_filtered16 = None  # the heading-error EMA state, x16 fixed (None -> seed next)
-        self._leg_dir: int = 1  # 'oo' endgame: which lobe (+1/-1), flips at each centre crossing
+        self._leg_dir: int = _LOBE_B  # 'oo' endgame: current lobe (_LOBE_B/_LOBE_A sign), flips at a crossing
         self._was_near = False  # 'oo' hysteresis: glider was within a lobe radius of the centre last tick
 
     def setpoint(self, stage: int):
@@ -232,6 +243,8 @@ class Guidance:
         self._pitch_hold = pitch
         self._nav_heading = None
         self._error_filtered16 = None  # a fresh control entry seeds the error filter anew
+        self._leg_dir = _LOBE_B  # the 'oo' endgame starts fresh -- a stale near-latch would drop a crossing
+        self._was_near = False
 
     def compute(self, stage: int, setpoint: dict, heading: float, now_us: int) -> bool:
         """Run `stage`'s law: fill roll_setpoint/pitch_setpoint/heading_error and return True, or
@@ -267,8 +280,7 @@ class Guidance:
             endgame = max(0.0, elevation / config.endgame_alt_m)
         raw_error = heading_error(self._target_heading(heading, final, now_us, endgame), heading)
         self.heading_error = self._filter_error(raw_error)
-        self.roll_setpoint = fixed.from_float(setpoint.get('roll', 0.0))
-        self.pitch_setpoint = fixed.from_float(setpoint.get('pitch', 0.0))
+        self.pitch_setpoint = config.setpoints_fx[stage][1]  # cached fixnum (per-flight constant)
         if config.land_bank_gain and (final or endgame is not None or stage == _STAGE.LANDING):
             # endgame / final approach / landing: FULL fin authority -- spiral tight, crab the crosswind
             # out; the residual at strong wind is airframe-bound, not a control gap. In the ENDGAME the
@@ -280,14 +292,15 @@ class Guidance:
         elif config.bank_gain and stage == _STAGE.GLIDING:  # bank-to-turn toward the zone (vs skid)
             self.roll_setpoint = fixed.from_float(commons.bank_demand(
                 self.heading_error, config.bank_gain, config.bank_limit))
+        else:  # no bank-to-turn configured -> the CONFIGURED roll setpoint (cached fixnum)
+            self.roll_setpoint = config.setpoints_fx[stage][0]
         return True
 
     def _hold(self, stage: int, setpoint: dict, heading: float, now_us: int) -> bool:
         """Any other configured control stage (ground-test configs): hold the configured setpoints
         and the heading captured at entry — no navigation."""
         self.heading_error = heading_error(self._heading_hold, heading)
-        self.roll_setpoint = fixed.from_float(setpoint.get('roll', 0.0))
-        self.pitch_setpoint = fixed.from_float(setpoint.get('pitch', 0.0))
+        self.roll_setpoint, self.pitch_setpoint = self._config.setpoints_fx[stage]  # cached fixnums
         return True
 
     def _filter_error(self, error: int) -> int:
@@ -388,7 +401,8 @@ class Guidance:
         ge, gn = navigation.offset(target[0], target[1], position[0], position[1])  # glider rel. the centre
         if ge * ge + gn * gn < r * r:  # within a lobe radius of the centre -> a crossing
             if not self._was_near:
-                self._leg_dir = -self._leg_dir  # switch to the other lobe (turn sense unchanged)
+                # switch to the other lobe (turn sense unchanged)
+                self._leg_dir = _LOBE_A if self._leg_dir == _LOBE_B else _LOBE_B
             self._was_near = True
         else:
             self._was_near = False

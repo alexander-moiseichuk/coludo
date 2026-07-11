@@ -54,6 +54,9 @@ class Flight(task.Task):
         self._pid = {axis: pid.Pid(output_limit=limit,
                                    integral_limit=self.config.get('integral_limit', limit),
                                    **gains.get(axis, {})) for axis in self._AXES}
+        # bind the three PIDs to a tuple ONCE (like the mixer binds fins) so _run_pid unpacks them
+        # instead of a string-keyed dict probe per axis on the 100 Hz loop; self._pid stays for reset/inspect
+        self._pids = (self._pid['roll'], self._pid['pitch'], self._pid['yaw'])
         self._attitude = databoard.Databoard.parameter('attitude')  # (heading, roll, pitch)
         self._rate = databoard.Databoard.parameter('rate')  # (roll, pitch, yaw) angular rate -> PID D term
         # the governor (governor.py): airspeed estimate -> dynamic-pressure fin-authority cap on the
@@ -181,11 +184,12 @@ class Flight(task.Task):
         (derivative-on-measurement -- clean, no setpoint kick); None when no gyro -> the PID differentiates
         the error instead. Axis mapping assumes the IMU mounted gx->roll, gy->pitch, gz->yaw."""
         law = self._guidance  # the computed setpoint slots (no per-step tuple)
+        roll_pid, pitch_pid, yaw_pid = self._pids  # bound once (no per-tick string-keyed dict probe)
         rate = self._rate.value()  # (roll, pitch, yaw) rate or None -- no box: the gyro's stored tuple
         roll_rate, pitch_rate, yaw_rate = rate if rate is not None else (None, None, None)
-        roll_cmd = self._pid['roll'].step(law.roll_setpoint - roll, dt_ms, roll_rate)
-        pitch_cmd = self._pid['pitch'].step(law.pitch_setpoint - pitch, dt_ms, pitch_rate)
-        yaw_cmd = self._pid['yaw'].step(law.heading_error * fixed.SCALE, dt_ms, yaw_rate)  # coordinate turn
+        roll_cmd = roll_pid.step(law.roll_setpoint - roll, dt_ms, roll_rate)
+        pitch_cmd = pitch_pid.step(law.pitch_setpoint - pitch, dt_ms, pitch_rate)
+        yaw_cmd = yaw_pid.step(law.heading_error * fixed.SCALE, dt_ms, yaw_rate)  # coordinate turn
         # positional (not roll=...) so no kwargs dict is built on the hot path
         self._actuate(roll_cmd // fixed.SCALE, pitch_cmd // fixed.SCALE, yaw_cmd // fixed.SCALE)
 
