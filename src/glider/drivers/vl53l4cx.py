@@ -202,10 +202,10 @@ class Vl53l4cx(task.Task):
             AGL in metres; None when the range status is not valid (out of range / low signal).
         """
         raw = (await self._read(_REG_RANGE_STATUS, 1))[0] & 0x1F
-        mm = struct.unpack('>H', await self._read(_REG_DISTANCE, 2))[0]
+        distance_mm = struct.unpack('>H', await self._read(_REG_DISTANCE, 2))[0]
         await self._write(_REG_SYSTEM_INTERRUPT_CLEAR, 0x01)  # release the interrupt for the next sample
         status = _STATUS_RTN[raw] if raw < len(_STATUS_RTN) else 255
-        return mm / 1000.0 if status == 0 else None
+        return distance_mm / 1000.0 if status == 0 else None
 
     async def run(self) -> None:
         """

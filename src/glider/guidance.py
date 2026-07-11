@@ -113,9 +113,9 @@ class GuidanceConfig:
         # per-flight constants). _steer/_hold read these instead of `fixed.from_float(setpoint.get(...))`
         # every tick -- that boxed a float on the 100 Hz GC-off path, and the roll box was discarded
         # whenever bank-to-turn overwrote it.
-        self.setpoints_fx: dict = {stage_id: (fixed.from_float(sp.get('roll', 0.0)),
-                                              fixed.from_float(sp.get('pitch', 0.0)))
-                                   for stage_id, sp in self.stages.items()}
+        self.setpoints_fx: dict = {stage_id: (fixed.from_float(setpoint.get('roll', 0.0)),
+                                              fixed.from_float(setpoint.get('pitch', 0.0)))
+                                   for stage_id, setpoint in self.stages.items()}
         # bank-to-turn: in GLIDING the roll SETPOINT comes from the heading error, so the glider
         # banks into the turn (tight, ~v²/(g·tan(bank))) instead of skidding flat on the rudder
         # (which over-ranges a small zone). gain 0 -> rudder-only steering.
@@ -572,23 +572,23 @@ class Guidance:
         Returns:
             The heading to fly (degrees).
         """
-        ce, cn = navigation.offset(target[0], target[1], gate_b[0], gate_b[1])  # centre -> gate_b (long axis)
-        half_len = math.sqrt(ce * ce + cn * cn) or 1.0
-        unit_e, unit_n = ce / half_len, cn / half_len  # unit vector along the long axis
+        centre_e, centre_n = navigation.offset(target[0], target[1], gate_b[0], gate_b[1])  # centre -> gate_b
+        half_len = math.sqrt(centre_e * centre_e + centre_n * centre_n) or 1.0
+        unit_e, unit_n = centre_e / half_len, centre_n / half_len  # unit vector along the long axis
         bank = self.endgame_bank() if endgame is not None else self._config.bank_limit
-        r = max(self.min_turn_radius(bank),
-                self._config.loiter_radius_m * (endgame if endgame is not None else 1.0))
-        ge, gn = navigation.offset(target[0], target[1], position[0], position[1])  # glider rel. the centre
-        if ge * ge + gn * gn < r * r:  # within a lobe radius of the centre -> a crossing
+        radius = max(self.min_turn_radius(bank),
+                     self._config.loiter_radius_m * (endgame if endgame is not None else 1.0))
+        glider_e, glider_n = navigation.offset(target[0], target[1], position[0], position[1])  # glider vs centre
+        if glider_e * glider_e + glider_n * glider_n < radius * radius:  # within a lobe radius -> a crossing
             if not self._was_near:
                 # switch to the other lobe (turn sense unchanged)
                 self._leg_dir = _LOBE_A if self._leg_dir == _LOBE_B else _LOBE_B
             self._was_near = True
         else:
             self._was_near = False
-        # tangent to the current lobe's circle (FIXED +90 sense) + an inward/outward cut to hold radius r
-        dx = self._leg_dir * r * unit_e - ge  # glider -> lobe centre
-        dy = self._leg_dir * r * unit_n - gn
-        dist = math.sqrt(dx * dx + dy * dy) or 1.0
-        cut = commons.between(-60.0, self._config.loiter_gain * (dist - r), 60.0)
-        return (navigation.compass(dx, dy) + 90.0 - cut) % 360.0
+        # tangent to the current lobe's circle (FIXED +90 sense) + an inward/outward cut to hold the radius
+        delta_e = self._leg_dir * radius * unit_e - glider_e  # glider -> lobe centre
+        delta_n = self._leg_dir * radius * unit_n - glider_n
+        dist = math.sqrt(delta_e * delta_e + delta_n * delta_n) or 1.0
+        cut = commons.between(-60.0, self._config.loiter_gain * (dist - radius), 60.0)
+        return (navigation.compass(delta_e, delta_n) + 90.0 - cut) % 360.0

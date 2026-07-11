@@ -76,12 +76,13 @@ class Controller(inspector.Inspectable):
 
     def directory(self) -> list:
         """Names of enabled devices, in creation order (config order)."""
-        return [d.get('name') for d in self._devices() if d.get('enabled', True) and d.get('name')]
+        return [device.get('name') for device in self._devices()
+                if device.get('enabled', True) and device.get('name')]
 
     def _component(self, name: str) -> dict:
-        for d in self._devices():
-            if d.get('name') == name:
-                return d
+        for device in self._devices():
+            if device.get('name') == name:
+                return device
         return None
 
     def create(self, name: str) -> task.Task:
@@ -167,7 +168,7 @@ class Controller(inspector.Inspectable):
         """
         while True:
             found = [self.tasks.get(name) for name in names]
-            if not waiting or all(t is not None for t in found):
+            if not waiting or all(entry is not None for entry in found):
                 return found
             await asyncio.sleep_ms(50)
 
@@ -404,15 +405,16 @@ class Controller(inspector.Inspectable):
 
     def validate(self) -> bool:
         """True if every active task is healthy."""
-        for t in self.tasks.values():
-            if not t.validate():
+        for entry in self.tasks.values():
+            if not entry.validate():
                 return False
         return True
 
-    # --- Inspectable ---
+    """Inspectable: the operator-facing state snapshot (inspect) and per-task stats."""
     def inspect(self) -> dict:
         return {'stage': self.stage_name(), 'armed': self.armed, 'manual': self.manual,
                 'tasks': list(self.tasks.keys()), 'failures': self.failures}
 
     def stats(self) -> dict:
-        return {'stage': self.stage_name(), 'tasks': dict((n, t.inspect()) for n, t in self.tasks.items())}
+        return {'stage': self.stage_name(),
+                'tasks': dict((name, entry.inspect()) for name, entry in self.tasks.items())}

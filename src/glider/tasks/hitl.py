@@ -97,7 +97,7 @@ class Hitl(task.Task):
             mission.update({'latitude': scenario['launch'][0], 'longitude': scenario['launch'][1],
                             'altitude': scenario['elevation_m'], 'zone': scenario['zone']})
         # provide the sim's sensor quantities to the databoard (priority 0 -> the control code reads these)
-        provided = {q: {'priority': 0, 'timeout_ms': 1000} for q in
+        provided = {name: {'priority': 0, 'timeout_ms': 1000} for name in
                     ('accel', 'attitude', 'rate', 'agl', 'altitude', 'elevation', 'position', 'speed',
                      'course')}
         self._ch = databoard.Databoard.provide(self.name, provided)
@@ -136,7 +136,7 @@ class Hitl(task.Task):
         if self._fins is None:
             self._fins = self.controller.find(['servo_eleron_left', 'servo_eleron_right', 'servo_yaw'])
         neutral = commons.SERVO_NEUTRAL_DEG
-        return tuple(neutral if f is None else (f.angle or neutral) for f in self._fins)
+        return tuple(neutral if fin is None else (fin.angle or neutral) for fin in self._fins)
 
     def _read_fins(self) -> tuple:
         """
@@ -170,22 +170,22 @@ class Hitl(task.Task):
             None; publishes the databoard channels and pushes the telemetry rows as a side effect.
         """
         body = self._body
-        n = self._noise
+        noise = self._noise
         accel = [0.0, 0.0, 0.0]
-        accel[self._axis_index] = _noisy(body.accel_g, n, -200.0, 200.0)  # |a| on the boost axis (g)
-        heading = _noisy(body.heading % 360.0, n, 0.0, 360.0)
-        roll = _noisy(body.roll, n, -180.0, 180.0)
-        pitch = _noisy(body.pitch, n, -180.0, 180.0)
+        accel[self._axis_index] = _noisy(body.accel_g, noise, -200.0, 200.0)  # |a| on the boost axis (g)
+        heading = _noisy(body.heading % 360.0, noise, 0.0, 360.0)
+        roll = _noisy(body.roll, noise, -180.0, 180.0)
+        pitch = _noisy(body.pitch, noise, -180.0, 180.0)
         # the baro is far more precise than the IMU/GNSS -- its noise is ~sub-metre absolute, not the
         # nominal % of the reading. Scale it down (5 % nominal -> ~0.25 %, ~0.6 m at 250 m) so the reading
         # is realistic AND the sequencer's baro apogee-detect is not swamped by fake ±10 m jitter.
-        baro_n = n * _BARO_NOISE_SCALE
-        altitude = _noisy(body.elev0 + body.alt, baro_n, -100.0, 10000.0)
-        elevation = _noisy(body.alt, baro_n, -100.0, 10000.0)  # altitude above the pad (= altitude - elev0)
-        speed = _noisy(body.ground_speed(), n, 0.0, 200.0)  # GNSS ground speed (2D, WITH wind) -> governor + wind
+        baro_noise = noise * _BARO_NOISE_SCALE
+        altitude = _noisy(body.elev0 + body.alt, baro_noise, -100.0, 10000.0)
+        elevation = _noisy(body.alt, baro_noise, -100.0, 10000.0)  # altitude above the pad (= altitude - elev0)
+        speed = _noisy(body.ground_speed(), noise, 0.0, 200.0)  # GNSS ground speed (2D, WITH wind) -> governor + wind
         agl_clean = max(0.0, body.alt)
         position = body.position()
-        course = _noisy(body.track(), n, 0.0, 360.0)  # ground-track bearing -> attitude-backup yaw ref
+        course = _noisy(body.track(), noise, 0.0, 360.0)  # ground-track bearing -> attitude-backup yaw ref
         # databoard -> the control loop. roll/pitch are centidegree fixnum for the fixed-point PID (heading
         # stays float for the nav trig); the sim's float physics wraps to fixnum once, here at the boundary.
         self._ch['accel'].push((accel[0], accel[1], accel[2]))
@@ -194,13 +194,13 @@ class Hitl(task.Task):
         # gyro rate -> the PID D term (rate damping). Noised deg/s (like the other IMU channels so the D
         # term sees real jitter), pushed as centideg/s fixnum -- same unit + mapping as the LSM6DSO32
         # (roll, pitch, yaw). The same noised values feed the imu_lsm6dso32 telemetry below (board parity).
-        roll_rate = _noisy(body.roll_rate, n, -2000.0, 2000.0)
-        pitch_rate = _noisy(body.pitch_rate, n, -2000.0, 2000.0)
-        yaw_rate = _noisy(body.yaw_rate, n, -2000.0, 2000.0)
+        roll_rate = _noisy(body.roll_rate, noise, -2000.0, 2000.0)
+        pitch_rate = _noisy(body.pitch_rate, noise, -2000.0, 2000.0)
+        yaw_rate = _noisy(body.yaw_rate, noise, -2000.0, 2000.0)
         self._ch['rate'].push((from_float(roll_rate), from_float(pitch_rate), from_float(yaw_rate)))
         in_range = agl_clean <= self._laser_range_m  # laser only sees the ground within its range
         if in_range:
-            self._ch['agl'].push(_noisy(agl_clean, n, 0.0, 1000.0))
+            self._ch['agl'].push(_noisy(agl_clean, noise, 0.0, 1000.0))
         self._ch['altitude'].push(altitude)
         self._ch['elevation'].push(elevation)
         if not self.drop_gnss:  # simulated GNSS dropout -> position/speed/course go stale (baro stays)
@@ -235,7 +235,7 @@ class Hitl(task.Task):
         period = max(1, 1000 // self._inject_hz)  # loop + publish cadence (inject rate)
         fixed = 1.0 / self._sim_hz                 # physics sub-step (integration rate, wall-time covered)
         max_catchup = 0.5            # s: cap a scheduling stall's catch-up (<= 0.5 s of sub-steps)
-        t = 0.0
+        sim_time = 0.0
         accumulator = 0.0
         last = time.ticks_ms()
         while True:
@@ -264,19 +264,19 @@ class Hitl(task.Task):
                 roll, pitch, yaw = self._read_fins()
             while accumulator >= fixed:                      # advance enough sub-steps to cover real time
                 if boosting:
-                    self._body.boost_step(fixed, self._thrust if t < self._burn_s else 0.0, pitch, roll)
+                    self._body.boost_step(fixed, self._thrust if sim_time < self._burn_s else 0.0, pitch, roll)
                 else:
                     spiked = roll * 2.0 if (self._spike and random.random() < fixed / 3.0) else roll
                     self._body.glide_step(fixed, spiked, pitch, yaw)  # occasional 2x roll spike
                 accumulator -= fixed
-                t += fixed
+                sim_time += fixed
             self._publish()
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
-        s = self._body.sensors()
+        sensors = self._body.sensors()
         status['gliding'] = self._body.gliding
-        status['alt'] = round(s['altitude'], 1)
-        status['heading'] = round(s['heading'], 1)
+        status['alt'] = round(sensors['altitude'], 1)
+        status['heading'] = round(sensors['heading'], 1)
         status['noise'] = self._noise
         return status

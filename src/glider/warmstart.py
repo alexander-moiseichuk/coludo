@@ -246,9 +246,9 @@ async def restore(flight, cfg: dict, log=print) -> bool:
     altitude = await _await_altitude(databoard.Databoard.parameter('altitude'))
     cause = machine.reset_cause()
     cause_is_reset = cause in (machine.WDT_RESET, machine.SOFT_RESET, machine.HARD_RESET)
-    ok, reason = should_restore(crumb, separated, altitude, cause_is_reset, time.time())
+    allowed, reason = should_restore(crumb, separated, altitude, cause_is_reset, time.time())
     log('warmstart :: gate: %s (reset_cause %d)' % (reason, cause))
-    if not ok:
+    if not allowed:
         clear()  # rejected -> make the NEXT boot unambiguously cold
         return False
     _apply_restore(flight, crumb, cfg)

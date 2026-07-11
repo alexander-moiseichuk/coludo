@@ -61,7 +61,7 @@ def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: f
     for sensor in cfg['sensors']:
         if sensor['name'] in _SIM_SENSORS:
             sensor['enabled'] = False  # the sim provides these instead
-    by_name = {c['name']: c for c in cfg['components']}
+    by_name = {comp['name']: comp for comp in cfg['components']}
     for name in _OFF:
         if name in by_name:
             by_name[name]['enabled'] = False

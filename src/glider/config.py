@@ -94,7 +94,7 @@ def _validate_board(board, errs: list):
     bid = board.get('id')
     if not isinstance(bid, str) or not bid:
         errs.append('board.id must be a non-empty string')
-    elif any(c in bid for c in ' \t\r\n'):
+    elif any(char in bid for char in ' \t\r\n'):
         errs.append('board.id must not contain whitespace (it is a bare wire token)')
     mcu = board.get('mcu')
     if not isinstance(mcu, str):
@@ -243,9 +243,9 @@ def _validate_recorder(rec, errs: list) -> None:
     if not isinstance(rec, dict):
         errs.append("'recorder' must be an object")
         return
-    for k in ('tlm_capacity', 'log_capacity', 'cell_size', 'stats_ms'):
-        if k in rec and not (_is_int(rec[k]) and rec[k] > 0):
-            errs.append('recorder.%s must be a positive int' % k)
+    for key in ('tlm_capacity', 'log_capacity', 'cell_size', 'stats_ms'):
+        if key in rec and not (_is_int(rec[key]) and rec[key] > 0):
+            errs.append('recorder.%s must be a positive int' % key)
 
 
 def _validate_devices(items, label: str, errs: list, bus_refs: set, seen_names: set) -> None:
@@ -271,8 +271,8 @@ def _validate_devices(items, label: str, errs: list, bus_refs: set, seen_names: 
     if not isinstance(items, list):
         errs.append("'%s' must be a list" % label)
         return
-    for i, dev in enumerate(items):
-        where = '%s[%d]' % (label, i)
+    for index, dev in enumerate(items):
+        where = '%s[%d]' % (label, index)
         if not isinstance(dev, dict):
             errs.append('%s must be an object' % where)
             continue
@@ -361,9 +361,9 @@ def _canon(o) -> str:
         A canonical string with dict keys sorted, so two equal configs serialise identically.
     """
     if isinstance(o, dict):
-        return '{' + ','.join(repr(k) + ':' + _canon(o[k]) for k in sorted(o.keys())) + '}'
+        return '{' + ','.join(repr(key) + ':' + _canon(o[key]) for key in sorted(o.keys())) + '}'
     if isinstance(o, (list, tuple)):
-        return '[' + ','.join(_canon(x) for x in o) + ']'
+        return '[' + ','.join(_canon(item) for item in o) + ']'
     return repr(o)
 
 
@@ -377,12 +377,12 @@ def config_id(cfg) -> str:
     Returns:
         A 12-hex-char id: the SHA-256 prefix when hashlib is available, else an 8-hex FNV-1a fallback.
     """
-    s = _canon(cfg)
+    canonical = _canon(cfg)
     if _HAVE_HASH:
-        return binascii.hexlify(hashlib.sha256(s.encode()).digest()).decode()[:12]
+        return binascii.hexlify(hashlib.sha256(canonical.encode()).digest()).decode()[:12]
     acc = 2166136261  # FNV-1a fallback
-    for ch in s:
-        acc = ((acc ^ ord(ch)) * 16777619) & 0xFFFFFFFF
+    for char in canonical:
+        acc = ((acc ^ ord(char)) * 16777619) & 0xFFFFFFFF
     return '%08x' % acc
 
 

@@ -105,11 +105,11 @@ class Dispatcher:
         msg = cc.parse(line)
         if msg.command is None:
             return None
-        fn = self.handlers.get(msg.command)
-        if fn is None:
+        handler = self.handlers.get(msg.command)
+        if handler is None:
             return cc.build('err', ['badcmd', msg.command])
         try:
-            return await fn(msg)
+            return await handler(msg)
         except Exception as error:
             return cc.build('err', ['internal', repr(error)])
 
@@ -228,7 +228,7 @@ def _register_identity(dispatcher, ctx) -> None:
             flight = ctx.controller.active('flight')  # live flight panel: airspeed + fin cap + reach
             if flight is not None and hasattr(flight, 'vitals'):
                 info['flight'] = flight.vitals()
-            info['tasks'] = [{'name': t.name, 'ok': t.validate()} for t in ctx.controller.active()]
+            info['tasks'] = [{'name': task.name, 'ok': task.validate()} for task in ctx.controller.active()]
         info['degraded'] = degraded
         return cc.build('ok', [json.dumps(info)])
 

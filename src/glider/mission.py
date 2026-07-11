@@ -397,7 +397,7 @@ class Mission(inspector.Inspectable):
             return message
         return None
 
-    # --- Inspectable ---
+    """Inspectable: the operator-facing mission snapshot."""
     def inspect(self) -> dict:
         origin = self.launch_point()
         snapshot = {

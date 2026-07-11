@@ -175,8 +175,8 @@ is applied by the caller, not baked into the table.
 """
 
 _FIN_VMAX: int = const(80)  # m/s -- table saturates here (well past any expected airspeed)
-_FIN_LIMIT: tuple = tuple(45 if v == 0 else min(45, max(5, round(12500 / (v * v))))
-                          for v in range(_FIN_VMAX + 1))
+_FIN_LIMIT: tuple = tuple(45 if value == 0 else min(45, max(5, round(12500 / (value * value))))
+                          for value in range(_FIN_VMAX + 1))
 
 
 def fin_deflection_limit(speed_ms: float) -> int:

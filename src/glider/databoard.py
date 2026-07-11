@@ -83,9 +83,9 @@ class _Channel:
 
     def push(self, value) -> None:
         """Record a reading now (timestamp taken here -- a value is delivered the moment it's known)."""
-        ts = time.ticks_us()
+        timestamp = time.ticks_us()
         self.t0, self.v0 = self.t1, self.v1
-        self.t1, self.v1 = ts, value
+        self.t1, self.v1 = timestamp, value
 
     def fresh(self, now: int, window_us: int) -> bool:
         """

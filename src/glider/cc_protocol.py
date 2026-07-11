@@ -40,8 +40,8 @@ class _Msg:
 def _is_simple(s: str) -> bool:
     if not s or s[: len(_PREFIX)] == _PREFIX:
         return False
-    for c in s:
-        if c not in _SAFE:
+    for char in s:
+        if char not in _SAFE:
             return False
     return True
 
@@ -60,10 +60,10 @@ def encode(v) -> str:
         return 'true' if v else 'false'
     if isinstance(v, int):
         return str(v)
-    s = v if isinstance(v, str) else str(v)
-    if _is_simple(s):
-        return s
-    return _PREFIX + binascii.b2a_base64(s.encode()).rstrip().decode()
+    text = v if isinstance(v, str) else str(v)
+    if _is_simple(text):
+        return text
+    return _PREFIX + binascii.b2a_base64(text.encode()).rstrip().decode()
 
 
 def decode(tok: str) -> str:
@@ -97,15 +97,15 @@ def parse(line: str) -> _Msg:
     command = toks[0].lower()
     args = []
     named = {}
-    for t in toks[1:]:
-        if t[: len(_PREFIX)] == _PREFIX:
-            args.append(decode(t))  # encoded positional (may contain '=')
+    for token in toks[1:]:
+        if token[: len(_PREFIX)] == _PREFIX:
+            args.append(decode(token))  # encoded positional (may contain '=')
         else:
-            eq = t.find('=')
-            if eq > 0:
-                named[t[:eq]] = decode(t[eq + 1 :])
+            eq_at = token.find('=')
+            if eq_at > 0:
+                named[token[:eq_at]] = decode(token[eq_at + 1 :])
             else:
-                args.append(decode(t))
+                args.append(decode(token))
     return _Msg(command, args, named, line)
 
 
@@ -122,9 +122,9 @@ def build(command: str, args=(), named=None) -> str:
         The assembled single-line protocol string.
     """
     parts = [command]
-    for a in args:
-        parts.append(encode(a))
+    for value in args:
+        parts.append(encode(value))
     if named:
-        for k in named:
-            parts.append('%s=%s' % (k, encode(named[k])))
+        for key in named:
+            parts.append('%s=%s' % (key, encode(named[key])))
     return ' '.join(parts)

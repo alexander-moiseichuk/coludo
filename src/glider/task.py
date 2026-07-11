@@ -173,8 +173,8 @@ class Task(inspector.Inspectable):
 
     def emit(self, event=None) -> None:
         """Notify all subscribers of an update."""
-        for cb in self._subs:
-            cb(self, event)
+        for callback in self._subs:
+            callback(self, event)
 
     def find(self, names: list[str]) -> list:
         """Non-blocking sibling lookup via the Controller (None for any not up)."""
@@ -204,7 +204,7 @@ class Task(inspector.Inspectable):
         """Shut down and release resources."""
         self._ok = False
 
-    # --- Inspectable ---
+    """Inspectable: the operator-facing task-state snapshot."""
     def inspect(self) -> dict:
         """Status dict. Subclasses extend it."""
         return {'name': self.name, 'ok': self._ok, 'healthy': self._healthy}
