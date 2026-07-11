@@ -58,6 +58,7 @@
 | `servo_eleron_left` | - | pin=servo_eleron_left (GPIO27) |
 | `servo_eleron_right` | - | pin=servo_eleron_right (GPIO32) |
 | `sequencer` | - | - |
+| `gnss_calib` | - | - |
 | `flight` | - | - |
 | `watchdog` | - | - |
 | `health` | - | - |
