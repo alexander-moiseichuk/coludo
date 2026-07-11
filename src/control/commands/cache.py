@@ -1,5 +1,9 @@
-# `cache <board>` — the Control-side cached properties for a board (config / inspect / stats /
-# health), last-known values without touching the board. Defaults to the session's selected board.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+`cache <board>` -- the Control-side cached properties for a board (config / inspect / stats /
+health), last-known values without touching the board. Defaults to the session's selected board.
+"""
 
 import json
 

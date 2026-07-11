@@ -1,6 +1,10 @@
-# Host (CPython) test for tools/launch_config.py: the generated flight-ready board.config validates
-# clean AND passes the `verify` readiness gate's board half (watchdog/flight/gains/fin-cap/radios),
-# while the plain default (bench) config does not. Run by the control suite.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Host (CPython) test for tools/launch_config.py: the generated flight-ready board.config validates
+clean AND passes the `verify` readiness gate's board half (watchdog/flight/gains/fin-cap/radios),
+while the plain default (bench) config does not. Run by the control suite.
+"""
 
 import os
 import sys

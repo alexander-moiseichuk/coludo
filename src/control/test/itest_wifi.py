@@ -1,11 +1,15 @@
-# Integration test: a real wifi exchange between Control (this host) and the board.
-#
-# Control runs a TCP server; the board (over wifi) dials in and serves. Control does the
-# board-first handshake (whoami -> iam) and then ping + `inspect wifi`, and verifies the board
-# reports itself connected with an IP. Needs the board on USB (mpremote) and on the `panda`
-# network (panda.creds deployed); run `src/glider/deploy.sh` first so modules + creds are on board.
-#
-#   python3 src/control/itest_wifi.py          (PORT_DEV env overrides the serial port)
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Integration test: a real wifi exchange between Control (this host) and the board.
+
+Control runs a TCP server; the board (over wifi) dials in and serves. Control does the
+board-first handshake (whoami -> iam) and then ping + `inspect wifi`, and verifies the board
+reports itself connected with an IP. Needs the board on USB (mpremote) and on the `panda`
+network (panda.creds deployed); run `src/glider/deploy.sh` first so modules + creds are on board.
+
+    python3 src/control/itest_wifi.py          (PORT_DEV env overrides the serial port)
+"""
 
 import asyncio
 import os

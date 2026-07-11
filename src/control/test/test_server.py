@@ -1,6 +1,10 @@
-# Host (CPython) test for server.py: the hub — board accept/handshake (loopback), the operator
-# console (list / route / select / broadcast / Control commands), and the web bridge (api/boards,
-# api/cmd, events) — all over a real loopback. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Host (CPython) test for server.py: the hub -- board accept/handshake (loopback), the operator
+console (list / route / select / broadcast / Control commands), and the web bridge (api/boards,
+api/cmd, events) -- all over a real loopback. Run by `make test`.
+"""
 
 import asyncio
 import json
@@ -26,7 +30,7 @@ LOG_WEB_PORT = 18245
 
 
 def _nmea(body):
-    """`$<body>*hh` with a correct XOR checksum — for feeding a synthetic fix to gps.Gps in tests."""
+    """`$<body>*hh` with a correct XOR checksum -- for feeding a synthetic fix to gps.Gps in tests."""
     checksum = 0
     for character in body:
         checksum ^= ord(character)

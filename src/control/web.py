@@ -1,13 +1,17 @@
-# Web bridge — the browser face of the Control hub (specs/cc-protocol.md "Browser bridge").
-#
-# A minimal HTTP/1.1 + SSE server on 8080 over the same stdlib asyncio loop as the board listener
-# and operator console (no extra dependency, no framework). Plain HTTP: the LAN is trusted and
-# encryption is out of scope (cc-protocol.md "Transport & ports"). Routes:
-#   GET  /             -> the one-page dashboard (static/index.html)
-#   GET  /api/boards   -> hub.board_rows() as JSON (same data as the `list` command)
-#   POST /api/cmd      -> {board, command, params} -> run it on the board, reply as JSON
-#   POST /api/op       -> {line} -> run an operator-console line (calibrate, ...) -> {lines}
-#   GET  /events       -> Server-Sent Events: the board list pushed every heartbeat (live table)
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Web bridge -- the browser face of the Control hub (specs/cc-protocol.md "Browser bridge").
+
+A minimal HTTP/1.1 + SSE server on 8080 over the same stdlib asyncio loop as the board listener
+and operator console (no extra dependency, no framework). Plain HTTP: the LAN is trusted and
+encryption is out of scope (cc-protocol.md "Transport & ports"). Routes:
+  GET  /             -> the one-page dashboard (static/index.html)
+  GET  /api/boards   -> hub.board_rows() as JSON (same data as the `list` command)
+  POST /api/cmd      -> {board, command, params} -> run it on the board, reply as JSON
+  POST /api/op       -> {line} -> run an operator-console line (calibrate, ...) -> {lines}
+  GET  /events       -> Server-Sent Events: the board list pushed every heartbeat (live table)
+"""
 
 import asyncio
 import json
@@ -100,8 +104,18 @@ class Web:
         await _send(writer, 404, 'text/plain', 'not found')
 
     async def _api_board(self, board_id: str, writer) -> None:
-        """The Control-side cached properties for one board (config / inspect / stats / health) —
-        last-known values, served without touching the board."""
+        """
+        The Control-side cached properties for one board (config / inspect / stats / health).
+
+        Last-known values, served without touching the board.
+
+        Args:
+            board_id - the board id from the URL.
+            writer - the response StreamWriter.
+
+        Returns:
+            None; writes the board's properties as JSON (404 when unknown).
+        """
         board = self.hub.boards.get(board_id)
         if board is None:
             return await _send_json(writer, 404, {'error': 'no board %r' % board_id})
@@ -124,10 +138,20 @@ class Web:
         return await _send_json(writer, 200, {'board': board.id, 'status': resp.command, 'args': resp.args})
 
     async def _api_op(self, body: bytes, writer) -> None:
-        """Run one operator-console line through the same dispatch the telnet console uses, so EVERY
-        operator command (calibrate, list, ...) is reachable from the browser without a bespoke route
-        per command. Body: {line: "calibrate taster i2c 0"}. Returns {lines: [...]} (the `from ...`
-        replies). A board-id-first line still routes to that board -- this is the console over HTTP."""
+        """
+        Run one operator-console line through the same dispatch the telnet console uses.
+
+        So EVERY operator command (calibrate, list, ...) is reachable from the browser without a
+        bespoke route per command. A board-id-first line still routes to that board -- this is the
+        console over HTTP.
+
+        Args:
+            body - the request body, JSON `{line: "calibrate taster i2c 0"}`.
+            writer - the response StreamWriter.
+
+        Returns:
+            None; writes `{lines: [...]}` (the `from ...` replies) as JSON.
+        """
         try:
             request = json.loads(body or b'{}')
         except ValueError:
@@ -139,8 +163,18 @@ class Web:
         return await _send_json(writer, 200, {'lines': lines})
 
     async def _api_assist(self, body: bytes, writer) -> None:
-        """Push the host GPS position into a board's launch config (the dashboard 'gps' button) -- the
-        web counterpart to the `assist` operator command (set-config launch: merge + persist)."""
+        """
+        Push the host GPS position into a board's launch config (the dashboard 'gps' button).
+
+        The web counterpart to the `assist` operator command (set-config launch: merge + persist).
+
+        Args:
+            body - the request body, JSON `{board}`.
+            writer - the response StreamWriter.
+
+        Returns:
+            None; writes the assist result as JSON (400 without a usable host fix, 502 when offline).
+        """
         try:
             request = json.loads(body or b'{}')
         except ValueError:
@@ -160,9 +194,20 @@ class Web:
                                 {'board': board.id, 'assisted': resp.command == 'ok', 'position': position})
 
     async def _api_log(self, body: bytes, writer) -> None:
-        """Start/stop the hub's log/telemetry stream for a board: body `{board, kind, interval_ms}`
-        where `kind` is 'log' (default) or 'tlm' (interval_ms <= 0 stops). The board's poll model
-        serves one at a time. Streamed lines arrive on the /logs SSE feed, same as `<board> log <ms>`."""
+        """
+        Start/stop the hub's log/telemetry stream for a board.
+
+        The board's poll model serves one at a time. Streamed lines arrive on the /logs SSE feed, same
+        as `<board> log <ms>`.
+
+        Args:
+            body - the request body, JSON `{board, kind, interval_ms}`; `kind` is 'log' (default) or
+                'tlm', and interval_ms <= 0 stops the stream.
+            writer - the response StreamWriter.
+
+        Returns:
+            None; writes the streaming state as JSON.
+        """
         try:
             request = json.loads(body or b'{}')
         except ValueError:
@@ -194,8 +239,18 @@ class Web:
             await asyncio.sleep(self.hub.heartbeat_s)
 
     async def _logs(self, writer) -> None:
-        """Server-Sent Events of streamed board log lines (`{board, line}`), pushed as the hub emits
-        them while `log <board>` is active. One queue per connection, dropped from the hub on close."""
+        """
+        Server-Sent Events of streamed board log lines (`{board, line}`).
+
+        Pushed as the hub emits them while `log <board>` is active. One queue per connection, dropped
+        from the hub on close.
+
+        Args:
+            writer - the response StreamWriter (the SSE connection).
+
+        Returns:
+            None; streams log frames until the connection closes.
+        """
         queue = asyncio.Queue(maxsize=1000)
         self.hub.log_subscribers.add(queue)
         try:

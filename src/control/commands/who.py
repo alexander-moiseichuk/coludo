@@ -1,4 +1,8 @@
-# `who` — show this session's currently selected board.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+`who` -- show this session's currently selected board.
+"""
 
 import json
 

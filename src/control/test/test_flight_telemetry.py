@@ -1,6 +1,10 @@
-# Host (CPython) test for the flight telemetry parser (tools/flight_telemetry.py): demux a recorder
-# capture into streams + logs, against both an explicit fixture and the synthetic flight. Stdlib only
-# (no plotly). Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Host (CPython) test for the flight telemetry parser (tools/flight_telemetry.py): demux a recorder
+capture into streams + logs, against both an explicit fixture and the synthetic flight. Stdlib only
+(no plotly). Run by `make test`.
+"""
 
 import os
 import sys

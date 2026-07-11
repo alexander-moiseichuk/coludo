@@ -1,6 +1,10 @@
-# board.py — one connected Coludo board as seen by the hub: lockstep request/response over its
-# socket (specs/cc-protocol.md). The per-board lock makes every exchange strictly sequential, so the
-# heartbeat and operator traffic to one board can never overlap. CPython 3.12, stdlib asyncio only.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+One connected Coludo board as seen by the hub: lockstep request/response over its socket
+(specs/cc-protocol.md). The per-board lock makes every exchange strictly sequential, so the
+heartbeat and operator traffic to one board can never overlap. CPython 3.12, stdlib asyncio only.
+"""
 
 import asyncio
 import json
@@ -34,10 +38,25 @@ class Board:
         return '%s:%d' % (host, port)
 
     async def exchange(self, line: str, timeout: float = EXCHANGE_TIMEOUT_S, quiet: bool = False) -> cc._Msg:
-        """Send a ready board-facing line and return its parsed reply (None if disconnected).
-        `timeout` (default 10 s) bounds the wait so a wedged board raises asyncio.TimeoutError. `quiet`
-        suppresses the tx/rx console log -- used for the heartbeat ping, which the hub summarises itself
-        (only its first success / first failure) rather than spamming a line every beat."""
+        """
+        Send a ready board-facing line and return its parsed reply.
+
+        `quiet` suppresses the tx/rx console log -- used for the heartbeat ping, which the hub
+        summarises itself (only its first success / first failure) rather than spamming a line every
+        beat.
+
+        Args:
+            line - the board-facing protocol line to send (the newline is appended here).
+            timeout - seconds to wait for the reply before raising (default EXCHANGE_TIMEOUT_S, 10 s),
+                so a wedged board raises rather than hanging.
+            quiet - suppress the tx/rx console log (the heartbeat ping sets it).
+
+        Returns:
+            The parsed reply (_Msg), or None if the board disconnected (an empty read).
+
+        Raises:
+            asyncio.TimeoutError - the board did not reply within `timeout`.
+        """
         tag = self.id or self.peer
         async with self._lock:
             if not quiet:
@@ -56,9 +75,19 @@ class Board:
         return msg
 
     def _remember(self, line: str, msg: cc._Msg) -> None:
-        """Cache a board-state reply (config / inspect / stats / health) keyed by the command sent,
-        so the dashboard shows last-known values without re-polling. Only successful `ok` replies
-        carrying JSON update the cache; everything else (ping, errors) is ignored."""
+        """
+        Cache a board-state reply (config / inspect / stats / health) keyed by the command sent.
+
+        So the dashboard shows last-known values without re-polling. Only successful `ok` replies
+        carrying JSON update the cache; everything else (ping, errors) is ignored.
+
+        Args:
+            line - the command line that was sent (its first token keys the cache).
+            msg - the parsed board reply.
+
+        Returns:
+            None; updates self.cache in place.
+        """
         if msg.command != 'ok' or not msg.args:
             return
         tokens = line.split()
@@ -77,15 +106,35 @@ class Board:
             self.cache['health'] = payload
 
     def properties(self) -> dict:
-        """The Control-side snapshot of this board: identity + the cached config/inspect/stats/health
-        (json-able). Served by `/api/board/<id>` and the `cache` operator command."""
+        """
+        The Control-side snapshot of this board: identity + the cached config/inspect/stats/health.
+
+        Json-able. Served by `/api/board/<id>` and the `cache` operator command.
+
+        Args:
+            (none)
+
+        Returns:
+            A dict of id / online / info / config / inspect / stats / health.
+        """
         return {'id': self.id, 'online': self.online, 'info': self.info,
                 'config': self.cache['config'], 'inspect': self.cache['inspect'],
                 'stats': self.cache['stats'], 'health': self.cache['health']}
 
     async def command(self, command: str, *args, timeout: float = EXCHANGE_TIMEOUT_S,
                       quiet: bool = False) -> cc._Msg:
-        """Build `command args...` and exchange it. Returns the parsed reply or None."""
+        """
+        Build `command args...` and exchange it.
+
+        Args:
+            command - the command verb.
+            args - the command arguments (base64-encoded by cc.build as needed).
+            timeout - seconds to wait for the reply (default EXCHANGE_TIMEOUT_S).
+            quiet - suppress the tx/rx console log.
+
+        Returns:
+            The parsed reply (_Msg), or None if the board disconnected.
+        """
         return await self.exchange(cc.build(command, list(args)), timeout, quiet=quiet)
 
     async def identify(self) -> str:

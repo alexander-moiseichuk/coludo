@@ -1,4 +1,8 @@
-# `select <board>` — set this session's sticky target; a later bare command routes to it.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+`select <board>` -- set this session's sticky target; a later bare command routes to it.
+"""
 
 import json
 

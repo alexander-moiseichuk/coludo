@@ -1,9 +1,13 @@
-# server.py — the Control hub: a board listener (1234) + per-board heartbeat + a telnet operator
-# console (1235), plus the web bridge (web.py, 8080). Boards dial in, Control learns each id via
-# whoami/iam and owns every exchange. An operator line whose first token is a board id or `all`
-# routes to that board (id stripped, the rest forwarded verbatim) and the reply is tagged
-# `from <board> ...`; any other first token is a Control command from the drop-in commands/ registry.
-# CPython 3.12, stdlib asyncio only. cc_protocol.py is shared with the firmware (symlinked).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+The Control hub: a board listener (1234) + per-board heartbeat + a telnet operator console (1235),
+plus the web bridge (web.py, 8080). Boards dial in, Control learns each id via whoami/iam and owns
+every exchange. An operator line whose first token is a board id or `all` routes to that board (id
+stripped, the rest forwarded verbatim) and the reply is tagged `from <board> ...`; any other first
+token is a Control command from the drop-in commands/ registry. CPython 3.12, stdlib asyncio only.
+cc_protocol.py is shared with the firmware (symlinked).
+"""
 
 import asyncio
 import json
@@ -18,16 +22,29 @@ BROADCAST: str = 'all'  # the one broadcast target -- a clean token for scriptin
 
 
 def _render(resp) -> str:
-    """Render a board reply (_Msg) as a human-readable `status [args...]` line for the console.
-    Args are already base64-decoded by cc.parse, so structured payloads show as plain JSON."""
+    """
+    Render a board reply (_Msg) as a human-readable `status [args...]` line for the console.
+
+    Args are already base64-decoded by cc.parse, so structured payloads show as plain JSON.
+
+    Args:
+        resp - the parsed board reply (_Msg).
+
+    Returns:
+        The rendered line: the status alone, or `status args...`.
+    """
     if not resp.args:
         return resp.command
     return '%s %s' % (resp.command, ' '.join(str(a) for a in resp.args))
 
 
 class Server:
-    """The hub: a board listener + per-board heartbeat + an operator console. `on_board` is an
-    optional async hook invoked once, right after a board identifies (used by integration tests)."""
+    """
+    The hub: a board listener + per-board heartbeat + an operator console.
+
+    `on_board` is an optional async hook invoked once, right after a board identifies (used by
+    integration tests).
+    """
 
     def __init__(self, host: str = '0.0.0.0', port: int = 1234, operator_port: int = 1235,
                  web_port: int = 8080, on_board=None, log=print, heartbeat_s: float = HEARTBEAT_S,
@@ -46,9 +63,19 @@ class Server:
         self.log_subscribers = set()  # asyncio.Queue per /logs SSE listener (streamed log lines)
 
     def board_rows(self) -> list:
-        """The registry as json-able rows — shared by the `list` operator command and the web
-        /api/boards + /events feeds. Carries the last-known stage/config_id plus the heartbeat vitals
-        (uptime / clock / temp / mem_free) cached from `health`, so the dashboard top table is live."""
+        """
+        The registry as json-able rows.
+
+        Shared by the `list` operator command and the web /api/boards + /events feeds. Carries the
+        last-known stage/config_id plus the heartbeat vitals (uptime / clock / temp / mem_free) cached
+        from `health`, so the dashboard top table is live.
+
+        Args:
+            (none)
+
+        Returns:
+            A list of per-board dicts (identity + stage/config/vitals/flight fields).
+        """
         rows = []
         for client in self.boards.values():
             health = client.cache.get('health') or {}
@@ -72,14 +99,32 @@ class Server:
         return rows
 
     def cc_status(self) -> dict:
-        """The Control host's own status for the dashboard header: the wall clock and the host GPS
-        (None if no GPS device is attached; otherwise gps.status() -- usable / fix_3d / lat / lon)."""
+        """
+        The Control host's own status for the dashboard header: the wall clock and the host GPS.
+
+        Args:
+            (none)
+
+        Returns:
+            {time, gps}: the wall clock, and gps.status() (usable / fix_3d / lat / lon) or None when
+            no GPS device is attached.
+        """
         return {'time': time.strftime('%Y-%m-%dT%H:%M:%S'),
                 'gps': self.gps.status() if self.gps is not None else None}
 
-    # ----------------------------------------------------------------- board side
+    """Board side: identify a connected board, register it, then heartbeat it until it drops."""
+
     async def _handle(self, reader, writer) -> None:
-        """Identify a freshly connected board, register it, then poll it until it drops."""
+        """
+        Identify a freshly connected board, register it, then poll it until it drops.
+
+        Args:
+            reader - the board connection's StreamReader.
+            writer - the board connection's StreamWriter.
+
+        Returns:
+            None; runs for the life of the connection, marking the board offline on exit.
+        """
         client = board.Board(reader, writer, log=self.log)  # log every CC<->board line exchanged
         self.log('board connected %s' % client.peer)
         try:
@@ -102,10 +147,21 @@ class Server:
             client.close()
             self.log('%s offline' % (client.id or client.peer))
 
-    # --------------------------------------------------------------- log streaming
+    """Log streaming: poll a board's log/telemetry buffer and fan the lines out to console + SSE."""
+
     def _emit_log(self, board_id, line) -> None:
-        """Surface one streamed board log line: to the console as `<id>: <line>` and to every /logs
-        SSE subscriber (a full subscriber queue drops the line, never blocks the poll)."""
+        """
+        Surface one streamed board log line: to the console and every /logs SSE subscriber.
+
+        A full subscriber queue drops the line, never blocks the poll.
+
+        Args:
+            board_id - the board the line came from.
+            line - the log line.
+
+        Returns:
+            None; logs to the console (`<id>: <line>`) and fans out to the SSE queues.
+        """
         self.log('%s: %s' % (board_id, line))
         for queue in list(self.log_subscribers):
             try:
@@ -114,11 +170,22 @@ class Server:
                 pass
 
     async def _stream(self, client, interval_ms, kind) -> None:
-        """Poll a board's `log`/`tlm` buffer every `interval_ms` and emit each returned line. `kind` is
-        'log' (reply `{lines}`) or 'tlm' (reply `{samples}`) -- the board's poll model serves one at a
-        time, so the dashboard picks which. The board window is 2x the interval so its deadline never
-        lapses between polls; if this task stops, the window lapses and the board self-disables (no
-        consumer -> no collection). Ends on disconnect."""
+        """
+        Poll a board's `log`/`tlm` buffer every `interval_ms` and emit each returned line.
+
+        `kind` is 'log' (reply `{lines}`) or 'tlm' (reply `{samples}`) -- the board's poll model
+        serves one at a time, so the dashboard picks which. The board window is 2x the interval so its
+        deadline never lapses between polls; if this task stops, the window lapses and the board
+        self-disables (no consumer -> no collection).
+
+        Args:
+            client - the Board to poll.
+            interval_ms - the poll period in milliseconds.
+            kind - 'log' or 'tlm'.
+
+        Returns:
+            None; ends on disconnect.
+        """
         field = 'samples' if kind == 'tlm' else 'lines'
         window_ms = max(1, interval_ms) * 2
         while True:
@@ -135,29 +202,63 @@ class Server:
             await asyncio.sleep(interval_ms / 1000.0)
 
     def start_stream(self, client, interval_ms, kind='log') -> None:
-        """(Re)start streaming a board's `kind` ('log'|'tlm') at `interval_ms`, replacing any running
-        stream for it."""
+        """
+        (Re)start streaming a board's `kind` ('log'|'tlm') at `interval_ms`, replacing any running one.
+
+        Args:
+            client - the Board to stream.
+            interval_ms - the poll period in milliseconds.
+            kind - 'log' (default) or 'tlm'.
+
+        Returns:
+            None; registers the streaming task in self.streams.
+        """
         self._drop_stream(client.id)
         self.streams[client.id] = (asyncio.create_task(self._stream(client, interval_ms, kind)), kind)
 
     def _drop_stream(self, board_id):
-        """Cancel and forget any streaming task for a board; return its Board (or None)."""
+        """
+        Cancel and forget any streaming task for a board.
+
+        Args:
+            board_id - the board whose stream to drop.
+
+        Returns:
+            The board's Board, or None if it is not registered.
+        """
         entry = self.streams.pop(board_id, None)
         if entry is not None:
             entry[0].cancel()
         return self.boards.get(board_id)
 
     async def stop_stream(self, board_id) -> None:
-        """Stop streaming a board and tell it to stop collecting (a final `<kind> 0` drain), so it does
-        not keep teeing once nobody is polling."""
+        """
+        Stop streaming a board and tell it to stop collecting (a final `<kind> 0` drain).
+
+        So it does not keep teeing once nobody is polling.
+
+        Args:
+            board_id - the board to stop.
+
+        Returns:
+            None; cancels the stream task and drains the board.
+        """
         kind = self.streams.get(board_id, (None, 'log'))[1]
         client = self._drop_stream(board_id)
         if client is not None and client.online:
             await client.command(kind, 0)
 
     async def _stream_toggle(self, client, args) -> str:
-        """`<board> log [ms|off]`: start/refresh (default 1000 ms) or stop the hub's log stream for one
-        board. Returns a source-tagged reply line, like any board-first command."""
+        """
+        `<board> log [ms|off]`: start/refresh (default 1000 ms) or stop the hub's log stream for a board.
+
+        Args:
+            client - the target Board.
+            args - the command tail: [ms] or ['off'|'0'], empty for the 1000 ms default.
+
+        Returns:
+            A source-tagged reply line (`from <board> ...`), like any board-first command.
+        """
         arg = args[0] if args else '1000'
         if arg in ('off', '0'):
             await self.stop_stream(client.id)
@@ -170,11 +271,20 @@ class Server:
         return 'from %s ok %s' % (client.id, json.dumps({'log': 'on', 'interval_ms': interval_ms}))
 
     async def _poll(self, client) -> None:
-        """Heartbeat: poll an idle board's `health` every `heartbeat_s` -- it proves liveness AND
-        refreshes the vitals (uptime / clock / temp / mem) the dashboard top table shows, cached
-        Control-side. A recent exchange within the window already proves liveness, so it is skipped.
-        The poll is `quiet` (no per-beat tx/rx spam) -- only a CHANGE in liveness is logged (the first
-        'ok', the first 'lost'). Returns on disconnect."""
+        """
+        Heartbeat: poll an idle board's `health` every `heartbeat_s`.
+
+        It proves liveness AND refreshes the vitals (uptime / clock / temp / mem) the dashboard top
+        table shows, cached Control-side. A recent exchange within the window already proves liveness,
+        so it is skipped. The poll is `quiet` (no per-beat tx/rx spam) -- only a CHANGE in liveness is
+        logged (the first 'ok', the first 'lost').
+
+        Args:
+            client - the Board to heartbeat.
+
+        Returns:
+            None; returns on disconnect (so _handle marks the board offline).
+        """
         alive = None  # last heartbeat outcome (None until the first poll) -> log only on transition
         while True:
             await asyncio.sleep(self.heartbeat_s)
@@ -187,9 +297,19 @@ class Server:
             if not ok:
                 return  # disconnected -> _handle marks it offline
 
-    # -------------------------------------------------------------- operator side
+    """Operator side: read console lines, route board-id-first ones to boards, the rest to commands."""
+
     async def _operator(self, reader, writer) -> None:
-        """One telnet/dev operator session: read lines, dispatch, write tagged replies."""
+        """
+        One telnet/dev operator session: read lines, dispatch, write tagged replies.
+
+        Args:
+            reader - the operator connection's StreamReader.
+            writer - the operator connection's StreamWriter.
+
+        Returns:
+            None; runs until the operator disconnects.
+        """
         session = {'selected': None}
         try:
             while True:
@@ -208,9 +328,20 @@ class Server:
             writer.close()
 
     async def _dispatch(self, text, session) -> list:
-        """Route one operator line. A known board id / `all` first token routes to a board (id
-        stripped); a registered Control command (from commands/) handles its own; otherwise a sticky
-        `select` target (if any) takes the whole line."""
+        """
+        Route one operator line.
+
+        A known board id / `all` first token routes to a board (id stripped); a registered Control
+        command (from commands/) handles its own; otherwise a sticky `select` target (if any) takes
+        the whole line.
+
+        Args:
+            text - the raw operator line.
+            session - the per-connection state (the sticky `selected` board).
+
+        Returns:
+            The reply lines (each `from ...`).
+        """
         tokens = text.split()
         first = tokens[0]
         if first in self.boards or first == BROADCAST:
@@ -228,9 +359,20 @@ class Server:
         return ['from cc err badcmd %s' % first]
 
     async def _route(self, target, command_tokens) -> list:
-        """Run `command_tokens` against one board or every online board, tagging each reply with its
-        source. `log [ms|off]` is intercepted as hub-orchestrated streaming (start/stop a poll task);
-        every other command is forwarded verbatim (already board-facing) as a one-shot exchange."""
+        """
+        Run `command_tokens` against one board or every online board, tagging each reply with its
+        source.
+
+        `log [ms|off]` is intercepted as hub-orchestrated streaming (start/stop a poll task); every
+        other command is forwarded verbatim (already board-facing) as a one-shot exchange.
+
+        Args:
+            target - a board id or BROADCAST ('all').
+            command_tokens - the board-facing command and its arguments.
+
+        Returns:
+            The reply lines (each `from <board> ...`), one per addressed board.
+        """
         if not command_tokens:
             return ['from cc err badargs empty-command']
         if target == BROADCAST:
@@ -251,7 +393,8 @@ class Server:
             out.append('from %s %s' % (client.id, _render(resp)) if resp else 'from %s err offline' % client.id)
         return out
 
-    # ------------------------------------------------------------------ listeners
+    """Listeners: accept board, operator, and web connections and run them together."""
+
     async def serve_forever(self) -> None:
         """Accept board connections on `port` (board-facing listener)."""
         server = await asyncio.start_server(self._handle, self.host, self.port)

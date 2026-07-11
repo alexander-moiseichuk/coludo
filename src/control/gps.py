@@ -1,15 +1,19 @@
-# gps.py — host-side GPS assist for the Control hub (finding #10).
-#
-# The flight board carries its own GNSS (ATGM336H); a GPS plugged into the Control host (e.g.
-# /dev/ttyUSB0) is an ASSIST, not the source of truth. Two jobs:
-#   1. tell the operator when a usable fix is available — the ideal launch condition is a 3D fix
-#      with 4+ satellites (so the board's own cold start has a good almanac/position seed);
-#   2. hand a launch position to the board (operator `assist <board>` -> `update mission` +
-#      `set-config launch`, persisted in the board's launch.config) when the on-board GPS has no fix yet.
-#
-# Pure NMEA parsing (GGA position/sats, GSA 2D/3D mode) is split from the serial transport so it is
-# unit-tested without hardware (test_gps.py); the Linux serial open + read loop is exercised by
-# itest_gps.py against a real receiver. CPython 3.12, stdlib asyncio only — no pyserial.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Host-side GPS assist for the Control hub.
+
+The flight board carries its own GNSS (ATGM336H); a GPS plugged into the Control host (e.g.
+/dev/ttyUSB0) is an ASSIST, not the source of truth. Two jobs:
+  1. tell the operator when a usable fix is available -- the ideal launch condition is a 3D fix
+     with 4+ satellites (so the board's own cold start has a good almanac/position seed);
+  2. hand a launch position to the board (operator `assist <board>` -> `update mission` +
+     `set-config launch`, persisted in the board's launch.config) when the on-board GPS has no fix yet.
+
+Pure NMEA parsing (GGA position/sats, GSA 2D/3D mode) is split from the serial transport so it is
+unit-tested without hardware (test_gps.py); the Linux serial open + read loop is exercised by
+itest_gps.py against a real receiver. CPython 3.12, stdlib asyncio only -- no pyserial.
+"""
 
 import asyncio
 
@@ -73,8 +77,18 @@ class Gps:
         self.lines: int = 0  # accepted sentences (a liveness sign for the operator)
 
     def feed(self, line: str) -> bool:
-        """Parse one NMEA sentence into the running fix. Returns False for non-NMEA, a bad checksum,
-        an unhandled sentence, or a malformed field — robust to the line noise a serial GPS emits."""
+        """
+        Parse one NMEA sentence into the running fix.
+
+        Robust to the line noise a serial GPS emits -- a bad sentence is rejected, never raised.
+
+        Args:
+            line - one raw NMEA sentence.
+
+        Returns:
+            True if the sentence updated the fix; False for non-NMEA, a bad checksum, an unhandled
+            sentence, or a malformed field.
+        """
         line = line.strip()
         if not line.startswith('$') or not _checksum_ok(line):
             return False
@@ -103,8 +117,17 @@ class Gps:
                 'lines': self.lines}
 
     def position(self):
-        """The host position as a mission dict (latitude/longitude[/altitude]) when the fix is
-        usable, else None — so `assist` only pushes a position worth trusting."""
+        """
+        The host position as a mission dict, when the fix is usable.
+
+        So `assist` only pushes a position worth trusting.
+
+        Args:
+            (none)
+
+        Returns:
+            {latitude, longitude[, altitude]} when the fix is usable; None otherwise.
+        """
         if not self.fix.usable:
             return None
         position = {'latitude': self.fix.latitude, 'longitude': self.fix.longitude}
@@ -113,7 +136,15 @@ class Gps:
         return position
 
     async def run(self, reader: asyncio.StreamReader) -> None:
-        """Feed every line from an NMEA stream until it ends (the read loop, transport-agnostic)."""
+        """
+        Feed every line from an NMEA stream until it ends (the read loop, transport-agnostic).
+
+        Args:
+            reader - an asyncio StreamReader over NMEA text.
+
+        Returns:
+            None; returns when the stream ends (an empty read).
+        """
         while True:
             raw = await reader.readline()
             if not raw:
@@ -121,9 +152,20 @@ class Gps:
             self.feed(raw.decode('ascii', 'ignore'))
 
     async def serve(self, device: str, baud: int = 9600) -> None:
-        """Open the serial GPS and feed it forever (the wired host-assist path). A device that cannot be
-        opened is REPORTED to the operator and skipped -- host GPS is an optional assist, so its failure
-        must not take down the hub (serve() is gathered with hub.run(); an unhandled raise cancels both)."""
+        """
+        Open the serial GPS and feed it forever (the wired host-assist path).
+
+        A device that cannot be opened is REPORTED to the operator and skipped -- host GPS is an
+        optional assist, so its failure must not take down the hub (serve() is gathered with
+        hub.run(); an unhandled raise cancels both).
+
+        Args:
+            device - the serial device path (e.g. /dev/ttyUSB0).
+            baud - the serial baud rate (default 9600).
+
+        Returns:
+            None; runs until the stream ends or the device is unavailable.
+        """
         try:
             reader = await open_serial(device, baud)
         except OSError as error:
@@ -137,8 +179,22 @@ class Gps:
 
 
 async def open_serial(device: str, baud: int = 9600) -> asyncio.StreamReader:
-    """Open a Linux serial tty as an asyncio StreamReader: raw 8N1 at `baud`, stdlib only (termios +
-    connect_read_pipe). Hardware path — covered by itest_gps.py, not the host unit tests."""
+    """
+    Open a Linux serial tty as an asyncio StreamReader: raw 8N1 at `baud`.
+
+    Stdlib only (termios + connect_read_pipe). Hardware path -- covered by itest_gps.py, not the host
+    unit tests.
+
+    Args:
+        device - the serial device path.
+        baud - the serial baud rate (default 9600).
+
+    Returns:
+        An asyncio.StreamReader over the opened tty.
+
+    Raises:
+        FileNotFoundError - the device cannot be opened.
+    """
     import os
     import termios
 
