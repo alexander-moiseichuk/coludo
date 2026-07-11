@@ -33,6 +33,11 @@ def test_atan2_cd():
         ref = round(adeg * 100)
         worst = max(worst, abs(((got - ref + 18000) % 36000) - 18000))
     assert worst <= 20, worst  # ~0.2 deg -- plenty for a backup attitude
+    # the viper CORDIC core matches its readable reference over the x>=0 half-plane atan2_cd feeds it
+    for adeg in range(-90, 91):
+        a = math.radians(adeg)
+        yi, xi = round(math.sin(a) * 1000), round(math.cos(a) * 1000)
+        assert fixed._cordic_vec_opt(yi, xi, fixed._ATAN_CD) == fixed._cordic_vec_upy(yi, xi, fixed._ATAN_CD)
     # isqrt exact vs the reference across the range the filter feeds it
     for n in (0, 1, 2, 4, 1000000, 1999999, 2000000):
         assert fixed.isqrt(n) == fixed.isqrt_upy(n) == int(n ** 0.5)
