@@ -1,13 +1,21 @@
-# On-board test for sim_model.Body boost-attitude dynamics: a crosswind weathercocks the stack off
-# vertical, control fins restore it, calm air stays vertical, and the 'speed' sensor reports the GNSS 2D
-# GROUND speed (with wind). Pure math (deterministic -- no noise()), runs identically host + board.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for sim_model.Body boost-attitude dynamics: a crosswind weathercocks the stack off
+vertical, control fins restore it, calm air stays vertical, and the 'speed' sensor reports the GNSS 2D
+GROUND speed (with wind). Pure math (deterministic -- no noise()), runs identically host + board.
+"""
 
 import sim_model
 
 
 def _boost(mass, wind_e, gain):
-    """Run an F15 burn with an east crosswind and a capped P-controller on pitch (gain 0 = no control);
-    return (body, worst lean off vertical in deg)."""
+    """
+    Run an F15 burn with an east crosswind and a capped P-controller on pitch (gain 0 = no control).
+
+    Returns:
+        (body, worst lean off vertical in deg).
+    """
     body = sim_model.Body(mass, (25.5, -80.4), 2.0, 30.0)
     body.wind_e = wind_e
     thrust, burn = sim_model.MOTORS['F15']

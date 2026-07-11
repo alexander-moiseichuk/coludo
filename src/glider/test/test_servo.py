@@ -1,6 +1,10 @@
-# On-board (MicroPython) test for the shared servo slew gate (servo.py): the FIFO counting semaphore
-# that bounds simultaneous fin slews, and the process-wide Gate.slew()/Gate.reset() shared instance.
-# Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board (MicroPython) test for the shared servo slew gate (servo.py): the FIFO counting semaphore
+that bounds simultaneous fin slews, and the process-wide Gate.slew()/Gate.reset() shared instance.
+Run by `make test`.
+"""
 
 import asyncio
 

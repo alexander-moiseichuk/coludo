@@ -1,6 +1,9 @@
-# On-board test for the databoard (databoard.py): provide/write/raw, value() rank-preference,
-# the expiry handover (rank 0 expires -> rank 1 takes over), and stale extrapolation. Run by
-# `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the databoard (databoard.py): provide/write/raw, value() rank-preference, the
+expiry handover (rank 0 expires -> rank 1 takes over), and stale extrapolation. Run by `make test`.
+"""
 
 import time
 

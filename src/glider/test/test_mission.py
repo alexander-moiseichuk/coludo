@@ -1,5 +1,9 @@
-# On-board test for mission.py: launch.config load, live update (launch id / position / RTC time
-# setup), persistence, and Inspector integration. Positive + negative.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for mission.py: launch.config load, live update (launch id / position / RTC time setup),
+persistence, and Inspector integration. Positive + negative.
+"""
 
 import asyncio
 import json

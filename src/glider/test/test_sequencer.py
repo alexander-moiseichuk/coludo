@@ -1,6 +1,10 @@
-# On-board test for the flight-stage sequencer (tasks/sequencer.py): the guarded, forward-only
-# transitions driven by synthetic databoard accel/agl with a controlled `now` (ticks_ms) fed to
-# _tick(). Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the flight-stage sequencer (tasks/sequencer.py): the guarded, forward-only transitions
+driven by synthetic databoard accel/agl with a controlled `now` (ticks_ms) fed to _tick(). Run by
+`make test`.
+"""
 
 import asyncio
 
@@ -155,7 +159,7 @@ async def amain():
     seq._tick(4000)  # accel + elevation absent -> guarded -> tick does nothing
     assert ctrl.stage == Stage.SETTING  # no crash, no advance
 
-    # apogee ARMING window (15.5): the motor exhaust pressure wave corrupts the in-airframe baro
+    # apogee ARMING window: the motor exhaust pressure wave corrupts the in-airframe baro
     # DURING BURN, so the whole detector (peak tracking included) is blind for apogee_arm_ms after
     # BOOSTING entry -- a burn spike must neither deploy GLIDING under thrust nor poison the peak.
     burn_ctrl = _StubController()
@@ -171,7 +175,7 @@ async def amain():
     assert burn_ctrl.stage == Stage.BOOSTING  # blind during burn -> no deploy under thrust
     assert bseq._apogee_max is None           # and the spike did not poison the peak tracker
 
-    # RSO flight timeout (15.6): with every landing sensor dead the glider must not circle until
+    # RSO flight timeout: with every landing sensor dead the glider must not circle until
     # the battery dies -- flight_timeout_ms after BOOSTING entry the stage forces DONE.
     rso_ctrl = _StubController()
     rseq = sequencer.Sequencer('sequencer', dict(SPEC, flight_timeout_ms=1000), rso_ctrl)
@@ -184,7 +188,7 @@ async def amain():
     rseq._tick(1100)
     assert rso_ctrl.stage == Stage.DONE     # the backstop landed the stage machine
 
-    # externally-driven transitions land in sequencer.csv too (15.8): the separation driver (or an
+    # externally-driven transitions land in sequencer.csv too: the separation driver (or an
     # operator command) moves the stage outside _advance() -- post-flight tooling needs ONE source.
     class _TelemetryLog:
         def __init__(self):

@@ -1,6 +1,10 @@
-# On-board test for the board vitals task (tasks/board_health.py): @task.activity('health')
-# registration, vitals sampling, telemetry (first row at startup), int load, and that the load
-# estimate tracks real CPU load. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the board vitals task (tasks/board_health.py): @task.activity('health')
+registration, vitals sampling, telemetry (first row at startup), int load, and that the load
+estimate tracks real CPU load. Run by `make test`.
+"""
 
 import asyncio
 

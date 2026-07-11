@@ -1,7 +1,11 @@
-# On-board test for the ATGM336H GNSS driver (drivers/atgm336h.py): @task.driver('atgm336h')
-# registration, that it subclasses the shared gnss.Gnss base, graceful setup on an undefined bus, and
-# that the real CASIC reconfiguration runs without error on uart:2. The NMEA parsing/elevation is
-# covered by test_gnss (the shared base). Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the ATGM336H GNSS driver (drivers/atgm336h.py): @task.driver('atgm336h')
+registration, that it subclasses the shared gnss.Gnss base, graceful setup on an undefined bus, and
+that the real CASIC reconfiguration runs without error on uart:2. The NMEA parsing/elevation is
+covered by test_gnss (the shared base). Run by `make test`.
+"""
 
 import asyncio
 

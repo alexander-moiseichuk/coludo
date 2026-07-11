@@ -1,6 +1,10 @@
-# On-board test for the ADXL375 driver (drivers/adxl375.py): @task.driver('adxl375') registration
-# and graceful setup when the device is absent. Deterministic whether or not an ADXL375 is wired
-# (it probes a bus/address that has nothing on it). Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the ADXL375 driver (drivers/adxl375.py): @task.driver('adxl375') registration and
+graceful setup when the device is absent. Deterministic whether or not an ADXL375 is wired (it probes
+a bus/address that has nothing on it). Run by `make test`.
+"""
 
 import asyncio
 

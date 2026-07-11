@@ -1,5 +1,9 @@
-# On-board (MicroPython) test for the CC line protocol (cc_protocol.py). Board-first: a board
-# socket sees `command params` (no id), so parse() is command-first. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board (MicroPython) test for the CC line protocol (cc_protocol.py). Board-first: a board socket
+sees `command params` (no id), so parse() is command-first. Run by `make test`.
+"""
 
 import cc_protocol as cc
 

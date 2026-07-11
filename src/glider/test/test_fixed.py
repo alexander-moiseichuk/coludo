@@ -1,7 +1,11 @@
-# On-board test for the fixed-point helpers (fixed.py): boundary conversions (from_float / to_float),
-# integer decimal formatting (to_str, no float boxed), clamp, and -- the point of the SCALE choice -- an
-# accuracy + overflow SWEEP over the real control-path ranges, reported so we pick SCALE (100 vs 1000)
-# from data. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the fixed-point helpers (fixed.py): boundary conversions (from_float / to_float),
+integer decimal formatting (to_str, no float boxed), clamp, and -- the point of the SCALE choice -- an
+accuracy + overflow SWEEP over the real control-path ranges, reported so we pick SCALE (100 vs 1000)
+from data. Run by `make test`.
+"""
 
 import math
 
@@ -9,9 +13,12 @@ import fixed
 
 
 def test_atan2_cd():
-    """Integer CORDIC atan2 (centidegrees) tracks math.atan2 to <= ~0.2 deg over all four quadrants,
-    and the accel-gravity-vector -> roll/pitch composition (with isqrt) reproduces banked/pitched
-    attitudes -- the attitude-backup filter's core, zero float boxed."""
+    """
+    Integer CORDIC atan2 (centidegrees) tracks math.atan2 to <= ~0.2 deg over all four quadrants.
+
+    The accel-gravity-vector -> roll/pitch composition (with isqrt) reproduces banked/pitched
+    attitudes -- the attitude-backup filter's core, zero float boxed.
+    """
     # cardinal + quadrant sanity
     assert fixed.atan2_cd(0, 0) == 0
     assert abs(fixed.atan2_cd(0, 1000) - 0) <= 17       # +x axis -> 0

@@ -1,5 +1,9 @@
-# On-board test for the status LED driver (led.py): driver registration, pin setup from config,
-# blink-period selection by stage/health, inspect, and the missing-pin negative. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the status LED driver (led.py): driver registration, pin setup from config,
+blink-period selection by stage/health, inspect, and the missing-pin negative. Run by `make test`.
+"""
 
 import asyncio
 

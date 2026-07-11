@@ -1,10 +1,14 @@
-# Validates that Coludo's recommended WaveShare ESP32-P4-WIFI6 pin assignment actually
-# constructs on real hardware, and prints each peripheral. Raises (-> runner reports FAIL) if
-# any pin cannot be configured. See doc/waveshare_esp32p4_pins.md.
-#
-# Deliberately does NOT construct the firmware *default* buses: I2C(0) defaults onto the C6
-# Wi-Fi pins (GPIO18/19) and SPI(2) onto the microSD pins, so touching the defaults can disrupt
-# Wi-Fi / the SD slot. It also never calls I2C(2), which hard-crashes this build.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Validates that Coludo's recommended WaveShare ESP32-P4-WIFI6 pin assignment actually constructs on
+real hardware, and prints each peripheral. Raises (-> runner reports FAIL) if any pin cannot be
+configured. See doc/waveshare_esp32p4_pins.md.
+
+Deliberately does NOT construct the firmware *default* buses: I2C(0) defaults onto the C6 Wi-Fi pins
+(GPIO18/19) and SPI(2) onto the microSD pins, so touching the defaults can disrupt Wi-Fi / the SD
+slot. It also never calls I2C(2), which hard-crashes this build.
+"""
 
 from machine import I2C, PWM, SPI, UART, Pin
 

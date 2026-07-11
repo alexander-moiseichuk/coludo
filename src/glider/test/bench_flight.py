@@ -1,14 +1,18 @@
-# bench_flight.py — flight-loop load sweep + step-time breakdown (run ON the board: `make bench-flight`,
-# or `mpremote run`). Runs tasks/flight.py at schedule_hz 0 (asyncio) / 50 / 100 / 200 (timer), forced
-# into GLIDING with a synthetic ~140 Hz attitude (centidegree fixnum) + gyro rate and gains 0 (each step
-# does the full read->PID->mix->apply, but the fins hold neutral -> no motion). Reports achieved Hz,
-# per-step latency (worst max_step_us) and CPU load (a free-running idle counter vs a no-flight baseline).
-#
-# The BREAKDOWN section then prices where a step's time goes -- the whole _step vs its _run_pid (the
-# fixed-point PID: 3x pid.step + the fused mixer.actuate) vs navigation.steer (the float homing trig,
-# recomputed only every nav_period_ms in flight). This is the evidence for the viperize question: if the
-# integer PID is a small slice and the float trig dominates, viperizing the alloc-free PID is churn.
-# Needs the firmware deployed (run `make test` or ../deploy.sh first). Results live in doc/plan.md.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Flight-loop load sweep + step-time breakdown (run ON the board: `make bench-flight`, or `mpremote run`).
+Runs tasks/flight.py at schedule_hz 0 (asyncio) / 50 / 100 / 200 (timer), forced into GLIDING with a
+synthetic ~140 Hz attitude (centidegree fixnum) + gyro rate and gains 0 (each step does the full
+read->PID->mix->apply, but the fins hold neutral -> no motion). Reports achieved Hz, per-step latency
+(worst max_step_us) and CPU load (a free-running idle counter vs a no-flight baseline).
+
+The BREAKDOWN section then prices where a step's time goes -- the whole _step vs its _run_pid (the
+fixed-point PID: 3x pid.step + the fused mixer.actuate) vs navigation.steer (the float homing trig,
+recomputed only every nav_period_ms in flight). This is the evidence for the viperize question: if the
+integer PID is a small slice and the float trig dominates, viperizing the alloc-free PID is churn. Needs
+the firmware deployed (run `make test` or ../deploy.sh first). Results live in doc/plan.md.
+"""
 
 import asyncio
 import gc
@@ -73,9 +77,15 @@ def _per_call(fn, n=2000):
 
 
 def _per_op(body, reps=50, n=400):
-    """Microseconds per body() invocation with the harness's per-call overhead amortized: body() runs
-    `reps` times inside each of `n` timed samples, so tens-of-us ops are measured above the ~call-overhead
-    noise floor. Returns us per single body()."""
+    """
+    Microseconds per single body() invocation, with the harness's per-call overhead amortized.
+
+    body() runs `reps` times inside each of `n` timed samples, so tens-of-us ops are measured above the
+    ~call-overhead noise floor.
+
+    Returns:
+        Microseconds per single body().
+    """
     def batch():
         for _ in range(reps):
             body()
@@ -106,8 +116,12 @@ async def sweep(base_rate):
 
 
 async def breakdown():
-    """Price a single control step's components: the whole _step, the fixed-point PID (_run_pid), and the
-    float nav trig (navigation.steer). schedule_hz 0 so no timer fires while we call _step() by hand."""
+    """
+    Price a single control step's components: the whole _step, the fixed-point PID (_run_pid), and the
+    float nav trig (navigation.steer).
+
+    schedule_hz 0 so no timer fires while we call _step() by hand.
+    """
     task = flight.Flight('flight', {'schedule_hz': 0, 'period_ms': 20, 'gains': {'roll': {'kp': 2.0, 'kd': 0.2},
                         'pitch': {'kp': 1.5}, 'yaw': {'kp': 1.5, 'kd': 0.1}}}, Ctrl())
     await task.setup()
@@ -161,10 +175,14 @@ async def breakdown():
 
 
 async def alloc():
-    """The REAL control-path leak: run flight._step() with GC DISABLED (as in flight -- sequencer disables
-    GC on BOOSTING) and measure gross bytes allocated per step. This is the number the fixed-point work
-    moved (attitude/error now integer); the HITL capture's ~250 KB/s is sim-physics-inflated, this is not.
-    Projected to a per-second leak + time-to-OOM against ~free PSRAM at boost."""
+    """
+    The REAL control-path leak: run flight._step() with GC DISABLED (as in flight -- sequencer disables
+    GC on BOOSTING) and measure gross bytes allocated per step.
+
+    This is the number the fixed-point work moved (attitude/error now integer); the HITL capture's
+    ~250 KB/s is sim-physics-inflated, this is not. Projected to a per-second leak + time-to-OOM against
+    ~free PSRAM at boost.
+    """
     task = flight.Flight('flight', {'schedule_hz': 0, 'period_ms': 20, 'gains': {'roll': {'kp': 2.0, 'kd': 0.2},
                         'pitch': {'kp': 1.5}, 'yaw': {'kp': 1.5, 'kd': 0.1}}}, Ctrl())
     await task.setup()

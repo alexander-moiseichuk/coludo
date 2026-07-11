@@ -1,7 +1,11 @@
-# On-board test for the shared GNSS base (gnss.py): the NMEA helpers and the Gnss base Task -- graceful
-# setup on an undefined bus, and that a parsed RMC/GGA lands on the databoard (fed canned sentences, so
-# it is deterministic without a satellite fix), including the GGA-derived elevation. A trivial
-# _StubGnss subclass exercises the base independently of any module driver. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the shared GNSS base (gnss.py): the NMEA helpers and the Gnss base Task -- graceful
+setup on an undefined bus, and that a parsed RMC/GGA lands on the databoard (fed canned sentences, so
+it is deterministic without a satellite fix), including the GGA-derived elevation. A trivial
+_StubGnss subclass exercises the base independently of any module driver. Run by `make test`.
+"""
 
 import asyncio
 

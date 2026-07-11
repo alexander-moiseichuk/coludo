@@ -1,5 +1,9 @@
-# On-board (MicroPython) test for the Inspectable mixin + Inspector registry (inspector.py).
-# Run by `make test`. Raises (-> runner reports FAIL) on any failed assertion.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board (MicroPython) test for the Inspectable mixin + Inspector registry (inspector.py). Run by
+`make test`. Raises (-> runner reports FAIL) on any failed assertion.
+"""
 
 import inspector
 

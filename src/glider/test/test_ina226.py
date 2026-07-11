@@ -1,6 +1,10 @@
-# On-board test for the INA226 driver (drivers/ina226.py): @task.driver('ina226') registration,
-# graceful setup when the device is absent, and the calibration math. Deterministic whether or not an
-# INA226 is wired (it probes a bus/address that has nothing on it). Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the INA226 driver (drivers/ina226.py): @task.driver('ina226') registration,
+graceful setup when the device is absent, and the calibration math. Deterministic whether or not an
+INA226 is wired (it probes a bus/address that has nothing on it). Run by `make test`.
+"""
 
 import asyncio
 

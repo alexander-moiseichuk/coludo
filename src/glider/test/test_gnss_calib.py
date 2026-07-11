@@ -1,6 +1,10 @@
-# On-board test for tasks/gnss_calib.py: averaging the reported ground velocity while stationary on the
-# pad recovers the GNSS drift velocity, freezing at launch locks it, and too few samples leaves it 0
-# (untrusted). Pure logic driven off stub databoard channels. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for tasks/gnss_calib.py: averaging the reported ground velocity while stationary on the
+pad recovers the GNSS drift velocity, freezing at launch locks it, and too few samples leaves it 0
+(untrusted). Pure logic driven off stub databoard channels. Run by `make test`.
+"""
 
 import asyncio
 import math

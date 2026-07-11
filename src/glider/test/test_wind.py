@@ -1,6 +1,10 @@
-# On-board test for the wind estimator (wind.py): the triangle recovers a known wind from the ground
-# velocity vs the air velocity, and the crosswind is bias-free under an airspeed over-read (only the
-# along-heading component absorbs the airspeed error). Pure math. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the wind estimator (wind.py): the triangle recovers a known wind from the ground
+velocity vs the air velocity, and the crosswind is bias-free under an airspeed over-read (only the
+along-heading component absorbs the airspeed error). Pure math. Run by `make test`.
+"""
 
 import math
 

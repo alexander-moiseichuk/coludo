@@ -1,5 +1,9 @@
-# On-board (MicroPython) test for the Recorder + PSRAM ring + Telemetry (recorder.py).
-# Run by `make test`. Raises (-> runner reports FAIL) on any failed assertion.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board (MicroPython) test for the Recorder + PSRAM ring + Telemetry (recorder.py). Run by
+`make test`. Raises (-> runner reports FAIL) on any failed assertion.
+"""
 
 import asyncio
 

@@ -1,6 +1,10 @@
-# On-board test for the Bluetooth radio driver (drivers/bluetooth.py): @task.driver('bluetooth')
-# registration and that it applies the configured `radio` state (default off) + live toggle via
-# update(). Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the Bluetooth radio driver (drivers/bluetooth.py): @task.driver('bluetooth')
+registration and that it applies the configured `radio` state (default off) + live toggle via
+update(). Run by `make test`.
+"""
 
 import asyncio
 

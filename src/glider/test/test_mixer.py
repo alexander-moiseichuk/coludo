@@ -1,6 +1,9 @@
-# On-board test for the control-surface mixer (mixer.py): the elevon + rudder mixing matrix, trim,
-# the +/- limit clamp, and the fused bind()/actuate() servo path the flight loop drives. Run by
-# `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the control-surface mixer (mixer.py): the elevon + rudder mixing matrix, trim, the
++/- limit clamp, and the fused bind()/actuate() servo path the flight loop drives. Run by `make test`.
+"""
 
 import mixer
 

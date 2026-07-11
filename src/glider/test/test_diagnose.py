@@ -1,8 +1,12 @@
-# On-board test for driver diagnose() -- the deeper wire-level self-analysis the Controller folds into a
-# failed device's reason (and the operator sees in verify/probe). Covers every new diagnose(): the
-# config-fault path (deterministic, no hardware) + the present-device path where one is wired. diagnose()
-# reads transport state that setup() builds, so the bus cases seed _bus/_addr to mimic the post-setup
-# instance the Controller diagnoses. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for driver diagnose() -- the deeper wire-level self-analysis the Controller folds into a
+failed device's reason (and the operator sees in verify/probe). Covers every new diagnose(): the
+config-fault path (deterministic, no hardware) + the present-device path where one is wired.
+diagnose() reads transport state that setup() builds, so the bus cases seed _bus/_addr to mimic the
+post-setup instance the Controller diagnoses. Run by `make test`.
+"""
 
 import asyncio
 

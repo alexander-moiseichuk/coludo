@@ -1,7 +1,11 @@
-# On-board test for the PID controller (pid.py): P/I/D terms, integral + output anti-windup clamps, and
-# reset(). Fixed-point integer math (error/output in fixed.fixnum, integer-ms dt) -- so outputs are EXACT.
-# Values go through fixed.from_float, so the test is independent of fixed.SCALE (survives a 100->1000
-# bump). Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the PID controller (pid.py): P/I/D terms, integral + output anti-windup clamps, and
+reset(). Fixed-point integer math (error/output in fixed.fixnum, integer-ms dt) -- so outputs are EXACT.
+Values go through fixed.from_float, so the test is independent of fixed.SCALE (survives a 100->1000
+bump). Run by `make test`.
+"""
 
 import fixed
 import pid

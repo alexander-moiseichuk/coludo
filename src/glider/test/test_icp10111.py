@@ -1,6 +1,10 @@
-# On-board test for the ICP-10111 driver (drivers/icp10111.py): @task.driver('icp10111')
-# registration, graceful setup when absent, and that the TDK polynomial conversion is sane.
-# Deterministic whether or not an ICP-10111 is wired. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the ICP-10111 driver (drivers/icp10111.py): @task.driver('icp10111') registration,
+graceful setup when absent, and that the TDK polynomial conversion is sane. Deterministic whether or
+not an ICP-10111 is wired. Run by `make test`.
+"""
 
 import asyncio
 

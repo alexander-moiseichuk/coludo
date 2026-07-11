@@ -1,6 +1,10 @@
-# On-board test for the Wi-Fi station driver (drivers/wifi.py): @task.driver('wifi') registration,
-# setup (brings the STA interface up), config parsing, and inspect. Does NOT join a network (that
-# needs the AP up) -- only checks construction. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the Wi-Fi station driver (drivers/wifi.py): @task.driver('wifi') registration,
+setup (brings the STA interface up), config parsing, and inspect. Does NOT join a network (that
+needs the AP up) -- only checks construction. Run by `make test`.
+"""
 
 import asyncio
 

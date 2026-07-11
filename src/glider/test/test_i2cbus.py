@@ -1,5 +1,9 @@
-# On-board test for the shared I2C bus (i2cbus.py): get() returns one cached, shared Bus per id, a
-# different id is a different bus, and scan/read/write go through the lock. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the shared I2C bus (i2cbus.py): get() returns one cached, shared Bus per id, a
+different id is a different bus, and scan/read/write go through the lock. Run by `make test`.
+"""
 
 import asyncio
 

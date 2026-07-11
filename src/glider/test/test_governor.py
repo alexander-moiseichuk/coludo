@@ -1,7 +1,11 @@
-# On-board test for the dynamic-pressure fin governor (governor.py): the mixer authority cap
-# (1/v² schedule × safety multiplier), the accel-backbone + GNSS-corrector estimator wiring, and the
-# adaptive throttle with its full-rate overrides (pre-glide / absolute overspeed / dive). Pure logic
-# with injected stub handles -- no Flight task, no databoard. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the dynamic-pressure fin governor (governor.py): the mixer authority cap
+(1/v² schedule × safety multiplier), the accel-backbone + GNSS-corrector estimator wiring, and the
+adaptive throttle with its full-rate overrides (pre-glide / absolute overspeed / dive). Pure logic
+with injected stub handles -- no Flight task, no databoard. Run by `make test`.
+"""
 
 import fixed
 import governor
@@ -58,8 +62,11 @@ def test_authority_cap():
 
 
 def test_estimator_wiring():
-    """predict() integrates the accel backbone; correct() blends a sane GNSS fix; missing readings
-    degrade gracefully (backbone kept, no crash)."""
+    """
+    predict() integrates the accel backbone; correct() blends a sane GNSS fix.
+
+    Missing readings degrade gracefully (backbone kept, no crash).
+    """
     unit, _mix, accel, gnss_speed = _build()
     accel.value_now = (0.0, 0.0, 6.0)  # 6 g -> ~49 m/s^2 net along the path
     unit.step(0.1, True, 0)
@@ -78,9 +85,13 @@ def test_estimator_wiring():
 
 
 def test_gnss_jump_rejected():
-    """A GNSS ground-speed JUMP (more than one max_wind off the airspeed estimate) is rejected, not
-    blended -- a spurious low speed would loosen the fin cap (the unsafe direction). A fix WITHIN the
-    max-wind band still blends."""
+    """
+    A GNSS ground-speed JUMP (more than one max_wind off the airspeed estimate) is rejected, not
+    blended.
+
+    A spurious low speed would loosen the fin cap (the unsafe direction). A fix WITHIN the max-wind
+    band still blends.
+    """
     unit, _mix, accel, gnss_speed = _build({'wind': {'max_speed': 15.0}})
     accel.value_now = (0.0, 0.0, 3.0)  # integrate the accel backbone up to a real airspeed
     for _ in range(8):
@@ -97,8 +108,12 @@ def test_gnss_jump_rejected():
 
 
 def test_throttle_and_overrides():
-    """The distance-constant throttle skips the float update between intervals; the pre-glide and
-    dive overrides force full rate at once. Observable: _accum_s == 0 iff the update ran."""
+    """
+    The distance-constant throttle skips the float update between intervals; the pre-glide and dive
+    overrides force full rate at once.
+
+    Observable: _accum_s == 0 iff the update ran.
+    """
     unit, _mix, _accel, _speed = _build({'airspeed_dive_pitch': -45.0})
     unit._interval_s = 1.0  # force a long throttle interval so only an override can fire the update
     # (a) glide: normal pitch + accum under the interval -> THROTTLED (update skipped)
@@ -118,9 +133,12 @@ def test_throttle_and_overrides():
 
 
 def test_distance_constant_interval():
-    """The update interval follows clamp(speed, floor, ceiling) Hz — one update per ~1 m of travel:
-    the table maps floor below 5 m/s, speed-proportional across 5..50, ceiling past 50; and after
-    every update the interval re-derives from the FRESH estimate (staleness self-scales)."""
+    """
+    The update interval follows clamp(speed, floor, ceiling) Hz -- one update per ~1 m of travel.
+
+    The table maps floor below 5 m/s, speed-proportional across 5..50, ceiling past 50; and after
+    every update the interval re-derives from the FRESH estimate (staleness self-scales).
+    """
     unit, _mix, _accel, gnss_speed = _build({'airspeed_floor_hz': 5, 'airspeed_ceiling_hz': 50})
     config = unit._config
     assert config.update_interval(0.0) == 0.2  # at rest: the 5 Hz floor bounds time-staleness
@@ -143,9 +161,13 @@ def test_distance_constant_interval():
 
 
 def test_gnss_steep_pitch_gate():
-    """Near-vertical flight gates the GNSS corrector OFF: the receiver's 2D ground speed reads ~0 in
-    a vertical boost climb (and under-reads in a steep dive), and blending that would drag the
-    estimate down -> a LOOSER fin cap at high q, the unsafe direction. Shallow attitude re-opens it."""
+    """
+    Near-vertical flight gates the GNSS corrector OFF.
+
+    The receiver's 2D ground speed reads ~0 in a vertical boost climb (and under-reads in a steep
+    dive), and blending that would drag the estimate down -> a LOOSER fin cap at high q, the unsafe
+    direction. Shallow attitude re-opens it.
+    """
     unit, _mix, _accel, gnss_speed = _build()
     gnss_speed.reading = (0.0, 'gnss', 0)  # live fix, 2D ground speed ~0 (what a vertical climb reads)
     unit._estimator._speed = 14.0  # within max_wind of 0 (a 14 m/s headwind) -> only the STEEP gate can reject

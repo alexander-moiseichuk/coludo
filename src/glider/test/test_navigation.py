@@ -1,6 +1,10 @@
-# On-board test for the landing-zone navigation geometry (navigation.py): bearing/distance, zone -> target +
-# short-side gates (both orientations), inside(), and steer() (nearer gate -> target). Pure math, no
-# hardware. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the landing-zone navigation geometry (navigation.py): bearing/distance, zone -> target
++ short-side gates (both orientations), inside(), and steer() (nearer gate -> target). Pure math, no
+hardware. Run by `make test`.
+"""
 
 import navigation
 

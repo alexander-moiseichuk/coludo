@@ -1,7 +1,11 @@
-# On-board test for the stage-dependent guidance law (guidance.py): control-stage gating, the boost
-# rod gate + vertical hold, the three GPS-degrading heading tiers with the nav cache, bank-to-turn
-# vs the full-authority landing/final-approach bank, and the strip-centreline final approach. Pure
-# logic with injected stubs -- no Flight task, no databoard. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the stage-dependent guidance law (guidance.py): control-stage gating, the boost rod
+gate + vertical hold, the three GPS-degrading heading tiers with the nav cache, bank-to-turn vs the
+full-authority landing/final-approach bank, and the strip-centreline final approach. Pure logic with
+injected stubs -- no Flight task, no databoard. Run by `make test`.
+"""
 
 import math
 
@@ -88,8 +92,10 @@ def test_heading_error():
 
 
 def test_control_stage_gate():
-    """setpoint() names the CONTROL stages from config (default: gliding only); everything else is
-    None -> the caller holds neutral."""
+    """
+    setpoint() names the CONTROL stages from config (default: gliding only); everything else is None ->
+    the caller holds neutral.
+    """
     unit, _p, _a, _g = _build()
     assert unit.setpoint(Stage.GLIDING) == {}
     assert unit.setpoint(Stage.BOOSTING) is None and unit.setpoint(Stage.SETTING) is None
@@ -99,8 +105,10 @@ def test_control_stage_gate():
 
 
 def test_boost_hold():
-    """BOOSTING engages only PAST the rod (airspeed > boost_engage) and then holds the attitude
-    captured at enter(); no yaw steering near vertical."""
+    """
+    BOOSTING engages only PAST the rod (airspeed > boost_engage) and then holds the attitude captured at
+    enter(); no yaw steering near vertical.
+    """
     unit, _p, _a, gov = _build({'stages': {'boosting': {}, 'gliding': {}}, 'boost_engage_speed': 15.0})
     unit.enter(0.0, 0, fixed.from_float(90.0))  # rod-vertical capture (heading, roll, pitch)
     gov.speed = 5.0  # still on the rod
@@ -142,8 +150,10 @@ def test_heading_tiers():
 
 
 def test_nav_cache():
-    """The steer() trig is cached for nav_period_us: a second compute within the period returns the
-    cached heading even if the fix moves; enter() invalidates."""
+    """
+    The steer() trig is cached for nav_period_us: a second compute within the period returns the cached
+    heading even if the fix moves; enter() invalidates.
+    """
     unit, position, _a, _g = _build({'nav_period_ms': 100})
     unit.enter(200.0, 0, 0)
     position.reading = ((48.0005, 11.020), 'gnss', 0)  # east of the zone -> ~270
@@ -159,8 +169,10 @@ def test_nav_cache():
 
 
 def test_bank_to_turn():
-    """GLIDING banks into the turn (roll setpoint = nav_bank_gain * heading error, capped at
-    bank_limit); LANDING and low FINAL use the land gains with the FULL fin authority."""
+    """
+    GLIDING banks into the turn (roll setpoint = nav_bank_gain * heading error, capped at bank_limit);
+    LANDING and low FINAL use the land gains with the FULL fin authority.
+    """
     unit, position, agl, _g = _build({'nav_bank_gain': 1.5, 'bank_limit': 30,
                                       'stages': {'gliding': {}, 'landing': {}}})
     unit.enter(0.0, 0, 0)
@@ -180,8 +192,10 @@ def test_bank_to_turn():
 
 
 def test_final_approach():
-    """Below final_approach_agl the target switches from homing on the centre to TRACKING the strip
-    centreline (navigation.approach) with the land bank gains -- even while still in GLIDING."""
+    """
+    Below final_approach_agl the target switches from homing on the centre to TRACKING the strip
+    centreline (navigation.approach) with the land bank gains -- even while still in GLIDING.
+    """
     unit, position, agl, _g = _build({'final_approach_agl': 8, 'nav_bank_gain': 1.5,
                                       'land_bank_gain': 1.5, 'land_bank_limit': 45})
     unit.enter(0.0, 0, 0)
@@ -205,10 +219,13 @@ def test_final_approach():
 
 
 def test_loiter_and_endgame_spiral():
-    """The loiter orbit + endgame spiral (the fly-long glide law): within loiter_capture_m the
-    heading command is the circle TANGENT corrected inward/outward by the radius error; in the
-    endgame band the radius scales with the remaining-altitude fraction (spiral-in); far outside
-    the capture radius the gate steering stays in charge."""
+    """
+    The loiter orbit + endgame spiral (the fly-long glide law).
+
+    Within loiter_capture_m the heading command is the circle TANGENT corrected inward/outward by the
+    radius error; in the endgame band the radius scales with the remaining-altitude fraction (spiral-in);
+    far outside the capture radius the gate steering stays in charge.
+    """
     import navigation
 
     class _Elevation:
@@ -258,8 +275,10 @@ def test_loiter_and_endgame_spiral():
 
 
 def test_endgame_pattern_selection():
-    """'auto' (default) lets the Mission pick 'o' vs 'oo' by zone shape (oo when aspect > threshold);
-    an explicit config value overrides. _ZONE is a strip (aspect ~6.7 > 2) -> auto resolves to 'oo'."""
+    """
+    'auto' (default) lets the Mission pick 'o' vs 'oo' by zone shape (oo when aspect > threshold); an
+    explicit config value overrides. _ZONE is a strip (aspect ~6.7 > 2) -> auto resolves to 'oo'.
+    """
     import navigation
     square = ((48.001, 11.000), (48.000, 11.0015))  # aspect ~1 -> 'o'
     assert navigation.zone_aspect(*_ZONE) > 2.0 and navigation.zone_aspect(*square) < 2.0
@@ -273,8 +292,12 @@ def test_endgame_pattern_selection():
 
 
 def test_oo_endgame():
-    """'oo' endgame: two lobes along the long axis. The lobe FLIPS at each centre crossing but the turn
-    SENSE stays fixed (unlike the divergent figure-8), and the lobes stay bounded (~loiter_radius)."""
+    """
+    'oo' endgame: two lobes along the long axis.
+
+    The lobe FLIPS at each centre crossing but the turn SENSE stays fixed (unlike the divergent
+    figure-8), and the lobes stay bounded (~loiter_radius).
+    """
     class _Elevation:
         def __init__(self):
             self.value_now = None
@@ -308,8 +331,10 @@ def test_oo_endgame():
 
 
 def test_steering_filter():
-    """The heading-error EMA: seeds on the first sample (raw through), smooths jitter with
-    alpha 1/2^shift, follows a genuine >90-deg change at once, and shift 0 disables."""
+    """
+    The heading-error EMA: seeds on the first sample (raw through), smooths jitter with alpha 1/2^shift,
+    follows a genuine >90-deg change at once, and shift 0 disables.
+    """
     unit, _p, _a, _g = _build({'steer_filter_shift': 3})
     assert unit._filter_error(40) == 40  # first sample seeds -> raw
     smoothed = unit._filter_error(48)  # +8 jitter -> moves 1/8 of the way
@@ -323,8 +348,10 @@ def test_steering_filter():
 
 
 def test_hold_law():
-    """A configured control stage with no specific law (ground tests, e.g. 'setting') holds the
-    configured setpoints and the heading captured at enter() -- no navigation."""
+    """
+    A configured control stage with no specific law (ground tests, e.g. 'setting') holds the configured
+    setpoints and the heading captured at enter() -- no navigation.
+    """
     unit, position, _a, _g = _build({'stages': {'setting': {'roll': 1.0, 'pitch': -2.0}}})
     position.reading = ((48.0005, 11.020), 'gnss', 0)  # a live fix must NOT steer this law
     unit.enter(100.0, 0, 0)
@@ -335,8 +362,10 @@ def test_hold_law():
 
 
 def test_reachability():
-    """reach = glide_ratio × elevation vs distance-to-zone -> reachable y/n + margin; None when a fix,
-    zone, or elevation is missing (the flight panel's zone-reachable signal)."""
+    """
+    reach = glide_ratio × elevation vs distance-to-zone -> reachable y/n + margin; None when a fix, zone,
+    or elevation is missing (the flight panel's zone-reachable signal).
+    """
     position = _PositionHandle()
     elevation = _AglHandle(100.0)  # 100 m above the pad
     unit = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(_ZONE),
@@ -381,8 +410,10 @@ def test_min_turn_radius():
 
 
 def test_endgame_bank():
-    """The airspeed-gated endgame bank: steeper than the fixed 45 deg land limit when the airspeed
-    allows (a tighter R_min), capped at endgame_max_bank, level when too slow, fixed limit when disabled."""
+    """
+    The airspeed-gated endgame bank: steeper than the fixed 45 deg land limit when the airspeed allows
+    (a tighter R_min), capped at endgame_max_bank, level when too slow, fixed limit when disabled.
+    """
     def _g(speed, cfg=None):
         return guidance.Guidance(guidance.GuidanceConfig(cfg or {}, 1000), _StubMission(_ZONE),
                                  _StubGovernor(speed), _PositionHandle(), _AglHandle(), _AglHandle(100.0))

@@ -1,7 +1,11 @@
-# On-board test for the attitude-redundancy backup (tasks/attitude.py): it MIRRORS the higher-priority
-# fused source while that is winning, FREE-RUNS a complementary filter (gyro integrate + accel gravity
-# correction) once the primary is lost, and its integer-CORDIC roll/pitch converge to the true attitude.
-# Uses the real databoard with a stand-in priority-0 source. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the attitude-redundancy backup (tasks/attitude.py): it MIRRORS the higher-priority
+fused source while that is winning, FREE-RUNS a complementary filter (gyro integrate + accel gravity
+correction) once the primary is lost, and its integer-CORDIC roll/pitch converge to the true attitude.
+Uses the real databoard with a stand-in priority-0 source. Run by `make test`.
+"""
 
 import asyncio
 import math

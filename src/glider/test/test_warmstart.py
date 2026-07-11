@@ -1,7 +1,11 @@
-# On-board test for warmstart.py (in-flight reboot recovery). Covers the pure gate should_restore() --
-# all five defenses, their accept/refuse boundaries, and a TORN crumb (missing key) refusing cleanly
-# instead of crashing the boot -- and _apply_restore(), which restores the mission,
-# rebases the baros, and sets an armed GLIDING (stubbed controller/mission). Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for warmstart.py (in-flight reboot recovery). Covers the pure gate should_restore() --
+all five defenses, their accept/refuse boundaries, and a TORN crumb (missing key) refusing cleanly
+instead of crashing the boot -- and _apply_restore(), which restores the mission, rebases the baros,
+and sets an armed GLIDING (stubbed controller/mission). Run by `make test`.
+"""
 
 import controller
 import inspector

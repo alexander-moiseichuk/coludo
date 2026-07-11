@@ -1,6 +1,10 @@
-# On-board test for the HITL simulator (tasks/hitl.py + config_hitl.py): the pure flight
-# Body physics (boost -> apogee -> fin-controlled glide, a roll command turns the heading) and that the
-# Hitl task is registered and config_hitl produces a valid, correctly-wired config. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the HITL simulator (tasks/hitl.py + config_hitl.py): the pure flight Body physics
+(boost -> apogee -> fin-controlled glide, a roll command turns the heading) and that the Hitl task is
+registered and config_hitl produces a valid, correctly-wired config. Run by `make test`.
+"""
 
 import config
 import config_hitl

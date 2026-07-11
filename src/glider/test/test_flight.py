@@ -1,8 +1,12 @@
-# On-board test for the Phase 3 stabilization loop (tasks/flight.py): registration, GLIDING gating,
-# degraded->neutral on stale attitude, the PID->mixer->fin path, both scheduling modes (asyncio at
-# schedule_hz=0, machine.Timer at schedule_hz>0), and the WIRING of the extracted governor + guidance
-# (their laws are unit-tested in test_governor.py / test_guidance.py). Uses fake fins + a stub
-# controller; attitude comes from the databoard. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the Phase 3 stabilization loop (tasks/flight.py): registration, GLIDING gating,
+degraded->neutral on stale attitude, the PID->mixer->fin path, both scheduling modes (asyncio at
+schedule_hz=0, machine.Timer at schedule_hz>0), and the WIRING of the extracted governor + guidance
+(their laws are unit-tested in test_governor.py / test_guidance.py). Uses fake fins + a stub
+controller; attitude comes from the databoard. Run by `make test`.
+"""
 
 import asyncio
 
@@ -248,7 +252,7 @@ async def amain():
     # pitch error = hold(90) - 80 = +10 -> kp 1 -> pitch_cmd 10 -> elevons 90+10, capped by the governor
     assert boost_ctrl.fins['servo_eleron_left'].angle == 100 and boost_ctrl.fins['servo_yaw'].angle == 90
 
-    # crash safety (15.3): an uncaught exception inside the control step must CENTRE the fins on the
+    # crash safety: an uncaught exception inside the control step must CENTRE the fins on the
     # way out (run()'s finally -> finish()), never leave the last deflection standing through the
     # watchdog window.
     crash_ctrl = _StubController(Stage.GLIDING)

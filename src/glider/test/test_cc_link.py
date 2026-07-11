@@ -1,6 +1,10 @@
-# On-board test for the Control link task (tasks/cc_link.py): @task.activity('cc') registration, that
-# setup builds the client, and the hub-address rule -- explicit cc_host honored, else the `.1` of the
-# board's own subnet is derived at dial time. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the Control link task (tasks/cc_link.py): @task.activity('cc') registration, that
+setup builds the client, and the hub-address rule -- explicit cc_host honored, else the `.1` of the
+board's own subnet is derived at dial time. Run by `make test`.
+"""
 
 import asyncio
 

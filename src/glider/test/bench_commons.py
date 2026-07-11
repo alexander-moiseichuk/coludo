@@ -1,6 +1,11 @@
-# performance bench for the commons primitives: each function's _opt (viper int / native float) vs
-# its _upy bytecode reference, ns/call + speedup. NOT a correctness test (see test_commons). Run
-# on-board: mpremote connect PORT run test/bench_commons.py
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Performance bench for the commons primitives: each function's _opt (viper int / native float) vs its
+_upy bytecode reference, ns/call + speedup. NOT a correctness test (see test_commons). Run on-board:
+mpremote connect PORT run test/bench_commons.py
+"""
+
 import time
 
 import commons
@@ -9,8 +14,12 @@ _N = 30000
 
 
 def _bench3(function, a, b, c):
-    """Wall-clock ns/call for function(a, b, c) over _N calls (fixed loop+call overhead is equal across
-    variants, so the RATIO between _upy and _opt is the clean signal)."""
+    """
+    Wall-clock ns/call for function(a, b, c) over _N calls.
+
+    Fixed loop+call overhead is equal across variants, so the RATIO between _upy and _opt is the clean
+    signal.
+    """
     start = time.ticks_us()
     for _ in range(_N):
         function(a, b, c)

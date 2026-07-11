@@ -1,5 +1,9 @@
-# On-board (MicroPython) test for the CC client (cc_client.py). Board-first: the board socket
-# sees `command params` (no id) and replies `status params` (no id except iam). Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board (MicroPython) test for the CC client (cc_client.py). Board-first: the board socket sees
+`command params` (no id) and replies `status params` (no id except iam). Run by `make test`.
+"""
 
 import asyncio
 import json

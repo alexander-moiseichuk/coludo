@@ -1,6 +1,10 @@
-# On-board test for the BNO055 driver (drivers/bno055.py): @task.driver('bno055') registration and
-# graceful setup when the device is absent. Deterministic whether or not a BNO055 is wired (it probes
-# a bus/address with nothing on it). Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the BNO055 driver (drivers/bno055.py): @task.driver('bno055') registration and
+graceful setup when the device is absent. Deterministic whether or not a BNO055 is wired (it probes a
+bus/address with nothing on it). Run by `make test`.
+"""
 
 import asyncio
 
