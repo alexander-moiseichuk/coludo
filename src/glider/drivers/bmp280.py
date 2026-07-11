@@ -1,11 +1,15 @@
-# drivers/bmp280.py — BMP280 barometric pressure sensor (on the SEN0253) over the shared I2C bus:
-# the backup altitude channel. @task.driver('bmp280'). setup() probes the chip id, reads the factory
-# calibration and starts normal-mode conversion; run() reads pressure, applies Bosch compensation
-# and writes pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the per-sensor
-# startup ground zero) to the databoard. Graceful: wrong/absent chip id -> setup False -> skipped.
-#
-# Polled at period_ms (the BMP280 conversion is ~tens of ms, far slower than the IMU). Uses the
-# shared locked bus (i2cbus) since it shares i2c:0 with the ADXL375 and BNO055.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+BMP280 barometric pressure sensor (on the SEN0253) over the shared I2C bus: the backup altitude
+channel. @task.driver('bmp280'). setup() probes the chip id, reads the factory calibration and starts
+normal-mode conversion; run() reads pressure, applies Bosch compensation and writes pressure (Pa),
+temperature (°C), altitude (m AMSL) and elevation (m above the per-sensor startup ground zero) to the
+databoard. Graceful: wrong/absent chip id -> setup False -> skipped.
+
+Polled at period_ms (the BMP280 conversion is ~tens of ms, far slower than the IMU). Uses the shared
+locked bus (i2cbus) since it shares i2c:0 with the ADXL375 and BNO055.
+"""
 
 import asyncio
 import struct
@@ -36,9 +40,12 @@ _GROUND_SAMPLES = const(8)  # readings averaged at startup to fix the ground-zer
 
 @task.driver('bmp280')
 class Bmp280(task.Task):
-    """Backup baro: pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
-    startup ground zero, captured per-sensor so it is offset-free) to the databoard. `update`
-    {"rezero": true} re-captures ground zero (e.g. after warm-up, just before launch)."""
+    """
+    Backup baro to the databoard: pressure (Pa), temperature (°C), altitude (m AMSL) and elevation.
+
+    Elevation is metres above the startup ground zero, captured per-sensor so it is offset-free.
+    `update {"rezero": true}` re-captures ground zero (e.g. after warm-up, just before launch).
+    """
 
     _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
 
@@ -82,8 +89,18 @@ class Bmp280(task.Task):
         return total / _GROUND_SAMPLES
 
     def _compensate(self, adc_t: int, adc_p: int) -> tuple:
-        """Bosch fixed-point compensation: raw ADC -> (pressure Pa, temperature °C). int64 math
-        (MicroPython ints are arbitrary precision); pressure is 0.0 if the calibration is degenerate."""
+        """
+        Bosch fixed-point compensation: raw ADC counts -> (pressure Pa, temperature °C).
+
+        int64 math throughout (MicroPython ints are arbitrary precision, so it cannot overflow).
+
+        Args:
+            adc_t - raw temperature ADC reading.
+            adc_p - raw pressure ADC reading.
+
+        Returns:
+            (pressure Pa, temperature °C); pressure is 0.0 when the calibration is degenerate.
+        """
         t1, t2, t3, p1, p2, p3, p4, p5, p6, p7, p8, p9 = self._cal
         tv1 = (((adc_t >> 3) - (t1 << 1)) * t2) >> 11
         tv2 = (((((adc_t >> 4) - t1) * ((adc_t >> 4) - t1)) >> 12) * t3) >> 14
@@ -129,10 +146,20 @@ class Bmp280(task.Task):
             await asyncio.sleep_ms(self._period_ms)
 
     def update(self, props: dict) -> list:
-        """`{"rezero": true}` re-captures ground zero from the latest altitude (sync; operator does
-        it when the reading is stable). `{"ground": <m>}` SETS the zero directly -- the warm start
-        rebases a rebooted baro to the breadcrumb's pad altitude (a mid-air re-zero would make
-        `elevation` read ~0 at altitude, faking an immediate landing)."""
+        """
+        Apply an operator property change: re-zero or directly set the ground reference.
+
+        `{"rezero": true}` re-captures ground zero from the latest altitude (sync; the operator does it
+        when the reading is stable). `{"ground": <m>}` SETS the zero directly -- the warm start rebases a
+        rebooted baro to the breadcrumb's pad altitude (a mid-air re-zero would make `elevation` read ~0
+        at altitude, faking an immediate landing).
+
+        Args:
+            props - the property dict; honours 'ground' (a float, metres) and 'rezero' (a truthy flag).
+
+        Returns:
+            The list of changed property names (['ground'] on a set or re-zero, [] otherwise).
+        """
         if 'ground' in props:
             self._ground = float(props['ground'])
             return ['ground']
@@ -142,7 +169,15 @@ class Bmp280(task.Task):
         return []
 
     async def probe(self) -> str:
-        """On-demand self-test: the chip id reads back, then one conversion reads (each step logged)."""
+        """
+        On-demand self-test: the chip id reads back, then one conversion reads (each step logged).
+
+        Args:
+            (none)
+
+        Returns:
+            None on success; a short failure message (also logged) at the first failing step.
+        """
         try:
             recorder.Recorder.log(self.name, 'probe: chip id ...')
             chip = (await self._bus.read(self._addr, _REG_CHIP_ID, 1))[0]
@@ -165,9 +200,19 @@ class Bmp280(task.Task):
         return None
 
     async def diagnose(self) -> str:
-        """Deeper analysis when setup() failed: the bus reads the chip id and classifies the fault (no
-        ack / wrong device / present-but-init). The Controller folds it into the failure reason, so
-        `verify`/`probe` show the 'why', not just 'absent / miswired?'."""
+        """
+        Deeper analysis when setup() failed: classify the wire-level fault.
+
+        The bus reads the chip id and classifies the fault (no ack / wrong device / present-but-init), so
+        the Controller can fold it into the failure reason and `verify`/`probe` show the 'why', not just
+        'absent / miswired?'.
+
+        Args:
+            (none)
+
+        Returns:
+            A wire-level fault description; a config-fault message when setup never built the bus.
+        """
         bus = self._bus  # None until setup builds the transport
         if bus is None:  # setup never built the bus -> a config fault
             return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)

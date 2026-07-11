@@ -1,7 +1,11 @@
-# On-board test for the PID controller (pid.py): P/I/D terms, integral + output anti-windup clamps, and
-# reset(). Fixed-point integer math (error/output in fixed.fixnum, integer-ms dt) -- so outputs are EXACT.
-# Values go through fixed.from_float, so the test is independent of fixed.SCALE (survives a 100->1000
-# bump). Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the PID controller (pid.py): P/I/D terms, integral + output anti-windup clamps, and
+reset(). Fixed-point integer math (error/output in fixed.fixnum, integer-ms dt) -- so outputs are EXACT.
+Values go through fixed.from_float, so the test is independent of fixed.SCALE (survives a 100->1000
+bump). Run by `make test`.
+"""
 
 import fixed
 import pid
@@ -27,7 +31,7 @@ def test_terms():
     assert rated.step(0, 100, rate=fixed.from_float(10)) == fixed.from_float(-10)   # kd·(-10 °/s) = -10
     assert rated.step(0, 100, rate=fixed.from_float(-4)) == fixed.from_float(4)
 
-    # first step after init/reset takes NO derivative -> no spike from a 0 baseline (finding 1.14.1)
+    # first step after init/reset takes NO derivative -> no spike from a 0 baseline
     spike = pid.Pid(kd=1.0)
     assert spike.step(fixed.from_float(5), 100) == 0
     spike.reset()
@@ -48,15 +52,15 @@ def test_clamps_and_reset():
     assert out == fixed.from_float(5)
 
     # output clamp: kp=100 on a 10° error is huge -> clamped to ±45°
-    p = pid.Pid(kp=100.0, output_limit=45.0)
-    assert p.step(fixed.from_float(10), 100) == fixed.from_float(45)
-    assert p.step(fixed.from_float(-10), 100) == fixed.from_float(-45)
+    clamp_pid = pid.Pid(kp=100.0, output_limit=45.0)
+    assert clamp_pid.step(fixed.from_float(10), 100) == fixed.from_float(45)
+    assert clamp_pid.step(fixed.from_float(-10), 100) == fixed.from_float(-45)
 
     # reset clears the integral
-    r = pid.Pid(ki=1.0)
-    r.step(fixed.from_float(5), 1000)
-    r.reset()
-    assert r.step(0, 1000) == 0
+    reset_pid = pid.Pid(ki=1.0)
+    reset_pid.step(fixed.from_float(5), 1000)
+    reset_pid.reset()
+    assert reset_pid.step(0, 1000) == 0
 
 
 test_terms()

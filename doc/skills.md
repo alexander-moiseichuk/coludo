@@ -97,6 +97,11 @@ so it must run on both.
 - **No abbreviations**, and an argument's name matches the field it sets: `capacity`/`cell_size`
   not `slots`, `max_payload` not `maxpay`, `storage` not `buf`, `servo_eleron_left` not `..._l`.
 - **PEP8**; module-internal names and classes start with `_` (e.g. `_Msg`, `_is_simple`).
+- **Scheduled per-cycle method = `_tick()`**: a task's periodic scheduled work (timer- or run-loop-
+  driven, 1–100 Hz) lives in a single `_tick()` method — one name across tasks (`flight`, `sequencer`,
+  `field`), and `_`-protected so it is never reachable from outside the task. The signature varies by
+  need (the 100 Hz `flight._tick()` self-times off `ticks_us`; the slower `sequencer`/`field` take the
+  loop's `now`). `tools/gen_graph.py` roots the hot-path trace at `Flight._tick()`.
 - **Qualify project-module references**: import our own modules whole and call *through* them —
   `import cc_client` then `cc_client.create_dispatcher()`, not `from cc_client import create_dispatcher`.
   The module scope stays visible at the call site (which catches edit errors) and a module's external
@@ -107,6 +112,19 @@ so it must run on both.
   renaming any instance variable that would otherwise shadow the module. Give the rename a
   **problem-specific** name that reads (`launch = mission.Mission(...)`; a Controller Task becomes
   `new_task` / `pending_task` / `closing_task` by lifecycle phase) — never a bare `task_` disambiguator.
+- **Imports at the module top (on-device)**: in `src/glider/` collect *all* imports at the top so
+  every module is fully linked at load — never defer an import into a function, because a lazy import
+  can stall a critical-path call. Board-only modules CPython lacks (`machine`, `esp32`, `network`,
+  `bluetooth`) are guarded at the top so the module still imports on the host (which runs the HITL sim
+  and the `tools/`), as a *separate* try/except from the `const` shim:
+  ```python
+  try:
+      from machine import Pin, I2C
+  except ImportError:  # host (CPython): board-only; the setup/run paths never execute off-board
+      Pin = I2C = None
+  ```
+  Tests (`test_*.py`) and host code (`src/control/`, `tools/`) MAY defer imports — placement laxness
+  there is fine.
 - **Type annotations** on every non-local: module constants, class variables, function arguments
   and return types (both CPython 3.12 and MicroPython 1.28 accept them).
 - **Constants** via `micropython.const`, with a portable shim at the top of shared/board modules:
@@ -117,6 +135,50 @@ so it must run on both.
       def const(x): return x
   ```
 - **Docstring or comment per entry** — every class, method, and non-trivial constant.
+- **Docstring shape (pydoc sections, not a dense prose block)** — open on the next line after `"""`,
+  a one/two-line summary, then a blank line and the design/why prose (measurements, rationale — keep
+  it, it is the value), then the sections that apply:
+  ```python
+  def endgame_bank(self) -> float:
+      """
+      The steepest bank the endgame may hold at the live airspeed, stall-margin bounded.
+
+      A coordinated turn at bank φ pulls load 1/cos φ, raising the stall speed; requiring
+      airspeed ≥ stall_margin·V_stall bounds φ. Capped at endgame_max_bank.
+
+      Args:
+          (none — reads self._governor.airspeed() + the config)
+
+      Returns:
+          Bank angle in degrees; 0.0 when too slow to bank; land_bank_limit when disabled.
+      """
+  ```
+  `Args:` one `name - description` per non-self arg (say `(none)` if there are none); `Returns:`
+  what comes back **and when** (the value in each case); `Raises:` only when the function itself
+  raises a known exception. A **procedure returns `None`** — annotate `-> None` and write
+  `Returns: None` (say what it does as a side effect). Trivial one-liners (properties, tiny helpers)
+  may stay a single `"""summary."""` line; add sections when there is an arg/return/raise worth naming.
+- **File header is a module docstring**, not a `#` block. The first line is the copyright, then a
+  blank line, then the existing description (module role, design notes, measurements — keep the prose):
+  ```python
+  """
+  Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+  <what this module is and the design notes that were here before>
+  """
+  ```
+- **Section dividers are docstrings, not `#` banners.** A `# ----------- lifecycle` rule is
+  unreadable; when a block genuinely needs a heading, write a `"""..."""` string statement instead
+  (one line of what the section is / why), or just drop the divider if the code reads fine without it:
+  ```python
+  """Lifecycle: bring the configured devices up, supervise them, tear them down."""
+  ```
+- **No bare cross-reference labels** in code/comments/docstrings — roadmap item numbers (`5.1`,
+  `#2`), findings/section IDs (`findings §18`, `1.2.1`), etc. They rot the moment the referenced
+  list is renumbered and force a lookup to understand the code. Write the *reason* instead: not
+  "kept float (findings §18)" but "kept float — a fixnum rewrite under-reads speed → a looser fin
+  cap (the unsafe direction)". A prose pointer to a stable spec by NAME is fine
+  (`specs/coludo.md "Turn-radius limit"`); a number that only means something against a mutable list is not.
 - **Slim classes, YAGNI**: no unused parameters or speculative flexibility. If the class already
   holds a value, don't also pass it in.
 - **Error policy by criticality**: logs are best-effort — drop silently (or truncate) when the

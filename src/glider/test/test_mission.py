@@ -1,5 +1,9 @@
-# On-board test for mission.py: launch.config load, live update (launch id / position / RTC time
-# setup), persistence, and Inspector integration. Positive + negative.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for mission.py: launch.config load, live update (launch id / position / RTC time setup),
+persistence, and Inspector integration. Positive + negative.
+"""
 
 import asyncio
 import json
@@ -98,7 +102,7 @@ def test_time_setup():
     assert launch.set_time(1.5) is False
     assert launch.set_time(True) is False
     assert launch.update({'epoch': 'now'}) == []
-    # negative: an epoch before 2000-01-01 is rejected (would set a pre-2000 RTC -- finding 1.11.1)
+    # negative: an epoch before 2000-01-01 is rejected (would set a pre-2000 RTC)
     assert launch.set_time(100) is False
     assert launch.set_time(mission._EPOCH_OFFSET - 1) is False
 

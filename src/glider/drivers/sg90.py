@@ -1,36 +1,39 @@
-# drivers/sg90.py — SG90 micro fin servo on a PWM pin. @task.driver('sg90'), one instance per fin
-# (yaw / left eleron / right eleron), each naming its `pin`. 50 Hz frame; the command unit is INTEGER
-# DEGREES, linearly mapped to a pulse width (min_us..max_us over min_deg..max_deg, integer math) and
-# CLAMPED to the range so a bad command can never drive the horn past the linkage.
-#
-# OPEN-LOOP -- NO POSITION FEEDBACK. A 3-wire SG90 (signal / V+ / GND) only RECEIVES a PWM command;
-# the signal pin is input-only on the servo and there is no wire back, so the board CANNOT read where
-# the horn actually is. Everything this driver reports (inspect()/telemetry `angle`, `pulse_us`) is
-# the LAST COMMANDED value it tracks in software -- what we asked for, NOT a measurement. A stalled,
-# force-held or jammed surface would still read the commanded target. inspect() carries
-# `feedback: None` to make that explicit. (Real feedback would need a feedback servo, or tapping the
-# internal pot to an ADC, or a current-sense on the rail.) Separately, this MicroPython-P4 build's PWM
-# duty_u16()/duty_ns() GETTERS are broken (return a constant), so we cannot even read the commanded
-# duty back from the peripheral -- the driver only ever WRITES it and remembers what it set.
-#
-# This class is SG90-specific on purpose. Other servos (MG90S, MG996R, ...) differ in pulse range and
-# behaviour and would be their own @task.driver -- a new drivers/<type>.py subclassing this or
-# standalone -- selected by the component's `driver` field. The shared slew gate + degree->pulse math
-# live here for now; factor them into a servo base when a second type lands.
-#
-# Two ways to command a fin:
-# update {"angle": d} -- IMMEDIATE, ungated: the operator override (sync, returns at once).
-# await move(d) -- GATED + settle-aware: passes through a SHARED slew gate so at most
-# `servo_concurrency` (board config, default 3 = no limit) fins slew at
-# once, then awaits the estimated travel so the caller knows it has (open-
-# loop, no feedback) arrived. The flight control loop uses this.
-# Both record the command to per-fin telemetry (<name>.csv: angle, pulse_us, done) -- done=0 when a
-# command is ISSUED, done=1 when a move() has (estimated) COMPLETED. probe() is the on-demand self-
-# test (CC `probe`, pre-flight -- never at boot, so a reboot never sweeps fins): it sweeps the full
-# range and returns to neutral, logging each step.
-#
-# Power: servos run off their own boost rail (per-pin diode protected); the board sources only the
-# low-current signal on the PWM pin, never the servo supply.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+SG90 micro fin servo on a PWM pin. @task.driver('sg90'), one instance per fin (yaw / left eleron /
+right eleron), each naming its 'pin'. 50 Hz frame; the command unit is INTEGER DEGREES, linearly mapped
+to a pulse width (min_us..max_us over min_deg..max_deg, integer math) and CLAMPED to the range so a bad
+command can never drive the horn past the linkage.
+
+OPEN-LOOP -- NO POSITION FEEDBACK. A 3-wire SG90 (signal / V+ / GND) only RECEIVES a PWM command; the
+signal pin is input-only on the servo and there is no wire back, so the board CANNOT read where the horn
+actually is. Everything this driver reports (inspect()/telemetry 'angle', 'pulse_us') is the LAST
+COMMANDED value it tracks in software -- what we asked for, NOT a measurement. A stalled, force-held or
+jammed surface would still read the commanded target. inspect() carries 'feedback: None' to make that
+explicit. (Real feedback would need a feedback servo, or tapping the internal pot to an ADC, or a
+current-sense on the rail.) Separately, this MicroPython-P4 build's PWM duty_u16()/duty_ns() GETTERS are
+broken (return a constant), so we cannot even read the commanded duty back from the peripheral -- the
+driver only ever WRITES it and remembers what it set.
+
+This class is SG90-specific on purpose. Other servos (MG90S, MG996R, ...) differ in pulse range and
+behaviour and would be their own @task.driver -- a new drivers/<type>.py subclassing this or standalone
+-- selected by the component's 'driver' field. The shared slew gate + degree->pulse math live here for
+now; factor them into a servo base when a second type lands.
+
+Two ways to command a fin:
+  update {"angle": d} -- IMMEDIATE, ungated: the operator override (sync, returns at once).
+  await move(d) -- GATED + settle-aware: passes through a SHARED slew gate so at most servo_concurrency
+    (board config, default 3 = no limit) fins slew at once, then awaits the estimated travel so the
+    caller knows it has (open-loop, no feedback) arrived. The flight control loop uses this.
+Both record the command to per-fin telemetry (<name>.csv: angle, pulse_us, done) -- done=0 when a
+command is ISSUED, done=1 when a move() has (estimated) COMPLETED. probe() is the on-demand self-test
+(CC 'probe', pre-flight -- never at boot, so a reboot never sweeps fins): it sweeps the full range and
+returns to neutral, logging each step.
+
+Power: servos run off their own boost rail (per-pin diode protected); the board sources only the
+low-current signal on the PWM pin, never the servo supply.
+"""
 
 import asyncio
 
@@ -39,6 +42,11 @@ import databoard
 import recorder
 import servo
 import task
+
+try:
+    from machine import PWM, Pin
+except ImportError:  # host (CPython): board-only; the PWM pin is driven only on the board
+    PWM = Pin = None
 
 _PERIOD_US: int = 20000  # 50 Hz servo frame (20 ms)
 _DUTY_U16_MAX: int = 65535  # full 16-bit PWM duty
@@ -52,17 +60,18 @@ _DEFAULT_CONCURRENCY: int = 3  # fins allowed to slew at once (== fin count -> n
 
 @task.driver('sg90')
 class SG90(task.Task):
-    """One PWM SG90 fin servo, commanded in integer degrees (clamped to [min_deg, max_deg]). OPEN-LOOP
-    -- reported angle is the last command, never a measurement (see module header; inspect carries
-    `feedback: None`). `update {"angle": d}` moves it immediately; `await move(d)` moves it through the
-    shared slew gate; probe() sweeps it on demand."""
+    """
+    One PWM SG90 fin servo, commanded in integer degrees (clamped to [min_deg, max_deg]).
+
+    OPEN-LOOP -- reported angle is the last command, never a measurement (see module header; inspect
+    carries 'feedback: None'). update {"angle": d} moves it immediately; await move(d) moves it through
+    the shared slew gate; probe() sweeps it on demand.
+    """
 
     async def setup(self) -> bool:
         gpio = self._pin_gpio('pin')
         if gpio is None:
             return False
-        from machine import PWM, Pin
-
         self._min_us: int = self.config.get('min_us', 500)  # pulse at min_deg (SG90 ~500..2500 us)
         self._max_us: int = self.config.get('max_us', 2500)  # pulse at max_deg
         self._min_deg: int = self.config.get('min_deg', 0)
@@ -83,14 +92,23 @@ class SG90(task.Task):
         return True
 
     async def run(self) -> None:
-        """Command-driven: no run loop. `move()` / `update()` are the entry points."""
+        """Command-driven: no run loop. move() / update() are the entry points."""
 
     async def probe(self) -> str:
-        """On-demand self-test (CC `probe`, pre-flight -- never at boot): sweep min -> max -> neutral so
-        the fin is seen to travel. Open-loop by nature, BUT when an INA226 'power' channel is live it
+        """
+        On-demand self-test (CC 'probe', pre-flight -- never at boot): sweep min -> max -> neutral.
+
+        The fin is seen to travel. Open-loop by nature, BUT when an INA226 'power' channel is live it
         becomes a CLOSED-LOOP go/no-go: a working / wired / powered servo draws a transient over the
         resting baseline, a dead servo / a lost PWM pin / an unpowered rail draws nothing -- so this
-        catches exactly the 'no pins lost' case. Returns a PWM-error step message, or the no-draw verdict."""
+        catches exactly the 'no pins lost' case.
+
+        Args:
+            (none)
+
+        Returns:
+            None on pass; a PWM-error step message, or the no-draw verdict, on failure.
+        """
         watch = databoard.Databoard.value('power') is not None  # INA present -> measure the actual draw
         self._apply(self._neutral)
         if watch:
@@ -123,9 +141,18 @@ class SG90(task.Task):
         return commons.clamp_int(self._min_deg, round(angle), self._max_deg)
 
     def _write(self, angle: int, done: int = 0) -> int:
-        """Map an ALREADY-CLAMPED integer `angle` to a pulse width (integer math), drive the PWM, and
-        record the command to telemetry (done=0 issued / 1 completed). Stores + returns the angle. The
-        clamp is the caller's job (so set_angle's compare-and-set clamps exactly once)."""
+        """
+        Map an ALREADY-CLAMPED integer angle to a pulse width, drive the PWM, and record to telemetry.
+
+        The clamp is the caller's job (so set_angle's compare-and-set clamps exactly once).
+
+        Args:
+            angle - the already-clamped command, in integer degrees.
+            done - telemetry marker: 0 when the command is issued, 1 when a move() has completed.
+
+        Returns:
+            The angle written (also stored on self.angle).
+        """
         span = self._max_deg - self._min_deg
         if span:
             self._pulse_us = self._min_us + (angle - self._min_deg) * (self._max_us - self._min_us) // span
@@ -137,14 +164,32 @@ class SG90(task.Task):
         return angle
 
     def _apply(self, angle, done: int = 0) -> int:
-        """Clamp `angle` to integer degrees then write it (the operator/props + move() path)."""
+        """
+        Clamp angle to integer degrees then write it (the operator/props + move() path).
+
+        Args:
+            angle - the requested command, in degrees (clamped before writing).
+            done - telemetry marker passed through to _write (0 issued / 1 completed).
+
+        Returns:
+            The clamped angle actually written.
+        """
         return self._write(self._clamp(angle), done)
 
     async def move(self, angle) -> int:
-        """Drive to `angle` (clamped, integer degrees) through the shared slew gate -- at most
-        servo_concurrency fins slew at once -- then await the estimated travel so the caller knows it
-        has arrived (open-loop: the wait is a slew estimate, not feedback). Records the command
-        (done=0) and, after settling, the completion (done=1). Returns the angle."""
+        """
+        Drive to angle (clamped, integer degrees) through the shared slew gate.
+
+        At most servo_concurrency fins slew at once -- then await the estimated travel so the caller
+        knows it has arrived (open-loop: the wait is a slew estimate, not feedback). Records the command
+        (done=0) and, after settling, the completion (done=1).
+
+        Args:
+            angle - the target command, in degrees (clamped before driving).
+
+        Returns:
+            The clamped target angle.
+        """
         target = self._clamp(angle)
         travel_ms = abs(target - self.angle) * _SLEW_MS_PER_60 // 60 + _SETTLE_MARGIN_MS
         async with self._gate:
@@ -158,19 +203,35 @@ class SG90(task.Task):
         return target
 
     def update(self, props: dict) -> list:
-        """`{"angle": d}` moves the servo IMMEDIATELY (integer degrees, clamped) -- the operator
-        override. Returns ['angle'] if set."""
+        """
+        {"angle": d} moves the servo IMMEDIATELY (integer degrees, clamped) -- the operator override.
+
+        Args:
+            props - the operator command dict; the 'angle' key (if present) is applied at once.
+
+        Returns:
+            ['angle'] when the angle was set, else [].
+        """
         if 'angle' in props:
             self._apply(props['angle'])
             return ['angle']
         return []
 
     def set_angle(self, angle) -> int:
-        """The 100 Hz flight-loop hot-path command. AVOIDS update()'s per-step {'angle': ...} dict (
-        ~300 dict/s of heap churn with GC disabled in flight) AND is compare-and-set: clamp, then drive
-        the PWM + push telemetry ONLY when the angle actually changed -- a held fin costs nothing. setup()
-        seeds self.angle via _apply(neutral), so it always tracks the real PWM state. update() stays the
-        operator/props path (always applies)."""
+        """
+        The 100 Hz flight-loop hot-path command (compare-and-set, no per-step dict).
+
+        AVOIDS update()'s per-step {'angle': ...} dict (~300 dict/s of heap churn with GC disabled in
+        flight) AND is compare-and-set: clamp, then drive the PWM + push telemetry ONLY when the angle
+        actually changed -- a held fin costs nothing. setup() seeds self.angle via _apply(neutral), so
+        it always tracks the real PWM state. update() stays the operator/props path (always applies).
+
+        Args:
+            angle - the target command, in degrees (clamped before comparing).
+
+        Returns:
+            The clamped angle (whether or not it changed).
+        """
         angle = self._clamp(angle)
         if angle != self.angle:
             self._write(angle)  # already clamped -> _write, not _apply (no second clamp)
@@ -182,15 +243,23 @@ class SG90(task.Task):
         await task.Task.finish(self)
 
     async def diagnose(self) -> str:
-        """Deeper analysis when setup() failed: is the pin PWM-capable? Resolve the pin and try to bring a
-        PWM up on it (released immediately). A 3-wire SG90 has no feedback, so this is the only check the
-        board can make. The Controller folds it into the failure reason."""
+        """
+        Deeper analysis when setup() failed: is the pin PWM-capable?
+
+        Resolve the pin and try to bring a PWM up on it (released immediately). A 3-wire SG90 has no
+        feedback, so this is the only check the board can make. The Controller folds it into the failure
+        reason.
+
+        Args:
+            (none)
+
+        Returns:
+            A one-line PWM-capability verdict for the failure reason.
+        """
         gpio = self._pin_gpio('pin')
         if gpio is None:
             return 'no PWM -- pin %r not defined in config pins' % self.config.get('pin')
         try:
-            from machine import PWM, Pin
-
             pwm = PWM(Pin(gpio), freq=50, duty_u16=0)
             pwm.deinit()
         except Exception as error:

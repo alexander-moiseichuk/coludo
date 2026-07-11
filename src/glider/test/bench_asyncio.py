@@ -1,18 +1,22 @@
-# Comprehensive micro-benchmark of MicroPython asyncio / GC / PSRAM / timing on the concrete
-# Coludo glider board (FireBeetle 2 ESP32-P4, 32 MB PSRAM, MicroPython v1.28.0). The numbers
-# feed the latency and GC assumptions in specs/coludo.md, and characterise behaviour worth
-# reporting upstream (see doc/benches/esp32p4-micropython-findings.md).
-#
-# Headline finding reproduced by bench_buffer(): bytearray / memoryview slice-assignment
-# `buf[a:b] = src` costs O(len(buf)) — it memmoves the tail past the slice even when the
-# source and destination lengths are equal (no resize). The same 32-byte write is ~6 us into
-# a 64-byte buffer but ~20 ms into a 256 KB buffer. struct.pack_into() and indexed writes are
-# O(record) and must be used instead for any large preallocated (PSRAM) buffer.
-#
-# Run transiently (does not persist to the board's filesystem):
-#     mpremote connect /dev/ttyACM0 run src/glider/test/bench_asyncio.py
-#
-# Emits a human-readable log to stdout and a final compact JSON line prefixed "BENCH_JSON ".
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Comprehensive micro-benchmark of MicroPython asyncio / GC / PSRAM / timing on the concrete Coludo glider
+board (FireBeetle 2 ESP32-P4, 32 MB PSRAM, MicroPython v1.28.0). The numbers feed the latency and GC
+assumptions in specs/coludo.md, and characterise behaviour worth reporting upstream (see
+doc/benches/esp32p4-micropython-findings.md).
+
+Headline finding reproduced by bench_buffer(): bytearray / memoryview slice-assignment `buf[a:b] = src`
+costs O(len(buf)) -- it memmoves the tail past the slice even when the source and destination lengths are
+equal (no resize). The same 32-byte write is ~6 us into a 64-byte buffer but ~20 ms into a 256 KB buffer.
+struct.pack_into() and indexed writes are O(record) and must be used instead for any large preallocated
+(PSRAM) buffer.
+
+Run transiently (does not persist to the board's filesystem):
+    mpremote connect /dev/ttyACM0 run src/glider/test/bench_asyncio.py
+
+Emits a human-readable log to stdout and a final compact JSON line prefixed "BENCH_JSON ".
+"""
 
 import asyncio
 import gc
@@ -43,7 +47,7 @@ def log(*a):
     print(*a)
 
 
-# ---------------------------------------------------------------- synchronous
+"""Synchronous benchmarks: ticks, allocation, buffer slice-assign, PSRAM memcpy, GC pauses."""
 
 
 def bench_ticks():
@@ -82,7 +86,7 @@ def bench_alloc():
 
 def bench_buffer():
     # FINDING: bytearray/memoryview slice-assignment cost scales with the TOTAL buffer
-    # length, not the slice length — assigning the same 32-byte slice into ever-larger
+    # length, not the slice length -- assigning the same 32-byte slice into ever-larger
     # buffers gets dramatically slower (the implementation memmoves the tail past the
     # slice even when source and destination lengths are equal and no resize occurs).
     # This makes the obvious ring-buffer write `buf[off:off+REC] = rec` O(buffer_size),
@@ -99,7 +103,7 @@ def bench_buffer():
     R['slice_assign_us_by_buflen'] = by_len
     log('slice-assign 32B vs buflen: ' + ' '.join('%d=%.1fus' % (k, by_len[k]) for k in sorted(by_len)))
 
-    # Correct in-place primitives whose cost is independent of buffer size — what the
+    # Correct in-place primitives whose cost is independent of buffer size -- what the
     # logger's PSRAM ring buffer must use instead of slice-assignment.
     SIZE = 262144
     b = bytearray(SIZE)
@@ -160,7 +164,7 @@ def bench_gc():
     )
 
 
-# ---------------------------------------------------------------------- async
+"""Asyncio benchmarks: yield cost, sleep jitter, event ping-pong, control-loop lateness."""
 
 
 async def bench_yield():

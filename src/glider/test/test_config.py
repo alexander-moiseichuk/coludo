@@ -1,6 +1,9 @@
-# On-board (MicroPython) test for the board config loader/validator (config.py), new schema:
-# nested buses (uart/i2c/spi -> id), `sensors` + `components` with 'type:id' bus refs.
-# Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board (MicroPython) test for the board config loader/validator (config.py), new schema: nested
+buses (uart/i2c/spi -> id), `sensors` + `components` with 'type:id' bus refs. Run by `make test`.
+"""
 
 import config
 import config_default
@@ -52,7 +55,7 @@ def main():
     badtype['buses']['oops'] = {'0': {'tx': 99, 'rx': 98}}
     assert any('not one of uart/i2c/spi' in e for e in config.validate(badtype))
 
-    # SPI mode must be 0..3 (machine.SPI polarity/phase are each 0/1) — finding 1.5.3
+    # SPI mode must be 0..3 (machine.SPI polarity/phase are each 0/1)
     badmode = config_default.default()
     badmode['buses']['spi']['1']['mode'] = 4
     assert any('.mode must be 0..3' in e for e in config.validate(badmode))
@@ -67,7 +70,7 @@ def main():
     del noimpl['components'][0]['activity']  # the recorder component
     assert any('driver` (drivers/) or `activity`' in e for e in config.validate(noimpl))
 
-    # bus() / device() helpers — addressed by (kind, id), no string parsing
+    # bus() / device() helpers -- addressed by (kind, id), no string parsing
     cfg = config_default.default()
     assert config.bus(cfg, 'i2c', 0) == {'sda': 7, 'scl': 8, 'freq': 400000}
     assert config.bus(cfg, 'uart', 2)['baud'] == 9600

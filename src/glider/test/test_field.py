@@ -1,7 +1,11 @@
-# On-board test for the CC-less field agent (tasks/field.py): site-by-GPS on the first fix (known
-# site vs the synthesized fallback zone), and the auto-arm dwell — stationary with a live fix for
-# the whole window, restarted by motion or a lost fix, gated by a missing zone. Tick-driven with a
-# controlled `now`. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the CC-less field agent (tasks/field.py): site-by-GPS on the first fix (known site
+vs the synthesized fallback zone), and the auto-arm dwell -- stationary with a live fix for the whole
+window, restarted by motion or a lost fix, gated by a missing zone. Tick-driven with a controlled
+`now`. Run by `make test`.
+"""
 
 import asyncio
 

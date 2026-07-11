@@ -1,22 +1,26 @@
 #!/usr/bin/env python3
-# cc.py -- script a board over CC from the shell, through the running Control hub.
-#
-# The hub (src/control/main.py) exposes POST /api/cmd on :8080: it relays one CC command to a named
-# board and returns the board's reply as JSON. This wraps that into one line so on-board tests do not
-# need the interactive console (telnet 1235 / rshell) -- every CC command becomes a scriptable call
-# with a meaningful exit code (0 == the board replied `ok`/`pong`/`iam`, non-zero == `err` or no board):
-#
-#   tools/cc.py taster verify                 # pre-flight pass/fail (exit code is the verdict)
-#   tools/cc.py taster probe imu_lsm6dso32    # one device self-test
-#   tools/cc.py taster inspect mission        # an inspectable's snapshot
-#   tools/cc.py taster tlm 2000               # telemetry rows buffered since the last tlm
-#   tools/cc.py taster get-config board       # the running board config
-#   tools/cc.py taster set-config board @board.config   # push a config file (@path -> its contents)
-#   tools/cc.py taster update mission '{"launch_id":"flight.8"}'
-#
-# A param of the form @path is replaced by that file's contents (for the JSON-heavy config commands);
-# everything else is passed verbatim. The hub encodes each param on the wire (JSON -> base64), so pass
-# plain strings. Reply args are printed decoded -- a single JSON arg is pretty-printed.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Script a board over CC from the shell, through the running Control hub.
+
+The hub (src/control/main.py) exposes POST /api/cmd on :8080: it relays one CC command to a named board
+and returns the board's reply as JSON. This wraps that into one line so on-board tests do not need the
+interactive console (telnet 1235 / rshell) -- every CC command becomes a scriptable call with a
+meaningful exit code (0 == the board replied `ok`/`pong`/`iam`, non-zero == `err` or no board):
+
+  tools/cc.py taster verify                 # pre-flight pass/fail (exit code is the verdict)
+  tools/cc.py taster probe imu_lsm6dso32    # one device self-test
+  tools/cc.py taster inspect mission        # an inspectable's snapshot
+  tools/cc.py taster tlm 2000               # telemetry rows buffered since the last tlm
+  tools/cc.py taster get-config board       # the running board config
+  tools/cc.py taster set-config board @board.config   # push a config file (@path -> its contents)
+  tools/cc.py taster update mission '{"launch_id":"flight.8"}'
+
+A param of the form @path is replaced by that file's contents (for the JSON-heavy config commands);
+everything else is passed verbatim. The hub encodes each param on the wire (JSON -> base64), so pass
+plain strings. Reply args are printed decoded -- a single JSON arg is pretty-printed.
+"""
 
 import argparse
 import json
@@ -49,8 +53,18 @@ def _payload(raw: bytes, code: int) -> dict:
 
 
 def _post(host: str, port: int, board: str, command: str, params: list) -> tuple:
-    """POST one command to the hub's /api/cmd. Returns (http_status, payload_dict). Never raises on an
-    HTTP error status -- the hub reports board/command problems as JSON with a 4xx/5xx code."""
+    """
+    POST one command to the hub's /api/cmd.
+
+    Never raises on an HTTP error status -- the hub reports board/command problems as JSON with a
+    4xx/5xx code, which the caller inspects.
+
+    Returns:
+        (http_status, payload_dict).
+
+    Raises:
+        SystemExit: when the hub cannot be reached at all (connection refused / no route).
+    """
     body = json.dumps({'board': board, 'command': command, 'params': params}).encode()
     request = urllib.request.Request('http://%s:%d/api/cmd' % (host, port), data=body,
                                      headers={'Content-Type': 'application/json'})

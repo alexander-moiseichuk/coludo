@@ -1,7 +1,11 @@
-# `gps` — the host GPS fix status (3D + satellites), so the operator knows when the launch site has a
-# usable position. `gps <board>` also fetches that board's on-board GNSS (`inspect gnss`) and shows it
-# beside the host fix, to check what the on-board receiver delivers against the USB reference before
-# trusting it / using `assist`. Requires a GPS attached to the Control host (main.py --gps-device).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+`gps` -- the host GPS fix status (3D + satellites), so the operator knows when the launch site has a
+usable position. `gps <board>` also fetches that board's on-board GNSS (`inspect gnss`) and shows it
+beside the host fix, to check what the on-board receiver delivers against the USB reference before
+trusting it / using `assist`. Requires a GPS attached to the Control host (main.py --gps-device).
+"""
 
 import json
 

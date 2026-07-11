@@ -1,7 +1,12 @@
-# tools/flight_metrics.py -- miss / in-zone / max-from-pad / duration for each capture in a directory,
-# computed from the GNSS track vs the HPRC pad + landing zone (sim_model.HPRC). Miss = touchdown distance
-# to the zone centre; duration = GNSS-track span (proxy for flight time from launch).
-# Usage: flight_metrics.py <dir-of-<scenario>.txt>
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Miss / in-zone / max-from-pad / duration for each capture in a directory, computed from the GNSS track
+vs the HPRC pad + landing zone (sim_model.HPRC). Miss = touchdown distance to the zone centre;
+duration = GNSS-track span (proxy for flight time from launch).
+
+Usage: flight_metrics.py <dir-of-<scenario>.txt>
+"""
 
 import math
 import os

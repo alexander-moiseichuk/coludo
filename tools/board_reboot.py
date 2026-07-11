@@ -1,12 +1,16 @@
 #!/usr/bin/env python3
-# board_reboot.py [PORT] -- soft-reboot the ESP32-P4 to a clean VM before an `mpremote run` flight/test.
-# This is the isolation boardrun's soft-reset used to give (boardrun is retired -- it was faulty). Sends
-# Ctrl-B (leave a wedged raw REPL), Ctrl-C x2 (break a running app to the REPL), Ctrl-D (soft reset ->
-# main.py re-runs), then waits for the boot.
-#
-# NOTE: a soft reset does NOT reset time.ticks_ms, so the recorder/capture uptime keeps climbing across
-# runs. flight_video/flight_report make the timeline flight-relative (t=0 at the boosting stage), so a
-# large absolute uptime is fine -- see flight_video.load().
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+board_reboot.py [PORT] -- soft-reboot the ESP32-P4 to a clean VM before an `mpremote run` flight/test.
+This is the isolation boardrun's soft-reset used to give (boardrun is retired -- it was faulty). Sends
+Ctrl-B (leave a wedged raw REPL), Ctrl-C x2 (break a running app to the REPL), Ctrl-D (soft reset ->
+main.py re-runs), then waits for the boot.
+
+NOTE: a soft reset does NOT reset time.ticks_ms, so the recorder/capture uptime keeps climbing across
+runs. flight_video/flight_report make the timeline flight-relative (t=0 at the boosting stage), so a
+large absolute uptime is fine -- see flight_video.load().
+"""
 
 import sys
 import time

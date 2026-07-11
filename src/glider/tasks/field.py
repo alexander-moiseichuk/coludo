@@ -1,12 +1,16 @@
-# tasks/field.py — the CC-less field agent (specs/coludo.md "Field operation without CC").
-# @task.activity('field'), DISABLED by default. On the pad (SETTING) it makes at most two decisions:
-#   1. SITE BY GPS — on the first fresh fix, the mission adopts the nearest launch.config site
-#      within max_range_m; none in range -> the synthesized spiral-landing fallback zone offset
-#      from the fix at the configured clear-sector bearing.
-#   2. AUTO-ARM (opt-in) — arm once the board has sat STATIONARY with a live fix for the whole
-#      auto_arm_dwell_s. The long dwell makes a bench/carry arm unlikely, and the flight loop's
-#      control-stage gating still holds the fins neutral on the ground either way.
-# Each decision fires once, then the task idles; the operator/CC can still override everything live.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+The CC-less field agent (specs/coludo.md "Field operation without CC"). @task.activity('field'),
+DISABLED by default. On the pad (SETTING) it makes at most two decisions:
+  1. SITE BY GPS -- on the first fresh fix, the mission adopts the nearest launch.config site within
+     max_range_m; none in range -> the synthesized spiral-landing fallback zone offset from the fix
+     at the configured clear-sector bearing.
+  2. AUTO-ARM (opt-in) -- arm once the board has sat STATIONARY with a live fix for the whole
+     auto_arm_dwell_s. The long dwell makes a bench/carry arm unlikely, and the flight loop's
+     control-stage gating still holds the fins neutral on the ground either way.
+Each decision fires once, then the task idles; the operator/CC can still override everything live.
+"""
 
 import asyncio
 import time
@@ -47,8 +51,18 @@ class Field(task.Task):
         return True
 
     def _tick(self, now: int) -> None:
-        """One pad decision step (`now` is ticks_ms; sync + tick-driven so the test controls time).
-        Only in SETTING — past ignition or once armed there is nothing left to decide."""
+        """
+        One pad decision step: site-by-GPS, then optionally auto-arm.
+
+        Sync + tick-driven so the test controls time. Only in SETTING -- past ignition or once armed
+        there is nothing left to decide.
+
+        Args:
+            now - the current time in ticks_ms (the auto-arm dwell is measured against it).
+
+        Returns:
+            None; may adopt a site / fallback zone and auto-arm the controller as side effects.
+        """
         if self.controller.stage != _STAGE.SETTING:
             return
         fix, source, _age = self._position.read()

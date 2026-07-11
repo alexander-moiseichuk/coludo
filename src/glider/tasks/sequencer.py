@@ -1,15 +1,20 @@
-# tasks/sequencer.py — Phase 3 flight-stage automation. @task.activity('sequencer'). Watches the
-# databoard and drives the guarded, forward-only stage machine that the control loop gates on:
-# SETTING -> BOOSTING : |accel| over launch_g sustained launch_ms (motor ignition), OR the baro climbing
-#                       past launch_alt_m off the pad (an independent, threshold-robust backup)
-# BOOSTING -> GLIDING : the separation switch (drivers/separation.py) is primary; else the baro APOGEE
-# detect (peak - apogee_drop_m, at the top of the arc, mass/motor-independent); burnout timeout last
-# GLIDING -> LANDING : agl below land_agl_m (the laser sees the ground; elevation is the fallback)
-# LANDING -> done : |accel| ~1 g (stationary) sustained ground_ms (on the ground)
-# Each transition fires once (the stage check + reset-on-change is the guard), logs the reason and a
-# sequencer.csv telemetry marker. Thresholds are config; launch_g/launch_ms is exactly what the
-# E16/F15 passive flights tune. One control-independent tick, so it runs on the passive flights too
-# (stages logged, no actuation -- the flight task stays disabled).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Phase 3 flight-stage automation. @task.activity('sequencer'). Watches the databoard and drives the
+guarded, forward-only stage machine that the control loop gates on:
+SETTING -> BOOSTING : |accel| over launch_g sustained launch_ms (motor ignition), OR the baro climbing
+                      past launch_alt_m off the pad (an independent, threshold-robust backup)
+BOOSTING -> GLIDING : the separation switch (drivers/separation.py) is primary; else the baro APOGEE
+                      detect (peak - apogee_drop_m, at the top of the arc, mass/motor-independent);
+                      burnout timeout last
+GLIDING -> LANDING : agl below land_agl_m (the laser sees the ground; elevation is the fallback)
+LANDING -> done : |accel| ~1 g (stationary) sustained ground_ms (on the ground)
+Each transition fires once (the stage check + reset-on-change is the guard), logs the reason and a
+sequencer.csv telemetry marker. Thresholds are config; launch_g/launch_ms is exactly what the E16/F15
+passive flights tune. One control-independent tick, so it runs on the passive flights too (stages
+logged, no actuation -- the flight task stays disabled).
+"""
 
 import asyncio
 import gc
@@ -28,12 +33,21 @@ _STAGE = controller_mod.Stage
 
 
 def _magnitude_sq(accel):
-    """Squared magnitude |accel|^2 in g^2 from (ax, ay, az), or None when there is no reading. Squared so
-    the threshold compares skip math.sqrt() -- only the rare transition log takes the root. (At the
-    50 Hz sequencer rate, with _magnitude_sq called only in SETTING/LANDING, this is a tidy-up, not a
-    hot-path win: it is NOT on the 100 Hz control loop.) `accel is None` is guarded explicitly, not via a
-    try/except on the unpack -- raising would allocate a traceback frame exactly under launch/impact
-    vibration, the worst moment for GC churn."""
+    """
+    Squared magnitude |accel|^2 in g^2 from (ax, ay, az), or None when there is no reading.
+
+    Squared so the threshold compares skip math.sqrt() -- only the rare transition log takes the root.
+    (At the 50 Hz sequencer rate, with _magnitude_sq called only in SETTING/LANDING, this is a tidy-up,
+    not a hot-path win: it is NOT on the 100 Hz control loop.) `accel is None` is guarded explicitly, not
+    via a try/except on the unpack -- raising would allocate a traceback frame exactly under
+    launch/impact vibration, the worst moment for GC churn.
+
+    Args:
+        accel - the (ax, ay, az) reading in g, or None when there is no reading.
+
+    Returns:
+        The squared magnitude in g^2, or None when accel is None.
+    """
     if accel is None:
         return None
     ax, ay, az = accel
@@ -52,13 +66,13 @@ class Sequencer(task.Task):
         self._launch_alt_m: float = cfg.get('launch_alt_m', 10.0)  # OR-trigger: clearly climbed off the pad
         self._boost_timeout_ms: int = cfg.get('boost_timeout_ms', 6000)
         self._apogee_drop_m: float = cfg.get('apogee_drop_m', 5.0)  # baro fall below its peak -> deploy at apogee
-        # the apogee detector ARMS this long after BOOSTING entry (finding 15.5): the motor exhaust
+        # the apogee detector ARMS this long after BOOSTING entry: the motor exhaust
         # pressure wave can spike/dip the in-airframe baro DURING BURN -- an unarmed detector could
         # either fire GLIDING while still under thrust (wings folded, fins steering the stack) or
         # poison the peak tracker with a spike the real apogee never reads 5 m below. Default covers
         # the longest motor burn (F15 3.45 s) + margin; the burnout timeout keeps running regardless.
         self._apogee_arm_ms: int = cfg.get('apogee_arm_ms', 4000)
-        # the RSO backstop (finding 15.6): with every landing sensor dead (baro + laser + accel) the
+        # the RSO backstop: with every landing sensor dead (baro + laser + accel) the
         # glider would circle in GLIDING until the battery dies. This bounds ANY flight: this long
         # after BOOSTING entry the stage forces DONE (GC re-enable + neutral fins -- at 5 min default,
         # long after any physically possible TMS flight has ended).
@@ -110,11 +124,21 @@ class Sequencer(task.Task):
             self._gc_transition(to_stage)
 
     def _drop_breadcrumb(self) -> None:
-        """The warm-start breadcrumb (specs/coludo.md "In-flight reboot & warm start"): the launch
-        fix, the active zone and the pad ABSOLUTE altitude into NVS, once, at BOOSTING entry. Only
-        an ARMED flight with a zone is worth restoring — a passive telemetry flight must never
-        warm-start into an armed GLIDING. warmstart.save() never raises (a full NVS must not block
-        a launch); the drop is logged so the flight record shows recovery was available."""
+        """
+        Save the warm-start breadcrumb to NVS, once, at BOOSTING entry.
+
+        The launch fix, the active zone and the pad ABSOLUTE altitude go into NVS (specs/coludo.md
+        "In-flight reboot & warm start"). Only an ARMED flight with a zone is worth restoring -- a
+        passive telemetry flight must never warm-start into an armed GLIDING. warmstart.save() never
+        raises (a full NVS must not block a launch); the drop is logged so the flight record shows
+        recovery was available.
+
+        Args:
+            (none)
+
+        Returns:
+            None; writes the breadcrumb to NVS, or nothing when the flight is disarmed or has no zone.
+        """
         if not self.controller.armed or self._mission is None or not self._mission.zone:
             return
         zone = self._mission.zone
@@ -127,19 +151,30 @@ class Sequencer(task.Task):
             recorder.Recorder.log(self.name, 'warm-start breadcrumb saved')
 
     def _gc_transition(self, to_stage: int) -> None:
-        """The in-flight GC policy (coludo.md, the most safety-critical piece of the sequencer, so a
-        named unit): compact the heap AT LAUNCH and keep GC DISABLED for the whole airborne phase --
-        no collection pause (0.3 ms clean .. tens of ms on a full heap) can then blow a 100 Hz control
-        slice. Re-enable + collect ONLY at DONE, once stationary on the ground: the post-flight collect
-        has a whole flight's garbage and blocks tens of ms, and paying it at the LANDING transition
-        would land at <land_agl_m (<5 m), possibly mid-flare -- the worst place for a control-loop
-        stall (it would be wrong to fly the whole descent and then crash on a GC pause at the end).
-        Both collect pauses are logged: the pre-flight one for the launch record, the post-flight one
-        as the actual cost the airborne phase deferred.
+        """
+        The in-flight GC policy: compact + disable at launch, re-enable + collect at DONE.
 
-        The disable buys PREDICTABILITY, not abstinence: no pause the loop did not schedule. An
-        EXPLICIT collect at a known-safe moment stays legitimate -- board_health's memory rescue
-        spends one (fins holding, altitude proven) whenever the leak physics demands it."""
+        The most safety-critical piece of the sequencer (coludo.md), so a named unit. Compact the heap
+        AT LAUNCH and keep GC DISABLED for the whole airborne phase -- no collection pause (0.3 ms clean
+        .. tens of ms on a full heap) can then blow a 100 Hz control slice. Re-enable + collect ONLY at
+        DONE, once stationary on the ground: the post-flight collect has a whole flight's garbage and
+        blocks tens of ms, and paying it at the LANDING transition would land at <land_agl_m (<5 m),
+        possibly mid-flare -- the worst place for a control-loop stall (it would be wrong to fly the
+        whole descent and then crash on a GC pause at the end). Both collect pauses are logged: the
+        pre-flight one for the launch record, the post-flight one as the actual cost the airborne phase
+        deferred.
+
+        The disable buys PREDICTABILITY, not abstinence: no pause the loop did not schedule. An EXPLICIT
+        collect at a known-safe moment stays legitimate -- board_health's memory rescue spends one (fins
+        holding, altitude proven) whenever the leak physics demands it.
+
+        Args:
+            to_stage - the stage just entered; BOOSTING triggers the compact + disable, DONE the
+                re-enable + collect, any other stage is a no-op.
+
+        Returns:
+            None; toggles the GC state and collects at the two transitions as a side effect.
+        """
         if to_stage == _STAGE.BOOSTING:
             start = time.ticks_us()
             gc.collect()    # compact + free before the flight (a known pause, on the rod)
@@ -157,23 +192,43 @@ class Sequencer(task.Task):
         gc.enable()  # never leave GC disabled if the task stops mid-flight (defensive)
 
     def _sustained(self, now: int, threshold_ms: int) -> bool:
-        """Dwell timer shared by every stage branch: start it on the first call after a reset, then
-        return True once `now` is at least `threshold_ms` past the start -- so a single sample never
-        triggers a transition. Callers clear self._since (the start) when their condition lapses."""
+        """
+        Dwell timer shared by every stage branch, so a single sample never triggers a transition.
+
+        Starts on the first call after a reset, then reports whether the dwell has elapsed. Callers clear
+        self._since (the start) when their condition lapses.
+
+        Args:
+            now - the current time (ticks_ms).
+            threshold_ms - the dwell the condition must hold before it counts.
+
+        Returns:
+            True once `now` is at least `threshold_ms` past the start, else False.
+        """
         if self._since is None:
             self._since = now
         return time.ticks_diff(now, self._since) >= threshold_ms
 
     def _tick(self, now: int) -> None:
-        """One stage-machine step (`now` is ticks_ms). Common prologue -- the operator-hold guard + a
-        fresh detect timer whenever the stage changes (so a separation-driven hop is clean) -- then
-        DISPATCH to the per-stage detector via self._detect (built in setup()). A table, not an if/elif
-        chain: the detectors are independent and unit-testable, dispatch is O(1) (no 'order by likelihood'
-        comparison tax), and a new stage is one table entry. Forward-only -- each detector only advances.
+        """
+        One stage-machine step: the common prologue, then dispatch to the per-stage detector.
+
+        Common prologue -- the operator-hold guard + a fresh detect timer whenever the stage changes (so
+        a separation-driven hop is clean) -- then DISPATCH to the per-stage detector via self._detect
+        (built in setup()). A table, not an if/elif chain: the detectors are independent and
+        unit-testable, dispatch is O(1) (no 'order by likelihood' comparison tax), and a new stage is one
+        table entry. Forward-only -- each detector only advances.
 
         Detectors guard missing readings with explicit `is not None`, NOT try/except: raising allocates a
         traceback frame (GC churn) and the dropped-sample case is most frequent under launch/impact
-        vibration -- the worst moment for a GC latency spike. A dropped sample simply does not advance."""
+        vibration -- the worst moment for a GC latency spike. A dropped sample simply does not advance.
+
+        Args:
+            now - the current time (ticks_ms).
+
+        Returns:
+            None; advances the stage machine at most one step as a side effect.
+        """
         if self.controller.manual:  # operator holds the stage -> do not auto-advance
             return
         stage = self.controller.stage
@@ -181,7 +236,7 @@ class Sequencer(task.Task):
             self._since = None
             self._stage_seen = stage
             if stage != self._advanced_to:  # EXTERNAL move (separation driver / operator command):
-                # record it in sequencer.csv too (finding 15.8) -- post-flight tooling keeps ONE
+                # record it in sequencer.csv too -- post-flight tooling keeps ONE
                 # stage-event source instead of cross-referencing separation.csv (which the field
                 # capture pull may not even fetch).
                 self._telemetry.push((_STAGE.STAGES.get(stage, str(stage)), 'external'))
@@ -195,7 +250,7 @@ class Sequencer(task.Task):
                 # or an external/operator move): base the RSO flight timeout HERE so it still bounds
                 # the restored flight (spec: the backstop re-bases, it never disappears).
                 self._boost_entry_ms = now
-        # the RSO backstop: any airborne stage this long after BOOSTING entry forces DONE (15.6)
+        # the RSO backstop: any airborne stage this long after BOOSTING entry forces DONE
         if self._boost_entry_ms is not None and stage != _STAGE.DONE \
                 and time.ticks_diff(now, self._boost_entry_ms) >= self._flight_timeout_ms:
             self._advance(_STAGE.DONE, 'flight timeout')
@@ -205,9 +260,19 @@ class Sequencer(task.Task):
             handler(now)
 
     def _detect_launch(self, now: int) -> None:
-        """SETTING -> BOOSTING: a sustained boost |a| (fast, primary) OR the baro clearly climbing off the
-        pad (slower but threshold-independent -- a heavy stack that boosts near the launch_g line, or a
-        missed accel window, still trips once it has left the rod)."""
+        """
+        SETTING -> BOOSTING: a sustained boost |a| (primary) or the baro clearly climbing off the pad.
+
+        The accel path is fast and primary; the baro path is slower but threshold-independent -- a heavy
+        stack that boosts near the launch_g line, or a missed accel window, still trips once it has left
+        the rod.
+
+        Args:
+            now - the current time (ticks_ms), for the sustained-detect timer.
+
+        Returns:
+            None; advances to BOOSTING when either trigger fires, else resets the dwell.
+        """
         elevation = self._elevation.value()
         g_sq = _magnitude_sq(self._accel.value())
         if elevation is not None and elevation > self._launch_alt_m:
@@ -219,12 +284,21 @@ class Sequencer(task.Task):
             self._since = None
 
     def _detect_apogee(self, now: int) -> None:
-        """BOOSTING -> GLIDING: deploy at APOGEE -- track the baro peak and fire once it has fallen
-        apogee_drop_m below it (mass/motor-independent, the top of the arc). The detector (peak
-        tracking INCLUDED) is blind until apogee_arm_ms past BOOSTING entry -- the motor exhaust
-        pressure wave corrupts the in-airframe baro during burn (15.5) and no motor reaches apogee
-        before burnout anyway. The burnout timeout below runs from BOOSTING entry regardless -- the
-        SECONDARY fallback (a flat/absent baro, or apogee never clearly detected)."""
+        """
+        BOOSTING -> GLIDING: deploy at APOGEE, with a burnout timeout as the fallback.
+
+        Track the baro peak and fire once it has fallen apogee_drop_m below it (mass/motor-independent,
+        the top of the arc). The detector (peak tracking INCLUDED) is blind until apogee_arm_ms past
+        BOOSTING entry -- the motor exhaust pressure wave corrupts the in-airframe baro during burn, and
+        no motor reaches apogee before burnout anyway. The burnout timeout runs from BOOSTING entry
+        regardless -- the SECONDARY fallback (a flat/absent baro, or apogee never clearly detected).
+
+        Args:
+            now - the current time (ticks_ms), for the arming window, the descend dwell and the timeout.
+
+        Returns:
+            None; advances to GLIDING at apogee or on the burnout timeout, else keeps tracking the peak.
+        """
         armed = self._boost_entry_ms is not None and \
             time.ticks_diff(now, self._boost_entry_ms) >= self._apogee_arm_ms
         elevation = self._elevation.value() if armed else None
@@ -243,8 +317,17 @@ class Sequencer(task.Task):
             self._advance(_STAGE.GLIDING, 'burnout timeout (no separation)')
 
     def _detect_landing(self, now: int) -> None:
-        """GLIDING -> LANDING: agl below land_agl_m (laser; baro elevation is the fallback), SUSTAINED so
-        a single low sample never flares."""
+        """
+        GLIDING -> LANDING: agl below land_agl_m, SUSTAINED so a single low sample never flares.
+
+        The laser agl is primary; the baro elevation is the fallback when the laser has no reading.
+
+        Args:
+            now - the current time (ticks_ms), for the sustained-detect timer.
+
+        Returns:
+            None; advances to LANDING once the height holds below land_agl_m, else resets the dwell.
+        """
         agl = self._agl.value()
         height = agl if agl is not None else self._elevation.value()
         if height is not None and height < self._land_agl_m:  # below the landing height...
@@ -254,7 +337,15 @@ class Sequencer(task.Task):
             self._since = None  # rose back / lost reading -> reset: a single low sample never flares
 
     def _detect_stationary(self, now: int) -> None:
-        """LANDING -> DONE: |accel| ~1 g (squared still-band) SUSTAINED ground_ms -- stopped on the ground."""
+        """
+        LANDING -> DONE: |accel| ~1 g (squared still-band) SUSTAINED ground_ms -- stopped on the ground.
+
+        Args:
+            now - the current time (ticks_ms), for the sustained-detect timer.
+
+        Returns:
+            None; advances to DONE once the still-band holds for ground_ms, else resets the dwell.
+        """
         g_sq = _magnitude_sq(self._accel.value())
         if g_sq is not None and self._still_lo_sq < g_sq < self._still_hi_sq:  # ~1 g, squared
             if self._sustained(now, self._ground_ms):

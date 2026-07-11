@@ -1,5 +1,9 @@
-# Minimal on-board sanity test for the runtime primitives the firmware relies on.
-# Passes (exit 0) if everything works; any failed `assert` raises -> the runner reports FAIL.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Minimal on-board sanity test for the runtime primitives the firmware relies on. Passes (exit 0) if
+everything works; any failed `assert` raises -> the runner reports FAIL.
+"""
 
 import asyncio
 import gc
@@ -16,7 +20,7 @@ def main():
     gc.collect()
     assert gc.mem_free() > 100_000, 'unexpectedly low free heap'
 
-    # struct.pack_into / unpack_from — the logger's in-place buffer primitive
+    # struct.pack_into / unpack_from -- the logger's in-place buffer primitive
     buf = bytearray(64)
     struct.pack_into('<I', buf, 0, 0x12345678)
     assert struct.unpack_from('<I', buf, 0)[0] == 0x12345678, 'pack/unpack mismatch'

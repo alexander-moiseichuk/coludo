@@ -1,14 +1,18 @@
-# drivers/ina226.py — INA226 high-side current / voltage / power monitor over the shared I2C bus:
-# the battery (or 5 V) supply-line sensor for consumption tracking. @task.driver('ina226'). setup()
-# verifies the die id, programs the conversion config, and computes + writes the calibration register
-# from the shunt resistance + the expected max current (the only board-specific numbers); run() polls
-# the bus voltage (V), current (A) and power (W) to the databoard + telemetry. Graceful: wrong/absent
-# die id -> setup False -> the Controller skips it.
-#
-# The INA226 measures the SHUNT VOLTAGE directly (2.5 uV/LSB), so the absolute accuracy comes from the
-# CAL register, not a precise resistor: Current_LSB = max_current / 2**15, CAL = 0.00512 / (Current_LSB
-# * shunt_ohms). To trust the watt-hours, calibrate `shunt_ohms` against a KNOWN current once and back
-# out the effective value -- a 2-wire ohmmeter cannot resolve a 0.01 ohm shunt.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+INA226 high-side current / voltage / power monitor over the shared I2C bus: the battery (or 5 V)
+supply-line sensor for consumption tracking. @task.driver('ina226'). setup() verifies the die id,
+programs the conversion config, and computes + writes the calibration register from the shunt
+resistance + the expected max current (the only board-specific numbers); run() polls the bus voltage
+(V), current (A) and power (W) to the databoard + telemetry. Graceful: wrong/absent die id -> setup
+False -> the Controller skips it.
+
+The INA226 measures the SHUNT VOLTAGE directly (2.5 uV/LSB), so the absolute accuracy comes from the
+CAL register, not a precise resistor: Current_LSB = max_current / 2**15, CAL = 0.00512 / (Current_LSB *
+shunt_ohms). To trust the watt-hours, calibrate 'shunt_ohms' against a KNOWN current once and back out
+the effective value -- a 2-wire ohmmeter cannot resolve a 0.01 ohm shunt.
+"""
 
 import asyncio
 import struct
@@ -23,6 +27,11 @@ try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
     from commons import const
+
+try:
+    from machine import Pin
+except ImportError:  # host (CPython): board-only; the ALERT pin is wired only on the board
+    Pin = None
 
 
 _REG_CONFIG = const(0x00)
@@ -49,11 +58,14 @@ _MASK_SOL = const(0x8000)    # ALERT on Shunt-Over-Voltage (== over-current: rai
 
 @task.driver('ina226')
 class Ina226(task.Task):
-    """High-side power monitor: bus voltage (mV), current (mA) and power (mW) -- INTEGER milli-units, no
-    float -- to the databoard + per-sample telemetry. Current/power scale from `shunt_mohms` +
-    `max_current_ma` (the CAL register). The same driver serves the 5 V USB phase and the LiPo phase --
-    it reports the INA's own bus voltage, so power is correct as the base rail changes. Graceful: a
-    wrong/absent die id -> setup False."""
+    """
+    High-side power monitor: bus voltage (mV), current (mA) and power (mW) as INTEGER milli-units.
+
+    No float -- pushed to the databoard + per-sample telemetry. Current/power scale from 'shunt_mohms'
+    + 'max_current_ma' (the CAL register). The same driver serves the 5 V USB phase and the LiPo phase
+    -- it reports the INA's own bus voltage, so power is correct as the base rail changes. Graceful: a
+    wrong/absent die id -> setup False.
+    """
 
     _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
 
@@ -95,7 +107,6 @@ class Ina226(task.Task):
                 limit = self._alert_ma * shunt_mohms * 2 // 5  # mA·mΩ -> shunt-voltage LSBs (÷2.5 µV)
                 await self._bus.write(self._addr, _REG_ALERT_LIM, struct.pack('>H', limit))
                 await self._bus.write(self._addr, _REG_MASK, struct.pack('>H', _MASK_SOL))  # transient, no latch
-                from machine import Pin
                 self._alert_pin = Pin(gpio, Pin.IN, Pin.PULL_UP)  # ALERT is open-drain, active-low
                 self._alert_pin.irq(self._on_alert, Pin.IRQ_FALLING)
             except Exception as error:  # a bad alert wire must not sink the whole monitor -> poll-only
@@ -110,9 +121,19 @@ class Ina226(task.Task):
         self._alerts += 1
 
     async def _read(self) -> tuple:
-        """Read (bus voltage mV, current mA, power mW) from the live registers -- INTEGER milli-units, no
-        float. Current is signed (a reversed shunt / charging current reads negative); power is positive.
-        The power term divides by 32768 BEFORE the ×25 so the intermediate stays a small int (no mpz)."""
+        """
+        Read (bus voltage mV, current mA, power mW) from the live registers.
+
+        INTEGER milli-units, no float. Current is signed (a reversed shunt / charging current reads
+        negative); power is positive. The power term divides by 32768 BEFORE the *25 so the intermediate
+        stays a small int (no mpz).
+
+        Args:
+            (none)
+
+        Returns:
+            (voltage_mv, current_ma, power_mw) -- integers, current signed, power positive.
+        """
         bus_raw = struct.unpack('>H', await self._bus.read(self._addr, _REG_BUS_V, 2))[0]
         current_raw = struct.unpack('>h', await self._bus.read(self._addr, _REG_CURRENT, 2))[0]
         power_raw = struct.unpack('>H', await self._bus.read(self._addr, _REG_POWER, 2))[0]
@@ -138,7 +159,15 @@ class Ina226(task.Task):
             await asyncio.sleep_ms(self._period_ms)
 
     async def probe(self) -> str:
-        """On-demand self-test: the die id reads back, then one live read (each step logged)."""
+        """
+        On-demand self-test: the die id reads back, then one live read (each step logged).
+
+        Args:
+            (none)
+
+        Returns:
+            None when both steps pass; a short failure message (the failing step) otherwise.
+        """
         try:
             recorder.Recorder.log(self.name, 'probe: die id ...')
             die = struct.unpack('>H', await self._bus.read(self._addr, _REG_DIE_ID, 2))[0]
@@ -161,8 +190,18 @@ class Ina226(task.Task):
         return None
 
     async def diagnose(self) -> str:
-        """Deeper analysis when setup() failed: the bus reads the die id and classifies the wire-level
-        fault (no ack / wrong device / present-but-init). The Controller folds it into the reason."""
+        """
+        Deeper analysis when setup() failed: classify the wire-level fault behind an absent monitor.
+
+        The bus reads the die id and classifies the fault (no ack / wrong device / present-but-init).
+        The Controller folds it into the reason.
+
+        Args:
+            (none)
+
+        Returns:
+            A one-line fault classification for the failure reason.
+        """
         bus = self._bus  # None until setup builds the transport
         if bus is None:  # setup never built the bus -> a config fault
             return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)

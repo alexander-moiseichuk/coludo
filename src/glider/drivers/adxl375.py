@@ -1,16 +1,20 @@
-# drivers/adxl375.py — ADXL375 ±200 g high-G accelerometer: the boost-phase accel channel. Works over
-# I2C (shared bus) OR SPI (its own bus, for clean high-rate reads) -- the component's `bus` field
-# selects, and a shared register-window device (i2cbus/spibus .device()) keeps the driver code
-# bus-agnostic. @task.driver('adxl375'). setup() probes the device id and configures it; run() writes
-# the latest (x, y, z) acceleration in g to the databoard 'accel' slot. If the device is absent (no
-# ack / wrong device id) setup() returns False and the Controller skips it -- the board boots fine
-# with the sensor unplugged.
-#
-# Sampling is interrupt-driven when an `int_pin` (INT1) is wired: the chip raises DATA_READY when a
-# new sample is ready, an IRQ sets a ThreadSafeFlag, and run() awaits it -- so the coroutine sleeps
-# until there is genuinely fresh data instead of blind-polling. A `fallback_ms` timeout still forces
-# a sample if interrupts go silent (dead sensor / wiring). With no int_pin it falls back to a plain
-# `period_ms` poll. Uses the shared locked I2C bus (i2cbus), as it shares i2c:0 with other sensors.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+ADXL375 ±200 g high-G accelerometer: the boost-phase accel channel. Works over I2C (shared bus) OR SPI
+(its own bus, for clean high-rate reads) -- the component's `bus` field selects, and a shared
+register-window device (i2cbus/spibus .device()) keeps the driver code bus-agnostic.
+@task.driver('adxl375'). setup() probes the device id and configures it; run() writes the latest
+(x, y, z) acceleration in g to the databoard 'accel' slot. If the device is absent (no ack / wrong
+device id) setup() returns False and the Controller skips it -- the board boots fine with the sensor
+unplugged.
+
+Sampling is interrupt-driven when an `int_pin` (INT1) is wired: the chip raises DATA_READY when a new
+sample is ready, an IRQ sets a ThreadSafeFlag, and run() awaits it -- so the coroutine sleeps until
+there is genuinely fresh data instead of blind-polling. A `fallback_ms` timeout still forces a sample if
+interrupts go silent (dead sensor / wiring). With no int_pin it falls back to a plain `period_ms` poll.
+Uses the shared locked I2C bus (i2cbus), as it shares i2c:0 with other sensors.
+"""
 
 import asyncio
 import struct
@@ -26,6 +30,11 @@ try:
     from micropython import const
 except ImportError:  # CPython (tooling / off-board checks)
     from commons import const
+
+try:
+    from machine import Pin
+except ImportError:  # host (CPython): board-only; the INT1 pin is wired only on the board
+    Pin = None
 
 
 _REG_DEVID = const(0x00)  # reads 0xE5 on the whole ADXL34x/375 family
@@ -77,8 +86,20 @@ class Adxl375(task.Task):
         return True
 
     def _transport(self, kind: str, bus_id: int, spec: dict):
-        """A register window over I2C (by address) or SPI (by chip-select), so the rest of the driver
-        is bus-agnostic. SPI needs a `cs_pin` in the component; returns None if it is missing."""
+        """
+        A register window over the selected bus, so the rest of the driver stays bus-agnostic.
+
+        I2C addresses by device address; SPI addresses by chip-select. SPI needs a `cs_pin` in the
+        component.
+
+        Args:
+            kind - the bus family, 'i2c' or 'spi'.
+            bus_id - which bus of that family (i2c:0, spi:1, ...).
+            spec - the bus config dict handed to the bus factory.
+
+        Returns:
+            The register-window device; None when SPI is selected but no cs_pin is wired.
+        """
         if kind == 'spi':
             cs = self._pin_gpio('cs_pin')
             return spibus.get(bus_id, spec).device(cs) if cs is not None else None
@@ -89,11 +110,9 @@ class Adxl375(task.Task):
         gpio = self._pin_gpio('int_pin')
         if gpio is None:
             return
-        from machine import Pin
-
         await self._dev.write(_REG_INT_MAP, b'\x00')  # DATA_READY -> INT1
         await self._dev.write(_REG_INT_ENABLE, bytes([_DATA_READY]))
-        # Arm the IRQ BEFORE clearing the pending DATA_READY (finding 2.4.1): if a conversion landed
+        # Arm the IRQ BEFORE clearing the pending DATA_READY: if a conversion landed
         # during the writes above, INT1 is already high and stays high (DATA_READY is level, not a
         # pulse) -- clearing FIRST then arming would miss that edge and, since the line is static-high,
         # the RISING IRQ would never fire until the fallback sample. Armed first, the clear-read drops
@@ -107,14 +126,33 @@ class Adxl375(task.Task):
         self._ready.set()
 
     async def sample(self) -> tuple:
-        """Read and return (x, y, z) acceleration in g (also clears DATA_READY)."""
+        """
+        Read one acceleration sample from the device.
+
+        The register read also clears DATA_READY, so it re-arms the interrupt for the next conversion.
+
+        Args:
+            (none)
+
+        Returns:
+            (x, y, z) acceleration in g.
+        """
         await self._dev.read_into(_REG_DATAX0, self._buf)
         x, y, z = struct.unpack('<hhh', self._buf)
         return (x * _SCALE_G, y * _SCALE_G, z * _SCALE_G)
 
     async def run(self) -> None:
-        """Sample on DATA_READY (or every fallback_ms if interrupts go silent); plain poll with no
-        INT wired. Either way, write the latest acceleration to the databoard."""
+        """
+        Sample on DATA_READY (or every fallback_ms if interrupts go silent); plain poll with no INT wired.
+
+        Either way, write the latest acceleration to the databoard.
+
+        Args:
+            (none)
+
+        Returns:
+            None; loops forever, pushing each sample to the databoard 'accel' slot and telemetry.
+        """
         while True:
             if self._int is not None:
                 try:
@@ -132,7 +170,15 @@ class Adxl375(task.Task):
                 self.note('adxl375 :: read %r', error)  # deduped: a persistent error logs once, not every tick
 
     async def probe(self) -> str:
-        """On-demand self-test: the device id reads back, then one sample succeeds (each step logged)."""
+        """
+        On-demand self-test: the device id reads back, then one sample succeeds (each step logged).
+
+        Args:
+            (none)
+
+        Returns:
+            None on success; a short failure message (also logged) at the first failing step.
+        """
         try:
             recorder.Recorder.log(self.name, 'probe: device id ...')
             devid = (await self._dev.read(_REG_DEVID, 1))[0]
@@ -155,10 +201,20 @@ class Adxl375(task.Task):
         return None
 
     async def diagnose(self) -> str:
-        """Deeper analysis when setup() failed: the bus reads our DEVID and classifies the wire-level
-        fault (CS dead / MISO floating / wrong device / present-but-init). The Controller folds it into
-        the failure reason so `verify`/`probe` show the 'why', not just 'absent / miswired?'. A None
-        transport means setup never built it -- a config fault (bus undefined / cs_pin unwired)."""
+        """
+        Deeper analysis when setup() failed: classify the wire-level fault.
+
+        The bus reads our DEVID and classifies the fault (CS dead / MISO floating / wrong device /
+        present-but-init), so the Controller can fold it into the failure reason and `verify`/`probe`
+        show the 'why', not just 'absent / miswired?'.
+
+        Args:
+            (none)
+
+        Returns:
+            A wire-level fault description; a config-fault message when setup never built the transport
+            (bus undefined / cs_pin unwired).
+        """
         if self._dev is None:  # setup never built the transport
             return 'no transport -- bus %s:%s undefined or cs_pin %s unwired' % (
                 self.config.get('bus'), self.config.get('id'), self.config.get('cs_pin'))

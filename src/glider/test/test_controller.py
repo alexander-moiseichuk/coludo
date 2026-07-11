@@ -1,5 +1,9 @@
-# On-board (MicroPython) test for the Task base + Controller skeleton.
-# Run by `make test`. Raises (-> runner reports FAIL) on any failed assertion.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board (MicroPython) test for the Task base + Controller skeleton. Run by `make test`. Raises
+(-> runner reports FAIL) on any failed assertion.
+"""
 
 import asyncio
 
@@ -31,8 +35,11 @@ class FailSensor(task.Task):
 
 
 class MessySensor(task.Task):
-    """setup() raises mid-init AND finish() raises on the half-set-up device -- the controller must
-    still record the failure and bring up the rest of the board, not abort boot (finding 1.2.1)."""
+    """
+    setup() raises mid-init AND finish() raises on the half-set-up device.
+
+    The controller must still record the failure and bring up the rest of the board, not abort boot.
+    """
 
     async def setup(self):
         raise RuntimeError('setup boom')
@@ -42,8 +49,12 @@ class MessySensor(task.Task):
 
 
 class FlakySensor(task.Task):
-    """Fails its first setup, succeeds on a retry (a fresh instance per attempt, so the attempt count
-    is class-level) -- models a breadboard contact that makes on the second try."""
+    """
+    Fails its first setup, succeeds on a retry.
+
+    A fresh instance per attempt, so the attempt count is class-level -- models a breadboard contact
+    that makes on the second try.
+    """
 
     attempts: int = 0
 
@@ -57,9 +68,12 @@ class FlakySensor(task.Task):
 
 
 class DiagnosingSensor(task.Task):
-    """Fails setup, but offers diagnose() -- the controller must fold the deeper wire-level analysis
-    into the recorded failure reason (the bus drivers' adxl375/lsm6dso32/... pattern, surfaced to
-    verify/probe)."""
+    """
+    Fails setup, but offers diagnose().
+
+    The controller must fold the deeper wire-level analysis into the recorded failure reason (the bus
+    drivers' adxl375/lsm6dso32/... pattern, surfaced to verify/probe).
+    """
 
     async def setup(self):
         return False
@@ -110,7 +124,7 @@ async def amain():
     assert 'flaky' in rc.tasks and rc.failures == {} and FlakySensor.attempts == 2  # up on the 2nd try
     await rc.finish()
 
-    # 1.2.1: a device whose setup AND cleanup both raise must not abort boot -- it is recorded and the
+    # a device whose setup AND cleanup both raise must not abort boot -- it is recorded and the
     # rest of the board still comes up.
     messy_cfg = {'board': {'id': 'm', 'mcu': 'esp32p4'},
                  'components': [{'name': 'messy', 'driver': 'messy', 'enabled': True},

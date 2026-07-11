@@ -1,10 +1,13 @@
 #!/usr/bin/env python3
-# board_pinmap.py — read a board config and print the physical wiring map: which GPIO carries
-# which bus line / discrete signal, and which device sits on which bus (with pins + I2C address).
-# Helps lay out / trace a PCB without doing it by hand. Host tool (parses config, never imports
-# firmware peripherals).
-#
-#   python3 tools/board_pinmap.py [board.config]    # default: the firmware default config
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Read a board config and print the physical wiring map: which GPIO carries which bus line / discrete
+signal, and which device sits on which bus (with pins + I2C address). Helps lay out / trace a PCB
+without doing it by hand. Host tool (parses config, never imports firmware peripherals).
+
+  python3 tools/board_pinmap.py [board.config]    # default: the firmware default config
+"""
 
 import os
 import sys

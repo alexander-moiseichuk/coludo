@@ -1,12 +1,16 @@
-# `calibrate <board> <i2c|spi> <id> [margin-steps]` -- find a sensor bus's max stable frequency.
-#
-# Drives the board's `bustune` primitive (retune-in-place + per-device health) UP a frequency ladder,
-# stopping at the first step any device fails. Reports the ceiling (highest all-healthy step), the
-# LIMITING device (first to drop out -> the one to rewire / move off the shared bus), and a `chosen`
-# freq backed off `margin` ladder steps for headroom (default 1 -- your MAX-1 rule). Restores the bus
-# to its configured freq afterwards; it does NOT persist. To apply, the operator runs the printed
-# `set-config board ... + reboot` (the immutable-config activation path). The sweep lives here on CC,
-# the board only executes one retune-and-test step at a time.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+`calibrate <board> <i2c|spi> <id> [margin-steps]` -- find a sensor bus's max stable frequency.
+
+Drives the board's `bustune` primitive (retune-in-place + per-device health) UP a frequency ladder,
+stopping at the first step any device fails. Reports the ceiling (highest all-healthy step), the
+LIMITING device (first to drop out -> the one to rewire / move off the shared bus), and a `chosen`
+freq backed off `margin` ladder steps for headroom (default 1 -- the MAX-1 rule). Restores the bus
+to its configured freq afterwards; it does NOT persist. To apply, the operator runs the printed
+`set-config board ... + reboot` (the immutable-config activation path). The sweep lives here on CC,
+the board only executes one retune-and-test step at a time.
+"""
 
 import json
 
@@ -48,7 +52,8 @@ async def calibrate_command(hub, tokens, session) -> list:
         if report.get('all_ok'):
             ceiling = freq
         else:  # first failing step -> the limiting device(s): what to rewire or split off the bus
-            limiter = {'freq': freq, 'failed': [n for n, v in report.get('devices', {}).items() if v != 'ok']}
+            failed = [name for name, result in report.get('devices', {}).items() if result != 'ok']
+            limiter = {'freq': freq, 'failed': failed}
             break
 
     chosen, note = None, None

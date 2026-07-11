@@ -1,47 +1,99 @@
-# cc_client — board side of the Control protocol (specs/cc-protocol.md). Board-first routing:
-# Control strips the routing board id, so the board receives `command params` and replies
-# `status params` (no id; only `iam` carries the board id, so Control can learn it on a new
-# socket). Dispatcher turns a parsed line into a response (pure logic, unit-testable); Client is
-# the thin networking that reads lines and writes responses.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Board side of the Control protocol (specs/cc-protocol.md). Board-first routing: Control strips the
+routing board id, so the board receives `command params` and replies `status params` (no id; only
+`iam` carries the board id, so Control can learn it on a new socket). Dispatcher turns a parsed line
+into a response (pure logic, unit-testable); Client is the thin networking that reads lines and
+writes responses.
+"""
 
 import asyncio
+import gc
 import json
+import time
 
 import cc_protocol as cc
+import config as config_mod
+import databoard
 import inspector
+import recorder
+
+try:
+    import esp32
+except ImportError:  # host (CPython): board-only; the health MCU-temp read degrades to None
+    esp32 = None
+
+
+def _enabled(tasks: dict, name: str):
+    """
+    The named task dict when it is present and enabled, else None.
+
+    Args:
+        tasks - name -> task dict, indexed from the config 'components' list.
+        name - the task name to look up.
+
+    Returns:
+        The task dict when it exists and its 'enabled' flag is truthy, otherwise None.
+    """
+    task = tasks.get(name)
+    return task if task is not None and task.get('enabled') else None
 
 
 def _readiness(cfg: dict) -> dict:
-    """The flight-readiness gate (doc/plan.md pre-flight hardening #1): the field-dangerous CONFIG
-    states no device probe can see -- watchdog off (a wedged flight loop never reboots), flight loop
-    off or zero gains (fins hold neutral: ballistic), a bench fin derating left applied, no landing
-    zone and no CC-less sites to pick one from. {check: problem} -- empty means flight-ready. Bench
-    and HITL sessions legitimately trip these, so `verify` reports them as a separate `ready`
-    verdict without failing the hardware `pass`."""
+    """
+    Flight-readiness gate: field-dangerous CONFIG states no device probe can see.
+
+    These are config choices that leave the board ballistic or unrecoverable in flight while every
+    peripheral still probes healthy: the watchdog off (a wedged flight loop never reboots), the
+    flight loop off or its gains zero (fins hold neutral -- ballistic), a bench fin derating still
+    applied, or no landing zone and no CC-less site to pick one from. Bench and HITL sessions
+    legitimately trip these, so `verify` reports them as a separate `ready` verdict without failing
+    the hardware `pass`.
+
+    Args:
+        cfg - the active board config (top level, with 'components' and 'fin_limit_multiplier').
+
+    Returns:
+        {check: problem} for each tripped gate; an empty dict means flight-ready.
+    """
     problems = {}
     tasks = {task.get('name'): task for task in cfg.get('components', [])}
-    for name, danger in (('watchdog', 'a wedged flight loop never reboots'),
-                         ('flight', 'fins hold neutral -- ballistic')):
-        task = tasks.get(name)
-        if task is None or not task.get('enabled'):
-            problems[name] = 'disabled: ' + danger
-    flight = tasks.get('flight')
-    if flight is not None and flight.get('enabled'):
+
+    # Watchdog off: a wedged flight loop never reboots.
+    if _enabled(tasks, 'watchdog') is None:
+        problems['watchdog'] = 'disabled: a wedged flight loop never reboots'
+
+    # Flight loop off, or running with no gains -- either way the fins hold neutral (ballistic).
+    flight = _enabled(tasks, 'flight')
+    if flight is None:
+        problems['flight'] = 'disabled: fins hold neutral -- ballistic'
+    else:
         gains = flight.get('gains', {})
         slack = [axis for axis in ('roll', 'pitch', 'yaw') if not any(gains.get(axis, {}).values())]
         if slack:
             problems['gains'] = 'zero/unset on ' + ', '.join(slack) + ' -- the loop computes but cannot act'
+
+    # Bench fin derating still applied.
     multiplier = cfg.get('fin_limit_multiplier', 1.0)
     if multiplier != 1.0:
         problems['fin_limit_multiplier'] = '%g: a bench derating is still applied' % multiplier
+
+    # No landing zone and no CC-less site to select one from.
     mission = inspector.Inspector.get('mission')
     if mission is not None and mission.zone is None and not mission.sites:
         problems['zone'] = 'no landing zone set and no CC-less sites to select one from'
+
     return problems
 
 
 class Dispatcher:
-    """Maps a command to an async handler(msg) -> response line."""
+    """
+    Command name -> async handler(msg) registry that turns a request line into a response line.
+
+    Pure routing with no networking (Client owns the socket), so the command logic stays
+    unit-testable off a live connection. Register handlers with on(); dispatch a line with handle().
+    """
 
     def __init__(self):
         self.handlers = {}
@@ -53,18 +105,21 @@ class Dispatcher:
         msg = cc.parse(line)
         if msg.command is None:
             return None
-        fn = self.handlers.get(msg.command)
-        if fn is None:
+        handler = self.handlers.get(msg.command)
+        if handler is None:
             return cc.build('err', ['badcmd', msg.command])
         try:
-            return await fn(msg)
+            return await handler(msg)
         except Exception as error:
             return cc.build('err', ['internal', repr(error)])
 
 
 class Client:
+    """The thin CC networking: dial Control, read request lines, write the dispatcher's responses."""
+
     def __init__(self, config: dict, dispatcher, log=None, backoff_ms: int = 1000):
-        wifi = config['wifi']
+        wifi = config.get('wifi', {})  # .get like every other config read -- a minimal config (no wifi
+        # section) falls back to the cc_host/cc_port defaults below instead of KeyErroring before them
         self.host = wifi.get('cc_host')  # None -> cc_link derives the `.1` of the board's subnet at dial
         self.port = wifi.get('cc_port', 1234)
         self.dispatcher = dispatcher
@@ -95,9 +150,13 @@ class Client:
 
 
 class _Context:
-    """Shared state the CC handlers close over: the running config, the optional Controller, the
-    reboot hook, the config path, and the board id (cached from the config). The _register_*
-    groups below each take one of these instead of a long argument list."""
+    """
+    Shared state the CC handlers close over.
+
+    Bundles the running config, the optional Controller, the reboot hook, the config path, and the
+    board id (cached from the config) so the _register_* groups below each take one object instead of
+    a long argument list.
+    """
 
     def __init__(self, cfg: dict, controller, on_reboot, config_path: str):
         self.cfg = cfg
@@ -113,12 +172,6 @@ class _Context:
 
 def _register_identity(dispatcher, ctx) -> None:
     """whoami / ping / health -- who the board is and how it is doing."""
-    import gc
-    import time
-
-    import config as config_mod
-    import databoard
-
     async def whoami(msg) -> str:
         info = {
             'mcu': ctx.cfg['board'].get('mcu'),
@@ -134,10 +187,8 @@ def _register_identity(dispatcher, ctx) -> None:
 
     async def health(msg) -> str:
         try:
-            import esp32
-
             temp = esp32.mcu_temperature()
-        except Exception:
+        except Exception:  # host (esp32 None) or a probe failure -> no temperature
             temp = None
         info = {'temp': temp, 'mem_free': gc.mem_free(), 'uptime': time.ticks_ms(), 'stage': ctx.stage()}
         position = databoard.Databoard.parameter('position')  # board GNSS fix -> dashboard (None until a fix)
@@ -177,7 +228,7 @@ def _register_identity(dispatcher, ctx) -> None:
             flight = ctx.controller.active('flight')  # live flight panel: airspeed + fin cap + reach
             if flight is not None and hasattr(flight, 'vitals'):
                 info['flight'] = flight.vitals()
-            info['tasks'] = [{'name': t.name, 'ok': t.validate()} for t in ctx.controller.active()]
+            info['tasks'] = [{'name': task.name, 'ok': task.validate()} for task in ctx.controller.active()]
         info['degraded'] = degraded
         return cc.build('ok', [json.dumps(info)])
 
@@ -190,8 +241,18 @@ def _register_control(dispatcher, ctx) -> None:
     """stage / arm / disarm / report -- flight-stage hold + actuation enable."""
 
     async def get_stage(msg) -> str:
-        """`stage` -> the current stage; `stage <name>` holds it (operator override, pauses the
-        sequencer -- ground test); `stage auto` resumes auto-sequencing."""
+        """
+        Read or hold the flight stage.
+
+        `stage` reports the current stage; `stage <name>` holds it (an operator override that pauses
+        the auto-sequencer, for ground test); `stage auto` resumes auto-sequencing.
+
+        Args:
+            msg - the request; msg.args[0], when present, is the stage name to hold or 'auto'.
+
+        Returns:
+            ok with {stage, manual}; err badargs when the named stage does not exist.
+        """
         manual = ctx.controller.manual if ctx.controller is not None else False
         if msg.args and ctx.controller is not None:
             if msg.args[0] == 'auto':
@@ -202,9 +263,20 @@ def _register_control(dispatcher, ctx) -> None:
         return cc.build('ok', [json.dumps({'stage': ctx.stage(), 'manual': manual})])
 
     async def arm(msg) -> str:
-        """Enable actuation -- but only when board verify is clean (every device up + probe healthy,
-        incl. the mission launch-position): a refused arm returns the problems. Disarmed by default;
-        the control loop holds the fins neutral until armed."""
+        """
+        Enable actuation, but only when board verify is clean.
+
+        Arms only when every device is up and probes healthy (including the mission launch position);
+        a refused arm returns the problems instead. The board is disarmed by default -- the control
+        loop holds the fins neutral until armed.
+
+        Args:
+            msg - the request (unused).
+
+        Returns:
+            ok {armed: true} on success; err unsupported when there is no controller; err unsafe
+            carrying the problems dict when a device is down or fails its probe.
+        """
         if ctx.controller is None:
             return cc.build('err', ['unsupported', 'no controller'])
         problems = dict(ctx.controller.failures)  # not-connected devices
@@ -269,15 +341,27 @@ def _register_inspection(dispatcher, ctx) -> None:
 
 
 def _register_config(dispatcher, ctx) -> None:
-    """get-config / set-config / reset-config -- read/write the named configs through one command
-    pair (get-config <name> / set-config <name> <json>), instead of a get-/save- pair per config:
+    """
+    get-config / set-config / reset-config -- read and write the named configs.
+
+    One command pair (get-config <name> / set-config <name> <json>) covers every config instead of a
+    get-/save- pair per config:
       board   the running board config (hardware; config.py, validated + atomically saved)
       default the built-in board default (read-only)
-      launch  the per-launch mission (launch.config; mission.py, merge-applied + saved)"""
-    import config as config_mod
-
+      launch  the per-launch mission (launch.config; mission.py, merge-applied + saved)
+    """
     async def get_config(msg) -> str:
-        """`get-config [name]` -- the named config (default `board`)."""
+        """
+        Read the named config.
+
+        Args:
+            msg - the request; msg.args[0], when present, is the config name (default 'board').
+
+        Returns:
+            ok with the config JSON (board/running the running config, default the built-in default,
+            launch the persisted mission); err unsupported when launch is asked for with no mission;
+            err badargs on an unknown name.
+        """
         name = msg.args[0] if msg.args else 'board'
         if name in ('board', 'running'):
             return cc.build('ok', [json.dumps(ctx.cfg)])
@@ -291,8 +375,20 @@ def _register_config(dispatcher, ctx) -> None:
         return cc.build('err', ['badargs', 'unknown config %s' % name])
 
     async def set_config(msg) -> str:
-        """`set-config <name> <json>` -- save the named config. `board` validates + atomically replaces
-        the running config; `launch` merge-applies the fields into the mission and persists them."""
+        """
+        Save the named config.
+
+        `board` validates the JSON and atomically replaces the running config; `launch` merge-applies
+        the fields into the mission and persists them.
+
+        Args:
+            msg - the request; msg.args[0] is the config name, msg.args[1] the JSON payload.
+
+        Returns:
+            ok with the saved result ({config_id} for board, the persisted mission for launch); err
+            badargs on a missing arg / bad JSON / unknown name; err invalid when board validation
+            fails; err unsupported when launch is asked for with no mission.
+        """
         if len(msg.args) < 2:
             return cc.build('err', ['badargs', 'set-config <name> <json>'])
         name = msg.args[0]
@@ -328,13 +424,24 @@ def _register_diagnostics(dispatcher, ctx) -> None:
     """probe / verify -- on-demand self-tests + the pre-flight pass/fail check."""
 
     async def probe(msg) -> str:
-        """Run self-tests ON DEMAND over the inspectable objects (tasks + mission + ...) that implement
-        probe(): `probe <name>` for one, `probe`/`probe all` for every one. Per object None when
+        """
+        Run device self-tests on demand over the inspectable objects.
+
+        Runs probe() on the inspectable objects (tasks + mission + ...) that implement it:
+        `probe <name>` for one, `probe` / `probe all` for every one. Each object reports None when
         healthy, else its error string. `probe all` also lists the devices that never set up (absent /
         miswired -> not inspectable), from the Controller's failures, so one command shows the whole
-        connected/not picture. Costly ACTIVE checks (e.g. the servo range sweep) live in probe(), never
-        at boot -- so a mid-flight reboot never sweeps the fins; the operator runs it pre-flight.
-        Sequential, so fins self-test one at a time."""
+        connected/not picture. Costly ACTIVE checks (e.g. the servo range sweep) live in probe(),
+        never at boot -- so a mid-flight reboot never sweeps the fins; the operator runs it pre-flight.
+        Sequential, so fins self-test one at a time.
+
+        Args:
+            msg - the request; msg.args[0], when present, is the object to probe (default 'all').
+
+        Returns:
+            ok with {name: result} (None healthy, else the error string); err badargs when a named
+            object has no probe.
+        """
         target = msg.args[0] if msg.args else 'all'
         if target == 'all':
             results = await inspector.Inspector.probe_all()  #
@@ -351,12 +458,22 @@ def _register_diagnostics(dispatcher, ctx) -> None:
         return cc.build('ok', [json.dumps({target: await run()})])
 
     async def verify(msg) -> str:
-        """Verify board setup and report PASS or the problems: dump every configured device (up vs
-        down) and run the probe self-tests, with an overall `pass` -- plus the flight-readiness
-        CONFIG gate as a separate `ready`/`readiness` verdict (a bench session is healthy but not
-        flight-ready). The on-the-pad / pre-flight re-check -- catches anything disconnected in
-        transport. Needs the Controller (the configured device list + setup failures). NOTE: probe
-        is active (sweeps the servos)."""
+        """
+        Verify board setup and report PASS or the problems.
+
+        Dumps every configured device (up vs down) and runs the probe self-tests, with an overall
+        `pass`, plus the flight-readiness CONFIG gate as a separate `ready`/`readiness` verdict (a
+        bench session is healthy but not flight-ready). This is the on-the-pad / pre-flight re-check
+        -- it catches anything disconnected in transport. Needs the Controller (the configured device
+        list + setup failures). Note the probe is active (it sweeps the servos).
+
+        Args:
+            msg - the request (unused).
+
+        Returns:
+            ok with {pass, devices, problems, ready, readiness}; err unsupported when there is no
+            controller.
+        """
         if ctx.controller is None:
             return cc.build('err', ['unsupported', 'no controller'])
         devices = {name: ('up' if ctx.controller.active(name) is not None
@@ -371,10 +488,21 @@ def _register_diagnostics(dispatcher, ctx) -> None:
                                            'ready': not readiness, 'readiness': readiness})])
 
     async def bustune(msg) -> str:
-        """`bustune <kind> <id> <freq>` -- retune a sensor bus (i2c/spi) to <freq> Hz live (no reboot)
-        and report which devices on it stay healthy. The CC-side `calibrate` sweep drives this to find
-        each bus's max stable frequency + the limiting device; it never persists (CC saves the chosen
-        freq via set-config board + reboot)."""
+        """
+        Retune a sensor bus frequency live and report which devices stay healthy.
+
+        `bustune <kind> <id> <freq>` retunes an i2c/spi bus to <freq> Hz without a reboot and reports
+        which devices on it stay healthy. The CC-side `calibrate` sweep drives this to find each bus's
+        maximum stable frequency and the limiting device; it never persists (CC saves the chosen freq
+        via set-config board + reboot).
+
+        Args:
+            msg - the request; msg.args are the bus kind, the bus id, and the frequency in Hz.
+
+        Returns:
+            ok with the per-device health after the retune; err unsupported when there is no
+            controller; err badargs on missing args or a non-integer frequency.
+        """
         if ctx.controller is None:
             return cc.build('err', ['unsupported', 'no controller'])
         if len(msg.args) < 3:
@@ -394,13 +522,22 @@ def _register_streaming(dispatcher) -> None:
     """log / tlm -- poll-model log + telemetry streaming (recorder only; no controller/config)."""
 
     async def log(msg) -> str:
-        """`log <duration_ms>` -- poll-model log streaming. Reply with the log lines the board buffered
-        since the last `log`, and keep teeing log() for another `duration_ms` (the operator re-sends it
-        each tick; `log 0` stops, default 1000 ms). The batch rides back as one base64 token (a JSON
-        list). An EXTRA route: the UART/Luckfox log path is untouched, and with no `log` request the
-        board collects nothing -- a lost link cannot grow memory once the window lapses."""
-        import recorder
+        """
+        Poll-model log streaming.
 
+        `log <duration_ms>` replies with the log lines the board buffered since the last `log`, and
+        keeps teeing log() for another `duration_ms` (the operator re-sends it each tick; `log 0`
+        stops, default 1000 ms). The batch rides back as one base64 token (a JSON list). An EXTRA
+        route: the UART/Luckfox log path is untouched, and with no `log` request the board collects
+        nothing -- a lost link cannot grow memory once the window lapses.
+
+        Args:
+            msg - the request; msg.args[0], when present, is the window in milliseconds (default
+            1000).
+
+        Returns:
+            ok with the buffered log lines; err badargs when the duration is not an integer.
+        """
         try:
             duration_ms = int(msg.args[0]) if msg.args else 1000
         except ValueError:
@@ -408,12 +545,21 @@ def _register_streaming(dispatcher) -> None:
         return cc.build('ok', [json.dumps(recorder.Recorder.cc_logs(duration_ms))])
 
     async def tlm(msg) -> str:
-        """`tlm <duration_ms>` -- poll-model telemetry streaming (mirrors `log`). Reply with the
-        telemetry rows the board buffered since the last `tlm`, and keep teeing tlm() for another
-        `duration_ms` (`tlm 0` stops, default 1000 ms). One base64 JSON token. An EXTRA route: the
-        UART/Luckfox telemetry is untouched, and with no `tlm` request the board collects nothing."""
-        import recorder
+        """
+        Poll-model telemetry streaming (mirrors `log`).
 
+        `tlm <duration_ms>` replies with the telemetry rows the board buffered since the last `tlm`,
+        and keeps teeing tlm() for another `duration_ms` (`tlm 0` stops, default 1000 ms). One base64
+        JSON token. An EXTRA route: the UART/Luckfox telemetry is untouched, and with no `tlm` request
+        the board collects nothing.
+
+        Args:
+            msg - the request; msg.args[0], when present, is the window in milliseconds (default
+            1000).
+
+        Returns:
+            ok with the buffered telemetry rows; err badargs when the duration is not an integer.
+        """
         try:
             duration_ms = int(msg.args[0]) if msg.args else 1000
         except ValueError:
@@ -442,10 +588,22 @@ def _register_system(dispatcher, ctx) -> None:
 
 def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
                       config_path: str = 'board.config') -> Dispatcher:
-    """Build a Dispatcher with the standard command handlers, wired to the running config, the
-    Inspector, and (optionally) the Controller. `on_reboot` lets tests intercept the reset. The
-    handlers are grouped by concern into the _register_* helpers; each closes over one shared
-    _Context, so this stays a short orchestrator."""
+    """
+    Build a Dispatcher with the standard command handlers.
+
+    Wires the handlers to the running config, the Inspector, and (optionally) the Controller.
+    `on_reboot` lets tests intercept the reset. The handlers are grouped by concern into the
+    _register_* helpers; each closes over one shared _Context, so this stays a short orchestrator.
+
+    Args:
+        cfg - the running board config.
+        controller - the flight Controller, or None (unit tests / recorder-only nodes).
+        on_reboot - a reset hook the reboot handler calls, or None to fall back to machine.reset().
+        config_path - where set-config board / reset-config persist the board config.
+
+    Returns:
+        The wired Dispatcher.
+    """
     dispatcher = Dispatcher()
     ctx = _Context(cfg, controller, on_reboot, config_path)
     _register_identity(dispatcher, ctx)

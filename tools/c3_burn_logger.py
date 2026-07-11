@@ -1,63 +1,67 @@
-# tools/c3_burn_logger.py -- standalone ESP32-C3 logger for the TMS-7 STATIC burn + separation ground
-# test. Runs ON the C3 (MicroPython), NOT the P4 flight computer. It reads the ADXL375 (+/-200 g) and the
-# LSM6DSO32 (+/-32 g accel + gyro) over a shared SPI bus and the separation switch on a GPIO, and writes a
-# compact telemetry CSV to the C3's own flash (2 MB) -- a self-contained witness for the burn.
-#
-# Memory/flash thrift (the C3 has little RAM + 2 MB flash): every 10 samples (~100 ms) are reduced to
-# min / avg / max. NOTHING is written to flash while sampling -- every row goes into a RAM buffer and the
-# WHOLE file is written at once (open -> write all -> flush -> close -> sync) only at a flush point, so a
-# flash erase stall can never compete with a peak. While IDLE (waiting for ignition) rows are decimated to
-# ONE per second and the buffer is flushed to the next file every minute. The moment a launch g-spike OR a
-# separation is seen it latches FLIGHT and buffers the full 100 ms summaries (10 rows/s); FLIGHT ends 10 s
-# after the last high-G / separation event (each shifts that deadline +10 s) and the buffer is flushed THEN
-# -- so the flight lands on flash within ~10 s of going quiet (safe against the power-pull). Worst-case file
-# = ~(60 s idle + 10 s flight) x 10 rows/s = 700 records; the buffer is capped at 1000 for safety.
-#
-# ---- Wiring (ESP32-C3 supermini; left header 5,6,7,8,9,10,20,21 / right 4,3,2,1,0 + 5V,G,3V3) ----
-#   SPI (shared):  SCK = GPIO4    MOSI = GPIO6    MISO = GPIO5
-#   ADXL375    CS = GPIO7         LSM6DSO32 CS = GPIO1
-#   data-ready INTs (OPTIONAL):  ADXL375 INT1 = GPIO10   LSM6DSO32 INT1 = GPIO0
-#   (each sensor's CS+INT are grouped on one header -- ADXL on the left 7/10, LSM on the right 1/0)
-#   separation switch = GPIO3  (pads route 3V3 -> GPIO3 when NESTED = HIGH; internal pull-down -> open = LOW)
-#   sensors powered from 3V3 + G. Avoid GPIO2/8/9 (strapping) and GPIO20/21 (USB-serial REPL).
-#
-# The INT pins are OPTIONAL: wired, the loop reads exactly when a fresh conversion lands (~104 Hz, never
-# misses a peak); unwired, it falls back to polling every ~15 ms. Wire them for a clean burn/landing capture.
-#
-# ---- Deploy + run ----  (the P4 firmware is untouched; this lives only on the C3)
-#   mpremote connect /dev/ttyACM1 cp tools/c3_burn_logger.py :main.py     # auto-runs on every boot
-#   mpremote connect /dev/ttyACM1 exec "import main; main.verify()"       # hardware check (after deploy,
-#       3 s of live CSV to the REPL; no file). (mpremote `run` can't pass --verify -- it never sets argv.)
-#   mpremote connect /dev/ttyACM1 exec "import main; main.probe()"        # low-level SPI probe of BOTH
-#       sensors (id reads + scratch write/read-back); pinpoints a pulled/open lead vs a dead chip. No file.
-#   ... power the C3 from battery, ignite within ~2 min, let it fly, then USB in to pull ...
-# While running, main() prints a 1 Hz `status` heartbeat to the REPL -- live per-sensor sample counts
-# (a pulled/dead sensor shows 0), the separation state, and the phase -- for a quick pad sanity check.
-# Every flush writes the next free burn.NN.csv (one file per idle minute, plus one when a flight ends) so an
-# autonomous restart or a battery brownout NEVER overwrites earlier data. A ~3-min power-up-to-unplug run is
-# therefore ~3 files; the 'flight file' is simply the one with the highest Gs + the separation. NOTE: a raw
-# power-pull loses the current un-flushed buffer (<=60 s of idle), but the flight auto-flushes ~10 s after it
-# goes quiet, so it is safe as long as you do not pull within ~10 s of the burn. Pull them over USB:
-#   mpremote connect /dev/ttyACM1 fs ls                                   # list burn.NN.csv
-#   mpremote connect /dev/ttyACM1 cp :burn.00.csv burn.00.csv            # pull each one
-#
-# ---- Output CSV + a VALIDATED example (manual shake + separate bench run) ----
-# Columns: t_us (DEVICE UPTIME -- us since power-up), phase, sep, n, dt_us, then min/avg/max of
-#   adxl_g, lsm_g, lsm_dps.
-#   phase: start (boot state) | slice (file-rotation state) | idle (1 row/s, decimated)
-#          | sep (a separation edge) | flight (full rate, RAM-buffered then dumped)
-#   sep:   1 = nested (switch HIGH) / 0 = open    n,dt_us = samples in the row / their real span (-> ~Hz)
-# A bench run (boot nested -> shake -> pull separation -> shake again) produced, e.g. (t_us = uptime):
-#   318000,start,1,1,0,0.110,0.110,0.110,0.997,0.997,0.997,... <- start (~0.3 s after power-up): NESTED, 1 g
-#   1006850,idle,1,159,986466,...                              <- idle: ~1 row/s, ~160 samples decimated
-#   12476710,flight,1,10,52267,0.000,8.629,24.444,1.201,6.944,14.463,...   <- LAUNCH (shake1): 24 g / 14 g
-#   14277405,sep,0,1,0,0.550,0.550,0.550,1.908,1.908,1.908,... <- SEPARATION edge (sep 1->0), timestamped
-#   15741660,flight,0,10,55526,2.528,9.415,40.393,6.059,10.922,15.715,470.825,1346.848,2111.386
-#                                                             <- shake2: ADXL 40 g, LSM 16 g, gyro 2111 dps
-# Validated end-to-end: boot state + the separation edge are both logged, shakes captured at ~175 Hz
-# (the data-ready INTs fire). LSM6DSO32 is the clean low-g channel (1.00 g at rest); the ADXL375
-# (49 mg/LSB, ~0.1-0.3 g offset at rest) is the high-g backstop -- it caught the sharp 40 g transient the
-# LSM filtered to 16 g. (Those rows predate the RAM-buffer / minute-slice rework but the format is the same.)
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Standalone ESP32-C3 logger for the TMS-7 STATIC burn + separation ground test. Runs ON the C3
+(MicroPython), NOT the P4 flight computer. It reads the ADXL375 (+/-200 g) and the LSM6DSO32 (+/-32 g
+accel + gyro) over a shared SPI bus and the separation switch on a GPIO, and writes a compact telemetry
+CSV to the C3's own flash (2 MB) -- a self-contained witness for the burn.
+
+Memory/flash thrift (the C3 has little RAM + 2 MB flash): every 10 samples (~100 ms) are reduced to
+min / avg / max. NOTHING is written to flash while sampling -- every row goes into a RAM buffer and the
+WHOLE file is written at once (open -> write all -> flush -> close -> sync) only at a flush point, so a
+flash erase stall can never compete with a peak. While IDLE (waiting for ignition) rows are decimated to
+ONE per second and the buffer is flushed to the next file every minute. The moment a launch g-spike OR a
+separation is seen it latches FLIGHT and buffers the full 100 ms summaries (10 rows/s); FLIGHT ends 10 s
+after the last high-G / separation event (each shifts that deadline +10 s) and the buffer is flushed THEN
+-- so the flight lands on flash within ~10 s of going quiet (safe against the power-pull). Worst-case file
+= ~(60 s idle + 10 s flight) x 10 rows/s = 700 records; the buffer is capped at 1000 for safety.
+
+---- Wiring (ESP32-C3 supermini; left header 5,6,7,8,9,10,20,21 / right 4,3,2,1,0 + 5V,G,3V3) ----
+  SPI (shared):  SCK = GPIO4    MOSI = GPIO6    MISO = GPIO5
+  ADXL375    CS = GPIO7         LSM6DSO32 CS = GPIO1
+  data-ready INTs (OPTIONAL):  ADXL375 INT1 = GPIO10   LSM6DSO32 INT1 = GPIO0
+  (each sensor's CS+INT are grouped on one header -- ADXL on the left 7/10, LSM on the right 1/0)
+  separation switch = GPIO3  (pads route 3V3 -> GPIO3 when NESTED = HIGH; internal pull-down -> open = LOW)
+  sensors powered from 3V3 + G. Avoid GPIO2/8/9 (strapping) and GPIO20/21 (USB-serial REPL).
+
+The INT pins are OPTIONAL: wired, the loop reads exactly when a fresh conversion lands (~104 Hz, never
+misses a peak); unwired, it falls back to polling every ~15 ms. Wire them for a clean burn/landing capture.
+
+---- Deploy + run ----  (the P4 firmware is untouched; this lives only on the C3)
+  mpremote connect /dev/ttyACM1 cp tools/c3_burn_logger.py :main.py     # auto-runs on every boot
+  mpremote connect /dev/ttyACM1 exec "import main; main.verify()"       # hardware check (after deploy,
+      3 s of live CSV to the REPL; no file). (mpremote `run` can't pass --verify -- it never sets argv.)
+  mpremote connect /dev/ttyACM1 exec "import main; main.probe()"        # low-level SPI probe of BOTH
+      sensors (id reads + scratch write/read-back); pinpoints a pulled/open lead vs a dead chip. No file.
+  ... power the C3 from battery, ignite within ~2 min, let it fly, then USB in to pull ...
+While running, main() prints a 1 Hz `status` heartbeat to the REPL -- live per-sensor sample counts
+(a pulled/dead sensor shows 0), the separation state, and the phase -- for a quick pad sanity check.
+Every flush writes the next free burn.NN.csv (one file per idle minute, plus one when a flight ends) so an
+autonomous restart or a battery brownout NEVER overwrites earlier data. A ~3-min power-up-to-unplug run is
+therefore ~3 files; the 'flight file' is simply the one with the highest Gs + the separation. NOTE: a raw
+power-pull loses the current un-flushed buffer (<=60 s of idle), but the flight auto-flushes ~10 s after it
+goes quiet, so it is safe as long as you do not pull within ~10 s of the burn. Pull them over USB:
+  mpremote connect /dev/ttyACM1 fs ls                                   # list burn.NN.csv
+  mpremote connect /dev/ttyACM1 cp :burn.00.csv burn.00.csv            # pull each one
+
+---- Output CSV + a VALIDATED example (manual shake + separate bench run) ----
+Columns: t_us (DEVICE UPTIME -- us since power-up), phase, sep, n, dt_us, then min/avg/max of
+  adxl_g, lsm_g, lsm_dps.
+  phase: start (boot state) | slice (file-rotation state) | idle (1 row/s, decimated)
+         | sep (a separation edge) | flight (full rate, RAM-buffered then dumped)
+  sep:   1 = nested (switch HIGH) / 0 = open    n,dt_us = samples in the row / their real span (-> ~Hz)
+A bench run (boot nested -> shake -> pull separation -> shake again) produced, e.g. (t_us = uptime):
+  318000,start,1,1,0,0.110,0.110,0.110,0.997,0.997,0.997,... <- start (~0.3 s after power-up): NESTED, 1 g
+  1006850,idle,1,159,986466,...                              <- idle: ~1 row/s, ~160 samples decimated
+  12476710,flight,1,10,52267,0.000,8.629,24.444,1.201,6.944,14.463,...   <- LAUNCH (shake1): 24 g / 14 g
+  14277405,sep,0,1,0,0.550,0.550,0.550,1.908,1.908,1.908,... <- SEPARATION edge (sep 1->0), timestamped
+  15741660,flight,0,10,55526,2.528,9.415,40.393,6.059,10.922,15.715,470.825,1346.848,2111.386
+                                                            <- shake2: ADXL 40 g, LSM 16 g, gyro 2111 dps
+Validated end-to-end: boot state + the separation edge are both logged, shakes captured at ~175 Hz
+(the data-ready INTs fire). LSM6DSO32 is the clean low-g channel (1.00 g at rest); the ADXL375
+(49 mg/LSB, ~0.1-0.3 g offset at rest) is the high-g backstop -- it caught the sharp 40 g transient the
+LSM filtered to 16 g. (Those rows predate the RAM-buffer / minute-slice rework but the format is the same.)
+"""
 
 import asyncio
 import math
@@ -68,7 +72,7 @@ import time
 
 from machine import SPI, Pin
 
-# --- config (edit here), grouped per device ---
+"""Config (edit here), grouped per device."""
 
 # shared SPI bus, mode 3 -- both parts ran clean at 10 MHz on the P4; 5 MHz is the safe ground choice
 _SCK, _MOSI, _MISO, _SPI_HZ = 4, 6, 5, 5_000_000
@@ -137,8 +141,21 @@ def _wr(cs, reg, value):
 
 
 def _verify_id(cs, reg, expected, tries=5):
-    """Read an id register, retrying -- the FIRST SPI read after bus bring-up can glitch (~10 % miss on
-    this family, seen on the P4 too). Returns (last_value, ok)."""
+    """
+    Read an id register, retrying past a first-read glitch.
+
+    The FIRST SPI read after bus bring-up can glitch (~10 % miss on this family, seen on the P4 too), so
+    the read is retried up to `tries` times.
+
+    Args:
+        cs - the device chip-select Pin.
+        reg - the id-register address.
+        expected - the id value that means the part answered.
+        tries - how many reads to attempt before giving up.
+
+    Returns:
+        (last_value, ok): the last id byte read and whether it ever matched `expected`.
+    """
     value = 0
     for _ in range(tries):
         value = _rd(cs, 0x80 | reg, 1)[0]
@@ -148,7 +165,14 @@ def _verify_id(cs, reg, expected, tries=5):
 
 
 def setup_sensors():
-    """Configure both parts; print + return (adxl_ok, lsm_ok) so the operator sees go/no-go before igniting."""
+    """
+    Configure both parts and report the go/no-go.
+
+    Prints the per-sensor id/status line so the operator sees the verdict before igniting.
+
+    Returns:
+        (adxl_ok, lsm_ok): whether each sensor answered its id register.
+    """
     adxl_id, adxl_ok = _verify_id(_cs_adxl, _ADXL_DEVID, _ADXL_ID)
     if adxl_ok:
         _wr(_cs_adxl, 0x31, 0x0B)   # DATA_FORMAT: full-res, 4-wire SPI
@@ -187,8 +211,11 @@ def sample(adxl_ok, lsm_ok):
 
 
 def _new():
-    """Fresh accumulator: [min,max,sum] x3 metrics, then count, first-sample us, last-sample us -- the
-    us pair lets each row carry the window's REAL span (n / dt_us = the true sample rate, with jitter)."""
+    """
+    A fresh accumulator: [min, max, sum] x3 metrics, then count, first-sample us, last-sample us.
+
+    The us pair lets each row carry the window's REAL span (n / dt_us = the true sample rate, with jitter).
+    """
     return [1e9, -1e9, 0.0, 1e9, -1e9, 0.0, 1e9, -1e9, 0.0, 0, 0, 0]
 
 
@@ -207,8 +234,15 @@ def _add(acc, adxl_g, lsm_g, lsm_dps, t_us):
 
 
 def _fmt_row(t_us, phase, sep, acc):
-    """Build one CSV line (NO I/O): t_us, phase, sep, n, dt_us (span) + min/avg/max of the 3 channels.
-    Returned as a string so FLIGHT rows can be held in RAM and hit flash only once the flight is over."""
+    """
+    Build one CSV line (NO I/O).
+
+    Columns: t_us, phase, sep, n, dt_us (span) + min/avg/max of the 3 channels. Returned as a string so
+    FLIGHT rows can be held in RAM and hit flash only once the flight is over.
+
+    Returns:
+        The CSV row as a newline-terminated string.
+    """
     n = acc[9] or 1
     cells = [str(t_us), phase, str(sep), str(acc[9]), str(time.ticks_diff(acc[11], acc[10]))]
     for b in (0, 3, 6):
@@ -233,8 +267,15 @@ def _fmt_event(t_us, phase, adxl_g, lsm_g, lsm_dps, sep):
 
 
 def _first_index():
-    """Lowest unused burn.NN index. Scanned ONCE at startup (a restart/brownout must not overwrite captured
-    data); the run then just increments -- only this process writes burn.*, so a rescan per flush is wasted."""
+    """
+    The lowest unused burn.NN index.
+
+    Scanned ONCE at startup (a restart/brownout must not overwrite captured data); the run then just
+    increments -- only this process writes burn.*, so a rescan per flush is wasted.
+
+    Returns:
+        The first free integer index N for burn.NN.csv.
+    """
     have = set(f for f in os.listdir() if f.startswith(_PREFIX) and f.endswith(_SUFFIX))
     n = 0
     while ('%s%02d%s' % (_PREFIX, n, _SUFFIX)) in have:
@@ -252,9 +293,15 @@ def _open(index):
 
 
 def _flush(buf, index, t_us, adxl_g, lsm_g, lsm_dps, sep):
-    """Write the whole buffer to burn.<index>.csv at once (open -> write all -> flush -> close -> sync) --
-    the ONLY moment flash is touched, so an erase stall never lands on a sample. Returns the fresh buffer,
-    primed with a 'slice' marker so the next file opens with the current separation state."""
+    """
+    Write the whole buffer to burn.<index>.csv at once (open -> write all -> flush -> close -> sync).
+
+    This is the ONLY moment flash is touched, so an erase stall never lands on a sample.
+
+    Returns:
+        A fresh buffer primed with a 'slice' marker, so the next file opens with the current separation
+        state.
+    """
     out, handle = _open(index)
     for line in buf:
         handle.write(line)
@@ -390,9 +437,16 @@ def verify():
 
 
 def _probe_dev(name, cs, idreg, idval, scratch):
-    """Probe one SPI device. Read its id register 8x (a CONSTANT value = nothing is driving MISO), then
-    write 0x7F -> read back -> restore 0x00 on a harmless scratch register (a live part echoes 0x7F, a
-    disconnected one returns a constant). Returns whether it responds, so each part is the other's control."""
+    """
+    Probe one SPI device on the shared bus.
+
+    Read its id register 8x (a CONSTANT value = nothing is driving MISO), then write 0x7F -> read back
+    -> restore 0x00 on a harmless scratch register (a live part echoes 0x7F, a disconnected one returns
+    a constant). Each part is the other's control on the shared bus.
+
+    Returns:
+        True if the device responds (the id matched or the scratch echo returned 0x7F), else False.
+    """
     ids = [_rd(cs, 0x80 | idreg, 1)[0] for _ in range(8)]
     _wr(cs, scratch, 0x7F)
     echo = _rd(cs, 0x80 | scratch, 1)[0]
@@ -406,9 +460,16 @@ def _probe_dev(name, cs, idreg, idval, scratch):
 
 
 def probe():
-    """Low-level SPI diagnostic of BOTH sensors -- each is the control for the other on the shared bus, so it
-    separates a pulled/open lead (one part silent, the other fine) from a dead bus (both silent) or a dead
-    chip. No file; prints a verdict. Run via:  mpremote ... exec "import main; main.probe()" ."""
+    """
+    Low-level SPI diagnostic of BOTH sensors.
+
+    Each sensor is the control for the other on the shared bus, so this separates a pulled/open lead
+    (one part silent, the other fine) from a dead bus (both silent) or a dead chip. No file; prints a
+    verdict. Run via:  mpremote ... exec "import main; main.probe()".
+
+    Returns:
+        (adxl_ok, lsm_ok): whether each sensor responded.
+    """
     print('-- SPI probe (SCK%d MOSI%d MISO%d @ %dMHz mode3) --' % (_SCK, _MOSI, _MISO, _SPI_HZ // 1_000_000))
     adxl_ok = _probe_dev('ADXL375', _cs_adxl, _ADXL_DEVID, _ADXL_ID, 0x1E)    # OFSX -- signed offset trim
     lsm_ok = _probe_dev('LSM6DSO32', _cs_lsm, _LSM_WHOAMI, _LSM_ID, 0x73)     # X_OFS_USR -- user offset

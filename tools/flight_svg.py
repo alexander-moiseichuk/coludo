@@ -1,11 +1,15 @@
-# flight_svg.py — render a Coludo flight capture as a standalone SVG (no dependencies), for when plotly
-# (flight_report.py) is not available. Two modes:
-#   single  : python3 flight_svg.py capture.txt -o report.svg [--title T] [--pad LAT,LON] [--zone ...]
-#             a two-panel report -- plan-view ground track (left) + altitude & roll vs time (right).
-#   overlay : python3 flight_svg.py a.txt b.txt c.txt --overlay -o cmp.svg --labels "5%,10%,25%"
-#             every track on one plan view, to compare runs.
-# Reuses flight_telemetry.parse(), so it keys on the same field names the recorder writes. Pad/zone are
-# not in a capture; pass --pad/--zone to draw them (defaults: origin = first GNSS fix, no zone box).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Render a Coludo flight capture as a standalone SVG (no dependencies), for when plotly (flight_report.py)
+is not available. Two modes:
+  single  : python3 flight_svg.py capture.txt -o report.svg [--title T] [--pad LAT,LON] [--zone ...]
+            a two-panel report -- plan-view ground track (left) + altitude & roll vs time (right).
+  overlay : python3 flight_svg.py a.txt b.txt c.txt --overlay -o cmp.svg --labels "5%,10%,25%"
+            every track on one plan view, to compare runs.
+Reuses flight_telemetry.parse(), so it keys on the same field names the recorder writes. Pad/zone are
+not in a capture; pass --pad/--zone to draw them (defaults: origin = first GNSS fix, no zone box).
+"""
 
 import argparse
 import math

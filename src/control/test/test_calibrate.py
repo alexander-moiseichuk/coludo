@@ -1,7 +1,11 @@
-# Host (CPython) test for the `calibrate` operator command: it drives a fake board's `bustune` ladder
-# and must (a) keep the ceiling when the sweep is clean, (b) back off `margin` steps below a real
-# failure and name the limiting device, (c) restore the bus to its configured freq, (d) guard bad args
-# / offline boards. No hardware -- a fake board answers get-config + bustune.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Host (CPython) test for the `calibrate` operator command: it drives a fake board's `bustune` ladder
+and must (a) keep the ceiling when the sweep is clean, (b) back off `margin` steps below a real
+failure and name the limiting device, (c) restore the bus to its configured freq, (d) guard bad args
+/ offline boards. No hardware -- a fake board answers get-config + bustune.
+"""
 
 import asyncio
 import json

@@ -1,20 +1,29 @@
-# tasks/watchdog.py — Phase 3 watchdog + heartbeat supervisor. @task.activity('watchdog'). Two layers:
-#   1. a hardware machine.WDT fed every period -> a TOTAL event-loop wedge (any task stuck below the
-#      await level, a hung I2C bus) stops the feed and the board hard-resets. The backstop.
-#   2. a heartbeat check of the CONTROL LOOP: while the flight task is in a control stage it must keep
-#      ticking (its step counter advances). A stalled control loop (live scheduler, dead control) ->
-#      reset, since a soft restart cannot preempt a wedged native call and the HW (PWM, the I2C bus,
-#      sensors mid-transaction) needs a clean reset to be trustworthy.
-# Recovery is a full machine.reset() (fast on the P4; boot re-centres the fins) -- a soft event-loop
-# restart is unreliable here. The flight loop already fail-safes to neutral on stale attitude (degraded
-# mode), so that is NOT a watchdog trigger. Disabled by default -- a live WDT also resets the board when
-# you drop the running firmware to the REPL for bench work; enable it for flight.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Watchdog + heartbeat supervisor. @task.activity('watchdog'). Two layers:
+  1. a hardware machine.WDT fed every period -> a TOTAL event-loop wedge (any task stuck below the
+     await level, a hung I2C bus) stops the feed and the board hard-resets. The backstop.
+  2. a heartbeat check of the CONTROL LOOP: while the flight task is in a control stage it must keep
+     ticking (its step counter advances). A stalled control loop (live scheduler, dead control) ->
+     reset, since a soft restart cannot preempt a wedged native call and the HW (PWM, the I2C bus,
+     sensors mid-transaction) needs a clean reset to be trustworthy.
+Recovery is a full machine.reset() (fast on the P4; boot re-centres the fins) -- a soft event-loop
+restart is unreliable here. The flight loop already fail-safes to neutral on stale attitude (degraded
+mode), so that is NOT a watchdog trigger. Disabled by default -- a live WDT also resets the board when
+you drop the running firmware to the REPL for bench work; enable it for flight.
+"""
 
 import asyncio
 import time
 
 import recorder
 import task
+
+try:
+    from machine import WDT
+except ImportError:  # host (CPython): board-only; the hardware WDT is armed only on the board
+    WDT = None
 
 
 @task.activity('watchdog')
@@ -31,10 +40,20 @@ class Watchdog(task.Task):
         return True
 
     def _stalled(self, flight) -> bool:
-        """True if the control loop says it is controlling but has produced no step within stall_ms.
-        Reads the flight task's public progress() heartbeat (not its privates, 3.6.1) and judges
-        staleness by the update TIMESTAMP -- a direct measure, independent of this watchdog's own poll
-        cadence (so it does not matter if a poll happens to land between two control steps)."""
+        """
+        Whether the control loop says it is controlling but has produced no step within stall_ms.
+
+        Reads the flight task's public progress() heartbeat -- not its private fields, so the coupling
+        is to a stable public API -- and judges staleness by the update TIMESTAMP: a direct measure,
+        independent of this watchdog's own poll cadence (so it does not matter if a poll happens to land
+        between two control steps).
+
+        Args:
+            flight - the flight task (None when it is disabled), read for its progress() heartbeat.
+
+        Returns:
+            True if the loop is in a control stage but its last step is older than stall_ms, else False.
+        """
         if flight is None:
             return False
         controlling, _steps, _stage, updated_us = flight.progress()
@@ -43,20 +62,36 @@ class Watchdog(task.Task):
         return time.ticks_diff(time.ticks_us(), updated_us) > self._stall_us
 
     def kick(self) -> None:
-        """Out-of-band feed for a caller about to LEGITIMATELY block the loop -- the memory
-        rescue's gc.collect() is atomic and unfeedable, so kicking first gives the block the FULL
-        timeout budget instead of whatever remains of the current feed window. No-op until the
-        WDT is armed."""
+        """
+        Out-of-band feed for a caller about to LEGITIMATELY block the loop.
+
+        The memory rescue's gc.collect() is atomic and unfeedable, so kicking first gives the block the
+        FULL timeout budget instead of whatever remains of the current feed window. No-op until the WDT
+        is armed.
+
+        Args:
+            (none)
+
+        Returns:
+            None; feeds the hardware WDT once if it is armed.
+        """
         if self._wdt is not None:
             self._wdt.feed()
 
     def _arm(self) -> None:
-        """Create the hardware WDT on the first run() tick -- NOT in setup(): the timeout starts
-        counting the moment the WDT exists, so it must not arm until the feed loop is actually live
-        (bring-up of later tasks could otherwise outlast the timeout and reset the board)."""
-        if self._wdt is None:
-            from machine import WDT
+        """
+        Create the hardware WDT on the first run() tick -- NOT in setup().
 
+        The timeout starts counting the moment the WDT exists, so it must not arm until the feed loop is
+        actually live (bring-up of later tasks could otherwise outlast the timeout and reset the board).
+
+        Args:
+            (none)
+
+        Returns:
+            None; creates the hardware WDT once (a no-op if it already exists).
+        """
+        if self._wdt is None:
             self._wdt = WDT(timeout=self._timeout_ms)
 
     async def run(self) -> None:

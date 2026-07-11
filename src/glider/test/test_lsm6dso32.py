@@ -1,7 +1,11 @@
-# On-board test for the LSM6DSO32 driver (drivers/lsm6dso32.py): @task.driver('lsm6dso32') registration
-# and graceful setup when the device is absent (negative, deterministic), plus a POSITIVE case against the
-# real device if one answers at the configured chip-select (accel ~1 g at rest, finite gyro). Run by
-# `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the LSM6DSO32 driver (drivers/lsm6dso32.py): @task.driver('lsm6dso32') registration
+and graceful setup when the device is absent (negative, deterministic), plus a POSITIVE case against the
+real device if one answers at the configured chip-select (accel ~1 g at rest, finite gyro). Run by
+`make test`.
+"""
 
 import asyncio
 
@@ -19,7 +23,7 @@ class _StubController:
 async def amain():
     assert task.ACTIVITIES.get('lsm6dso32') is lsm6dso32.Lsm6dso32  # registered driver
 
-    # --- negative (deterministic whether or not the IMU is wired) ---
+    """Negative: deterministic whether or not the IMU is wired."""
     no_bus = lsm6dso32.Lsm6dso32('imu', {'bus': 'i2c', 'id': 9}, _StubController())
     assert await no_bus.setup() is False and not no_bus.validate()  # undefined bus -> graceful False
 
@@ -32,7 +36,7 @@ async def amain():
     no_cs = lsm6dso32.Lsm6dso32('imu', {'bus': 'spi', 'id': 1}, _StubController())
     assert await no_cs.setup() is False  # SPI selected, no cs_pin -> graceful False
 
-    # --- positive (only when the real LSM6DSO32 answers on cs 50; skipped cleanly if unplugged) ---
+    """Positive: only when the real LSM6DSO32 answers on cs 50; skipped cleanly if unplugged."""
     real = lsm6dso32.Lsm6dso32('imu', {'bus': 'spi', 'id': 1, 'cs_pin': 'lsm6dso32_cs',
                                        'int_pin': 'lsm6dso32_int1',
                                        'provides': {'accel': {'priority': 0}, 'rate': {'priority': 0}}},

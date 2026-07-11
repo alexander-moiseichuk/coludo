@@ -1,4 +1,8 @@
-# `help` — list operator commands, or `help <command>` for one.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+`help` -- list operator commands, or `help <command>` for one.
+"""
 
 import json
 

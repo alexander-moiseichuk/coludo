@@ -1,5 +1,9 @@
-# Host (CPython) test for board.py: the Board lockstep (command / identify / disconnect / timeout)
-# over fake streams. Run by `make test` in this dir (or python3 test_board.py).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Host (CPython) test for board.py: the Board lockstep (command / identify / disconnect / timeout)
+over fake streams. Run by `make test` in this dir (or python3 test_board.py).
+"""
 
 import asyncio
 import json

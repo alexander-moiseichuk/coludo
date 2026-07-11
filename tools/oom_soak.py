@@ -1,18 +1,22 @@
-# tools/oom_soak.py -- in-flight OOM soak (MicroPython, runs ON the board; wishes 7/06 #2).
-# The GC-off control-path leak is ~15-18 KB/s at 100 Hz -> a natural OOM sits ~36 min out, far
-# past any real flight. This soak BALLASTS the heap down to `target_kb` before ignition so the
-# SAME leak reaches OOM mid-glide, then lets the production failure chain run for real:
-#   MemoryError in the flight slice -> crash->neutral (flight.py's finally) -> the step counter
-#   stops -> watchdog stall (stall_ms 500) -> hard reset -> main.py boots and the warm-start
-#   five-signal gate decides (on the bench it must REFUSE -- the separation latch reads nested /
-#   the baro reads pad level -- and clear the crumb: the negative gate under a REAL reset cause).
-# The run therefore ENDS with the board resetting out from under mpremote -- that connection
-# drop IS the observable. Afterwards check: machine.reset_cause(), the NVS crumb flag (cleared),
-# and the recorder session's watchdog 'control loop stalled' line (Luckfox).
-#
-# Fly it like hitl_run (deploy first: cd src/glider && ./deploy.sh; then):
-#   printf 'import oom_soak\noom_soak.soak("F15", 600)\n' > /tmp/launch.py
-#   python3 tools/board_reboot.py PORT && mpremote connect PORT run /tmp/launch.py
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+In-flight OOM soak (MicroPython, runs ON the board). The GC-off control-path leak is ~15-18 KB/s at
+100 Hz -> a natural OOM sits ~36 min out, far past any real flight. This soak BALLASTS the heap down to
+`target_kb` before ignition so the SAME leak reaches OOM mid-glide, then lets the production failure
+chain run for real:
+    MemoryError in the flight slice -> crash->neutral (flight.py's finally) -> the step counter stops ->
+    watchdog stall (stall_ms 500) -> hard reset -> main.py boots and the warm-start five-signal gate
+    decides (on the bench it must REFUSE -- the separation latch reads nested / the baro reads pad level
+    -- and clear the crumb: the negative gate under a REAL reset cause).
+The run therefore ENDS with the board resetting out from under mpremote -- that connection drop IS the
+observable. Afterwards check: machine.reset_cause(), the NVS crumb flag (cleared), and the recorder
+session's watchdog 'control loop stalled' line (Luckfox).
+
+Fly it like hitl_run (deploy first: cd src/glider && ./deploy.sh; then):
+    printf 'import oom_soak\\noom_soak.soak("F15", 600)\\n' > /tmp/launch.py
+    python3 tools/board_reboot.py PORT && mpremote connect PORT run /tmp/launch.py
+"""
 
 import asyncio
 import gc
@@ -30,12 +34,21 @@ _FINE: int = 64 * 1024
 
 
 async def _ballast(target_kb: int) -> list:
-    """Eat the heap down to ~target_kb free (refs held by the caller). Called at GLIDING entry:
-    every long-lived structure (sim body, rings, tasks) is already placed and GC is already off,
-    so the ballast carves the REMAINING free pool without starving the bring-up -- the first
-    attempt ballasted before start() and the fragmented heap killed the sim before ignition.
-    Yields per chunk: zeroing ~25 MB of PSRAM blocks for seconds, and the enabled watchdog
-    (wdt_timeout 1000 ms) must keep feeding while we dig."""
+    """
+    Eat the heap down to ~target_kb free (refs held by the caller).
+
+    Called at GLIDING entry: every long-lived structure (sim body, rings, tasks) is already placed and
+    GC is already off, so the ballast carves the REMAINING free pool without starving the bring-up --
+    the first attempt ballasted before start() and the fragmented heap killed the sim before ignition.
+    Yields per chunk: zeroing ~25 MB of PSRAM blocks for seconds, and the enabled watchdog (wdt_timeout
+    1000 ms) must keep feeding while we dig.
+
+    Args:
+        target_kb - leave roughly this many KB of heap free.
+
+    Returns:
+        The list of ballast bytearrays; the caller must hold the reference to keep the heap pinned.
+    """
     hold = []
     try:
         while gc.mem_free() > target_kb * 1024 + 2 * _BIG:

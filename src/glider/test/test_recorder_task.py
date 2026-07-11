@@ -1,5 +1,9 @@
-# On-board test for the Recorder's task adapter (tasks/recorder.py): @task.driver('recorder')
-# registration, and that it proxies + wires the global Recorder singleton. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the Recorder's task adapter (tasks/recorder.py): @task.driver('recorder')
+registration, and that it proxies + wires the global Recorder singleton. Run by `make test`.
+"""
 
 import asyncio
 

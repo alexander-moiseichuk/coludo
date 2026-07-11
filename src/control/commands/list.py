@@ -1,4 +1,8 @@
-# `list` — the connected boards and their last-known status.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+`list` -- the connected boards and their last-known status.
+"""
 
 import json
 

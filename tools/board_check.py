@@ -1,13 +1,17 @@
-# tools/board_check.py — "verify board setup and report problems". Runs ON the board: brings up every
-# configured device from the board's own config and reports which are connected vs absent/miswired,
-# then runs the probe self-tests. One command over serial, NO Wi-Fi/CC needed -- the network tasks set
-# up locally and connect in the background, so this works right after install, before the AP /
-# credentials are confirmed.
-#
-#   mpremote connect /dev/ttyACM0 run tools/board_check.py
-#
-# NOTE: probe runs ACTIVE self-tests -- it SWEEPS THE SERVOS. Bench use only, never with the airframe
-# armed. PASS = no setup failures and every probe healthy; otherwise the problems are listed.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+'verify board setup and report problems'. Runs ON the board: brings up every configured device from
+the board's own config and reports which are connected vs absent/miswired, then runs the probe
+self-tests. One command over serial, NO Wi-Fi/CC needed -- the network tasks set up locally and
+connect in the background, so this works right after install, before the AP / credentials are
+confirmed.
+
+  mpremote connect /dev/ttyACM0 run tools/board_check.py
+
+NOTE: probe runs ACTIVE self-tests -- it SWEEPS THE SERVOS. Bench use only, never with the airframe
+armed. PASS = no setup failures and every probe healthy; otherwise the problems are listed.
+"""
 
 import asyncio
 

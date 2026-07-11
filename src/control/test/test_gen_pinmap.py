@@ -1,6 +1,10 @@
-# Host (CPython) test: the generated pin doc (doc/waveshare_esp32p4_pins.md) is IN SYNC with
-# config_default -- `gen_pinmap.py --check` must pass. So a bus/pin change that forgot to regenerate
-# the doc fails CI here, instead of leaving a stale doc that once nearly sent a solder to phantom pins.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Host (CPython) test: the generated pin doc (doc/waveshare_esp32p4_pins.md) is IN SYNC with
+config_default -- `gen_pinmap.py --check` must pass. So a bus/pin change that forgot to regenerate
+the doc fails CI here, instead of leaving a stale doc that once nearly sent a solder to phantom pins.
+"""
 
 import os
 import subprocess

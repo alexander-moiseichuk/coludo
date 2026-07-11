@@ -1,26 +1,28 @@
-# commons.py — small, dependency-free primitives shared across the control-math modules (mixer / pid /
-# navigation / guidance / governor / sequencer / flight / sg90). The bundle module for the plan.
-#
-# Layout, one banner per concern: COMPATIBILITY (every MicroPython/CPython shim, in one place) ->
-# CONSTANTS -> INTEGER MATH (viper) -> FLOAT MATH (native) -> FIN GOVERNOR -> PERSISTENCE ->
-# WIRE DIAGNOSTICS.
-#
-# Naming convention:
-# plain name -- a leaf with no _opt variant at all.
-# NAME_upy / NAME_opt + `NAME = <winner>`
-# -- a function with an optimised variant. NAME_upy is the
-# portable bytecode reference; NAME_opt is the optimised build (viper for ints, native for floats,
-# future asm). The module binds NAME to whichever the on-board bench FAVOURS -- usually _opt; switch
-# the one alias line if a measurement changes. Both forms stay public so benchmarks/tests call them
-# DIRECTLY (no runtime selector). Bound here: clamp_int, wrap180 (@viper, ~2.1-2.8x); between,
-# magnitude_sq (@native, ~1.2-1.6x); bank_demand -> _upy for now (its @native measured 1.03x -- a
-# thin wrapper over native between; switch to _opt when a bench shows a gain).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-# ------------------------------------------------------------------ MicroPython/CPython compatibility
-# `@micropython.viper` / `@micropython.native` are compiler directives keyed on the literal decorator
-# name (not aliasable); the shim keeps the module importable on CPython (the decorator degrades to
-# identity, runs as plain Python). On the board the RV32 emitter compiles viper to integer-only native
-# code (~2.1-2.5x vs bytecode, no FPU) and native to FPU float code (~1.2-1.6x — float boxing caps it).
+Small, dependency-free primitives shared across the control-math modules (mixer / pid / navigation /
+guidance / governor / sequencer / flight / sg90). The bundle module for the plan.
+
+Layout, one section per concern: COMPATIBILITY (every MicroPython/CPython shim, in one place) ->
+CONSTANTS -> INTEGER MATH (viper) -> FLOAT MATH (native) -> FIN GOVERNOR -> PERSISTENCE ->
+WIRE DIAGNOSTICS.
+
+Naming convention: a plain name is a leaf with no _opt variant at all. A NAME_upy / NAME_opt pair
+plus `NAME = <winner>` is a function with an optimised variant -- NAME_upy is the portable bytecode
+reference; NAME_opt is the optimised build (viper for ints, native for floats, future asm). The
+module binds NAME to whichever the on-board bench FAVOURS -- usually _opt; switch the one alias line
+if a measurement changes. Both forms stay public so benchmarks/tests call them DIRECTLY (no runtime
+selector). Bound here: clamp_int, wrap180 (@viper, ~2.1-2.8x); between, magnitude_sq (@native,
+~1.2-1.6x); bank_demand -> _upy for now (its @native measured 1.03x -- a thin wrapper over native
+between; switch to _opt when a bench shows a gain).
+"""
+
+# MicroPython/CPython compatibility: `@micropython.viper` / `@micropython.native` are compiler
+# directives keyed on the literal decorator name (not aliasable); the shim keeps the module importable
+# on CPython (the decorator degrades to identity, runs as plain Python). On the board the RV32 emitter
+# compiles viper to integer-only native code (~2.1-2.5x vs bytecode, no FPU) and native to FPU float
+# code (~1.2-1.6x -- float boxing caps it).
 
 try:
     from time import ticks_diff  # wrap-safe tick difference (guidance nav cache)
@@ -51,7 +53,10 @@ except ImportError:  # CPython (off-board tooling / tests) — everything degrad
         return new - old
 
 
-# ------------------------------------------------------------------------------------ shared constants
+import json
+import os
+
+"""Shared constants."""
 
 M_PER_DEG: float = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat));
                              # shared by navigation + sim_model (flat-earth geo) -- one definition.
@@ -61,7 +66,7 @@ SERVO_NEUTRAL_DEG: int = 90  # default fin/servo neutral angle (deg): the zero-d
                              # deflections. A board may override per surface via config `mixer.neutral_deg`.
 
 
-# ------------------------------------------------------------------------------- integer math (@viper)
+"""Integer math -- the @viper (integer-only native) primitives."""
 
 # clamp_int: integer clamp to [low, high]. Hot via sg90 fin clamping (round(angle), min/max deg).
 
@@ -91,13 +96,24 @@ def wrap180_opt(degrees: int) -> int:
 wrap180 = wrap180_opt  # viper is safe on this firmware -> bind the optimised variant
 
 
-# ------------------------------------------------------------------------------- float math (@native)
+"""Float math -- the @native (FPU) primitives."""
 
 def between_upy(low: float, value: float, high: float) -> float:
-    """Clamp `value` to the inclusive range [low, high]: `low` if below, `high` if above, else `value`.
+    """
+    Clamp `value` to the inclusive range [low, high]: `low` if below, `high` if above, else `value`.
+
     With low=-x, high=+x it is a symmetric +/-x clamp; either bound may be math.inf for an open side
     (between(-inf, v, inf) == v). Float-/inf-valued (so @native, not viper); plain ints pass through
-    unconverted. Assumes low <= high."""
+    unconverted. Assumes low <= high.
+
+    Args:
+        low - the lower bound (may be -math.inf for an open lower side).
+        value - the value to clamp.
+        high - the upper bound (may be math.inf for an open upper side).
+
+    Returns:
+        `value` clamped to [low, high].
+    """
     return low if value < low else (high if value > high else value)
 
 
@@ -110,7 +126,7 @@ between = between_opt  # @native -- the most-called primitive; a free ~1.6x (han
 
 
 def magnitude_sq_upy(x: float, y: float, z: float) -> float:
-    """|(x, y, z)|^2 (no sqrt — callers compare against squared thresholds). Pure float -> @native."""
+    """|(x, y, z)|^2 (no sqrt -- callers compare against squared thresholds). Pure float -> @native."""
     return x * x + y * y + z * z
 
 
@@ -123,10 +139,20 @@ magnitude_sq = magnitude_sq_opt  # @native
 
 
 def bank_demand_upy(heading_error: int, gain: float, limit: float) -> float:
-    """Bank-to-turn: the roll angle (deg, right +) to hold for a heading error (deg) -- proportional with
-    a symmetric hard clamp (gain 0 -> no bank, rudder-only). A banked turn is tight (~v^2/(g*tan(bank)))
-    where a flat rudder skid is wide and weak, so the glider does not over-RANGE a small zone and the
-    overshoot loop becomes an altitude-bleeding orbit."""
+    """
+    Bank-to-turn: the roll angle to hold for a heading error, proportional with a symmetric hard clamp.
+
+    A banked turn is tight (~v^2/(g*tan(bank))) where a flat rudder skid is wide and weak, so the glider
+    does not over-RANGE a small zone and the overshoot loop becomes an altitude-bleeding orbit.
+
+    Args:
+        heading_error - the heading error to null (deg).
+        gain - roll degrees commanded per degree of error (0 -> no bank, rudder-only).
+        limit - the symmetric hard clamp on the returned roll (deg).
+
+    Returns:
+        The roll angle (deg, right +), clamped to [-limit, limit].
+    """
     return between(-limit, gain * heading_error, limit)
 
 
@@ -138,34 +164,53 @@ def bank_demand_opt(heading_error: int, gain: float, limit: float) -> float:
 bank_demand = bank_demand_upy  # @native measured 1.03x here -> keep _upy; switch to _opt when a bench shows a gain
 
 
-# ------------------------------------------------------------------------------------- fin governor
-# The dynamic-pressure fin deflection table (coludo.md "Fin authority"): max fin deflection (deg from
-# neutral) the airframe can safely take at a given airspeed. Aero torque scales with dynamic pressure
-# q ∝ v², so a fixed angle is too weak slow / too violent fast; the cap goes ∝ 1/v² to hold ~constant
-# angular authority, clamped to [5°, 45°] (always-some authority / fin mechanical throw). K=12500
-# anchors 50 m/s -> 5°. Precomputed ONCE at import (no per-step 1/v² on the 100 Hz path); the
-# board.config `fin_limit_multiplier` (default 1.0) is applied by the caller, not baked into the table.
+"""
+Fin governor -- the dynamic-pressure fin deflection table (coludo.md "Fin authority"): the max fin
+deflection (deg from neutral) the airframe can safely take at a given airspeed. Aero torque scales
+with dynamic pressure q proportional to v^2, so a fixed angle is too weak slow / too violent fast;
+the cap goes proportional to 1/v^2 to hold ~constant angular authority, clamped to [5 deg, 45 deg]
+(always-some authority / fin mechanical throw). K=12500 anchors 50 m/s -> 5 deg. Precomputed ONCE at
+import (no per-step 1/v^2 on the 100 Hz path); the board.config `fin_limit_multiplier` (default 1.0)
+is applied by the caller, not baked into the table.
+"""
 
 _FIN_VMAX: int = const(80)  # m/s -- table saturates here (well past any expected airspeed)
-_FIN_LIMIT: tuple = tuple(45 if v == 0 else min(45, max(5, round(12500 / (v * v))))
-                          for v in range(_FIN_VMAX + 1))
+_FIN_LIMIT: tuple = tuple(45 if value == 0 else min(45, max(5, round(12500 / (value * value))))
+                          for value in range(_FIN_VMAX + 1))
 
 
 def fin_deflection_limit(speed_ms: float) -> int:
-    """Max fin deflection in degrees for airspeed `speed_ms` (m/s) -- the dynamic-pressure governor table
-    lookup (saturates at _FIN_VMAX). Multiply by the config fin_limit_multiplier at the caller."""
+    """
+    Max fin deflection in degrees for a given airspeed -- the dynamic-pressure governor table lookup.
+
+    Saturates at _FIN_VMAX. Multiply by the config fin_limit_multiplier at the caller (the safety dial
+    is not baked into the table).
+
+    Args:
+        speed_ms - the airspeed (m/s).
+
+    Returns:
+        The max fin deflection (deg from neutral) for that airspeed.
+    """
     return _FIN_LIMIT[max(0, min(int(speed_ms), _FIN_VMAX))]
 
 
-# -------------------------------------------------------------------------------------- persistence
+"""Persistence."""
 
 def atomic_write_json(path: str, data) -> None:
-    """Persist `data` as JSON to `path` atomically (shared by config.save + mission.save): write a
-    temp file then rename it over the target, with a remove-then-rename fallback for a VFS (FAT) that
-    won't rename onto an existing file. os/json are imported lazily so the hot-path importers of commons
-    do not pull them in."""
-    import json
-    import os
+    """
+    Persist `data` as JSON to `path` atomically (shared by config.save + mission.save).
+
+    Write a temp file then rename it over the target, with a remove-then-rename fallback for a VFS
+    (FAT) that won't rename onto an existing file.
+
+    Args:
+        path - the destination file path.
+        data - the JSON-serialisable object to persist.
+
+    Returns:
+        None. Writes `path` atomically as a side effect (via a `.tmp` sibling then rename).
+    """
     tmp = path + '.tmp'
     with open(tmp, 'w') as handle:
         handle.write(json.dumps(data))
@@ -179,14 +224,25 @@ def atomic_write_json(path: str, data) -> None:
         os.rename(tmp, path)
 
 
-# --------------------------------------------------------------------------------- wire diagnostics
+"""Wire diagnostics."""
 
 def id_classify(read, expected: int) -> str:
-    """Classify a chip WHO_AM_I / device-id byte against the expected value into an operator-readable
-    wire-level diagnosis. The deeper 'why' a bus driver's diagnose() returns when setup() failed, so
-    `verify`/`probe` report e.g. 'chip-select not asserting' instead of just 'absent / miswired?'.
-    `read` is None when the bus read itself failed (no I2C ack / SPI error). Shared by every ID-based
-    driver (adxl375 / lsm6dso32 / bno055 / bmp280), so it lives here, not in one driver."""
+    """
+    Classify a chip WHO_AM_I / device-id byte into an operator-readable wire-level diagnosis.
+
+    The deeper 'why' a bus driver's diagnose() returns when setup() failed, so `verify`/`probe` report
+    e.g. 'chip-select not asserting' instead of just 'absent / miswired?'. Shared by every ID-based
+    driver (adxl375 / lsm6dso32 / bno055 / bmp280), so it lives here, not in one driver.
+
+    Args:
+        read - the id byte read from the device, or None when the bus read itself failed (no I2C ack /
+            SPI error).
+        expected - the device's documented id byte.
+
+    Returns:
+        A human-readable diagnosis string: 'ok' when read == expected, else the most likely wiring/
+        power fault inferred from read (None / 0x00 / 0xFF / a wrong non-zero id).
+    """
     if read is None:
         return 'no bus response -- device not acking (absent / unpowered / miswired)'
     if read == expected:

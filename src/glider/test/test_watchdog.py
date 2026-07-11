@@ -1,7 +1,11 @@
-# On-board test for the watchdog/heartbeat supervisor (tasks/watchdog.py): the control-loop stall
-# decision (now TIME-based, via the flight progress() timestamp) and that run() feeds an (injected)
-# WDT while healthy but resets on a stall. A stub WDT + reset are injected so nothing actually resets
-# the board. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the watchdog/heartbeat supervisor (tasks/watchdog.py): the control-loop stall
+decision (now TIME-based, via the flight progress() timestamp) and that run() feeds an (injected)
+WDT while healthy but resets on a stall. A stub WDT + reset are injected so nothing actually resets
+the board. Run by `make test`.
+"""
 
 import asyncio
 import time
@@ -30,7 +34,7 @@ class FakeFlight:
         self._steps += 1
         self._updated_us = time.ticks_us()
 
-    def progress(self):  # the public heartbeat the watchdog reads (3.6.1): (active, steps, stage, updated_us)
+    def progress(self):  # the public heartbeat the watchdog reads: (active, steps, stage, updated_us)
         return self._active, self._steps, self._stage, self._updated_us
 
 

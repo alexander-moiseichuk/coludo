@@ -1,7 +1,11 @@
-# On-board test for the fixed-point helpers (fixed.py): boundary conversions (from_float / to_float),
-# integer decimal formatting (to_str, no float boxed), clamp, and -- the point of the SCALE choice -- an
-# accuracy + overflow SWEEP over the real control-path ranges, reported so we pick SCALE (100 vs 1000)
-# from data. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the fixed-point helpers (fixed.py): boundary conversions (from_float / to_float),
+integer decimal formatting (to_str, no float boxed), clamp, and -- the point of the SCALE choice -- an
+accuracy + overflow SWEEP over the real control-path ranges, reported so we pick SCALE (100 vs 1000)
+from data. Run by `make test`.
+"""
 
 import math
 
@@ -9,9 +13,12 @@ import fixed
 
 
 def test_atan2_cd():
-    """Integer CORDIC atan2 (centidegrees) tracks math.atan2 to <= ~0.2 deg over all four quadrants,
-    and the accel-gravity-vector -> roll/pitch composition (with isqrt) reproduces banked/pitched
-    attitudes -- the attitude-backup filter's core, zero float boxed."""
+    """
+    Integer CORDIC atan2 (centidegrees) tracks math.atan2 to <= ~0.2 deg over all four quadrants.
+
+    The accel-gravity-vector -> roll/pitch composition (with isqrt) reproduces banked/pitched
+    attitudes -- the attitude-backup filter's core, zero float boxed.
+    """
     # cardinal + quadrant sanity
     assert fixed.atan2_cd(0, 0) == 0
     assert abs(fixed.atan2_cd(0, 1000) - 0) <= 17       # +x axis -> 0
@@ -26,6 +33,11 @@ def test_atan2_cd():
         ref = round(adeg * 100)
         worst = max(worst, abs(((got - ref + 18000) % 36000) - 18000))
     assert worst <= 20, worst  # ~0.2 deg -- plenty for a backup attitude
+    # the viper CORDIC core matches its readable reference over the x>=0 half-plane atan2_cd feeds it
+    for adeg in range(-90, 91):
+        a = math.radians(adeg)
+        yi, xi = round(math.sin(a) * 1000), round(math.cos(a) * 1000)
+        assert fixed._cordic_vec_opt(yi, xi, fixed._ATAN_CD) == fixed._cordic_vec_upy(yi, xi, fixed._ATAN_CD)
     # isqrt exact vs the reference across the range the filter feeds it
     for n in (0, 1, 2, 4, 1000000, 1999999, 2000000):
         assert fixed.isqrt(n) == fixed.isqrt_upy(n) == int(n ** 0.5)

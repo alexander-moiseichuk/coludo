@@ -1,8 +1,13 @@
-# tools/flight_video.py — render a narrated 3D-ish animation of one or more flight captures to an mp4.
-# Uses follow-cam (glider stays at 35 % left, 40 % from bottom of the map pane) so the plane is large
-# enough to see its attitude, fin deflections, and wing deployment throughout. The ground track, zone,
-# trees, and trail all shift each frame. A pure-PIL frame pipeline piped to ffmpeg, FHD 1920x1080 @ 50 fps.
-# Usage: flight_video.py <out.mp4> <LABEL> <capture.txt> [<LABEL> <capture.txt>] ...
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Render a narrated 3D-ish animation of one or more flight captures to an mp4. Uses follow-cam (glider
+stays at 35 % left, 40 % from bottom of the map pane) so the plane is large enough to see its attitude,
+fin deflections, and wing deployment throughout. The ground track, zone, trees, and trail all shift each
+frame. A pure-PIL frame pipeline piped to ffmpeg, FHD 1920x1080 @ 50 fps.
+
+Usage: flight_video.py <out.mp4> <LABEL> <capture.txt> [<LABEL> <capture.txt>] ...
+"""
 
 import math
 import os
@@ -38,7 +43,9 @@ _FALLBACK_FONTS = (
 _TRAIL_SEC = 2.0
 _TRAIL_POINTS_MAX = 200
 _TARGET_GX = 0.35
-_TARGET_GY = 0.40
+_TARGET_GY = 0.72  # glider screen anchor, fraction from the TOP (target_sy below): high value = LOW on
+# screen, so the pad/launch sits in the lower ~quarter and the climb has the sky above it (was 0.40, which
+# put the start mid-screen)
 
 
 def _font(name, size):
@@ -116,7 +123,8 @@ def _axes(heading, pitch, roll):
     return f, r, u
 
 
-# -- plane model --
+"""The plane wireframe model -- vertices, faces, and the wing-fold / fin-deflect rigging."""
+
 # Vertices (x fwd, y right, z up). Base model at neutral fins, wings deployed.
 # Wing indices are grouped so _fold_wing_verts can rotate them around the fuselage
 # (butterfly-knife fold). Fin indices group trailing-edge vertices that deflect.
@@ -146,7 +154,7 @@ _V = [
     (-1.7, 0.30, 0.05),    # 22 right tailplane root
 ]
 
-# (i, j, k, colour) — order controls backface culling (CW = visible from outside)
+# (i, j, k, colour) -- order controls backface culling (CW = visible from outside)
 _FACES = [
     # Fuselage
     (0, 1, 6, (180, 175, 70)),      # nose left
@@ -194,11 +202,21 @@ _HINGE_X = 0.4         # wing pivot x (between root LE 0.8 and TE 0.0) for the s
 
 
 def _fold_wing_verts(v, fold_frac):
-    """Stow/deploy the wings the way Coludo really does it: during boost the wings are swept AFT and
-    tucked UNDER the fuselage (folded back along the body, not raised up like a bird); when the booster
-    drops and the hook releases them they SWEEP OUT to the flying position. fold_frac 1 = stowed, 0 =
-    deployed. The sweep is a rotation about the root's vertical axis so each tip swings from lateral
-    (+/-y) toward the tail (-x), plus a small downward tuck under the body line."""
+    """
+    Stow or deploy the wings the way Coludo really does it.
+
+    During boost the wings are swept AFT and tucked UNDER the fuselage (folded back along the body, not
+    raised up like a bird); when the booster drops and the hook releases them they SWEEP OUT to the
+    flying position. The sweep is a rotation about the root's vertical axis so each tip swings from
+    lateral (+/-y) toward the tail (-x), plus a small downward tuck under the body line.
+
+    Args:
+        v - the mutable vertex list, modified in place.
+        fold_frac - 1 = stowed (swept back along the body), 0 = deployed (full span).
+
+    Returns:
+        The same vertex list v, mutated in place.
+    """
     phi = fold_frac * math.radians(88)     # 0 deployed (full span) -> 88 stowed (swept back along body)
     c, s = math.cos(phi), math.sin(phi)
     tuck = -0.30 * fold_frac               # drop under the body centreline when stowed
@@ -340,7 +358,7 @@ def load(label, path):
     cmid = ((_TL[0] + _BR[0]) / 2, (_TL[1] + _BR[1]) / 2)
     td, cm = (track[-1] if track else (0.0, 0.0)), _to_m(*cmid)
 
-    # Load fins telemetry (eleron_left, eleron_right, yaw) — optional
+    # Load fins telemetry (eleron_left, eleron_right, yaw) -- optional
     fins = None
     fins_str = streams.get('fins.csv')
     if fins_str and 'eleron_left' in fins_str.fields:
@@ -349,7 +367,7 @@ def load(label, path):
         _, fy = rel(fins_str, 'yaw')
         fins = (ft, list(zip(fl, fr, fy)))
 
-    # Load acceleration (ax, ay, az) — optional
+    # Load acceleration (ax, ay, az) -- optional
     accel = None
     accel_str = streams.get('accel_adxl375.csv')
     if accel_str and 'ax' in accel_str.fields:
@@ -358,6 +376,17 @@ def load(label, path):
         _, az = rel(accel_str, 'az')
         accel = (at, list(zip(ax, ay, az)))
 
+    # Load board vitals (mem_free / CPU load / predicted oom) from health.csv -- optional; shown live in
+    # the HUD so the operator watches the GC-off memory drain + CPU headroom as the flight progresses.
+    health = None
+    health_str = streams.get('health.csv')
+    if health_str and 'mem_free' in health_str.fields:
+        # mem_free + load are on EVERY health row (aligned) -> zip is safe. oom_s/land_s blank out when
+        # not shrinking (ragged), so they are left to the charts (flight_report), not the live HUD.
+        ht, mem = rel(health_str, 'mem_free')
+        _, load_pct = rel(health_str, 'load')
+        health = (ht, list(zip(mem, load_pct)))
+
     return {'label': label, 'motor': label.split()[0], 'pos': (lat_t, track), 'height': hgt,
             'speed': (spd_t, [k / 1.94384 for k in knots]), 'heading': rel(imu, 'heading'),
             'roll': rol, 'pitch': pit, 'stages': stages, 'launch': launch,
@@ -365,7 +394,7 @@ def load(label, path):
             'apogee': apogee, 'land_t': land_t, 'miss': math.hypot(td[0] - cm[0], td[1] - cm[1]),
             'in_zone': bool(track) and (_BR[0] <= lat[-1] <= _TL[0]) and (_TL[1] <= lon[-1] <= _BR[1]),
             'apogee_pos': _at(lat_t, track, apogee[0]) or (0.0, 0.0),
-            'fins': fins, 'accel': accel}
+            'fins': fins, 'accel': accel, 'health': health}
 
 
 def captions(fl):
@@ -412,6 +441,7 @@ def render(flights, out):
         gp, hh = fl['pos'], fl['height']
         fins_data = fl.get('fins')
         accel_data = fl.get('accel')
+        health_data = fl.get('health')
         burn_time = fl['burn']
 
         _cam = [0.0, 0.0]
@@ -564,7 +594,7 @@ def render(flights, out):
             d.rectangle([0, _CAP_Y - 8, _W, _H], fill=_SKY)
             d.rectangle([_PANEL_X - 30, 92, _W, _CAP_Y - 16], fill=(18, 40, 28))
             spd = max(0.0, _at(fl['speed'][0], fl['speed'][1], tc) or 0.0)
-            d.text((_PANEL_X, 112), '5% noise, calm', font=F_TITLE, fill=(245, 245, 185))
+            d.text((_PANEL_X, 112), 'live telemetry', font=F_TITLE, fill=(245, 245, 185))
 
             metrics = [
                 ('time', '%5.1f s' % tc),
@@ -576,13 +606,22 @@ def render(flights, out):
             ]
             if g_load is not None:
                 metrics.append(('g-load', '%5.2f g' % g_load))
+            # board vitals -- the GC-off memory drain + CPU load + time-to-OOM, live in the HUD
+            if health_data is not None:
+                vitals = _at(health_data[0], health_data[1], tc)
+                if vitals is not None:
+                    mem_mb, load_pct = vitals
+                    metrics.append(('memory', '%5.1f MB' % (mem_mb / 1e6)))
+                    metrics.append(('cpu load', '%5.0f %%' % load_pct))
 
+            # rows scale to the metric count so the added vitals never push the schedule off the panel
+            row = 72 if len(metrics) <= 7 else 58
             for i, (lab, val) in enumerate(metrics):
-                yy = 172 + i * 72
+                yy = 168 + i * row
                 d.text((_PANEL_X, yy), lab, font=F_LBL, fill=(170, 205, 170))
                 d.text((_PANEL_X, yy + 22), val, font=F_NUM, fill=(255, 255, 255))
 
-            schedule_y = 172 + len(metrics) * 72 + 20
+            schedule_y = 168 + len(metrics) * row + 16
             d.text((_PANEL_X, schedule_y), 'schedule', font=F_LBL, fill=(170, 205, 170))
             for i, (lab, et) in enumerate(sched):
                 done = tc >= et

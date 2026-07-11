@@ -1,6 +1,10 @@
-# On-board test for airspeed.AirspeedEstimator (the fin-governor airspeed fusion): accel-integration
-# backbone, ceiling clamp, and the sanity-gated GNSS complementary blend (no-fix and out-of-range
-# rejected, in-range blended, repeated good fixes converge). Pure math, no hardware. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for airspeed.AirspeedEstimator (the fin-governor airspeed fusion): accel-integration
+backbone, ceiling clamp, and the sanity-gated GNSS complementary blend (no-fix and out-of-range
+rejected, in-range blended, repeated good fixes converge). Pure math, no hardware. Run by `make test`.
+"""
 
 from airspeed import AirspeedEstimator
 

@@ -1,8 +1,12 @@
-# drivers/bluetooth.py — set the BLE radio to the state declared in config at boot. The component
-# field `radio` (true/false, default false) says whether Bluetooth should be ON; the driver applies
-# it -- transparent, so nobody is surprised by an implicit disable. Default false saves power (the
-# wireless is the external C6 and BLE is unused on the glider). Setup-only @task.driver('bluetooth')
-# plus update() so the operator can toggle it live (`update bluetooth {"radio": true}`).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Set the BLE radio to the state declared in config at boot. The component field `radio` (true/false,
+default false) says whether Bluetooth should be ON; the driver applies it -- transparent, so nobody is
+surprised by an implicit disable. Default false saves power (the wireless is the external C6 and BLE is
+unused on the glider). Setup-only @task.driver('bluetooth') plus update() so the operator can toggle it
+live (`update bluetooth {"radio": true}`).
+"""
 
 import recorder
 import task
@@ -36,9 +40,22 @@ class Bluetooth(task.Task):
         """Setup-only: no run loop. `update()` is the runtime entry point."""
 
     def _apply(self, on: bool):
-        """Set BLE active to `on`; return the resulting state, or None if there is no BLE here."""
+        """
+        Set BLE active to `on` and return the resulting state.
+
+        The `import bluetooth` stays IN-FUNCTION deliberately: this file is drivers/bluetooth.py, so a
+        top-level `import bluetooth` is a filename/module-name collision whose resolution (self vs the
+        board's builtin BLE) is build-dependent -- and this is a setup-only path, so there is no hot-call
+        cost to move it. The only in-function import kept on-device.
+
+        Args:
+            on - the desired BLE radio state (True = on).
+
+        Returns:
+            The radio's resulting active state, or None if there is no BLE on this board.
+        """
         try:
-            import bluetooth
+            import bluetooth  # the board's builtin BLE radio (NOT this driver module)
 
             radio = bluetooth.BLE()
             radio.active(on)

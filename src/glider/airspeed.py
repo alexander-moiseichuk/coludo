@@ -1,19 +1,26 @@
-# airspeed.py — hybrid airspeed estimate for the dynamic-pressure fin governor (coludo.md "Fin
-# authority"). There is NO pitot tube, so:
-#   * accelerometer integration is the BACKBONE (predict) — primary, and the only usable source during
-#     boost and right after separation, when GNSS is jittery under high dynamics;
-#   * a valid, sane GNSS ground speed nudges out the integrator's drift (correct) — a complementary
-#     filter, GNSS as the slow truth, accel as the fast signal.
-# GNSS is DISTRUSTED by default: rejected without a fix and above a physical ceiling (a 100+ m/s reading
-# under separation is a glitch), and only ever BLENDED (never a hard replace) so one bad-but-in-range
-# sample cannot jump the estimate; repeated good fixes pull the drift out. The estimate is biased to
-# over-read when uncertain — a high airspeed tightens the governor cap, which is the safe direction.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Hybrid airspeed estimate for the dynamic-pressure fin governor (coludo.md "Fin authority"). There is
+NO pitot tube, so:
+  * accelerometer integration is the BACKBONE (predict) -- primary, and the only usable source during
+    boost and right after separation, when GNSS is jittery under high dynamics;
+  * a valid, sane GNSS ground speed nudges out the integrator's drift (correct) -- a complementary
+    filter, GNSS as the slow truth, accel as the fast signal.
+GNSS is DISTRUSTED by default: rejected without a fix and above a physical ceiling (a 100+ m/s reading
+under separation is a glitch), and only ever BLENDED (never a hard replace) so one bad-but-in-range
+sample cannot jump the estimate; repeated good fixes pull the drift out. The estimate is biased to
+over-read when uncertain -- a high airspeed tightens the governor cap, which is the safe direction.
+"""
 
 
 class AirspeedEstimator:
-    """Fuse integrated body acceleration (predict) with sanity-gated GNSS ground speed (correct) into one
-    airspeed estimate (m/s) for the fin governor. Stateless of HOW accel-along-path is derived — the
-    caller passes it (e.g. |accel| - g during boost), so this stays unit-testable on the host."""
+    """
+    Fuse integrated body acceleration with sanity-gated GNSS ground speed into one airspeed estimate.
+
+    The airspeed estimate (m/s) feeds the fin governor. Stateless of HOW accel-along-path is derived --
+    the caller passes it (e.g. |accel| - g during boost), so this stays unit-testable on the host.
+    """
 
     def __init__(self, ceiling_ms: float = 60.0, gnss_gain: float = 0.2):
         self._speed: float = 0.0            # current airspeed estimate (m/s)
@@ -25,16 +32,36 @@ class AirspeedEstimator:
         return self._speed
 
     def predict(self, accel_along: float, dt: float) -> float:
-        """Integrate net acceleration ALONG the flight path (m/s^2; pass it >= 0 / over-read to stay
-        conservative) over `dt` seconds — the backbone. Clamped to [0, ceiling]."""
+        """
+        Integrate net acceleration ALONG the flight path over `dt` seconds -- the backbone.
+
+        Clamped to [0, ceiling]. Pass the acceleration >= 0 / over-read to stay conservative.
+
+        Args:
+            accel_along - net acceleration along the flight path (m/s^2), >= 0 to stay conservative.
+            dt - the integration interval (seconds).
+
+        Returns:
+            The updated airspeed estimate (m/s), clamped to [0, ceiling].
+        """
         self._speed = max(0.0, min(self._speed + accel_along * dt, self._ceiling))
         return self._speed
 
     def correct(self, gnss_speed: float, has_fix: bool) -> float:
-        """Blend toward a GNSS ground speed ONLY if trustworthy: a live fix and within the physical
-        ceiling (anything above is a separation/dynamics glitch -> ignored). Blends by gnss_gain so one
+        """
+        Blend toward a GNSS ground speed ONLY if trustworthy: a live fix and within the physical ceiling.
+
+        Anything above the ceiling is a separation/dynamics glitch -> ignored. Blends by gnss_gain so one
         in-range bad sample moves the estimate only slightly, while a run of good fixes removes the
-        integrator drift. No fix or out-of-range -> the integrated backbone is kept untouched."""
+        integrator drift. No fix or out-of-range -> the integrated backbone is kept untouched.
+
+        Args:
+            gnss_speed - the GNSS ground speed to blend toward (m/s).
+            has_fix - whether the GNSS currently has a valid fix.
+
+        Returns:
+            The airspeed estimate (m/s): nudged toward gnss_speed when trusted, else unchanged.
+        """
         if has_fix and 0.0 <= gnss_speed <= self._ceiling:
             self._speed += self._gnss_gain * (gnss_speed - self._speed)
         return self._speed

@@ -1,6 +1,10 @@
-# On-board test for the board bring-up (main.py): the network-free bringup() wires the inspectable
-# objects + Controller and starts the configured task loops, incl. the Recorder virtual driver,
-# while skipping config sensors whose drivers are not implemented yet. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the board bring-up (main.py): the network-free bringup() wires the inspectable
+objects + Controller and starts the configured task loops, incl. the Recorder virtual driver,
+while skipping config sensors whose drivers are not implemented yet. Run by `make test`.
+"""
 
 import asyncio
 

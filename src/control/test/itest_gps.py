@@ -1,11 +1,15 @@
-# Integration test: read a real serial GPS on the Control host and report when it reaches a usable
-# launch fix (3D + 4+ satellites). Hardware-gated — needs a GPS plugged in (default /dev/ttyUSB0);
-# the `itest_` prefix keeps it out of the default `make test` (host-only) run.
-#
-#   python3 src/control/test/itest_gps.py            (GPS_DEVICE / GPS_BAUD env override the port)
-#
-# A cold receiver takes tens of seconds to a few minutes to fix; this watches for up to TIMEOUT_S and
-# prints the fix as it improves, exiting 0 on the first usable fix and 1 if it never gets one.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Integration test: read a real serial GPS on the Control host and report when it reaches a usable
+launch fix (3D + 4+ satellites). Hardware-gated -- needs a GPS plugged in (default /dev/ttyUSB0);
+the `itest_` prefix keeps it out of the default `make test` (host-only) run.
+
+    python3 src/control/test/itest_gps.py            (GPS_DEVICE / GPS_BAUD env override the port)
+
+A cold receiver takes tens of seconds to a few minutes to fix; this watches for up to TIMEOUT_S and
+prints the fix as it improves, exiting 0 on the first usable fix and 1 if it never gets one.
+"""
 
 import asyncio
 import os

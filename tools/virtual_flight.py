@@ -1,23 +1,25 @@
-# virtual_flight.py — fly a complete Coludo mission on the HOST and emit a recorder capture (6/23
-# global4). It runs the SAME closed loop the board runs in HITL, but in CPython: the shared flight model
-# (src/glider/sim_model.Body) is driven by the REAL control code — guidance.Guidance (per-stage law,
-# GPS tiers, boost hold, final approach), governor.Governor (estimated-airspeed fin-authority cap +
-# adaptive throttle), pid.Pid and the fused mixer.actuate() — under the REAL config (config_hitl).
-# The board's databoard/mission are stood in by tiny injected handles; ONLY the sequencer's stage
-# machine and the physics are mirrored here (the sequencer is genuinely board-bound: databoard,
-# recorder, gc policy). The old hand-mirrored control law + `_run_pid` copy are GONE (doc/plan.md
-# structural roadmap #5) — a control-law change lands in this tool automatically.
-#
-# Each control tick reads NOISE-degraded attitude/accel (the `--noise` knob, same sim_model.noisy as
-# the board) so you can see how the loop holds the zone when the sensors are clean (5 %) vs ratty
-# (50 %). Note the governor now flies the ESTIMATED airspeed (accel backbone + GNSS corrector) like
-# the board — not the sim's true airspeed. The output is the exact wire format
-# flight_telemetry.parse() reads, so it renders with flight_report.py -- a virtual flight movie
-# before any real one.
-#
-# python3 virtual_flight.py --motor F15 --noise 0.05 -o clean.txt
-# python3 virtual_flight.py --motor F15 --noise 0.50 -o ratty.txt
-# python3 flight_report.py clean.txt -o clean.html # pip install plotly
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Fly a complete Coludo mission on the HOST and emit a recorder capture. It runs the SAME closed loop the
+board runs in HITL, but in CPython: the shared flight model (src/glider/sim_model.Body) is driven by the
+REAL control code -- guidance.Guidance (per-stage law, GPS tiers, boost hold, final approach),
+governor.Governor (estimated-airspeed fin-authority cap + adaptive throttle), pid.Pid and the fused
+mixer.actuate() -- under the REAL config (config_hitl). The board's databoard/mission are stood in by
+tiny injected handles; ONLY the sequencer's stage machine and the physics are mirrored here (the
+sequencer is genuinely board-bound: databoard, recorder, gc policy). The old hand-mirrored control law +
+`_run_pid` copy are GONE -- a control-law change lands in this tool automatically.
+
+Each control tick reads NOISE-degraded attitude/accel (the `--noise` knob, same sim_model.noisy as the
+board) so you can see how the loop holds the zone when the sensors are clean (5 %) vs ratty (50 %). Note
+the governor now flies the ESTIMATED airspeed (accel backbone + GNSS corrector) like the board -- not the
+sim's true airspeed. The output is the exact wire format flight_telemetry.parse() reads, so it renders
+with flight_report.py -- a virtual flight movie before any real one.
+
+python3 virtual_flight.py --motor F15 --noise 0.05 -o clean.txt
+python3 virtual_flight.py --motor F15 --noise 0.50 -o ratty.txt
+python3 flight_report.py clean.txt -o clean.html # pip install plotly
+"""
 
 import argparse
 import math
@@ -88,8 +90,12 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         wind: float = 0.0, wind_dir: float = 0.0, final_agl_override: float = None,
         imbalance_pitch: float = 0.0, imbalance_roll: float = 0.0,
         endgame_alt_override: float = None) -> str:
-    """Run the closed loop and return a recorder capture (text). Reuses config_hitl so the gains, mixer,
-    sequencer thresholds and scenario are byte-for-byte what the board flies."""
+    """
+    Run the closed loop and return a recorder capture (text).
+
+    Reuses config_hitl so the gains, mixer, sequencer thresholds and scenario are byte-for-byte what the
+    board flies.
+    """
     cfg = config_hitl.default(motor=motor, noise=noise, spike=spike)
     flight_c = _component(cfg, 'flight')
     seq_c = _component(cfg, 'sequencer')
@@ -318,11 +324,15 @@ class _Capture:
             self._tlm('laser_agl.csv', '%u;%.3f' % (microseconds, agl))
 
     def health(self, t, stage):
-        """A 1 Hz board-vitals row (board_health.csv fields). SYNTHETIC + phase-modeled -- the host has no
-        real MCU -- but shaped like the board would read: load tracks the work per stage (idle on the rod,
-        high under boost sampling, steady in the glide loop, highest while the laser hammers I2C on
-        landing); temperature drifts up under load; free memory stays consistent (the firmware
-        pre-allocates and avoids churn, so GC is gentle -- only a shallow sawtooth around ~4 MB)."""
+        """
+        A 1 Hz board-vitals row (board_health.csv fields).
+
+        SYNTHETIC + phase-modeled -- the host has no real MCU -- but shaped like the board would read:
+        load tracks the work per stage (idle on the rod, high under boost sampling, steady in the glide
+        loop, highest while the laser hammers I2C on landing); temperature drifts up under load; free
+        memory stays consistent (the firmware pre-allocates and avoids churn, so GC is gentle -- only a
+        shallow sawtooth around ~4 MB).
+        """
         if t - self._last_health < 1.0:
             return
         self._last_health = t

@@ -1,6 +1,10 @@
-# Host (CPython) test for gps.py: NMEA parsing (GGA position/sats/altitude, GSA 2D/3D), fix-quality
-# logic (usable = 3D + 4 satellites + a position), checksum + malformed-line robustness, and the
-# launch-position dict handed to `assist`. Pure parsing — no serial hardware. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Host (CPython) test for gps.py: NMEA parsing (GGA position/sats/altitude, GSA 2D/3D), fix-quality
+logic (usable = 3D + 4 satellites + a position), checksum + malformed-line robustness, and the
+launch-position dict handed to `assist`. Pure parsing -- no serial hardware. Run by `make test`.
+"""
 
 import os
 import sys

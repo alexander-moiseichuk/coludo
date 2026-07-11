@@ -1,13 +1,17 @@
-# Baked-in default board configuration for the WaveShare ESP32-P4-WIFI6 controller.
-#
-# Human-edited firmware default and the safe fallback when no valid board.config exists (see
-# specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
-# test/test_pins.py). `default()` returns a FRESH dict each call so callers may mutate it freely.
-#
-# Topology: buses are grouped by type then id; a sensor/component addresses one by `bus` (the kind,
-# e.g. 'i2c') + `id` (its int id), so nothing parses a 'type:id' string. `sensors` are data
-# providers fused by quantity + priority (several may provide the same quantity with different
-# drivers/priorities); `components` are the consumers/actuators (recorder, ...).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Baked-in default board configuration for the WaveShare ESP32-P4-WIFI6 controller.
+
+Human-edited firmware default and the safe fallback when no valid board.config exists (see
+specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
+test/test_pins.py). `default()` returns a FRESH dict each call so callers may mutate it freely.
+
+Topology: buses are grouped by type then id; a sensor/component addresses one by `bus` (the kind,
+e.g. 'i2c') + `id` (its int id), so nothing parses a 'type:id' string. `sensors` are data providers
+fused by quantity + priority (several may provide the same quantity with different drivers /
+priorities); `components` are the consumers / actuators (recorder, ...).
+"""
 
 import commons
 
@@ -293,6 +297,11 @@ def default() -> dict:
              'apogee_drop_m': 5.0, 'apogee_arm_ms': 4000, 'boost_timeout_ms': 12000,
              'land_agl_m': 5.0, 'land_ms': 300, 'still_g': 0.3, 'ground_ms': 3000,
              'flight_timeout_ms': 300000, 'disable_gc_flight': True},
+            # GNSS consistent-drift calibration (gnss_calib.py): average the reported ground velocity while
+            # stationary on the pad through SETTING (min_samples floor), freeze it at launch; the flight
+            # loop de-biases the wind by it. period_ms is the slow sample cadence (the drift is slow).
+            {'name': 'gnss_calib', 'activity': 'gnss_calib', 'enabled': True,
+             'period_ms': 1000, 'min_samples': 5},
             # Phase 3 stabilization loop (off by default -- no actuation until enabled + tuned on the
             # airframe). schedule_hz > 0 -> machine.Timer (deterministic slice, ~1 m/step at 100 Hz/100 m/s);
             # schedule_hz 0 -> asyncio at period_ms. Gains/setpoint are airframe tuning; gates to GLIDING.
@@ -312,23 +321,35 @@ def default() -> dict:
              # the LOITER orbit (tuned 7/06, coludo.md "Gliding"): within loiter_capture_m of
              # the zone centre the heading command becomes the circle tangent + loiter_gain deg
              # of inward cut per metre off the loiter_radius_m circle -- a stable constant-radius
-             # orbit that bleeds altitude through the banked turn (objective #1's energy
+             # orbit that bleeds altitude through the banked turn (the fly-long objective's energy
              # management). The radius must stay ABOVE the cruise-bank minimum (~34 m at 30 deg)
              # or the orbit destabilizes.
              'loiter_radius_m': 30, 'loiter_capture_m': 120, 'loiter_gain': 3.0,
              # the ENDGAME band: below this baro elevation the glide steering opens the full
              # land-bank authority (turn radius halves) so the last seconds SPIRAL around the zone
-             # instead of racetracking past it -- objective #2/#3 tightening that leaves #1 (fly
-             # long) untouched up high. 0 -> off.
+             # instead of racetracking past it -- an in-zone/near-centre tightening that leaves the
+             # fly-long objective untouched up high. 0 -> off.
              'endgame_alt_m': 50,
+             # ENDGAME holding pattern + airspeed-gated bank (guidance.py). endgame_pattern: 'o' a single
+             # circle, 'oo'/'o-o' two lobes along the long axis, or 'auto' -> the Mission picks o/oo from
+             # the zone aspect. NOTE 'oo' is a known-limited negative result (it overruns a narrow strip +
+             # drifts on wind -- see doc/sims/TMS-7-oo_landing); set 'o' for reliable in-zone landing. The
+             # gated bank banks as steep as the LIVE airspeed allows: a coordinated turn at bank phi raises
+             # the stall speed to stall_speed_1g*sqrt(1/cos phi), and airspeed >= stall_margin*that bounds
+             # phi (capped at endgame_max_bank). These four match the guidance defaults (behaviour unchanged);
+             # exposed here so the operator can tune them from board.config without editing source.
+             'endgame_pattern': 'auto', 'stall_speed_1g': 9.0, 'stall_margin': 1.2, 'endgame_max_bank': 60,
              'final_approach_agl': 8, 'final_cross_gain': 3.0, 'final_intercept_deg': 45,
              # reachability (flight panel): nominal glide ratio (L/D) -> reach = glide_ratio * elevation
              # vs the distance to the zone -> 'zone reachable y/n'. Conservative default (the quality-2
              # polar is ~2; a real airframe re-derives it from the first glide telemetry).
              'glide_ratio': 3.0,
-             # wind estimation (wind.py): the wind triangle, triangle_alpha EMA-smooths the per-fix
-             # estimate; wind_min_speed gates a noisy course at a crawl.
-             'wind_triangle_alpha': 0.05, 'wind_min_speed': 3.0,
+             # wind estimation (wind.py) -- the estimator owns this `wind` subtree (Inspectable, CC-tunable):
+             # triangle_alpha EMA-smooths the per-fix estimate; min_speed gates a noisy course at a crawl;
+             # the physical ENVELOPE (calm_speed .. max_speed) rejects a per-fix estimate above the ceiling
+             # as a GNSS jump and floors below the floor to calm. The governor reuses max_speed to reject a
+             # GNSS ground-speed jump (a real ground speed is within one max-wind of airspeed).
+             'wind': {'triangle_alpha': 0.05, 'min_speed': 3.0, 'calm_speed': 0.5, 'max_speed': 15.0},
              # boost: BOOSTING holds the rod-vertical attitude captured at stage entry, but only once
              # PAST THE ROD (airspeed > boost_engage_speed m/s) -- the 3-point rod keeps it vertical and the
              # fins have no authority below that. The speed governor caps the throw the whole way up.
@@ -385,14 +406,14 @@ def default() -> dict:
             # reclaims the flight -- vastly cheaper than the OOM chain (~1.4 s frozen fins +
             # ~7 s reboot) -- and it re-fires EVERY health period for as long as the trigger
             # holds (a fast leak gets a collect per second, altitude allowing; the HITL soak
-            # logged 8). One knob, the rest is physics: collect when the predicted
-            # time-to-OOM < 2x the time left to sink to the rescue floor (memory-decay vs
-            # elevation-decay slopes), with PROVEN safe altitude (elevation > rescue_agl_m ~ 2x
-            # the 5 m landing gate: a 0.2 s pause costs ~2 m), in BOOSTING/GLIDING only (never
-            # LANDING; no descent trend yet -> no rescue -- boost is 3.5 s of peak dynamics).
-            # rescue_agl_m 0 disables. oom_s + land_s ride health.csv + `inspect health`.
-            {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'probe_ms': 10, 'enabled': True,
-             'rescue_agl_m': 10},
+            # logged 8). No knob: the rest is physics. Collect when the predicted time-to-OOM < 2x the
+            # time left to sink to the ground (memory-decay vs elevation-decay slopes), with a proven safe
+            # altitude. The safe floor is FULLY DYNAMIC (no fixed/base altitude): 2x the descent a ~200 ms
+            # collect pause costs, computed from the live sink rate -- so the rescue fires as low as physics
+            # allows and the doubled pause never sinks the glider to the ground. BOOSTING/GLIDING only
+            # (never LANDING -- the stage gate excludes the flare; no descent -> no rescue). `rescue: false`
+            # disables it (memory tests). oom_s + land_s ride health.csv + `inspect health`.
+            {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'probe_ms': 10, 'enabled': True},
             # CC-less field agent (specs/coludo.md "Field operation without CC"), OFF by default:
             # on the pad it selects the mission site by the first GNSS fix (nearest launch.config
             # site within max_range_m; none -> a GENEROUS spiral-landing fallback box the spiral just

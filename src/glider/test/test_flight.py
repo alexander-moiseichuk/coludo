@@ -1,8 +1,12 @@
-# On-board test for the Phase 3 stabilization loop (tasks/flight.py): registration, GLIDING gating,
-# degraded->neutral on stale attitude, the PID->mixer->fin path, both scheduling modes (asyncio at
-# schedule_hz=0, machine.Timer at schedule_hz>0), and the WIRING of the extracted governor + guidance
-# (their laws are unit-tested in test_governor.py / test_guidance.py). Uses fake fins + a stub
-# controller; attitude comes from the databoard. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the Phase 3 stabilization loop (tasks/flight.py): registration, GLIDING gating,
+degraded->neutral on stale attitude, the PID->mixer->fin path, both scheduling modes (asyncio at
+schedule_hz=0, machine.Timer at schedule_hz>0), and the WIRING of the extracted governor + guidance
+(their laws are unit-tested in test_governor.py / test_guidance.py). Uses fake fins + a stub
+controller; attitude comes from the databoard. Run by `make test`.
+"""
 
 import asyncio
 
@@ -51,6 +55,19 @@ class _StubMission:
     def launch_point(self):
         return self._launch
 
+    def zone_points(self):
+        import navigation
+        return navigation.zone(self.zone[0], self.zone[1])
+
+    def zone_aspect(self):
+        import navigation
+        return navigation.zone_aspect(self.zone[0], self.zone[1])
+
+    def endgame_heading(self):
+        import guidance
+        wide = self.zone_aspect() > guidance.Heading.OO_ASPECT
+        return guidance.Heading.FIG_OO if wide else guidance.Heading.FIG_O
+
 
 async def amain():
     assert task.ACTIVITIES.get('flight') is flight.Flight  # registered driver
@@ -61,30 +78,30 @@ async def amain():
     attitude = databoard.Databoard.provide('imu', {'attitude': {'priority': 0, 'timeout_ms': 1000}}, 'attitude')
 
     # not gliding -> the loop is gated, no actuation
-    unit._step()
+    unit._tick()
     assert ctrl.fins['servo_yaw'].angle is None
 
     # gliding but attitude born-stale (not pushed) -> degraded -> fins neutral, not engaged
     ctrl.stage = Stage.GLIDING
-    unit._step()
+    unit._tick()
     assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._active is False
 
     # gliding + fresh attitude -> engage: kp=1 on roll=10 -> roll cmd -10 -> elevons differential
     attitude.push((100.0, fixed.from_float(10), fixed.from_float(-5)))  # heading, roll, pitch
-    unit._step()
+    unit._tick()
     assert unit._active is True and unit._stage == Stage.GLIDING and unit._steps == 1
     assert ctrl.fins['servo_eleron_left'].angle == 80 and ctrl.fins['servo_eleron_right'].angle == 100
     assert ctrl.fins['servo_yaw'].angle == 90  # heading hold captured at 100 -> error 0 -> rudder neutral
 
     # landing is NOT a control stage by default (only gliding) -> centre the fins + disengage
     ctrl.stage = Stage.LANDING
-    unit._step()
+    unit._tick()
     assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._active is False
 
     # disarmed -> neutral even in a control stage (the arming safety gate)
     ctrl.stage = Stage.GLIDING
     ctrl.armed = False
-    unit._step()
+    unit._tick()
     assert all(fin.angle == 90 for fin in ctrl.fins.values()) and unit._active is False
     ctrl.armed = True  # re-arm for the scheduling-mode checks below
 
@@ -119,15 +136,15 @@ async def amain():
     staged = flight.Flight('flight', {'schedule_hz': 0, 'gains': {'pitch': {'kp': 1.0}},
                                       'stages': {'gliding': {'pitch': 0}, 'landing': {'pitch': 0}}}, pctrl)
     assert await staged.setup() is True
-    staged._step()  # gliding -> engage
+    staged._tick()  # gliding -> engage
     assert staged._active is True and staged._stage == Stage.GLIDING
     pctrl.stage = Stage.LANDING
-    staged._step()  # still a control stage -> stays engaged (no neutral between)
+    staged._tick()  # still a control stage -> stays engaged (no neutral between)
     assert staged._active is True and staged._stage == Stage.LANDING
     # pitch=-5, landing setpoint 0 -> error 5 -> kp=1 -> elevons 90+5 (controlling, not neutral)
     assert pctrl.fins['servo_eleron_left'].angle == 95 and pctrl.fins['servo_eleron_right'].angle == 95
     pctrl.stage = Stage.BOOSTING
-    staged._step()  # non-control stage -> fins neutral, disengaged
+    staged._tick()  # non-control stage -> fins neutral, disengaged
     assert all(fin.angle == 90 for fin in pctrl.fins.values()) and staged._active is False
 
     # bank-to-turn WIRING through the whole pipeline: a heading error becomes a BANK (guidance) and
@@ -141,7 +158,7 @@ async def amain():
                                           'nav_bank_gain': 1.5, 'bank_limit': 30}, bank_ctrl)
     assert await bankflight.setup() is True
     bankflight._guidance._mission = _StubMission(launch=None)  # zone present -> tier-1 live fix
-    bankflight._step()
+    bankflight._tick()
     # error +90 -> bank_demand(+90, 1.5, 30) = +30 -> roll PID (kp 1) -> elevons 90+/-30 (a right bank)
     assert bank_ctrl.fins['servo_eleron_left'].angle == 120 and bank_ctrl.fins['servo_eleron_right'].angle == 60
     assert bank_ctrl.fins['servo_eleron_left'].angle != bank_ctrl.fins['servo_eleron_right'].angle  # banked
@@ -155,7 +172,7 @@ async def amain():
     landflight._guidance._mission = _StubMission(launch=None)
     position.push((48.0005, 10.990))   # west of the zone -> steer ~east (90); agl absent -> not 'final'
     attitude.push((0.0, 0, 0))
-    landflight._step()
+    landflight._tick()
     # error +90 -> bank_demand(+90, land_bank_gain 1.5, land_bank_limit 45) = +45 -> elevons 90+/-45 (full)
     assert land_ctrl.fins['servo_eleron_left'].angle == 135 and land_ctrl.fins['servo_eleron_right'].angle == 45
 
@@ -188,15 +205,15 @@ async def amain():
     accel = databoard.Databoard.provide('accel_gov', {'accel': {'priority': 0, 'timeout_ms': 1000}}, 'accel')
     accel.push((0.0, 0.0, 1.0))  # exactly 1 g -> net accel 0 -> predict() is a no-op, value() = what we set
     gov._governor._estimator._speed = 0.0
-    gov._step()
+    gov._tick()
     assert gov._mixer.limit == 45  # 0 m/s -> full 45 deg authority (and SETTING still ran the governor)
     gov._governor._estimator._speed = 40.0
-    gov._step()
+    gov._tick()
     assert gov._mixer.limit == 8  # fin_deflection_limit(40) -> 8 deg
     # the accel channel feeds the integral through the databoard handle: >1 g builds airspeed from zero
     gov._governor._estimator._speed = 0.0
     accel.push((0.0, 0.0, 6.0))  # 6 g -> ~49 m/s^2 net along the path
-    gov._step()
+    gov._tick()
     assert gov._governor.airspeed() > 0.0  # integrated off zero
 
     # airspeed governor THROTTLE wiring in the glide: the fresh pitch (dive detector) measured by the
@@ -209,9 +226,9 @@ async def amain():
     accel.push((0.0, 0.0, 1.0))  # 1 g -> net 0 -> predict() no-op
     thr._governor._interval_s = 1.0  # long throttle interval -> only an override can fire the update
     thr._governor._estimator._speed = 14.0  # settled low speed -> no absolute-speed override
-    thr._step()  # reads the dive pitch into _pitch_cd (this step may still be throttled)
+    thr._tick()  # reads the dive pitch into _pitch_cd (this step may still be throttled)
     thr._governor._accum_s = 0.5
-    thr._step()
+    thr._tick()
     assert thr._governor._accum_s == 0.0, 'the measured dive pitch must re-arm the governor full rate'
 
     # boost stage: BOOSTING is a control stage that holds the captured rod-vertical attitude, but only
@@ -224,18 +241,18 @@ async def amain():
     accel.push((0.0, 0.0, 1.0))  # 1 g -> net 0 -> predict() no-op so the poked airspeed survives
     attitude.push((0.0, 0, fixed.from_float(90)))  # vertical on the rod (heading 0, roll 0, pitch 90)
     boostflight._governor._estimator._speed = 5.0  # still on the rod (below boost_engage)
-    boostflight._step()
+    boostflight._tick()
     assert all(fin.angle == 90 for fin in boost_ctrl.fins.values())  # rod gate -> neutral
     assert boostflight._guidance._pitch_hold == fixed.from_float(90)  # captured the vertical hold
     assert boostflight._guidance._roll_hold == 0
     # past the rod + leaned 10 deg off vertical -> elevons deflect to restore pitch toward the hold
     boostflight._governor._estimator._speed = 30.0
     attitude.push((0.0, 0, fixed.from_float(80)))
-    boostflight._step()
+    boostflight._tick()
     # pitch error = hold(90) - 80 = +10 -> kp 1 -> pitch_cmd 10 -> elevons 90+10, capped by the governor
     assert boost_ctrl.fins['servo_eleron_left'].angle == 100 and boost_ctrl.fins['servo_yaw'].angle == 90
 
-    # crash safety (15.3): an uncaught exception inside the control step must CENTRE the fins on the
+    # crash safety: an uncaught exception inside the control step must CENTRE the fins on the
     # way out (run()'s finally -> finish()), never leave the last deflection standing through the
     # watchdog window.
     crash_ctrl = _StubController(Stage.GLIDING)
@@ -243,7 +260,7 @@ async def amain():
                                         'gains': {'roll': {'kp': 1.0}}}, crash_ctrl)
     assert await crashing.setup() is True
     attitude.push((100.0, fixed.from_float(10), fixed.from_float(-5)))
-    crashing._step()  # engage: the elevons leave neutral
+    crashing._tick()  # engage: the elevons leave neutral
     assert crash_ctrl.fins['servo_eleron_left'].angle != 90
     crashing._guidance = None  # poison the pipeline -> the next step raises AttributeError
     try:

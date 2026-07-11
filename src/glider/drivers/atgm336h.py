@@ -1,9 +1,13 @@
-# drivers/atgm336h.py — ATGM336H GNSS (GPS + BDS, CASIC chip) on a dedicated UART. @task.driver(
-# 'atgm336h'). All NMEA reading/parsing lives in the shared gnss.Gnss base; this driver only adds the
-# CASIC reconfiguration: RMC at `hz` (position) plus GGA at ~1 Hz (altitude/elevation, a baro backup)
-# -- both fit 9600 baud (~10 Hz RMC ~700 B/s + ~1 Hz GGA ~70 B/s < 960). PCAS is the CASIC command set;
-# the PMTK pair is sent too as a fallback for MTK-variant modules (each side ignores the other's
-# sentences). Graceful: an undefined bus -> setup False (the Controller skips it).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+ATGM336H GNSS (GPS + BDS, CASIC chip) on a dedicated UART. @task.driver('atgm336h'). All NMEA
+reading/parsing lives in the shared gnss.Gnss base; this driver only adds the CASIC reconfiguration:
+RMC at `hz` (position) plus GGA at ~1 Hz (altitude/elevation, a baro backup) -- both fit 9600 baud
+(~10 Hz RMC ~700 B/s + ~1 Hz GGA ~70 B/s < 960). PCAS is the CASIC command set; the PMTK pair is sent
+too as a fallback for MTK-variant modules (each side ignores the other's sentences). Graceful: an
+undefined bus -> setup False (the Controller skips it).
+"""
 
 import asyncio
 

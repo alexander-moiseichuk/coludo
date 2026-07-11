@@ -1,13 +1,29 @@
-# drivers/ — HAL drivers: each a @task.driver Task that talks directly to hardware (the status LED,
-# the sensors, the servos, ...). load() imports every module so its registration runs; the
-# Controller then builds the *enabled* ones from the board config. Adding a driver is dropping a
-# file here -- main.py and the Controller never change.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+HAL drivers: each a @task.driver Task that talks directly to hardware (the status LED, the sensors, the
+servos, ...). load() imports every module so its registration runs; the Controller then builds the
+*enabled* ones from the board config. Adding a driver is dropping a file here -- main.py and the
+Controller never change.
+"""
 
 import os
 
 
 def load() -> None:
-    """Import every driver module in this package so its @task.driver registration runs."""
+    """
+    Import every driver module in this package so its @task.driver registration runs.
+
+    Args:
+        (none)
+
+    Returns:
+        None; every driver module is imported for its registration side effect.
+
+    Raises:
+        RuntimeError - if no driver modules are discovered (wrong CWD, or a frozen build os.listdir
+            cannot see), so the failure is loud rather than a silent empty registry.
+    """
     # List this package's OWN directory, taken from __file__ ('drivers/__init__.py' -> 'drivers'):
     # __name__ is a DOTTED module name that breaks os.listdir once the package is nested, and os.path
     # is absent on MicroPython (so os.path.dirname is not an option).

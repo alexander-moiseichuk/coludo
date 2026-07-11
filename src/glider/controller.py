@@ -1,13 +1,17 @@
-# Flight Controller — creates and supervises the tasks described by a validated config, and
-# tracks the flight stage machine. See specs/coludo.md ('Flight Controller', 'Tasks').
-#
-# The Controller is the one task created explicitly; it creates the rest from config in a
-# deterministic order. Task failures are reported, not fatal (the strict/operator-authority
-# model): a component that fails setup is logged and skipped, and go/no-go stays with the
-# operator via stats()/validate().
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Flight Controller -- creates and supervises the tasks described by a validated config, and tracks the
+flight stage machine. See specs/coludo.md ('Flight Controller', 'Tasks').
+
+The Controller is the one task created explicitly; it creates the rest from config in a deterministic
+order. Task failures are reported, not fatal (the strict/operator-authority model): a component that
+fails setup is logged and skipped, and go/no-go stays with the operator via stats()/validate().
+"""
 
 import asyncio
 
+import config as config_mod
 import inspector
 import task
 
@@ -18,14 +22,18 @@ except ImportError:  # CPython (tooling / off-board checks)
 
 
 class Stage:
-    """The flight stages, self-contained: int ids (cheap to compare/store on MicroPython) and the
-    `STAGES` id->name mapping (operator-facing names; `in Stage.STAGES` is an O(1) key check). `NAMES`
-    is the reverse (name->id) so config that names stages by string resolves to an id once.
+    """
+    The flight stages: int ids and their operator-facing names, self-contained.
 
-    kept here, in the stage machine's own module. flight/sequencer/hitl/led import it from
-    controller -- a LIGHT coupling (the module loads fast, no heavy deps pulled just for the enum). It
-    could move to commons.py as the shared domain enum to drop even that import, but the gain is marginal
-    versus the cross-file churn; revisit only if importing controller solely for Stage ever bites."""
+    Int ids (cheap to compare/store on MicroPython) plus the `STAGES` id->name mapping (operator-facing
+    names; `in Stage.STAGES` is an O(1) key check). `NAMES` is the reverse (name->id) so config that
+    names stages by string resolves to an id once.
+
+    Kept here, in the stage machine's own module. flight/sequencer/hitl/led import it from controller
+    -- a LIGHT coupling (the module loads fast, no heavy deps pulled just for the enum). It could move
+    to commons.py as the shared domain enum to drop even that import, but the gain is marginal versus
+    the cross-file churn; revisit only if importing controller solely for Stage ever bites.
+    """
 
     SETTING = const(0)
     BOOSTING = const(1)
@@ -61,24 +69,34 @@ class Controller(inspector.Inspectable):
         self.warm_started: bool = False  # a mid-air reset was recovered by the warm-start gate (degraded)
         inspector.Inspector.register(self)
 
-    # ------------------------------------------------------------------ scope
+    """Scope: which config entries become tasks, plus creating and finding them by name."""
     def _devices(self) -> list:
-        """Sensors (data providers) + components (consumers/actuators) — all are tasks."""
+        """Sensors (data providers) + components (consumers/actuators) -- all are tasks."""
         return self.config.get('sensors', []) + self.config.get('components', [])
 
     def directory(self) -> list:
         """Names of enabled devices, in creation order (config order)."""
-        return [d.get('name') for d in self._devices() if d.get('enabled', True) and d.get('name')]
+        return [device.get('name') for device in self._devices()
+                if device.get('enabled', True) and device.get('name')]
 
     def _component(self, name: str) -> dict:
-        for d in self._devices():
-            if d.get('name') == name:
-                return d
+        for device in self._devices():
+            if device.get('name') == name:
+                return device
         return None
 
     def create(self, name: str) -> task.Task:
-        """Create a task by component name via the registry. A component names its implementation
-        with `driver` (from drivers/) or `activity` (from tasks/). Returns task or None."""
+        """
+        Create a task by component name via the registry.
+
+        A component names its implementation with `driver` (from drivers/) or `activity` (from tasks/).
+
+        Args:
+            name - the component name to build (looked up in this config).
+
+        Returns:
+            The task, or None if the component is absent or names no known driver/activity.
+        """
         comp = self._component(name)
         if comp is None:
             return None
@@ -90,52 +108,82 @@ class Controller(inspector.Inspectable):
         return cls(name, comp, self)
 
     def active(self, name: str = None):
-        """Return the active task by name (None if absent), or a list of all active tasks if
-        `name` is None."""
+        """
+        The active task by name, or all active tasks.
+
+        Args:
+            name - the task name to look up; None returns every active task.
+
+        Returns:
+            The named task (None if absent), or a list of all active tasks when name is None.
+        """
         if name is None:
             return list(self.tasks.values())
         return self.tasks.get(name)
 
     def find(self, names: list[str]) -> list:
-        """Non-blocking: the active tasks for `names`, None for any not up. The fast lookup for
-        sync code; `query` is the awaitable that can wait for dependencies."""
+        """
+        The active tasks for `names`, without blocking.
+
+        The fast lookup for sync code; query() is the awaitable that can wait for dependencies.
+
+        Args:
+            names - the task names to look up.
+
+        Returns:
+            A list aligned with `names`, with None for any task not up.
+        """
         return [self.tasks.get(name) for name in names]
 
     async def query(self, names: list[str], waiting: bool = True) -> list:
-        """Look up sibling tasks by name from the registry: `gnss, baro = await self.query(['gnss',
-        'baro_icp10111'])`.
+        """
+        Look up sibling tasks by name from the registry, optionally waiting until they are all up.
 
-        waiting=False: return immediately — a list aligned with `names`, with None for any task not
-        yet enlisted. The caller must handle the Nones. Safe anywhere, including setup().
+        Example: `gnss, baro = await self.query(['gnss', 'baro_icp10111'])`. waiting=False returns
+        immediately, and the caller must handle the Nones (safe anywhere, including setup());
+        waiting=True awaits until every named task is present, then returns them all.
 
-        waiting=True: await until every named task is present, then return them all.
-
-        IMPORTANT — call waiting=True only from run(), never from setup():
+        IMPORTANT -- call waiting=True only from run(), never from setup():
           * setup() runs serially in the single bring-up coroutine: the Controller awaits each
-            task's setup() before creating the next. Blocking there blocks the whole boot — if the
+            task's setup() before creating the next. Blocking there blocks the whole boot -- if the
             dependency is set up later in the order, you deadlock bring-up.
           * run() loops are concurrent: awaiting here suspends only THIS task's coroutine while the
             event loop keeps scheduling every other task's run(), so the rest of boot progresses.
             When the dependency appears, the await resumes.
 
         The wait is await-based (poll + asyncio.sleep), so the current coroutine yields and never
-        starves the single-core scheduler — never a busy `while not found`.
+        starves the single-core scheduler -- never a busy `while not found`. Rule of thumb:
+        discover-or-skip in setup() (waiting=False, handle None); block-for-ready in run()
+        (waiting=True). A wait timeout (so a never-appearing dependency surfaces as a logged error
+        rather than a task parked forever) fits the strict/operator-authority model, and is not yet
+        implemented.
 
-        Rule of thumb: discover-or-skip in setup() (waiting=False, handle None); block-for-ready in
-        run() (waiting=True). A wait timeout (so a never-appearing dependency surfaces as a logged
-        error rather than a task parked forever) fits the strict/operator-authority model — TODO."""
+        Args:
+            names - the sibling task names to look up.
+            waiting - True (default) parks until all are present; False returns immediately.
+
+        Returns:
+            A list aligned with `names`: with waiting=False, None for any task not yet enlisted;
+            with waiting=True, every named task (never None).
+        """
         while True:
             found = [self.tasks.get(name) for name in names]
-            if not waiting or all(t is not None for t in found):
+            if not waiting or all(entry is not None for entry in found):
                 return found
             await asyncio.sleep_ms(50)
 
-    # -------------------------------------------------------------- lifecycle
+    """Lifecycle: bring the configured devices up, supervise them, tear them down."""
     async def setup(self) -> bool:
-        """Create + set up every enabled task in order. Skip (and report) failures. setup() brings a
-        device to a SAFE state (sensors detect-or-skip, servos centre) with no costly side effects;
-        the active self-test is probe(), run on demand (the CC `probe` command), never at boot -- a
-        mid-flight reboot must not sweep the fins."""
+        """
+        Create + set up every enabled task in order, skipping (and reporting) failures.
+
+        setup() brings a device to a SAFE state (sensors detect-or-skip, servos centre) with no costly
+        side effects; the active self-test is probe(), run on demand (the CC `probe` command), never at
+        boot -- a mid-flight reboot must not sweep the fins.
+
+        Returns:
+            True once bring-up has run; failures are recorded in self.failures, not raised.
+        """
         self.failures = {}  # recomputed each bring-up
         attempts = max(1, self.config.get('setup_retries', 1))  # retry flaky contacts (breadboard)
         for name in self.directory():
@@ -152,8 +200,18 @@ class Controller(inspector.Inspectable):
         return True
 
     async def _bring_up(self, name: str, attempts: int) -> task.Task:
-        """Create + set up a device, retrying a flaky setup up to `attempts` times (breadboard contacts
-        make and break). Returns the task on success, else None and records the failure reason."""
+        """
+        Create + set up a device, retrying a flaky setup up to `attempts` times.
+
+        Breadboard contacts make and break, so a setup gets several tries before it is called a failure.
+
+        Args:
+            name - the component name to bring up.
+            attempts - how many setup tries before giving up.
+
+        Returns:
+            The task on success; else None, with the failure reason recorded in self.failures.
+        """
         reason = 'no driver/activity'  # if create() never yields a task (missing driver)
         for attempt in range(1, attempts + 1):
             new_task = self.create(name)
@@ -168,7 +226,7 @@ class Controller(inspector.Inspectable):
                 self.log("controller :: task '%s' setup raised: %r" % (name, error))
             if attempt == attempts:  # final try -> deeper wire-level analysis while the transport is still alive
                 reason = await self._diagnose(new_task, reason)
-            try:  # clean up the half-set-up device; a cleanup failure must NOT abort the rest of boot (1.2.1)
+            try:  # clean up the half-set-up device; a cleanup failure must NOT abort the rest of boot
                 await new_task.finish()
             except Exception as error:
                 self.log("controller :: task '%s' cleanup raised: %r" % (name, error))
@@ -179,10 +237,21 @@ class Controller(inspector.Inspectable):
         return None
 
     async def _diagnose(self, new_task, reason: str) -> str:
-        """Fold a driver's optional diagnose() into the failure reason -- a deeper, wire-level analysis
-        (chip-select dead / MISO floating / wrong device / present-but-init-failed) that the operator
-        sees in `verify`/`probe`. Best-effort: a driver without diagnose(), or one that raises, just
-        keeps the generic reason."""
+        """
+        Fold a driver's optional diagnose() into the failure reason.
+
+        A deeper, wire-level analysis (chip-select dead / MISO floating / wrong device /
+        present-but-init-failed) that the operator sees in `verify`/`probe`. Best-effort: a driver
+        without diagnose(), or one that raises, just keeps the generic reason.
+
+        Args:
+            new_task - the task whose optional diagnose() is consulted.
+            reason - the generic failure reason to augment.
+
+        Returns:
+            The reason with the driver's diagnostic appended, or the unchanged reason when there is no
+            diagnose() or it raised.
+        """
         analyse = getattr(new_task, 'diagnose', None)
         if analyse is None:
             return reason
@@ -193,14 +262,25 @@ class Controller(inspector.Inspectable):
         return '%s -- %s' % (reason, detail) if detail else reason
 
     async def bustune(self, kind: str, ident, freq: int) -> dict:
-        """Bench frequency-calibration primitive the CC-side sweep drives: retune sensor bus
-        <kind>:<ident> to <freq> Hz IN PLACE (no reboot), then report which of its devices stay healthy
-        -- each up device's probe() (id reads back + a sample succeeds). Returns the per-device verdicts
-        + all_ok, so the host can find the bus ceiling AND the limiting device (whoever drops out first
-        as freq climbs). Nothing is persisted here: CC saves the chosen freq via set-config board +
-        reboot. i2c/spi only (uart/pwm are not frequency-swept)."""
-        import config as config_mod
+        """
+        Retune a sensor bus in place and report which of its devices stay healthy.
 
+        The bench frequency-calibration primitive the CC-side sweep drives: retune sensor bus
+        <kind>:<ident> to <freq> Hz IN PLACE (no reboot), then check each up device's probe() (id
+        reads back + a sample succeeds). Reporting the per-device verdicts + all_ok lets the host find
+        the bus ceiling AND the limiting device (whoever drops out first as freq climbs). Nothing is
+        persisted here: CC saves the chosen freq via set-config board + reboot. i2c/spi only (uart/pwm
+        are not frequency-swept).
+
+        Args:
+            kind - the bus kind, 'i2c' or 'spi'.
+            ident - the bus id (number) to retune.
+            freq - the target frequency in Hz.
+
+        Returns:
+            A dict of the per-device verdicts + all_ok; or {'error': ...} for a non-tunable kind or an
+            undefined bus.
+        """
         modules = {'i2c': 'i2cbus', 'spi': 'spibus'}
         if kind not in modules:
             return {'error': "bus kind '%s' is not tunable (i2c/spi only)" % kind}
@@ -250,10 +330,17 @@ class Controller(inspector.Inspectable):
             await closing_task.finish()
 
     async def finish(self) -> None:
-        """Shut down all tasks, in REVERSE bring-up order so a command PRODUCER (e.g. the flight loop,
-        which centres the fins in its finish()) closes before the actuators/resources it writes to --
-        otherwise teardown drives an already-released peripheral (PWM deinit'd -> RuntimeError). Best
-        effort: a single task's finish() error is logged, never stranding the rest of the shutdown."""
+        """
+        Shut down all tasks, in REVERSE bring-up order.
+
+        Reverse order so a command PRODUCER (e.g. the flight loop, which centres the fins in its
+        finish()) closes before the actuators/resources it writes to -- otherwise teardown drives an
+        already-released peripheral (PWM deinit'd -> RuntimeError). Best effort: a single task's
+        finish() error is logged, never stranding the rest of the shutdown.
+
+        Returns:
+            None; every task closed and the stage left at DONE.
+        """
         for name in reversed(list(self.tasks)):
             try:
                 await self.close(name)
@@ -261,7 +348,7 @@ class Controller(inspector.Inspectable):
                 self.log("controller :: finish '%s' error: %r" % (name, error))
         self.stage = Stage.DONE
 
-    # ------------------------------------------------------------------ stage
+    """Stage: the flight stage machine and its operator-facing name."""
     def set_stage(self, stage: int) -> None:
         if stage not in Stage.STAGES:
             raise ValueError('unknown stage: %s' % stage)
@@ -272,11 +359,18 @@ class Controller(inspector.Inspectable):
         """The current flight stage as its operator-facing name."""
         return Stage.STAGES[self.stage]
 
-    # ------------------------------------------------------------------ arming
+    """Arming: the actuation gate and the operator stage/health gates."""
     def arm(self) -> None:
-        """Enable actuation. The pre-flight precondition (probe all clean, mission set) is enforced by
-        the caller (the CC `arm` command / field auto-arm); arming also pins the live GNSS fix as the
-        launch point (mission.freeze_launch) so the tier-2 heading survives a mid-flight fix loss."""
+        """
+        Enable actuation.
+
+        The pre-flight precondition (probe all clean, mission set) is enforced by the caller (the CC
+        `arm` command / field auto-arm); arming also pins the live GNSS fix as the launch point
+        (mission.freeze_launch) so the tier-2 heading survives a mid-flight fix loss.
+
+        Returns:
+            None; sets self.armed and freezes the launch point.
+        """
         mission = inspector.Inspector.get('mission')
         if mission is not None:  # None only in unit rigs without a mission
             mission.freeze_launch()
@@ -288,8 +382,15 @@ class Controller(inspector.Inspectable):
         self.log('controller :: disarmed')
 
     def hold(self, stage_name: str) -> bool:
-        """Operator stage override (ground test): force a stage and pause auto-sequencing. Returns
-        False for an unknown stage name."""
+        """
+        Operator stage override (ground test): force a stage and pause auto-sequencing.
+
+        Args:
+            stage_name - the stage to force, by its operator-facing name.
+
+        Returns:
+            True once held at the stage; False for an unknown stage name.
+        """
         for stage_id, name in Stage.STAGES.items():
             if name == stage_name:
                 self.set_stage(stage_id)
@@ -304,15 +405,16 @@ class Controller(inspector.Inspectable):
 
     def validate(self) -> bool:
         """True if every active task is healthy."""
-        for t in self.tasks.values():
-            if not t.validate():
+        for entry in self.tasks.values():
+            if not entry.validate():
                 return False
         return True
 
-    # --- Inspectable ---
+    """Inspectable: the operator-facing state snapshot (inspect) and per-task stats."""
     def inspect(self) -> dict:
         return {'stage': self.stage_name(), 'armed': self.armed, 'manual': self.manual,
                 'tasks': list(self.tasks.keys()), 'failures': self.failures}
 
     def stats(self) -> dict:
-        return {'stage': self.stage_name(), 'tasks': dict((n, t.inspect()) for n, t in self.tasks.items())}
+        return {'stage': self.stage_name(),
+                'tasks': dict((name, entry.inspect()) for name, entry in self.tasks.items())}

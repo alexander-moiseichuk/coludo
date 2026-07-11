@@ -1,21 +1,25 @@
-# On-board (MicroPython) test for the CC line protocol (cc_protocol.py). Board-first: a board
-# socket sees `command params` (no id), so parse() is command-first. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board (MicroPython) test for the CC line protocol (cc_protocol.py). Board-first: a board socket
+sees `command params` (no id), so parse() is command-first. Run by `make test`.
+"""
 
 import cc_protocol as cc
 
 
 def main():
     # bare command, no params
-    m = cc.parse('ping')
-    assert m.command == 'ping' and m.args == [] and m.named == {}
+    msg = cc.parse('ping')
+    assert msg.command == 'ping' and msg.args == [] and msg.named == {}
 
     # positional params (bare tokens are strings; the receiver converts numerics)
-    m = cc.parse('log 3000')
-    assert m.command == 'log' and m.args == ['3000']
+    msg = cc.parse('log 3000')
+    assert msg.command == 'log' and msg.args == ['3000']
 
     # named params
-    m = cc.parse('tel ms=3000')
-    assert m.command == 'tel' and m.named == {'ms': '3000'} and m.args == []
+    msg = cc.parse('tel ms=3000')
+    assert msg.command == 'tel' and msg.named == {'ms': '3000'} and msg.args == []
 
     # simple values stay bare; spaces/specials ride as base64
     assert cc.encode('192.168.10.1') == '192.168.10.1'
@@ -27,32 +31,32 @@ def main():
 
     # JSON rides as one base64 value (no special case)
     payload = '{"board": {"id": "g7a"}, "n": 2}'
-    m = cc.parse(cc.build('set-config', ['board', payload]))
-    assert m.command == 'set-config' and m.args == ['board', payload]
+    msg = cc.parse(cc.build('set-config', ['board', payload]))
+    assert msg.command == 'set-config' and msg.args == ['board', payload]
 
     # an encoded positional containing '=' stays positional
-    m = cc.parse(cc.build('inspect', ['wifi', 'a=b']))
-    assert m.args == ['wifi', 'a=b']
+    msg = cc.parse(cc.build('inspect', ['wifi', 'a=b']))
+    assert msg.args == ['wifi', 'a=b']
 
     # command lowercased; values keep case
-    m = cc.parse('STAGE Glider1')
-    assert m.command == 'stage' and m.args == ['Glider1']
+    msg = cc.parse('STAGE Glider1')
+    assert msg.command == 'stage' and msg.args == ['Glider1']
 
     # response forms parse too (status first); iam carries the board id
-    m = cc.parse('iam taster base64:eyJhIjogMX0=')
-    assert m.command == 'iam' and m.args[0] == 'taster' and m.args[1] == '{"a": 1}'
+    msg = cc.parse('iam taster base64:eyJhIjogMX0=')
+    assert msg.command == 'iam' and msg.args[0] == 'taster' and msg.args[1] == '{"a": 1}'
     assert cc.parse('pong').command == 'pong'
-    m = cc.parse('err badcmd nope')
-    assert m.command == 'err' and m.args == ['badcmd', 'nope']
+    msg = cc.parse('err badcmd nope')
+    assert msg.command == 'err' and msg.args == ['badcmd', 'nope']
 
     # empty line
-    m = cc.parse('   ')
-    assert m.command is None and m.args == []
+    msg = cc.parse('   ')
+    assert msg.command is None and msg.args == []
 
     # build round-trips named + positional through parse
     line = cc.build('note', ['taster'], {'msg': 'pad 7, gusty'})
-    m = cc.parse(line)
-    assert m.command == 'note' and m.args == ['taster'] and m.named == {'msg': 'pad 7, gusty'}
+    msg = cc.parse(line)
+    assert msg.command == 'note' and msg.args == ['taster'] and msg.named == {'msg': 'pad 7, gusty'}
 
     print('ok: cc_protocol parse/build/encode/decode (board-first, base64, no quoting)')
 

@@ -1,9 +1,13 @@
-# gnss.py — shared GNSS infrastructure (sibling of i2cbus/spibus/servo). NMEA helpers + a Gnss base
-# Task: read NMEA over a dedicated UART, parse RMC -> 'position' (lat, lon) and GGA -> 'altitude'
-# (m MSL) + 'elevation' (m above the GNSS ground zero, a barometer backup). Module-specific sentence
-# selection + rate is the subclass's _configure(); ATGM336H (CASIC/PCAS) and NEO-6M (u-blox) differ
-# only there. Talker-agnostic (GP/GN/BD). Best-effort -- lock drops under boost, so the channels go
-# stale and consumers fall back.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Shared GNSS infrastructure (sibling of i2cbus/spibus/servo). NMEA helpers + a Gnss base Task: read
+NMEA over a dedicated UART, parse RMC -> 'position' (lat, lon) and GGA -> 'altitude' (m MSL) +
+'elevation' (m above the GNSS ground zero, a barometer backup). Module-specific sentence selection +
+rate is the subclass's _configure(); ATGM336H (CASIC/PCAS) and NEO-6M (u-blox) differ only there.
+Talker-agnostic (GP/GN/BD). Best-effort -- lock drops under boost, so the channels go stale and
+consumers fall back.
+"""
 
 import asyncio
 
@@ -12,14 +16,27 @@ import databoard
 import micropython
 import recorder
 import task
+from machine import UART  # board-only, like `micropython` above (this module never imports off-board)
 
 _KNOTS_TO_MS: float = 0.514444  # NMEA RMC speed is in knots; the airspeed governor wants m/s
 
 
 @micropython.viper
 def _xor_checksum(data: ptr8, start: int, end: int) -> int:  # noqa: F821 -- ptr8 is a viper builtin type
-    """XOR of the bytes data[start:end] -- the NMEA checksum inner loop as native integer code (/
-    a viper pointer walk, no per-char str iterator + ord()). `data` is a bytes-like (callers .encode())."""
+    """
+    XOR of the bytes data[start:end] -- the NMEA checksum inner loop as native integer code.
+
+    A viper pointer walk (no per-char str iterator + ord()). `data` is a bytes-like (callers
+    .encode()).
+
+    Args:
+        data - a bytes-like buffer (ptr8).
+        start - the first index (inclusive).
+        end - the end index (exclusive).
+
+    Returns:
+        The XOR checksum of the byte range, as an int.
+    """
     checksum = 0
     for index in range(start, end):
         checksum ^= int(data[index])
@@ -27,7 +44,18 @@ def _xor_checksum(data: ptr8, start: int, end: int) -> int:  # noqa: F821 -- ptr
 
 
 def checksum_ok(sentence: str) -> bool:
-    """Verify the NMEA `*hh` XOR checksum (over the chars between '$' and '*'); inner loop = _xor_checksum."""
+    """
+    Verify the NMEA `*hh` XOR checksum (over the chars between '$' and '*').
+
+    The inner XOR loop is _xor_checksum.
+
+    Args:
+        sentence - the full NMEA sentence including the '$' and the '*hh' suffix.
+
+    Returns:
+        True when the computed checksum matches the sentence's; False on a missing '*' or a bad /
+        absent hex suffix.
+    """
     star = sentence.rfind('*')
     if star < 0:
         return False
@@ -39,7 +67,16 @@ def checksum_ok(sentence: str) -> bool:
 
 
 def degrees(value: str, hemisphere: str):
-    """NMEA ddmm.mmmm + N/S/E/W -> signed decimal degrees (None when the field is empty)."""
+    """
+    Convert an NMEA ddmm.mmmm value + hemisphere to signed decimal degrees.
+
+    Args:
+        value - the ddmm.mmmm field (empty -> None).
+        hemisphere - 'N'/'S'/'E'/'W' (S and W give a negative result).
+
+    Returns:
+        The signed decimal degrees, or None when the field is empty.
+    """
     if not value:
         return None
     dot = value.find('.')
@@ -48,15 +85,29 @@ def degrees(value: str, hemisphere: str):
 
 
 def nmea(body: str) -> bytes:
-    """Wrap a command body in `$...*hh\\r\\n` with its XOR checksum (PCAS/PMTK/PUBX config sentences)."""
+    """
+    Wrap a command body in `$...*hh\\r\\n` with its XOR checksum.
+
+    For building PCAS/PMTK/PUBX config sentences.
+
+    Args:
+        body - the sentence body between '$' and '*' (no delimiters).
+
+    Returns:
+        The full sentence as bytes, ready to write to the UART.
+    """
     checksum = _xor_checksum(body.encode(), 0, len(body))
     return ('$%s*%02X\r\n' % (body, checksum)).encode()
 
 
 class Gnss(task.Task):
-    """Base GNSS driver over a dedicated UART: RMC -> 'position' (lat, lon); GGA -> 'altitude' (m MSL)
-    + 'elevation' (m above the GNSS ground zero, a baro backup). Subclasses set the module-specific
-    sentence selection + rate in _configure()."""
+    """
+    Base GNSS driver over a dedicated UART.
+
+    RMC -> 'position' (lat, lon); GGA -> 'altitude' (m MSL) + 'elevation' (m above the GNSS ground
+    zero, a baro backup). Subclasses set the module-specific sentence selection + rate in
+    _configure().
+    """
 
     _uart = None  # class default: no transport until setup() opens it (diagnose reads directly)
 
@@ -65,8 +116,6 @@ class Gnss(task.Task):
         spec = config.bus(self.controller.config, self.config.get('bus', 'uart'), bus_id)
         if spec is None:
             return False
-        from machine import UART
-
         self._uart = UART(bus_id, baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
         self._reader = asyncio.StreamReader(self._uart)
         await self._configure(self.config.get('hz', 1))
@@ -121,9 +170,18 @@ class Gnss(task.Task):
                 self._elevation.push(altitude - self._ground)
 
     async def run(self) -> None:
-        """Read NMEA lines forever and parse them; non-ASCII noise and malformed fields are skipped
-        (decode raises on a high byte -- MicroPython has no errors='ignore'). A silent receiver simply
-        yields nothing."""
+        """
+        Read NMEA lines forever and parse them.
+
+        Non-ASCII noise and malformed fields are skipped (decode raises on a high byte -- MicroPython
+        has no errors='ignore'). A silent receiver simply yields nothing.
+
+        Args:
+            (none)
+
+        Returns:
+            None (runs forever).
+        """
         while True:
             raw = await self._reader.readline()
             if raw:
@@ -134,8 +192,19 @@ class Gnss(task.Task):
                     pass  # noise byte / malformed field -> drop the line
 
     async def probe(self) -> str:
-        """On-demand self-test: NMEA is arriving on the UART (the run loop counts lines). A satellite
-        fix needs sky view, so it is logged (fix true/false), not treated as a failure."""
+        """
+        On-demand self-test: NMEA is arriving on the UART.
+
+        The run loop counts lines; this checks the count advances. A satellite fix needs sky view, so
+        it is logged (fix true/false), not treated as a failure.
+
+        Args:
+            (none)
+
+        Returns:
+            None when NMEA is flowing; an error message string when no lines arrived within the
+            window.
+        """
         try:
             recorder.Recorder.log(self.name, 'probe: nmea link ...')
             before = self._lines
@@ -151,17 +220,26 @@ class Gnss(task.Task):
         return None
 
     async def diagnose(self) -> str:
-        """Deeper analysis when setup() failed: is NMEA arriving on the UART? Open the port and listen
-        briefly. Silence = GNSS unpowered / TX-RX swapped / no module; lines = the link is alive (a fix
-        still needs sky view). Shared by atgm336h + neo6mv2. The Controller folds this into the reason."""
+        """
+        Deeper analysis when setup() failed: is NMEA arriving on the UART?
+
+        Opens the port and listens briefly. Silence = GNSS unpowered / TX-RX swapped / no module;
+        lines = the link is alive (a fix still needs sky view). Shared by atgm336h + neo6mv2. The
+        Controller folds this into the reason.
+
+        Args:
+            (none)
+
+        Returns:
+            A human-readable string: 'no transport ...' when the bus is undefined, 'no NMEA ...' on
+            silence, else 'NMEA flowing ...' when the link is alive.
+        """
         bus_id = self.config.get('id', 2)
         spec = config.bus(self.controller.config, self.config.get('bus', 'uart'), bus_id)
         if spec is None:
             return 'no transport -- uart bus %s undefined in config' % bus_id
         uart = self._uart  # None until setup opens the port
         if uart is None:
-            from machine import UART
-
             uart = UART(bus_id, baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
         reader = asyncio.StreamReader(uart)
         seen = 0

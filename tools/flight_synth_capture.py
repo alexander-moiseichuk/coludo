@@ -1,7 +1,12 @@
-# flight_synth_capture.py — generate a synthetic Coludo recorder capture (a believable E/F-motor boost
-# -> coast -> glide -> land), in the exact wire format flight_telemetry.parse() reads. Lets the report
-# be demoed before any real flight, and gives the parser test realistic data.
-# `python3 flight_synth_capture.py` prints a capture to stdout; pipe it into flight_report.py.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Generate a synthetic Coludo recorder capture (a believable E/F-motor boost -> coast -> glide -> land),
+in the exact wire format flight_telemetry.parse() reads. Lets the report be demoed before any real
+flight, and gives the parser test realistic data.
+
+`python3 flight_synth_capture.py` prints a capture to stdout; pipe it into flight_report.py.
+"""
 
 import math
 

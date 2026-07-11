@@ -411,6 +411,19 @@ altitude runs out.
   full `land_bank_limit` 45° available (`land_bank_gain` 3.0 — at 1.5 the rotating-target P-loop
   saturated near 25° and the spiral froze at that bank's 44 m radius; 45° gives the ~20 m minimum
   the miss target needs).
+* **Turn-radius limit — a physical restriction, not a tuning knob.** A coordinated turn holds
+  `R = v²/(g·tan φ)`; at ~14 m/s trim the endgame's 45° land-bank gives **R_min ≈ 20 m**, so the spiral
+  CANNOT collapse tighter and the touchdown is bounded to that circle (the measured 15–20 m floor; the
+  residual miss is otherwise along the strip's long axis plus ~15 m of unactuated free-drift in the
+  final descent). Guidance therefore CLAMPS the commanded loiter/endgame radius to `min_turn_radius(bank)`
+  at the live airspeed — it never asks for a turn the airframe cannot fly (cruise clamps at `bank_limit`,
+  the endgame at `land_bank_limit`) — and reports the landing R_min in `flight.vitals` (`r_min_m`) for a
+  land-short-vs-stretch decision. Tightening it further needs a steeper AIRSPEED-GATED bank bounded by the
+  turn-stall speed (`V_stall·√n`, load `n = 1/cos φ`): a separate program (5.2) that first needs a stall
+  model added to `sim_model` — the current dynamics has no stall break, so a naive steeper bank would look
+  free in HITL and lie about the real airframe. These aero limits (the 45° cap, the launch-wind limit, the
+  sink polar) were intuitive first guesses; they are worth re-deriving from the measured TMS-7 mass / wing
+  area / CL_max.
 * **Final approach** (below `final_approach_agl`): the strip-centreline tracker, unchanged.
 * **Steering noise filter** (all laws): the heading error runs through an all-integer EMA
   (`steer_filter_shift` 3 = alpha 1/8, τ ≈ 80 ms at 100 Hz; zero-alloc under GC-off) so per-step

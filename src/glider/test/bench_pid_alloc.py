@@ -1,10 +1,14 @@
-# F01 allocation benchmark (not a make-test case; run by hand via mpremote).
-# Measures GROSS heap allocation per PID step with GC DISABLED -- i.e. the exact in-flight leak
-# rate (gc.disable() on BOOSTING, so nothing is freed and every alloc accumulates to OOM). The
-# fixed-point Pid shipped (SCALE=100, centidegrees), so this now measures the SHIPPED pid.Pid
-# (expect ~0 B/step, the win we chose) -- including the gyro-rate D term -- against the two integer
-# candidates (mdeg + cdeg) that priced the scale, at a realistic error and the ±180 deg worst case.
-# The old float baseline is gone: pid.Pid IS the fixed-point one now, so it takes fixnum error/int dt.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Allocation benchmark (not a make-test case; run by hand via mpremote). Measures GROSS heap allocation
+per PID step with GC DISABLED -- i.e. the exact in-flight leak rate (gc.disable() on BOOSTING, so nothing
+is freed and every alloc accumulates to OOM). The fixed-point Pid shipped (SCALE=100, centidegrees), so
+this now measures the SHIPPED pid.Pid (expect ~0 B/step, the win we chose) -- including the gyro-rate D
+term -- against the two integer candidates (mdeg + cdeg) that priced the scale, at a realistic error and
+the ±180 deg worst case. The old float baseline is gone: pid.Pid IS the fixed-point one now, so it takes
+fixnum error/int dt.
+"""
 
 import gc
 
@@ -27,9 +31,13 @@ def per_step(fn):
 
 
 class _FixedPid:
-    """Integer fixed-point PID candidate. error in `unit` sub-degrees (1000 = mdeg, 100 = cdeg), dt in
-    ms, gains scaled by _KU. Every intermediate stays a small int if the scale is chosen so products
-    stay < 2**30 (the RV32 small-int ceiling); above it MicroPython boxes a 16-byte mpz per op."""
+    """
+    Integer fixed-point PID candidate.
+
+    error in `unit` sub-degrees (1000 = mdeg, 100 = cdeg), dt in ms, gains scaled by _KU. Every
+    intermediate stays a small int if the scale is chosen so products stay < 2**30 (the RV32 small-int
+    ceiling); above it MicroPython boxes a 16-byte mpz per op.
+    """
 
     _KU = 100  # gain scale: 0.01 resolution (kp 1.50 -> 150)
 
@@ -84,8 +92,12 @@ def main():
 
 
 def bench_unit(unit, tag):
-    """Fixed-point candidate at `unit` sub-degree ticks/degree: realistic error, ±180 swing (worst case
-    for the derivative's *1000), and the call-site float->int conversion. All measured alloc-free."""
+    """
+    Fixed-point candidate at `unit` sub-degree ticks/degree.
+
+    Realistic error, ±180 swing (worst case for the derivative's *1000), and the call-site float->int
+    conversion. All measured alloc-free.
+    """
     fx = _FixedPid(1.5, 0.2, 0.05, 100 * unit, 45 * unit, unit)
     fx.step(1 * unit, 10)
     e_small = 5 * unit

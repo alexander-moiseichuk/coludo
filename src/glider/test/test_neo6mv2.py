@@ -1,7 +1,11 @@
-# On-board test for the NEO-6M GNSS driver (drivers/neo6mv2.py): @task.driver('neo6mv2') registration,
-# that it subclasses the shared gnss.Gnss base, the UBX binary framing/checksum, graceful setup on an
-# undefined bus, and that the u-blox PUBX/UBX reconfiguration runs without error on uart:2. NMEA
-# parsing/elevation is covered by test_gnss (the shared base). Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the NEO-6M GNSS driver (drivers/neo6mv2.py): @task.driver('neo6mv2') registration,
+that it subclasses the shared gnss.Gnss base, the UBX binary framing/checksum, graceful setup on an
+undefined bus, and that the u-blox PUBX/UBX reconfiguration runs without error on uart:2. NMEA
+parsing/elevation is covered by test_gnss (the shared base). Run by `make test`.
+"""
 
 import asyncio
 import struct

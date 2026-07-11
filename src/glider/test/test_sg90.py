@@ -1,7 +1,11 @@
-# On-board test for the SG90 servo driver (drivers/sg90.py): @task.driver('sg90') registration, the
-# integer degrees->pulse mapping, range clamping, neutral-at-boot, update/finish, move() + the N-slew
-# gate, the open-loop `feedback: None` marker, and the probe() sweep. Constructs real PWM on the
-# configured fin pins (no servo needs to be attached). Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the SG90 servo driver (drivers/sg90.py): @task.driver('sg90') registration, the
+integer degrees->pulse mapping, range clamping, neutral-at-boot, update/finish, move() + the N-slew
+gate, the open-loop `feedback: None` marker, and the probe() sweep. Constructs real PWM on the
+configured fin pins (no servo needs to be attached). Run by `make test`.
+"""
 
 import asyncio
 

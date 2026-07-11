@@ -1,6 +1,10 @@
-# `assist <board>` — push the host GPS position to a board's mission (sync the launch site), then
-# persist it to the board's launch.config. Only sends a usable 3D fix; defaults to the selected
-# board. Requires a GPS attached to the Control host (main.py --gps-device).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+`assist <board>` -- push the host GPS position to a board's mission (sync the launch site), then
+persist it to the board's launch.config. Only sends a usable 3D fix; defaults to the selected
+board. Requires a GPS attached to the Control host (main.py --gps-device).
+"""
 
 import json
 
@@ -26,5 +30,5 @@ async def assist_command(hub, tokens, session) -> list:
     if saved is None:
         return ['from cc err offline %s' % target]
     if saved.command != 'ok':
-        return ['from cc err set-config %s' % ' '.join(str(a) for a in saved.args)]
+        return ['from cc err set-config %s' % ' '.join(str(arg) for arg in saved.args)]
     return ['from cc ok %s' % json.dumps({'assisted': target, 'position': position, 'saved': True})]

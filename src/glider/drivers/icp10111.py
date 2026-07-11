@@ -1,11 +1,15 @@
-# drivers/icp10111.py — ICP-10111 barometric pressure sensor (TDK ICP-101xx, on the SEN0517) over
-# the shared I2C bus: the PRIMARY altitude channel (8.5 cm accuracy). @task.driver('icp10111').
-# Command-based, not register-mapped: setup() verifies the product id and reads the 4 OTP calibration
-# constants; run() issues a measure command, reads pressure+temperature, applies the TDK polynomial
-# conversion and writes pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
-# per-sensor startup ground zero) to the databoard. Graceful: wrong/absent id -> setup False -> skipped.
-#
-# Polled at period_ms. Uses the shared locked bus (i2cbus); shares i2c:0 with the other sensors.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+ICP-10111 barometric pressure sensor (TDK ICP-101xx, on the SEN0517) over the shared I2C bus: the
+PRIMARY altitude channel (8.5 cm accuracy). @task.driver('icp10111'). Command-based, not
+register-mapped: setup() verifies the product id and reads the 4 OTP calibration constants; run() issues
+a measure command, reads pressure+temperature, applies the TDK polynomial conversion and writes pressure
+(Pa), temperature (°C), altitude (m AMSL) and elevation (m above the per-sensor startup ground zero) to
+the databoard. Graceful: wrong/absent id -> setup False -> skipped.
+
+Polled at period_ms. Uses the shared locked bus (i2cbus); shares i2c:0 with the other sensors.
+"""
 
 import asyncio
 import struct
@@ -44,9 +48,12 @@ _GROUND_SAMPLES = const(8)  # readings averaged at startup to fix the ground-zer
 
 @task.driver('icp10111')
 class Icp10111(task.Task):
-    """Primary baro: pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the
-    startup ground zero, captured per-sensor so it is offset-free) to the databoard. `update`
-    {"rezero": true} re-captures ground zero (e.g. after warm-up, just before launch)."""
+    """
+    Primary baro to the databoard: pressure (Pa), temperature (°C), altitude (m AMSL) and elevation.
+
+    Elevation is metres above the startup ground zero, captured per-sensor so it is offset-free.
+    `update {"rezero": true}` re-captures ground zero (e.g. after warm-up, just before launch).
+    """
 
     _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
 
@@ -116,7 +123,16 @@ class Icp10111(task.Task):
         return total / _GROUND_SAMPLES
 
     def _compensate(self, p_raw: int, t_raw: int) -> float:
-        """TDK ICP-101xx polynomial: raw pressure + temperature -> pressure in Pa."""
+        """
+        TDK ICP-101xx polynomial conversion: raw pressure + temperature -> pressure in Pa.
+
+        Args:
+            p_raw - raw pressure reading from the sensor.
+            t_raw - raw temperature reading from the sensor.
+
+        Returns:
+            Pressure in Pa.
+        """
         c0, c1, c2, c3 = self._otp
         t = t_raw - 32768
         s1 = _LUT_LOWER + c0 * t * t * _QUADR
@@ -157,10 +173,20 @@ class Icp10111(task.Task):
             await asyncio.sleep_ms(self._period_ms)
 
     def update(self, props: dict) -> list:
-        """`{"rezero": true}` re-captures ground zero from the latest altitude (sync; operator does
-        it when the reading is stable). `{"ground": <m>}` SETS the zero directly -- the warm start
-        rebases a rebooted baro to the breadcrumb's pad altitude (a mid-air re-zero would make
-        `elevation` read ~0 at altitude, faking an immediate landing)."""
+        """
+        Apply an operator property change: re-zero or directly set the ground reference.
+
+        `{"rezero": true}` re-captures ground zero from the latest altitude (sync; the operator does it
+        when the reading is stable). `{"ground": <m>}` SETS the zero directly -- the warm start rebases a
+        rebooted baro to the breadcrumb's pad altitude (a mid-air re-zero would make `elevation` read ~0
+        at altitude, faking an immediate landing).
+
+        Args:
+            props - the property dict; honours 'ground' (a float, metres) and 'rezero' (a truthy flag).
+
+        Returns:
+            The list of changed property names (['ground'] on a set or re-zero, [] otherwise).
+        """
         if 'ground' in props:
             self._ground = float(props['ground'])
             return ['ground']
@@ -170,9 +196,19 @@ class Icp10111(task.Task):
         return []
 
     async def probe(self) -> str:
-        """On-demand self-test: the run loop is producing pressure. We issue NO I2C here -- the
-        command-based ICP (write-measure then read) would race the run loop's own measure/read
-        sequence on the shared bus; a present, healthy sensor instead keeps its channel fresh."""
+        """
+        On-demand self-test: confirm the run loop is producing pressure.
+
+        We issue NO I2C here -- the command-based ICP (write-measure then read) would race the run loop's
+        own measure/read sequence on the shared bus; a present, healthy sensor instead keeps its channel
+        fresh, so probe just waits for and checks it.
+
+        Args:
+            (none)
+
+        Returns:
+            None on success; a short failure message (also logged) when no pressure appears.
+        """
         try:
             recorder.Recorder.log(self.name, 'probe: data ...')
             await asyncio.sleep_ms(300)  # let the run loop produce a fresh reading
@@ -187,10 +223,19 @@ class Icp10111(task.Task):
         return None
 
     async def diagnose(self) -> str:
-        """Deeper analysis when setup() failed: re-issue the product-id command and classify via
-        commons.id_classify (masked 2-byte word & 0x3F, expecting 0x08). icp10111 is command-based (not
-        register-mapped) so it cannot use i2cbus._Device.diagnose(), but the shared classifier still
-        produces the same wire-level categories."""
+        """
+        Deeper analysis when setup() failed: re-issue the product-id command and classify the fault.
+
+        commons.id_classify masks the 2-byte word (& 0x3F, expecting 0x08). icp10111 is command-based
+        (not register-mapped) so it cannot use i2cbus._Device.diagnose(), but the shared classifier still
+        produces the same wire-level categories.
+
+        Args:
+            (none)
+
+        Returns:
+            A wire-level fault category; a config-fault message when setup never built the transport.
+        """
         if self._bus is None:  # setup never built the transport
             return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)
         try:

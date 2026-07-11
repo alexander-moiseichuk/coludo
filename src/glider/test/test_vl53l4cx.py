@@ -1,6 +1,10 @@
-# On-board test for the VL53L4CX driver (drivers/vl53l4cx.py): @task.driver('vl53l4cx') registration
-# and graceful setup when the device is absent. Deterministic whether or not a VL53L4CX is wired (it
-# probes a bus/address that has nothing on it). Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the VL53L4CX driver (drivers/vl53l4cx.py): @task.driver('vl53l4cx') registration
+and graceful setup when the device is absent. Deterministic whether or not a VL53L4CX is wired (it
+probes a bus/address that has nothing on it). Run by `make test`.
+"""
 
 import asyncio
 

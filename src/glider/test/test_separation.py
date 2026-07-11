@@ -1,6 +1,10 @@
-# On-board test for the separation switch (drivers/separation.py): @task.driver('separation')
-# registration, pin setup, the Boosting->Gliding transition on a confirmed separation, the
-# not-Boosting guard, and graceful-absent. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the separation switch (drivers/separation.py): @task.driver('separation')
+registration, pin setup, the Boosting->Gliding transition on a confirmed separation, the
+not-Boosting guard, and graceful-absent. Run by `make test`.
+"""
 
 import asyncio
 

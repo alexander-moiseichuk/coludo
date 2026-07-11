@@ -1,6 +1,10 @@
-# exploration: push past viper -- measure @micropython.native on the FLOAT hot path and a
-# hand-written @micropython.asm_rv32 integer clamp, both vs bytecode/viper, with correctness asserts.
-# Run on-board: mpremote connect PORT run test/bench_emitters.py
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Exploration: push past viper -- measure @micropython.native on the FLOAT hot path and a hand-written
+@micropython.asm_rv32 integer clamp, both vs bytecode/viper, with correctness asserts. Run on-board:
+mpremote connect PORT run test/bench_emitters.py
+"""
 # ruff: noqa: F821 -- the asm_rv32 body uses bare RV32 mnemonics/registers the inline assembler provides.
 import time
 
@@ -16,7 +20,9 @@ def _bench3(function, a, b, c):
     return time.ticks_diff(time.ticks_us(), start) * 1000 // _N
 
 
-# ---------- integer clamp: bytecode vs viper vs inline RV32 assembly ----------
+"""Integer clamp: bytecode vs viper vs inline RV32 assembly."""
+
+
 def _clamp_upy(low, value, high):
     if value < low:
         return low
@@ -39,7 +45,9 @@ def _clamp_viper(low: int, value: int, high: int) -> int:
 # firmware rebuild. Only @native + @viper are usable (both measured here).
 
 
-# ---------- float multiply-chain (a pid.step-shaped body): bytecode vs native ----------
+"""Float multiply-chain (a pid.step-shaped body): bytecode vs native."""
+
+
 def _axis_upy(error, integral, derivative):
     return 0.8 * error + 0.05 * integral + 0.1 * derivative
 

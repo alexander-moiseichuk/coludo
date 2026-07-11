@@ -1,17 +1,24 @@
-# servo.py — shared servo infrastructure, sibling of the bus helpers (i2cbus/spibus). The slew gate
-# bounds how many fins slew at once (the boost-rail current transient): a process-wide counting
-# semaphore so `servo_concurrency` (board config) caps total simultaneous slews across every servo
-# driver. Servo-type-agnostic -- each driver (sg90, future mg90s/mg996r) imports the gate and adds its
-# own pulse range + slew timing.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Shared servo infrastructure, sibling of the bus helpers (i2cbus/spibus). The slew gate bounds how many
+fins slew at once (the boost-rail current transient): a process-wide counting semaphore so
+`servo_concurrency` (board config) caps total simultaneous slews across every servo driver.
+Servo-type-agnostic -- each driver (sg90, future mg90s/mg996r) imports the gate and adds its own pulse
+range + slew timing.
+"""
 
 import asyncio
 
 
 class Gate:
-    """A tiny FIFO counting semaphore (MicroPython asyncio has no Semaphore, only Lock/Event): at most
-    `permits` holders at once, the rest queue and are handed a permit in order on release. The
+    """
+    A tiny FIFO counting semaphore (MicroPython asyncio has no Semaphore, only Lock/Event).
+
+    At most `permits` holders at once, the rest queue and are handed a permit in order on release. The
     process-wide shared instance lives on the class itself (Gate.slew()/Gate.reset()) -- no module
-    global."""
+    global.
+    """
 
     _shared: 'Gate' = None  # the process-wide slew gate, created on the first Gate.slew()
 
@@ -53,15 +60,30 @@ class Gate:
 
     @classmethod
     def slew(cls, permits: int) -> 'Gate':
-        """The process-wide slew gate, created once (the first servo's `permits` wins) and shared by
-        every servo driver, so `servo_concurrency` bounds simultaneous slews board-wide rather than
-        per driver."""
+        """
+        The process-wide slew gate, created once and shared by every servo driver.
+
+        The first servo's `permits` wins, so `servo_concurrency` bounds simultaneous slews board-wide
+        rather than per driver.
+
+        Args:
+            permits - the maximum simultaneous slews, applied only when the shared gate is first created.
+
+        Returns:
+            The shared Gate instance (the same object on every call).
+        """
         if cls._shared is None:
             cls._shared = cls(permits)
         return cls._shared
 
     @classmethod
     def reset(cls) -> None:
-        """Drop the shared gate so the next Gate.slew() rebuilds it -- for tests (clean permit count)
-        and a full reconfigure."""
+        """
+        Drop the shared gate so the next Gate.slew() rebuilds it.
+
+        For tests (a clean permit count) and a full reconfigure.
+
+        Returns:
+            None; clears the class-held shared gate.
+        """
         cls._shared = None

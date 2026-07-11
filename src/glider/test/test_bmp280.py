@@ -1,6 +1,10 @@
-# On-board test for the BMP280 driver (drivers/bmp280.py): @task.driver('bmp280') registration,
-# graceful setup when absent, and that the Bosch compensation is sane. Deterministic whether or not
-# a BMP280 is wired. Run by `make test`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+On-board test for the BMP280 driver (drivers/bmp280.py): @task.driver('bmp280') registration,
+graceful setup when absent, and that the Bosch compensation is sane. Deterministic whether or not a
+BMP280 is wired. Run by `make test`.
+"""
 
 import asyncio
 
