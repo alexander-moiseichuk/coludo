@@ -35,7 +35,7 @@ def _render(resp) -> str:
     """
     if not resp.args:
         return resp.command
-    return '%s %s' % (resp.command, ' '.join(str(a) for a in resp.args))
+    return '%s %s' % (resp.command, ' '.join(str(arg) for arg in resp.args))
 
 
 class Server:
@@ -290,11 +290,11 @@ class Server:
             await asyncio.sleep(self.heartbeat_s)
             if time.monotonic() - client.last_seen < self.heartbeat_s:
                 continue  # a recent exchange already proved liveness
-            ok = await client.command('health', quiet=True) is not None
-            if ok != alive:
-                self.log('%s heartbeat %s' % (client.id, 'ok' if ok else 'lost'))
-                alive = ok
-            if not ok:
+            healthy = await client.command('health', quiet=True) is not None
+            if healthy != alive:
+                self.log('%s heartbeat %s' % (client.id, 'ok' if healthy else 'lost'))
+                alive = healthy
+            if not healthy:
                 return  # disconnected -> _handle marks it offline
 
     """Operator side: read console lines, route board-id-first ones to boards, the rest to commands."""
@@ -376,7 +376,7 @@ class Server:
         if not command_tokens:
             return ['from cc err badargs empty-command']
         if target == BROADCAST:
-            targets = [c for c in self.boards.values() if c.online]
+            targets = [board for board in self.boards.values() if board.online]
             if not targets:
                 return ['from cc err noboard all']
         else:

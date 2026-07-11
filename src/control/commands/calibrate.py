@@ -52,7 +52,8 @@ async def calibrate_command(hub, tokens, session) -> list:
         if report.get('all_ok'):
             ceiling = freq
         else:  # first failing step -> the limiting device(s): what to rewire or split off the bus
-            limiter = {'freq': freq, 'failed': [n for n, v in report.get('devices', {}).items() if v != 'ok']}
+            failed = [name for name, result in report.get('devices', {}).items() if result != 'ok']
+            limiter = {'freq': freq, 'failed': failed}
             break
 
     chosen, note = None, None
