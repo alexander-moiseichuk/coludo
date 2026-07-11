@@ -1,10 +1,15 @@
 #!/usr/bin/env python3
-# Generate doc/api.md from the module sources by *parsing* them (stdlib `ast`) -- never importing,
-# so it works for the firmware too (which imports machine/network/esp32, absent on the host) and
-# needs no third-party tools. Module descriptions come from the leading `#` comment header; class,
-# method and function descriptions from their docstrings. Public surface only (skips _-internals).
-#
-#   python3 tools/gen_docs.py        # writes doc/api.md
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Generate doc/api.md from the module sources by *parsing* them (stdlib `ast`) -- never importing, so it
+works for the firmware too (which imports machine/network/esp32, absent on the host) and needs no
+third-party tools. Module descriptions come from the module docstring (minus the shared copyright
+line); class, method and function descriptions from their docstrings. Public surface only (skips
+_-internals).
+
+    python3 tools/gen_docs.py        # writes doc/api.md
+"""
 
 import ast
 import os
@@ -20,19 +25,29 @@ SOURCES = [
 SKIP_PREFIXES = ('test_', 'itest_', 'bench_', 'gen_docs', '__init__', 'version')
 
 
-def module_header(source: str) -> str:
-    """The leading block of `#` comment lines (our module header), as plain text."""
-    lines = []
-    for line in source.splitlines():
-        stripped = line.strip()
-        if stripped.startswith('#'):
-            lines.append(stripped[1:].strip())
-        elif stripped == '' and lines:
-            break
-        elif stripped == '':
-            continue
-        else:
-            break
+def module_header(tree: ast.Module) -> str:
+    """
+    The module's description text: its docstring with the shared copyright line stripped.
+
+    Every module now opens with a docstring whose first line is the 'Coludo project, copyright ...'
+    notice; api.md wants the prose that follows, not that boilerplate repeated per module. When the
+    copyright line is absent the whole docstring is returned unchanged.
+
+    Args:
+        tree - the parsed module AST.
+
+    Returns:
+        The description prose (copyright line and its trailing blank removed), or '' when the module
+        has no docstring.
+    """
+    doc = ast.get_docstring(tree)
+    if not doc:
+        return ''
+    lines = doc.splitlines()
+    if lines and lines[0].strip().startswith('Coludo project, copyright'):
+        lines = lines[1:]
+        while lines and lines[0].strip() == '':
+            lines.pop(0)
     return '\n'.join(lines).strip()
 
 
@@ -92,7 +107,7 @@ def render_module(path: str, out: list) -> None:
     test = os.path.join(os.path.dirname(path), 'test', 'test_%s' % name)
     if os.path.exists(test):
         out.append('_Tested by `test/test_%s`._\n' % name)
-    header = module_header(source)
+    header = module_header(tree)
     if header:
         out.append(header + '\n')
 

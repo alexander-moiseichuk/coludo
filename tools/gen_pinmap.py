@@ -1,8 +1,12 @@
-# tools/gen_pinmap.py -- generate doc/waveshare_esp32p4_pins.md FROM config_default.py, so the pin
-# doc can never drift stale (the old hand-maintained one nearly sent a solder to phantom codec pins).
-# CPython; reads the MicroPython config through its const shim. Run from the repo root:
-#   python3 tools/gen_pinmap.py            # rewrites doc/waveshare_esp32p4_pins.md
-#   python3 tools/gen_pinmap.py --check    # non-zero exit if the doc is out of date (CI hook)
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Generate doc/waveshare_esp32p4_pins.md FROM config_default.py, so the pin doc can never drift stale (the
+old hand-maintained one nearly sent a solder to phantom codec pins). CPython; reads the MicroPython
+config through its const shim. Run from the repo root:
+    python3 tools/gen_pinmap.py            # rewrites doc/waveshare_esp32p4_pins.md
+    python3 tools/gen_pinmap.py --check    # non-zero exit if the doc is out of date (CI hook)
+"""
 
 import os
 import sys

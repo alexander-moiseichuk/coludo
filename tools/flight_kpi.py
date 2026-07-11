@@ -1,15 +1,19 @@
-# tools/flight_kpi.py — guidance-effectiveness KPIs for one or more flight captures, comparable across
-# firmware versions (used for the doc/sims set READMEs). Per capture:
-#   * fin ACTIVITY — commanded-angle changes between consecutive fins.csv samples ('moves'; sg90
-#     compare-and-sets, so an unchanged command is no PWM write), total travel (deg), max single step;
-#   * CONTROL EFFORT — total travel per second of flight;
-#   * SERVO ENERGY — the INA226 power integral (J) and average power = energy / flight duration
-#     (real measured actuation work, including holding torque);
-#   * GUIDANCE OUTCOME — touchdown distance from the landing-zone centre + inside-zone flag.
-# Handles both the integer milli-unit power stream (power_mw, fixnums firmware on) and the older float
-# watts (power) so pre-fixnums captures compare on the same axis.
-#
-# Usage: flight_kpi.py LABEL:capture.txt [LABEL:capture.txt ...] [--zone lat1,lon1,lat2,lon2]
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Guidance-effectiveness KPIs for one or more flight captures, comparable across firmware versions (used
+for the doc/sims set READMEs). Per capture:
+  * fin ACTIVITY -- commanded-angle changes between consecutive fins.csv samples ('moves'; sg90
+    compare-and-sets, so an unchanged command is no PWM write), total travel (deg), max single step;
+  * CONTROL EFFORT -- total travel per second of flight;
+  * SERVO ENERGY -- the INA226 power integral (J) and average power = energy / flight duration
+    (real measured actuation work, including holding torque);
+  * GUIDANCE OUTCOME -- touchdown distance from the landing-zone centre + inside-zone flag.
+Handles both the integer milli-unit power stream (power_mw, fixnums firmware on) and the older float
+watts (power) so pre-fixnums captures compare on the same axis.
+
+Usage: flight_kpi.py LABEL:capture.txt [LABEL:capture.txt ...] [--zone lat1,lon1,lat2,lon2]
+"""
 
 import argparse
 import math
@@ -43,8 +47,15 @@ def _fin_activity(fins) -> tuple:
 
 
 def _servo_energy(power) -> tuple:
-    """(joules, duration_s) from the INA226 stream — trapezoid integral of power over the capture.
-    Reads power_mw (integer milli-units) or the pre-fixnums float `power` watts."""
+    """
+    Energy (joules) and duration from the INA226 stream.
+
+    Trapezoid integral of power over the capture. Reads power_mw (integer milli-units) or the
+    pre-fixnums float `power` watts, so old and new captures land on the same axis.
+
+    Returns:
+        (joules, duration_s) over the captured window.
+    """
     field = 'power_mw' if 'power_mw' in power.fields else 'power'
     times, values = power.column(field)
     milliwatts = values if field == 'power_mw' else [watts * 1000.0 for watts in values]
@@ -55,7 +66,16 @@ def _servo_energy(power) -> tuple:
 
 
 def _touchdown(gnss, zone: tuple) -> tuple:
-    """(miss_m, inside) — the last GNSS fix against the zone rectangle ((lat, lon) TL, BR)."""
+    """
+    The last GNSS fix measured against the zone rectangle.
+
+    Args:
+        gnss - the parsed GNSS stream (its final lat/lon is the touchdown point).
+        zone - the landing rectangle as ((lat, lon) TL, (lat, lon) BR).
+
+    Returns:
+        (miss_m, inside): metres from the zone centre and whether the fix is inside the rectangle.
+    """
     _times, latitudes = gnss.column('lat')
     _times, longitudes = gnss.column('lon')
     latitude, longitude = latitudes[-1], longitudes[-1]

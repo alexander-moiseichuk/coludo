@@ -1,11 +1,14 @@
-# flight_telemetry.py — parse a Coludo recorder capture (the UART stream to the Luckfox) into aligned
-# telemetry streams + log lines, for offline analysis. The recorder interleaves two record kinds on
-# uart:1 (recorder.py):
-#   @<session>_<file>@<row>              telemetry; first row per file is `uptime;<field>;...`, then
-#                                        each data row is `<uptime_us>;<v>;<v>;...`  (';'-separated)
-#   <ticks_us> <descriptor> :: <message> best-effort log line
-# parse() reads a raw capture (both kinds interleaved) and returns the streams + logs. Stdlib only, so
-# it stays importable in the test suite; the plotly rendering lives in flight_report.py.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Parse a Coludo recorder capture (the UART stream to the Luckfox) into aligned telemetry streams + log
+lines, for offline analysis. The recorder interleaves two record kinds on uart:1 (recorder.py):
+    @<session>_<file>@<row>               telemetry; first row per file is `uptime;<field>;...`, then
+                                          each data row is `<uptime_us>;<v>;<v>;...`  (';'-separated)
+    <ticks_us> <descriptor> :: <message>  best-effort log line
+parse() reads a raw capture (both kinds interleaved) and returns the streams + logs. Stdlib only, so it
+stays importable in the test suite; the plotly rendering lives in flight_report.py.
+"""
 
 import re
 
@@ -23,7 +26,15 @@ class Stream:
         self.rows: list = []  # [uptime_us, v1, v2, ...] per row (floats; '' for a missing/blank cell)
 
     def column(self, field: str):
-        """The (time_seconds, value) series for one field name — blanks skipped. Empty if absent."""
+        """
+        The (time_seconds, value) series for one field name; blank cells skipped.
+
+        Args:
+            field - the column name to extract.
+
+        Returns:
+            (times, values) parallel lists; ([], []) when the field is absent.
+        """
         if field not in self.fields:
             return [], []
         index = self.fields.index(field) + 1  # +1 past the uptime column
@@ -44,7 +55,17 @@ def _number(token: str):
 
 
 def parse(text: str):
-    """text -> ({file -> Stream}, logs), where logs is a list of (uptime_us | None, line)."""
+    """
+    Parse a raw capture into aligned streams and log lines.
+
+    Args:
+        text - the raw recorder capture (both record kinds interleaved).
+
+    Returns:
+        ({file -> Stream}, logs), where logs is a list of (uptime_us | None, line). Every timestamp is
+        normalised to a flight-relative origin (the earliest stamp seen is subtracted), so a capture
+        starts at t=0 rather than at the board's raw boot uptime.
+    """
     streams = {}
     logs = []
     for raw in text.splitlines():

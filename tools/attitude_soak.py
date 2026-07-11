@@ -1,15 +1,19 @@
-# tools/attitude_soak.py -- attitude-REDUNDANCY validation (MicroPython, runs ON the board). Flies a
-# HITL glide, then mid-glide flips the sim's `drop_attitude` to simulate a BNO055 death: the sim stops
-# publishing `attitude` while accel + rate keep flowing, so the priority-1 complementary-filter backup
-# (tasks/attitude.py) must take over the fused attitude slot and keep the glider controllable to DONE.
-#
-# It reports: the backup-vs-truth attitude error just before the drop (was it mirroring / warm?), the
-# fused-source handover (imu/sim -> attitude backup), the backup-vs-truth error through the backup-flown
-# descent, and whether the flight still reaches DONE (control stayed stable on the backup attitude).
-#
-# Deploy first (cd src/glider && ./deploy.sh), then:
-#   printf 'import attitude_soak\nattitude_soak.soak("F15", 6.0)\n' > /tmp/launch.py
-#   python3 tools/board_reboot.py PORT && mpremote connect PORT run /tmp/launch.py
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Attitude-REDUNDANCY validation (MicroPython, runs ON the board). Flies a HITL glide, then mid-glide
+flips the sim's `drop_attitude` to simulate a BNO055 death: the sim stops publishing `attitude` while
+accel + rate keep flowing, so the priority-1 complementary-filter backup (tasks/attitude.py) must take
+over the fused attitude slot and keep the glider controllable to DONE.
+
+It reports: the backup-vs-truth attitude error just before the drop (was it mirroring / warm?), the
+fused-source handover (imu/sim -> attitude backup), the backup-vs-truth error through the backup-flown
+descent, and whether the flight still reaches DONE (control stayed stable on the backup attitude).
+
+Deploy first (cd src/glider && ./deploy.sh), then:
+  printf 'import attitude_soak\nattitude_soak.soak("F15", 6.0)\n' > /tmp/launch.py
+  python3 tools/board_reboot.py PORT && mpremote connect PORT run /tmp/launch.py
+"""
 
 import asyncio
 import time

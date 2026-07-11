@@ -1,11 +1,15 @@
-# flight_report.py — render a Coludo flight capture as one self-contained interactive HTML (plotly):
-# a 3D trajectory (GNSS ground-track + baro altitude) plus linked time-series (accel magnitude,
-# altitude/elevation, attitude, agl) with stage/separation events marked. Streams are matched by their
-# field names, not file names, so it survives config renames.
-#
-#   pip install plotly
-#   python3 synth_capture.py > demo.txt && python3 flight_report.py demo.txt -o demo.html
-#   python3 flight_report.py <luckfox-capture> -o flight.html
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Render a Coludo flight capture as one self-contained interactive HTML (plotly): a 3D trajectory (GNSS
+ground-track + baro altitude) plus linked time-series (accel magnitude, altitude/elevation, attitude,
+agl) with stage/separation events marked. Streams are matched by their field names, not file names, so
+it survives config renames.
+
+  pip install plotly
+  python3 synth_capture.py > demo.txt && python3 flight_report.py demo.txt -o demo.html
+  python3 flight_report.py <luckfox-capture> -o flight.html
+"""
 
 import argparse
 import math
@@ -27,8 +31,20 @@ def _require_plotly():
 
 
 def find_stream(streams, *fields, prefer=None):
-    """The stream carrying all the given fields; when several match, one whose name contains `prefer`
-    wins (e.g. the dedicated ADXL high-g accel over the IMU's low-g accel). None if none match."""
+    """
+    The stream carrying all the given fields.
+
+    When several match, one whose name contains `prefer` wins (e.g. the dedicated ADXL high-g accel
+    over the IMU's low-g accel).
+
+    Args:
+        streams - the parsed streams, keyed by name.
+        fields - the field names the stream must carry (all of them).
+        prefer - a name substring to break ties toward a preferred stream.
+
+    Returns:
+        The matching stream, or None when none carry every field.
+    """
     matches = [stream for stream in streams.values() if all(field in stream.fields for field in fields)]
     if prefer:
         for stream in matches:
@@ -57,9 +73,15 @@ def _nearest(times, values, targets):
 
 
 def leak_estimate(health, events):
-    """GC-off PSRAM leak from the mem_free slope over BOOSTING->DONE (GC is disabled airborne, so mem_free
-    falls monotonically), and the extrapolated time-to-OOM (free-at-boost / leak). Returns
-    (leak_kbps, oom_s, free_boost_mb, free_low_mb) or None when there is no health/stage data."""
+    """
+    The GC-off PSRAM leak and the extrapolated time-to-OOM.
+
+    Measured from the mem_free slope over BOOSTING->DONE (GC is disabled airborne, so mem_free falls
+    monotonically); time-to-OOM is free-at-boost / leak.
+
+    Returns:
+        (leak_kbps, oom_s, free_boost_mb, free_low_mb), or None when there is no health/stage data.
+    """
     if health is None or 'mem_free' not in health.fields:
         return None
     boost = next((t for t, label in events if 'boosting' in label.lower()), None)
@@ -186,8 +208,20 @@ def build(streams, logs, go, make_subplots):
 
 
 def write_html(trajectory, series, out, pio, plotlyjs=True):
-    """One HTML with both figures. plotlyjs True -> embed plotly.js (self-contained, ~4.5 MB); 'cdn' ->
-    load it from the CDN (tiny file, needs internet to view)."""
+    """
+    Write one HTML file holding both figures.
+
+    Args:
+        trajectory - the 3D trajectory figure.
+        series - the linked time-series figure.
+        out - path to write the HTML to.
+        pio - the plotly.io module.
+        plotlyjs - True embeds plotly.js (self-contained, ~4.5 MB); 'cdn' loads it from the CDN (tiny
+            file, needs internet to view).
+
+    Returns:
+        None (writes the HTML to `out`).
+    """
     body = (pio.to_html(trajectory, include_plotlyjs=plotlyjs, full_html=False)
             + pio.to_html(series, include_plotlyjs=False, full_html=False))
     with open(out, 'w') as handle:

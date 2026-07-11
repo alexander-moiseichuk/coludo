@@ -1,19 +1,23 @@
-# main.py — a handheld servo bench tester for an ESP32-C3 + 0.42" SSD1306 OLED + two capacitive
-# buttons (see servos.md). Standalone: it does NOT import the glider firmware. Dial one of three views
-# of the same PWM state (angle / pulse width / raw duty) up or down with the buttons, watch the live
-# set-vs-get read-back on the OLED, and get the full state over the USB console. Named main.py so the
-# C3 auto-starts it on power-up -- a self-contained gadget; nothing else lives on that board.
-#
-# Controls: left (pin 0) = '-', right (pin 1) = '+', both = switch parameter, hold = auto-repeat.
-#
-# Install (the C3 enumerates as /dev/ttyACM1 here; adjust the port to taste):
-#   pip install mpremote                                   # once, on the host
-#   mpremote connect /dev/ttyACM1 cp ssd1306.py :          # the OLED driver this imports
-#   mpremote connect /dev/ttyACM1 cp main.py :             # this tool (auto-runs on the next reset)
-#   mpremote connect /dev/ttyACM1 reset                    # reset -> it starts on its own
-# Watch the console (or iterate before relying on auto-run):
-#   mpremote connect /dev/ttyACM1 run main.py              # run + stream the console (Ctrl-C to stop)
-# Tweak if the hardware differs: _BUTTON_ACTIVE (active-high/low) and _X_OFFSET/_Y_OFFSET (OLED centring).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+A handheld servo bench tester for an ESP32-C3 + 0.42" SSD1306 OLED + two capacitive buttons (see
+servos.md). Standalone: it does NOT import the glider firmware. Dial one of three views of the same PWM
+state (angle / pulse width / raw duty) up or down with the buttons, watch the live set-vs-get read-back
+on the OLED, and get the full state over the USB console. Named main.py so the C3 auto-starts it on
+power-up -- a self-contained gadget; nothing else lives on that board.
+
+Controls: left (pin 0) = '-', right (pin 1) = '+', both = switch parameter, hold = auto-repeat.
+
+Install (the C3 enumerates as /dev/ttyACM1 here; adjust the port to taste):
+    pip install mpremote                                   # once, on the host
+    mpremote connect /dev/ttyACM1 cp ssd1306.py :          # the OLED driver this imports
+    mpremote connect /dev/ttyACM1 cp main.py :             # this tool (auto-runs on the next reset)
+    mpremote connect /dev/ttyACM1 reset                    # reset -> it starts on its own
+Watch the console (or iterate before relying on auto-run):
+    mpremote connect /dev/ttyACM1 run main.py              # run + stream the console (Ctrl-C to stop)
+Tweak if the hardware differs: _BUTTON_ACTIVE (active-high/low) and _X_OFFSET/_Y_OFFSET (OLED centring).
+"""
 
 import asyncio
 import time
@@ -30,7 +34,8 @@ except ImportError:  # CPython (host syntax check only)
         return value
 
 
-# --- hardware wiring (servos.md) -------------------------------------------------------------------
+"""Hardware wiring (see servos.md): the I2C, servo PWM, and button pins."""
+
 _I2C_ID: int = const(0)
 _PIN_SDA: int = const(5)
 _PIN_SCL: int = const(6)
@@ -39,7 +44,8 @@ _PIN_LEFT: int = const(4)   # '-' button
 _PIN_RIGHT: int = const(1)  # '+' button
 _BUTTON_ACTIVE: int = const(1)  # capacitive module reads 1 when touched; set 0 for an active-low module
 
-# --- OLED geometry: a 72x40 visible window centred in the SSD1306's 128x64 buffer ------------------
+"""OLED geometry: a 72x40 visible window centred in the SSD1306's 128x64 buffer."""
+
 _BUFFER_WIDTH: int = const(128)
 _BUFFER_HEIGHT: int = const(64)
 _SCREEN_WIDTH: int = const(72)
@@ -47,18 +53,21 @@ _SCREEN_HEIGHT: int = const(40)
 _X_OFFSET: int = const((_BUFFER_WIDTH - _SCREEN_WIDTH) // 2)   # 28
 _Y_OFFSET: int = const((_BUFFER_HEIGHT - _SCREEN_HEIGHT) // 2)  # 12
 
-# --- PWM / servo timing ----------------------------------------------------------------------------
+"""PWM / servo timing."""
+
 _FREQ_HZ: int = const(50)
 _PERIOD_US: int = const(1000000 // _FREQ_HZ)  # 20000 us
 _U16: int = const(65535)
 
-# --- button timing (event-driven: pin IRQs + a repeat timer, no active polling) -------------------
+"""Button timing -- event-driven: pin IRQs plus a repeat timer, no active polling."""
+
 _DEBOUNCE_MS: int = const(40)       # settle the level after an edge; also filters the both-press race
 _REPEAT_DELAY_MS: int = const(500)  # hold this long before auto-repeat begins -> a tap = 1 step
 _REPEAT_MS: int = const(160)        # auto-repeat period once it has begun (sweep while held)
 _TIMER_ID: int = const(0)           # machine.Timer for auto-repeat (armed only while a button is held)
 
-# --- the three editable parameters: indices into _HUD_ROWS (defined below, after Servo) -------------
+"""The three editable parameters: indices into _HUD_ROWS (defined below, after Servo)."""
+
 _ANG: int = const(0)
 _PUL: int = const(1)
 _DUT: int = const(2)
@@ -117,8 +126,9 @@ class Servo:
         """The duty the PWM peripheral reports back (proves the write, shows quantisation)."""
         return self._pwm.duty_u16()
 
-    # --- the three parameter views: get/set per parameter, referenced directly by _HUD_ROWS as
-    # unbound methods (row['get'](servo) / row['set'](servo, value)). All keyed off the canonical pulse.
+    """The three parameter views: get/set per parameter, referenced directly by _HUD_ROWS as unbound
+    methods (row['get'](servo) / row['set'](servo, value)). All keyed off the canonical pulse."""
+
     def get_angle(self) -> int:
         return _convert(self.pulse_us, _PUL, _ANG)
 
@@ -137,8 +147,9 @@ class Servo:
     def set_duty(self, value: int) -> None:
         self.apply_pulse(_convert(value, _DUT, _PUL))
 
-    # --- the 'api' callbacks: what each parameter maps to in the platform Servo/PWM API. Referenced by
-    # _HUD_ROWS as row['api'](servo); the banner prints them so you can see what the port actually offers.
+    """The 'api' callbacks: what each parameter maps to in the platform Servo/PWM API. Referenced by
+    _HUD_ROWS as row['api'](servo); the banner prints them so you can see what the port actually offers."""
+
     def api_angle(self) -> dict:
         """'angle' is not a native platform concept -- it is a logical dial derived from the pulse."""
         return {'native': None, 'derived_from': 'pulse'}

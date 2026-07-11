@@ -1,8 +1,13 @@
-# tools/assemble_capture.py -- reassemble the per-stream CSVs the Luckfox writes for one recorder session
-# (<session>_<file>.csv, pulled with `adb pull`) into the interleaved recorder wire-format capture that
-# flight_telemetry / flight_report / flight_svg read. Stage transitions are synthesized from sequencer.csv
-# as `... controller :: stage -> X` log lines so the reports mark them.
-# Usage: assemble_capture.py <session> <indir> <out.txt>
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Reassemble the per-stream CSVs the Luckfox writes for one recorder session (<session>_<file>.csv,
+pulled with `adb pull`) into the interleaved recorder wire-format capture that flight_telemetry /
+flight_report / flight_svg read. Stage transitions are synthesized from sequencer.csv as
+`... controller :: stage -> X` log lines so the reports mark them.
+
+Usage: assemble_capture.py <session> <indir> <out.txt>
+"""
 
 import glob
 import os
@@ -10,7 +15,17 @@ import sys
 
 
 def assemble(session: str, indir: str, out: str) -> int:
-    """Merge <indir>/<session>_*.csv into the capture `out`; return the row count."""
+    """
+    Merge <indir>/<session>_*.csv into the capture `out`.
+
+    Args:
+        session - the recorder session id (the '<session>_' filename prefix).
+        indir - directory holding the pulled per-stream CSVs.
+        out - path to write the interleaved capture to.
+
+    Returns:
+        The number of rows written to `out`.
+    """
     lines = []
     for path in sorted(glob.glob(os.path.join(indir, session + '_*.csv'))):
         name = os.path.basename(path)[len(session) + 1:]  # strip the '<session>_' prefix

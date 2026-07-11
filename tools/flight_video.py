@@ -1,8 +1,13 @@
-# tools/flight_video.py — render a narrated 3D-ish animation of one or more flight captures to an mp4.
-# Uses follow-cam (glider stays at 35 % left, 40 % from bottom of the map pane) so the plane is large
-# enough to see its attitude, fin deflections, and wing deployment throughout. The ground track, zone,
-# trees, and trail all shift each frame. A pure-PIL frame pipeline piped to ffmpeg, FHD 1920x1080 @ 50 fps.
-# Usage: flight_video.py <out.mp4> <LABEL> <capture.txt> [<LABEL> <capture.txt>] ...
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Render a narrated 3D-ish animation of one or more flight captures to an mp4. Uses follow-cam (glider
+stays at 35 % left, 40 % from bottom of the map pane) so the plane is large enough to see its attitude,
+fin deflections, and wing deployment throughout. The ground track, zone, trees, and trail all shift each
+frame. A pure-PIL frame pipeline piped to ffmpeg, FHD 1920x1080 @ 50 fps.
+
+Usage: flight_video.py <out.mp4> <LABEL> <capture.txt> [<LABEL> <capture.txt>] ...
+"""
 
 import math
 import os
@@ -118,7 +123,8 @@ def _axes(heading, pitch, roll):
     return f, r, u
 
 
-# -- plane model --
+"""The plane wireframe model -- vertices, faces, and the wing-fold / fin-deflect rigging."""
+
 # Vertices (x fwd, y right, z up). Base model at neutral fins, wings deployed.
 # Wing indices are grouped so _fold_wing_verts can rotate them around the fuselage
 # (butterfly-knife fold). Fin indices group trailing-edge vertices that deflect.
@@ -148,7 +154,7 @@ _V = [
     (-1.7, 0.30, 0.05),    # 22 right tailplane root
 ]
 
-# (i, j, k, colour) — order controls backface culling (CW = visible from outside)
+# (i, j, k, colour) -- order controls backface culling (CW = visible from outside)
 _FACES = [
     # Fuselage
     (0, 1, 6, (180, 175, 70)),      # nose left
@@ -196,11 +202,21 @@ _HINGE_X = 0.4         # wing pivot x (between root LE 0.8 and TE 0.0) for the s
 
 
 def _fold_wing_verts(v, fold_frac):
-    """Stow/deploy the wings the way Coludo really does it: during boost the wings are swept AFT and
-    tucked UNDER the fuselage (folded back along the body, not raised up like a bird); when the booster
-    drops and the hook releases them they SWEEP OUT to the flying position. fold_frac 1 = stowed, 0 =
-    deployed. The sweep is a rotation about the root's vertical axis so each tip swings from lateral
-    (+/-y) toward the tail (-x), plus a small downward tuck under the body line."""
+    """
+    Stow or deploy the wings the way Coludo really does it.
+
+    During boost the wings are swept AFT and tucked UNDER the fuselage (folded back along the body, not
+    raised up like a bird); when the booster drops and the hook releases them they SWEEP OUT to the
+    flying position. The sweep is a rotation about the root's vertical axis so each tip swings from
+    lateral (+/-y) toward the tail (-x), plus a small downward tuck under the body line.
+
+    Args:
+        v - the mutable vertex list, modified in place.
+        fold_frac - 1 = stowed (swept back along the body), 0 = deployed (full span).
+
+    Returns:
+        The same vertex list v, mutated in place.
+    """
     phi = fold_frac * math.radians(88)     # 0 deployed (full span) -> 88 stowed (swept back along body)
     c, s = math.cos(phi), math.sin(phi)
     tuck = -0.30 * fold_frac               # drop under the body centreline when stowed
@@ -342,7 +358,7 @@ def load(label, path):
     cmid = ((_TL[0] + _BR[0]) / 2, (_TL[1] + _BR[1]) / 2)
     td, cm = (track[-1] if track else (0.0, 0.0)), _to_m(*cmid)
 
-    # Load fins telemetry (eleron_left, eleron_right, yaw) — optional
+    # Load fins telemetry (eleron_left, eleron_right, yaw) -- optional
     fins = None
     fins_str = streams.get('fins.csv')
     if fins_str and 'eleron_left' in fins_str.fields:
@@ -351,7 +367,7 @@ def load(label, path):
         _, fy = rel(fins_str, 'yaw')
         fins = (ft, list(zip(fl, fr, fy)))
 
-    # Load acceleration (ax, ay, az) — optional
+    # Load acceleration (ax, ay, az) -- optional
     accel = None
     accel_str = streams.get('accel_adxl375.csv')
     if accel_str and 'ax' in accel_str.fields:

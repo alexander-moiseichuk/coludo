@@ -1,12 +1,17 @@
-# tools/hitl_run.py -- board-side HITL flight runner (MicroPython, runs ON the board). Deploy it with
-# `mpremote cp tools/hitl_run.py :` and fly a scenario via `mpremote run` + a one-line launcher, e.g.:
-#   printf 'import hitl_run\nhitl_run.fly("F15", 0.10, 12.0, 210.0, False)\n' > /tmp/launch.py
-#   tools/board_reboot.py PORT && mpremote connect PORT run /tmp/launch.py
-# (hitl_collect.sh wraps this.) boardrun is retired.
-# It brings up config_hitl (real sensors off; the hitl sim feeds the REAL sequencer/flight/pid/mixer/nav),
-# ARMS the controller (else the flight loop holds the fins neutral -> no bank -> no descent), and flies to
-# DONE (or a 95 s cap). The Recorder streams every stream to the Luckfox (/userdata/recordings/<session>_*
-# .csv); pull with adb and assemble with tools/assemble_capture.py. See doc memory `board-data-workflow`.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Board-side HITL flight runner (MicroPython, runs ON the board). Deploy it with
+`mpremote cp tools/hitl_run.py :` and fly a scenario via `mpremote run` + a one-line launcher, e.g.:
+    printf 'import hitl_run\\nhitl_run.fly("F15", 0.10, 12.0, 210.0, False)\\n' > /tmp/launch.py
+    tools/board_reboot.py PORT && mpremote connect PORT run /tmp/launch.py
+(hitl_collect.sh wraps this.) boardrun is retired.
+
+It brings up config_hitl (real sensors off; the hitl sim feeds the REAL sequencer/flight/pid/mixer/nav),
+ARMS the controller (else the flight loop holds the fins neutral -> no bank -> no descent), and flies to
+DONE (or a 95 s cap). The Recorder streams every stream to the Luckfox (/userdata/recordings/<session>_*
+.csv); pull with adb and assemble with tools/assemble_capture.py. See doc memory `board-data-workflow`.
+"""
 
 import asyncio
 import time
@@ -110,14 +115,24 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
 
 
 async def _simulated_reboot(flight, boot_s: float) -> None:
-    """A mid-glide reboot with the REAL warm-start code: the outage (disarm + SETTING under a manual
-    hold) lasts `boot_s` like a real boot, then the real breadcrumb is loaded and the real
-    five-signal gate decides; a pass restores GLIDING + arm exactly as main._restore_flight does.
-    Only the physical inputs are simulated: separated=True (post-separation by construction here),
-    the sim's absolute baro altitude, cause=reset. The fins stay FROZEN at their last commanded
-    deflection through the outage -- the OOM soak measured that a dying runtime never reaches the
-    crash->neutral path, and a rebooting MCU drives no PWM (the servos hold mechanically) -- so the
-    flight task's _neutral is stubbed out for the outage (disarmed -> it is the only writer)."""
+    """
+    A mid-glide reboot with the REAL warm-start code.
+
+    The outage (disarm + SETTING under a manual hold) lasts `boot_s` like a real boot, then the real
+    breadcrumb is loaded and the real five-signal gate decides; a pass restores GLIDING + arm exactly as
+    main._restore_flight does. Only the physical inputs are simulated: separated=True (post-separation by
+    construction here), the sim's absolute baro altitude, cause=reset. The fins stay FROZEN at their last
+    commanded deflection through the outage -- the OOM soak measured that a dying runtime never reaches
+    the crash->neutral path, and a rebooting MCU drives no PWM (the servos hold mechanically) -- so the
+    flight task's _neutral is stubbed out for the outage (disarmed -> it is the only writer).
+
+    Args:
+        flight - the live Controller; its stage / arm state is driven through the outage and restore.
+        boot_s - how long the simulated outage lasts, in seconds.
+
+    Returns:
+        None. Side effect: leaves the controller either warm-restored to GLIDING+armed, or cold-booted.
+    """
     import databoard
     import warmstart
     print('REBOOT: outage %.1fs (disarmed, FROZEN fins, stage SETTING)' % boot_s)
@@ -148,18 +163,21 @@ def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0, wind_dir: fl
         spike: bool = False, glider_g: int = 285, inject_hz: int = 0,
         reboot_s: float = 0.0, no_cc: bool = False, attitude_drop_s: float = 0.0,
         gnss_drop_s: float = 0.0) -> None:
-    """Fly one HITL scenario to completion (or a 95 s cap), recording every stream to the Luckfox.
-    `glider_g` is the glider (glide) mass in grams (TMS-7 v3: 285 full, 235 light); the booster adds
-    to it for boost then ejects, so a lighter glider glides longer -- the memory-leak stress case.
+    """
+    Fly one HITL scenario to completion (or a 95 s cap), recording every stream to the Luckfox.
+
+    `glider_g` is the glider (glide) mass in grams (TMS-7 v3: 285 full, 235 light); the booster adds to
+    it for boost then ejects, so a lighter glider glides longer -- the memory-leak stress case.
     `inject_hz` > 0 slims the sim's sensor publish rate (physics still integrate at sim_hz) so the
-    on-board HITL leak reflects real flight -- pass e.g. 10 for a memory-measurement run.
-    `reboot_s` > 0 simulates a mid-glide reboot: a boot-long outage (neutral fins) at a RANDOM
-    early-glide moment, then the real warm-start gate + restore. `no_cc` flies the CC-less scenario:
-    no zone/sites -- the field agent synthesizes the spiral-landing fallback from the GNSS fix.
-    `attitude_drop_s` > 0 kills the sim `attitude` this many seconds into GLIDING (a BNO055 death):
-    the priority-1 complementary-filter backup must carry the glide to a controlled landing.
-    `gnss_drop_s` > 0 drops position/speed/course for that many seconds at a random glide moment (a
-    tunnel / antenna knock): the guidance falls to its open-loop heading tiers, then recovers. All the
-    degradations COMBINE -- pass several at once for the interaction stress (combined-degradation)."""
+    on-board HITL leak reflects real flight -- pass e.g. 10 for a memory-measurement run. `reboot_s` > 0
+    simulates a mid-glide reboot: a boot-long outage (neutral fins) at a RANDOM early-glide moment, then
+    the real warm-start gate + restore. `no_cc` flies the CC-less scenario: no zone/sites -- the field
+    agent synthesizes the spiral-landing fallback from the GNSS fix. `attitude_drop_s` > 0 kills the sim
+    `attitude` this many seconds into GLIDING (a BNO055 death): the priority-1 complementary-filter
+    backup must carry the glide to a controlled landing. `gnss_drop_s` > 0 drops position/speed/course
+    for that many seconds at a random glide moment (a tunnel / antenna knock): the guidance falls to its
+    open-loop heading tiers, then recovers. All the degradations COMBINE -- pass several at once for the
+    interaction stress.
+    """
     asyncio.run(_go(motor, noise, wind, wind_dir, spike, glider_g, inject_hz, reboot_s, no_cc,
                     attitude_drop_s, gnss_drop_s))

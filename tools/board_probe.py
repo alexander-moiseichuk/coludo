@@ -1,14 +1,18 @@
-# board_probe.py — run ON a board to sketch an initial board.config: identity (name, unique_id),
-# and which UART/I2C/SPI ids + GPIOs are constructable. A discovery aid, not a pass/fail test.
-#
-#   mpremote connect /dev/ttyACM0 run tools/board_probe.py
-#
-# HAZARD: some ids/pins HARD-CRASH this port (e.g. I2C(2), and flash/PSRAM GPIOs) and reset the
-# board -- a try/except cannot catch that. So every result is printed immediately (streamed), the
-# crashy I2C probe runs last, and the GPIO sweep is opt-in. If the board resets mid-run, the
-# streamed output up to that point is still valid; rerun skipping the id/pin that reset it.
-#
-# Captured results, one round per board: doc/board-probe.md.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Run ON a board to sketch an initial board.config: identity (name, unique_id), and which UART/I2C/SPI
+ids + GPIOs are constructable. A discovery aid, not a pass/fail test.
+
+  mpremote connect /dev/ttyACM0 run tools/board_probe.py
+
+HAZARD: some ids/pins HARD-CRASH this port (e.g. I2C(2), and flash/PSRAM GPIOs) and reset the board --
+a try/except cannot catch that. So every result is printed immediately (streamed), the crashy I2C
+probe runs last, and the GPIO sweep is opt-in. If the board resets mid-run, the streamed output up to
+that point is still valid; rerun skipping the id/pin that reset it.
+
+Captured results, one round per board: doc/board-probe.md.
+"""
 
 import os
 

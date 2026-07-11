@@ -1,15 +1,18 @@
-# tools/launch_config.py -- generate a FLIGHT-READY board.config from config_default: the field
-# deployment config that passes the `verify` readiness gate (plan CC item 9). It flips exactly what
-# the gate checks -> watchdog ON, flight ON with proposed gains, radios QUIESCED (policy auto: silent
-# BOOSTING..LANDING, live pre-launch + post-land), fin cap nominal. The gains are SIM-DERIVED PROPOSALS
-# (the HITL-validated config_hitl values) -- they get you a config that arms, but MUST be verified on
-# the first real glide; the banner says so.
-#
-# Usage:
-#   python3 tools/launch_config.py [-o flight.config]      # write (default: stdout)
-#   tools/cc.py <board> set-config board @flight.config    # then push it to the board
-# The board config is only half of a field deployment -- pair it with a launch.config carrying the
-# site/zone (via `set-config launch` / the CC-less `sites` list); the zone half of the gate is that.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Generate a FLIGHT-READY board.config from config_default: the field deployment config that passes the
+`verify` readiness gate. It flips exactly what the gate checks -> watchdog ON, flight ON with proposed
+gains, radios QUIESCED (policy auto: silent BOOSTING..LANDING, live pre-launch + post-land), fin cap
+nominal. The gains are SIM-DERIVED PROPOSALS (the HITL-validated config_hitl values) -- they get you a
+config that arms, but MUST be verified on the first real glide; the banner says so.
+
+Usage:
+    python3 tools/launch_config.py [-o flight.config]      # write (default: stdout)
+    tools/cc.py <board> set-config board @flight.config    # then push it to the board
+The board config is only half of a field deployment -- pair it with a launch.config carrying the
+site/zone (via `set-config launch` / the CC-less `sites` list); the zone half of the gate is that.
+"""
 
 import argparse
 import json
@@ -33,7 +36,15 @@ _BANNER = """\
 
 
 def _sim_gains() -> dict:
-    """The HITL-validated flight gains -- sourced from config_hitl so the proposal stays in sync."""
+    """
+    The HITL-validated flight gains, sourced from config_hitl so the proposal stays in sync.
+
+    Returns:
+        The flight component's gains dict from config_hitl.
+
+    Raises:
+        RuntimeError - config_hitl has no flight component.
+    """
     for component in config_hitl.default()['components']:
         if component['name'] == 'flight':
             return component['gains']
