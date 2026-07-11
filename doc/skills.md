@@ -135,6 +135,29 @@ so it must run on both.
       def const(x): return x
   ```
 - **Docstring or comment per entry** — every class, method, and non-trivial constant.
+- **Docstring shape (pydoc sections, not a dense prose block)** — open on the next line after `"""`,
+  a one/two-line summary, then a blank line and the design/why prose (measurements, rationale — keep
+  it, it is the value), then the sections that apply:
+  ```python
+  def endgame_bank(self) -> float:
+      """
+      The steepest bank the endgame may hold at the live airspeed, stall-margin bounded.
+
+      A coordinated turn at bank φ pulls load 1/cos φ, raising the stall speed; requiring
+      airspeed ≥ stall_margin·V_stall bounds φ. Capped at endgame_max_bank.
+
+      Args:
+          (none — reads self._governor.airspeed() + the config)
+
+      Returns:
+          Bank angle in degrees; 0.0 when too slow to bank; land_bank_limit when disabled.
+      """
+  ```
+  `Args:` one `name - description` per non-self arg (say `(none)` if there are none); `Returns:`
+  what comes back **and when** (the value in each case); `Raises:` only when the function itself
+  raises a known exception. A **procedure returns `None`** — annotate `-> None` and write
+  `Returns: None` (say what it does as a side effect). Trivial one-liners (properties, tiny helpers)
+  may stay a single `"""summary."""` line; add sections when there is an arg/return/raise worth naming.
 - **No bare cross-reference labels** in code/comments/docstrings — roadmap item numbers (`5.1`,
   `#2`), findings/section IDs (`findings §18`, `1.2.1`), etc. They rot the moment the referenced
   list is renumbered and force a lookup to understand the code. Write the *reason* instead: not

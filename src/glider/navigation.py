@@ -41,14 +41,22 @@ GATE: int = const(2)     # outside the zone -> heading for the nearer short-side
 
 
 def offset(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
-    """(east, north) offset in metres from point 1 to point 2 (equirectangular). The longitude delta is
-    wrapped to [-180, 180] so a span crossing the anti-meridian (+/-180 deg) does not flip the
-    vector -- the same wrap the heading-error math uses. Coludo flies nowhere near +/-180, but it is a
-    free correctness guard and identical to the plain subtraction everywhere else.
+    """
+    Metre (east, north) offset from point 1 to point 2 (equirectangular).
 
-    The one geographic primitive: distance()/bearing()/range_bearing() derive from it, so a caller that
-    needs BOTH range and bearing to the same point computes this float-trig ONCE (range_bearing) instead
-    of twice -- the measured GC-off saving that keeps the nav path off the leak (see the header note)."""
+    The longitude delta is wrapped to [-180, 180] so a span crossing the anti-meridian (+/-180 deg)
+    does not flip the vector -- the same wrap the heading-error math uses (Coludo flies nowhere near
+    +/-180, but it is a free correctness guard). This is the ONE geographic primitive: distance() /
+    bearing() / range_bearing() all derive from it, so a caller needing BOTH range and bearing to the
+    same point computes the float-trig ONCE (via range_bearing) instead of twice (see the header note).
+
+    Args:
+        lat1, lon1 - the FROM point (decimal degrees).
+        lat2, lon2 - the TO point (decimal degrees).
+
+    Returns:
+        (east, north) offset in metres.
+    """
     lat_mid = math.radians((lat1 + lat2) / 2.0)
     dlon = (lon2 - lon1 + 180.0) % 360.0 - 180.0  # anti-meridian-safe longitude delta
     east = dlon * M_PER_DEG * math.cos(lat_mid)
@@ -57,38 +65,84 @@ def offset(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
 
 
 def compass(east: float, north: float) -> float:
-    """(east, north) metre offset -> compass bearing in degrees (0 = north, 90 = east, clockwise)."""
+    """
+    Convert an (east, north) metre offset to a compass bearing.
+
+    Args:
+        east - eastward component (metres).
+        north - northward component (metres).
+
+    Returns:
+        Bearing in degrees: 0 = north, 90 = east, clockwise, wrapped to [0, 360).
+    """
     return math.degrees(math.atan2(east, north)) % 360.0
 
 
 def bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Compass bearing in degrees (0 = north, 90 = east, clockwise) from point 1 to point 2."""
+    """
+    Compass bearing from point 1 to point 2.
+
+    Args:
+        lat1, lon1 - the FROM point (decimal degrees).
+        lat2, lon2 - the TO point (decimal degrees).
+
+    Returns:
+        Bearing in degrees (0 = north, 90 = east, clockwise).
+    """
     return compass(*offset(lat1, lon1, lat2, lon2))
 
 
 def distance(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Distance in metres from point 1 to point 2 (equirectangular)."""
+    """
+    Straight-line distance from point 1 to point 2 (equirectangular).
+
+    Args:
+        lat1, lon1 - the FROM point (decimal degrees).
+        lat2, lon2 - the TO point (decimal degrees).
+
+    Returns:
+        Distance in metres.
+    """
     east, north = offset(lat1, lon1, lat2, lon2)
     return math.sqrt(east * east + north * north)
 
 
 def range_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
-    """(distance_m, bearing_deg) from point 1 to point 2 in ONE pass -- the fused primitive for a caller
-    that needs both (loiter: orbit radius + tangent heading; reachability: range + wind projection). One
-    offset()/float-trig instead of the distance()+bearing() pair that recomputed it twice."""
+    """
+    Distance AND bearing from point 1 to point 2 in one pass.
+
+    The fused primitive for a caller that needs both (loiter: orbit radius + tangent heading;
+    reachability: range + wind projection) -- one offset()/float-trig instead of the distance() +
+    bearing() pair that recomputed it twice.
+
+    Args:
+        lat1, lon1 - the FROM point (decimal degrees).
+        lat2, lon2 - the TO point (decimal degrees).
+
+    Returns:
+        (distance_metres, bearing_degrees).
+    """
     east, north = offset(lat1, lon1, lat2, lon2)
     return math.sqrt(east * east + north * north), compass(east, north)
 
 
 def zone(corner_tl: tuple, corner_br: tuple) -> tuple:
-    """Resolve the rectangle (top-left, bottom-right corners, each (lat, lon)) -> (target, gate_a,
-    gate_b): the centre and the midpoints of the two SHORTER sides. A horizontally (longitude)
-    stretched zone gates on its left/right edges; a vertically (latitude) stretched one on top/bottom.
+    """
+    Resolve a zone rectangle to its target centre + the two short-side gates.
 
-    corner ORDER does not matter. The centre is the average, the spans use abs(), and the gates are
-    the coordinate EXTREMES (lon_l/lon_r at the centre latitude, or lat_t/lat_b at the centre longitude)
-    -- so whichever diagonal pair is passed (TL/BR or BL/TR), the two returned gates are the same two
-    side-midpoints; steer() then picks the nearer. inside() likewise uses min/max. No normalisation needed."""
+    A horizontally (longitude) stretched zone gates on its left/right edges; a vertically (latitude)
+    stretched one on top/bottom. Corner ORDER does not matter: the centre is the average, the spans use
+    abs(), and the gates are the coordinate EXTREMES -- so whichever diagonal pair is passed (TL/BR or
+    BL/TR) the two returned gates are the same side-midpoints (steer() then picks the nearer). No
+    normalisation needed.
+
+    Args:
+        corner_tl - one corner (lat, lon), decimal degrees.
+        corner_br - the diagonally-opposite corner (lat, lon).
+
+    Returns:
+        (target, gate_a, gate_b): the centre (lat, lon) and the two shorter-side midpoints.
+    """
     lat_t, lon_l = corner_tl
     lat_b, lon_r = corner_br
     lat_c = (lat_t + lat_b) / 2.0
@@ -102,9 +156,19 @@ def zone(corner_tl: tuple, corner_br: tuple) -> tuple:
 
 
 def zone_aspect(corner_tl: tuple, corner_br: tuple) -> float:
-    """The zone rectangle's long/short side ratio (>= 1). The endgame picks its pattern from it: a
-    SQUARISH zone (ratio <= the config threshold) orbits a single circle ('o'); an ELONGATED strip flies
-    two lobes along the long axis ('oo') to cover the length without leaving the zone."""
+    """
+    The zone rectangle's long/short side ratio.
+
+    The endgame picks its pattern from it: a SQUARISH zone (ratio <= the config threshold) orbits a
+    single circle ('o'); an ELONGATED strip flies two lobes along the long axis ('oo').
+
+    Args:
+        corner_tl - one corner (lat, lon), decimal degrees.
+        corner_br - the diagonally-opposite corner (lat, lon).
+
+    Returns:
+        The ratio (>= 1); 1.0 when a side is degenerate.
+    """
     lat_t, lon_l = corner_tl
     lat_b, lon_r = corner_br
     lat_span = abs(lat_t - lat_b) * M_PER_DEG
@@ -114,7 +178,16 @@ def zone_aspect(corner_tl: tuple, corner_br: tuple) -> float:
 
 
 def inside(position: tuple, corner_tl: tuple, corner_br: tuple) -> bool:
-    """True if position (lat, lon) is within the zone rectangle (corner order-agnostic)."""
+    """
+    Whether a position is within the zone rectangle (corner order-agnostic).
+
+    Args:
+        position - the point (lat, lon), decimal degrees.
+        corner_tl, corner_br - the two diagonally-opposite corners (lat, lon).
+
+    Returns:
+        True if position is inside the rectangle, else False.
+    """
     lat, lon = position
     lat_t, lon_l = corner_tl
     lat_b, lon_r = corner_br
@@ -125,22 +198,42 @@ def inside(position: tuple, corner_tl: tuple, corner_br: tuple) -> bool:
 
 
 def steer(position: tuple, corner_tl: tuple, corner_br: tuple) -> tuple:
-    """The heading to fly toward the landing target via the nearer gate: head for the closer short-side
-    entrance until inside the zone, then for the centre. Returns (bearing_deg, waypoint, leg) with leg
-    GATE or TARGET. position = (lat, lon).
+    """
+    The heading to fly toward the landing target via the nearer gate.
 
-    Stateless + re-evaluated each tick, so the overshoot loop is emergent: if the glider crosses the
-    zone and exits the far side without landing (still high), the gate it just crossed is now the
-    nearest one -> it turns back (~180deg) and re-approaches through it. No waypoint memory -- the
-    spec's 'recalculate to the nearest alternative entry and loop' just happens."""
+    Head for the closer short-side entrance until inside the zone, then for the centre. Stateless +
+    re-evaluated each tick, so the overshoot loop is emergent: if the glider crosses the zone and exits
+    the far side still high, the gate it just crossed is now the nearest -> it turns back (~180deg) and
+    re-approaches through it. No waypoint memory -- the spec's "recalculate to the nearest alternative
+    entry and loop" just happens.
+
+    Args:
+        position - the glider (lat, lon), decimal degrees.
+        corner_tl, corner_br - the zone's diagonally-opposite corners (lat, lon).
+
+    Returns:
+        (bearing_degrees, waypoint, leg), with leg GATE (outside the zone) or TARGET (inside).
+    """
     return steer_to(position, corner_tl, corner_br, *zone(corner_tl, corner_br))
 
 
 def steer_to(position: tuple, corner_tl: tuple, corner_br: tuple,
              target: tuple, gate_a: tuple, gate_b: tuple) -> tuple:
-    """steer() with the zone geometry (target + the two gates) ALREADY resolved, so a caller that steers
-    every nav tick resolves the per-flight-constant zone() ONCE (mission.zone_points) instead of paying
-    it here each call. inside() still takes the corners -- a cheap min/max, no trig/alloc."""
+    """
+    steer() with the zone geometry (target + the two gates) ALREADY resolved.
+
+    Lets a caller that steers every nav tick resolve the per-flight-constant zone() ONCE
+    (mission.zone_points) instead of paying it here each call. inside() still takes the corners -- a
+    cheap min/max, no trig/alloc.
+
+    Args:
+        position - the glider (lat, lon), decimal degrees.
+        corner_tl, corner_br - the zone corners (for the cheap inside() check).
+        target, gate_a, gate_b - the pre-resolved zone geometry (from zone()).
+
+    Returns:
+        (bearing_degrees, waypoint, leg), with leg GATE or TARGET.
+    """
     lat, lon = position
     if inside(position, corner_tl, corner_br):
         waypoint = target
@@ -152,8 +245,17 @@ def steer_to(position: tuple, corner_tl: tuple, corner_br: tuple,
 
 
 def cross_track(position: tuple, point: tuple, heading: float) -> float:
-    """Signed perpendicular distance (metres) from `position` to the line through `point` along compass
-    `heading`; positive = to the RIGHT of the line (looking along the heading)."""
+    """
+    Signed perpendicular distance from a position to a line.
+
+    Args:
+        position - the point to measure (lat, lon), decimal degrees.
+        point - a point ON the line (lat, lon).
+        heading - the line's compass direction (degrees).
+
+    Returns:
+        Perpendicular distance in metres; positive = to the RIGHT of the line, looking along heading.
+    """
     east, north = offset(point[0], point[1], position[0], position[1])
     radians = math.radians(heading)
     return east * math.cos(radians) - north * math.sin(radians)
@@ -161,20 +263,46 @@ def cross_track(position: tuple, point: tuple, heading: float) -> float:
 
 def approach(position: tuple, corner_tl: tuple, corner_br: tuple, heading: float,
              cross_gain: float, intercept_max: float) -> float:
-    """Final-approach guidance: the heading to fly to TRACK the zone's long-axis CENTRELINE (the
-    strip), used low on final instead of homing to the centre POINT. The glider intercepts the line at up
-    to `intercept_max` deg (`cross_gain` deg per metre off it), then flies down it -- so a crosswind is
-    crabbed out and the touchdown holds the narrow strip. Uses the full bank authority (keep it gliding,
-    not rolling-and-dropping). (This is a banked/crab correction -- a true wing-low SLIP would need a
-    sideslip-capable airframe model; the residual at strong wind is airframe-bound, not a control gap.)"""
+    """
+    Final-approach heading that TRACKS the zone's long-axis centreline (the strip).
+
+    Used low on final instead of homing to the centre POINT: the glider intercepts the line at up to
+    intercept_max deg (cross_gain deg per metre off it), then flies down it, so a crosswind is crabbed
+    out and the touchdown holds the narrow strip. (A banked crab, not a wing-low slip -- that would need
+    a sideslip-capable airframe model; the residual at strong wind is airframe-bound, not a control gap.)
+
+    Args:
+        position - the glider (lat, lon), decimal degrees.
+        corner_tl, corner_br - the zone's diagonally-opposite corners (lat, lon).
+        heading - the glider's current heading (degrees), used to pick the along-strip direction.
+        cross_gain - intercept degrees commanded per metre off the centreline.
+        intercept_max - the cap on the intercept angle (degrees).
+
+    Returns:
+        The heading to fly (degrees).
+    """
     return approach_to(position, *zone(corner_tl, corner_br),
                        heading, cross_gain, intercept_max)
 
 
 def approach_to(position: tuple, target: tuple, gate_a: tuple, gate_b: tuple,
                 heading: float, cross_gain: float, intercept_max: float) -> float:
-    """approach() with the zone geometry ALREADY resolved -- see steer_to(): the caller reuses one
-    mission.zone_points() resolve across the whole nav tick instead of each nav call recomputing zone()."""
+    """
+    approach() with the zone geometry ALREADY resolved (see steer_to()).
+
+    The caller reuses one mission.zone_points() resolve across the whole nav tick instead of each nav
+    call recomputing zone().
+
+    Args:
+        position - the glider (lat, lon), decimal degrees.
+        target, gate_a, gate_b - the pre-resolved zone geometry (from zone()).
+        heading - the glider's current heading (degrees).
+        cross_gain - intercept degrees commanded per metre off the centreline.
+        intercept_max - the cap on the intercept angle (degrees).
+
+    Returns:
+        The heading to fly (degrees).
+    """
     centreline = bearing(gate_a[0], gate_a[1], gate_b[0], gate_b[1])
     if abs(((centreline - heading + 180.0) % 360.0) - 180.0) > 90.0:  # fly the along-strip way we are going
         centreline = (centreline + 180.0) % 360.0
