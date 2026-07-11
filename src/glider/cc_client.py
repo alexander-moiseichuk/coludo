@@ -1,8 +1,12 @@
-# cc_client — board side of the Control protocol (specs/cc-protocol.md). Board-first routing:
-# Control strips the routing board id, so the board receives `command params` and replies
-# `status params` (no id; only `iam` carries the board id, so Control can learn it on a new
-# socket). Dispatcher turns a parsed line into a response (pure logic, unit-testable); Client is
-# the thin networking that reads lines and writes responses.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Board side of the Control protocol (specs/cc-protocol.md). Board-first routing: Control strips the
+routing board id, so the board receives `command params` and replies `status params` (no id; only
+`iam` carries the board id, so Control can learn it on a new socket). Dispatcher turns a parsed line
+into a response (pure logic, unit-testable); Client is the thin networking that reads lines and
+writes responses.
+"""
 
 import asyncio
 import gc
@@ -21,32 +25,65 @@ except ImportError:  # host (CPython): board-only; the health MCU-temp read degr
     esp32 = None
 
 
+def _enabled(tasks: dict, name: str):
+    """
+    The named task dict when it is present and enabled, else None.
+
+    Args:
+        tasks - name -> task dict, indexed from the config 'components' list.
+        name - the task name to look up.
+
+    Returns:
+        The task dict when it exists and its 'enabled' flag is truthy, otherwise None.
+    """
+    task = tasks.get(name)
+    return task if task is not None and task.get('enabled') else None
+
+
 def _readiness(cfg: dict) -> dict:
-    """The flight-readiness gate: the field-dangerous CONFIG
-    states no device probe can see -- watchdog off (a wedged flight loop never reboots), flight loop
-    off or zero gains (fins hold neutral: ballistic), a bench fin derating left applied, no landing
-    zone and no CC-less sites to pick one from. {check: problem} -- empty means flight-ready. Bench
-    and HITL sessions legitimately trip these, so `verify` reports them as a separate `ready`
-    verdict without failing the hardware `pass`."""
+    """
+    Flight-readiness gate: field-dangerous CONFIG states no device probe can see.
+
+    These are config choices that leave the board ballistic or unrecoverable in flight while every
+    peripheral still probes healthy: the watchdog off (a wedged flight loop never reboots), the
+    flight loop off or its gains zero (fins hold neutral -- ballistic), a bench fin derating still
+    applied, or no landing zone and no CC-less site to pick one from. Bench and HITL sessions
+    legitimately trip these, so `verify` reports them as a separate `ready` verdict without failing
+    the hardware `pass`.
+
+    Args:
+        cfg - the active board config (top level, with 'components' and 'fin_limit_multiplier').
+
+    Returns:
+        {check: problem} for each tripped gate; an empty dict means flight-ready.
+    """
     problems = {}
     tasks = {task.get('name'): task for task in cfg.get('components', [])}
-    for name, danger in (('watchdog', 'a wedged flight loop never reboots'),
-                         ('flight', 'fins hold neutral -- ballistic')):
-        task = tasks.get(name)
-        if task is None or not task.get('enabled'):
-            problems[name] = 'disabled: ' + danger
-    flight = tasks.get('flight')
-    if flight is not None and flight.get('enabled'):
+
+    # Watchdog off: a wedged flight loop never reboots.
+    if _enabled(tasks, 'watchdog') is None:
+        problems['watchdog'] = 'disabled: a wedged flight loop never reboots'
+
+    # Flight loop off, or running with no gains -- either way the fins hold neutral (ballistic).
+    flight = _enabled(tasks, 'flight')
+    if flight is None:
+        problems['flight'] = 'disabled: fins hold neutral -- ballistic'
+    else:
         gains = flight.get('gains', {})
         slack = [axis for axis in ('roll', 'pitch', 'yaw') if not any(gains.get(axis, {}).values())]
         if slack:
             problems['gains'] = 'zero/unset on ' + ', '.join(slack) + ' -- the loop computes but cannot act'
+
+    # Bench fin derating still applied.
     multiplier = cfg.get('fin_limit_multiplier', 1.0)
     if multiplier != 1.0:
         problems['fin_limit_multiplier'] = '%g: a bench derating is still applied' % multiplier
+
+    # No landing zone and no CC-less site to select one from.
     mission = inspector.Inspector.get('mission')
     if mission is not None and mission.zone is None and not mission.sites:
         problems['zone'] = 'no landing zone set and no CC-less sites to select one from'
+
     return problems
 
 
