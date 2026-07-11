@@ -1,7 +1,0 @@
-# Rendered/derived flight artifacts are large and per-run -- regenerate from a capture (see README).
-# Tracked: README.md, .gitignore. Ignored: the heavy generated views + source captures.
-*.mp4
-*.html
-*.svg
-*.txt
-*.csv
