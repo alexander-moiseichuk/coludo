@@ -1,22 +1,26 @@
-# tasks/attitude.py — attitude REDUNDANCY: a complementary-filter backup for the BNO055 (plan item 4;
-# coludo.md "Sensors Fusion/Backup"). The BNO055 is the sole fused-attitude source; losing it mid-flight
-# would leave the flight loop with stale/absent attitude -> neutral fins -> ballistic. This task derives
-# (heading, roll, pitch) from the LSM6DSO32 gyro `rate` + accel gravity vector and PROVIDES it on the
-# databoard at PRIORITY 1, so the existing timeout-handoff fusion swaps to it automatically the moment the
-# BNO055 (priority 0) stops -- no change to flight.py.
-#
-# @task.activity('attitude'). Two regimes, checked each cycle by the fused-attitude SOURCE:
-#   * BNO055 alive (it is the fused source): MIRROR it -- copy roll/pitch (already fixnum cd) + heading,
-#     staying warm and FRESH so the handoff is seamless, no atan2/accel math (the BNO055 is trusted).
-#   * BNO055 lost (source is us / extrapolated): FREE-RUN -- integrate the gyro rate (integer) and, when
-#     |accel| ~ 1 g (a trustworthy gravity vector), pull roll/pitch toward the accel angle via the integer
-#     CORDIC fixed.atan2_cd (throttled -- drift correction is slow). Heading is gyro-z only (it drifts: the
-#     LSM6DSO32 has no magnetometer) -- roll/pitch stay solid (gravity-referenced), so the glider holds
-#     wings-level + pitch; nav heading degrades gracefully. Integer/fixnum throughout; the only boxed float
-#     is the heading value the channel format requires (nav consumes heading as float degrees).
-#
-# Mounting (the gyro-D-term convention, HITL-validated): gx->roll, gy->pitch, gz->yaw; accel roll =
-# atan2(ay, az), pitch = atan2(-ax, |ay,az|). Field calibration flips a sign like the mixer gains.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Attitude REDUNDANCY: a complementary-filter backup for the BNO055 (coludo.md "Sensors Fusion/Backup").
+The BNO055 is the sole fused-attitude source; losing it mid-flight would leave the flight loop with
+stale/absent attitude -> neutral fins -> ballistic. This task derives (heading, roll, pitch) from the
+LSM6DSO32 gyro `rate` + accel gravity vector and PROVIDES it on the databoard at PRIORITY 1, so the
+existing timeout-handoff fusion swaps to it automatically the moment the BNO055 (priority 0) stops -- no
+change to flight.py.
+
+@task.activity('attitude'). Two regimes, checked each cycle by the fused-attitude SOURCE:
+  * BNO055 alive (it is the fused source): MIRROR it -- copy roll/pitch (already fixnum cd) + heading,
+    staying warm and FRESH so the handoff is seamless, no atan2/accel math (the BNO055 is trusted).
+  * BNO055 lost (source is us / extrapolated): FREE-RUN -- integrate the gyro rate (integer) and, when
+    |accel| ~ 1 g (a trustworthy gravity vector), pull roll/pitch toward the accel angle via the integer
+    CORDIC fixed.atan2_cd (throttled -- drift correction is slow). Heading is gyro-z only (it drifts: the
+    LSM6DSO32 has no magnetometer) -- roll/pitch stay solid (gravity-referenced), so the glider holds
+    wings-level + pitch; nav heading degrades gracefully. Integer/fixnum throughout; the only boxed float
+    is the heading value the channel format requires (nav consumes heading as float degrees).
+
+Mounting (the gyro-D-term convention, HITL-validated): gx->roll, gy->pitch, gz->yaw; accel roll =
+atan2(ay, az), pitch = atan2(-ax, |ay,az|). Field calibration flips a sign like the mixer gains.
+"""
 
 import asyncio
 import time
@@ -62,9 +66,18 @@ class Attitude(task.Task):
         return True
 
     def _mirror(self, value: tuple) -> None:
-        """Track the higher-priority source while it is the fused winner (the BNO055 in flight, the sim's
-        attitude in HITL): copy its (already-fixnum) roll/pitch and heading, so we stay fresh and hand
-        over seamlessly if it dies next cycle. value = (heading FLOAT deg, roll cd, pitch cd)."""
+        """
+        Track the higher-priority source while it is the fused winner, so the handoff is seamless.
+
+        The winner is the BNO055 in flight, the sim's attitude in HITL. Copy its (already-fixnum)
+        roll/pitch and heading, so we stay fresh and hand over the moment it dies next cycle.
+
+        Args:
+            value - the winning source's (heading FLOAT deg, roll cd, pitch cd).
+
+        Returns:
+            None; copies the source into our own state as a side effect.
+        """
         heading, roll_cd, pitch_cd = value
         self._roll_cd = roll_cd            # already a centidegree fixnum
         self._pitch_cd = pitch_cd
@@ -72,13 +85,22 @@ class Attitude(task.Task):
         self._seeded = True
 
     def _integrate(self, dt_ms: int) -> None:
-        """Free-run: gyro-integrate roll/pitch/yaw (centidegrees), then pull roll/pitch toward the accel
-        gravity vector -- but ONLY when that vector is trustworthy: near 1 g AND not in a turn. In a
+        """
+        Free-run: gyro-integrate roll/pitch/yaw, then re-anchor roll/pitch to the accel gravity vector.
+
+        The accel pull fires ONLY when that vector is trustworthy: near 1 g AND not in a turn. In a
         coordinated turn the accel reads gravity+centripetal DOWN THE BODY AXIS, so its roll/pitch look
         level however hard the glider is banked; correcting to that would roll the estimate flat. The
         gyro integrates the true bank through the turn, so the accel correction is gated off there (yaw
         rate over turn_gate) and only re-anchors roll/pitch in straight-ish flight. The per-axis
-        gyro-integrate + accel-blend is fixed.blend_cd (viper, zero float boxed)."""
+        gyro-integrate + accel-blend is fixed.blend_cd (viper, zero float boxed).
+
+        Args:
+            dt_ms - the step interval in integer milliseconds, for the gyro integration.
+
+        Returns:
+            None; advances the free-run roll/pitch/yaw state as a side effect.
+        """
         rate = self._rate.value()  # (gx, gy, gz) centideg/s fixnum, or None
         roll_d = pitch_d = yaw_d = 0  # gyro-integration deltas this step (centidegree fixnum)
         turning = True
@@ -116,8 +138,14 @@ class Attitude(task.Task):
         self._pitch_cd = fixed.blend_cd(self._pitch_cd, pitch_d, pitch_accel, self._corr_shift, correct)
 
     async def run(self) -> None:
-        """Mirror the primary while it is the fused source; free-run the complementary filter when it is
-        lost. Publish (heading, roll, pitch) at priority 1 every cycle to stay fresh for the handoff."""
+        """
+        Mirror the primary while it is the fused source; free-run the filter when it is lost.
+
+        Publish (heading, roll, pitch) at priority 1 every cycle to stay fresh for the handoff.
+
+        Returns:
+            None; loops forever, publishing the backup attitude once per cycle.
+        """
         while True:
             await asyncio.sleep_ms(self._period_ms)
             now = time.ticks_us()
@@ -138,8 +166,14 @@ class Attitude(task.Task):
             self._attitude.push((self._yaw_cd / 100.0, self._roll_cd, self._pitch_cd))  # heading float; r/p fixnum
 
     async def probe(self) -> str:
-        """On-demand self-test: the gyro `rate` is present (the backup's core input). A dead gyro means
-        no attitude backup -- surfaced pre-flight."""
+        """
+        On-demand self-test: the gyro `rate` is present (the backup's core input).
+
+        A dead gyro means no attitude backup -- surfaced pre-flight.
+
+        Returns:
+            None when the gyro rate is present; an error message string when it is missing.
+        """
         try:
             recorder.Recorder.log(self.name, 'probe: gyro rate ...')
             if self._rate.value() is None:
@@ -150,7 +184,8 @@ class Attitude(task.Task):
             return message
         return None
 
-    # --- Inspectable ---
+    """Inspectable: the operator-facing backup-attitude snapshot (inspect/stats)."""
+
     def inspect(self) -> dict:
         return {'name': self.name, 'free_running': self._free, 'seeded': self._seeded,
                 'roll': fixed.to_str(self._roll_cd), 'pitch': fixed.to_str(self._pitch_cd),

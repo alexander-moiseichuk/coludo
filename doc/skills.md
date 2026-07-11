@@ -158,6 +158,21 @@ so it must run on both.
   raises a known exception. A **procedure returns `None`** — annotate `-> None` and write
   `Returns: None` (say what it does as a side effect). Trivial one-liners (properties, tiny helpers)
   may stay a single `"""summary."""` line; add sections when there is an arg/return/raise worth naming.
+- **File header is a module docstring**, not a `#` block. The first line is the copyright, then a
+  blank line, then the existing description (module role, design notes, measurements — keep the prose):
+  ```python
+  """
+  Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+  <what this module is and the design notes that were here before>
+  """
+  ```
+- **Section dividers are docstrings, not `#` banners.** A `# ----------- lifecycle` rule is
+  unreadable; when a block genuinely needs a heading, write a `"""..."""` string statement instead
+  (one line of what the section is / why), or just drop the divider if the code reads fine without it:
+  ```python
+  """Lifecycle: bring the configured devices up, supervise them, tear them down."""
+  ```
 - **No bare cross-reference labels** in code/comments/docstrings — roadmap item numbers (`5.1`,
   `#2`), findings/section IDs (`findings §18`, `1.2.1`), etc. They rot the moment the referenced
   list is renumbered and force a lookup to understand the code. Write the *reason* instead: not

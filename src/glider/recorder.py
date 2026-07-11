@@ -1,12 +1,16 @@
-# Recorder — the single non-hot data path: telemetry + logs into PSRAM ring buffers, drained to
-# the Luckfox recorder over UART. See specs/coludo.md ('Task Data-Flow', 'Logging', 'Telemetry',
-# 'Storage Write Constraints').
-#
-# Recorder is a singleton: any module calls Recorder.log() / Recorder.tlm() globally. Producers
-# enqueue synchronously (struct.pack_into into a ring -- never slice-assignment, which is
-# O(buffer length) on this port); the async run() loop drains the rings to the UART via an
-# asyncio.StreamWriter, telemetry (1st priority) before logs (2nd). Logs are best-effort (dropped
-# when full); telemetry is important (raises if a record will not fit).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+The single non-hot data path: telemetry + logs into PSRAM ring buffers, drained to the Luckfox
+recorder over UART. See specs/coludo.md ('Task Data-Flow', 'Logging', 'Telemetry', 'Storage Write
+Constraints').
+
+Recorder is a singleton: any module calls Recorder.log() / Recorder.tlm() globally. Producers enqueue
+synchronously (struct.pack_into into a ring -- never slice-assignment, which is O(buffer length) on
+this port); the async run() loop drains the rings to the UART via an asyncio.StreamWriter, telemetry
+(first priority) before logs. Logs are best-effort (dropped when full); telemetry is important (raises
+if a record will not fit).
+"""
 
 import asyncio
 import random
@@ -39,12 +43,15 @@ class _RecorderError(ValueError):
 
 
 class Ring:
-    """Lock-free single-producer / single-consumer byte ring. The writer owns `head`, the reader
-    owns `tail`; they never touch the same field, so it is safe between an ISR producer and a task
-    consumer with no locks. Each cell holds <uint16 length><payload>. write() uses pack_into
-    (cost O(record)) and returns False if there is no room (the record is skipped, never
-    overwriting unread data). read() returns a bytes copy (stable across an await). Holds
-    `capacity - 1` records (one cell separates full from empty)."""
+    """
+    Lock-free single-producer / single-consumer byte ring.
+
+    The writer owns `head`, the reader owns `tail`; they never touch the same field, so it is safe
+    between an ISR producer and a task consumer with no locks. Each cell holds <uint16 length>
+    <payload>. write() uses pack_into (cost O(record)) and returns False if there is no room (the
+    record is skipped, never overwriting unread data). read() returns a bytes copy (stable across an
+    await). Holds `capacity - 1` records (one cell separates full from empty).
+    """
 
     def __init__(self, capacity: int = _DEFAULT_CAPACITY, cell_size: int = _DEFAULT_CELL_SIZE):
         self.capacity: int = capacity or _DEFAULT_CAPACITY
@@ -90,12 +97,15 @@ class Ring:
 
 
 class _TeeSink:
-    """A poll-model CC mirror of a recorder stream (`log` and `tlm` both use one). While a deadline is
-    armed, tee() copies each record into a bounded ring; drain(ms) returns the batch buffered since the
-    last call and re-arms for `ms` more (<= 0 stops). The ring is lazily sized from the first window
-    (~10 records/ms, capped) and reused. If no follow-up arrives before the window lapses, the next
-    tee() discards the buffer and disables -- a lost link cannot grow memory. The UART sink is never
-    touched; the tee is best-effort (a full ring drops, never raises)."""
+    """
+    A poll-model CC mirror of a recorder stream (`log` and `tlm` both use one).
+
+    While a deadline is armed, tee() copies each record into a bounded ring; drain(ms) returns the
+    batch buffered since the last call and re-arms for `ms` more (<= 0 stops). The ring is lazily
+    sized from the first window (~10 records/ms, capped) and reused. If no follow-up arrives before
+    the window lapses, the next tee() discards the buffer and disables -- a lost link cannot grow
+    memory. The UART sink is never touched; the tee is best-effort (a full ring drops, never raises).
+    """
 
     def __init__(self):
         self._ring: Ring = None
@@ -126,8 +136,17 @@ class _TeeSink:
         return records
 
     def drain(self, duration_ms: int) -> list:
-        """Freeze (so no producer tees mid-drain -- the protocol is request->reply), return the batch
-        since the last call, and re-arm for `duration_ms` more."""
+        """
+        Return the batch buffered since the last call and re-arm for `duration_ms` more.
+
+        Freezes first (so no producer tees mid-drain -- the protocol is request->reply).
+
+        Args:
+            duration_ms - the next window in milliseconds (<= 0 stops after returning the batch).
+
+        Returns:
+            The records buffered since the last call (decoded, right-stripped).
+        """
         self._deadline = 0
         if self._ring is None:
             if duration_ms <= 0:
@@ -140,6 +159,8 @@ class _TeeSink:
 
 
 class Recorder:
+    """The global telemetry + log singleton: enqueue synchronously, drain to the Luckfox UART async."""
+
     name = 'recorder'
     kind = 'recorder'
     _tlm: Ring = None
@@ -189,8 +210,18 @@ class Recorder:
 
     @classmethod
     def session(cls) -> str:
-        """The per-boot file prefix, produced from the RTC the first time it is needed and then
-        shared by every telemetry stream in this boot."""
+        """
+        The per-boot file prefix.
+
+        Produced from the RTC the first time it is needed, then shared by every telemetry stream in
+        this boot.
+
+        Args:
+            (none)
+
+        Returns:
+            The session id string 'YYYYMMDD_HHMMSS_rand' (cached after the first call).
+        """
         if cls._session is None:
             now = time.localtime()
             # a random suffix disambiguates boots that start before the RTC ticks (fast restarts share
@@ -202,9 +233,21 @@ class Recorder:
 
     @classmethod
     def _enqueue(cls, ring, tee, data: bytes) -> bool:
-        """Queue `data` to `ring` (the UART/Luckfox primary sink), signal the drain loop on success, and
-        tee it to the CC mirror -- the extra route, which never gates the primary result. Returns
-        whether it was stored, so the caller picks best-effort drop (log) vs raise (tlm)."""
+        """
+        Queue `data` to `ring` (the UART/Luckfox primary sink) and tee it to the CC mirror.
+
+        Signals the drain loop on a successful store; the tee is the extra route and never gates the
+        primary result.
+
+        Args:
+            ring - the primary destination ring.
+            tee - the CC-mirror tee callable.
+            data - the encoded record bytes.
+
+        Returns:
+            True when stored in the primary ring (so the caller picks best-effort drop for logs vs
+            raise for telemetry), else False.
+        """
         stored = ring.write(data)
         if stored:
             cls._flag.set()
@@ -213,8 +256,19 @@ class Recorder:
 
     @classmethod
     def log(cls, descriptor: str, message: str) -> bool:
-        """Best-effort log line "<ts> <descriptor> :: <message>" (-> recorder.log). Truncated to
-        fit a cell; dropped (returns False) when the buffer is full or the Recorder is not set up."""
+        """
+        Best-effort log line "<ts> <descriptor> :: <message>" (-> recorder.log).
+
+        Truncated to fit a cell; dropped (returns False) when the buffer is full or the Recorder is
+        not set up.
+
+        Args:
+            descriptor - the source tag.
+            message - the log text.
+
+        Returns:
+            True when queued, False when dropped (buffer full, or the Recorder is not set up).
+        """
         if cls._log is None:
             return False  # not set up yet -> drop (logs are best-effort)
         data = ('%u %s :: %s\n' % (cls.timestamp(), descriptor, message)).encode()
@@ -224,21 +278,53 @@ class Recorder:
 
     @classmethod
     def cc_logs(cls, duration_ms: int) -> dict:
-        """Poll-model CC log streaming (the `log <ms>` command): the lines buffered since the last call,
-        re-arming the tee for `duration_ms` more (<= 0 stops)."""
+        """
+        Poll-model CC log streaming (the `log <ms>` command).
+
+        Returns the lines buffered since the last call, re-arming the tee for `duration_ms` more
+        (<= 0 stops).
+
+        Args:
+            duration_ms - the next window in milliseconds (<= 0 stops).
+
+        Returns:
+            {'lines': [...]} -- the buffered log lines.
+        """
         return {'lines': cls._cc_log.drain(duration_ms)}
 
     @classmethod
     def cc_telemetry(cls, duration_ms: int) -> dict:
-        """Poll-model CC telemetry streaming (the `tlm <ms>` command): the telemetry rows buffered since
-        the last call, re-arming the tee for `duration_ms` more (<= 0 stops). An EXTRA route -- the
-        UART/Luckfox telemetry is untouched."""
+        """
+        Poll-model CC telemetry streaming (the `tlm <ms>` command).
+
+        Returns the telemetry rows buffered since the last call, re-arming the tee for `duration_ms`
+        more (<= 0 stops). An EXTRA route -- the UART/Luckfox telemetry is untouched.
+
+        Args:
+            duration_ms - the next window in milliseconds (<= 0 stops).
+
+        Returns:
+            {'samples': [...]} -- the buffered telemetry rows.
+        """
         return {'samples': cls._cc_tlm.drain(duration_ms)}
 
     @classmethod
     def tlm(cls, filename: str, content: str) -> None:
-        """Important telemetry line "@<session>_<filename>@<content>". Raises if the record will
-        not fit or there is no room -- telemetry must not be lost silently."""
+        """
+        Queue an important telemetry line "@<session>_<filename>@<content>".
+
+        Telemetry must not be lost silently.
+
+        Args:
+            filename - the destination stream file (without the session prefix).
+            content - the CSV row (or header) text.
+
+        Returns:
+            None.
+
+        Raises:
+            _RecorderError - when the record will not fit or there is no room.
+        """
         data = ('@%s_%s@%s\n' % (cls.session(), filename, content)).encode()
         if not cls._enqueue(cls._tlm, cls._cc_tlm.tee, data):  # CC mirror + primary ring
             raise _RecorderError('telemetry dropped (%d bytes)' % len(data))
@@ -266,10 +352,19 @@ class Recorder:
 
     @classmethod
     async def run(cls) -> None:
-        """Event-driven drain loop: wait for a producer signal, then drain everything queued, so
-        data is delivered as fast as possible with no fixed poll interval and zero idle CPU. Runs
+        """
+        Event-driven drain loop: wait for a producer signal, then drain everything queued.
+
+        Data is delivered as fast as possible with no fixed poll interval and zero idle CPU. Runs
         forever (a wedged board reboots via the watchdog); logs a buffer-stats line about every
-        _stats_ms."""
+        _stats_ms.
+
+        Args:
+            (none)
+
+        Returns:
+            None (runs forever).
+        """
         while True:
             await cls._flag.wait()
             await cls.drain()
@@ -311,15 +406,19 @@ class Recorder:
 
 
 class Telemetry:
-    """A typed telemetry stream. Created with a destination file and its data field names; the
-    first push emits the CSV header (uptime + fields), then each push emits a timestamped row.
-    All streams in one boot share the Recorder session prefix, so file names are stable.
+    """
+    A typed telemetry stream.
+
+    Created with a destination file and its data field names; the first push emits the CSV header
+    (uptime + fields), then each push emits a timestamped row. All streams in one boot share the
+    Recorder session prefix, so file names are stable.
 
     `decimate_us` rate-limits the stream: push() emits only when at least `decimate_us` microseconds
     have passed since the last emitted row (a fast sensor can push every sample and have its telemetry
     decimated to a sane rate). `decimate_us=0` (the default) inherits the Recorder GLOBAL rate
     (`Recorder.telemetry_decimate_us`, 50 Hz) -- so a stream opts into an individual rate by passing a
-    non-zero value, else the board-wide `recorder.telemetry_us` prorates it."""
+    non-zero value, else the board-wide `recorder.telemetry_us` prorates it.
+    """
 
     def __init__(self, filename: str, fields: tuple, decimate_us: int = 0):
         self.filename: str = filename

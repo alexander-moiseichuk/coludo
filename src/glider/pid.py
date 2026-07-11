@@ -1,24 +1,29 @@
-# pid.py — a minimal fixed-point PID controller for the flight stabilization loop (Phase 3), sibling of
-# mixer.py. One instance per control axis. Integral anti-windup clamp + output clamp; reset() on
-# (re)entering a control phase.
-#
-# INTEGER fixed-point (fixed.fixnum in/out, integer-millisecond dt) so a step allocates NOTHING on the
-# heap. The flight loop runs with GC DISABLED (sequencer disables it on BOOSTING), so every heap byte
-# accumulates toward OOM; the old float PID boxed a fresh float on every * + / -- measured 176 B/step,
-# ×3 axes ×100 Hz ≈ 56 KB/s of leak. This version measures 0 B/step (even at a ±180° heading swing, the
-# worst case for the derivative), leaving only the isolated call-site conversion fixed.from_float(setpoint
-# - actual) at the sensor boundary. Net saving ≈ 47 KB/s (from the memory-refactor work).
-#
-# Fixed-point contract (error/output in fixed.fixnum -- degrees × fixed.SCALE; measured alloc-free):
-#   error   fixnum  -- the caller scales at the boundary: fixed.from_float(setpoint - actual)
-#   dt      ms (int)
-#   gains   floats (kp/ki/kd) -- scaled by _KU=100 (0.01 gain resolution) at construction
-#   limits  degrees -- scaled by fixed.SCALE (to the error/output unit) at construction
-#   output  fixnum  -- the caller reduces: output // fixed.SCALE -> integer degrees for the mixer
-# The two 1000s inside step() are TIME (ms<->s), not the angle scale -- they are independent of SCALE.
-# Every intermediate product stays < 2**30 (the RV32 small-int ceiling; past it boxes a 16-byte mpz): at
-# SCALE=100 the worst term kp_k·e = 500·18000 = 9e6 and the derivative swing 36000·1000 = 3.6e7, both far
-# under it (SCALE=100 keeps ~3x headroom even on a scaled angle², which SCALE=1000 would overflow).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+A minimal fixed-point PID controller for the flight stabilization loop (Phase 3), sibling of mixer.py.
+One instance per control axis. Integral anti-windup clamp + output clamp; reset() on (re)entering a
+control phase.
+
+INTEGER fixed-point (fixed.fixnum in/out, integer-millisecond dt) so a step allocates NOTHING on the
+heap. The flight loop runs with GC DISABLED (sequencer disables it on BOOSTING), so every heap byte
+accumulates toward OOM; the old float PID boxed a fresh float on every * + / -- measured 176 B/step,
+×3 axes ×100 Hz ≈ 56 KB/s of leak. This version measures 0 B/step (even at a ±180° heading swing, the
+worst case for the derivative), leaving only the isolated call-site conversion
+fixed.from_float(setpoint - actual) at the sensor boundary. Net saving ≈ 47 KB/s (from the
+memory-refactor work).
+
+Fixed-point contract (error/output in fixed.fixnum -- degrees × fixed.SCALE; measured alloc-free):
+  error   fixnum  -- the caller scales at the boundary: fixed.from_float(setpoint - actual)
+  dt      ms (int)
+  gains   floats (kp/ki/kd) -- scaled by _KU=100 (0.01 gain resolution) at construction
+  limits  degrees -- scaled by fixed.SCALE (to the error/output unit) at construction
+  output  fixnum  -- the caller reduces: output // fixed.SCALE -> integer degrees for the mixer
+The two 1000s inside step() are TIME (ms<->s), not the angle scale -- they are independent of SCALE.
+Every intermediate product stays < 2**30 (the RV32 small-int ceiling; past it boxes a 16-byte mpz): at
+SCALE=100 the worst term kp_k·e = 500·18000 = 9e6 and the derivative swing 36000·1000 = 3.6e7, both far
+under it (SCALE=100 keeps ~3x headroom even on a scaled angle², which SCALE=1000 would overflow).
+"""
 
 from fixed import SCALE, clamp, fixnum  # fixed-point convention: error/output in SCALE-units, integer clamp
 
@@ -33,10 +38,14 @@ _UNBOUNDED_DEG = const(1000000)  # default 'no limit' -- ×SCALE stays a small i
 
 
 class Pid:
-    """error (fixnum, degrees × SCALE) -> control output (fixnum). step(error, dt_ms[, rate]):
-    kp*e + ki*integral(e) + kd*derivative, each clamped -- all integer, no heap allocation. The
-    derivative is the measured `rate` (gyro, SCALE-deg/s) when given -- derivative-on-measurement, clean
-    + no setpoint kick -- else d(error)/dt (differentiated on the error)."""
+    """
+    A minimal fixed-point PID controller for one control axis: error (fixnum) -> control output (fixnum).
+
+    step(error, dt_ms[, rate]) is kp*e + ki*integral(e) + kd*derivative, each clamped -- all integer,
+    no heap allocation. Error and output are fixnums (degrees × SCALE). The derivative is the measured
+    `rate` (gyro, SCALE-deg/s) when given -- derivative-on-measurement, clean + no setpoint kick --
+    else d(error)/dt (differentiated on the error).
+    """
 
     def __init__(self, kp: float = 0.0, ki: float = 0.0, kd: float = 0.0,
                  integral_limit: int = _UNBOUNDED_DEG, output_limit: int = _UNBOUNDED_DEG):
@@ -51,10 +60,19 @@ class Pid:
         self._previous = None  # last error (mdeg); None until the first step -> no derivative kick on entry
 
     def reset(self) -> None:
-        """Clear the integral + derivative history -- on entering a control phase, so a fresh glide does
-        not inherit wind-up from a previous one. `_previous = None` so the FIRST step after reset takes no
-        derivative term (a 0 baseline would make de/dt = error/dt, a large spurious D kick
-        on entry)."""
+        """
+        Clear the integral + derivative history.
+
+        On entering a control phase, so a fresh glide does not inherit wind-up from a previous one.
+        `_previous = None` so the FIRST step after reset takes no derivative term (a 0 baseline would
+        make de/dt = error/dt, a large spurious D kick on entry).
+
+        Args:
+            (none)
+
+        Returns:
+            None -- resets self._integral and self._previous in place.
+        """
         self._integral = 0
         self._previous = None
 

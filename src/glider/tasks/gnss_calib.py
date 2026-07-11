@@ -1,16 +1,20 @@
-# tasks/gnss_calib.py — GNSS consistent-drift calibration on the pad. @task.activity('gnss_calib').
-#
-# A STATIONARY GNSS position walks slowly (changing satellite geometry, ionospheric delay, multipath).
-# Over the ~60 s a rocket sits on the pad the walk is roughly a constant DRIFT VELOCITY, and the almanac
-# barely changes through the ~60 s flight -- so the drift measured on the pad predicts the drift in the
-# air. A fixed antenna is NOT carried by the wind, so on the pad the receiver's whole reported ground
-# velocity IS its drift: we average it through SETTING and FREEZE it at launch. The flight loop then
-# subtracts it from the GNSS ground velocity before the wind triangle -- otherwise the drift folds
-# STRAIGHT into the wind estimate (wind = ground_velocity - airspeed*heading), reading as phantom wind.
-#
-# Position-nav is deliberately NOT corrected: the drift over a 60 s flight is a few metres, inside the
-# ~20 m turn-radius landing floor (specs/coludo.md), so it would not move the touchdown -- the win is a
-# clean wind estimate. Slow loop (the drift is slow); Inspectable -> the operator sees the frozen drift.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+GNSS consistent-drift calibration on the pad. @task.activity('gnss_calib').
+
+A STATIONARY GNSS position walks slowly (changing satellite geometry, ionospheric delay, multipath).
+Over the ~60 s a rocket sits on the pad the walk is roughly a constant DRIFT VELOCITY, and the almanac
+barely changes through the ~60 s flight -- so the drift measured on the pad predicts the drift in the
+air. A fixed antenna is NOT carried by the wind, so on the pad the receiver's whole reported ground
+velocity IS its drift: we average it through SETTING and FREEZE it at launch. The flight loop then
+subtracts it from the GNSS ground velocity before the wind triangle -- otherwise the drift folds
+STRAIGHT into the wind estimate (wind = ground_velocity - airspeed*heading), reading as phantom wind.
+
+Position-nav is deliberately NOT corrected: the drift over a 60 s flight is a few metres, inside the
+~20 m turn-radius landing floor (specs/coludo.md), so it would not move the touchdown -- the win is a
+clean wind estimate. Slow loop (the drift is slow); Inspectable -> the operator sees the frozen drift.
+"""
 
 import asyncio
 import math
@@ -25,8 +29,12 @@ _STAGE = controller.Stage
 
 @task.activity('gnss_calib')
 class GnssCalib(task.Task):
-    """Average the reported ground velocity while stationary on the pad (SETTING) -> the GNSS drift, and
-    freeze it at launch (BOOSTING). drift() hands it to the flight loop to de-bias the wind."""
+    """
+    Average the reported ground velocity while stationary on the pad (SETTING) -> the GNSS drift, and
+    freeze it at launch (BOOSTING).
+
+    drift() hands it to the flight loop to de-bias the wind.
+    """
 
     async def setup(self) -> bool:
         self._speed = databoard.Databoard.parameter('speed')    # reported ground speed (m/s)
@@ -54,8 +62,18 @@ class GnssCalib(task.Task):
         self._count += 1
 
     def _freeze(self) -> None:
-        """At launch (SETTING -> BOOSTING): drift = the mean stationary ground velocity. Too few samples
-        (a fast arm, or no fix on the pad) -> leave the drift 0 rather than trust a noisy mean."""
+        """
+        At launch (SETTING -> BOOSTING) lock the drift to the mean stationary ground velocity.
+
+        Too few samples (a fast arm, or no fix on the pad) -> leave the drift 0 rather than trust a
+        noisy mean.
+
+        Args:
+            (none)
+
+        Returns:
+            None; freezes the drift estimate, marks it frozen, and logs it.
+        """
         if self._count >= self._min_samples:
             self._drift_e = self._sum_e / self._count
             self._drift_n = self._sum_n / self._count

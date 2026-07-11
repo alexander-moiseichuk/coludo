@@ -1,8 +1,12 @@
-# i2cbus.py — shared, lock-serialized I2C buses. Several sensor drivers sit on one physical bus
-# (i2c:0 carries the ADXL375, BNO055 and BMP280), so they must not interleave transactions on the
-# single peripheral: each bus id has ONE machine.I2C plus an asyncio.Lock, and get() hands back the
-# shared wrapper. The read/write methods are async (they acquire the lock) but the underlying I2C op
-# is fast and synchronous, so the lock is held only for the transaction. A glider-only module.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Shared, lock-serialized I2C buses. Several sensor drivers sit on one physical bus (i2c:0 carries the
+ADXL375, BNO055 and BMP280), so they must not interleave transactions on the single peripheral: each
+bus id has ONE machine.I2C plus an asyncio.Lock, and get() hands back the shared wrapper. The
+read/write methods are async (they acquire the lock) but the underlying I2C op is fast and
+synchronous, so the lock is held only for the transaction. A glider-only module.
+"""
 
 import asyncio
 
@@ -17,8 +21,12 @@ _buses: dict = {}  # bus id -> Bus
 
 
 class _Device:
-    """A register window on a shared I2C bus for one address, mirroring spibus.Bus.device so a driver
-    can use either bus the same way: read(reg, n) / read_into(reg, buf) / write(reg, data)."""
+    """
+    A register window on a shared I2C bus for one address.
+
+    Mirrors spibus.Bus.device so a driver can use either bus the same way:
+    read(reg, n) / read_into(reg, buf) / write(reg, data).
+    """
 
     def __init__(self, bus, addr: int):
         self._bus = bus
@@ -34,11 +42,22 @@ class _Device:
         await self._bus.write(self._addr, reg, data)
 
     async def diagnose(self, reg: int, expected: int, addrsize: int = 8) -> str:
-        """Read this chip's id/WHO_AM_I register and classify the wire-level result for a failed setup()
-        (commons.id_classify: no I2C ack / wrong device / present-but-init). A driver's diagnose() just
-        awaits this with its id register + expected value -- the read and verdict live with the bus,
-        mirroring spibus._Device.diagnose. `addrsize` is passed through for 16-bit register devices
-        (e.g. VL53L4CX); default is 8."""
+        """
+        Read this chip's id/WHO_AM_I register and classify the wire-level result for a failed setup().
+
+        commons.id_classify sorts the read into no I2C ack / wrong device / present-but-init. A driver's
+        diagnose() just awaits this with its id register + expected value -- the read and verdict live
+        with the bus, mirroring spibus._Device.diagnose.
+
+        Args:
+            reg - the id/WHO_AM_I register to read.
+            expected - the id value a healthy device returns.
+            addrsize - register address width in bits, passed through for 16-bit register devices
+                (e.g. VL53L4CX); default is 8.
+
+        Returns:
+            The commons.id_classify verdict string (no ack / wrong device / present-but-init).
+        """
         try:
             read = (await self.read(reg, 1, addrsize=addrsize))[0]
         except Exception:
@@ -56,10 +75,19 @@ class Bus:
         self._lock = asyncio.Lock()
 
     async def retune(self, freq: int) -> None:
-        """Re-init this I2C peripheral at `freq` Hz in place (bench frequency calibration; no reboot).
+        """
+        Re-init this I2C peripheral at `freq` Hz in place (bench frequency calibration; no reboot).
+
         Held under the lock so it never swaps mid-transaction -- the shared device windows keep working.
         Not persisted: the CC-side sweep finds the ceiling, then saves the chosen freq to board.config +
-        reboots."""
+        reboots.
+
+        Args:
+            freq - the new I2C clock frequency in Hz.
+
+        Returns:
+            None; replaces self._i2c with a peripheral running at the new frequency.
+        """
         async with self._lock:
             self._i2c = I2C(self._bus_id, scl=Pin(self._spec['scl']), sda=Pin(self._spec['sda']), freq=freq)
 
@@ -76,12 +104,12 @@ class Bus:
             self._i2c.writeto_mem(addr, reg, data, addrsize=addrsize)
 
     async def writeto(self, addr: int, data: bytes) -> None:
-        """Raw write (no register) — for command-based devices like the ICP-10111."""
+        """Raw write (no register) -- for command-based devices like the ICP-10111."""
         async with self._lock:
             self._i2c.writeto(addr, data)
 
     async def readfrom(self, addr: int, count: int) -> bytes:
-        """Raw read (no register) — pairs with writeto() for command-based devices."""
+        """Raw read (no register) -- pairs with writeto() for command-based devices."""
         async with self._lock:
             return self._i2c.readfrom(addr, count)
 

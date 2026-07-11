@@ -1,25 +1,29 @@
-# Task base class and driver registry — the unit the Controller creates and supervises.
-#
-# Every component/system task follows the common lifecycle from specs/coludo.md:
-# setup() async; initialize or reset; return True on success
-# probe() async; ON-DEMAND self-test (the CC `probe` command, never at boot) -> None if healthy,
-# else an error string. Default None; a sensor reports 'X not found on i2c:0', an actuator
-# exercises itself (the servo sweeps its range) -- so a mid-flight reboot never sweeps fins.
-# run() async; the task's main activity loop
-# notify() subscribe a callback for this task's updates
-# validate() return True if the task is currently healthy
-# finish() async; shut down and release resources
-# A Task is Inspectable: inspect()/update()/stats() expose it to the operator (the Controller
-# registers each task with the Inspector), so there is no separate report().
-#
-# A task registers itself with @activity('name') (or its alias @driver('name') for the HAL ones in
-# drivers/) into ACTIVITIES, the CLASS registry: name -> Task subclass, "what can be built". It is a
-# module global on purpose -- the decorators fill it at IMPORT time, before any Controller exists, so
-# it cannot live on a Controller instance (that is why moving it into the Controller would be a mess,
-# not a tidy-up). The Controller READS it (injected as `registry`, defaulting to ACTIVITIES) to build
-# a component, and keeps its own INSTANCE directory -- find()/query(), "what is currently running" --
-# for dependency lookup. Two deliberately separate lookups: class-by-name here, instance-by-name on
-# the Controller. The driver/activity names share one registry for now; splitting drivers out later.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Task base class and driver registry -- the unit the Controller creates and supervises.
+
+Every component/system task follows the common lifecycle from specs/coludo.md:
+  setup() async; initialize or reset; return True on success
+  probe() async; ON-DEMAND self-test (the CC `probe` command, never at boot) -> None if healthy,
+      else an error string. Default None; a sensor reports 'X not found on i2c:0', an actuator
+      exercises itself (the servo sweeps its range) -- so a mid-flight reboot never sweeps fins.
+  run() async; the task's main activity loop
+  notify() subscribe a callback for this task's updates
+  validate() return True if the task is currently healthy
+  finish() async; shut down and release resources
+A Task is Inspectable: inspect()/update()/stats() expose it to the operator (the Controller registers
+each task with the Inspector), so there is no separate report().
+
+A task registers itself with @activity('name') (or its alias @driver('name') for the HAL ones in
+drivers/) into ACTIVITIES, the CLASS registry: name -> Task subclass, "what can be built". It is a
+module global on purpose -- the decorators fill it at IMPORT time, before any Controller exists, so it
+cannot live on a Controller instance (that is why moving it into the Controller would be a mess, not a
+tidy-up). The Controller READS it (injected as `registry`, defaulting to ACTIVITIES) to build a
+component, and keeps its own INSTANCE directory -- find()/query(), "what is currently running" -- for
+dependency lookup. Two deliberately separate lookups: class-by-name here, instance-by-name on the
+Controller. The driver/activity names share one registry for now; splitting drivers out later.
+"""
 
 import inspector
 
@@ -27,8 +31,18 @@ ACTIVITIES: dict = {}  # CLASS registry: name -> Task subclass (instance lookup 
 
 
 def activity(name: str):
-    """Class decorator: register a Task subclass (a HAL driver or a higher-level activity) under a
-    name so the Controller can build it from a config component."""
+    """
+    Class decorator: register a Task subclass under a name.
+
+    Registers a HAL driver or a higher-level activity so the Controller can build it from a config
+    component.
+
+    Args:
+        name - the registry key a config component names to build this class.
+
+    Returns:
+        The class decorator, which registers the class and returns it unchanged.
+    """
 
     def deco(cls):
         ACTIVITIES[name] = cls
@@ -52,15 +66,26 @@ class Task(inspector.Inspectable):
         self._healthy: bool = True  # RUNTIME read health (distinct from _ok = setup ok); note() tracks it
 
     def note(self, template: str = None, arg=None) -> None:
-        """De-duplicated best-effort run-loop log + runtime-health flag. Call `note()` (template None) on a
-        healthy pass; call `note('x :: %r', error)` on a failure. The failure is printed ONCE per healthy->
-        error transition, and -- critically -- the `template % arg` is formatted only on that transition.
-        `note('x :: %r' % error)` would instead format EAGERLY at the call site every tick, so a
-        persistently-failing read in a GC-OFF flight loop leaks a string each iteration (and a 50 Hz sensor
-        floods the USB-CDC, wedging the REPL). Pass the template literal + a single by-reference `arg`
-        (fixed 2-arg signature, no *args tuple) so nothing allocates while the fault repeats. A healthy
-        note() re-arms the next error to log afresh, and tracks _healthy so inspect()['healthy'] shows a
-        flaky run loop that _ok (setup-time) cannot."""
+        """
+        De-duplicated best-effort run-loop log + runtime-health flag.
+
+        Call `note()` (template None) on a healthy pass; call `note('x :: %r', error)` on a failure. The
+        failure is printed ONCE per healthy->error transition, and -- critically -- the `template % arg`
+        is formatted only on that transition. `note('x :: %r' % error)` would instead format EAGERLY at
+        the call site every tick, so a persistently-failing read in a GC-OFF flight loop leaks a string
+        each iteration (and a 50 Hz sensor floods the USB-CDC, wedging the REPL). Pass the template
+        literal + a single by-reference `arg` (fixed 2-arg signature, no *args tuple) so nothing
+        allocates while the fault repeats. A healthy note() re-arms the next error to log afresh, and
+        tracks _healthy so inspect()['healthy'] shows a flaky run loop that _ok (setup-time) cannot.
+
+        Args:
+            template - the log format string, or None to mark a healthy pass.
+            arg - a single by-reference argument for `template % arg`; None when the template needs
+                none.
+
+        Returns:
+            None; prints once on the healthy->error transition and updates _healthy.
+        """
         if template is None:  # healthy pass -> clear the fault, re-arm the next error
             self._healthy = True
             return
@@ -69,16 +94,26 @@ class Task(inspector.Inspectable):
         self._healthy = False
 
     def _pin_gpio(self, field: str, default: str = None) -> int:
-        """The board GPIO NUMBER for this component's `field` pin (None if absent) -- look the
-        component's pin name (config[field], or `default` when the component omits it) up in the board
-        `pins` map. Returns a number, not a machine.Pin: chip-select / PWM sites consume the number
-        directly, and the Pin-building sites (int / xshut / separation) each need their own mode + IRQ.
-        One resolver for the cs_pin / int_pin / xshut_pin / pin lookup shared across drivers.
+        """
+        The board GPIO NUMBER for this component's `field` pin (None if absent).
+
+        Looks the component's pin name (config[field], or `default` when the component omits it) up in
+        the board `pins` map. Returns a number, not a machine.Pin: chip-select / PWM sites consume the
+        number directly, and the Pin-building sites (int / xshut / separation) each need their own mode
+        + IRQ. One resolver for the cs_pin / int_pin / xshut_pin / pin lookup shared across drivers.
 
         DISABLED optional pin: a pins-map value of `null` (None) -- or `-1` -- means the feature is
-        wired off on this board. Both resolve to None, exactly like an absent pin, so every
-        optional-pin driver's `is None` guard skips the feature (poll instead of INT, no XSHUT
-        toggle, no hardware ALERT). `null` is the preferred, self-documenting form."""
+        wired off on this board. Both resolve to None, exactly like an absent pin, so every optional-pin
+        driver's `is None` guard skips the feature (poll instead of INT, no XSHUT toggle, no hardware
+        ALERT). `null` is the preferred, self-documenting form.
+
+        Args:
+            field - the config key naming this component's pin.
+            default - the pin name to use when the component omits `field`.
+
+        Returns:
+            The GPIO number; None when the pin is absent, null, or negative (the feature is wired off).
+        """
         gpio = self.controller.config.get('pins', {}).get(self.config.get(field, default))
         return gpio if isinstance(gpio, int) and gpio >= 0 else None
 
@@ -87,10 +122,11 @@ class Task(inspector.Inspectable):
         raise NotImplementedError('Task.setup() must be overridden')
 
     async def probe(self) -> str:
-        """On-demand self-test (the CC `probe` command, NOT run at boot): return None when healthy, or
-        a human-readable error string (e.g. 'BMP280 not found on i2c:0'). The operator runs it
-        pre-flight; costly active checks (the servo range sweep) belong here, so a reboot never
-        triggers them. Override per device; default has nothing to probe.
+        """
+        On-demand self-test (the CC `probe` command, NOT run at boot).
+
+        The operator runs it pre-flight; costly active checks (the servo range sweep) belong here, so a
+        reboot never triggers them. Override per device; the default has nothing to probe.
 
         Convention -- write each step EXPLICITLY, wrapped in its own try/except with a Recorder.log
         before the action, after success (with the value got), and on failure; on failure return the
@@ -104,13 +140,30 @@ class Task(inspector.Inspectable):
                 recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
                 return message
             ... next step ...
-            return None"""
+            return None
+
+        Args:
+            (none)
+
+        Returns:
+            None when healthy, or a human-readable error string (e.g. 'BMP280 not found on i2c:0').
+        """
         return None
 
     async def run(self) -> None:
-        """Main activity loop. Override. Default raises to catch missing overrides (the Controller
-        catches the exception and logs the crash). Command-driven tasks with no loop (SG90,
-        Bluetooth) override explicitly with `pass`."""
+        """
+        The task's main activity loop.
+
+        Override. The default raises to catch missing overrides (the Controller catches the exception
+        and logs the crash). Command-driven tasks with no loop (SG90, Bluetooth) override explicitly
+        with `pass`.
+
+        Returns:
+            None; loops forever until the task is cancelled.
+
+        Raises:
+            NotImplementedError if a subclass does not override it.
+        """
         raise NotImplementedError('Task.run() must be overridden')
 
     def notify(self, callback) -> None:
@@ -128,8 +181,19 @@ class Task(inspector.Inspectable):
         return self.controller.find(names)
 
     async def query(self, names: list[str], waiting: bool = True) -> list:
-        """Await sibling tasks by name via the Controller; with `waiting` (default) park until all
-        are up (order is not fixed): `wifi, = await self.query(['wifi'])`."""
+        """
+        Await sibling tasks by name via the Controller.
+
+        With `waiting` (default) park until all are up (order is not fixed):
+        `wifi, = await self.query(['wifi'])`.
+
+        Args:
+            names - the sibling task names to look up.
+            waiting - True (default) parks until all are present; False returns immediately.
+
+        Returns:
+            A list aligned with `names` (see Controller.query for the None semantics).
+        """
         return await self.controller.query(names, waiting)
 
     def validate(self) -> bool:

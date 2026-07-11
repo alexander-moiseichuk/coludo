@@ -1,17 +1,21 @@
-# tasks/flight.py — Phase 3 stabilization loop. @task.activity('flight'). At `schedule_hz` it runs the
-# control PIPELINE: dt -> airspeed Governor (fin-authority cap, adaptively throttled) -> control-stage
-# gate -> attitude -> Guidance (per-stage setpoints + heading) -> PID per axis -> mixer actuate. The
-# control LAW lives in guidance.py and the airspeed/authority POLICY in governor.py — this task is
-# the orchestration: databoard reads, arming/degraded gates,
-# scheduling, and the PID->mixer->servo drive. Per-stage behaviour, the GPS-degrading heading tiers,
-# boost hold and final approach are guidance.py's; the adaptive estimator throttle is governor.py's.
-# Degraded: stale/absent attitude -> neutral. Disarmed / non-control stage -> neutral.
-#
-# Scheduling: schedule_hz > 0 -> a machine.Timer ticks the step, so the control law gets a regular slice
-# independent of what other asyncio tasks are doing (deterministic, e.g. while the laser hammers I2C in
-# landing). schedule_hz == 0 -> a plain asyncio loop at period_ms (reconfigure/debug; subject to the ~10 ms
-# asyncio floor). Default 100 Hz timer = ~1 m per control step at 100 m/s. Gains default to 0 and the
-# task is disabled by default -- it cannot move a surface until enabled + tuned on the airframe.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Phase 3 stabilization loop. @task.activity('flight'). At `schedule_hz` it runs the control PIPELINE:
+dt -> airspeed Governor (fin-authority cap, adaptively throttled) -> control-stage gate -> attitude ->
+Guidance (per-stage setpoints + heading) -> PID per axis -> mixer actuate. The control LAW lives in
+guidance.py and the airspeed/authority POLICY in governor.py -- this task is the orchestration: databoard
+reads, arming/degraded gates, scheduling, and the PID->mixer->servo drive. Per-stage behaviour, the
+GPS-degrading heading tiers, boost hold and final approach are guidance.py's; the adaptive estimator
+throttle is governor.py's. Degraded: stale/absent attitude -> neutral. Disarmed / non-control stage ->
+neutral.
+
+Scheduling: schedule_hz > 0 -> a machine.Timer ticks the step, so the control law gets a regular slice
+independent of what other asyncio tasks are doing (deterministic, e.g. while the laser hammers I2C in
+landing). schedule_hz == 0 -> a plain asyncio loop at period_ms (reconfigure/debug; subject to the
+~10 ms asyncio floor). Default 100 Hz timer = ~1 m per control step at 100 m/s. Gains default to 0 and
+the task is disabled by default -- it cannot move a surface until enabled + tuned on the airframe.
+"""
 
 import asyncio
 import math
@@ -100,12 +104,22 @@ class Flight(task.Task):
         return True
 
     def _tick(self) -> None:
-        """One scheduled control cycle (sync, no await -> runs whole in a timer slice). The unified name
-        for a task's per-cycle scheduled work (cf. sequencer/field `_tick`). The pipeline: dt ->
-        governor (full rate pre-glide, throttled in the glide -> the deflection cap stays warm) -> stage
-        gate -> attitude -> first-entry init -> guidance -> PID -> actuate. Guidance sets/reads instance
-        slots rather than returning tuples -- decomposed WITHOUT adding a per-step heap allocation (GC is
-        off in flight). Self-times for the load sweep."""
+        """
+        One scheduled control cycle (sync, no await -> runs whole in a timer slice).
+
+        The unified name for a task's per-cycle scheduled work (cf. sequencer/field `_tick`). The
+        pipeline: dt -> governor (full rate pre-glide, throttled in the glide -> the deflection cap stays
+        warm) -> stage gate -> attitude -> first-entry init -> guidance -> PID -> actuate. Guidance
+        sets/reads instance slots rather than returning tuples -- decomposed WITHOUT adding a per-step
+        heap allocation (GC is off in flight). Self-times for the load sweep.
+
+        Args:
+            (none)
+
+        Returns:
+            None; runs one control step, actuating the fins (or centring them on a degraded/non-control
+            tick) as a side effect.
+        """
         start = time.ticks_us()
         dt_ms = self._compute_dt(start)  # also stores self._dt (float s) for the governor's integrator
         # stage authority stays with the task: pre-glide (boost + active decel) FORCES the governor to
@@ -144,9 +158,19 @@ class Flight(task.Task):
             self._max_step_us = elapsed
 
     def _feed_wind(self, heading: float) -> None:
-        """One GNSS-rate wind update: the ground velocity (de-biased by the pad-measured GNSS drift, so
-        the drift does not read as phantom wind) vs the air velocity. Needs a fresh course + a meaningful
-        ground speed (a crawl gives a noisy course)."""
+        """
+        One GNSS-rate wind update: ground velocity vs air velocity.
+
+        The ground velocity is de-biased by the pad-measured GNSS drift, so the drift does not read as
+        phantom wind. Needs a fresh course + a meaningful ground speed (a crawl gives a noisy course).
+
+        Args:
+            heading - the glider's current heading (degrees), the air-velocity direction for the triangle.
+
+        Returns:
+            None; feeds one observation to the wind estimator, or nothing when the course/speed is
+            missing or the ground speed is below the meaningful threshold.
+        """
         course = self._course.value()
         speed = self._gnss_speed.value()
         if course is None or speed is None or speed <= self._wind_min_speed:
@@ -163,10 +187,20 @@ class Flight(task.Task):
         self._wind.observe(course, speed, self._governor.airspeed(), heading)
 
     def _compute_dt(self, start: int) -> int:
-        """Integer-ms slice since the last step, and stash self._dt (float s) for the governor's airspeed
-        integrator. ACTUAL elapsed -- a GC pause / delayed slice makes it longer, and the PID I/D + the
-        airspeed integral must use the real interval. First step or a long gap (>0.5 s)
-        -> nominal slice."""
+        """
+        Integer-ms slice since the last step, and stash self._dt (float s) for the governor.
+
+        ACTUAL elapsed -- a GC pause / delayed slice makes it longer, and the PID I/D + the airspeed
+        integral must use the real interval, not the nominal one. First step or a long gap (>0.5 s) ->
+        nominal slice.
+
+        Args:
+            start - time.ticks_us() at the top of this step.
+
+        Returns:
+            The slice in integer milliseconds (for the fixed-point PID); also stores self._dt in float
+            seconds for the governor's airspeed integrator.
+        """
         dt_us = time.ticks_diff(start, self._last_step_us)
         self._last_step_us = start
         if dt_us <= 0 or dt_us > 500000:  # first step / long gap (GC pause, delayed slice) -> nominal slice
@@ -175,14 +209,26 @@ class Flight(task.Task):
         return dt_us // 1000  # integer ms: the fixed-point PID (no float box)
 
     def _run_pid(self, roll: int, pitch: int, dt_ms: int) -> None:
-        """Fixed-point PID (the guidance setpoint slots vs the measured attitude) -> mixer -> fins.
+        """
+        Fixed-point PID (guidance setpoint slots vs measured attitude) -> mixer -> fins.
+
         Setpoints AND the measured roll/pitch are both centidegree fixnum (bno055 reads them that way),
         so the error is a plain INT SUBTRACT -- no per-axis float conversion in the PID (the setpoint's
         from_float happened once in guidance). Output fixnum -> whole degrees for the mixer via
-        // fixed.SCALE. heading_error is int degrees, so × SCALE stays a small int (no box).
-        The gyro 'rate' (centideg/s fixnum, same unit as the error) feeds each PID's D term directly
-        (derivative-on-measurement -- clean, no setpoint kick); None when no gyro -> the PID differentiates
-        the error instead. Axis mapping assumes the IMU mounted gx->roll, gy->pitch, gz->yaw."""
+        // fixed.SCALE. heading_error is int degrees, so × SCALE stays a small int (no box). The gyro
+        'rate' (centideg/s fixnum, same unit as the error) feeds each PID's D term directly
+        (derivative-on-measurement -- clean, no setpoint kick); None when no gyro -> the PID
+        differentiates the error instead. Axis mapping assumes the IMU mounted gx->roll, gy->pitch,
+        gz->yaw.
+
+        Args:
+            roll - measured roll (centidegree fixnum).
+            pitch - measured pitch (centidegree fixnum).
+            dt_ms - the step interval in integer milliseconds.
+
+        Returns:
+            None; steps the three PIDs and drives the mixer/fins as a side effect.
+        """
         law = self._guidance  # the computed setpoint slots (no per-step tuple)
         roll_pid, pitch_pid, yaw_pid = self._pids  # bound once (no per-tick string-keyed dict probe)
         rate = self._rate.value()  # (roll, pitch, yaw) rate or None -- no box: the gyro's stored tuple
@@ -194,10 +240,21 @@ class Flight(task.Task):
         self._actuate(roll_cmd // fixed.SCALE, pitch_cmd // fixed.SCALE, yaw_cmd // fixed.SCALE)
 
     def _actuate(self, roll: int, pitch: int, yaw: int) -> None:
-        """Drive the fins through the mixer's fused mix-and-write loop. The fin objects are resolved
-        ONCE and bound into the mixer on the first call: controller.find() is a dict search,
-        pure overhead per step. By the first actuation all servo tasks are up (bring-up finishes before
-        any run loop), so the lookup is stable."""
+        """
+        Drive the fins through the mixer's fused mix-and-write loop.
+
+        The fin objects are resolved ONCE and bound into the mixer on the first call: controller.find()
+        is a dict search, pure overhead per step. By the first actuation all servo tasks are up (bring-up
+        finishes before any run loop), so the lookup is stable.
+
+        Args:
+            roll - roll command in whole degrees of deflection.
+            pitch - pitch command in whole degrees.
+            yaw - yaw command in whole degrees.
+
+        Returns:
+            None; writes the mixed servo angles as a side effect.
+        """
         if not self._mixer.bound:
             names = list(self._mixer.surfaces)  # the config surface names (mixer.surfaces is the gain map)
             self._mixer.bind(dict(zip(names, self.controller.find(names))))
@@ -221,9 +278,16 @@ class Flight(task.Task):
             await self.finish()
 
     async def _run_timer(self) -> None:
-        """A machine.Timer ticks a ThreadSafeFlag at schedule_hz; the step runs in this task (not the ISR).
-        A regular slice regardless of other tasks. The flag coalesces, so an overrun runs the latest
-        step (no backlog)."""
+        """
+        Run the control step off a machine.Timer at schedule_hz (the board scheduling path).
+
+        The timer ticks a ThreadSafeFlag; the step runs in this task, not the ISR, so it gets a regular
+        slice regardless of other tasks. The flag coalesces, so an overrun runs the latest step (no
+        backlog).
+
+        Returns:
+            None; loops forever, ticking _tick() once per timer flag.
+        """
         flag = asyncio.ThreadSafeFlag()
         self._timer = Timer(self.config.get('timer_id', 0))
         self._timer.init(freq=self._schedule_hz, mode=Timer.PERIODIC, callback=lambda t: flag.set())
@@ -244,20 +308,31 @@ class Flight(task.Task):
         self._neutral()  # leave the fins centred
 
     def progress(self) -> tuple:
-        """(controlling, steps, stage, updated_us) -- the public control-loop heartbeat, so the watchdog
-        (and anything else) need not read private attributes. `controlling` is True only
-        in a control stage (PID engaged); `steps` advances each control update; `stage` is the current
-        control-stage Stage id (int, or None); `updated_us` is time.ticks_us() of the last control step,
-        so a supervisor can judge staleness by TIME directly (not by step-count diffing against its own
-        poll cadence)."""
+        """
+        The public control-loop heartbeat, so a supervisor need not read private attributes.
+
+        The watchdog (and anything else) reads this instead of the private slots.
+
+        Returns:
+            (controlling, steps, stage, updated_us): `controlling` is True only in a control stage (PID
+            engaged); `steps` advances each control update; `stage` is the current control-stage Stage id
+            (int, or None); `updated_us` is time.ticks_us() of the last control step, so a supervisor can
+            judge staleness by TIME directly (not by step-count diffing against its own poll cadence).
+        """
         return self._active, self._steps, self._stage, self._last_step_us
 
     def vitals(self) -> dict:
-        """The live flight-panel readout (CC dashboard): the governor's airspeed estimate + the
-        dynamic-pressure fin-authority cap it set, whether the control loop is engaged, the
-        zone-reachability estimate (glide_ratio × elevation vs distance-to-zone), and the endgame
-        turn-radius floor (R_min = v²/(g·tan land-bank) — the physical landing-accuracy bound). Called
-        at the ~0.5 Hz health rate, so the airspeed / nav-trig float boxes are off the hot path."""
+        """
+        The live flight-panel readout (CC dashboard).
+
+        Called at the ~0.5 Hz health rate, so the airspeed / nav-trig float boxes are off the hot path.
+
+        Returns:
+            A dict of the governor's airspeed estimate + the dynamic-pressure fin-authority cap it set,
+            whether the control loop is engaged, the zone-reachability estimate (glide_ratio × elevation
+            vs distance-to-zone), the endgame turn-radius floor (R_min = v²/(g·tan land-bank) -- the
+            physical landing-accuracy bound), and the wind speed/direction.
+        """
         wind_e, wind_n = self._wind.components()
         reach = self._guidance.reachability(self._glide_ratio, wind_e, wind_n, self._governor.airspeed())
         return {'airspeed': round(self._governor.airspeed(), 1), 'fin_cap': self._governor.cap(),

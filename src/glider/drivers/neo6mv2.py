@@ -1,9 +1,13 @@
-# drivers/neo6mv2.py — GY-NEO6MV2 (u-blox NEO-6M) GNSS on a dedicated UART: a drop-in alternative to
-# the ATGM336H on the SAME UART -- swap the component `driver` to 'neo6mv2' in config (and lower `hz`;
-# the NEO-6M tops out near 5 Hz). @task.driver('neo6mv2'). NMEA read/parse is the shared gnss.Gnss base;
-# this driver only adds the u-blox reconfiguration: $PUBX,40 selects RMC (position) + GGA at ~1 Hz
-# (altitude/elevation) on the UART and silences the rest, then UBX-CFG-RATE sets the measurement
-# period. Default link is 9600 8N1, like the ATGM. Graceful: an undefined bus -> setup False.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+GY-NEO6MV2 (u-blox NEO-6M) GNSS on a dedicated UART: a drop-in alternative to the ATGM336H on the SAME
+UART -- swap the component `driver` to 'neo6mv2' in config (and lower `hz`; the NEO-6M tops out near
+5 Hz). @task.driver('neo6mv2'). NMEA read/parse is the shared gnss.Gnss base; this driver only adds the
+u-blox reconfiguration: $PUBX,40 selects RMC (position) + GGA at ~1 Hz (altitude/elevation) on the UART
+and silences the rest, then UBX-CFG-RATE sets the measurement period. Default link is 9600 8N1, like the
+ATGM. Graceful: an undefined bus -> setup False.
+"""
 
 import asyncio
 import struct
@@ -13,8 +17,20 @@ import task
 
 
 def _ubx(class_id: int, msg_id: int, payload: bytes) -> bytes:
-    """A UBX binary frame: 0xB5 0x62 + class + id + little-endian length + payload + 8-bit Fletcher
-    checksum (over class..payload)."""
+    """
+    Build a UBX binary frame.
+
+    0xB5 0x62 + class + id + little-endian length + payload + 8-bit Fletcher checksum (over
+    class..payload).
+
+    Args:
+        class_id - the UBX message class byte.
+        msg_id - the UBX message id byte.
+        payload - the message payload bytes (may be empty).
+
+    Returns:
+        The complete UBX frame as bytes (sync header, body, and the two checksum bytes).
+    """
     body = struct.pack('<BBH', class_id, msg_id, len(payload)) + payload
     ck_a = ck_b = 0
     for byte in body:

@@ -1,9 +1,13 @@
-# spibus.py — shared, lock-serialized SPI buses, mirroring i2cbus. A sensor may move off the shared
-# I2C bus onto SPI (e.g. the ADXL375, for clean high-rate reads): each bus id gets ONE machine.SPI
-# plus an asyncio.Lock, and get() hands back the shared wrapper. device(cs) returns a register window
-# with the SAME read/read_into/write(reg, ...) interface as i2cbus, so a driver is bus-agnostic. The
-# chip-select is a plain GPIO held low only around each locked transaction (the SPI peripheral does
-# not own it, so several devices can share one bus). A glider-only module (MicroPython).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Shared, lock-serialized SPI buses, mirroring i2cbus. A sensor may move off the shared I2C bus onto SPI
+(e.g. the ADXL375, for clean high-rate reads): each bus id gets ONE machine.SPI plus an asyncio.Lock,
+and get() hands back the shared wrapper. device(cs) returns a register window with the SAME
+read/read_into/write(reg, ...) interface as i2cbus, so a driver is bus-agnostic. The chip-select is a
+plain GPIO held low only around each locked transaction (the SPI peripheral does not own it, so several
+devices can share one bus). A glider-only module (MicroPython).
+"""
 
 import asyncio
 
@@ -18,12 +22,16 @@ _buses: dict = {}  # bus id -> Bus
 
 
 class _Device:
-    """A register window for one chip-select on a shared SPI bus, with the same interface as
-    i2cbus.Bus.device so a driver works over either bus. The command byte is (0x80 if read) | (the
-    multi-byte bit if the transfer spans >1 register) | reg -- the convention of the ADXL/LSM family.
-    `mb_bit` is the multi-byte/auto-increment bit position (6 for the ADXL family); pass None for chips
-    that auto-increment from a config bit instead of an address bit (e.g. LSM6DSO32 via CTRL3_C.IF_INC),
-    so the command byte is just (0x80 if read) | reg with no spurious address bit set."""
+    """
+    A register window for one chip-select on a shared SPI bus.
+
+    Same interface as i2cbus.Bus.device so a driver works over either bus. The command byte is
+    (0x80 if read) | (the multi-byte bit if the transfer spans >1 register) | reg -- the convention of
+    the ADXL/LSM family. `mb_bit` is the multi-byte/auto-increment bit position (6 for the ADXL family);
+    pass None for chips that auto-increment from a config bit instead of an address bit (e.g. LSM6DSO32
+    via CTRL3_C.IF_INC), so the command byte is just (0x80 if read) | reg with no spurious address bit
+    set.
+    """
 
     def __init__(self, bus, cs: int, mb_bit: int = 6):
         self._bus = bus
@@ -51,10 +59,20 @@ class _Device:
             self._cs(1)
 
     async def diagnose(self, reg: int, expected: int) -> str:
-        """Read this chip's id/WHO_AM_I register and classify the wire-level result for a failed setup()
-        (commons.id_classify: chip-select not asserting / MISO floating / wrong device / present-but-
-        init). A driver's diagnose() just awaits this with its id register + expected value -- the read
-        and the verdict live with the bus, not duplicated in every driver."""
+        """
+        Read this chip's id/WHO_AM_I register and classify the wire-level result for a failed setup().
+
+        commons.id_classify sorts the read into chip-select not asserting / MISO floating / wrong device
+        / present-but-init. A driver's diagnose() just awaits this with its id register + expected value
+        -- the read and the verdict live with the bus, not duplicated in every driver.
+
+        Args:
+            reg - the id/WHO_AM_I register to read.
+            expected - the id value a healthy device returns.
+
+        Returns:
+            The commons.id_classify verdict string.
+        """
         try:
             read = (await self.read(reg, 1))[0]
         except Exception:
@@ -78,10 +96,19 @@ class Bus:
         return _Device(self, cs, mb_bit)
 
     async def retune(self, freq: int) -> None:
-        """Re-init this SPI peripheral at `freq` Hz in place (bench frequency calibration; no reboot).
+        """
+        Re-init this SPI peripheral at `freq` Hz in place (bench frequency calibration; no reboot).
+
         Held under the lock so it never swaps mid-transaction -- the shared device windows keep working,
         they transact through self._spi which now runs at the new baud. Not persisted: the CC-side sweep
-        finds the ceiling, then saves the chosen freq to board.config + reboots."""
+        finds the ceiling, then saves the chosen freq to board.config + reboots.
+
+        Args:
+            freq - the new SPI baud rate in Hz.
+
+        Returns:
+            None; replaces self._spi with a peripheral running at the new baud.
+        """
         async with self._lock:
             mode = self._spec.get('mode', 3)
             self._spi = SPI(self._bus_id, baudrate=freq, polarity=mode >> 1, phase=mode & 1,

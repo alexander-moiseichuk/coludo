@@ -1,25 +1,29 @@
-# tasks/hitl.py — Hardware-In-The-Loop flight simulator (Phase-5). @task.activity('hitl').
-#
-# Closes the control loop ON THE BOARD without changing any production code: it reads the commanded fin
-# angles from the cached servo tasks, steps a flight-dynamics model (sim_model.Body), and PROVIDES the
-# resulting sensor quantities on the databoard at priority 0 -- so sequencer.py / flight.py / pid /
-# mixer / navigation read it and cannot tell it is simulated. The full chain runs closed-loop: sim
-# sensors -> sequencer (stage machine) -> flight (PID -> mixer -> fins) -> back into the model. Use with
-# config_hitl (real sensors off, this on, flight + sequencer enabled, watchdog off). The physics live in
-# sim_model.py (pure, shared with the host-side tools/virtual_flight.py -- same model, both worlds).
-#
-# Fidelity: BOOST adds attitude under thrust -- a crosswind weathercocks the stack and the boost
-# stage's guarded fins fight to hold it vertical, on top of the vertical 1-DoF that drives launch detect +
-# apogee; the GLIDE is a rigid body with roll/pitch/yaw state driven by the elevon/rudder deflections the
-# flight loop commands (that is where the rest of control happens). Aero is simplified and the
-# coefficients are deliberately tunable -- the point is a stable, closed loop that exercises the control
-# code, not aerodynamic truth. Outputs are perturbed by a noise level N and optional 2x spikes
-# to study sensor-quality degradation (e.g. the laser dropping out beyond its range).
-#
-# The simulated sensors are ALSO recorded as telemetry under the SAME csv names/fields as the real
-# drivers (accel_adxl375 / imu_bno055 / baro_icp10111 / gnss / laser_agl + a combined fins), so an
-# on-board HITL run produces a COMPLETE, renderable capture on the Luckfox (flight_report/flight_svg),
-# not just health/sequencer/servo. The records are decimated so the recorder link keeps up.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Hardware-In-The-Loop flight simulator (Phase-5). @task.activity('hitl').
+
+Closes the control loop ON THE BOARD without changing any production code: it reads the commanded fin
+angles from the cached servo tasks, steps a flight-dynamics model (sim_model.Body), and PROVIDES the
+resulting sensor quantities on the databoard at priority 0 -- so sequencer.py / flight.py / pid / mixer /
+navigation read it and cannot tell it is simulated. The full chain runs closed-loop: sim sensors ->
+sequencer (stage machine) -> flight (PID -> mixer -> fins) -> back into the model. Use with config_hitl
+(real sensors off, this on, flight + sequencer enabled, watchdog off). The physics live in sim_model.py
+(pure, shared with the host-side tools/virtual_flight.py -- same model, both worlds).
+
+Fidelity: BOOST adds attitude under thrust -- a crosswind weathercocks the stack and the boost stage's
+guarded fins fight to hold it vertical, on top of the vertical 1-DoF that drives launch detect + apogee;
+the GLIDE is a rigid body with roll/pitch/yaw state driven by the elevon/rudder deflections the flight
+loop commands (that is where the rest of control happens). Aero is simplified and the coefficients are
+deliberately tunable -- the point is a stable, closed loop that exercises the control code, not
+aerodynamic truth. Outputs are perturbed by a noise level N and optional 2x spikes to study
+sensor-quality degradation (e.g. the laser dropping out beyond its range).
+
+The simulated sensors are ALSO recorded as telemetry under the SAME csv names/fields as the real drivers
+(accel_adxl375 / imu_bno055 / baro_icp10111 / gnss / laser_agl + a combined fins), so an on-board HITL
+run produces a COMPLETE, renderable capture on the Luckfox (flight_report/flight_svg), not just
+health/sequencer/servo. The records are decimated so the recorder link keeps up.
+"""
 
 import asyncio
 import math
@@ -119,24 +123,52 @@ class Hitl(task.Task):
         return True
 
     def _fin_angles(self) -> tuple:
-        """Raw commanded servo angles (eleron_left, eleron_right, yaw) in degrees, from the cached servo
-        tasks the flight loop writes (90 = neutral). (90, 90, 90) before the servos are found."""
+        """
+        Raw commanded servo angles read back from the cached servo tasks the flight loop writes.
+
+        Args:
+            (none)
+
+        Returns:
+            (eleron_left, eleron_right, yaw) in degrees (90 = neutral); (90, 90, 90) before the servos
+            are found.
+        """
         if self._fins is None:
             self._fins = self.controller.find(['servo_eleron_left', 'servo_eleron_right', 'servo_yaw'])
         neutral = commons.SERVO_NEUTRAL_DEG
         return tuple(neutral if f is None else (f.angle or neutral) for f in self._fins)
 
     def _read_fins(self) -> tuple:
-        """The commanded (roll, pitch, yaw) deflections in degrees from neutral (90), recovered from the
-        cached servo angles the flight loop wrote (mixer: elevons common=pitch, differential=roll)."""
+        """
+        The commanded (roll, pitch, yaw) deflections in degrees from neutral (90).
+
+        Recovered from the cached servo angles the flight loop wrote (mixer: elevons common = pitch,
+        differential = roll).
+
+        Args:
+            (none)
+
+        Returns:
+            (roll, pitch, yaw) deflections in degrees from neutral.
+        """
         left, right, yaw = self._fin_angles()
         return ((left - right) / 2.0, (left + right) / 2.0 - commons.SERVO_NEUTRAL_DEG,
                 yaw - commons.SERVO_NEUTRAL_DEG)
 
     def _publish(self) -> None:
-        """Push the (noised) simulated sensors onto the databoard every inject step (the control loop
-        reads them), and record them as decimated telemetry (the recorder rate-limits each stream).
-        Reads the Body state directly (not the sensors() dict) so no dict is allocated per tick."""
+        """
+        Push the (noised) simulated sensors onto the databoard and record them as telemetry.
+
+        Runs every inject step: the control loop reads the databoard channels, and each sensor is also
+        recorded as decimated telemetry (the recorder rate-limits each stream). Reads the Body state
+        directly (not the sensors() dict) so no dict is allocated per tick.
+
+        Args:
+            (none)
+
+        Returns:
+            None; publishes the databoard channels and pushes the telemetry rows as a side effect.
+        """
         body = self._body
         n = self._noise
         accel = [0.0, 0.0, 0.0]

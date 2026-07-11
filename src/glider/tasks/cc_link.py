@@ -1,9 +1,13 @@
-# tasks/cc_link.py — the Control link task: once Wi-Fi is up it dials the CC hub and serves the
-# command dispatcher, reconnecting with backoff. @task.activity('cc'). Telemetry-first: with no Wi-Fi
-# up it simply waits, so the board flies fine without CC. The hub address is the configured `cc_host`,
-# or -- when unset -- the `.1` of whatever subnet the board joins (the Control hub by convention), so
-# a board reaches its hub on any network. An empty `cc_host` ('') disables CC entirely (standalone).
-# The dispatcher is wired to this board's config + Controller.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+The Control link task: once Wi-Fi is up it dials the CC hub and serves the command dispatcher,
+reconnecting with backoff. @task.activity('cc'). Telemetry-first: with no Wi-Fi up it simply waits, so
+the board flies fine without CC. The hub address is the configured `cc_host`, or -- when unset -- the
+`.1` of whatever subnet the board joins (the Control hub by convention), so a board reaches its hub on
+any network. An empty `cc_host` ('') disables CC entirely (standalone). The dispatcher is wired to this
+board's config + Controller.
+"""
 
 import asyncio
 
@@ -13,8 +17,17 @@ import task
 
 
 def _network_host(ip: str) -> str:
-    """The Control hub for a board with no explicit `cc_host`: the `.1` of its own subnet (the AP /
-    gateway by convention). None if the IP is unusable, so the caller waits for a real lease."""
+    """
+    The Control hub for a board with no explicit `cc_host`: the `.1` of its own subnet.
+
+    The `.1` of the subnet is the AP / gateway by convention.
+
+    Args:
+        ip - the board's own IP address (dotted-decimal string).
+
+    Returns:
+        The hub address string; None if the IP is unusable, so the caller waits for a real lease.
+    """
     if not ip or ip == '0.0.0.0':
         return None
     return ip.rsplit('.', 1)[0] + '.1'
@@ -22,9 +35,12 @@ def _network_host(ip: str) -> str:
 
 @task.activity('cc')
 class ControlLink(task.Task):
-    """Serve the CC protocol to the hub when the link is available; never fatal. With no `cc_host`
-    configured the board dials the `.1` of whatever subnet it joins (the Control hub by convention);
-    an empty `cc_host` ('') disables CC and the board flies standalone."""
+    """
+    Serve the CC protocol to the hub when the link is available; never fatal.
+
+    With no `cc_host` configured the board dials the `.1` of whatever subnet it joins (the Control hub
+    by convention); an empty `cc_host` ('') disables CC and the board flies standalone.
+    """
 
     async def setup(self) -> bool:
         if self.controller.config.get('wifi', {}).get('cc_host') == '':
@@ -39,9 +55,18 @@ class ControlLink(task.Task):
         return self._client.host or _network_host(wifi.ip())
 
     async def run(self) -> None:
-        """Park until the Wi-Fi dependency is up, then dial CC and serve until the link drops; retry.
+        """
+        Park until the Wi-Fi dependency is up, then dial CC and serve until the link drops; retry.
+
         On a board with no Wi-Fi the query never returns, so this just stays idle -- the board keeps
-        running its other tasks."""
+        running its other tasks.
+
+        Args:
+            (none)
+
+        Returns:
+            None; runs forever, dialing the hub and serving the command dispatcher with backoff.
+        """
         wifi, = await self.query(['wifi'])  # block until the wifi task is up (our dependency)
         while True:
             if not wifi.isconnected():
@@ -60,8 +85,18 @@ class ControlLink(task.Task):
             await asyncio.sleep_ms(self._client.backoff_ms)
 
     async def probe(self) -> str:
-        """On-demand self-test: the CC hub address resolves (explicit or derived) and the Wi-Fi
-        dependency is up. A down link is logged, not failed -- run() dials it on demand with backoff."""
+        """
+        On-demand self-test: the CC hub address resolves (explicit or derived) and the Wi-Fi
+        dependency is up.
+
+        A down link is logged, not failed -- run() dials it on demand with backoff.
+
+        Args:
+            (none)
+
+        Returns:
+            None on success; an error message string if the hub address or Wi-Fi check fails.
+        """
         try:
             recorder.Recorder.log(self.name, 'probe: cc link ...')
             wifi = self.controller.find(['wifi'])[0]

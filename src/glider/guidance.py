@@ -1,19 +1,23 @@
-# guidance.py — the stage-dependent guidance law, sibling of pid.py / mixer.py / navigation.py.
-# Turns (stage, heading) into the attitude setpoints + heading error the PIDs chase: the boost
-# rod-vertical hold, bank-to-turn toward the landing zone, the three GPS-degrading heading tiers,
-# and the low-final-approach centreline tracker. Extracted from tasks/flight.py so the control law
-# is unit-testable without a Flight task; per-stage laws dispatch through a table (the proven
-# sequencer._detect pattern), so a new stage is one entry + one method, not a branch in a growing
-# if/elif.
-#
-# Host-runnable by construction (tools/virtual_flight.py drives the REAL law): dependencies are
-# INJECTED — the mission (zone/launch_point), the governor (airspeed for the boost rod gate), and
-# databoard-style handles (`position.read()` -> ((lat, lon), source, age_ms), `agl.value()` -> m or
-# None). Timing comes in as `now_us` from the caller; only commons.ticks_diff touches ticks.
-#
-# Results land in the roll_setpoint/pitch_setpoint (centidegree fixnum) + heading_error (int
-# degrees) INSTANCE SLOTS rather than a returned tuple — decomposed WITHOUT adding a per-step heap
-# allocation (GC is off in flight).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+The stage-dependent guidance law, sibling of pid.py / mixer.py / navigation.py. Turns (stage,
+heading) into the attitude setpoints + heading error the PIDs chase: the boost rod-vertical hold,
+bank-to-turn toward the landing zone, the three GPS-degrading heading tiers, and the
+low-final-approach centreline tracker. Extracted from tasks/flight.py so the control law is
+unit-testable without a Flight task; per-stage laws dispatch through a table (the proven
+sequencer._detect pattern), so a new stage is one entry + one method, not a branch in a growing
+if/elif.
+
+Host-runnable by construction (tools/virtual_flight.py drives the REAL law): dependencies are
+INJECTED -- the mission (zone/launch_point), the governor (airspeed for the boost rod gate), and
+databoard-style handles (`position.read()` -> ((lat, lon), source, age_ms), `agl.value()` -> m or
+None). Timing comes in as `now_us` from the caller; only commons.ticks_diff touches ticks.
+
+Results land in the roll_setpoint/pitch_setpoint (centidegree fixnum) + heading_error (int degrees)
+INSTANCE SLOTS rather than a returned tuple -- decomposed WITHOUT adding a per-step heap allocation
+(GC is off in flight).
+"""
 
 import math
 
@@ -37,11 +41,15 @@ _LOBE_A: int = -1  # the gate_a-side lobe
 
 
 class Heading:
-    """The endgame HOLDING pattern, self-contained like controller.Stage: int ids (cheap to compare/store
-    on MicroPython) + the `PATTERNS` id->name mapping and `NAMES` reverse. Config names the pattern by
-    string; resolve() turns 'auto'/'o'/'oo'/'o-o' (case-insensitive; 'o-o' aliases 'oo') into an id once.
-    AUTO defers the choice to the Mission (mission.endgame_heading), which decides 'o' vs 'oo' from the
-    zone's long/short aspect (a strip wider than OO_ASPECT flies the two-lobe 'oo')."""
+    """
+    The endgame HOLDING pattern, self-contained like controller.Stage.
+
+    Int ids (cheap to compare/store on MicroPython) + the `PATTERNS` id->name mapping and `NAMES`
+    reverse. Config names the pattern by string; resolve() turns 'auto'/'o'/'oo'/'o-o'
+    (case-insensitive; 'o-o' aliases 'oo') into an id once. AUTO defers the choice to the Mission
+    (mission.endgame_heading), which decides 'o' vs 'oo' from the zone's long/short aspect (a strip
+    wider than OO_ASPECT flies the two-lobe 'oo').
+    """
 
     AUTO = const(0)    # the Mission decides o vs oo from the zone shape
     FIG_O = const(1)   # a single circle
@@ -52,24 +60,48 @@ class Heading:
 
     @classmethod
     def resolve(cls, name) -> int:
-        """A config string -> the pattern id: 'auto'/'o'/'oo'/'o-o', case-insensitive, 'o-o' aliasing
-        'oo'. An unknown value falls back to AUTO (the Mission decides)."""
+        """
+        A config string -> the pattern id.
+
+        'auto'/'o'/'oo'/'o-o', case-insensitive, 'o-o' aliasing 'oo'. An unknown value falls back to
+        AUTO (the Mission decides).
+
+        Args:
+            name - the config pattern name (any case; 'o-o' aliases 'oo').
+
+        Returns:
+            The Heading id (AUTO/FIG_O/FIG_OO); AUTO for an unrecognised name.
+        """
         return cls.NAMES.get(str(name).lower().replace('-', ''), cls.AUTO)
 
 
 def heading_error(target: float, current: float) -> int:
-    """Shortest signed heading error (deg), wrapped to [-180, 180] so 350 -> 10 is +20, not -340.
-    Integer degrees — sub-degree precision is irrelevant to a servo and lets one modulo replace the
-    wrap loop (commons.wrap180, viper bundle)."""
+    """
+    Shortest signed heading error (deg), wrapped to [-180, 180] so 350 -> 10 is +20, not -340.
+
+    Integer degrees -- sub-degree precision is irrelevant to a servo and lets one modulo replace the
+    wrap loop (commons.wrap180, viper bundle).
+
+    Args:
+        target - the desired heading (degrees).
+        current - the current heading (degrees).
+
+    Returns:
+        The signed error target - current, wrapped to [-180, 180] (integer degrees).
+    """
     return commons.wrap180(int(target - current))
 
 
 class GuidanceConfig:
-    """The guidance knobs, resolved from the flight task's config dict ONCE (typed config: one place
-    for defaults + doc-in-code; the keys keep their board.config names). `position_window_ms` is the
-    caller's default tier-1 freshness gate — the GNSS channels' own databoard windows — so it tracks
-    the GNSS rate instead of a magic number; config sets position_age_max_ms TIGHTER to distrust
-    GNSS sooner (looser is a no-op: the source is already None past the window)."""
+    """
+    The guidance knobs, resolved from the flight task's config dict ONCE.
+
+    Typed config: one place for defaults + doc-in-code; the keys keep their board.config names.
+    `position_window_ms` is the caller's default tier-1 freshness gate -- the GNSS channels' own
+    databoard windows -- so it tracks the GNSS rate instead of a magic number; config sets
+    position_age_max_ms TIGHTER to distrust GNSS sooner (looser is a no-op: the source is already None
+    past the window).
+    """
 
     def __init__(self, config: dict, position_window_ms: int):
         # which flight stages are CONTROL stages and their attitude setpoint; resolved to Stage INT
@@ -90,7 +122,7 @@ class GuidanceConfig:
         self.bank_gain: float = config.get('nav_bank_gain', 1.5)
         self.bank_limit: float = config.get('bank_limit', 30)
         # final approach / landing: track the strip CENTRELINE with the FULL fin authority to crab
-        # the crosswind out — keep it gliding, not rolling-and-dropping. final_agl 0 -> disabled.
+        # the crosswind out -- keep it gliding, not rolling-and-dropping. final_agl 0 -> disabled.
         self.land_bank_gain: float = config.get('land_bank_gain', 1.5)
         self.land_bank_limit: float = config.get('land_bank_limit', 45)
         # the ENDGAME band (fly-long objectives, coludo.md "Gliding"): below this ELEVATION the
@@ -124,7 +156,7 @@ class GuidanceConfig:
         self.final_agl: float = config.get('final_approach_agl', 8)
         self.final_cross_gain: float = config.get('final_cross_gain', 3.0)  # deg intercept per m off
         self.final_intercept: float = config.get('final_intercept_deg', 45)  # max intercept angle
-        # boost: engage only PAST the rod (airspeed > boost_engage) — below it the fins have no q to
+        # boost: engage only PAST the rod (airspeed > boost_engage) -- below it the fins have no q to
         # bite and heading is ill-defined near vertical.
         self.boost_engage: float = config.get('boost_engage_speed', 15.0)
         # steering noise filter: an integer EMA on the heading ERROR (the measured heading jitters
@@ -139,8 +171,12 @@ class GuidanceConfig:
 
 
 class Guidance:
-    """The per-stage control law: setpoint(stage) gates control stages; enter() captures the holds
-    on entering control; compute() dispatches the stage's law and fills the setpoint slots."""
+    """
+    The per-stage control law.
+
+    setpoint(stage) gates control stages; enter() captures the holds on entering control; compute()
+    dispatches the stage's law and fills the setpoint slots.
+    """
 
     def __init__(self, config: GuidanceConfig, mission, governor, position, agl, elevation=None):
         self._config: GuidanceConfig = config
@@ -168,19 +204,41 @@ class Guidance:
         self._was_near = False  # 'oo' hysteresis: glider was within a lobe radius of the centre last tick
 
     def setpoint(self, stage: int):
-        """The configured attitude setpoint dict for `stage`, or None when it is not a CONTROL stage
-        (SETTING/BOOSTING/DONE by default — no actuation under thrust / on the ground)."""
+        """
+        The configured attitude setpoint dict for a stage, or None when it is not a CONTROL stage.
+
+        SETTING/BOOSTING/DONE are not control stages by default -- no actuation under thrust / on the
+        ground.
+
+        Args:
+            stage - the flight stage (Stage int id).
+
+        Returns:
+            The stage's attitude setpoint dict, or None when `stage` is not a control stage.
+        """
         return self._config.stages.get(stage)
 
     def reachability(self, glide_ratio: float, wind_e: float = 0.0, wind_n: float = 0.0,
                      airspeed: float = 0.0):
-        """Can the glider still glide to the zone from here? The still-air reach = elevation × glide_ratio
-        (how far it travels spending the current height at a nominal L/D). The wind component ALONG the
-        bearing to target scales the GROUND range -- ground_range = reach × (1 + w_along/airspeed): a
-        tailwind toward the zone extends it, a headwind shrinks it. Compared to the distance from the live
-        fix to the zone target. Returns {reachable, margin_m, distance_m, headwind_mps}, or None with no
-        fix / zone / elevation. The operator's EARLY warning of an unreachable zone (flight panel) — and
-        the groundwork for a deliberate land-short decision instead of a doomed stretch."""
+        """
+        Can the glider still glide to the zone from here?
+
+        The still-air reach = elevation × glide_ratio (how far it travels spending the current height at
+        a nominal L/D). The wind component ALONG the bearing to target scales the GROUND range --
+        ground_range = reach × (1 + w_along/airspeed): a tailwind toward the zone extends it, a headwind
+        shrinks it. Compared to the distance from the live fix to the zone target. The operator's EARLY
+        warning of an unreachable zone (flight panel) -- and the groundwork for a deliberate land-short
+        decision instead of a doomed stretch.
+
+        Args:
+            glide_ratio - the nominal L/D used to turn height into still-air range.
+            wind_e - eastward wind component (m/s); 0 skips the wind projection.
+            wind_n - northward wind component (m/s).
+            airspeed - the airspeed (m/s) the ground-range scaling divides by; 0 skips the projection.
+
+        Returns:
+            {reachable, margin_m, distance_m, headwind_mps}, or None with no fix / zone / elevation.
+        """
         if self._mission is None or not self._mission.zone or self._elevation is None:
             return None
         elevation = self._elevation.value()          # baro height above the pad (m)
@@ -201,11 +259,20 @@ class Guidance:
                 'distance_m': round(distance), 'headwind_mps': round(headwind, 1)}
 
     def min_turn_radius(self, bank_deg: float) -> float:
-        """The tightest coordinated turn the airframe can HOLD at `bank_deg` and its LIVE airspeed:
-        `R = v^2 / (g * tan(bank))`. A physical restriction, not a tuning knob — the guidance clamps the
-        commanded loiter/endgame radius to this so it never asks for a turn the airframe cannot fly (at
-        the 45deg land-bank limit and ~14 m/s trim that floor is ~20 m, and it BOUNDS landing accuracy;
-        see specs/coludo.md 'Turn-radius limit'). 0 when airspeed/bank are unusable."""
+        """
+        The tightest coordinated turn the airframe can HOLD at `bank_deg` and its LIVE airspeed.
+
+        `R = v^2 / (g * tan(bank))`. A physical restriction, not a tuning knob -- the guidance clamps
+        the commanded loiter/endgame radius to this so it never asks for a turn the airframe cannot fly
+        (at the 45deg land-bank limit and ~14 m/s trim that floor is ~20 m, and it BOUNDS landing
+        accuracy; see specs/coludo.md 'Turn-radius limit').
+
+        Args:
+            bank_deg - the bank angle to evaluate the radius at (degrees).
+
+        Returns:
+            The minimum turn radius in metres; 0 when airspeed/bank are unusable.
+        """
         airspeed = self._governor.airspeed()
         tan_bank = math.tan(math.radians(bank_deg))
         if airspeed <= 0.0 or tan_bank <= 0.0:
@@ -213,13 +280,22 @@ class Guidance:
         return airspeed * airspeed / (_G * tan_bank)
 
     def endgame_bank(self) -> float:
-        """The steepest bank the ENDGAME spiral may hold at the LIVE airspeed while keeping a stall
-        margin. A coordinated turn at bank phi pulls load n = 1/cos(phi), which raises the stall speed to
+        """
+        The steepest bank the ENDGAME spiral may hold at the LIVE airspeed, stall-margin bounded.
+
+        A coordinated turn at bank phi pulls load n = 1/cos(phi), which raises the stall speed to
         stall_speed_1g*sqrt(n); requiring airspeed >= stall_margin*stall_speed_1g*sqrt(n) bounds phi to
-        acos((stall_margin*stall_speed_1g / airspeed)^2). Steeper than the fixed land_bank_limit when the
-        airspeed allows (a tighter R_min -> a closer touchdown), collapsing toward wings-level as speed
-        decays toward stall. Capped at the structural endgame_max_bank. Falls back to land_bank_limit when
-        disabled (stall_speed_1g 0) or the airspeed estimate is unusable."""
+        acos((stall_margin*stall_speed_1g / airspeed)^2). Steeper than the fixed land_bank_limit when
+        the airspeed allows (a tighter R_min -> a closer touchdown), collapsing toward wings-level as
+        speed decays toward stall. Capped at the structural endgame_max_bank.
+
+        Args:
+            (none -- reads self._governor.airspeed() + the config)
+
+        Returns:
+            Bank angle in degrees; 0.0 when too slow to bank; land_bank_limit when disabled
+            (stall_speed_1g 0) or the airspeed estimate is unusable.
+        """
         config = self._config
         floor = config.stall_speed_1g * config.stall_margin  # min airspeed to hold a 1-g turn with margin
         if floor <= 0.0:
@@ -230,14 +306,25 @@ class Guidance:
         return min(config.endgame_max_bank, math.degrees(math.acos((floor / airspeed) ** 2)))
 
     def landing_turn_radius(self) -> float:
-        """The endgame turn-radius floor at the LAND-bank limit — the precision bound reported for a
+        """The endgame turn-radius floor at the LAND-bank limit -- the precision bound reported for a
         land-short-vs-stretch decision (flight-panel telemetry)."""
         return self.min_turn_radius(self._config.land_bank_limit)
 
     def enter(self, heading: float, roll: fixnum, pitch: fixnum) -> None:
-        """Entering a control stage (from a non-control one): capture the heading to hold blind and
-        the rod-vertical attitude for the boost hold; invalidate the nav cache so the first
-        controlled step steers fresh."""
+        """
+        Entering a control stage (from a non-control one): capture the holds and reset the nav cache.
+
+        Captures the heading to hold blind and the rod-vertical attitude for the boost hold;
+        invalidates the nav cache so the first controlled step steers fresh.
+
+        Args:
+            heading - the heading to hold blind (degrees).
+            roll - the rod-vertical roll attitude to hold through boost (centidegree fixnum).
+            pitch - the rod-vertical pitch attitude to hold through boost (centidegree fixnum).
+
+        Returns:
+            None -- captures the holds and resets the nav-cache / filter / endgame-lobe state.
+        """
         self._heading_hold = heading
         self._roll_hold = roll
         self._pitch_hold = pitch
@@ -247,14 +334,40 @@ class Guidance:
         self._was_near = False
 
     def compute(self, stage: int, setpoint: dict, heading: float, now_us: int) -> bool:
-        """Run `stage`'s law: fill roll_setpoint/pitch_setpoint/heading_error and return True, or
-        return False when the fins must hold neutral (boost still on the rod — no q to bite)."""
+        """
+        Run a stage's law: fill the setpoint slots and report whether the fins may actuate.
+
+        Dispatches through the per-stage law table (falling back to _hold), filling roll_setpoint /
+        pitch_setpoint / heading_error.
+
+        Args:
+            stage - the flight stage (Stage int id) whose law to run.
+            setpoint - the stage's configured setpoint dict (passed through to the law).
+            heading - the current heading (degrees).
+            now_us - the caller's timestamp (microseconds) for the nav cache.
+
+        Returns:
+            True when the setpoint slots are filled and the fins may actuate; False when the fins must
+            hold neutral (boost still on the rod -- no q to bite).
+        """
         law = self._laws.get(stage, self._hold)
         return law(stage, setpoint, heading, now_us)
 
     def _boost(self, stage: int, setpoint: dict, heading: float, now_us: int) -> bool:
-        """BOOSTING: hold the rod-vertical attitude captured at entry, engaging only PAST the rod
-        (airspeed > boost_engage); below that the caller neutrals (the rod holds it vertical)."""
+        """
+        BOOSTING: hold the rod-vertical attitude captured at entry.
+
+        Engages only PAST the rod (airspeed > boost_engage); below that the caller neutrals (the rod
+        holds it vertical). No nav/yaw steering near vertical, where heading is ill-defined.
+
+        Args:
+            stage, setpoint, heading, now_us - the uniform dispatch signature (see compute()); _boost
+                reads only the captured hold + the governor's airspeed gate.
+
+        Returns:
+            True once past the rod (setpoints filled); False below boost_engage (the caller holds
+            neutral).
+        """
         if self._governor.airspeed() < self._config.boost_engage:
             return False
         self.roll_setpoint = self._roll_hold  # centidegree fixnum (captured from the centideg roll)
@@ -263,9 +376,21 @@ class Guidance:
         return True
 
     def _steer(self, stage: int, setpoint: dict, heading: float, now_us: int) -> bool:
-        """GLIDING / LANDING: steer to the landing zone (three GPS-degrading tiers), banking into
-        the turn; low on FINAL approach the target switches to the strip centreline. Setpoints go to
-        centidegree fixnum HERE (from_float once, at this boundary) so the PID subtract is plain int."""
+        """
+        GLIDING / LANDING: steer to the landing zone, banking into the turn.
+
+        Steers through the three GPS-degrading tiers; low on FINAL approach the target switches to the
+        strip centreline. Setpoints go to centidegree fixnum HERE (from_float once, at this boundary)
+        so the PID subtract is plain int.
+
+        Args:
+            stage, setpoint, heading, now_us - the uniform dispatch signature (see compute()); _steer
+                reads the stage, heading and now_us (setpoint is unused -- setpoints come from the
+                config table).
+
+        Returns:
+            True -- the setpoint slots are always filled in GLIDING / LANDING.
+        """
         agl = self._agl.value()
         config = self._config
         final = config.final_agl and agl is not None and agl < config.final_agl  # low on final
@@ -297,17 +422,37 @@ class Guidance:
         return True
 
     def _hold(self, stage: int, setpoint: dict, heading: float, now_us: int) -> bool:
-        """Any other configured control stage (ground-test configs): hold the configured setpoints
-        and the heading captured at entry — no navigation."""
+        """
+        Any other configured control stage (ground-test configs): hold the configured setpoints.
+
+        Holds the heading captured at entry -- no navigation.
+
+        Args:
+            stage, setpoint, heading, now_us - the uniform dispatch signature (see compute()); _hold
+                reads the stage + heading (setpoint and now_us are unused).
+
+        Returns:
+            True -- the setpoint slots are always filled.
+        """
         self.heading_error = heading_error(self._heading_hold, heading)
         self.roll_setpoint, self.pitch_setpoint = self._config.setpoints_fx[stage]  # cached fixnums
         return True
 
     def _filter_error(self, error: int) -> int:
-        """The steering noise filter: an all-integer EMA (state x16 fixed, alpha = 1/2^shift) on the
-        heading error. A GENUINE target change (|jump| > 90 deg: an overfly flip, a law handover)
-        resets the state so steering follows at once -- only per-step sensor jitter is smoothed.
-        Zero heap allocation (GC is off in flight); shift 0 disables."""
+        """
+        The steering noise filter: an all-integer EMA on the heading error.
+
+        State is x16 fixed, alpha = 1/2^shift. A GENUINE target change (|jump| > 90 deg: an overfly
+        flip, a law handover) resets the state so steering follows at once -- only per-step sensor
+        jitter is smoothed. Zero heap allocation (GC is off in flight); shift 0 disables.
+
+        Args:
+            error - the raw heading error this step (integer degrees).
+
+        Returns:
+            The filtered heading error (integer degrees); the raw error unchanged when the filter is
+            off or on a genuine target change.
+        """
         shift = self._config.steer_filter_shift
         if not shift:
             return error
@@ -320,24 +465,36 @@ class Guidance:
 
     def _target_heading(self, heading: float, final: bool, now_us: int,
                         endgame=None) -> float:
-        """The heading to steer in GLIDING / LANDING. High on the glide it homes to the zone
-        (navigation.steer: gate -> centre); in the ENDGAME band it heads for the zone CENTRE
-        unconditionally -- the gates are doorways for a glider with altitude to spend, but the last
-        seconds must spiral down ON the target, not around the nearest doorway (the zone's long
-        axis puts a gate ~90 m from the centre); low on FINAL approach it TRACKS the strip
-        centreline (navigation.approach), so a crosswind is crabbed out before the narrow
-        touchdown. Tiers when homing:
+        """
+        The heading to steer in GLIDING / LANDING.
+
+        High on the glide it homes to the zone (navigation.steer: gate -> centre); in the ENDGAME band
+        it heads for the zone CENTRE unconditionally -- the gates are doorways for a glider with
+        altitude to spend, but the last seconds must spiral down ON the target, not around the nearest
+        doorway (the zone's long axis puts a gate ~90 m from the centre); low on FINAL approach it
+        TRACKS the strip centreline (navigation.approach), so a crosswind is crabbed out before the
+        narrow touchdown. Tiers when homing:
           1. a FRESH fix (< position_age_max_ms) -> steer from the current position (closed-loop);
           2. no fix but a CC-set launch point -> hold the launch->gate bearing (open-loop fallback);
           3. neither -> the captured glide heading (blind).
-        (CPU): steer()/approach() are float trig recomputed at most every nav_period_us; between
-        refreshes the cached float is returned (the final-approach value rides the same cache — the
-        position only moves at the GPS rate anyway)."""
+        Float trig (steer()/approach()) is recomputed at most every nav_period_us; between refreshes
+        the cached float is returned (the final-approach value rides the same cache -- the position
+        only moves at the GPS rate anyway).
+
+        Args:
+            heading - the current heading (degrees), the blind fallback and the along-strip direction.
+            final - True low on final approach (track the strip centreline instead of homing).
+            now_us - the caller's timestamp (microseconds) for the nav-refresh cache.
+            endgame - the remaining-altitude fraction of the endgame band, or None above it.
+
+        Returns:
+            The heading to steer (degrees).
+        """
         if self._mission is None or not self._mission.zone:
             return self._heading_hold
         if self._nav_heading is not None and \
                 commons.ticks_diff(now_us, self._nav_updated_us) < self._config.nav_period_us:
-            return self._nav_heading  # cached — skip the trig this step
+            return self._nav_heading  # cached -- skip the trig this step
         self._nav_updated_us = now_us
         zone = self._mission.zone
         target, gate_a, gate_b = self._mission.zone_points()  # per-flight-constant geometry, memoized
@@ -371,11 +528,22 @@ class Guidance:
         return self._nav_heading
 
     def _circle_heading(self, east: float, north: float, span: float, endgame) -> float:
-        """'o' endgame: a single constant-radius orbit around the centre -- the tangent heading (bearing
-        + 90) corrected inward/outward by the radius error. One fixed orbit direction, so noise never
-        flips the turn into S-hunting; in the ENDGAME the radius shrinks with the altitude (a spiral
-        collapsing toward the centre), CLAMPED to the physical min turn radius at the phase's bank.
-        `east, north` is the offset glider -> centre, `span` its length."""
+        """
+        'o' endgame: a single constant-radius orbit around the centre.
+
+        The tangent heading (bearing + 90) corrected inward/outward by the radius error. One fixed
+        orbit direction, so noise never flips the turn into S-hunting; in the ENDGAME the radius
+        shrinks with the altitude (a spiral collapsing toward the centre), CLAMPED to the physical min
+        turn radius at the phase's bank.
+
+        Args:
+            east, north - the offset from the glider to the centre (metres).
+            span - the length of that offset (metres).
+            endgame - the remaining-altitude fraction of the endgame band, or None (fixed radius).
+
+        Returns:
+            The heading to fly (degrees).
+        """
         bank = self.endgame_bank() if endgame is not None else self._config.bank_limit
         radius = max(self._config.loiter_radius_m * (endgame if endgame is not None else 1.0),
                      self.min_turn_radius(bank))
@@ -383,15 +551,27 @@ class Guidance:
         return (navigation.compass(east, north) + 90.0 - correction) % 360.0
 
     def _oo_heading(self, position: tuple, target: tuple, gate_b: tuple, endgame) -> float:
-        """'oo' endgame: two lobes offset along the long axis, so an elongated strip is covered by two
-        orbits rather than one central circle. Each lobe is a circle of radius r offset r along the axis
-        (so it passes through the centre); the lobe FLIPS at each centre crossing but the turn SENSE stays
-        fixed (+90) -- both loops turn the same way, so the transition is SMOOTH (the sharp sense-reversal
-        of a true figure-8 diverged). r stays bounded (~loiter_radius) and shrinks with the endgame
-        altitude, so the pair collapses toward the centre. gate_b sets the long-axis direction. (KNOWN
-        LIMITATION: on a strip narrower than ~2*r the lobes reach outside the short edges -- lands out of
-        zone in HITL on the ~40 m HPRC strip; fitting r to the width needs the steep bank whose sink then
-        drops it out anyway. 'o' stays the reliable in-zone default; 'oo' needs more geometry work.)"""
+        """
+        'oo' endgame: two lobes offset along the long axis, covering an elongated strip.
+
+        Two orbits rather than one central circle. Each lobe is a circle of radius r offset r along the
+        axis (so it passes through the centre); the lobe FLIPS at each centre crossing but the turn
+        SENSE stays fixed (+90) -- both loops turn the same way, so the transition is SMOOTH (the sharp
+        sense-reversal of a true figure-8 diverged). r stays bounded (~loiter_radius) and shrinks with
+        the endgame altitude, so the pair collapses toward the centre. KNOWN LIMITATION: on a strip
+        narrower than ~2*r the lobes reach outside the short edges -- lands out of zone in HITL on the
+        ~40 m HPRC strip; fitting r to the width needs the steep bank whose sink then drops it out
+        anyway. 'o' stays the reliable in-zone default; 'oo' needs more geometry work.
+
+        Args:
+            position - the glider position (lat, lon), decimal degrees.
+            target - the zone centre (lat, lon).
+            gate_b - the gate that sets the long-axis direction (lat, lon).
+            endgame - the remaining-altitude fraction of the endgame band, or None (fixed radius).
+
+        Returns:
+            The heading to fly (degrees).
+        """
         ce, cn = navigation.offset(target[0], target[1], gate_b[0], gate_b[1])  # centre -> gate_b (long axis)
         half_len = math.sqrt(ce * ce + cn * cn) or 1.0
         unit_e, unit_n = ce / half_len, cn / half_len  # unit vector along the long axis

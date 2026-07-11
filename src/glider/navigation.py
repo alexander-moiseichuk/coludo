@@ -1,26 +1,31 @@
-# navigation.py — landing-zone navigation geometry (Phase 4 'heading-to-home'), sibling of mixer.py/pid.py.
-# The mission's landing zone is a lat/lon rectangle, top-left (TL) + bottom-right (BR) corners
-# (specs/coludo.md). The TARGET is the zone centre; the two GATES are the midpoints of the two SHORTER
-# sides, so the glider enters along the long axis (the documented "vector to the shortest boundary
-# entrance"). steer() picks the nearer gate, heads for it until inside the zone, then for the centre.
-# Equirectangular (flat-earth) math -- "not exact but about", which is plenty at zone scale (<~1 km).
-#
-# (perf analysis): steer()/bearing()/distance() use float trig and allocate a few small tuples per call
-# -- measured GC-off (n=4000): distance ~170 B, bearing ~256, steer ~518, approach ~982. The primary
-# throttle is on the CALLER side -- guidance._target_heading() caches the result at GPS cadence (~10 Hz),
-# so the rate drops ~10x -- but at that rate the nav path is still ~5 KB/s of the ~15 KB/s glide leak, so
-# "no measurable gain" (the old note) was wrong. The lever is REDUNDANT float work, not fixnum (lat/lon
-# need ~1e-5 deg; a SCALE-100 fixnum degree is ~1 km -- far too coarse): a caller that needs both range
-# AND bearing to a point now calls range_bearing() (one offset(), not two). navigation stays pure float;
-# the geometry is computed once. (Next lever, if needed: cache the per-flight-constant zone() geometry.)
-#
-# SAFETY: the gates are FIXED to the short sides, and steer() will always vector to one (and turn ~180
-# back through it on an overshoot) with NO knowledge of what lies beyond any side (trees / launch pad /
-# people). So the operator must ORIENT the zone -- choose the TL/BR corners in launch.config so the two
-# short-side entrances point at hazard-free approach corridors and the long sides border the hazards.
-# Aerodynamics (long run-in, lower crosswind) and safety (clear corridors) only align if it is laid out
-# that way; the firmware cannot verify it. See specs/coludo.md "Zone orientation -- an operator safety
-# decision".
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Landing-zone navigation geometry ('heading-to-home'), sibling of mixer.py/pid.py. The mission's
+landing zone is a lat/lon rectangle, top-left (TL) + bottom-right (BR) corners (specs/coludo.md).
+The TARGET is the zone centre; the two GATES are the midpoints of the two SHORTER sides, so the
+glider enters along the long axis (the documented "vector to the shortest boundary entrance").
+steer() picks the nearer gate, heads for it until inside the zone, then for the centre.
+Equirectangular (flat-earth) math -- "not exact but about", which is plenty at zone scale (<~1 km).
+
+Perf: steer()/bearing()/distance() use float trig and allocate a few small tuples per call --
+measured GC-off (n=4000): distance ~170 B, bearing ~256, steer ~518, approach ~982. The primary
+throttle is on the CALLER side -- guidance._target_heading() caches the result at GPS cadence
+(~10 Hz), so the rate drops ~10x -- but at that rate the nav path is still ~5 KB/s of the ~15 KB/s
+glide leak, so "no measurable gain" (the old note) was wrong. The lever is REDUNDANT float work,
+not fixnum (lat/lon need ~1e-5 deg; a SCALE-100 fixnum degree is ~1 km -- far too coarse): a caller
+that needs both range AND bearing to a point now calls range_bearing() (one offset(), not two).
+navigation stays pure float; the geometry is computed once. (Next lever, if needed: cache the
+per-flight-constant zone() geometry.)
+
+SAFETY: the gates are FIXED to the short sides, and steer() will always vector to one (and turn ~180
+back through it on an overshoot) with NO knowledge of what lies beyond any side (trees / launch pad /
+people). So the operator must ORIENT the zone -- choose the TL/BR corners in launch.config so the two
+short-side entrances point at hazard-free approach corridors and the long sides border the hazards.
+Aerodynamics (long run-in, lower crosswind) and safety (clear corridors) only align if it is laid out
+that way; the firmware cannot verify it. See specs/coludo.md "Zone orientation -- an operator safety
+decision".
+"""
 
 import math
 

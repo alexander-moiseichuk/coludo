@@ -1,8 +1,12 @@
-# sim_model.py — pure flight-dynamics model shared by the on-board HITL task (tasks/hitl.py) and the
-# host-side virtual-flight tool (tools/virtual_flight.py). PURE: math + random only, no hardware, so it
-# runs identically on the board (MicroPython) and on the host (CPython) -- the virtual flight and the
-# HITL sim are then the SAME physics, only the harness around them differs. World frame is ENU metres
-# from the launch pad; attitude is Euler degrees (roll, pitch, yaw=heading).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Pure flight-dynamics model shared by the on-board HITL task (tasks/hitl.py) and the host-side
+virtual-flight tool (tools/virtual_flight.py). PURE: math + random only, no hardware, so it runs
+identically on the board (MicroPython) and on the host (CPython) -- the virtual flight and the HITL
+sim are then the SAME physics, only the harness around them differs. World frame is ENU metres from
+the launch pad; attitude is Euler degrees (roll, pitch, yaw=heading).
+"""
 
 import math
 import random
@@ -39,9 +43,12 @@ HPRC: dict = {
 
 
 class Body:
-    """Flight-dynamics state + integrator (PURE -- host-testable). `boost_step()` climbs vertically; at
-    apogee `begin_glide()` hands over to `glide_step()` (fin-controlled); `sensors()` returns what the
-    on-board sensors would read."""
+    """
+    Flight-dynamics state + integrator (PURE -- host-testable).
+
+    `boost_step()` climbs vertically; at apogee `begin_glide()` hands over to `glide_step()`
+    (fin-controlled); `sensors()` returns what the on-board sensors would read.
+    """
 
     def __init__(self, mass: float, launch: tuple, elevation_m: float, glide_heading: float,
                  glide_mass: float = None):
@@ -83,12 +90,24 @@ class Body:
         self.imbalance_roll = 0.0
 
     def boost_step(self, dt: float, thrust: float, pitch_cmd: float = 0.0, roll_cmd: float = 0.0) -> None:
-        """Vertical climb (1-DoF: thrust + gravity + drag) PLUS attitude under thrust: a crosswind
-        WEATHERCOCKS the stack off vertical (passive fin stability cocks the nose toward the relative
-        wind, ∝ q·AoA), the CONTROL fins push it back toward vertical (∝ q·deflection), aero damps the
-        rate. Two lean axes -- pitch off the east-wind component, roll off the north -- so the guarded
-        fins are seen fighting the wind during the climb. The accelerometer reads specific force =
-        (thrust - drag)/mass (= kinematic a + g); ~0 g in ballistic coast (free fall)."""
+        """
+        Vertical climb (1-DoF: thrust + gravity + drag) PLUS attitude under thrust.
+
+        A crosswind WEATHERCOCKS the stack off vertical (passive fin stability cocks the nose toward the
+        relative wind, ∝ q·AoA), the CONTROL fins push it back toward vertical (∝ q·deflection), aero
+        damps the rate. Two lean axes -- pitch off the east-wind component, roll off the north -- so the
+        guarded fins are seen fighting the wind during the climb. The accelerometer reads specific force
+        = (thrust - drag)/mass (= kinematic a + g); ~0 g in ballistic coast (free fall).
+
+        Args:
+            dt - the integration interval (seconds).
+            thrust - the motor thrust this step (N); 0 in coast.
+            pitch_cmd - the pitch fin deflection command (deg); 0 = neutral.
+            roll_cmd - the roll fin deflection command (deg); 0 = neutral.
+
+        Returns:
+            None. Advances the vertical + attitude state in place.
+        """
         drag = 0.5 * _RHO * self.vu * abs(self.vu) * _CDA
         specific = (thrust - drag) / self.mass         # what the accelerometer measures (up +)
         self.accel_g = specific / _G if thrust else max(0.0, -drag / self.mass / _G + 0.0)
@@ -111,8 +130,15 @@ class Body:
         self.roll += self.roll_rate * dt
 
     def begin_glide(self) -> None:
-        """Apogee hand-over: the booster ejects (mass drops to the glider-only glide_mass), then nose down
-        to a shallow glide on the configured heading at ~trim speed."""
+        """
+        Apogee hand-over: the booster ejects and the glider noses down into the trim glide.
+
+        Mass drops to the glider-only glide_mass, then nose down to a shallow glide on the configured
+        heading at ~trim speed.
+
+        Returns:
+            None. Switches the body into the gliding state.
+        """
         self.mass = self.glide_mass  # separation: shed the booster -> the glider glides on its own mass
         self.gliding = True
         self.pitch = -6.0
@@ -125,9 +151,22 @@ class Body:
         self.vu = self.speed * math.sin(math.radians(self.pitch))
 
     def glide_step(self, dt: float, roll_cmd: float, pitch_cmd: float, yaw_cmd: float) -> None:
-        """Rigid-body glide. Fin deflections (deg from neutral) command roll/pitch; bank turns the
-        heading (coordinated turn); a shallow nose-down trim holds the descent. First-order responses
-        keep it stable. Eases the airspeed back toward trim."""
+        """
+        Rigid-body glide step under fin control.
+
+        Fin deflections (deg from neutral) command roll/pitch; bank turns the heading (coordinated
+        turn); a shallow nose-down trim holds the descent. First-order responses keep it stable. Eases
+        the airspeed back toward trim.
+
+        Args:
+            dt - the integration interval (seconds).
+            roll_cmd - the roll (aileron) fin deflection command (deg from neutral).
+            pitch_cmd - the pitch (elevator) fin deflection command (deg from neutral).
+            yaw_cmd - the yaw fin deflection command (deg from neutral).
+
+        Returns:
+            None. Advances the glide state (attitude, heading, speed, position) in place.
+        """
         roll0, pitch0 = self.roll, self.pitch  # for the gyro angular rates (finite difference, honours clamp)
         # STALL check for THIS step, from the bank we are flying: load n = 1/cos(roll), stall speed rises
         # as sqrt(n). A stalled wing loses lift (a sink break, below) and bites at half control authority.
@@ -181,26 +220,46 @@ class Body:
         return (lat, lon)
 
     def _ground_velocity(self) -> tuple:
-        """The GNSS-REPORTED horizontal ground velocity (east, north m/s). AIRBORNE it is the air velocity
-        along the heading + the wind (the glider drifts with the air mass) plus the receiver's consistent
-        DRIFT; on the pad / boost climb the receiver is stationary (a fixed antenna is NOT carried by the
-        wind), so it reports ONLY its drift -- exactly what the pad calibration measures over SETTING."""
+        """
+        The GNSS-REPORTED horizontal ground velocity (east, north m/s).
+
+        AIRBORNE it is the air velocity along the heading + the wind (the glider drifts with the air
+        mass) plus the receiver's consistent DRIFT; on the pad / boost climb the receiver is stationary
+        (a fixed antenna is NOT carried by the wind), so it reports ONLY its drift -- exactly what the
+        pad calibration measures over SETTING.
+
+        Returns:
+            (east, north) ground velocity in m/s.
+        """
         if not self.gliding:
             return (self.gnss_drift_e, self.gnss_drift_n)
         return (self.speed * math.sin(math.radians(self.heading)) + self.wind_e + self.gnss_drift_e,
                 self.speed * math.cos(math.radians(self.heading)) + self.wind_n + self.gnss_drift_n)
 
     def track(self) -> float:
-        """Ground-track bearing (deg) -- the direction the glider MOVES over the ground: air velocity
-        along the heading PLUS the wind. In no wind it equals the heading; a crosswind adds a crab
-        angle. This is what a GNSS receiver reports as course (the attitude backup's absolute yaw ref)."""
+        """
+        Ground-track bearing (deg) -- the direction the glider MOVES over the ground.
+
+        Air velocity along the heading PLUS the wind. In no wind it equals the heading; a crosswind adds
+        a crab angle. This is what a GNSS receiver reports as course (the attitude backup's absolute yaw
+        ref).
+
+        Returns:
+            The ground-track bearing in degrees [0, 360); the heading when the glider is not moving.
+        """
         east, north = self._ground_velocity()
         return math.degrees(math.atan2(east, north)) % 360.0 if (east or north) else self.heading % 360.0
 
     def ground_speed(self) -> float:
-        """Horizontal GNSS GROUND speed (m/s) -- the magnitude of the ground velocity, WITH the wind
-        (a real GNSS reports ground speed, not airspeed). In a turn it swings +/- the wind around the
-        airspeed, which is what the wind estimator's min/max reads."""
+        """
+        Horizontal GNSS GROUND speed (m/s) -- the magnitude of the ground velocity, WITH the wind.
+
+        A real GNSS reports ground speed, not airspeed. In a turn it swings +/- the wind around the
+        airspeed, which is what the wind estimator's min/max reads.
+
+        Returns:
+            The ground speed in m/s.
+        """
         east, north = self._ground_velocity()
         return math.sqrt(east * east + north * north)
 
@@ -215,7 +274,18 @@ class Body:
 
 
 def noisy(value, frac: float, lo: float, hi: float):
-    """Perturb a scalar by +/- frac of its magnitude (uniform), clamped to [lo, hi]. frac 0 -> clean."""
+    """
+    Perturb a scalar by +/- frac of its magnitude (uniform), clamped to [lo, hi].
+
+    Args:
+        value - the clean scalar to perturb.
+        frac - the noise fraction of magnitude (0 -> returned clean).
+        lo - the lower clamp bound.
+        hi - the upper clamp bound.
+
+    Returns:
+        The perturbed, clamped value; the clean value clamped when frac is 0.
+    """
     if frac:
         value = value + (random.random() * 2 - 1) * frac * (abs(value) + 1.0)
     return lo if value < lo else (hi if value > hi else value)

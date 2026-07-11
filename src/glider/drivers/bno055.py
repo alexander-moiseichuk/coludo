@@ -1,12 +1,16 @@
-# drivers/bno055.py — BNO055 9-DOF IMU (on the SEN0253) over the shared I2C bus: the attitude
-# channel. @task.driver('bno055'). In NDOF fusion mode the chip computes absolute orientation
-# on-chip; run() reads the Euler angles (heading, roll, pitch in degrees) to the databoard
-# 'attitude' slot. Graceful: a wrong/absent chip id -> setup False -> the Controller skips it.
-#
-# BNO055's INT pin signals motion/threshold events, not a fusion data-ready, so this driver polls at
-# period_ms (the fusion engine runs at 100 Hz internally); the wired int_pin is reserved for future
-# event detection (e.g. high-g). Uses the shared locked bus (i2cbus) since it shares i2c:0 with the
-# ADXL375 and BMP280.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+BNO055 9-DOF IMU (on the SEN0253) over the shared I2C bus: the attitude channel.
+@task.driver('bno055'). In NDOF fusion mode the chip computes absolute orientation on-chip; run() reads
+the Euler angles (heading, roll, pitch in degrees) to the databoard 'attitude' slot. Graceful: a
+wrong/absent chip id -> setup False -> the Controller skips it.
+
+BNO055's INT pin signals motion/threshold events, not a fusion data-ready, so this driver polls at
+period_ms (the fusion engine runs at 100 Hz internally); the wired int_pin is reserved for future event
+detection (e.g. high-g). Uses the shared locked bus (i2cbus) since it shares i2c:0 with the ADXL375 and
+BMP280.
+"""
 
 import asyncio
 import struct
@@ -39,8 +43,12 @@ _ACC_G = 1.0 / 980.665  # ACC_DATA is m/s² at 100 LSB/(m/s²); /100/9.80665 -> 
 
 @task.driver('bno055')
 class Bno055(task.Task):
-    """9-DOF: attitude (heading, roll, pitch) deg -> 'attitude', plus the calibrated accelerometer
-    (g, incl gravity) -> 'accel' as a low-g backup to the ADXL375 (priority 1)."""
+    """
+    9-DOF IMU to the databoard: fused attitude and a calibrated low-g accelerometer.
+
+    NDOF fusion attitude (heading, roll, pitch in degrees) -> 'attitude', plus the calibrated
+    accelerometer (g, including gravity) -> 'accel' as a low-g backup to the ADXL375 (priority 1).
+    """
 
     _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
 
@@ -73,9 +81,20 @@ class Bno055(task.Task):
         return True
 
     async def sample(self) -> tuple:
-        """Read the block and return a FLAT 6-tuple (run() slices): heading in float degrees (feeds the
-        navigation trig island), roll + pitch as fixnum CENTIDEGREES (raw·SCALE//16, exact -- 16 LSB/deg;
-        they feed the fixed-point PID with no float conversion), and accel (x, y, z) in float g."""
+        """
+        Read the ACC..EUL block and return a FLAT 6-tuple (run() slices it).
+
+        Heading stays float degrees (it feeds the navigation trig island); roll + pitch are fixnum
+        CENTIDEGREES (raw·SCALE//16, exact -- 16 LSB/deg, so they feed the fixed-point PID with no float
+        conversion); accel (x, y, z) is float g.
+
+        Args:
+            (none)
+
+        Returns:
+            (heading°, roll_cd, pitch_cd, ax, ay, az): heading in float degrees, roll/pitch in
+            centidegree fixnums, and accel in g.
+        """
         await self._bus.read_into(self._addr, _REG_DATA, self._buf)
         ax, ay, az = struct.unpack_from('<hhh', self._buf, 0)
         heading, roll, pitch = struct.unpack_from('<hhh', self._buf, _OFF_EUL)
@@ -97,7 +116,15 @@ class Bno055(task.Task):
             await asyncio.sleep_ms(self._period_ms)
 
     async def probe(self) -> str:
-        """On-demand self-test: the chip id reads back, then one fused sample succeeds (each step logged)."""
+        """
+        On-demand self-test: the chip id reads back, then one fused sample succeeds (each step logged).
+
+        Args:
+            (none)
+
+        Returns:
+            None on success; a short failure message (also logged) at the first failing step.
+        """
         try:
             recorder.Recorder.log(self.name, 'probe: chip id ...')
             chip = (await self._bus.read(self._addr, _REG_CHIP_ID, 1))[0]
@@ -120,9 +147,19 @@ class Bno055(task.Task):
         return None
 
     async def diagnose(self) -> str:
-        """Deeper analysis when setup() failed: the bus reads the chip id and classifies the fault (no
-        ack / wrong device / present-but-init). The Controller folds it into the failure reason, so
-        `verify`/`probe` show the 'why', not just 'absent / miswired?'."""
+        """
+        Deeper analysis when setup() failed: classify the wire-level fault.
+
+        The bus reads the chip id and classifies the fault (no ack / wrong device / present-but-init), so
+        the Controller can fold it into the failure reason and `verify`/`probe` show the 'why', not just
+        'absent / miswired?'.
+
+        Args:
+            (none)
+
+        Returns:
+            A wire-level fault description; a config-fault message when setup never built the bus.
+        """
         bus = self._bus  # None until setup builds the transport
         if bus is None:  # setup never built the bus -> a config fault
             return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)

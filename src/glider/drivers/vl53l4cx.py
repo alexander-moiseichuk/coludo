@@ -1,14 +1,18 @@
-# drivers/vl53l4cx.py — VL53L4CX time-of-flight laser ranger (Adafruit 5425) over the shared I2C bus:
-# the above-ground-level (AGL) channel for the last metres of the glide, where the barometer is
-# useless. @task.driver('vl53l4cx'). The VL53 family uses 16-BIT register addresses (i2cbus addrsize=
-# 16). This part is the newer 0xEBAA silicon (shared by the VL53L4CD/L4CX), so it uses the VL53L4CD
-# Ultra-Lite-Driver init -- the older VL53L1X (0xEACC) config does NOT produce ranges on it.
-#
-# setup(): optional XSHUT reset -> wait for boot -> write the default configuration -> run one VHV
-# calibration ranging cycle (start/wait/clear/stop, then the VHV config writes) -> start continuous
-# ranging. run(): wait for data-ready (the GPIO1 interrupt if wired, else a poll), read the distance
-# and write AGL (m) to the databoard. Single-target distance; the L4CX multi-target extras are unused.
-# Graceful: no I2C ack -> setup False -> Controller skips it. Shares i2c:0 via the locked i2cbus.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+VL53L4CX time-of-flight laser ranger (Adafruit 5425) over the shared I2C bus: the above-ground-level
+(AGL) channel for the last metres of the glide, where the barometer is useless.
+@task.driver('vl53l4cx'). The VL53 family uses 16-BIT register addresses (i2cbus addrsize=16). This
+part is the newer 0xEBAA silicon (shared by the VL53L4CD/L4CX), so it uses the VL53L4CD Ultra-Lite-
+Driver init -- the older VL53L1X (0xEACC) config does NOT produce ranges on it.
+
+setup(): optional XSHUT reset -> wait for boot -> write the default configuration -> run one VHV
+calibration ranging cycle (start/wait/clear/stop, then the VHV config writes) -> start continuous
+ranging. run(): wait for data-ready (the GPIO1 interrupt if wired, else a poll), read the distance and
+write AGL (m) to the databoard. Single-target distance; the L4CX multi-target extras are unused.
+Graceful: no I2C ack -> setup False -> Controller skips it. Shares i2c:0 via the locked i2cbus.
+"""
 
 import asyncio
 import struct
@@ -60,8 +64,12 @@ _DEFAULT_CONFIG = (
 
 @task.driver('vl53l4cx')
 class Vl53l4cx(task.Task):
-    """Laser ToF: writes above-ground-level distance (m) to the databoard 'agl' slot, for the final
-    low-altitude metres where the barometer cannot resolve height. Interrupt-driven when GPIO1 wired."""
+    """
+    Laser ToF: writes above-ground-level distance (m) to the databoard 'agl' slot.
+
+    For the final low-altitude metres where the barometer cannot resolve height. Interrupt-driven when
+    GPIO1 is wired.
+    """
 
     _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
 
@@ -109,8 +117,18 @@ class Vl53l4cx(task.Task):
         await self._bus.write(self._addr, reg, bytes((value,)), addrsize=16)
 
     async def _reset(self) -> None:
-        """Drive XSHUT low->high to reset the sensor (recovers a wedged ToF without a board reboot),
-        then wait for the firmware to boot. With no xshut_pin the sensor is assumed always-on."""
+        """
+        Drive XSHUT low->high to reset the sensor, then wait for the firmware to boot.
+
+        Recovers a wedged ToF without a board reboot. With no xshut_pin the sensor is assumed
+        always-on.
+
+        Args:
+            (none)
+
+        Returns:
+            None; pulses XSHUT (if wired) and polls the firmware-status register until booted.
+        """
         gpio = self._pin_gpio('xshut_pin')
         if gpio is not None:
             xshut = Pin(gpio, Pin.OUT, value=0)  # active-low shutdown
@@ -123,9 +141,18 @@ class Vl53l4cx(task.Task):
             await asyncio.sleep_ms(1)
 
     async def _set_timing_budget(self, budget_ms: int) -> None:
-        """Set the ranging integration time (RANGE_CONFIG_A/B) for continuous mode (inter-measurement
-        0). Longer budget -> more integration -> lower sigma / longer range. ULD integer math (the
-        2**30 term overflows single-precision float on MicroPython, so it stays integer)."""
+        """
+        Set the ranging integration time (RANGE_CONFIG_A/B) for continuous mode (inter-measurement 0).
+
+        Longer budget -> more integration -> lower sigma / longer range. ULD integer math (the 2**30
+        term overflows single-precision float on MicroPython, so it stays integer).
+
+        Args:
+            budget_ms - the ranging integration time, in milliseconds.
+
+        Returns:
+            None; writes the RANGE_CONFIG_A/B registers.
+        """
         osc = struct.unpack('>H', await self._read(0x0006, 2))[0]
         if not osc:
             return
@@ -142,7 +169,15 @@ class Vl53l4cx(task.Task):
                                   addrsize=16)
 
     async def _await_ready(self, timeout_ms: int) -> None:
-        """Poll GPIO__TIO_HV_STATUS until a measurement is ready (bit0 == the interrupt polarity)."""
+        """
+        Poll GPIO__TIO_HV_STATUS until a measurement is ready (bit0 == the interrupt polarity).
+
+        Args:
+            timeout_ms - how long to poll, in milliseconds (1 ms per step).
+
+        Returns:
+            None; returns as soon as a measurement is ready, or after timeout_ms if none arrives.
+        """
         for _ in range(timeout_ms):
             if ((await self._read(_REG_GPIO_HV_STATUS, 1))[0] & 0x01) == self._polarity:
                 return
@@ -157,8 +192,15 @@ class Vl53l4cx(task.Task):
         self._int.irq(lambda pin: self._ready.set(), Pin.IRQ_FALLING)
 
     async def _range(self) -> float:
-        """Read the latest measurement and clear the interrupt; return AGL in metres, or None if the
-        range status is not valid (out of range / low signal)."""
+        """
+        Read the latest measurement and clear the interrupt.
+
+        Args:
+            (none)
+
+        Returns:
+            AGL in metres; None when the range status is not valid (out of range / low signal).
+        """
         raw = (await self._read(_REG_RANGE_STATUS, 1))[0] & 0x1F
         mm = struct.unpack('>H', await self._read(_REG_DISTANCE, 2))[0]
         await self._write(_REG_SYSTEM_INTERRUPT_CLEAR, 0x01)  # release the interrupt for the next sample
@@ -166,8 +208,18 @@ class Vl53l4cx(task.Task):
         return mm / 1000.0 if status == 0 else None
 
     async def run(self) -> None:
-        """Sample on data-ready (GPIO1) or every period_ms; write AGL (m) to the databoard. Runs
-        forever."""
+        """
+        The sampling loop: write AGL (m) to the databoard, forever.
+
+        Sample on data-ready (GPIO1) or every period_ms, then push a valid AGL to the databoard and
+        telemetry (an invalid range is skipped).
+
+        Args:
+            (none)
+
+        Returns:
+            None; runs forever (a wedged board reboots rather than exits).
+        """
         while True:
             if self._int is not None:
                 try:
@@ -185,9 +237,18 @@ class Vl53l4cx(task.Task):
                 print('vl53l4cx :: read %r' % error)
 
     async def probe(self) -> str:
-        """On-demand self-test: the model id reads back -- a single locked op, safe alongside the run
-        loop's multi-op range sequence. The agl reading is legitimately None with no target in range,
-        so it is not checked here."""
+        """
+        On-demand self-test: the model id reads back.
+
+        A single locked op, safe alongside the run loop's multi-op range sequence. The agl reading is
+        legitimately None with no target in range, so it is not checked here.
+
+        Args:
+            (none)
+
+        Returns:
+            None when the model id reads back; a short failure message otherwise.
+        """
         try:
             recorder.Recorder.log(self.name, 'probe: model id ...')
             model = (await self._read(_REG_MODEL_ID, 1))[0]
@@ -202,9 +263,19 @@ class Vl53l4cx(task.Task):
         return None
 
     async def diagnose(self) -> str:
-        """Deeper analysis when setup() failed: re-read the 16-bit MODEL_ID high byte (0xEB) and
-        classify it via the i2cbus _Device helper. The Controller folds this into the failure reason so
-        verify/probe show the 'why', not just 'absent / miswired?'."""
+        """
+        Deeper analysis when setup() failed: classify the wire-level fault behind an absent ranger.
+
+        Re-read the 16-bit MODEL_ID high byte (0xEB) and classify it via the i2cbus _Device helper. The
+        Controller folds this into the failure reason so verify/probe show the 'why', not just 'absent /
+        miswired?'.
+
+        Args:
+            (none)
+
+        Returns:
+            A one-line fault classification for the failure reason.
+        """
         if self._bus is None:  # setup never built the transport
             return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)
         return await self._bus.device(self._addr).diagnose(_REG_MODEL_ID, 0xEB, addrsize=16)

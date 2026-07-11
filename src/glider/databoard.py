@@ -1,49 +1,53 @@
-# databoard.py — the shared latest-value store + sensor fusion for hot data (specs/coludo.md "Task
-# Data-Flow and Message Propagation"). Replaces a two-layer raw/fused store + a polling fusion task
-# with a registry of Parameter objects whose fused value is computed on read.
-#
-# Structure.
-#   Databoard   — a registry of Parameter objects. Databoard.parameter(name) gets-or-creates one;
-#                  a sensor registers itself as a source via provide() (which returns its channel
-#                  handles) and then reports by pushing each channel directly -- the hot write path
-#                  is one step, no lookup. value()/read() resolve the winner + primary in one pass.
-#   Parameter    — one fused quantity (e.g. 'altitude') for the consumer. Holds a short LIST of
-#                  channels KEPT IN RANK ORDER (lowest = primary first; a list, not a dict, is faster
-#                  at this size), plus the shared freshness window derived from its primary tier.
-#   _Channel     — one source's stream: a static rank (priority; lower = preferred) and TWO slots
-#                  (the last two readings) -- two slots because the extrapolation here is LINEAR
-#                  (needs 2 points); a degree-N model would keep N+1.
-#
-# Fusion is a pure read-time function, Parameter.value():
-#   1. winner = the lowest-rank channel still fresh. Channels are rank-ordered, so it is just the
-#      FIRST fresh one in the list (same-rank channels are equivalent). Freshness uses ONE shared
-#      window per parameter: the tightest expiry among the rank-0 tier (min() if two share rank 0),
-#      applied to EVERY channel. Return its value.
-#   2. if NO channel is fresh, linearly extrapolate the PRIMARY (channels[0]) two slots to now --
-#      project the trusted source forward rather than hand out a backup that is itself stale.
-#   3. if the primary never pushed (startup), None.
-# So "rank 0 answers while fresh; a backup takes over only while itself THIS fresh, else rank 0 is
-# extrapolated" is EMERGENT -- every read re-evaluates freshness against the shared window. A channel
-# is BORN STALE (t1 a full _DEFAULT_EXPIRE in the past), so an un-pushed channel is never fresh; and
-# since every window is <= _DEFAULT_EXPIRE, a FRESH channel always has data -- which is why nothing
-# downstream needs a v1-None check (a source that never produces is simply never fresh, and surfaces
-# as a missing reading rather than a hidden guard).
-#
-# The shared window decides WHEN to fall back; offset reconciliation (opt-in, 'reconcile': true on a
-# provider) decides WHAT the fallback reports. While the primary is fresh, each backup's BIAS against
-# it is learned (EMA, once per new primary reading -- the rate is set by data, not by reads); on
-# handover the backup's value is corrected by that offset, so it reads what the primary would --
-# closing the bias gap between e.g. ICP-10111 and BMP280 rather than jumping across it. Offsets FREEZE
-# while the primary is stale, and reconciliation is for additive SCALARS only (altitude, pressure) --
-# never vectors (attitude/accel) or unlike quantities (agl, position). Per-source slots keep
-# extrapolation within a single source.
-#
-# Dependencies. A sensor that consumes another's quantity grabs a read handle with parameter(*names)
-# (get-or-create, so setup order does not matter); a provider gets its write-channels from
-# provide(source, provides, *want). Both return one handle for one name, a tuple for several.
-#
-# Telemetry is separate: each sensor writes its own raw SENSOR.csv directly. A global singleton,
-# Inspectable as `databoard` (fused value/source/age per parameter).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+The shared latest-value store + sensor fusion for hot data (specs/coludo.md "Task Data-Flow and
+Message Propagation"). Replaces a two-layer raw/fused store + a polling fusion task with a registry
+of Parameter objects whose fused value is computed on read.
+
+Structure.
+  Databoard   -- a registry of Parameter objects. Databoard.parameter(name) gets-or-creates one;
+                 a sensor registers itself as a source via provide() (which returns its channel
+                 handles) and then reports by pushing each channel directly -- the hot write path
+                 is one step, no lookup. value()/read() resolve the winner + primary in one pass.
+  Parameter   -- one fused quantity (e.g. 'altitude') for the consumer. Holds a short LIST of
+                 channels KEPT IN RANK ORDER (lowest = primary first; a list, not a dict, is faster
+                 at this size), plus the shared freshness window derived from its primary tier.
+  _Channel    -- one source's stream: a static rank (priority; lower = preferred) and TWO slots
+                 (the last two readings) -- two slots because the extrapolation here is LINEAR
+                 (needs 2 points); a degree-N model would keep N+1.
+
+Fusion is a pure read-time function, Parameter.value():
+  1. winner = the lowest-rank channel still fresh. Channels are rank-ordered, so it is just the
+     FIRST fresh one in the list (same-rank channels are equivalent). Freshness uses ONE shared
+     window per parameter: the tightest expiry among the rank-0 tier (min() if two share rank 0),
+     applied to EVERY channel. Return its value.
+  2. if NO channel is fresh, linearly extrapolate the PRIMARY (channels[0]) two slots to now --
+     project the trusted source forward rather than hand out a backup that is itself stale.
+  3. if the primary never pushed (startup), None.
+So "rank 0 answers while fresh; a backup takes over only while itself THIS fresh, else rank 0 is
+extrapolated" is EMERGENT -- every read re-evaluates freshness against the shared window. A channel
+is BORN STALE (t1 a full _DEFAULT_EXPIRE in the past), so an un-pushed channel is never fresh; and
+since every window is <= _DEFAULT_EXPIRE, a FRESH channel always has data -- which is why nothing
+downstream needs a v1-None check (a source that never produces is simply never fresh, and surfaces
+as a missing reading rather than a hidden guard).
+
+The shared window decides WHEN to fall back; offset reconciliation (opt-in, 'reconcile': true on a
+provider) decides WHAT the fallback reports. While the primary is fresh, each backup's BIAS against
+it is learned (EMA, once per new primary reading -- the rate is set by data, not by reads); on
+handover the backup's value is corrected by that offset, so it reads what the primary would --
+closing the bias gap between e.g. ICP-10111 and BMP280 rather than jumping across it. Offsets FREEZE
+while the primary is stale, and reconciliation is for additive SCALARS only (altitude, pressure) --
+never vectors (attitude/accel) or unlike quantities (agl, position). Per-source slots keep
+extrapolation within a single source.
+
+Dependencies. A sensor that consumes another's quantity grabs a read handle with parameter(*names)
+(get-or-create, so setup order does not matter); a provider gets its write-channels from
+provide(source, provides, *want). Both return one handle for one name, a tuple for several.
+
+Telemetry is separate: each sensor writes its own raw SENSOR.csv directly. A global singleton,
+Inspectable as `databoard` (fused value/source/age per parameter).
+"""
 
 import time
 
@@ -60,10 +64,13 @@ _OFFSET_ALPHA: float = 0.1  # EMA weight when learning a backup's bias against t
 
 
 class _Channel:
-    """One source's stream within a Parameter: a static rank and two slots (newest = t1/v1, previous
-    = t0/v0) for linear extrapolation. Born STALE (t1 a full _DEFAULT_EXPIRE in the past, no data), so
+    """
+    One source's stream within a Parameter: a static rank and two slots for linear extrapolation.
+
+    newest = t1/v1, previous = t0/v0. Born STALE (t1 a full _DEFAULT_EXPIRE in the past, no data), so
     an un-pushed channel is never fresh and a fresh channel always has data. `offset` is the bias
-    learned against the primary (None until learned), added on a reconciled fallback."""
+    learned against the primary (None until learned), added on a reconciled fallback.
+    """
 
     def __init__(self, source: str, rank: int):
         self.source: str = source
@@ -81,8 +88,19 @@ class _Channel:
         self.t1, self.v1 = ts, value
 
     def fresh(self, now: int, window_us: int) -> bool:
-        """Fresh iff it pushed within `window_us` of now. Born stale + window <= _DEFAULT_EXPIRE means
-        a fresh channel always has data -- no v1-None check needed here or downstream."""
+        """
+        Whether this channel pushed within `window_us` of `now`.
+
+        Born stale + a window <= _DEFAULT_EXPIRE means a fresh channel always has data -- no v1-None
+        check is needed here or downstream.
+
+        Args:
+            now - the current ticks_us.
+            window_us - the freshness window in microseconds.
+
+        Returns:
+            True when the last push is within the window, else False.
+        """
         return time.ticks_diff(now, self.t1) <= window_us
 
     def value(self):
@@ -91,11 +109,22 @@ class _Channel:
 
 
 def _extrapolate(chan: _Channel, now: int):
-    """Linear projection of a channel's two slots to `now`. With only one reading (v0 None), a
-    non-scalar value (a stale vector), or a zero span, there is no linear model -- return the latest
-    as-is (None if the channel never pushed). Explicit guards, NOT try/except: a caught exception
-    allocates its object, and this runs every step for a stale channel with GC off (e.g. accel dropped
-    -> airspeed integrator) -- the degraded path must not leak."""
+    """
+    Linearly project a channel's two slots to `now`.
+
+    With only one reading (v0 None), a non-scalar value (a stale vector), or a zero span there is no
+    linear model -- return the latest as-is (None if the channel never pushed). Explicit guards, NOT
+    try/except: a caught exception allocates its object, and this runs every step for a stale channel
+    with GC off (e.g. accel dropped -> airspeed integrator), so the degraded path must not leak.
+
+    Args:
+        chan - the channel to project.
+        now - the ticks_us to project to.
+
+    Returns:
+        The projected scalar; or the latest value as-is when no linear model applies (None if never
+        pushed).
+    """
     v1, v0 = chan.v1, chan.v0
     if v0 is None or not isinstance(v1, (int, float)):
         return v1  # one reading, or a vector (no scalar linear model) -> latest as-is, no alloc
@@ -106,8 +135,12 @@ def _extrapolate(chan: _Channel, now: int):
 
 
 class Parameter:
-    """One fused quantity. Holds a rank-ordered channel per source; value() fuses by rank/freshness,
-    falling back to extrapolation of the primary when none is fresh."""
+    """
+    One fused quantity.
+
+    Holds a rank-ordered channel per source; value() fuses by rank and freshness, falling back to
+    extrapolation of the primary when none is fresh.
+    """
 
     def __init__(self, name: str):
         self.name: str = name
@@ -125,11 +158,23 @@ class Parameter:
         return None
 
     def add_source(self, source: str, rank: int, expire_us: int, reconcile: bool = False) -> _Channel:
-        """Register (or re-register) a source at `rank`; return its channel to push() to directly (no
-        per-write lookup). Channels are KEPT IN RANK ORDER (channels[0] = primary). The shared
-        freshness window is the tightest expiry of the primary (lowest-rank) tier, tracked here -- the
-        only place expiry is consulted; runtime freshness uses window_us alone. `reconcile` (any
-        provider) turns on offset reconciliation for this parameter."""
+        """
+        Register (or re-register) a source at `rank`; return its channel to push() to directly.
+
+        Channels are KEPT IN RANK ORDER (channels[0] = primary), so there is no per-write lookup. The
+        shared freshness window is the tightest expiry of the primary (lowest-rank) tier, tracked here
+        -- the only place expiry is consulted; runtime freshness uses window_us alone. `reconcile`
+        (from any provider) turns on offset reconciliation for this parameter.
+
+        Args:
+            source - the source name.
+            rank - its priority (lower = preferred; the lowest-rank tier is the primary).
+            expire_us - its freshness window in microseconds (0 -> _DEFAULT_EXPIRE_US).
+            reconcile - True to enable offset reconciliation for this parameter.
+
+        Returns:
+            The source's _Channel, ready to push() to.
+        """
         channel = self._channel(source)
         if channel is None:
             channel = _Channel(source, rank)
@@ -148,27 +193,58 @@ class Parameter:
         return channel
 
     def write(self, value, source: str) -> None:
-        """Report a source's latest reading by name (convenience; sensors push() their channel). The
-        source is created on first write if it was not provided (rank 0, default window)."""
+        """
+        Report a source's latest reading by name (a convenience; sensors push() their channel).
+
+        The source is created on first write if it was not provided (rank 0, default window).
+
+        Args:
+            value - the reading to record.
+            source - the source name.
+
+        Returns:
+            None.
+        """
         try:
             self._channel(source).push(value)
         except AttributeError:
             self.add_source(source, 0, _DEFAULT_EXPIRE_US).push(value)
 
     def _winner(self, now: int):
-        """The first fresh channel in rank order (lowest rank wins; same-rank channels are equivalent),
-        or None. The primary is always channels[0], so value()/read() read it directly -- no (winner,
-        primary) tuple is built on the hot path (a GC-off flight allocates nothing here)."""
+        """
+        The first fresh channel in rank order, or None.
+
+        Lowest rank wins; same-rank channels are equivalent. The primary is always channels[0], so
+        value()/read() read it directly -- no (winner, primary) tuple is built on the hot path (a
+        GC-off flight allocates nothing here).
+
+        Args:
+            now - the current ticks_us.
+
+        Returns:
+            The lowest-rank still-fresh channel, or None when none is fresh.
+        """
         for channel in self.channels:
             if channel.fresh(now, self.window_us):
                 return channel
         return None
 
     def _learn(self, now: int, primary: _Channel) -> None:
-        """While the primary (channels[0]) is fresh it is truth; learn each fresh backup's bias
-        against it (EMA) -- once per new primary reading, so the rate is set by data, not by reads.
-        Co-primaries (same rank) are not reconciled. Offsets FREEZE while the primary is stale; they
-        are applied on fallback in value()/read()."""
+        """
+        While the primary is fresh, learn each fresh backup's bias against it (EMA).
+
+        The primary (channels[0]) is truth while fresh; each backup's offset is updated once per new
+        primary reading, so the rate is set by data, not by reads. Co-primaries (same rank) are not
+        reconciled. Offsets FREEZE while the primary is stale; they are applied on fallback in
+        value()/read().
+
+        Args:
+            now - the current ticks_us.
+            primary - the primary channel (channels[0]).
+
+        Returns:
+            None.
+        """
         if primary.t1 == self._learned_t1 or not primary.fresh(now, self.window_us):
             return
         self._learned_t1 = primary.t1
@@ -184,10 +260,20 @@ class Parameter:
                 pass  # a non-scalar slipped into a reconciled param -> skip, never crash
 
     def value(self):
-        """The fused estimate (offset-reconciled when enabled); None if nothing was ever written.
+        """
+        The fused estimate (offset-reconciled when enabled); None if nothing was ever written.
+
         Allocation-free on the hot path: returns the fresh winner's STORED value directly (or the
         primary extrapolated to now when nothing is fresh -- that fallback boxes floats, but it is the
-        rare degraded case)."""
+        rare degraded case).
+
+        Args:
+            (none)
+
+        Returns:
+            The fused value; a reconciled scalar (winner + learned offset) on a corrected fallback;
+            the primary extrapolated to now when nothing is fresh; None when no source ever wrote.
+        """
         if not self.channels:
             return None  # no sources registered yet (a consumer touched the param early)
         now = time.ticks_us()
@@ -202,18 +288,39 @@ class Parameter:
         return winner.v1
 
     def stamp(self):
-        """ticks_us of the primary source's latest push, or None if nothing was ever written. For
-        change-detection: a consumer feeds once per NEW reading by watching this advance, so it
+        """
+        ticks_us of the primary source's latest push, or None if nothing was ever written.
+
+        For change-detection: a consumer feeds once per NEW reading by watching this advance, so it
         self-tunes to the provider's native rate (a 1/5/25 Hz GNSS) with no polling-period constant.
-        Equality-compared, so it is wrap-safe -- unlike a ticks_diff against a fixed origin."""
+        Equality-compared, so it is wrap-safe -- unlike a ticks_diff against a fixed origin.
+
+        Args:
+            (none)
+
+        Returns:
+            The primary channel's latest push timestamp (ticks_us), or None when no source is
+            registered.
+        """
         return self.channels[0].t1 if self.channels else None
 
     def read(self) -> list:
-        """[value, source, age_ms] of the fused estimate; `source` is None when extrapolated, else the
-        raw provider even for a reconciled (offset-corrected) value. Returns a REUSED 3-slot buffer
-        (mutated each call), NOT a fresh tuple -- so a GC-off flight allocates nothing here. Safe because
-        every caller unpacks it immediately (`a, b, c = param.read()`); do NOT retain the result across
-        another read() of the same parameter (they alias one buffer)."""
+        """
+        [value, source, age_ms] of the fused estimate.
+
+        `source` is None when extrapolated, else the raw provider even for a reconciled
+        (offset-corrected) value. Returns a REUSED 3-slot buffer (mutated each call), NOT a fresh
+        tuple -- so a GC-off flight allocates nothing here. Safe because every caller unpacks it
+        immediately (`a, b, c = param.read()`); do NOT retain the result across another read() of the
+        same parameter (they alias one buffer).
+
+        Args:
+            (none)
+
+        Returns:
+            The reused [value, source, age_ms] buffer; source and age_ms are None when the value is
+            extrapolated or no source ever wrote.
+        """
         buf = self._read_buf
         if not self.channels:
             buf[0] = buf[1] = buf[2] = None
@@ -249,16 +356,26 @@ class Parameter:
 
 
 class Databoard:
+    """The global registry of Parameter objects; Inspectable as `databoard` (fused value per name)."""
+
     name: str = 'databoard'
     kind: str = 'databoard'
     _params: dict = {}  # name -> Parameter
 
     @classmethod
     def parameter(cls, *names):
-        """Get-or-create read handle(s) for `names` -- the dependency accessor: a consumer grabs
-        another sensor's Parameter regardless of setup order (created on first touch, reused after;
-        registers with the Inspector on the very first one). One name returns the Parameter; several
-        return a tuple in order."""
+        """
+        Get-or-create read handle(s) for `names` -- the dependency accessor.
+
+        A consumer grabs another sensor's Parameter regardless of setup order (created on first touch,
+        reused after; registers with the Inspector on the very first one).
+
+        Args:
+            names - one or more parameter names.
+
+        Returns:
+            The Parameter for a single name; a tuple of Parameters, in order, for several.
+        """
         handles = []
         for name in names:
             param = cls._params.get(name)
@@ -271,10 +388,23 @@ class Databoard:
 
     @classmethod
     def provide(cls, source: str, provides: dict, *want):
-        """Register `source` for the params it provides ({param: {priority, timeout_ms[, reconcile]}})
-        and hand back its write-channel(s), ready to push(): name the ones you `want` -- one name
-        returns that channel, several return a tuple in that order, none returns the {param: channel}
-        dict. So a driver writes `self._a, self._b = provide(name, provides, 'a', 'b')` in one line."""
+        """
+        Register `source` for the params it provides and hand back its write-channel(s).
+
+        `provides` maps {param: {priority, timeout_ms[, reconcile]}}. Name the ones you `want`: one
+        name returns that channel, several return a tuple in that order, none returns the
+        {param: channel} dict. So a driver writes `self._a, self._b = provide(name, provides, 'a',
+        'b')` in one line.
+
+        Args:
+            source - the provider's name.
+            provides - {param: {priority, timeout_ms[, reconcile]}} for each param it feeds.
+            want - the param names whose channels to return (none -> the whole {param: channel} dict).
+
+        Returns:
+            The single channel for one `want`, a tuple for several, or the {param: channel} dict for
+            none.
+        """
         channels = {name: cls.parameter(name).add_source(source, spec.get('priority', 0),
                                                          spec.get('timeout_ms', 0) * 1000,
                                                          spec.get('reconcile', False))
@@ -304,7 +434,7 @@ class Databoard:
         param = cls._params.get(name)
         return param.raw(source) if param is not None else None
 
-    # --- Inspectable (fused value per parameter) ---
+    """Inspectable: the fused value/source/age per parameter."""
     @classmethod
     def inspect(cls) -> dict:
         out = {}

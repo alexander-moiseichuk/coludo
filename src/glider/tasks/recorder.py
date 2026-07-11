@@ -1,7 +1,11 @@
-# tasks/recorder.py — the Recorder's task adapter. The data path itself is the top-level `recorder`
-# singleton (used directly by every module via recorder.Recorder.log/tlm); this thin @task.activity
-# plugs it into the Controller's task graph so the `recorder` component (its bus selects the UART)
-# is created and supervised like any other task. No 'uart_sink' abstraction -- the Recorder is it.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+The Recorder's task adapter. The data path itself is the top-level `recorder` singleton (used directly
+by every module via recorder.Recorder.log/tlm); this thin @task.activity plugs it into the Controller's
+task graph so the `recorder` component (its bus selects the UART) is created and supervised like any
+other task. No 'uart_sink' abstraction -- the Recorder is it.
+"""
 
 import recorder
 import task
@@ -9,8 +13,11 @@ import task
 
 @task.activity('recorder')
 class RecorderTask(task.Task):
-    """Owns the Recorder's setup + drain loop and surfaces it to the operator; everything else
-    keeps logging/telemetering through the global recorder.Recorder."""
+    """
+    Owns the Recorder's setup + drain loop and surfaces it to the operator.
+
+    Everything else keeps logging/telemetering through the global recorder.Recorder.
+    """
 
     async def setup(self) -> bool:
         recorder.Recorder.setup(self.controller.config)  # resolves the recorder component's UART bus
@@ -21,7 +28,15 @@ class RecorderTask(task.Task):
         await recorder.Recorder.run()
 
     async def probe(self) -> str:
-        """On-demand self-test: the Recorder rings are up and a probe log line writes through them."""
+        """
+        On-demand self-test: the Recorder rings are up and a probe log line writes through them.
+
+        Args:
+            (none)
+
+        Returns:
+            None on success; an error message string if the rings are missing or a write fails.
+        """
         try:
             recorder.Recorder.log(self.name, 'probe: recorder rings ...')
             if recorder.Recorder._log is None or recorder.Recorder._tlm is None:

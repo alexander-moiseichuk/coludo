@@ -1,13 +1,17 @@
-# Baked-in default board configuration for the WaveShare ESP32-P4-WIFI6 controller.
-#
-# Human-edited firmware default and the safe fallback when no valid board.config exists (see
-# specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
-# test/test_pins.py). `default()` returns a FRESH dict each call so callers may mutate it freely.
-#
-# Topology: buses are grouped by type then id; a sensor/component addresses one by `bus` (the kind,
-# e.g. 'i2c') + `id` (its int id), so nothing parses a 'type:id' string. `sensors` are data
-# providers fused by quantity + priority (several may provide the same quantity with different
-# drivers/priorities); `components` are the consumers/actuators (recorder, ...).
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Baked-in default board configuration for the WaveShare ESP32-P4-WIFI6 controller.
+
+Human-edited firmware default and the safe fallback when no valid board.config exists (see
+specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
+test/test_pins.py). `default()` returns a FRESH dict each call so callers may mutate it freely.
+
+Topology: buses are grouped by type then id; a sensor/component addresses one by `bus` (the kind,
+e.g. 'i2c') + `id` (its int id), so nothing parses a 'type:id' string. `sensors` are data providers
+fused by quantity + priority (several may provide the same quantity with different drivers /
+priorities); `components` are the consumers / actuators (recorder, ...).
+"""
 
 import commons
 

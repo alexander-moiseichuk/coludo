@@ -1,16 +1,22 @@
-# Inspector — the registry of Inspectable objects and the operator-facing introspection surface.
-# Control's inspect/update/stats commands resolve an object by name through the Inspector
-# (specs/cc-protocol.md). Any object an operator should see or tweak registers itself here.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Inspector -- the registry of Inspectable objects and the operator-facing introspection surface.
+Control's inspect/update/stats commands resolve an object by name through the Inspector
+(specs/cc-protocol.md). Any object an operator should see or tweak registers itself here.
+"""
 
 
 class Inspectable:
-    """Mixin for an operator-inspectable object.
+    """
+    Mixin for an operator-inspectable object.
 
     `name` is the registry key; `kind` is a category. inspect() returns a json-able dict of
     properties; update(props) applies the supported, changed ones and returns the names actually
     changed; stats() returns interesting runtime numbers. The defaults read `_inspect` (readable
     property names) and write `_writable` (the subset settable via update()); override any of the
-    three for computed values."""
+    three for computed values.
+    """
 
     name: str = 'object'
     kind: str = 'object'
@@ -53,9 +59,15 @@ class Inspector:
 
     @classmethod
     async def probe_all(cls) -> dict:
-        """Run probe() on every registered inspectable that implements it; return {name: result} (result
-        None = passed). The shared probe-all sweep: cc arm/verify keep the non-None failures,
-        `probe all` reports every result."""
+        """
+        Run probe() on every registered inspectable that implements it.
+
+        The shared probe-all sweep: cc arm/verify keep the non-None failures, `probe all` reports every
+        result.
+
+        Returns:
+            {name: result} for each inspectable with a probe(); a None result means it passed.
+        """
         results = {}
         for name in cls.names():
             run = getattr(cls.get(name), 'probe', None)

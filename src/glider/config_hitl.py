@@ -1,9 +1,13 @@
-# config_hitl.py — a HITL board config derived from config_default (). The real sensor drivers
-# are turned OFF and the `hitl` task supplies accel/attitude/agl/altitude/elevation/position at priority
-# 0, so the control code reads the simulation. flight is enabled with test gains, the watchdog and the
-# radios are off (self-contained sim), and separation is off (the boost-timeout drives BOOSTING ->
-# GLIDING). Servos stay on so the sim can read the commanded fin angles. `default()` returns a fresh
-# dict -- mutate freely. Run it instead of config_default for a simulation; the flight config is untouched.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+A HITL board config derived from config_default(). The real sensor drivers are turned OFF and the
+`hitl` task supplies accel / attitude / agl / altitude / elevation / position at priority 0, so the
+control code reads the simulation. flight is enabled with test gains, the watchdog and the radios are
+off (self-contained sim), and separation is off (the boost-timeout drives BOOSTING -> GLIDING).
+Servos stay on so the sim can read the commanded fin angles. `default()` returns a fresh dict --
+mutate freely. Run it instead of config_default for a simulation; the flight config is untouched.
+"""
 
 import config_default
 
@@ -25,15 +29,34 @@ def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: f
             wind_dir: float = 0.0, boost_axis: str = 'z',
             glider_g: int = _GLIDER_G, inject_hz: int = 0,
             gnss_drift: float = 0.0, gnss_drift_dir: float = 0.0, pad_dwell_s: float = 0.0) -> dict:
-    """Build a HITL config. Separation is off here, so boost->glide deploy rides the sequencer's baro
-    APOGEE detect (mass/motor-independent -- the top of the arc), with config_default's long boost_timeout
-    as the last-resort fallback; the sim's reduced baro noise keeps the peak-detect clean. `wind`/`wind_dir`
-    set a steady cross-wind (m/s, toward deg) the glide must crab against. `boost_axis` picks which accel
-    axis carries the boost |a|. `glider_g` is the glider (glide) mass in grams (default 300, the full build;
-    150 = the half-weight optimisation target) -- the booster adds to it for the boost phase, then ejects
-    at separation so the glide runs on `glider_g` alone (a lighter glider -> a longer glide, the worst case
-    for the GC-off leak). `inject_hz` > 0 sets the sensor publish rate (default 0 -> the sim's sim_hz);
-    lower it (e.g. 10) to slim the sim's own heap churn so an on-board HITL leak reflects real flight."""
+    """
+    Build a HITL config from config_default(), the real sensors off and the `hitl` sim task added.
+
+    Separation is off here, so the boost->glide deploy rides the sequencer's baro APOGEE detect
+    (mass / motor-independent -- the top of the arc), with config_default's long boost_timeout as the
+    last-resort fallback; the sim's reduced baro noise keeps the peak-detect clean. The booster adds to
+    the glide mass for the boost phase then ejects at separation, so the glide runs on `glider_g` alone
+    -- a lighter glider glides LONGER, the worst case for the GC-off leak.
+
+    Args:
+        motor - the booster motor ('E16' / 'F15'); its mass sets the boost-phase liftoff mass.
+        noise - sensor-noise level fed to the sim (0.0 = clean).
+        spike - inject accel spikes when True (a robustness stressor).
+        wind - steady cross-wind speed (m/s) the glide must crab against.
+        wind_dir - the wind's toward-bearing (deg).
+        boost_axis - which accel axis ('x' / 'y' / 'z') carries the boost |a|.
+        glider_g - the glider (glide) mass in grams (default _GLIDER_G, the full build; pass the
+            light-build mass for the half-weight optimisation target).
+        inject_hz - the sensor publish rate; 0 -> the sim's sim_hz. Lower it (e.g. 10) to slim the
+            sim's own heap churn so an on-board HITL leak reflects real flight.
+        gnss_drift - steady GNSS ground-velocity drift (m/s) the pad-drift calibration must measure out.
+        gnss_drift_dir - the drift's bearing (deg).
+        pad_dwell_s - seconds held stationary on the pad before launch (lets the drift calibration
+            gather samples).
+
+    Returns:
+        A fresh HITL config dict (the real sensors disabled, flight + the `hitl` task enabled).
+    """
     cfg = config_default.default()
     for sensor in cfg['sensors']:
         if sensor['name'] in _SIM_SENSORS:

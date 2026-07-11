@@ -1,7 +1,11 @@
-# led.py — status LED driver. One GPIO shows the board state at a glance: fast blink when a task is
-# unhealthy (error), slow blink while setting up / standing by, solid once flying. The pin role
-# (default 'led_status') comes from the component's `pin` field, resolved against the config `pins`
-# section. Registered as @task.driver('led') so the Controller creates and supervises it.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Status LED driver. One GPIO shows the board state at a glance: fast blink when a task is unhealthy
+(error), slow blink while setting up / standing by, solid once flying. The pin role (default
+'led_status') comes from the component's `pin` field, resolved against the config `pins` section.
+Registered as @task.driver('led') so the Controller creates and supervises it.
+"""
 
 import asyncio
 

@@ -1,15 +1,19 @@
-# drivers/lsm6dso32.py — LSM6DSO32 6-DoF IMU: the primary raw accel + the sole gyro `rate`. ±32 g accel
-# (covers the 8-12 g boost without clipping, fine 1 g resolution for the airspeed integrator) + ±2000 dps
-# gyro. @task.driver('lsm6dso32'). setup() checks WHO_AM_I, configures accel/gyro, and provides both the
-# 'accel' (x,y,z in g) and 'rate' (x,y,z in deg/s) databoard slots; run() writes the latest reading. If
-# the device is absent (wrong WHO_AM_I) setup() returns False and the Controller skips it.
-#
-# Wired on SPI1 (its own chip-select, shared with the ADXL375) for clean high-rate reads — see
-# doc/waveshare_esp32p4_pins.md. SPI is 4-wire mode 3; multi-byte reads auto-increment via CTRL3_C.IF_INC
-# (so the bus device takes mb_bit=None — no address multi-byte bit). I2C (addr 0x6A) also works if the
-# component sets bus 'i2c'. Sampling is interrupt-driven on INT1 (accel data-ready) when an `int_pin` is
-# wired, else a plain period_ms poll, mirroring the ADXL375 driver. Gyro + accel sit in contiguous output
-# registers (0x22..0x2D), so one 12-byte read fetches both.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+LSM6DSO32 6-DoF IMU: the primary raw accel + the sole gyro 'rate'. A +/-32 g accel range (covers the
+8-12 g boost without clipping, fine 1 g resolution for the airspeed integrator) plus a +/-2000 dps
+gyro. @task.driver('lsm6dso32'). setup() checks WHO_AM_I, configures accel/gyro, and provides both the
+'accel' (x,y,z in g) and 'rate' (x,y,z in deg/s) databoard slots; run() writes the latest reading. If
+the device is absent (wrong WHO_AM_I) setup() returns False and the Controller skips it.
+
+Wired on SPI1 (its own chip-select, shared with the ADXL375) for clean high-rate reads -- see
+doc/waveshare_esp32p4_pins.md. SPI is 4-wire mode 3; multi-byte reads auto-increment via CTRL3_C.IF_INC
+(so the bus device takes mb_bit=None -- no address multi-byte bit). I2C (addr 0x6A) also works if the
+component sets bus 'i2c'. Sampling is interrupt-driven on INT1 (accel data-ready) when an 'int_pin' is
+wired, else a plain period_ms poll, mirroring the ADXL375 driver. Gyro + accel sit in contiguous output
+registers (0x22..0x2D), so one 12-byte read fetches both.
+"""
 
 import asyncio
 import struct
@@ -92,17 +96,38 @@ class Lsm6dso32(task.Task):
         return True
 
     def _transport(self, kind: str, bus_id: int, spec: dict):
-        """A register window over SPI (by chip-select) or I2C (by address). LSM6DSO32 auto-increments via
-        IF_INC, so the SPI device uses mb_bit=None (no address multi-byte bit)."""
+        """
+        Build a register window over SPI (by chip-select) or I2C (by address).
+
+        LSM6DSO32 auto-increments via IF_INC, so the SPI device uses mb_bit=None (no address multi-byte
+        bit).
+
+        Args:
+            kind - the bus type, 'spi' or 'i2c'.
+            bus_id - the bus index within that type.
+            spec - the resolved bus spec (from config.bus).
+
+        Returns:
+            The bus device for register access; None when SPI is selected but no cs_pin is wired.
+        """
         if kind == 'spi':
             cs = self._pin_gpio('cs_pin')
             return spibus.get(bus_id, spec).device(cs, mb_bit=None) if cs is not None else None
         return i2cbus.get(bus_id, spec).device(self.config.get('addr', 0x6A))
 
     async def _setup_interrupt(self) -> None:
-        """Route accel data-ready to INT1 if the component declares an int_pin; else stay poll-only.
+        """
+        Route accel data-ready to INT1 if the component declares an int_pin; else stay poll-only.
+
         Arm the IRQ before the first clearing read so a conversion that landed during config is a clean
-        rising edge (the same ordering as the ADXL375 driver)."""
+        rising edge (the same ordering as the ADXL375 driver).
+
+        Args:
+            (none)
+
+        Returns:
+            None; wires the INT1 pin + IRQ handler, or leaves the driver poll-only when no int_pin.
+        """
         gpio = self._pin_gpio('int_pin')
         if gpio is None:
             return
@@ -116,17 +141,37 @@ class Lsm6dso32(task.Task):
         self._ready.set()
 
     async def sample(self) -> tuple:
-        """Read and return a FLAT 6-tuple (run() slices it, no concat): accel (ax, ay, az) in float g, then
-        gyro (gx, gy, gz) as fixnum CENTIDEG/S (raw·_MDPS·SCALE//1000, exact -- the PID's rate-damping D
-        term reads these). One 12-byte read clears data-ready."""
+        """
+        Read one accel + gyro sample as a flat 6-tuple.
+
+        A FLAT 6-tuple (run() slices it, no concat): accel (ax, ay, az) in float g, then gyro (gx, gy,
+        gz) as fixnum CENTIDEG/S (raw*_MDPS*SCALE//1000, exact -- the PID's rate-damping D term reads
+        these). One 12-byte read clears data-ready.
+
+        Args:
+            (none)
+
+        Returns:
+            (ax, ay, az, gx, gy, gz): accel in float g, gyro in centideg/s fixnum.
+        """
         await self._dev.read_into(_OUTX_L_G, self._buf)
         gx, gy, gz, ax, ay, az = struct.unpack('<hhhhhh', self._buf)
         return (ax * _SCALE_A, ay * _SCALE_A, az * _SCALE_A,
                 gx * _MDPS * SCALE // 1000, gy * _MDPS * SCALE // 1000, gz * _MDPS * SCALE // 1000)
 
     async def run(self) -> None:
-        """Sample on INT1 data-ready (or every fallback_ms if interrupts go silent; plain poll with no
-        INT wired) and write the latest accel + gyro to the databoard."""
+        """
+        The sampling loop: publish the latest accel + gyro to the databoard, forever.
+
+        Sample on INT1 data-ready (or every fallback_ms if interrupts go silent; a plain poll when no
+        INT is wired), then push accel + rate to the databoard and telemetry.
+
+        Args:
+            (none)
+
+        Returns:
+            None; runs forever (a wedged board reboots rather than exits).
+        """
         while True:
             if self._int is not None:
                 try:
@@ -147,7 +192,15 @@ class Lsm6dso32(task.Task):
                 self.note('lsm6dso32 :: read %r', error)  # deduped: a persistent error logs once
 
     async def probe(self) -> str:
-        """On-demand self-test: WHO_AM_I reads back, then one sample succeeds (each step logged)."""
+        """
+        On-demand self-test: WHO_AM_I reads back, then one sample succeeds (each step logged).
+
+        Args:
+            (none)
+
+        Returns:
+            None when both steps pass; a short failure message (the failing step) otherwise.
+        """
         try:
             recorder.Recorder.log(self.name, 'probe: who_am_i ...')
             whoami = (await self._dev.read(_WHO_AM_I, 1))[0]
@@ -171,10 +224,20 @@ class Lsm6dso32(task.Task):
         return None
 
     async def diagnose(self) -> str:
-        """Deeper analysis when setup() failed: the bus reads WHO_AM_I and classifies the wire-level
-        fault (CS dead / MISO floating / wrong device / present-but-init). The Controller folds it into
-        the failure reason so `verify`/`probe` show the 'why', not just 'absent / miswired?'. A None
-        transport means setup never built it -- a config fault (bus undefined / cs_pin unwired)."""
+        """
+        Deeper analysis when setup() failed: classify the wire-level fault behind an absent IMU.
+
+        The bus reads WHO_AM_I and classifies the fault (CS dead / MISO floating / wrong device /
+        present-but-init). The Controller folds it into the failure reason so 'verify'/'probe' show the
+        'why', not just 'absent / miswired?'. A None transport means setup never built it -- a config
+        fault (bus undefined / cs_pin unwired).
+
+        Args:
+            (none)
+
+        Returns:
+            A one-line fault classification for the failure reason.
+        """
         if self._dev is None:  # setup never built the transport
             return 'no transport -- bus %s:%s undefined or cs_pin %s unwired' % (
                 self.config.get('bus'), self.config.get('id'), self.config.get('cs_pin'))

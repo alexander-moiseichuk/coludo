@@ -1,13 +1,17 @@
-# main.py — board bring-up, run on boot. Loads the driver/task packages (so every @task.activity /
-# @task.driver registers), creates the Mission (launch identity), and hands the config to the Controller,
-# which builds + supervises the *enabled* tasks. Connectivity (Wi-Fi + the CC link) is just two of
-# those tasks, so a board with no Wi-Fi (e.g. FireBeetle 2) boots and runs everything else without
-# CC -- nothing here is hardcoded. Adding a task is dropping a file in drivers/ or tasks/ and
-# enabling it in the board config.
-#
-# Telemetry-first: the task loops (recording included) start immediately and keep running; the
-# Wi-Fi/CC tasks connect in the background when they can. Time sync + live tweaks arrive from Control
-# over the link (e.g. `update mission {epoch}` sets the RTC); the board itself never asks.
+"""
+Coludo project, copyright under MIT license, Alexander Moiseichuk
+
+Board bring-up, run on boot. Loads the driver/task packages (so every @task.activity / @task.driver
+registers), creates the Mission (launch identity), and hands the config to the Controller, which
+builds + supervises the *enabled* tasks. Connectivity (Wi-Fi + the CC link) is just two of those
+tasks, so a board with no Wi-Fi (e.g. FireBeetle 2) boots and runs everything else without CC --
+nothing here is hardcoded. Adding a task is dropping a file in drivers/ or tasks/ and enabling it in
+the board config.
+
+Telemetry-first: the task loops (recording included) start immediately and keep running; the Wi-Fi/CC
+tasks connect in the background when they can. Time sync + live tweaks arrive from Control over the
+link (e.g. `update mission {epoch}` sets the RTC); the board itself never asks.
+"""
 
 import asyncio
 
@@ -20,9 +24,18 @@ import warmstart
 
 
 async def bringup(cfg: dict, log=print) -> controller.Controller:
-    """Register every driver/task, create the Mission, and have the Controller build + start the
-    enabled tasks from the config. Returns the Controller. Network-free itself -- any Wi-Fi/CC work
-    happens inside the tasks the Controller starts."""
+    """
+    Register every driver/task, create the Mission, and start the enabled tasks from the config.
+
+    Network-free itself -- any Wi-Fi/CC work happens inside the tasks the Controller starts.
+
+    Args:
+        cfg - the validated board config the Controller builds its tasks from.
+        log - line logger for bring-up progress (defaults to print).
+
+    Returns:
+        The Controller, with each enabled component's task created and its run loop launched.
+    """
     drivers.load()  # HAL drivers (LED, sensors, ...) -> task.ACTIVITIES
     tasks.load()  # subsystem tasks (Recorder, BoardHealth, Wi-Fi, CC link, ...) -> task.ACTIVITIES
     mission.Mission(max_range_m=cfg.get('max_range_m', 200))  # launch identity + clock + zone range gate
