@@ -74,7 +74,8 @@ class Dispatcher:
 
 class Client:
     def __init__(self, config: dict, dispatcher, log=None, backoff_ms: int = 1000):
-        wifi = config['wifi']
+        wifi = config.get('wifi', {})  # .get like every other config read -- a minimal config (no wifi
+        # section) falls back to the cc_host/cc_port defaults below instead of KeyErroring before them
         self.host = wifi.get('cc_host')  # None -> cc_link derives the `.1` of the board's subnet at dial
         self.port = wifi.get('cc_port', 1234)
         self.dispatcher = dispatcher

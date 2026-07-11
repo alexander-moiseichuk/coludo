@@ -326,6 +326,15 @@ def default() -> dict:
              # instead of racetracking past it -- an in-zone/near-centre tightening that leaves the
              # fly-long objective untouched up high. 0 -> off.
              'endgame_alt_m': 50,
+             # ENDGAME holding pattern + airspeed-gated bank (guidance.py). endgame_pattern: 'o' a single
+             # circle, 'oo'/'o-o' two lobes along the long axis, or 'auto' -> the Mission picks o/oo from
+             # the zone aspect. NOTE 'oo' is a known-limited negative result (it overruns a narrow strip +
+             # drifts on wind -- see doc/sims/TMS-7-oo_landing); set 'o' for reliable in-zone landing. The
+             # gated bank banks as steep as the LIVE airspeed allows: a coordinated turn at bank phi raises
+             # the stall speed to stall_speed_1g*sqrt(1/cos phi), and airspeed >= stall_margin*that bounds
+             # phi (capped at endgame_max_bank). These four match the guidance defaults (behaviour unchanged);
+             # exposed here so the operator can tune them from board.config without editing source.
+             'endgame_pattern': 'auto', 'stall_speed_1g': 9.0, 'stall_margin': 1.2, 'endgame_max_bank': 60,
              'final_approach_agl': 8, 'final_cross_gain': 3.0, 'final_intercept_deg': 45,
              # reachability (flight panel): nominal glide ratio (L/D) -> reach = glide_ratio * elevation
              # vs the distance to the zone -> 'zone reachable y/n'. Conservative default (the quality-2
