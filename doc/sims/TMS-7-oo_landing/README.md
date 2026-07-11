@@ -1,9 +1,8 @@
 # TMS-7 "oo" endgame — the two-lobe landing pattern (on-board HITL)
 
-🎬 **[`tms7_oo_landing.mp4`](tms7_oo_landing.mp4)** — four segments, on-board HITL provenance
-(`tasks/hitl.py`, the real `guidance`/`governor`/`pid`/`mixer` over the quality-2 worst-case polar,
-10 % noise, **3 m/s cross-wind toward 210°**), each with the live HUD (altitude / speed / attitude /
-**memory** / **CPU** / schedule).
+On-board HITL provenance (`tasks/hitl.py`, the real `guidance`/`governor`/`pid`/`mixer` over the
+quality-2 worst-case polar, 10 % noise, **3 m/s cross-wind toward 210°**); each variant has an
+interactive 3D report and a top-down SVG plan.
 
 This round documents the **`oo` endgame holding pattern** — two lobes along the zone's long axis
 (`guidance.Heading.FIG_OO`, selected by `auto` because the HPRC strip's aspect k≈4.65 > 2). The
@@ -30,10 +29,8 @@ elongated-strip geometry exists.
 ## Regenerate
 
 ```bash
-# fly one variant (records to the Luckfox), pull the 3D report + svg, render the movie
+# fly one variant (records to the Luckfox), pull the 3D report + svg
 printf 'import hitl_run\nhitl_run.fly("F15", 0.10, 3.0, 210.0, glider_g=235)\n' > /tmp/fly.py
 tools/board_reboot.py $PORT && mpremote connect $PORT run /tmp/fly.py
 tools/flight_pull.sh <session> <dir>                       # -> <session>.txt + .html + .svg
-python3 tools/flight_video.py tms7_oo_landing.mp4 \
-    "E16 full ..." <e16_full.txt> "E16 half ..." <e16_half.txt> ...   # one movie, all four
 ```
