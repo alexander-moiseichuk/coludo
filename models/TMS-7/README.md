@@ -26,16 +26,16 @@ Booster is the lower part of Coludo which may have E16 or F15 solid rocket prope
 
 |Component|Count|Weight [g]|
 | ------------------- | --- | ---- |
-|Body Tube  |  1  |  50.3  |
-|Holder|  1  |  21.0  |
-|Cap|  1  |  6.6  |
+|Bottom  |  1  |  56.2  |
+|Top|  1  |  28.1  |
+|Cap|  1  |  6.5  |
 |Parachute and cord|  1  |   5  |
 |E16-4 Engine         |  1  | 82.5 |
 |F15-4 Engine         |  1  | 98.9 |
 | ------------------- | --- | ---- |
-|Full Booster Without Engine|  1  | 82.6 |
-|Full Booster With E16-4 Engine|  1  | 165.1 |
-|Full Booster With F15-4 Engine|  1  | 181.5 |
+|Full Booster Without Engine|  1  |102.0 |
+|Full Booster With E16-4 Engine|  1  | 184.5 |
+|Full Booster With F15-4 Engine|  1  | 200.9 |
 
 ## Glider
 
@@ -43,28 +43,42 @@ The Glider is seated on top of the Booster and its wings are in a folded state u
 
 |Component|Count|Weight [g]|
 | ------------------- | --- | ---- |
-|Front Lower Body    |  1  |  8.4 |
+|Front Lower Body    |  1  |  9.2 |
 |Front Upper Body    |  1  | 12.0 |
-|Back Lower Body     |  1  | 27.3 |
-|Left Fin            |  1  | 6.4  |
-|Right fin           |  1  | 6.4  |
-|Top Fin             |  1  | 6.4  |
+|Back Lower Body     |  1  | 29.1 |
+|Fin                 |  3  | 3.7  |
 |Left Wing           |  1  | 26.7 |
 |Right Wing          |  1  | 26.7 |
+|Stopper             |  1  | 0.5  |
 | ------------------- | --- | ---- |
-|Glider Construction with all of the above | 1 | 134.8 |
+|Glider Construction with all of the above | 1 | 115.3 |
+
+## Glider Electronics
+
+The Glider's electronics accounted according to [board_layout.md](doc/board_layout.md) and each board includes the 2.5 gram electric pad as per Carrier-Board split.
+
+|Component|Count|Weight [g]|
+| ------------------- | --- | ---- |
+|Forward I2C Sensor  |  1  |  15.4|
+|IMU (SPI) + Main Board|  1  | 20.3 |
+|Aft Power/INA Carrier|  1  | 14.0 |
+|GNSS + Recorder + Camera|  1  | 20.0  |
+|Separation Switch     |  1  | 2.0 |
+|Servo Motor         |  3  | 11 .0|
+|Cable               |  4  | 7.8  |
+|Battery               |  1  | 19.0  |
+| ------------------- | --- | ---- |
+|Glider Electronics  | 1 | 154.9 |
 
 ## Coludo assembled
 
-Weight with whole assembly having around 100-150 grams of electronics on board. 
+Weight with whole assembly having around 155 grams of electronics on board. 
 
 |Component|Weight [g]|
 | ------------------- | ---- |
-|Coludo as Glider and Booster without engine |  212.5 |
-|Coludo 100 g electronics E16-4 engine |  395.0 |
-|Coludo 100 g electronics F15-4 engine |  411.4 |
-|Coludo 150 g electronics E16-4 engine |  445.0 |
-|Coludo 150 g electronics F15-4 engine |  461.4 |
+|Coludo as Glider and Booster without engine |  372.3 |
+|Coludo + E16-4 engine |  454.8 |
+|Coludo + F15-4 engine |  471.2 |
 
 ## Derived geometry (from STL analysis)
 
