@@ -55,6 +55,21 @@ class Stage:
     }
     NAMES: dict[str, int] = {name: stage_id for stage_id, name in STAGES.items()}
 
+    @staticmethod
+    def active(stage: int) -> bool:
+        """True during the powered boost (BOOSTING only) -- the one active-thrust stage."""
+        return stage == Stage.BOOSTING
+
+    @staticmethod
+    def passive(stage: int) -> bool:
+        """True while gliding unpowered, post-separation (GLIDING..LANDING) -- the boost stack is gone."""
+        return Stage.GLIDING <= stage <= Stage.LANDING
+
+    @staticmethod
+    def airborne(stage: int) -> bool:
+        """True while off the ground -- the union of the active boost and the passive glide."""
+        return Stage.active(stage) or Stage.passive(stage)
+
 
 class Controller(inspector.Inspectable):
     name: str = 'controller'

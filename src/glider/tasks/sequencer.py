@@ -27,7 +27,6 @@ import databoard
 import inspector
 import recorder
 import task
-import warmstart
 
 _STAGE = controller_mod.Stage
 
@@ -124,39 +123,8 @@ class Sequencer(task.Task):
         self._telemetry.push((_STAGE.STAGES[to_stage], reason))
         self._since = None
         self._advanced_to = to_stage  # our own move: _tick's change-detect must not re-log it
-        if to_stage == _STAGE.BOOSTING:
-            self._drop_breadcrumb()  # BEFORE GC goes off (an NVS commit is a few ms, on the rod)
-        elif to_stage == _STAGE.DONE:
-            warmstart.clear()  # flight over -> the next boot is cold
         if self._disable_gc_flight:  # clean heap into the flight, GC OFF for the WHOLE airborne phase
             self._gc_transition(to_stage)
-
-    def _drop_breadcrumb(self) -> None:
-        """
-        Save the warm-start breadcrumb to NVS, once, at BOOSTING entry.
-
-        The launch fix, the active zone and the pad ABSOLUTE altitude go into NVS (specs/coludo.md
-        "In-flight reboot & warm start"). Only an ARMED flight with a zone is worth restoring -- a
-        passive telemetry flight must never warm-start into an armed GLIDING. warmstart.save() never
-        raises (a full NVS must not block a launch); the drop is logged so the flight record shows
-        recovery was available.
-
-        Args:
-            (none)
-
-        Returns:
-            None; writes the breadcrumb to NVS, or nothing when the flight is disarmed or has no zone.
-        """
-        if not self.controller.armed or self._mission is None or not self._mission.zone:
-            return
-        zone = self._mission.zone
-        self._mission.freeze_launch()  # a fix that arrived AFTER arm pins here -- last ground moment
-        launch = self._mission.launch_point()
-        if launch is None:  # no fix/CC point: the zone centre keeps the crumb usable (tier-2 fallback)
-            launch = ((zone[0][0] + zone[1][0]) / 2, (zone[0][1] + zone[1][1]) / 2)
-        altitude = self._altitude.value()
-        if warmstart.save(launch, zone, altitude if altitude is not None else 0.0, time.time()):
-            recorder.Recorder.log(self.name, 'warm-start breadcrumb saved')
 
     def _gc_transition(self, to_stage: int) -> None:
         """

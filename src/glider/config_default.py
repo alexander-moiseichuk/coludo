@@ -536,6 +536,17 @@ def default() -> dict:
              'fallback_near_m': 50.0, 'fallback_width_m': 100.0, 'fallback_depth_m': 90.0,
              'auto_arm': False, 'auto_arm_dwell_s': 60, 'still_g': 0.3}
 
+    """
+    Warm-start checkpoint (warmstart.py, specs/coludo.md "In-flight reboot & warm start"): saves the
+    live flight state (stage, altitude, speed, uptime) to NVS so a mid-air reset recovers the SAVED
+    stage instead of going ballistic -- but ONLY for an ARMED flight (a passive telemetry flight never
+    warm-starts into an armed stage). checkpoint_s (floored at 1 s) is the cadence WHILE AIRBORNE;
+    SETTING/DONE checkpoint once on entry (nothing moves on the ground, so no flash wear). The
+    telemetry/log timeline is written every checkpoint regardless. warm_start (top level) gates the
+    recovery at boot; this task writes what recovery reads.
+    """
+    checkpoint = {'name': 'checkpoint', 'activity': 'checkpoint', 'enabled': True, 'checkpoint_s': 1}
+
     components = [
         # Recorder drain loop: a thin activity over the global Recorder, using uart:1.
         {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True},
@@ -545,6 +556,7 @@ def default() -> dict:
          'debounce_ms': 20},
     ] + servos + [
         sequencer,
+        checkpoint,
         gnss_calib,
         flight,
         watchdog,
