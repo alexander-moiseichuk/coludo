@@ -137,7 +137,7 @@ class Lsm6dso32(task.Task):
         self._int.irq(self._on_data_ready, Pin.IRQ_RISING)
         await self._dev.read_into(_OUTX_L_G, self._buf)  # clear data-ready -> next conversion = clean edge
 
-    def _on_data_ready(self, pin) -> None:
+    def _on_data_ready(self, _unused_pin) -> None:
         """IRQ: a fresh sample is ready -- wake run(). ThreadSafeFlag.set() is interrupt-safe."""
         self._ready.set()
 

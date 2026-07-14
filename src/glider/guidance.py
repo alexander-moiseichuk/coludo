@@ -369,7 +369,7 @@ class Guidance:
         law = self._laws.get(stage, self._hold)
         return law(stage, setpoint, heading, now_us)
 
-    def _boost(self, stage: int, setpoint: dict, heading: float, now_us: int) -> bool:
+    def _boost(self, _unused_stage: int, _unused_setpoint: dict, _unused_heading: float, _unused_now_us: int) -> bool:
         """
         BOOSTING: hold the rod-vertical attitude captured at entry.
 
@@ -391,7 +391,7 @@ class Guidance:
         self.heading_error = 0  # no nav/yaw steering near vertical (heading is ill-defined)
         return True
 
-    def _steer(self, stage: int, setpoint: dict, heading: float, now_us: int) -> bool:
+    def _steer(self, stage: int, _unused_setpoint: dict, heading: float, now_us: int) -> bool:
         """
         GLIDING / LANDING: steer to the landing zone, banking into the turn.
 
@@ -441,7 +441,7 @@ class Guidance:
             self.roll_setpoint = config.setpoints_fx[stage][0]
         return True
 
-    def _hold(self, stage: int, setpoint: dict, heading: float, now_us: int) -> bool:
+    def _hold(self, stage: int, _unused_setpoint: dict, heading: float, _unused_now_us: int) -> bool:
         """
         Any other configured control stage (ground-test configs): hold the configured setpoints.
 

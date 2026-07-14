@@ -116,7 +116,7 @@ class Ina226(task.Task):
         self._ok = True
         return True
 
-    def _on_alert(self, pin) -> None:
+    def _on_alert(self, _unused_pin) -> None:
         """IRQ: the ALERT line fell -- current crossed the over-current trip. COUNT it (the per-flight
         total is the value; a soft IRQ so the small-int increment is safe -- only run() reads it)."""
         self._alerts += 1
