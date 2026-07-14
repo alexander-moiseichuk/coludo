@@ -54,6 +54,14 @@ class ControlLink(task.Task):
         """The hub address: the explicit `cc_host` if set, else the `.1` of the board's own subnet."""
         return self._client.host or _network_host(wifi.ip())
 
+    def inspect(self) -> dict:
+        status = task.Task.inspect(self)
+        client = getattr(self, '_client', None)  # only set once setup() runs (absent when standalone)
+        status.update({'enabled': client is not None,  # False -> standalone (cc_host set to '')
+                       'cc_host': client.host if client is not None else None,
+                       'port': client.port if client is not None else None})
+        return status
+
     async def run(self) -> None:
         """
         Park until the Wi-Fi dependency is up, then dial CC and serve until the link drops; retry.

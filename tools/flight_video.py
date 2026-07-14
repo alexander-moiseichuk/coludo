@@ -125,9 +125,11 @@ def _axes(heading, pitch, roll):
 
 """The plane wireframe model -- vertices, faces, and the wing-fold / fin-deflect rigging."""
 
-# Vertices (x fwd, y right, z up). Base model at neutral fins, wings deployed.
-# Wing indices are grouped so _fold_wing_verts can rotate them around the fuselage
-# (butterfly-knife fold). Fin indices group trailing-edge vertices that deflect.
+"""
+Vertices (x fwd, y right, z up). Base model at neutral fins, wings deployed.
+Wing indices are grouped so _fold_wing_verts can rotate them around the fuselage
+(butterfly-knife fold). Fin indices group trailing-edge vertices that deflect.
+"""
 _V = [
     (2.4, 0.0, 0.0),       # 0  nose tip
     (1.6, 0.0, 0.20),      # 1  nose base top
@@ -327,9 +329,11 @@ def load(label, path):
     stages = [(us / 1e6, line.split('stage -> ')[1].split()[0]) for us, line in logs
               if us and 'stage -> ' in line]
     launch = next((t for t, s in stages if s == 'boosting'), 0.0)
-    # Make the whole timeline flight-relative (t=0 at ignition). rel() subtracts `launch` from the stream
-    # DATA; the stage times must be offset to match, else end/glide/land stay at the board's absolute
-    # uptime (large after soft-reboots -- ticks_ms doesn't reset) and the render pads dead air to ~uptime.
+    """
+    Make the whole timeline flight-relative (t=0 at ignition). rel() subtracts `launch` from the stream
+    DATA; the stage times must be offset to match, else end/glide/land stay at the board's absolute
+    uptime (large after soft-reboots -- ticks_ms doesn't reset) and the render pads dead air to ~uptime.
+    """
     stages = [(t - launch, s) for t, s in stages]
     gnss, baro, imu = streams.get('gnss.csv'), streams.get('baro_icp10111.csv'), streams.get('imu_bno055.csv')
 

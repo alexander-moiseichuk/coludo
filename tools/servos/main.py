@@ -164,13 +164,15 @@ class Servo:
         return {'native': 'duty_u16', 'range': [0, _U16], 'freq_hz': self._pwm.freq()}
 
 
-# Every per-parameter knob in ONE table (these were scattered across constants + three _step branches):
-# the OLED position (x, y in the visible window), the label, the editable [min, max], the step, and the
-# get / set callbacks. The three parameters are LINKED views of one position, so a row carries no stored
-# value -- get(servo) computes the live value and set(servo, value) applies it through the servo, which
-# keeps all three consistent. Indexed by _ANG / _PUL / _DUT. To add a parameter, add a row.
-# `text` carries a leading space (the cursor column): render draws the label as-is and overlays a '>'
-# on the selected row, so the draw loop needs no per-row cursor branch.
+"""
+Every per-parameter knob in ONE table (these were scattered across constants + three _step branches):
+the OLED position (x, y in the visible window), the label, the editable [min, max], the step, and the
+get / set callbacks. The three parameters are LINKED views of one position, so a row carries no stored
+value -- get(servo) computes the live value and set(servo, value) applies it through the servo, which
+keeps all three consistent. Indexed by _ANG / _PUL / _DUT. To add a parameter, add a row.
+`text` carries a leading space (the cursor column): render draws the label as-is and overlays a '>'
+on the selected row, so the draw loop needs no per-row cursor branch.
+"""
 _HUD_ROWS = [
     {'x': 0, 'y': 16, 'text': ' ang', 'min': 0, 'max': 360, 'step': 5,
      'get': Servo.get_angle, 'set': Servo.set_angle, 'api': Servo.api_angle},

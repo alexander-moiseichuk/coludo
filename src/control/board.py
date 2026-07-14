@@ -25,9 +25,11 @@ class Board:
         self._lock = asyncio.Lock()
         self.id = None
         self.info = {}  # the iam handshake: mcu / firmware_version / stage / config_id
-        # Control-side cache of board properties, filled as a side effect of real exchanges so the
-        # dashboard can show last-known values without re-polling. config <- get-config (running);
-        # inspect/stats <- per-object; health <- the vitals reply.
+        """
+        Control-side cache of board properties, filled as a side effect of real exchanges so the
+        dashboard can show last-known values without re-polling. config <- get-config (running);
+        inspect/stats <- per-object; health <- the vitals reply.
+        """
         self.cache = {'config': None, 'inspect': {}, 'stats': {}, 'health': None}
         self.online: bool = True
         self.last_seen: float = time.monotonic()

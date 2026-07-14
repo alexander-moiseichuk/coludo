@@ -37,6 +37,7 @@ except ImportError:  # host (CPython): board-only; the INT1 pin is wired only on
     Pin = None
 
 
+_ADDR = const(0x6A)       # default I2C address (SDO low; 0x6B when high)
 _WHO_AM_I = const(0x0F)   # reads 0x6C on the LSM6DSO32
 _CTRL1_XL = const(0x10)   # accel: ODR + full-scale
 _CTRL2_G = const(0x11)    # gyro: ODR + full-scale
@@ -113,7 +114,7 @@ class Lsm6dso32(task.Task):
         if kind == 'spi':
             cs = self._pin_gpio('cs_pin')
             return spibus.get(bus_id, spec).device(cs, mb_bit=None) if cs is not None else None
-        return i2cbus.get(bus_id, spec).device(self.config.get('addr', 0x6A))
+        return i2cbus.get(bus_id, spec).device(self.config.get('addr', _ADDR))
 
     async def _setup_interrupt(self) -> None:
         """
@@ -136,7 +137,7 @@ class Lsm6dso32(task.Task):
         self._int.irq(self._on_data_ready, Pin.IRQ_RISING)
         await self._dev.read_into(_OUTX_L_G, self._buf)  # clear data-ready -> next conversion = clean edge
 
-    def _on_data_ready(self, pin) -> None:
+    def _on_data_ready(self, _unused_pin) -> None:
         """IRQ: a fresh sample is ready -- wake run(). ThreadSafeFlag.set() is interrupt-safe."""
         self._ready.set()
 

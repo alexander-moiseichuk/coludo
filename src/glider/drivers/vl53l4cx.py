@@ -34,6 +34,7 @@ except ImportError:  # host (CPython): board-only; the XSHUT/INT pins are wired 
     Pin = None
 
 
+_ADDR = const(0x29)  # default I2C address
 _REG_FIRMWARE_STATUS = const(0x00E5)  # reads 0x03 once the firmware has booted
 _REG_MODEL_ID = const(0x010F)  # 2 bytes: 0xEBAA for the VL53L4CD/L4CX silicon
 _REG_CONFIG_START = const(0x002D)  # the default-configuration block is written from here
@@ -79,7 +80,7 @@ class Vl53l4cx(task.Task):
         if spec is None:
             return False
         self._bus = i2cbus.get(bus_id, spec)
-        self._addr: int = self.config.get('addr', 0x29)
+        self._addr: int = self.config.get('addr', _ADDR)
         self._period_ms: int = self.config.get('period_ms', 50)  # poll interval with no INT wired
         self._fallback_ms: int = self.config.get('fallback_ms', 500)  # safety sample if INT silent
         self._ready = asyncio.ThreadSafeFlag()

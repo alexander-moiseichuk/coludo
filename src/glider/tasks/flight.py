@@ -63,9 +63,11 @@ class Flight(task.Task):
         self._pids = (self._pid['roll'], self._pid['pitch'], self._pid['yaw'])
         self._attitude = databoard.Databoard.parameter('attitude')  # (heading, roll, pitch)
         self._rate = databoard.Databoard.parameter('rate')  # (roll, pitch, yaw) angular rate -> PID D term
-        # the governor (governor.py): airspeed estimate -> dynamic-pressure fin-authority cap on the
-        # mixer, adaptively throttled once the glide settles. Reads accel (backbone) + GNSS speed
-        # (corrector) through injected databoard handles; fin_limit_multiplier is the safety dial.
+        """
+        the governor (governor.py): airspeed estimate -> dynamic-pressure fin-authority cap on the mixer,
+        adaptively throttled once the glide settles. Reads accel (backbone) + GNSS speed (corrector)
+        through injected databoard handles; fin_limit_multiplier is the safety dial.
+        """
         accel = databoard.Databoard.parameter('accel')  # (x, y, z) in g -> airspeed integration
         gnss_speed = databoard.Databoard.parameter('speed')  # GNSS ground speed (m/s) corrector
         self._governor = governor.Governor(governor.GovernorConfig(self.config), self._mixer,
@@ -82,9 +84,11 @@ class Flight(task.Task):
         # the wind estimator is fed once per NEW GNSS sample (see _tick): track the course channel's last
         # push stamp so it self-tunes to the receiver's rate (1/5/25 Hz) with no hardcoded feed period.
         self._wind_stamp = None
-        # the guidance law (guidance.py): per-stage setpoints + the three-tier heading resolution.
-        # The default tier-1 freshness gate is the GNSS channels' own databoard windows (the same
-        # point the databoard drops `source` to None), so it tracks the GNSS rate, not a magic number.
+        """
+        the guidance law (guidance.py): per-stage setpoints + the three-tier heading resolution. The
+        default tier-1 freshness gate is the GNSS channels' own databoard windows (the same point the
+        databoard drops `source` to None), so it tracks the GNSS rate, not a magic number.
+        """
         position = databoard.Databoard.parameter('position')  # (lat, lon) for landing-zone navigation
         agl = databoard.Databoard.parameter('agl')  # height above ground -> final-approach trigger
         elevation = databoard.Databoard.parameter('elevation')  # baro height -> the endgame band
@@ -264,11 +268,13 @@ class Flight(task.Task):
         self._actuate(0, 0, 0)
 
     async def run(self) -> None:
-        # finally covers BOTH exits -- a crash out of _tick (uncaught exception in a control stage)
-        # and an orderly cancel -- so the fins NEVER hold a live deflection while nobody is flying
-        # them (an uncaught crash used to leave the last command standing for the ~1-2 s
-        # watchdog window). finish() is idempotent (timer None check), so the Controller's own
-        # finish() on shutdown is a harmless second call. Zero cost on the hot path.
+        """
+        finally covers BOTH exits -- a crash out of _tick (uncaught exception in a control stage) and an
+        orderly cancel -- so the fins NEVER hold a live deflection while nobody is flying them (an uncaught
+        crash used to leave the last command standing for the ~1-2 s watchdog window). finish() is
+        idempotent (timer None check), so the Controller's own finish() on shutdown is a harmless second
+        call. Zero cost on the hot path.
+        """
         try:
             if self._schedule_hz > 0:
                 await self._run_timer()

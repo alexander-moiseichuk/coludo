@@ -34,6 +34,7 @@ except ImportError:  # host (CPython): board-only; the ALERT pin is wired only o
     Pin = None
 
 
+_ADDR = const(0x40)  # default I2C address (A1=A0=GND)
 _REG_CONFIG = const(0x00)
 _REG_BUS_V = const(0x02)    # u16, 1.25 mV/LSB
 _REG_POWER = const(0x03)    # u16, Power_LSB = 25 * Current_LSB
@@ -43,11 +44,11 @@ _REG_DIE_ID = const(0xFF)   # = 0x2260 on the INA226
 _DIE_ID = const(0x2260)
 _DIE_HI = const(0x22)       # die-id high byte -- the 8-bit value the bus diagnose() reads back
 _CONFIG_DEFAULT = const(0x4327)  # continuous shunt+bus, 4-sample average, 1.1 ms conv (~9 ms/update)
-# INTEGER milli-unit scaling (no float): the driver reads/reports mV, mA, mW. Derived from the datasheet:
-#   bus:  1.25 mV/LSB           -> mV  = bus_raw * 5 // 4
-#   cur:  Current_LSB = max/2^15 -> mA  = current_raw * max_current_ma // 32768
-#   pow:  Power_LSB = 25*Cur_LSB -> mW  = power_raw * max_current_ma // 32768 * 25   (reordered: no 2^30 mpz)
-#   cal = 0.00512 / (Current_LSB[A] * shunt[Ω]) = 0.00512 * 2^15 * 1e6 / (max_current_ma * shunt_mohms)
+"""INTEGER milli-unit scaling (no float): the driver reads/reports mV, mA, mW. Derived from the datasheet:
+  bus:  1.25 mV/LSB           -> mV  = bus_raw * 5 // 4
+  cur:  Current_LSB = max/2^15 -> mA  = current_raw * max_current_ma // 32768
+  pow:  Power_LSB = 25*Cur_LSB -> mW  = power_raw * max_current_ma // 32768 * 25   (reordered: no 2^30 mpz)
+  cal = 0.00512 / (Current_LSB[A] * shunt[Ω]) = 0.00512 * 2^15 * 1e6 / (max_current_ma * shunt_mohms)"""
 _CAL_NUM = const(167772160)  # 0.00512 * 2**15 * 1e6 -> integer cal numerator for milli-unit inputs
 _POWER_LSB_RATIO = const(25)  # Power_LSB = 25 * Current_LSB
 _REG_MASK = const(0x06)      # Mask/Enable: which condition drives ALERT, plus the read-back flags
@@ -75,7 +76,7 @@ class Ina226(task.Task):
         if spec is None:
             return False
         self._bus = i2cbus.get(bus_id, spec)
-        self._addr: int = self.config.get('addr', 0x40)
+        self._addr: int = self.config.get('addr', _ADDR)
         self._period_ms: int = self.config.get('period_ms', 100)
         shunt_mohms: int = self.config.get('shunt_mohms', 10)  # shunt resistance in milli-ohms (was shunt_ohms)
         self._max_current_ma: int = self.config.get('max_current_ma', 5000)  # full-scale current, mA
@@ -93,10 +94,10 @@ class Ina226(task.Task):
         self._telemetry = recorder.Telemetry(
             '%s.csv' % self.name, ('voltage_mv', 'current_ma', 'power_mw', 'alerts'),
             decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
-        # optional hardware over-current ALERT (config `alert_pin` -> a GPIO): the INA asserts it
-        # (open-drain, active-low) each time the shunt voltage crosses the trip -- a stall / short flag
-        # independent of the poll rate. Transient (no latch), and the IRQ COUNTS every trip: the running
-        # total over a flight (in telemetry + inspect) is the statistic, not the fact of a single alert.
+        """optional hardware over-current ALERT (config `alert_pin` -> a GPIO): the INA asserts it
+        (open-drain, active-low) each time the shunt voltage crosses the trip -- a stall / short flag
+        independent of the poll rate. Transient (no latch), and the IRQ COUNTS every trip: the running
+        total over a flight (in telemetry + inspect) is the statistic, not the fact of a single alert."""
         self._alerts: int = 0
         self._logged_alerts: int = 0
         self._alert_ma: int = 0
@@ -115,7 +116,7 @@ class Ina226(task.Task):
         self._ok = True
         return True
 
-    def _on_alert(self, pin) -> None:
+    def _on_alert(self, _unused_pin) -> None:
         """IRQ: the ALERT line fell -- current crossed the over-current trip. COUNT it (the per-flight
         total is the value; a soft IRQ so the small-int increment is safe -- only run() reads it)."""
         self._alerts += 1

@@ -70,9 +70,11 @@ async def _go(motor: str, target_kb: int, watchdog: bool) -> None:
     mission.Mission(max_range_m=200)
     cfg = config_hitl.default(motor, 0.05, False, 0.0, 0.0, glider_g=285, inject_hz=25)
     by_name = {component['name']: component for component in cfg['components']}
-    # watchdog True = the OOM RESET chain under test (rescue collects on the ballast-full heap
-    # take ~3.4 s and starve any WDT -- expect the panic/reboot). watchdog False = the memory
-    # RESCUE under test: the physics trigger collects and the flight must complete to DONE.
+    """
+    watchdog True = the OOM RESET chain under test (rescue collects on the ballast-full heap
+    take ~3.4 s and starve any WDT -- expect the panic/reboot). watchdog False = the memory
+    RESCUE under test: the physics trigger collects and the flight must complete to DONE.
+    """
     by_name['watchdog']['enabled'] = watchdog
     flight = controller.Controller(cfg, log=lambda message: None)
     await flight.setup()

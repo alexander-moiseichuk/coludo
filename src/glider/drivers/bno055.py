@@ -28,6 +28,7 @@ except ImportError:  # CPython (tooling / off-board checks)
     from commons import const
 
 
+_ADDR = const(0x28)  # default I2C address (COM3 low; 0x29 when high)
 _REG_CHIP_ID = const(0x00)  # = 0xA0
 _REG_OPR_MODE = const(0x3D)  # operating mode
 _REG_PWR_MODE = const(0x3E)  # power mode
@@ -58,11 +59,11 @@ class Bno055(task.Task):
         if spec is None:
             return False
         self._bus = i2cbus.get(bus_id, spec)
-        self._addr: int = self.config.get('addr', 0x28)
+        self._addr: int = self.config.get('addr', _ADDR)
         self._period_ms: int = self.config.get('period_ms', 20)  # 50 Hz (fusion runs at 100 Hz)
         self._buf = bytearray(24)  # ACC..EUL block
         try:
-            if (await self._bus.read(self._addr, _REG_CHIP_ID, 1))[0] != _CHIP_ID:
+            if await self._bus.read_chip_id(self._addr, _REG_CHIP_ID) != _CHIP_ID:
                 return False  # not a BNO055 at this address
             await self._bus.write(self._addr, _REG_OPR_MODE, bytes([_MODE_CONFIG]))
             await asyncio.sleep_ms(25)  # mode switch settle
@@ -127,7 +128,7 @@ class Bno055(task.Task):
         """
         try:
             recorder.Recorder.log(self.name, 'probe: chip id ...')
-            chip = (await self._bus.read(self._addr, _REG_CHIP_ID, 1))[0]
+            chip = await self._bus.read_chip_id(self._addr, _REG_CHIP_ID)
             if chip != _CHIP_ID:
                 raise ValueError('BNO055 id 0x%02x != 0x%02x at i2c:%s 0x%02x' % (
                     chip, _CHIP_ID, self.config.get('id'), self._addr))

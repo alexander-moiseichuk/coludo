@@ -53,30 +53,38 @@ class GovernorConfig:
     """
 
     def __init__(self, config: dict):
-        # DISTANCE-CONSTANT throttle: the estimator updates at clamp(speed, floor, ceiling) Hz --
-        # one update per ~1 m of TRAVEL at any speed (probed 1..60 m/s: exactly 1.00 m/check across
-        # the whole 5..50 band). The floor bounds time-staleness near stall (200 ms where q is
-        # harmless); the ceiling caps the float-path leak at speed (20 ms, 1.0-1.2 m/check past 50).
-        # Precomputed ONCE as an interval table indexed by integer m/s -- the exact mirror of
-        # commons.fin_deflection_limit (no per-update division on the hot path).
+        """
+        DISTANCE-CONSTANT throttle: the estimator updates at clamp(speed, floor, ceiling) Hz --
+        one update per ~1 m of TRAVEL at any speed (probed 1..60 m/s: exactly 1.00 m/check across
+        the whole 5..50 band). The floor bounds time-staleness near stall (200 ms where q is
+        harmless); the ceiling caps the float-path leak at speed (20 ms, 1.0-1.2 m/check past 50).
+        Precomputed ONCE as an interval table indexed by integer m/s -- the exact mirror of
+        commons.fin_deflection_limit (no per-update division on the hot path).
+        """
         self.floor_hz: int = config.get('airspeed_floor_hz', 5)
         self.ceiling_hz: int = config.get('airspeed_ceiling_hz', 50)
         self._interval_by_speed: tuple = tuple(
             1.0 / min(self.ceiling_hz, max(self.floor_hz, speed)) for speed in range(_SPEED_MAX + 1))
-        # PROACTIVE full-rate override: a steep nose-down builds speed FAST and would outrun even the
-        # self-scaling interval (it derives from the LAST estimate), so a dive (fresh pitch,
-        # centidegree fixnum) forces full rate at once -- a LEADING indicator.
+        """
+        PROACTIVE full-rate override: a steep nose-down builds speed FAST and would outrun even the
+        self-scaling interval (it derives from the LAST estimate), so a dive (fresh pitch,
+        centidegree fixnum) forces full rate at once -- a LEADING indicator.
+        """
         self.dive_pitch: fixnum = fixed.from_float(config.get('airspeed_dive_pitch', -45.0))
-        # GNSS reports 2D GROUND speed: near-vertical flight (the boost climb, a steep dive) makes it
-        # under-read true airspeed, and blending an under-read LOOSENS the fin cap exactly at high q --
-        # the unsafe direction. At/steeper than this |pitch| the corrector is gated OFF (the integrator
-        # flies alone, over-read biased = safe). HITL masks this (it publishes 3D total speed); the
-        # real ATGM336H does not, so the gate is attitude-truth, not stage-truth.
+        """
+        GNSS reports 2D GROUND speed: near-vertical flight (the boost climb, a steep dive) makes it
+        under-read true airspeed, and blending an under-read LOOSENS the fin cap exactly at high q --
+        the unsafe direction. At/steeper than this |pitch| the corrector is gated OFF (the integrator
+        flies alone, over-read biased = safe). HITL masks this (it publishes 3D total speed); the
+        real ATGM336H does not, so the gate is attitude-truth, not stage-truth.
+        """
         self.steep_pitch: fixnum = fixed.from_float(config.get('gnss_steep_pitch', 45.0))
-        # a real ground speed differs from airspeed only by the WIND, which is physically bounded: a GNSS
-        # fix whose speed is more than max_wind off the current estimate is a JUMP, not wind -> reject it
-        # (blending a spurious low speed loosens the fin cap, the unsafe direction). Shares the estimator's
-        # `wind` config subtree so the envelope ceiling is set in one place.
+        """
+        a real ground speed differs from airspeed only by the WIND, which is physically bounded: a GNSS
+        fix whose speed is more than max_wind off the current estimate is a JUMP, not wind -> reject it
+        (blending a spurious low speed loosens the fin cap, the unsafe direction). Shares the estimator's
+        `wind` config subtree so the envelope ceiling is set in one place.
+        """
         self.max_wind: float = config.get('wind', {}).get('max_speed', 15.0)
 
     def update_interval(self, speed: float) -> float:

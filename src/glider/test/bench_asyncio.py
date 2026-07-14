@@ -85,12 +85,14 @@ def bench_alloc():
 
 
 def bench_buffer():
-    # FINDING: bytearray/memoryview slice-assignment cost scales with the TOTAL buffer
-    # length, not the slice length -- assigning the same 32-byte slice into ever-larger
-    # buffers gets dramatically slower (the implementation memmoves the tail past the
-    # slice even when source and destination lengths are equal and no resize occurs).
-    # This makes the obvious ring-buffer write `buf[off:off+REC] = rec` O(buffer_size),
-    # i.e. unusable for a large preallocated PSRAM queue. See doc/benches/.
+    """
+    FINDING: bytearray/memoryview slice-assignment cost scales with the TOTAL buffer
+    length, not the slice length -- assigning the same 32-byte slice into ever-larger
+    buffers gets dramatically slower (the implementation memmoves the tail past the
+    slice even when source and destination lengths are equal and no resize occurs).
+    This makes the obvious ring-buffer write `buf[off:off+REC] = rec` O(buffer_size),
+    i.e. unusable for a large preallocated PSRAM queue. See doc/benches/.
+    """
     rec = bytearray(32)
     by_len = {}
     for size in (64, 4096, 65536, 262144):

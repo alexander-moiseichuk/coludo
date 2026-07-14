@@ -38,15 +38,19 @@ _EPOCH_OFFSET: int = 946684800
 
 _FIELDS: tuple = ('launch_id', 'site', 'latitude', 'longitude', 'altitude')
 
-# Default max range (m) from the launch point to any zone point, when the board config omits it. The
-# real value is `max_range_m` in board.config -- it is a glide-range property of the AIRFRAME (a bigger
-# glider reaches farther), so it lives in the board config, not the per-launch mission.
+"""
+Default max range (m) from the launch point to any zone point, when the board config omits it. The real
+value is `max_range_m` in board.config -- it is a glide-range property of the AIRFRAME (a bigger glider
+reaches farther), so it lives in the board config, not the per-launch mission.
+"""
 _DEFAULT_MAX_RANGE_M: float = 200.0
 
-# Default launch site when no launch.config has been set yet: HPRC (Homestead Public Rocketry Club), the
-# documented test pad + landing zone (doc/plan.md, specs/coludo.md, sim_model.HPRC). So a fresh board
-# already has a valid pad + zone for HPRC field tests; the operator overrides it live via `update mission`
-# / `set-config launch` for any other site.
+"""
+Default launch site when no launch.config has been set yet: HPRC (Homestead Public Rocketry Club), the
+documented test pad + landing zone (doc/plan.md, specs/coludo.md, sim_model.HPRC). So a fresh board already
+has a valid pad + zone for HPRC field tests; the operator overrides it live via `update mission` /
+`set-config launch` for any other site.
+"""
 _HPRC_DEFAULT: dict = {
     'site': 'HPRC',
     'latitude': 25.514379,

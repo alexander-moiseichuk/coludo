@@ -29,17 +29,23 @@ class Stage:
     names; `in Stage.STAGES` is an O(1) key check). `NAMES` is the reverse (name->id) so config that
     names stages by string resolves to an id once.
 
+    NULL = 0 is a SENTINEL, not a flight stage: it is what an unwritten NVS checkpoint reads back, so
+    a warm-start knows "no checkpoint saved". The live stages start at SETTING = 1, so any non-zero
+    saved id IS a real stage to recover into. NULL is deliberately kept OUT of STAGES/NAMES -- it is
+    never set_stage()-able and never has an operator name.
+
     Kept here, in the stage machine's own module. flight/sequencer/hitl/led import it from controller
     -- a LIGHT coupling (the module loads fast, no heavy deps pulled just for the enum). It could move
     to commons.py as the shared domain enum to drop even that import, but the gain is marginal versus
     the cross-file churn; revisit only if importing controller solely for Stage ever bites.
     """
 
-    SETTING = const(0)
-    BOOSTING = const(1)
-    GLIDING = const(2)
-    LANDING = const(3)
-    DONE = const(4)
+    NULL = const(0)      # sentinel: no checkpoint saved (unwritten NVS reads 0); never a live stage
+    SETTING = const(1)
+    BOOSTING = const(2)
+    GLIDING = const(3)
+    LANDING = const(4)
+    DONE = const(5)
     STAGES: dict[int, str] = {
         SETTING: 'setting',
         BOOSTING: 'boosting',
@@ -48,6 +54,21 @@ class Stage:
         DONE: 'done',
     }
     NAMES: dict[str, int] = {name: stage_id for stage_id, name in STAGES.items()}
+
+    @staticmethod
+    def active(stage: int) -> bool:
+        """True during the powered boost (BOOSTING only) -- the one active-thrust stage."""
+        return stage == Stage.BOOSTING
+
+    @staticmethod
+    def passive(stage: int) -> bool:
+        """True while gliding unpowered, post-separation (GLIDING..LANDING) -- the boost stack is gone."""
+        return Stage.GLIDING <= stage <= Stage.LANDING
+
+    @staticmethod
+    def airborne(stage: int) -> bool:
+        """True while off the ground -- the union of the active boost and the passive glide."""
+        return Stage.active(stage) or Stage.passive(stage)
 
 
 class Controller(inspector.Inspectable):

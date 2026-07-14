@@ -49,9 +49,8 @@ class RecorderTask(task.Task):
         return None
 
     def inspect(self) -> dict:
-        status = recorder.Recorder.inspect()
-        status['name'] = self.name
-        status['ok'] = self._ok
+        status = task.Task.inspect(self)
+        status.update(recorder.Recorder.inspect())
         return status
 
     def stats(self) -> dict:

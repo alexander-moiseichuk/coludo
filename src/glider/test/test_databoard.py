@@ -76,9 +76,11 @@ def main():
     handle_a, handle_b = Databoard.parameter('pa', 'pb')  # several -> a tuple in order
     assert handle_a.value() == 1.0 and handle_b.value() == 2.0
 
-    # shared freshness window: the primary (lowest-rank) timeout governs EVERY channel. A backup is
-    # used only while itself that fresh; when it lapses too, the PRIMARY is extrapolated (not the
-    # backup's stale value, which would carry its bias).
+    """
+    shared freshness window: the primary (lowest-rank) timeout governs EVERY channel. A backup is
+    used only while itself that fresh; when it lapses too, the PRIMARY is extrapolated (not the
+    backup's stale value, which would carry its bias).
+    """
     Databoard.provide('pri', {'w': {'priority': 0, 'timeout_ms': 20}})    # primary: tight 20 ms
     Databoard.provide('sec', {'w': {'priority': 1, 'timeout_ms': 5000}})  # backup declares 5 s...
     Databoard.write('w', 10.0, 'pri')

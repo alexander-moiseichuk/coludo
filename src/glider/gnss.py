@@ -134,7 +134,7 @@ class Gnss(task.Task):
         self._ok = True
         return True
 
-    async def _configure(self, hz: int) -> None:
+    async def _configure(self, _unused_hz: int) -> None:
         """Module-specific sentence selection + rate. Default: accept the module's own stream as-is."""
         pass
 

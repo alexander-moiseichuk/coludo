@@ -83,9 +83,11 @@ def test_convert():
 
 
 def test_limits():
-    # The heaviest control-path shapes are a scaled angle (max ±180° -> ±180·SCALE) times another scaled
-    # quantity. Assert the worst case stays a SMALL INT (< 2**30) so nothing promotes to a 16-byte mpz,
-    # and print the margins so the SCALE=100-vs-1000 decision is data-driven.
+    """
+    The heaviest control-path shapes are a scaled angle (max ±180° -> ±180·SCALE) times another scaled
+    quantity. Assert the worst case stays a SMALL INT (< 2**30) so nothing promotes to a 16-byte mpz,
+    and print the margins so the SCALE=100-vs-1000 decision is data-driven.
+    """
     ceiling = 1 << 30  # RV32 small-int limit
     angle = 180 * fixed.SCALE                 # widest scaled angle
     angle_sq = angle * angle                  # scaled × scaled (the heaviest product shape)

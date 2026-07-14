@@ -26,6 +26,7 @@ except ImportError:  # CPython (tooling / off-board checks)
     from commons import const
 
 
+_ADDR = const(0x76)  # default I2C address (SDO low; 0x77 when high)
 _REG_CHIP_ID = const(0xD0)  # = 0x58 for BMP280
 _REG_CALIB = const(0x88)  # 24 bytes: dig_T1..T3, dig_P1..P9
 _REG_CTRL_MEAS = const(0xF4)
@@ -55,11 +56,11 @@ class Bmp280(task.Task):
         if spec is None:
             return False
         self._bus = i2cbus.get(bus_id, spec)
-        self._addr: int = self.config.get('addr', 0x76)
+        self._addr: int = self.config.get('addr', _ADDR)
         self._period_ms: int = self.config.get('period_ms', 100)  # ~10 Hz (conversion is slow)
         self._buf = bytearray(6)
         try:
-            if (await self._bus.read(self._addr, _REG_CHIP_ID, 1))[0] != _CHIP_ID:
+            if await self._bus.read_chip_id(self._addr, _REG_CHIP_ID) != _CHIP_ID:
                 return False  # not a BMP280 at this address
             cal = await self._bus.read(self._addr, _REG_CALIB, 24)
             # dig_T1 + dig_P1 are unsigned (H), the rest signed (h)
@@ -180,7 +181,7 @@ class Bmp280(task.Task):
         """
         try:
             recorder.Recorder.log(self.name, 'probe: chip id ...')
-            chip = (await self._bus.read(self._addr, _REG_CHIP_ID, 1))[0]
+            chip = await self._bus.read_chip_id(self._addr, _REG_CHIP_ID)
             if chip != _CHIP_ID:
                 raise ValueError('BMP280 id 0x%02x != 0x%02x at i2c:%s 0x%02x' % (
                     chip, _CHIP_ID, self.config.get('id'), self._addr))
@@ -220,8 +221,9 @@ class Bmp280(task.Task):
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)  # our channels' latest (no hot-path I2C here)
-        status['altitude_m'] = self._altitude.value()
-        status['temperature_c'] = self._temperature.value()
-        status['pressure_pa'] = self._pressure.value()
-        status['elevation_m'] = self._elevation.value()
+        status.update({'addr': hex(self._addr),
+                       'altitude_m': self._altitude.value(),
+                       'temperature_c': self._temperature.value(),
+                       'pressure_pa': self._pressure.value(),
+                       'elevation_m': self._elevation.value()})
         return status

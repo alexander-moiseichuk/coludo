@@ -209,9 +209,11 @@ def test_launch_point_from_gnss():
 
 
 def test_sites_and_fallback():
-    # CC-less site selection (specs/coludo.md "Field operation without CC"): sites parse (invalid
-    # entries dropped), the nearest in-range pad wins, none in range -> None; the fallback zone is
-    # centred offset_m from the fix at bearing_deg and adopted as the mission zone.
+    """
+    CC-less site selection (specs/coludo.md "Field operation without CC"): sites parse (invalid
+    entries dropped), the nearest in-range pad wins, none in range -> None; the fallback zone is
+    centred offset_m from the fix at bearing_deg and adopted as the mission zone.
+    """
     _cleanup()
     with open(PATH, 'w') as f:
         f.write(json.dumps({'sites': [

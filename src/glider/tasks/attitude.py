@@ -109,9 +109,11 @@ class Attitude(task.Task):
             pitch_d = rate[1] * dt_ms // 1000
             yaw_d = rate[2] * dt_ms // 1000
             turning = abs(rate[2]) > self._turn_gate  # |yaw rate| -> coordinated-turn detector
-        # yaw: gyro-integrate (wrapped), then pull toward the GNSS ground track when moving -- an
-        # ABSOLUTE reference that bounds the gyro drift (no magnetometer), and it is the TRACK, which is
-        # what the nav steers by anyway. Weak blend (course_shift) so a crosswind crab averages out.
+        """
+        yaw: gyro-integrate (wrapped), then pull toward the GNSS ground track when moving -- an ABSOLUTE
+        reference that bounds the gyro drift (no magnetometer), and it is the TRACK, which is what the nav
+        steers by anyway. Weak blend (course_shift) so a crosswind crab averages out.
+        """
         self._yaw_cd = (self._yaw_cd + yaw_d) % 36000
         course = self._course.value()
         speed = self._speed.value()
@@ -163,7 +165,7 @@ class Attitude(task.Task):
             self._roll_cd = ((self._roll_cd + 18000) % 36000) - 18000   # wrap to (-180, 180] cd
             self._pitch_cd = ((self._pitch_cd + 18000) % 36000) - 18000
             self._yaw_cd %= 36000                                        # heading to [0, 360) cd
-            self._attitude.push((self._yaw_cd / 100.0, self._roll_cd, self._pitch_cd))  # heading float; r/p fixnum
+            self._attitude.push((fixed.to_float(self._yaw_cd), self._roll_cd, self._pitch_cd))  # heading float; r/p cd
 
     async def probe(self) -> str:
         """
@@ -187,9 +189,11 @@ class Attitude(task.Task):
     """Inspectable: the operator-facing backup-attitude snapshot (inspect/stats)."""
 
     def inspect(self) -> dict:
-        return {'name': self.name, 'free_running': self._free, 'seeded': self._seeded,
-                'roll': fixed.to_str(self._roll_cd), 'pitch': fixed.to_str(self._pitch_cd),
-                'heading': fixed.to_str(self._yaw_cd)}
+        status = task.Task.inspect(self)
+        status.update({'free_running': self._free, 'seeded': self._seeded,
+                       'roll': fixed.to_str(self._roll_cd), 'pitch': fixed.to_str(self._pitch_cd),
+                       'heading': fixed.to_str(self._yaw_cd)})
+        return status
 
     def stats(self) -> dict:
         return self.inspect()

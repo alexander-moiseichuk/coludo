@@ -81,10 +81,12 @@ class Pid:
         integral = clamp(-self.integral_limit, self._integral + error * dt_ms // 1000, self.integral_limit)
         self._integral = integral
         if rate is not None:
-            # DERIVATIVE-ON-MEASUREMENT: the gyro's angular rate (SCALE-deg/s), used directly. For a
-            # constant setpoint d(error)/dt = -d(measured)/dt, so the D term is -rate -- but the gyro is
-            # far cleaner than differentiating a customer-level attitude signal, and it has no derivative
-            # kick when the setpoint steps. Always valid, so no first-step guard.
+            """
+            DERIVATIVE-ON-MEASUREMENT: the gyro's angular rate (SCALE-deg/s), used directly. For a
+            constant setpoint d(error)/dt = -d(measured)/dt, so the D term is -rate -- but the gyro is
+            far cleaner than differentiating a customer-level attitude signal, and it has no derivative
+            kick when the setpoint steps. Always valid, so no first-step guard.
+            """
             derivative = -rate
         elif self._previous is None or dt_ms <= 0:  # no gyro -> derivative on error; skip the first step
             derivative = 0

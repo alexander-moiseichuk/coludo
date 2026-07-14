@@ -32,18 +32,22 @@ class Mixer:
     def __init__(self, config: dict = None):
         config = config or {}
         self.neutral: int = config.get('neutral_deg', SERVO_NEUTRAL_DEG)
-        # max control deflection from neutral, per surface. OWNERSHIP: config only seeds the pre-flight
-        # value -- in flight the Governor OWNS it (rewrites it every update, ∝ 1/v² of airspeed) and
-        # mix()/actuate() read it. Nothing else may write it: a "configurable limit" would silently
-        # fight the dynamic-pressure governor.
+        """
+        max control deflection from neutral, per surface. OWNERSHIP: config only seeds the pre-flight
+        value -- in flight the Governor OWNS it (rewrites it every update, ∝ 1/v² of airspeed) and
+        mix()/actuate() read it. Nothing else may write it: a "configurable limit" would silently
+        fight the dynamic-pressure governor.
+        """
         self.limit: int = config.get('limit_deg', 45)
         self.surfaces: dict = config.get('surfaces', _DEFAULT_SURFACES)
         self.trim: dict = config.get('trim', {})  # per-fin neutral offset (deg)
-        # (zero-alloc hot path): pre-resolve each surface to (name, base, roll_gain, pitch_gain,
-        # yaw_gain) where base = neutral + trim, and pre-allocate the output dict ONCE. mix() then runs
-        # at 100 Hz with NO per-call allocation -- it rewrites the shared `_out` in place (the nested
-        # axis-dict + per-axis `.get()` of the old version are gone). Under the GC-disabled-in-flight
-        # policy (coludo.md) this keeps the glide from churning the heap.
+        """
+        (zero-alloc hot path): pre-resolve each surface to (name, base, roll_gain, pitch_gain,
+        yaw_gain) where base = neutral + trim, and pre-allocate the output dict ONCE. mix() then runs
+        at 100 Hz with NO per-call allocation -- it rewrites the shared `_out` in place (the nested
+        axis-dict + per-axis `.get()` of the old version are gone). Under the GC-disabled-in-flight
+        policy (coludo.md) this keeps the glide from churning the heap.
+        """
         self._surfaces: list = [(name, int(self.neutral + self.trim.get(name, 0)),
                                  gains.get('roll', 0), gains.get('pitch', 0), gains.get('yaw', 0))
                                 for name, gains in self.surfaces.items()]
