@@ -27,6 +27,7 @@ except ImportError:  # CPython (tooling / off-board checks)
     from commons import const
 
 
+_ADDR = const(0x63)  # the fixed I2C address
 _CMD_ID = b'\xef\xc8'  # read product id -> (word & 0x3f) == 0x08 for ICP-101xx
 _GENERAL_CALL_RESET = b'\x06'  # I2C general-call reset (to addr 0x00): reaches a wedged core
 _CMD_OTP_UNLOCK = b'\xc5\x95\x00\x66\x9c'  # unlock OTP, then 4x read
@@ -63,7 +64,7 @@ class Icp10111(task.Task):
         if spec is None:
             return False
         self._bus = i2cbus.get(bus_id, spec)
-        self._addr: int = self.config.get('addr', 0x63)
+        self._addr: int = self.config.get('addr', _ADDR)
         self._period_ms: int = self.config.get('period_ms', 100)  # ~10 Hz
         # OSError(19) hardening (measured after the 7/06 OOM-soak panic): a mid-conversion
         # sensor NAKs until the conversion drains, and an unclean reboot can LATCH the digital

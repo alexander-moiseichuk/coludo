@@ -37,6 +37,7 @@ except ImportError:  # host (CPython): board-only; the INT1 pin is wired only on
     Pin = None
 
 
+_ADDR = const(0x53)  # default I2C address (SDO low; 0x1D when high)
 _REG_DEVID = const(0x00)  # reads 0xE5 on the whole ADXL34x/375 family
 _REG_BW_RATE = const(0x2C)  # output data rate
 _REG_POWER_CTL = const(0x2D)  # measure bit = 0x08
@@ -103,7 +104,7 @@ class Adxl375(task.Task):
         if kind == 'spi':
             cs = self._pin_gpio('cs_pin')
             return spibus.get(bus_id, spec).device(cs) if cs is not None else None
-        return i2cbus.get(bus_id, spec).device(self.config.get('addr', 0x53))
+        return i2cbus.get(bus_id, spec).device(self.config.get('addr', _ADDR))
 
     async def _setup_interrupt(self) -> None:
         """Wire INT1 -> DATA_READY if the component declares an int_pin; else stay poll-only."""
@@ -222,6 +223,6 @@ class Adxl375(task.Task):
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
-        status['interrupt'] = self._int is not None
-        status['accel_g'] = self._accel.value()  # our channel's latest (no hot-path I2C here)
+        status.update({'interrupt': self._int is not None,
+                       'accel_g': self._accel.value()})  # our channel's latest (no hot-path I2C here)
         return status

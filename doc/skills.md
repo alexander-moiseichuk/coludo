@@ -173,6 +173,21 @@ so it must run on both.
   ```python
   """Lifecycle: bring the configured devices up, supervise them, tear them down."""
   ```
+- **A comment block of 3+ consecutive `#` lines is a `"""..."""` block**, not a stack of `#`. Long
+  `#`-per-line prose is hard to read; write it as one triple-quoted string statement placed right
+  before the code it explains (a bare string statement is a no-op — behaviour-neutral). 1–2 line
+  comments stay `#`. The one hard exception is **inside a dict/list literal (or before the imports —
+  ruff E402)**, where a string statement is a syntax error: keep `#` there, or restructure the
+  literal into documented section variables so the prose can be a `"""..."""` block.
+  ```python
+  # BEFORE                                        AFTER
+  # bank-to-turn: GLIDING steers by banking       """
+  # (roll setpoint = gain * heading_error),       bank-to-turn: GLIDING steers by banking (roll
+  # so the turn is tight and orbits the zone.      setpoint = gain * heading_error), so the turn is
+  self._bank = ...                                 tight and orbits the zone.
+                                                   """
+                                                   self._bank = ...
+  ```
 - **No bare cross-reference labels** in code/comments/docstrings — roadmap item numbers (`5.1`,
   `#2`), findings/section IDs (`findings §18`, `1.2.1`), etc. They rot the moment the referenced
   list is renumbered and force a lookup to understand the code. Write the *reason* instead: not

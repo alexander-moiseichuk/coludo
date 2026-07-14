@@ -40,7 +40,8 @@ async def test_basics():
     assert isinstance(vitals['mem_free'], int) and vitals['mem_free'] > 0
     assert isinstance(vitals['load'], int) and 0 <= vitals['load'] <= 100
     assert vitals['rescues'] == 0 and vitals['oom_s'] is None and vitals['land_s'] is None
-    assert set(health.inspect().keys()) == {'temp', 'mem_free', 'load', 'oom_s', 'land_s', 'rescues'}
+    assert set(health.inspect().keys()) == {'name', 'ok', 'healthy',  # the common Task.inspect base
+                                            'temp', 'mem_free', 'load', 'oom_s', 'land_s', 'rescues'}
 
     # the FIRST telemetry row lands at startup -- not one period late
     runner = asyncio.create_task(health.run())

@@ -257,7 +257,9 @@ class BoardHealth(task.Task):
     """Inspectable: the operator-facing vitals snapshot (inspect/stats)."""
 
     def inspect(self) -> dict:
-        return self.sample()
+        status = task.Task.inspect(self)
+        status.update(self.sample())
+        return status
 
     def stats(self) -> dict:
         return self.sample()

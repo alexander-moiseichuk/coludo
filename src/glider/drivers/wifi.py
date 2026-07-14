@@ -274,13 +274,16 @@ class Wifi(task.Task):
 
     """Inspectable: operator-facing view (inspect), live tuning (update), compact status (stats)."""
     def inspect(self) -> dict:
-        return {
-            'ssid': self.ssid,
-            'tx_power': self.tx_power,
+        status = task.Task.inspect(self)
+        status.update({
+            'ssid': self.ssid,  # the network we are on (or last tried)
             'connected': self.isconnected(),
-            'rssi': self.rssi(),
             'ip': self.ip(),
-        }
+            'rssi': self.rssi(),
+            'tx_power': self.tx_power,
+            'networks': [network.get('ssid') for network in self._networks],  # all configured, in order
+        })
+        return status
 
     def update(self, props: dict) -> list:
         changed = []

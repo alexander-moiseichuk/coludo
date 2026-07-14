@@ -34,6 +34,7 @@ except ImportError:  # host (CPython): board-only; the ALERT pin is wired only o
     Pin = None
 
 
+_ADDR = const(0x40)  # default I2C address (A1=A0=GND)
 _REG_CONFIG = const(0x00)
 _REG_BUS_V = const(0x02)    # u16, 1.25 mV/LSB
 _REG_POWER = const(0x03)    # u16, Power_LSB = 25 * Current_LSB
@@ -75,7 +76,7 @@ class Ina226(task.Task):
         if spec is None:
             return False
         self._bus = i2cbus.get(bus_id, spec)
-        self._addr: int = self.config.get('addr', 0x40)
+        self._addr: int = self.config.get('addr', _ADDR)
         self._period_ms: int = self.config.get('period_ms', 100)
         shunt_mohms: int = self.config.get('shunt_mohms', 10)  # shunt resistance in milli-ohms (was shunt_ohms)
         self._max_current_ma: int = self.config.get('max_current_ma', 5000)  # full-scale current, mA
