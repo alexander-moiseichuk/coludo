@@ -43,13 +43,14 @@ class BoardHealth(task.Task):
     async def setup(self) -> bool:
         self.period_ms: int = self.config.get('period_ms', 1000)
         self._probe_ms: int = self.config.get('probe_ms', 10)  # idle-probe sleep -> CPU relaxes between probes
-        # all-integer bookkeeping (fixed-point convention): the leak slope is a plain bytes/s count, the
-        # descent slope + elevation are fixnums (m/s, m -- the SCALE-100 centi-representation is internal),
-        # predictions are whole seconds; the float baro elevation converts to a fixnum once, at the boundary.
-        # The rescue's
-        # safe-altitude floor is FULLY DYNAMIC (see _rescue) -- 2x the descent a ~200 ms collect pause
-        # costs, so the pause never sinks the glider to the ground. No fixed/base altitude: the stage gate
-        # already excludes the LANDING flare, and 2x keeps the glider ~200 ms clear of the ground after.
+        """
+        all-integer bookkeeping (fixed-point convention): the leak slope is a plain bytes/s count, the
+        descent slope + elevation are fixnums (m/s, m -- the SCALE-100 centi-representation is internal),
+        predictions are whole seconds; the float baro elevation converts to a fixnum once, at the boundary.
+        The rescue's safe-altitude floor is FULLY DYNAMIC (see _rescue) -- 2x the descent a ~200 ms collect
+        pause costs, so the pause never sinks the glider to the ground. No fixed/base altitude: the stage
+        gate already excludes the LANDING flare, and 2x keeps the glider ~200 ms clear of the ground after.
+        """
         self._rescue_on: bool = self.config.get('rescue', True)  # explicit off for memory-behaviour tests
         self._elevation = databoard.Databoard.parameter('elevation')  # rescue safety gate (baro height)
         self.load: int = 0  # CPU load as an integer percent 0..100 (from probe wake-up lateness)
@@ -163,9 +164,11 @@ class BoardHealth(task.Task):
             return  # the rescue is disabled (config)
         if elevation is None:
             return  # safe altitude must be PROVEN, not assumed
-        # DYNAMIC floor, no base: 2x the descent the ~pause would cost. A faster sink needs more headroom,
-        # and doubling a pause estimate that is ALREADY conservative (typical collect ~67 ms) leaves the
-        # glider ~200 ms clear of the ground after the collect. The stage gate excludes the LANDING flare.
+        """
+        DYNAMIC floor, no base: 2x the descent the ~pause would cost. A faster sink needs more headroom,
+        and doubling a pause estimate that is ALREADY conservative (typical collect ~67 ms) leaves the
+        glider ~200 ms clear of the ground after the collect. The stage gate excludes the LANDING flare.
+        """
         floor = self._descent * 2 * _RESCUE_PAUSE_MS // 1000  # fixnum m: same SCALE as the elevation below
         if fixed.from_float(elevation) <= floor:  # elevation (m) -> fixnum at the boundary, then compare
             return

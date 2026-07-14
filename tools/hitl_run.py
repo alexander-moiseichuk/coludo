@@ -32,9 +32,11 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
     launch = mission.Mission(max_range_m=200)
     cfg = config_hitl.default(motor, noise, spike, wind, wind_dir, glider_g=glider_g, inject_hz=inject_hz)
     if no_cc:
-        # the CC-less scenario: an UNKNOWN field -- no operator zone, no launch point, no known
-        # sites. The REAL field agent must synthesize the spiral-landing fallback zone from the sim
-        # GNSS fix; the fast tick gives it a decision inside the short pre-ignition SETTING.
+        """
+        the CC-less scenario: an UNKNOWN field -- no operator zone, no launch point, no known
+        sites. The REAL field agent must synthesize the spiral-landing fallback zone from the sim
+        GNSS fix; the fast tick gives it a decision inside the short pre-ignition SETTING.
+        """
         launch.zone = None
         launch.sites = []
         launch.latitude = launch.longitude = None
@@ -70,9 +72,11 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
                 import random
                 gnss_drop_at_ms = time.ticks_add(time.ticks_ms(), int((2.0 + random.random() * 4.0) * 1000))
             if stage == stages.GLIDING and reboot_s > 0 and not rebooted:
-                # a RANDOM early-to-mid-glide moment (never LANDING: too little altitude to prove
-                # anything but luck). A boost-phase reset is NON-restorable by design -- the
-                # separation latch reads nested -- so the restorable window starts here.
+                """
+                a RANDOM early-to-mid-glide moment (never LANDING: too little altitude to prove
+                anything but luck). A boost-phase reset is NON-restorable by design -- the
+                separation latch reads nested -- so the restorable window starts here.
+                """
                 import random
                 reboot_at_ms = time.ticks_add(time.ticks_ms(), int((1.0 + random.random() * 5.0) * 1000))
             if stage == stages.GLIDING and attitude_drop_s > 0 and not dropped:

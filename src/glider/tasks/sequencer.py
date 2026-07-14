@@ -66,32 +66,40 @@ class Sequencer(task.Task):
         self._launch_alt_m: float = cfg.get('launch_alt_m', 10.0)  # OR-trigger: clearly climbed off the pad
         self._boost_timeout_ms: int = cfg.get('boost_timeout_ms', 6000)
         self._apogee_drop_m: float = cfg.get('apogee_drop_m', 5.0)  # baro fall below its peak -> deploy at apogee
-        # the apogee detector ARMS this long after BOOSTING entry: the motor exhaust
-        # pressure wave can spike/dip the in-airframe baro DURING BURN -- an unarmed detector could
-        # either fire GLIDING while still under thrust (wings folded, fins steering the stack) or
-        # poison the peak tracker with a spike the real apogee never reads 5 m below. Default covers
-        # the longest motor burn (F15 3.45 s) + margin; the burnout timeout keeps running regardless.
+        """
+        the apogee detector ARMS this long after BOOSTING entry: the motor exhaust pressure wave can
+        spike/dip the in-airframe baro DURING BURN -- an unarmed detector could either fire GLIDING while
+        still under thrust (wings folded, fins steering the stack) or poison the peak tracker with a spike
+        the real apogee never reads 5 m below. Default covers the longest motor burn (F15 3.45 s) + margin;
+        the burnout timeout keeps running regardless.
+        """
         self._apogee_arm_ms: int = cfg.get('apogee_arm_ms', 4000)
-        # the RSO backstop: with every landing sensor dead (baro + laser + accel) the
-        # glider would circle in GLIDING until the battery dies. This bounds ANY flight: this long
-        # after BOOSTING entry the stage forces DONE (GC re-enable + neutral fins -- at 5 min default,
-        # long after any physically possible TMS flight has ended).
+        """
+        the RSO backstop: with every landing sensor dead (baro + laser + accel) the glider would circle in
+        GLIDING until the battery dies. This bounds ANY flight: this long after BOOSTING entry the stage
+        forces DONE (GC re-enable + neutral fins -- at 5 min default, long after any physically possible
+        TMS flight has ended).
+        """
         self._flight_timeout_ms: int = cfg.get('flight_timeout_ms', 300000)
         self._land_agl_m: float = cfg.get('land_agl_m', 5.0)
         self._land_ms: int = cfg.get('land_ms', 300)  # AGL must stay below land_agl_m this long (anti-spike)
         self._still_g: float = cfg.get('still_g', 0.3)
         self._ground_ms: int = cfg.get('ground_ms', 3000)
-        # compare |accel|^2 against squared thresholds so the detect path skips math.sqrt() (only the
-        # rare transition LOG takes the root). The still-band 1 +/- still_g g maps to [lo, hi] in g^2
-        # (assumes still_g < 1, which it always is -- it is a tolerance around 1 g).
+        """
+        compare |accel|^2 against squared thresholds so the detect path skips math.sqrt() (only the rare
+        transition LOG takes the root). The still-band 1 +/- still_g g maps to [lo, hi] in g^2 (assumes
+        still_g < 1, which it always is -- it is a tolerance around 1 g).
+        """
         self._launch_g_sq: float = self._launch_g * self._launch_g
         self._still_lo_sq: float = (1.0 - self._still_g) ** 2 if self._still_g < 1.0 else 0.0
         self._still_hi_sq: float = (1.0 + self._still_g) ** 2
-        # (coludo.md GC policy): compact the heap at launch and DISABLE GC while airborne, so no GC
-        # pause (0.3 ms clean .. tens of ms on a full heap) can blow a 100 Hz control slice; re-enable at
-        # touchdown. Safe only because the hot paths are near-zero-alloc (mixer, nav cache) and the
-        # ~12 MB PSRAM absorbs the rest of the flight -- verified by a HITL heap soak. disable_gc_flight False
-        # keeps GC on (ground tests, and the unit test below).
+        """
+        (coludo.md GC policy): compact the heap at launch and DISABLE GC while airborne, so no GC pause
+        (0.3 ms clean .. tens of ms on a full heap) can blow a 100 Hz control slice; re-enable at
+        touchdown. Safe only because the hot paths are near-zero-alloc (mixer, nav cache) and the ~12 MB
+        PSRAM absorbs the rest of the flight -- verified by a HITL heap soak. disable_gc_flight False keeps
+        GC on (ground tests, and the unit test below).
+        """
         self._disable_gc_flight: bool = cfg.get('disable_gc_flight', True)
         self._accel = databoard.Databoard.parameter('accel')
         self._agl = databoard.Databoard.parameter('agl')
@@ -236,9 +244,10 @@ class Sequencer(task.Task):
             self._since = None
             self._stage_seen = stage
             if stage != self._advanced_to:  # EXTERNAL move (separation driver / operator command):
-                # record it in sequencer.csv too -- post-flight tooling keeps ONE
-                # stage-event source instead of cross-referencing separation.csv (which the field
-                # capture pull may not even fetch).
+                """
+                record it in sequencer.csv too -- post-flight tooling keeps ONE stage-event source instead
+                of cross-referencing separation.csv (which the field capture pull may not even fetch).
+                """
                 self._telemetry.push((_STAGE.STAGES.get(stage, str(stage)), 'external'))
             self._advanced_to = None
             if stage == _STAGE.BOOSTING:  # start apogee peak-tracking fresh for this flight
@@ -246,9 +255,11 @@ class Sequencer(task.Task):
                 self._apogee_since = None
                 self._boost_entry_ms = now  # arms the apogee detector + starts the flight timeout
             elif self._boost_entry_ms is None and (stage == _STAGE.GLIDING or stage == _STAGE.LANDING):
-                # jumped straight into an airborne stage without ever seeing BOOSTING (a warm start,
-                # or an external/operator move): base the RSO flight timeout HERE so it still bounds
-                # the restored flight (spec: the backstop re-bases, it never disappears).
+                """
+                jumped straight into an airborne stage without ever seeing BOOSTING (a warm start, or an
+                external/operator move): base the RSO flight timeout HERE so it still bounds the restored
+                flight (spec: the backstop re-bases, it never disappears).
+                """
                 self._boost_entry_ms = now
         # the RSO backstop: any airborne stage this long after BOOSTING entry forces DONE
         if self._boost_entry_ms is not None and stage != _STAGE.DONE \

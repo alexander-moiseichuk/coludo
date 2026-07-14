@@ -24,9 +24,11 @@ async def amain():
     no_bus = icp10111.Icp10111('baro', {'bus': 'i2c', 'id': 9}, _StubController())
     assert await no_bus.setup() is False and not no_bus.validate()
 
-    # a real bus but a bogus address (nothing acks) -> graceful False (Controller would skip it).
-    # This also walks the soft-reset preamble's never-acks exit (4 tries over ~90 ms -- the busy
-    # window a mid-conversion sensor NAKs through after an unclean reboot, OSError 19).
+    """
+    a real bus but a bogus address (nothing acks) -> graceful False (Controller would skip it).
+    This also walks the soft-reset preamble's never-acks exit (4 tries over ~90 ms -- the busy
+    window a mid-conversion sensor NAKs through after an unclean reboot, OSError 19).
+    """
     absent = icp10111.Icp10111('baro', {'bus': 'i2c', 'id': 0, 'addr': 0x7F}, _StubController())
     assert await absent.setup() is False
 

@@ -135,10 +135,12 @@ async def breakdown():
     step_us = _per_call(task._step)
     pid_us = _per_call(lambda: task._run_pid(roll_cd, pitch_cd, 10))
     nav_us = _per_call(lambda: navigation.steer(position, corner_tl, corner_br))
-    # decompose _run_pid: is the cost the VIPERIZABLE integer PID arithmetic, or the databoard read /
-    # dict ops around it? Time each piece _run_pid runs (one pid.step, the 3-axis PID, mix, rate read, apply)
-    # sub-ops are tens of us -- smaller than the timing harness's per-call overhead -- so amortize it
-    # (_per_op runs each 50x per sample). Precompute args: no float box / tuple alloc inside the timed body.
+    """
+    decompose _run_pid: is the cost the VIPERIZABLE integer PID arithmetic, or the databoard read /
+    dict ops around it? Time each piece _run_pid runs (one pid.step, the 3-axis PID, mix, rate read, apply)
+    sub-ops are tens of us -- smaller than the timing harness's per-call overhead -- so amortize it
+    (_per_op runs each 50x per sample). Precompute args: no float box / tuple alloc inside the timed body.
+    """
     err, rate_arg = roll_cd - fixed.from_float(2.0), fixed.from_float(2.0)
     roll_pid, pitch_pid, yaw_pid = task._pid['roll'], task._pid['pitch'], task._pid['yaw']
     one_step_us = _per_op(lambda: roll_pid.step(err, 10, rate_arg))
@@ -165,9 +167,11 @@ async def breakdown():
     print('    rate.value (databoard) : %7.1f us' % rate_us)
     print('    mixer.actuate (fused)  : %7.1f us  (vs old mix->dict->apply; mix alone %.1f us)' %
           (actuate_us, mix_us))
-    # viper verdict: viper can only speed pid.step's integer ARITHMETIC, not the Python method/attr/clamp
-    # overhead, the fused actuate loop, or the databoard read. So its ceiling is a fraction of the 3x
-    # pid.step slice. And a step is a small part of the 100 Hz budget -> headroom, not a deadline.
+    """
+    viper verdict: viper can only speed pid.step's integer ARITHMETIC, not the Python method/attr/clamp
+    overhead, the fused actuate loop, or the databoard read. So its ceiling is a fraction of the 3x
+    pid.step slice. And a step is a small part of the 100 Hz budget -> headroom, not a deadline.
+    """
     budget_us = 10000  # 100 Hz
     print('  -- viper #6 verdict --')
     print('    3x pid.step = %.0f%% of a step; a step = %.1f%% of the 100 Hz budget (%d us)' %
@@ -199,10 +203,12 @@ async def alloc():
         gc.enable()
         return used / n
 
-    # per-CALL component costs (each measured in isolation). The tight GC-off loop runs _step back-to-back
-    # (dt ~ us), so the glide airspeed THROTTLE almost never fires here -- measuring per_step directly would
-    # over-state the win. Instead measure a base step with the governor's update forced off, then amortize
-    # it by its REAL glide cadence (the adaptive interval) against the control rate -- the honest flight leak.
+    """
+    per-CALL component costs (each measured in isolation). The tight GC-off loop runs _step back-to-back
+    (dt ~ us), so the glide airspeed THROTTLE almost never fires here -- measuring per_step directly would
+    over-state the win. Instead measure a base step with the governor's update forced off, then amortize
+    it by its REAL glide cadence (the adaptive interval) against the control rate -- the honest flight leak.
+    """
     task._guidance.enter(100.0, 0, 0)  # the first-entry capture a real run does; guidance needs the hold
     air_b = _alloc(lambda: task._governor._update(task._dt, 0))  # shallow pitch: GNSS corrector active
     glide_setpoint = task._guidance.setpoint(Stage.GLIDING)
@@ -213,9 +219,11 @@ async def alloc():
     base_step = _alloc(task._step)
     gc.collect()
     free = gc.mem_free()
-    # the glide throttle is DISTANCE-CONSTANT: clamp(speed, floor, ceiling) Hz = ~1 m of travel per
-    # update. Read the intervals off the governor's config so this tracks the configured defaults;
-    # report the ceiling (worst case, >= 50 m/s dive) and the glide-trim rate (~14 m/s).
+    """
+    the glide throttle is DISTANCE-CONSTANT: clamp(speed, floor, ceiling) Hz = ~1 m of travel per
+    update. Read the intervals off the governor's config so this tracks the configured defaults;
+    report the ceiling (worst case, >= 50 m/s dive) and the glide-trim rate (~14 m/s).
+    """
     air_hz_fast = task._governor._config.ceiling_hz             # >= ceiling m/s: the worst-case rate
     air_hz_settled = 1.0 / task._governor._config.update_interval(14.0)  # glide trim ~14 m/s
     print('\nreal control-path leak (GC off, %d steps) -- glide phase:' % 2000)
@@ -233,10 +241,12 @@ async def alloc():
 
 
 async def main():
-    # big freshness window: the alloc probe runs a tight GC-off loop where the async pusher can't be
-    # scheduled -- with a short timeout the channels would go stale and value() would hit the float-boxing
-    # _extrapolate fallback (a measurement artifact). In real flight concurrent tasks keep them fresh, so a
-    # wide window reproduces the fresh (zero-alloc-databoard) path the flight actually runs.
+    """
+    big freshness window: the alloc probe runs a tight GC-off loop where the async pusher can't be
+    scheduled -- with a short timeout the channels would go stale and value() would hit the float-boxing
+    _extrapolate fallback (a measurement artifact). In real flight concurrent tasks keep them fresh, so a
+    wide window reproduces the fresh (zero-alloc-databoard) path the flight actually runs.
+    """
     ch = databoard.Databoard.provide('imu', {
         'attitude': {'priority': 0, 'timeout_ms': 30000}, 'rate': {'priority': 0, 'timeout_ms': 30000},
         'accel': {'priority': 0, 'timeout_ms': 30000}, 'speed': {'priority': 0, 'timeout_ms': 30000},

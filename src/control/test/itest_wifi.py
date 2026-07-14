@@ -23,9 +23,11 @@ import server  # noqa: E402
 PORT_DEV = os.environ.get('PORT_DEV', '/dev/ttyACM0')
 BOARD_SCRIPT = '/tmp/coludo_board_probe.py'
 
-# Runs on the board: bring the Wi-Fi task up, dial the gateway (= Control host) and serve the
-# protocol. Uses the real wifi driver (drivers/wifi.py) but dials the gateway directly so the test
-# works on any network regardless of the configured cc_host.
+"""
+Runs on the board: bring the Wi-Fi task up, dial the gateway (= Control host) and serve the
+protocol. Uses the real wifi driver (drivers/wifi.py) but dials the gateway directly so the test
+works on any network regardless of the configured cc_host.
+"""
 BOARD_SRC = """
 import asyncio
 import cc_client

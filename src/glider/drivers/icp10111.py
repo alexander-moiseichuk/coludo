@@ -66,15 +66,15 @@ class Icp10111(task.Task):
         self._bus = i2cbus.get(bus_id, spec)
         self._addr: int = self.config.get('addr', _ADDR)
         self._period_ms: int = self.config.get('period_ms', 100)  # ~10 Hz
-        # OSError(19) hardening (measured after the 7/06 OOM-soak panic): a mid-conversion
-        # sensor NAKs until the conversion drains, and an unclean reboot can LATCH the digital
-        # core -- the address still acks (scan sees 0x63) but every command NAKs. The addressed
-        # soft reset (0x805d) RE-WEDGED the latched bench part; the I2C GENERAL-CALL reset
-        # (0x00 0x06) fully recovered it (5/5 measures after). So: touch the part plainly (a
-        # clean boot never needs a reset), drain a possible busy window on the first NAK, and
-        # only from the second NAK fire the general call. It also resets peers that honour it
-        # (bmp280, ina226) -- acceptable: they re-apply their config-declared state when set up
-        # after us, and it fires only when the PRIMARY baro would otherwise be lost.
+        """OSError(19) hardening (measured after the 7/06 OOM-soak panic): a mid-conversion
+        sensor NAKs until the conversion drains, and an unclean reboot can LATCH the digital
+        core -- the address still acks (scan sees 0x63) but every command NAKs. The addressed
+        soft reset (0x805d) RE-WEDGED the latched bench part; the I2C GENERAL-CALL reset
+        (0x00 0x06) fully recovered it (5/5 measures after). So: touch the part plainly (a
+        clean boot never needs a reset), drain a possible busy window on the first NAK, and
+        only from the second NAK fire the general call. It also resets peers that honour it
+        (bmp280, ina226) -- acceptable: they re-apply their config-declared state when set up
+        after us, and it fires only when the PRIMARY baro would otherwise be lost."""
         for attempt in range(_RESET_TRIES):
             try:
                 await self._bus.writeto(self._addr, _CMD_ID)

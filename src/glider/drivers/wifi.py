@@ -45,20 +45,20 @@ class Wifi(task.Task):
             Always True, so the run() loop exists to (re)try even when Wi-Fi is slow or absent.
         """
         wifi = self.controller.config.get('wifi', {})
-        # policy (CC-less field ops, specs/coludo.md): 'auto' (default) joins/rejoins on the retry
-        # interval, quiescent while airborne; 'disabled' never touches the radio this session. (Distinct
-        # from the radio 'mode' key, which stays 'sta'.)
+        """policy (CC-less field ops, specs/coludo.md): 'auto' (default) joins/rejoins on the retry
+        interval, quiescent while airborne; 'disabled' never touches the radio this session. (Distinct
+        from the radio 'mode' key, which stays 'sta'.)"""
         self._policy: str = wifi.get('policy', 'auto')
         self.ssid: str = wifi.get('ssid', '')
-        # networks: full per-network configs, each entry ORGANIZED LIKE THE WORKING top-level wifi
-        # section (the proven panda shape, replicated): ssid + optional enabled/policy/retry_ms/
-        # tx_power_dbm/password, every missing key INHERITED from the top level. STA is the ONLY
-        # radio mode -- there is no `mode` knob, the driver hardcodes STA_IF (the validator still
-        # rejects a stray non-'sta' mode key so a typo cannot silently mean nothing). A bare string
-        # is sugar for {'ssid': name}. Per-network `retry_ms` is the MINIMAL time between attempts
-        # of THAT network (its own backoff clock), so a flaky hotspot is polled gently while the
-        # lab AP retries fast. Passwords: <ssid>.creds wins, the entry/top-level `password` is the
-        # fallback. `enabled: false` / policy 'disabled' parks an entry.
+        """networks: full per-network configs, each entry ORGANIZED LIKE THE WORKING top-level wifi
+        section (the proven panda shape, replicated): ssid + optional enabled/policy/retry_ms/
+        tx_power_dbm/password, every missing key INHERITED from the top level. STA is the ONLY
+        radio mode -- there is no `mode` knob, the driver hardcodes STA_IF (the validator still
+        rejects a stray non-'sta' mode key so a typo cannot silently mean nothing). A bare string
+        is sugar for {'ssid': name}. Per-network `retry_ms` is the MINIMAL time between attempts
+        of THAT network (its own backoff clock), so a flaky hotspot is polled gently while the
+        lab AP retries fast. Passwords: <ssid>.creds wins, the entry/top-level `password` is the
+        fallback. `enabled: false` / policy 'disabled' parks an entry."""
         defaults = {'policy': 'auto', 'enabled': True,
                     'retry_ms': wifi.get('retry_ms', 10000),
                     'tx_power_dbm': wifi.get('tx_power_dbm'),
@@ -165,10 +165,10 @@ class Wifi(task.Task):
                             and network['tx_power_dbm'] != self.tx_power:
                         self.set_tx_power(network['tx_power_dbm'])
                     await self.connect()
-            # CONNECTED -> the hunt stops entirely (no rotation, no attempts): only this status
-            # poll remains, relaxed to 5 s. Hunting keeps the 1 s tick so each network's retry_ms
-            # schedules responsively. A dropped link re-enters the hunt with the backoff clocks
-            # still remembering their last attempts.
+            """CONNECTED -> the hunt stops entirely (no rotation, no attempts): only this status
+            poll remains, relaxed to 5 s. Hunting keeps the 1 s tick so each network's retry_ms
+            schedules responsively. A dropped link re-enters the hunt with the backoff clocks
+            still remembering their last attempts."""
             await asyncio.sleep_ms(5000 if self.isconnected() else 1000)
 
     def _read_password(self, fallback: str) -> str:

@@ -37,9 +37,11 @@ class _StubController:
         self.stage = stage
 
 
-# small thresholds for a fast, deterministic test; disable_gc_flight off here so the stage-logic checks do not
-# also toggle the interpreter's GC (the GC policy has its own focused test below). apogee_arm_ms is
-# tiny so the apogee checks run promptly; the arming window has its own focused test below.
+"""
+small thresholds for a fast, deterministic test; disable_gc_flight off here so the stage-logic checks do not
+also toggle the interpreter's GC (the GC policy has its own focused test below). apogee_arm_ms is
+tiny so the apogee checks run promptly; the arming window has its own focused test below.
+"""
 SPEC = {'period_ms': 10, 'launch_g': 3.0, 'launch_ms': 100, 'boost_timeout_ms': 500,
         'apogee_arm_ms': 50, 'land_agl_m': 5.0, 'land_ms': 100, 'still_g': 0.3, 'ground_ms': 300,
         'disable_gc_flight': False}
@@ -116,9 +118,11 @@ async def amain():
     seq._tick(2110)
     assert ctrl.stage == Stage.BOOSTING
 
-    # apogee detect: in BOOSTING the baro peaks then falls apogee_drop_m (5 m) -> deploy at the TOP of the
-    # arc (mass/motor-independent), before the long burnout-timeout fallback. The detector ARMS
-    # apogee_arm_ms (50 here) after the entry TICK -- a reading inside the window is ignored.
+    """
+    apogee detect: in BOOSTING the baro peaks then falls apogee_drop_m (5 m) -> deploy at the TOP of the
+    arc (mass/motor-independent), before the long burnout-timeout fallback. The detector ARMS
+    apogee_arm_ms (50 here) after the entry TICK -- a reading inside the window is ignored.
+    """
     seq._tick(2120)   # BOOSTING entry seen -> the arming clock starts here
     elevation.push(80.0)
     seq._tick(2140)   # 20 ms in: a burn spike INSIDE the arming window...
@@ -159,9 +163,11 @@ async def amain():
     seq._tick(4000)  # accel + elevation absent -> guarded -> tick does nothing
     assert ctrl.stage == Stage.SETTING  # no crash, no advance
 
-    # apogee ARMING window: the motor exhaust pressure wave corrupts the in-airframe baro
-    # DURING BURN, so the whole detector (peak tracking included) is blind for apogee_arm_ms after
-    # BOOSTING entry -- a burn spike must neither deploy GLIDING under thrust nor poison the peak.
+    """
+    apogee ARMING window: the motor exhaust pressure wave corrupts the in-airframe baro
+    DURING BURN, so the whole detector (peak tracking included) is blind for apogee_arm_ms after
+    BOOSTING entry -- a burn spike must neither deploy GLIDING under thrust nor poison the peak.
+    """
     burn_ctrl = _StubController()
     bseq = sequencer.Sequencer('sequencer', dict(SPEC, apogee_arm_ms=100000), burn_ctrl)
     assert await bseq.setup() is True
@@ -208,9 +214,11 @@ async def amain():
     eseq._tick(10)
     assert eseq._telemetry.rows[-1] == ('gliding', 'test')  # ...is NOT double-logged as external
 
-    # warm-start breadcrumb (specs/coludo.md): an ARMED flight with a zone drops it at BOOSTING and
-    # clears it at DONE; unarmed (passive telemetry) flights never do -- a warm start must not arm
-    # a flight that was never armed. Round-trips the real NVS on the board (no-op on CPython).
+    """
+    warm-start breadcrumb (specs/coludo.md): an ARMED flight with a zone drops it at BOOSTING and
+    clears it at DONE; unarmed (passive telemetry) flights never do -- a warm start must not arm
+    a flight that was never armed. Round-trips the real NVS on the board (no-op on CPython).
+    """
     import warmstart
 
     class _StubMission:

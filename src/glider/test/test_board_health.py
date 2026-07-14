@@ -92,9 +92,11 @@ async def test_load_tracking():
 
 
 async def test_memory_rescue():
-    # the physics-based pre-OOM rescue: collect when the predicted time-to-OOM < 2x the time
-    # left to sink to the ground (land_s), with a PROVEN safe altitude (elevation above the dynamic
-    # floor = 2x the descent a ~200 ms pause costs), in BOOSTING..GLIDING only; no descent -> no rescue.
+    """
+    the physics-based pre-OOM rescue: collect when the predicted time-to-OOM < 2x the time
+    left to sink to the ground (land_s), with a PROVEN safe altitude (elevation above the dynamic
+    floor = 2x the descent a ~200 ms pause costs), in BOOSTING..GLIDING only; no descent -> no rescue.
+    """
     import controller as controller_mod
 
     class _StubController:

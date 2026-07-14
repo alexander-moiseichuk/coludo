@@ -109,9 +109,11 @@ class Attitude(task.Task):
             pitch_d = rate[1] * dt_ms // 1000
             yaw_d = rate[2] * dt_ms // 1000
             turning = abs(rate[2]) > self._turn_gate  # |yaw rate| -> coordinated-turn detector
-        # yaw: gyro-integrate (wrapped), then pull toward the GNSS ground track when moving -- an
-        # ABSOLUTE reference that bounds the gyro drift (no magnetometer), and it is the TRACK, which is
-        # what the nav steers by anyway. Weak blend (course_shift) so a crosswind crab averages out.
+        """
+        yaw: gyro-integrate (wrapped), then pull toward the GNSS ground track when moving -- an ABSOLUTE
+        reference that bounds the gyro drift (no magnetometer), and it is the TRACK, which is what the nav
+        steers by anyway. Weak blend (course_shift) so a crosswind crab averages out.
+        """
         self._yaw_cd = (self._yaw_cd + yaw_d) % 36000
         course = self._course.value()
         speed = self._speed.value()

@@ -30,9 +30,11 @@ except ImportError:
 
 KNOWN_MCUS = ('esp32p4', 'esp32c6', 'firebeetle2p4')
 
-# GPIOs that must never be assigned: doing so breaks a core function. For the WaveShare
-# ESP32-P4-WIFI6 these are the ESP32-C6 Wi-Fi link (6, 14-19, 54), USB-JTAG (24, 25) and the
-# serial console (37, 38). See doc/waveshare_esp32p4_pins.md.
+"""
+GPIOs that must never be assigned: doing so breaks a core function. For the WaveShare ESP32-P4-WIFI6 these
+are the ESP32-C6 Wi-Fi link (6, 14-19, 54), USB-JTAG (24, 25) and the serial console (37, 38). See
+doc/waveshare_esp32p4_pins.md.
+"""
 RESERVED_PINS = {
     'esp32p4': (6, 14, 15, 16, 17, 18, 19, 24, 25, 37, 38, 54),
 }

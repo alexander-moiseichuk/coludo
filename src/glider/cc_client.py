@@ -199,18 +199,22 @@ def _register_identity(dispatcher, ctx) -> None:
         if mission is not None:  # the board wall-clock (RTC) -> the dashboard top table shows it live
             info['clock'] = mission.clock()
             info['epoch'] = mission.epoch()
-            # the launchpad the board would fly with, for the dashboard safety cell: the effective
-            # origin (CC-set/frozen, else the live fix -- which freeze_launch pins at arm), whether
-            # it is already persistent, and the selected site name (CC-less site-by-GPS)
+            """
+            the launchpad the board would fly with, for the dashboard safety cell: the effective origin
+            (CC-set/frozen, else the live fix -- which freeze_launch pins at arm), whether it is already
+            persistent, and the selected site name (CC-less site-by-GPS)
+            """
             info['launchpad'] = mission.launch_point()
             info['launchpad_set'] = mission.latitude is not None and mission.longitude is not None
             info['site'] = mission.site or None
         agl = databoard.Databoard.parameter('agl')  # low-altitude laser AGL -> the flight panel
         if agl is not None:
             info['agl'] = agl.value()
-        # degraded-mode annunciation: the non-nominal states, gathered into one operator signal so a
-        # glance shows the board is NOT flying clean (attitude on the backup, memory rescued, warm
-        # restart, CC-less fallback zone). Empty list = nominal.
+        """
+        degraded-mode annunciation: the non-nominal states, gathered into one operator signal so a glance
+        shows the board is NOT flying clean (attitude on the backup, memory rescued, warm restart, CC-less
+        fallback zone). Empty list = nominal.
+        """
         degraded = []
         attitude = databoard.Databoard.parameter('attitude')
         if attitude is not None and attitude.read()[1] == 'attitude':  # fused source IS the backup

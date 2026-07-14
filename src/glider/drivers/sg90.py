@@ -78,10 +78,10 @@ class SG90(task.Task):
         self._max_deg: int = self.config.get('max_deg', 180)
         self._neutral: int = (self._min_deg + self._max_deg) // 2  # the zero position
         self._gate = servo.Gate.slew(self.controller.config.get('servo_concurrency', _DEFAULT_CONCURRENCY))
-        # probe() closes the open loop when an INA226 'power' channel is live: a working/wired/powered
-        # servo draws this extra power on a sweep. Below the floor -> dead / PWM pin lost / rail unpowered.
-        # The ceiling is a HIGH-draw flag only (stall/binding), not a fail -- rail-voltage dependent (a
-        # single SG90 peaks ~3 W on a 3.7 V pack, ~3.7 W on 5 V), so it warns rather than false-fails.
+        """probe() closes the open loop when an INA226 'power' channel is live: a working/wired/powered
+        servo draws this extra power on a sweep. Below the floor -> dead / PWM pin lost / rail unpowered.
+        The ceiling is a HIGH-draw flag only (stall/binding), not a fail -- rail-voltage dependent (a
+        single SG90 peaks ~3 W on a 3.7 V pack, ~3.7 W on 5 V), so it warns rather than false-fails."""
         self._engine_min_mw: int = self.config.get('engine_min_mw', 500)  # INA226 'power' is mW (integer)
         self._engine_max_mw: int = self.config.get('engine_max_mw', 3500)
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('angle', 'pulse_us', 'done'),
@@ -195,9 +195,9 @@ class SG90(task.Task):
         async with self._gate:
             self._apply(target)  # done=0: commanded
             completed = (target, self._pulse_us, 1)  # snapshot the WHOLE completion record before any await:
-            # a set_angle() from the 100 Hz loop during the slew or the gate release must never re-pair
-            # done=1 with a later angle/pulse. Capturing the tuple (not self._*) keeps that true even if a
-            # future edit reshapes the push below.
+            """a set_angle() from the 100 Hz loop during the slew or the gate release must never re-pair
+            done=1 with a later angle/pulse. Capturing the tuple (not self._*) keeps that true even if a
+            future edit reshapes the push below."""
             await asyncio.sleep_ms(travel_ms)
         self._telemetry.push(completed)  # done=1: (estimated) completed
         return target

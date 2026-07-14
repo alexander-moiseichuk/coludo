@@ -174,9 +174,11 @@ class Recorder:
     _log_max: int = 0  # high-water mark of queued log records
     _stats_ms: int = _STATS_PERIOD_MS
     _last_stats_ms: int = 0
-    # global telemetry decimation (µs between emitted rows): every Telemetry stream whose own decimate_us
-    # is 0 uses this, so `recorder.telemetry_us` in the board config prorates ALL streams at once, while a
-    # stream that sets a non-zero telemetry_us keeps its individual rate. Default 50 Hz.
+    """
+    global telemetry decimation (µs between emitted rows): every Telemetry stream whose own decimate_us is
+    0 uses this, so `recorder.telemetry_us` in the board config prorates ALL streams at once, while a stream
+    that sets a non-zero telemetry_us keeps its individual rate. Default 50 Hz.
+    """
     telemetry_decimate_us: int = _DEFAULT_TELEMETRY_US
 
     @classmethod
@@ -224,9 +226,11 @@ class Recorder:
         """
         if cls._session is None:
             now = time.localtime()
-            # a random suffix disambiguates boots that start before the RTC ticks (fast restarts share
-            # the same wall-clock second otherwise -> colliding session ids -> telemetry files clobbered
-            # / a header spliced mid-file on the Luckfox).
+            """
+            a random suffix disambiguates boots that start before the RTC ticks (fast restarts share the
+            same wall-clock second otherwise -> colliding session ids -> telemetry files clobbered / a
+            header spliced mid-file on the Luckfox).
+            """
             cls._session = '%04d%02d%02d_%02d%02d%02d_%d' % (
                 now[0], now[1], now[2], now[3], now[4], now[5], random.randint(100, 1000))
         return cls._session
@@ -436,8 +440,10 @@ class Telemetry:
         now = Recorder.timestamp()
         if time.ticks_diff(now, self._last_us) < self.decimate_us:
             return  # too soon since the last row -> decimate
-        # one % pass over a precomputed format string: no per-field str() generator, no intermediate
-        # ';'.join list -- a GC-off flight decimates to ~10 Hz/stream, so trim the per-row allocations.
-        # ((now,) + tuple(values), not (now, *values): this compiler rejects display star-unpack.)
+        """
+        one % pass over a precomputed format string: no per-field str() generator, no intermediate ';'.join
+        list -- a GC-off flight decimates to ~10 Hz/stream, so trim the per-row allocations. ((now,) +
+        tuple(values), not (now, *values): this compiler rejects display star-unpack.)
+        """
         Recorder.tlm(self.filename, self._row_fmt % ((now,) + tuple(values)))
         self._last_us = now

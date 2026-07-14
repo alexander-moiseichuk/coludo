@@ -59,9 +59,11 @@ def test_inside_and_steer():
 
 
 def test_overshoot_loop():
-    # the loop: entered via the left gate (eastbound), crossed the zone, exited the far (east) side
-    # without landing -> the gate it just crossed is now nearest -> steer turns back (~180) and
-    # re-approaches through the RIGHT gate. Stateless: no waypoint memory, just per-tick nearest-gate.
+    """
+    the loop: entered via the left gate (eastbound), crossed the zone, exited the far (east) side
+    without landing -> the gate it just crossed is now nearest -> steer turns back (~180) and
+    re-approaches through the RIGHT gate. Stateless: no waypoint memory, just per-tick nearest-gate.
+    """
     tl, br = (48.001, 11.000), (48.000, 11.010)
     heading, waypoint, leg = navigation.steer((48.0005, 11.011), tl, br)  # just past the east edge
     assert leg == navigation.GATE and _close(waypoint[1], 11.010, 1e-4)  # the right gate (the one just crossed)

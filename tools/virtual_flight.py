@@ -171,10 +171,12 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         pitch_rate = fixed.from_float(pitch_rate_dps)
         yaw_rate = fixed.from_float(yaw_rate_dps)
 
-        # inject a transient 2x glitch on the attitude + accel for ONE tick every _SPIKE_S seconds
-        # (deterministic schedule so the stored corner-case traces reproduce). Exercises the control
-        # loop's rejection of a sudden bad sample -- the fin trace shows the kick, the trajectory should
-        # barely move.
+        """
+        inject a transient 2x glitch on the attitude + accel for ONE tick every _SPIKE_S seconds
+        (deterministic schedule so the stored corner-case traces reproduce). Exercises the control
+        loop's rejection of a sudden bad sample -- the fin trace shows the kick, the trajectory should
+        barely move.
+        """
         if spike and int(t / _SPIKE_S) != int((t - dt) / _SPIKE_S):
             roll_m *= 2.0
             pitch_m *= 2.0
@@ -189,10 +191,12 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
             else:
                 since = t
         elif stage == 'boosting':
-            # APOGEE detect (mirror of sequencer._detect_apogee -- the mirror had DRIFTED to
-            # timeout-only deploy, and a low arc could be back underground by the timeout): blind
-            # for apogee_arm_ms after entry (burn pressure wave), then track the noised baro peak
-            # and deploy once it falls apogee_drop_m below, sustained; the timeout stays fallback.
+            """
+            APOGEE detect (mirror of sequencer._detect_apogee -- the mirror had DRIFTED to
+            timeout-only deploy, and a low arc could be back underground by the timeout): blind
+            for apogee_arm_ms after entry (burn pressure wave), then track the noised baro peak
+            and deploy once it falls apogee_drop_m below, sustained; the timeout stays fallback.
+            """
             elevation_now = altitude_m - body.elev0
             if (t - since) * 1000.0 >= apogee_arm_ms:
                 if apogee_max is None or elevation_now > apogee_max:

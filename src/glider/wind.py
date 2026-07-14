@@ -47,9 +47,11 @@ class WindEstimator(inspector.Inspectable):
         self._wn: float = 0.0
         self._seen: bool = False
         self.triangle_alpha: float = config.get('triangle_alpha', 0.05)
-        # the physical wind ENVELOPE (launches are ≤ ~10 m/s; the ceiling has spare for a GNSS jump):
-        # a per-fix estimate beyond max_speed is a GNSS course/speed JUMP, not wind -> reject the sample;
-        # a result below calm_speed is estimate/GNSS noise -> report calm.
+        """
+        the physical wind ENVELOPE (launches are ≤ ~10 m/s; the ceiling has spare for a GNSS jump): a
+        per-fix estimate beyond max_speed is a GNSS course/speed JUMP, not wind -> reject the sample; a
+        result below calm_speed is estimate/GNSS noise -> report calm.
+        """
         self.calm_speed: float = config.get('calm_speed', 0.5)
         self.max_speed: float = config.get('max_speed', 15.0)
 
