@@ -307,7 +307,7 @@ def _register_control(dispatcher, ctx) -> None:
     dispatcher.on('report', report)
 
 
-def _register_inspection(dispatcher, ctx) -> None:
+def _register_inspection(dispatcher) -> None:
     """objects / inspect / update / stats -- the Inspector surface for operator-facing objects."""
 
     async def objects(msg) -> str:
@@ -612,7 +612,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
     ctx = _Context(cfg, controller, on_reboot, config_path)
     _register_identity(dispatcher, ctx)
     _register_control(dispatcher, ctx)
-    _register_inspection(dispatcher, ctx)
+    _register_inspection(dispatcher)
     _register_config(dispatcher, ctx)
     _register_diagnostics(dispatcher, ctx)
     _register_streaming(dispatcher)
