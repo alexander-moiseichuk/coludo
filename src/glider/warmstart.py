@@ -13,11 +13,12 @@ The Checkpoint task writes the crumb every `checkpoint_s` while airborne (BOOSTI
 floored at 1 s) and once on entering each stage, but ONLY for an ARMED flight (a disarmed passive
 flight must never warm-start into an armed stage); it always writes the telemetry/log timeline.
 Recovery is stage-aware: SETTING recovers as a plain cold boot, DONE stays DONE (a landed glider never
-re-enters the flight sequence), the airborne stages need proof they are in the air.
+re-enters the flight sequence), and the passive glide stages must show the separation latch.
 
-Storage layout: `flight` is a bare i32 flag (cheap to flip on the clear path), the payload is ONE JSON
-blob (`crumb`) -- full float precision, no per-field key bookkeeping, and a new field is a dict entry
-rather than an NVS schema change. The module degrades to no-ops off-board (CPython).
+Storage layout: the `stage` i32 IS the flag (Stage.NULL = 0 -> cold, non-zero -> recover it -- no
+separate key), the payload is ONE JSON blob (`crumb`) -- full float precision, no per-field key
+bookkeeping, and a new field is a dict entry rather than an NVS schema change. The module degrades to
+no-ops off-board (CPython).
 """
 
 import asyncio
@@ -42,7 +43,16 @@ try:
 except ImportError:  # host (CPython): board-only; restore()'s reset-cause read never runs off-board
     machine = None
 
-_BLOB_MAX: int = 512  # read buffer for the crumb blob (the JSON is ~150 B; headroom for new fields)
+try:
+    from micropython import const
+except ImportError:  # CPython (host tools / sim)
+    def const(value):
+        return value
+
+_BLOB_MAX: int = const(512)  # read buffer for the crumb blob (the JSON is ~150 B; headroom for new fields)
+_MAX_AGE_S: int = const(600)  # max crumb age (s): the DONE operator-wait dwell (~10 min). Airborne
+#                               crumbs re-stamp every checkpoint so they arrive reboot-fresh; this bounds
+#                               the post-landing DONE recovery and rejects a stale prior-session crumb
 
 
 def save(crumb: dict) -> bool:
@@ -118,40 +128,36 @@ def load():
         return None
 
 
-def should_restore(crumb, separated: bool, altitude, cause_is_reset: bool, now_s,
-                   min_height_m: float = 15.0, max_age_s: int = 600) -> tuple:
+def should_restore(crumb, separated: bool, cause_is_reset: bool, now_s) -> tuple:
     """
     The warm-start gate: a legitimate mid-flight reset to recover the crumb's stage into?
 
-    Defense in depth, and STAGE-AWARE -- what proves "really airborne, really this stage" differs by
-    stage, so the gate reads the crumb's own `stage`:
+    The periodic checkpoint keeps the crumb's `stage` fresh (re-stamped every second aloft, so it is
+    at most ~1 s stale at a reset), so the STAGE itself is trustworthy -- the gate only has to confirm
+    this is a genuine RECENT reset of a real flight, not that the altitude independently agrees (a
+    height cross-check was an atavism of the old single-breadcrumb design and is gone):
 
       * universal (every stage): a valid crumb (carries stage + stamp); `cause_is_reset` -- WDT/SOFT/
         HARD, never a power-on (a battery insertion / power switch is a human -- a fresh flight or a
-        recovery crew -> cold); `age_s` in 0..max_age_s (the RTC survives soft/WDT resets so the
+        recovery crew -> cold); the crumb age in 0.._MAX_AGE_S (the RTC survives soft/WDT resets so the
         continuity holds; a power cycle restarts it and breaks the arithmetic -> cold).
-      * airborne stages (BOOSTING/GLIDING/LANDING): the baro ABSOLUTE altitude reads at least
-        min_height_m above the crumb's pad -- still clearly in the air (a bench sits AT the pad, so the
-        height gate rejects it; None baro -> refuse).
-      * post-separation stages (GLIDING/LANDING): the separation switch reads SEPARATED -- the physical
-        latch no software can fake. BOOSTING is pre-separation (latch nested), so it leans on the
-        airborne + reset + age gates instead. SETTING/DONE are on the ground and need neither: SETTING
-        recovers as a plain cold boot, DONE just stays DONE.
+      * passive stages (GLIDING/LANDING, the unpowered post-separation glide): the separation switch
+        reads SEPARATED -- the physical latch no software can fake, so a landed-then-nested glider can
+        never recover into a glide. BOOSTING is the active boost (pre-separation, latch nested), so
+        reset + age carry it; SETTING/DONE are on the ground and need neither (SETTING recovers as a
+        plain cold boot, DONE just stays DONE).
 
     Pure function of its inputs (host-testable).
 
     Args:
         crumb - the crumb dict from load(), or None.
         separated - the separation driver's latch reading (True = separated).
-        altitude - the baro ABSOLUTE altitude (m), or None if the baro is not up yet.
         cause_is_reset - True when machine.reset_cause() was WDT/SOFT/HARD (not a power-on).
         now_s - the current time (RTC epoch seconds).
-        min_height_m - the minimum height above the pad to accept an airborne stage (m).
-        max_age_s - the maximum crumb age to accept (seconds).
 
     Returns:
-        (restore, reason): restore True with the passing reason when the stage-aware gate agrees, else
-        False with the first failing reason.
+        (restore, reason): restore True with the passing reason when the gate agrees, else False with
+        the first failing reason.
     """
     if crumb is None:
         return False, 'no crumb'
@@ -162,41 +168,11 @@ def should_restore(crumb, separated: bool, altitude, cause_is_reset: bool, now_s
     if not cause_is_reset:
         return False, 'power-on boot (human hands), not a reset'
     age_s = now_s - stamp
-    if not 0 <= age_s <= max_age_s:
-        return False, 'crumb age %ds outside 0..%ds' % (age_s, max_age_s)
-    if controller.Stage.airborne(stage):
-        pad_altitude = crumb.get('pad_altitude')
-        if pad_altitude is None:
-            return False, 'airborne crumb missing pad_altitude -> cold boot'
-        if altitude is None:
-            return False, 'no altitude reading'
-        height = altitude - pad_altitude
-        if height < min_height_m:
-            return False, 'altitude %.0fm above pad < %.0fm' % (height, min_height_m)
-        if controller.Stage.passive(stage) and not separated:  # a gliding stage must really have separated
-            return False, 'separation switch reads nested'
+    if not 0 <= age_s <= _MAX_AGE_S:
+        return False, 'crumb age %ds outside 0..%ds' % (age_s, _MAX_AGE_S)
+    if controller.Stage.passive(stage) and not separated:  # a gliding stage must really have separated
+        return False, 'separation switch reads nested'
     return True, 'recover %s, %ds after checkpoint' % (controller.Stage.STAGES.get(stage, '?'), age_s)
-
-
-async def _await_altitude(parameter, timeout_ms: int = 5000):
-    """
-    Wait up to `timeout_ms` for the baro task's first ABSOLUTE altitude reading.
-
-    Its setup races the reset, so on a fast reboot the parameter is briefly None.
-
-    Args:
-        parameter - the databoard altitude parameter to poll.
-        timeout_ms - how long to wait for the first reading (milliseconds).
-
-    Returns:
-        The absolute altitude reading (m), or None on timeout.
-    """
-    deadline = time.ticks_add(time.ticks_ms(), timeout_ms)
-    altitude = parameter.value()
-    while altitude is None and time.ticks_diff(deadline, time.ticks_ms()) > 0:
-        await asyncio.sleep_ms(100)
-        altitude = parameter.value()
-    return altitude
 
 
 def _apply_restore(flight, crumb, cfg: dict) -> None:
@@ -266,10 +242,9 @@ async def restore(flight, cfg: dict, log=print) -> bool:
         return False
     separation = flight.find(['separation'])[0]  # the driver's own latch reading (no second Pin)
     separated = separation.separated() if separation is not None else False
-    altitude = await _await_altitude(databoard.Databoard.parameter('altitude'))
     cause = machine.reset_cause()
     cause_is_reset = cause in (machine.WDT_RESET, machine.SOFT_RESET, machine.HARD_RESET)
-    allowed, reason = should_restore(crumb, separated, altitude, cause_is_reset, time.time())
+    allowed, reason = should_restore(crumb, separated, cause_is_reset, time.time())
     log('warmstart :: gate: %s (reset_cause %d)' % (reason, cause))
     if not allowed:
         clear()  # rejected -> make the NEXT boot unambiguously cold
@@ -352,13 +327,9 @@ class Checkpoint(task.Task):
         ticks_ms = time.ticks_ms()
         self._telemetry.push((stage, altitude, speed, ticks_ms))
         if self.controller.armed:  # only an armed flight is worth -- and safe -- to recover
-            crumb = dict(self._static)
-            crumb['stage'] = stage
-            crumb['armed'] = True
-            crumb['altitude'] = altitude
-            crumb['speed'] = speed
-            crumb['ticks_ms'] = ticks_ms
-            crumb['stamp'] = int(time.time())
+            crumb = dict(self._static)  # launch/zone/pad from BOOSTING
+            crumb.update({'stage': stage, 'armed': True, 'altitude': altitude, 'speed': speed,
+                          'ticks_ms': ticks_ms, 'stamp': int(time.time())})
             save(crumb)
         recorder.Recorder.log(self.name, 'checkpoint %s alt=%s' % (controller.Stage.STAGES.get(stage), altitude))
 
