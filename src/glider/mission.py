@@ -40,8 +40,8 @@ _FIELDS: tuple = ('launch_id', 'site', 'latitude', 'longitude', 'altitude')
 
 """
 Default max range (m) from the launch point to any zone point, when the board config omits it. The real
-value is `max_range_m` in board.config -- it is a glide-range property of the AIRFRAME (a bigger glider
-reaches farther), so it lives in the board config, not the per-launch mission.
+value is `max_range_m` on the board config's `field` component -- it is a glide-range property of the
+AIRFRAME (a bigger glider reaches farther), so it lives in the board config, not the per-launch mission.
 """
 _DEFAULT_MAX_RANGE_M: float = 200.0
 
@@ -339,17 +339,21 @@ class Mission(inspector.Inspectable):
         """
         The endgame holding pattern (a guidance.Heading id) the AUTO setting resolves to.
 
-        Decided from the zone SHAPE: a strip whose long/short aspect exceeds Heading.OO_ASPECT flies
-        FIG_OO (two lobes along the long axis to cover the length), everything squarer flies FIG_O (a
-        single circle). The Mission owns the zone, so it owns this decision; guidance only asks when its
-        config is AUTO.
+        Decided from the zone SHAPE (long/short aspect k): squarish (k < OVAL_ASPECT) flies FIG_O (a
+        single circle); a MODERATELY elongated strip (OVAL_ASPECT <= k < OO_ASPECT) flies the FIG_OVAL
+        centreline racetrack; a VERY elongated strip (k >= OO_ASPECT) flies the two-lobe FIG_OO. The
+        Mission owns the zone, so it owns this decision; guidance only asks when its config is AUTO.
 
         Returns:
-            The guidance.Heading id: FIG_OO for an elongated zone, else FIG_O.
+            The guidance.Heading id: FIG_O / FIG_OVAL / FIG_OO by ascending zone aspect.
         """
         import guidance  # local: the endgame enum lives with the control law, no top-level coupling
-        return guidance.Heading.FIG_OO if self.zone_aspect() > guidance.Heading.OO_ASPECT \
-            else guidance.Heading.FIG_O
+        aspect = self.zone_aspect()
+        if aspect >= guidance.Heading.OO_ASPECT:
+            return guidance.Heading.FIG_OO
+        if aspect >= guidance.Heading.OVAL_ASPECT:
+            return guidance.Heading.FIG_OVAL
+        return guidance.Heading.FIG_O
 
     def geometry(self) -> dict:
         """

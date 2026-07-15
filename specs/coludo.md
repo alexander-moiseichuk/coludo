@@ -291,7 +291,7 @@ This matters because aerodynamic torque on a fin scales with **dynamic pressure*
 The controller instead **schedules the maximum fin deflection by airspeed** to hold roughly *constant angular authority* (deflection ∝ 1/q ∝ 1/v²):
 
 ```
-deflection_limit(v) = clamp(K / v², 5°, 45°) × fin_limit_multiplier      (K ≈ 12500, anchored at 50 m/s → 5°)
+deflection_limit(v) = clamp(K / v², 5°, 45°) × fins.limit_multiplier     (K ≈ 12500, anchored at 50 m/s → 5°)
 ```
 
 | airspeed (m/s) | ≤16 | 20 | 25 | 30 | 35 | 40 | 45 | ≥50 |
@@ -301,7 +301,7 @@ deflection_limit(v) = clamp(K / v², 5°, 45°) × fin_limit_multiplier      (K 
 * **Flight-wide, not boost-only.** Ignition can end off-vertical and fast, and a glide can build speed in a dive, so the governor caps the fins through **every** stage (boosting, gliding, landing). It is the final actuator clamp, applied after the per-stage control law and the mixer.
 * **45° floor of authority at low speed** (≤16 m/s): low `q` means weak fins *and* low kinetic energy = low risk, so full mechanical throw is allowed — the "trade speed for altitude with gentle uplift" regime.
 * **5° ceiling of restraint near burnout** (≥50 m/s): high `q`, highest consequence — but never 0°, so some authority always remains.
-* **`fin_limit_multiplier` (board.config, default 1.0)** scales the whole schedule. It is the safety dial: if a flight starts **losing fins or control in the air** (flutter, servo stall, structural failure), drop it (e.g. 0.5) to halve authority everywhere without re-deriving the table.
+* **`fins.limit_multiplier` (board.config, default 1.0)** scales the whole schedule. It is the safety dial: if a flight starts **losing fins or control in the air** (flutter, servo stall, structural failure), drop it (e.g. 0.5) to halve authority everywhere without re-deriving the table.
 * Stored as a **precomputed lookup table** indexed by integer m/s, so the 100 Hz path does a table read, not a `1/v²` division.
 * **Airspeed estimate** (no pitot tube): integrated vertical acceleration during boost; GNSS ground speed once gliding. The estimate is biased to *over*-read when uncertain — over-estimating airspeed tightens the cap, which is the safe direction.
 

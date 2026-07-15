@@ -2,8 +2,9 @@
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 On-board test for the SG90 servo driver (drivers/sg90.py): @task.driver('sg90') registration, the
-integer degrees->pulse mapping, range clamping, neutral-at-boot, update/finish, move() + the N-slew
-gate, the open-loop `feedback: None` marker, and the probe() sweep. Constructs real PWM on the
+integer degrees->pulse mapping, range clamping, neutral-at-boot, the per-fin mechanical `trim` (zero
+offset + live update), update/finish, move() + the N-slew gate, the open-loop `feedback: None` marker,
+and the probe() sweep. Constructs real PWM on the
 configured fin pins (no servo needs to be attached). Run by `make test`.
 """
 
@@ -75,6 +76,23 @@ async def amain():
     assert geared.angle == 30
     await geared.finish()
 
+    # per-fin mechanical trim (deg): the fin's individual zero, added to every command before the pulse
+    # map so boot/failsafe/control land on its true centre -- +9 deg over 0..180 / 500..2500 us = +100 us
+    untrimmed = sg90.SG90('servo_yaw', {'pin': 'servo_yaw'}, _StubController())
+    await untrimmed.setup()
+    center_us = untrimmed.inspect()['pulse_us']  # ~1500 us, no trim
+    trimmed = sg90.SG90('servo_yaw', {'pin': 'servo_yaw', 'trim': 9}, _StubController())
+    assert await trimmed.setup() is True and trimmed.angle == 90  # command tracks the un-trimmed angle
+    assert trimmed.inspect()['trim'] == 9
+    assert trimmed.inspect()['pulse_us'] == center_us + 100  # boot neutral rides +9 deg = +100 us
+    # a live update {"trim": d} re-drives the current angle so CC can zero each engine and watch it settle
+    assert trimmed.update({'trim': 0}) == ['trim'] and trimmed.angle == 90  # angle unchanged, fin re-driven
+    assert trimmed.inspect()['pulse_us'] == center_us  # trim removed -> back to the un-trimmed centre
+    assert trimmed.update({'trim': 4, 'angle': 90}) == ['trim', 'angle']  # both keys apply, in order
+    assert trimmed.inspect()['pulse_us'] == center_us + 44  # +4 deg = +44 us on top of neutral
+    await untrimmed.finish()
+    await trimmed.finish()
+
     # move() drives to the clamped angle through the slew gate and returns it (settle-aware)
     fin2 = sg90.SG90('servo_yaw', {'pin': 'servo_yaw'}, _StubController())
     await fin2.setup()
@@ -91,7 +109,7 @@ async def amain():
     assert fin3.angle == 90 and isinstance(fin3.angle, int)  # ended at neutral, integer degrees
     await fin3.finish()
 
-    print('ok: sg90 int degrees/clamp/update/set_angle(compare-and-set)/finish + move(), feedback:None, probe()')
+    print('ok: sg90 int degrees/clamp/trim/update/set_angle(compare-and-set)/finish + move(), feedback:None, probe()')
 
 
 asyncio.run(amain())

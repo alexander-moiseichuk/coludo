@@ -1,8 +1,8 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-On-board test for the control-surface mixer (mixer.py): the elevon + rudder mixing matrix, trim, the
-+/- limit clamp, and the fused bind()/actuate() servo path the flight loop drives. Run by `make test`.
+On-board test for the control-surface mixer (mixer.py): the elevon + rudder mixing matrix, the +/-
+limit clamp, and the fused bind()/actuate() servo path the flight loop drives. Run by `make test`.
 """
 
 import mixer
@@ -46,7 +46,7 @@ def test_default_mixing():
     assert all(isinstance(v, int) for v in m.mix(roll=3, pitch=7, yaw=2).values())
 
 
-def test_clamp_and_trim():
+def test_clamp():
     m = mixer.Mixer()
     # the control deflection is clamped to +/- limit (45) even when commanded past it
     assert m.mix(pitch=100)['servo_eleron_left'] == 135  # 90 + 45
@@ -54,12 +54,11 @@ def test_clamp_and_trim():
     # a combined deflection over the limit is clamped as a whole (total surface authority bounded)
     assert m.mix(pitch=40, roll=40)['servo_eleron_left'] == 135  # 80 -> clamp 45 -> 90 + 45
 
-    # trim is the neutral offset, applied on top of the clamped deflection
-    trimmed = mixer.Mixer({'neutral_deg': 90, 'limit_deg': 30, 'trim': {'servo_yaw': 4},
-                           'surfaces': {'servo_yaw': {'yaw': 1}}})
-    assert trimmed.mix() == {'servo_yaw': 94}  # neutral + trim
-    assert trimmed.mix(yaw=100) == {'servo_yaw': 124}  # 90 + 4 + clamp(100, 30)
-    assert trimmed.mix(yaw=-100) == {'servo_yaw': 64}  # 90 + 4 - 30
+    # a custom neutral/limit rides the clamp; mechanical zero is the sg90 driver's job, not the mixer
+    tight = mixer.Mixer({'neutral_deg': 90, 'limit_deg': 30, 'surfaces': {'servo_yaw': {'yaw': 1}}})
+    assert tight.mix() == {'servo_yaw': 90}  # common neutral, no per-fin offset
+    assert tight.mix(yaw=100) == {'servo_yaw': 120}  # 90 + clamp(100, 30)
+    assert tight.mix(yaw=-100) == {'servo_yaw': 60}  # 90 - 30
 
 
 def test_bind_and_actuate():
@@ -87,16 +86,8 @@ def test_bind_and_actuate():
     partial.actuate(0, 10, 0)
     assert left.angle == 100
 
-    # trim rides actuate the same way it rides mix()
-    trimmed = mixer.Mixer({'neutral_deg': 90, 'limit_deg': 30, 'trim': {'servo_yaw': 4},
-                           'surfaces': {'servo_yaw': {'yaw': 1}}})
-    rudder = _Fin()
-    trimmed.bind({'servo_yaw': rudder})
-    trimmed.actuate(0, 0, 100)
-    assert rudder.angle == 124  # 90 + 4 + clamp(100, 30)
-
 
 test_default_mixing()
-test_clamp_and_trim()
+test_clamp()
 test_bind_and_actuate()
-print('ok: mixer -- elevon + rudder mixing, trim, +/- limit clamp, integer angles, bind/actuate fusion')
+print('ok: mixer -- elevon + rudder mixing, +/- limit clamp, integer angles, bind/actuate fusion')

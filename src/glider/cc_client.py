@@ -52,7 +52,7 @@ def _readiness(cfg: dict) -> dict:
     the hardware `pass`.
 
     Args:
-        cfg - the active board config (top level, with 'components' and 'fin_limit_multiplier').
+        cfg - the active board config (top level, with 'components' and the 'fins' section).
 
     Returns:
         {check: problem} for each tripped gate; an empty dict means flight-ready.
@@ -75,9 +75,9 @@ def _readiness(cfg: dict) -> dict:
             problems['gains'] = 'zero/unset on ' + ', '.join(slack) + ' -- the loop computes but cannot act'
 
     # Bench fin derating still applied.
-    multiplier = cfg.get('fin_limit_multiplier', 1.0)
+    multiplier = cfg.get('fins', {}).get('limit_multiplier', 1.0)
     if multiplier != 1.0:
-        problems['fin_limit_multiplier'] = '%g: a bench derating is still applied' % multiplier
+        problems['fins.limit_multiplier'] = '%g: a bench derating is still applied' % multiplier
 
     # No landing zone and no CC-less site to select one from.
     mission = inspector.Inspector.get('mission')

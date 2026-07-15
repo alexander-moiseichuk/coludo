@@ -27,6 +27,8 @@
   .tick { font-size: .85rem; margin-left: .5rem; }
   .tick.ok { color: #2a9d3a; }
   .tick.no { color: #888; }
+  .finctl { margin: 0 .5rem; white-space: nowrap; }
+  .finctl span { display: inline-block; min-width: 2.2rem; text-align: center; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -69,6 +71,29 @@
   <button id="send">send</button>
 </p>
 <pre id="reply"></pre>
+
+<h2>fin zero</h2>
+<p>
+  <input id="finboard" placeholder="board id" size="10">
+  <button id="finload">load</button>
+  <span class="finctl"><b>yaw</b>
+    <button class="finminus" data-fin="servo_yaw">−</button>
+    <span id="trim-servo_yaw">–</span>°
+    <button class="finplus" data-fin="servo_yaw">+</button></span>
+  <span class="finctl"><b>left</b>
+    <button class="finminus" data-fin="servo_eleron_left">−</button>
+    <span id="trim-servo_eleron_left">–</span>°
+    <button class="finplus" data-fin="servo_eleron_left">+</button></span>
+  <span class="finctl"><b>right</b>
+    <button class="finminus" data-fin="servo_eleron_right">−</button>
+    <span id="trim-servo_eleron_right">–</span>°
+    <button class="finplus" data-fin="servo_eleron_right">+</button></span>
+  <button id="finsave">save to board config</button>
+</p>
+<p class="muted">−/+ nudges that fin's mechanical zero <b>live</b> by 1° (the fin moves now, not saved); when the
+  calibration looks right, <b>save to board config</b> loads the board config, writes the three trims in and
+  persists it (re-baselined on the next reboot).</p>
+<pre id="finresult"></pre>
 
 <h2>config &amp; control</h2>
 <p>
@@ -151,6 +176,7 @@ function prettyResult(result) {
 
 function selectBoard(id) {
   document.getElementById('board').value = id;
+  document.getElementById('finboard').value = id;
   document.getElementById('cfgboard').value = id;
   document.getElementById('inspboard').value = id;
   document.getElementById('logboard').value = id;
@@ -353,6 +379,93 @@ document.getElementById('calibrate').onclick = async () => {
     btn.disabled = false;
   }
 };
+
+// --- fin zero: nudge each fin's mechanical trim live (update <fin> {trim}); save persists it to
+// the board config. Calibrate with -/+ (the fin moves now), then the operator clicks save when happy;
+// save always re-reads the board config first, patches the three trims, and writes the whole thing back.
+const FINS = { servo_yaw: 'yaw', servo_eleron_left: 'left', servo_eleron_right: 'right' };
+const finBoard = () => document.getElementById('finboard').value.trim();
+const finOut = document.getElementById('finresult');
+let finTrim = {};       // live trim (deg) per fin, mirrored from the board
+let finLoaded = false;  // has this card read the board's fins yet?
+
+function renderFin(fin) {
+  const el = document.getElementById('trim-' + fin);
+  if (el) el.textContent = (fin in finTrim) ? finTrim[fin] : '–';
+}
+
+// read each fin's current trim via inspect, so -/+ start from the real zero (not a guess).
+async function loadFins() {
+  const board = finBoard();
+  if (!board) { finOut.textContent = 'pick a board first'; return false; }
+  finOut.textContent = 'reading fins…';
+  finTrim = {};
+  for (const fin of Object.keys(FINS)) {
+    const r = await cmd(board, 'inspect', [fin]);
+    const props = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : null;
+    if (!props || typeof props.trim !== 'number') {
+      finOut.textContent = `could not read ${FINS[fin]} (${fin}): ` + prettyResult(r);
+      return false;
+    }
+    finTrim[fin] = props.trim;
+    renderFin(fin);
+  }
+  finLoaded = true;
+  finOut.textContent = 'loaded: ' + Object.entries(finTrim).map(([f, v]) => `${FINS[f]} ${v}°`).join(' · ');
+  return true;
+}
+
+// nudge one fin's zero by delta degrees, live (update <fin> {trim}); the fin moves at once.
+async function nudgeFin(fin, delta) {
+  const board = finBoard();
+  if (!board) { finOut.textContent = 'pick a board first'; return; }
+  if (!(fin in finTrim) && !(await loadFins())) return;
+  const next = finTrim[fin] + delta;
+  const r = await cmd(board, 'update', [fin, JSON.stringify({ trim: next })]);
+  const changed = (r.status === 'ok' && Array.isArray(r.args)) ? (safeParse(r.args[0]).changed || []) : null;
+  if (changed && changed.includes('trim')) {
+    finTrim[fin] = next;
+    renderFin(fin);
+    finOut.textContent = `${FINS[fin]} zero = ${next}° — live, not yet saved`;
+  } else {
+    finOut.textContent = `${FINS[fin]} update failed: ` + prettyResult(r);
+  }
+}
+
+// persist the calibrated trims: load the board config, write the three trims into their components,
+// and set-config it back (the whole snapshot -- so nothing else is lost). Reboot re-baselines the fins.
+async function saveFins() {
+  const board = finBoard();
+  if (!board) { finOut.textContent = 'pick a board first'; return; }
+  if (!finLoaded && !(await loadFins())) return;  // never commit trims we have not read
+  finOut.textContent = 'loading board config…';
+  const got = await cmd(board, 'get-config', ['board']);
+  const cfg = (got.status === 'ok' && Array.isArray(got.args)) ? safeParse(got.args[0]) : null;
+  if (!cfg || !Array.isArray(cfg.components)) {
+    finOut.textContent = 'could not load board config: ' + prettyResult(got);
+    return;
+  }
+  let patched = 0;
+  for (const dev of cfg.components) {
+    if (dev && dev.name in finTrim) { dev.trim = finTrim[dev.name]; patched++; }
+  }
+  if (patched !== Object.keys(finTrim).length) {
+    finOut.textContent = `aborted: found ${patched}/${Object.keys(finTrim).length} fins in the board config`;
+    return;
+  }
+  finOut.textContent = 'saving board config…';
+  const saved = await cmd(board, 'set-config', ['board', JSON.stringify(cfg)]);
+  const body = (saved.status === 'ok' && Array.isArray(saved.args)) ? safeParse(saved.args[0]) : null;
+  finOut.textContent = body
+    ? `saved to board config (${body.config_id || 'ok'}): `
+      + Object.entries(finTrim).map(([f, v]) => `${FINS[f]} ${v}°`).join(' · ') + ' — reboot to re-baseline'
+    : 'save failed: ' + prettyResult(saved);
+}
+
+document.getElementById('finload').onclick = loadFins;
+document.getElementById('finsave').onclick = saveFins;
+document.querySelectorAll('.finminus').forEach((b) => { b.onclick = () => nudgeFin(b.dataset.fin, -1); });
+document.querySelectorAll('.finplus').forEach((b) => { b.onclick = () => nudgeFin(b.dataset.fin, 1); });
 
 // --- inspect: list objects, then inspect each -> a per-object editor (update -> green ✓) ---
 const inspOut = document.getElementById('inspresult');

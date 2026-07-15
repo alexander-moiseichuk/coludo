@@ -85,18 +85,22 @@ def _div_round(numerator: int, denominator: int) -> int:
 
 
 def _convert(value: int, source: int, target: int) -> int:
-    """Map `value` from row `source`'s [min, max] linearly onto row `target`'s [min, max] (integer).
+    """
+    Map `value` from row `source`'s [min, max] linearly onto row `target`'s [min, max] (integer).
     The three parameters are views of ONE servo position, so this is how a change to one becomes the
     others. The duty row's range is exactly the pulse range expressed as duty, so _convert(pulse->duty)
-    equals duty_u16 = pulse * 65535 / period -- no separate formula needed."""
+    equals duty_u16 = pulse * 65535 / period -- no separate formula needed.
+    """
     src, dst = _HUD_ROWS[source], _HUD_ROWS[target]
     return dst['min'] + _div_round((value - src['min']) * (dst['max'] - dst['min']), src['max'] - src['min'])
 
 
 def _scaled_text(display, text: str, x: int, y: int, scale: int) -> None:
-    """Draw `text` at integer `scale` (the FrameBuffer 8x8 font has no native scaling): render it once
+    """
+    Draw `text` at integer `scale` (the FrameBuffer 8x8 font has no native scaling): render it once
     into a temporary 1-bpp buffer, then stamp each lit pixel as a scale*scale block. Cheap enough for a
-    few characters on an event-driven redraw."""
+    few characters on an event-driven redraw.
+    """
     width = len(text) * 8
     temp = framebuf.FrameBuffer(bytearray((width // 8) * 8), width, 8, framebuf.MONO_HLSB)
     temp.fill(0)
@@ -108,9 +112,11 @@ def _scaled_text(display, text: str, x: int, y: int, scale: int) -> None:
 
 
 class Servo:
-    """Thin PWM wrapper: it holds the canonical pulse width (us, int) and writes / reads back the raw
+    """
+    Thin PWM wrapper: it holds the canonical pulse width (us, int) and writes / reads back the raw
     duty. All the parameter conversions live in _convert + the _HUD_ROWS callbacks, so this stays
-    minimal. Float-free -- the C3 has no FPU."""
+    minimal. Float-free -- the C3 has no FPU.
+    """
 
     def __init__(self, pin: int):
         self._pwm = PWM(Pin(pin), freq=_FREQ_HZ)
@@ -209,10 +215,12 @@ class Hud:
 
 
 class Buttons:
-    """Event-driven two-button input -- no active polling. Pin IRQs (both edges) wake the events()
+    """
+    Event-driven two-button input -- no active polling. Pin IRQs (both edges) wake the events()
     task via a ThreadSafeFlag; a machine.Timer, armed only while a single button is held, drives
     auto-repeat. A short debounce read after each wake settles the level and filters the both-press
-    race (an intended combo lands within the window -> read as both -> one 'switch', no stray step)."""
+    race (an intended combo lands within the window -> read as both -> one 'switch', no stray step).
+    """
 
     def __init__(self):
         pull = Pin.PULL_DOWN if _BUTTON_ACTIVE else Pin.PULL_UP
@@ -242,10 +250,12 @@ class Buttons:
         self._repeat.deinit()
 
     def _emit(self, event: str, left: bool, right: bool) -> str:
-        """Tally an event and always print a 'BTN' trace line -- the USB console (115200 over
+        """
+        Tally an event and always print a 'BTN' trace line -- the USB console (115200 over
         /dev/ttyACMx) is the detailed tracking channel; the OLED only shows the live values. The line
         carries the event, the raw pin levels (confirms wiring/polarity) and the running counts, so a
-        hand-pressed sequence is fully verifiable from the console."""
+        hand-pressed sequence is fully verifiable from the console.
+        """
         self._counts[event] += 1
         print('BTN ev=%-6s L=%d R=%d +=%d -=%d switch=%d' % (
             event, left, right, self._counts['+'], self._counts['-'], self._counts['switch']))
@@ -278,10 +288,12 @@ class Buttons:
         return ''
 
     async def wait_event(self) -> str:
-        """Await the next button event ('-', '+', 'switch'), driven by pin IRQs (edges) + the repeat
+        """
+        Await the next button event ('-', '+', 'switch'), driven by pin IRQs (edges) + the repeat
         timer (while held) -- never an active poll. Each wake settles for _DEBOUNCE_MS, then resolves the
         state; loops until a wake actually produces an event. (A plain async method, not an async
-        generator -- MicroPython's `async for` does not support those.)"""
+        generator -- MicroPython's `async for` does not support those.)
+        """
         while True:
             await self._flag.wait()
             await asyncio.sleep_ms(_DEBOUNCE_MS)  # let the level settle (and the both-press land together)
@@ -326,9 +338,11 @@ class Tester:
         self._last_angle = angle
 
     def report(self, event: str) -> None:
-        """One key=value line per event to the USB console -- the rich data that does not fit the OLED.
+        """
+        One key=value line per event to the USB console -- the rich data that does not fit the OLED.
         Human-readable and trivially parseable; capture it while you sweep the servo. Float-free: the
-        percentages are integer tenths (per-mille // formatting)."""
+        percentages are integer tenths (per-mille // formatting).
+        """
         servo = self.servo
         row, pulse = _HUD_ROWS[self.selected], _HUD_ROWS[_PUL]
         duty_get = servo.duty_get()

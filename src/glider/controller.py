@@ -206,7 +206,7 @@ class Controller(inspector.Inspectable):
             True once bring-up has run; failures are recorded in self.failures, not raised.
         """
         self.failures = {}  # recomputed each bring-up
-        attempts = max(1, self.config.get('setup_retries', 1))  # retry flaky contacts (breadboard)
+        attempts = max(1, self.config.get('board', {}).get('setup_retries', 1))  # retry flaky contacts (breadboard)
         for name in self.directory():
             if name in self.tasks:
                 continue

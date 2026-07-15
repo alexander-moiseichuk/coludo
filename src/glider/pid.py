@@ -76,6 +76,24 @@ class Pid:
         self._integral = 0
         self._previous = None
 
+    def set_limit(self, limit_deg: int) -> None:
+        """
+        Retune the output clamp + anti-windup integral clamp to a live authority limit (whole degrees).
+
+        The governor rewrites the fin cap (mixer.limit) by dynamic pressure every update; driving BOTH
+        PID clamps from that same cap stops the integral winding up to a stale 45deg behind a tight
+        (e.g. 5deg) cap and then dumping a saturating deflection when the cap reopens (overshoot). Scales
+        to the SCALE-unit the loop runs in, matching the constructor. Cheap (two int stores, no alloc).
+
+        Args:
+            limit_deg - the current authority limit in whole degrees (the mixer's live cap).
+
+        Returns:
+            None -- updates self.output_limit and self.integral_limit in place.
+        """
+        self.output_limit = limit_deg * SCALE
+        self.integral_limit = limit_deg * SCALE
+
     def step(self, error: fixnum, dt_ms: int, rate: fixnum = None) -> fixnum:
         # integral += error*dt in SCALE-degree-seconds (the //1000 is TIME, ms -> s); clamped for anti-windup
         integral = clamp(-self.integral_limit, self._integral + error * dt_ms // 1000, self.integral_limit)

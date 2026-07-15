@@ -26,6 +26,7 @@ import gc
 import json
 import time
 
+import config
 import controller
 import databoard
 import inspector
@@ -226,7 +227,7 @@ async def restore(flight, cfg: dict, log=print) -> bool:
 
     Args:
         flight - the controller to move into GLIDING on a passed gate.
-        cfg - the board config (warm_start toggle + the sensor list for the baros).
+        cfg - the board config (the checkpoint component's warm_start toggle + the sensor list for the baros).
         log - the log sink (defaults to print).
 
     Returns:
@@ -236,7 +237,7 @@ async def restore(flight, cfg: dict, log=print) -> bool:
     crumb = load()
     if crumb is None:
         return False  # no flight was in progress: the normal boot, zero extra work
-    if not cfg.get('warm_start', True):
+    if not (config.device(cfg, name='checkpoint') or {}).get('warm_start', True):
         clear()
         log('warmstart :: disabled by config')
         return False

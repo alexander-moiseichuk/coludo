@@ -240,9 +240,11 @@ def _root_name(node):
 
 
 def _resolve(call, module, cls, modules):
-    """Best-effort (target_module, 'Class.method' or 'func') for a Call, or None. Resolves self.method
+    """
+    Best-effort (target_module, 'Class.method' or 'func') for a Call, or None. Resolves self.method
     (same class), self._x.method (typed attribute), module.func, and bare module-level / from-imported
-    functions. Typed-attribute chains it cannot type (self._pid[a].reset()) stay unresolved."""
+    functions. Typed-attribute chains it cannot type (self._pid[a].reset()) stay unresolved.
+    """
     func = call.func
     if isinstance(func, ast.Attribute):
         value = func.value
