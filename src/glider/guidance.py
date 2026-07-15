@@ -56,7 +56,7 @@ class Heading:
     FIG_OO = const(2)  # two lobes along the long axis (an elongated strip)
     FIG_OVAL = const(3)  # a centreline oval / racetrack for a MODERATELY elongated strip
     OVAL_ASPECT: float = 2.0  # long/short aspect >= this flies the oval ('ov'); below it a single circle ('o')
-    OO_ASPECT: float = 4.0    # ...and >= this flies the two-lobe 'oo' (fixed rules, not config knobs)
+    OO_ASPECT: float = 6.0    # ...and >= this flies the two-lobe 'oo' (the converging oval wins up to here)
     PATTERNS: dict = {AUTO: 'auto', FIG_O: 'o', FIG_OO: 'oo', FIG_OVAL: 'ov'}
     NAMES: dict = {name: pattern_id for pattern_id, name in PATTERNS.items()}
 
@@ -621,22 +621,20 @@ class Guidance:
 
     def _oval_heading(self, position: tuple, target: tuple, gate_b: tuple, endgame) -> float:
         """
-        'oval' endgame (EXPERIMENTAL): track the strip CENTRELINE back and forth, not an orbit.
+        'ov' endgame: a CONVERGING centreline oval / racetrack for a moderately elongated strip.
 
-        The 'oo' failure is that its round lobes bulge +/-r across the SHORT axis, so on a narrow strip
-        the glider spends the endgame outside the short edges. A straight leg has ZERO perpendicular
-        extent -- so this flies ALONG the long axis holding the centreline (a cross-track correction
-        proportional to the perpendicular offset, so wind/noise is crabbed back ONTO the line, unlike
-        an open-loop heading-hold), reverses a turn-radius short of each strip end, and descends. The
-        glider stays over the centreline for the whole leg -> lands ON the midline (in-zone) if the
-        altitude runs out mid-leg. The end U-turns still sweep ~r perpendicular (inherent) -- the study
-        is whether the on-centreline legs win over 'o'/'oo' on the HPRC strip.
+        The 'oo' failure is round lobes bulging +/-r across the SHORT axis; a straight leg has ZERO
+        perpendicular extent, so this flies ALONG the long axis holding the centreline (the proven
+        approach_to intercept -- proportional to the cross-track offset + capped, so it tracks without
+        the S-hunt limit cycle of a raw pursuit) and reverses at each leg end. The KEY is CONVERGENCE:
+        the reversal point shrinks with the endgame altitude, so the whole racetrack COLLAPSES onto the
+        centre (like the 'o' spiral, but oval) and lands ON the midline near the centre (in-zone).
 
         Args:
             position - the glider position (lat, lon), decimal degrees.
             target - the zone centre (lat, lon).
             gate_b - the gate that sets the long-axis direction (lat, lon).
-            endgame - the remaining-altitude fraction of the endgame band, or None (fixed radius).
+            endgame - the remaining-altitude fraction of the endgame band, or None (no collapse).
 
         Returns:
             The heading to fly (degrees).
@@ -645,17 +643,19 @@ class Guidance:
         half_len = math.sqrt(centre_e * centre_e + centre_n * centre_n) or 1.0
         unit_e, unit_n = centre_e / half_len, centre_n / half_len  # along-axis unit (toward gate_b)
         glider_e, glider_n = navigation.offset(target[0], target[1], position[0], position[1])  # glider vs centre
-        along = glider_e * unit_e + glider_n * unit_n            # signed position along the axis (0 = centre)
-        cross = glider_n * unit_e - glider_e * unit_n            # signed perpendicular offset from the centreline
-        bank = self.endgame_bank() if endgame is not None else self._config.bank_limit
-        reach = max(0.0, half_len - self.min_turn_radius(bank))  # reverse a turn-radius short of the strip end
+        along = glider_e * unit_e + glider_n * unit_n  # signed position along the axis (0 = centre)
+        # CONVERGE: the leg reversal point shrinks with the endgame altitude -> the racetrack COLLAPSES
+        # onto the centre (like the 'o' spiral, but oval); floored so a small end-to-end oscillation
+        # persists down to touchdown rather than a dead stop on the line
+        reach = half_len * max(0.15, min(1.0, endgame if endgame is not None else 1.0))
         if self._leg_dir == _LOBE_B and along >= reach:
             self._leg_dir = _LOBE_A
         elif self._leg_dir == _LOBE_A and along <= -reach:
             self._leg_dir = _LOBE_B
-        leg_e, leg_n = self._leg_dir * unit_e, self._leg_dir * unit_n  # along-axis direction of this leg
-        # cross-track PURE PURSUIT: aim at a point on the centreline a lookahead ahead in the leg
-        # direction -> a smooth intercept that flattens with distance (no S-hunt from a linear+clamp gain)
-        lookahead = 3.0 * max(self.min_turn_radius(bank), 12.0)
-        correction = math.degrees(math.atan2(cross * self._leg_dir, lookahead))
-        return (navigation.compass(leg_e, leg_n) + correction) % 360.0
+        # fly the current leg direction, TRACKING the centreline with the damped approach_to intercept
+        # (proportional to the cross-track offset + capped) -- no S-hunt limit cycle
+        leg_bearing = navigation.compass(self._leg_dir * unit_e, self._leg_dir * unit_n)
+        intercept = commons.between(-self._config.final_intercept, -self._config.final_cross_gain
+                                    * navigation.cross_track(position, target, leg_bearing),
+                                    self._config.final_intercept)
+        return (leg_bearing + intercept) % 360.0
