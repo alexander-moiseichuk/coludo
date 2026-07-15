@@ -421,9 +421,10 @@ def default() -> dict:
     untouched up high. 0 -> off.
 
     ENDGAME holding pattern + airspeed-gated bank (guidance.py). endgame_pattern: 'o' a single
-    circle, 'oo'/'o-o' two lobes along the long axis, or 'auto' -> the Mission picks o/oo from the
-    zone aspect. NOTE 'oo' is a known-limited negative result (it overruns a narrow strip + drifts
-    on wind -- see doc/sims/TMS-7-oo_landing); set 'o' for reliable in-zone landing. The gated bank
+    circle, 'ov' a centreline oval/racetrack, 'oo'/'o-o' two lobes along the long axis, or 'auto' ->
+    the Mission picks by the zone aspect k (k<2 -> o, 2<=k<4 -> ov, k>=4 -> oo). NOTE 'oo' overruns a
+    narrow strip (doc/sims/TMS-7-oo_landing) and 'ov' does not yet converge (a limit-cycle -- needs a
+    damped track-hold + sink-fit); 'o' is the reliable in-zone default today. The gated bank
     banks as steep as the LIVE airspeed allows: a coordinated turn at bank phi raises the stall
     speed to stall_speed_1g*sqrt(1/cos phi), and airspeed >= stall_margin*that bounds phi (capped at
     endgame_max_bank). These four match the guidance defaults (behaviour unchanged); exposed here so

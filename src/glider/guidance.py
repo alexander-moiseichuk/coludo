@@ -45,17 +45,19 @@ class Heading:
     The endgame HOLDING pattern, self-contained like controller.Stage.
 
     Int ids (cheap to compare/store on MicroPython) + the `PATTERNS` id->name mapping and `NAMES`
-    reverse. Config names the pattern by string; resolve() turns 'auto'/'o'/'oo'/'o-o'
-    (case-insensitive; 'o-o' aliases 'oo') into an id once. AUTO defers the choice to the Mission
-    (mission.endgame_heading), which decides 'o' vs 'oo' from the zone's long/short aspect (a strip
-    wider than OO_ASPECT flies the two-lobe 'oo').
+    reverse. Config names the pattern by string; resolve() turns 'auto'/'o'/'ov'/'oo'/'o-o'
+    (case-insensitive; 'o-o' aliases 'oo') into an id once. AUTO defers to the Mission
+    (mission.endgame_heading), which picks by the zone's long/short aspect k: k < OVAL_ASPECT -> 'o'
+    (single circle), OVAL_ASPECT <= k < OO_ASPECT -> 'ov' (centreline oval), k >= OO_ASPECT -> 'oo'.
     """
 
     AUTO = const(0)    # the Mission decides o vs oo from the zone shape
     FIG_O = const(1)   # a single circle
     FIG_OO = const(2)  # two lobes along the long axis (an elongated strip)
-    OO_ASPECT: float = 2.0  # long/short aspect above which a zone flies 'oo' (a fixed rule, not a config knob)
-    PATTERNS: dict = {AUTO: 'auto', FIG_O: 'o', FIG_OO: 'oo'}
+    FIG_OVAL = const(3)  # a centreline oval / racetrack for a MODERATELY elongated strip
+    OVAL_ASPECT: float = 2.0  # long/short aspect >= this flies the oval ('ov'); below it a single circle ('o')
+    OO_ASPECT: float = 4.0    # ...and >= this flies the two-lobe 'oo' (fixed rules, not config knobs)
+    PATTERNS: dict = {AUTO: 'auto', FIG_O: 'o', FIG_OO: 'oo', FIG_OVAL: 'ov'}
     NAMES: dict = {name: pattern_id for pattern_id, name in PATTERNS.items()}
 
     @classmethod
@@ -63,8 +65,8 @@ class Heading:
         """
         A config string -> the pattern id.
 
-        'auto'/'o'/'oo'/'o-o', case-insensitive, 'o-o' aliasing 'oo'. An unknown value falls back to
-        AUTO (the Mission decides).
+        'auto'/'o'/'ov'/'oo'/'o-o', case-insensitive, 'o-o' aliasing 'oo'. An unknown value falls back
+        to AUTO (the Mission decides).
 
         Args:
             name - the config pattern name (any case; 'o-o' aliases 'oo').
@@ -538,6 +540,8 @@ class Guidance:
                         pattern = self._mission.endgame_heading()
                     if pattern == Heading.FIG_OO:
                         self._nav_heading = self._oo_heading(position, target, gate_b, endgame)
+                    elif pattern == Heading.FIG_OVAL:
+                        self._nav_heading = self._oval_heading(position, target, gate_b, endgame)
                     else:
                         self._nav_heading = self._circle_heading(east, north, span, endgame)
                 else:  # far out: travel to the zone through the nearer gate, as always
@@ -614,3 +618,44 @@ class Guidance:
         dist = math.sqrt(delta_e * delta_e + delta_n * delta_n) or 1.0
         cut = commons.between(-60.0, self._config.loiter_gain * (dist - radius), 60.0)
         return (navigation.compass(delta_e, delta_n) + 90.0 - cut) % 360.0
+
+    def _oval_heading(self, position: tuple, target: tuple, gate_b: tuple, endgame) -> float:
+        """
+        'oval' endgame (EXPERIMENTAL): track the strip CENTRELINE back and forth, not an orbit.
+
+        The 'oo' failure is that its round lobes bulge +/-r across the SHORT axis, so on a narrow strip
+        the glider spends the endgame outside the short edges. A straight leg has ZERO perpendicular
+        extent -- so this flies ALONG the long axis holding the centreline (a cross-track correction
+        proportional to the perpendicular offset, so wind/noise is crabbed back ONTO the line, unlike
+        an open-loop heading-hold), reverses a turn-radius short of each strip end, and descends. The
+        glider stays over the centreline for the whole leg -> lands ON the midline (in-zone) if the
+        altitude runs out mid-leg. The end U-turns still sweep ~r perpendicular (inherent) -- the study
+        is whether the on-centreline legs win over 'o'/'oo' on the HPRC strip.
+
+        Args:
+            position - the glider position (lat, lon), decimal degrees.
+            target - the zone centre (lat, lon).
+            gate_b - the gate that sets the long-axis direction (lat, lon).
+            endgame - the remaining-altitude fraction of the endgame band, or None (fixed radius).
+
+        Returns:
+            The heading to fly (degrees).
+        """
+        centre_e, centre_n = navigation.offset(target[0], target[1], gate_b[0], gate_b[1])  # centre -> gate_b
+        half_len = math.sqrt(centre_e * centre_e + centre_n * centre_n) or 1.0
+        unit_e, unit_n = centre_e / half_len, centre_n / half_len  # along-axis unit (toward gate_b)
+        glider_e, glider_n = navigation.offset(target[0], target[1], position[0], position[1])  # glider vs centre
+        along = glider_e * unit_e + glider_n * unit_n            # signed position along the axis (0 = centre)
+        cross = glider_n * unit_e - glider_e * unit_n            # signed perpendicular offset from the centreline
+        bank = self.endgame_bank() if endgame is not None else self._config.bank_limit
+        reach = max(0.0, half_len - self.min_turn_radius(bank))  # reverse a turn-radius short of the strip end
+        if self._leg_dir == _LOBE_B and along >= reach:
+            self._leg_dir = _LOBE_A
+        elif self._leg_dir == _LOBE_A and along <= -reach:
+            self._leg_dir = _LOBE_B
+        leg_e, leg_n = self._leg_dir * unit_e, self._leg_dir * unit_n  # along-axis direction of this leg
+        # cross-track PURE PURSUIT: aim at a point on the centreline a lookahead ahead in the leg
+        # direction -> a smooth intercept that flattens with distance (no S-hunt from a linear+clamp gain)
+        lookahead = 3.0 * max(self.min_turn_radius(bank), 12.0)
+        correction = math.degrees(math.atan2(cross * self._leg_dir, lookahead))
+        return (navigation.compass(leg_e, leg_n) + correction) % 360.0

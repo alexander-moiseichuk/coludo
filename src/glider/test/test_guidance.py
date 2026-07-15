@@ -63,8 +63,10 @@ class _StubMission:
     def endgame_heading(self):
         if self.zone is None:
             return guidance.Heading.FIG_O
-        wide = self.zone_aspect() > guidance.Heading.OO_ASPECT
-        return guidance.Heading.FIG_OO if wide else guidance.Heading.FIG_O
+        aspect = self.zone_aspect()
+        if aspect >= guidance.Heading.OO_ASPECT:
+            return guidance.Heading.FIG_OO
+        return guidance.Heading.FIG_OVAL if aspect >= guidance.Heading.OVAL_ASPECT else guidance.Heading.FIG_O
 
     def geometry(self):
         if self.zone is None:

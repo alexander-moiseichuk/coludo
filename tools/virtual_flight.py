@@ -100,8 +100,10 @@ class _Mission:
         return 1.0 if self.zone_points() is None else self._zone_aspect
 
     def endgame_heading(self):
-        return guidance.Heading.FIG_OO if self.zone_aspect() > guidance.Heading.OO_ASPECT \
-            else guidance.Heading.FIG_O
+        aspect = self.zone_aspect()
+        if aspect >= guidance.Heading.OO_ASPECT:
+            return guidance.Heading.FIG_OO
+        return guidance.Heading.FIG_OVAL if aspect >= guidance.Heading.OVAL_ASPECT else guidance.Heading.FIG_O
 
 
 def _component(cfg: dict, name: str) -> dict:
@@ -147,6 +149,7 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
 
     body = sim_model.Body(hitl_c.get('liftoff_g', 430) / 1000.0,
                           tuple(scenario['launch']), scenario['elevation_m'], scenario['heading_deg'])
+    body.trim_sink = 14.0 / float(os.environ.get('VF_QUALITY', 2.0))  # air-quality (L/D) sink: 2 = worst-case floor
     body.imbalance_pitch = imbalance_pitch  # weight-imbalance torque during burn (deg/s^2)
     body.imbalance_roll = imbalance_roll
     body.wind_e = wind * math.sin(math.radians(wind_dir))   # steady wind the glider must crab against

@@ -69,6 +69,7 @@ class Body:
         self.pn = 0.0          # position north (m from pad)
         self.alt = 0.0         # altitude above the pad (m)
         self.vu = 0.0          # vertical speed (m/s)
+        self.trim_sink = 7.0   # trim sink (m/s) at load 1 = 14/(L/D); 7.0 = "air quality 2" worst-case polar
         self.speed = 0.0       # horizontal airspeed (m/s)
         self.heading = glide_heading  # deg (0 = north)
         self.roll = 0.0        # deg
@@ -205,7 +206,7 @@ class Body:
         the TURNS -- the designed energy management (fly-long is the primary objective; see coludo.md).
         """
         load = 1.0 / max(0.3, math.cos(roll_rad))  # load factor n (clamped); the accel_g below reuses it
-        self.vu += -0.1 * (self.vu + 7.0 * load ** 1.5) * dt
+        self.vu += -0.1 * (self.vu + self.trim_sink * load ** 1.5) * dt
         if stalled:  # lift lost -> a hard sink break on TOP of induced drag; deeper deficit, harder drop
             self.vu -= _STALL_SINK * (stall_speed - self.speed) * dt
         """

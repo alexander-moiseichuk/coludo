@@ -65,8 +65,10 @@ class _StubMission:
 
     def endgame_heading(self):
         import guidance
-        wide = self.zone_aspect() > guidance.Heading.OO_ASPECT
-        return guidance.Heading.FIG_OO if wide else guidance.Heading.FIG_O
+        aspect = self.zone_aspect()
+        if aspect >= guidance.Heading.OO_ASPECT:
+            return guidance.Heading.FIG_OO
+        return guidance.Heading.FIG_OVAL if aspect >= guidance.Heading.OVAL_ASPECT else guidance.Heading.FIG_O
 
 
 async def amain():
