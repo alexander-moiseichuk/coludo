@@ -34,7 +34,7 @@ class _FakeFin:
 
 class _StubController:
     def __init__(self, stage):
-        self.config = config_default.default()  # carries the mixer block
+        self.config = config_default.default()  # carries the fins/mixer block
         self.stage = stage  # a Stage id (int) -- the flight loop reads controller.stage, not strings
         self.armed = True  # the gate: disarmed -> the loop holds neutral (tested below)
         self.fins = {n: _FakeFin() for n in ('servo_yaw', 'servo_eleron_left', 'servo_eleron_right')}

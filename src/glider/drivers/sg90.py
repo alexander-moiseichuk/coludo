@@ -23,7 +23,7 @@ now; factor them into a servo base when a second type lands.
 
 Two ways to command a fin:
   update {"angle": d} -- IMMEDIATE, ungated: the operator override (sync, returns at once).
-  await move(d) -- GATED + settle-aware: passes through a SHARED slew gate so at most servo_concurrency
+  await move(d) -- GATED + settle-aware: passes through a SHARED slew gate so at most fins.concurrency
     (board config, default 3 = no limit) fins slew at once, then awaits the estimated travel so the
     caller knows it has (open-loop, no feedback) arrived. The flight control loop uses this.
 Both record the command to per-fin telemetry (<name>.csv: angle, pulse_us, done) -- done=0 when a
@@ -55,13 +55,17 @@ _SETTLE_MARGIN_MS: int = 60  # added to the slew estimate so move() returns afte
 _DEFAULT_CONCURRENCY: int = 3  # fins allowed to slew at once (== fin count -> no limit)
 
 # The N-slew concurrency gate is shared infrastructure (servo.py) so future servo types share one
-# board-wide `servo_concurrency` budget.
+# board-wide `fins.concurrency` budget.
 
 
 @task.driver('sg90')
 class SG90(task.Task):
     """
     One PWM SG90 fin servo, commanded in integer degrees (clamped to [min_deg, max_deg]).
+
+    Each fin has a per-engine `trim` (degrees; config or live via update {"trim": d}): its MECHANICAL
+    zero offset, added to every command before the pulse map so boot / failsafe / control all land on
+    this fin's true centre -- physical install is never exact, so each engine is zeroed individually.
 
     OPEN-LOOP -- reported angle is the last command, never a measurement (see module header; inspect
     carries 'feedback: None'). update {"angle": d} moves it immediately; await move(d) moves it through
@@ -77,11 +81,21 @@ class SG90(task.Task):
         self._min_deg: int = self.config.get('min_deg', 0)
         self._max_deg: int = self.config.get('max_deg', 180)
         self._neutral: int = (self._min_deg + self._max_deg) // 2  # the zero position
-        self._gate = servo.Gate.slew(self.controller.config.get('servo_concurrency', _DEFAULT_CONCURRENCY))
-        """probe() closes the open loop when an INA226 'power' channel is live: a working/wired/powered
+        self._trim_deg: int = self.config.get('trim', 0)
+        """
+        per-fin MECHANICAL zero offset (degrees): the fin's true centre when the loop commands
+        neutral. Physical install is never exact (a horn on a ~18deg spline + linkage slop), so each
+        engine is zeroed individually -- added to every commanded angle before the pulse map (so boot /
+        failsafe / control all land on this fin's centre) and re-settable live over CC
+        (update {"trim": d}). +/-a few degrees, well inside the throw.
+        """
+        self._gate = servo.Gate.slew(self.controller.config.get('fins', {}).get('concurrency', _DEFAULT_CONCURRENCY))
+        """
+        probe() closes the open loop when an INA226 'power' channel is live: a working/wired/powered
         servo draws this extra power on a sweep. Below the floor -> dead / PWM pin lost / rail unpowered.
         The ceiling is a HIGH-draw flag only (stall/binding), not a fail -- rail-voltage dependent (a
-        single SG90 peaks ~3 W on a 3.7 V pack, ~3.7 W on 5 V), so it warns rather than false-fails."""
+        single SG90 peaks ~3 W on a 3.7 V pack, ~3.7 W on 5 V), so it warns rather than false-fails.
+        """
         self._engine_min_mw: int = self.config.get('engine_min_mw', 500)  # INA226 'power' is mW (integer)
         self._engine_max_mw: int = self.config.get('engine_max_mw', 3500)
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('angle', 'pulse_us', 'done'),
@@ -144,20 +158,23 @@ class SG90(task.Task):
         """
         Map an ALREADY-CLAMPED integer angle to a pulse width, drive the PWM, and record to telemetry.
 
-        The clamp is the caller's job (so set_angle's compare-and-set clamps exactly once).
+        The angle clamp is the caller's job (so set_angle's compare-and-set clamps exactly once). The
+        per-fin mechanical `trim` (degrees) is added here, in the degree domain, then the resulting
+        pulse is bounded to [min_us, max_us] so a large trim can never over-drive the horn.
 
         Args:
             angle - the already-clamped command, in integer degrees.
             done - telemetry marker: 0 when the command is issued, 1 when a move() has completed.
 
         Returns:
-            The angle written (also stored on self.angle).
+            The angle written (stored on self.angle -- the COMMAND, before trim).
         """
         span = self._max_deg - self._min_deg
         if span:
-            self._pulse_us = self._min_us + (angle - self._min_deg) * (self._max_us - self._min_us) // span
+            pulse = self._min_us + (angle + self._trim_deg - self._min_deg) * (self._max_us - self._min_us) // span
         else:
-            self._pulse_us = self._min_us
+            pulse = self._min_us
+        self._pulse_us = commons.clamp_int(self._min_us, pulse, self._max_us)
         self._pwm.duty_u16(self._pulse_us * _DUTY_U16_MAX // _PERIOD_US)
         self.angle = angle
         self._telemetry.push((angle, self._pulse_us, done))
@@ -180,7 +197,7 @@ class SG90(task.Task):
         """
         Drive to angle (clamped, integer degrees) through the shared slew gate.
 
-        At most servo_concurrency fins slew at once -- then await the estimated travel so the caller
+        At most fins.concurrency fins slew at once -- then await the estimated travel so the caller
         knows it has arrived (open-loop: the wait is a slew estimate, not feedback). Records the command
         (done=0) and, after settling, the completion (done=1).
 
@@ -195,27 +212,39 @@ class SG90(task.Task):
         async with self._gate:
             self._apply(target)  # done=0: commanded
             completed = (target, self._pulse_us, 1)  # snapshot the WHOLE completion record before any await:
-            """a set_angle() from the 100 Hz loop during the slew or the gate release must never re-pair
+            """
+            a set_angle() from the 100 Hz loop during the slew or the gate release must never re-pair
             done=1 with a later angle/pulse. Capturing the tuple (not self._*) keeps that true even if a
-            future edit reshapes the push below."""
+            future edit reshapes the push below.
+            """
             await asyncio.sleep_ms(travel_ms)
         self._telemetry.push(completed)  # done=1: (estimated) completed
         return target
 
     def update(self, props: dict) -> list:
         """
-        {"angle": d} moves the servo IMMEDIATELY (integer degrees, clamped) -- the operator override.
+        Operator overrides, IMMEDIATE and ungated. {"angle": d} moves the servo (integer degrees,
+        clamped); {"trim": d} sets its mechanical zero (degrees) and re-drives it, so CC can zero each
+        engine live and watch the fin settle on its true centre.
 
         Args:
-            props - the operator command dict; the 'angle' key (if present) is applied at once.
+            props - the operator command dict; 'trim' (mechanical zero, deg) and/or 'angle' (target,
+                deg, clamped) are applied at once. 'trim' alone re-drives the current angle so the fin
+                visibly moves to its new centre.
 
         Returns:
-            ['angle'] when the angle was set, else [].
+            The keys applied, a subset of ['trim', 'angle'] in that order (else []).
         """
+        applied = []
+        if 'trim' in props:
+            self._trim_deg = props['trim']
+            applied.append('trim')
         if 'angle' in props:
-            self._apply(props['angle'])
-            return ['angle']
-        return []
+            self._apply(props['angle'])  # picks up the new trim
+            applied.append('angle')
+        elif applied:  # trim changed with no new angle -> re-drive current so the fin moves to centre
+            self._apply(self.angle)
+        return applied
 
     def set_angle(self, angle) -> int:
         """
@@ -270,5 +299,6 @@ class SG90(task.Task):
         status = task.Task.inspect(self)
         status['angle'] = self.angle  # COMMANDED, not measured -- SG90 is open-loop
         status['pulse_us'] = self._pulse_us
+        status['trim'] = self._trim_deg  # per-fin mechanical zero offset (degrees)
         status['feedback'] = None  # no position feedback on a 3-wire SG90
         return status

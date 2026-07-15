@@ -22,7 +22,8 @@ except ImportError:
 
 
 def default() -> dict:
-    board = {'id': 'taster', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION}
+    board = {'id': 'taster', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION,
+             'setup_retries': 3}  # re-attempt a flaky device setup at boot (breadboard contacts; 1 = no retry)
 
     """
     warm start (specs/coludo.md "In-flight reboot & warm start"): a mid-air reset restores GLIDING
@@ -112,26 +113,32 @@ def default() -> dict:
     }
 
     """
-    Dynamic-pressure fin governor (coludo.md "Fin authority"): the flight loop caps fin control
-    deflection by airspeed (commons.fin_deflection_limit, ∝ 1/v²); this scales the whole schedule.
-    1.0 = nominal; drop (e.g. 0.5) if a flight starts losing fins / control authority in the air.
-    """
-    fin_limit_multiplier = 1.0
+    Fin / servo control -- one home for every fin knob (specs/board-config.md "Fins").
 
+    concurrency: max fin servos allowed to SLEW at once via servo.move() -- caps the boost-rail
+    current transient. 3 (== fin count) = no limit; drop to 2/1 if the rail sags on the built airframe.
+
+    limit_multiplier: the dynamic-pressure fin governor's safety dial (coludo.md "Fin authority";
+    commons.fin_deflection_limit, ∝ 1/v²) -- scales the whole schedule. 1.0 = nominal; drop (e.g. 0.5)
+    if a flight starts losing fins / control authority in the air.
+
+    mixer: elevons (the two elerons move together for pitch, differentially for roll) + a rudder (the
+    yaw fin). Flip a gain sign if a surface deflects the wrong way. Each fin's mechanical neutral (true
+    zero) is the servo driver's `trim` (sg90, per fin -- boot / failsafe / control alike), NOT here.
+    limit_deg bounds control deflection.
     """
-    Control-surface mixing: elevons (the two elerons move together for pitch, differentially for
-    roll) + a rudder (the yaw fin). Flip a gain sign if a surface deflects the wrong way; set `trim`
-    (deg) for mechanical neutral. limit_deg bounds control deflection.
-    """
-    mixer = {
-        'neutral_deg': commons.SERVO_NEUTRAL_DEG,
-        'limit_deg': 45,
-        'surfaces': {
-            'servo_yaw': {'yaw': 1},
-            'servo_eleron_left': {'pitch': 1, 'roll': 1},
-            'servo_eleron_right': {'pitch': 1, 'roll': -1},
+    fins = {
+        'concurrency': 3,
+        'limit_multiplier': 1.0,
+        'mixer': {
+            'neutral_deg': commons.SERVO_NEUTRAL_DEG,
+            'limit_deg': 45,
+            'surfaces': {
+                'servo_yaw': {'yaw': 1},
+                'servo_eleron_left': {'pitch': 1, 'roll': 1},
+                'servo_eleron_right': {'pitch': 1, 'roll': -1},
+            },
         },
-        'trim': {},  # per-fin neutral offset (deg), set during bench alignment
     }
 
     # ---- sensors: data providers. Fusion groups by quantity and orders providers by priority
@@ -306,6 +313,9 @@ def default() -> dict:
       min_us 500 / max_us 2500 -- the PWM pulse endpoints (SG90 datasheet range);
       min_deg 0 / max_deg 180  -- the PHYSICAL clamp (a horn that binds at 135 -> max_deg 135); the
         mixer's limit_deg caps control AUTHORITY, this caps absolute travel;
+      trim 0 -- per-fin MECHANICAL zero offset (deg): each engine's true centre, since the install is
+        never exact. Added to every command (boot / failsafe / control), settable live over CC
+        (update {"trim": d}); zero each fin during bench alignment;
       angle -- boot angle (default: neutral mid-range);
       engine_min_mw 500 / engine_max_mw 3500 -- the INA226 servo-rail draw window the probe sweep
         must stay inside (stall / no-load detection during the pre-flight self-test).
@@ -479,10 +489,10 @@ def default() -> dict:
     = the TRIM glide attitude: hold it and the glider flies as LONG as possible, bleeding altitude
     through the orbit's bank, not through a forced off-trim descent (a pitch-0 'level attitude'
     setpoint fought the trim and tripled the sink to ~10 m/s). -6 is the SIM's trim, NOT the
-    airframe's: FIELD-TUNE it -- set the mixer `trim` so the elevator neutral matches the built
-    airframe, then read the hands-off steady-glide pitch from the walk-test / passive-flight
-    telemetry and put THAT number here (at true trim the pitch PID rides ~zero and the fins stay
-    near neutral). LANDING keeps trim; the flare is a field-tuning knob on top.
+    airframe's: FIELD-TUNE it -- first zero each fin's mechanical neutral (servo `trim`, sg90, per
+    fin), then read the hands-off steady-glide pitch from the walk-test / passive-flight telemetry
+    and put THAT number here (at true trim the pitch PID rides ~zero and the fins stay near neutral).
+    LANDING keeps trim; the flare is a field-tuning knob on top.
     """
     stage_setpoints = {'stages': {'boosting': {}, 'gliding': {'roll': 0, 'pitch': -6},
                                   'landing': {'roll': 0, 'pitch': -6}}}
@@ -532,6 +542,8 @@ def default() -> dict:
     field day with no hub.
     """
     field = {'name': 'field', 'activity': 'field', 'enabled': False, 'period_ms': 1000,
+             'max_range_m': 200,  # AIRFRAME glide range: the landing zone must be within this of the launch
+             # pad (a bigger glider reaches farther); the mission range-gate + this task's site-select use it
              'site_select': True, 'fallback_bearing_deg': 0.0,
              'fallback_near_m': 50.0, 'fallback_width_m': 100.0, 'fallback_depth_m': 90.0,
              'auto_arm': False, 'auto_arm_dwell_s': 60, 'still_g': 0.3}
@@ -542,10 +554,11 @@ def default() -> dict:
     stage instead of going ballistic -- but ONLY for an ARMED flight (a passive telemetry flight never
     warm-starts into an armed stage). checkpoint_s (floored at 1 s) is the cadence WHILE AIRBORNE;
     SETTING/DONE checkpoint once on entry (nothing moves on the ground, so no flash wear). The
-    telemetry/log timeline is written every checkpoint regardless. warm_start (top level) gates the
-    recovery at boot; this task writes what recovery reads.
+    telemetry/log timeline is written every checkpoint regardless. warm_start (this component's toggle)
+    gates the recovery at boot; this task writes what recovery reads.
     """
-    checkpoint = {'name': 'checkpoint', 'activity': 'checkpoint', 'enabled': True, 'checkpoint_s': 1}
+    checkpoint = {'name': 'checkpoint', 'activity': 'checkpoint', 'enabled': True, 'checkpoint_s': 1,
+                  'warm_start': warm_start}
 
     components = [
         # Recorder drain loop: a thin activity over the global Recorder, using uart:1.
@@ -572,19 +585,11 @@ def default() -> dict:
 
     return {
         'board': board,
-        'setup_retries': 3,  # re-attempt a flaky device setup at boot (breadboard contacts; 1 = no retry)
-        'warm_start': warm_start,
-        'max_range_m': 200,  # landing zone must be within this of the launch point -- the AIRFRAME glide
-        # range (a bigger glider reaches farther); the mission range-gate uses it
         'wifi': wifi,
         'buses': buses,
         'pins': pins,
         'recorder': recorder,
-        # Max fin servos allowed to SLEW at once via servo.move() -- caps the boost-rail current
-        # transient. 3 (== fin count) = no limit; drop to 2/1 if the rail sags on the built airframe.
-        'servo_concurrency': 3,
-        'fin_limit_multiplier': fin_limit_multiplier,
-        'mixer': mixer,
+        'fins': fins,
         'sensors': sensors,
         'components': components,
     }

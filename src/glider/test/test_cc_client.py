@@ -242,8 +242,8 @@ async def amain():
     tasks['flight']['gains']['yaw'] = {'kp': 0.0}  # a zero gain on one axis -> named
     assert 'yaw' in cc_client._readiness(ready_cfg)['gains']
     tasks['flight']['gains']['yaw'] = {'kp': 1.0}
-    ready_cfg['fin_limit_multiplier'] = 0.5  # a bench derating left applied
-    assert '0.5' in cc_client._readiness(ready_cfg)['fin_limit_multiplier']
+    ready_cfg['fins']['limit_multiplier'] = 0.5  # a bench derating left applied
+    assert '0.5' in cc_client._readiness(ready_cfg)['fins.limit_multiplier']
     _SitedMission.sites = []  # no zone AND no sites to select one from -> named
     assert 'zone' in cc_client._readiness(ready_cfg)
 

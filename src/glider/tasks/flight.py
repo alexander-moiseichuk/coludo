@@ -48,7 +48,8 @@ class Flight(task.Task):
 
     async def setup(self) -> bool:
         board = self.controller.config
-        self._mixer = mixer.Mixer(board.get('mixer', {}))
+        fins = board.get('fins', {})
+        self._mixer = mixer.Mixer(fins.get('mixer', {}))
         self._schedule_hz: int = self.config.get('schedule_hz', 100)  # > 0 -> timer; 0 -> asyncio at period_ms
         self._period_ms: int = self.config.get('period_ms', 20)
         self._dt: float = (1.0 / self._schedule_hz) if self._schedule_hz > 0 else (self._period_ms / 1000.0)
@@ -66,12 +67,12 @@ class Flight(task.Task):
         """
         the governor (governor.py): airspeed estimate -> dynamic-pressure fin-authority cap on the mixer,
         adaptively throttled once the glide settles. Reads accel (backbone) + GNSS speed (corrector)
-        through injected databoard handles; fin_limit_multiplier is the safety dial.
+        through injected databoard handles; fins.limit_multiplier is the safety dial.
         """
         accel = databoard.Databoard.parameter('accel')  # (x, y, z) in g -> airspeed integration
         gnss_speed = databoard.Databoard.parameter('speed')  # GNSS ground speed (m/s) corrector
         self._governor = governor.Governor(governor.GovernorConfig(self.config), self._mixer,
-                                           accel, gnss_speed, board.get('fin_limit_multiplier', 1.0))
+                                           accel, gnss_speed, fins.get('limit_multiplier', 1.0))
         # wind estimation (wind.py): the GNSS ground velocity vs the air velocity (airspeed × heading).
         # Fed at ~GNSS rate (throttled off the hot loop); the loiter enables its airspeed-free average.
         self._gnss_speed = gnss_speed
