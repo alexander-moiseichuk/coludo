@@ -306,13 +306,17 @@ def default() -> dict:
     # `activity` from tasks/ (higher-level subsystems); both resolve through the same registry.
 
     """
-    Fin servos (SG90) on their PWM pins, commanded in INTEGER degrees via `update {"angle": d}` /
-    move(); neutral (mid-range) at boot. Open-loop -- no position feedback. Powered from a separate
-    boost rail (the board drives signal only). Other servo types = their own `driver`. Per-fin knobs
+    Fin servos (SG90 / MG90S metal-gear) on their PWM pins, commanded in INTEGER degrees via
+    `update {"angle": d}` / move(); neutral (mid-range) at boot. Open-loop -- no position feedback.
+    Powered from a separate boost rail (the board drives signal only). The `driver` field picks the
+    servo TYPE (sg90 / mg90s) per fin, and a MIXED fleet is supported -- mg90s is the metal-gear
+    POSITIONAL variant (holds a fin against wind back-drive), electrically an SG90. Per-fin knobs
     (driver defaults; set per LINKAGE in the board config):
-      min_us 500 / max_us 2500 -- the PWM pulse endpoints (SG90 datasheet range);
-      min_deg 0 / max_deg 180  -- the PHYSICAL clamp (a horn that binds at 135 -> max_deg 135); the
-        mixer's limit_deg caps control AUTHORITY, this caps absolute travel;
+      min_us 500 / max_us 2500 -- the PWM pulse endpoints (SG90/MG90S datasheet range);
+      min_deg 0 / max_deg 180  -- the PHYSICAL travel clamp (a horn that binds at 135 -> max_deg 135);
+        span = max_deg - min_deg must equal the servo's mechanical travel so 1 command-deg = 1 rotation-
+        deg (180 for SG90 / 180deg positional MG90S). The mixer's limit_deg caps control AUTHORITY, this
+        caps absolute travel;
       trim 0 -- per-fin MECHANICAL zero offset (deg): each engine's true centre, since the install is
         never exact. Added to every command (boot / failsafe / control), settable live over CC
         (update {"trim": d}); zero each fin during bench alignment;
@@ -321,6 +325,10 @@ def default() -> dict:
         must stay inside (stall / no-load detection during the pre-flight self-test).
     """
     servos = [
+        # All SG90 for now. The `mg90s` driver (drivers/mg90s.py) is ready for the POSITIONAL metal-gear
+        # MG90S (holds a fin against wind back-drive): set a fin's `driver` to 'mg90s' once that servo is
+        # fitted -- a mixed fleet (mg90s + sg90) is supported. NB a continuous-rotation "360" MG90S is
+        # NOT a fin servo (pulse = speed, it spins and never holds an angle) -- use the 180deg positional.
         {'name': 'servo_yaw', 'driver': 'sg90', 'pin': 'servo_yaw', 'enabled': True},
         {'name': 'servo_eleron_left', 'driver': 'sg90', 'pin': 'servo_eleron_left', 'enabled': True},
         {'name': 'servo_eleron_right', 'driver': 'sg90', 'pin': 'servo_eleron_right', 'enabled': True},

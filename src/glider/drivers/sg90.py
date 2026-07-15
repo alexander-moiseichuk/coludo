@@ -50,8 +50,6 @@ except ImportError:  # host (CPython): board-only; the PWM pin is driven only on
 
 _PERIOD_US: int = 20000  # 50 Hz servo frame (20 ms)
 _DUTY_U16_MAX: int = 65535  # full 16-bit PWM duty
-_SLEW_MS_PER_60: int = 150  # ~0.15 s / 60deg SG90 slew estimate (open-loop -- no position feedback)
-_SETTLE_MARGIN_MS: int = 60  # added to the slew estimate so move() returns after it has settled
 _DEFAULT_CONCURRENCY: int = 3  # fins allowed to slew at once (== fin count -> no limit)
 
 # The N-slew concurrency gate is shared infrastructure (servo.py) so future servo types share one
@@ -71,6 +69,16 @@ class SG90(task.Task):
     carries 'feedback: None'). update {"angle": d} moves it immediately; await move(d) moves it through
     the shared slew gate; probe() sweeps it on demand.
     """
+
+    """
+    Servo-TYPE defaults -- a subclass (e.g. drivers/mg90s.py) overrides these for a different servo,
+    and a component's config still overrides per instance. Slew/settle are the open-loop move() travel
+    estimate; the mW window is the probe() self-test's expected INA226 draw.
+    """
+    _SLEW_MS_PER_60: int = 150   # ~0.15 s / 60deg (SG90 plastic-gear slew estimate)
+    _SETTLE_MARGIN_MS: int = 60  # added to the slew estimate so move() returns after it has settled
+    _ENGINE_MIN_MW: int = 500    # probe: min draw rise a working/wired/powered servo must show
+    _ENGINE_MAX_MW: int = 3500   # probe: draw above this is flagged HIGH (stall/binding)
 
     async def setup(self) -> bool:
         gpio = self._pin_gpio('pin')
@@ -96,8 +104,8 @@ class SG90(task.Task):
         The ceiling is a HIGH-draw flag only (stall/binding), not a fail -- rail-voltage dependent (a
         single SG90 peaks ~3 W on a 3.7 V pack, ~3.7 W on 5 V), so it warns rather than false-fails.
         """
-        self._engine_min_mw: int = self.config.get('engine_min_mw', 500)  # INA226 'power' is mW (integer)
-        self._engine_max_mw: int = self.config.get('engine_max_mw', 3500)
+        self._engine_min_mw: int = self.config.get('engine_min_mw', self._ENGINE_MIN_MW)  # INA226 'power' is mW
+        self._engine_max_mw: int = self.config.get('engine_max_mw', self._ENGINE_MAX_MW)
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('angle', 'pulse_us', 'done'),
                                        decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
         self._pwm = PWM(Pin(gpio), freq=50, duty_u16=0)
@@ -208,7 +216,7 @@ class SG90(task.Task):
             The clamped target angle.
         """
         target = self._clamp(angle)
-        travel_ms = abs(target - self.angle) * _SLEW_MS_PER_60 // 60 + _SETTLE_MARGIN_MS
+        travel_ms = abs(target - self.angle) * self._SLEW_MS_PER_60 // 60 + self._SETTLE_MARGIN_MS
         async with self._gate:
             self._apply(target)  # done=0: commanded
             completed = (target, self._pulse_us, 1)  # snapshot the WHOLE completion record before any await:
