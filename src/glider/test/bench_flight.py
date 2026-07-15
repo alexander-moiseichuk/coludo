@@ -7,7 +7,7 @@ synthetic ~140 Hz attitude (centidegree fixnum) + gyro rate and gains 0 (each st
 read->PID->mix->apply, but the fins hold neutral -> no motion). Reports achieved Hz, per-step latency
 (worst max_step_us) and CPU load (a free-running idle counter vs a no-flight baseline).
 
-The BREAKDOWN section then prices where a step's time goes -- the whole _step vs its _run_pid (the
+The BREAKDOWN section then prices where a step's time goes -- the whole _tick vs its _run_pid (the
 fixed-point PID: 3x pid.step + the fused mixer.actuate) vs navigation.steer (the float homing trig,
 recomputed only every nav_period_ms in flight). This is the evidence for the viperize question: if the
 integer PID is a small slice and the float trig dominates, viperizing the alloc-free PID is churn. Needs
@@ -100,10 +100,10 @@ async def sweep(base_rate):
         await flight_task.setup()
         runner = asyncio.create_task(flight_task.run())
         await asyncio.sleep_ms(300)
-        flight_task._steps = 0
+        flight_task._ticks = 0
         flight_task._max_step_us = 0
         idle_delta, ms = await _window(2000)
-        achieved = flight_task._steps * 1000 / ms
+        achieved = flight_task._ticks * 1000 / ms
         load = (1 - (idle_delta * 1000 / ms) / base_rate) * 100
         label = 'asyncio %dms' % (period_ms or 20) if schedule_hz == 0 else 'timer %dHz' % schedule_hz
         print('%-18s %8.1f %9d %7.1f' % (label, achieved, flight_task._max_step_us, load))
@@ -117,22 +117,22 @@ async def sweep(base_rate):
 
 async def breakdown():
     """
-    Price a single control step's components: the whole _step, the fixed-point PID (_run_pid), and the
+    Price a single control step's components: the whole _tick, the fixed-point PID (_run_pid), and the
     float nav trig (navigation.steer).
 
-    schedule_hz 0 so no timer fires while we call _step() by hand.
+    schedule_hz 0 so no timer fires while we call _tick() by hand.
     """
     task = flight.Flight('flight', {'schedule_hz': 0, 'period_ms': 20, 'gains': {'roll': {'kp': 2.0, 'kd': 0.2},
                         'pitch': {'kp': 1.5}, 'yaw': {'kp': 1.5, 'kd': 0.1}}}, Ctrl())
     await task.setup()
-    task._step()  # warm: bind the fins into the mixer and fill the guidance setpoint slots for _run_pid
+    task._tick()  # warm: bind the fins into the mixer and fill the guidance setpoint slots for _run_pid
 
     # representative coords: a position ~200 m off a 100 m landing zone (the homing trig's real inputs)
     position = (25.5000, -80.4000)
     corner_tl, corner_br = (25.5010, -80.4010), (25.4990, -80.3990)
     roll_cd, pitch_cd = fixed.from_float(5.0), fixed.from_float(-3.0)
 
-    step_us = _per_call(task._step)
+    step_us = _per_call(task._tick)
     pid_us = _per_call(lambda: task._run_pid(roll_cd, pitch_cd, 10))
     nav_us = _per_call(lambda: navigation.steer(position, corner_tl, corner_br))
     """
@@ -155,7 +155,7 @@ async def breakdown():
     mix_us = _per_op(lambda: task._mixer.mix(1, 1, 1))  # reference: the old dict path (host tools only)
 
     print('\nstep-time breakdown (us/call, %d samples):' % 2000)
-    print('  whole _step (nav cached) : %7.1f us' % step_us)
+    print('  whole _tick (nav cached) : %7.1f us' % step_us)
     print('  _run_pid (PID+actuate)   : %7.1f us  (%.0f%% of a step)' % (pid_us, 100 * pid_us / step_us))
     print('  navigation.steer (trig)  : %7.1f us  (throttled ~1 in %d steps -> ~%.0f us amortized/step)' %
           (nav_us, max(1, task.config.get('nav_period_ms', 100) // 10),
@@ -180,7 +180,7 @@ async def breakdown():
 
 async def alloc():
     """
-    The REAL control-path leak: run flight._step() with GC DISABLED (as in flight -- sequencer disables
+    The REAL control-path leak: run flight._tick() with GC DISABLED (as in flight -- sequencer disables
     GC on BOOSTING) and measure gross bytes allocated per step.
 
     This is the number the fixed-point work moved (attitude/error now integer); the HITL capture's
@@ -192,7 +192,7 @@ async def alloc():
     await task.setup()
     await asyncio.sleep_ms(50)  # let the pusher land a fresh sample on every channel before the tight loop
     for _ in range(5):
-        task._step()  # warm caches (fins, airspeed state) so steady-state alloc is measured
+        task._tick()  # warm caches (fins, airspeed state) so steady-state alloc is measured
     def _alloc(fn, n=2000):
         gc.collect()
         gc.disable()
@@ -204,7 +204,7 @@ async def alloc():
         return used / n
 
     """
-    per-CALL component costs (each measured in isolation). The tight GC-off loop runs _step back-to-back
+    per-CALL component costs (each measured in isolation). The tight GC-off loop runs _tick back-to-back
     (dt ~ us), so the glide airspeed THROTTLE almost never fires here -- measuring per_step directly would
     over-state the win. Instead measure a base step with the governor's update forced off, then amortize
     it by its REAL glide cadence (the adaptive interval) against the control rate -- the honest flight leak.
@@ -216,7 +216,7 @@ async def alloc():
     pid_b = _alloc(lambda: task._run_pid(fixed.from_float(5.0), fixed.from_float(-3.0), 10))
     task._governor._interval_s = 1e9  # force the adaptive throttle to never fire -> a base step without airspeed
     task._governor._accum_s = 0.0
-    base_step = _alloc(task._step)
+    base_step = _alloc(task._tick)
     gc.collect()
     free = gc.mem_free()
     """
