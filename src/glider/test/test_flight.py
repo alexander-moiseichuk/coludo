@@ -164,6 +164,8 @@ async def amain():
     # error +90 -> bank_demand(+90, 1.5, 30) = +30 -> roll PID (kp 1) -> elevons 90+/-30 (a right bank)
     assert bank_ctrl.fins['servo_eleron_left'].angle == 120 and bank_ctrl.fins['servo_eleron_right'].angle == 60
     assert bank_ctrl.fins['servo_eleron_left'].angle != bank_ctrl.fins['servo_eleron_right'].angle  # banked
+    # 23.5 wiring: _run_pid drives each PID's clamp from the governor's live cap (set_limit)
+    assert bankflight._pid['roll'].output_limit == bankflight._mixer.limit * fixed.SCALE
 
     # crosswind landing: LANDING keeps steering to the zone (not a blind wings-level flare), using
     # the FULL fin authority (land_bank_limit 45) to crab the crosswind out -- keep it gliding.
@@ -212,6 +214,8 @@ async def amain():
     assert await gov.setup() is True
     accel = databoard.Databoard.provide('accel_gov', {'accel': {'priority': 0, 'timeout_ms': 1000}}, 'accel')
     accel.push((0.0, 0.0, 1.0))  # exactly 1 g -> net accel 0 -> predict() is a no-op, value() = what we set
+    gov._governor._estimator._confident = True  # trusted estimate -> the cap tracks value() (the 23.4
+    # conservative cap-floor applies only WHILE un-confident -- that path is covered by test_governor)
     gov._governor._estimator._speed = 0.0
     gov._tick()
     assert gov._mixer.limit == 45  # 0 m/s -> full 45 deg authority (and SETTING still ran the governor)

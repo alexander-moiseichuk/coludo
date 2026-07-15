@@ -462,9 +462,12 @@ def default() -> dict:
     otherwise the DISTANCE-CONSTANT throttle updates it at clamp(speed, floor, ceiling) Hz = one
     update per ~1 m of travel at any speed (the floor bounds time-staleness near stall, the ceiling
     caps the float-path cost at speed). Staleness self-scales -- an overspeed shrinks its own next
-    interval.
+    interval. airspeed_unconfident_ms: until the estimate is TRUSTED (a fresh boot / mid-air reset
+    reads 0 before the accel integrator or a GNSS fix charge it) the fin cap is taken from THIS
+    conservative speed, not the un-charged 0 (which would open authority to the full 45deg at high q).
     """
-    airspeed_governor = {'airspeed_floor_hz': 5, 'airspeed_ceiling_hz': 50, 'airspeed_dive_pitch': -45.0}
+    airspeed_governor = {'airspeed_floor_hz': 5, 'airspeed_ceiling_hz': 50, 'airspeed_dive_pitch': -45.0,
+                         'airspeed_unconfident_ms': 30.0}
 
     """
     GNSS corrector gate: at |pitch| >= gnss_steep_pitch (deg) the receiver's 2D GROUND speed cannot
@@ -479,7 +482,9 @@ def default() -> dict:
     (their defaults are DERIVED, do not pin them here):
       position_age_max_ms -- tier-1 freshness gate, defaults to the GNSS channels' own databoard
         windows (set TIGHTER to distrust a stale fix sooner);
-      integral_limit -- PID anti-windup, defaults to the mixer deflection limit.
+      integral_limit -- PID anti-windup INITIAL value, defaults to the mixer deflection limit; in
+        flight both PID clamps TRACK the live governor cap each update (so the integral never winds up
+        behind a tightened cap and dumps on reopen), so this only seeds the pre-loop default.
 
     steering noise filter: integer EMA on the heading error (steer_filter_shift; shift 3 = alpha
     1/8, tau ~80 ms @ 100 Hz) -- smooths per-step sensor jitter out of the bank command without

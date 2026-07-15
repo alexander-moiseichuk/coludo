@@ -44,7 +44,32 @@ def test_gnss_correct_gated():
     assert abs(estimator.value() - 10.0) < 0.5
 
 
+def test_confidence_and_seed():
+    # a fresh estimator (cold boot / mid-air reset) is NOT confident -- it reads 0 before anything charges
+    estimator = AirspeedEstimator(gnss_gain=0.2)
+    assert not estimator.confident() and estimator.value() == 0.0
+
+    # a tiny accel charge (below the clearly-airborne threshold) does not yet earn trust
+    estimator.predict(1.0, 0.1)  # -> 0.1 m/s, well under 5
+    assert not estimator.confident()
+
+    # the FIRST accepted GNSS fix while un-confident SEEDS directly (full set, not a 20% crawl to 4.88)
+    estimator.correct(24.0, has_fix=True)
+    assert estimator.confident() and abs(estimator.value() - 24.0) < 1e-6
+
+    # once confident, further fixes BLEND (not re-seed)
+    estimator.correct(20.0, has_fix=True)
+    assert abs(estimator.value() - (24.0 + 0.2 * (20.0 - 24.0))) < 1e-6  # 23.2
+
+    # accel alone can earn trust too: charged past the clearly-airborne threshold (boost)
+    charged = AirspeedEstimator()
+    for _ in range(20):
+        charged.predict(49.0, 0.01)  # -> ~9.8 m/s, past 5
+    assert charged.confident()
+
+
 test_predict_integration()
 test_ceiling_clamp()
 test_gnss_correct_gated()
-print('ok: airspeed -- accel-integrate backbone, ceiling clamp, sanity-gated GNSS blend + convergence')
+test_confidence_and_seed()
+print('ok: airspeed -- accel backbone, ceiling clamp, GNSS blend + convergence, confidence + first-fix seed')

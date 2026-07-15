@@ -86,6 +86,14 @@ class GovernorConfig:
         `wind` config subtree so the envelope ceiling is set in one place.
         """
         self.max_wind: float = config.get('wind', {}).get('max_speed', 15.0)
+        """
+        UNCONFIDENT cap floor: until the estimator is confident() -- a fresh construct or a MID-AIR RESET
+        reads 0 before anything charges it -- the cap is taken from this CONSERVATIVE speed, not the
+        un-charged 0 (fin_deflection_limit(0) is the full 45deg, opening authority wide at high q, the
+        unsafe direction). 30 m/s -> ~14deg: tight for a post-apogee dive yet past the ~10deg boost-hold.
+        The estimator turns confident within a boost (accel-charged) or on the first sane GNSS fix.
+        """
+        self.unconfident_ms: float = config.get('airspeed_unconfident_ms', 30.0)
 
     def update_interval(self, speed: float) -> float:
         """
@@ -197,10 +205,13 @@ class Governor:
         speed, speed_source, _speed_age = self._gnss_speed.read()
         steep = pitch >= self._config.steep_pitch or pitch <= -self._config.steep_pitch
         # reject a GNSS JUMP: a real ground speed is within max_wind of the airspeed (their difference IS
-        # the wind, which is bounded). Before the first estimate (value 0) accept it as the seed.
+        # the wind, which is bounded). While NOT yet confident (fresh / mid-air reset) accept it as the seed.
         estimate = self._estimator.value()
-        plausible = speed is not None and (estimate <= 0.0 or abs(speed - estimate) <= self._config.max_wind)
+        plausible = speed is not None and (
+            not self._estimator.confident() or abs(speed - estimate) <= self._config.max_wind)
         self._estimator.correct(speed if speed is not None else 0.0,
                                 speed_source is not None and plausible and not steep)
-        self._mixer.limit = max(1, int(
-            commons.fin_deflection_limit(self._estimator.value()) * self._multiplier))
+        # cap off the estimate ONLY when it is trusted; else the conservative floor (never off an
+        # un-charged 0, which would open authority to the full 45deg at high q -- the unsafe direction)
+        cap_speed = self._estimator.value() if self._estimator.confident() else self._config.unconfident_ms
+        self._mixer.limit = max(1, int(commons.fin_deflection_limit(cap_speed) * self._multiplier))

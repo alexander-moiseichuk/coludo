@@ -24,6 +24,7 @@ python3 flight_report.py clean.txt -o clean.html # pip install plotly
 import argparse
 import math
 import os
+import random
 import sys
 
 _GLIDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'glider')
@@ -35,6 +36,7 @@ import fixed  # noqa: E402 -- fixed-point convention: PID error/output in centid
 import governor  # noqa: E402 -- the REAL fin-authority governor (estimated airspeed + throttle)
 import guidance  # noqa: E402 -- the REAL per-stage guidance law
 import mixer  # noqa: E402
+import navigation  # noqa: E402 -- zone geometry for the _Mission stub (memoized, mirrors mission.Mission)
 import pid  # noqa: E402
 import sim_model  # noqa: E402
 
@@ -73,13 +75,33 @@ class _Handle:
 
 class _Mission:
     """Mission stand-in: the landing zone from the HITL scenario; no CC-set launch point, so the
-    guidance tiers exercise tier 1 (live fix) and tier 3 (blind) exactly as a real flight would."""
+    guidance tiers exercise tier 1 (live fix) and tier 3 (blind) exactly as a real flight would. The
+    zone geometry getters mirror the real mission.Mission (memoized by zone identity)."""
 
     def __init__(self, zone):
         self.zone = zone
+        self._zone_key = None
+        self._zone_points = None
+        self._zone_aspect = 1.0
 
     def launch_point(self):
         return None
+
+    def zone_points(self):
+        if self.zone is None:
+            return None
+        if self.zone is not self._zone_key:  # first call / zone replaced -> resolve + cache
+            self._zone_key = self.zone
+            self._zone_points = navigation.zone(self.zone[0], self.zone[1])
+            self._zone_aspect = navigation.zone_aspect(self.zone[0], self.zone[1])
+        return self._zone_points
+
+    def zone_aspect(self):
+        return 1.0 if self.zone_points() is None else self._zone_aspect
+
+    def endgame_heading(self):
+        return guidance.Heading.FIG_OO if self.zone_aspect() > guidance.Heading.OO_ASPECT \
+            else guidance.Heading.FIG_O
 
 
 def _component(cfg: dict, name: str) -> dict:
@@ -94,10 +116,17 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     Run the closed loop and return a recorder capture (text).
 
     Reuses config_hitl so the gains, mixer, sequencer thresholds and scenario are byte-for-byte what the
-    board flies.
+    board flies. Set VF_SEED to seed the sensor noise deterministically (A/B a control change on the
+    SAME noise realisation).
     """
+    _seed = os.environ.get('VF_SEED')
+    if _seed is not None:
+        random.seed(int(_seed))
     cfg = config_hitl.default(motor=motor, noise=noise, spike=spike)
     flight_c = _component(cfg, 'flight')
+    _endgame = os.environ.get('VF_ENDGAME')
+    if _endgame:
+        flight_c['endgame_pattern'] = _endgame  # A/B the endgame pattern (o / oo / auto) from the shell
     seq_c = _component(cfg, 'sequencer')
     hitl_c = _component(cfg, 'hitl')
 
@@ -258,6 +287,9 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
                 for axis_pid in pids.values():
                     axis_pid.reset()
             if law.compute(stage_id, setpoint, heading_m, int(t * 1e6)):
+                cap = mix.limit  # PID clamps track the governor's live cap (mirrors flight._run_pid, finding 23.5)
+                for axis_pid in pids.values():
+                    axis_pid.set_limit(cap)
                 roll_cmd = pids['roll'].step(law.roll_setpoint - roll_cd, dt_ms, roll_rate)
                 pitch_cmd = pids['pitch'].step(law.pitch_setpoint - pitch_cd, dt_ms, pitch_rate)
                 yaw_cmd = pids['yaw'].step(law.heading_error * fixed.SCALE, dt_ms, yaw_rate)

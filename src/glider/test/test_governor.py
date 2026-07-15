@@ -46,19 +46,38 @@ def _build(config=None, multiplier=1.0):
 
 
 def test_authority_cap():
-    """The 1/v² deflection schedule lands in mixer.limit, scaled by the safety multiplier."""
+    """The 1/v² deflection schedule lands in mixer.limit (when the estimate is TRUSTED), × the multiplier."""
     unit, mix, _accel, _speed = _build()
+    unit._estimator._confident = True  # a trusted estimate -> the cap tracks the live speed
     unit._estimator._speed = 0.0
     unit.step(0.01, True, 0)  # pre-glide -> full rate -> the cap updates every step
-    assert mix.limit == 45  # 0 m/s -> full 45 deg authority
+    assert mix.limit == 45  # 0 m/s (genuinely slow, low q) -> full 45 deg authority
     unit._estimator._speed = 40.0
     unit.step(0.01, True, 0)
     assert mix.limit == 8  # fin_deflection_limit(40) -> 8 deg
     capped, capped_mix, _a, _s = _build(multiplier=0.5)  # the safety dial halves the whole schedule
+    capped._estimator._confident = True
     capped._estimator._speed = 0.0
     capped.step(0.01, True, 0)
     assert capped_mix.limit == 22  # int(45 * 0.5)
     assert capped_mix.limit >= 1  # the cap never reaches 0 (always-some authority)
+
+
+def test_unconfident_cap_floor():
+    """
+    Until the estimate is TRUSTED (a fresh construct / mid-air reset reads 0 before anything charges
+    it), the cap comes from the conservative unconfident_ms, NOT the un-charged 0 -- which would open
+    authority to the full 45deg at high q, the unsafe direction (finding 23.4). It turns confident on
+    the first accel-charge or the first sane GNSS fix.
+    """
+    unit, mix, _accel, gnss_speed = _build({'airspeed_unconfident_ms': 30.0})
+    assert not unit._estimator.confident()  # fresh: no trusted speed yet
+    unit.step(0.01, True, 0)  # airborne with a 0 estimate -> the conservative floor, NOT 45
+    assert mix.limit == 14  # fin_deflection_limit(30) -> 14, not fin_deflection_limit(0) == 45
+    # a sane GNSS fix anchors it -> confident -> the cap tracks the real (here genuinely slow) speed
+    gnss_speed.reading = (4.0, 'gnss', 0)
+    unit.step(0.01, True, 0)
+    assert unit._estimator.confident() and mix.limit == 45  # 4 m/s, low q -> full authority is now correct
 
 
 def test_estimator_wiring():
@@ -70,8 +89,9 @@ def test_estimator_wiring():
     unit, _mix, accel, gnss_speed = _build()
     accel.value_now = (0.0, 0.0, 6.0)  # 6 g -> ~49 m/s^2 net along the path
     unit.step(0.1, True, 0)
+    unit.step(0.1, True, 0)  # charge past the clearly-airborne threshold (~9.8 m/s) -> confident -> BLEND
     integrated = unit.airspeed()
-    assert integrated > 0.0  # integrated off zero
+    assert integrated > 5.0 and unit._estimator.confident()  # a trusted, clearly-airborne backbone
     gnss_speed.reading = (10.0, 'gnss', 0)  # a live fix pulls the estimate toward GNSS
     accel.value_now = (0.0, 0.0, 1.0)  # net 0 -> only the corrector moves it
     unit.step(0.1, True, 0)
@@ -186,10 +206,11 @@ def test_gnss_steep_pitch_gate():
 
 
 test_authority_cap()
+test_unconfident_cap_floor()
 test_estimator_wiring()
 test_throttle_and_overrides()
 test_distance_constant_interval()
 test_gnss_steep_pitch_gate()
 test_gnss_jump_rejected()
-print('ok: governor -- 1/v2 authority cap, estimator wiring, distance-constant throttle, full-rate '
-      'overrides, steep-pitch GNSS gate, GNSS jump rejection')
+print('ok: governor -- 1/v2 authority cap, unconfident cap-floor, estimator wiring, distance-constant '
+      'throttle, full-rate overrides, steep-pitch GNSS gate, GNSS jump rejection')

@@ -236,6 +236,10 @@ class Flight(task.Task):
         """
         law = self._guidance  # the computed setpoint slots (no per-step tuple)
         roll_pid, pitch_pid, yaw_pid = self._pids  # bound once (no per-tick string-keyed dict probe)
+        cap = self._mixer.limit  # the governor's live 1/v² authority -> track the PID clamps to it (anti-windup)
+        roll_pid.set_limit(cap)
+        pitch_pid.set_limit(cap)
+        yaw_pid.set_limit(cap)
         rate = self._rate.value()  # (roll, pitch, yaw) rate or None -- no box: the gyro's stored tuple
         roll_rate, pitch_rate, yaw_rate = rate if rate is not None else (None, None, None)
         roll_cmd = roll_pid.step(law.roll_setpoint - roll, dt_ms, roll_rate)

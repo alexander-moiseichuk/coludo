@@ -63,6 +63,27 @@ def test_clamps_and_reset():
     assert reset_pid.step(0, 1000) == 0
 
 
+def test_set_limit():
+    # set_limit retunes BOTH clamps live -> the output tracks the governor's tightened fin cap
+    clamp_pid = pid.Pid(kp=100.0, output_limit=45.0)
+    assert clamp_pid.step(fixed.from_float(10), 100) == fixed.from_float(45)  # wide cap -> 45
+    clamp_pid.set_limit(5)  # governor tightens authority to 5° at high q
+    assert clamp_pid.step(fixed.from_float(10), 100) == fixed.from_float(5)   # tracks the live 5° cap
+    clamp_pid.set_limit(45)  # cap reopens
+    assert clamp_pid.step(fixed.from_float(10), 100) == fixed.from_float(45)
+
+    # the integral clamp tracks the cap too -> no wind-up behind a tight cap that dumps on reopen
+    integ = pid.Pid(ki=1.0, integral_limit=45.0)
+    integ.set_limit(5)  # tight cap
+    out = 0
+    for _ in range(20):
+        out = integ.step(fixed.from_float(10), 1000)  # hammer 10°/s -> integral pinned at the 5° cap
+    assert out == fixed.from_float(5)  # ki*5, NOT ki*45 -> no windup
+    integ.set_limit(45)  # cap reopens -- the integral was held at 5, so no saturating dump
+    assert integ.step(0, 1000) == fixed.from_float(5)  # still ki*5, not a 45° spike
+
+
 test_terms()
 test_clamps_and_reset()
-print('ok: pid -- fixed-point P/I/D terms, integral + output clamps, reset, ±180 swing (SCALE-agnostic)')
+test_set_limit()
+print('ok: pid -- fixed-point P/I/D, integral + output clamps, reset, ±180 swing, live set_limit (SCALE-agnostic)')
