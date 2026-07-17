@@ -130,6 +130,53 @@ Alternative is to connect e.g. from [6F22 9V using plug](https://www.amazon.com/
 
 **Required, weight 42.1g for 6F22, and power-down board**
 
+## Converter
+The servo rail is driven by a **ND3A05SD DC-DC module (5 V / 3 A, isolated)**, separate from the
+controller rail. Three **MG90S at ~1.2 A stall each** give a **~3.5 A simultaneous peak that exceeds the
+3 A module**, so the rail carries a **reservoir capacitor** to source that transient — the decided,
+primary protection.
+
+The module maker also suggests a series **diode** (an isolated buck cannot sink current, so a
+back-driven motor's regenerative kick pushes the floating output up until something clamps it). **That
+advice targets a single larger motor; three small MG90S regenerate far less, and the bulk cap already
+doubles as the regen sink** (ΔV = Q/C is tiny for a small kick into 1000 µF). So the series diode is
+**omitted** — it would cost ~0.4 V drop / ~1.4 W / reduced fin torque for protection the cap already
+provides. A cheap **TVS clamp** across the rail is the optional belt-and-suspenders (≈ 0 loss when idle)
+if any overvoltage is still a worry.
+
+```
+  battery  ──▶  ND3A05SD  ──▶ (D1 — omitted) ──┬──────────▶  3× MG90S servos
+  6F22/LiPo     5 V / 3 A                       │               ~1.2 A each
+                (isolated)                       │               ~3.5 A peak
+                                      ┌──────────┴─────────┐
+                                      │ Cbulk 1000 µF      │  reservoir (decided):
+                                      │  ‖ 10 µF ‖ 100 nF  │  sources the spike AND
+                                      │  ‖ TVS 5 V (opt.)  │  absorbs the small regen
+                                      └──────────┬─────────┘
+                                                GND
+  module 0 V ──────────── bond to system GND ───────────────▶ (shared PWM reference)
+```
+
+**Reservoir capacitor — the decided protection.** A **1000 µF low-ESR aluminium (16 V, 105 °C — or a
+polymer type for the vibration/temperature of a flight article)** plus **10 µF X7R + 100 nF ceramics**,
+placed **right at the servo header** so the spike path (cap → servos) carries no series impedance. Keep
+the module's own output cap as well. 470 µF is the minimum; 2200 µF is fine but watch the power-on inrush
+tripping the module soft-start. Bond the module output − to system ground so the servo PWM shares the
+logic reference.
+
+**If a diode is ever wanted** (a bigger single motor, or reverse-polarity protection): use a **Schottky**,
+V_F as low as possible, **I_F ≥ 8 A**, **V_RRM ≥ 20 V**, on the **+ rail only** — never one in each line
+(a diode in the 0 V line lifts the servo ground and shifts the PWM reference, and two series diodes drop
+the servos to ~4.2 V, near the MG90S limit). For reverse-polarity specifically an **ideal-diode P-FET**
+(≈ milliohm drop) beats a Schottky.
+
+**Firmware helps too.** The fin `concurrency` gate staggers servo motion so they do not all slam at
+once — that caps the *simultaneity* of the draw; the reservoir cap caps the *transient*. A sustained
+all-three-stall > 3 A is an average-power limit the cap cannot fix (the module current-limits), so it is
+handled by not commanding three hardovers at once, not by more capacitance.
+
+**Required, weight ~5–7 g (module + reservoir cap; optional TVS).**
+
 ## Separation switch
 Detects stage separation — when the engine has burned out and the booster throws the glider away (parachute opens).
 **Chosen design (light + reliable): two adhesive copper pads**, one on the glider and one on the booster. While nested
@@ -161,9 +208,10 @@ Candidates (SG90 expected primary — cheap, compact, light):
 **Gearing/transmission**: a reduction can trade angle for force and lower sustained current — 180°→90°/60°/45°.
 **60° looks interesting** (gives **±30°** of fin throw at ~4× torque); 45° (±22.5°) is too little angle.
 
-**Power**: servos run from their **own boost rail** (expected 5V, can be 7/9/12V if needed), separate from the
-controller; **per-pin diode protection** is NOT required for 5V. In case of high current peaks,
-drive the servos **sequentially** (not all at once) most likely is not feasible due to slow reactions of such mode.
+**Power**: servos run from their **own converter rail** (5 V — see [Converter](#converter) above),
+separate from the controller. The ~3.5 A peak of 3× MG90S is handled by that rail's **reservoir
+capacitor**; a series diode is not used (small servos → low back-EMF, the cap absorbs it). The firmware
+fin `concurrency` gate staggers servo motion so they do not all draw at once.
 
 **Required, weight 10.6g per each engine and wires, at least 2 are required**
 
