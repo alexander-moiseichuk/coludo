@@ -234,6 +234,28 @@ def default() -> dict:
                      'temperature': {'priority': 1, 'timeout_ms': 500}},  # slow quantity, capped ≤1000
     }
 
+    """
+    Pitot/static airspeed (sdp810.py): SDP810-500Pa differential-pressure sensor on i2c:0 @ 0x25
+    (bench-verified). P+ = pitot (total), P- = interior static; the interior reference has a position
+    error, so pad-tare the zero (CC `update {"zero": true}`, glider still) and trim `pressure_scale`
+    against a known GNSS ground speed on a calm pass. Provides dynamic_pressure (Pa) + airspeed (m/s);
+    no consumer wired yet (the governor still runs its accel+GNSS estimator) -- logs + telemetry today,
+    a fusion input for airspeed.py later. `air_density` trims sqrt(2q/rho) for field elevation.
+    """
+    airspeed_sdp810 = {
+        'name': 'airspeed_sdp810',
+        'driver': 'sdp810',
+        'bus': 'i2c', 'id': 0,
+        'addr': 0x25,
+        'period_ms': 20,  # ~50 Hz (tau63 < 3 ms; 9-byte read is ~0.5 ms on the 400 kHz bus)
+        'air_density': 1.225,  # kg/m^3 (ISA sea level); set to field density for a true-airspeed span
+        'zero_offset_pa': 0.0,  # pad-static bias (Pa) -- set by the pad tare, not by hand
+        'pressure_scale': 1.0,  # span trim from a GNSS-vs-q calm pass (position error)
+        'enabled': True,
+        'provides': {'dynamic_pressure': {'priority': 0, 'timeout_ms': 100},
+                     'airspeed': {'priority': 0, 'timeout_ms': 100}},
+    }
+
     laser_agl = {
         'name': 'laser_agl',
         'driver': 'vl53l4cx',
@@ -297,6 +319,7 @@ def default() -> dict:
         attitude,
         baro_icp10111,
         baro_bmp280,
+        airspeed_sdp810,
         laser_agl,
         power_ina226,
         gnss,
