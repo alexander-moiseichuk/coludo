@@ -2,15 +2,18 @@
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 On-board test for the SDP810 driver (drivers/sdp810.py): @task.driver('sdp810') registration, graceful
-setup when the bus is undefined, the Sensirion CRC-8, and that the raw -> dynamic-pressure -> airspeed
-conversion (with tare / span / density) is sane. Deterministic whether or not an SDP810 is wired.
-Run by `make test`.
+setup when the bus is undefined, the @viper Sensirion CRC-8, the integer raw -> dynamic-pressure fixnum
+scaling + pad tare, and the airspeed = sqrt(2q/rho) conversion the driver derives once per read.
+Deterministic whether or not an SDP810 is wired. The fusion of that airspeed (the estimator's direct
+source + the governor's in-band/saturation gate) is tested in test_airspeed / test_governor. Run by
+`make test`.
 """
 
 import asyncio
 import struct
 
 import config_default
+import fixed
 import task
 from drivers import sdp810
 
@@ -20,13 +23,13 @@ class _StubController:
 
 
 def _frame(dp_raw, temp_raw=5000, scale=60):
-    """Build a valid 9-byte SDP8xx frame (DP, Temp, Scale each + a correct CRC) for the conversion tests."""
+    """Build a valid 9-byte SDP8xx frame (DP, Temp, Scale each + a correct CRC) for the scaling tests."""
     body = bytearray(9)
     body[0:2] = struct.pack('>h', dp_raw)
     body[3:5] = struct.pack('>h', temp_raw)
     body[6:8] = struct.pack('>H', scale)
     for base in (0, 3, 6):
-        body[base + 2] = sdp810._crc8(body, base)
+        body[base + 2] = sdp810._crc8(body[base], body[base + 1])  # @viper crc over the word's two bytes
     return bytes(body)
 
 
@@ -41,7 +44,7 @@ async def amain():
     Sensirion CRC-8 (poly 0x31, seed 0xFF): the datasheet worked example 0xBEEF -> 0x92, and a
     round-trip through the frame builder must validate while a single flipped bit must not.
     """
-    assert sdp810._crc8(b'\xbe\xef', 0) == 0x92
+    assert sdp810._crc8(0xBE, 0xEF) == 0x92
     good = _frame(8100)  # +135 Pa at scale 60
     assert sdp810._frame_ok(good)
     bad = bytearray(good)
@@ -49,29 +52,28 @@ async def amain():
     assert not sdp810._frame_ok(bytes(bad))
     assert not sdp810._frame_ok(good[:8])  # short frame -> rejected
 
-    # conversion: +135 Pa dynamic pressure (raw 8100 / scale 60) -> ~15 m/s at ISA density
+    # signed-16 field decode + integer scaling: raw 8100 / scale 60 -> 135.00 Pa -> 13500 fixnum
+    assert sdp810._signed16(0x1f, 0xa4) == 8100 and sdp810._signed16(0xfd, 0xa8) == -600
     probe = sdp810.Sdp810('airspeed', {}, _StubController())
-    probe._scale, probe._density, probe._gain, probe._zero_pa = 60.0, 1.225, 1.0, 0.0
-    pressure, airspeed, temp = probe._convert(_frame(8100, temp_raw=5000))
-    assert abs(pressure - 135.0) < 0.5, pressure
-    assert 14.5 < airspeed < 15.5, airspeed  # sqrt(2*135/1.225) ~ 14.85
-    assert abs(temp - 25.0) < 0.1, temp  # 5000 / 200
+    probe._scale, probe._zero, probe._density = 60, 0, 1.225
+    assert probe._pressure(8100) == 13500 and abs(fixed.to_float(probe._pressure(8100)) - 135.0) < 0.01
+    assert probe._pressure(-600) == -1000  # -10 Pa; a negative (reverse/near-zero flow) reading is kept signed
 
-    # negative dynamic pressure (reverse/near-zero flow) -> 0 m/s, never a complex root
-    pressure, airspeed, _t = probe._convert(_frame(-600))  # -10 Pa
-    assert pressure < 0.0 and airspeed == 0.0, (pressure, airspeed)
+    # the ONE float: airspeed = sqrt(2q/rho); 135 Pa -> ~14.85 m/s, and a negative q clamps to 0 (no root)
+    assert 14.5 < probe._airspeed(13500) < 15.5, probe._airspeed(13500)
+    assert probe._airspeed(-1000) == 0.0 and probe._airspeed(0) == 0.0
 
     """
-    Calibration: a pad tare captures the at-rest bias so a still glider reads ~0 Pa / 0 m/s, and the
-    span trim scales the reading. update() reports the changed property names for the CC round-trip.
+    Calibration: a pad tare captures the at-rest bias (a Pa fixnum) so a still glider reads 0; a direct
+    set applies a Pa offset; air_density is the q->v span knob. update() reports the changed names (CC).
     """
-    probe._convert(_frame(120))  # +2 Pa at rest -> becomes the tare source (_raw_pa)
-    assert probe.update({'zero': True}) == ['zero_offset_pa']
-    pressure, airspeed, _t = probe._convert(_frame(120))  # same reading, now tared
-    assert abs(pressure) < 0.01 and airspeed == 0.0, (pressure, airspeed)
-    assert probe.update({'pressure_scale': 1.05}) == ['pressure_scale'] and probe._gain == 1.05
+    probe._pressure(200)  # +200 raw -> _raw = 333 fixnum -> becomes the tare source
+    assert probe.update({'zero': True}) == ['zero_offset_pa'] and probe._zero == 333  # 200*100//60
+    assert probe._pressure(200) == 0  # same reading, now tared to zero
+    assert probe.update({'zero_offset_pa': 1.5}) == ['zero_offset_pa'] and probe._zero == fixed.from_float(1.5)
+    assert probe.update({'air_density': 1.2}) == ['air_density'] and probe._density == 1.2
 
-    print('ok: sdp810 driver registered; graceful-absent; crc + conversion ~%.0f Pa / %.1f m/s' % (135.0, 14.85))
+    print('ok: sdp810 driver registered; graceful-absent; @viper crc + Pa-fixnum scaling + airspeed')
 
 
 asyncio.run(amain())

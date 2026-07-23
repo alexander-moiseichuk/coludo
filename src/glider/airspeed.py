@@ -1,12 +1,16 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-Hybrid airspeed estimate for the dynamic-pressure fin governor (coludo.md "Fin authority"). There is
-NO pitot tube, so:
-  * accelerometer integration is the BACKBONE (predict) -- primary, and the only usable source during
-    boost and right after separation, when GNSS is jittery under high dynamics;
+Hybrid airspeed estimate for the dynamic-pressure fin governor (coludo.md "Fin authority"). Three
+sources, in order of trust:
+  * a PITOT/static differential-pressure reading (measure) -- a DIRECT airspeed measurement (sdp810.py
+    -> governor), the preferred source WHEN IN-BAND: it measures the air, not the ground, so no wind
+    offset and no attitude gate. Saturates past its full scale (boost / a steep dive), where the caller
+    falls back to the accel backbone rather than trust an under-read;
+  * accelerometer integration is the BACKBONE (predict) -- always running, and the only usable source
+    during boost and right after separation, when the pitot rails and GNSS is jittery under high dynamics;
   * a valid, sane GNSS ground speed nudges out the integrator's drift (correct) -- a complementary
-    filter, GNSS as the slow truth, accel as the fast signal.
+    filter used when the pitot is absent/stale, GNSS as the slow truth, accel as the fast signal.
 GNSS is DISTRUSTED by default: rejected without a fix and above a physical ceiling (a 100+ m/s reading
 under separation is a glitch), and only ever BLENDED (never a hard replace) so one bad-but-in-range
 sample cannot jump the estimate; repeated good fixes pull the drift out. The estimate is biased to
@@ -97,5 +101,32 @@ class AirspeedEstimator:
                 self._speed += self._gnss_gain * (gnss_speed - self._speed)  # complementary blend
             else:
                 self._speed = gnss_speed  # first trusted anchor -> seed directly
+            self._confident = True
+        return self._speed
+
+    def measure(self, airspeed: float, gain: float) -> float:
+        """
+        Fold a DIRECT airspeed measurement (the pitot) -- the PREFERRED source when it is available.
+
+        Unlike GNSS ground speed, the pitot measures the AIR directly: no wind offset, no attitude gate,
+        so it anchors strongly. Seed directly while not-yet-confident (a real measurement, not the slow
+        GNSS crawl); once confident, complementary-blend by `gain` (set higher than the GNSS gain -- it
+        is truth, not a proxy). The caller vets the reading in-band first (a saturated pitot under-reads,
+        which would loosen the cap -- the unsafe direction -- so it falls back to the accel backbone
+        instead of calling here). Confidence latches only once the reading clears the airborne threshold,
+        so a 0 on the pad never trips the cap off an un-charged low speed.
+
+        Args:
+            airspeed - the pitot-derived indicated airspeed (m/s), already vetted in-band by the caller.
+            gain - the complementary blend weight toward it (0..1).
+
+        Returns:
+            The airspeed estimate (m/s): seeded (un-confident) or blended (confident) toward the pitot.
+        """
+        if self._confident:
+            self._speed += gain * (airspeed - self._speed)  # complementary blend toward the direct truth
+        else:
+            self._speed = airspeed  # first trusted anchor -> seed directly (a measurement, not a crawl)
+        if self._speed >= _CONFIDENT_MS:  # a clearly-airborne pitot reading -> trust it
             self._confident = True
         return self._speed

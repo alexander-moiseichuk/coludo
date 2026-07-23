@@ -150,6 +150,8 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     body = sim_model.Body(hitl_c.get('liftoff_g', 430) / 1000.0,
                           tuple(scenario['launch']), scenario['elevation_m'], scenario['heading_deg'])
     body.trim_sink = 14.0 / float(os.environ.get('VF_QUALITY', 2.0))  # air-quality (L/D) sink: 2 = worst-case floor
+    pitot_on = os.environ.get('VF_PITOT', '1') != '0'  # feed the SDP810 direct airspeed to the fusion (default on)
+    pitot_rail = (2.0 * 546.0 / 1.225) ** 0.5  # the ±500 Pa sensor rails ~29.85 m/s -> boost/dive fall back to accel
     body.imbalance_pitch = imbalance_pitch  # weight-imbalance torque during burn (deg/s^2)
     body.imbalance_roll = imbalance_roll
     body.wind_e = wind * math.sin(math.radians(wind_dir))   # steady wind the glider must crab against
@@ -160,10 +162,10 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     mix = mixer.Mixer(cfg.get('mixer', {}))
     fins_by_name = {name: _Fin(mix.neutral) for name in _FINS}
     mix.bind(fins_by_name)
-    accel_handle, speed_handle, position_handle, agl_handle, elevation_handle = (
-        _Handle(), _Handle(), _Handle(), _Handle(), _Handle())
+    accel_handle, speed_handle, pitot_handle, position_handle, agl_handle, elevation_handle = (
+        _Handle(), _Handle(), _Handle(), _Handle(), _Handle(), _Handle())
     fin_governor = governor.Governor(governor.GovernorConfig(flight_c), mix, accel_handle, speed_handle,
-                                     cfg.get('fin_limit_multiplier', 1.0))
+                                     pitot_handle, cfg.get('fin_limit_multiplier', 1.0))
     law = guidance.Guidance(guidance.GuidanceConfig(flight_c, int(_GNSS_S * 2000)), _Mission(zone),
                             fin_governor, position_handle, agl_handle, elevation_handle)
     if final_agl_override is not None:
@@ -260,6 +262,9 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         # --- publish the sim readings into the injected handles (what the databoard does on-board) ---
         accel_handle.value_now = (0.0, 0.0, accel_m)   # boost-axis |a| in g (magnitude parity)
         accel_handle.source = 'sim'
+        if pitot_on:  # SDP810 DIRECT airspeed (m/s) each tick, clamped at the rail so boost/dive saturates -> accel
+            pitot_handle.value_now = min((body.speed * body.speed + body.vu * body.vu) ** 0.5, pitot_rail)
+            pitot_handle.source = 'sim'
         agl_handle.value_now = agl
         agl_handle.source = 'sim'
         elevation_handle.value_now = altitude_m - body.elev0  # noised baro elevation (endgame band)
