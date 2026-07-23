@@ -124,6 +124,36 @@ VL53L0X / VL53L1X are drop-in alternates; the [50m TOF Laser Ranging Sensor, 100
 
 **as power consumption needs another battery, weight ~20g**
 
+## Airspeed (pitot/static)
+The airspeed estimate was the weakest signal in the stack (an accel integrator nudged by GNSS **ground**
+speed). A direct pitot/static reading fixes it. **Chosen: [Sensirion SDP810-500Pa](https://sensirion.com/products/catalog/SDP810-500Pa)**
+differential-pressure sensor (thermal flow-through, ±500 Pa, I²C `0x25`, 3.3 V, tube barbs) — its range
+suits the glide (q ≈ 135 Pa at 15 m/s, well inside ±500 Pa, ~29 m/s full scale) and its 0.1 Pa zero /
+`<0.05 Pa/yr` drift beat the cheaper ADP2100/MS4525DO for a flight sensor. Bench-verified on hand (5 units);
+scale factor 60 (Pa = raw/60), zero ~0.02 Pa. Driver `drivers/sdp810.py` (@viper CRC-8, fixnum dynamic
+pressure, one airspeed float per read) fuses into the fin governor as the **direct** airspeed source ahead
+of the accel+GNSS backbone; it rails past ±500 Pa (boost / a steep dive), where the governor drops back to
+the accel backbone.
+
+**Plumbing (integrated into the printed body, sensor fully inside — do NOT strip the calibrated
+flow-through cap):**
+- **P+ (total) → a forward-facing pitot** integrated into the body, parallel to the body bottom, on the
+  frontal face **under the camera** → direct frontal air = total pressure. A **3.8 mm** printed channel
+  mates the SDP810 P+ stub (dead-ended, so the bore is a mechanical fit only). Keep it **airtight** (resin
+  print or a seal coat; silicone sleeve on the barb) — at 135 Pa a pinhole biases the reading directly —
+  with a **weep / no low point** so rain or dirt can't block the line, and the mouth clear of the camera
+  bump's wake.
+- **P− (static) → the vented interior bay**, ≥ 1 cm (cut back to ~2 cm) clear of the camera board. The
+  camera is angled ~25° up/down (not a forward ram-inlet), so it cannot pressurize the bay → interior ≈
+  ambient static.
+
+**Calibration (two knobs, `airspeed_sdp810` config):** `zero_offset_pa` — a **pad tare** (CC
+`update {"zero": true}` with the glider still) cancels the interior-static pressure bias; `air_density` —
+the single q→v knob (it absorbs the position-span error), **trimmed on a calm-day pass** so the fused
+airspeed matches GNSS ground speed in still air.
+
+**Required (airspeed), weight ~5g (sensor + tube); needs the calm-pass air_density trim before trusting.**
+
 ## Battery
 Not many options for [5V USB-C low-weight](https://www.amazon.com/dp/B07SZKNST4) power delivery are avaialbe.
 Alternative is to connect e.g. from [6F22 9V using plug](https://www.amazon.com/dp/B083QFFH66) and a lightweight power-down module or a LiPo 3.7 V single cell battery and boost up circuit for controller and a separate circuit for the servos.
