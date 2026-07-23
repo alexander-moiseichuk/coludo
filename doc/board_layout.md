@@ -128,6 +128,10 @@ like the real thing for the Phase-5 walk-test (plan.md → Phase 5 · 1):
 5. **Drop tests (2–3 m)** — the low-altitude landing path (laser AGL → LANDING → stationary), the
    final stage of the ladder.
 
+The step-by-step **no-ignition ground checklist** for steps 2–4 (CC + glider: power-up → sensors →
+attitude/IMU → GNSS/guidance → airspeed → boost-detect → separation → data, with pass criteria) is
+[`field_test.md`](field_test.md).
+
 ## Disabling an optional pin
 
 To turn an optional feature off on a board that does not wire it, set its `pins` entry to **`null`**
