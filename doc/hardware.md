@@ -151,8 +151,9 @@ flow-through cap):**
 
 **Calibration (two knobs, `airspeed_sdp810` config):** `zero_offset_pa` — a **pad tare** (CC
 `update {"zero": true}` with the glider still) cancels the interior-static pressure bias; `air_density` —
-the single q→v knob (it absorbs the position-span error), **trimmed on a calm-day pass** so the fused
-airspeed matches GNSS ground speed in still air.
+the single q→v knob (it absorbs the position-span error), default **1.18 kg/m³** (~25 °C sea level for
+Florida, not ISA 15 °C's 1.225) and **trimmed on a calm-day pass** so the fused airspeed matches GNSS
+ground speed in still air.
 
 **Required (airspeed), weight ~5g (sensor + tube); needs the calm-pass air_density trim before trusting.**
 

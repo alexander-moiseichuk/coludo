@@ -36,15 +36,15 @@ import task
 from commons import const, micropython
 
 _ADDR = const(0x25)  # the fixed I2C address (SDP800/810-500Pa / -125Pa; 0x26 for the -x1 variants)
-_CMD_START = b'\x36\x15'  # start continuous: differential-pressure temp-comp, average-till-read
-_CMD_STOP = b'\x3f\xf9'  # stop continuous -> idle (required before re-starting after an unclean reboot)
+_CMD_START: bytes = b'\x36\x15'  # start continuous: differential-pressure temp-comp, average-till-read
+_CMD_STOP: bytes = b'\x3f\xf9'  # stop continuous -> idle (required before re-starting after an unclean reboot)
 _FRAME = const(9)  # DP[0,1],CRC, T[3,4],CRC, Scale[6,7],CRC
 _FIRST_MS = const(20)  # first continuous result lands ~8 ms after start (with margin)
 _STOP_MS = const(3)  # stop settles in ~0.5 ms before the part accepts the next command (with margin)
 _START_TRIES = const(2)  # start attempts: a stop+restart clears a part left mid-continuous
 _DEFAULT_SCALE = const(60)  # scale factor for the -500Pa part (Pa = raw / scale); the -125Pa reports 240
 _TEMP_LSB = const(200)  # sensor temperature = raw / 200 -> °C; logged as a °C fixnum (raw // 2 = raw/200 × SCALE)
-_AIR_DENSITY = 1.225  # kg/m^3 (ISA sea level, 15 °C); config 'air_density' folds in the position-span trim
+_AIR_DENSITY: float = 1.18  # kg/m^3 (~25 °C sea level -- Florida, not ISA 15 °C); the calm-pass trim overrides it
 
 
 @micropython.viper
@@ -81,7 +81,7 @@ def _crc8(byte0: int, byte1: int) -> int:
 
 
 @micropython.native
-def _frame_ok(data) -> bool:
+def _frame_ok(data: bytes) -> bool:
     """Validate the differential-pressure word's CRC (the flight-relevant field of the 9-byte frame)."""
     return len(data) == _FRAME and _crc8(data[0], data[1]) == data[2]
 
@@ -175,7 +175,7 @@ class Sdp810(task.Task):
         self._raw = raw * fixed.SCALE // self._scale  # Pa fixnum, un-tared (the tare source)
         return self._raw - self._zero
 
-    def _airspeed(self, pressure: int) -> float:
+    def _airspeed(self, pressure: fixed.fixnum) -> float:
         """
         Indicated airspeed (m/s) from a dynamic-pressure fixnum -- the ONE float, computed once per read.
 
@@ -288,12 +288,14 @@ class Sdp810(task.Task):
             self._addr, (frame[6] << 8) | frame[7])
 
     def inspect(self) -> dict:
-        status = task.Task.inspect(self)  # our channels' latest (no hot-path I2C here)
         pressure = self._pressure_ch.value()
-        status['dynamic_pressure_pa'] = None if pressure is None else fixed.to_float(pressure)
-        status['airspeed_ms'] = self._airspeed_ch.value()
-        status['temperature_c'] = round(self._temp_raw / _TEMP_LSB, 1)
-        status['scale'] = self._scale
-        status['zero_offset_pa'] = fixed.to_float(self._zero)
-        status['air_density'] = self._density
+        status = task.Task.inspect(self)  # our channels' latest (no hot-path I2C here)
+        status.update({
+            'dynamic_pressure_pa': None if pressure is None else fixed.to_float(pressure),
+            'airspeed_ms': self._airspeed_ch.value(),
+            'temperature_c': round(self._temp_raw / _TEMP_LSB, 1),
+            'scale': self._scale,
+            'zero_offset_pa': fixed.to_float(self._zero),
+            'air_density': self._density,
+        })
         return status

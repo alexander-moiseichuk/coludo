@@ -249,7 +249,7 @@ def default() -> dict:
         'bus': 'i2c', 'id': 0,
         'addr': 0x25,
         'period_ms': 20,  # ~50 Hz (tau63 < 3 ms; 9-byte read is ~0.5 ms on the 400 kHz bus)
-        'air_density': 1.225,  # kg/m^3 (ISA sea level); the q->v knob -- trim it on a GNSS-vs-q calm pass
+        'air_density': 1.18,  # kg/m^3 (~25 °C sea level, Florida -- not ISA 15 °C); trim on a GNSS-vs-q calm pass
         'zero_offset_pa': 0.0,  # pad-static bias (Pa) -- set by the pad tare, not by hand
         'enabled': True,
         'provides': {'dynamic_pressure': {'priority': 0, 'timeout_ms': 100},

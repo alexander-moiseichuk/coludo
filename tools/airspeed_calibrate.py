@@ -119,7 +119,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description='SDP810 air_density trim from a calm-day GNSS-vs-q pass.')
     parser.add_argument('recording', help='a recording directory (auto-detects both CSVs) or the pitot CSV')
     parser.add_argument('--gnss', help='the GNSS CSV (auto-detected in a directory by its speed_kn column)')
-    parser.add_argument('--current', type=float, default=1.225, help='air_density in the recording (default 1.225)')
+    parser.add_argument('--current', type=float, default=1.18, help='air_density in the recording (default 1.18)')
     parser.add_argument('--min-speed', type=float, default=8.0, help='ignore ground speed below this m/s (default 8)')
     args = parser.parse_args()
 
