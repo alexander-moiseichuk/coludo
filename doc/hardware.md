@@ -28,6 +28,7 @@ wiring is in [`waveshare_esp32p4_pins.md`](waveshare_esp32p4_pins.md).
 | **attitude (9-DOF)** + baro | **sen0253** = BNO055 + BMP280 | I²C `0x28` / `0x76` | one board, two devices; **BNO055 is flight-critical** (sole heading) |
 | pressure | **sen0517** = ICP-10111 | I²C `0x63` | primary altimeter |
 | AGL laser | **VL53L4CX** ([Adafruit 5425](https://www.adafruit.com/product/5425)) | I²C `0x29` | ToF, low-altitude (<~6–10 m) |
+| airspeed | **SDP810-500Pa** ([Sensirion](https://sensirion.com/products/catalog/SDP810-500Pa)) | I²C `0x25` | pitot/static ±500 Pa; the **direct** airspeed → fin governor (see *Airspeed* below) |
 | GNSS | **ATGM336H** | UART 9600, 10 Hz | position; may lose lock under high-g |
 
 **Interchangeable / additional options:**
@@ -51,6 +52,7 @@ What actually gates a launch, sorted by how badly its loss hurts. "Critical" = *
 | Separation switch (copper pads) | **Critical** | the BOOSTING→GLIDING trigger | ✔ |
 | ICP-10111 baro | Important | primary altimeter (apogee / glide profile) | ✔ |
 | VL53L4CX laser | Important | low-altitude AGL (<~10 m) for the landing — baro is poor there | ✔ |
+| SDP810 airspeed | Important | **direct** pitot airspeed → the fin-authority cap (the estimate was the weakest signal). Degrades gracefully to the accel+GNSS estimate — the pre-pitot baseline flown in all HITL to date — if absent | ✔ (5) |
 | ADXL375 (±200 g) | Optional | >32 g high-g backstop; LSM6DSO32 ±32 g already covers the 8–12 g boost. Keep for telemetry / data-quality launches (run both, compare traces) | ✔ |
 | BMP280 baro | Optional | backup baro (rides on the sen0253 board with BNO055 anyway) | ✔ |
 | ATGM336H GNSS | Optional | aux position; loses lock under high-g, non-priority in fusion | ✔ |
