@@ -68,8 +68,27 @@ def test_confidence_and_seed():
     assert charged.confident()
 
 
+def test_pitot_measure():
+    """
+    The DIRECT pitot measurement: seed while un-confident, blend once confident, latch confidence only
+    past the airborne threshold (so a 0 on the pad never trips the cap off an un-charged low speed).
+    """
+    estimator = AirspeedEstimator()
+    # a pad reading (0 m/s) updates the speed but does NOT earn trust (would open the cap off a low speed)
+    estimator.measure(0.0, 0.5)
+    assert estimator.value() == 0.0 and not estimator.confident()
+    # the first airborne reading SEEDS directly (a measurement, not a crawl) and latches confidence
+    estimator.measure(15.0, 0.5)
+    assert abs(estimator.value() - 15.0) < 1e-6 and estimator.confident()
+    # once confident, further readings BLEND by gain (higher than the GNSS gain -- it is truth)
+    estimator.measure(17.0, 0.5)
+    assert abs(estimator.value() - (15.0 + 0.5 * (17.0 - 15.0))) < 1e-6  # 16.0, not a re-seed to 17
+
+
 test_predict_integration()
 test_ceiling_clamp()
 test_gnss_correct_gated()
 test_confidence_and_seed()
-print('ok: airspeed -- accel backbone, ceiling clamp, GNSS blend + convergence, confidence + first-fix seed')
+test_pitot_measure()
+print('ok: airspeed -- accel backbone, ceiling clamp, GNSS blend + convergence, confidence + first-fix seed, '
+      'pitot direct-measure')

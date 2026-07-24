@@ -71,8 +71,9 @@ class Flight(task.Task):
         """
         accel = databoard.Databoard.parameter('accel')  # (x, y, z) in g -> airspeed integration
         gnss_speed = databoard.Databoard.parameter('speed')  # GNSS ground speed (m/s) corrector
+        pitot = databoard.Databoard.parameter('airspeed')  # SDP810 DIRECT airspeed (m/s), the preferred source
         self._governor = governor.Governor(governor.GovernorConfig(self.config), self._mixer,
-                                           accel, gnss_speed, fins.get('limit_multiplier', 1.0))
+                                           accel, gnss_speed, pitot, fins.get('limit_multiplier', 1.0))
         # wind estimation (wind.py): the GNSS ground velocity vs the air velocity (airspeed × heading).
         # Fed at ~GNSS rate (throttled off the hot loop); the loiter enables its airspeed-free average.
         self._gnss_speed = gnss_speed

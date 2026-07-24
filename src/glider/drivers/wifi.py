@@ -161,13 +161,13 @@ class Wifi(task.Task):
                 await asyncio.sleep_ms(5000)  # airborne: stop initiating connections, just idle
                 continue
             if self._networks and await self._ensure_radio() and not self.isconnected():
-                network = self._next_network(time.ticks_ms())  # per-network backoff decides
-                if network is not None:
-                    self.ssid = network['ssid']
-                    self.password = self._read_password(network.get('password', ''))
-                    if network.get('tx_power_dbm') is not None \
-                            and network['tx_power_dbm'] != self.tx_power:
-                        self.set_tx_power(network['tx_power_dbm'])
+                chosen = self._next_network(time.ticks_ms())  # per-network backoff decides (not the `network` module)
+                if chosen is not None:
+                    self.ssid = chosen['ssid']
+                    self.password = self._read_password(chosen.get('password', ''))
+                    if chosen.get('tx_power_dbm') is not None \
+                            and chosen['tx_power_dbm'] != self.tx_power:
+                        self.set_tx_power(chosen['tx_power_dbm'])
                     await self.connect()
             """
             CONNECTED -> the hunt stops entirely (no rotation, no attempts): only this status

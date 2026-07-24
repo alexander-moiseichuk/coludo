@@ -31,7 +31,7 @@ _M_PER_DEG: float = 111320.0
 def _fin_activity(fins) -> tuple:
     """Per-fin (moves, travel_deg, max_step) rows + the flight span in seconds from the fins stream."""
     rows = []
-    span = 1.0
+    starts, ends = [], []
     for fin in _FINS:
         times, angles = fins.column(fin)
         moves = travel = biggest = 0
@@ -41,8 +41,11 @@ def _fin_activity(fins) -> tuple:
                 moves += 1
                 travel += delta
                 biggest = max(biggest, delta)
-        span = times[-1] - times[0] if len(times) > 1 else 1.0
+        if len(times) > 1:  # collect each fin's window; the flight span is their combined range
+            starts.append(times[0])
+            ends.append(times[-1])
         rows.append((fin, len(angles), moves, travel, biggest))
+    span = max(max(ends) - min(starts), 1e-9) if starts else 1.0  # single non-zero span for all fins
     return rows, span
 
 
@@ -58,6 +61,8 @@ def _servo_energy(power) -> tuple:
     """
     field = 'power_mw' if 'power_mw' in power.fields else 'power'
     times, values = power.column(field)
+    if not times:  # empty power stream -- nothing to integrate
+        return 0.0, 0.0
     milliwatts = values if field == 'power_mw' else [watts * 1000.0 for watts in values]
     duration = times[-1] - times[0]
     joules = sum((t1 - t0) * (p0 + p1) / 2000.0
@@ -78,6 +83,8 @@ def _touchdown(gnss, zone: tuple) -> tuple:
     """
     _times, latitudes = gnss.column('lat')
     _times, longitudes = gnss.column('lon')
+    if not latitudes:  # empty GNSS stream -- no touchdown fix
+        return 0.0, False
     latitude, longitude = latitudes[-1], longitudes[-1]
     (lat_t, lon_l), (lat_b, lon_r) = zone
     centre_lat, centre_lon = (lat_t + lat_b) / 2, (lon_l + lon_r) / 2
@@ -90,7 +97,8 @@ def _touchdown(gnss, zone: tuple) -> tuple:
 
 def report(label: str, path: str, zone: tuple) -> None:
     """Print the KPI block for one capture."""
-    streams, _logs = flight_telemetry.parse(open(path).read())
+    with open(path) as handle:
+        streams, _logs = flight_telemetry.parse(handle.read())
     fins = next((s for name, s in streams.items() if 'fins' in name), None)
     print(label)
     if fins is None:
@@ -107,7 +115,8 @@ def report(label: str, path: str, zone: tuple) -> None:
     power = next((s for name, s in streams.items() if 'power' in name), None)
     if power is not None:
         joules, duration = _servo_energy(power)
-        print('  servo energy : %6.1f J over %.1f s -> average %4.2f W' % (joules, duration, joules / duration))
+        watts = joules / duration if duration > 0 else 0.0  # single sample has no window to average over
+        print('  servo energy : %6.1f J over %.1f s -> average %4.2f W' % (joules, duration, watts))
     gnss = next((s for name, s in streams.items() if 'gnss' in name), None)
     if gnss is not None:
         miss, inside = _touchdown(gnss, zone)

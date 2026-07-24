@@ -351,7 +351,11 @@ def main():
     target = os.path.join(ROOT, 'doc', 'architecture.md')
     content = build()
     if '--check' in sys.argv:
-        current = open(target).read() if os.path.exists(target) else ''
+        if os.path.exists(target):
+            with open(target) as handle:
+                current = handle.read()
+        else:
+            current = ''
         if current != content:
             print('doc/architecture.md is STALE — run: python3 tools/gen_graph.py')
             sys.exit(1)

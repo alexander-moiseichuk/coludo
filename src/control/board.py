@@ -36,8 +36,8 @@ class Board:
 
     @property
     def peer(self) -> str:
-        host, port = self._writer.get_extra_info('peername')[:2]
-        return '%s:%d' % (host, port)
+        info = self._writer.get_extra_info('peername')  # None once the connection is torn down
+        return '%s:%d' % (info[0], info[1]) if info else '<gone>'
 
     async def exchange(self, line: str, timeout: float = EXCHANGE_TIMEOUT_S, quiet: bool = False) -> cc._Msg:
         """
@@ -64,7 +64,8 @@ class Board:
             if not quiet:
                 self._log('%s -> %s' % (tag, line))  # CC sends (tx); logged before the wait
             self._writer.write((line + '\n').encode())
-            await self._writer.drain()
+            # bound the drain too: TCP backpressure held under the lock must not hang every later exchange
+            await asyncio.wait_for(self._writer.drain(), timeout)
             raw = await asyncio.wait_for(self._reader.readline(), timeout)
         reply = raw.decode().strip()
         if not quiet:
@@ -143,12 +144,20 @@ class Board:
         resp = await self.command('whoami')
         if resp and resp.command == 'iam' and len(resp.args) >= 2:
             self.id = resp.args[0]
-            self.info = json.loads(resp.args[1])
+            try:
+                self.info = json.loads(resp.args[1])
+            except ValueError:
+                return None  # a malformed iam payload -> identify fails (the caller drops the board)
         return self.id
 
     async def inspect(self, name: str) -> dict:
         resp = await self.command('inspect', name)
-        return json.loads(resp.args[0]) if resp and resp.command == 'ok' else {}
+        if not resp or resp.command != 'ok' or not resp.args:
+            return {}
+        try:
+            return json.loads(resp.args[0])
+        except ValueError:
+            return {}  # a malformed reply -> a structured empty result, not an exception
 
     def close(self) -> None:
         self._writer.close()

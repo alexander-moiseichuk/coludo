@@ -33,7 +33,8 @@ def _track(path: str) -> list:
                 row = line.strip().split('gnss.csv@', 1)[1]
                 if not row.startswith('uptime'):
                     fields = row.split(';')
-                    gnss.append((int(fields[0]), float(fields[1]), float(fields[2])))
+                    if len(fields) >= 3:  # skip a truncated row rather than IndexError
+                        gnss.append((int(fields[0]), float(fields[1]), float(fields[2])))
     return gnss
 
 

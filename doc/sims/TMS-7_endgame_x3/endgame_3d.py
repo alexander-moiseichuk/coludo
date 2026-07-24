@@ -25,7 +25,8 @@ def nearest(times, values, targets):
 
 
 def track(path):
-    streams, _ = ft.parse(open(path).read())
+    with open(path) as f:
+        streams, _ = ft.parse(f.read())
     gnss = next((s for s in streams.values() if 'lat' in s.fields), None)
     if gnss is None:
         return None

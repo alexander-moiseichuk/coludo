@@ -17,7 +17,7 @@ pin is reserved so you can solder the INT for debugging · **tie** = not wired, 
 
 | Signal | GPIO | Bus / role | Status |
 |---|---|---|---|
-| I2C0 SDA / SCL | 7 / 8 | forward sensor cluster (BNO055, BMP280, ICP-10111, VL53L4CX) | **req** |
+| I2C0 SDA / SCL | 7 / 8 | forward sensor cluster (BNO055, BMP280, ICP-10111, VL53L4CX, SDP810 airspeed) | **req** |
 | I2C1 SDA / SCL | 31 / 30 | aft power bus (INA226) — real header pins (codec 9–13 not broken out) | **req** |
 | SPI1 SCK / MOSI / MISO | 48 / 47 / 46 | IMU bus (LSM6DSO32, ADXL375) | **req** |
 | LSM6DSO32 CS | 50 | SPI chip-select | **req** |
@@ -43,8 +43,10 @@ follows the glider layout below.
 
 ### A · Forward I2C sensor carrier  *(movement-sensitive cluster, forward, laser down-facing)*
 - **Devices:** BNO055 + BMP280 (sen0253 combo, 0x28/0x76) · ICP-10111 (sen0517, 0x63) ·
-  VL53L4CX (laser, 0x29, pointing **down**; can be a short daisy stub below the stack).
-- **Plug → main board:** `[SDA0, SCL0, 3V3, GND]` — **4-pin (req)**.
+  VL53L4CX (laser, 0x29, pointing **down**; can be a short daisy stub below the stack) ·
+  **SDP810** (airspeed, 0x25) — mount it forward enough that the **P+ tube** reaches the nose pitot
+  in a short run (P− is open to the interior bay); no extra main-board pin, it just daisy-chains the bus.
+- **Plug → main board:** `[SDA0, SCL0, 3V3, GND]` — **4-pin (req)** (5 devices on the one daisy).
 - **Optional debug:** `[VL53 INT → GPIO 3]` — 1-pin. XSHUT strapped to 3V3 on the carrier (no wire).
 - Bus is now **forward-only** (INA226 moved off) → short run, keeps the calibrated high I2C freq.
 
@@ -86,7 +88,8 @@ follows the glider layout below.
 Nose → tail (your vision, annotated):
 
 ```
- nose ─ camera → Luckfox(recorder) → GNSS(up) ─┐ forward I2C carrier A (BNO/baro/ICP, laser↓)
+ nose ─ camera → Luckfox(recorder) → GNSS(up) ─┐ forward I2C carrier A (BNO/baro/ICP, laser↓, SDP810)
+   └ pitot P+ (forward, under camera) → SDP810 │ tube; P− open to the interior bay
                                                │
  ───────────────────────── middle ────────────┤
                                                │
@@ -98,8 +101,10 @@ Nose → tail (your vision, annotated):
 
 - **Keep SPI short:** carrier B goes on the underside of the main board (reversed) → millimetres of
   SPI, not a cable. This is what lets LSM-INT stay the one clean interrupt.
-- **Keep I2C0 forward-only:** with INA226 on I2C1, the forward bus threads just the 4 sensors in a
+- **Keep I2C0 forward-only:** with INA226 on I2C1, the forward bus threads just the 5 sensors in a
   line — one short daisy chain, one 4-pin cable back.
+- **Pitot at the nose, short P+ tube:** the SDP810 sits on carrier A but its P+ tube must reach the
+  forward-facing pitot under the camera — keep that run short + sealed; P− vents to the interior.
 - **Don't run the GNSS UART parallel to the servo PWM** (PWM edges couple into the 9600-baud line).
   GNSS forward + up also maximises antenna separation from the engine.
 - **Copper-adhesive + conductive-pen** is fine for the short static runs — separation pads and
@@ -122,6 +127,10 @@ like the real thing for the Phase-5 walk-test (plan.md → Phase 5 · 1):
 4. **Separation-by-hand** — trip the switch, confirm `BOOSTING → GLIDING` and the loop engages.
 5. **Drop tests (2–3 m)** — the low-altitude landing path (laser AGL → LANDING → stationary), the
    final stage of the ladder.
+
+The step-by-step **no-ignition ground checklist** for steps 2–4 (CC + glider: power-up → sensors →
+attitude/IMU → GNSS/guidance → airspeed → boost-detect → separation → data, with pass criteria) is
+[`field_test.md`](field_test.md).
 
 ## Disabling an optional pin
 

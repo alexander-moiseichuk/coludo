@@ -2,16 +2,17 @@
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 The dynamic-pressure fin governor (specs/coludo.md "Fin authority"), sibling of pid.py / mixer.py /
-airspeed.py. Owns the airspeed ESTIMATE (airspeed.AirspeedEstimator: accel backbone + GNSS
-corrector), the ADAPTIVE THROTTLE that keeps that float path off the GC-off hot loop once the glide
-settles, and the mixer authority cap (commons.fin_deflection_limit ∝ 1/v², × the board's
-fin_limit_multiplier safety dial). Extracted from tasks/flight.py so the throttle policy is
-unit-testable without a Flight task.
+airspeed.py. Owns the airspeed ESTIMATE (airspeed.AirspeedEstimator: the PITOT direct source when
+in-band, else the accel backbone + GNSS corrector), the ADAPTIVE THROTTLE that keeps that float path
+off the GC-off hot loop once the glide settles, and the mixer authority cap (commons.fin_deflection_limit
+∝ 1/v², × the board's fin_limit_multiplier safety dial). Extracted from tasks/flight.py so the throttle
+policy is unit-testable without a Flight task.
 
 Host-runnable by construction (tools/virtual_flight.py drives the REAL governor): the sensor
 dependencies are INJECTED databoard-style handles -- `accel.value()` -> (x, y, z) in g or None,
-`gnss_speed.read()` -> (m/s, source, age_ms) -- never the databoard itself, and nothing here touches
-time or the machine.
+`gnss_speed.read()` -> (m/s, source, age_ms), `pitot.read()` -> (airspeed m/s, source, age_ms) from the
+SDP810 (the DIRECT source, sdp810.py did the sqrt) -- never the databoard itself, and nothing here
+touches time or the machine.
 
 Why the estimator is throttled at all: the update is a FLOAT path (sqrt magnitude, integrate, GNSS
 blend) ~ the biggest GC-off allocator measured (~22 KB/s at 100 Hz). It runs FULL RATE where the
@@ -94,6 +95,16 @@ class GovernorConfig:
         The estimator turns confident within a boost (accel-charged) or on the first sane GNSS fix.
         """
         self.unconfident_ms: float = config.get('airspeed_unconfident_ms', 30.0)
+        """
+        PITOT (sdp810.py -> the `airspeed` databoard quantity, m/s; the driver already did the sqrt). The
+        DIRECT airspeed source, preferred over the accel+GNSS estimate WHEN IN-BAND -- it measures the air,
+        so no wind or steep-attitude gate. pitot_max_ms is the saturation guard: past it (boost, a steep
+        dive) the ±500 Pa sensor rails at ~30 m/s and UNDER-reads, which would loosen the fin cap (the
+        unsafe direction), so the fusion drops back to the over-read-biased accel backbone. pitot_gain
+        blends it in (higher than the GNSS gain -- it is truth, not a ground-speed proxy).
+        """
+        self.pitot_gain: float = config.get('pitot_gain', 0.5)  # complementary blend toward the direct reading
+        self.pitot_max_ms: float = config.get('pitot_max_ms', 28.0)  # reject a railed pitot above this (~480 Pa)
 
     def update_interval(self, speed: float) -> float:
         """
@@ -118,12 +129,13 @@ class Governor:
     accumulated dt, and writes the deflection cap into mixer.limit.
     """
 
-    def __init__(self, config: GovernorConfig, mixer, accel, gnss_speed,
+    def __init__(self, config: GovernorConfig, mixer, accel, gnss_speed, pitot,
                  fin_limit_multiplier: float = 1.0):
         self._config: GovernorConfig = config
         self._mixer = mixer  # the cap lands in mixer.limit (the final actuator clamp, every stage)
         self._accel = accel  # injected handle: value() -> (x, y, z) in g, or None
         self._gnss_speed = gnss_speed  # injected handle: read() -> (m/s, source, age_ms)
+        self._pitot = pitot  # injected handle: read() -> (airspeed m/s, source, age_ms) -- the direct source
         self._multiplier: float = fin_limit_multiplier  # scales the whole 1/v² schedule (safety dial)
         self._estimator = airspeed.AirspeedEstimator()
         self._interval_s: float = config.update_interval(0.0)  # from the LAST estimate (floor at rest)
@@ -202,15 +214,23 @@ class Governor:
         if accel is not None:
             self._estimator.predict(
                 (commons.magnitude_sq(accel[0], accel[1], accel[2]) ** 0.5 - 1.0) * 9.81, dt)
-        speed, speed_source, _speed_age = self._gnss_speed.read()
-        steep = pitch >= self._config.steep_pitch or pitch <= -self._config.steep_pitch
-        # reject a GNSS JUMP: a real ground speed is within max_wind of the airspeed (their difference IS
-        # the wind, which is bounded). While NOT yet confident (fresh / mid-air reset) accept it as the seed.
-        estimate = self._estimator.value()
-        plausible = speed is not None and (
-            not self._estimator.confident() or abs(speed - estimate) <= self._config.max_wind)
-        self._estimator.correct(speed if speed is not None else 0.0,
-                                speed_source is not None and plausible and not steep)
+        # PITOT FIRST: a fresh, in-band airspeed is a DIRECT measurement (the driver already did the sqrt)
+        # -- no wind/steep gate (it reads air, not ground). Above the saturation guard the pitot rails and
+        # under-reads (boost / a steep dive), so fall back to the GNSS corrector + the over-read-biased
+        # accel backbone rather than loosen the cap on a false-low reading.
+        airspeed, airspeed_source, _airspeed_age = self._pitot.read()
+        if airspeed_source is not None and airspeed is not None and airspeed < self._config.pitot_max_ms:
+            self._estimator.measure(airspeed, self._config.pitot_gain)
+        else:
+            speed, speed_source, _speed_age = self._gnss_speed.read()
+            steep = pitch >= self._config.steep_pitch or pitch <= -self._config.steep_pitch
+            # reject a GNSS JUMP: a real ground speed is within max_wind of the airspeed (their difference
+            # IS the wind, bounded). While NOT yet confident (fresh / mid-air reset) accept it as the seed.
+            estimate = self._estimator.value()
+            plausible = speed is not None and (
+                not self._estimator.confident() or abs(speed - estimate) <= self._config.max_wind)
+            self._estimator.correct(speed if speed is not None else 0.0,
+                                    speed_source is not None and plausible and not steep)
         # cap off the estimate ONLY when it is trusted; else the conservative floor (never off an
         # un-charged 0, which would open authority to the full 45deg at high q -- the unsafe direction)
         cap_speed = self._estimator.value() if self._estimator.confident() else self._config.unconfident_ms

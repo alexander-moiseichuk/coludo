@@ -108,14 +108,19 @@ def render(cfg: dict) -> str:
 def main() -> int:
     text = render(config_default.default())
     check = '--check' in sys.argv
-    existing = open(_DOC).read() if os.path.exists(_DOC) else None
+    if os.path.exists(_DOC):
+        with open(_DOC) as handle:
+            existing = handle.read()
+    else:
+        existing = None
     if check:
         if existing != text:
             print('doc/waveshare_esp32p4_pins.md is STALE -- run: python3 tools/gen_pinmap.py')
             return 1
         print('pin doc up to date')
         return 0
-    open(_DOC, 'w').write(text)
+    with open(_DOC, 'w') as handle:
+        handle.write(text)
     print('wrote', os.path.relpath(_DOC))
     return 0
 
