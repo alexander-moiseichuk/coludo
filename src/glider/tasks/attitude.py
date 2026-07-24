@@ -29,7 +29,10 @@ import databoard
 import fixed
 import recorder
 import task
+from commons import const
 from fixed import fixnum  # centidegree fixed-point -- the one control scale (roll/pitch/yaw AND accel)
+
+_MAX_DT_MS = const(500)  # a gyro-integration gap longer than this (asyncio stall) -> clamp dt to nominal
 
 
 @task.activity('attitude')
@@ -153,6 +156,8 @@ class Attitude(task.Task):
             now = time.ticks_us()
             dt_ms = time.ticks_diff(now, self._last_us) // 1000
             self._last_us = now
+            if dt_ms > _MAX_DT_MS or dt_ms < 0:  # a long asyncio gap (I2C contention) -> nominal, not a huge
+                dt_ms = self._period_ms  # single gyro-integration jump the yaw would then hold permanently
             value, source, _age = self._attitude_param.read()
             if value is not None and source != self.name:
                 self._mirror(value)  # a higher-priority source is winning -> mirror it (stay warm/fresh)

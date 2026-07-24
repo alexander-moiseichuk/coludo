@@ -67,11 +67,11 @@ class Bmp280(task.Task):
             self._cal = struct.unpack('<HhhHhhhhhhhh', cal)
             await self._bus.write(self._addr, _REG_CONFIG, bytes([_CONFIG_FILTER]))
             await self._bus.write(self._addr, _REG_CTRL_MEAS, bytes([_CTRL_NORMAL]))
+            await asyncio.sleep_ms(50)  # let the first normal-mode conversion complete
+            self._ground = await self._ground_zero()  # inside the try: an I2C error here -> graceful False
         except Exception as error:
             print('bmp280 :: %r' % error)
             return False
-        await asyncio.sleep_ms(50)  # let the first normal-mode conversion complete
-        self._ground = await self._ground_zero()
         self._altitude, self._temperature, self._pressure, self._elevation = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'altitude', 'temperature', 'pressure', 'elevation')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,

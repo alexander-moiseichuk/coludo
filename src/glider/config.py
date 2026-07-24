@@ -169,6 +169,7 @@ def _validate_buses(buses, errs: list, pin_owner: dict, bus_refs: set) -> None:
     for kind, group in buses.items():
         if kind not in ('uart', 'i2c', 'spi'):
             errs.append("bus type '%s' is not one of uart/i2c/spi" % kind)
+            continue  # skip: don't register an invalid kind's ids (a ref would false-pass then fail at runtime)
         if not isinstance(group, dict):
             errs.append('buses.%s must be an object' % kind)
             continue

@@ -378,7 +378,7 @@ class Controller(inspector.Inspectable):
 
     def stage_name(self) -> str:
         """The current flight stage as its operator-facing name."""
-        return Stage.STAGES[self.stage]
+        return Stage.STAGES.get(self.stage, '?')  # tolerate an out-of-range stage: inspect()/stats() must not crash
 
     """Arming: the actuation gate and the operator stage/health gates."""
     def arm(self) -> None:
