@@ -326,8 +326,8 @@ def _draw_exhaust(d, bx, by, dx, dy, intensity):
 def load(label, path):
     with open(path) as handle:
         streams, logs = flight_telemetry.parse(handle.read())
-    stages = [(us / 1e6, line.split('stage -> ')[1].split()[0]) for us, line in logs
-              if us and 'stage -> ' in line]
+    stages = [(us / 1e6, parts[0]) for us, line in logs
+              if us and 'stage -> ' in line and (parts := line.split('stage -> ')[1].split())]
     launch = next((t for t, s in stages if s == 'boosting'), 0.0)
     """
     Make the whole timeline flight-relative (t=0 at ignition). rel() subtracts `launch` from the stream
@@ -352,8 +352,8 @@ def load(label, path):
     rol = rel(imu, 'roll')
     pit = (pit[0], _smooth(_smooth(pit[1], 7), 7))
     rol = (rol[0], _smooth(_smooth(rol[1], 7), 7))
-    ex = _smooth(_smooth([_to_m(lat[i], lon[i])[0] for i in range(len(lat))], 21), 21)
-    ny = _smooth(_smooth([_to_m(lat[i], lon[i])[1] for i in range(len(lat))], 21), 21)
+    ex = _smooth(_smooth([_to_m(la, lo)[0] for la, lo in zip(lat, lon)], 21), 21)
+    ny = _smooth(_smooth([_to_m(la, lo)[1] for la, lo in zip(lat, lon)], 21), 21)
     track = list(zip(ex, ny))
     apogee = max(zip(hgt[0], hgt[1]), key=lambda p: p[1]) if hgt[0] else (0.0, 0.0)
     land_t = next((t for t, s in stages if s == 'landing'), apogee[0])
@@ -554,8 +554,9 @@ def render(flights, out):
                 d.line([bx_stage - rr + 3, cyb - 2, bx_stage, by_stage - 14], fill=(210, 210, 210))
                 d.line([bx_stage + rr - 3, cyb - 2, bx_stage, by_stage - 14], fill=(210, 210, 210))
 
-            # Glider attitude
-            pitch = _at(fl['pitch'][0], fl['pitch'][1], tc) or 90.0
+            # Glider attitude ('is not None' so a legit 0.0 pitch stays level, not nose-up)
+            pitch_val = _at(fl['pitch'][0], fl['pitch'][1], tc)
+            pitch = pitch_val if pitch_val is not None else 90.0
             roll = _at(fl['roll'][0], fl['roll'][1], tc) or 0.0
             nxt = _at(gp[0], gp[1], tc + 0.7) or gpos
             vel = (nxt[0] - gpos[0], nxt[1] - gpos[1])
@@ -580,7 +581,7 @@ def render(flights, out):
 
             # Vertical speed from smoothed height profile (immune to per-frame noise)
             vspeed = 0.0
-            if tc > 0 and tc < hh[0][-1]:
+            if tc > 0 and hh[0] and tc < hh[0][-1]:
                 h1 = _at(hh[0], hh[1], tc + 0.15) or height
                 h2 = _at(hh[0], hh[1], max(0, tc - 0.15)) or height
                 vspeed = (h1 - h2) / 0.3
@@ -637,7 +638,10 @@ def render(flights, out):
             d.text((30, 16), 'Coludo %s  --  HITL' % fl['label'], font=F_HEAD, fill=(232, 232, 242))
             d.text((40, _CAP_Y + 22), next((c[2] for c in cards if c[0] <= t < c[1]), ''),
                    font=F_BIG, fill=(255, 255, 255))
-            proc.stdin.write(img.tobytes())
+            try:
+                proc.stdin.write(img.tobytes())
+            except BrokenPipeError:
+                break  # ffmpeg died early; stop feeding frames so close()/wait() report its status
     proc.stdin.close()
     ret = proc.wait()
     if ret != 0:

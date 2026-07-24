@@ -37,6 +37,8 @@ def _track(streams):
         return []
     _t, lat = gnss.column('lat')
     _t, lon = gnss.column('lon')
+    if len(lat) != len(lon):
+        sys.stderr.write('warning: lat/lon length mismatch (%d/%d), truncating\n' % (len(lat), len(lon)))
     return list(zip(lat, lon))
 
 
@@ -88,7 +90,8 @@ def _plan(streams_list, labels, pad, zone, box):
         if labels:
             out.append('<rect x="%d" y="%d" width="13" height="13" fill="%s"/>'
                        '<text x="%d" y="%d" font-size="12">%s</text>'
-                       % (x0 + 8, y0 + 8 + i * 20, colour, x0 + 26, y0 + 19 + i * 20, labels[i]))
+                       % (x0 + 8, y0 + 8 + i * 20, colour, x0 + 26, y0 + 19 + i * 20,
+                          labels[i] if i < len(labels) else ''))
     out.append('<text x="%d" y="%d" font-size="11" fill="#888">ground track — m from pad (N up)</text>'
                % (x0 + 8, y0 + h - 8))
     return ''.join(out)
@@ -153,6 +156,10 @@ def main():
 
     pad = tuple(float(v) for v in args.pad.split(',')) if args.pad else None
     zone = tuple(float(v) for v in args.zone.split(',')) if args.zone else None
+    if pad is not None and len(pad) != 2:
+        parser.error('--pad needs exactly LAT,LON')
+    if zone is not None and len(zone) != 4:
+        parser.error('--zone needs exactly TL_LAT,TL_LON,BR_LAT,BR_LON')
     streams_list = []
     for c in args.captures:
         with open(c) as handle:

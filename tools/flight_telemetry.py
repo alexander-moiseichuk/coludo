@@ -47,11 +47,11 @@ class Stream:
 
 
 def _number(token: str):
-    """A telemetry cell -> float when it parses, else the raw string ('' stays '')."""
+    """A telemetry cell -> float when it parses; '' stays '' (blank), other non-numeric -> nan."""
     try:
         return float(token)
     except ValueError:
-        return token
+        return token if token == '' else float('nan')  # nan keeps downstream arithmetic from TypeError
 
 
 def parse(text: str):
