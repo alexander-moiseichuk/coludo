@@ -44,19 +44,27 @@ class _Device:
         return bytes(buf)
 
     async def read_into(self, reg: int, buf) -> None:
+        """
+        One CS-framed register read into a caller buffer.
+
+        NOT locked, for the reason i2cbus.Bus documents: the CS-low .. CS-high section contains no
+        `await`, and MicroPython's asyncio is cooperative, so nothing can run between asserting and
+        releasing CS -- a second device on this bus cannot steal it mid-transaction. That is the
+        property that matters here (LSM6DSO32 and ADXL375 share SPI1), and it comes from the
+        scheduler, not from the lock. The lock cost ~288 B per call, measured.
+        """
         cmd = 0x80 | reg | (self._multi if len(buf) > 1 else 0)
-        async with self._bus._lock:
-            self._cs(0)
-            self._bus._spi.write(bytes((cmd,)))
-            self._bus._spi.readinto(buf)
-            self._cs(1)
+        self._cs(0)
+        self._bus._spi.write(bytes((cmd,)))
+        self._bus._spi.readinto(buf)
+        self._cs(1)
 
     async def write(self, reg: int, data: bytes) -> None:
+        """One CS-framed register write; unlocked for the same reason as read_into above."""
         cmd = reg | (self._multi if len(data) > 1 else 0)
-        async with self._bus._lock:
-            self._cs(0)
-            self._bus._spi.write(bytes((cmd,)) + bytes(data))
-            self._cs(1)
+        self._cs(0)
+        self._bus._spi.write(bytes((cmd,)) + bytes(data))
+        self._cs(1)
 
     async def diagnose(self, reg: int, expected: int) -> str:
         """
