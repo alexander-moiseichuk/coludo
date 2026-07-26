@@ -86,24 +86,45 @@ panels render from them.
 
 ### Memory: where the GC-off bytes actually go
 
-This capture reports a GC-off leak of **258 KB/s → time-to-OOM ~126 s** (free 32.4 → 18.1 MB), against
-**271 KB/s / 120 s** before the telemetry work below. Measured per-call on the board rather than guessed:
+Three fixes landed, each measured on the board rather than guessed:
 
-| source | per call | rate | share |
-|---|---|---|---|
-| `Telemetry.push` | **176 B** (was 240) | ~172 rows/s | ~30 KB/s |
-| HITL sim `glide_step` + `sensors()` | 58 B + 162 B | 100 Hz | ~22 KB/s |
-| remainder — the driver I²C read path | — | 8 drivers @ 10–50 Hz | **~200 KB/s** |
+- **`Telemetry.push` 240 → 176 B.** The wire line is now formatted and encoded **once** (`tlm()` used to
+  re-copy the whole row to prepend the session prefix), and telemetry rows carry **centi-unit integers
+  instead of floats** — a float in a row is heap-boxed on MicroPython *and* then `str()`-formatted.
+- **Bus read 320 → 80 B (−75 %).** `i2cbus`/`spibus` took an `asyncio.Lock` per operation; the lock alone
+  cost **288 of those 320 B**. Every locked section is ONE synchronous, non-yielding `machine.I2C` call,
+  and MicroPython's loop is cooperative, so the lock protected nothing — and being released *between*
+  calls, it never gave multi-step atomicity either. `Bus.transaction()` is now the explicit escape hatch
+  for a sequence that genuinely must not interleave.
+- **A per-tick raised exception.** `flight._record()` pushed telemetry every tick; with the Recorder not
+  running that RAISED and was caught every tick. `Telemetry.due()` now reports not-due when there is no
+  ring to write to. In `bench_flight` this alone was **720 of the 816 B** it attributed to a control step
+  — the real control path is **96 B/step (22 KB/s at 100 Hz, OOM ~1450 s)** and was never the problem.
 
-Two fixes landed, both grounded in that table: the wire line is now formatted and encoded **once**
-(`tlm()` used to re-copy the whole row to prepend the session prefix — 240 → 176 B per push, ~27 %),
-and telemetry rows carry **centi-unit integers instead of floats**, because a float in a row is
-heap-boxed on MicroPython *and* then `str()`-formatted. Together those bought ~13 KB/s.
+#### How much of a HITL leak is the simulator?
 
-The honest conclusion is that **telemetry was never the main term** — the driver read path is, and that
-is the place to look next. Note also that a real flight does not run the HITL sim (−22 KB/s), and that
-`board_health` already carries the OOM prediction and the safe-height elimination logic as the standing
-mitigation. A dedicated soak still belongs before any powered flight.
+The sim is float physics, and every intermediate is a boxed float — so it is the standing suspect. It is
+now measured two independent ways (`make bench-hitl`, and a flown A/B where each arm changes exactly one
+rate). F15, noise 0.05, calm, 285 g, ~56 s airborne:
+
+| arm | leak | isolates |
+|---|---|---|
+| `inject_hz` 50 (default) | 224, 255 KB/s | baseline — two runs, the spread is real (~±16) |
+| `inject_hz` 10 | 193, 194 KB/s | −40 Hz of `_publish` → **46 KB/s** (~1150 B each) |
+| `inject_hz` 10 + `sim_hz` 25 | 168 KB/s | −25 Hz of `glide_step` → **26 KB/s** (~1040 B each) |
+
+At the default rates that is publish ~58 + physics ~52 = **~110 KB/s, 46 % of the ~240 KB/s baseline,
+none of which a real flight runs**. The per-call bench agrees in shape but reads ~40 % high (145 KB/s) —
+a tight bench loop takes branches a real flight skips, so it is an upper bound and the flown A/B is the
+number to quote.
+
+**A real flight's leak is therefore ~130 KB/s → OOM ~250 s**, not the ~240 KB/s / ~135 s a HITL capture
+shows. `board_health` carries the OOM prediction and the safe-height elimination logic as the standing
+mitigation, and a dedicated soak still belongs before any powered flight — but the headline HITL figure
+should not be read as a flight number.
+
+One trap worth recording: the first `sim_hz` arm measured *nothing*, because `hitl_run` imports
+`config_hitl` **from the board**. Editing the host copy without deploying changes nothing.
 
 ## Regenerate
 
