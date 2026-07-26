@@ -9,15 +9,37 @@ controller; attitude comes from the databoard. Run by `make test`.
 """
 
 import asyncio
+import time
 
 import config_default
 import databoard
 import fixed
 import guidance
 import pid
+import recorder
 import task
 from controller import Stage
 from tasks import flight
+
+
+class _FakeWriter:
+    def write(self, data):
+        pass
+
+    async def drain(self):
+        pass
+
+
+def _drain_stream(name: str) -> list:
+    """Pull the queued telemetry records for one stream out of the Recorder ring (test-only helper)."""
+    rows = []
+    record = recorder.Recorder._tlm.read()
+    while record is not None:
+        text = record.decode()
+        if name in text:
+            rows.append(text.split('@')[2].strip())  # '@<session>_<file>@<content>' -> content
+        record = recorder.Recorder._tlm.read()
+    return rows
 
 
 class _FakeFin:
@@ -73,6 +95,7 @@ class _StubMission:
 
 async def amain():
     assert task.ACTIVITIES.get('flight') is flight.Flight  # registered driver
+    recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())  # flight.csv control-state stream
 
     ctrl = _StubController(Stage.SETTING)
     unit = flight.Flight('flight', {'schedule_hz': 0, 'period_ms': 20, 'gains': {'roll': {'kp': 1.0}}}, ctrl)
@@ -94,6 +117,23 @@ async def amain():
     assert unit._active is True and unit._stage == Stage.GLIDING and unit._steps == 1
     assert ctrl.fins['servo_eleron_left'].angle == 80 and ctrl.fins['servo_eleron_right'].angle == 100
     assert ctrl.fins['servo_yaw'].angle == 90  # heading hold captured at 100 -> error 0 -> rudder neutral
+
+    """
+    flight.csv (findings §27.2): the control state -- what the loop BELIEVED and DEMANDED plus the cap
+    that clipped it -- is the one thing no other stream holds (the per-servo streams have only the
+    resulting angles). Assert the header shape, then force the sample clock (the stream is decimated to
+    10 Hz, so a burst of test ticks would otherwise emit once) and check a row of the ENGAGED state.
+    """
+    rows = _drain_stream('flight.csv')
+    assert rows[0] == ('uptime;stage;active;airspeed;fin_cap;roll_sp;pitch_sp;heading_err;'
+                       'roll_cmd;pitch_cmd;yaw_cmd;wind_speed;wind_from'), rows[0]
+    assert len(rows[1].split(';')) == 13  # uptime + the 12 control-state fields
+    unit._telemetry._last_us = time.ticks_add(time.ticks_us(), -unit._tlm_period_us)  # force due now
+    unit._tick()
+    live = _drain_stream('flight.csv')[0].split(';')
+    assert int(live[1]) == Stage.GLIDING and int(live[2]) == 1  # stage + engaged
+    assert int(live[4]) == unit._mixer.limit  # fin_cap: the live authority the governor set
+    assert int(live[8]) == unit._roll_cmd  # the roll demand that produced the elevon split above
 
     # landing is NOT a control stage by default (only gliding) -> centre the fins + disengage
     ctrl.stage = Stage.LANDING

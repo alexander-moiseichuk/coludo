@@ -433,6 +433,24 @@ class Telemetry:
         self._header_sent: bool = False
         self._last_us: int = Recorder.timestamp() - self.decimate_us  # one window back -> first push emits
 
+    def due(self, now: int) -> bool:
+        """
+        Whether the decimation window has elapsed -- so a HOT-PATH producer can skip building its row.
+
+        push() takes an already-built `values` tuple, so a 100 Hz caller that lets push() do the
+        decimating still allocates that tuple 100x/s on a GC-off flight. Checking here first lets the
+        caller return before building it, against the SAME clock push() uses -- one clock, so a jittery
+        slice can never advance a private counter past a window push() then refuses (which would drop
+        the sample silently).
+
+        Args:
+            now - the current Recorder.timestamp() / ticks_us.
+
+        Returns:
+            True when a push() now would emit rather than decimate.
+        """
+        return time.ticks_diff(now, self._last_us) >= self.decimate_us
+
     def push(self, values) -> None:
         if not self._header_sent:
             Recorder.tlm(self.filename, self._header)

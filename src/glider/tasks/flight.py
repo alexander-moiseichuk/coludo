@@ -29,8 +29,10 @@ import guidance
 import inspector
 import mixer
 import pid
+import recorder
 import task
 import wind
+from commons import const
 
 try:
     from machine import Timer
@@ -38,6 +40,7 @@ except ImportError:  # host (CPython): board-only; the timer-scheduled path runs
     Timer = None
 
 _STAGE = controller_mod.Stage
+_TLM_PERIOD_US = const(100000)  # 10 Hz: the control state is SAMPLED, not traced (the loop runs at 100)
 
 
 @task.activity('flight')
@@ -102,6 +105,26 @@ class Flight(task.Task):
         self._glide_ratio: float = self.config.get('glide_ratio', 3.0)  # nominal L/D for the reach estimate
         self._active: bool = False  # in a control stage (PID engaged)
         self._stage = None  # the current control-stage name (for inspect)
+        """
+        flight.csv -- the control state, which NOTHING else records: what the loop BELIEVED (airspeed,
+        wind) and DEMANDED (setpoints, per-axis commands), plus the authority cap that clipped it. The
+        per-servo streams already hold the resulting fin angles, so those are not duplicated here; the
+        value of this stream is that command, cap and belief share ONE timestamp -- post-flight you can
+        see not just what the fins did but what limited them and why (findings §27.2).
+
+        SAMPLED at telemetry_us, not traced at the loop rate. _record() asks Telemetry.due() BEFORE
+        building the row, because push() takes an already-built tuple -- letting push() do the decimating
+        would still allocate 100x/s on a GC-off flight. due() reads push()'s own clock, so there is one
+        clock: a jittery slice can never advance a private counter past a window push() then refuses.
+        """
+        self._tlm_period_us: int = self.config.get('telemetry_us', _TLM_PERIOD_US)
+        self._telemetry = recorder.Telemetry(
+            'flight.csv', ('stage', 'active', 'airspeed', 'fin_cap', 'roll_sp', 'pitch_sp',
+                           'heading_err', 'roll_cmd', 'pitch_cmd', 'yaw_cmd', 'wind_speed', 'wind_from'),
+            decimate_us=self._tlm_period_us)
+        self._roll_cmd: int = 0  # last per-axis demand (whole degrees) -> flight.csv; small ints, no boxing
+        self._pitch_cmd: int = 0
+        self._yaw_cmd: int = 0
         self._steps: int = 0  # control steps run (self-timing for load characterization)
         self._max_step_us: int = 0
         self._last_step_us: int = 0  # ticks_us of the previous control step -> actual dt
@@ -131,6 +154,7 @@ class Flight(task.Task):
         # stage authority stays with the task: pre-glide (boost + active decel) FORCES the governor to
         # full rate from outside; its own speed/dive triggers decide the rest (governor.step docstring)
         self._governor.step(self._dt, self.controller.stage < _STAGE.GLIDING, self._pitch_cd)
+        self._record(start)  # BEFORE the gates below: a degraded / neutral pass must be recorded too
         setpoint = self._guidance.setpoint(self.controller.stage)  # int key -> None if not control
         if setpoint is None or not self.controller.armed:  # not a control stage, or disarmed -> neutral
             if self._active:  # left the control stages (or disarmed) -> centre the fins
@@ -246,8 +270,12 @@ class Flight(task.Task):
         roll_cmd = roll_pid.step(law.roll_setpoint - roll, dt_ms, roll_rate)
         pitch_cmd = pitch_pid.step(law.pitch_setpoint - pitch, dt_ms, pitch_rate)
         yaw_cmd = yaw_pid.step(law.heading_error * fixed.SCALE, dt_ms, yaw_rate)  # coordinate turn
+        # stash the per-axis demands (whole degrees) for flight.csv -- small-int stores, no boxing
+        self._roll_cmd = roll_cmd // fixed.SCALE
+        self._pitch_cmd = pitch_cmd // fixed.SCALE
+        self._yaw_cmd = yaw_cmd // fixed.SCALE
         # positional (not roll=...) so no kwargs dict is built on the hot path
-        self._actuate(roll_cmd // fixed.SCALE, pitch_cmd // fixed.SCALE, yaw_cmd // fixed.SCALE)
+        self._actuate(self._roll_cmd, self._pitch_cmd, self._yaw_cmd)
 
     def _actuate(self, roll: int, pitch: int, yaw: int) -> None:
         """
@@ -269,6 +297,38 @@ class Flight(task.Task):
             names = list(self._mixer.surfaces)  # the config surface names (mixer.surfaces is the gain map)
             self._mixer.bind(dict(zip(names, self.controller.find(names))))
         self._mixer.actuate(roll, pitch, yaw)
+
+    def _record(self, now: int) -> None:
+        """
+        Sample the control state into flight.csv (see setup for why this stream exists).
+
+        Called every tick BEFORE the stage/attitude gates, so a disarmed, degraded or neutral pass is
+        recorded too -- the flights worth reviewing are the ones that STOPPED controlling, and a stream
+        that goes quiet exactly then would be useless. The governor fields are fresh (it stepped this
+        tick); the setpoints/demands are the previous tick's, which a 10 Hz sample of a 100 Hz loop
+        cannot resolve anyway.
+
+        A ring overflow must never break the control loop, so unlike the sensor drivers (whose telemetry
+        is allowed to raise, per the error policy) this one is caught and deduped through note() --
+        visible as unhealthy on the CC panel, but the fins keep flying.
+
+        Args:
+            now - this tick's ticks_us.
+
+        Returns:
+            None; pushes one telemetry row when the sample period has elapsed.
+        """
+        if not self._telemetry.due(now):
+            return  # not due -- return BEFORE building the values tuple (no 100 Hz hot-path allocation)
+        law = self._guidance
+        try:
+            self._telemetry.push((self.controller.stage, 1 if self._active else 0,
+                                  round(self._governor.airspeed(), 1), self._mixer.limit,
+                                  law.roll_setpoint, law.pitch_setpoint, law.heading_error,
+                                  self._roll_cmd, self._pitch_cmd, self._yaw_cmd,
+                                  round(self._wind.speed(), 1), round(self._wind.direction())))
+        except Exception as error:
+            self.note('flight :: telemetry %r', error)  # deduped; control continues regardless
 
     def _neutral(self) -> None:
         self._actuate(0, 0, 0)
