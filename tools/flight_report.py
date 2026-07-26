@@ -93,6 +93,9 @@ def build(streams, logs, go, make_subplots):
     gyro = find_stream(streams, 'gx', 'gy', 'gz', prefer='lsm')  # imu_lsm6dso32.csv: gyro rate (deg/s) -> PID D term
     pitot = find_stream(streams, 'dynamic_pressure')  # airspeed_sdp810.csv: the DIRECT pitot measurement
     control = find_stream(streams, 'fin_cap')  # flight.csv: the control state (findings §27.2)
+    # telemetry carries centi-units (fixnums), never floats -- a float in a row heap-boxes on
+    # MicroPython, so every rate is x100 on the wire and scaled here
+    centi = 100.0
 
     trajectory = go.Figure()
     if gnss is not None:
@@ -177,12 +180,13 @@ def build(streams, logs, go, make_subplots):
     tools/airspeed_calibrate.py) and their divergence flags wind, saturation or a fallback to the accel
     backbone.
     """
-    if pitot is not None and 'airspeed' in pitot.fields:
-        times, values = pitot.column('airspeed')
-        series.add_trace(go.Scatter(x=times, y=values, name='pitot'), row=10, col=1)
-    if control is not None and 'airspeed' in control.fields:
-        times, values = control.column('airspeed')
-        series.add_trace(go.Scatter(x=times, y=values, name='estimate (governor)'), row=10, col=1)
+    if pitot is not None and 'airspeed_cms' in pitot.fields:
+        times, values = pitot.column('airspeed_cms')
+        series.add_trace(go.Scatter(x=times, y=[v / centi for v in values], name='pitot'), row=10, col=1)
+    if control is not None and 'airspeed_cms' in control.fields:
+        times, values = control.column('airspeed_cms')
+        series.add_trace(go.Scatter(x=times, y=[v / centi for v in values],
+                                    name='estimate (governor)'), row=10, col=1)
     if gnss is not None and 'speed_kn' in gnss.fields:
         times, knots = gnss.column('speed_kn')
         series.add_trace(go.Scatter(x=times, y=[k / 1.94384 for k in knots], name='GNSS ground',

@@ -344,9 +344,9 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
                     (roll_rate_dps, pitch_rate_dps, yaw_rate_dps),
                     dt=dt,
                     pitot=(pitot_handle.value_now if pitot_on else None),
-                    control=(stage_id, 1 if active else 0, fin_governor.airspeed(), mix.limit,
+                    control=(stage_id, 1 if active else 0, int(fin_governor.airspeed() * 100), mix.limit,
                              law.roll_setpoint, law.pitch_setpoint, law.heading_error,
-                             roll_deg, pitch_deg, yaw_deg, wind_speed, wind_from))
+                             roll_deg, pitch_deg, yaw_deg, int(wind_speed * 100), wind_from))
         if stage == 'boosting':
             rows.leak_starts(t)  # GC goes off at BOOSTING on the board -> the leak clock starts
         rows.health(t, stage)
@@ -384,10 +384,10 @@ class _Capture:
         self._tlm('health.csv', 'uptime;temp;mem_free;load')          # board vitals (board_health.py)
         # flight.csv: the CONTROL STATE, byte-identical in shape to the board's (tasks/flight.py) so a
         # sim capture exercises the same report panels a real capture will (findings §27.1/§27.2)
-        self._tlm('flight.csv', 'uptime;stage;active;airspeed;fin_cap;roll_sp;pitch_sp;heading_err;'
-                                'roll_cmd;pitch_cmd;yaw_cmd;wind_speed;wind_from')
+        self._tlm('flight.csv', 'uptime;stage;active;airspeed_cms;fin_cap;roll_sp;pitch_sp;heading_err;'
+                                'roll_cmd;pitch_cmd;yaw_cmd;wind_cms;wind_from')
         # the SDP810 pitot as the board's driver records it (Pa fixnum + derived m/s)
-        self._tlm('airspeed_sdp810.csv', 'uptime;dynamic_pressure;airspeed;temperature')
+        self._tlm('airspeed_sdp810.csv', 'uptime;dynamic_pressure;airspeed_cms;temperature')
         # servo-rail power as the INA226 records it -- MODELLED from the measured MG90S figures, so
         # the report's engine panel and flight_kpi's servo-energy metric are not blank on a sim run
         self._tlm('power_ina226.csv', 'uptime;voltage_mv;current_ma;power_mw;alerts')
@@ -409,8 +409,8 @@ class _Capture:
         if agl <= laser_range:                           # the laser only resolves the last few metres
             self._tlm('laser_agl.csv', '%u;%.3f' % (microseconds, agl))
         if pitot is not None:                            # SDP810: q = 0.5*rho*v^2, Pa as a x100 fixnum
-            self._tlm('airspeed_sdp810.csv', '%u;%d;%.2f;2500'
-                      % (microseconds, int(0.5 * 1.225 * pitot * pitot * 100), pitot))
+            self._tlm('airspeed_sdp810.csv', '%u;%d;%d;2500'
+                      % (microseconds, int(0.5 * 1.225 * pitot * pitot * 100), int(pitot * 100)))
         """
         SERVO POWER: a fin that CHANGED angle is travelling; at max slew it needs
         |delta| * _SERVO_SLEW_S_PER_DEG seconds, during which the measured mean draw is
@@ -426,7 +426,7 @@ class _Capture:
         power_mw = int(_SERVO_HOLD_MW + moving_mw)
         self._tlm('power_ina226.csv', '%u;5000;%d;%d;0' % (microseconds, power_mw // 5, power_mw))
         if control is not None:                          # the control state the board's flight task records
-            self._tlm('flight.csv', '%u;%d;%d;%.1f;%d;%d;%d;%d;%d;%d;%d;%.1f;%d'
+            self._tlm('flight.csv', '%u;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d'
                       % ((microseconds,) + control))
 
     def leak_starts(self, t) -> None:

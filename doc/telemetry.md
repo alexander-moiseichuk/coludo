@@ -12,7 +12,7 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | `baro_icp10111.csv` | board | `hitl.py` | `altitude`, `temperature`, `pressure`, `elevation` |
 | `checkpoint.csv` | board | `warmstart.py` | `stage`, `altitude`, `speed`, `ticks_ms` |
 | `fins.csv` | board | `hitl.py` | `eleron_left`, `eleron_right`, `yaw` |
-| `flight.csv` | board | `flight.py` | `stage`, `active`, `airspeed`, `fin_cap`, `roll_sp`, `pitch_sp`, `heading_err`, `roll_cmd`, `pitch_cmd`, `yaw_cmd`, `wind_speed`, `wind_from` |
+| `flight.csv` | board | `flight.py` | `stage`, `active`, `airspeed_cms`, `fin_cap`, `roll_sp`, `pitch_sp`, `heading_err`, `roll_cmd`, `pitch_cmd`, `yaw_cmd`, `wind_cms`, `wind_from` |
 | `gnss.csv` | board | `hitl.py` | `lat`, `lon`, `speed_kn`, `course` |
 | `health.csv` | board | `board_health.py` | `temp`, `mem_free`, `load`, `oom_s`, `land_s` |
 | `imu_bno055.csv` | board | `hitl.py` | `heading`, `roll`, `pitch` |
@@ -26,7 +26,7 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | _per-device_ (`<name>.csv`) | board | `icp10111.py` | `altitude`, `temperature`, `pressure`, `elevation` |
 | _per-device_ (`<name>.csv`) | board | `ina226.py` | `voltage_mv`, `current_ma`, `power_mw`, `alerts` |
 | _per-device_ (`<name>.csv`) | board | `lsm6dso32.py` | `ax`, `ay`, `az`, `gx`, `gy`, `gz` |
-| _per-device_ (`<name>.csv`) | board | `sdp810.py` | `dynamic_pressure`, `airspeed`, `temperature` |
+| _per-device_ (`<name>.csv`) | board | `sdp810.py` | `dynamic_pressure`, `airspeed_cms`, `temperature` |
 | _per-device_ (`<name>.csv`) | board | `sequencer.py` | `stage`, `reason` |
 | _per-device_ (`<name>.csv`) | board | `sg90.py` | `angle`, `pulse_us`, `done` |
 | _per-device_ (`<name>.csv`) | board | `vl53l4cx.py` | `agl` |

@@ -35,8 +35,8 @@ _HEADERS = [
     'servo_eleron_left.csv;uptime;angle;pulse_us;done',
     'servo_eleron_right.csv;uptime;angle;pulse_us;done',
     'servo_yaw.csv;uptime;angle;pulse_us;done',
-    'flight.csv;uptime;stage;active;airspeed;fin_cap;roll_sp;pitch_sp;heading_err;'
-    'roll_cmd;pitch_cmd;yaw_cmd;wind_speed;wind_from',
+    'flight.csv;uptime;stage;active;airspeed_cms;fin_cap;roll_sp;pitch_sp;heading_err;'
+    'roll_cmd;pitch_cmd;yaw_cmd;wind_cms;wind_from',
     'gnss.csv;uptime;lat;lon;speed_kn;course',
 ]
 
@@ -53,7 +53,7 @@ def _board_samples() -> list:
         if step % 3 == 0:  # the right elevon moves less often -- forward-fill must cover the gaps
             rows.append('@%s_servo_eleron_right.csv@%d;%d;1500;1' % (_SESSION, stamp, 90 - step))
         rows.append('@%s_servo_yaw.csv@%d;90;1500;1' % (_SESSION, stamp))
-        rows.append('@%s_flight.csv@%d;3;1;14.%d;%d;0;-600;2;%d;0;0;0.0;0'
+        rows.append('@%s_flight.csv@%d;3;1;14%02d;%d;0;-600;2;%d;0;0;0;0'
                     % (_SESSION, stamp, step, 45 - step, step))
         rows.append('@%s_gnss.csv@%d;25.5146%02d;-80.3920;27.2;30.0' % (_SESSION, stamp, step))
     return rows

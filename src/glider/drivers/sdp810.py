@@ -147,7 +147,7 @@ class Sdp810(task.Task):
         self._pressure_ch, self._airspeed_ch = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'dynamic_pressure', 'airspeed')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
-                                       ('dynamic_pressure', 'airspeed', 'temperature'),  # Pa fixnum, m/s, °C fixnum
+                                       ('dynamic_pressure', 'airspeed_cms', 'temperature'),  # all fixnums (x SCALE)
                                        decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
         self._ok = True
         return True
@@ -202,7 +202,8 @@ class Sdp810(task.Task):
                     self._temp_raw = _signed16(frame[3], frame[4])
                     self._pressure_ch.push(pressure)  # Pa fixnum -> small int, no boxing
                     self._airspeed_ch.push(airspeed)  # m/s -> the governor's estimator (airspeed.py)
-                    self._telemetry.push((pressure, airspeed, self._temp_raw // 2))  # every collected value
+                    # every collected value, all as fixnums -- a float in a row boxes on MicroPython
+                    self._telemetry.push((pressure, int(airspeed * fixed.SCALE), self._temp_raw // 2))
                     self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
                 self.note('sdp810 :: read %r', error)  # deduped: a persistent error logs once, not every tick

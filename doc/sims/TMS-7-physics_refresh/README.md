@@ -70,27 +70,40 @@ flight-critical for accuracy" actually costs.
 
 The host runs above are the matrix; this is the same flight flown **on the board** — real drivers, real
 servos physically moving, real INA226 on the servo rail, real MCU memory.
-[**Report**](hitl_f15_full.html) · [**video (FHD, 64 s)**](hitl_f15_full.mp4) ·
-[capture](hitl_f15_full.txt).
+[**Report**](hitl_f15_full.html) · [**video (FHD, 64 s)**](hitl_f15_full.mp4).
 
 | measured on the board | value |
 |---|---|
-| servo-rail power | **peak 5750 mW**, mean 100 mW, **6.2 J** over the 60 s flight |
-| fin activity | 710 moves, 1622° of travel (27 °/s of flight) |
+| servo-rail power | **peak 5850 mW**, mean 101 mW, **6.1 J** over the 60 s flight |
+| fin activity | 707 moves, 1594° of travel (27 °/s of flight) |
 | `fin_cap` (governor authority) | swept **14 → 45°** — the unconfident floor, then the live 1/v² schedule |
-| airspeed estimate | 0 → 14.6 m/s |
-| pitot `dynamic_pressure` | −0.0 … 0.0 Pa — correct: the SDP810 is on the bench with no airflow |
+| airspeed estimate | 0 → 14.4 m/s |
+| pitot `dynamic_pressure` | ~0 Pa — correct: the SDP810 is on the bench with no airflow |
 
 This run is what validated the capture-pipeline work end to end: `flight.csv` (542 rows), the three
 per-servo streams and `airspeed_sdp810.csv` all came off a real board, and the fin/authority/airspeed
 panels render from them.
 
-> ⚠️ **Memory:** this HITL capture reports a GC-off leak of **271 KB/s → time-to-OOM ~120 s**
-> (free 32.4 → 17.2 MB). That is ~18× the 15 KB/s recorded for the control path in
-> [TMS-7-guiding_refactoring](../TMS-7-guiding_refactoring/) and shorter than a real glide. A HITL run
-> allocates more than a flight does (the sim task itself runs on the board alongside the real drivers,
-> and the SDP810 now polls at 50 Hz), so this is **not** directly a flight number — but it is a real
-> measurement from real hardware and wants a dedicated soak before any powered flight.
+### Memory: where the GC-off bytes actually go
+
+This capture reports a GC-off leak of **258 KB/s → time-to-OOM ~126 s** (free 32.4 → 18.1 MB), against
+**271 KB/s / 120 s** before the telemetry work below. Measured per-call on the board rather than guessed:
+
+| source | per call | rate | share |
+|---|---|---|---|
+| `Telemetry.push` | **176 B** (was 240) | ~172 rows/s | ~30 KB/s |
+| HITL sim `glide_step` + `sensors()` | 58 B + 162 B | 100 Hz | ~22 KB/s |
+| remainder — the driver I²C read path | — | 8 drivers @ 10–50 Hz | **~200 KB/s** |
+
+Two fixes landed, both grounded in that table: the wire line is now formatted and encoded **once**
+(`tlm()` used to re-copy the whole row to prepend the session prefix — 240 → 176 B per push, ~27 %),
+and telemetry rows carry **centi-unit integers instead of floats**, because a float in a row is
+heap-boxed on MicroPython *and* then `str()`-formatted. Together those bought ~13 KB/s.
+
+The honest conclusion is that **telemetry was never the main term** — the driver read path is, and that
+is the place to look next. Note also that a real flight does not run the HITL sim (−22 KB/s), and that
+`board_health` already carries the OOM prediction and the safe-height elimination logic as the standing
+mitigation. A dedicated soak still belongs before any powered flight.
 
 ## Regenerate
 

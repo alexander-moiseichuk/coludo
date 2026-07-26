@@ -119,8 +119,8 @@ class Flight(task.Task):
         """
         self._tlm_period_us: int = self.config.get('telemetry_us', _TLM_PERIOD_US)
         self._telemetry = recorder.Telemetry(
-            'flight.csv', ('stage', 'active', 'airspeed', 'fin_cap', 'roll_sp', 'pitch_sp',
-                           'heading_err', 'roll_cmd', 'pitch_cmd', 'yaw_cmd', 'wind_speed', 'wind_from'),
+            'flight.csv', ('stage', 'active', 'airspeed_cms', 'fin_cap', 'roll_sp', 'pitch_sp',
+                           'heading_err', 'roll_cmd', 'pitch_cmd', 'yaw_cmd', 'wind_cms', 'wind_from'),
             decimate_us=self._tlm_period_us)
         self._roll_cmd: int = 0  # last per-axis demand (whole degrees) -> flight.csv; small ints, no boxing
         self._pitch_cmd: int = 0
@@ -322,11 +322,14 @@ class Flight(task.Task):
             return  # not due -- return BEFORE building the values tuple (no 100 Hz hot-path allocation)
         law = self._guidance
         try:
+            # centi-units, not floats: a float in the row is heap-BOXED on MicroPython and then
+            # str()-formatted, and it does not match the fixnum convention the rest of the
+            # control path already speaks. Ints cost nothing and the tools scale by SCALE.
             self._telemetry.push((self.controller.stage, 1 if self._active else 0,
-                                  round(self._governor.airspeed(), 1), self._mixer.limit,
+                                  int(self._governor.airspeed() * fixed.SCALE), self._mixer.limit,
                                   law.roll_setpoint, law.pitch_setpoint, law.heading_error,
                                   self._roll_cmd, self._pitch_cmd, self._yaw_cmd,
-                                  round(self._wind.speed(), 1), round(self._wind.direction())))
+                                  int(self._wind.speed() * fixed.SCALE), int(self._wind.direction())))
         except Exception as error:
             self.note('flight :: telemetry %r', error)  # deduped; control continues regardless
 

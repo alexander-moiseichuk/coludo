@@ -31,9 +31,9 @@ def generate() -> str:
     # the fixture must look like a REAL capture -- it is what the tool tests and the demo render
     # against, so a stream the tools depend on must be present here too (findings §27.1/§27.8)
     tlm('fins.csv', 'uptime;eleron_left;eleron_right;yaw')
-    tlm('flight.csv', 'uptime;stage;active;airspeed;fin_cap;roll_sp;pitch_sp;heading_err;'
-                      'roll_cmd;pitch_cmd;yaw_cmd;wind_speed;wind_from')
-    tlm('airspeed_sdp810.csv', 'uptime;dynamic_pressure;airspeed;temperature')
+    tlm('flight.csv', 'uptime;stage;active;airspeed_cms;fin_cap;roll_sp;pitch_sp;heading_err;'
+                      'roll_cmd;pitch_cmd;yaw_cmd;wind_cms;wind_from')
+    tlm('airspeed_sdp810.csv', 'uptime;dynamic_pressure;airspeed_cms;temperature')
 
     step, t = 0.05, 0.0
     while t < 16.0:
@@ -65,11 +65,11 @@ def generate() -> str:
         rudder = 90 + int(4.0 * math.cos(t * 0.9)) if gliding else 90
         tlm('fins.csv', '%u;%d;%d;%d' % (microseconds, left, right, rudder))
         airspeed = 14.0 + 1.5 * math.sin(t / 2.0) if gliding else 0.0
-        tlm('airspeed_sdp810.csv', '%u;%d;%.2f;2500'
-            % (microseconds, int(0.5 * 1.225 * airspeed * airspeed * 100), airspeed))
+        tlm('airspeed_sdp810.csv', '%u;%d;%d;2500'
+            % (microseconds, int(0.5 * 1.225 * airspeed * airspeed * 100), int(airspeed * 100)))
         cap = 45 if airspeed < 12.0 else max(8, int(45.0 * (12.0 / airspeed) ** 2))
-        tlm('flight.csv', '%u;%d;%d;%.1f;%d;%d;%d;%d;%d;%d;%d;0.0;0'
-            % (microseconds, 3 if gliding else 2, 1 if gliding else 0, airspeed, cap,
+        tlm('flight.csv', '%u;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;0;0'
+            % (microseconds, 3 if gliding else 2, 1 if gliding else 0, int(airspeed * 100), cap,
                int(100 * 5.0 * math.cos(t / 2.0)), -600, int(3.0 * math.sin(t)),
                left - 90, 0, rudder - 90))
         t += step

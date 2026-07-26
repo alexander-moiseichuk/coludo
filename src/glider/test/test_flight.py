@@ -125,8 +125,8 @@ async def amain():
     10 Hz, so a burst of test ticks would otherwise emit once) and check a row of the ENGAGED state.
     """
     rows = _drain_stream('flight.csv')
-    assert rows[0] == ('uptime;stage;active;airspeed;fin_cap;roll_sp;pitch_sp;heading_err;'
-                       'roll_cmd;pitch_cmd;yaw_cmd;wind_speed;wind_from'), rows[0]
+    assert rows[0] == ('uptime;stage;active;airspeed_cms;fin_cap;roll_sp;pitch_sp;heading_err;'
+                       'roll_cmd;pitch_cmd;yaw_cmd;wind_cms;wind_from'), rows[0]
     assert len(rows[1].split(';')) == 13  # uptime + the 12 control-state fields
     unit._telemetry._last_us = time.ticks_add(time.ticks_us(), -unit._tlm_period_us)  # force due now
     unit._tick()
