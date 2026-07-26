@@ -133,6 +133,12 @@ class Ina226(task.Task):
         negative); power is positive. The power term divides by 32768 BEFORE the *25 so the intermediate
         stays a small int (no mpz).
 
+        THREE SEPARATE READS, DELIBERATELY. 0x02/0x03/0x04 are contiguous, so one 6-byte read looks like
+        an obvious saving -- it is not possible on this part. The INA226 has a register POINTER that does
+        NOT auto-increment: probed on the board, a 6-byte read from 0x02 returns the bus voltage and then
+        0xFFFF padding (`bus=0x0F95` then `[1]=0xFFFF [2]=0xFFFF`), not power and current. Each register
+        needs its own pointer write. Do not "optimise" this back into one read.
+
         Args:
             (none)
 

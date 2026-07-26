@@ -104,7 +104,9 @@ to maximum at high dynamic pressure, the precise failure the governor exists to 
 Two consequences worth carrying:
 
 - **Servo energy is ~35 J per 56 s flight (0.6 W average), not 3.6 J.** The old figure came from
-  flights whose authority was accidentally capped at 14°. This is a battery-sizing input.
+  flights whose authority was accidentally capped at 14°. This is a battery-sizing input — and it is
+  the **servo rail only**: the INA226 sits on the aft power bus, which is to be rewired to service the
+  main MCU as well, so the measured total becomes a steady 0.5 W or more with this servo work on top.
 - **Board HITL captures recorded before this fix are not a valid basis for a control-tuning or
   power-budget claim.** Host results are unaffected — the host sim publishes realistic airspeeds, so
   the floor never bites, and the full matrix (8 cases, gusts, faults) is bit-identical before and after.

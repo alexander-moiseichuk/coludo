@@ -77,6 +77,14 @@ class SG90(task.Task):
     """
     _SLEW_MS_PER_60: int = 150   # ~0.15 s / 60deg (SG90 plastic-gear slew estimate)
     _SETTLE_MARGIN_MS: int = 60  # added to the slew estimate so move() returns after it has settled
+    """
+    probe() thresholds, in mW of RISE OVER BASELINE -- never absolute draw. That distinction is load
+    bearing: the INA226 currently sees only the servo rail (~0 mW at rest), but the aft power bus is
+    to be rewired so it services the MAIN MCU + servos together, putting a steady 0.5 W or more
+    under every reading. Because the probe subtracts the settled baseline before comparing, the rewiring shifts the
+    baseline and leaves these two numbers valid as they stand. Do not "correct" them for the higher
+    rail total -- that would break the check it survives today.
+    """
     _ENGINE_MIN_MW: int = 500    # probe: min draw rise a working/wired/powered servo must show
     _ENGINE_MAX_MW: int = 3500   # probe: draw above this is flagged HIGH (stall/binding)
 
