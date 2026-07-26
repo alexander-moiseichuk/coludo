@@ -44,6 +44,12 @@ first powered flight.
 - [ ] **Airspeed:** dynamic pressure ≈ 0; do the **pad tare** (CC `update {"zero": true}` on
       `airspeed_sdp810`, glider still) → airspeed reads ~0
 - [ ] **Fins:** disarmed → all at neutral; verify each fin's **zero/trim** via the CC fin-zero UI
+      > ⚠️ **Drive servo checks through the firmware (CC / the driver), never raw PWM on one pin.** A
+      > servo whose signal line is left FLOATING hunts on its own, so a bench script that drives one fin
+      > and leaves the others unconfigured looks exactly like "all three fins move together" — a false
+      > wiring fault that cost real time on 7/25. `sg90.setup()` gives every fin a valid PWM at bring-up,
+      > which is why the fault never appears in normal operation. If you must poke a pin directly, hold
+      > the other fin pins as **OUTPUT LOW** first.
 - [ ] **Power:** INA226 servo-rail voltage/current sane at idle (no stall/short)
 - [ ] **Separation switch:** pads nested → pin reads **HIGH = nested**
 

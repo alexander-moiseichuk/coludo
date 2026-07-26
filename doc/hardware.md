@@ -165,9 +165,13 @@ Alternative is to connect e.g. from [6F22 9V using plug](https://www.amazon.com/
 
 ## Converter
 The servo rail is driven by a **ND3A05SD DC-DC module (5 V / 3 A, isolated)**, separate from the
-controller rail. Three **MG90S at ~1.2 A stall each** give a **~3.5 A simultaneous peak that exceeds the
-3 A module**, so the rail carries a **reservoir capacitor** to source that transient — the decided,
-primary protection.
+controller rail. **MEASURED (2026-07-25, INA226 on the servo rail @ ~100 Hz, MG90S yaw, 10 × full
+0↔180° at max slew):** **peak 3.9 W = 0.79 A**, mean during travel ~1.4 W, ~625 mJ per 180° sweep,
+41 mW holding. So three moving together is **~2.4 A peak — inside the 3 A module**, not the ~3.5 A the
+earlier ~1.2 A/servo estimate suggested. (A USB power meter reads only ~2 W here: it updates at a few Hz
+and smooths, so it sees roughly the mean plus board baseline, never the sub-100 ms spike. Size the
+**capacitor from the peak** and the **converter from the mean**.) The rail still carries a **reservoir
+capacitor** to source the transient — the decided, primary protection — but it is headroom, not a rescue.
 
 The module maker also suggests a series **diode** (an isolated buck cannot sink current, so a
 back-driven motor's regenerative kick pushes the floating output up until something clamps it). **That
@@ -179,8 +183,8 @@ if any overvoltage is still a worry.
 
 ```
   battery  ──▶  ND3A05SD  ──▶ (D1 — omitted) ──┬──────────▶  3× MG90S servos
-  6F22/LiPo     5 V / 3 A                       │               ~1.2 A each
-                (isolated)                       │               ~3.5 A peak
+  6F22/LiPo     5 V / 3 A                       │            0.79 A each (measured)
+                (isolated)                       │            ~2.4 A if all three
                                       ┌──────────┴─────────┐
                                       │ Cbulk 1000 µF      │  reservoir (decided):
                                       │  ‖ 10 µF ‖ 100 nF  │  sources the spike AND
@@ -242,7 +246,7 @@ Candidates (SG90 expected primary — cheap, compact, light):
 **60° looks interesting** (gives **±30°** of fin throw at ~4× torque); 45° (±22.5°) is too little angle.
 
 **Power**: servos run from their **own converter rail** (5 V — see [Converter](#converter) above),
-separate from the controller. The ~3.5 A peak of 3× MG90S is handled by that rail's **reservoir
+separate from the controller. The measured ~2.4 A peak of 3× MG90S is handled by that rail's **reservoir
 capacitor**; a series diode is not used (small servos → low back-EMF, the cap absorbs it). The firmware
 fin `concurrency` gate staggers servo motion so they do not all draw at once.
 
