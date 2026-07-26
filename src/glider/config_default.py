@@ -182,7 +182,11 @@ def default() -> dict:
         'bus': 'spi', 'id': 1,  # shares the ADXL375 SPI1, own chip-select (mode 3, 5 MHz)
         'addr': 0x6A,  # kept for an i2c fallback (set bus 'i2c', id 0)
         'cs_pin': 'lsm6dso32_cs',  # SPI chip-select (GPIO50)
-        'int_pin': 'lsm6dso32_int1',  # INT1 accel data-ready drives the sampling (fallback_ms 500 if silent)
+        'int_pin': 'lsm6dso32_int1',  # INT1 accel data-ready drives the sampling
+        # POLL rate when INT1 is silent (see the driver's run loop). Must track the sensor's 104 Hz ODR
+        # and beat the 20 ms `rate` freshness window below -- the old 100 ms default would have left the
+        # PID's D term starved even in poll mode, so the fallback has to be fast, not merely present.
+        'period_ms': 10,
         'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
         'enabled': True,
         'provides': {'accel': {'priority': 0, 'timeout_ms': 20},   # PRIMARY accel (±32 g)
