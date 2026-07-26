@@ -259,7 +259,11 @@ class Guidance:
         """
         if self._mission is None or not self._mission.zone or self._elevation is None:
             return None
-        elevation = self._elevation.value()          # baro height above the pad (m)
+        # FRESH baro only -- a stale scalar channel extrapolates without bound, and this figure tells
+        # the operator whether the zone is still reachable (see sequencer._detect_launch)
+        elevation, elevation_source, _elevation_age = self._elevation.read()
+        if elevation_source is None:
+            elevation = None
         position, source, _age = self._position.read()
         geometry = self._mission.geometry()
         if elevation is None or position is None or source is None or geometry is None:
@@ -437,7 +441,13 @@ class Guidance:
         radius halves, the last seconds spiral around the zone). Costs sink only briefly at the
         bottom, so the fly-long objective is untouched up high.
         """
-        elevation = self._elevation.value() if self._elevation is not None else None
+        # FRESH baro only: this opens the FULL land-bank authority, so an extrapolated
+        # elevation would unlock the endgame bank at the wrong height (or never)
+        elevation = None
+        if self._elevation is not None:
+            elevation, elevation_source, _elevation_age = self._elevation.read()
+            if elevation_source is None:
+                elevation = None
         # endgame = the remaining-altitude FRACTION of the band (None above it): the loiter radius
         # shrinks with it, so the orbit SPIRALS IN onto the centre as the energy runs out.
         endgame = None

@@ -252,7 +252,18 @@ class Sequencer(task.Task):
         Returns:
             None; advances to BOOSTING when either trigger fires, else resets the dwell.
         """
-        elevation = self._elevation.value()
+        """
+        FRESH elevation only. This is the baro LAUNCH BACKUP -- climbing past launch_alt_m trips
+        BOOSTING regardless of accel -- and `value()` answers a stale scalar channel by extrapolating
+        its last two samples WITHOUT BOUND. On the pad those samples are ~0 m of noise, so a baro that
+        stops publishing (the icp10111 read timeouts seen on this very bench) lets the projection run
+        away past the 10 m threshold and declare a FALSE LAUNCH while the glider sits still -- which
+        disables GC, arms the flight and starts the stage machine on the ground. Same class as the
+        stale-agl bug that ended a flight at apogee (_detect_landing below).
+        """
+        elevation, elevation_source, _elevation_age = self._elevation.read()
+        if elevation_source is None:
+            elevation = None  # no fresh baro -> the accel trigger carries launch detect alone
         g_sq = _magnitude_sq(self._accel.value())
         if elevation is not None and elevation > self._launch_alt_m:
             self._advance(_STAGE.BOOSTING, 'launch alt=%.0fm' % elevation)

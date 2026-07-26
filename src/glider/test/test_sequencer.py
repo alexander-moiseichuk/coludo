@@ -119,6 +119,30 @@ async def amain():
     seq._tick(1960)  # 310 ms > ground_ms 300
     assert ctrl.stage == Stage.DONE
 
+    """
+    A STALE baro must not declare a FALSE LAUNCH on the pad. The baro backup trips BOOSTING when
+    elevation passes launch_alt_m regardless of accel, and `value()` answers a stale scalar channel by
+    extrapolating without bound -- so a baro that stops publishing (icp10111 read timeouts are real on
+    this hardware) lets the projection run away past the threshold while the glider sits still. That
+    would disable GC, arm the flight and start the stage machine on the ground.
+    """
+    ctrl.stage = Stage.SETTING
+    seq._stage_seen = None
+    seq._since = None
+    accel.push((0.0, 0.0, 1.0))        # 1 g: stationary, so ONLY the baro backup could trip launch
+    elevation.push(0.5)                # last real reading: on the pad
+    await asyncio.sleep_ms(1100)       # > the channel's 1000 ms timeout -> the baro is STALE
+    accel.push((0.0, 0.0, 1.0))        # keep accel fresh; only the baro went away
+    seq._tick(40000)
+    seq._tick(40200)
+    assert ctrl.stage == Stage.SETTING, 'a stale baro declared a false launch on the pad'
+
+    # ...and a FRESH baro genuinely above the threshold still trips it
+    elevation.push(15.0)
+    seq._tick(40400)
+    assert ctrl.stage == Stage.BOOSTING
+    elevation.push(3.0)  # back below launch_alt_m so the checks below are not pre-tripped by the baro
+
     # guard: a transient (high g that drops before launch_ms) does NOT trip launch
     ctrl.stage = Stage.SETTING
     seq._stage_seen = None
@@ -176,6 +200,9 @@ async def amain():
     class _NoReading:
         def value(self):
             return None  # a stale / absent databoard parameter
+
+        def read(self):
+            return [None, None, None]  # ...and no fresh source vouches for it either
 
     ctrl.stage = Stage.SETTING
     ctrl.manual = False

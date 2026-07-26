@@ -284,7 +284,13 @@ class Flight(task.Task):
         roll_pid.set_limit(cap)
         pitch_pid.set_limit(cap)
         yaw_pid.set_limit(cap)
-        rate = self._rate.value()  # (roll, pitch, yaw) rate or None -- no box: the gyro's stored tuple
+        # FRESH gyro only. A stale rate in a DERIVATIVE term is worse than none: it damps against a
+        # motion that already ended. pid.step() takes rate=None and falls back to derivative-on-error,
+        # which is the documented degraded mode -- so hand it None rather than a 500 ms-old sample
+        # (exactly what a silent LSM6DSO32 INT1 was producing before the poll fallback landed).
+        rate, rate_source, _rate_age = self._rate.read()
+        if rate_source is None:
+            rate = None
         roll_rate, pitch_rate, yaw_rate = rate if rate is not None else (None, None, None)
         roll_cmd = roll_pid.step(law.roll_setpoint - roll, dt_ms, roll_rate)
         pitch_cmd = pitch_pid.step(law.pitch_setpoint - pitch, dt_ms, pitch_rate)

@@ -222,6 +222,35 @@ def test_final_approach():
     tracking = unit._nav_heading
     assert homing != tracking  # approach() tracks the long-axis line, not the centre point
     assert abs(guidance.heading_error(tracking, 270.0)) <= 45  # intercept capped at final_intercept
+    """
+    A STALE baro must not open the ENDGAME band. Below endgame_alt_m the law unlocks FULL land-bank
+    authority, and `value()` extrapolates a stale scalar channel without bound -- so a dead baro could
+    unlock the endgame bank at the wrong height, or hold it open all glide. Same class as the stale-agl
+    and stale-elevation-launch bugs.
+    """
+    class _Band:
+        def __init__(self):
+            self.value_now, self.fresh = None, True
+
+        def value(self):
+            return self.value_now
+
+        def read(self):
+            return [self.value_now, 'baro' if (self.fresh and self.value_now is not None) else None, 0]
+
+    band = _Band()
+    banded, band_pos, _band_agl, _bg = _build({'endgame_alt_m': 50, 'land_bank_gain': 3.0})
+    banded._elevation = band
+    banded.enter(0.0, 0, 0)
+    band_pos.reading = ((48.0005, 11.020), 'gnss', 0)
+    band.value_now, band.fresh = 10.0, False     # low, but nothing vouches for it
+    banded.compute(Stage.GLIDING, {}, 270.0, 0)
+    stale_bank = banded.roll_setpoint
+    band.fresh = True                            # the same reading, now from a live baro
+    banded._nav_heading = None
+    banded.compute(Stage.GLIDING, {}, 270.0, 0)
+    assert banded.roll_setpoint != stale_bank or stale_bank == 0, 'a stale baro drove the endgame band'
+
     # a STALE agl must not engage final approach: out of the laser's ~4 m range the channel extrapolates
     # without bound, and a bogus low reading would hold centreline tracking for the whole glide
     agl.value_now, agl.fresh = 4.0, False
@@ -252,9 +281,13 @@ def test_loiter_and_endgame_spiral():
     class _Elevation:
         def __init__(self):
             self.value_now = None
+            self.fresh = True   # guidance gates the endgame band on a FRESH baro (see _steer)
 
         def value(self):
             return self.value_now
+
+        def read(self):
+            return [self.value_now, 'baro' if (self.fresh and self.value_now is not None) else None, 0]
 
     elevation = _Elevation()
     unit, position, _agl, _gov = _build({'loiter_radius_m': 30, 'loiter_capture_m': 120,
@@ -323,9 +356,13 @@ def test_oo_endgame():
     class _Elevation:
         def __init__(self):
             self.value_now = None
+            self.fresh = True   # guidance gates the endgame band on a FRESH baro (see _steer)
 
         def value(self):
             return self.value_now
+
+        def read(self):
+            return [self.value_now, 'baro' if (self.fresh and self.value_now is not None) else None, 0]
 
     elevation = _Elevation()
     # _ZONE is a strip -> 'auto' resolves to 'oo'
