@@ -150,6 +150,24 @@ class Governor:
         operator's live 'how much fin the loop may use' readout for the flight panel."""
         return self._mixer.limit
 
+    def seed_airspeed(self, airspeed: float) -> None:
+        """
+        Restore the airspeed persisted by the warm-start crumb, and cap off it AT ONCE.
+
+        Without the immediate re-cap the mixer would keep the blunt unconfident limit until the next
+        scheduled governor update -- up to `1/floor_hz` (200 ms) of starved authority on a glider that
+        has just rebooted mid-air, which is exactly the window this exists to close.
+
+        Args:
+            airspeed - the airspeed (m/s) the last checkpoint saved before the reset.
+
+        Returns:
+            None -- seeds the estimator and rewrites the mixer's fin-authority cap.
+        """
+        self._estimator.seed(airspeed)
+        self._mixer.limit = max(1, int(commons.fin_deflection_limit(
+            self._estimator.value()) * self._multiplier))
+
     def step(self, dt: float, full_rate_override: bool, pitch: fixnum) -> None:
         """
         One control slice: accumulate `dt` and update the estimator + fin cap when due.

@@ -396,6 +396,22 @@ class Flight(task.Task):
         """
         return self._active, self._steps, self._stage, self._last_step_us
 
+    def airspeed(self) -> float:
+        """The fused airspeed estimate (m/s) -- what the checkpoint persists for a warm start."""
+        return self._governor.airspeed()
+
+    def seed_airspeed(self, airspeed: float) -> None:
+        """
+        Restore the airspeed a warm-start crumb carried (warmstart.py calls this after the gate passes).
+
+        Args:
+            airspeed - the airspeed (m/s) saved by the last checkpoint before the reset.
+
+        Returns:
+            None -- seeds the governor's estimator and re-caps the mixer off it.
+        """
+        self._governor.seed_airspeed(airspeed)
+
     def vitals(self) -> dict:
         """
         The live flight-panel readout (CC dashboard).

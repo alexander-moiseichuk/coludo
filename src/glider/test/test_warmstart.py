@@ -67,14 +67,28 @@ class _StubMission:
         self.updated = patch
 
 
+class _StubFlightTask:
+    """The flight task as _apply_restore sees it: somewhere to hand the crumb's airspeed back."""
+
+    def __init__(self):
+        self.seeded = None
+
+    def seed_airspeed(self, airspeed):
+        self.seeded = airspeed
+
+
 class _StubFlight:
-    def __init__(self, baros):
+    def __init__(self, baros, flight_task=None):
         self._baros = baros
+        self._flight_task = flight_task
         self.stage = None
         self.armed = False
         self.warm_started = False
 
     def find(self, names):
+        # name-aware: _apply_restore asks for 'flight' (the airspeed seed) and for the baro names
+        if list(names) == ['flight']:
+            return [self._flight_task]
         return self._baros
 
     def set_stage(self, stage):
@@ -104,6 +118,33 @@ def test_apply_restore():
         inspector.Inspector.unregister('mission')
 
 
+def test_apply_restore_seeds_airspeed():
+    """
+    findings §23.4: the crumb's fused airspeed is handed back BEFORE the loop runs, so the fin cap comes
+    off a real speed instead of the blunt unconfident floor (starved authority right after a mid-air
+    reset). An older crumb without the field must simply not seed -- never crash the recovery boot.
+    """
+    mission = _StubMission()
+    inspector.Inspector.register(mission)
+    try:
+        cfg = {'sensors': [{'name': 'baro_icp10111', 'driver': 'icp10111'}]}
+        task = _StubFlightTask()
+        crumb = dict(_CRUMB, airspeed=16.5)
+        warmstart._apply_restore(_StubFlight([_StubBaro()], task), crumb, cfg)
+        assert task.seeded == 16.5
+
+        # NEGATIVE: a crumb predating the field -> no seed, recovery still completes
+        old = _StubFlightTask()
+        flight = _StubFlight([_StubBaro()], old)
+        warmstart._apply_restore(flight, _CRUMB, cfg)
+        assert old.seeded is None and flight.stage == controller.Stage.GLIDING
+
+        # NEGATIVE: no flight task registered at all (flight disabled) -> no crash
+        warmstart._apply_restore(_StubFlight([_StubBaro()], None), crumb, cfg)
+    finally:
+        inspector.Inspector.unregister('mission')
+
+
 def test_apply_restore_torn_crumb():
     # a crumb with pad_altitude+stamp (gate passed) but launch/zone dropped -> mission NOT updated and
     # no crash; the baro rebase + armed GLIDING still happen
@@ -124,6 +165,7 @@ def test_apply_restore_torn_crumb():
 
 test_should_restore()
 test_apply_restore()
+test_apply_restore_seeds_airspeed()
 test_apply_restore_torn_crumb()
 print('ok: warmstart -- gate (5 defenses + boundaries + torn-crumb refuse), apply restores '
       'mission/baros/armed-GLIDING')

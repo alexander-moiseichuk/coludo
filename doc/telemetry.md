@@ -10,7 +10,7 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 |---|---|---|---|
 | `accel_adxl375.csv` | board | `hitl.py` | `ax`, `ay`, `az` |
 | `baro_icp10111.csv` | board | `hitl.py` | `altitude`, `temperature`, `pressure`, `elevation` |
-| `checkpoint.csv` | board | `warmstart.py` | `stage`, `altitude`, `speed`, `ticks_ms` |
+| `checkpoint.csv` | board | `warmstart.py` | `stage`, `altitude`, `speed`, `airspeed`, `ticks_ms` |
 | `fins.csv` | board | `hitl.py` | `eleron_left`, `eleron_right`, `yaw` |
 | `flight.csv` | board | `flight.py` | `stage`, `active`, `airspeed_cms`, `fin_cap`, `roll_sp`, `pitch_sp`, `heading_err`, `roll_cmd`, `pitch_cmd`, `yaw_cmd`, `wind_cms`, `wind_from` |
 | `gnss.csv` | board | `hitl.py` | `lat`, `lon`, `speed_kn`, `course` |

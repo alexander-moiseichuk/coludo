@@ -209,6 +209,17 @@ def _apply_restore(flight, crumb, cfg: dict) -> None:
         for baro in flight.find(baro_names):
             if baro is not None:
                 baro.update({'ground': pad_altitude})
+    """
+    AIRSPEED (findings §23.4): hand the saved airspeed back to the flight task BEFORE the loop runs, so
+    the fin cap comes off a real speed rather than the blunt `airspeed_unconfident_ms` floor. Recovery
+    order is pitot -> saved -> GNSS: this is the immediate one, the accel backbone integrates on from
+    it, and the first in-band pitot read overrides it. Absent on an older crumb -> unchanged behaviour.
+    """
+    airspeed = crumb.get('airspeed')
+    if airspeed is not None:
+        flight_task = flight.find(['flight'])[0]
+        if flight_task is not None:
+            flight_task.seed_airspeed(airspeed)
     flight.set_stage(crumb['stage'])  # the SAVED stage; the detectors re-evaluate from here
     if crumb.get('armed'):
         flight.arm()  # only an armed flight ever checkpoints a recovery crumb -- re-arm to match
@@ -278,7 +289,11 @@ class Checkpoint(task.Task):
         self._poll_ms: int = min(500, self._period_ms)  # tick fast enough to catch a stage change promptly
         self._altitude = databoard.Databoard.parameter('altitude')
         self._speed = databoard.Databoard.parameter('speed')
-        self._telemetry = recorder.Telemetry('checkpoint.csv', ('stage', 'altitude', 'speed', 'ticks_ms'))
+        # the FUSED airspeed (not the GNSS ground speed above) is what a warm start needs back: it is the
+        # quantity the fin-authority cap is computed from, and a reacquiring GNSS cannot supply it in time
+        self._flight = None  # resolved lazily -- task setup order is not guaranteed
+        self._telemetry = recorder.Telemetry('checkpoint.csv',
+                                             ('stage', 'altitude', 'speed', 'airspeed', 'ticks_ms'))
         self._static: dict = {}  # launch / zone / pad_altitude, frozen at BOOSTING entry (empty until then)
         self._pad = None  # tracked while on the pad (SETTING) so BOOSTING freezes a true GROUND altitude
         self._ok = True
@@ -325,12 +340,15 @@ class Checkpoint(task.Task):
         """
         altitude = self._altitude.value()
         speed = self._speed.value()
+        if self._flight is None:
+            self._flight = self.controller.find(['flight'])[0]
+        airspeed = None if self._flight is None else round(self._flight.airspeed(), 1)
         ticks_ms = time.ticks_ms()
-        self._telemetry.push((stage, altitude, speed, ticks_ms))
+        self._telemetry.push((stage, altitude, speed, airspeed, ticks_ms))
         if self.controller.armed:  # only an armed flight is worth -- and safe -- to recover
             crumb = dict(self._static)  # launch/zone/pad from BOOSTING
             crumb.update({'stage': stage, 'armed': True, 'altitude': altitude, 'speed': speed,
-                          'ticks_ms': ticks_ms, 'stamp': int(time.time())})
+                          'airspeed': airspeed, 'ticks_ms': ticks_ms, 'stamp': int(time.time())})
             save(crumb)
         recorder.Recorder.log(self.name, 'checkpoint %s alt=%s' % (controller.Stage.STAGES.get(stage), altitude))
 

@@ -68,6 +68,37 @@ def test_confidence_and_seed():
     assert charged.confident()
 
 
+def test_warm_start_seed():
+    """
+    seed() restores a persisted airspeed after a MID-AIR RESET (findings §23.4).
+
+    Distinct from measure(): it accepts a BELOW-threshold value, because the warm-start gate has
+    already established a flight was in progress -- a slow airspeed is then real, not an un-charged 0.
+    """
+    estimator = AirspeedEstimator()
+    estimator.seed(16.5)
+    assert estimator.confident() and abs(estimator.value() - 16.5) < 1e-6
+
+    # a slow-but-real airspeed still earns confidence (measure() would refuse it -- see test_pitot_measure)
+    slow = AirspeedEstimator()
+    slow.seed(3.0)
+    assert slow.confident() and abs(slow.value() - 3.0) < 1e-6
+
+    # the accel backbone integrates ON from the seed, so a ballistic reboot gap is picked up
+    slow.predict(9.81, 1.0)
+    assert abs(slow.value() - 12.81) < 1e-3
+
+    # a pitot read still overrides the seed outright (it is a live measurement, the seed is history)
+    estimator.measure(25.0, gain=1.0)
+    assert abs(estimator.value() - 25.0) < 1e-6
+
+    # NEGATIVE: garbage is refused and leaves the estimate untouched (no confidence from nothing)
+    for bad in (-1.0, 1e6):
+        fresh = AirspeedEstimator(ceiling_ms=60.0)
+        fresh.seed(bad)
+        assert not fresh.confident() and fresh.value() == 0.0, bad
+
+
 def test_pitot_measure():
     """
     The DIRECT pitot measurement: seed while un-confident, blend once confident, latch confidence only
@@ -90,5 +121,6 @@ test_ceiling_clamp()
 test_gnss_correct_gated()
 test_confidence_and_seed()
 test_pitot_measure()
+test_warm_start_seed()
 print('ok: airspeed -- accel backbone, ceiling clamp, GNSS blend + convergence, confidence + first-fix seed, '
-      'pitot direct-measure')
+      'pitot direct-measure, warm-start seed')
