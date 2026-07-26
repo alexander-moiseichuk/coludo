@@ -152,3 +152,7 @@ class Mixer:
         for fin, base, roll_gain, pitch_gain, yaw_gain in self._fins:
             fin.set_angle(base + between(-limit, roll_gain * roll + pitch_gain * pitch + yaw_gain * yaw,
                                          limit))
+            # a servo may FOLD a small mid-slew command into the move already under way (sg90.set_angle
+            # coalescing); settle() issues that folded target once the horn arrives, so the last command
+            # can never be left unwritten with control believing the fin moved. No-op when nothing pends.
+            fin.settle()

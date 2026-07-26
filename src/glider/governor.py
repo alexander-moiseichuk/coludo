@@ -1,7 +1,7 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-The dynamic-pressure fin governor (specs/coludo.md "Fin authority"), sibling of pid.py / mixer.py /
+The dynamic-pressure fin governor (doc/specs/coludo.md "Fin authority"), sibling of pid.py / mixer.py /
 airspeed.py. Owns the airspeed ESTIMATE (airspeed.AirspeedEstimator: the PITOT direct source when
 in-band, else the accel backbone + GNSS corrector), the ADAPTIVE THROTTLE that keeps that float path
 off the GC-off hot loop once the glide settles, and the mixer authority cap (commons.fin_deflection_limit

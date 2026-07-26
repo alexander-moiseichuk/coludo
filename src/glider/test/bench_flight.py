@@ -27,6 +27,9 @@ from tasks import flight
 
 
 class FakeFin:
+    def settle(self):
+        pass
+
     def set_angle(self, angle):
         pass
 

@@ -14,6 +14,9 @@ class _Fin:
     def __init__(self):
         self.angle = None
 
+    def settle(self):
+        pass
+
     def set_angle(self, angle):
         self.angle = angle
         return angle

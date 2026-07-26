@@ -49,6 +49,9 @@ class _FakeFin:
     def update(self, props):
         self.angle = props['angle']
 
+    def settle(self):  # part of the fin contract (sg90 coalescing); nothing folds away in the stub
+        pass
+
     def set_angle(self, angle):  # the flight loop's hot-path entry (no dict; compare-and-set in sg90)
         self.angle = angle
         return angle

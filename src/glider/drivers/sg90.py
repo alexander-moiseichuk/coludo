@@ -36,6 +36,7 @@ low-current signal on the PWM pin, never the servo supply.
 """
 
 import asyncio
+import time
 
 import commons
 import databoard
@@ -51,6 +52,37 @@ except ImportError:  # host (CPython): board-only; the PWM pin is driven only on
 _PERIOD_US: int = 20000  # 50 Hz servo frame (20 ms)
 _DUTY_U16_MAX: int = 65535  # full 16-bit PWM duty
 _DEFAULT_CONCURRENCY: int = 3  # fins allowed to slew at once (== fin count -> no limit)
+_COALESCE_DEG: int = 12  # a change this big is a MANOEUVRE and always preempts; see SG90.set_angle
+"""
+COMMAND COALESCING -- built, measured, and DEFAULT OFF because it did not earn its place.
+
+The idea: a move of D degrees occupies the horn for T(D) (travel_ms), so issuing A sets a deadline
+D(A) = now + T(A) + T(margin); commands arriving before it accumulate into A1, which is injected at
+the deadline and opens D(A1) from its own travel. Re-commanding a travelling horn cannot make it
+arrive sooner and only adds current surges, and at 100 Hz against sensor noise most of those commands
+contradict each other. All of that reasoning still stands.
+
+It just does not show up. Five policies flown on the board against a real INA226, 57 s HITL flights:
+
+  policy                          energy      moves     vs the paired baseline
+  3 deg deadband                  35.4 J      1818      none (jitter is ~4.4 deg -> always preempts)
+  fixed 25 ms window              31.8 J      1980      -10 %, NOT reproduced at 37 ms
+  elevator (direction-aware)      37.7 J      1860      none (same-direction commands still wrote)
+  time-combining T(A)             32.4 J      1767      -8 % once, then 32.4/33.3 vs 32.7/31.0 paired
+  time-combining + T(3 deg)       37.5 J      1760      none
+
+Paired runs settle it: off = 32.7, 31.0, 34.7 J; on = 32.4, 33.3, 37.5 J. The single -8 % was
+run-to-run spread, not signal. The mechanism is real (unit-tested) but the windows it produces --
+~10 ms for a 4 deg jitter command, ~18 ms with the margin -- are barely one control tick at 100 Hz,
+so almost nothing lands inside one.
+
+Kept, off, with the knobs (`coalesce`, `coalesce_margin_deg`, `coalesce_deg`) so a field session can
+retry it once the chatter it targets is characterised on REAL sensors: every number above was flown
+against the SIM's 5 % noise model, whose realism is unverified (it perturbs by a fraction of MAGNITUDE,
+which for a 0-360 heading means +-18 deg -- nothing like a BNO055).
+"""
+_COALESCE: bool = False
+_COALESCE_MARGIN_DEG: int = 3  # deadline margin, in degrees of travel; see SG90.setup
 
 # The N-slew concurrency gate is shared infrastructure (servo.py) so future servo types share one
 # board-wide `fins.concurrency` budget.
@@ -88,6 +120,24 @@ class SG90(task.Task):
     _ENGINE_MIN_MW: int = 500    # probe: min draw rise a working/wired/powered servo must show
     _ENGINE_MAX_MW: int = 3500   # probe: draw above this is flagged HIGH (stall/binding)
 
+    def travel_ms(self, degrees: int, settle: bool = True) -> int:
+        """
+        How long a move of `degrees` occupies this servo (ms) -- the ONE place that converts angle to time.
+
+        Open-loop: there is no feedback, so this is an ESTIMATE from the servo type's rated slew
+        (_SLEW_MS_PER_60), which is why SG90 and MG90S give different answers from the same call. Both
+        the move() settle-wait and the command-coalescing deadline derive from it, so a servo swap
+        retunes both at once and they can never drift apart.
+
+        Args:
+            degrees - the size of the move (sign ignored).
+            settle - include _SETTLE_MARGIN_MS, the post-arrival settling the horn still needs.
+
+        Returns:
+            The estimated duration in milliseconds.
+        """
+        return abs(degrees) * self._SLEW_MS_PER_60 // 60 + (self._SETTLE_MARGIN_MS if settle else 0)
+
     async def setup(self) -> bool:
         gpio = self._pin_gpio('pin')
         if gpio is None:
@@ -112,6 +162,26 @@ class SG90(task.Task):
         The ceiling is a HIGH-draw flag only (stall/binding), not a fail -- rail-voltage dependent (a
         single SG90 peaks ~3 W on a 3.7 V pack, ~3.7 W on 5 V), so it warns rather than false-fails.
         """
+        """
+        TIME-COMBINING coalescing: `coalesce` turns it on; the window needs no knob at all because it
+        IS the move's own travel time, from THIS servo's _SLEW_MS_PER_60 (SG90 150 ms/60deg, MG90S 100)
+        -- so SG90 and MG90S self-size. `coalesce_deg` only bounds how long a MANOEUVRE may be made to
+        wait behind combining.
+        """
+        self.coalesce_deg: int = self.config.get('coalesce_deg', _COALESCE_DEG)
+        self.coalesce: bool = bool(self.config.get('coalesce', _COALESCE))
+        """
+        deadline MARGIN, expressed in DEGREES and converted through the same travel_ms(): D(A) =
+        now + T(A) + T(margin). T(A) alone is often shorter than one control tick -- a 4 deg jitter
+        command is only ~10 ms on an SG90 -- so nothing combines and the mechanism idles. The margin
+        widens every deadline by a fixed, physically-meaningful amount (the time to move `margin`
+        degrees on THIS servo), which is what lets a burst of small commands land inside one window.
+        Degrees rather than ms so it stays the same knob whichever servo is fitted.
+        """
+        self._margin_ms: int = self.travel_ms(self.config.get('coalesce_margin_deg', _COALESCE_MARGIN_DEG),
+                                              settle=False)
+        self._pending = None      # the combined target, written when the horn arrives
+        self._arrives_ms: int = time.ticks_ms()  # when the move under way completes (ticks_ms)
         self._engine_min_mw: int = self.config.get('engine_min_mw', self._ENGINE_MIN_MW)  # INA226 'power' is mW
         self._engine_max_mw: int = self.config.get('engine_max_mw', self._ENGINE_MAX_MW)
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('angle', 'pulse_us', 'done'),
@@ -224,7 +294,7 @@ class SG90(task.Task):
             The clamped target angle.
         """
         target = self._clamp(angle)
-        travel_ms = abs(target - self.angle) * self._SLEW_MS_PER_60 // 60 + self._SETTLE_MARGIN_MS
+        travel_ms = self.travel_ms(target - self.angle)
         async with self._gate:
             self._apply(target)  # done=0: commanded
             completed = (target, self._pulse_us, 1)  # snapshot the WHOLE completion record before any await:
@@ -271,16 +341,63 @@ class SG90(task.Task):
         actually changed -- a held fin costs nothing. setup() seeds self.angle via _apply(neutral), so
         it always tracks the real PWM state. update() stays the operator/props path (always applies).
 
+        SLEW COALESCING. The loop commands at 100 Hz; the horn needs `_SLEW_MS_PER_60` per 60 deg
+        (SG90 150 ms, MG90S 100) to get anywhere. So while the fin is still TRAVELLING to the last
+        target, re-commanding it every 10 ms cannot make it arrive sooner -- it only redirects a moving
+        horn, and each redirect is a fresh current surge into a motor that is already stalled against
+        its own inertia. Sensor noise makes those redirects mostly jitter about the same position.
+
+        So a small change arriving mid-slew is REMEMBERED, not written, and issued when the horn gets
+        there -- one move to the FINAL position instead of a burst of contradictory ones. A large change
+        (>= `coalesce_deg`) still preempts immediately: a real manoeuvre must never wait behind noise.
+        The fin therefore ends up exactly where control asked, having spent less travel and fewer
+        current peaks getting there. Deferring costs at most one slew window of lag, which is time the
+        horn was going to spend moving regardless.
+
         Args:
             angle - the target command, in degrees (clamped before comparing).
 
         Returns:
-            The clamped angle (whether or not it changed).
+            The clamped angle (whether or not it was written this call).
         """
         angle = self._clamp(angle)
-        if angle != self.angle:
+        if angle == self.angle:
+            return angle  # already there (or already commanded there) -- a held fin costs nothing
+        if not self.coalesce:
+            self._write(angle)  # coalescing disabled -> write every change (the original behaviour)
+            return angle
+        now = time.ticks_ms()
+        # TIME-COMBINING: a move of D degrees occupies the horn for D * _SLEW_MS_PER_60 / 60 ms. Until
+        # it arrives the servo is BUSY -- every command in that window is combined into the LATEST one
+        # rather than written, whichever direction it points, because re-commanding a travelling horn
+        # cannot make it arrive sooner and only adds current surges. Arrival writes that combined
+        # target, which starts a fresh window sized by ITS travel: the accumulation continues from the
+        # moment a new movement actually starts, not on a fixed clock.
+        if time.ticks_diff(now, self._arrives_ms) >= 0 or abs(angle - self.angle) >= self.coalesce_deg:
+            self._pending = None
+            self._arrives_ms = time.ticks_add(
+                now, self.travel_ms(angle - self.angle, settle=False) + self._margin_ms)
             self._write(angle)  # already clamped -> _write, not _apply (no second clamp)
+        else:
+            self._pending = angle  # the horn is still travelling -> combine into the last command
         return angle
+
+    def settle(self) -> None:
+        """
+        Apply a held reversal once the horn has arrived (call from the same loop as set_angle).
+
+        Without this the last folded command could sit unwritten if the loop stops asking for new
+        angles -- the fin would hold a stale position with control believing otherwise. Cheap: one
+        integer compare on a fin with nothing pending.
+
+        Args:
+            (none)
+
+        Returns:
+            None -- writes the pending angle once the coalescing window has elapsed.
+        """
+        if self._pending is not None and time.ticks_diff(time.ticks_ms(), self._arrives_ms) >= 0:
+            self.set_angle(self._pending)
 
     async def finish(self) -> None:
         """Release the PWM (stop driving the pin) on shutdown."""

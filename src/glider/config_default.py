@@ -4,7 +4,7 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 Baked-in default board configuration for the WaveShare ESP32-P4-WIFI6 controller.
 
 Human-edited firmware default and the safe fallback when no valid board.config exists (see
-specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
+doc/specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
 test/test_pins.py). `default()` returns a FRESH dict each call so callers may mutate it freely.
 
 Topology: buses are grouped by type then id; a sensor/component addresses one by `bus` (the kind,
@@ -40,7 +40,7 @@ def default() -> dict:
              'setup_retries': 3}  # re-attempt a flaky device setup at boot (breadboard contacts; 1 = no retry)
 
     """
-    warm start (specs/coludo.md "In-flight reboot & warm start"): a mid-air reset restores GLIDING
+    warm start (doc/specs/coludo.md "In-flight reboot & warm start"): a mid-air reset restores GLIDING
     when the NVS breadcrumb + the separation latch + baro-above-pad all agree. False -> every boot
     is cold (bench work with a separated stack on the desk).
     """
@@ -49,7 +49,7 @@ def default() -> dict:
     """
     Wi-Fi: STA-only (the sole supported radio mode; no `mode` knob exists).
 
-    policy (CC-less field ops, specs/coludo.md "Field operation without CC"): 'auto' joins/rejoins
+    policy (CC-less field ops, doc/specs/coludo.md "Field operation without CC"): 'auto' joins/rejoins
     every retry_ms on the ground, goes SILENT from BOOSTING through LANDING (no reconnect churn
     under GC-off) and resumes at DONE (recovery-crew hotspot); 'disabled' never touches the radio
     this session.
@@ -127,7 +127,7 @@ def default() -> dict:
     }
 
     """
-    Fin / servo control -- one home for every fin knob (specs/board-config.md "Fins").
+    Fin / servo control -- one home for every fin knob (doc/specs/board-config.md "Fins").
 
     concurrency: max fin servos allowed to SLEW at once via servo.move() -- caps the boost-rail
     current transient. 3 (== fin count) = no limit; drop to 2/1 if the rail sags on the built airframe.
@@ -593,7 +593,7 @@ def default() -> dict:
     health = {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'probe_ms': 10, 'enabled': True}
 
     """
-    CC-less field agent (specs/coludo.md "Field operation without CC"), OFF by default: on the pad
+    CC-less field agent (doc/specs/coludo.md "Field operation without CC"), OFF by default: on the pad
     it selects the mission site by the first GNSS fix (nearest launch.config site within
     max_range_m; none -> a GENEROUS spiral-landing fallback box the spiral just lands inside:
     fallback_width_m (the wide side facing the pad, left-right) x fallback_depth_m, its near edge
@@ -609,7 +609,7 @@ def default() -> dict:
              'auto_arm': False, 'auto_arm_dwell_s': 60, 'still_g': 0.3}
 
     """
-    Warm-start checkpoint (warmstart.py, specs/coludo.md "In-flight reboot & warm start"): saves the
+    Warm-start checkpoint (warmstart.py, doc/specs/coludo.md "In-flight reboot & warm start"): saves the
     live flight state (stage, altitude, speed, uptime) to NVS so a mid-air reset recovers the SAVED
     stage instead of going ballistic -- but ONLY for an ARMED flight (a passive telemetry flight never
     warm-starts into an armed stage). checkpoint_s (floored at 1 s) is the cadence WHILE AIRBORNE;

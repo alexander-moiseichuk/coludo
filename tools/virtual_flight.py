@@ -61,6 +61,9 @@ class _Fin:
     def __init__(self, neutral: int):
         self.angle = neutral
 
+    def settle(self):
+        """No coalescing in the host stub: the sim applies every command immediately."""
+
     def set_angle(self, angle):
         self.angle = angle
         return angle

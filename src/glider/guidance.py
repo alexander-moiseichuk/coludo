@@ -139,7 +139,7 @@ class GuidanceConfig:
         """
         self.endgame_alt_m: float = config.get('endgame_alt_m', 50)
         """
-        ENDGAME airspeed-gated bank (specs/coludo.md "Turn-radius limit"): instead of the fixed
+        ENDGAME airspeed-gated bank (doc/specs/coludo.md "Turn-radius limit"): instead of the fixed
         land_bank_limit, the endgame spiral banks as steep as the LIVE airspeed safely allows and no
         steeper. A coordinated turn at bank phi pulls load n=1/cos(phi), which raises the stall speed to
         stall_speed_1g*sqrt(n); holding airspeed >= stall_margin*that bounds phi -- steeper than 45 deg
@@ -283,7 +283,7 @@ class Guidance:
         `R = v^2 / (g * tan(bank))`. A physical restriction, not a tuning knob -- the guidance clamps
         the commanded loiter/endgame radius to this so it never asks for a turn the airframe cannot fly
         (at the 45deg land-bank limit and ~14 m/s trim that floor is ~20 m, and it BOUNDS landing
-        accuracy; see specs/coludo.md 'Turn-radius limit').
+        accuracy; see doc/specs/coludo.md 'Turn-radius limit').
 
         Args:
             bank_deg - the bank angle to evaluate the radius at (degrees).
