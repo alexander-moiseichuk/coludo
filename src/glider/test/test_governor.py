@@ -131,6 +131,46 @@ def test_pitot_direct_source():
     assert unit.airspeed() != settled  # the GNSS fallback moved it, proving the pitot was dropped
 
 
+def test_dead_pitot_must_not_open_the_cap():
+    """
+    A pitot reading near ZERO is a DEAD SENSOR, not a slow airspeed, and must never reach the estimate.
+
+    q = 1/2 rho v^2, so a blocked / iced / disconnected tube reads inside the tare error (~5.5 Pa at
+    3 m/s, ~0.6 Pa at 1 m/s). Blending that drags the fused airspeed toward 0, and a low airspeed OPENS
+    fin_deflection_limit to the full 45 deg at high dynamic pressure -- the exact failure the governor
+    exists to prevent. It is also below stall, so it is never valid in a control stage.
+
+    Found on the bench: the HITL sim does not simulate `airspeed`, so the real SDP810's still-air ~0 m/s
+    poisoned every on-board flight -- the glider flew a simulated 14 m/s while the governor believed
+    0.00, and the cap jumped to 45 deg the moment confidence latched.
+    """
+    unit, mix, accel, gnss_speed, pitot = _build({'pitot_min_ms': 3.0, 'pitot_max_ms': 28.0,
+                                                  'airspeed_unconfident_ms': 30.0})
+    # charge a real airspeed off the accel backbone, as a boost would
+    accel.value_now = (0.0, 0.0, 3.0)
+    for _ in range(8):
+        unit.step(0.1, True, 0)
+    accel.value_now = (0.0, 0.0, 1.0)  # net ~0 -> only the fusion can move the estimate now
+    flying = unit.airspeed()
+    tight = mix.limit
+    assert flying > 5.0 and unit._estimator.confident()
+
+    # a dead pitot pinned near zero must be IGNORED -- estimate and cap both hold
+    for _ in range(20):
+        pitot.reading = (0.0, 'sdp810', 0)
+        unit.step(0.1, True, 0)
+    assert abs(unit.airspeed() - flying) < 1e-6, unit.airspeed()
+    assert mix.limit == tight, 'a dead pitot opened the fin cap to %d deg' % mix.limit
+
+    # ...and a reading just under the floor is refused, just over it is trusted (the boundary)
+    pitot.reading = (2.9, 'sdp810', 0)
+    unit.step(0.1, True, 0)
+    assert abs(unit.airspeed() - flying) < 1e-6
+    pitot.reading = (3.1, 'sdp810', 0)
+    unit.step(0.1, True, 0)
+    assert unit.airspeed() != flying  # in band -> blended
+
+
 def test_gnss_jump_rejected():
     """
     A GNSS ground-speed JUMP (more than one max_wind off the airspeed estimate) is rejected, not
@@ -236,6 +276,7 @@ test_authority_cap()
 test_unconfident_cap_floor()
 test_estimator_wiring()
 test_pitot_direct_source()
+test_dead_pitot_must_not_open_the_cap()
 test_throttle_and_overrides()
 test_distance_constant_interval()
 test_gnss_steep_pitch_gate()

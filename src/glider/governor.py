@@ -105,6 +105,24 @@ class GovernorConfig:
         """
         self.pitot_gain: float = config.get('pitot_gain', 0.5)  # complementary blend toward the direct reading
         self.pitot_max_ms: float = config.get('pitot_max_ms', 28.0)  # reject a railed pitot above this (~480 Pa)
+        """
+        LOW-SIDE guard, and the more dangerous of the two. q = 1/2 rho v^2 collapses quadratically, so
+        below a few m/s the differential pressure sinks into the tare/installation error (3 m/s is only
+        ~5.5 Pa; 1 m/s is ~0.6 Pa) -- and a BLOCKED, iced, disconnected or unpressurised pitot reads
+        exactly there. Such a reading is not a slow airspeed, it is a DEAD SENSOR, and feeding it in
+        drags the fused estimate toward 0, which OPENS fin_deflection_limit to the full 45deg at high
+        dynamic pressure: the precise failure the governor exists to prevent. It is also below stall,
+        so it is never a valid airspeed in a control stage; the accel backbone covers the pad and the
+        early boost, over-read biased (safe).
+
+        Found on the bench (findings, 7/26): the HITL sim does NOT simulate `airspeed`, so the real
+        SDP810 kept publishing its still-air ~0 m/s into the fused channel. The glider flew a simulated
+        14 m/s while the governor believed 0.00 for the whole flight, and the cap sat at the
+        unconfident floor until the boost transient happened to latch confident() -- after which it
+        jumped to 45deg off that bogus 0. Whether that race latched decided the whole trajectory, which
+        is what made repeated identical HITL flights land in two different families.
+        """
+        self.pitot_min_ms: float = config.get('pitot_min_ms', 3.0)  # below this the reading is tare noise
 
     def update_interval(self, speed: float) -> float:
         """
@@ -232,12 +250,15 @@ class Governor:
         if accel is not None:
             self._estimator.predict(
                 (commons.magnitude_sq(accel[0], accel[1], accel[2]) ** 0.5 - 1.0) * 9.81, dt)
-        # PITOT FIRST: a fresh, in-band airspeed is a DIRECT measurement (the driver already did the sqrt)
-        # -- no wind/steep gate (it reads air, not ground). Above the saturation guard the pitot rails and
-        # under-reads (boost / a steep dive), so fall back to the GNSS corrector + the over-read-biased
-        # accel backbone rather than loosen the cap on a false-low reading.
+        # PITOT FIRST: a fresh, IN-BAND airspeed is a DIRECT measurement (the driver already did the sqrt)
+        # -- no wind/steep gate (it reads air, not ground). The band is bounded BOTH ways, and both bounds
+        # exist for the same reason: a reading outside them under-reads, and an under-read LOOSENS the fin
+        # cap -- the unsafe direction. Above pitot_max_ms the cell rails (boost / a steep dive); below
+        # pitot_min_ms the pressure is inside the tare error, which is what a blocked or dead tube reads.
+        # Out of band -> the GNSS corrector + the over-read-biased accel backbone carry it instead.
         airspeed, airspeed_source, _airspeed_age = self._pitot.read()
-        if airspeed_source is not None and airspeed is not None and airspeed < self._config.pitot_max_ms:
+        if (airspeed_source is not None and airspeed is not None
+                and self._config.pitot_min_ms <= airspeed < self._config.pitot_max_ms):
             self._estimator.measure(airspeed, self._config.pitot_gain)
         else:
             speed, speed_source, _speed_age = self._gnss_speed.read()

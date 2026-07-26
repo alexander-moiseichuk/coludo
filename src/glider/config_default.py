@@ -504,9 +504,17 @@ def default() -> dict:
     interval. airspeed_unconfident_ms: until the estimate is TRUSTED (a fresh boot / mid-air reset
     reads 0 before the accel integrator or a GNSS fix charge it) the fin cap is taken from THIS
     conservative speed, not the un-charged 0 (which would open authority to the full 45deg at high q).
+
+    pitot_min_ms / pitot_max_ms bound the band in which the SDP810 reading is TRUSTED over the estimate,
+    and both bounds guard the same failure: an out-of-band pitot UNDER-reads, and an under-read loosens
+    the fin cap (unsafe). Above max the +/-500 Pa cell rails (~30 m/s); below min the dynamic pressure
+    (q = 1/2 rho v^2 -- only ~5.5 Pa at 3 m/s) is inside the tare error, which is exactly what a BLOCKED,
+    iced or disconnected tube reads. It is also below stall, so it is never a valid airspeed in a control
+    stage. Out of band the accel backbone + GNSS corrector carry the estimate instead.
     """
     airspeed_governor = {'airspeed_floor_hz': 5, 'airspeed_ceiling_hz': 50, 'airspeed_dive_pitch': -45.0,
-                         'airspeed_unconfident_ms': 30.0}
+                         'airspeed_unconfident_ms': 30.0,
+                         'pitot_min_ms': 3.0, 'pitot_max_ms': 28.0, 'pitot_gain': 0.5}
 
     """
     GNSS corrector gate: at |pitch| >= gnss_steep_pitch (deg) the receiver's 2D GROUND speed cannot
