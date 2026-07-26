@@ -407,8 +407,16 @@ class Flight(task.Task):
         """
         wind_e, wind_n = self._wind.components()
         reach = self._guidance.reachability(self._glide_ratio, wind_e, wind_n, self._governor.airspeed())
+        # attitude + the commanded fins make the panel a WALK-TEST HUD (findings §27.19): carrying the
+        # glider, the operator needs to see the fins answer the attitude, not just the derived numbers
+        value, source, _age = self._attitude.read()
+        attitude = None if (source is None or value is None) else {
+            'heading': round(fixed.to_float(value[0])) if isinstance(value[0], int) else round(value[0]),
+            'roll': round(fixed.to_float(value[1])), 'pitch': round(fixed.to_float(value[2]))}
         return {'airspeed': round(self._governor.airspeed(), 1), 'fin_cap': self._governor.cap(),
                 'active': self._active, 'reach': reach, 'r_min_m': round(self._guidance.landing_turn_radius()),
+                'attitude': attitude, 'fins': self._mixer.angles(),
+                'heading_error': self._guidance.heading_error,
                 'wind': {'speed': round(self._wind.speed(), 1), 'from': round(self._wind.direction())}}
 
     def inspect(self) -> dict:

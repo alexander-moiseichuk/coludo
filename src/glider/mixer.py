@@ -57,6 +57,7 @@ class Mixer:
         self._out: dict = {name: base for name, base, _r, _p, _y in self._surfaces}
         self.bound: bool = False  # bind() resolved the fin drivers -> actuate() is armed
         self._fins: list = []  # (fin, base, roll_gain, pitch_gain, yaw_gain) per bound surface
+        self._names: list = []  # the bound surface names, parallel to _fins (operator view only)
 
     def mix(self, roll: int = 0, pitch: int = 0, yaw: int = 0) -> dict:
         """
@@ -110,7 +111,25 @@ class Mixer:
         self._fins = [(fins[name], base, roll_gain, pitch_gain, yaw_gain)
                       for name, base, roll_gain, pitch_gain, yaw_gain in self._surfaces
                       if fins.get(name) is not None]
+        self._names = [name for name, _b, _r, _p, _y in self._surfaces if fins.get(name) is not None]
         self.bound = True
+
+    def angles(self) -> dict:
+        """
+        {surface name: the angle currently commanded to its fin}.
+
+        For the OPERATOR view only -- it allocates a dict, so it is called at the ~0.5 Hz vitals rate,
+        never from actuate(). Reads each driver's stored command rather than re-deriving the mix, so
+        what the panel shows is literally what the servo was told (findings §27.19).
+
+        Args:
+            (none)
+
+        Returns:
+            The per-surface commanded angles; empty before bind().
+        """
+        return {name: getattr(entry[0], 'angle', None)
+                for name, entry in zip(self._names, self._fins)}
 
     def actuate(self, roll: int, pitch: int, yaw: int) -> None:
         """

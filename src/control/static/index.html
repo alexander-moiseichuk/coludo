@@ -214,7 +214,23 @@ function fmtFlight(b) {
       : `<b style="color:#c22">zone ✗ ${r.margin_m}m</b>`);
   }
   const engaged = f.active ? '' : ' <span class="muted">idle</span>';
-  return `${armed}${degraded}<br><span class="muted">${bits.join(' · ')}</span>${engaged}`;
+  // WALK-TEST HUD (findings §27.19): carrying the glider, the operator watches the FINS answer the
+  // ATTITUDE -- that is the whole point of the no-ignition ground test, and neither was on screen.
+  let hud = '';
+  if (f.attitude) {
+    const a = f.attitude;
+    const err = (f.heading_error != null && f.heading_error !== 0)
+      ? ` <span class="muted">(zone ${f.heading_error > 0 ? '+' : ''}${f.heading_error}°)</span>` : '';
+    hud += `<br><span class="muted">hdg ${a.heading}° · roll ${a.roll}° · pitch ${a.pitch}°${err}</span>`;
+  }
+  if (f.fins) {
+    // deflection from the 90° neutral reads at a glance; a fin that never moves is the thing to spot
+    const fins = Object.entries(f.fins)
+      .filter(([, v]) => v != null)
+      .map(([k, v]) => `${k.replace('servo_', '').replace('eleron_', 'el-')} ${v - 90 >= 0 ? '+' : ''}${v - 90}°`);
+    if (fins.length) hud += `<br><span class="muted">fins ${fins.join(' · ')}</span>`;
+  }
+  return `${armed}${degraded}<br><span class="muted">${bits.join(' · ')}</span>${engaged}${hud}`;
 }
 function fmtPad(b) {
   if (!b.launchpad) return '<b style="color:#c22">no launchpad</b>';
