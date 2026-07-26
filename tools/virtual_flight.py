@@ -38,6 +38,7 @@ import guidance  # noqa: E402 -- the REAL per-stage guidance law
 import mixer  # noqa: E402
 import navigation  # noqa: E402 -- zone geometry for the _Mission stub (memoized, mirrors mission.Mission)
 import pid  # noqa: E402
+import preflight  # noqa: E402 -- install + data-consistency gates, run before any flying
 import sim_model  # noqa: E402
 
 _STAGE = controller_mod.Stage
@@ -434,7 +435,13 @@ def main():
     parser.add_argument('--hz', type=int, default=50, help='simulation rate (default 50)')
     parser.add_argument('--seconds', type=float, default=240.0, help='max flight time (default 240)')
     parser.add_argument('-o', '--out', help='write capture here (default stdout)')
+    parser.add_argument('--no-preflight', action='store_true',
+                        help='skip the install/data-consistency gates (not recommended)')
     args = parser.parse_args()
+    if not args.no_preflight:
+        # gate BEFORE flying: a missing dep or a sim/board schema drift should cost a second here,
+        # not a whole sweep that produces captures the renderers cannot read (findings §27.6)
+        preflight.gate('simulation')
 
     capture = fly(args.motor, args.noise, args.spike, args.hz, args.seconds, args.wind, args.wind_dir,
                   args.final_agl, args.imbalance_pitch, args.imbalance_roll, args.endgame_alt)

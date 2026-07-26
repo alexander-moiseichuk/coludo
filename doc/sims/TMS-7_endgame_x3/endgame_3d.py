@@ -1,4 +1,7 @@
-import sys, os, math
+import math
+import os
+import sys
+
 sys.path.insert(0, 'tools')
 sys.path.insert(0, 'src/glider')
 import flight_telemetry as ft
@@ -6,7 +9,8 @@ import plotly.graph_objects as go
 import plotly.io as pio
 
 SP = os.environ['SP']
-tl = (25.514944, -80.392972); br = (25.514583, -80.391111)
+tl = (25.514944, -80.392972)
+br = (25.514583, -80.391111)
 cx, cy = (tl[0] + br[0]) / 2, (tl[1] + br[1]) / 2
 K = 111320.0
 
@@ -16,7 +20,9 @@ def EN(lat, lon):
 
 
 def nearest(times, values, targets):
-    out = []; j = 0; n = len(times)
+    out = []
+    j = 0
+    n = len(times)
     for t in targets:
         while j + 1 < n and abs(times[j + 1] - t) < abs(times[j] - t):
             j += 1
@@ -32,12 +38,15 @@ def track(path):
         return None
     baro = next((s for s in streams.values() if 'elevation' in s.fields), None) or \
         next((s for s in streams.values() if 'altitude' in s.fields), None)
-    t, lat = gnss.column('lat'); _, lon = gnss.column('lon')
+    t, lat = gnss.column('lat')
+    _, lon = gnss.column('lon')
     field = 'elevation' if (baro and 'elevation' in baro.fields) else 'altitude'
     alt = nearest(*baro.column(field), targets=t) if baro else [0.0] * len(t)
     E, N = [], []
     for a, b in zip(lat, lon):
-        e, nn = EN(a, b); E.append(e); N.append(nn)
+        e, nn = EN(a, b)
+        E.append(e)
+        N.append(nn)
     return E, N, alt, [x / 1e6 for x in t]
 
 

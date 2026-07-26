@@ -32,13 +32,14 @@ On-device modules layered leaves-first (a module depends only on lower layers, b
 - `config` (core) -> `commons`, `config_default`
 - `config_hitl` (core) -> `config_default`
 - `governor` (core) -> `airspeed`, `commons`, `fixed`
+- `mg90s` (driver) -> `task`
 - `pid` (core) -> `fixed`
 - `recorder` (task) -> `task`
 
 **Layer 3**
 
 - `adxl375` (driver) -> `config`, `databoard`, `i2cbus`, `recorder`, `spibus`, `task`
-- `attitude` (task) -> `databoard`, `fixed`, `recorder`, `task`
+- `attitude` (task) -> `commons`, `databoard`, `fixed`, `recorder`, `task`
 - `bluetooth` (driver) -> `recorder`, `task`
 - `bmp280` (driver) -> `config`, `databoard`, `i2cbus`, `recorder`, `task`
 - `bno055` (driver) -> `config`, `databoard`, `fixed`, `i2cbus`, `recorder`, `task`
@@ -49,6 +50,7 @@ On-device modules layered leaves-first (a module depends only on lower layers, b
 - `ina226` (driver) -> `config`, `databoard`, `i2cbus`, `recorder`, `task`
 - `lsm6dso32` (driver) -> `config`, `databoard`, `fixed`, `i2cbus`, `recorder`, `spibus`, `task`
 - `mission` (core) -> `commons`, `databoard`, `inspector`, `navigation`, `recorder`
+- `sdp810` (driver) -> `commons`, `config`, `databoard`, `fixed`, `i2cbus`, `recorder`, `task`
 - `sg90` (driver) -> `commons`, `databoard`, `recorder`, `servo`, `task`
 - `vl53l4cx` (driver) -> `config`, `databoard`, `i2cbus`, `recorder`, `task`
 - `watchdog` (task) -> `recorder`, `task`
@@ -56,7 +58,7 @@ On-device modules layered leaves-first (a module depends only on lower layers, b
 **Layer 4**
 
 - `atgm336h` (driver) -> `gnss`, `task`
-- `board_health` (task) -> `controller`, `databoard`, `recorder`, `task`
+- `board_health` (task) -> `controller`, `databoard`, `fixed`, `recorder`, `task`
 - `cc_link` (task) -> `cc_client`, `recorder`, `task`
 - `field` (task) -> `commons`, `controller`, `databoard`, `inspector`, `recorder`, `task`
 - `gnss_calib` (task) -> `controller`, `databoard`, `recorder`, `task`
@@ -65,25 +67,25 @@ On-device modules layered leaves-first (a module depends only on lower layers, b
 - `led` (driver) -> `controller`, `recorder`, `task`
 - `neo6mv2` (driver) -> `gnss`, `task`
 - `separation` (driver) -> `controller`, `recorder`, `task`
-- `warmstart` (core) -> `controller`, `databoard`, `inspector`
+- `sequencer` (task) -> `commons`, `controller`, `databoard`, `inspector`, `recorder`, `task`
+- `warmstart` (core) -> `config`, `controller`, `databoard`, `inspector`, `recorder`, `task`
 - `wifi` (driver) -> `controller`, `recorder`, `task`
 
 **Layer 5**
 
-- `flight` (task) -> `controller`, `databoard`, `fixed`, `governor`, `guidance`, `inspector`, `mixer`, `pid`, `task`, `wind`
-- `main` (core) -> `config`, `controller`, `mission`, `warmstart`
-- `sequencer` (task) -> `commons`, `controller`, `databoard`, `inspector`, `recorder`, `task`, `warmstart`
+- `flight` (task) -> `commons`, `controller`, `databoard`, `fixed`, `governor`, `guidance`, `inspector`, `mixer`, `pid`, `recorder`, `task`, `wind`
+- `main` (core) -> `config`, `controller`, `mission`, `recorder`, `warmstart`
 
 **Most depended-on (fan-in)** — a change here ripples widest:
 
-- `task` — imported by 26: `adxl375`, `atgm336h`, `attitude`, `bluetooth`, `bmp280`, `bno055`, `board_health`, `cc_link`, `controller`, `field`, `flight`, `gnss`, `gnss_calib`, `hitl`, `icp10111`, `ina226`, `led`, `lsm6dso32`, `neo6mv2`, `recorder`, `separation`, `sequencer`, `sg90`, `vl53l4cx`, `watchdog`, `wifi`
-- `recorder` — imported by 23: `adxl375`, `attitude`, `bluetooth`, `bmp280`, `bno055`, `board_health`, `cc_client`, `cc_link`, `field`, `gnss`, `gnss_calib`, `hitl`, `icp10111`, `ina226`, `led`, `lsm6dso32`, `mission`, `separation`, `sequencer`, `sg90`, `vl53l4cx`, `watchdog`, `wifi`
-- `databoard` — imported by 19: `adxl375`, `attitude`, `bmp280`, `bno055`, `board_health`, `cc_client`, `field`, `flight`, `gnss`, `gnss_calib`, `hitl`, `icp10111`, `ina226`, `lsm6dso32`, `mission`, `sequencer`, `sg90`, `vl53l4cx`, `warmstart`
-- `commons` — imported by 16: `config`, `config_default`, `field`, `fixed`, `governor`, `guidance`, `hitl`, `i2cbus`, `icp10111`, `mission`, `mixer`, `navigation`, `sequencer`, `sg90`, `sim_model`, `spibus`
+- `task` — imported by 29: `adxl375`, `atgm336h`, `attitude`, `bluetooth`, `bmp280`, `bno055`, `board_health`, `cc_link`, `controller`, `field`, `flight`, `gnss`, `gnss_calib`, `hitl`, `icp10111`, `ina226`, `led`, `lsm6dso32`, `mg90s`, `neo6mv2`, `recorder`, `sdp810`, `separation`, `sequencer`, `sg90`, `vl53l4cx`, `warmstart`, `watchdog`, `wifi`
+- `recorder` — imported by 27: `adxl375`, `attitude`, `bluetooth`, `bmp280`, `bno055`, `board_health`, `cc_client`, `cc_link`, `field`, `flight`, `gnss`, `gnss_calib`, `hitl`, `icp10111`, `ina226`, `led`, `lsm6dso32`, `main`, `mission`, `sdp810`, `separation`, `sequencer`, `sg90`, `vl53l4cx`, `warmstart`, `watchdog`, `wifi`
+- `databoard` — imported by 20: `adxl375`, `attitude`, `bmp280`, `bno055`, `board_health`, `cc_client`, `field`, `flight`, `gnss`, `gnss_calib`, `hitl`, `icp10111`, `ina226`, `lsm6dso32`, `mission`, `sdp810`, `sequencer`, `sg90`, `vl53l4cx`, `warmstart`
+- `commons` — imported by 19: `attitude`, `config`, `config_default`, `field`, `fixed`, `flight`, `governor`, `guidance`, `hitl`, `i2cbus`, `icp10111`, `mission`, `mixer`, `navigation`, `sdp810`, `sequencer`, `sg90`, `sim_model`, `spibus`
+- `config` — imported by 13: `adxl375`, `bmp280`, `bno055`, `cc_client`, `controller`, `gnss`, `icp10111`, `ina226`, `lsm6dso32`, `main`, `sdp810`, `vl53l4cx`, `warmstart`
 - `controller` — imported by 12: `board_health`, `field`, `flight`, `gnss_calib`, `guidance`, `hitl`, `led`, `main`, `separation`, `sequencer`, `warmstart`, `wifi`
-- `config` — imported by 11: `adxl375`, `bmp280`, `bno055`, `cc_client`, `controller`, `gnss`, `icp10111`, `ina226`, `lsm6dso32`, `main`, `vl53l4cx`
 - `inspector` — imported by 11: `cc_client`, `controller`, `databoard`, `field`, `flight`, `hitl`, `mission`, `sequencer`, `task`, `warmstart`, `wind`
-- `fixed` — imported by 8: `attitude`, `bno055`, `flight`, `governor`, `guidance`, `hitl`, `lsm6dso32`, `pid`
+- `fixed` — imported by 10: `attitude`, `bno055`, `board_health`, `flight`, `governor`, `guidance`, `hitl`, `lsm6dso32`, `pid`, `sdp810`
 
 ## Class hierarchy
 
@@ -91,7 +93,8 @@ Base class -> the on-device classes that extend it (the base may be an external 
 
 - **`Gnss`** <- `atgm336h.Atgm336h`, `neo6mv2.Neo6mv2`
 - **`Inspectable`** <- `controller.Controller`, `mission.Mission`, `task.Task`, `wind.WindEstimator`
-- **`Task`** <- `adxl375.Adxl375`, `attitude.Attitude`, `bluetooth.Bluetooth`, `bmp280.Bmp280`, `bno055.Bno055`, `board_health.BoardHealth`, `cc_link.ControlLink`, `field.Field`, `flight.Flight`, `gnss.Gnss`, `gnss_calib.GnssCalib`, `hitl.Hitl`, `icp10111.Icp10111`, `ina226.Ina226`, `led.LedStatus`, `lsm6dso32.Lsm6dso32`, `recorder.RecorderTask`, `separation.Separation`, `sequencer.Sequencer`, `sg90.SG90`, `vl53l4cx.Vl53l4cx`, `watchdog.Watchdog`, `wifi.Wifi`
+- **`SG90`** <- `mg90s.MG90S`
+- **`Task`** <- `adxl375.Adxl375`, `attitude.Attitude`, `bluetooth.Bluetooth`, `bmp280.Bmp280`, `bno055.Bno055`, `board_health.BoardHealth`, `cc_link.ControlLink`, `field.Field`, `flight.Flight`, `gnss.Gnss`, `gnss_calib.GnssCalib`, `hitl.Hitl`, `icp10111.Icp10111`, `ina226.Ina226`, `led.LedStatus`, `lsm6dso32.Lsm6dso32`, `recorder.RecorderTask`, `sdp810.Sdp810`, `separation.Separation`, `sequencer.Sequencer`, `sg90.SG90`, `vl53l4cx.Vl53l4cx`, `warmstart.Checkpoint`, `watchdog.Watchdog`, `wifi.Wifi`
 
 ## Flight-control hot path — `Flight._tick()` (100 Hz, GC-off)
 
@@ -101,11 +104,20 @@ The resolved call tree from the control step, with GC-off risk flags per functio
   - `flight.Flight._compute_dt`
   - `governor.Governor.step`
     - `governor.Governor._update`
+      - `airspeed.AirspeedEstimator.predict`
+      - `airspeed.AirspeedEstimator.measure`
       - `airspeed.AirspeedEstimator.value`
       - `airspeed.AirspeedEstimator.correct`
-      - `airspeed.AirspeedEstimator.predict`
+      - `airspeed.AirspeedEstimator.confident`
       - `commons.fin_deflection_limit`
     - `airspeed.AirspeedEstimator.value` …
+  - `flight.Flight._record`  — ⚠Tuple
+    - `governor.Governor.airspeed`
+      - `airspeed.AirspeedEstimator.value` …
+    - `wind.WindEstimator.speed`  — ∿math.sqrt
+      - `wind.WindEstimator.components`  — ⚠Tuple x2
+    - `wind.WindEstimator.direction`  — ∿math.atan2, math.degrees
+      - `wind.WindEstimator.components`  — ⚠Tuple x2 …
   - `guidance.Guidance.setpoint`  — ⌕.get()
   - `flight.Flight._run_pid`  — ⚠Tuple
     - `flight.Flight._actuate`  — ⌕.find()
@@ -117,14 +129,17 @@ The resolved call tree from the control step, with GC-off risk flags per functio
   - `guidance.Guidance.compute`  — ⌕.get()
   - `flight.Flight._feed_wind`  — ⚠Tuple; ∿math.atan2, math.cos, math.degrees, math.radians, math.sin, math.sqrt; ⌕.get()
     - `wind.WindEstimator.observe`  — ⚠Tuple; ∿math.cos x2, math.radians x2, math.sin x2
-    - `governor.Governor.airspeed`
-      - `airspeed.AirspeedEstimator.value` …
+    - `governor.Governor.airspeed` …
 
 ### Hot-path analysis — functions carrying GC-off risk flags
 
 Candidates to review (a flag in a GC-off 100 Hz path is a per-step heap-churn / cost risk — many are already deliberate/cold-branch; this pass surfaces them, it does not judge). Empty = the traced path is clean.
 
 - `flight.Flight._tick` — ⚠.values()
+- `flight.Flight._record` — ⚠Tuple
+- `wind.WindEstimator.speed` — ∿math.sqrt
+- `wind.WindEstimator.components` — ⚠Tuple x2
+- `wind.WindEstimator.direction` — ∿math.atan2, math.degrees
 - `guidance.Guidance.setpoint` — ⌕.get()
 - `flight.Flight._run_pid` — ⚠Tuple
 - `flight.Flight._actuate` — ⌕.find()
