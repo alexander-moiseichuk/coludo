@@ -21,8 +21,16 @@ python3 "$ROOT/tools/board_reboot.py" "$PORT" >/dev/null 2>&1 || true   # clean 
 out=$(timeout 190 mpremote connect "$PORT" run /tmp/launch.py 2>&1) || true   # a CDC wedge must not abort (set -e)
 ses=$(echo "$out" | grep -oE 'SESSION [0-9_]+' | awk '{print $2}')
 [ -z "$ses" ] && { echo "FAIL $motor/$scen: $(echo "$out" | tail -1)"; exit 1; }
-for stream in accel_adxl375 baro_icp10111 imu_bno055 imu_lsm6dso32 gnss laser_agl fins health sequencer power_ina226; do
-  adb pull "/userdata/recordings/${ses}_${stream}.csv" "$d/" >/dev/null 2>&1 || true
+# Pull EVERY stream this session wrote -- never a hardcoded list. The old fixed list silently dropped
+# any stream added since it was written (flight.csv, the per-servo servo_*.csv, airspeed_sdp810), so a
+# board capture was missing data the board had actually recorded and nothing said so.
+# list-then-filter: the Luckfox shell does not expand a glob here, and its `ls` emits ANSI colour
+# codes + CR, so strip both before matching or every name silently fails to match.
+for name in $(adb shell "ls /userdata/recordings/" 2>/dev/null \
+              | sed -e "s/\x1b\[[0-9;]*m//g" -e "s/\r//g" | grep "^${ses}_.*\.csv$"); do
+  adb pull "/userdata/recordings/$name" "$d/" >/dev/null 2>&1 || true
 done
+pulled=$(ls "$d" | wc -l)
+[ "$pulled" -eq 0 ] && echo "WARN $motor/$scen: no streams pulled for session $ses"
 python3 "$ROOT/tools/assemble_capture.py" "$ses" "$d" "$outdir/$scen.txt" >/dev/null
 echo "OK $motor/$scen session=$ses $(echo "$out" | grep -oE 'DONE|TIMEOUT [0-9]+' | head -1)"

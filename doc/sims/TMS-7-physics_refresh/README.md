@@ -66,6 +66,32 @@ The pitot row is the useful confirmation: the saturation fallback built for the 
 exactly as designed under a real injected failure. The GNSS row quantifies what "GNSS is
 flight-critical for accuracy" actually costs.
 
+## On real hardware (board HITL)
+
+The host runs above are the matrix; this is the same flight flown **on the board** — real drivers, real
+servos physically moving, real INA226 on the servo rail, real MCU memory.
+[**Report**](hitl_f15_full.html) · [**video (FHD, 64 s)**](hitl_f15_full.mp4) ·
+[capture](hitl_f15_full.txt).
+
+| measured on the board | value |
+|---|---|
+| servo-rail power | **peak 5750 mW**, mean 100 mW, **6.2 J** over the 60 s flight |
+| fin activity | 710 moves, 1622° of travel (27 °/s of flight) |
+| `fin_cap` (governor authority) | swept **14 → 45°** — the unconfident floor, then the live 1/v² schedule |
+| airspeed estimate | 0 → 14.6 m/s |
+| pitot `dynamic_pressure` | −0.0 … 0.0 Pa — correct: the SDP810 is on the bench with no airflow |
+
+This run is what validated the capture-pipeline work end to end: `flight.csv` (542 rows), the three
+per-servo streams and `airspeed_sdp810.csv` all came off a real board, and the fin/authority/airspeed
+panels render from them.
+
+> ⚠️ **Memory:** this HITL capture reports a GC-off leak of **271 KB/s → time-to-OOM ~120 s**
+> (free 32.4 → 17.2 MB). That is ~18× the 15 KB/s recorded for the control path in
+> [TMS-7-guiding_refactoring](../TMS-7-guiding_refactoring/) and shorter than a real glide. A HITL run
+> allocates more than a flight does (the sim task itself runs on the board alongside the real drivers,
+> and the SDP810 now polls at 50 Hz), so this is **not** directly a flight number — but it is a real
+> measurement from real hardware and wants a dedicated soak before any powered flight.
+
 ## Regenerate
 
 ```bash

@@ -45,6 +45,13 @@ _STAGE = controller_mod.Stage
 _FINS = ('servo_eleron_left', 'servo_eleron_right', 'servo_yaw')
 _SPIKE_S = 3.0  # a transient 2x sensor glitch fires once every this many seconds (within 2-5 s)
 _GNSS_S = 0.1  # GNSS fix cadence (~10 Hz), for both the injected handles and the capture rows
+_LEAK_BPS = 15000.0   # measured GC-off control-path leak (B/s) -- doc/sims/TMS-7-guiding_refactoring
+_FREE_AT_BOOT = 33_000_000  # MEASURED on the ESP32-P4 (gc.mem_free() = 33.09 MB of PSRAM). The old
+# 4.19 MB guess was ~8x low, which -- with the sawtooth -- is why the report's time-to-OOM printed
+# absurdities. 33 MB at 15 KB/s = ~37 min, matching the real board's measured time-to-OOM.
+_SERVO_HOLD_MW = 41   # measured rail draw with the fins holding (INA226, 2026-07-25)
+_SERVO_MOVE_MW = 1400  # measured MEAN draw of one servo in travel (peak 3925 mW = 0.79 A)
+_SERVO_SLEW_S_PER_DEG = 0.1 / 60.0  # MG90S: ~0.1 s per 60 deg at max slew
 
 
 class _Fin:
@@ -335,10 +342,13 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         rows.sample(t, accel_m, altitude_m, sensors['altitude'] - body.elev0, heading_m, roll_m, pitch_m,
                     sensors['position'], agl, laser_range_m, body.speed, fins,
                     (roll_rate_dps, pitch_rate_dps, yaw_rate_dps),
+                    dt=dt,
                     pitot=(pitot_handle.value_now if pitot_on else None),
                     control=(stage_id, 1 if active else 0, fin_governor.airspeed(), mix.limit,
                              law.roll_setpoint, law.pitch_setpoint, law.heading_error,
                              roll_deg, pitch_deg, yaw_deg, wind_speed, wind_from))
+        if stage == 'boosting':
+            rows.leak_starts(t)  # GC goes off at BOOSTING on the board -> the leak clock starts
         rows.health(t, stage)
         if body.gliding and body.alt <= 0.0:             # touched down
             rows.event(t, 'controller :: stage -> done')
@@ -357,6 +367,8 @@ class _Capture:
         self._lines = []
         self._last_gnss = -1.0
         self._last_health = -1.0
+        self._leak_from = None   # when GC went off (BOOSTING) -- the modelled leak's origin
+        self._fins_prev = None   # previous commanded fin angles -> which servos MOVED this tick
 
     def _tlm(self, file: str, row: str) -> None:
         self._lines.append('@%s_%s@%s' % (self._SESSION, file, row))
@@ -376,9 +388,12 @@ class _Capture:
                                 'roll_cmd;pitch_cmd;yaw_cmd;wind_speed;wind_from')
         # the SDP810 pitot as the board's driver records it (Pa fixnum + derived m/s)
         self._tlm('airspeed_sdp810.csv', 'uptime;dynamic_pressure;airspeed;temperature')
+        # servo-rail power as the INA226 records it -- MODELLED from the measured MG90S figures, so
+        # the report's engine panel and flight_kpi's servo-energy metric are not blank on a sim run
+        self._tlm('power_ina226.csv', 'uptime;voltage_mv;current_ma;power_mw;alerts')
 
     def sample(self, t, accel, altitude, elevation, heading, roll, pitch, position, agl, laser_range, speed,
-               fins, rate, control=None, pitot=None):
+               fins, rate, control=None, pitot=None, dt=0.02):
         microseconds = int(t * 1e6)
         self._tlm('accel_adxl375.csv', '%u;0.000;0.000;%.3f' % (microseconds, accel))
         self._tlm('baro_icp10111.csv', '%u;%.2f;21.0;100000;%.2f' % (microseconds, altitude, elevation))
@@ -396,9 +411,28 @@ class _Capture:
         if pitot is not None:                            # SDP810: q = 0.5*rho*v^2, Pa as a x100 fixnum
             self._tlm('airspeed_sdp810.csv', '%u;%d;%.2f;2500'
                       % (microseconds, int(0.5 * 1.225 * pitot * pitot * 100), pitot))
+        """
+        SERVO POWER: a fin that CHANGED angle is travelling; at max slew it needs
+        |delta| * _SERVO_SLEW_S_PER_DEG seconds, during which the measured mean draw is
+        _SERVO_MOVE_MW. Spread that energy over this tick (a move shorter than dt averages down),
+        add the measured holding draw, and report it as the INA226 would.
+        """
+        moving_mw = 0.0
+        if self._fins_prev is not None and dt > 0:
+            for now_deg, was_deg in zip(fins, self._fins_prev):
+                travel_s = abs(now_deg - was_deg) * _SERVO_SLEW_S_PER_DEG
+                moving_mw += _SERVO_MOVE_MW * min(travel_s / dt, 1.0)
+        self._fins_prev = tuple(fins)
+        power_mw = int(_SERVO_HOLD_MW + moving_mw)
+        self._tlm('power_ina226.csv', '%u;5000;%d;%d;0' % (microseconds, power_mw // 5, power_mw))
         if control is not None:                          # the control state the board's flight task records
             self._tlm('flight.csv', '%u;%d;%d;%.1f;%d;%d;%d;%d;%d;%d;%d;%.1f;%d'
                       % ((microseconds,) + control))
+
+    def leak_starts(self, t) -> None:
+        """Mark when GC went off (BOOSTING) so the modelled leak runs from there, as on the board."""
+        if self._leak_from is None:
+            self._leak_from = t
 
     def health(self, t, stage):
         """
@@ -406,9 +440,14 @@ class _Capture:
 
         SYNTHETIC + phase-modeled -- the host has no real MCU -- but shaped like the board would read:
         load tracks the work per stage (idle on the rod, high under boost sampling, steady in the glide
-        loop, highest while the laser hammers I2C on landing); temperature drifts up under load; free
-        memory stays consistent (the firmware pre-allocates and avoids churn, so GC is gentle -- only a
-        shallow sawtooth around ~4 MB).
+        loop, highest while the laser hammers I2C on landing); temperature drifts up under load.
+
+        mem_free follows the MEASURED GC-off leak (~15 KB/s settled at 100 Hz, doc/sims/
+        TMS-7-guiding_refactoring), declining monotonically once airborne. It used to be a 30 s
+        SAWTOOTH, which left a near-zero net slope over BOOSTING->DONE -- so flight_report's
+        time-to-OOM headline divided by ~0 and printed an absurd ~15000 s on every sim study. A
+        modelled number that matches the real board (~36 min to OOM) is honest; a fabricated flat one
+        that reads as a measurement is not.
         """
         if t - self._last_health < 1.0:
             return
@@ -416,7 +455,8 @@ class _Capture:
         load = {'setting': 5, 'boosting': 45, 'gliding': 30, 'landing': 60}.get(stage, 8)
         load = max(0, min(100, load + int(6 * math.sin(t * 2.5))))
         temp = min(63.0, 45.0 + 0.18 * t + (4.0 if stage == 'landing' else 0.0))
-        mem_free = 4_190_000 - int((t * 1000) % 30000)   # ~4 MB, a shallow GC sawtooth (memory is steady)
+        airborne = max(0.0, t - self._leak_from) if self._leak_from else 0.0
+        mem_free = int(_FREE_AT_BOOT - _LEAK_BPS * airborne)  # GC is OFF airborne -> monotonic decline
         self._tlm('health.csv', '%u;%.1f;%d;%d' % (int(t * 1e6), temp, mem_free, load))
 
     def event(self, t, line: str) -> None:
