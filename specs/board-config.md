@@ -64,6 +64,8 @@ identical behaviour every time.
 
 ```json
 {
+  "version": "20260725",
+
   "board": { "id": "glider-01", "mcu": "esp32p4", "rev": 1, "setup_retries": 3 },
 
   "wifi": {
@@ -137,6 +139,16 @@ identical behaviour every time.
 
 ### Section reference
 
+- **`version`** — the **config schema version** (`YYYYMMDD`) the file was produced from, stamped by
+  `config_default.CONFIG_VERSION`. It travels into `board.config` on save and **stays there forever**.
+  The saved config always wins as-is (what you saved is what flies — a flight stays reproducible, and a
+  board never silently runs something you did not persist), but `config.load()` compares the two and
+  reports a mismatch through its `source` string, which surfaces in the boot log, the capture's
+  provenance line and CC. A config produced before a newer firmware's tree simply *lacks* its new
+  devices; without this stamp that shows up only as a sensor that mysteriously never ran.
+  **Bump `CONFIG_VERSION` on any change to the config tree or its defaults** — a new sensor/component, a
+  renamed or moved key, a changed default. Not for comment/docstring edits. Re-save the board config
+  (CC) to adopt the new tree.
 - **`board`** — identity and MCU type. `mcu` is one of `esp32p4`, `esp32c6`, `firebeetle2p4`
   and lets the firmware select MCU-specific behaviour. `setup_retries` is the boot setup-attempt
   count per device (flaky breadboard contacts; `1` = no retry).

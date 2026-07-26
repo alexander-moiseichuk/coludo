@@ -19,6 +19,7 @@ import config
 import controller
 import drivers
 import mission
+import recorder
 import tasks
 import warmstart
 
@@ -51,6 +52,16 @@ async def main() -> None:
     cfg, source, errors = config.load()
     print('main :: config %s%s' % (source, '' if not errors else ' ERRORS=%s' % errors))
     flight = await bringup(cfg)
+    """
+    PROVENANCE (findings §27.3): stamp the build + config identity into the CAPTURE, not just the
+    console. A recording that cannot be attributed to the firmware and config that produced it is not
+    comparable across a flight campaign -- which is the whole point of the passive-telemetry flights.
+    Logged after bringup so the Recorder exists to carry it; log() is best-effort by policy, so a board
+    with recording disabled just skips it.
+    """
+    board = cfg.get('board', {})
+    recorder.Recorder.log('main', 'boot: board %s | firmware %s | config %s %s' % (
+        board.get('id', '?'), board.get('firmware_version', '?'), config.config_id(cfg), source))
     await warmstart.restore(flight, cfg)  # warm start after a mid-air reset (no-op on a cold boot)
     while True:  # the supervised tasks do the work; keep the event loop alive
         await asyncio.sleep_ms(10000)

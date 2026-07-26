@@ -20,6 +20,20 @@ try:
 except ImportError:
     _FIRMWARE_VERSION = 'dev'
 
+"""
+CONFIG SCHEMA VERSION -- the date THIS file's structure or defaults last changed (YYYYMMDD).
+
+A saved board.config carries the version it was produced from, forever; `config.load()` keeps running
+the SAVED config (what you saved is what flies -- reproducible) but reports a mismatch against this
+constant, so a config predating a new sensor/section is visible instead of silently dropping devices
+(findings §27.13).
+
+**BUMP THIS on any change to the config TREE or its defaults** -- a new sensor/component, a renamed or
+moved key, a changed default value. Do NOT bump for a comment or a docstring edit. Bumping is what turns
+'my new sensor never ran' into a reported mismatch.
+"""
+CONFIG_VERSION: str = '20260725'  # mg90s yaw + airspeed_sdp810 + this version field
+
 
 def default() -> dict:
     board = {'id': 'taster', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION,
@@ -348,11 +362,11 @@ def default() -> dict:
         must stay inside (stall / no-load detection during the pre-flight self-test).
     """
     servos = [
-        # All SG90 for now. The `mg90s` driver (drivers/mg90s.py) is ready for the POSITIONAL metal-gear
-        # MG90S (holds a fin against wind back-drive): set a fin's `driver` to 'mg90s' once that servo is
-        # fitted -- a mixed fleet (mg90s + sg90) is supported. NB a continuous-rotation "360" MG90S is
-        # NOT a fin servo (pulse = speed, it spins and never holds an angle) -- use the 180deg positional.
-        {'name': 'servo_yaw', 'driver': 'sg90', 'pin': 'servo_yaw', 'enabled': True},
+        # MIXED FLEET: yaw is a POSITIONAL metal-gear MG90S 180deg (fitted 7/25 -- it holds the rudder
+        # against wind back-drive); the elerons stay SG90. Each fin's `driver` is independent, so mixing
+        # is supported. NB a continuous-rotation "360" MG90S is NOT a fin servo (pulse = speed, it spins
+        # and never holds an angle) -- only the 180deg positional part works here.
+        {'name': 'servo_yaw', 'driver': 'mg90s', 'pin': 'servo_yaw', 'enabled': True},
         {'name': 'servo_eleron_left', 'driver': 'sg90', 'pin': 'servo_eleron_left', 'enabled': True},
         {'name': 'servo_eleron_right', 'driver': 'sg90', 'pin': 'servo_eleron_right', 'enabled': True},
     ]
@@ -622,6 +636,7 @@ def default() -> dict:
     ]
 
     return {
+        'version': CONFIG_VERSION,  # travels into board.config on save and stays there forever
         'board': board,
         'wifi': wifi,
         'buses': buses,

@@ -110,7 +110,30 @@ def main():
     cfg, source, errs = config.load(path, defaults=config_default.default())
     assert source == 'default'
 
-    print('ok: config validate/config_id/save/load/reset + nested buses, sensors, bus()/device()')
+    """
+    Config SCHEMA VERSION (findings §27.13): a saved config carries the version it was produced from,
+    forever. The saved config still WINS as-is -- what you saved is what flies -- but a mismatch against
+    the firmware is reported through `source`, so a config predating a new sensor is visible instead of
+    silently dropping it.
+    """
+    fresh = config_default.default()
+    assert fresh['version'] == config_default.CONFIG_VERSION and config.outdated(fresh, fresh) is None
+    assert config.schema_version(fresh) == config_default.CONFIG_VERSION
+    assert config.schema_version(None) == '' and config.schema_version({}) == ''
+    assert config.outdated({'version': '19700101'}, fresh) == ('19700101', config_default.CONFIG_VERSION)
+    assert config.outdated({}, fresh) == ('unversioned', config_default.CONFIG_VERSION)  # predates versioning
+    # an OLD saved config still loads and still wins -- only the source string flags it
+    stale = config_default.default()
+    stale['version'] = '19700101'
+    stale['board']['id'] = 'stale-board'
+    config.save(stale, path)
+    cfg, source, errs = config.load(path, defaults=fresh)
+    assert not errs and cfg['board']['id'] == 'stale-board'  # the SAVED config ran, unmodified
+    assert source.startswith('active(config 19700101, firmware ') and 're-save' in source, source
+    config.reset(path)
+
+    print('ok: config validate/config_id/save/load/reset + nested buses, sensors, bus()/device(), '
+          'schema version + outdated()')
 
 
 main()
