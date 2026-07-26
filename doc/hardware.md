@@ -256,7 +256,7 @@ fin `concurrency` gate staggers servo motion so they do not all draw at once.
 runs the *governed* fin at ~3–4 % of stall — **~25–30× torque margin, no gearing needed**. The only
 stress case is an un-governed ±45° hardover near burnout (servo back-drives at ~60–90 m/s), where the
 output-shaft **bending** load is the limit, not torque — the sole reason to prefer the metal-gear
-**MG90S** (~+3 g). Derivation: [`../specs/coludo.md`](../specs/coludo.md) → "Fin authority → Servo torque".
+**MG90S** (~+3 g). Derivation: [`../doc/specs/coludo.md`](../doc/specs/coludo.md) → "Fin authority → Servo torque".
 
 ## SD card
 Any suitable by size and throughput as code, videos and logs will be written here.
@@ -286,7 +286,7 @@ The detailed numbers are avaliable in the [TMS-7 readme.md file](../models/TMS-7
 
 The F15-4 mass above (98.8 g) is measured. The alternative **E16** motor is lighter — ~82.5 g loaded. Both motors'
 estimated flight envelope (peak accel / speed / apogee / glide range) is in
-[`specs/coludo.md` → Flight envelope](../specs/coludo.md).
+[`doc/specs/coludo.md` → Flight envelope](../doc/specs/coludo.md).
 
 
 # Potential configurations

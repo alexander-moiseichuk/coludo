@@ -14,7 +14,7 @@ worst-case polar, calm, 5 % noise):
    the small motor lands in the zone too.
 
 Time aloft 121–148 % of the polar ceiling in every sweep case — objective ① (fly long) never paid
-for the precision. Full law + tuning history: specs/coludo.md "Gliding" and the guidance commit.
+for the precision. Full law + tuning history: doc/specs/coludo.md "Gliding" and the guidance commit.
 
 **Pending for this set:** the ON-BOARD confirmation matrix (glide-energy program step 3) replaces
 these host captures with device telemetry; until then treat the numbers as sim-predicted.

@@ -1,7 +1,7 @@
 # Coludo — Development & Testing Guide
 
 How we build, flash, and test Coludo across its components. This captures the working
-conventions; the architecture itself lives in [`specs/`](specs/) (`coludo.md`,
+conventions; the architecture itself lives in [`doc/specs/`](doc/specs/) (`coludo.md`,
 `board-config.md`, `cc-protocol.md`).
 
 ## Repository layout
@@ -12,7 +12,7 @@ conventions; the architecture itself lives in [`specs/`](specs/) (`coludo.md`,
 | `src/glider/test/` | Test cases for every glider module (**required** — see [Testing](#testing-requirements)) |
 | `src/control/` | Control Center (CC) application — **Python**, runs on the host/PC |
 | `src/camera/` | Recorder module (Luckfox Pico) — already implemented |
-| `specs/` | Architecture & protocol specs |
+| `doc/specs/` | Architecture & protocol specs |
 | `doc/`, `models/`, `videos/` | Hardware notes, STL models, flight footage |
 
 New controller code goes under `src/glider/`; **all Control Center code goes under
@@ -195,7 +195,7 @@ so it must run on both.
   list is renumbered and force a lookup to understand the code. Write the *reason* instead: not
   "kept float (findings §18)" but "kept float — a fixnum rewrite under-reads speed → a looser fin
   cap (the unsafe direction)". A prose pointer to a stable spec by NAME is fine
-  (`specs/coludo.md "Turn-radius limit"`); a number that only means something against a mutable list is not.
+  (`doc/specs/coludo.md "Turn-radius limit"`); a number that only means something against a mutable list is not.
 - **Slim classes, YAGNI**: no unused parameters or speculative flexibility. If the class already
   holds a value, don't also pass it in.
 - **Error policy by criticality**: logs are best-effort — drop silently (or truncate) when the

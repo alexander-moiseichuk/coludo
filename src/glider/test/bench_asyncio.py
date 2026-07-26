@@ -3,7 +3,7 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 Comprehensive micro-benchmark of MicroPython asyncio / GC / PSRAM / timing on the concrete Coludo glider
 board (FireBeetle 2 ESP32-P4, 32 MB PSRAM, MicroPython v1.28.0). The numbers feed the latency and GC
-assumptions in specs/coludo.md, and characterise behaviour worth reporting upstream (see
+assumptions in doc/specs/coludo.md, and characterise behaviour worth reporting upstream (see
 doc/benches/esp32p4-micropython-findings.md).
 
 Headline finding reproduced by bench_buffer(): bytearray / memoryview slice-assignment `buf[a:b] = src`

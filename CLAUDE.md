@@ -2,7 +2,7 @@
 
 Rocket-powered autonomous glider. Firmware in `src/glider/` (**MicroPython** on a WaveShare
 ESP32-P4-WIFI6); ground station "Control" in `src/control/` (**CPython 3.12**). Architecture:
-`specs/` (`coludo.md`, `board-config.md`, `cc-protocol.md`). Status + roadmap: `doc/plan.md`.
+`doc/specs/` (`coludo.md`, `board-config.md`, `cc-protocol.md`). Status + roadmap: `doc/plan.md`.
 Hardware/dev guide + the full conventions: `doc/skills.md`.
 
 ## Read before coding: `doc/skills.md` → "Coding conventions". In short:

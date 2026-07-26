@@ -2,7 +2,7 @@
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 Landing-zone navigation geometry ('heading-to-home'), sibling of mixer.py/pid.py. The mission's
-landing zone is a lat/lon rectangle, top-left (TL) + bottom-right (BR) corners (specs/coludo.md).
+landing zone is a lat/lon rectangle, top-left (TL) + bottom-right (BR) corners (doc/specs/coludo.md).
 The TARGET is the zone centre; the two GATES are the midpoints of the two SHORTER sides, so the
 glider enters along the long axis (the documented "vector to the shortest boundary entrance").
 steer() picks the nearer gate, heads for it until inside the zone, then for the centre.
@@ -23,7 +23,7 @@ back through it on an overshoot) with NO knowledge of what lies beyond any side 
 people). So the operator must ORIENT the zone -- choose the TL/BR corners in launch.config so the two
 short-side entrances point at hazard-free approach corridors and the long sides border the hazards.
 Aerodynamics (long run-in, lower crosswind) and safety (clear corridors) only align if it is laid out
-that way; the firmware cannot verify it. See specs/coludo.md "Zone orientation -- an operator safety
+that way; the firmware cannot verify it. See doc/specs/coludo.md "Zone orientation -- an operator safety
 decision".
 """
 

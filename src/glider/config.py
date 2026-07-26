@@ -4,7 +4,7 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 Board configuration loader / validator -- the foundational config layer the rest of the firmware
 builds its tasks from.
 
-Implements the three-layer model from specs/board-config.md:
+Implements the three-layer model from doc/specs/board-config.md:
   config_default.py -- firmware default / fallback
   board.config      -- saved active config, a full snapshot
   in-memory dict    -- validated, what the Controller builds tasks from

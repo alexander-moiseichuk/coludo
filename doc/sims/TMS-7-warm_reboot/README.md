@@ -2,7 +2,7 @@
 
 The first capture set on the **TMS-7 v3 measured weights** (booster with engine E16 165 g /
 F15 182 g; glider 285 g full / 235 g light) flying the **fly-long trim law** under the objective
-order set 7/05 (specs/coludo.md "Gliding"): **① fly as long as possible, ② land in-zone, ③ land
+order set 7/05 (doc/specs/coludo.md "Gliding"): **① fly as long as possible, ② land in-zone, ③ land
 near the midpoint** — and the first to exercise the 7/04 field-autonomy features on the board:
 **warm start** after a simulated mid-glide reboot and the **CC-less spiral-landing fallback**.
 Calm, 5 % noise, `inject_hz=25`; the sim polar is pinned at **air quality 2 (worst case,

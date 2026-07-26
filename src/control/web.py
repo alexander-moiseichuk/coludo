@@ -1,7 +1,7 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-Web bridge -- the browser face of the Control hub (specs/cc-protocol.md "Browser bridge").
+Web bridge -- the browser face of the Control hub (doc/specs/cc-protocol.md "Browser bridge").
 
 A minimal HTTP/1.1 + SSE server on 8080 over the same stdlib asyncio loop as the board listener
 and operator console (no extra dependency, no framework). Plain HTTP: the LAN is trusted and

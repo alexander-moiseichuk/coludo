@@ -3,7 +3,7 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 Task base class and driver registry -- the unit the Controller creates and supervises.
 
-Every component/system task follows the common lifecycle from specs/coludo.md:
+Every component/system task follows the common lifecycle from doc/specs/coludo.md:
   setup() async; initialize or reset; return True on success
   probe() async; ON-DEMAND self-test (the CC `probe` command, never at boot) -> None if healthy,
       else an error string. Default None; a sensor reports 'X not found on i2c:0', an actuator

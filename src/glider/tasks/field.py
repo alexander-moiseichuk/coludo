@@ -1,7 +1,7 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-The CC-less field agent (specs/coludo.md "Field operation without CC"). @task.activity('field'),
+The CC-less field agent (doc/specs/coludo.md "Field operation without CC"). @task.activity('field'),
 DISABLED by default. On the pad (SETTING) it makes at most two decisions:
   1. SITE BY GPS -- on the first fresh fix, the mission adopts the nearest launch.config site within
      max_range_m; none in range -> the synthesized spiral-landing fallback zone offset from the fix

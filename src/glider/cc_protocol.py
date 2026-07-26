@@ -1,7 +1,7 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-CC <-> board line protocol (specs/cc-protocol.md).
+CC <-> board line protocol (doc/specs/cc-protocol.md).
 
 One newline-delimited message per line:  <command> <board-id> [params...]. Tokens are
 whitespace-separated, so there is NO quoting or escaping. A param value is one of:

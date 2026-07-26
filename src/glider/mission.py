@@ -47,7 +47,7 @@ _DEFAULT_MAX_RANGE_M: float = 200.0
 
 """
 Default launch site when no launch.config has been set yet: HPRC (Homestead Public Rocketry Club), the
-documented test pad + landing zone (doc/plan.md, specs/coludo.md, sim_model.HPRC). So a fresh board already
+documented test pad + landing zone (doc/plan.md, doc/specs/coludo.md, sim_model.HPRC). So a fresh board already
 has a valid pad + zone for HPRC field tests; the operator overrides it live via `update mission` /
 `set-config launch` for any other site.
 """
@@ -94,7 +94,7 @@ def _zone(value):
 
     navigation.py resolves the target (centre) + gates (short-side midpoints) from it. The corner
     choice is an operator SAFETY decision: orient the zone so the short-side entrances face hazard-free
-    corridors -- navigation steers to a gate with no hazard awareness (specs/coludo.md "Zone
+    corridors -- navigation steers to a gate with no hazard awareness (doc/specs/coludo.md "Zone
     orientation").
 
     Args:
@@ -121,7 +121,7 @@ def _sites(value) -> list:
     """
     Validate launch.config `sites` -- the known launch locations for CC-less field operation.
 
-    From specs/coludo.md "Field operation without CC": [{name, pad: [lat, lon], zone: [[TL], [BR]]},
+    From doc/specs/coludo.md "Field operation without CC": [{name, pad: [lat, lon], zone: [[TL], [BR]]},
     ...] becomes [(name, (lat, lon), zone), ...]. Invalid entries are dropped, never raised -- a typo
     in one site must not cost the list.
 
@@ -243,7 +243,7 @@ class Mission(inspector.Inspectable):
 
     def select_site(self, fix: tuple):
         """
-        CC-less site selection (specs/coludo.md "Field operation without CC").
+        CC-less site selection (doc/specs/coludo.md "Field operation without CC").
 
         The nearest known site whose pad is within max_range_m of the live GNSS `fix` becomes the
         mission (site name + zone). The launch POINT stays the LIVE fix -- latitude/longitude are left
@@ -360,7 +360,7 @@ class Mission(inspector.Inspectable):
         The landing zone resolved against the launch point.
 
         The target (centre) + both gates (short-side entrances) and the launch-point->point distances,
-        with `in_range` False if any of the three exceeds self.max_range_m (specs/coludo.md).
+        with `in_range` False if any of the three exceeds self.max_range_m (doc/specs/coludo.md).
 
         Returns:
             A dict with origin, target, gates, distances_m, max_distance_m, and in_range; None when the

@@ -1,7 +1,7 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-Board side of the Control protocol (specs/cc-protocol.md). Board-first routing: Control strips the
+Board side of the Control protocol (doc/specs/cc-protocol.md). Board-first routing: Control strips the
 routing board id, so the board receives `command params` and replies `status params` (no id; only
 `iam` carries the board id, so Control can learn it on a new socket). Dispatcher turns a parsed line
 into a response (pure logic, unit-testable); Client is the thin networking that reads lines and

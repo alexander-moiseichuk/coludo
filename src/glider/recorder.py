@@ -2,7 +2,7 @@
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 The single non-hot data path: telemetry + logs into PSRAM ring buffers, drained to the Luckfox
-recorder over UART. See specs/coludo.md ('Task Data-Flow', 'Logging', 'Telemetry', 'Storage Write
+recorder over UART. See doc/specs/coludo.md ('Task Data-Flow', 'Logging', 'Telemetry', 'Storage Write
 Constraints').
 
 Recorder is a singleton: any module calls Recorder.log() / Recorder.tlm() globally. Producers enqueue

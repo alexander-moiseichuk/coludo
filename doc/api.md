@@ -37,7 +37,7 @@ the caller passes it (e.g. |accel| - g during boost), so this stays unit-testabl
 
 _Tested by `test/test_cc_client.py`._
 
-Board side of the Control protocol (specs/cc-protocol.md). Board-first routing: Control strips the
+Board side of the Control protocol (doc/specs/cc-protocol.md). Board-first routing: Control strips the
 routing board id, so the board receives `command params` and replies `status params` (no id; only
 `iam` carries the board id, so Control can learn it on a new socket). Dispatcher turns a parsed line
 into a response (pure logic, unit-testable); Client is the thin networking that reads lines and
@@ -83,7 +83,7 @@ Returns:
 
 _Tested by `test/test_cc_protocol.py`._
 
-CC <-> board line protocol (specs/cc-protocol.md).
+CC <-> board line protocol (doc/specs/cc-protocol.md).
 
 One newline-delimited message per line:  <command> <board-id> [params...]. Tokens are
 whitespace-separated, so there is NO quoting or escaping. A param value is one of:
@@ -256,7 +256,7 @@ _Tested by `test/test_config.py`._
 Board configuration loader / validator -- the foundational config layer the rest of the firmware
 builds its tasks from.
 
-Implements the three-layer model from specs/board-config.md:
+Implements the three-layer model from doc/specs/board-config.md:
   config_default.py -- firmware default / fallback
   board.config      -- saved active config, a full snapshot
   in-memory dict    -- validated, what the Controller builds tasks from
@@ -364,7 +364,7 @@ Returns:
 Baked-in default board configuration for the WaveShare ESP32-P4-WIFI6 controller.
 
 Human-edited firmware default and the safe fallback when no valid board.config exists (see
-specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
+doc/specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
 test/test_pins.py). `default()` returns a FRESH dict each call so callers may mutate it freely.
 
 Topology: buses are grouped by type then id; a sensor/component addresses one by `bus` (the kind,
@@ -417,7 +417,7 @@ Returns:
 _Tested by `test/test_controller.py`._
 
 Flight Controller -- creates and supervises the tasks described by a validated config, and tracks the
-flight stage machine. See specs/coludo.md ('Flight Controller', 'Tasks').
+flight stage machine. See doc/specs/coludo.md ('Flight Controller', 'Tasks').
 
 The Controller is the one task created explicitly; it creates the rest from config in a deterministic
 order. Task failures are reported, not fatal (the strict/operator-authority model): a component that
@@ -464,7 +464,7 @@ the cross-file churn; revisit only if importing controller solely for Stage ever
 
 _Tested by `test/test_databoard.py`._
 
-The shared latest-value store + sensor fusion for hot data (specs/coludo.md "Task Data-Flow and
+The shared latest-value store + sensor fusion for hot data (doc/specs/coludo.md "Task Data-Flow and
 Message Propagation"). Replaces a two-layer raw/fused store + a polling fusion task with a registry
 of Parameter objects whose fused value is computed on read.
 
@@ -745,7 +745,7 @@ _configure().
 
 _Tested by `test/test_governor.py`._
 
-The dynamic-pressure fin governor (specs/coludo.md "Fin authority"), sibling of pid.py / mixer.py /
+The dynamic-pressure fin governor (doc/specs/coludo.md "Fin authority"), sibling of pid.py / mixer.py /
 airspeed.py. Owns the airspeed ESTIMATE (airspeed.AirspeedEstimator: accel backbone + GNSS
 corrector), the ADAPTIVE THROTTLE that keeps that float path off the GC-off hot loop once the glide
 settles, and the mixer authority cap (commons.fin_deflection_limit ∝ 1/v², × the board's
@@ -904,7 +904,7 @@ _Tested by `test/test_inspector.py`._
 
 Inspector -- the registry of Inspectable objects and the operator-facing introspection surface.
 Control's inspect/update/stats commands resolve an object by name through the Inspector
-(specs/cc-protocol.md). Any object an operator should see or tweak registers itself here.
+(doc/specs/cc-protocol.md). Any object an operator should see or tweak registers itself here.
 
 ### `class Inspectable`
 
@@ -991,7 +991,7 @@ launch.config at construction.
 - `epoch() -> int` — Current board clock as a Unix epoch (seconds), for Control to compare against its own.
 - `launch_point()` — The launch origin (lat, lon).
 - `freeze_launch() -> None` — Pin the live GNSS fix as the persistent launch point.
-- `select_site(fix: tuple)` — CC-less site selection (specs/coludo.md "Field operation without CC").
+- `select_site(fix: tuple)` — CC-less site selection (doc/specs/coludo.md "Field operation without CC").
 - `fallback_zone(fix: tuple, bearing_deg: float=0.0, near_m: float=50.0, width_m: float=100.0, depth_m: float=90.0) -> tuple` — The spiral-landing fallback: synthesize and ADOPT a GENEROUS box the spiral just lands INSIDE.
 - `zone_points() -> tuple` — (target, gate_a, gate_b) for the current landing zone, memoized by zone identity.
 - `zone_aspect() -> float` — The zone's long/short side ratio (>= 1), memoized alongside zone_points.
@@ -1035,7 +1035,7 @@ angle = neutral + trim + clamp(sum(gain * axis), +/- limit).
 _Tested by `test/test_navigation.py`._
 
 Landing-zone navigation geometry ('heading-to-home'), sibling of mixer.py/pid.py. The mission's
-landing zone is a lat/lon rectangle, top-left (TL) + bottom-right (BR) corners (specs/coludo.md).
+landing zone is a lat/lon rectangle, top-left (TL) + bottom-right (BR) corners (doc/specs/coludo.md).
 The TARGET is the zone centre; the two GATES are the midpoints of the two SHORTER sides, so the
 glider enters along the long axis (the documented "vector to the shortest boundary entrance").
 steer() picks the nearer gate, heads for it until inside the zone, then for the centre.
@@ -1056,7 +1056,7 @@ back through it on an overshoot) with NO knowledge of what lies beyond any side 
 people). So the operator must ORIENT the zone -- choose the TL/BR corners in launch.config so the two
 short-side entrances point at hazard-free approach corridors and the long sides border the hazards.
 Aerodynamics (long run-in, lower crosswind) and safety (clear corridors) only align if it is laid out
-that way; the firmware cannot verify it. See specs/coludo.md "Zone orientation -- an operator safety
+that way; the firmware cannot verify it. See doc/specs/coludo.md "Zone orientation -- an operator safety
 decision".
 
 ### `offset(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple`
@@ -1292,7 +1292,7 @@ else d(error)/dt (differentiated on the error).
 _Tested by `test/test_recorder.py`._
 
 The single non-hot data path: telemetry + logs into PSRAM ring buffers, drained to the Luckfox
-recorder over UART. See specs/coludo.md ('Task Data-Flow', 'Logging', 'Telemetry', 'Storage Write
+recorder over UART. See doc/specs/coludo.md ('Task Data-Flow', 'Logging', 'Telemetry', 'Storage Write
 Constraints').
 
 Recorder is a singleton: any module calls Recorder.log() / Recorder.tlm() globally. Producers enqueue
@@ -1439,7 +1439,7 @@ The shared Bus for `bus_id`, created once from `spec` (sck/mosi/miso/baud/mode) 
 
 Task base class and driver registry -- the unit the Controller creates and supervises.
 
-Every component/system task follows the common lifecycle from specs/coludo.md:
+Every component/system task follows the common lifecycle from doc/specs/coludo.md:
   setup() async; initialize or reset; return True on success
   probe() async; ON-DEMAND self-test (the CC `probe` command, never at boot) -> None if healthy,
       else an error string. Default None; a sensor reports 'X not found on i2c:0', an actuator
@@ -1492,7 +1492,7 @@ Returns:
 
 _Tested by `test/test_warmstart.py`._
 
-In-flight reboot recovery (specs/coludo.md "In-flight reboot & warm start"). A mid-air reset
+In-flight reboot recovery (doc/specs/coludo.md "In-flight reboot & warm start"). A mid-air reset
 (watchdog, brownout-survivor, crash) must not turn the glider ballistic: the sequencer drops a tiny
 BREADCRUMB into NVS at BOOSTING entry (never a VFS file -- a filesystem write locks the scheduler and
 wears the data flash; esp32.NVS commits to its own partition in milliseconds) and clears it at DONE.
@@ -1571,7 +1571,7 @@ Returns:
 
 ### `restore(flight, cfg: dict, log=print) -> bool`
 
-Warm start (specs/coludo.md "In-flight reboot & warm start") -- was main._restore_flight, moved
+Warm start (doc/specs/coludo.md "In-flight reboot & warm start") -- was main._restore_flight, moved
 here so main.py stays a thin bring-up.
 
 A mid-air reset must not turn the glider ballistic: restore GLIDING when the NVS breadcrumb AND two
@@ -1851,7 +1851,7 @@ Stage-separation switch: two adhesive copper pads (one on the glider, one on the
 An IRQ on either edge wakes run(), which debounces, and on a confirmed separation during the Boosting
 stage drives the documented Boosting -> Gliding transition (the booster ejects the glider at apogee).
 The event is logged and emitted to subscribers; the discrete event is NOT a databoard quantity (per
-specs/coludo.md, events use notify/log).
+doc/specs/coludo.md, events use notify/log).
 
 The pin uses an internal pull-down so an open (separated) circuit reads LOW reliably; while nested the
 pads override it HIGH. A separation while not Boosting (e.g. a ground test in Setting) is logged but
@@ -2070,7 +2070,7 @@ by convention); an empty `cc_host` ('') disables CC and the board flies standalo
 
 ## `field.py`
 
-The CC-less field agent (specs/coludo.md "Field operation without CC"). @task.activity('field'),
+The CC-less field agent (doc/specs/coludo.md "Field operation without CC"). @task.activity('field'),
 DISABLED by default. On the pad (SETTING) it makes at most two decisions:
   1. SITE BY GPS -- on the first fresh fix, the mission adopts the nearest launch.config site within
      max_range_m; none in range -> the synthesized spiral-landing fallback zone offset from the fix
@@ -2128,7 +2128,7 @@ subtracts it from the GNSS ground velocity before the wind triangle -- otherwise
 STRAIGHT into the wind estimate (wind = ground_velocity - airspeed*heading), reading as phantom wind.
 
 Position-nav is deliberately NOT corrected: the drift over a 60 s flight is a few metres, inside the
-~20 m turn-radius landing floor (specs/coludo.md), so it would not move the touchdown -- the win is a
+~20 m turn-radius landing floor (doc/specs/coludo.md), so it would not move the touchdown -- the win is a
 clean wind estimate. Slow loop (the drift is slow); Inspectable -> the operator sees the frozen drift.
 
 ### `class GnssCalib(task.Task)`
@@ -2249,7 +2249,7 @@ Feed a hardware WDT (wedge backstop) + supervise the control loop (stall -> full
 _Tested by `test/test_board.py`._
 
 One connected Coludo board as seen by the hub: lockstep request/response over its socket
-(specs/cc-protocol.md). The per-board lock makes every exchange strictly sequential, so the
+(doc/specs/cc-protocol.md). The per-board lock makes every exchange strictly sequential, so the
 heartbeat and operator traffic to one board can never overlap. CPython 3.12, stdlib asyncio only.
 
 ### `class Board`
@@ -2357,7 +2357,7 @@ integration tests).
 
 ## `web.py`
 
-Web bridge -- the browser face of the Control hub (specs/cc-protocol.md "Browser bridge").
+Web bridge -- the browser face of the Control hub (doc/specs/cc-protocol.md "Browser bridge").
 
 A minimal HTTP/1.1 + SSE server on 8080 over the same stdlib asyncio loop as the board listener
 and operator console (no extra dependency, no framework). Plain HTTP: the LAN is trusted and

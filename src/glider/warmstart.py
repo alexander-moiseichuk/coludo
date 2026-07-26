@@ -1,7 +1,7 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-In-flight reboot recovery (specs/coludo.md "In-flight reboot & warm start"). A mid-air reset
+In-flight reboot recovery (doc/specs/coludo.md "In-flight reboot & warm start"). A mid-air reset
 (watchdog, brownout-survivor, crash) must not turn the glider ballistic: the Checkpoint task keeps a
 tiny CRUMB in NVS (never a VFS file -- a filesystem write locks the scheduler and wears the data
 flash; esp32.NVS commits to its own partition in milliseconds) carrying the live flight state. At
@@ -228,7 +228,7 @@ def _apply_restore(flight, crumb, cfg: dict) -> None:
 
 async def restore(flight, cfg: dict, log=print) -> bool:
     """
-    Warm start (specs/coludo.md "In-flight reboot & warm start") -- was main._restore_flight, moved
+    Warm start (doc/specs/coludo.md "In-flight reboot & warm start") -- was main._restore_flight, moved
     here so main.py stays a thin bring-up.
 
     A mid-air reset must not turn the glider ballistic: restore GLIDING when the NVS breadcrumb AND two

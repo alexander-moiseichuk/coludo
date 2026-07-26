@@ -3,7 +3,7 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 Inspector -- the registry of Inspectable objects and the operator-facing introspection surface.
 Control's inspect/update/stats commands resolve an object by name through the Inspector
-(specs/cc-protocol.md). Any object an operator should see or tweak registers itself here.
+(doc/specs/cc-protocol.md). Any object an operator should see or tweak registers itself here.
 """
 
 
