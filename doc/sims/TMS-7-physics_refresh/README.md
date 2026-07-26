@@ -32,7 +32,7 @@ Knobs: `VF_GUST`, `VF_GUST_TAU`, `VF_FAULT`, `VF_GLIDER_G` (+ the existing `VF_Q
 | `f15_full` | F15 | 270 g | 109.7 m ✗ | **27.0 m ✓ in-zone** | [report](f15_full.html) |
 | `f15_light` | F15 | 215 g | 114.4 m ✗ | 56.0 m ✗ | [report](f15_light.html) |
 
-[**Top-down plan**, all four at q5](plan_canonical.svg).
+[**Top-down plan**, all four at q5](plan_canonical.svg) · [**combined video** (FHD, 310 s)](physics_refresh.mp4).
 
 Consistent with the endgame study: **the polar dominates the landing**. Nothing reaches the zone at the
 quality-2 floor; at the realistic quality 5 half the matrix lands in-zone. The lighter E16 and the full
