@@ -5,7 +5,7 @@
 #   make compile      mpy-cross the board tree (the authority on MicroPython syntax, incl. @viper)
 #   make preflight    install + data-consistency gates (also run inside the default scripts)
 #   make test-host    the control-hub tests (CPython, no hardware)
-#   make docs         regenerate the derived docs (pin map, architecture)
+#   make docs         regenerate the derived docs (pin map, architecture, telemetry schema)
 #   make docs-check   fail if a derived doc is stale
 #   make test-board   the on-board suite (needs the board on PORT; slow, not part of `check`)
 #
@@ -48,11 +48,13 @@ test-host:
 docs:
 	@python3 tools/gen_pinmap.py
 	@python3 tools/gen_graph.py
+	@python3 tools/gen_schema.py
 
 docs-check:
 	@echo "== derived docs up to date =="
 	@python3 tools/gen_pinmap.py --check
 	@python3 tools/gen_graph.py --check
+	@python3 tools/gen_schema.py --check
 
 test-board:
 	@$(MAKE) -C src/glider/test test PORT=$(PORT)
