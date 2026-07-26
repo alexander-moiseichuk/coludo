@@ -280,6 +280,7 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
 
         # --- the REAL control pipeline (mirrors flight._step): governor -> gate -> guidance -> PID ---
         stage_id = _STAGE.NAMES[stage]
+        roll_deg = pitch_deg = yaw_deg = 0  # per-axis demands for flight.csv (0 whenever fins are neutral)
         roll_cd = fixed.from_float(roll_m)
         pitch_cd = fixed.from_float(pitch_m)
         fin_governor.step(dt, stage_id < _STAGE.GLIDING, pitch_cd)
@@ -301,7 +302,10 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
                 roll_cmd = pids['roll'].step(law.roll_setpoint - roll_cd, dt_ms, roll_rate)
                 pitch_cmd = pids['pitch'].step(law.pitch_setpoint - pitch_cd, dt_ms, pitch_rate)
                 yaw_cmd = pids['yaw'].step(law.heading_error * fixed.SCALE, dt_ms, yaw_rate)
-                mix.actuate(roll_cmd // fixed.SCALE, pitch_cmd // fixed.SCALE, yaw_cmd // fixed.SCALE)
+                roll_deg = roll_cmd // fixed.SCALE
+                pitch_deg = pitch_cmd // fixed.SCALE
+                yaw_deg = yaw_cmd // fixed.SCALE
+                mix.actuate(roll_deg, pitch_deg, yaw_deg)
             else:                                       # boost still on the rod -> neutral
                 mix.actuate(0, 0, 0)
         fins = tuple(fins_by_name[name].angle for name in _FINS)
@@ -315,9 +319,15 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         else:                                           # non-control stage -> coast, fins neutral
             body.glide_step(dt, 0.0, 0.0, 0.0)
 
+        wind_speed = (body.wind_e ** 2 + body.wind_n ** 2) ** 0.5
+        wind_from = int(math.degrees(math.atan2(-body.wind_e, -body.wind_n))) % 360 if wind_speed else 0
         rows.sample(t, accel_m, altitude_m, sensors['altitude'] - body.elev0, heading_m, roll_m, pitch_m,
                     sensors['position'], agl, laser_range_m, body.speed, fins,
-                    (roll_rate_dps, pitch_rate_dps, yaw_rate_dps))
+                    (roll_rate_dps, pitch_rate_dps, yaw_rate_dps),
+                    pitot=(pitot_handle.value_now if pitot_on else None),
+                    control=(stage_id, 1 if active else 0, fin_governor.airspeed(), mix.limit,
+                             law.roll_setpoint, law.pitch_setpoint, law.heading_error,
+                             roll_deg, pitch_deg, yaw_deg, wind_speed, wind_from))
         rows.health(t, stage)
         if body.gliding and body.alt <= 0.0:             # touched down
             rows.event(t, 'controller :: stage -> done')
@@ -349,9 +359,15 @@ class _Capture:
         self._tlm('laser_agl.csv', 'uptime;agl')
         self._tlm('fins.csv', 'uptime;eleron_left;eleron_right;yaw')  # commanded servo angles (deg)
         self._tlm('health.csv', 'uptime;temp;mem_free;load')          # board vitals (board_health.py)
+        # flight.csv: the CONTROL STATE, byte-identical in shape to the board's (tasks/flight.py) so a
+        # sim capture exercises the same report panels a real capture will (findings §27.1/§27.2)
+        self._tlm('flight.csv', 'uptime;stage;active;airspeed;fin_cap;roll_sp;pitch_sp;heading_err;'
+                                'roll_cmd;pitch_cmd;yaw_cmd;wind_speed;wind_from')
+        # the SDP810 pitot as the board's driver records it (Pa fixnum + derived m/s)
+        self._tlm('airspeed_sdp810.csv', 'uptime;dynamic_pressure;airspeed;temperature')
 
     def sample(self, t, accel, altitude, elevation, heading, roll, pitch, position, agl, laser_range, speed,
-               fins, rate):
+               fins, rate, control=None, pitot=None):
         microseconds = int(t * 1e6)
         self._tlm('accel_adxl375.csv', '%u;0.000;0.000;%.3f' % (microseconds, accel))
         self._tlm('baro_icp10111.csv', '%u;%.2f;21.0;100000;%.2f' % (microseconds, altitude, elevation))
@@ -366,6 +382,12 @@ class _Capture:
                       % (microseconds, position[0], position[1], speed * 1.94384, heading))
         if agl <= laser_range:                           # the laser only resolves the last few metres
             self._tlm('laser_agl.csv', '%u;%.3f' % (microseconds, agl))
+        if pitot is not None:                            # SDP810: q = 0.5*rho*v^2, Pa as a x100 fixnum
+            self._tlm('airspeed_sdp810.csv', '%u;%d;%.2f;2500'
+                      % (microseconds, int(0.5 * 1.225 * pitot * pitot * 100), pitot))
+        if control is not None:                          # the control state the board's flight task records
+            self._tlm('flight.csv', '%u;%d;%d;%.1f;%d;%d;%d;%d;%d;%d;%d;%.1f;%d'
+                      % ((microseconds,) + control))
 
     def health(self, t, stage):
         """

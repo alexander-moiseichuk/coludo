@@ -30,27 +30,8 @@ def _require_plotly():
     return go, pio, make_subplots
 
 
-def find_stream(streams, *fields, prefer=None):
-    """
-    The stream carrying all the given fields.
-
-    When several match, one whose name contains `prefer` wins (e.g. the dedicated ADXL high-g accel
-    over the IMU's low-g accel).
-
-    Args:
-        streams - the parsed streams, keyed by name.
-        fields - the field names the stream must carry (all of them).
-        prefer - a name substring to break ties toward a preferred stream.
-
-    Returns:
-        The matching stream, or None when none carry every field.
-    """
-    matches = [stream for stream in streams.values() if all(field in stream.fields for field in fields)]
-    if prefer:
-        for stream in matches:
-            if prefer in stream.name:
-                return stream
-    return matches[0] if matches else None
+# role-based stream lookup now lives with the parser, so every renderer resolves streams the same way
+find_stream = flight_telemetry.find_stream
 
 
 def stage_events(logs):
@@ -110,6 +91,8 @@ def build(streams, logs, go, make_subplots):
     health = find_stream(streams, 'load')  # board_health.csv: temp (C), mem_free (bytes), load (%)
     power = find_stream(streams, 'voltage_mv', 'current_ma', 'power_mw')  # power_ina226.csv: integer mV/mA/mW
     gyro = find_stream(streams, 'gx', 'gy', 'gz', prefer='lsm')  # imu_lsm6dso32.csv: gyro rate (deg/s) -> PID D term
+    pitot = find_stream(streams, 'dynamic_pressure')  # airspeed_sdp810.csv: the DIRECT pitot measurement
+    control = find_stream(streams, 'fin_cap')  # flight.csv: the control state (findings §27.2)
 
     trajectory = go.Figure()
     if gnss is not None:
@@ -132,12 +115,14 @@ def build(streams, logs, go, make_subplots):
     else:
         trajectory.update_layout(title='trajectory — no GNSS fix in this capture')
 
-    series = make_subplots(rows=9, cols=1, shared_xaxes=True, vertical_spacing=0.020,
+    series = make_subplots(rows=11, cols=1, shared_xaxes=True, vertical_spacing=0.017,
                            subplot_titles=('|accel| (g)', 'altitude / elevation (m)', 'speed (m/s)',
                                            'attitude (deg)', 'fins — commanded (deg)',
                                            'board health — load %, temp °C, mem MB', 'agl (m)',
                                            'engine — mV / mA / mW / over-current alerts (INA226)',
-                                           'gyro rate — LSM6DSO32 (deg/s) → PID D term'))
+                                           'gyro rate — LSM6DSO32 (deg/s) → PID D term',
+                                           'airspeed (m/s) — pitot vs governor estimate vs GNSS ground',
+                                           'control authority (deg) — fin cap vs per-axis demand'))
     if accel is not None:
         times, ax = accel.column('ax')
         _, ay = accel.column('ay')
@@ -185,6 +170,39 @@ def build(streams, logs, go, make_subplots):
             if field in gyro.fields:
                 times, values = gyro.column(field)
                 series.add_trace(go.Scatter(x=times, y=values, name=label), row=9, col=1)
+    """
+    AIRSPEED (findings §27.4): the pitot is the direct measurement, the governor estimate is what the fin
+    cap was actually computed from, and GNSS ground speed is the third opinion -- overlaid, their spread
+    IS the calibration signal (a calm pass should collapse pitot onto ground speed; see
+    tools/airspeed_calibrate.py) and their divergence flags wind, saturation or a fallback to the accel
+    backbone.
+    """
+    if pitot is not None and 'airspeed' in pitot.fields:
+        times, values = pitot.column('airspeed')
+        series.add_trace(go.Scatter(x=times, y=values, name='pitot'), row=10, col=1)
+    if control is not None and 'airspeed' in control.fields:
+        times, values = control.column('airspeed')
+        series.add_trace(go.Scatter(x=times, y=values, name='estimate (governor)'), row=10, col=1)
+    if gnss is not None and 'speed_kn' in gnss.fields:
+        times, knots = gnss.column('speed_kn')
+        series.add_trace(go.Scatter(x=times, y=[k / 1.94384 for k in knots], name='GNSS ground',
+                                    line=dict(dash='dot')), row=10, col=1)
+    """
+    CONTROL AUTHORITY (findings §27.16): fin_cap is the 1/v² limit the governor imposed, and the per-axis
+    demands are what the PID asked for. Where a demand rides the cap the loop was CLIPPED -- previously
+    invisible, since only the resulting fin angles were ever recorded.
+    """
+    if control is not None:
+        times, cap = control.column('fin_cap')
+        series.add_trace(go.Scatter(x=times, y=cap, name='fin cap', line=dict(width=3)), row=11, col=1)
+        series.add_trace(go.Scatter(x=times, y=[-value for value in cap], name='fin cap (−)',
+                                    line=dict(width=3), showlegend=False), row=11, col=1)
+        for field, label in (('roll_cmd', 'roll demand'), ('pitch_cmd', 'pitch demand'),
+                             ('yaw_cmd', 'yaw demand')):
+            if field in control.fields:
+                times, values = control.column(field)
+                series.add_trace(go.Scatter(x=times, y=values, name=label), row=11, col=1)
+
     events = stage_events(logs)
     for time_s, label in events:
         series.add_vline(x=time_s, line_dash='dash', line_color='crimson',
@@ -202,7 +220,7 @@ def build(streams, logs, go, make_subplots):
                               showarrow=False, xanchor='left', yanchor='bottom',
                               font=dict(color='crimson', size=12))
     # 'x unified' -> hovering (or clicking) any time shows every panel's value at that instant
-    series.update_layout(height=1850, title=title, showlegend=True, hovermode='x unified')
+    series.update_layout(height=2250, title=title, showlegend=True, hovermode='x unified')
     series.update_xaxes(title_text='time (s)', row=9, col=1)
     return trajectory, series
 
