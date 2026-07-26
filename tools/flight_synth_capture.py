@@ -28,6 +28,12 @@ def generate() -> str:
     tlm('imu_bno055.csv', 'uptime;heading;roll;pitch')
     tlm('gnss.csv', 'uptime;lat;lon;speed_kn;course')
     tlm('laser_agl.csv', 'uptime;agl')
+    # the fixture must look like a REAL capture -- it is what the tool tests and the demo render
+    # against, so a stream the tools depend on must be present here too (findings §27.1/§27.8)
+    tlm('fins.csv', 'uptime;eleron_left;eleron_right;yaw')
+    tlm('flight.csv', 'uptime;stage;active;airspeed;fin_cap;roll_sp;pitch_sp;heading_err;'
+                      'roll_cmd;pitch_cmd;yaw_cmd;wind_speed;wind_from')
+    tlm('airspeed_sdp810.csv', 'uptime;dynamic_pressure;airspeed;temperature')
 
     step, t = 0.05, 0.0
     while t < 16.0:
@@ -53,6 +59,19 @@ def generate() -> str:
             tlm('gnss.csv', '%u;%.6f;%.6f;0.0;0.0' % (microseconds, latitude, longitude))
         if elevation < 4.0:  # laser only resolves the last few metres
             tlm('laser_agl.csv', '%u;%.3f' % (microseconds, elevation))
+        gliding = t >= 2.0
+        left = 90 + int(6.0 * math.sin(t * 1.3)) if gliding else 90
+        right = 180 - left if gliding else 90
+        rudder = 90 + int(4.0 * math.cos(t * 0.9)) if gliding else 90
+        tlm('fins.csv', '%u;%d;%d;%d' % (microseconds, left, right, rudder))
+        airspeed = 14.0 + 1.5 * math.sin(t / 2.0) if gliding else 0.0
+        tlm('airspeed_sdp810.csv', '%u;%d;%.2f;2500'
+            % (microseconds, int(0.5 * 1.225 * airspeed * airspeed * 100), airspeed))
+        cap = 45 if airspeed < 12.0 else max(8, int(45.0 * (12.0 / airspeed) ** 2))
+        tlm('flight.csv', '%u;%d;%d;%.1f;%d;%d;%d;%d;%d;%d;%d;0.0;0'
+            % (microseconds, 3 if gliding else 2, 1 if gliding else 0, airspeed, cap,
+               int(100 * 5.0 * math.cos(t / 2.0)), -600, int(3.0 * math.sin(t)),
+               left - 90, 0, rudder - 90))
         t += step
 
     lines.append('2000000 separation :: separated -> gliding')
