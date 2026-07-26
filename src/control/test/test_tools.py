@@ -185,6 +185,32 @@ def test_airspeed_calibration_from_an_assembled_capture():
     assert empty_pitot == [] and len(some_gnss) == 400
 
 
+def test_ticks_us_wraparound_is_unwrapped():
+    """
+    MicroPython's ticks_us wraps at 2**30 us (~17.9 min of uptime) and the recorder stamps rows raw.
+
+    A board powered up, set up, waiting on a GNSS fix and then flown crosses that boundary mid-capture,
+    after which stamps jump BACKWARDS by a full period and every downstream duration goes negative --
+    observed twice on the bench as a flight reported -1015.6 s long at 7.3e12 deg/s of fin travel.
+    The shared parser unwraps it, so captures already on disk are repaired too.
+    """
+    period = flight_telemetry._TICKS_PERIOD
+    lines = ['@20260726_090000_1_flight.csv@uptime;fin_cap']
+    stamps = [period - 30000, period - 20000, period - 10000, 10000, 20000, 30000]  # wraps mid-stream
+    for stamp in stamps:
+        lines.append('@20260726_090000_1_flight.csv@%d;20' % stamp)
+    streams, _logs = flight_telemetry.parse('\n'.join(lines) + '\n')
+    times = [row[0] for row in streams['flight.csv'].rows]
+    assert times == sorted(times), times                 # monotonic after unwrapping
+    assert times[-1] - times[0] == 60000, times          # 60 ms total, not a negative period-sized jump
+
+    # a capture that never wraps is untouched
+    plain = ['@20260726_090000_1_flight.csv@uptime;fin_cap'] + \
+            ['@20260726_090000_1_flight.csv@%d;20' % (i * 1000) for i in range(5)]
+    streams, _logs = flight_telemetry.parse('\n'.join(plain) + '\n')
+    assert [row[0] for row in streams['flight.csv'].rows] == [0, 1000, 2000, 3000, 4000]
+
+
 def test_parser_edge_cases():
     """Malformed rows degrade instead of crashing (§26.28, §26.32) -- captures do get truncated."""
     streams, _logs = flight_telemetry.parse(
@@ -204,6 +230,7 @@ test_kpi_survives_a_partial_capture()
 test_svg_renders_a_track()
 test_airspeed_calibration_recovers_a_known_density()
 test_airspeed_calibration_from_an_assembled_capture()
+test_ticks_us_wraparound_is_unwrapped()
 test_parser_edge_cases()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, svg render, '
       'airspeed calibration fit, parser edge cases')

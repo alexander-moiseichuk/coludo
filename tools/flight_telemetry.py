@@ -131,6 +131,50 @@ def _synthesise_fins(streams: dict) -> None:
     streams['fins.csv'] = fused
 
 
+_TICKS_PERIOD = 1 << 30  # MicroPython ticks_us wraps here (~1073.7 s ~ 17.9 min of board uptime)
+
+
+def _unwrap(streams: dict, logs: list) -> None:
+    """
+    Undo the ticks_us WRAPAROUND so a long-uptime capture is not silently mangled.
+
+    MicroPython's `time.ticks_us()` wraps at 2**30 us -- about **17.9 minutes** of board uptime -- and
+    the recorder stamps rows with it raw. A board powered up, set up, waiting on a GNSS fix and then
+    flown will cross that boundary mid-capture, after which stamps jump BACKWARDS by 2**30 and every
+    duration computed downstream goes negative. Seen twice in one bench session (a flight reported as
+    -1015.6 s long, at 7.3e12 deg/s of fin travel) -- and it is a plausible field-day sequence, not a
+    bench artifact.
+
+    Fixed here, in the one parser every tool shares, so it also repairs captures ALREADY recorded
+    rather than only those taken after a firmware change. Per stream: walk in file order and add one
+    period each time a stamp drops by more than half a period (a real gap is never that large; a wrap
+    always is).
+
+    Args:
+        streams - {name: Stream}, mutated in place.
+        logs - the (uptime_us | None, line) list, mutated in place.
+
+    Returns:
+        None.
+    """
+    half = _TICKS_PERIOD // 2
+    for stream in streams.values():
+        offset, previous = 0, None
+        for row in stream.rows:
+            if previous is not None and row[0] + offset < previous - half:
+                offset += _TICKS_PERIOD
+            row[0] += offset
+            previous = row[0]
+    offset, previous = 0, None
+    for index, (stamp, line) in enumerate(logs):
+        if stamp is None:
+            continue
+        if previous is not None and stamp + offset < previous - half:
+            offset += _TICKS_PERIOD
+        logs[index] = (stamp + offset, line)
+        previous = stamp + offset
+
+
 def parse(text: str):
     """
     Parse a raw capture into aligned streams and log lines.
@@ -170,6 +214,7 @@ def parse(text: str):
         else:  # a log line: '<ticks_us> <descriptor> :: <message>'
             first = line.split(' ', 1)[0]
             logs.append((int(first) if first.isdigit() else None, line))
+    _unwrap(streams, logs)
     """
     Normalise every timestamp to a flight-relative origin. The recorder stamps raw board uptime
     (ticks_us), which starts wherever the board happened to be at boot -- so an un-normalised plot reads
