@@ -40,6 +40,25 @@ except ImportError:  # host (CPython): board-only; the timer-scheduled path runs
     Timer = None
 
 _STAGE = controller_mod.Stage
+
+
+def _round_or_none(value):
+    """
+    Round a metric that is legitimately ABSENT, without turning the absence into a number.
+
+    guidance.landing_turn_radius() returns None when the glider is too slow to bank -- the turn radius
+    is unbounded there, and round(None) would raise while a 0.0 would read on the panel as perfect
+    precision. None travels to the operator as 'no value', which is what it is.
+
+    Args:
+        value - the metric, or None when it does not exist right now.
+
+    Returns:
+        The rounded integer, or None.
+    """
+    return None if value is None else round(value)
+
+
 _TLM_PERIOD_US = const(100000)  # 10 Hz: the control state is SAMPLED, not traced (the loop runs at 100)
 
 
@@ -433,7 +452,7 @@ class Flight(task.Task):
             'heading': round(fixed.to_float(value[0])) if isinstance(value[0], int) else round(value[0]),
             'roll': round(fixed.to_float(value[1])), 'pitch': round(fixed.to_float(value[2]))}
         return {'airspeed': round(self._governor.airspeed(), 1), 'fin_cap': self._governor.cap(),
-                'active': self._active, 'reach': reach, 'r_min_m': round(self._guidance.landing_turn_radius()),
+                'active': self._active, 'reach': reach, 'r_min_m': _round_or_none(self._guidance.landing_turn_radius()),
                 'attitude': attitude, 'fins': self._mixer.angles(),
                 'heading_error': self._guidance.heading_error,
                 'wind': {'speed': round(self._wind.speed(), 1), 'from': round(self._wind.direction())}}

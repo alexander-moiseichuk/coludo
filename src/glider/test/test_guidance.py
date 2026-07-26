@@ -422,7 +422,23 @@ def test_min_turn_radius():
                              _StubGovernor(14.0), _PositionHandle(), _AglHandle(), _AglHandle(100.0))
     assert abs(slow.min_turn_radius(45.0) - 20.0) < 0.5   # 14²/(9.81·tan45) ≈ 20 m -- the endgame floor
     assert abs(slow.min_turn_radius(30.0) - 34.6) < 0.5   # a gentler bank -> a wider turn
-    assert abs(slow.landing_turn_radius() - 20.0) < 0.5   # defaults to the 45° land-bank limit
+    """
+    landing_turn_radius() reports the floor at the bank the endgame ACTUALLY holds -- the gated bank
+    (5.2), not the fixed 45° land limit. At 14 m/s the gate allows ~60° (capped), so the reported
+    bound is ~11.5 m, not the 20.0 m the fixed limit would claim. Quoting 20 m under-states what the
+    glider can do, on the very panel used to decide land-short vs stretch.
+    """
+    assert abs(slow.landing_turn_radius() - slow.min_turn_radius(slow.endgame_bank())) < 1e-6
+    assert slow.landing_turn_radius() < 20.0, slow.landing_turn_radius()
+    # too slow to bank at all -> the radius is UNBOUNDED, reported as None. It used to be 0.0, which
+    # reads on the panel as PERFECT precision -- the exact inverse of the truth.
+    crawling = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(_ZONE),
+                                 _StubGovernor(5.0), _PositionHandle(), _AglHandle(), _AglHandle(100.0))
+    assert crawling.endgame_bank() == 0.0 and crawling.landing_turn_radius() is None
+    # gate disabled -> back to the fixed land-bank limit, unchanged behaviour
+    ungated = guidance.Guidance(guidance.GuidanceConfig({'stall_speed_1g': 0}, 1000), _StubMission(_ZONE),
+                                _StubGovernor(14.0), _PositionHandle(), _AglHandle(), _AglHandle(100.0))
+    assert abs(ungated.landing_turn_radius() - 20.0) < 0.5
     fast = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(_ZONE),
                              _StubGovernor(20.0), _PositionHandle(), _AglHandle(), _AglHandle(100.0))
     assert fast.min_turn_radius(45.0) > slow.min_turn_radius(45.0)  # R ∝ v² -> faster flight widens it

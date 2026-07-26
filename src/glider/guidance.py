@@ -323,10 +323,27 @@ class Guidance:
             return 0.0  # too slow to bank without stalling -> hold the wings level until speed recovers
         return min(config.endgame_max_bank, math.degrees(math.acos((floor / airspeed) ** 2)))
 
-    def landing_turn_radius(self) -> float:
-        """The endgame turn-radius floor at the LAND-bank limit -- the precision bound reported for a
-        land-short-vs-stretch decision (flight-panel telemetry)."""
-        return self.min_turn_radius(self._config.land_bank_limit)
+    def landing_turn_radius(self):
+        """
+        The endgame turn-radius floor at the bank the endgame will ACTUALLY hold -- the precision bound
+        reported for a land-short-vs-stretch decision (flight-panel telemetry).
+
+        Off `endgame_bank()`, not the fixed `land_bank_limit`: since the airspeed-gated bank landed
+        (#5.2) the spiral banks as steep as the live airspeed safely allows, up to endgame_max_bank
+        (60 deg), so quoting the 45 deg figure UNDER-states what the glider can do -- 20.0 m against
+        11.5 m at 14 m/s. An operator deciding whether the zone is still reachable was reading a bound
+        the aircraft had already beaten.
+
+        Args:
+            (none -- reads the live gated bank)
+
+        Returns:
+            The minimum turn radius in metres; None when the glider is too slow to bank at all, where
+            the radius is UNBOUNDED. That case used to return 0.0 -- a radius of zero reads as perfect
+            precision on the panel, the exact inverse of the truth.
+        """
+        bank = self.endgame_bank()
+        return self.min_turn_radius(bank) if bank > 0.0 else None
 
     def enter(self, heading: float, roll: fixnum, pitch: fixnum) -> None:
         """
