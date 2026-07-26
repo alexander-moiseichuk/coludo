@@ -112,11 +112,11 @@ The resolved call tree from the control step, with GC-off risk flags per functio
       - `commons.fin_deflection_limit`
     - `airspeed.AirspeedEstimator.value` …
   - `flight.Flight._record`  — ⚠Tuple
+    - `wind.WindEstimator.direction`  — ∿math.atan2, math.degrees
+      - `wind.WindEstimator.components`  — ⚠Tuple x2
     - `governor.Governor.airspeed`
       - `airspeed.AirspeedEstimator.value` …
     - `wind.WindEstimator.speed`  — ∿math.sqrt
-      - `wind.WindEstimator.components`  — ⚠Tuple x2
-    - `wind.WindEstimator.direction`  — ∿math.atan2, math.degrees
       - `wind.WindEstimator.components`  — ⚠Tuple x2 …
   - `guidance.Guidance.setpoint`  — ⌕.get()
   - `flight.Flight._run_pid`  — ⚠Tuple
@@ -137,9 +137,9 @@ Candidates to review (a flag in a GC-off 100 Hz path is a per-step heap-churn / 
 
 - `flight.Flight._tick` — ⚠.values()
 - `flight.Flight._record` — ⚠Tuple
-- `wind.WindEstimator.speed` — ∿math.sqrt
-- `wind.WindEstimator.components` — ⚠Tuple x2
 - `wind.WindEstimator.direction` — ∿math.atan2, math.degrees
+- `wind.WindEstimator.components` — ⚠Tuple x2
+- `wind.WindEstimator.speed` — ∿math.sqrt
 - `guidance.Guidance.setpoint` — ⌕.get()
 - `flight.Flight._run_pid` — ⚠Tuple
 - `flight.Flight._actuate` — ⌕.find()
