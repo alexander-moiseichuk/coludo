@@ -74,9 +74,20 @@ first powered flight.
 - [ ] *(if it runs on the ground)* the wind estimate populates from the GNSS triangle — sanity only
 
 ## Phase 6 — Airspeed in motion (the new SDP810)
-- [ ] Jog with the **pitot exposed to airflow** (or gently blow the **P+** tube) → dynamic pressure rises, airspeed reads a few m/s (a brisk 5 m/s jog ≈ 15 Pa ≈ 5 m/s)
+
+`src/glider/test/live_pitot.py` prints q, airspeed and the governor's own verdict live, so this whole
+phase is one run of it: `mpremote connect $PORT run live_pitot.py` (30 s window). Bench-validated
+2026-07-26 with the values below, so treat a deviation as a real finding.
+
+- [ ] **At rest** → q sits at the tare floor (**~-0.02 Pa**, ~0.2 m/s equivalent) → verdict **IGNORED
+      (below floor)**. A blocked or disconnected tube looks EXACTLY like this, which is why the floor
+      exists — a near-zero reading must never reach the estimate
+- [ ] Jog with the **pitot exposed to airflow** (or gently blow the **P+** = RIGHT tube) → **TRUSTED (in
+      band)**; measured 12–103 Pa → 4.5–13.2 m/s
 - [ ] Confirm the governor's airspeed now tracks the **pitot** (the fin-authority cap tightens as airspeed rises)
-- [ ] Blow **hard** → the reading **rails ~30 m/s** (±500 Pa) → the governor **drops back to the accel+GNSS backbone** (saturation guard) — the safety path
+- [ ] Blow **hard** → the cell **rails at ~546 Pa → 30.4 m/s** (a pinned, repeating value) → verdict
+      **IGNORED (railed)** → the governor drops back to the accel+GNSS backbone — the safety path.
+      `pitot_max_ms` 28 sits just below the rail, which is what makes the guard fire before the pin
 - [ ] At rest again → airspeed returns to ~0 (tare holds)
 
 ## Phase 7 — Minimal acceleration / boost-detect (no ignition)
