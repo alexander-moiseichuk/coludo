@@ -117,7 +117,7 @@ async def amain():
 
     # setup_retries: a device that fails its first setup comes up on a retry (breadboard contacts)
     FlakySensor.attempts = 0
-    retry_cfg = {'board': {'id': 'r', 'mcu': 'esp32p4'}, 'setup_retries': 2,
+    retry_cfg = {'board': {'id': 'r', 'mcu': 'esp32p4', 'setup_retries': 2},
                  'components': [{'name': 'flaky', 'driver': 'flaky', 'enabled': True}]}
     rc = controller.Controller(retry_cfg, registry={'flaky': FlakySensor}, log=lambda m: None)
     assert await rc.setup() is True

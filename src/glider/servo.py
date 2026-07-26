@@ -3,7 +3,7 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 Shared servo infrastructure, sibling of the bus helpers (i2cbus/spibus). The slew gate bounds how many
 fins slew at once (the boost-rail current transient): a process-wide counting semaphore so
-`servo_concurrency` (board config) caps total simultaneous slews across every servo driver.
+`fins.concurrency` (board config) caps total simultaneous slews across every servo driver.
 Servo-type-agnostic -- each driver (sg90, future mg90s/mg996r) imports the gate and adds its own pulse
 range + slew timing.
 """
@@ -63,7 +63,7 @@ class Gate:
         """
         The process-wide slew gate, created once and shared by every servo driver.
 
-        The first servo's `permits` wins, so `servo_concurrency` bounds simultaneous slews board-wide
+        The first servo's `permits` wins, so `fins.concurrency` bounds simultaneous slews board-wide
         rather than per driver.
 
         Args:

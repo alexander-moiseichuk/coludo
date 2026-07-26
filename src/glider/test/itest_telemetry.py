@@ -13,6 +13,7 @@ Run on-board: mpremote connect PORT run test/itest_telemetry.py
 
 import asyncio
 
+import config
 import config_default
 import databoard
 import drivers
@@ -31,7 +32,7 @@ async def _bringup(cfg):
     """Mirror main.bringup: register drivers/tasks, create the Mission, build + start enabled tasks."""
     drivers.load()
     tasks.load()
-    mission.Mission(max_range_m=cfg.get('max_range_m', 200))
+    mission.Mission(max_range_m=(config.device(cfg, name='field') or {}).get('max_range_m', 200))
     flight_controller = Controller(cfg, log=_log)
     await flight_controller.setup()
     await flight_controller.start()

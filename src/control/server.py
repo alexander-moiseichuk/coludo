@@ -12,6 +12,7 @@ cc_protocol.py is shared with the firmware (symlinked).
 import asyncio
 import json
 import time
+import traceback
 
 import board
 import commands
@@ -139,8 +140,8 @@ class Server:
             await self._poll(client)
         except (asyncio.TimeoutError, ConnectionError, asyncio.IncompleteReadError) as error:
             self.log('%s link lost %r' % (client.id or client.peer, error))
-        except Exception as error:
-            self.log('error %r' % error)
+        except Exception as error:  # keep the traceback so the root cause is visible
+            self.log('error %r\n%s' % (error, traceback.format_exc()))
         finally:
             self._drop_stream(client.id)  # stop any log stream for this board
             client.online = False
@@ -214,7 +215,30 @@ class Server:
             None; registers the streaming task in self.streams.
         """
         self._drop_stream(client.id)
-        self.streams[client.id] = (asyncio.create_task(self._stream(client, interval_ms, kind)), kind)
+        task = asyncio.create_task(self._stream(client, interval_ms, kind))
+        task.add_done_callback(lambda finished: self._stream_done(client.id, finished))
+        self.streams[client.id] = (task, kind)
+
+    def _stream_done(self, board_id, task) -> None:
+        """
+        Done-callback for a stream task: log any crash and forget a stale entry.
+
+        A cancelled task (replaced or stopped on purpose) is expected and not logged; a task that
+        raised leaves a dead entry in self.streams, so drop it here -- but only if the entry still
+        points at this task, so a just-restarted stream is left intact.
+
+        Args:
+            board_id - the board the stream belonged to.
+            task - the finished streaming task.
+
+        Returns:
+            None; removes the stale stream entry and logs any exception.
+        """
+        entry = self.streams.get(board_id)
+        if entry is not None and entry[0] is task:
+            del self.streams[board_id]
+        if not task.cancelled() and task.exception() is not None:
+            self.log('stream %s crashed: %r' % (board_id, task.exception()))
 
     def _drop_stream(self, board_id):
         """
@@ -316,7 +340,7 @@ class Server:
                 raw = await reader.readline()
                 if not raw:
                     return
-                text = raw.decode().strip()
+                text = raw.decode('ascii', errors='replace').strip()  # binary telnet garbage must not kill the session
                 if not text:
                     continue
                 for line in await self._dispatch(text, session):

@@ -49,7 +49,7 @@ class Separation(task.Task):
         self._ok = True
         return True
 
-    def _on_edge(self, pin) -> None:
+    def _on_edge(self, _unused_pin) -> None:
         """IRQ: the line changed -- wake run() to debounce and act. ThreadSafeFlag.set() is safe."""
         self._flag.set()
 

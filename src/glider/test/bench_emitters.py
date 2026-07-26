@@ -40,9 +40,11 @@ def _clamp_viper(low: int, value: int, high: int) -> int:
     return value
 
 
-# NOTE: @micropython.asm_rv32 is NOT available on this firmware build ("invalid micropython decorator")
-# -- inline RV32 assembly isn't compiled into the board's MicroPython, so asm is off the table without a
-# firmware rebuild. Only @native + @viper are usable (both measured here).
+"""
+NOTE: @micropython.asm_rv32 is NOT available on this firmware build ("invalid micropython decorator")
+-- inline RV32 assembly isn't compiled into the board's MicroPython, so asm is off the table without a
+firmware rebuild. Only @native + @viper are usable (both measured here).
+"""
 
 
 """Float multiply-chain (a pid.step-shaped body): bytecode vs native."""

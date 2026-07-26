@@ -24,9 +24,11 @@ def load() -> None:
         RuntimeError - if no driver modules are discovered (wrong CWD, or a frozen build os.listdir
             cannot see), so the failure is loud rather than a silent empty registry.
     """
-    # List this package's OWN directory, taken from __file__ ('drivers/__init__.py' -> 'drivers'):
-    # __name__ is a DOTTED module name that breaks os.listdir once the package is nested, and os.path
-    # is absent on MicroPython (so os.path.dirname is not an option).
+    """
+    List this package's OWN directory, taken from __file__ ('drivers/__init__.py' -> 'drivers'):
+    __name__ is a DOTTED module name that breaks os.listdir once the package is nested, and os.path
+    is absent on MicroPython (so os.path.dirname is not an option).
+    """
     count = 0
     for entry in os.listdir(__file__.rsplit('/', 1)[0]):
         if entry.startswith('__') or not (entry.endswith('.py') or entry.endswith('.mpy')):

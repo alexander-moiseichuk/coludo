@@ -48,7 +48,8 @@ class Flight(task.Task):
 
     async def setup(self) -> bool:
         board = self.controller.config
-        self._mixer = mixer.Mixer(board.get('mixer', {}))
+        fins = board.get('fins', {})
+        self._mixer = mixer.Mixer(fins.get('mixer', {}))
         self._schedule_hz: int = self.config.get('schedule_hz', 100)  # > 0 -> timer; 0 -> asyncio at period_ms
         self._period_ms: int = self.config.get('period_ms', 20)
         self._dt: float = (1.0 / self._schedule_hz) if self._schedule_hz > 0 else (self._period_ms / 1000.0)
@@ -63,13 +64,16 @@ class Flight(task.Task):
         self._pids = (self._pid['roll'], self._pid['pitch'], self._pid['yaw'])
         self._attitude = databoard.Databoard.parameter('attitude')  # (heading, roll, pitch)
         self._rate = databoard.Databoard.parameter('rate')  # (roll, pitch, yaw) angular rate -> PID D term
-        # the governor (governor.py): airspeed estimate -> dynamic-pressure fin-authority cap on the
-        # mixer, adaptively throttled once the glide settles. Reads accel (backbone) + GNSS speed
-        # (corrector) through injected databoard handles; fin_limit_multiplier is the safety dial.
+        """
+        the governor (governor.py): airspeed estimate -> dynamic-pressure fin-authority cap on the mixer,
+        adaptively throttled once the glide settles. Reads accel (backbone) + GNSS speed (corrector)
+        through injected databoard handles; fins.limit_multiplier is the safety dial.
+        """
         accel = databoard.Databoard.parameter('accel')  # (x, y, z) in g -> airspeed integration
         gnss_speed = databoard.Databoard.parameter('speed')  # GNSS ground speed (m/s) corrector
+        pitot = databoard.Databoard.parameter('airspeed')  # SDP810 DIRECT airspeed (m/s), the preferred source
         self._governor = governor.Governor(governor.GovernorConfig(self.config), self._mixer,
-                                           accel, gnss_speed, board.get('fin_limit_multiplier', 1.0))
+                                           accel, gnss_speed, pitot, fins.get('limit_multiplier', 1.0))
         # wind estimation (wind.py): the GNSS ground velocity vs the air velocity (airspeed × heading).
         # Fed at ~GNSS rate (throttled off the hot loop); the loiter enables its airspeed-free average.
         self._gnss_speed = gnss_speed
@@ -82,9 +86,11 @@ class Flight(task.Task):
         # the wind estimator is fed once per NEW GNSS sample (see _tick): track the course channel's last
         # push stamp so it self-tunes to the receiver's rate (1/5/25 Hz) with no hardcoded feed period.
         self._wind_stamp = None
-        # the guidance law (guidance.py): per-stage setpoints + the three-tier heading resolution.
-        # The default tier-1 freshness gate is the GNSS channels' own databoard windows (the same
-        # point the databoard drops `source` to None), so it tracks the GNSS rate, not a magic number.
+        """
+        the guidance law (guidance.py): per-stage setpoints + the three-tier heading resolution. The
+        default tier-1 freshness gate is the GNSS channels' own databoard windows (the same point the
+        databoard drops `source` to None), so it tracks the GNSS rate, not a magic number.
+        """
         position = databoard.Databoard.parameter('position')  # (lat, lon) for landing-zone navigation
         agl = databoard.Databoard.parameter('agl')  # height above ground -> final-approach trigger
         elevation = databoard.Databoard.parameter('elevation')  # baro height -> the endgame band
@@ -231,6 +237,10 @@ class Flight(task.Task):
         """
         law = self._guidance  # the computed setpoint slots (no per-step tuple)
         roll_pid, pitch_pid, yaw_pid = self._pids  # bound once (no per-tick string-keyed dict probe)
+        cap = self._mixer.limit  # the governor's live 1/v² authority -> track the PID clamps to it (anti-windup)
+        roll_pid.set_limit(cap)
+        pitch_pid.set_limit(cap)
+        yaw_pid.set_limit(cap)
         rate = self._rate.value()  # (roll, pitch, yaw) rate or None -- no box: the gyro's stored tuple
         roll_rate, pitch_rate, yaw_rate = rate if rate is not None else (None, None, None)
         roll_cmd = roll_pid.step(law.roll_setpoint - roll, dt_ms, roll_rate)
@@ -264,11 +274,13 @@ class Flight(task.Task):
         self._actuate(0, 0, 0)
 
     async def run(self) -> None:
-        # finally covers BOTH exits -- a crash out of _tick (uncaught exception in a control stage)
-        # and an orderly cancel -- so the fins NEVER hold a live deflection while nobody is flying
-        # them (an uncaught crash used to leave the last command standing for the ~1-2 s
-        # watchdog window). finish() is idempotent (timer None check), so the Controller's own
-        # finish() on shutdown is a harmless second call. Zero cost on the hot path.
+        """
+        finally covers BOTH exits -- a crash out of _tick (uncaught exception in a control stage) and an
+        orderly cancel -- so the fins NEVER hold a live deflection while nobody is flying them (an uncaught
+        crash used to leave the last command standing for the ~1-2 s watchdog window). finish() is
+        idempotent (timer None check), so the Controller's own finish() on shutdown is a harmless second
+        call. Zero cost on the hot path.
+        """
         try:
             if self._schedule_hz > 0:
                 await self._run_timer()

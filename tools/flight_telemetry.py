@@ -47,11 +47,11 @@ class Stream:
 
 
 def _number(token: str):
-    """A telemetry cell -> float when it parses, else the raw string ('' stays '')."""
+    """A telemetry cell -> float when it parses; '' stays '' (blank), other non-numeric -> nan."""
     try:
         return float(token)
     except ValueError:
-        return token
+        return token if token == '' else float('nan')  # nan keeps downstream arithmetic from TypeError
 
 
 def parse(text: str):
@@ -93,10 +93,12 @@ def parse(text: str):
         else:  # a log line: '<ticks_us> <descriptor> :: <message>'
             first = line.split(' ', 1)[0]
             logs.append((int(first) if first.isdigit() else None, line))
-    # Normalise every timestamp to a flight-relative origin. The recorder stamps raw board uptime
-    # (ticks_us), which starts wherever the board happened to be at boot -- so an un-normalised plot reads
-    # ~600 s at boost, not 0. Subtract the earliest stamp seen so the capture (and every renderer keyed on
-    # these times) starts at t=0.
+    """
+    Normalise every timestamp to a flight-relative origin. The recorder stamps raw board uptime
+    (ticks_us), which starts wherever the board happened to be at boot -- so an un-normalised plot reads
+    ~600 s at boost, not 0. Subtract the earliest stamp seen so the capture (and every renderer keyed on
+    these times) starts at t=0.
+    """
     stamps = [row[0] for stream in streams.values() for row in stream.rows]
     stamps += [ts for ts, _ in logs if ts is not None]
     if stamps:

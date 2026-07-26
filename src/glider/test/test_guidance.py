@@ -63,8 +63,10 @@ class _StubMission:
     def endgame_heading(self):
         if self.zone is None:
             return guidance.Heading.FIG_O
-        wide = self.zone_aspect() > guidance.Heading.OO_ASPECT
-        return guidance.Heading.FIG_OO if wide else guidance.Heading.FIG_O
+        aspect = self.zone_aspect()
+        if aspect >= guidance.Heading.OO_ASPECT:
+            return guidance.Heading.FIG_OO
+        return guidance.Heading.FIG_OVAL if aspect >= guidance.Heading.OVAL_ASPECT else guidance.Heading.FIG_O
 
     def geometry(self):
         if self.zone is None:
@@ -277,11 +279,12 @@ def test_loiter_and_endgame_spiral():
 def test_endgame_pattern_selection():
     """
     'auto' (default) lets the Mission pick 'o' vs 'oo' by zone shape (oo when aspect > threshold); an
-    explicit config value overrides. _ZONE is a strip (aspect ~6.7 > 2) -> auto resolves to 'oo'.
+    explicit config value overrides. _ZONE is a long strip (aspect ~6.7 > OO_ASPECT) -> auto -> 'oo'.
     """
     import navigation
     square = ((48.001, 11.000), (48.000, 11.0015))  # aspect ~1 -> 'o'
-    assert navigation.zone_aspect(*_ZONE) > 2.0 and navigation.zone_aspect(*square) < 2.0
+    assert navigation.zone_aspect(*_ZONE) > guidance.Heading.OO_ASPECT
+    assert navigation.zone_aspect(*square) < guidance.Heading.OVAL_ASPECT
     assert _StubMission(_ZONE).endgame_heading() == guidance.Heading.FIG_OO   # strip -> oo (from the k-ratio)
     assert _StubMission(square).endgame_heading() == guidance.Heading.FIG_O   # square -> o
     # config strings resolve to Heading ids via guidance.Heading (to/from string, 'o-o' aliasing 'oo')

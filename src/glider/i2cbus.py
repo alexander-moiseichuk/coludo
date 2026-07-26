@@ -95,6 +95,23 @@ class Bus:
         async with self._lock:
             return self._i2c.readfrom_mem(addr, reg, count, addrsize=addrsize)
 
+    async def read_chip_id(self, addr: int, reg: int, addrsize: int = 8) -> int:
+        """
+        Read a device's one-byte identity register (WHO_AM_I / CHIP_ID).
+
+        Several drivers confirm the right chip answers at an address by reading a single id byte in
+        both probe and diagnose; this is that read, named so the intent is obvious at the call site.
+
+        Args:
+            addr - the device's I2C address.
+            reg - the identity register.
+            addrsize - the register-address width in bits (8 or 16).
+
+        Returns:
+            The identity byte.
+        """
+        return (await self.read(addr, reg, 1, addrsize))[0]
+
     async def read_into(self, addr: int, reg: int, buf, addrsize: int = 8) -> None:
         async with self._lock:
             self._i2c.readfrom_mem_into(addr, reg, buf, addrsize=addrsize)

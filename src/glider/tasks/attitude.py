@@ -29,7 +29,10 @@ import databoard
 import fixed
 import recorder
 import task
+from commons import const
 from fixed import fixnum  # centidegree fixed-point -- the one control scale (roll/pitch/yaw AND accel)
+
+_MAX_DT_MS = const(500)  # a gyro-integration gap longer than this (asyncio stall) -> clamp dt to nominal
 
 
 @task.activity('attitude')
@@ -109,9 +112,11 @@ class Attitude(task.Task):
             pitch_d = rate[1] * dt_ms // 1000
             yaw_d = rate[2] * dt_ms // 1000
             turning = abs(rate[2]) > self._turn_gate  # |yaw rate| -> coordinated-turn detector
-        # yaw: gyro-integrate (wrapped), then pull toward the GNSS ground track when moving -- an
-        # ABSOLUTE reference that bounds the gyro drift (no magnetometer), and it is the TRACK, which is
-        # what the nav steers by anyway. Weak blend (course_shift) so a crosswind crab averages out.
+        """
+        yaw: gyro-integrate (wrapped), then pull toward the GNSS ground track when moving -- an ABSOLUTE
+        reference that bounds the gyro drift (no magnetometer), and it is the TRACK, which is what the nav
+        steers by anyway. Weak blend (course_shift) so a crosswind crab averages out.
+        """
         self._yaw_cd = (self._yaw_cd + yaw_d) % 36000
         course = self._course.value()
         speed = self._speed.value()
@@ -151,6 +156,8 @@ class Attitude(task.Task):
             now = time.ticks_us()
             dt_ms = time.ticks_diff(now, self._last_us) // 1000
             self._last_us = now
+            if dt_ms > _MAX_DT_MS or dt_ms < 0:  # a long asyncio gap (I2C contention) -> nominal, not a huge
+                dt_ms = self._period_ms  # single gyro-integration jump the yaw would then hold permanently
             value, source, _age = self._attitude_param.read()
             if value is not None and source != self.name:
                 self._mirror(value)  # a higher-priority source is winning -> mirror it (stay warm/fresh)
@@ -163,7 +170,7 @@ class Attitude(task.Task):
             self._roll_cd = ((self._roll_cd + 18000) % 36000) - 18000   # wrap to (-180, 180] cd
             self._pitch_cd = ((self._pitch_cd + 18000) % 36000) - 18000
             self._yaw_cd %= 36000                                        # heading to [0, 360) cd
-            self._attitude.push((self._yaw_cd / 100.0, self._roll_cd, self._pitch_cd))  # heading float; r/p fixnum
+            self._attitude.push((fixed.to_float(self._yaw_cd), self._roll_cd, self._pitch_cd))  # heading float; r/p cd
 
     async def probe(self) -> str:
         """
@@ -187,9 +194,11 @@ class Attitude(task.Task):
     """Inspectable: the operator-facing backup-attitude snapshot (inspect/stats)."""
 
     def inspect(self) -> dict:
-        return {'name': self.name, 'free_running': self._free, 'seeded': self._seeded,
-                'roll': fixed.to_str(self._roll_cd), 'pitch': fixed.to_str(self._pitch_cd),
-                'heading': fixed.to_str(self._yaw_cd)}
+        status = task.Task.inspect(self)
+        status.update({'free_running': self._free, 'seeded': self._seeded,
+                       'roll': fixed.to_str(self._roll_cd), 'pitch': fixed.to_str(self._pitch_cd),
+                       'heading': fixed.to_str(self._yaw_cd)})
+        return status
 
     def stats(self) -> dict:
         return self.inspect()

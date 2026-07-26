@@ -63,7 +63,8 @@ async def amain():
     # interface up but not joined (no connect() called) -> inspect reflects it
     assert radio.isconnected() is False
     snapshot = radio.inspect()
-    assert set(snapshot.keys()) == {'ssid', 'tx_power', 'connected', 'rssi', 'ip'}
+    assert set(snapshot.keys()) == {'name', 'ok', 'healthy',  # the common Task.inspect base
+                                    'ssid', 'tx_power', 'connected', 'rssi', 'ip', 'networks'}
     assert snapshot['ssid'] == 'panda' and snapshot['connected'] is False
 
     # update: re-applying the same tx_power changes nothing

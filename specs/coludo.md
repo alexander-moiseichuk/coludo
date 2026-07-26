@@ -104,14 +104,18 @@ landing stage (the laser hammering I²C) — the single P4 core is mostly idle b
 is ample headroom. The asyncio loop runs **~3× faster than the 50 Hz sim rate** under this load, which is
 why `tasks/hitl.py` drives the model from a wall-clock accumulator rather than a fixed dt (see Phase-5).
 
-## Flight envelope (E16 / F15 — measured v3 masses)
+## Flight envelope (E16 / F15 — measured masses)
 
 Numbers to seed modelling and the HITL simulation (Phase-5), and to sanity-check sensor ranges and
-the launch-detect threshold. Derived from the **measured TMS-7 v3 masses**: the **booster with the
-motor** (ejects at separation) — E16 **165 g**, F15 **182 g** — and the **glider** (airframe +
-electronics) **285 g** as built, **235 g** the light build. So the full stack is **450 g (E16) /
-467 g (F15)** at liftoff (400/417 g light), and the *glide* runs on the glider alone. See
-[`hardware.md`](../doc/hardware.md) + [`models/TMS-7`](../models/TMS-7).
+the launch-detect threshold. Derived from the **measured TMS-7 v4 masses** (`models/TMS-7` README):
+the **booster with the motor** (ejects at separation) — E16 **185 g**, F15 **201 g** — and the
+**glider** (structure 115 g + electronics 155 g) **270 g** as built, **215 g** the light build. So
+the full stack is **455 g (E16) / 471 g (F15)** at liftoff (400/416 g light), and the *glide* runs on
+the glider alone. See [`hardware.md`](../doc/hardware.md) + [`models/TMS-7`](../models/TMS-7).
+
+The v4 remeasure (glider −15 g, booster +20 g — all within the ±10 g build tolerance; wing geometry
+unchanged) shifts the derived envelope below (a v3-mass HITL + analytic baseline) only marginally;
+`config_hitl` already carries the v4 masses, and a v4 re-sim will refresh the device numbers.
 
 **Boost assumptions (deliberately crude):** vertical launch, no wind; constant *average* motor
 thrust over the burn with propellant mass burning off linearly; drag `F = ½·ρ·v²·Cd·A` with
@@ -124,7 +128,7 @@ The **glide** rows are no longer an L/D guess: they are the fly-long trim law me
 (−7 m/s trim sink), so every glide duration is a FLOOR; the real airframe is expected at
 quality 4–6 and the polar re-calibrates from the first real glide telemetry.
 
-Numbers are the **full 285 g glider** (stack 450/467 g); the **235 g light build** climbs higher —
+Numbers are the **full 270 g glider** (stack 455/471 g); the **215 g light build** climbs higher —
 E16 **161 m**, F15 **345 m** apogee measured (159/357 m analytic) — and flies longer (40.5/71.3 s
 at the quality-2 floor). The `sim_model` integration of thrust − drag − gravity matches the analytic
 model to a few percent at the v3 masses too (E16-full 128 m analytic vs 130 m device, F15-full
@@ -132,7 +136,7 @@ model to a few percent at the v3 masses too (E16-full 128 m analytic vs 130 m de
 
 | Parameter | **E16** | **F15** |
 |---|---|---|
-| Liftoff mass (booster + 285 g glider) | ~450 g | ~467 g |
+| Liftoff mass (booster + 270 g glider) | ~455 g | ~471 g |
 | Total impulse / burn | 28 N·s / 1.8 s | 50 N·s / 3.5 s |
 | Peak accel — accelerometer reads (specific force) | **~7.8 g** (peak thrust 33 N) | **~5.8 g** (peak thrust 25 N) |
 | Early-boost — accelerometer reads | ~3.5 g | ~3.1 g |
@@ -145,8 +149,8 @@ model to a few percent at the v3 masses too (E16-full 128 m analytic vs 130 m de
 - *Accelerometer:* it reads **specific force** = kinematic acceleration **+ 1 g**. Peak is only ~6–9 g,
   so even the BNO055 (±16 g) would not clip — but the ADXL375 (±200 g) stays the boost source for
   headroom/noise margin (clones and the airframe vary; a spike can exceed the published peak).
-- *Launch detect:* the accelerometer reads **specific force = thrust/mass** — at the v3 masses
-  early boost is E16 (450 g) ≈ 3.5 g, F15 (467 g) ≈ **3.1 g**. `launch_g` stays **2.5**: sized for
+- *Launch detect:* the accelerometer reads **specific force = thrust/mass** — at the v4 masses
+  early boost is E16 (455 g) ≈ 3.5 g, F15 (471 g) ≈ **3.1 g**. `launch_g` stays **2.5**: sized for
   the heavier v2 stack (F15 read 2.84 g), it keeps ~20 % margin below the lightest real boost, plus
   an independent **`launch_alt_m = 10 m`** backup — the baro climbing 10 m off the pad trips
   BOOSTING regardless of the accel threshold, so a heavy/marginal boost or a dropped accel window
@@ -175,8 +179,8 @@ Solid-PLA volumes are 2–3× the measured part masses → ~30–42 % effective 
 [`hardware.md`](../doc/hardware.md). Geometry is **symmetric** (L/R wings and fins identical) — good for
 roll/trim balance. Structural / aerodynamic items to weigh before the active-control flights:
 
-1. **Wing loading is high** — ~124 cm² total wing for the measured 285 g glider ≈ **~23 kg/m²**
-   (light build 235 g ≈ 19 kg/m²), giving a stall of **~19–20 m/s** (CL_max ~0.9 for a flat plate).
+1. **Wing loading is high** — ~124 cm² total wing for the measured 270 g glider ≈ **~22 kg/m²**
+   (light build 215 g ≈ 17 kg/m²), giving a stall of **~18–19 m/s** (CL_max ~0.9 for a flat plate).
    The glider therefore has to glide *fast* (~20–25 m/s) and lands hot. **Bigger wings (1.5–2× area)** are
    the single most impactful change — they drop the stall speed, make the glide controllable and the
    landing flare survivable, and improve the realistic L/D.
@@ -287,7 +291,7 @@ This matters because aerodynamic torque on a fin scales with **dynamic pressure*
 The controller instead **schedules the maximum fin deflection by airspeed** to hold roughly *constant angular authority* (deflection ∝ 1/q ∝ 1/v²):
 
 ```
-deflection_limit(v) = clamp(K / v², 5°, 45°) × fin_limit_multiplier      (K ≈ 12500, anchored at 50 m/s → 5°)
+deflection_limit(v) = clamp(K / v², 5°, 45°) × fins.limit_multiplier     (K ≈ 12500, anchored at 50 m/s → 5°)
 ```
 
 | airspeed (m/s) | ≤16 | 20 | 25 | 30 | 35 | 40 | 45 | ≥50 |
@@ -297,7 +301,7 @@ deflection_limit(v) = clamp(K / v², 5°, 45°) × fin_limit_multiplier      (K 
 * **Flight-wide, not boost-only.** Ignition can end off-vertical and fast, and a glide can build speed in a dive, so the governor caps the fins through **every** stage (boosting, gliding, landing). It is the final actuator clamp, applied after the per-stage control law and the mixer.
 * **45° floor of authority at low speed** (≤16 m/s): low `q` means weak fins *and* low kinetic energy = low risk, so full mechanical throw is allowed — the "trade speed for altitude with gentle uplift" regime.
 * **5° ceiling of restraint near burnout** (≥50 m/s): high `q`, highest consequence — but never 0°, so some authority always remains.
-* **`fin_limit_multiplier` (board.config, default 1.0)** scales the whole schedule. It is the safety dial: if a flight starts **losing fins or control in the air** (flutter, servo stall, structural failure), drop it (e.g. 0.5) to halve authority everywhere without re-deriving the table.
+* **`fins.limit_multiplier` (board.config, default 1.0)** scales the whole schedule. It is the safety dial: if a flight starts **losing fins or control in the air** (flutter, servo stall, structural failure), drop it (e.g. 0.5) to halve authority everywhere without re-deriving the table.
 * Stored as a **precomputed lookup table** indexed by integer m/s, so the 100 Hz path does a table read, not a `1/v²` division.
 * **Airspeed estimate** (no pitot tube): integrated vertical acceleration during boost; GNSS ground speed once gliding. The estimate is biased to *over*-read when uncertain — over-estimating airspeed tightens the cap, which is the safe direction.
 

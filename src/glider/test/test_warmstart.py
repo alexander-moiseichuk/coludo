@@ -2,9 +2,10 @@
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 On-board test for warmstart.py (in-flight reboot recovery). Covers the pure gate should_restore() --
-all five defenses, their accept/refuse boundaries, and a TORN crumb (missing key) refusing cleanly
-instead of crashing the boot -- and _apply_restore(), which restores the mission, rebases the baros,
-and sets an armed GLIDING (stubbed controller/mission). Run by `make test`.
+its reset / age / per-stage separation defenses and their accept/refuse boundaries, plus a TORN crumb
+(missing key) refusing cleanly instead of crashing the boot -- and _apply_restore(), which restores
+the mission, rebases the baros, and sets the saved (armed GLIDING) stage (stubbed controller/mission).
+Run by `make test`.
 """
 
 import controller
@@ -12,32 +13,40 @@ import inspector
 import warmstart
 
 _CRUMB = {'launch': [25.5, -80.4], 'zone': [[25.514, -80.393], [25.514, -80.391]],
-          'pad_altitude': 100.0, 'stamp': 1000}
+          'pad_altitude': 100.0, 'stamp': 1000, 'stage': controller.Stage.GLIDING, 'armed': True}
 
 
 def test_should_restore():
-    # happy path: separated, 50 m above the pad, WDT reset, crumb 30 s old
-    ok, reason = warmstart.should_restore(_CRUMB, True, 150.0, True, 1030)
+    # happy path: a GLIDING crumb, separated, WDT reset, 30 s old
+    ok, reason = warmstart.should_restore(_CRUMB, True, True, 1030)
     assert ok, reason
-    # 1. no breadcrumb -> cold boot
-    assert not warmstart.should_restore(None, True, 150.0, True, 1030)[0]
-    # 1. TORN crumb -- a missing pad_altitude or stamp REFUSES with no KeyError
-    assert not warmstart.should_restore({'stamp': 1000}, True, 150.0, True, 1030)[0]
-    assert not warmstart.should_restore({'pad_altitude': 100.0}, True, 150.0, True, 1030)[0]
-    # 2. separation switch nested (not separated) -> refuse
-    assert not warmstart.should_restore(_CRUMB, False, 150.0, True, 1030)[0]
-    # 3. no altitude reading (baro not up in time) -> refuse
-    assert not warmstart.should_restore(_CRUMB, True, None, True, 1030)[0]
-    # 3. only 5 m above the pad (< 15) -> refuse; exactly 15 m -> pass (boundary)
-    assert not warmstart.should_restore(_CRUMB, True, 105.0, True, 1030)[0]
-    assert warmstart.should_restore(_CRUMB, True, 115.0, True, 1030)[0]
-    # 4. power-on boot (recovery crew's hands / a brownout), not a reset -> refuse
-    assert not warmstart.should_restore(_CRUMB, True, 150.0, False, 1030)[0]
-    # 5. age negative (clock rewound / power-cycled RTC) -> refuse
-    assert not warmstart.should_restore(_CRUMB, True, 150.0, True, 990)[0]
-    # 5. age over the 600 s max -> refuse; exactly 600 s -> pass (boundary)
-    assert not warmstart.should_restore(_CRUMB, True, 150.0, True, 1000 + 601)[0]
-    assert warmstart.should_restore(_CRUMB, True, 150.0, True, 1000 + 600)[0]
+    # no crumb -> cold boot
+    assert not warmstart.should_restore(None, True, True, 1030)[0]
+    # TORN crumb -- a missing stage or stamp REFUSES with no KeyError
+    assert not warmstart.should_restore({'stamp': 1000}, True, True, 1030)[0]
+    assert not warmstart.should_restore({'stage': controller.Stage.GLIDING}, True, True, 1030)[0]
+    # a GLIDING (passive) crumb with the switch nested (not separated) -> refuse
+    assert not warmstart.should_restore(_CRUMB, False, True, 1030)[0]
+    # power-on boot (recovery crew's hands / a brownout), not a reset -> refuse
+    assert not warmstart.should_restore(_CRUMB, True, False, 1030)[0]
+    # age negative (clock rewound / power-cycled RTC) -> refuse
+    assert not warmstart.should_restore(_CRUMB, True, True, 990)[0]
+    # age over the 600 s max -> refuse; exactly 600 s -> pass (boundary)
+    assert not warmstart.should_restore(_CRUMB, True, True, 1000 + 601)[0]
+    assert warmstart.should_restore(_CRUMB, True, True, 1000 + 600)[0]
+    # BOOSTING is the ACTIVE boost (pre-separation) -> recovers with the switch NESTED, on reset + age
+    boost = {'stage': controller.Stage.BOOSTING, 'stamp': 1000}
+    assert warmstart.should_restore(boost, False, True, 1030)[0]
+    # LANDING is a PASSIVE glide stage -> the separation latch is required (a landed-nested glider cannot)
+    landing = {'stage': controller.Stage.LANDING, 'stamp': 1000}
+    assert warmstart.should_restore(landing, True, True, 1030)[0]        # separated -> recover LANDING
+    assert not warmstart.should_restore(landing, False, True, 1030)[0]   # nested -> refuse
+    # SETTING/DONE are on the ground -- no separation gate, just reset + age
+    setting = {'stage': controller.Stage.SETTING, 'stamp': 1000}
+    assert warmstart.should_restore(setting, False, True, 1030)[0]       # armed on the pad, WDT reset
+    done = {'stage': controller.Stage.DONE, 'stamp': 1000}
+    assert warmstart.should_restore(done, False, True, 1030)[0]          # landed, WDT reset -> stay DONE
+    assert not warmstart.should_restore(done, False, False, 1030)[0]     # ... but a power-on stays cold
 
 
 class _StubBaro:
@@ -103,7 +112,8 @@ def test_apply_restore_torn_crumb():
     try:
         baro = _StubBaro()
         flight = _StubFlight([baro])
-        warmstart._apply_restore(flight, {'pad_altitude': 100.0, 'stamp': 1000},
+        warmstart._apply_restore(flight, {'pad_altitude': 100.0, 'stamp': 1000,
+                                          'stage': controller.Stage.GLIDING},
                                  {'sensors': [{'name': 'b', 'driver': 'bmp280'}]})
         assert mission.updated is None       # no launch/zone -> mission left as-is, no crash
         assert baro.ground == 100.0          # rebase still applied

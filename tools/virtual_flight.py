@@ -24,6 +24,7 @@ python3 flight_report.py clean.txt -o clean.html # pip install plotly
 import argparse
 import math
 import os
+import random
 import sys
 
 _GLIDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'glider')
@@ -35,6 +36,7 @@ import fixed  # noqa: E402 -- fixed-point convention: PID error/output in centid
 import governor  # noqa: E402 -- the REAL fin-authority governor (estimated airspeed + throttle)
 import guidance  # noqa: E402 -- the REAL per-stage guidance law
 import mixer  # noqa: E402
+import navigation  # noqa: E402 -- zone geometry for the _Mission stub (memoized, mirrors mission.Mission)
 import pid  # noqa: E402
 import sim_model  # noqa: E402
 
@@ -73,13 +75,35 @@ class _Handle:
 
 class _Mission:
     """Mission stand-in: the landing zone from the HITL scenario; no CC-set launch point, so the
-    guidance tiers exercise tier 1 (live fix) and tier 3 (blind) exactly as a real flight would."""
+    guidance tiers exercise tier 1 (live fix) and tier 3 (blind) exactly as a real flight would. The
+    zone geometry getters mirror the real mission.Mission (memoized by zone identity)."""
 
     def __init__(self, zone):
         self.zone = zone
+        self._zone_key = None
+        self._zone_points = None
+        self._zone_aspect = 1.0
 
     def launch_point(self):
         return None
+
+    def zone_points(self):
+        if self.zone is None:
+            return None
+        if self.zone is not self._zone_key:  # first call / zone replaced -> resolve + cache
+            self._zone_key = self.zone
+            self._zone_points = navigation.zone(self.zone[0], self.zone[1])
+            self._zone_aspect = navigation.zone_aspect(self.zone[0], self.zone[1])
+        return self._zone_points
+
+    def zone_aspect(self):
+        return 1.0 if self.zone_points() is None else self._zone_aspect
+
+    def endgame_heading(self):
+        aspect = self.zone_aspect()
+        if aspect >= guidance.Heading.OO_ASPECT:
+            return guidance.Heading.FIG_OO
+        return guidance.Heading.FIG_OVAL if aspect >= guidance.Heading.OVAL_ASPECT else guidance.Heading.FIG_O
 
 
 def _component(cfg: dict, name: str) -> dict:
@@ -94,10 +118,17 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     Run the closed loop and return a recorder capture (text).
 
     Reuses config_hitl so the gains, mixer, sequencer thresholds and scenario are byte-for-byte what the
-    board flies.
+    board flies. Set VF_SEED to seed the sensor noise deterministically (A/B a control change on the
+    SAME noise realisation).
     """
+    _seed = os.environ.get('VF_SEED')
+    if _seed is not None:
+        random.seed(int(_seed))
     cfg = config_hitl.default(motor=motor, noise=noise, spike=spike)
     flight_c = _component(cfg, 'flight')
+    _endgame = os.environ.get('VF_ENDGAME')
+    if _endgame:
+        flight_c['endgame_pattern'] = _endgame  # A/B the endgame pattern (o / oo / auto) from the shell
     seq_c = _component(cfg, 'sequencer')
     hitl_c = _component(cfg, 'hitl')
 
@@ -118,6 +149,9 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
 
     body = sim_model.Body(hitl_c.get('liftoff_g', 430) / 1000.0,
                           tuple(scenario['launch']), scenario['elevation_m'], scenario['heading_deg'])
+    body.trim_sink = 14.0 / float(os.environ.get('VF_QUALITY', 2.0))  # air-quality (L/D) sink: 2 = worst-case floor
+    pitot_on = os.environ.get('VF_PITOT', '1') != '0'  # feed the SDP810 direct airspeed to the fusion (default on)
+    pitot_rail = (2.0 * 546.0 / 1.225) ** 0.5  # the ±500 Pa sensor rails ~29.85 m/s -> boost/dive fall back to accel
     body.imbalance_pitch = imbalance_pitch  # weight-imbalance torque during burn (deg/s^2)
     body.imbalance_roll = imbalance_roll
     body.wind_e = wind * math.sin(math.radians(wind_dir))   # steady wind the glider must crab against
@@ -128,10 +162,10 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     mix = mixer.Mixer(cfg.get('mixer', {}))
     fins_by_name = {name: _Fin(mix.neutral) for name in _FINS}
     mix.bind(fins_by_name)
-    accel_handle, speed_handle, position_handle, agl_handle, elevation_handle = (
-        _Handle(), _Handle(), _Handle(), _Handle(), _Handle())
+    accel_handle, speed_handle, pitot_handle, position_handle, agl_handle, elevation_handle = (
+        _Handle(), _Handle(), _Handle(), _Handle(), _Handle(), _Handle())
     fin_governor = governor.Governor(governor.GovernorConfig(flight_c), mix, accel_handle, speed_handle,
-                                     cfg.get('fin_limit_multiplier', 1.0))
+                                     pitot_handle, cfg.get('fin_limit_multiplier', 1.0))
     law = guidance.Guidance(guidance.GuidanceConfig(flight_c, int(_GNSS_S * 2000)), _Mission(zone),
                             fin_governor, position_handle, agl_handle, elevation_handle)
     if final_agl_override is not None:
@@ -171,10 +205,12 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         pitch_rate = fixed.from_float(pitch_rate_dps)
         yaw_rate = fixed.from_float(yaw_rate_dps)
 
-        # inject a transient 2x glitch on the attitude + accel for ONE tick every _SPIKE_S seconds
-        # (deterministic schedule so the stored corner-case traces reproduce). Exercises the control
-        # loop's rejection of a sudden bad sample -- the fin trace shows the kick, the trajectory should
-        # barely move.
+        """
+        inject a transient 2x glitch on the attitude + accel for ONE tick every _SPIKE_S seconds
+        (deterministic schedule so the stored corner-case traces reproduce). Exercises the control
+        loop's rejection of a sudden bad sample -- the fin trace shows the kick, the trajectory should
+        barely move.
+        """
         if spike and int(t / _SPIKE_S) != int((t - dt) / _SPIKE_S):
             roll_m *= 2.0
             pitch_m *= 2.0
@@ -189,10 +225,12 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
             else:
                 since = t
         elif stage == 'boosting':
-            # APOGEE detect (mirror of sequencer._detect_apogee -- the mirror had DRIFTED to
-            # timeout-only deploy, and a low arc could be back underground by the timeout): blind
-            # for apogee_arm_ms after entry (burn pressure wave), then track the noised baro peak
-            # and deploy once it falls apogee_drop_m below, sustained; the timeout stays fallback.
+            """
+            APOGEE detect (mirror of sequencer._detect_apogee -- the mirror had DRIFTED to
+            timeout-only deploy, and a low arc could be back underground by the timeout): blind
+            for apogee_arm_ms after entry (burn pressure wave), then track the noised baro peak
+            and deploy once it falls apogee_drop_m below, sustained; the timeout stays fallback.
+            """
             elevation_now = altitude_m - body.elev0
             if (t - since) * 1000.0 >= apogee_arm_ms:
                 if apogee_max is None or elevation_now > apogee_max:
@@ -224,6 +262,9 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         # --- publish the sim readings into the injected handles (what the databoard does on-board) ---
         accel_handle.value_now = (0.0, 0.0, accel_m)   # boost-axis |a| in g (magnitude parity)
         accel_handle.source = 'sim'
+        if pitot_on:  # SDP810 DIRECT airspeed (m/s) each tick, clamped at the rail so boost/dive saturates -> accel
+            pitot_handle.value_now = min((body.speed * body.speed + body.vu * body.vu) ** 0.5, pitot_rail)
+            pitot_handle.source = 'sim'
         agl_handle.value_now = agl
         agl_handle.source = 'sim'
         elevation_handle.value_now = altitude_m - body.elev0  # noised baro elevation (endgame band)
@@ -254,6 +295,9 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
                 for axis_pid in pids.values():
                     axis_pid.reset()
             if law.compute(stage_id, setpoint, heading_m, int(t * 1e6)):
+                cap = mix.limit  # PID clamps track the governor's live cap (mirrors flight._run_pid, finding 23.5)
+                for axis_pid in pids.values():
+                    axis_pid.set_limit(cap)
                 roll_cmd = pids['roll'].step(law.roll_setpoint - roll_cd, dt_ms, roll_rate)
                 pitch_cmd = pids['pitch'].step(law.pitch_setpoint - pitch_cd, dt_ms, pitch_rate)
                 yaw_cmd = pids['yaw'].step(law.heading_error * fixed.SCALE, dt_ms, yaw_rate)

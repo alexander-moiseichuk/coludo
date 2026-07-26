@@ -170,7 +170,7 @@ deflection (deg from neutral) the airframe can safely take at a given airspeed. 
 with dynamic pressure q proportional to v^2, so a fixed angle is too weak slow / too violent fast;
 the cap goes proportional to 1/v^2 to hold ~constant angular authority, clamped to [5 deg, 45 deg]
 (always-some authority / fin mechanical throw). K=12500 anchors 50 m/s -> 5 deg. Precomputed ONCE at
-import (no per-step 1/v^2 on the 100 Hz path); the board.config `fin_limit_multiplier` (default 1.0)
+import (no per-step 1/v^2 on the 100 Hz path); the config `fins.limit_multiplier` (default 1.0)
 is applied by the caller, not baked into the table.
 """
 
@@ -183,7 +183,7 @@ def fin_deflection_limit(speed_ms: float) -> int:
     """
     Max fin deflection in degrees for a given airspeed -- the dynamic-pressure governor table lookup.
 
-    Saturates at _FIN_VMAX. Multiply by the config fin_limit_multiplier at the caller (the safety dial
+    Saturates at _FIN_VMAX. Multiply by the config fins.limit_multiplier at the caller (the safety dial
     is not baked into the table).
 
     Args:

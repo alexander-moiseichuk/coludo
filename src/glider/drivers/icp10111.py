@@ -27,6 +27,7 @@ except ImportError:  # CPython (tooling / off-board checks)
     from commons import const
 
 
+_ADDR = const(0x63)  # the fixed I2C address
 _CMD_ID = b'\xef\xc8'  # read product id -> (word & 0x3f) == 0x08 for ICP-101xx
 _GENERAL_CALL_RESET = b'\x06'  # I2C general-call reset (to addr 0x00): reaches a wedged core
 _CMD_OTP_UNLOCK = b'\xc5\x95\x00\x66\x9c'  # unlock OTP, then 4x read
@@ -63,17 +64,19 @@ class Icp10111(task.Task):
         if spec is None:
             return False
         self._bus = i2cbus.get(bus_id, spec)
-        self._addr: int = self.config.get('addr', 0x63)
+        self._addr: int = self.config.get('addr', _ADDR)
         self._period_ms: int = self.config.get('period_ms', 100)  # ~10 Hz
-        # OSError(19) hardening (measured after the 7/06 OOM-soak panic): a mid-conversion
-        # sensor NAKs until the conversion drains, and an unclean reboot can LATCH the digital
-        # core -- the address still acks (scan sees 0x63) but every command NAKs. The addressed
-        # soft reset (0x805d) RE-WEDGED the latched bench part; the I2C GENERAL-CALL reset
-        # (0x00 0x06) fully recovered it (5/5 measures after). So: touch the part plainly (a
-        # clean boot never needs a reset), drain a possible busy window on the first NAK, and
-        # only from the second NAK fire the general call. It also resets peers that honour it
-        # (bmp280, ina226) -- acceptable: they re-apply their config-declared state when set up
-        # after us, and it fires only when the PRIMARY baro would otherwise be lost.
+        """
+        OSError(19) hardening (measured after the 7/06 OOM-soak panic): a mid-conversion
+        sensor NAKs until the conversion drains, and an unclean reboot can LATCH the digital
+        core -- the address still acks (scan sees 0x63) but every command NAKs. The addressed
+        soft reset (0x805d) RE-WEDGED the latched bench part; the I2C GENERAL-CALL reset
+        (0x00 0x06) fully recovered it (5/5 measures after). So: touch the part plainly (a
+        clean boot never needs a reset), drain a possible busy window on the first NAK, and
+        only from the second NAK fire the general call. It also resets peers that honour it
+        (bmp280, ina226) -- acceptable: they re-apply their config-declared state when set up
+        after us, and it fires only when the PRIMARY baro would otherwise be lost.
+        """
         for attempt in range(_RESET_TRIES):
             try:
                 await self._bus.writeto(self._addr, _CMD_ID)

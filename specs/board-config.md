@@ -64,7 +64,7 @@ identical behaviour every time.
 
 ```json
 {
-  "board": { "id": "glider-01", "mcu": "esp32p4", "rev": 1 },
+  "board": { "id": "glider-01", "mcu": "esp32p4", "rev": 1, "setup_retries": 3 },
 
   "wifi": {
     "mode": "sta",
@@ -88,6 +88,20 @@ identical behaviour every time.
     "servo_yaw": 26,
     "servo_eleron_left": 27,
     "servo_eleron_right": 32
+  },
+
+  "fins": {
+    "concurrency": 3,
+    "limit_multiplier": 1.0,
+    "mixer": {
+      "neutral_deg": 90,
+      "limit_deg": 45,
+      "surfaces": {
+        "servo_yaw":          { "yaw": 1 },
+        "servo_eleron_left":  { "pitch": 1, "roll": 1 },
+        "servo_eleron_right": { "pitch": 1, "roll": -1 }
+      }
+    }
   },
 
   "sensors": [
@@ -124,7 +138,13 @@ identical behaviour every time.
 ### Section reference
 
 - **`board`** — identity and MCU type. `mcu` is one of `esp32p4`, `esp32c6`, `firebeetle2p4`
-  and lets the firmware select MCU-specific behaviour.
+  and lets the firmware select MCU-specific behaviour. `setup_retries` is the boot setup-attempt
+  count per device (flaky breadboard contacts; `1` = no retry).
+- **`fins`** — one home for fin/servo control: `concurrency` (max servos slewing at once, caps the
+  boost-rail current transient; `== fin count` = no limit), `limit_multiplier` (the dynamic-pressure
+  governor's safety dial, `1.0` nominal), and the `mixer` (the elevon + rudder mixing matrix —
+  `surfaces` gains, `neutral_deg`, `limit_deg`). Each fin's mechanical zero is the servo component's
+  own per-fin `trim` (degrees), NOT here.
 - **`wifi`** — the board is a **station (STA)** that joins the network hosted by **CC**.
   (The earlier "glider hosts an AP" idea in `coludo.md` is superseded.) `cc_host`/`cc_port`
   point at the CC service; `tx_power_dbm` is the operator-tunable signal level.

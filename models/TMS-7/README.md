@@ -82,41 +82,74 @@ Weight with whole assembly having around 155 grams of electronics on board.
 
 ## Derived geometry (from STL analysis)
 
-Wing and fin planform areas measured from the STL meshes (see `glider/` and `booster/`). The
-STL coordinates are in mm; planform = one-side projected area.
+Wing and fin planform areas measured from the v4 STL meshes (see `glider/` and `booster/`). The
+STL coordinates are in mm; planform = one-side projected area. Wing geometry is unchanged from v3;
+fin and body thickness increased.
 
-| Component | Span [mm] | Root chord [mm] | Tip chord [mm] | Planform [cm²] | Notes |
-|---|---|---|---|---|---|
-| Left Wing | 299 (semi) | 79 | 20 | 148 | trapezoidal, nearly unswept |
-| Right Wing | 299 (semi) | 79 | 20 | 148 | mirror of left |
-| **Total wing** | **598** | — | — | **296** | **AR 12.1** |
-| Left Fin | 77 | 69 | ~24 | 35.6 | vertical surface |
-| Right Fin | 77 | 69 | ~24 | 35.6 | mirror of left |
-| Top Fin | 77 | 69 | ~24 | 35.6 | vertical surface |
-| **Total fins (3)** | — | — | — | **107** | all 35.6 cm² each |
+| Component | Span [mm] | Root chord [mm] | Tip chord [mm] | Planform [cm²] | STL volume [cm³] | Notes |
+|---|---|---|---|---|---|---|
+| Left Wing | 299 (semi) | 79 | 20 | 148 | 24.2 | trapezoidal, nearly unswept |
+| Right Wing | 299 (semi) | 79 | 20 | 148 | 24.2 | mirror of left |
+| **Total wing** | **598** | — | — | **296** | **48.4** | **AR 12.1** |
+| Fin (×3) | 79.5 | 69 | ~24 | 35.6 | 10.9 each | thickness increased vs v3 |
+| **Total fins (3)** | — | — | — | **107** | **32.8** | all 35.6 cm² each |
 
-Wing thickness is 2.4 mm (from Y-span of STL bbox), giving a thickness/chord ratio of ~3 %
-at root and ~12 % at tip. Aspect ratio (AR) = b²/S = 0.598² / 0.0296 = 12.1 — high,
-favourable for induced-drag efficiency. The fins are trapezoidal with 77 mm span and
+Wing thickness is 2.0 mm (from Y-span of STL bbox), giving a thickness/chord ratio of ~2.5 %
+at root and ~10 % at tip. Aspect ratio (AR) = b²/S = 0.598² / 0.0296 = 12.1 — high,
+favourable for induced-drag efficiency. The fins are trapezoidal with 79.5 mm span and
 69 mm root chord, tapering to ~24 mm at the tip; their combined area is ~36 % of the wing,
-providing generous directional and pitch authority.
+providing generous directional and pitch authority. Fin thickness increased from ~2 mm (v3)
+to ~3 mm (v4), adding stiffness without changing planform.
+
+### Body volume changes (v3 → v4)
+
+The v4 models increase glider body wall thickness for structural strength, redesign the
+booster for heat resistance, and add new parts (Electric Pad, Retainer, Retention Pin).
+STL enclosed volumes:
+
+| Component | v3 (cm³) | v4 (cm³) | v4 measured (g) | Change |
+|---|---|---|---|---|
+| Glider Back Lower Body | 66.2 | 79.1 | 29.1 | +19 % vol |
+| Glider Front Lower Body | 27.4 | 30.4 | 9.2 | +11 % vol |
+| Glider Front Upper Body | 46.5 | 46.1 | 12.0 | −1 % vol |
+| **Glider body total** | **140.1** | **155.6** | **50.3** | **+11 % vol** |
+| Booster Bottom (was Body Tube) | 137.1 | 56.8 | 56.2 | split redesigned |
+| Booster Top (was Holder) | 20.0 | 82.8 | 28.1 | split redesigned |
+| Booster Cap | 7.4 | 7.2 | 6.5 | −3 % |
+| **Booster total** | **164.5** | **146.8** | **90.8** | **−11 % vol** |
+
+Despite the +11 % glider body volume increase, the printed glider structure weight
+stayed at 115.3 g (same as v3) — the thicker walls were offset by reduced infill
+and optimised slicer settings. The fins are lighter (3.7 g each vs 6.4 g) due to
+a simplified mesh (96 vs 408 triangles) and lower infill. The booster weight
+increased from 82.6 g (v3, parts only) to 102.0 g (v4, full assembly with hardware)
+— the redesigned parts include engine retention and assembly hardware that were
+previously unaccounted.
+
+New parts added in v4: Electric Pad (STL volume 5.1 cm³, serves as the 2.5 g pad per
+Carrier-Board split), Retainer, and Retention Pin. Their weights are included in the
+electronics and assembly totals above.
 
 ## Performance estimates
 
-Basic-fidelity estimates using the measured masses above, motor data from Estes
-specifications (E16-4: 28 N·s / 1.8 s burn / 33 N peak; F15-4: 50 N·s / 3.5 s burn /
-25 N peak), and aerodynamic parameters derived from the STL geometry. Assumes: sea-level
-ρ = 1.225 kg/m³; Cd = 0.6 for the boost configuration (frontal area ~17 cm² = glider body
-~46 mm effective diameter); no wind; vertical launch.
+Basic-fidelity estimates using the measured v4 masses (glider structure 115.3 g,
+booster 102.0 g, electronics 154.9 g), motor data from Estes specifications
+(E16-4: 28 N·s / 1.8 s burn / 33 N peak; F15-4: 50 N·s / 3.5 s burn / 25 N peak),
+and aerodynamic parameters derived from the STL geometry. The "100g electronics"
+and "150g electronics" columns are scenarios including ~35 g of ancillary mass
+(battery, wiring, adhesives). Assumes: sea-level ρ = 1.225 kg/m³; Cd = 0.6 for
+the boost configuration (frontal area ~17 cm² = glider body ~46 mm effective
+diameter); no wind; vertical launch.
 
 ### Boost phase
 
 | Parameter | E16-4 | F15-4 |
 |---|---|---|
-| Liftoff mass (100g electronics) | 451 g | 468 g |
-| Liftoff mass (150g electronics) | 501 g | 518 g |
-| Peak thrust / weight ratio | 33 N / 4.42 N = 7.5 | 25 N / 4.59 N = 5.4 |
-| Peak specific force (accelerometer reads) | **~7.5 g** | **~5.4 g** |
+| Liftoff mass (v4 measured) | 455 g | 471 g |
+| Liftoff mass (100 g elec scenario) | 451 g | 468 g |
+| Liftoff mass (150 g elec scenario) | 501 g | 518 g |
+| Peak thrust / weight ratio | 33 N / 4.46 N = 7.4 | 25 N / 4.62 N = 5.4 |
+| Peak specific force (accelerometer reads) | **~7.4 g** | **~5.4 g** |
 | Ideal Δv (impulse / avg mass) | 65.9 m/s | 115.2 m/s |
 | Gravity loss (g × t_burn) | −17.7 m/s | −34.3 m/s |
 | Drag loss (approx) | −4 m/s | −20 m/s |
@@ -133,7 +166,7 @@ gives it better early acceleration despite lower total impulse.
 
 | Parameter | 100g electronics | 150g electronics |
 |---|---|---|
-| Glider mass (structure + elec) | 250.4 g | 300.4 g |
+| Glider mass (structure + elec) | 250 g | 300 g |
 | Wing loading (W/S) | 8.3 kg/m² | 9.9 kg/m² |
 | Stall speed (CL_max 0.7) | ~14 m/s (~50 km/h) | ~15 m/s (~54 km/h) |
 | Best glide speed (CL 0.4) | ~17 m/s (~61 km/h) | ~19 m/s (~68 km/h) |
@@ -159,9 +192,10 @@ biggest improvement:
   instead of always flying at the edge of stall.
 - **Wing loading halved** — a gentler glide, lower sink rate, and more margin for turns.
 - **Boost apogee is lower** than originally estimated (~140 vs 180 m for E16, ~290 vs
-  360 m for F15) because the actual printed glider structure (150.4 g) is heavier than
-  the earlier ~113 g airframe estimate. The stack is ~15 % heavier, reducing burnout
-  speed and apogee.
+  360 m for F15) because the actual printed glider structure (115.3 g) with full
+  electronics (154.9 g) gives a stack ~372 g — heavier than the earlier ~270 g
+  airframe-only estimate. Despite similar glider and booster weights to v3, the
+  electronics now accounted (board_layout.md) add ~155 g to the total stack.
 
 The net effect is a vehicle that climbs less high but glides much better once separated
 — trading peak altitude for flyability, which is the right trade for proving active
@@ -171,8 +205,8 @@ control.
 
 ### Speeds at a glance
 
-All values for the 250.4 g glider (100 g electronics) unless noted.
-CdA updated to reflect corrected fin planform (107 cm² total vs earlier 71 cm²).
+All values for the 250 g glider (100 g electronics scenario) unless noted.
+CdA = 0.00173 m².
 
 | Speed | Value | Notes |
 |---|---|---|
@@ -180,8 +214,8 @@ CdA updated to reflect corrected fin planform (107 cm² total vs earlier 71 cm²
 | Best L/D speed | **~17 m/s** (~61 km/h) | CL 0.4, mid-range of L/D polar |
 | Manoeuvring speed (Va) | **~31 m/s** (~112 km/h) | Full deflection × limit load (5 g); above this, full throw overstresses the wing |
 | Maximum level speed | **~30–37 m/s** (108–133 km/h) | At minimum usable CL ≈ 0.1–0.2 in a glide |
-| Maximum dive speed (E16 launch) | **~37 m/s** (133 km/h) | Achievable from 140 m apogee in a steep dive (70 % of Vt) |
-| Maximum dive speed (F15 launch) | **~45 m/s** (162 km/h) | Achievable from 290 m apogee (approaches Vt) |
+| Maximum dive speed (E16 launch) | **~37 m/s** (133 km/h) | Achievable from 140 m apogee in a steep dive |
+| Maximum dive speed (F15 launch) | **~45 m/s** (162 km/h) | Achievable from 290 m apogee |
 | Terminal velocity (Vt, vertical) | **~48 m/s** (173 km/h) | Limit of drag = weight; glider cannot exceed this regardless of starting height |
 | Never-exceed speed (Vne) | **~47 m/s** (~169 km/h) | 1.5× Va; above this, a gust or full pull-up may exceed 5 g |
 | Fin full-authority ceiling | ≤16 m/s | ±45° available |
@@ -279,7 +313,7 @@ Kg ≈ 0.80 for this glider:
 ```
 
 | Airspeed | Gust (U_g) | Δn | Total load factor (incl. 1 g) |
-|---|---|---|---|
+|---|---|---|---|---|
 | 14 m/s (stall) | 5 m/s | +2.2 g | 3.2 g |
 | 17 m/s (best glide) | 5 m/s | +2.7 g | 3.7 g |
 | 17 m/s (best glide) | 7.5 m/s | +4.0 g | 5.0 g — **limit** |
@@ -496,6 +530,26 @@ spring is embedded in the hinge joint.
 | **P3** | Torsion-spring hinge | Deployment redundancy | Medium (mechanical detail) |
 
 ## Version log
+
+### v4 (2026-07-12) — heat-resistant booster, stronger glider, electronics
+
+- **Booster redesigned:** split into Bottom (heat-resistant lower section) and Top
+  (glider attachment) replacing the old Body Tube + Holder. Printed weights:
+  Bottom 56.2 g, Top 28.1 g, Cap 6.5 g. Full booster with hardware: 102.0 g.
+- **Glider body:** wall thickness increased for strength. Back Lower Body +19 % STL
+  volume, Front Lower +11 %. Printed weights: Back Lower 29.1 g, Front Lower 9.2 g,
+  Front Upper 12.0 g (unchanged).
+- **Fins:** three identical fins consolidated into a single `Fin.stl` file with
+  simplified mesh (96 triangles vs 408 each previously). Thickness increased from
+  ~2 mm to ~3 mm; printed weight 3.7 g each (vs 6.4 g in v3).
+- **New parts:** Electric Pad (5.1 cm³, 2.5 g per Carrier-Board split), Retainer,
+  Retention Pin, and Stopper added to the model set.
+- **Electronics table added:** 154.9 g total, broken down per board per
+  [board_layout.md](doc/board_layout.md).
+- **Weights reconciled:** all part weights are now actual printed measurements
+  from the v4 prints (glider structure 115.3 g, booster 102.0 g). Previous v3
+  table listed partial assembly weights only.
+- **Wings unchanged** (same STL files as v3, 26.7 g each).
 
 ### v3 (2026-07-03) — memory-optimised STL files
 - **Wings & fins:** aerofoil geometry identical to v2; triangle count halved (wings 3614→1666,

@@ -45,17 +45,19 @@ class Heading:
     The endgame HOLDING pattern, self-contained like controller.Stage.
 
     Int ids (cheap to compare/store on MicroPython) + the `PATTERNS` id->name mapping and `NAMES`
-    reverse. Config names the pattern by string; resolve() turns 'auto'/'o'/'oo'/'o-o'
-    (case-insensitive; 'o-o' aliases 'oo') into an id once. AUTO defers the choice to the Mission
-    (mission.endgame_heading), which decides 'o' vs 'oo' from the zone's long/short aspect (a strip
-    wider than OO_ASPECT flies the two-lobe 'oo').
+    reverse. Config names the pattern by string; resolve() turns 'auto'/'o'/'ov'/'oo'/'o-o'
+    (case-insensitive; 'o-o' aliases 'oo') into an id once. AUTO defers to the Mission
+    (mission.endgame_heading), which picks by the zone's long/short aspect k: k < OVAL_ASPECT -> 'o'
+    (single circle), OVAL_ASPECT <= k < OO_ASPECT -> 'ov' (centreline oval), k >= OO_ASPECT -> 'oo'.
     """
 
     AUTO = const(0)    # the Mission decides o vs oo from the zone shape
     FIG_O = const(1)   # a single circle
     FIG_OO = const(2)  # two lobes along the long axis (an elongated strip)
-    OO_ASPECT: float = 2.0  # long/short aspect above which a zone flies 'oo' (a fixed rule, not a config knob)
-    PATTERNS: dict = {AUTO: 'auto', FIG_O: 'o', FIG_OO: 'oo'}
+    FIG_OVAL = const(3)  # a centreline oval / racetrack for a MODERATELY elongated strip
+    OVAL_ASPECT: float = 2.0  # long/short aspect >= this flies the oval ('ov'); below it a single circle ('o')
+    OO_ASPECT: float = 6.0    # ...and >= this flies the two-lobe 'oo' (the converging oval wins up to here)
+    PATTERNS: dict = {AUTO: 'auto', FIG_O: 'o', FIG_OO: 'oo', FIG_OVAL: 'ov'}
     NAMES: dict = {name: pattern_id for pattern_id, name in PATTERNS.items()}
 
     @classmethod
@@ -63,8 +65,8 @@ class Heading:
         """
         A config string -> the pattern id.
 
-        'auto'/'o'/'oo'/'o-o', case-insensitive, 'o-o' aliasing 'oo'. An unknown value falls back to
-        AUTO (the Mission decides).
+        'auto'/'o'/'ov'/'oo'/'o-o', case-insensitive, 'o-o' aliasing 'oo'. An unknown value falls back
+        to AUTO (the Mission decides).
 
         Args:
             name - the config pattern name (any case; 'o-o' aliases 'oo').
@@ -109,49 +111,61 @@ class GuidanceConfig:
         self.stages: dict = {_STAGE.NAMES[name]: setpoint
                              for name, setpoint in config.get('stages', {'gliding': {}}).items()
                              if name in _STAGE.NAMES}
-        # the configured roll/pitch setpoints as centidegree fixnums, resolved ONCE here (they are
-        # per-flight constants). _steer/_hold read these instead of `fixed.from_float(setpoint.get(...))`
-        # every tick -- that boxed a float on the 100 Hz GC-off path, and the roll box was discarded
-        # whenever bank-to-turn overwrote it.
+        """
+        the configured roll/pitch setpoints as centidegree fixnums, resolved ONCE here (they are
+        per-flight constants). _steer/_hold read these instead of `fixed.from_float(setpoint.get(...))`
+        every tick -- that boxed a float on the 100 Hz GC-off path, and the roll box was discarded
+        whenever bank-to-turn overwrote it.
+        """
         self.setpoints_fx: dict = {stage_id: (fixed.from_float(setpoint.get('roll', 0.0)),
                                               fixed.from_float(setpoint.get('pitch', 0.0)))
                                    for stage_id, setpoint in self.stages.items()}
-        # bank-to-turn: in GLIDING the roll SETPOINT comes from the heading error, so the glider
-        # banks into the turn (tight, ~v²/(g·tan(bank))) instead of skidding flat on the rudder
-        # (which over-ranges a small zone). gain 0 -> rudder-only steering.
+        """
+        bank-to-turn: in GLIDING the roll SETPOINT comes from the heading error, so the glider
+        banks into the turn (tight, ~v²/(g·tan(bank))) instead of skidding flat on the rudder
+        (which over-ranges a small zone). gain 0 -> rudder-only steering.
+        """
         self.bank_gain: float = config.get('nav_bank_gain', 1.5)
         self.bank_limit: float = config.get('bank_limit', 30)
         # final approach / landing: track the strip CENTRELINE with the FULL fin authority to crab
         # the crosswind out -- keep it gliding, not rolling-and-dropping. final_agl 0 -> disabled.
         self.land_bank_gain: float = config.get('land_bank_gain', 1.5)
         self.land_bank_limit: float = config.get('land_bank_limit', 45)
-        # the ENDGAME band (fly-long objectives, coludo.md "Gliding"): below this ELEVATION the
-        # glide steering opens the full land-bank authority, halving the turn radius so the last
-        # seconds spiral tightly around the zone instead of racetracking past it. High up the
-        # gentler bank_limit preserves the fly-long objective (a tight bank costs sink ~load^1.5); 0 -> off.
+        """
+        the ENDGAME band (fly-long objectives, coludo.md "Gliding"): below this ELEVATION the
+        glide steering opens the full land-bank authority, halving the turn radius so the last
+        seconds spiral tightly around the zone instead of racetracking past it. High up the
+        gentler bank_limit preserves the fly-long objective (a tight bank costs sink ~load^1.5); 0 -> off.
+        """
         self.endgame_alt_m: float = config.get('endgame_alt_m', 50)
-        # ENDGAME airspeed-gated bank (specs/coludo.md "Turn-radius limit"): instead of the fixed
-        # land_bank_limit, the endgame spiral banks as steep as the LIVE airspeed safely allows and no
-        # steeper. A coordinated turn at bank phi pulls load n=1/cos(phi), which raises the stall speed to
-        # stall_speed_1g*sqrt(n); holding airspeed >= stall_margin*that bounds phi -- steeper than 45 deg
-        # when there is energy (a tighter R_min -> closer touchdown), collapsing to level as speed decays.
-        # Capped at endgame_max_bank (structural). stall_speed_1g 0 -> off (fall back to land_bank_limit).
+        """
+        ENDGAME airspeed-gated bank (specs/coludo.md "Turn-radius limit"): instead of the fixed
+        land_bank_limit, the endgame spiral banks as steep as the LIVE airspeed safely allows and no
+        steeper. A coordinated turn at bank phi pulls load n=1/cos(phi), which raises the stall speed to
+        stall_speed_1g*sqrt(n); holding airspeed >= stall_margin*that bounds phi -- steeper than 45 deg
+        when there is energy (a tighter R_min -> closer touchdown), collapsing to level as speed decays.
+        Capped at endgame_max_bank (structural). stall_speed_1g 0 -> off (fall back to land_bank_limit).
+        """
         self.stall_speed_1g: float = config.get('stall_speed_1g', 9.0)  # 1-g stall speed (m/s)
         self.stall_margin: float = config.get('stall_margin', 1.2)      # airspeed cushion above stall
         self.endgame_max_bank: float = config.get('endgame_max_bank', 60)  # structural bank ceiling (deg)
-        # the LOITER orbit (the "orbit the target to bleed altitude" the docs always intended):
-        # within loiter_capture_m of the zone centre the heading command becomes the CIRCLE TANGENT
-        # plus an inward correction (bearing + 90 - gain*(distance - radius)) -- the glider CAPTURES
-        # a constant-radius orbit instead of bang-banging between overfly and U-turn (measured: the
-        # point-steer law swung 184 m racetrack legs and landed on phase luck). R=40 m at 14 m/s
-        # needs only ~26 deg of bank -- inside bank_limit, sustainable for the whole descent. R BELOW
-        # the cruise-bank minimum (~34 m at 30 deg) destabilizes the pre-endgame orbit: do not shrink.
+        """
+        the LOITER orbit (the "orbit the target to bleed altitude" the docs always intended):
+        within loiter_capture_m of the zone centre the heading command becomes the CIRCLE TANGENT
+        plus an inward correction (bearing + 90 - gain*(distance - radius)) -- the glider CAPTURES
+        a constant-radius orbit instead of bang-banging between overfly and U-turn (measured: the
+        point-steer law swung 184 m racetrack legs and landed on phase luck). R=40 m at 14 m/s
+        needs only ~26 deg of bank -- inside bank_limit, sustainable for the whole descent. R BELOW
+        the cruise-bank minimum (~34 m at 30 deg) destabilizes the pre-endgame orbit: do not shrink.
+        """
         self.loiter_radius_m: float = config.get('loiter_radius_m', 30)
         self.loiter_capture_m: float = config.get('loiter_capture_m', 120)
         self.loiter_gain: float = config.get('loiter_gain', 3.0)  # deg of inward cut per m off-circle
-        # ENDGAME holding pattern: 'o' a single circle, 'oo'/'o-o' two lobes along the long axis (cover an
-        # elongated strip), or 'auto' (default) -- the Mission decides from the zone shape. Resolved to a
-        # Heading id ONCE (case-insensitive; the aspect threshold is Heading.OO_ASPECT, a fixed rule).
+        """
+        ENDGAME holding pattern: 'o' a single circle, 'oo'/'o-o' two lobes along the long axis (cover an
+        elongated strip), or 'auto' (default) -- the Mission decides from the zone shape. Resolved to a
+        Heading id ONCE (case-insensitive; the aspect threshold is Heading.OO_ASPECT, a fixed rule).
+        """
         self.endgame_pattern: int = Heading.resolve(config.get('endgame_pattern', 'auto'))
         self.final_agl: float = config.get('final_approach_agl', 8)
         self.final_cross_gain: float = config.get('final_cross_gain', 3.0)  # deg intercept per m off
@@ -159,10 +173,12 @@ class GuidanceConfig:
         # boost: engage only PAST the rod (airspeed > boost_engage) -- below it the fins have no q to
         # bite and heading is ill-defined near vertical.
         self.boost_engage: float = config.get('boost_engage_speed', 15.0)
-        # steering noise filter: an integer EMA on the heading ERROR (the measured heading jitters
-        # at the control rate under sensor noise; the nav target is already 10 Hz-cached), shift =
-        # the EMA divisor power (3 -> alpha 1/8, tau ~80 ms at 100 Hz). Kills the bank flapping
-        # that wobbled the endgame spiral at >=25 % noise. 0 -> off. All-int -> zero alloc (GC-off).
+        """
+        steering noise filter: an integer EMA on the heading ERROR (the measured heading jitters
+        at the control rate under sensor noise; the nav target is already 10 Hz-cached), shift =
+        the EMA divisor power (3 -> alpha 1/8, tau ~80 ms at 100 Hz). Kills the bank flapping
+        that wobbled the endgame spiral at >=25 % noise. 0 -> off. All-int -> zero alloc (GC-off).
+        """
         self.steer_filter_shift: int = config.get('steer_filter_shift', 3)
         # navigation.steer()/approach() are float trig; the GNSS fixes at ~10 Hz, so the target
         # heading is cached and recomputed at most every nav_period_ms (see _target_heading).
@@ -185,10 +201,12 @@ class Guidance:
         self._position = position  # injected handle: read() -> ((lat, lon), source, age_ms)
         self._agl = agl  # injected handle: value() -> height above ground (m) or None
         self._elevation = elevation  # baro height above the pad (m) -> the endgame band (optional)
-        # per-stage law table (the sequencer._detect pattern): dispatch is O(1) and a new
-        # stage's law is one entry + one method. GLIDING and LANDING share the steering law (it
-        # branches on the bank gains internally); anything else configured as a control stage falls
-        # back to _hold (configured setpoints + the captured heading).
+        """
+        per-stage law table (the sequencer._detect pattern): dispatch is O(1) and a new
+        stage's law is one entry + one method. GLIDING and LANDING share the steering law (it
+        branches on the bank gains internally); anything else configured as a control stage falls
+        back to _hold (configured setpoints + the captured heading).
+        """
         self._laws: dict = {_STAGE.BOOSTING: self._boost, _STAGE.GLIDING: self._steer,
                             _STAGE.LANDING: self._steer}
         self.roll_setpoint: fixnum = 0  # compute() writes, the PID caller reads (instance slots,
@@ -353,7 +371,7 @@ class Guidance:
         law = self._laws.get(stage, self._hold)
         return law(stage, setpoint, heading, now_us)
 
-    def _boost(self, stage: int, setpoint: dict, heading: float, now_us: int) -> bool:
+    def _boost(self, _unused_stage: int, _unused_setpoint: dict, _unused_heading: float, _unused_now_us: int) -> bool:
         """
         BOOSTING: hold the rod-vertical attitude captured at entry.
 
@@ -375,7 +393,7 @@ class Guidance:
         self.heading_error = 0  # no nav/yaw steering near vertical (heading is ill-defined)
         return True
 
-    def _steer(self, stage: int, setpoint: dict, heading: float, now_us: int) -> bool:
+    def _steer(self, stage: int, _unused_setpoint: dict, heading: float, now_us: int) -> bool:
         """
         GLIDING / LANDING: steer to the landing zone, banking into the turn.
 
@@ -394,9 +412,11 @@ class Guidance:
         agl = self._agl.value()
         config = self._config
         final = config.final_agl and agl is not None and agl < config.final_agl  # low on final
-        # the ENDGAME band: elevation below endgame_alt_m -> full land-bank authority (the turn
-        # radius halves, the last seconds spiral around the zone). Costs sink only briefly at the
-        # bottom, so the fly-long objective is untouched up high.
+        """
+        the ENDGAME band: elevation below endgame_alt_m -> full land-bank authority (the turn
+        radius halves, the last seconds spiral around the zone). Costs sink only briefly at the
+        bottom, so the fly-long objective is untouched up high.
+        """
         elevation = self._elevation.value() if self._elevation is not None else None
         # endgame = the remaining-altitude FRACTION of the band (None above it): the loiter radius
         # shrinks with it, so the orbit SPIRALS IN onto the centre as the energy runs out.
@@ -407,10 +427,12 @@ class Guidance:
         self.heading_error = self._filter_error(raw_error)
         self.pitch_setpoint = config.setpoints_fx[stage][1]  # cached fixnum (per-flight constant)
         if config.land_bank_gain and (final or endgame is not None or stage == _STAGE.LANDING):
-            # endgame / final approach / landing: FULL fin authority -- spiral tight, crab the crosswind
-            # out; the residual at strong wind is airframe-bound, not a control gap. In the ENDGAME the
-            # ceiling is the airspeed-gated bank (steeper than land_bank_limit when energy allows);
-            # final/LANDING keep the fixed land_bank_limit (a straight crabbed approach, not a spiral).
+            """
+            endgame / final approach / landing: FULL fin authority -- spiral tight, crab the crosswind
+            out; the residual at strong wind is airframe-bound, not a control gap. In the ENDGAME the
+            ceiling is the airspeed-gated bank (steeper than land_bank_limit when energy allows);
+            final/LANDING keep the fixed land_bank_limit (a straight crabbed approach, not a spiral).
+            """
             limit = self.endgame_bank() if endgame is not None else config.land_bank_limit
             self.roll_setpoint = fixed.from_float(commons.bank_demand(
                 self.heading_error, config.land_bank_gain, limit))
@@ -421,7 +443,7 @@ class Guidance:
             self.roll_setpoint = config.setpoints_fx[stage][0]
         return True
 
-    def _hold(self, stage: int, setpoint: dict, heading: float, now_us: int) -> bool:
+    def _hold(self, stage: int, _unused_setpoint: dict, heading: float, _unused_now_us: int) -> bool:
         """
         Any other configured control stage (ground-test configs): hold the configured setpoints.
 
@@ -508,14 +530,18 @@ class Guidance:
                 east, north = navigation.offset(position[0], position[1], target[0], target[1])
                 span = math.sqrt(east * east + north * north)
                 if endgame is not None or span <= config.loiter_capture_m:
-                    # ENDGAME holding pattern (Heading id) -- FIG_O (a single circle) or FIG_OO (two lobes
-                    # along the long axis, for an elongated strip). AUTO defers to the Mission, which picks
-                    # from the zone shape.
+                    """
+                    ENDGAME holding pattern (Heading id) -- FIG_O (a single circle) or FIG_OO (two lobes
+                    along the long axis, for an elongated strip). AUTO defers to the Mission, which picks
+                    from the zone shape.
+                    """
                     pattern = config.endgame_pattern
                     if pattern == Heading.AUTO:
                         pattern = self._mission.endgame_heading()
                     if pattern == Heading.FIG_OO:
                         self._nav_heading = self._oo_heading(position, target, gate_b, endgame)
+                    elif pattern == Heading.FIG_OVAL:
+                        self._nav_heading = self._oval_heading(position, target, gate_b, endgame)
                     else:
                         self._nav_heading = self._circle_heading(east, north, span, endgame)
                 else:  # far out: travel to the zone through the nearer gate, as always
@@ -592,3 +618,44 @@ class Guidance:
         dist = math.sqrt(delta_e * delta_e + delta_n * delta_n) or 1.0
         cut = commons.between(-60.0, self._config.loiter_gain * (dist - radius), 60.0)
         return (navigation.compass(delta_e, delta_n) + 90.0 - cut) % 360.0
+
+    def _oval_heading(self, position: tuple, target: tuple, gate_b: tuple, endgame) -> float:
+        """
+        'ov' endgame: a CONVERGING centreline oval / racetrack for a moderately elongated strip.
+
+        The 'oo' failure is round lobes bulging +/-r across the SHORT axis; a straight leg has ZERO
+        perpendicular extent, so this flies ALONG the long axis holding the centreline (the proven
+        approach_to intercept -- proportional to the cross-track offset + capped, so it tracks without
+        the S-hunt limit cycle of a raw pursuit) and reverses at each leg end. The KEY is CONVERGENCE:
+        the reversal point shrinks with the endgame altitude, so the whole racetrack COLLAPSES onto the
+        centre (like the 'o' spiral, but oval) and lands ON the midline near the centre (in-zone).
+
+        Args:
+            position - the glider position (lat, lon), decimal degrees.
+            target - the zone centre (lat, lon).
+            gate_b - the gate that sets the long-axis direction (lat, lon).
+            endgame - the remaining-altitude fraction of the endgame band, or None (no collapse).
+
+        Returns:
+            The heading to fly (degrees).
+        """
+        centre_e, centre_n = navigation.offset(target[0], target[1], gate_b[0], gate_b[1])  # centre -> gate_b
+        half_len = math.sqrt(centre_e * centre_e + centre_n * centre_n) or 1.0
+        unit_e, unit_n = centre_e / half_len, centre_n / half_len  # along-axis unit (toward gate_b)
+        glider_e, glider_n = navigation.offset(target[0], target[1], position[0], position[1])  # glider vs centre
+        along = glider_e * unit_e + glider_n * unit_n  # signed position along the axis (0 = centre)
+        # CONVERGE: the leg reversal point shrinks with the endgame altitude -> the racetrack COLLAPSES
+        # onto the centre (like the 'o' spiral, but oval); floored so a small end-to-end oscillation
+        # persists down to touchdown rather than a dead stop on the line
+        reach = half_len * max(0.15, min(1.0, endgame if endgame is not None else 1.0))
+        if self._leg_dir == _LOBE_B and along >= reach:
+            self._leg_dir = _LOBE_A
+        elif self._leg_dir == _LOBE_A and along <= -reach:
+            self._leg_dir = _LOBE_B
+        # fly the current leg direction, TRACKING the centreline with the damped approach_to intercept
+        # (proportional to the cross-track offset + capped) -- no S-hunt limit cycle
+        leg_bearing = navigation.compass(self._leg_dir * unit_e, self._leg_dir * unit_n)
+        intercept = commons.between(-self._config.final_intercept, -self._config.final_cross_gain
+                                    * navigation.cross_track(position, target, leg_bearing),
+                                    self._config.final_intercept)
+        return (leg_bearing + intercept) % 360.0

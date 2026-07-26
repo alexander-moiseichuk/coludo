@@ -57,11 +57,13 @@ class Hitl(task.Task):
         scenario = dict(_HPRC)
         scenario.update(cfg.get('scenario', {}))
         self._sim_hz: int = cfg.get('sim_hz', 50)
-        # INJECT rate = how often sensors are published to the databoard + telemetry (the sim's per-tick
-        # allocation). Decoupled from sim_hz (the physics INTEGRATION rate, kept for boost/apogee
-        # fidelity): the accumulator covers wall time with sim_hz sub-steps regardless of the loop rate.
-        # Default = sim_hz (publish every step, as before); lower it (e.g. 10) to slim the sim's own
-        # heap churn so an on-board HITL leak reflects real flight -- see doc/sims/TMS-7-memory_refactoring.
+        """
+        INJECT rate = how often sensors are published to the databoard + telemetry (the sim's per-tick
+        allocation). Decoupled from sim_hz (the physics INTEGRATION rate, kept for boost/apogee fidelity):
+        the accumulator covers wall time with sim_hz sub-steps regardless of the loop rate. Default =
+        sim_hz (publish every step, as before); lower it (e.g. 10) to slim the sim's own heap churn so an
+        on-board HITL leak reflects real flight -- see doc/sims/TMS-7-memory_refactoring.
+        """
         self._inject_hz: int = cfg.get('inject_hz', self._sim_hz)
         self._noise: float = cfg.get('noise', 0.0)             # N: 0.0 / 0.05 / 0.10 / 0.25 / 0.50
         self._laser_range_m: float = cfg.get('laser_range_m', 4.0)  # agl drops out beyond this
@@ -69,9 +71,11 @@ class Hitl(task.Task):
         # PAD DWELL (s): hold the stack armed + stationary on the pad before ignition (0 = ignite at once,
         # the default -> unchanged). A realistic pad wait, and it lets the GNSS drift calibration sample.
         self._pad_dwell_s: float = cfg.get('pad_dwell_s', 0.0)
-        # which accelerometer axis carries the boost |a|: on the rod the IMU long-axis (often X or Y,
-        # since the board's Z is normal to the PCB) reads the thrust. Launch-detect is magnitude-based
-        # (axis-agnostic), so this is for matching the real mounting / exercising per-axis code.
+        """
+        which accelerometer axis carries the boost |a|: on the rod the IMU long-axis (often X or Y, since
+        the board's Z is normal to the PCB) reads the thrust. Launch-detect is magnitude-based
+        (axis-agnostic), so this is for matching the real mounting / exercising per-axis code.
+        """
         self._axis_index: int = {'x': 0, 'y': 1, 'z': 2}.get(cfg.get('boost_axis', 'z'), 2)
         motor = _MOTORS.get(cfg.get('motor', 'F15'), _MOTORS['F15'])
         self._thrust, self._burn_s = motor
@@ -101,9 +105,11 @@ class Hitl(task.Task):
                     ('accel', 'attitude', 'rate', 'agl', 'altitude', 'elevation', 'position', 'speed',
                      'course')}
         self._ch = databoard.Databoard.provide(self.name, provided)
-        # attitude-redundancy validation: a runner flips this True mid-glide to simulate a BNO055 death
-        # (stop publishing the sim `attitude`); accel + rate keep flowing, so the priority-1 attitude
-        # backup (tasks/attitude.py) must take over the fused slot and keep the glider controllable.
+        """
+        attitude-redundancy validation: a runner flips this True mid-glide to simulate a BNO055 death
+        (stop publishing the sim `attitude`); accel + rate keep flowing, so the priority-1 attitude backup
+        (tasks/attitude.py) must take over the fused slot and keep the glider controllable.
+        """
         self.drop_attitude: bool = False
         # simulated GNSS dropout (tunnel / antenna knock): stop publishing position/speed/course so the
         # guidance falls to its open-loop heading tiers and the wind feed stalls -- baro (altitude) stays.
@@ -176,9 +182,11 @@ class Hitl(task.Task):
         heading = _noisy(body.heading % 360.0, noise, 0.0, 360.0)
         roll = _noisy(body.roll, noise, -180.0, 180.0)
         pitch = _noisy(body.pitch, noise, -180.0, 180.0)
-        # the baro is far more precise than the IMU/GNSS -- its noise is ~sub-metre absolute, not the
-        # nominal % of the reading. Scale it down (5 % nominal -> ~0.25 %, ~0.6 m at 250 m) so the reading
-        # is realistic AND the sequencer's baro apogee-detect is not swamped by fake ±10 m jitter.
+        """
+        the baro is far more precise than the IMU/GNSS -- its noise is ~sub-metre absolute, not the nominal
+        % of the reading. Scale it down (5 % nominal -> ~0.25 %, ~0.6 m at 250 m) so the reading is
+        realistic AND the sequencer's baro apogee-detect is not swamped by fake ±10 m jitter.
+        """
         baro_noise = noise * _BARO_NOISE_SCALE
         altitude = _noisy(body.elev0 + body.alt, baro_noise, -100.0, 10000.0)
         elevation = _noisy(body.alt, baro_noise, -100.0, 10000.0)  # altitude above the pad (= altitude - elev0)
@@ -191,9 +199,11 @@ class Hitl(task.Task):
         self._ch['accel'].push((accel[0], accel[1], accel[2]))
         if not self.drop_attitude:  # simulated BNO055 death -> the priority-1 backup must carry attitude
             self._ch['attitude'].push((heading, from_float(roll), from_float(pitch)))
-        # gyro rate -> the PID D term (rate damping). Noised deg/s (like the other IMU channels so the D
-        # term sees real jitter), pushed as centideg/s fixnum -- same unit + mapping as the LSM6DSO32
-        # (roll, pitch, yaw). The same noised values feed the imu_lsm6dso32 telemetry below (board parity).
+        """
+        gyro rate -> the PID D term (rate damping). Noised deg/s (like the other IMU channels so the D term
+        sees real jitter), pushed as centideg/s fixnum -- same unit + mapping as the LSM6DSO32 (roll,
+        pitch, yaw). The same noised values feed the imu_lsm6dso32 telemetry below (board parity).
+        """
         roll_rate = _noisy(body.roll_rate, noise, -2000.0, 2000.0)
         pitch_rate = _noisy(body.pitch_rate, noise, -2000.0, 2000.0)
         yaw_rate = _noisy(body.yaw_rate, noise, -2000.0, 2000.0)
@@ -223,15 +233,17 @@ class Hitl(task.Task):
         self._tlm_gnss.push(('%.6f' % lat, '%.6f' % lon, round(speed * _KNOTS, 1), round(heading, 1)))
 
     async def run(self) -> None:
-        # FIXED-TIMESTEP ACCUMULATOR. The sim must track the WALL clock, because the sequencer's stage
-        # timeouts (launch dwell, the boost->glide burnout/ejection timeout, ground dwell) are wall-clock
-        # (ticks_ms) -- if sim-time and wall-time drift, the stages fire at the wrong altitude (a fixed dt
-        # per iteration flew the model ~3x realtime, past apogee and underground before the 6 s timeout;
-        # naively clamping the measured dt does the reverse, throttling the sim below wall-time so the
-        # glide never reaches the ground). So each iteration measures the real elapsed time and advances
-        # the model in stable `fixed`-size sub-steps to COVER it: integration stays at sim_hz (accurate),
-        # while the number of sub-steps floats with the loop rate so 1 sim-second == 1 wall-second. A big
-        # one-off stall is capped so it cannot inject a burst of catch-up steps.
+        """
+        FIXED-TIMESTEP ACCUMULATOR. The sim must track the WALL clock, because the sequencer's stage
+        timeouts (launch dwell, the boost->glide burnout/ejection timeout, ground dwell) are wall-clock
+        (ticks_ms) -- if sim-time and wall-time drift, the stages fire at the wrong altitude (a fixed dt
+        per iteration flew the model ~3x realtime, past apogee and underground before the 6 s timeout;
+        naively clamping the measured dt does the reverse, throttling the sim below wall-time so the glide
+        never reaches the ground). So each iteration measures the real elapsed time and advances the model
+        in stable `fixed`-size sub-steps to COVER it: integration stays at sim_hz (accurate), while the
+        number of sub-steps floats with the loop rate so 1 sim-second == 1 wall-second. A big one-off stall
+        is capped so it cannot inject a burst of catch-up steps.
+        """
         period = max(1, 1000 // self._inject_hz)  # loop + publish cadence (inject rate)
         fixed = 1.0 / self._sim_hz                 # physics sub-step (integration rate, wall-time covered)
         max_catchup = 0.5            # s: cap a scheduling stall's catch-up (<= 0.5 s of sub-steps)
@@ -243,9 +255,11 @@ class Hitl(task.Task):
             now = time.ticks_ms()
             elapsed = time.ticks_diff(now, last) / 1000.0
             last = now
-            # PAD DWELL: armed + stationary on the pad -> the sequencer stays in SETTING (accel 1 g < the
-            # launch threshold) while the GNSS drift calibration samples. Hold the body (no boost
-            # integration, no accumulator backlog) until the dwell elapses, then ignition proceeds.
+            """
+            PAD DWELL: armed + stationary on the pad -> the sequencer stays in SETTING (accel 1 g < the
+            launch threshold) while the GNSS drift calibration samples. Hold the body (no boost integration,
+            no accumulator backlog) until the dwell elapses, then ignition proceeds.
+            """
             if self._pad_dwell_s > 0.0 and self.controller.stage == _STAGE.SETTING and not self._body.gliding:
                 self._pad_dwell_s -= elapsed
                 self._body.accel_g = 1.0

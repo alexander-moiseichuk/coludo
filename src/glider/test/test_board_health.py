@@ -40,7 +40,8 @@ async def test_basics():
     assert isinstance(vitals['mem_free'], int) and vitals['mem_free'] > 0
     assert isinstance(vitals['load'], int) and 0 <= vitals['load'] <= 100
     assert vitals['rescues'] == 0 and vitals['oom_s'] is None and vitals['land_s'] is None
-    assert set(health.inspect().keys()) == {'temp', 'mem_free', 'load', 'oom_s', 'land_s', 'rescues'}
+    assert set(health.inspect().keys()) == {'name', 'ok', 'healthy',  # the common Task.inspect base
+                                            'temp', 'mem_free', 'load', 'oom_s', 'land_s', 'rescues'}
 
     # the FIRST telemetry row lands at startup -- not one period late
     runner = asyncio.create_task(health.run())
@@ -91,9 +92,11 @@ async def test_load_tracking():
 
 
 async def test_memory_rescue():
-    # the physics-based pre-OOM rescue: collect when the predicted time-to-OOM < 2x the time
-    # left to sink to the ground (land_s), with a PROVEN safe altitude (elevation above the dynamic
-    # floor = 2x the descent a ~200 ms pause costs), in BOOSTING..GLIDING only; no descent -> no rescue.
+    """
+    the physics-based pre-OOM rescue: collect when the predicted time-to-OOM < 2x the time
+    left to sink to the ground (land_s), with a PROVEN safe altitude (elevation above the dynamic
+    floor = 2x the descent a ~200 ms pause costs), in BOOSTING..GLIDING only; no descent -> no rescue.
+    """
     import controller as controller_mod
 
     class _StubController:

@@ -65,7 +65,9 @@ class Bluetooth(task.Task):
             return None
 
     def inspect(self) -> dict:
-        return {'radio': self.radio, 'active': self.active}
+        status = task.Task.inspect(self)
+        status.update({'radio': self.radio, 'active': self.active})
+        return status
 
     def update(self, props) -> list:
         if 'radio' in props and props['radio'] != self.radio:

@@ -34,7 +34,7 @@ class _FakeFin:
 
 class _StubController:
     def __init__(self, stage):
-        self.config = config_default.default()  # carries the mixer block
+        self.config = config_default.default()  # carries the fins/mixer block
         self.stage = stage  # a Stage id (int) -- the flight loop reads controller.stage, not strings
         self.armed = True  # the gate: disarmed -> the loop holds neutral (tested below)
         self.fins = {n: _FakeFin() for n in ('servo_yaw', 'servo_eleron_left', 'servo_eleron_right')}
@@ -65,8 +65,10 @@ class _StubMission:
 
     def endgame_heading(self):
         import guidance
-        wide = self.zone_aspect() > guidance.Heading.OO_ASPECT
-        return guidance.Heading.FIG_OO if wide else guidance.Heading.FIG_O
+        aspect = self.zone_aspect()
+        if aspect >= guidance.Heading.OO_ASPECT:
+            return guidance.Heading.FIG_OO
+        return guidance.Heading.FIG_OVAL if aspect >= guidance.Heading.OVAL_ASPECT else guidance.Heading.FIG_O
 
 
 async def amain():
@@ -147,9 +149,11 @@ async def amain():
     staged._tick()  # non-control stage -> fins neutral, disengaged
     assert all(fin.angle == 90 for fin in pctrl.fins.values()) and staged._active is False
 
-    # bank-to-turn WIRING through the whole pipeline: a heading error becomes a BANK (guidance) and
-    # the roll PID drives the elevons differentially. The tier/cache/bank law details are
-    # test_guidance.py's; here the databoard fix must reach it through the running task.
+    """
+    bank-to-turn WIRING through the whole pipeline: a heading error becomes a BANK (guidance) and
+    the roll PID drives the elevons differentially. The tier/cache/bank law details are
+    test_guidance.py's; here the databoard fix must reach it through the running task.
+    """
     position = databoard.Databoard.provide('gnss', {'position': {'priority': 0, 'timeout_ms': 1000}}, 'position')
     position.push((48.0005, 10.990))   # west of the zone -> steer ~east (90) to the left gate
     attitude.push((0.0, 0, 0))     # facing north, wings level -> a +90 heading error
@@ -162,6 +166,8 @@ async def amain():
     # error +90 -> bank_demand(+90, 1.5, 30) = +30 -> roll PID (kp 1) -> elevons 90+/-30 (a right bank)
     assert bank_ctrl.fins['servo_eleron_left'].angle == 120 and bank_ctrl.fins['servo_eleron_right'].angle == 60
     assert bank_ctrl.fins['servo_eleron_left'].angle != bank_ctrl.fins['servo_eleron_right'].angle  # banked
+    # 23.5 wiring: _run_pid drives each PID's clamp from the governor's live cap (set_limit)
+    assert bankflight._pid['roll'].output_limit == bankflight._mixer.limit * fixed.SCALE
 
     # crosswind landing: LANDING keeps steering to the zone (not a blind wings-level flare), using
     # the FULL fin authority (land_bank_limit 45) to crab the crosswind out -- keep it gliding.
@@ -176,10 +182,12 @@ async def amain():
     # error +90 -> bank_demand(+90, land_bank_gain 1.5, land_bank_limit 45) = +45 -> elevons 90+/-45 (full)
     assert land_ctrl.fins['servo_eleron_left'].angle == 135 and land_ctrl.fins['servo_eleron_right'].angle == 45
 
-    # integer-degree heading error quantises the yaw D-term -- characterise the on-device impact.
-    # A smooth turn feeds a kd-only PID (its step() output IS the D term). Float wrap gives a smooth
-    # de/dt ~= the turn rate; the production int wrap holds flat then jumps a whole degree, so the D term
-    # spikes to ~1deg/dt at each integer crossing -- larger peaks, but bounded and sparse.
+    """
+    integer-degree heading error quantises the yaw D-term -- characterise the on-device impact.
+    A smooth turn feeds a kd-only PID (its step() output IS the D term). Float wrap gives a smooth
+    de/dt ~= the turn rate; the production int wrap holds flat then jumps a whole degree, so the D term
+    spikes to ~1deg/dt at each integer crossing -- larger peaks, but bounded and sparse.
+    """
     dt_ms = 10  # 100 Hz
     sweep = [30.0 - 0.27 * i for i in range(80)]  # heading error sweeping smoothly (~27 deg/s turn)
 
@@ -193,17 +201,23 @@ async def amain():
           % (peak_float, peak_int))
     assert abs(peak_float - 27) < 2          # float: ~ the turn rate, no quantisation
     assert peak_int >= 1000 / dt_ms - 1      # int: spikes of ~1deg/dt (~100 deg/s) at degree crossings
-    # Verdict: the spike is bounded by one degree-per-tick. With yaw kd kept small (sub-degree heading
-    # precision is irrelevant for fin authority over a 100-200 m approach) it is negligible; if a large
-    # kd is ever needed, switch the yaw error to float or low-pass the D term.
+    """
+    Verdict: the spike is bounded by one degree-per-tick. With yaw kd kept small (sub-degree heading
+    precision is irrelevant for fin authority over a 100-200 m approach) it is negligible; if a large
+    kd is ever needed, switch the yaw error to float or low-pass the D term.
+    """
 
-    # dynamic-pressure fin governor WIRING: the governor caps mixer.limit EVERY step (even in a
-    # non-control stage). The schedule/throttle/override logic is test_governor.py's; here the
-    # databoard accel channel and the step pipeline must reach it through the running task.
+    """
+    dynamic-pressure fin governor WIRING: the governor caps mixer.limit EVERY step (even in a
+    non-control stage). The schedule/throttle/override logic is test_governor.py's; here the
+    databoard accel channel and the step pipeline must reach it through the running task.
+    """
     gov = flight.Flight('flight', {'schedule_hz': 0, 'gains': {}}, _StubController(Stage.SETTING))
     assert await gov.setup() is True
     accel = databoard.Databoard.provide('accel_gov', {'accel': {'priority': 0, 'timeout_ms': 1000}}, 'accel')
     accel.push((0.0, 0.0, 1.0))  # exactly 1 g -> net accel 0 -> predict() is a no-op, value() = what we set
+    gov._governor._estimator._confident = True  # trusted estimate -> the cap tracks value() (the 23.4
+    # conservative cap-floor applies only WHILE un-confident -- that path is covered by test_governor)
     gov._governor._estimator._speed = 0.0
     gov._tick()
     assert gov._mixer.limit == 45  # 0 m/s -> full 45 deg authority (and SETTING still ran the governor)
@@ -252,9 +266,11 @@ async def amain():
     # pitch error = hold(90) - 80 = +10 -> kp 1 -> pitch_cmd 10 -> elevons 90+10, capped by the governor
     assert boost_ctrl.fins['servo_eleron_left'].angle == 100 and boost_ctrl.fins['servo_yaw'].angle == 90
 
-    # crash safety: an uncaught exception inside the control step must CENTRE the fins on the
-    # way out (run()'s finally -> finish()), never leave the last deflection standing through the
-    # watchdog window.
+    """
+    crash safety: an uncaught exception inside the control step must CENTRE the fins on the
+    way out (run()'s finally -> finish()), never leave the last deflection standing through the
+    watchdog window.
+    """
     crash_ctrl = _StubController(Stage.GLIDING)
     crashing = flight.Flight('flight', {'schedule_hz': 0, 'period_ms': 10,
                                         'gains': {'roll': {'kp': 1.0}}}, crash_ctrl)

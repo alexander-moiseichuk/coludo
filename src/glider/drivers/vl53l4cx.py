@@ -34,6 +34,7 @@ except ImportError:  # host (CPython): board-only; the XSHUT/INT pins are wired 
     Pin = None
 
 
+_ADDR = const(0x29)  # default I2C address
 _REG_FIRMWARE_STATUS = const(0x00E5)  # reads 0x03 once the firmware has booted
 _REG_MODEL_ID = const(0x010F)  # 2 bytes: 0xEBAA for the VL53L4CD/L4CX silicon
 _REG_CONFIG_START = const(0x002D)  # the default-configuration block is written from here
@@ -79,13 +80,14 @@ class Vl53l4cx(task.Task):
         if spec is None:
             return False
         self._bus = i2cbus.get(bus_id, spec)
-        self._addr: int = self.config.get('addr', 0x29)
+        self._addr: int = self.config.get('addr', _ADDR)
         self._period_ms: int = self.config.get('period_ms', 50)  # poll interval with no INT wired
         self._fallback_ms: int = self.config.get('fallback_ms', 500)  # safety sample if INT silent
         self._ready = asyncio.ThreadSafeFlag()
         self._int = None
         try:
-            await self._reset()  # pulse XSHUT (if wired) and wait for the firmware to boot
+            if not await self._reset():  # pulse XSHUT (if wired) and wait for the firmware to boot
+                return False  # firmware wedged -> reject (the model id below is silicon, would false-pass)
             if (await self._read(_REG_MODEL_ID, 1))[0] != 0xEB:
                 return False  # not a VL53L4CD/L4CX at this address
             await self._bus.write(self._addr, _REG_CONFIG_START, _DEFAULT_CONFIG, addrsize=16)
@@ -127,7 +129,8 @@ class Vl53l4cx(task.Task):
             (none)
 
         Returns:
-            None; pulses XSHUT (if wired) and polls the firmware-status register until booted.
+            True once the firmware boots; False on timeout -- a dead-firmware sensor still ACKs its
+            hard-silicon model id, so setup() must gate on this to avoid a false-present detection.
         """
         gpio = self._pin_gpio('xshut_pin')
         if gpio is not None:
@@ -137,8 +140,9 @@ class Vl53l4cx(task.Task):
         await asyncio.sleep_ms(2)
         for _ in range(_BOOT_TIMEOUT_MS):  # poll FIRMWARE__SYSTEM_STATUS until booted
             if (await self._read(_REG_FIRMWARE_STATUS, 1))[0] & 0x01:
-                return
+                return True
             await asyncio.sleep_ms(1)
+        return False  # firmware never booted -> model-id below is hard silicon (false-present); setup gates on this
 
     async def _set_timing_budget(self, budget_ms: int) -> None:
         """
@@ -234,7 +238,7 @@ class Vl53l4cx(task.Task):
                     self._agl.push(agl)  # one step: push our channel directly
                     self._telemetry.push((agl,))
             except Exception as error:
-                print('vl53l4cx :: read %r' % error)
+                self.note('vl53l4cx :: read %r', error)  # deduped: a persistent I2C error logs once, not at poll rate
 
     async def probe(self) -> str:
         """

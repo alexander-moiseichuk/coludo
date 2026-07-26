@@ -16,11 +16,13 @@ import commons
 _G = 9.81
 _RHO = 1.225            # sea-level air density (kg/m^3)
 _CDA = 0.6 * 0.0017     # Cd * frontal area (m^2) from the coludo.md envelope (~46 mm, ~17 cm^2)
-# STALL floor: the 1-g stall speed. A coordinated turn pulls load n = 1/cos(bank), and the wing needs
-# airspeed >= _V_STALL_1G*sqrt(n) to hold it; below that it stalls (lift collapses -> a hard sink break,
-# controls go mushy). Trim is ~14 m/s so a straight glide sits ~1.5x above stall; it bites only at steep
-# bank (>~66 deg at trim) or when a degraded speed sags. This is the physical limit the airspeed-gated
-# endgame bank (in guidance) is gated to respect -- the sim PENALISES a gate that over-commands.
+"""
+STALL floor: the 1-g stall speed. A coordinated turn pulls load n = 1/cos(bank), and the wing needs
+airspeed >= _V_STALL_1G*sqrt(n) to hold it; below that it stalls (lift collapses -> a hard sink break,
+controls go mushy). Trim is ~14 m/s so a straight glide sits ~1.5x above stall; it bites only at steep
+bank (>~66 deg at trim) or when a degraded speed sags. This is the physical limit the airspeed-gated
+endgame bank (in guidance) is gated to respect -- the sim PENALISES a gate that over-commands.
+"""
 _V_STALL_1G = 9.0       # m/s -- 1-g stall speed (below the 14 m/s trim)
 _STALL_SINK = 1.0       # 1/s -- extra sink (m/s per m/s of speed deficit) once stalled, on top of drag
 _ROLL_MAX = 70.0        # deg -- structural bank clamp (raised from 60 to give the gated bank room)
@@ -55,9 +57,11 @@ class Body:
         self.mass = mass  # boost mass (whole stack: booster + glider); drops to glide_mass at separation
         self.glide_mass = glide_mass if glide_mass else mass  # glider-only mass after the booster ejects
         self.lat0, self.lon0 = launch
-        # metres per degree of LONGITUDE at the (fixed) pad latitude -- precomputed once, not per
-        # position() sample: cos(radians(lat0)) is constant for the whole flight (saves a per-call
-        # radians()+cos() box on the sim's publish-rate ground-track math).
+        """
+        metres per degree of LONGITUDE at the (fixed) pad latitude -- precomputed once, not per
+        position() sample: cos(radians(lat0)) is constant for the whole flight (saves a per-call
+        radians()+cos() box on the sim's publish-rate ground-track math).
+        """
         self._m_per_deg_lon = commons.M_PER_DEG * math.cos(math.radians(self.lat0))
         self.elev0 = elevation_m
         self.glide_heading = glide_heading
@@ -65,6 +69,7 @@ class Body:
         self.pn = 0.0          # position north (m from pad)
         self.alt = 0.0         # altitude above the pad (m)
         self.vu = 0.0          # vertical speed (m/s)
+        self.trim_sink = 7.0   # trim sink (m/s) at load 1 = 14/(L/D); 7.0 = "air quality 2" worst-case polar
         self.speed = 0.0       # horizontal airspeed (m/s)
         self.heading = glide_heading  # deg (0 = north)
         self.roll = 0.0        # deg
@@ -76,16 +81,20 @@ class Body:
         self.gliding = False
         self.wind_e = 0.0      # steady wind advecting the body (m/s, east +) -- a glide disturbance
         self.wind_n = 0.0      # steady wind advecting the body (m/s, north +)
-        # GNSS consistent-drift velocity (m/s ENU): a stationary receiver's slow apparent motion (geometry
-        # / ionosphere / multipath). Present in the REPORTED ground velocity even on the pad (a fixed
-        # antenna, no wind) -> the calibration reads it. MEASURED (Adafruit DGPS, 8 sats, HDOP 1.01, 60 s
-        # stationary, 2026-07-09): ~0.25 m/s apparent, of which ~0.13 m/s is a CONSISTENT bias (the part
-        # the calib removes) and ~half is random walk (residual). So a realistic scenario value is ~0.15.
+        """
+        GNSS consistent-drift velocity (m/s ENU): a stationary receiver's slow apparent motion (geometry
+        / ionosphere / multipath). Present in the REPORTED ground velocity even on the pad (a fixed
+        antenna, no wind) -> the calibration reads it. MEASURED (Adafruit DGPS, 8 sats, HDOP 1.01, 60 s
+        stationary, 2026-07-09): ~0.25 m/s apparent, of which ~0.13 m/s is a CONSISTENT bias (the part
+        the calib removes) and ~half is random walk (residual). So a realistic scenario value is ~0.15.
+        """
         self.gnss_drift_e = 0.0
         self.gnss_drift_n = 0.0
-        # weight-imbalance / thrust-misalignment disturbance (deg/s^2), applied while the motor
-        # burns: a CG offset or a canted nozzle torques the stack CONSTANTLY, unlike the
-        # weathercock which needs wind. Pitch = the top-to-bottom lean axis, roll = side-to-side.
+        """
+        weight-imbalance / thrust-misalignment disturbance (deg/s^2), applied while the motor
+        burns: a CG offset or a canted nozzle torques the stack CONSTANTLY, unlike the
+        weathercock which needs wind. Pitch = the top-to-bottom lean axis, roll = side-to-side.
+        """
         self.imbalance_pitch = 0.0
         self.imbalance_roll = 0.0
 
@@ -185,23 +194,27 @@ class Body:
         self.heading = (self.heading + self.yaw_rate * dt) % 360.0
         heading_rad = math.radians(self.heading)  # cached: pe + pn reuse it (was 2 radians() calls)
         self.speed += (14.0 - self.speed) * 0.5 * dt
-        # sink: the straight-TRIM glide settles at ~-7 m/s = "air quality 2", the WORST-CASE polar
-        # (14 m/s / L/D 2: 200 m of altitude buys ~400 m of air path). Deliberately pessimistic:
-        # the real airframe is expected at quality 4-6 (capacity ~10 min aloft), but simulating
-        # that makes every HITL campaign crazy long -- the sim stays conservative and the polar
-        # RE-CALIBRATES from the first real glide telemetry. A bank raises sink by the induced-drag
-        # law (load factor n^1.5: x1.24 at 30 deg, x1.68 at 45) -- the physical cost, replacing the
-        # old raw G*(1-cos) term (~10x too harsh, every turn hemorrhaged what trim saved). An
-        # off-trim pitch still adds sink, so holding trim flies longest and altitude bleeds through
-        # the TURNS -- the designed energy management (fly-long is the primary objective; see coludo.md).
+        """
+        sink: the straight-TRIM glide settles at ~-7 m/s = "air quality 2", the WORST-CASE polar
+        (14 m/s / L/D 2: 200 m of altitude buys ~400 m of air path). Deliberately pessimistic:
+        the real airframe is expected at quality 4-6 (capacity ~10 min aloft), but simulating
+        that makes every HITL campaign crazy long -- the sim stays conservative and the polar
+        RE-CALIBRATES from the first real glide telemetry. A bank raises sink by the induced-drag
+        law (load factor n^1.5: x1.24 at 30 deg, x1.68 at 45) -- the physical cost, replacing the
+        old raw G*(1-cos) term (~10x too harsh, every turn hemorrhaged what trim saved). An
+        off-trim pitch still adds sink, so holding trim flies longest and altitude bleeds through
+        the TURNS -- the designed energy management (fly-long is the primary objective; see coludo.md).
+        """
         load = 1.0 / max(0.3, math.cos(roll_rad))  # load factor n (clamped); the accel_g below reuses it
-        self.vu += -0.1 * (self.vu + 7.0 * load ** 1.5) * dt
+        self.vu += -0.1 * (self.vu + self.trim_sink * load ** 1.5) * dt
         if stalled:  # lift lost -> a hard sink break on TOP of induced drag; deeper deficit, harder drop
             self.vu -= _STALL_SINK * (stall_speed - self.speed) * dt
-        # ANY off-trim pitch adds sink (ABS -- both a nose-down dive and a nose-up mush cost energy), so
-        # holding trim flies longest. The old signed term let a sustained nose-DOWN pitch (< -6) REDUCE
-        # sink and even CLIMB -- unphysical for an unpowered glider (found by the combined-degradation
-        # HITL, where degraded control drove the pitch off-trim and the glider climbed instead of landing).
+        """
+        ANY off-trim pitch adds sink (ABS -- both a nose-down dive and a nose-up mush cost energy), so
+        holding trim flies longest. The old signed term let a sustained nose-DOWN pitch (< -6) REDUCE
+        sink and even CLIMB -- unphysical for an unpowered glider (found by the combined-degradation
+        HITL, where degraded control drove the pitch off-trim and the glider climbed instead of landing).
+        """
         self.vu = self.vu - 0.4 * abs(self.pitch + 6.0) * dt
         self.alt += self.vu * dt
         # ground track = airspeed along the heading + the wind (the glider is blown with the air mass)

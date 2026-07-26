@@ -52,7 +52,7 @@ def _readiness(cfg: dict) -> dict:
     the hardware `pass`.
 
     Args:
-        cfg - the active board config (top level, with 'components' and 'fin_limit_multiplier').
+        cfg - the active board config (top level, with 'components' and the 'fins' section).
 
     Returns:
         {check: problem} for each tripped gate; an empty dict means flight-ready.
@@ -75,9 +75,9 @@ def _readiness(cfg: dict) -> dict:
             problems['gains'] = 'zero/unset on ' + ', '.join(slack) + ' -- the loop computes but cannot act'
 
     # Bench fin derating still applied.
-    multiplier = cfg.get('fin_limit_multiplier', 1.0)
+    multiplier = cfg.get('fins', {}).get('limit_multiplier', 1.0)
     if multiplier != 1.0:
-        problems['fin_limit_multiplier'] = '%g: a bench derating is still applied' % multiplier
+        problems['fins.limit_multiplier'] = '%g: a bench derating is still applied' % multiplier
 
     # No landing zone and no CC-less site to select one from.
     mission = inspector.Inspector.get('mission')
@@ -172,7 +172,7 @@ class _Context:
 
 def _register_identity(dispatcher, ctx) -> None:
     """whoami / ping / health -- who the board is and how it is doing."""
-    async def whoami(msg) -> str:
+    async def whoami(_unused_msg) -> str:
         info = {
             'mcu': ctx.cfg['board'].get('mcu'),
             'firmware_version': ctx.cfg['board'].get('firmware_version', 'dev'),
@@ -182,10 +182,10 @@ def _register_identity(dispatcher, ctx) -> None:
         }
         return cc.build('iam', [ctx.board_id, json.dumps(info)])  # the one reply carrying the id
 
-    async def ping(msg) -> str:
+    async def ping(_unused_msg) -> str:
         return cc.build('pong')
 
-    async def health(msg) -> str:
+    async def health(_unused_msg) -> str:
         try:
             temp = esp32.mcu_temperature()
         except Exception:  # host (esp32 None) or a probe failure -> no temperature
@@ -199,18 +199,22 @@ def _register_identity(dispatcher, ctx) -> None:
         if mission is not None:  # the board wall-clock (RTC) -> the dashboard top table shows it live
             info['clock'] = mission.clock()
             info['epoch'] = mission.epoch()
-            # the launchpad the board would fly with, for the dashboard safety cell: the effective
-            # origin (CC-set/frozen, else the live fix -- which freeze_launch pins at arm), whether
-            # it is already persistent, and the selected site name (CC-less site-by-GPS)
+            """
+            the launchpad the board would fly with, for the dashboard safety cell: the effective origin
+            (CC-set/frozen, else the live fix -- which freeze_launch pins at arm), whether it is already
+            persistent, and the selected site name (CC-less site-by-GPS)
+            """
             info['launchpad'] = mission.launch_point()
             info['launchpad_set'] = mission.latitude is not None and mission.longitude is not None
             info['site'] = mission.site or None
         agl = databoard.Databoard.parameter('agl')  # low-altitude laser AGL -> the flight panel
         if agl is not None:
             info['agl'] = agl.value()
-        # degraded-mode annunciation: the non-nominal states, gathered into one operator signal so a
-        # glance shows the board is NOT flying clean (attitude on the backup, memory rescued, warm
-        # restart, CC-less fallback zone). Empty list = nominal.
+        """
+        degraded-mode annunciation: the non-nominal states, gathered into one operator signal so a glance
+        shows the board is NOT flying clean (attitude on the backup, memory rescued, warm restart, CC-less
+        fallback zone). Empty list = nominal.
+        """
         degraded = []
         attitude = databoard.Databoard.parameter('attitude')
         if attitude is not None and attitude.read()[1] == 'attitude':  # fused source IS the backup
@@ -262,7 +266,7 @@ def _register_control(dispatcher, ctx) -> None:
             manual = ctx.controller.manual
         return cc.build('ok', [json.dumps({'stage': ctx.stage(), 'manual': manual})])
 
-    async def arm(msg) -> str:
+    async def arm(_unused_msg) -> str:
         """
         Enable actuation, but only when board verify is clean.
 
@@ -288,13 +292,13 @@ def _register_control(dispatcher, ctx) -> None:
         ctx.controller.arm()
         return cc.build('ok', [json.dumps({'armed': True})])
 
-    async def disarm(msg) -> str:
+    async def disarm(_unused_msg) -> str:
         if ctx.controller is None:
             return cc.build('err', ['unsupported', 'no controller'])
         ctx.controller.disarm()
         return cc.build('ok', [json.dumps({'armed': False})])
 
-    async def report(msg) -> str:
+    async def report(_unused_msg) -> str:
         return cc.build('ok', [json.dumps(ctx.controller.stats() if ctx.controller is not None else {})])
 
     dispatcher.on('stage', get_stage)
@@ -303,10 +307,10 @@ def _register_control(dispatcher, ctx) -> None:
     dispatcher.on('report', report)
 
 
-def _register_inspection(dispatcher, ctx) -> None:
+def _register_inspection(dispatcher) -> None:
     """objects / inspect / update / stats -- the Inspector surface for operator-facing objects."""
 
-    async def objects(msg) -> str:
+    async def objects(_unused_msg) -> str:
         return cc.build('ok', [json.dumps(inspector.Inspector.names())])
 
     async def inspect(msg) -> str:
@@ -411,7 +415,7 @@ def _register_config(dispatcher, ctx) -> None:
             return cc.build('ok', [json.dumps(mission.persisted())])
         return cc.build('err', ['badargs', 'unknown config %s' % name])
 
-    async def reset_config(msg) -> str:
+    async def reset_config(_unused_msg) -> str:
         config_mod.reset(ctx.config_path)
         return cc.build('ok')
 
@@ -457,7 +461,7 @@ def _register_diagnostics(dispatcher, ctx) -> None:
             return cc.build('err', ['badargs', 'no probe for ' + target])
         return cc.build('ok', [json.dumps({target: await run()})])
 
-    async def verify(msg) -> str:
+    async def verify(_unused_msg) -> str:
         """
         Verify board setup and report PASS or the problems.
 
@@ -573,7 +577,7 @@ def _register_streaming(dispatcher) -> None:
 def _register_system(dispatcher, ctx) -> None:
     """reboot -- restart the board (delayed so the `ok` reply flushes before the reset)."""
 
-    async def reboot(msg) -> str:
+    async def reboot(_unused_msg) -> str:
         reset = ctx.on_reboot or (lambda: __import__('machine').reset())  # imported only when it fires
 
         async def do_reset() -> None:
@@ -608,7 +612,7 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
     ctx = _Context(cfg, controller, on_reboot, config_path)
     _register_identity(dispatcher, ctx)
     _register_control(dispatcher, ctx)
-    _register_inspection(dispatcher, ctx)
+    _register_inspection(dispatcher)
     _register_config(dispatcher, ctx)
     _register_diagnostics(dispatcher, ctx)
     _register_streaming(dispatcher)

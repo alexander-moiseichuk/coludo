@@ -243,9 +243,11 @@ async def _web():
                                        json.dumps({'board': 'ghost', 'command': 'ping'}))
         assert status == 404
 
-        # POST /api/op runs an operator-console line through the registry (calibrate, list, ...) over the
-        # same dispatch the telnet console uses -- so an operator command runs, and a board-id-first line
-        # still routes to the board.
+        """
+        POST /api/op runs an operator-console line through the registry (calibrate, list, ...) over the
+        same dispatch the telnet console uses -- so an operator command runs, and a board-id-first line
+        still routes to the board.
+        """
         status, payload = await _http(WEB_PORT, 'POST', '/api/op', json.dumps({'line': 'list'}))
         assert status == 200 and json.loads(payload)['lines'][0].startswith('from cc ok ')  # `list` ran
         status, payload = await _http(WEB_PORT, 'POST', '/api/op', json.dumps({'line': 'glider9 ping'}))
@@ -352,9 +354,11 @@ async def _gps_assist():
 
 
 async def _log_stream():
-    """Operator enables `<board> log <ms>` (board-first, like `<board> ping`): the hub polls the
+    """
+    Operator enables `<board> log <ms>` (board-first, like `<board> ping`): the hub polls the
     board's `log` buffer and surfaces each line to the console (`<id>: <line>`) and the /logs SSE
-    feed; `<board> log off` stops it (and tells the board to stop collecting with a final `log 0`)."""
+    feed; `<board> log off` stops it (and tells the board to stop collecting with a final `log 0`).
+    """
     seen = []
     hub = server.Server(host='127.0.0.1', port=LOG_BOARD_PORT, operator_port=LOG_OPERATOR_PORT,
                         web_port=LOG_WEB_PORT, log=seen.append, heartbeat_s=5.0)

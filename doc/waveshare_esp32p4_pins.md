@@ -49,6 +49,7 @@
 | `attitude` | - | - |
 | `baro_icp10111` | i2c:0 @ 0x63 | - |
 | `baro_bmp280` | i2c:0 @ 0x76 | - |
+| `airspeed_sdp810` | i2c:0 @ 0x25 | - |
 | `laser_agl` | i2c:0 @ 0x29 | int_pin=laser_int (GPIO3), xshut_pin=laser_xshut (GPIO5) |
 | `power_ina226` | i2c:1 @ 0x40 | alert_pin=ina226_alert (GPIO29) |
 | `gnss` | uart:2 | - |
@@ -58,6 +59,7 @@
 | `servo_eleron_left` | - | pin=servo_eleron_left (GPIO27) |
 | `servo_eleron_right` | - | pin=servo_eleron_right (GPIO32) |
 | `sequencer` | - | - |
+| `checkpoint` | - | - |
 | `gnss_calib` | - | - |
 | `flight` | - | - |
 | `watchdog` | - | - |

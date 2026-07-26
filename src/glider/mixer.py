@@ -3,14 +3,16 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 Control-surface mixer (sibling of servo.py / gnss.py). Maps the control axes (roll, pitch, yaw --
 each a deflection command in degrees) to per-fin servo angles for the airframe's mixing: ELEVONS (the
-two elerons move together for pitch, differentially for roll) + a RUDDER (the yaw fin). Per-fin trim
-(mechanical neutral alignment) and a hard +/- limit on control deflection. Pure integer math, no
-hardware -- the flight control task (Phase 3) binds the resolved fin driver objects once (bind()) and
-then drives them straight from the mixing loop (actuate()); the per-driver clamp still guards the
-physical range. mix() keeps the dict form for tests/host tools.
+two elerons move together for pitch, differentially for roll) + a RUDDER (the yaw fin). A hard +/-
+limit on control deflection. Pure integer math, no hardware -- the flight control task (Phase 3) binds
+the resolved fin driver objects once (bind()) and then drives them straight from the mixing loop
+(actuate()); the per-driver clamp still guards the physical range. mix() keeps the dict form for
+tests/host tools.
 
-Signs are config (`surfaces` gains + `trim`), set during bench alignment: if a surface deflects the
-wrong way, flip its gain sign; if its neutral is off, set its trim.
+Signs are config (`surfaces` gains), set during bench alignment: if a surface deflects the wrong way,
+flip its gain sign. MECHANICAL NEUTRAL (each fin's true zero) is NOT here -- it lives in the servo
+driver (sg90 `trim`, per fin), so it applies to boot / failsafe / control alike; the mixer commands a
+COMMON neutral and the driver offsets each fin to its centre.
 """
 
 from commons import SERVO_NEUTRAL_DEG, between
@@ -26,25 +28,30 @@ class Mixer:
     """
     Mix (roll, pitch, yaw) deflection commands -> {fin_name: integer angle}.
 
-    angle = neutral + trim + clamp(sum(gain * axis), +/- limit).
+    angle = neutral + clamp(sum(gain * axis), +/- limit).  Each fin's mechanical zero is the servo
+    driver's `trim`, applied downstream -- the mixer only commands the COMMON neutral.
     """
 
     def __init__(self, config: dict = None):
         config = config or {}
         self.neutral: int = config.get('neutral_deg', SERVO_NEUTRAL_DEG)
-        # max control deflection from neutral, per surface. OWNERSHIP: config only seeds the pre-flight
-        # value -- in flight the Governor OWNS it (rewrites it every update, ∝ 1/v² of airspeed) and
-        # mix()/actuate() read it. Nothing else may write it: a "configurable limit" would silently
-        # fight the dynamic-pressure governor.
+        """
+        max control deflection from neutral, per surface. OWNERSHIP: config only seeds the pre-flight
+        value -- in flight the Governor OWNS it (rewrites it every update, ∝ 1/v² of airspeed) and
+        mix()/actuate() read it. Nothing else may write it: a "configurable limit" would silently
+        fight the dynamic-pressure governor.
+        """
         self.limit: int = config.get('limit_deg', 45)
         self.surfaces: dict = config.get('surfaces', _DEFAULT_SURFACES)
-        self.trim: dict = config.get('trim', {})  # per-fin neutral offset (deg)
-        # (zero-alloc hot path): pre-resolve each surface to (name, base, roll_gain, pitch_gain,
-        # yaw_gain) where base = neutral + trim, and pre-allocate the output dict ONCE. mix() then runs
-        # at 100 Hz with NO per-call allocation -- it rewrites the shared `_out` in place (the nested
-        # axis-dict + per-axis `.get()` of the old version are gone). Under the GC-disabled-in-flight
-        # policy (coludo.md) this keeps the glide from churning the heap.
-        self._surfaces: list = [(name, int(self.neutral + self.trim.get(name, 0)),
+        """
+        (zero-alloc hot path): pre-resolve each surface to (name, base, roll_gain, pitch_gain,
+        yaw_gain) where base = neutral (the COMMON zero; each fin's mechanical offset is the servo
+        driver's `trim`), and pre-allocate the output dict ONCE. mix() then runs at 100 Hz with NO
+        per-call allocation -- it rewrites the shared `_out` in place (the nested axis-dict + per-axis
+        `.get()` of the old version are gone). Under the GC-disabled-in-flight policy (coludo.md) this
+        keeps the glide from churning the heap.
+        """
+        self._surfaces: list = [(name, int(self.neutral),
                                  gains.get('roll', 0), gains.get('pitch', 0), gains.get('yaw', 0))
                                 for name, gains in self.surfaces.items()]
         self._out: dict = {name: base for name, base, _r, _p, _y in self._surfaces}
@@ -58,7 +65,7 @@ class Mixer:
         This clamps only the CONTROL AUTHORITY to +/-limit. The absolute PHYSICAL endpoint is enforced
         per-fin by sg90's `[min_deg, max_deg]` clamp -- that is the correct layer: the safe travel is
         per-linkage, not a single global bound, so set each fin's min_deg/max_deg to its mechanical
-        range in board.config (e.g. a horn that binds at 135 deg -> max_deg=135) and the trim+deflection
+        range in board.config (e.g. a horn that binds at 135 deg -> max_deg=135) and the deflection
         sum can never drive it past that. Inputs are already integers (flight rounds the PID output) so
         there is no per-call float cast.
 
@@ -75,8 +82,8 @@ class Mixer:
         limit = self.limit
         out = self._out  # hoist the attribute lookup out of the per-fin loop
         for name, base, roll_gain, pitch_gain, yaw_gain in self._surfaces:
-            # clamp the CONTROL deflection (authority) to +/-limit, then add to base (neutral+trim);
-            # the absolute physical end-stop is sg90's per-fin [min_deg, max_deg]
+            # clamp the CONTROL deflection (authority) to +/-limit, then add to base (the common neutral;
+            # each fin's mechanical zero is the sg90 driver's trim). Physical end-stop = sg90 [min,max].
             deflection = between(-limit, roll_gain * roll + pitch_gain * pitch + yaw_gain * yaw, limit)
             out[name] = base + deflection
         return out

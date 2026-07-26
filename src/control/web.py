@@ -17,7 +17,7 @@ import asyncio
 import json
 import os
 
-_REASON = {200: 'OK', 400: 'Bad Request', 404: 'Not Found', 502: 'Bad Gateway'}
+_REASON = {200: 'OK', 400: 'Bad Request', 404: 'Not Found', 500: 'Internal Server Error', 502: 'Bad Gateway'}
 _PAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'index.html')
 
 
@@ -73,11 +73,20 @@ class Web:
                     break
                 name, _, value = header.decode().partition(':')
                 if name.strip().lower() == 'content-length':
-                    length = int(value.strip())
+                    try:
+                        length = int(value.strip())
+                    except ValueError:
+                        length = 0  # a non-numeric Content-Length -> no body, still route the request
             body = await reader.readexactly(length) if length else b''
             await self._route(method, path, body, writer)
-        except (ConnectionError, asyncio.IncompleteReadError, asyncio.CancelledError):
-            pass
+        except (ConnectionError, asyncio.IncompleteReadError, asyncio.CancelledError,
+                ValueError, UnicodeDecodeError):
+            pass  # torn-down link or a malformed request line/headers -> close quietly
+        except Exception:  # any handler fault -> answer 500 so the client never hangs
+            try:
+                await _send(writer, 500, 'text/plain', 'internal error')
+            except Exception:
+                pass
         finally:
             writer.close()
 
