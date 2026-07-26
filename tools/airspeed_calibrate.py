@@ -47,6 +47,38 @@ def _read_csv(path: str) -> list:
     return rows
 
 
+def _read_capture(path: str) -> tuple:
+    """
+    Pull the pitot and GNSS rows out of an ASSEMBLED capture (.txt) -- the artifact every other tool eats.
+
+    Without this the calibrator was the odd one out: it read only loose per-stream CSVs, so trimming
+    `air_density` from a field recording meant hand-splitting the capture first. Reuses the shared
+    flight_telemetry parser (findings §27.5) rather than re-implementing the wire format, and rebuilds
+    the same {column: value} row dicts the CSV path yields, so calibrate() is untouched.
+
+    Args:
+        path - the assembled capture file.
+
+    Returns:
+        (pitot_rows, gnss_rows) -- each a list of {column: value} dicts, empty when the stream is absent.
+    """
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import flight_telemetry
+
+    with open(path) as handle:
+        streams, _logs = flight_telemetry.parse(handle.read())
+    pitot = flight_telemetry.find_stream(streams, 'dynamic_pressure')
+    gnss = flight_telemetry.find_stream(streams, 'speed_kn')
+
+    def rows(stream):
+        if stream is None:
+            return []
+        names = ['uptime'] + list(stream.fields)
+        return [dict(zip(names, [str(cell) for cell in row])) for row in stream.rows]
+
+    return rows(pitot), rows(gnss)
+
+
 def _find(directory: str, column: str) -> str:
     """The first *.csv in `directory` whose header carries `column` (auto-detect a stream by its field)."""
     for path in sorted(glob.glob(os.path.join(directory, '*.csv'))):
@@ -82,7 +114,10 @@ def calibrate(pitot_rows: list, gnss_rows: list, min_speed: float, current: floa
         A result dict: recommended air_density, sample count, robust scatter, and the airspeed error
         before/after the trim; or {'samples': 0} when nothing usable pairs up.
     """
-    pitot = sorted((int(row['uptime']), int(row['dynamic_pressure']) / _SCALE) for row in pitot_rows)
+    # float() both: the CSV path yields integer strings, the assembled-capture path yields parsed
+    # floats ('0.0'), and int() would reject the latter
+    pitot = sorted((int(float(row['uptime'])), float(row['dynamic_pressure']) / _SCALE)
+                   for row in pitot_rows)
     stamps = [stamp for stamp, _q in pitot]
     pressures = [q for _stamp, q in pitot]
     densities, pairs = [], []
@@ -90,7 +125,7 @@ def calibrate(pitot_rows: list, gnss_rows: list, min_speed: float, current: floa
         speed = float(row['speed_kn']) * _KNOTS_TO_MS
         if speed < min_speed:
             continue  # not the steady airborne segment (taxi / pad / stall)
-        q = _nearest(stamps, pressures, int(row['uptime']))
+        q = _nearest(stamps, pressures, int(float(row['uptime'])))
         if q is None or q <= 0.0:
             continue  # no time-aligned pitot sample, or a sub-zero (reverse/noise) reading
         densities.append(2.0 * q / (speed * speed))
@@ -199,7 +234,9 @@ def _rms_error(pairs: list, density: float) -> float:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description='SDP810 air_density trim from a calm-day GNSS-vs-q pass.')
-    parser.add_argument('recording', help='a recording directory (auto-detects both CSVs) or the pitot CSV')
+    parser.add_argument('recording',
+                        help='an assembled capture .txt, a recording directory (auto-detects both '
+                             'CSVs), or the pitot CSV')
     parser.add_argument('--gnss', help='the GNSS CSV (auto-detected in a directory by its speed_kn column)')
     parser.add_argument('--current', type=float, default=1.18, help='air_density in the recording (default 1.18)')
     parser.add_argument('--plot', help='also write an SVG of the fit (pitot vs GNSS + the rho spread)')
@@ -209,14 +246,27 @@ def main() -> int:
     if os.path.isdir(args.recording):
         pitot_path = _find(args.recording, 'dynamic_pressure')
         gnss_path = args.gnss or _find(args.recording, 'speed_kn')
+        if not pitot_path or not gnss_path:
+            print('error: could not find the pitot (dynamic_pressure) and/or GNSS (speed_kn) CSV',
+                  file=sys.stderr)
+            return 2
+        pitot_rows, gnss_rows = _read_csv(pitot_path), _read_csv(gnss_path)
+    elif args.recording.endswith('.txt'):  # an assembled capture -- what every other tool consumes
+        pitot_path = gnss_path = args.recording
+        pitot_rows, gnss_rows = _read_capture(args.recording)
+        if not pitot_rows or not gnss_rows:
+            print('error: the capture carries no pitot (dynamic_pressure) and/or GNSS (speed_kn) stream',
+                  file=sys.stderr)
+            return 2
     else:
         pitot_path = args.recording
         gnss_path = args.gnss or _find(os.path.dirname(pitot_path) or '.', 'speed_kn')
-    if not pitot_path or not gnss_path:
-        print('error: could not find the pitot (dynamic_pressure) and/or GNSS (speed_kn) CSV', file=sys.stderr)
-        return 2
+        if not gnss_path:
+            print('error: could not find the GNSS (speed_kn) CSV', file=sys.stderr)
+            return 2
+        pitot_rows, gnss_rows = _read_csv(pitot_path), _read_csv(gnss_path)
 
-    result = calibrate(_read_csv(pitot_path), _read_csv(gnss_path), args.min_speed, args.current)
+    result = calibrate(pitot_rows, gnss_rows, args.min_speed, args.current)
     if result['samples'] < 5:
         print('error: only %d usable paired samples (need >=5) -- fly a longer steady calm pass above %g m/s'
               % (result['samples'], args.min_speed), file=sys.stderr)

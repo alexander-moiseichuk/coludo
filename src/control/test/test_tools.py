@@ -12,6 +12,7 @@ tools; every one of them is pinned below so it cannot come back. Run by `make te
 
 import os
 import sys
+import tempfile
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.join(_ROOT, 'tools'))
@@ -138,6 +139,52 @@ def test_airspeed_calibration_recovers_a_known_density():
     assert airspeed_calibrate.calibrate(pitot[:2], gnss[:2], 8.0, 1.225)['samples'] < 5
 
 
+def test_airspeed_calibration_from_an_assembled_capture():
+    """
+    The calibrator must eat the SAME artifact every other tool does -- an assembled capture (§27.17).
+
+    It used to read only loose per-stream CSVs, so trimming air_density from a field recording meant
+    hand-splitting the capture first. The capture path reuses the shared flight_telemetry parser, which
+    yields FLOAT cells where the CSV path yields integer strings -- the reason calibrate() floats both.
+    Also exercises plot(), which had no coverage at all.
+    """
+    true_rho = 1.15
+    knots = 1.0 / 0.514444
+    pitot_lines = ['@s_airspeed_sdp810.csv@uptime;dynamic_pressure;airspeed_cms;temperature']
+    gnss_lines = ['@s_gnss.csv@uptime;lat;lon;speed_kn;course']
+    for i in range(400):
+        speed = 15.0 + 1.0 * ((i % 40) - 20) / 20.0
+        stamp = i * 20000
+        pressure = 0.5 * true_rho * speed * speed
+        pitot_lines.append('@s_airspeed_sdp810.csv@%d;%d;%d;21.0'
+                           % (stamp, int(pressure * 100), int(speed * 100)))
+        gnss_lines.append('@s_gnss.csv@%d;25.5;-80.4;%.4f;90.0' % (stamp, speed * knots))
+    capture = os.path.join(tempfile.mkdtemp(), 'calm_pass.txt')
+    with open(capture, 'w') as handle:
+        handle.write('\n'.join(pitot_lines + gnss_lines) + '\n')
+
+    pitot_rows, gnss_rows = airspeed_calibrate._read_capture(capture)
+    assert len(pitot_rows) == 400 and len(gnss_rows) == 400
+    result = airspeed_calibrate.calibrate(pitot_rows, gnss_rows, min_speed=8.0, current=1.225)
+    assert abs(result['air_density'] - true_rho) < 0.01, result['air_density']
+
+    # plot() writes a well-formed, self-contained SVG (no plotly at the field)
+    svg = capture.replace('.txt', '.svg')
+    airspeed_calibrate.plot(result, svg, current=1.225)
+    with open(svg) as handle:
+        document = handle.read()
+    assert document.startswith('<svg') and document.rstrip().endswith('</svg>')
+    # self-contained: the w3.org xmlns is the XML namespace (not a fetch), but nothing may be LOADED
+    assert 'href="http' not in document and 'src="http' not in document, 'the field SVG fetches a remote asset'
+
+    # NEGATIVE: a capture with no pitot stream reports empty rather than crashing
+    bare = os.path.join(os.path.dirname(capture), 'bare.txt')
+    with open(bare, 'w') as handle:
+        handle.write('\n'.join(gnss_lines) + '\n')
+    empty_pitot, some_gnss = airspeed_calibrate._read_capture(bare)
+    assert empty_pitot == [] and len(some_gnss) == 400
+
+
 def test_parser_edge_cases():
     """Malformed rows degrade instead of crashing (§26.28, §26.32) -- captures do get truncated."""
     streams, _logs = flight_telemetry.parse(
@@ -156,6 +203,7 @@ test_kpi_on_the_synthetic_flight()
 test_kpi_survives_a_partial_capture()
 test_svg_renders_a_track()
 test_airspeed_calibration_recovers_a_known_density()
+test_airspeed_calibration_from_an_assembled_capture()
 test_parser_edge_cases()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, svg render, '
       'airspeed calibration fit, parser edge cases')
