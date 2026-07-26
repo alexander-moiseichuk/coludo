@@ -55,6 +55,8 @@ async def amain():
     assert await seq.setup() is True
     accel = databoard.Databoard.provide('imu', {'accel': {'priority': 0, 'timeout_ms': 1000}}, 'accel')
     agl = databoard.Databoard.provide('laser', {'agl': {'priority': 0, 'timeout_ms': 1000}}, 'agl')
+    elevation = databoard.Databoard.provide(
+        'baro', {'elevation': {'priority': 0, 'timeout_ms': 1000}}, 'elevation')
 
     # SETTING: 1 g at rest -> no launch
     accel.push((0.0, 0.0, 1.0))
@@ -88,6 +90,28 @@ async def amain():
     seq._tick(1810)  # 110 ms > land_ms 100 -> LANDING
     assert ctrl.stage == Stage.LANDING
 
+    """
+    STALE agl must NOT land the glider at altitude. The laser only reaches ~4 m, so above it the channel
+    goes stale and `value()` would LINEARLY PROJECT the last two samples to now without bound -- a real
+    HITL flight logged `landing; agl -9.6m` 0.38 s after `gliding; apogee 274m`, ending control at
+    apogee. _detect_landing now requires a FRESH source and falls back to the baro elevation.
+    """
+    ctrl.stage = Stage.GLIDING
+    seq._since = None
+    agl.push(0.2)                 # the last on-pad reading, then the laser goes out of range...
+    # REAL time must pass: databoard freshness is wall ticks_us, not the synthetic `now` fed to _tick
+    await asyncio.sleep_ms(1100)  # > the channel's 1000 ms timeout -> the agl channel is STALE
+    elevation.push(274.0)         # ...while the baro says we are at apogee
+    seq._tick(30000)
+    seq._tick(30500)              # sustained well past land_ms: a stale agl would have flared by now
+    assert ctrl.stage == Stage.GLIDING, 'stale agl landed the glider at 274 m'
+
+    # ...and the baro fallback still lands it when the elevation genuinely comes down
+    elevation.push(1.0)
+    seq._tick(31000)
+    seq._tick(31200)              # 200 ms > land_ms 100
+    assert ctrl.stage == Stage.LANDING
+
     # LANDING: ~1 g stationary sustained ground_ms -> done
     accel.push((0.0, 0.0, 1.0))
     seq._tick(1650)
@@ -108,8 +132,6 @@ async def amain():
     # sub-launch_g accel -- a heavy stack boosting near the threshold still detects once it left the pad.
     ctrl.stage = Stage.SETTING
     seq._stage_seen = None
-    elevation = databoard.Databoard.provide(
-        'baro', {'elevation': {'priority': 0, 'timeout_ms': 1000}}, 'elevation')
     accel.push((0.0, 0.0, 2.0))  # only 2 g -- below this SPEC's 3 g launch_g
     elevation.push(3.0)          # still on/near the pad
     seq._tick(2100)

@@ -208,8 +208,9 @@ def _register_identity(dispatcher, ctx) -> None:
             info['launchpad_set'] = mission.latitude is not None and mission.longitude is not None
             info['site'] = mission.site or None
         agl = databoard.Databoard.parameter('agl')  # low-altitude laser AGL -> the flight panel
-        if agl is not None:
-            info['agl'] = agl.value()
+        if agl is not None:  # FRESH only -- out of the laser's ~4 m range an extrapolated agl is fiction
+            value, source, _age = agl.read()
+            info['agl'] = value if source is not None else None
         """
         degraded-mode annunciation: the non-nominal states, gathered into one operator signal so a glance
         shows the board is NOT flying clean (attitude on the backup, memory rescued, warm restart, CC-less

@@ -409,9 +409,12 @@ class Guidance:
         Returns:
             True -- the setpoint slots are always filled in GLIDING / LANDING.
         """
-        agl = self._agl.value()
+        # FRESH agl only: the laser reaches ~4 m, so out of range `value()` projects stale samples
+        # without bound and a bogus low reading would hold FINAL APPROACH on for the whole glide.
+        # See sequencer._detect_landing -- the same staleness ended a flight at apogee.
+        agl, agl_source, _agl_age = self._agl.read()
         config = self._config
-        final = config.final_agl and agl is not None and agl < config.final_agl  # low on final
+        final = config.final_agl and agl_source is not None and agl < config.final_agl  # low on final
         """
         the ENDGAME band: elevation below endgame_alt_m -> full land-bank authority (the turn
         radius halves, the last seconds spiral around the zone). Costs sink only briefly at the

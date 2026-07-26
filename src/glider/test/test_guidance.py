@@ -27,13 +27,24 @@ class _PositionHandle:
 
 
 class _AglHandle:
-    """value() stand-in for the databoard agl Parameter."""
+    """
+    read() stand-in for the databoard agl Parameter.
 
-    def __init__(self, value=None):
+    Guidance reads the SOURCE as well as the value: the laser only reaches ~4 m, so out of range the
+    channel goes stale and an extrapolated agl would hold final approach on for the whole glide (see
+    sequencer._detect_landing -- the same staleness ended a real HITL flight at apogee). `fresh=False`
+    models the out-of-range laser: a value is still projected, but no source vouches for it.
+    """
+
+    def __init__(self, value=None, fresh=True):
         self.value_now = value
+        self.fresh = fresh
 
     def value(self):
         return self.value_now
+
+    def read(self):
+        return [self.value_now, 'laser' if (self.fresh and self.value_now is not None) else None, 0]
 
 
 class _StubGovernor:
@@ -211,6 +222,14 @@ def test_final_approach():
     tracking = unit._nav_heading
     assert homing != tracking  # approach() tracks the long-axis line, not the centre point
     assert abs(guidance.heading_error(tracking, 270.0)) <= 45  # intercept capped at final_intercept
+    # a STALE agl must not engage final approach: out of the laser's ~4 m range the channel extrapolates
+    # without bound, and a bogus low reading would hold centreline tracking for the whole glide
+    agl.value_now, agl.fresh = 4.0, False
+    unit._nav_heading = None
+    unit.compute(Stage.GLIDING, {}, 270.0, 0)
+    assert unit._nav_heading == homing, 'a stale agl engaged final approach'
+    agl.fresh = True
+
     # final_approach_agl 0 disables the final-approach switch (and an absent agl never triggers it)
     off, position, agl, _g = _build({'final_approach_agl': 0})
     off.enter(0.0, 0, 0)

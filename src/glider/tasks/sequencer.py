@@ -301,14 +301,23 @@ class Sequencer(task.Task):
 
         The laser agl is primary; the baro elevation is the fallback when the laser has no reading.
 
+        FRESHNESS IS THE WHOLE POINT HERE. The laser only reaches ~4 m, so for all but the last seconds
+        of a flight it publishes NOTHING -- and `value()` answers a stale channel by LINEARLY PROJECTING
+        its last two samples to now, without bound. Projecting the on-pad readings across a whole boost
+        yields an arbitrary number whose sign depends only on the noise in those two samples: observed
+        `landing; agl -9.6m` fired 0.38 s after `gliding; apogee 274m`, ending the flight at apogee and
+        leaving the glider ballistic. Intermittent precisely because it is noise-signed. So read the
+        SOURCE, not just the value: no fresh laser -> there is no agl, and the baro elevation is the
+        fallback the docstring above always claimed it was.
+
         Args:
             now - the current time (ticks_ms), for the sustained-detect timer.
 
         Returns:
             None; advances to LANDING once the height holds below land_agl_m, else resets the dwell.
         """
-        agl = self._agl.value()
-        height = agl if agl is not None else self._elevation.value()
+        agl, agl_source, _agl_age = self._agl.read()
+        height = agl if agl_source is not None else self._elevation.value()
         if height is not None and height < self._land_agl_m:  # below the landing height...
             if self._sustained(now, self._land_ms):  # ...and SUSTAINED (not a single spike)
                 self._advance(_STAGE.LANDING, 'agl %.1fm' % height)
