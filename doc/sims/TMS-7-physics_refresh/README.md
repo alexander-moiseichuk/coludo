@@ -70,39 +70,55 @@ flight-critical for accuracy" actually costs.
 
 The host runs above are the matrix; this is the same flight flown **on the board** — real drivers, real
 servos physically moving, real INA226 on the servo rail, real MCU memory.
-[**Report**](hitl_f15_full.html) · [**video (FHD, 64 s)**](hitl_f15_full.mp4).
+[**Report**](hitl_f15_full.html) · [**video** (FHD, 62 s)](hitl_f15_full.mp4).
 
-| measured on the board | value | (previous capture) |
+| measured on the board (3 runs) | value | before the pitot fix |
 |---|---|---|
-| servo-rail power | mean **100–109 mW**, **6.2–6.4 J** over the 60 s flight | 101 mW, 6.1 J |
-| fin activity | 689–789 moves, **1450–1734°** of travel (24–29 °/s) | 707 moves, 1594° |
-| `fin_cap` (governor authority) | swept **14 → 45°** — the unconfident floor, then the live 1/v² schedule | same |
-| airspeed estimate | 0 → **13.6–14.6 m/s** | 0 → 14.4 |
-| pitot `dynamic_pressure` | ~0 Pa — correct: the SDP810 is on the bench with no airflow | same |
+| touchdown | **118.6–124.5 m**, spread 6 m | 85–225 m, bimodal |
+| fin activity | 1869–1914 moves, **7736–8068°** (134–139 °/s) | ~1000 **or** ~5000–7000° |
+| servo energy | **30.7–37.2 J** (0.53–0.64 W avg) | 3.6 J or 27.8 J |
+| `fin_cap` | **5° at boost speed → 45° at trim** — the real 1/v² schedule | pinned 14 or 45 |
+| airspeed estimate | ~50 m/s boost → **14.1 m/s glide** (sim trim = 14.0) | **0.00 all flight** |
 
-Three runs, because a single flight cannot distinguish a real delta from the spread (below). Peak
-servo power is a one-sample boot transient (3675–4975 mW here, 5850 before) and is not a stable metric.
+### The bistability had a root cause, and it was a real flight bug
+
+Repeated identical board flights used to land in one of two families — ~1000° of fin travel touching
+down ~220 m out, or ~5000–7000° landing 85–180 m. Neither was correct, and the explanation is a hole in
+the governor rather than anything about the endgame.
+
+**The HITL sim does not simulate `airspeed`.** It is absent from `hitl.py`'s provided channels and from
+`config_hitl._SIM_SENSORS`, so the **real SDP810 kept publishing its still-air ~0 m/s** into the fused
+channel on every on-board flight. The pitot band was bounded only above (`pitot_max_ms`, a railed cell),
+so a near-zero reading sailed through and was blended at gain 0.5. **The glider flew a simulated 14 m/s
+while the governor believed 0.00 for the entire flight.**
+
+The cap then sat at the unconfident floor (14°) until the boost transient happened to push `predict()`
+past the 5 m/s confidence threshold *before* the pitot dragged it back — a **race**. Win it and the cap
+jumped to the full 45° computed off that bogus zero; lose it and the flight ran on a crippled 14°. That
+race was the two families.
+
+`pitot_min_ms` (3.0 m/s ≈ 5.5 Pa) closes it — see the commit. It is not a sim-only fix: a **blocked,
+iced or disconnected pitot reads exactly there in real flight**, and feeding it in opens fin authority
+to maximum at high dynamic pressure, the precise failure the governor exists to prevent.
+
+Two consequences worth carrying:
+
+- **Servo energy is ~35 J per 56 s flight (0.6 W average), not 3.6 J.** The old figure came from
+  flights whose authority was accidentally capped at 14°. This is a battery-sizing input.
+- **Board HITL captures recorded before this fix are not a valid basis for a control-tuning or
+  power-budget claim.** Host results are unaffected — the host sim publishes realistic airspeeds, so
+  the floor never bites, and the full matrix (8 cases, gusts, faults) is bit-identical before and after.
 
 ### Delta check after the §23.4 / §23.5 / stale-agl changes
 
-The control path changed (warm-start airspeed seed, PID back-calculation, and a landing detector that
-no longer trusts a stale AGL), so the whole matrix was re-flown to see what moved. **The host matrix is
-bit-identical** — all eight canonical cases, the three-point gust sweep and the three-way fault matrix
-reproduce their recorded values to 0.1 m. Back-calculation only engages on a saturated fin, which these
-flights do not reach; the AGL fix is a no-op on the host, where the sim publishes AGL at every altitude
-rather than only inside a real laser's ~4 m range. The board numbers above are within their spread.
+Those three (warm-start airspeed seed, PID back-calculation, and a landing detector that no longer
+trusts a stale AGL) were re-flown separately: **the host matrix is bit-identical** — all eight canonical
+cases, the gust sweep and the fault matrix reproduce to 0.1 m. Back-calculation only engages on a
+saturated fin, which these flights never reach; the AGL fix is a no-op on the host, where the sim
+publishes AGL at every altitude rather than only inside a real laser's ~4 m range.
 
-**A pre-existing bistability, found while checking that spread and worth recording.** Repeated identical
-board flights land in one of two families: ~1000° of fin travel touching down ~220 m out (family A), or
-~5000–7000° landing 85–180 m, sometimes in-zone (family B). It is not caused by these changes — the
-unmodified firmware produces family B too (one run of ten: 5436°, **89.4 m, in-zone**). The trigger was
-not isolated; a flight that maneuvers more lands closer, so the two families differ in accuracy by ~2.5×.
-This is a robustness question for the endgame, and it means **a single HITL flight is not evidence** —
-quote a spread.
-
-Leak on these captures is **268–285 KB/s → OOM ~120 s**, above the 240 KB/s baseline of the A/B below
-because these fly ~50 % more fin, and every fin move costs a servo-telemetry row. The leak scales with
-control activity, so it is a property of the flight, not only of the firmware.
+Leak on the board captures is **233–262 KB/s → OOM ~125–140 s**. It scales with control activity — every
+fin move costs a servo-telemetry row — so it is a property of the flight, not only of the firmware.
 
 This run is what validated the capture-pipeline work end to end: `flight.csv` (542 rows), the three
 per-servo streams and `airspeed_sdp810.csv` all came off a real board, and the fin/authority/airspeed
