@@ -469,9 +469,13 @@ class Telemetry:
             now - the current Recorder.timestamp() / ticks_us.
 
         Returns:
-            True when a push() now would emit rather than decimate.
+            True when a push() now would emit rather than decimate. False when the Recorder is not
+            running at all: with no ring to write to, push() would RAISE, and a hot-path producer
+            calling it every tick would pay for a raised-and-caught exception per tick (measured in
+            bench_flight, where the bench has no UART: it dominated the reported per-step cost). A
+            stream that has nowhere to go is simply not due.
         """
-        return time.ticks_diff(now, self._last_us) >= self.decimate_us
+        return Recorder._tlm is not None and time.ticks_diff(now, self._last_us) >= self.decimate_us
 
     def push(self, values) -> None:
         if not self._header_sent:
