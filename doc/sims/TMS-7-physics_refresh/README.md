@@ -72,13 +72,37 @@ The host runs above are the matrix; this is the same flight flown **on the board
 servos physically moving, real INA226 on the servo rail, real MCU memory.
 [**Report**](hitl_f15_full.html) · [**video (FHD, 64 s)**](hitl_f15_full.mp4).
 
-| measured on the board | value |
-|---|---|
-| servo-rail power | **peak 5850 mW**, mean 101 mW, **6.1 J** over the 60 s flight |
-| fin activity | 707 moves, 1594° of travel (27 °/s of flight) |
-| `fin_cap` (governor authority) | swept **14 → 45°** — the unconfident floor, then the live 1/v² schedule |
-| airspeed estimate | 0 → 14.4 m/s |
-| pitot `dynamic_pressure` | ~0 Pa — correct: the SDP810 is on the bench with no airflow |
+| measured on the board | value | (previous capture) |
+|---|---|---|
+| servo-rail power | mean **100–109 mW**, **6.2–6.4 J** over the 60 s flight | 101 mW, 6.1 J |
+| fin activity | 689–789 moves, **1450–1734°** of travel (24–29 °/s) | 707 moves, 1594° |
+| `fin_cap` (governor authority) | swept **14 → 45°** — the unconfident floor, then the live 1/v² schedule | same |
+| airspeed estimate | 0 → **13.6–14.6 m/s** | 0 → 14.4 |
+| pitot `dynamic_pressure` | ~0 Pa — correct: the SDP810 is on the bench with no airflow | same |
+
+Three runs, because a single flight cannot distinguish a real delta from the spread (below). Peak
+servo power is a one-sample boot transient (3675–4975 mW here, 5850 before) and is not a stable metric.
+
+### Delta check after the §23.4 / §23.5 / stale-agl changes
+
+The control path changed (warm-start airspeed seed, PID back-calculation, and a landing detector that
+no longer trusts a stale AGL), so the whole matrix was re-flown to see what moved. **The host matrix is
+bit-identical** — all eight canonical cases, the three-point gust sweep and the three-way fault matrix
+reproduce their recorded values to 0.1 m. Back-calculation only engages on a saturated fin, which these
+flights do not reach; the AGL fix is a no-op on the host, where the sim publishes AGL at every altitude
+rather than only inside a real laser's ~4 m range. The board numbers above are within their spread.
+
+**A pre-existing bistability, found while checking that spread and worth recording.** Repeated identical
+board flights land in one of two families: ~1000° of fin travel touching down ~220 m out (family A), or
+~5000–7000° landing 85–180 m, sometimes in-zone (family B). It is not caused by these changes — the
+unmodified firmware produces family B too (one run of ten: 5436°, **89.4 m, in-zone**). The trigger was
+not isolated; a flight that maneuvers more lands closer, so the two families differ in accuracy by ~2.5×.
+This is a robustness question for the endgame, and it means **a single HITL flight is not evidence** —
+quote a spread.
+
+Leak on these captures is **268–285 KB/s → OOM ~120 s**, above the 240 KB/s baseline of the A/B below
+because these fly ~50 % more fin, and every fin move costs a servo-telemetry row. The leak scales with
+control activity, so it is a property of the flight, not only of the firmware.
 
 This run is what validated the capture-pipeline work end to end: `flight.csv` (542 rows), the three
 per-servo streams and `airspeed_sdp810.csv` all came off a real board, and the fin/authority/airspeed
@@ -141,4 +165,24 @@ for n in e16_full e16_light f15_full f15_light; do
 # gust sweep / fault matrix
 VF_GUST=3.0 VF_QUALITY=5 VF_SEED=1 python3 tools/virtual_flight.py --motor F15 --noise 0.05 -o $SP/gust3.txt
 VF_FAULT=gnss@30 VF_QUALITY=5 VF_SEED=1 python3 tools/virtual_flight.py --motor F15 --noise 0.05 -o $SP/f_gnss.txt
+
+# top-down plan (all four at q5)
+python3 tools/flight_svg.py $SP/{e16_full,e16_light,f15_full,f15_light}_q5.txt --overlay \
+    -o doc/sims/TMS-7-physics_refresh/plan_canonical.svg --labels "e16_full,e16_light,f15_full,f15_light" \
+    --title "TMS-7 physics refresh -- canonical matrix, quality 5"
+
+# BOARD hitl -- fly it 3x, not once (see the bistability note above), then report the representative run
+for n in 1 2 3; do
+  ./tools/hitl_collect.sh F15 f15_full_r$n 0.05 0.0 210.0 False /tmp/hitlnew 270 0
+  pkill -9 mpremote; uhubctl -l 1-3 -p 1 -a cycle; sleep 8   # the CDC wedges under rapid mpremote
+done
+python3 tools/flight_kpi.py /tmp/hitlnew/f15_full_r*.txt          # compare the spread before picking one
+$PV tools/flight_report.py --cdn /tmp/hitlnew/f15_full_r1.txt -o doc/sims/TMS-7-physics_refresh/hitl_f15_full.html
+
+# videos (flight_video.py <out.mp4> <LABEL> <capture> [<LABEL> <capture>] ...)
+python3 tools/flight_video.py doc/sims/TMS-7-physics_refresh/hitl_f15_full.mp4 \
+    "HITL F15 full (board)" /tmp/hitlnew/f15_full_r1.txt
+python3 tools/flight_video.py doc/sims/TMS-7-physics_refresh/physics_refresh.mp4 \
+    "E16 full q5" $SP/e16_full_q5.txt   "E16 light q5" $SP/e16_light_q5.txt \
+    "F15 full q5" $SP/f15_full_q5.txt   "F15 light q5" $SP/f15_light_q5.txt
 ```
