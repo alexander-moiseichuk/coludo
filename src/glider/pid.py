@@ -2,8 +2,9 @@
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 A minimal fixed-point PID controller for the flight stabilization loop (Phase 3), sibling of mixer.py.
-One instance per control axis. Integral anti-windup clamp + output clamp; reset() on (re)entering a
-control phase.
+One instance per control axis. Anti-windup is TWO mechanisms: the integral/output clamps bound the
+magnitude (and track the governor's live fin cap via set_limit()), and BACK-CALCULATION bleeds the
+integral by whatever demand the saturated fin could not fly. reset() on (re)entering a control phase.
 
 INTEGER fixed-point (fixed.fixnum in/out, integer-millisecond dt) so a step allocates NOTHING on the
 heap. The flight loop runs with GC DISABLED (sequencer disables it on BOOSTING), so every heap byte
@@ -35,6 +36,7 @@ except ImportError:  # CPython (tooling / off-board checks)
 
 _KU = const(100)  # GAIN scale: kp 1.50 -> 150 (0.01 gain resolution) -- distinct from fixed.SCALE (angle)
 _UNBOUNDED_DEG = const(1000000)  # default 'no limit' -- ×SCALE stays a small int, so the clamp is a no-op
+_ANTI_WINDUP_SHIFT = const(2)  # back-calculation gain = 1/4 of the unflyable demand per step (see step())
 
 
 class Pid:
@@ -48,12 +50,14 @@ class Pid:
     """
 
     def __init__(self, kp: float = 0.0, ki: float = 0.0, kd: float = 0.0,
-                 integral_limit: int = _UNBOUNDED_DEG, output_limit: int = _UNBOUNDED_DEG):
+                 integral_limit: int = _UNBOUNDED_DEG, output_limit: int = _UNBOUNDED_DEG,
+                 anti_windup_shift: int = _ANTI_WINDUP_SHIFT):
         # gains scaled by _KU; limits (degrees) scaled by SCALE to the error/output unit the loop runs in,
         # so a step needs no unit conversion. An unbounded default (1e6 deg) stays a small int -> no-op.
         self.kp: int = int(kp * _KU)
         self.ki: int = int(ki * _KU)
         self.kd: int = int(kd * _KU)
+        self.anti_windup_shift: int = anti_windup_shift  # back-calculation strength; see step()
         self.integral_limit: fixnum = int(integral_limit * SCALE)  # SCALE-degree-seconds
         self.output_limit: fixnum = int(output_limit * SCALE)  # SCALE-degrees
         self._integral: int = 0
@@ -112,4 +116,34 @@ class Pid:
             derivative = (error - self._previous) * 1000 // dt_ms  # SCALE-degrees per second (1000 is TIME)
         self._previous = error
         output = (self.kp * error + self.ki * integral + self.kd * derivative) // _KU
-        return clamp(-self.output_limit, output, self.output_limit)
+        limited = clamp(-self.output_limit, output, self.output_limit)
+        """
+        BACK-CALCULATION anti-windup (findings §23.5). The clamps above bound the integral's MAGNITUDE,
+        but they do not unwind it: while the fin is saturated the integral simply sits at its limit and
+        keeps demanding what the airframe cannot fly, so the moment authority returns it dumps.
+        Back-calculation actively bleeds it by the part of the demand that did NOT reach the fin,
+        converted back into integral units through ki (`* _KU // ki` inverts the `ki * integral // _KU`
+        above) and damped by a shift so it eases out rather than snapping.
+
+        This matters most on a WARM START: after a mid-air reset the fins sit whereever the servos
+        landed while the GPIO was floating -- potentially near 90deg to the airflow, where a fin is an
+        AIRBRAKE, not a control surface. The loop then restarts against a large, sustained disturbance
+        with a tight `unconfident` cap, i.e. deep saturation for many steps: exactly the case where a
+        clamp-only integral winds to its bound and a back-calculated one does not.
+
+        ki == 0 -> no integral to unwind (the conversion would divide by zero); the clamp still bounds.
+        All-integer, every product < 2**30, so the step stays 0-allocation (bench_pid_alloc guards it).
+        """
+        if limited != output and self.ki:
+            unwound = integral - (((output - limited) * _KU // self.ki) >> self.anti_windup_shift)
+            """
+            STOP AT ZERO -- a deliberate deviation from textbook back-calculation. Unmodified, the law
+            drives the integral until it CANCELS the excess, so a demand the P term alone oversaturates
+            (30deg of error against a 5deg cap) settles the integral at the opposite sign: measured
+            -1067 where the error was +3000, which commands a REVERSED fin the instant the cap reopens.
+            Trading windup for counter-windup is not a fix. Bleeding only toward zero removes the
+            wind-up §23.5 is about and can never invert the command.
+            """
+            integral = max(0, unwound) if integral > 0 else min(0, unwound)
+            self._integral = integral
+        return limited

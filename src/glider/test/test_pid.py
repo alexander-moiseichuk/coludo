@@ -83,7 +83,50 @@ def test_set_limit():
     assert integ.step(0, 1000) == fixed.from_float(5)  # still ki*5, not a 45° spike
 
 
+def test_back_calculation():
+    """
+    findings §23.5: while the fin is SATURATED the integral must unwind, not sit at its clamp.
+
+    The clamps bound magnitude but never bleed, so a clamp-only loop dumps full deflection the moment
+    authority returns. Deep saturation here is the warm-start case: a fin left ~90° to the airflow is an
+    airbrake, so the loop restarts against a large sustained disturbance under a tight cap.
+    """
+    def saturate(shift):
+        axis = pid.Pid(kp=1.0, ki=2.0, integral_limit=45, output_limit=5, anti_windup_shift=shift)
+        for _ in range(50):
+            axis.step(fixed.from_float(30), 20)  # 30° error against a 5° cap -> deeply saturated
+        wound = axis._integral
+        axis.set_limit(45)                       # authority returns
+        return wound, axis.step(0, 20)
+
+    wound, dump = saturate(2)                    # back-calculation on
+    assert wound == 0, wound                     # unwound, not pinned
+    assert dump == 0, dump                       # nothing to dump
+
+    pinned, spike = saturate(30)                 # shift so large the bleed truncates to 0 -> clamp-only
+    assert pinned == fixed.from_float(30)        # the old behaviour: integral sits at the clamp
+    assert spike == fixed.from_float(45)         # ...and dumps FULL deflection at zero error
+
+    # the unwinding STOPS AT ZERO -- it must never cross into an opposite-sign command (a reversed fin).
+    # Textbook back-calculation settles the integral at -1250 here, because P alone oversaturates 6x.
+    reversal = pid.Pid(kp=1.0, ki=2.0, integral_limit=45, output_limit=5)
+    for _ in range(200):
+        reversal.step(fixed.from_float(30), 20)
+        assert reversal._integral >= 0, reversal._integral
+
+    # NEGATIVE: back-calculation must not disable the I term when the output is NOT saturated
+    free = pid.Pid(ki=2.0, integral_limit=45, output_limit=45)
+    for _ in range(50):
+        free.step(fixed.from_float(1), 20)
+    assert free._integral > 0 and free.step(fixed.from_float(1), 20) > 0
+
+    # NEGATIVE: ki == 0 -> no integral to unwind, and no division by zero
+    assert pid.Pid(kp=100.0, output_limit=5).step(fixed.from_float(30), 20) == fixed.from_float(5)
+
+
 test_terms()
 test_clamps_and_reset()
 test_set_limit()
-print('ok: pid -- fixed-point P/I/D, integral + output clamps, reset, ±180 swing, live set_limit (SCALE-agnostic)')
+test_back_calculation()
+print('ok: pid -- fixed-point P/I/D, integral + output clamps, reset, ±180 swing, live set_limit '
+      '(SCALE-agnostic), back-calculation anti-windup')
