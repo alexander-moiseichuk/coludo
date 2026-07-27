@@ -11,12 +11,15 @@ synchronous, so the lock is held only for the transaction. A glider-only module.
 import asyncio
 
 import commons
+import recorder
 
 try:
     from machine import I2C, Pin
 except ImportError:  # host (CPython): board-only; the bus is constructed only on the board
     I2C = Pin = None
 
+_BUS_FAIL_LIMIT = 4   # CONSECUTIVE failed transfers that mean the BUS is wedged, not one part NAKing
+_CLEAR_PULSES = 9     # SCL pulses to walk a stuck slave off SDA (one byte + the ack it is waiting for)
 _buses: dict = {}  # bus id -> Bus
 
 
@@ -89,6 +92,7 @@ class Bus:
         self._spec: dict = spec
         self._i2c = I2C(bus_id, scl=Pin(spec['scl']), sda=Pin(spec['sda']), freq=spec.get('freq', 400000))
         self._lock = asyncio.Lock()  # NOT per-operation: only transaction() and retune() take it
+        self._fails: int = 0  # consecutive failed transfers -> bus clear (see _failed)
 
     def transaction(self):
         """
@@ -120,8 +124,63 @@ class Bus:
         async with self._lock:
             self._i2c = I2C(self._bus_id, scl=Pin(self._spec['scl']), sda=Pin(self._spec['sda']), freq=freq)
 
+    def _ok(self) -> None:
+        """A completed transfer clears the consecutive-failure run (see _failed)."""
+        self._fails = 0
+
+    def _failed(self) -> None:
+        """
+        Count a failed transfer and CLEAR THE BUS once they stop being isolated.
+
+        Per-driver recovery cannot fix the failure that matters most here: a slave reset or glitched
+        mid-byte can hold SDA LOW and never release it, which wedges the whole bus. Every driver on it
+        then fails forever, and none can recover, because none can talk -- the icp10111 general call,
+        the sdp810 restart and the rest all need a working bus to be issued on. Nothing in this class
+        was recoverable in flight before.
+
+        The standard remedy is electrical, not protocol: pulse SCL until the stuck slave finishes the
+        byte it is waiting on and releases SDA, then hand-generate a STOP so every device is back in
+        idle, then re-init the peripheral. It fires only after _BUS_FAIL_LIMIT CONSECUTIVE failures, so
+        an ordinary NAK (a busy conversion, an absent optional part) never triggers it.
+
+        Args:
+            (none)
+
+        Returns:
+            None; recovers the bus in place when the failure run crosses the limit.
+        """
+        self._fails += 1
+        if self._fails != _BUS_FAIL_LIMIT:  # once per wedge, not on every subsequent failure
+            return
+        try:
+            self._i2c = None  # release the peripheral so the pins can be driven directly
+            scl = Pin(self._spec['scl'], Pin.OUT, value=1)
+            sda = Pin(self._spec['sda'], Pin.IN, Pin.PULL_UP)
+            for _ in range(_CLEAR_PULSES):  # let a stuck slave finish its byte and release SDA
+                scl.value(0)
+                scl.value(1)
+                if sda.value():
+                    break
+            sda = Pin(self._spec['sda'], Pin.OUT, value=0)  # hand-generate a STOP: SDA low->high, SCL high
+            scl.value(1)
+            sda.value(1)
+        except Exception:
+            pass  # a pin we cannot drive is not worse than the wedge we are already in
+        finally:
+            self._i2c = I2C(self._bus_id, scl=Pin(self._spec['scl']), sda=Pin(self._spec['sda']),
+                            freq=self._spec.get('freq', 400000))
+        recorder.Recorder.log('i2c:%d' % self._bus_id,
+                              'bus wedged after %d failures -- clocked SDA free and re-inited' % self._fails)
+        self._fails = 0  # acted on it: count afresh, so a still-dead bus escalates again rather than never
+
     async def read(self, addr: int, reg: int, count: int, addrsize: int = 8) -> bytes:
-        return self._i2c.readfrom_mem(addr, reg, count, addrsize=addrsize)
+        try:
+            value = self._i2c.readfrom_mem(addr, reg, count, addrsize=addrsize)
+        except OSError:
+            self._failed()
+            raise
+        self._ok()
+        return value
 
     async def read_chip_id(self, addr: int, reg: int, addrsize: int = 8) -> int:
         """
@@ -141,10 +200,20 @@ class Bus:
         return (await self.read(addr, reg, 1, addrsize))[0]
 
     async def read_into(self, addr: int, reg: int, buf, addrsize: int = 8) -> None:
-        self._i2c.readfrom_mem_into(addr, reg, buf, addrsize=addrsize)
+        try:
+            self._i2c.readfrom_mem_into(addr, reg, buf, addrsize=addrsize)
+        except OSError:
+            self._failed()
+            raise
+        self._ok()
 
     async def write(self, addr: int, reg: int, data: bytes, addrsize: int = 8) -> None:
-        self._i2c.writeto_mem(addr, reg, data, addrsize=addrsize)
+        try:
+            self._i2c.writeto_mem(addr, reg, data, addrsize=addrsize)
+        except OSError:
+            self._failed()
+            raise
+        self._ok()
 
     async def writeto(self, addr: int, data: bytes) -> None:
         """Raw write (no register) -- for command-based devices like the ICP-10111."""

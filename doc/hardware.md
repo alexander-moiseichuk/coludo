@@ -303,3 +303,23 @@ There are a number of composition options possible
 |    4    | required and optional components |   144.4    | rich case, controllable on top level, but could be issues with power consumption |
 
 **Note:** sticky pads for attaching boards and engines furniture not added
+
+## v0.2 board — hardware TODO
+
+Found on the v0.1 hand-wired board (bench, 2026-07-26). **v0.1 PCB is already ordered**, so these are
+carried to v0.2. Each has a software mitigation on the branch, so none blocks flying v0.1 — but the
+mitigations are degradations, not equivalents.
+
+| # | Issue | Evidence | v0.2 action | Software mitigation today |
+|---|---|---|---|---|
+| 1 | **LSM6DSO32 INT1 not connected** | `INT1_CTRL` 0x01 written and read back, accel + gyro both at 104 Hz, `STATUS` continuously data-ready — yet **GPIO28 stuck low, never toggles** | Route INT1 to its GPIO and verify the net | Driver detects the silent line after 3 timeouts and polls at 10 ms instead (`rate` 2.0 → 72 Hz). Costs the interrupt's timing precision and some CPU |
+| 2 | **BNO055 fusion core faulty** | Bit-identical Euler triple forever while raw accel/gyro stream in the *same* block read; survives a power cycle, NDOF **and** IMU mode, both clock sources; MAG all zeros; `SYS_STATUS` 5, `SYS_ERR` 0, `ST_RESULT` 0x0F | Fit the replacement part; self-test alone does **not** catch this, so re-run `diag_bno.py` after assembly | Driver withholds a frozen attitude so the priority-1 gyro backup takes over — verified live |
+| 3 | **Move the BNO055 to `i2c:1`** | Attitude (priority 0) shares `i2c:0` with four devices; a wedge, or the icp10111 latch-up recovery's general-call reset, takes the whole bus down together | Put the BNO055 on `i2c:1` with the INA226 | None possible in software — the buses are physical. See below for why this one matters most |
+| 4 | **BNO055 breakout has no 32.768 kHz crystal** | Selecting `CLK_SEL` external kills fusion outright (EUL all zeros) | Prefer a crystal-equipped module: Bosch specifies the external crystal for fusion modes | Driver leaves `CLK_SEL` internal |
+
+**Why #3 is the one worth spending layout on.** The attitude PRIMARY (BNO055, `i2c:0`) and its BACKUP
+(`tasks/attitude.py`, integrating the LSM6DSO32 on **SPI1**) are meant to be independent. Today they
+are — but only because the backup happens to be on SPI. Everything *else* the attitude path depends
+on shares `i2c:0`, so a single stuck slave on that bus takes out the primary plus the baro plus the
+pitot plus the laser at once. Moving the BNO055 to `i2c:1` leaves `i2c:0` as the "everything else"
+bus and gives the attitude chain no common failure point at all: primary on `i2c:1`, backup on SPI1.
