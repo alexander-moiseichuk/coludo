@@ -75,7 +75,6 @@ class Lsm6dso32(task.Task):
         self._ready = asyncio.ThreadSafeFlag()
         self._int = None
         self._edge_seen: bool = False  # non-blocking INT1 mark for the polling fallback
-        self._int_missed: int = 0     # consecutive INT1 timeouts (see run())
         self._int_silent: bool = False  # the INT line is dead -> poll at period_ms instead
         try:
             whoami = 0
@@ -210,10 +209,9 @@ class Lsm6dso32(task.Task):
             if self._int is not None and not self._int_silent:
                 try:
                     await asyncio.wait_for_ms(self._ready.wait(), self._fallback_ms)
-                    self._int_missed = 0
+                    self.strike(False, _INT_SILENT_LIMIT)  # an edge arrived: rearm the run
                 except asyncio.TimeoutError:
-                    self._int_missed += 1
-                    if self._int_missed >= _INT_SILENT_LIMIT:
+                    if self.strike(True, _INT_SILENT_LIMIT):
                         self._int_silent = True  # the line is dead, not merely jittery -> poll instead
                         self.note('lsm6dso32 :: INT1 silent -- degraded to polling at %d ms',
                                   self._period_ms)
@@ -221,7 +219,7 @@ class Lsm6dso32(task.Task):
                 await asyncio.sleep_ms(self._period_ms)
                 if self._int is not None and self._ready_flagged():
                     self._int_silent = False  # an edge arrived after all -> back to interrupt-driven
-                    self._int_missed = 0
+                    self.strike(False, _INT_SILENT_LIMIT)
             try:
                 sample = await self.sample()  # flat 6-tuple
                 self._accel.push(sample[:3])

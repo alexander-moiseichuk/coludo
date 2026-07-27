@@ -53,11 +53,11 @@ async def amain():
     threshold (not every tick while the part stays dead) and a good read must rearm it.
     """
     loop_unit = icp10111.Icp10111('baro', {}, _StubController())
-    loop_unit._failures = 0
+    loop_unit._strikes = 0
     recoveries = []
 
     async def fake_recover():
-        recoveries.append(loop_unit._failures)
+        recoveries.append(loop_unit._strikes)
 
     loop_unit._recover = fake_recover
     fail = [True]
@@ -80,7 +80,7 @@ async def amain():
     assert recoveries[0] == 3, recoveries          # at _RECOVER_AFTER consecutive failures
     fail[0] = False                                 # the part comes back
     await asyncio.sleep_ms(30)
-    assert loop_unit._failures == 0, 'a good read must rearm the counter'
+    assert loop_unit._strikes == 0, 'a good read must rearm the counter'
     fail[0] = True                                  # ...and a LATER wedge escalates again
     await asyncio.sleep_ms(120)
     assert len(recoveries) == 2, recoveries

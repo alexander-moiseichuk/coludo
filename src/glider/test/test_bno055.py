@@ -44,7 +44,6 @@ async def amain():
     detector = bno055.Bno055('imu', {}, _StubController())
     detector._buf = bytearray(24)
     detector._last_euler = None
-    detector._frozen = 0
     detector._stalled = False
 
     def turning(dps):
@@ -55,7 +54,7 @@ async def amain():
     turning(0.0)                            # STILL: a repeated reading proves nothing
     for _ in range(500):
         assert detector._fusion_alive(frozen + (0.1, 0.2, 0.9)) is True
-    assert detector._frozen == 0, 'a still part must never accumulate toward a stall'
+    assert detector._strikes == 0, 'a still part must never accumulate toward a stall'
 
     turning(30.0)                           # ROTATING, yet the fusion output does not move
     alive = [detector._fusion_alive(frozen + (0.1, 0.2, 0.9)) for _ in range(60)]
@@ -64,10 +63,11 @@ async def amain():
     # sequence starts counting on its FIRST call rather than spending one on the comparison
     assert alive.index(False) == 49, alive.index(False)  # exactly _STALL_SAMPLES rotating reads
 
-    # a fusion that DOES move under rotation is never flagged, and clears any partial count
-    detector._frozen = 40
+    # a fusion that DOES move under rotation is never flagged, clears any partial count AND releases
+    # the latch -- without that release a recovered part stays withheld forever (caught in review)
+    detector._strikes = 40
     assert detector._fusion_alive((149.0, 840, -16870) + (0.1, 0.2, 0.9)) is True
-    assert detector._frozen == 0
+    assert detector._strikes == 0 and detector._stalled is False
 
     print('ok: bno055 driver registered; setup fails gracefully when no device answers; '
           'fusion-stall detector fires under rotation, never when still')

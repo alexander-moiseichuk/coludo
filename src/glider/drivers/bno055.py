@@ -72,7 +72,6 @@ class Bno055(task.Task):
         self._period_ms: int = self.config.get('period_ms', 20)  # 50 Hz (fusion runs at 100 Hz)
         self._buf = bytearray(24)  # ACC..EUL block
         self._last_euler = None    # fusion-stall detector state (see _fusion_alive)
-        self._frozen: int = 0
         self._stalled: bool = False
         self.calibration_state = None  # (sys, gyr, acc, mag) 0..3 each; None until first poll
         self._calib_due: int = 1  # countdown to the next CALIB_STAT read (see _poll_calibration)
@@ -149,13 +148,15 @@ class Bno055(task.Task):
         euler = sample[:3]
         if euler != self._last_euler:
             self._last_euler = euler
-            self._frozen = 0
-            return True
+            self.strike(False, _STALL_SAMPLES)  # the fusion moved
+            self._stalled = False  # ...so clear the latch HERE: returning `not self._stalled` below
+            return True            # would otherwise keep reporting stalled forever after a recovery
         # the part's OWN gyro, bytes 12..17 of the block sample() just read (16 LSB/deg/s)
         gx, gy, gz = struct.unpack_from('<hhh', self._buf, _OFF_GYR)
-        if abs(gx) + abs(gy) + abs(gz) > _TURNING_LSB:  # rotating, yet the fusion has not moved
-            self._frozen += 1
-        return self._frozen < _STALL_SAMPLES
+        rotating = abs(gx) + abs(gy) + abs(gz) > _TURNING_LSB  # only then is a frozen euler PROOF
+        if self.strike(rotating, _STALL_SAMPLES):
+            self._stalled = True  # latch: stays until the fusion moves again (cleared in run())
+        return not self._stalled
 
     async def _poll_calibration(self) -> None:
         """

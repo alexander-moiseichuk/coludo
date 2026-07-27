@@ -114,7 +114,6 @@ class Icp10111(task.Task):
         except Exception as error:
             print('icp10111 :: %r' % error)
             return False
-        self._failures: int = 0  # consecutive read failures -> _recover() (see run())
         self._altitude, self._temperature, self._pressure, self._elevation = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'altitude', 'temperature', 'pressure', 'elevation')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
@@ -234,7 +233,7 @@ class Icp10111(task.Task):
             pass  # nothing honours general call -- nothing lost by asking
         await asyncio.sleep_ms(_RESET_RETRY_MS)
         recorder.Recorder.log(self.name, 'read recovery: general-call reset after %d failures'
-                              % self._failures)
+                              % _RECOVER_AFTER)
 
     def calibration(self) -> str:
         """The ground-reference instruction; '' once a ground zero is held."""
@@ -255,7 +254,7 @@ class Icp10111(task.Task):
         while True:
             try:
                 altitude, temp_c, pressure = await self._read()
-                self._failures = 0
+                self.strike(False, _RECOVER_AFTER)  # good read rearms the run
                 elevation = altitude - self._ground
                 self._altitude.push(altitude)  # one step: push our channels directly
                 self._temperature.push(temp_c)
@@ -265,8 +264,7 @@ class Icp10111(task.Task):
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
                 self.note('icp10111 :: read %r', error)  # deduped: a persistent error logs once, not every tick
-                self._failures += 1
-                if self._failures == _RECOVER_AFTER:  # once, not every tick while it stays dead
+                if self.strike(True, _RECOVER_AFTER):  # once, not every tick while it stays dead
                     await self._recover()
             await asyncio.sleep_ms(self._period_ms)
 

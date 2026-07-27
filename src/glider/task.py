@@ -64,6 +64,7 @@ class Task(inspector.Inspectable):
         self._ok: bool = False
         self._subs: list = []
         self._healthy: bool = True  # RUNTIME read health (distinct from _ok = setup ok); note() tracks it
+        self._strikes: int = 0  # consecutive-failure run for strike() (see below)
 
     def note(self, template: str = None, arg=None) -> None:
         """
@@ -120,6 +121,35 @@ class Task(inspector.Inspectable):
     async def setup(self) -> bool:
         """Initialize or reset. Override. Return True on success, False otherwise."""
         raise NotImplementedError('Task.setup() must be overridden')
+
+    def strike(self, failed: bool, limit: int) -> bool:
+        """
+        Count a run of CONSECUTIVE failures; True exactly ONCE, when the run reaches `limit`.
+
+        Four drivers had hand-rolled this (icp10111 read failures -> general-call reset, sdp810 ->
+        continuous-mode restart, lsm6dso32 INT1 timeouts -> poll fallback, bno055 frozen-fusion ->
+        withhold attitude) and they had already drifted apart: two fired at `== limit`, one at
+        `>= limit`, and each kept its own counter and reset. The shape is identical every time and the
+        subtle part is the same every time -- act ONCE while the fault persists, not on every tick, and
+        rearm only on a genuine success.
+
+        Returning True only on the transition is what gives "once": a caller can escalate directly
+        without tracking whether it already has. A latch (bno055's withheld attitude, lsm6dso32's poll
+        mode) sets its own flag on that True and clears it on its own terms, since "recovered" means
+        something different per device and does not belong here.
+
+        Args:
+            failed - True when this pass failed; False on a good pass, which rearms the count.
+            limit - consecutive failures that constitute a real fault rather than a blip.
+
+        Returns:
+            True on the pass that reaches `limit`, False every other time (including further failures).
+        """
+        if not failed:
+            self._strikes = 0
+            return False
+        self._strikes += 1
+        return self._strikes == limit
 
     def calibration(self) -> str:
         """

@@ -172,7 +172,6 @@ class Sdp810(task.Task):
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
                                        ('dynamic_pressure', 'airspeed_cms', 'temperature'),  # all fixnums (x SCALE)
                                        decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
-        self._failures: int = 0  # consecutive read failures -> _restart() (see run())
         self._ok = True
         return True
 
@@ -239,7 +238,7 @@ class Sdp810(task.Task):
             await asyncio.sleep_ms(_STOP_MS)
             await self._bus.writeto(self._addr, _CMD_START)
             await asyncio.sleep_ms(_FIRST_MS)
-            recorder.Recorder.log(self.name, 'restarted continuous mode after %d failures' % self._failures)
+            recorder.Recorder.log(self.name, 'restarted continuous mode after %d failures' % _RESTART_AFTER)
         except OSError:
             pass  # still gone -- the next read fails and we try again
 
@@ -301,11 +300,10 @@ class Sdp810(task.Task):
                     # every collected value, all as fixnums -- a float in a row boxes on MicroPython
                     self._telemetry.push((pressure, int(airspeed * fixed.SCALE), self._temp_raw // 2))
                     self.note(None)  # healthy pass -> let the next error log afresh
-                    self._failures = 0
+                    self.strike(False, _RESTART_AFTER)  # good read rearms the run
             except Exception as error:
                 self.note('sdp810 :: read %r', error)  # deduped: a persistent error logs once, not every tick
-                self._failures += 1
-                if self._failures == _RESTART_AFTER:  # once, not every tick while it stays dead
+                if self.strike(True, _RESTART_AFTER):  # once, not every tick while it stays dead
                     await self._restart()
             await asyncio.sleep_ms(self._period_ms)
 

@@ -1610,6 +1610,7 @@ Returns:
 - `__init__(name: str, config: dict=None, controller=None)` — constructor
 - `note(template: str=None, arg=None) -> None` — De-duplicated best-effort run-loop log + runtime-health flag.
 - `setup() -> bool` — Initialize or reset. Override. Return True on success, False otherwise.
+- `strike(failed: bool, limit: int) -> bool` — Count a run of CONSECUTIVE failures; True exactly ONCE, when the run reaches `limit`.
 - `calibration() -> str` — What the OPERATOR must do to make this device flight-ready -- or '' when there is nothing.
 - `calibrate() -> str` — Start / enforce this device's calibration (the CC `calibrate <device>` command).
 - `probe() -> str` — On-demand self-test (the CC `probe` command, NOT run at boot).
