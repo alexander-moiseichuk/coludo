@@ -111,6 +111,11 @@ def test_dashboard_carries_the_imu_calibration_column():
     # the button COUNTS DOWN off the heartbeat, so the row clears itself without an extra round trip
     assert b'pendingCalibration' in page and b'calibrate ${pending.length}' in page
     assert b'names[0]' in page, 'one device per press, not a loop that holds the operator'
+    # PLAIN WORDS, not "M3/3": the operator reads this in a field, without a datasheet. And the report
+    # stays reachable when everything is fine -- "no button" must not mean "no information".
+    assert b'calibWord' in page and b'calibrationReport' in page
+    assert b"'not calibrated'" in page and b"'OK'" in page
+    assert b'>info</button>' in page, 'the report must stay available once nothing is outstanding'
     # every colspan must match the header width, or the empty-state row misaligns the table
     assert b'colspan="13"' in page and b'colspan="12"' not in page
 

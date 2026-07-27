@@ -295,29 +295,46 @@ function pendingCalibration(b) {
   return Object.keys(b.calibration || {});
 }
 
-function fmtImu(b) {
+// A BNO055 axis level (0..3) as words. "3/3" told an operator nothing -- the whole point of this
+// cell is that someone holding a glider in a field can read it without a datasheet.
+function calibWord(level) {
+  if (level >= 3) return 'OK';
+  if (level >= 1) return `partial (${level}/3)`;
+  return 'not calibrated';
+}
+
+// The full, plain-text calibration report -- shown in the tooltip and by the info button, so the
+// detail is there whether or not anything is outstanding.
+function calibrationReport(b) {
+  const lines = [];
   const c = b.imu_calibration;
-  const pending = pendingCalibration(b);
-  // the IMU's own numbers ride along, because watching mag climb is how an operator knows the
-  // figure-8 is working -- but the CELL is about calibration board-wide, not just the IMU
-  // BNO055 CALIB_STAT, 0..3 each. Spelled out in the tooltip because SxGxAxMx is meaningless to
-  // someone holding a glider in a field -- and M is what the operator can actually change.
-  const calibTip = c
-    ? `sys ${c[0]} (fusion confidence, lags and dips while moving) | gyro ${c[1]} (self-calibrates when still) `
-      + `| accel ${c[2]} (wants a few held orientations) | MAG ${c[3]} (needs the figure-8) — 3 = calibrated`
-    : '';
-  const imu = c
-    ? (c[3] >= 3
-        ? `<span style="color:#2a2" title="${calibTip}">imu ✓ mag ${c[3]}/3</span>`
-        : `<b class="warn" title="${calibTip}">imu ⚠ mag ${c[3]}/3 — needs figure-8</b>`)
-    : '';
-  if (!pending.length) {
-    return `${imu}${imu ? ' ' : ''}<span style="color:#2a2">✓ calibrated</span>`;
+  if (c) {
+    // `system` is DERIVED fusion confidence, not an axis anyone can calibrate: it lags the other three
+    // and dips whenever the airframe moves. Saying "not calibrated" there reads as a fault and sends
+    // an operator chasing something they cannot fix -- and gating on it would block a working IMU
+    // (measured here: sys 0 with gyro/accel/mag all 3 and the fusion tracking perfectly).
+    const sys = c[0] >= 1 ? 'settled' : 'settling (normal — it lags the others and dips while moving)';
+    lines.push(`imu — system: ${sys}, gyro: ${calibWord(c[1])}, accelerometer: ${calibWord(c[2])}`
+      + `, magnetometer: ${calibWord(c[3])}${c[3] >= 3 ? '' : ' ← move the airframe in a figure-8'}`);
   }
-  // the button COUNTS DOWN as devices are done and disappears at zero, so the remaining work is
-  // visible without opening anything; the title names exactly which devices are outstanding
-  return `${imu}${imu ? ' ' : ''}<button onclick="event.stopPropagation(); calibrateBoard('${b.id}')" ` +
-         `title="outstanding: ${pending.join(', ')}">calibrate ${pending.length}</button>`;
+  const pending = b.calibration || {};
+  for (const name of Object.keys(pending)) lines.push(`${name} — TODO: ${pending[name]}`);
+  if (!Object.keys(pending).length) lines.push('all devices calibrated — nothing outstanding');
+  return lines.join('\n');
+}
+
+function fmtImu(b) {
+  const pending = pendingCalibration(b);
+  const report = calibrationReport(b);
+  const info = `<button onclick="event.stopPropagation(); boardMsg(\`${b.id} calibration:\\n${report}\`)" `
+    + `title="${report}">info</button>`;
+  if (!pending.length) {
+    return `<span style="color:#2a2" title="${report}">✓ calibrated</span> ${info}`;
+  }
+  // the button COUNTS DOWN and names what is outstanding; info stays available either way
+  return `<b class="warn" title="${report}">⚠ ${pending.join(', ')}</b> `
+    + `<button onclick="event.stopPropagation(); calibrateBoard('${b.id}')" `
+    + `title="${report}">calibrate ${pending.length}</button> ${info}`;
 }
 
 // Guided calibration, ONE DEVICE PER PRESS. The board's `calibrate` sweep says which devices are
