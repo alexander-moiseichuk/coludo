@@ -98,13 +98,19 @@ def test_dashboard_carries_the_imu_calibration_column():
     footnote, and the page ships the formatter + the guided button that watches mag climb to 3.
     """
     page = _request(b'GET / HTTP/1.1\r\n\r\n')
-    assert b'<th>imu</th>' in page, 'the dashboard lost its IMU column'
+    # the live operator surface must never be cached: a stale page shows stale controls, and the
+    # failure is SILENT -- an edited dashboard that simply never appears in the browser
+    assert b'Cache-Control: no-store' in page
+    assert b'<th>calibration</th>' in page, 'the dashboard lost its calibration column'
     assert b'fmtImu' in page and b'calibrateBoard' in page, 'the calibrate action is not served'
     # the sweep must be GENERIC -- a hardcoded device name means a new one is silently skipped
     assert b"'calibrate', []" in page, 'the button must sweep, not name one device'
     # one device at a time, gated on the OPERATOR confirming -- a timed pause races them, and a tare
     # captured while the airframe is still being set down is worse than no tare
     assert b'confirm(' in page, 'each device must wait for an explicit OK'
+    # the button COUNTS DOWN off the heartbeat, so the row clears itself without an extra round trip
+    assert b'pendingCalibration' in page and b'calibrate ${pending.length}' in page
+    assert b'names[0]' in page, 'one device per press, not a loop that holds the operator'
     # every colspan must match the header width, or the empty-state row misaligns the table
     assert b'colspan="13"' in page and b'colspan="12"' not in page
 

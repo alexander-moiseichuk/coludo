@@ -43,7 +43,7 @@
 
 <table id="boards">
   <thead><tr>
-    <th>board</th><th>online</th><th>stage</th><th>flight</th><th>imu</th><th>version</th><th>config</th><th>uptime</th>
+    <th>board</th><th>online</th><th>stage</th><th>flight</th><th>calibration</th><th>version</th><th>config</th><th>uptime</th>
     <th>board time</th><th></th><th>position</th><th>launchpad</th><th></th>
   </tr></thead>
   <tbody><tr><td colspan="13" class="muted">waiting for boards…</td></tr></tbody>
@@ -289,24 +289,37 @@ function notReady(b) {
   return !!(b.degraded && b.degraded.length);
 }
 
-function fmtImu(b) {
-  const c = b.imu_calibration;
-  if (!c) return '<span class="muted">—</span>';
-  const [sys, gyr, acc, mag] = c;
-  const ok = mag >= 3;
-  const label = `S${sys} G${gyr} A${acc} <b>M${mag}</b>`;
-  const state = ok
-    ? `<span style="color:#2a2" title="magnetometer calibrated -- fusion converged">✓ ${label}</span>`
-    : `<b style="color:#c22" title="NDOF needs motion: move the airframe in a figure-8 until M3">⚠ ${label}</b>`;
-  return `${state} <button onclick="event.stopPropagation(); calibrateBoard('${b.id}')" ` +
-         `title="calibrate every device that needs it: runs what the board can do, guides what it cannot">calibrate</button>`;
+// devices still needing calibration, straight off the heartbeat -- so the count falls and the row
+// clears itself as the operator works through them, with no extra round trip
+function pendingCalibration(b) {
+  return Object.keys(b.calibration || {});
 }
 
-// Guided calibration. The board's `calibrate` sweep says WHICH devices are outstanding and what the
-// operator must do for each; this walks them ONE AT A TIME behind a popup, because nobody can hold a
-// glider still and wave it in a figure-8 simultaneously. OK is the operator saying "done" -- a timed
-// pause would race them, and a tare captured while the airframe is still being set down is worse than
-// no tare. Adding a device that needs calibrating is a driver override; nothing here changes.
+function fmtImu(b) {
+  const c = b.imu_calibration;
+  const pending = pendingCalibration(b);
+  // the IMU's own numbers ride along, because watching mag climb is how an operator knows the
+  // figure-8 is working -- but the CELL is about calibration board-wide, not just the IMU
+  const imu = c
+    ? (c[3] >= 3
+        ? `<span style="color:#2a2" title="magnetometer calibrated">imu ✓ M${c[3]}</span>`
+        : `<b class="warn" title="NDOF needs motion: figure-8 until M3">imu ⚠ S${c[0]} G${c[1]} A${c[2]} M${c[3]}</b>`)
+    : '';
+  if (!pending.length) {
+    return `${imu}${imu ? ' ' : ''}<span style="color:#2a2">✓ calibrated</span>`;
+  }
+  // the button COUNTS DOWN as devices are done and disappears at zero, so the remaining work is
+  // visible without opening anything; the title names exactly which devices are outstanding
+  return `${imu}${imu ? ' ' : ''}<button onclick="event.stopPropagation(); calibrateBoard('${b.id}')" ` +
+         `title="outstanding: ${pending.join(', ')}">calibrate ${pending.length}</button>`;
+}
+
+// Guided calibration, ONE DEVICE PER PRESS. The board's `calibrate` sweep says which devices are
+// outstanding and what the operator must do for each; this takes the first, shows it, and stops. The
+// heartbeat then re-counts, the button becomes `calibrate 2`, `calibrate 1`, and finally disappears
+// as the row goes green -- so progress is visible without this holding the operator in a loop.
+// OK is them saying "done": a timed pause races the work, and a tare captured while the airframe is
+// still being set down is worse than none, because it looks valid.
 async function sweepCalibration(id) {
   try { return JSON.parse((await cmd(id, 'calibrate', [])).args[0]); } catch (err) { return null; }
 }
@@ -317,25 +330,22 @@ async function calibrateBoard(id) {
   const names = Object.keys(pending);
   if (!names.length) { boardMsg(`${id} calibrate: nothing outstanding — all devices ready`); return; }
 
-  for (let index = 0; index < names.length; index++) {
-    const name = names[index];
-    const step = `[${index + 1}/${names.length}] ${name}`;
-    if (!confirm(`Calibrate ${step}\n\n${pending[name]}\n\nPress OK when done (Cancel to stop).`)) {
-      boardMsg(`${id} calibrate: cancelled at ${name}`);
-      return;
-    }
-    const ran = await cmd(id, 'calibrate', [name]);   // no-op where the act is purely physical
-    if (ran.status !== 'ok') { boardMsg(`${id} calibrate ${name}: ${JSON.stringify(ran)}`); continue; }
-
-    const now = await sweepCalibration(id);           // '' out of the sweep == satisfied
-    boardMsg(now && (name in now)
-      ? `${id} calibrate ${step}: STILL OUTSTANDING — ${now[name]}`
-      : `${id} calibrate ${step}: done`);
+  const name = names[0];   // one at a time: the instructions conflict physically
+  const left = names.length;
+  if (!confirm(`Calibrate ${name}   (${left} device${left > 1 ? 's' : ''} outstanding)\n\n` +
+               `${pending[name]}\n\nPress OK when done.`)) {
+    boardMsg(`${id} calibrate: cancelled at ${name}`);
+    return;
   }
-  const left = await sweepCalibration(id);
-  boardMsg(left && Object.keys(left).length
-    ? `${id} calibrate: still outstanding — ${Object.keys(left).join(', ')}`
-    : `${id} calibrate: ALL DONE — board is calibration-ready`);
+  const ran = await cmd(id, 'calibrate', [name]);   // no-op where the act is purely physical
+  if (ran.status !== 'ok') { boardMsg(`${id} calibrate ${name}: ${JSON.stringify(ran)}`); return; }
+
+  const now = await sweepCalibration(id);
+  const stillLeft = now ? Object.keys(now) : [];
+  if (stillLeft.includes(name)) { boardMsg(`${id} calibrate ${name}: STILL OUTSTANDING — ${now[name]}`); return; }
+  boardMsg(stillLeft.length
+    ? `${id} calibrate: ${name} done — ${stillLeft.length} left (${stillLeft.join(', ')})`
+    : `${id} calibrate: ${name} done — ALL DEVICES CALIBRATED`);
 }
 
 // top-table actions: set the board RTC from the PC clock (update mission epoch), and push the host

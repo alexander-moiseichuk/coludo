@@ -32,8 +32,11 @@ def _load_page() -> str:
 async def _send(writer, status: int, content_type: str, body) -> None:
     if isinstance(body, str):
         body = body.encode()
+    # NO-CACHE on everything. The dashboard is a live operator surface: a browser holding a stale copy
+    # shows stale controls, and the failure is silent -- an edited page that simply never appears.
     head = (
-        'HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\nConnection: close\r\n\r\n'
+        'HTTP/1.1 %d %s\r\nContent-Type: %s\r\nContent-Length: %d\r\n'
+        'Cache-Control: no-store\r\nConnection: close\r\n\r\n'
         % (status, _REASON.get(status, 'OK'), content_type, len(body))
     )
     writer.write(head.encode() + body)
@@ -93,7 +96,9 @@ class Web:
     async def _route(self, method: str, path: str, body: bytes, writer) -> None:
         route = path.split('?', 1)[0]
         if method == 'GET' and route == '/':
-            return await _send(writer, 200, 'text/html; charset=utf-8', self.page)
+            # re-read per request, not once at startup: editing the dashboard should need a
+            # browser reload, never a hub restart (that cost a debugging round here)
+            return await _send(writer, 200, 'text/html; charset=utf-8', _load_page())
         if method == 'GET' and route == '/api/boards':
             return await _send_json(writer, 200, self.hub.board_rows())
         if method == 'GET' and route.startswith('/api/board/'):

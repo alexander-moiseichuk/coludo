@@ -138,6 +138,8 @@ async def amain():
     class _Pitot:
         """A device the board can calibrate itself -- the operator still has to hold it still."""
 
+        name = 'airspeed_sdp810'
+
         def calibration(self):
             return 'keep the pitot in STILL AIR -- this captures the zero tare'
 
@@ -172,8 +174,13 @@ async def amain():
                 return _FlightTask()
             return _UncalibratedImu() if name == 'imu_bno055' else None
 
-    sd_flight = cc_client.create_dispatcher(config_default.default(), controller=_FlightController())
-    panel = json.loads(cc.parse(await sd_flight.handle('health')).args[0])
+    # the sweep reads REGISTERED inspectables, so the stub has to be one for the heartbeat to see it
+    inspector.Inspector.register(_Pitot())
+    try:
+        sd_flight = cc_client.create_dispatcher(config_default.default(), controller=_FlightController())
+        panel = json.loads(cc.parse(await sd_flight.handle('health')).args[0])
+    finally:
+        inspector.Inspector.unregister('airspeed_sdp810')
     assert panel['armed'] is True and panel['flight'] == _VITALS  # airspeed / fin cap / reach ride along
     assert 'agl' in panel  # low-altitude laser AGL rides the same heartbeat
     # degraded-mode annunciation: warm-started (from the controller flag) is surfaced
@@ -184,8 +191,11 @@ async def amain():
     motion -- so a still glider reaches launch with a frozen attitude on HEALTHY hardware. Not
     reporting it is what got a working module condemned on this bench.
     """
-    assert 'imu-uncalibrated' in panel['degraded']
-    assert panel['imu_calibration'] == [0, 3, 3, 0]  # (sys, gyr, acc, mag) -- mag 0 names the fix
+    assert 'needs-calibration' in panel['degraded']
+    assert panel['imu_calibration'] == [0, 3, 3, 0]  # (sys, gyr, acc, mag) -- mag 0 shows the progress
+    # the pending sweep rides the heartbeat as {device: instruction}: the dashboard counts it for the
+    # `calibrate N` button and clears the not-ready row when it empties, with no extra round trip
+    assert isinstance(panel['calibration'], dict) and panel['calibration']
     # a clean board (no controller) reports an empty degraded list
     assert json.loads(cc.parse(await sd.handle('health')).args[0])['degraded'] == []
 

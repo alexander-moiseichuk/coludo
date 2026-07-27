@@ -98,6 +98,9 @@ class Server:
                 # BNO055 (sys, gyr, acc, mag) 0..3 -- shown as its own dashboard column, because NDOF
                 # only converges with MOTION and a still glider reaches launch with a frozen attitude
                 'imu_calibration': health.get('imu_calibration'),
+                # {device: instruction} for anything still needing calibration -- drives the
+                # `calibrate N` button and clears the not-ready row when it empties
+                'calibration': health.get('calibration'),
                 'temp': health.get('temp'), 'mem_free': health.get('mem_free'),
             })
         return rows

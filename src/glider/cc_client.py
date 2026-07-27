@@ -229,14 +229,22 @@ def _register_identity(dispatcher, ctx) -> None:
         attitude. It cost this project a wrongly-condemned module before anything reported it. The cure
         is ten seconds of figure-8 with the airframe in hand -- but only if the panel says so.
         """
+        """
+        OUTSTANDING CALIBRATION on the heartbeat, as {device: instruction}. The dashboard counts it for
+        the `calibrate N` button and clears the not-ready flag the moment it empties -- so the row goes
+        green by itself as the operator works through the devices, with no extra round trip. Cheap:
+        every calibration() reads cached state, none touches a bus.
+        """
+        pending = inspector.Inspector.calibration_all()
+        if pending:
+            info['calibration'] = pending
+            degraded.append('needs-calibration')
         if ctx.controller is not None:
             imu = ctx.controller.active('imu_bno055')
-            if imu is not None and hasattr(imu, 'calibrated'):
-                # ALWAYS reported, not only when bad: the dashboard shows calibration as live state, so
-                # the operator can watch mag climb to 3 while moving the airframe instead of guessing
-                info['imu_calibration'] = imu.calibration  # (sys, gyr, acc, mag)
-                if not imu.calibrated():
-                    degraded.append('imu-uncalibrated')
+            if imu is not None and hasattr(imu, 'calibration_state'):
+                # the raw (sys, gyr, acc, mag) as well, so the IMU column shows mag CLIMBING rather
+                # than a bare "not done" -- the operator can see the figure-8 working
+                info['imu_calibration'] = imu.calibration_state
         mission = inspector.Inspector.get('mission')
         if mission is not None and mission.site == 'fallback':
             degraded.append('cc-less-fallback')
