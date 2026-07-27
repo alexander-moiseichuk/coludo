@@ -115,7 +115,8 @@ def test_dashboard_carries_the_imu_calibration_column():
     # stays reachable when everything is fine -- "no button" must not mean "no information".
     assert b'calibWord' in page and b'calibrationReport' in page
     assert b"'not calibrated'" in page and b"'OK'" in page
-    assert b'>info</button>' in page, 'the report must stay available once nothing is outstanding'
+    # the report rides the TOOLTIP on the status itself, so it stays reachable with nothing to click
+    assert b'title="${report}"' in page, 'the report must stay reachable when nothing is outstanding'
     # every colspan must match the header width, or the empty-state row misaligns the table
     assert b'colspan="13"' in page and b'colspan="12"' not in page
 

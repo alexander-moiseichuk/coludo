@@ -325,16 +325,15 @@ function calibrationReport(b) {
 
 function fmtImu(b) {
   const pending = pendingCalibration(b);
+  // the full plain-text report rides the TOOLTIP on whatever the cell shows -- the status itself is
+  // the hover target, so there is nothing extra to click and nothing disappears when all is well
   const report = calibrationReport(b);
-  const info = `<button onclick="event.stopPropagation(); boardMsg(\`${b.id} calibration:\\n${report}\`)" `
-    + `title="${report}">info</button>`;
   if (!pending.length) {
-    return `<span style="color:#2a2" title="${report}">✓ calibrated</span> ${info}`;
+    return `<span style="color:#2a2" title="${report}">✓ calibrated</span>`;
   }
-  // the button COUNTS DOWN and names what is outstanding; info stays available either way
   return `<b class="warn" title="${report}">⚠ ${pending.join(', ')}</b> `
     + `<button onclick="event.stopPropagation(); calibrateBoard('${b.id}')" `
-    + `title="${report}">calibrate ${pending.length}</button> ${info}`;
+    + `title="${report}">calibrate ${pending.length}</button>`;
 }
 
 // Guided calibration, ONE DEVICE PER PRESS. The board's `calibrate` sweep says which devices are
