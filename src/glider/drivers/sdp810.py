@@ -24,6 +24,12 @@ shares i2c:0 with the other forward sensors.
 
 import asyncio
 
+try:
+    from esp32 import NVS
+    _nvs = NVS('coludo')
+except Exception:  # host / no NVS partition -- the tare simply stays in RAM
+    _nvs = None
+
 import config
 import databoard
 import fixed
@@ -40,6 +46,7 @@ _CMD_START: bytes = b'\x36\x15'  # start continuous: differential-pressure temp-
 _CMD_STOP: bytes = b'\x3f\xf9'  # stop continuous -> idle (required before re-starting after an unclean reboot)
 _FRAME = const(9)  # DP[0,1],CRC, T[3,4],CRC, Scale[6,7],CRC
 _FIRST_MS = const(20)  # first continuous result lands ~8 ms after start (with margin)
+_NVS_ZERO = 'sdp810_zero'  # NVS key: the tare as a fixnum i32, so it survives any reboot
 _RESTART_AFTER = const(5)  # consecutive read failures before re-issuing _CMD_START (see _restart)
 _STOP_MS = const(3)  # stop settles in ~0.5 ms before the part accepts the next command (with margin)
 _START_TRIES = const(2)  # start attempts: a stop+restart clears a part left mid-continuous
@@ -118,6 +125,19 @@ class Sdp810(task.Task):
         self._period_ms: int = self.config.get('period_ms', 20)  # ~50 Hz (tau63 < 3 ms allows fast poll)
         self._density: float = self.config.get('air_density', _AIR_DENSITY)  # the single q->v knob
         self._zero: fixed.fixnum = fixed.from_float(self.config.get('zero_offset_pa', 0.0))  # pad bias
+        """
+        A tare stored by a previous session WINS over the config default: it was measured on this
+        airframe with this tube run, where the config value is a guess. Restoring it means a reboot --
+        including one mid-glide, where nobody can re-tare -- comes back with a real zero instead of 0,
+        which would otherwise put the whole interior-static bias into the airspeed the governor caps off.
+        """
+        if _nvs is not None:
+            try:
+                self._zero = _nvs.get_i32(_NVS_ZERO)
+                recorder.Recorder.log(self.name, 'zero restored from NVS: %.2f Pa'
+                                      % fixed.to_float(self._zero))
+            except Exception:
+                pass  # never stored yet -- keep the config default
         self._scale: int = _DEFAULT_SCALE
         self._raw: fixed.fixnum = 0  # last un-tared reading (Pa fixnum) -> the tare source
         self._temp_raw: int = 0  # last raw temperature word (raw / 200 -> °C)
@@ -233,8 +253,36 @@ class Sdp810(task.Task):
         if self._raw is None:
             return 'no reading yet'
         self.update({'zero': True})
+        self._persist_zero()
         recorder.Recorder.log(self.name, 'calibrated: zero_offset %.2f Pa' % fixed.to_float(self._zero))
         return None
+
+    def _persist_zero(self) -> None:
+        """
+        Commit the tare to NVS so it survives ANY reboot, warm or cold.
+
+        The warm-start crumb already carries it, but only while the board is ARMED AND AIRBORNE, and it
+        is discarded whenever the recovery gate rejects -- so a reboot the gate refuses (a cold power
+        cycle at the pad, a cause it does not trust) still comes back untared. This is the same value
+        with none of those conditions: written when the operator tares, read at setup, so dynamic
+        pressure never silently carries the full interior-static bias.
+
+        Best-effort by design -- a board with no NVS partition simply keeps the in-RAM tare, exactly as
+        before. A failed commit must never take down a sensor that is otherwise working.
+
+        Args:
+            (none)
+
+        Returns:
+            None.
+        """
+        if _nvs is None:
+            return
+        try:
+            _nvs.set_i32(_NVS_ZERO, int(self._zero))  # the fixnum itself: an int, no float in NVS
+            _nvs.commit()
+        except Exception as error:
+            self.note('sdp810 :: zero persist %r', error)
 
     async def run(self) -> None:
         while True:

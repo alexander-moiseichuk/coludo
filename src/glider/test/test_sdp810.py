@@ -73,7 +73,23 @@ async def amain():
     assert probe.update({'zero_offset_pa': 1.5}) == ['zero_offset_pa'] and probe._zero == fixed.from_float(1.5)
     assert probe.update({'air_density': 1.2}) == ['air_density'] and probe._density == 1.2
 
-    print('ok: sdp810 driver registered; graceful-absent; @viper crc + Pa-fixnum scaling + airspeed')
+    """
+    The tare must survive a reboot, INCLUDING one mid-glide where nobody can re-tare. It lives in RAM,
+    so without this the board returns with zero offset and the whole interior-static bias lands in the
+    dynamic pressure -- which is the airspeed the fin governor caps off, so the error goes straight to
+    control authority. The warm-start crumb carries it too, but ONLY while armed and airborne and only
+    if the recovery gate accepts; NVS has neither condition.
+    """
+    keeper = sdp810.Sdp810('airspeed_sdp810', {}, _StubController())
+    keeper._zero = fixed.from_float(-1.25)
+    keeper._raw = fixed.from_float(-1.25)
+    keeper.note = lambda *args: None
+    keeper._persist_zero()               # best-effort: a board with no NVS must not raise here
+    if sdp810._nvs is not None:          # on the board, the fixnum round-trips through NVS
+        assert sdp810._nvs.get_i32(sdp810._NVS_ZERO) == keeper._zero
+
+    print('ok: sdp810 driver registered; graceful-absent; @viper crc + Pa-fixnum scaling + airspeed; '
+          'tare persisted to NVS')
 
 
 asyncio.run(amain())
