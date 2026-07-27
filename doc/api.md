@@ -2590,7 +2590,8 @@ The hub: a board listener + per-board heartbeat + an operator console.
 `on_board` is an optional async hook invoked once, right after a board identifies (used by
 integration tests).
 
-- `__init__(host: str='0.0.0.0', port: int=1234, operator_port: int=1235, web_port: int=8080, on_board=None, log=print, heartbeat_s: float=HEARTBEAT_S, gps=None)` — constructor
+- `absent() -> list` — Gliders the roster knows that are not connected right now, with what to do about it.
+- `__init__(host: str='0.0.0.0', port: int=1234, operator_port: int=1235, web_port: int=8080, on_board=None, log=print, heartbeat_s: float=HEARTBEAT_S, gps=None, roster_path: str=None)` — constructor
 - `board_rows() -> list` — The registry as json-able rows.
 - `cc_status() -> dict` — The Control host's own status for the dashboard header: the wall clock and the host GPS.
 - `start_stream(client, interval_ms, kind='log') -> None` — (Re)start streaming a board's `kind` ('log'|'tlm') at `interval_ms`, replacing any running one.
@@ -2610,6 +2611,7 @@ and operator console (no extra dependency, no framework). Plain HTTP: the LAN is
 encryption is out of scope (cc-protocol.md "Transport & ports"). Routes:
   GET  /             -> the one-page dashboard (static/index.html)
   GET  /api/boards   -> hub.board_rows() as JSON (same data as the `list` command)
+  GET  /api/absent   -> known-but-disconnected gliders from the roster, each with a reboot hint
   POST /api/cmd      -> {board, command, params} -> run it on the board, reply as JSON
   POST /api/op       -> {line} -> run an operator-console line (calibrate, ...) -> {lines}
   GET  /events       -> Server-Sent Events: the board list pushed every heartbeat (live table)

@@ -33,6 +33,9 @@
   tr.notready td { background: #fff2f2; }
   tr.notready td:first-child { box-shadow: inset 3px 0 0 #c22; }
   .warn { color: #c22; }
+  /* known-but-absent gliders: an action the operator can take, not a missing row */
+  .absent { margin: 4px 0; }
+  .absent:empty { display: none; }
 </style>
 </head>
 <body>
@@ -41,6 +44,7 @@
   <span class="muted" id="ccstatus">CC —</span>
 </div>
 
+<div id="absent" class="absent"></div>
 <table id="boards">
   <thead><tr>
     <th>board</th><th>online</th><th>stage</th><th>flight</th><th>calibration</th><th>version</th><th>config</th><th>uptime</th>
@@ -258,6 +262,7 @@ new EventSource('/events').onmessage = (event) => {
     tbody.innerHTML = '<tr><td colspan="13" class="muted">no boards connected</td></tr>';
     return;
   }
+  renderAbsent();
   tbody.innerHTML = boards.map((b) => `
     <tr class="click ${b.online ? 'on' : 'off'} ${notReady(b) ? 'notready' : ''}" onclick="selectBoard('${b.id}')">
       <td>${notReady(b) ? `<b class="warn" title="NOT READY: ${b.degraded.join(', ')}">❗</b> ` : ''}${b.id}</td>
@@ -282,6 +287,22 @@ new EventSource('/events').onmessage = (event) => {
 // healthy hardware can reach launch with a FROZEN attitude and nothing else reports it (probe passes,
 // self-test passes, the config is fine). mag is the axis needing the operator's figure-8; gyr reaches 3
 // on its own and acc wants held orientations but does not block heading.
+// Gliders the hub has SEEN BEFORE but that are not connected now. A board registers with the hub only
+// at boot, so one that is powered but was missed will not appear however long you wait -- it has to be
+// rebooted. Without this an absent glider is simply a row that is not there, which reads identically to
+// one that was never set up.
+async function renderAbsent() {
+  const box = document.getElementById('absent');
+  if (!box) return;
+  let missing = [];
+  try { missing = await (await fetch('/api/absent')).json(); } catch (err) { return; }
+  box.innerHTML = missing.length
+    ? `<b class="warn">\u2757 ${missing.length} known glider${missing.length > 1 ? 's' : ''} not connected:</b> `
+      + missing.map(g => `<span title="${g.hint}">${g.id} (${g.ip || 'ip unknown'})</span>`).join(', ')
+      + ' — a glider registers with the hub only at boot, so power-cycle it to re-login'
+    : '';
+}
+
 // NOT READY TO LAUNCH: any degraded state (uncalibrated IMU, attitude on the backup, warm restart,
 // memory rescued, CC-less fallback). Flagged on the ROW rather than inside a cell -- an operator
 // scanning a table of boards must see which one needs attention without reading every column.

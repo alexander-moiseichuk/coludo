@@ -8,6 +8,7 @@ and operator console (no extra dependency, no framework). Plain HTTP: the LAN is
 encryption is out of scope (cc-protocol.md "Transport & ports"). Routes:
   GET  /             -> the one-page dashboard (static/index.html)
   GET  /api/boards   -> hub.board_rows() as JSON (same data as the `list` command)
+  GET  /api/absent   -> known-but-disconnected gliders from the roster, each with a reboot hint
   POST /api/cmd      -> {board, command, params} -> run it on the board, reply as JSON
   POST /api/op       -> {line} -> run an operator-console line (calibrate, ...) -> {lines}
   GET  /events       -> Server-Sent Events: the board list pushed every heartbeat (live table)
@@ -101,6 +102,11 @@ class Web:
             return await _send(writer, 200, 'text/html; charset=utf-8', _load_page())
         if method == 'GET' and route == '/api/boards':
             return await _send_json(writer, 200, self.hub.board_rows())
+        if method == 'GET' and route == '/api/absent':
+            # gliders the roster KNOWS but that are not connected. Separate from /api/boards, which
+            # only ever describes live links: an operator cannot otherwise tell "never seen" from
+            # "seen yesterday, not powered now", and only the second has an action (reboot it).
+            return await _send_json(writer, 200, self.hub.absent())
         if method == 'GET' and route.startswith('/api/board/'):
             return await self._api_board(route[len('/api/board/'):], writer)
         if method == 'POST' and route == '/api/cmd':
