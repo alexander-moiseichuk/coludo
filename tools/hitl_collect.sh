@@ -26,11 +26,22 @@ ses=$(echo "$out" | grep -oE 'SESSION [0-9_]+' | awk '{print $2}')
 # board capture was missing data the board had actually recorded and nothing said so.
 # list-then-filter: the Luckfox shell does not expand a glob here, and its `ls` emits ANSI colour
 # codes + CR, so strip both before matching or every name silently fails to match.
-for name in $(adb shell "ls /userdata/recordings/" 2>/dev/null \
-              | sed -e "s/\x1b\[[0-9;]*m//g" -e "s/\r//g" | grep "^${ses}_.*\.csv$"); do
+expected=$(adb shell "ls /userdata/recordings/" 2>/dev/null \
+           | sed -e "s/\x1b\[[0-9;]*m//g" -e "s/\r//g" | grep "^${ses}_.*\.csv$")
+for name in $expected; do
   adb pull "/userdata/recordings/$name" "$d/" >/dev/null 2>&1 || true
 done
+# VERIFY THE PULL. A capture missing streams still assembles into a file that looks like a whole
+# flight, and every downstream tool renders it as one -- this exact class already cost two findings
+# (§27.1's hardcoded stream list, §27.8's 5-stream fixture standing in for an 8-stream flight). The
+# old check only caught "nothing at all"; a partial pull passed silently.
+want=$(echo "$expected" | grep -c . || true)
 pulled=$(ls "$d" | wc -l)
-[ "$pulled" -eq 0 ] && echo "WARN $motor/$scen: no streams pulled for session $ses"
+if [ "$pulled" -ne "$want" ]; then
+  echo "FAIL $motor/$scen: pulled $pulled of $want streams for session $ses -- capture is INCOMPLETE"
+  echo "  missing: $(for n in $expected; do [ -f "$d/$n" ] || echo -n "$n "; done)"
+  exit 1
+fi
+[ "$want" -eq 0 ] && { echo "FAIL $motor/$scen: session $ses produced no streams"; exit 1; }
 python3 "$ROOT/tools/assemble_capture.py" "$ses" "$d" "$outdir/$scen.txt" >/dev/null
 echo "OK $motor/$scen session=$ses $(echo "$out" | grep -oE 'DONE|TIMEOUT [0-9]+' | head -1)"
