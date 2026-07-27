@@ -40,6 +40,10 @@ _MODE_NDOF = const(0x0C)  # full 9-DOF absolute-orientation fusion
 _PWR_NORMAL = const(0x00)
 # consecutive bit-identical Euler reads (WHILE accel moves) that prove the fusion has latched;
 # 50 at the 50 Hz default is ~1 s -- long enough that a still airframe never trips it
+_OFF_GYR = const(12)  # gyro within the ACC..EUL block (bytes 12..17)
+# |gx|+|gy|+|gz| above this means the part is genuinely ROTATING, so a frozen Euler is a fault
+# and not merely a still airframe. 16 LSB/deg/s, so ~5 deg/s summed across the axes.
+_TURNING_LSB = const(80)
 _STALL_SAMPLES = const(50)
 _DEG = 1.0 / 16.0
 _ACC_G = 1.0 / 980.665  # ACC_DATA is m/s² at 100 LSB/(m/s²); /100/9.80665 -> g (incl gravity)
@@ -67,7 +71,6 @@ class Bno055(task.Task):
         self._buf = bytearray(24)  # ACC..EUL block
         self._last_euler = None    # fusion-stall detector state (see _fusion_alive)
         self._frozen: int = 0
-        self._frozen_accel = None
         self._stalled: bool = False
         try:
             if await self._bus.read_chip_id(self._addr, _REG_CHIP_ID) != _CHIP_ID:
@@ -122,10 +125,16 @@ class Bno055(task.Task):
         accel and gyro keep streaming normally in the same 24-byte block read -- across a power cycle,
         in both NDOF and IMU fusion modes, and on either clock source.
 
-        That raw stream is what makes the detector safe: a genuinely motionless glider could repeat a
-        fused reading, but its ACCELEROMETER always dithers by an LSB or two. So "Euler bit-identical
-        for _STALL_SAMPLES consecutive reads WHILE accel is moving" means the fusion is dead, not that
-        the airframe is still.
+        The judgement is made ONLY WHILE THE PART IS ROTATING, off its own gyro in the same block read.
+        A stationary BNO055 legitimately repeats its fused output bit for bit -- measured on a healthy
+        replacement sitting on the bench -- so an earlier version of this that keyed on accel dither
+        fired on a GOOD sensor, and would have withheld attitude on the pad and pushed the glider onto
+        the gyro backup before launch. Rotation is the only condition under which a frozen Euler is
+        provably wrong: turn the part and a working fusion MUST move.
+
+        The cost is that a stalled fusion is not detectable while the airframe is still, which is
+        correct rather than a gap -- the two are genuinely indistinguishable then, and a stationary
+        glider is not being controlled by attitude anyway. In flight there is always rotation.
 
         Args:
             sample - the flat 6-tuple from sample().
@@ -133,15 +142,14 @@ class Bno055(task.Task):
         Returns:
             True while the fusion output is live (or not yet proven dead).
         """
-        euler, accel = sample[:3], sample[3:]
+        euler = sample[:3]
         if euler != self._last_euler:
             self._last_euler = euler
             self._frozen = 0
-            self._frozen_accel = None
             return True
-        if self._frozen_accel is None:
-            self._frozen_accel = accel
-        elif accel != self._frozen_accel:  # the part is alive and moving, but the fusion is not
+        # the part's OWN gyro, bytes 12..17 of the block sample() just read (16 LSB/deg/s)
+        gx, gy, gz = struct.unpack_from('<hhh', self._buf, _OFF_GYR)
+        if abs(gx) + abs(gy) + abs(gz) > _TURNING_LSB:  # rotating, yet the fusion has not moved
             self._frozen += 1
         return self._frozen < _STALL_SAMPLES
 
