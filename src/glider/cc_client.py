@@ -223,6 +223,17 @@ def _register_identity(dispatcher, ctx) -> None:
         health = inspector.Inspector.get('health')
         if getattr(health, 'rescues', 0) > 0:
             degraded.append('memory-rescued')
+        """
+        IMU NOT CALIBRATED is an operator ACTION, not a fault: NDOF fusion needs motion to converge and
+        a glider sits still on the pad, so a perfectly healthy BNO055 can reach launch with a frozen
+        attitude. It cost this project a wrongly-condemned module before anything reported it. The cure
+        is ten seconds of figure-8 with the airframe in hand -- but only if the panel says so.
+        """
+        if ctx.controller is not None:
+            imu = ctx.controller.active('imu_bno055')
+            if imu is not None and hasattr(imu, 'calibrated') and not imu.calibrated():
+                degraded.append('imu-uncalibrated')
+                info['imu_calibration'] = imu.calibration  # (sys, gyr, acc, mag) so the fix is obvious
         mission = inspector.Inspector.get('mission')
         if mission is not None and mission.site == 'fallback':
             degraded.append('cc-less-fallback')
@@ -489,6 +500,18 @@ def _register_diagnostics(dispatcher, ctx) -> None:
             if result is not None:
                 problems[name] = result
         readiness = _readiness(ctx.cfg)
+        """
+        LIVE readiness on top of the config gate: an uncalibrated BNO055 is invisible to _readiness()
+        because it is not a config choice, and invisible to probe() because the part answers perfectly.
+        NDOF fusion only converges with motion, so a still glider reaches launch with a frozen attitude
+        on healthy hardware -- exactly the state that got a working module condemned here. Reported as
+        a readiness item, not a hardware `pass` failure: nothing is broken, the operator just has to
+        pick the airframe up.
+        """
+        imu = ctx.controller.active('imu_bno055')
+        if imu is not None and hasattr(imu, 'calibrated') and not imu.calibrated():
+            readiness['imu_calibration'] = ('BNO055 not calibrated %s -- move the airframe in a slow '
+                                            'figure-8 until mag reads 3' % (imu.calibration,))
         return cc.build('ok', [json.dumps({'pass': not problems, 'devices': devices, 'problems': problems,
                                            'ready': not readiness, 'readiness': readiness})])
 

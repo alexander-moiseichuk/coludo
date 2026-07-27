@@ -40,6 +40,8 @@ _MODE_NDOF = const(0x0C)  # full 9-DOF absolute-orientation fusion
 _PWR_NORMAL = const(0x00)
 # consecutive bit-identical Euler reads (WHILE accel moves) that prove the fusion has latched;
 # 50 at the 50 Hz default is ~1 s -- long enough that a still airframe never trips it
+_REG_CALIB_STAT = const(0x35)  # sys[7:6] gyr[5:4] acc[3:2] mag[1:0], 3 = fully calibrated
+_MAG_CALIBRATED = const(3)     # magnetometer level that means the figure-8 is done
 _OFF_GYR = const(12)  # gyro within the ACC..EUL block (bytes 12..17)
 # |gx|+|gy|+|gz| above this means the part is genuinely ROTATING, so a frozen Euler is a fault
 # and not merely a still airframe. 16 LSB/deg/s, so ~5 deg/s summed across the axes.
@@ -72,6 +74,8 @@ class Bno055(task.Task):
         self._last_euler = None    # fusion-stall detector state (see _fusion_alive)
         self._frozen: int = 0
         self._stalled: bool = False
+        self.calibration = None   # (sys, gyr, acc, mag) 0..3 each; None until first poll
+        self._calib_due: int = 1  # countdown to the next CALIB_STAT read (see _poll_calibration)
         try:
             if await self._bus.read_chip_id(self._addr, _REG_CHIP_ID) != _CHIP_ID:
                 return False  # not a BNO055 at this address
@@ -153,6 +157,38 @@ class Bno055(task.Task):
             self._frozen += 1
         return self._frozen < _STALL_SAMPLES
 
+    async def _poll_calibration(self) -> None:
+        """
+        Refresh CALIB_STAT at ~1 Hz so the OPERATOR can be told the IMU still needs calibrating.
+
+        NDOF fusion does not converge without motion, and a glider sits still on the pad -- so a
+        perfectly healthy part can reach LAUNCH with a frozen attitude, which is what made a working
+        module look broken on this bench. That is a pre-flight procedure item, and it only becomes one
+        if the board reports it: hence `calibrated` on the operator surfaces (cc_client degraded +
+        the `verify` readiness gate).
+
+        MAG is the gate. The magnetometer is the axis that needs the deliberate figure-8; the gyro
+        reaches 3 by itself within seconds of sitting still, and the accelerometer wants a few held
+        orientations but does not block heading. Decimated to ~1 Hz -- one extra byte off the bus, well
+        off the 50 Hz sampling path.
+
+        Args:
+            (none)
+
+        Returns:
+            None; refreshes self.calibration (sys, gyr, acc, mag) as a side effect.
+        """
+        self._calib_due -= 1
+        if self._calib_due > 0:
+            return
+        self._calib_due = max(1, 1000 // self._period_ms)
+        raw = (await self._bus.read(self._addr, _REG_CALIB_STAT, 1))[0]
+        self.calibration = (raw >> 6, (raw >> 4) & 3, (raw >> 2) & 3, raw & 3)
+
+    def calibrated(self) -> bool:
+        """True once the MAGNETOMETER is calibrated -- the axis that needs the operator's figure-8."""
+        return self.calibration is not None and self.calibration[3] >= _MAG_CALIBRATED
+
     async def run(self) -> None:
         while True:
             try:
@@ -171,6 +207,7 @@ class Bno055(task.Task):
                 self._telemetry.push((sample[0], to_str(sample[1]), to_str(sample[2]),
                                       sample[3], sample[4], sample[5]))
                 self.note(None)  # healthy pass -> let the next error log afresh
+                await self._poll_calibration()
             except Exception as error:
                 self.note('bno055 :: read %r', error)  # deduped: a persistent error logs once, not at 50 Hz
             await asyncio.sleep_ms(self._period_ms)
@@ -232,4 +269,6 @@ class Bno055(task.Task):
         # the operator must see a WITHHELD attitude: the channel simply going quiet looks like a
         # missing sensor, and this says the part is alive with a dead fusion core
         status['fusion_stalled'] = self._stalled
+        status['calibration'] = self.calibration  # (sys, gyr, acc, mag)
+        status['calibrated'] = self.calibrated()
         return status

@@ -135,6 +135,14 @@ async def amain():
         def vitals(self):
             return _VITALS
 
+    class _UncalibratedImu:
+        """A healthy BNO055 that simply has not been moved yet -- mag calibration still 0."""
+
+        calibration = (0, 3, 3, 0)
+
+        def calibrated(self):
+            return self.calibration[3] >= 3
+
     class _FlightController:
         armed = True
         warm_started = True  # a degraded state -> annunciated
@@ -144,7 +152,11 @@ async def amain():
             return 'gliding'
 
         def active(self, name=None):
-            return [_FlightTask()] if name is None else (_FlightTask() if name == 'flight' else None)
+            if name is None:
+                return [_FlightTask()]
+            if name == 'flight':
+                return _FlightTask()
+            return _UncalibratedImu() if name == 'imu_bno055' else None
 
     sd_flight = cc_client.create_dispatcher(config_default.default(), controller=_FlightController())
     panel = json.loads(cc.parse(await sd_flight.handle('health')).args[0])
@@ -152,6 +164,14 @@ async def amain():
     assert 'agl' in panel  # low-altitude laser AGL rides the same heartbeat
     # degraded-mode annunciation: warm-started (from the controller flag) is surfaced
     assert 'warm-started' in panel['degraded']
+    """
+    An UNCALIBRATED BNO055 must reach the operator. It is invisible to probe() (the part answers
+    perfectly) and to _readiness() (it is not a config choice), yet NDOF fusion never converges without
+    motion -- so a still glider reaches launch with a frozen attitude on HEALTHY hardware. Not
+    reporting it is what got a working module condemned on this bench.
+    """
+    assert 'imu-uncalibrated' in panel['degraded']
+    assert panel['imu_calibration'] == [0, 3, 3, 0]  # (sys, gyr, acc, mag) -- mag 0 names the fix
     # a clean board (no controller) reports an empty degraded list
     assert json.loads(cc.parse(await sd.handle('health')).args[0])['degraded'] == []
 
