@@ -970,6 +970,28 @@ sequence to be atomic across awaits should say so explicitly with `async with bu
 
 The shared Bus for `bus_id`, created once from `spec` (scl/sda/freq) and cached thereafter.
 
+### `bind(board: dict, device: dict, default_addr: int) -> tuple`
+
+Resolve a device's config block to the (bus, address) pair it talks over.
+
+Six drivers opened setup() with the identical four lines -- read `id`, resolve the spec through
+config.bus(), fetch the shared bus, pull `addr`. That preamble is BUS knowledge (which config keys
+name a bus, what they default to), not driver knowledge, so it belongs here rather than on the
+generic Task base: a task-level helper would need an i2c and an spi variant, and would drag both
+bus modules into the import graph of every task that has no bus at all.
+
+Returns the pair rather than a _Device window because these drivers pass the address per transfer
+(self._bus.read(self._addr, ...)) -- they share the bus wrapper's recovery and claim paths.
+
+Args:
+    board - the whole board config (holds the `buses` section).
+    device - the component's own config block ('bus', 'id', 'addr').
+    default_addr - the datasheet address when the block does not name one.
+
+Returns:
+    (bus, addr), or (None, None) when the config declares no such bus -- the caller's setup()
+    returns False on that and the Controller reports the device as not connected.
+
 ## `inspector.py`
 
 _Tested by `test/test_inspector.py`._

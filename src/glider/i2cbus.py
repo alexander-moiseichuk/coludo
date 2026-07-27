@@ -11,6 +11,7 @@ synchronous, so the lock is held only for the transaction. A glider-only module.
 import asyncio
 
 import commons
+import config
 import recorder
 
 try:
@@ -236,3 +237,32 @@ def get(bus_id: int, spec: dict) -> Bus:
     if bus_id not in _buses:
         _buses[bus_id] = Bus(bus_id, spec)
     return _buses[bus_id]
+
+
+def bind(board: dict, device: dict, default_addr: int) -> tuple:
+    """
+    Resolve a device's config block to the (bus, address) pair it talks over.
+
+    Six drivers opened setup() with the identical four lines -- read `id`, resolve the spec through
+    config.bus(), fetch the shared bus, pull `addr`. That preamble is BUS knowledge (which config keys
+    name a bus, what they default to), not driver knowledge, so it belongs here rather than on the
+    generic Task base: a task-level helper would need an i2c and an spi variant, and would drag both
+    bus modules into the import graph of every task that has no bus at all.
+
+    Returns the pair rather than a _Device window because these drivers pass the address per transfer
+    (self._bus.read(self._addr, ...)) -- they share the bus wrapper's recovery and claim paths.
+
+    Args:
+        board - the whole board config (holds the `buses` section).
+        device - the component's own config block ('bus', 'id', 'addr').
+        default_addr - the datasheet address when the block does not name one.
+
+    Returns:
+        (bus, addr), or (None, None) when the config declares no such bus -- the caller's setup()
+        returns False on that and the Controller reports the device as not connected.
+    """
+    bus_id = device.get('id', 0)
+    spec = config.bus(board, device.get('bus', 'i2c'), bus_id)
+    if spec is None:
+        return None, None
+    return get(bus_id, spec), device.get('addr', default_addr)

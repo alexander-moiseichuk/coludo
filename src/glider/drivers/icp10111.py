@@ -16,7 +16,6 @@ import struct
 import time
 
 import commons
-import config
 import databoard
 import i2cbus
 import recorder
@@ -61,14 +60,11 @@ class Icp10111(task.Task):
     _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
 
     async def setup(self) -> bool:
-        bus_id = self.config.get('id', 0)
-        spec = config.bus(self.controller.config, self.config.get('bus', 'i2c'), bus_id)
-        if spec is None:
-            return False
-        self._bus = i2cbus.get(bus_id, spec)
+        self._bus, self._addr = i2cbus.bind(self.controller.config, self.config, _ADDR)
+        if self._bus is None:
+            return False  # no such bus in config -> the Controller skips this device
         self._sample = None
         self._sample_ms: int = 0
-        self._addr: int = self.config.get('addr', _ADDR)
         self._period_ms: int = self.config.get('period_ms', 100)  # ~10 Hz
         """
         OSError(19) hardening (measured after the 7/06 OOM-soak panic): a mid-conversion
