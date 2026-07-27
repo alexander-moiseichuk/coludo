@@ -279,7 +279,15 @@ class Server:
                 return  # board dropped -> _handle marks it offline and drops the stream
             if resp.command == 'ok' and resp.args:
                 try:
-                    items = json.loads(resp.args[0]).get(field, [])
+                    payload = json.loads(resp.args[0])
+                    items = payload.get(field, [])
+                    # the board's tee is best-effort: a full ring DISCARDS rather than raising, so a
+                    # gap in a live stream looks exactly like a quiet sensor. Say so once per window
+                    # instead of letting the operator read absence as calm.
+                    lost = payload.get('dropped') or 0
+                    if lost:
+                        self._emit_log(client.id, '[%s stream: %d record(s) DROPPED by the board tee '
+                                                  '-- this window is incomplete]' % (kind, lost))
                 except ValueError:
                     items = []
                 for line in items:

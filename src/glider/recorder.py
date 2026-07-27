@@ -156,17 +156,23 @@ class _TeeSink:
             duration_ms - the next window in milliseconds (<= 0 stops after returning the batch).
 
         Returns:
-            The records buffered since the last call (decoded, right-stripped).
+            (records, dropped): the rows buffered since the last call (decoded, right-stripped), and
+            how many the ring DISCARDED in that window. The count matters because the tee is
+            best-effort by design -- a full ring drops rather than raising, so a live `tlm` session
+            with a gap looks exactly like a quiet sensor. Reporting it turns an invisible loss into a
+            number the operator can see.
         """
         self._deadline = 0
         if self._ring is None:
             if duration_ms <= 0:
-                return []
+                return [], 0
             self._ring = Ring(min(duration_ms * 10, 4 * _DEFAULT_CAPACITY), self._cell)  # first window sizes it
+        dropped = self._ring.dropped
+        self._ring.dropped = 0
         records = self._take()
         if duration_ms > 0:
             self._deadline = time.ticks_add(time.ticks_us(), duration_ms * 1000)
-        return records
+        return records, dropped
 
 
 class Recorder:
@@ -303,9 +309,10 @@ class Recorder:
             duration_ms - the next window in milliseconds (<= 0 stops).
 
         Returns:
-            {'lines': [...]} -- the buffered log lines.
+            {'lines': [...], 'dropped': n} -- the buffered log lines and how many the tee discarded.
         """
-        return {'lines': cls._cc_log.drain(duration_ms)}
+        lines, dropped = cls._cc_log.drain(duration_ms)
+        return {'lines': lines, 'dropped': dropped}
 
     @classmethod
     def cc_telemetry(cls, duration_ms: int) -> dict:
@@ -319,9 +326,11 @@ class Recorder:
             duration_ms - the next window in milliseconds (<= 0 stops).
 
         Returns:
-            {'samples': [...]} -- the buffered telemetry rows.
+            {'samples': [...], 'dropped': n} -- the buffered rows and how many the tee discarded
+            (non-zero means the operator is seeing a GAP, not a quiet sensor).
         """
-        return {'samples': cls._cc_tlm.drain(duration_ms)}
+        samples, dropped = cls._cc_tlm.drain(duration_ms)
+        return {'samples': samples, 'dropped': dropped}
 
     @classmethod
     def tlm(cls, filename: str, content: str) -> None:

@@ -303,6 +303,13 @@ async def amain():
     assert batch['lines'][0].endswith('test :: hello'), batch
     assert json.loads(cc.parse(await sd5.handle('log 0')).args[0])['lines'] == []  # stop, drained
     assert recorder.Recorder._cc_log._deadline == 0
+    """
+    The tee is best-effort -- a full ring DISCARDS rather than raising -- so a live stream with a gap
+    looks exactly like a quiet sensor. The reply carries the discarded count so the hub can say the
+    window is incomplete instead of the operator reading absence as calm.
+    """
+    assert 'dropped' in batch, batch
+    assert json.loads(cc.parse(await sd5.handle('tlm 1000')).args[0])['dropped'] == 0
     assert 'badargs' in await sd5.handle('log notanumber')  # non-integer duration rejected
 
     # telemetry streaming: `tlm <ms>` mirrors `log` -- arms collection + returns {'samples': [...]}.

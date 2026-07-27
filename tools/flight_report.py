@@ -207,7 +207,20 @@ def build(streams, logs, go, make_subplots):
                 times, values = control.column(field)
                 series.add_trace(go.Scatter(x=times, y=values, name=label), row=11, col=1)
 
+    """
+    STAGE MARKERS COME FROM LOGS, and logs are not evidence. The recorder flushes them roughly every
+    1000 telemetry messages, so a short capture can carry full telemetry and NO log lines at all -- and
+    a plot with no stage markers looks exactly like a flight that never changed stage. Telemetry is
+    committed per line and is trustworthy; the log channel is what was traded away for that (see
+    recorder.py). Say when the markers are missing rather than drawing a flight that appears stageless.
+    """
     events = stage_events(logs)
+    if not events:
+        series.add_annotation(text='no stage markers — this capture carries no log lines '
+                                   '(logs flush ~every 1000 telemetry rows, so a short session may '
+                                   'have none). Telemetry below is unaffected.',
+                              xref='paper', yref='paper', x=0, y=1.02, showarrow=False,
+                              font={'color': 'crimson'})
     for time_s, label in events:
         series.add_vline(x=time_s, line_dash='dash', line_color='crimson',
                          annotation_text=label, annotation_position='top left')
