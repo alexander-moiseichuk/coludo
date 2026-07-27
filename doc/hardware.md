@@ -313,9 +313,27 @@ mitigations are degradations, not equivalents.
 | # | Issue | Evidence | v0.2 action | Software mitigation today |
 |---|---|---|---|---|
 | 1 | **LSM6DSO32 INT1 not connected** | `INT1_CTRL` 0x01 written and read back, accel + gyro both at 104 Hz, `STATUS` continuously data-ready — yet **GPIO28 stuck low, never toggles** | Route INT1 to its GPIO and verify the net | Driver detects the silent line after 3 timeouts and polls at 10 ms instead (`rate` 2.0 → 72 Hz). Costs the interrupt's timing precision and some CPU |
-| 2 | **BNO055 fusion core faulty** | Bit-identical Euler triple forever while raw accel/gyro stream in the *same* block read; survives a power cycle, NDOF **and** IMU mode, both clock sources; MAG all zeros; `SYS_STATUS` 5, `SYS_ERR` 0, `ST_RESULT` 0x0F | Fit the replacement part; self-test alone does **not** catch this, so re-run `diag_bno.py` after assembly | Driver withholds a frozen attitude so the priority-1 gyro backup takes over — verified live |
+| 2 | **BNO055 attitude frozen — cause UNDETERMINED** | Bit-identical Euler triple, `sys`/`mag` calibration stuck at 0. Originally called a faulty fusion core; **that verdict does not hold** (see below) | Re-test with VERIFIED motion before condemning any part. Self-test does **not** exercise fusion (`ST_RESULT` 0x0F on a part that was not updating) | Driver withholds a frozen attitude *while rotating* so the priority-1 gyro backup takes over |
 | 3 | **Move the BNO055 to `i2c:1`** | Attitude (priority 0) shares `i2c:0` with four devices; a wedge, or the icp10111 latch-up recovery's general-call reset, takes the whole bus down together | Put the BNO055 on `i2c:1` with the INA226 | None possible in software — the buses are physical. See below for why this one matters most |
 | 4 | **BNO055 breakout has no 32.768 kHz crystal** | Selecting `CLK_SEL` external kills fusion outright (EUL all zeros) | Prefer a crystal-equipped module: Bosch specifies the external crystal for fusion modes | Driver leaves `CLK_SEL` internal |
+
+### The BNO055 "faulty part" call — retracted
+
+A v0.1 module was condemned as having a dead fusion core. **That conclusion was not supported.** Every
+test behind it was run with the board STATIONARY, and a stationary BNO055 legitimately repeats its
+fused output bit for bit — the replacement part does exactly the same at rest. The bench rig is fixed
+to a breadboard, so sustained motion is awkward, and three later runs that were *assumed* to be moving
+turned out to read 0.1–0.4 °/s. The diagnostics now print the gyro on every line and annotate a still
+sample as **"STILL — proves nothing"**, so the mistake cannot be repeated silently.
+
+What survives: the two parts behave identically at rest, and neither calibrates without motion. What
+does not: any claim that either is broken. Re-test with the gyro column showing >5 °/s before
+condemning hardware.
+
+**The operational consequence is the real finding.** NDOF fusion needs motion to calibrate, and a
+glider sits still on the pad — so the BNO055 can be uncalibrated and its attitude frozen *at launch*,
+on a perfectly good part. That is a pre-flight procedure item, not a hardware defect (see
+`doc/field_test.md` Phase 3).
 
 ### v0.2 — BNO055 control lines to break out
 

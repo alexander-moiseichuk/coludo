@@ -54,6 +54,12 @@ first powered flight.
 - [ ] **Separation switch:** pads nested → pin reads **HIGH = nested**
 
 ## Phase 3 — Attitude / IMU (pick it up, rotate, tilt)
+- [ ] **CALIBRATE THE BNO055 BEFORE ARMING.** NDOF fusion does not converge without motion, and a
+      glider sits still on the pad — so a perfectly healthy part can reach launch with `sys`/`mag`
+      calibration at 0 and a FROZEN attitude. Move the airframe in a slow figure-8 until
+      `diag_bno_calib.py` shows **mag 3** and the euler bytes changing (took ~1 s on a good part).
+      Check the gyro column reads **> 5 °/s** while you do it — a still sample proves nothing, which
+      is how a working module was once wrongly condemned
 - [ ] Pitch nose up / down → **pitch tracks** the right sense; roll L/R → **roll tracks**
 - [ ] Yaw / spin → **heading tracks**; no glitches or freezes on quick moves (gyro rate feeds the PID D-term)
 - [ ] Return to level → attitude returns to ~0/0 and the heading settles
