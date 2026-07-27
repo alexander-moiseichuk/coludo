@@ -34,6 +34,7 @@ _CMD_OTP_UNLOCK = b'\xc5\x95\x00\x66\x9c'  # unlock OTP, then 4x read
 _CMD_OTP_READ = b'\xc7\xf7'
 _CMD_MEASURE = b'\x48\xa3'  # "measure pressure first", normal mode (6.3 ms, 1.6 Pa RMS)
 _RESET_TRIES = const(4)  # first-touch attempts spanning one max-length conversion window (~95 ms)
+_RECOVER_AFTER = const(3)  # consecutive run-loop read failures before escalating (see _recover)
 _RESET_RETRY_MS = const(30)
 _MEASURE_MS = const(12)  # conversion wait for normal mode (with margin)
 _ID_MASK = const(0x3F)
@@ -109,6 +110,7 @@ class Icp10111(task.Task):
         except Exception as error:
             print('icp10111 :: %r' % error)
             return False
+        self._failures: int = 0  # consecutive read failures -> _recover() (see run())
         self._altitude, self._temperature, self._pressure, self._elevation = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'altitude', 'temperature', 'pressure', 'elevation')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
@@ -160,10 +162,41 @@ class Icp10111(task.Task):
         altitude = 0.0 if pressure <= 0.0 else 44330.0 * (1.0 - (pressure / _SEA_LEVEL_PA) ** 0.190294957)
         return altitude, temp_c, pressure
 
+    async def _recover(self) -> None:
+        """
+        Un-wedge a part that has stopped answering MID-FLIGHT, with the escalation setup() proved.
+
+        setup() hardens the boot path against a latched core, but the run loop had no recovery at all:
+        a read that started failing simply logged once and kept failing, so a mid-air latch-up cost the
+        PRIMARY baro for the rest of the flight -- elevation drives the endgame band, the landing
+        fallback and the launch backup, so that is expensive even with bmp280 behind it.
+
+        Measured escalation (7/06 OOM soak, unchanged here): a NAK is usually just a conversion still
+        draining, so wait one period first; only a PERSISTENT failure gets the I2C GENERAL-CALL reset
+        (0x00 0x06), which is what actually recovered the latched bench part when the addressed soft
+        reset re-wedged it. The general call also resets peers that honour it (bmp280, ina226) -- they
+        re-apply their config-declared state, and this fires only when the primary baro is already lost.
+
+        Args:
+            (none)
+
+        Returns:
+            None; best-effort -- a still-dead part just fails the next read and tries again later.
+        """
+        await asyncio.sleep_ms(self._period_ms)  # a busy conversion drains on its own
+        try:
+            await self._bus.writeto(0x00, _GENERAL_CALL_RESET)
+        except OSError:
+            pass  # nothing honours general call -- nothing lost by asking
+        await asyncio.sleep_ms(_RESET_RETRY_MS)
+        recorder.Recorder.log(self.name, 'read recovery: general-call reset after %d failures'
+                              % self._failures)
+
     async def run(self) -> None:
         while True:
             try:
                 altitude, temp_c, pressure = await self._read()
+                self._failures = 0
                 elevation = altitude - self._ground
                 self._altitude.push(altitude)  # one step: push our channels directly
                 self._temperature.push(temp_c)
@@ -173,6 +206,9 @@ class Icp10111(task.Task):
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
                 self.note('icp10111 :: read %r', error)  # deduped: a persistent error logs once, not every tick
+                self._failures += 1
+                if self._failures == _RECOVER_AFTER:  # once, not every tick while it stays dead
+                    await self._recover()
             await asyncio.sleep_ms(self._period_ms)
 
     def update(self, props: dict) -> list:
