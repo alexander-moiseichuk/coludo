@@ -102,6 +102,9 @@ def test_dashboard_carries_the_imu_calibration_column():
     assert b'fmtImu' in page and b'calibrateBoard' in page, 'the calibrate action is not served'
     # the sweep must be GENERIC -- a hardcoded device name means a new one is silently skipped
     assert b"'calibrate', []" in page, 'the button must sweep, not name one device'
+    # one device at a time, gated on the OPERATOR confirming -- a timed pause races them, and a tare
+    # captured while the airframe is still being set down is worse than no tare
+    assert b'confirm(' in page, 'each device must wait for an explicit OK'
     # every colspan must match the header width, or the empty-state row misaligns the table
     assert b'colspan="13"' in page and b'colspan="12"' not in page
 

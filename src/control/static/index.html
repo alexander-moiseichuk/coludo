@@ -302,10 +302,11 @@ function fmtImu(b) {
          `title="calibrate every device that needs it: runs what the board can do, guides what it cannot">calibrate</button>`;
 }
 
-// Guided calibration: the board's own `calibrate` sweep says WHICH devices are outstanding and what
-// the operator must do for each, so this walks them ONE AT A TIME rather than dumping every
-// instruction at once (nobody can hold a glider still and wave it in a figure-8 simultaneously).
-// Adding a device that needs calibrating is a driver override; nothing here changes.
+// Guided calibration. The board's `calibrate` sweep says WHICH devices are outstanding and what the
+// operator must do for each; this walks them ONE AT A TIME behind a popup, because nobody can hold a
+// glider still and wave it in a figure-8 simultaneously. OK is the operator saying "done" -- a timed
+// pause would race them, and a tare captured while the airframe is still being set down is worse than
+// no tare. Adding a device that needs calibrating is a driver override; nothing here changes.
 async function sweepCalibration(id) {
   try { return JSON.parse((await cmd(id, 'calibrate', [])).args[0]); } catch (err) { return null; }
 }
@@ -318,25 +319,18 @@ async function calibrateBoard(id) {
 
   for (let index = 0; index < names.length; index++) {
     const name = names[index];
-    boardMsg(`${id} calibrate [${index + 1}/${names.length}] ${name} → ${pending[name]}`);
-    // give the operator a moment to comply BEFORE the board captures anything -- a tare taken while
-    // the airframe is still being set down is worse than no tare
-    await new Promise(done => setTimeout(done, 3000));
-    const ran = await cmd(id, 'calibrate', [name]);   // no-op where the act is purely physical
-    if (ran.status !== 'ok') boardMsg(`${id} calibrate ${name}: ${JSON.stringify(ran)}`);
-
-    // wait for THIS device to drop out of the sweep; '' means satisfied
-    let done = false;
-    for (let step = 0; step < 40 && !done; step++) {
-      const now = await sweepCalibration(id);
-      if (now === null) continue;
-      if (!(name in now)) { done = true; break; }
-      boardMsg(`${id} calibrate [${index + 1}/${names.length}] ${name} → ${now[name]}`);
-      await new Promise(wait => setTimeout(wait, 1000));
+    const step = `[${index + 1}/${names.length}] ${name}`;
+    if (!confirm(`Calibrate ${step}\n\n${pending[name]}\n\nPress OK when done (Cancel to stop).`)) {
+      boardMsg(`${id} calibrate: cancelled at ${name}`);
+      return;
     }
-    boardMsg(done
-      ? `${id} calibrate: ${name} DONE`
-      : `${id} calibrate: ${name} gave up after 40 s — is the airframe actually being moved/held?`);
+    const ran = await cmd(id, 'calibrate', [name]);   // no-op where the act is purely physical
+    if (ran.status !== 'ok') { boardMsg(`${id} calibrate ${name}: ${JSON.stringify(ran)}`); continue; }
+
+    const now = await sweepCalibration(id);           // '' out of the sweep == satisfied
+    boardMsg(now && (name in now)
+      ? `${id} calibrate ${step}: STILL OUTSTANDING — ${now[name]}`
+      : `${id} calibrate ${step}: done`);
   }
   const left = await sweepCalibration(id);
   boardMsg(left && Object.keys(left).length
