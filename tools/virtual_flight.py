@@ -55,17 +55,38 @@ _SERVO_SLEW_S_PER_DEG = 0.1 / 60.0  # MG90S: ~0.1 s per 60 deg at max slew
 
 
 class _Fin:
-    """set_angle() stand-in for an sg90 driver: the fused mixer.actuate() writes the commanded angle
-    here and the sim reads it back (same role the servo task plays on the board)."""
+    """
+    Slew-limited sg90 stand-in: the fused mixer.actuate() commands an angle, the horn CHASES it.
 
-    def __init__(self, neutral: int):
+    It used to apply every command instantly, which quietly made the host unable to say anything about
+    fin activity or servo power -- a real horn needs `slew_ms_per_60` per 60 deg, so at 100 Hz it can
+    physically move only ~1 deg per tick, and instant application over-counted travel by several fold.
+    That is why a coalescing sweep on the host returned byte-identical results while the same sweep on
+    the board did not: there was no servo here to coalesce for.
+
+    `angle` is now the MODELLED HORN POSITION (what fins.csv records and the sim reads back for its
+    aerodynamics), `target` the last command. Set slew_ms_per_60 to 0 for the old instant behaviour.
+    """
+
+    def __init__(self, neutral: int, slew_ms_per_60: float = 150.0, dt: float = 0.01):
         self.angle = neutral
+        self.target = neutral
+        # degrees the horn can travel in one control tick; 0 -> instant (the pre-slew behaviour)
+        self._step = (60.0 * dt * 1000.0 / slew_ms_per_60) if slew_ms_per_60 else 0.0
 
     def settle(self):
-        """No coalescing in the host stub: the sim applies every command immediately."""
+        """Advance the horn toward the commanded target by one tick of physical travel."""
+        if not self._step:
+            self.angle = self.target
+            return
+        delta = self.target - self.angle
+        if abs(delta) <= self._step:
+            self.angle = self.target
+        else:
+            self.angle += self._step if delta > 0 else -self._step
 
     def set_angle(self, angle):
-        self.angle = angle
+        self.target = angle  # commanded; settle() moves the horn toward it at the servo's own rate
         return angle
 
 
@@ -176,10 +197,21 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     body.wind_e = wind * math.sin(math.radians(wind_dir))   # steady wind the glider must crab against
     body.wind_n = wind * math.cos(math.radians(wind_dir))
 
+    dt = 1.0 / sim_hz  # one rate here drives BOTH physics and control -- see the --hz help
     # the REAL control stack, exactly as tasks/flight.py builds it -- mixer with bound fins, the
     # governor and guidance over injected handles, one fixed-point PID per axis.
     mix = mixer.Mixer(cfg.get('mixer', {}))
-    fins_by_name = {name: _Fin(mix.neutral) for name in _FINS}
+    """
+    the fin's slew comes from the SERVO TYPE the board config names, so the host models whatever is
+    fitted (sg90 150 ms/60deg, mg90s 100) instead of an instant, physically impossible horn.
+    """
+    _SLEW_BY_DRIVER = {'sg90': 150.0, 'mg90s': 100.0}
+    servo_driver = {component['name']: component.get('driver')
+                    for component in cfg.get('components', [])}
+    fins_by_name = {name: _Fin(mix.neutral,
+                               _SLEW_BY_DRIVER.get(servo_driver.get(name), 150.0),
+                               dt)
+                    for name in _FINS}
     mix.bind(fins_by_name)
     accel_handle, speed_handle, pitot_handle, position_handle, agl_handle, elevation_handle = (
         _Handle(), _Handle(), _Handle(), _Handle(), _Handle(), _Handle())
@@ -195,7 +227,6 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     pids = {axis: pid.Pid(output_limit=mix.limit, integral_limit=mix.limit, **gains.get(axis, {}))
             for axis in ('roll', 'pitch', 'yaw')}
 
-    dt = 1.0 / sim_hz
     dt_ms = max(1, int(round(dt * 1000)))   # integer-ms slice the fixed-point PID expects (board parity)
     stage = 'setting'
     since = 0.0          # time the current sustained-detect window started
@@ -210,7 +241,8 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         # NOISE-degraded readings -- what the control loop and the recorder actually see (board parity:
         # accel/attitude/altitude/agl are noised; GNSS position is not -- see tasks/hitl._publish).
         accel_m = sim_model.noisy(sensors['accel'], noise, -200.0, 200.0)
-        heading_m = sim_model.noisy(sensors['heading'], noise, 0.0, 360.0)
+        # CIRCULAR: absolute error band, not a fraction of a 0..360 magnitude (sim_model.noisy)
+        heading_m = sim_model.noisy(sensors['heading'], noise, 0.0, 360.0, sim_model.HEADING_NOISE_REF)
         roll_m = sim_model.noisy(sensors['roll'], noise, -180.0, 180.0)
         pitch_m = sim_model.noisy(sensors['pitch'], noise, -180.0, 180.0)
         altitude_m = sim_model.noisy(sensors['altitude'], noise, -100.0, 10000.0)
@@ -485,7 +517,17 @@ def main():
                         help='weight-imbalance torque on the ROLL axis during burn (deg/s^2)')
     parser.add_argument('--final-agl', type=float, default=None,
                         help=' final-approach trigger AGL override (0 = disabled / old blind flare)')
-    parser.add_argument('--hz', type=int, default=50, help='simulation rate (default 50)')
+    """
+    ONE rate drives both the physics and the control loop here, unlike the board, which decouples them
+    (hitl `sim_hz` 50 for physics, flight `schedule_hz` 100 for the loop). The default was 50, so the
+    tool stepped the PID HALF as often as the board does and under-reported fin activity roughly 2x --
+    which is why host and board fin numbers never lined up. Defaulting to 100 matches the board's
+    control rate; the physics simply integrate finer than the board's 50 Hz, which is harmless.
+    Decoupling them properly needs this loop to grow the board's accumulator -- worth doing when the
+    host is next asked to predict servo duty, not before.
+    """
+    parser.add_argument('--hz', type=int, default=100,
+                        help='simulation AND control rate (default 100, matching the board flight loop)')
     parser.add_argument('--seconds', type=float, default=240.0, help='max flight time (default 240)')
     parser.add_argument('-o', '--out', help='write capture here (default stdout)')
     parser.add_argument('--no-preflight', action='store_true',

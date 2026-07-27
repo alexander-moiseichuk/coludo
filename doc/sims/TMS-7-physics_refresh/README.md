@@ -27,10 +27,13 @@ Knobs: `VF_GUST`, `VF_GUST_TAU`, `VF_FAULT`, `VF_GLIDER_G` (+ the existing `VF_Q
 
 | case | motor | glider | quality 2 (floor) | quality 5 (realistic) | report |
 |---|---|---|---|---|---|
-| `e16_full` | E16 | 270 g | 85.8 m ✗ | 88.3 m ✗ | [report](e16_full.html) |
-| `e16_light` | E16 | 215 g | 38.9 m ✗ | **19.9 m ✓ in-zone** | [report](e16_light.html) |
-| `f15_full` | F15 | 270 g | 109.7 m ✗ | **27.0 m ✓ in-zone** | [report](f15_full.html) |
-| `f15_light` | F15 | 215 g | 114.4 m ✗ | 56.0 m ✗ | [report](f15_light.html) |
+| `e16_full` | E16 | 270 g | 90.1 m ✗ | 101.0 m ✗ | [report](e16_full.html) |
+| `e16_light` | E16 | 215 g | 44.2 m ✗ | **20.2 m ✓ in-zone** | [report](e16_light.html) |
+| `f15_full` | F15 | 270 g | 119.2 m ✗ | **13.9 m ✓ in-zone** | [report](f15_full.html) |
+| `f15_light` | F15 | 215 g | 110.0 m ✗ | 80.9 m ✗ | [report](f15_light.html) |
+
+**Re-flown 7/26 on a corrected harness** (below). Every number moved; **every in-zone verdict is
+unchanged**, so the conclusions hold and the figures are now the trustworthy ones.
 
 [**Top-down plan**, all four at q5](plan_canonical.svg) · [**combined video** (FHD, 310 s)](physics_refresh.mp4).
 
@@ -110,6 +113,29 @@ Two consequences worth carrying:
 - **Board HITL captures recorded before this fix are not a valid basis for a control-tuning or
   power-budget claim.** Host results are unaffected — the host sim publishes realistic airspeeds, so
   the floor never bites, and the full matrix (8 cases, gusts, faults) is bit-identical before and after.
+
+### Harness corrections (7/26) — why the matrix numbers moved
+
+Three defects in the *tooling*, all found by comparing host against board rather than by reading code:
+
+- **The host ran control at half the board's rate.** `virtual_flight --hz` drove BOTH the physics and
+  the control loop from one knob, defaulting to 50, while the board decouples them (`sim_hz` 50,
+  flight `schedule_hz` **100**). So the PID stepped half as often as it really does, under-reporting
+  fin activity ~2×. Default is now 100. Properly decoupling the two needs this loop to grow the
+  board's accumulator — worth doing when the host is next asked to predict servo duty.
+- **The host servo was physically impossible.** `_Fin.set_angle()` applied every command instantly, so
+  there was no horn to be slow. A real one needs 150 ms/60° (SG90) / 100 (MG90S) — about 1° per tick
+  at 100 Hz. It now models the slew, taking the rate from the servo type the config names. This is why
+  a coalescing sweep on the host returned byte-identical results while the board's did not.
+- **Noise on a circular quantity was nonsense.** `sim_model.noisy()` scales by `|value|+1`, so on a
+  0–360 heading "5 %" meant **±18° near 350 and ±0.5° near 10** — as if north were more certain than
+  south. A BNO055 fused heading is ~±1–2° wherever it points. Heading and course now take an absolute
+  error band (`HEADING_NOISE_REF`). Measured alone: fin travel −27 %, touchdown 118.3 → 118.4 m — so
+  it never distorted accuracy, only the fin-activity and power numbers it was being used for.
+
+Together these moved host fin travel from 22791° to **13889°** against the board's 7946° — from 2.9×
+off to 1.75×, with touchdown agreeing at 119.2 vs 122.7 m. The remaining gap is the board's
+integer-degree servo quantisation and its coarser 50 Hz physics.
 
 ### Delta check after the §23.4 / §23.5 / stale-agl changes
 

@@ -427,19 +427,41 @@ class Body:
         }
 
 
-def noisy(value, frac: float, lo: float, hi: float):
+HEADING_NOISE_REF: float = 20.0
+"""
+Noise reference for CIRCULAR channels (heading, GNSS course): frac 0.05 -> +-1 deg, a realistic BNO055
+fused-heading band, instead of the +-18 deg that scaling by a 0..360 magnitude produced. See noisy().
+"""
+
+
+def noisy(value, frac: float, lo: float, hi: float, reference: float = None):
     """
-    Perturb a scalar by +/- frac of its magnitude (uniform), clamped to [lo, hi].
+    Perturb a scalar by +/- frac of a REFERENCE magnitude (uniform), clamped to [lo, hi].
+
+    The reference defaults to `abs(value) + 1` -- noise proportional to the reading, which is right for
+    a quantity whose error genuinely scales with it (speed, dynamic pressure, acceleration).
+
+    It is WRONG for a CIRCULAR quantity, and that mattered. A compass heading lives on 0..360, so
+    magnitude-proportional noise made "5 %" mean +-18 deg near 350 and +-0.5 deg near 10 -- as if north
+    were more certain than south. A real BNO055 fused heading is ~+-1-2 deg wherever it points. Every
+    noise>0 study was therefore exercising an absurdly hostile heading signal: measured on the host,
+    switching heading to an absolute +-1 deg cut fin travel 22791 -> 16687 deg (-27 %) while touchdown
+    moved 118.3 -> 118.4 m. So it never distorted the ACCURACY results, only the fin-activity and
+    servo-power ones -- which is exactly what the numbers were being used for.
+
+    Pass `reference` for such channels (see HEADING_NOISE_REF) to get an absolute error band instead.
 
     Args:
         value - the clean scalar to perturb.
-        frac - the noise fraction of magnitude (0 -> returned clean).
+        frac - the noise fraction (0 -> returned clean).
         lo - the lower clamp bound.
         hi - the upper clamp bound.
+        reference - noise scale to use instead of abs(value) + 1 (for circular / absolute-error channels).
 
     Returns:
         The perturbed, clamped value; the clean value clamped when frac is 0.
     """
     if frac:
-        value = value + (random.random() * 2 - 1) * frac * (abs(value) + 1.0)
+        scale = reference if reference is not None else abs(value) + 1.0
+        value = value + (random.random() * 2 - 1) * frac * scale
     return lo if value < lo else (hi if value > hi else value)

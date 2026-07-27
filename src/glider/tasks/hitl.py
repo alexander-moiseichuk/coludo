@@ -179,7 +179,8 @@ class Hitl(task.Task):
         noise = self._noise
         accel = [0.0, 0.0, 0.0]
         accel[self._axis_index] = _noisy(body.accel_g, noise, -200.0, 200.0)  # |a| on the boost axis (g)
-        heading = _noisy(body.heading % 360.0, noise, 0.0, 360.0)
+        # CIRCULAR: an absolute error band, not a fraction of a 0..360 magnitude (sim_model.noisy)
+        heading = _noisy(body.heading % 360.0, noise, 0.0, 360.0, sim_model.HEADING_NOISE_REF)
         roll = _noisy(body.roll, noise, -180.0, 180.0)
         pitch = _noisy(body.pitch, noise, -180.0, 180.0)
         """
@@ -193,7 +194,7 @@ class Hitl(task.Task):
         speed = _noisy(body.ground_speed(), noise, 0.0, 200.0)  # GNSS ground speed (2D, WITH wind) -> governor + wind
         agl_clean = max(0.0, body.alt)
         position = body.position()
-        course = _noisy(body.track(), noise, 0.0, 360.0)  # ground-track bearing -> attitude-backup yaw ref
+        course = _noisy(body.track(), noise, 0.0, 360.0, sim_model.HEADING_NOISE_REF)  # ground track -> yaw ref
         # databoard -> the control loop. roll/pitch are centidegree fixnum for the fixed-point PID (heading
         # stays float for the nav trig); the sim's float physics wraps to fixnum once, here at the boundary.
         self._ch['accel'].push((accel[0], accel[1], accel[2]))
