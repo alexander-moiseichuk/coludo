@@ -25,6 +25,8 @@ dependency lookup. Two deliberately separate lookups: class-by-name here, instan
 Controller. The driver/activity names share one registry for now; splitting drivers out later.
 """
 
+import asyncio
+
 import inspector
 
 ACTIVITIES: dict = {}  # CLASS registry: name -> Task subclass (instance lookup is Controller.find/query)
@@ -65,6 +67,7 @@ class Task(inspector.Inspectable):
         self._subs: list = []
         self._healthy: bool = True  # RUNTIME read health (distinct from _ok = setup ok); note() tracks it
         self._strikes: int = 0  # consecutive-failure run for strike() (see below)
+        self._claimed: bool = False  # a multi-step device conversation is in progress (claim())
 
     def note(self, template: str = None, arg=None) -> None:
         """
@@ -121,6 +124,38 @@ class Task(inspector.Inspectable):
     async def setup(self) -> bool:
         """Initialize or reset. Override. Return True on success, False otherwise."""
         raise NotImplementedError('Task.setup() must be overridden')
+
+    async def claim(self) -> None:
+        """
+        Wait until no other caller owns this device's MULTI-STEP conversation, then take it.
+
+        Some devices carry state across an await -- icp10111 is write-measure, sleep, read; vl53l4cx is
+        status, distance, then the interrupt clear that arms the next sample. A second caller entering
+        mid-sequence issues its own command into the middle of the first and both come back NAKing:
+        measured at a 20.8 % failure rate when a diagnostic polled alongside the run loop. It is not
+        bus SHARING (peers on the same bus cost nothing) -- it is one device having one conversation.
+
+        A plain flag, not asyncio.Lock: `async with lock` measures ~288 B on this port (see the
+        per-operation lock removed in 556f98c) and MicroPython's loop is cooperative, so the flag can
+        only change across an await. Always release in a `finally` -- a raising read must not wedge
+        every future caller.
+
+        What is NOT here: whether a waiting caller can be served from cache instead. That predicate is
+        device-specific (icp10111 by sample age, vl53l4cx by presence) and stays with the device.
+
+        Args:
+            (none)
+
+        Returns:
+            None; the caller owns the device until unclaim().
+        """
+        while self._claimed:
+            await asyncio.sleep_ms(1)
+        self._claimed = True
+
+    def unclaim(self) -> None:
+        """Release the claim taken by claim(); call it from a `finally`, never a happy path only."""
+        self._claimed = False
 
     def strike(self, failed: bool, limit: int) -> bool:
         """

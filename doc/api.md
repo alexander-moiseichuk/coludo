@@ -1610,6 +1610,8 @@ Returns:
 - `__init__(name: str, config: dict=None, controller=None)` — constructor
 - `note(template: str=None, arg=None) -> None` — De-duplicated best-effort run-loop log + runtime-health flag.
 - `setup() -> bool` — Initialize or reset. Override. Return True on success, False otherwise.
+- `claim() -> None` — Wait until no other caller owns this device's MULTI-STEP conversation, then take it.
+- `unclaim() -> None` — Release the claim taken by claim(); call it from a `finally`, never a happy path only.
 - `strike(failed: bool, limit: int) -> bool` — Count a run of CONSECUTIVE failures; True exactly ONCE, when the run reaches `limit`.
 - `calibration() -> str` — What the OPERATOR must do to make this device flight-ready -- or '' when there is nothing.
 - `calibrate() -> str` — Start / enforce this device's calibration (the CC `calibrate <device>` command).

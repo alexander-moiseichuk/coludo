@@ -66,7 +66,6 @@ class Icp10111(task.Task):
         if spec is None:
             return False
         self._bus = i2cbus.get(bus_id, spec)
-        self._busy: bool = False  # one owner of the measure->read conversation (see _read)
         self._sample = None
         self._sample_ms: int = 0
         self._addr: int = self.config.get('addr', _ADDR)
@@ -180,16 +179,17 @@ class Icp10111(task.Task):
         if cached_ok and self._sample is not None \
                 and time.ticks_diff(time.ticks_ms(), self._sample_ms) < self._period_ms:
             return self._sample
-        while self._busy:  # someone else owns the conversation -- wait for their answer, do not compete
+        # someone else may own the conversation; while waiting, take THEIR answer rather than compete
+        while self._claimed:
             await asyncio.sleep_ms(1)
             if cached_ok and self._sample is not None \
                     and time.ticks_diff(time.ticks_ms(), self._sample_ms) < self._period_ms:
                 return self._sample
-        self._busy = True
+        await self.claim()
         try:
             return await self._measure()
         finally:
-            self._busy = False  # a raising read must not wedge every future caller
+            self.unclaim()  # a raising read must not wedge every future caller
 
     async def _measure(self) -> tuple:
         """The bus conversation itself; only ever entered by the single owner _read() admits."""

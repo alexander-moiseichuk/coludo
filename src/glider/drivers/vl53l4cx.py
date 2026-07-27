@@ -196,7 +196,6 @@ class Vl53l4cx(task.Task):
         self._int = Pin(gpio, Pin.IN, Pin.PULL_UP)
         self._int.irq(lambda pin: self._ready.set(), Pin.IRQ_FALLING)
 
-    _busy: bool = False   # one owner of the status->distance->clear sequence (see _range)
     _sample = None        # last good range (m), or None when out of range
     _sample_ms: int = 0   # when it was taken (0 = never)
 
@@ -220,15 +219,16 @@ class Vl53l4cx(task.Task):
         """
         if cached_ok and self._sample_ms:
             return self._sample
-        while self._busy:  # someone owns the status->distance->clear sequence; take their answer
+        # someone may own the status->distance->clear sequence; while waiting, take their answer
+        while self._claimed:
             await asyncio.sleep_ms(1)
             if self._sample_ms:
                 return self._sample
-        self._busy = True
+        await self.claim()
         try:
             return await self._range_locked()
         finally:
-            self._busy = False  # a raising read must not wedge every future caller
+            self.unclaim()  # a raising read must not wedge every future caller
 
     async def _range_locked(self) -> float:
         """The bus conversation itself; only ever entered by the single owner _range() admits."""
