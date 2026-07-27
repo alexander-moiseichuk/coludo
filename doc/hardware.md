@@ -317,6 +317,28 @@ mitigations are degradations, not equivalents.
 | 3 | **Move the BNO055 to `i2c:1`** | Attitude (priority 0) shares `i2c:0` with four devices; a wedge, or the icp10111 latch-up recovery's general-call reset, takes the whole bus down together | Put the BNO055 on `i2c:1` with the INA226 | None possible in software — the buses are physical. See below for why this one matters most |
 | 4 | **BNO055 breakout has no 32.768 kHz crystal** | Selecting `CLK_SEL` external kills fusion outright (EUL all zeros) | Prefer a crystal-equipped module: Bosch specifies the external crystal for fusion modes | Driver leaves `CLK_SEL` internal |
 
+### v0.2 — BNO055 control lines to break out
+
+The v0.1 module is wired with a DFRobot Gravity 4-pin (VCC/GND/SDA/SCL), so every control pin the part
+offers is unreachable. Ranked by what this branch actually needed and could not do:
+
+| Pin | v0.2 | Why |
+|---|---|---|
+| **`RST`** | **MCU GPIO** | The escalation tier we are missing. Recovery today goes device → I2C general call → bus clear, and **all three stop short of "reset this specific part"**. The BNO055 pulled from v0.1 held its latched state through a full power cycle, and the icp10111 latch-up notes say only a rail cycle clears that one. A reset line turns "sensor lost for the rest of the flight" into "lost for 200 ms" |
+| **`INT`** | **MCU GPIO** | Data-ready sampling instead of polling. Worth less here than on the LSM6DSO32 (fusion is 100 Hz, we poll at 50), but the pin is cheap and it removes a poll loop |
+| `PS1` (+`PS0`) | **jumper** | Selects UART instead of I2C. The BNO055 is a documented I2C **clock-stretcher** — exactly the failure the bus-wedge recovery in `i2cbus` exists for, where one slave holding the line takes down four other devices. UART moves the worst offender off the shared bus entirely, which addresses #3 more thoroughly than relocating it to `i2c:1`. **Confirmed available:** UART3/4/5 all instantiate on this MicroPython build (uart1 = recorder, uart2 = GNSS), and 21 GPIOs are free — so a third UART costs pins, not peripherals |
+| `ADR` | solder pad | Selects 0x29 → a **second BNO055** (true attitude redundancy rather than gyro integration), or clash avoidance. No GPIO needed |
+| `BL_IND`, `NBOOT` | test pads | Reflashing the sensor's own firmware only |
+
+Free GPIOs after v0.1 (reserved straps excluded): **0, 1, 2, 9–13, 34–36, 39–45, 51–53**.
+
+**Every routed line must be continuity-checked at assembly.** `lsm6dso32_int1` is declared on GPIO28 in
+`config_default.py` and is not connected in copper: the driver silently sampled at 2 Hz, `rate` was
+stale 96 % of the time, and the PID's D term had quietly degraded to derivative-on-error. Nothing
+noticed until an unrelated investigation went looking. A routed-but-dead line is **worse** than an
+absent one, because the config claims it works. `diag_lsm_int.py` is the pattern: drive the pin, read
+it back, fail loudly.
+
 **Why #3 is the one worth spending layout on.** The attitude PRIMARY (BNO055, `i2c:0`) and its BACKUP
 (`tasks/attitude.py`, integrating the LSM6DSO32 on **SPI1**) are meant to be independent. Today they
 are — but only because the backup happens to be on SPI. Everything *else* the attitude path depends
