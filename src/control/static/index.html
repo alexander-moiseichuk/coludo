@@ -300,10 +300,16 @@ function fmtImu(b) {
   const pending = pendingCalibration(b);
   // the IMU's own numbers ride along, because watching mag climb is how an operator knows the
   // figure-8 is working -- but the CELL is about calibration board-wide, not just the IMU
+  // BNO055 CALIB_STAT, 0..3 each. Spelled out in the tooltip because SxGxAxMx is meaningless to
+  // someone holding a glider in a field -- and M is what the operator can actually change.
+  const calibTip = c
+    ? `sys ${c[0]} (fusion confidence, lags and dips while moving) | gyro ${c[1]} (self-calibrates when still) `
+      + `| accel ${c[2]} (wants a few held orientations) | MAG ${c[3]} (needs the figure-8) — 3 = calibrated`
+    : '';
   const imu = c
     ? (c[3] >= 3
-        ? `<span style="color:#2a2" title="magnetometer calibrated">imu ✓ M${c[3]}</span>`
-        : `<b class="warn" title="NDOF needs motion: figure-8 until M3">imu ⚠ S${c[0]} G${c[1]} A${c[2]} M${c[3]}</b>`)
+        ? `<span style="color:#2a2" title="${calibTip}">imu ✓ mag ${c[3]}/3</span>`
+        : `<b class="warn" title="${calibTip}">imu ⚠ mag ${c[3]}/3 — needs figure-8</b>`)
     : '';
   if (!pending.length) {
     return `${imu}${imu ? ' ' : ''}<span style="color:#2a2">✓ calibrated</span>`;
