@@ -134,8 +134,10 @@ class Sdp810(task.Task):
         if _nvs is not None:
             try:
                 self._zero = _nvs.get_i32(_NVS_ZERO)
-                recorder.Recorder.log(self.name, 'zero restored from NVS: %.2f Pa'
-                                      % fixed.to_float(self._zero))
+                # print(), not Recorder.log(): setup runs BEFORE the recorder task is up, so a logged
+                # line here goes nowhere (logs are best-effort by policy). The same reason icp10111 and
+                # bno055 print their setup failures. Runtime messages below still use the recorder.
+                print('sdp810 :: zero restored from NVS: %.2f Pa' % fixed.to_float(self._zero))
             except Exception:
                 pass  # never stored yet -- keep the config default
         self._scale: int = _DEFAULT_SCALE

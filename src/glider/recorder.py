@@ -10,6 +10,17 @@ synchronously (struct.pack_into into a ring -- never slice-assignment, which is 
 this port); the async run() loop drains the rings to the UART via an asyncio.StreamWriter, telemetry
 (first priority) before logs. Logs are best-effort (dropped when full); telemetry is important (raises
 if a record will not fit).
+
+That trade continues on the RECORDER side, deliberately -- logging is what is spent to make telemetry
+trustworthy, so the two channels have different guarantees end to end:
+  * TELEMETRY is committed PER LINE, so a row that reached the link is on disk. That is what makes a
+    capture survive a crash mid-flight, and why anything that must be evidence belongs in tlm().
+  * LOGS are buffered and flushed roughly every 1000 telemetry messages, so a SHORT session can end
+    with log lines that were never written out. A log line is a convenience, never evidence -- do not
+    reason about a flight from one, and do not put a value there that a capture needs.
+  * SETUP-TIME messages reach NEITHER: drivers set up before the recorder task, so the log ring is
+    empty and the line is discarded. Use print() there -- the only channel that early (measured: an
+    sdp810 setup line never reached recorder.log, while print() shows on the console at boot).
 """
 
 import asyncio
