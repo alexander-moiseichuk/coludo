@@ -49,12 +49,14 @@ docs:
 	@python3 tools/gen_pinmap.py
 	@python3 tools/gen_graph.py
 	@python3 tools/gen_schema.py
+	@python3 tools/gen_docs.py
 
 docs-check:
 	@echo "== derived docs up to date =="
 	@python3 tools/gen_pinmap.py --check
 	@python3 tools/gen_graph.py --check
 	@python3 tools/gen_schema.py --check
+	@python3 tools/gen_docs.py --check
 
 test-board:
 	@$(MAKE) -C src/glider/test test PORT=$(PORT)

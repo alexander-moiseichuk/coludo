@@ -13,6 +13,7 @@ _-internals).
 
 import ast
 import os
+import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SOURCES = [
@@ -133,7 +134,7 @@ def render_module(path: str, out: list) -> None:
                 out.append(doc.strip() + '\n')
 
 
-def main() -> None:
+def main(check: bool = False) -> None:
     out = ['# Coludo API reference', '',
            '_Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand;'
            ' run `python3 tools/gen_docs.py` to regenerate._', '',
@@ -151,10 +152,28 @@ def main() -> None:
         for name in files:
             render_module(os.path.join(directory, name), out)
     target = os.path.join(ROOT, 'doc', 'api.md')
+    text = '\n'.join(out).rstrip() + '\n'
+    """
+    --check makes this gateable like the other three generators. It was the ONLY derived doc `make
+    check` did not enforce, and it silently rotted 417 lines (330+/87-) while gen_pinmap / gen_graph /
+    gen_schema stayed exact through the same period -- an API reference missing a session's worth of
+    modules and signatures is worse than none, because it reads as current.
+    """
+    if check:
+        existing = ''
+        if os.path.exists(target):
+            with open(target) as handle:
+                existing = handle.read()
+        if existing != text:
+            print('doc/api.md is STALE -- run: python3 tools/gen_docs.py', file=sys.stderr)
+            return 1
+        print('api doc up to date')
+        return 0
     with open(target, 'w') as handle:
-        handle.write('\n'.join(out).rstrip() + '\n')
+        handle.write(text)
     print('wrote %s (%d modules)' % (target, sum(1 for _ in out if _.startswith('## '))))
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main('--check' in sys.argv))

@@ -2628,16 +2628,14 @@ board. Requires a GPS attached to the Control host (main.py --gps-device).
 
 ### `assist_command(hub, tokens, session) -> list`
 
-## `cache.py`
+## `bustune.py`
 
-`cache <board>` -- the Control-side cached properties for a board (config / inspect / stats /
-health), last-known values without touching the board. Defaults to the session's selected board.
+`bustune <board> <i2c|spi> <id> [margin-steps]` -- find a sensor bus's max stable frequency.
 
-### `cache_command(hub, tokens, session) -> list`
-
-## `calibrate.py`
-
-`calibrate <board> <i2c|spi> <id> [margin-steps]` -- find a sensor bus's max stable frequency.
+NAMED FOR THE PRIMITIVE IT DRIVES. It was `calibrate`, which collided with the board's own
+`calibrate` command (sensor calibration -- a pitot tare, an IMU figure-8): the same verb meant
+"tune a bus" at the operator console and "calibrate a sensor" on the dashboard, decided only by which
+surface you typed it on. Nothing about the behaviour changed with the rename.
 
 Drives the board's `bustune` primitive (retune-in-place + per-device health) UP a frequency ladder,
 stopping at the first step any device fails. Reports the ceiling (highest all-healthy step), the
@@ -2647,7 +2645,14 @@ to its configured freq afterwards; it does NOT persist. To apply, the operator r
 `set-config board ... + reboot` (the immutable-config activation path). The sweep lives here on CC,
 the board only executes one retune-and-test step at a time.
 
-### `calibrate_command(hub, tokens, session) -> list`
+### `bustune_command(hub, tokens, session) -> list`
+
+## `cache.py`
+
+`cache <board>` -- the Control-side cached properties for a board (config / inspect / stats /
+health), last-known values without touching the board. Defaults to the session's selected board.
+
+### `cache_command(hub, tokens, session) -> list`
 
 ## `gps.py`
 
