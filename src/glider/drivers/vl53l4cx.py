@@ -16,6 +16,7 @@ Graceful: no I2C ack -> setup False -> Controller skips it. Shares i2c:0 via the
 
 import asyncio
 import struct
+import time
 
 import config
 import databoard
@@ -195,21 +196,49 @@ class Vl53l4cx(task.Task):
         self._int = Pin(gpio, Pin.IN, Pin.PULL_UP)
         self._int.irq(lambda pin: self._ready.set(), Pin.IRQ_FALLING)
 
-    async def _range(self) -> float:
+    _busy: bool = False   # one owner of the status->distance->clear sequence (see _range)
+    _sample = None        # last good range (m), or None when out of range
+    _sample_ms: int = 0   # when it was taken (0 = never)
+
+    async def _range(self, cached_ok: bool = False) -> float:
         """
-        Read the latest measurement and clear the interrupt.
+        Read the latest measurement and clear the interrupt -- SERIALISED, one owner at a time.
+
+        Same shape that bit icp10111: status read, distance read and the interrupt CLEAR are three bus
+        operations with awaits between them, and the clear is what arms the next sample. A second
+        caller entering mid-sequence would read a half-updated pair and clear an interrupt that was not
+        theirs. Today run() is the only caller, so this is latent rather than live -- but on icp10111
+        the second caller turned out to be a DIAGNOSTIC, which invented a 20.8 % failure rate and cost
+        real time to disbelieve. The guard is two integer checks; the bug it prevents is not.
 
         Args:
-            (none)
+            cached_ok - True returns the last good range instead of touching the bus (an inspect-style
+                caller wants the latest value, not a fresh conversation).
 
         Returns:
             AGL in metres; None when the range status is not valid (out of range / low signal).
         """
+        if cached_ok and self._sample_ms:
+            return self._sample
+        while self._busy:  # someone owns the status->distance->clear sequence; take their answer
+            await asyncio.sleep_ms(1)
+            if self._sample_ms:
+                return self._sample
+        self._busy = True
+        try:
+            return await self._range_locked()
+        finally:
+            self._busy = False  # a raising read must not wedge every future caller
+
+    async def _range_locked(self) -> float:
+        """The bus conversation itself; only ever entered by the single owner _range() admits."""
         raw = (await self._read(_REG_RANGE_STATUS, 1))[0] & 0x1F
         distance_mm = struct.unpack('>H', await self._read(_REG_DISTANCE, 2))[0]
         await self._write(_REG_SYSTEM_INTERRUPT_CLEAR, 0x01)  # release the interrupt for the next sample
         status = _STATUS_RTN[raw] if raw < len(_STATUS_RTN) else 255
-        return distance_mm / 1000.0 if status == 0 else None
+        self._sample = distance_mm / 1000.0 if status == 0 else None
+        self._sample_ms = time.ticks_ms()
+        return self._sample
 
     async def run(self) -> None:
         """

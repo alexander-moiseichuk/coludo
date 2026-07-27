@@ -13,6 +13,7 @@ Polled at period_ms. Uses the shared locked bus (i2cbus); shares i2c:0 with the 
 
 import asyncio
 import struct
+import time
 
 import commons
 import config
@@ -65,6 +66,9 @@ class Icp10111(task.Task):
         if spec is None:
             return False
         self._bus = i2cbus.get(bus_id, spec)
+        self._busy: bool = False  # one owner of the measure->read conversation (see _read)
+        self._sample = None
+        self._sample_ms: int = 0
         self._addr: int = self.config.get('addr', _ADDR)
         self._period_ms: int = self.config.get('period_ms', 100)  # ~10 Hz
         """
@@ -123,7 +127,7 @@ class Icp10111(task.Task):
         """Average a short burst of altitude readings -> the per-sensor ground reference (m AMSL)."""
         total = 0.0
         for _ in range(_GROUND_SAMPLES):
-            altitude, _temp, _pressure = await self._read()
+            altitude, _temp, _pressure = await self._read(cached_ok=False)  # AVERAGE distinct samples
             total += altitude
         return total / _GROUND_SAMPLES
 
@@ -150,8 +154,46 @@ class Icp10111(task.Task):
         b = (p0 - a) * (s1 + c)
         return a + b / (c + p_raw)
 
-    async def _read(self) -> tuple:
-        """Measure and return (altitude m AMSL, temperature °C, pressure Pa)."""
+    async def _read(self, cached_ok: bool = True) -> tuple:
+        """
+        Measure and return (altitude m AMSL, temperature °C, pressure Pa) -- SERIALISED and cached.
+
+        This is a MULTI-STEP sequence: write-measure, await the conversion, then read. That await is a
+        yield point, so a second caller entering here mid-sequence issues its own measure command into
+        the middle of ours and both come back NAKing -- measured at a 20.8 % failure rate when a
+        diagnostic polled alongside the run loop. It is not a bus-sharing problem (peers on i2c:0 cost
+        nothing); it is this device's own state machine having exactly one conversation at a time.
+        probe() dodges it by issuing no I2C at all, which was a workaround for the missing guard here.
+
+        So: one owner at a time, and a caller arriving while a sample is already in flight gets the
+        RESULT rather than starting a competing conversation. A sample newer than period_ms is served
+        from cache untouched -- it is exactly as fresh as the run loop would have handed out anyway,
+        for zero bus traffic. A plain flag rather than asyncio.Lock: `async with lock` measures ~288 B
+        on this port and MicroPython's loop is cooperative, so the flag can only change across an await.
+
+        Args:
+            cached_ok - False forces a genuine conversion (ground_zero AVERAGES samples, so serving it
+                the same cached tuple repeatedly would collapse the average to one reading).
+
+        Returns:
+            (altitude m AMSL, temperature degC, pressure Pa).
+        """
+        if cached_ok and self._sample is not None \
+                and time.ticks_diff(time.ticks_ms(), self._sample_ms) < self._period_ms:
+            return self._sample
+        while self._busy:  # someone else owns the conversation -- wait for their answer, do not compete
+            await asyncio.sleep_ms(1)
+            if cached_ok and self._sample is not None \
+                    and time.ticks_diff(time.ticks_ms(), self._sample_ms) < self._period_ms:
+                return self._sample
+        self._busy = True
+        try:
+            return await self._measure()
+        finally:
+            self._busy = False  # a raising read must not wedge every future caller
+
+    async def _measure(self) -> tuple:
+        """The bus conversation itself; only ever entered by the single owner _read() admits."""
         await self._bus.writeto(self._addr, _CMD_MEASURE)
         await asyncio.sleep_ms(_MEASURE_MS)
         data = await self._bus.readfrom(self._addr, 9)  # P[0,1],CRC, P[3],_,CRC, T[6,7],CRC
@@ -160,7 +202,9 @@ class Icp10111(task.Task):
         temp_c = -45.0 + 175.0 / 65536.0 * t_raw
         pressure = self._compensate(p_raw, t_raw)
         altitude = 0.0 if pressure <= 0.0 else 44330.0 * (1.0 - (pressure / _SEA_LEVEL_PA) ** 0.190294957)
-        return altitude, temp_c, pressure
+        self._sample = (altitude, temp_c, pressure)
+        self._sample_ms = time.ticks_ms()
+        return self._sample
 
     async def _recover(self) -> None:
         """
