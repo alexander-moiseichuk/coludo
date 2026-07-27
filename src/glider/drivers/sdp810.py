@@ -40,6 +40,7 @@ _CMD_START: bytes = b'\x36\x15'  # start continuous: differential-pressure temp-
 _CMD_STOP: bytes = b'\x3f\xf9'  # stop continuous -> idle (required before re-starting after an unclean reboot)
 _FRAME = const(9)  # DP[0,1],CRC, T[3,4],CRC, Scale[6,7],CRC
 _FIRST_MS = const(20)  # first continuous result lands ~8 ms after start (with margin)
+_RESTART_AFTER = const(5)  # consecutive read failures before re-issuing _CMD_START (see _restart)
 _STOP_MS = const(3)  # stop settles in ~0.5 ms before the part accepts the next command (with margin)
 _START_TRIES = const(2)  # start attempts: a stop+restart clears a part left mid-continuous
 _DEFAULT_SCALE = const(60)  # scale factor for the -500Pa part (Pa = raw / scale); the -125Pa reports 240
@@ -149,6 +150,7 @@ class Sdp810(task.Task):
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
                                        ('dynamic_pressure', 'airspeed_cms', 'temperature'),  # all fixnums (x SCALE)
                                        decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
+        self._failures: int = 0  # consecutive read failures -> _restart() (see run())
         self._ok = True
         return True
 
@@ -190,6 +192,35 @@ class Sdp810(task.Task):
         q = fixed.to_float(pressure)
         return (2.0 * q / self._density) ** 0.5 if q > 0.0 else 0.0
 
+    async def _restart(self) -> None:
+        """
+        Re-issue the continuous-measurement command after the part has been reset out from under us.
+
+        This sensor holds its MODE in volatile state: it only streams because setup() sent _CMD_START.
+        Anything that resets it mid-flight silently drops it to idle, and every later read then fails
+        forever -- the run loop had no way back. The concrete trigger is a PEER: icp10111's latch-up
+        recovery fires an I2C GENERAL-CALL reset (0x00 0x06), which by design resets every device on
+        the bus that honours it, this one included. Observed here as `sdp810 :: read OSError(19)` with
+        the channel flatlined at 0.0 Hz while the part itself was perfectly healthy.
+
+        stop-then-start, because the part refuses a fresh start while still streaming (the same
+        sequence setup() uses after an unclean reboot).
+
+        Args:
+            (none)
+
+        Returns:
+            None; best-effort -- a still-dead part just fails the next read and retries later.
+        """
+        try:
+            await self._bus.writeto(self._addr, _CMD_STOP)
+            await asyncio.sleep_ms(_STOP_MS)
+            await self._bus.writeto(self._addr, _CMD_START)
+            await asyncio.sleep_ms(_FIRST_MS)
+            recorder.Recorder.log(self.name, 'restarted continuous mode after %d failures' % self._failures)
+        except OSError:
+            pass  # still gone -- the next read fails and we try again
+
     async def run(self) -> None:
         while True:
             try:
@@ -205,8 +236,12 @@ class Sdp810(task.Task):
                     # every collected value, all as fixnums -- a float in a row boxes on MicroPython
                     self._telemetry.push((pressure, int(airspeed * fixed.SCALE), self._temp_raw // 2))
                     self.note(None)  # healthy pass -> let the next error log afresh
+                    self._failures = 0
             except Exception as error:
                 self.note('sdp810 :: read %r', error)  # deduped: a persistent error logs once, not every tick
+                self._failures += 1
+                if self._failures == _RESTART_AFTER:  # once, not every tick while it stays dead
+                    await self._restart()
             await asyncio.sleep_ms(self._period_ms)
 
     def update(self, props: dict) -> list:

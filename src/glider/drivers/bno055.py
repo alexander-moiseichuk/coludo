@@ -38,6 +38,9 @@ _CHIP_ID = const(0xA0)
 _MODE_CONFIG = const(0x00)
 _MODE_NDOF = const(0x0C)  # full 9-DOF absolute-orientation fusion
 _PWR_NORMAL = const(0x00)
+# consecutive bit-identical Euler reads (WHILE accel moves) that prove the fusion has latched;
+# 50 at the 50 Hz default is ~1 s -- long enough that a still airframe never trips it
+_STALL_SAMPLES = const(50)
 _DEG = 1.0 / 16.0
 _ACC_G = 1.0 / 980.665  # ACC_DATA is m/s² at 100 LSB/(m/s²); /100/9.80665 -> g (incl gravity)
 
@@ -62,6 +65,10 @@ class Bno055(task.Task):
         self._addr: int = self.config.get('addr', _ADDR)
         self._period_ms: int = self.config.get('period_ms', 20)  # 50 Hz (fusion runs at 100 Hz)
         self._buf = bytearray(24)  # ACC..EUL block
+        self._last_euler = None    # fusion-stall detector state (see _fusion_alive)
+        self._frozen: int = 0
+        self._frozen_accel = None
+        self._stalled: bool = False
         try:
             if await self._bus.read_chip_id(self._addr, _REG_CHIP_ID) != _CHIP_ID:
                 return False  # not a BNO055 at this address
@@ -102,11 +109,55 @@ class Bno055(task.Task):
         return (heading * _DEG, roll * SCALE // 16, pitch * SCALE // 16,
                 ax * _ACC_G, ay * _ACC_G, az * _ACC_G)
 
+    def _fusion_alive(self, sample: tuple) -> bool:
+        """
+        Is the fusion engine still COMPUTING, or has it latched a constant?
+
+        A stalled BNO055 fusion core is the worst failure this driver can have, because the channel
+        stays FRESH: every staleness guard downstream passes, and the priority-1 attitude backup
+        (tasks/attitude.py) -- built for exactly this -- only takes over when the primary goes stale, so
+        it would never engage. The PID would be handed a constant attitude and nothing would notice.
+
+        Measured on this bench: the part returns a bit-identical Euler triple indefinitely while its RAW
+        accel and gyro keep streaming normally in the same 24-byte block read -- across a power cycle,
+        in both NDOF and IMU fusion modes, and on either clock source.
+
+        That raw stream is what makes the detector safe: a genuinely motionless glider could repeat a
+        fused reading, but its ACCELEROMETER always dithers by an LSB or two. So "Euler bit-identical
+        for _STALL_SAMPLES consecutive reads WHILE accel is moving" means the fusion is dead, not that
+        the airframe is still.
+
+        Args:
+            sample - the flat 6-tuple from sample().
+
+        Returns:
+            True while the fusion output is live (or not yet proven dead).
+        """
+        euler, accel = sample[:3], sample[3:]
+        if euler != self._last_euler:
+            self._last_euler = euler
+            self._frozen = 0
+            self._frozen_accel = None
+            return True
+        if self._frozen_accel is None:
+            self._frozen_accel = accel
+        elif accel != self._frozen_accel:  # the part is alive and moving, but the fusion is not
+            self._frozen += 1
+        return self._frozen < _STALL_SAMPLES
+
     async def run(self) -> None:
         while True:
             try:
                 sample = await self.sample()  # flat 6-tuple (heading°, roll_cd, pitch_cd, ax, ay, az g)
-                self._attitude.push(sample[:3])  # one step: push our channels directly (roll/pitch fixnum)
+                if self._fusion_alive(sample):
+                    self._attitude.push(sample[:3])  # push our channels directly (roll/pitch fixnum)
+                    self._stalled = False
+                elif not self._stalled:
+                    self._stalled = True
+                    # STOP publishing attitude so the channel goes stale and the databoard hands over to
+                    # the priority-1 backup. Accel keeps flowing -- that half of the part still works.
+                    recorder.Recorder.log(self.name, 'fusion STALLED (frozen euler while accel moves)'
+                                                     ' -- attitude withheld, backup takes over')
                 self._accel.push(sample[3:])  # low-g backup to the ADXL375
                 # roll/pitch are centidegree fixnum -> to_str for a human-readable, float-free CSV column
                 self._telemetry.push((sample[0], to_str(sample[1]), to_str(sample[2]),
@@ -170,4 +221,7 @@ class Bno055(task.Task):
         status = task.Task.inspect(self)
         status['attitude_deg'] = self._attitude.value()  # our channels' latest (no hot-path I2C)
         status['accel_g'] = self._accel.value()
+        # the operator must see a WITHHELD attitude: the channel simply going quiet looks like a
+        # missing sensor, and this says the part is alive with a dead fusion core
+        status['fusion_stalled'] = self._stalled
         return status
