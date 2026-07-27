@@ -231,9 +231,12 @@ def _register_identity(dispatcher, ctx) -> None:
         """
         if ctx.controller is not None:
             imu = ctx.controller.active('imu_bno055')
-            if imu is not None and hasattr(imu, 'calibrated') and not imu.calibrated():
-                degraded.append('imu-uncalibrated')
-                info['imu_calibration'] = imu.calibration  # (sys, gyr, acc, mag) so the fix is obvious
+            if imu is not None and hasattr(imu, 'calibrated'):
+                # ALWAYS reported, not only when bad: the dashboard shows calibration as live state, so
+                # the operator can watch mag climb to 3 while moving the airframe instead of guessing
+                info['imu_calibration'] = imu.calibration  # (sys, gyr, acc, mag)
+                if not imu.calibrated():
+                    degraded.append('imu-uncalibrated')
         mission = inspector.Inspector.get('mission')
         if mission is not None and mission.site == 'fallback':
             degraded.append('cc-less-fallback')

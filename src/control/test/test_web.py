@@ -88,6 +88,31 @@ def test_routes():
     assert b'404' in _request(b'GET /nope HTTP/1.1\r\n\r\n')
 
 
+def test_dashboard_carries_the_imu_calibration_column():
+    """
+    The IMU calibration must survive the whole path board -> health -> /api/boards -> table.
+
+    An uncalibrated BNO055 is invisible to probe(), to self-test and to the config gate, yet NDOF
+    fusion only converges with MOTION -- so a still glider reaches launch with a frozen attitude. It
+    only becomes actionable if the operator can SEE it, so the field is a column rather than a
+    footnote, and the page ships the formatter + the guided button that watches mag climb to 3.
+    """
+    page = _request(b'GET / HTTP/1.1\r\n\r\n')
+    assert b'<th>imu</th>' in page, 'the dashboard lost its IMU column'
+    assert b'fmtImu' in page and b'calibrateImu' in page, 'the calibrate action is not served'
+    # every colspan must match the header width, or the empty-state row misaligns the table
+    assert b'colspan="13"' in page and b'colspan="12"' not in page
+
+    # a NOT-READY board must be obvious on the ROW, not buried in a cell an operator has to read
+    assert b'function notReady' in page and b'tr.notready' in page
+    assert b'\xe2\x9d\x97' in page or b'&#10071;' in page or b'notready' in page  # the ❗ marker
+
+    # the server must forward the field verbatim rather than dropping it with the rest of `health`
+    import server as server_module
+    with open(server_module.__file__) as handle:
+        assert "'imu_calibration': health.get('imu_calibration')" in handle.read()
+
+
 def test_malformed_request_line_does_not_hang():
     """
     §26.4: `method, path, _ = line.split(' ', 2)` raised ValueError on a garbage line, which no except
@@ -130,9 +155,10 @@ def test_post_with_bad_json_is_answered():
 
 
 test_routes()
+test_dashboard_carries_the_imu_calibration_column()
 test_malformed_request_line_does_not_hang()
 test_bad_content_length_still_routes()
 test_handler_fault_answers_500()
 test_post_with_bad_json_is_answered()
-print('ok: web -- routing + 404, malformed request line, bad Content-Length, handler fault -> 500, '
-      'bad JSON POST answered')
+print('ok: web -- routing + 404, IMU calibration column + calibrate action, not-ready row flag, '
+      'malformed request line, bad Content-Length, handler fault -> 500, bad JSON POST answered')

@@ -95,6 +95,9 @@ class Server:
                 # the degraded-mode annunciation (non-nominal states as one operator signal)
                 'agl': health.get('agl'), 'flight': health.get('flight'),
                 'degraded': health.get('degraded'),
+                # BNO055 (sys, gyr, acc, mag) 0..3 -- shown as its own dashboard column, because NDOF
+                # only converges with MOTION and a still glider reaches launch with a frozen attitude
+                'imu_calibration': health.get('imu_calibration'),
                 'temp': health.get('temp'), 'mem_free': health.get('mem_free'),
             })
         return rows

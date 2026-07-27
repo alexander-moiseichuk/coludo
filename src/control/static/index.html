@@ -29,6 +29,10 @@
   .tick.no { color: #888; }
   .finctl { margin: 0 .5rem; white-space: nowrap; }
   .finctl span { display: inline-block; min-width: 2.2rem; text-align: center; font-weight: 600; }
+  /* a board that is NOT flight-ready: tinted row + red edge, so it is obvious at a glance */
+  tr.notready td { background: #fff2f2; }
+  tr.notready td:first-child { box-shadow: inset 3px 0 0 #c22; }
+  .warn { color: #c22; }
 </style>
 </head>
 <body>
@@ -39,10 +43,10 @@
 
 <table id="boards">
   <thead><tr>
-    <th>board</th><th>online</th><th>stage</th><th>flight</th><th>version</th><th>config</th><th>uptime</th>
+    <th>board</th><th>online</th><th>stage</th><th>flight</th><th>imu</th><th>version</th><th>config</th><th>uptime</th>
     <th>board time</th><th></th><th>position</th><th>launchpad</th><th></th>
   </tr></thead>
-  <tbody><tr><td colspan="12" class="muted">waiting for boards…</td></tr></tbody>
+  <tbody><tr><td colspan="13" class="muted">waiting for boards…</td></tr></tbody>
 </table>
 <p class="muted">click a board to target it below · <span id="boardmsg"></span></p>
 
@@ -251,15 +255,16 @@ new EventSource('/events').onmessage = (event) => {
   document.getElementById('ccstatus').textContent = `CC ${(cc.time || '').replace('T', ' ')} · GPS ${ccGps(cc.gps)}`;
   const ccHasFix = !!(cc.gps && cc.gps.usable);  // 'sync CC GPS' is offered only when CC has a fix
   if (!boards.length) {
-    tbody.innerHTML = '<tr><td colspan="12" class="muted">no boards connected</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="muted">no boards connected</td></tr>';
     return;
   }
   tbody.innerHTML = boards.map((b) => `
-    <tr class="click ${b.online ? 'on' : 'off'}" onclick="selectBoard('${b.id}')">
-      <td>${b.id}</td>
+    <tr class="click ${b.online ? 'on' : 'off'} ${notReady(b) ? 'notready' : ''}" onclick="selectBoard('${b.id}')">
+      <td>${notReady(b) ? `<b class="warn" title="NOT READY: ${b.degraded.join(', ')}">❗</b> ` : ''}${b.id}</td>
       <td><span class="dot">${b.online ? '●' : '○'}</span></td>
       <td>${b.stage || ''}</td>
       <td>${fmtFlight(b)}</td>
+      <td>${fmtImu(b)}</td>
       <td>${b.version || ''}</td>
       <td>${b.config_id || ''}</td>
       <td>${fmtUptime(b.uptime)}</td>
@@ -272,6 +277,52 @@ new EventSource('/events').onmessage = (event) => {
         : '<span class="muted">—</span>'}</td>
     </tr>`).join('');
 };
+
+// BNO055 calibration: NDOF fusion only converges with MOTION, and a glider sits still on the pad -- so
+// healthy hardware can reach launch with a FROZEN attitude and nothing else reports it (probe passes,
+// self-test passes, the config is fine). mag is the axis needing the operator's figure-8; gyr reaches 3
+// on its own and acc wants held orientations but does not block heading.
+// NOT READY TO LAUNCH: any degraded state (uncalibrated IMU, attitude on the backup, warm restart,
+// memory rescued, CC-less fallback). Flagged on the ROW rather than inside a cell -- an operator
+// scanning a table of boards must see which one needs attention without reading every column.
+function notReady(b) {
+  return !!(b.degraded && b.degraded.length);
+}
+
+function fmtImu(b) {
+  const c = b.imu_calibration;
+  if (!c) return '<span class="muted">—</span>';
+  const [sys, gyr, acc, mag] = c;
+  const ok = mag >= 3;
+  const label = `S${sys} G${gyr} A${acc} <b>M${mag}</b>`;
+  const state = ok
+    ? `<span style="color:#2a2" title="magnetometer calibrated -- fusion converged">✓ ${label}</span>`
+    : `<b style="color:#c22" title="NDOF needs motion: move the airframe in a figure-8 until M3">⚠ ${label}</b>`;
+  return `${state} <button onclick="event.stopPropagation(); calibrateImu('${b.id}')" ` +
+         `title="guided BNO055 calibration -- move the airframe in a slow figure-8">calibrate</button>`;
+}
+
+// Guided calibration. There is nothing to COMMAND -- the sensor calibrates by being moved -- so the
+// button's job is to tell the operator that and then watch, polling the board until mag reaches 3 so
+// they know when to stop rather than guessing.
+async function calibrateImu(id) {
+  boardMsg(`${id} calibrate: MOVE THE AIRFRAME in a slow figure-8 -- watching for mag 3…`);
+  for (let step = 0; step < 40; step++) {
+    const r = await cmd(id, 'inspect', ['imu_bno055']);
+    let calib = null;
+    try { calib = JSON.parse(r.args[0]).calibration; } catch (err) { calib = null; }
+    if (calib) {
+      const [sys, gyr, acc, mag] = calib;
+      if (mag >= 3) {
+        boardMsg(`${id} calibrate: DONE -- sys ${sys} gyr ${gyr} acc ${acc} mag ${mag}. Stop moving.`);
+        return;
+      }
+      boardMsg(`${id} calibrate: keep moving -- sys ${sys} gyr ${gyr} acc ${acc} mag ${mag} (need mag 3)`);
+    }
+    await new Promise(done => setTimeout(done, 1000));
+  }
+  boardMsg(`${id} calibrate: gave up after 40 s -- is the airframe actually moving? (check the gyro)`);
+}
 
 // top-table actions: set the board RTC from the PC clock (update mission epoch), and push the host
 // GPS position to the board launch config (/api/assist).
