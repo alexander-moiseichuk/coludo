@@ -1,7 +1,12 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-`calibrate <board> <i2c|spi> <id> [margin-steps]` -- find a sensor bus's max stable frequency.
+`bustune <board> <i2c|spi> <id> [margin-steps]` -- find a sensor bus's max stable frequency.
+
+NAMED FOR THE PRIMITIVE IT DRIVES. It was `calibrate`, which collided with the board's own
+`calibrate` command (sensor calibration -- a pitot tare, an IMU figure-8): the same verb meant
+"tune a bus" at the operator console and "calibrate a sensor" on the dashboard, decided only by which
+surface you typed it on. Nothing about the behaviour changed with the rename.
 
 Drives the board's `bustune` primitive (retune-in-place + per-device health) UP a frequency ladder,
 stopping at the first step any device fails. Reports the ceiling (highest all-healthy step), the
@@ -25,10 +30,10 @@ _LADDER = {
 _FREQ_KEY = {'i2c': 'freq', 'spi': 'baud'}  # the bus-spec field each kind tunes
 
 
-@command('calibrate', 'sweep a sensor bus (i2c/spi) to its max stable frequency via bustune')
-async def calibrate_command(hub, tokens, session) -> list:
+@command('bustune', 'sweep a sensor bus (i2c/spi) to its max stable frequency')
+async def bustune_command(hub, tokens, session) -> list:
     if len(tokens) < 4 or tokens[2] not in _LADDER:
-        return ['from cc err badargs calibrate <board> <i2c|spi> <id> [margin-steps]']
+        return ['from cc err badargs bustune <board> <i2c|spi> <id> [margin-steps]']
     target, kind, ident = tokens[1], tokens[2], tokens[3]
     margin = int(tokens[4]) if len(tokens) >= 5 and tokens[4].isdigit() else 1
     board = hub.boards.get(target)
