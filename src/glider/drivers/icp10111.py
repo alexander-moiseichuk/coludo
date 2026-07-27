@@ -236,6 +236,21 @@ class Icp10111(task.Task):
         recorder.Recorder.log(self.name, 'read recovery: general-call reset after %d failures'
                               % self._failures)
 
+    def calibration(self) -> str:
+        """The ground-reference instruction; '' once a ground zero is held."""
+        if self._ground is not None:
+            return ''
+        return 'stand the glider STILL on the pad -- this captures its ground reference'
+
+    async def calibrate(self) -> str:
+        """Re-capture ground zero from the live reading -- do it with the glider ON THE PAD."""
+        try:
+            self._ground = await self._ground_zero()
+        except Exception as error:
+            return 'ground zero: %s' % error
+        recorder.Recorder.log(self.name, 'calibrated: ground %.1f m AMSL' % self._ground)
+        return None
+
     async def run(self) -> None:
         while True:
             try:

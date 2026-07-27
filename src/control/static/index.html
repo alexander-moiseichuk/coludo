@@ -298,30 +298,50 @@ function fmtImu(b) {
   const state = ok
     ? `<span style="color:#2a2" title="magnetometer calibrated -- fusion converged">✓ ${label}</span>`
     : `<b style="color:#c22" title="NDOF needs motion: move the airframe in a figure-8 until M3">⚠ ${label}</b>`;
-  return `${state} <button onclick="event.stopPropagation(); calibrateImu('${b.id}')" ` +
-         `title="guided BNO055 calibration -- move the airframe in a slow figure-8">calibrate</button>`;
+  return `${state} <button onclick="event.stopPropagation(); calibrateBoard('${b.id}')" ` +
+         `title="calibrate every device that needs it: runs what the board can do, guides what it cannot">calibrate</button>`;
 }
 
-// Guided calibration. There is nothing to COMMAND -- the sensor calibrates by being moved -- so the
-// button's job is to tell the operator that and then watch, polling the board until mag reaches 3 so
-// they know when to stop rather than guessing.
-async function calibrateImu(id) {
-  boardMsg(`${id} calibrate: MOVE THE AIRFRAME in a slow figure-8 -- watching for mag 3…`);
-  for (let step = 0; step < 40; step++) {
-    const r = await cmd(id, 'inspect', ['imu_bno055']);
-    let calib = null;
-    try { calib = JSON.parse(r.args[0]).calibration; } catch (err) { calib = null; }
-    if (calib) {
-      const [sys, gyr, acc, mag] = calib;
-      if (mag >= 3) {
-        boardMsg(`${id} calibrate: DONE -- sys ${sys} gyr ${gyr} acc ${acc} mag ${mag}. Stop moving.`);
-        return;
-      }
-      boardMsg(`${id} calibrate: keep moving -- sys ${sys} gyr ${gyr} acc ${acc} mag ${mag} (need mag 3)`);
+// Guided calibration: the board's own `calibrate` sweep says WHICH devices are outstanding and what
+// the operator must do for each, so this walks them ONE AT A TIME rather than dumping every
+// instruction at once (nobody can hold a glider still and wave it in a figure-8 simultaneously).
+// Adding a device that needs calibrating is a driver override; nothing here changes.
+async function sweepCalibration(id) {
+  try { return JSON.parse((await cmd(id, 'calibrate', [])).args[0]); } catch (err) { return null; }
+}
+
+async function calibrateBoard(id) {
+  const pending = await sweepCalibration(id);
+  if (pending === null) { boardMsg(`${id} calibrate: board did not answer`); return; }
+  const names = Object.keys(pending);
+  if (!names.length) { boardMsg(`${id} calibrate: nothing outstanding — all devices ready`); return; }
+
+  for (let index = 0; index < names.length; index++) {
+    const name = names[index];
+    boardMsg(`${id} calibrate [${index + 1}/${names.length}] ${name} → ${pending[name]}`);
+    // give the operator a moment to comply BEFORE the board captures anything -- a tare taken while
+    // the airframe is still being set down is worse than no tare
+    await new Promise(done => setTimeout(done, 3000));
+    const ran = await cmd(id, 'calibrate', [name]);   // no-op where the act is purely physical
+    if (ran.status !== 'ok') boardMsg(`${id} calibrate ${name}: ${JSON.stringify(ran)}`);
+
+    // wait for THIS device to drop out of the sweep; '' means satisfied
+    let done = false;
+    for (let step = 0; step < 40 && !done; step++) {
+      const now = await sweepCalibration(id);
+      if (now === null) continue;
+      if (!(name in now)) { done = true; break; }
+      boardMsg(`${id} calibrate [${index + 1}/${names.length}] ${name} → ${now[name]}`);
+      await new Promise(wait => setTimeout(wait, 1000));
     }
-    await new Promise(done => setTimeout(done, 1000));
+    boardMsg(done
+      ? `${id} calibrate: ${name} DONE`
+      : `${id} calibrate: ${name} gave up after 40 s — is the airframe actually being moved/held?`);
   }
-  boardMsg(`${id} calibrate: gave up after 40 s -- is the airframe actually moving? (check the gyro)`);
+  const left = await sweepCalibration(id);
+  boardMsg(left && Object.keys(left).length
+    ? `${id} calibrate: still outstanding — ${Object.keys(left).join(', ')}`
+    : `${id} calibrate: ALL DONE — board is calibration-ready`);
 }
 
 // top-table actions: set the board RTC from the PC clock (update mission epoch), and push the host

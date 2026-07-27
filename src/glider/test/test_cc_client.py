@@ -135,13 +135,27 @@ async def amain():
         def vitals(self):
             return _VITALS
 
+    class _Pitot:
+        """A device the board can calibrate itself -- the operator still has to hold it still."""
+
+        def calibration(self):
+            return 'keep the pitot in STILL AIR -- this captures the zero tare'
+
+        async def calibrate(self):
+            return None
+
     class _UncalibratedImu:
         """A healthy BNO055 that simply has not been moved yet -- mag calibration still 0."""
 
-        calibration = (0, 3, 3, 0)
+        calibration_state = (0, 3, 3, 0)
+        calibration_value = (0, 3, 3, 0)
+
+        @property
+        def calibration(self):
+            return self.calibration_value
 
         def calibrated(self):
-            return self.calibration[3] >= 3
+            return self.calibration_value[3] >= 3
 
     class _FlightController:
         armed = True

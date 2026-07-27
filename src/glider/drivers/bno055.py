@@ -74,7 +74,7 @@ class Bno055(task.Task):
         self._last_euler = None    # fusion-stall detector state (see _fusion_alive)
         self._frozen: int = 0
         self._stalled: bool = False
-        self.calibration = None   # (sys, gyr, acc, mag) 0..3 each; None until first poll
+        self.calibration_state = None  # (sys, gyr, acc, mag) 0..3 each; None until first poll
         self._calib_due: int = 1  # countdown to the next CALIB_STAT read (see _poll_calibration)
         try:
             if await self._bus.read_chip_id(self._addr, _REG_CHIP_ID) != _CHIP_ID:
@@ -183,11 +183,21 @@ class Bno055(task.Task):
             return
         self._calib_due = max(1, 1000 // self._period_ms)
         raw = (await self._bus.read(self._addr, _REG_CALIB_STAT, 1))[0]
-        self.calibration = (raw >> 6, (raw >> 4) & 3, (raw >> 2) & 3, raw & 3)
+        self.calibration_state = (raw >> 6, (raw >> 4) & 3, (raw >> 2) & 3, raw & 3)
 
     def calibrated(self) -> bool:
         """True once the MAGNETOMETER is calibrated -- the axis that needs the operator's figure-8."""
-        return self.calibration is not None and self.calibration[3] >= _MAG_CALIBRATED
+        return self.calibration_state is not None and self.calibration_state[3] >= _MAG_CALIBRATED
+
+    def calibration(self) -> str:
+        """The figure-8 instruction while NDOF is unconverged, with the live reading folded in; '' once done."""
+        if self.calibration_state is None:
+            return 'move the airframe in a slow figure-8 (BNO055 calibration not read yet)'
+        sys_, gyr, acc, mag = self.calibration_state
+        if mag >= _MAG_CALIBRATED:
+            return ''
+        return ('move the airframe in a slow FIGURE-8 until mag reads 3 '
+                '(now sys %d gyr %d acc %d mag %d)' % (sys_, gyr, acc, mag))
 
     async def run(self) -> None:
         while True:
@@ -269,6 +279,6 @@ class Bno055(task.Task):
         # the operator must see a WITHHELD attitude: the channel simply going quiet looks like a
         # missing sensor, and this says the part is alive with a dead fusion core
         status['fusion_stalled'] = self._stalled
-        status['calibration'] = self.calibration  # (sys, gyr, acc, mag)
+        status['calibration'] = self.calibration_state  # (sys, gyr, acc, mag)
         status['calibrated'] = self.calibrated()
         return status

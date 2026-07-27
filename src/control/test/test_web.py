@@ -99,7 +99,9 @@ def test_dashboard_carries_the_imu_calibration_column():
     """
     page = _request(b'GET / HTTP/1.1\r\n\r\n')
     assert b'<th>imu</th>' in page, 'the dashboard lost its IMU column'
-    assert b'fmtImu' in page and b'calibrateImu' in page, 'the calibrate action is not served'
+    assert b'fmtImu' in page and b'calibrateBoard' in page, 'the calibrate action is not served'
+    # the sweep must be GENERIC -- a hardcoded device name means a new one is silently skipped
+    assert b"'calibrate', []" in page, 'the button must sweep, not name one device'
     # every colspan must match the header width, or the empty-state row misaligns the table
     assert b'colspan="13"' in page and b'colspan="12"' not in page
 

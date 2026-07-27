@@ -544,6 +544,35 @@ def _register_diagnostics(dispatcher, ctx) -> None:
             return cc.build('err', ['badargs', 'freq must be an int (Hz)'])
         return cc.build('ok', [json.dumps(await ctx.controller.bustune(msg.args[0], msg.args[1], freq))])
 
+    async def calibrate(msg) -> str:
+        """
+        Report which devices need CALIBRATING, or run one device's calibration.
+
+        `calibrate` with no argument sweeps every device that declares a requirement -- the operator
+        gets a short list of what actually wants doing, not a wall of n/a. `calibrate <device>` runs
+        that one, where the board can do it alone (a pitot tare, a baro ground zero); where the act is
+        inherently physical the device says so through its `action` instead and this is a no-op.
+
+        A sibling of `probe` because they answer different questions: probe asks whether the hardware
+        WORKS -- an uncalibrated BNO055 passes it, the part responds perfectly -- while this asks
+        whether it is ready to FLY. Nothing in the config can reveal the difference, which is how a
+        healthy IMU with a frozen attitude reached the pad unnoticed.
+
+        Args:
+            msg - the request; args[0] optionally names one device.
+
+        Returns:
+            ok with {device: state} for the sweep, or {device: result} for a run (None = success).
+        """
+        if not msg.args:
+            return cc.build('ok', [json.dumps(inspector.Inspector.calibration_all())])
+        target = msg.args[0]
+        run = getattr(inspector.Inspector.get(target), 'calibrate', None)
+        if run is None:
+            return cc.build('err', ['badargs', 'no calibrate for ' + target])
+        return cc.build('ok', [json.dumps({target: await run()})])
+
+    dispatcher.on('calibrate', calibrate)
     dispatcher.on('probe', probe)
     dispatcher.on('verify', verify)
     dispatcher.on('bustune', bustune)

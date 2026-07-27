@@ -221,6 +221,21 @@ class Sdp810(task.Task):
         except OSError:
             pass  # still gone -- the next read fails and we try again
 
+    def calibration(self) -> str:
+        """The still-air tare instruction; '' once a zero offset has been captured."""
+        if self._zero != 0:
+            return ''
+        return ('keep the pitot in STILL AIR -- do NOT blow into it, this captures the zero tare '
+                '(now %.2f Pa)' % fixed.to_float(self._pressure_ch.value() or 0))
+
+    async def calibrate(self) -> str:
+        """Capture the current still-air reading as the zero offset -- the board can do this itself."""
+        if self._raw is None:
+            return 'no reading yet'
+        self.update({'zero': True})
+        recorder.Recorder.log(self.name, 'calibrated: zero_offset %.2f Pa' % fixed.to_float(self._zero))
+        return None
+
     async def run(self) -> None:
         while True:
             try:

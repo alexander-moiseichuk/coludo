@@ -121,6 +121,46 @@ class Task(inspector.Inspectable):
         """Initialize or reset. Override. Return True on success, False otherwise."""
         raise NotImplementedError('Task.setup() must be overridden')
 
+    def calibration(self) -> str:
+        """
+        What the OPERATOR must do to make this device flight-ready -- or '' when there is nothing.
+
+        A sibling of probe(), and needed because the two answer different questions. probe() asks "does
+        the hardware work" -- an uncalibrated BNO055 passes it, because the part responds perfectly.
+        This asks "is it ready to FLY", which for several devices means a physical act nobody can infer
+        from the config: the IMU wants motion, the pitot still air, the baro a settled ground reference.
+
+        ONE STRING, deliberately. '' means nothing to do -- device needs no calibration, or already
+        satisfied -- so a caller polls by simply re-reading until it empties, and the operator surfaces
+        need no state machine. Fold the live reading INTO the text ("...until mag reads 3 (now mag 1)")
+        so progress is visible while the instruction stays the thing being shown.
+
+        Args:
+            (none)
+
+        Returns:
+            '' when nothing to do, else the instruction for the operator.
+        """
+        return ''
+
+    async def calibrate(self) -> str:
+        """
+        Start / enforce this device's calibration (the CC `calibrate <device>` command).
+
+        Only meaningful where the board can DO something -- capture a tare, re-zero a reference. Where
+        calibration is inherently physical (the BNO055 needs the airframe moved) the device says so
+        through calibration() and this stays a no-op, so a caller can sweep every device without
+        special-casing. The operator precondition still applies to both: the board cannot capture a
+        still-air tare while somebody is waving the airframe about.
+
+        Args:
+            (none)
+
+        Returns:
+            None on success (or nothing to do), else a human-readable failure string.
+        """
+        return None
+
     async def probe(self) -> str:
         """
         On-demand self-test (the CC `probe` command, NOT run at boot).
