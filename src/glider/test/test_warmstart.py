@@ -67,6 +67,20 @@ class _StubMission:
         self.updated = patch
 
 
+class _StubPitot:
+    """The SDP810 as warmstart sees it: a tare to freeze on the pad and restore after a reboot."""
+
+    def __init__(self, zero=0.0):
+        self.zero = zero
+
+    def inspect(self):
+        return {'zero_offset_pa': self.zero}
+
+    def update(self, props):
+        self.zero = props['zero_offset_pa']
+        return ['zero_offset_pa']
+
+
 class _StubFlightTask:
     """The flight task as _apply_restore sees it: somewhere to hand the crumb's airspeed back."""
 
@@ -78,17 +92,21 @@ class _StubFlightTask:
 
 
 class _StubFlight:
-    def __init__(self, baros, flight_task=None):
+    def __init__(self, baros, flight_task=None, pitot=None):
         self._baros = baros
         self._flight_task = flight_task
+        self.pitot = pitot
         self.stage = None
         self.armed = False
         self.warm_started = False
 
     def find(self, names):
-        # name-aware: _apply_restore asks for 'flight' (the airspeed seed) and for the baro names
+        # name-aware: _apply_restore asks for 'flight' (the airspeed seed), the pitot (its tare) and
+        # the baro names
         if list(names) == ['flight']:
             return [self._flight_task]
+        if list(names) == ['airspeed_sdp810']:
+            return [self.pitot]
         return self._baros
 
     def set_stage(self, stage):
@@ -145,6 +163,29 @@ def test_apply_restore_seeds_airspeed():
         inspector.Inspector.unregister('mission')
 
 
+def test_apply_restore_pitot_tare():
+    """
+    The PITOT TARE must survive a mid-air reboot. It lives in RAM, so without this a warm-started
+    board flies on dynamic pressure that still carries the interior-static bias -- and that is the
+    airspeed the fin governor caps off. Same class as the baro rebase, which exists for this reason.
+    """
+    mission = _StubMission()
+    inspector.Inspector.register(mission)
+    try:
+        cfg = {'sensors': [{'name': 'baro_icp10111', 'driver': 'icp10111'}]}
+        pitot = _StubPitot(zero=0.0)
+        flight = _StubFlight([_StubBaro()], _StubFlightTask(), pitot)
+        warmstart._apply_restore(flight, dict(_CRUMB, pitot_zero=-1.75), cfg)
+        assert pitot.zero == -1.75, pitot.zero
+
+        # NEGATIVE: a crumb without the field leaves the driver's own tare alone, never zeroes it
+        untouched = _StubPitot(zero=-0.5)
+        warmstart._apply_restore(_StubFlight([_StubBaro()], _StubFlightTask(), untouched), _CRUMB, cfg)
+        assert untouched.zero == -0.5
+    finally:
+        inspector.Inspector.unregister('mission')
+
+
 def test_apply_restore_torn_crumb():
     # a crumb with pad_altitude+stamp (gate passed) but launch/zone dropped -> mission NOT updated and
     # no crash; the baro rebase + armed GLIDING still happen
@@ -166,6 +207,7 @@ def test_apply_restore_torn_crumb():
 test_should_restore()
 test_apply_restore()
 test_apply_restore_seeds_airspeed()
+test_apply_restore_pitot_tare()
 test_apply_restore_torn_crumb()
 print('ok: warmstart -- gate (5 defenses + boundaries + torn-crumb refuse), apply restores '
       'mission/baros/armed-GLIDING')

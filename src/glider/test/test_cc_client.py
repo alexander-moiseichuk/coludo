@@ -184,7 +184,7 @@ async def amain():
     assert panel['armed'] is True and panel['flight'] == _VITALS  # airspeed / fin cap / reach ride along
     assert 'agl' in panel  # low-altitude laser AGL rides the same heartbeat
     # degraded-mode annunciation: warm-started (from the controller flag) is surfaced
-    assert 'warm-started' in panel['degraded']
+    assert 'WARM-STARTED (rebooted in flight)' in panel['degraded']
     """
     An UNCALIBRATED BNO055 must reach the operator. It is invisible to probe() (the part answers
     perfectly) and to _readiness() (it is not a config choice), yet NDOF fusion never converges without

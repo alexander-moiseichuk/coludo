@@ -215,6 +215,16 @@ def _apply_restore(flight, crumb, cfg: dict) -> None:
     order is pitot -> saved -> GNSS: this is the immediate one, the accel backbone integrates on from
     it, and the first in-band pitot read overrides it. Absent on an older crumb -> unchanged behaviour.
     """
+    """
+    Restore the pitot tare before anything reads airspeed. Without it a warm-started board flies on
+    dynamic pressure that still contains the interior-static bias, and the governor caps off the
+    result -- the same class as the baro rebase above, which exists for exactly this reason.
+    """
+    pitot_zero = crumb.get('pitot_zero')
+    if pitot_zero:
+        pitot = flight.find(['airspeed_sdp810'])[0]
+        if pitot is not None:
+            pitot.update({'zero_offset_pa': pitot_zero})
     airspeed = crumb.get('airspeed')
     if airspeed is not None:
         flight_task = flight.find(['flight'])[0]
@@ -326,6 +336,18 @@ class Checkpoint(task.Task):
         pad = self._pad if self._pad is not None else self._altitude.value()  # last on-pad reading (fallback: now)
         if pad is not None:
             static['pad_altitude'] = pad
+        """
+        PITOT ZERO. The SDP810's tare lives in RAM, so a mid-air reboot comes back untared and every
+        dynamic-pressure reading then carries the full interior-static bias -- the airspeed the fin
+        governor caps off. Frozen here with the rest of the recovery IDENTITY rather than sampled per
+        checkpoint, because it is a CALIBRATION captured on the pad, not live flight state: re-reading
+        it in flight would persist whatever a disturbed sensor happened to show.
+        """
+        pitot = self.controller.find(['airspeed_sdp810'])[0]
+        if pitot is not None:
+            zero = pitot.inspect().get('zero_offset_pa')
+            if zero:
+                static['pitot_zero'] = zero
         self._static = static
 
     def _checkpoint(self, stage: int) -> None:

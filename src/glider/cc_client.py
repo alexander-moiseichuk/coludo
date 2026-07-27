@@ -251,7 +251,10 @@ def _register_identity(dispatcher, ctx) -> None:
         if ctx.controller is not None:
             info['armed'] = ctx.controller.armed
             if getattr(ctx.controller, 'warm_started', False):
-                degraded.append('warm-started')
+                # the loudest thing on the panel: this board REBOOTED MID-FLIGHT and recovered its
+                # stage from the crumb, so its baro rebase, pitot tare and airspeed are restored
+                # values rather than measured ones
+                degraded.append('WARM-STARTED (rebooted in flight)')
             flight = ctx.controller.active('flight')  # live flight panel: airspeed + fin cap + reach
             if flight is not None and hasattr(flight, 'vitals'):
                 info['flight'] = flight.vitals()
