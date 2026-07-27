@@ -10,16 +10,34 @@ See [`architecture.md`](architecture.md) for the module dependency graph, class 
 
 _Tested by `test/test_airspeed.py`._
 
-Hybrid airspeed estimate for the dynamic-pressure fin governor (coludo.md "Fin authority"). There is
-NO pitot tube, so:
-  * accelerometer integration is the BACKBONE (predict) -- primary, and the only usable source during
-    boost and right after separation, when GNSS is jittery under high dynamics;
+Hybrid airspeed estimate for the dynamic-pressure fin governor (coludo.md "Fin authority"). Three
+sources, in order of trust:
+  * a PITOT/static differential-pressure reading (measure) -- a DIRECT airspeed measurement (sdp810.py
+    -> governor), the preferred source WHEN IN-BAND: it measures the air, not the ground, so no wind
+    offset and no attitude gate. Saturates past its full scale (boost / a steep dive), where the caller
+    falls back to the accel backbone rather than trust an under-read;
+  * accelerometer integration is the BACKBONE (predict) -- always running, and the only usable source
+    during boost and right after separation, when the pitot rails and GNSS is jittery under high dynamics;
   * a valid, sane GNSS ground speed nudges out the integrator's drift (correct) -- a complementary
-    filter, GNSS as the slow truth, accel as the fast signal.
+    filter used when the pitot is absent/stale, GNSS as the slow truth, accel as the fast signal.
 GNSS is DISTRUSTED by default: rejected without a fix and above a physical ceiling (a 100+ m/s reading
 under separation is a glitch), and only ever BLENDED (never a hard replace) so one bad-but-in-range
 sample cannot jump the estimate; repeated good fixes pull the drift out. The estimate is biased to
 over-read when uncertain -- a high airspeed tightens the governor cap, which is the safe direction.
+
+CONFIDENCE: a freshly-constructed estimator (cold boot, or a MID-AIR RESET that re-runs setup) reads 0
+before anything charges it -- and a 0 airspeed would open the governor's fin cap to full 45deg at high
+dynamic pressure (the unsafe direction). `confident()` reports whether a TRUSTED speed exists yet: it
+flips True once the accel integrator charges a clearly-airborne speed (boost / a building dive) or the
+first sane GNSS fix anchors it (a direct set, not a slow blend). Until then the governor caps
+conservatively rather than off the un-charged 0. `confident` is a latch -- once trusted, it stays so.
+
+WARM START: the conservative cap keeps a recovered glider SAFE, but it is a blunt instrument -- pinned
+at `airspeed_unconfident_ms` (30 m/s) it also starves fin authority at the moment a glider that just
+rebooted mid-air most needs it. `seed()` closes that window from the warm-start crumb, so the recovery
+order is pitot -> saved -> GNSS: the crumb is available IMMEDIATELY at restore (no fix wait), the accel
+backbone integrates on from it, and the pitot -- a direct measurement -- overrides on its first in-band
+read. GNSS is last precisely because a fix can take tens of seconds to reacquire after a reset.
 
 ### `class AirspeedEstimator`
 
@@ -30,8 +48,11 @@ the caller passes it (e.g. |accel| - g during boost), so this stays unit-testabl
 
 - `__init__(ceiling_ms: float=60.0, gnss_gain: float=0.2)` — constructor
 - `value() -> float` — The current airspeed estimate (m/s).
+- `confident() -> bool` — Whether the estimate is trustworthy yet (see module header).
+- `seed(airspeed: float) -> float` — Restore a PERSISTED airspeed (the warm-start crumb) as the starting estimate.
 - `predict(accel_along: float, dt: float) -> float` — Integrate net acceleration ALONG the flight path over `dt` seconds -- the backbone.
 - `correct(gnss_speed: float, has_fix: bool) -> float` — Blend toward a GNSS ground speed ONLY if trustworthy: a live fix and within the physical ceiling.
+- `measure(airspeed: float, gain: float) -> float` — Fold a DIRECT airspeed measurement (the pitot) -- the PREFERRED source when it is available.
 
 ## `cc_client.py`
 
@@ -209,7 +230,7 @@ Returns:
 
 Max fin deflection in degrees for a given airspeed -- the dynamic-pressure governor table lookup.
 
-Saturates at _FIN_VMAX. Multiply by the config fin_limit_multiplier at the caller (the safety dial
+Saturates at _FIN_VMAX. Multiply by the config fins.limit_multiplier at the caller (the safety dial
 is not baked into the table).
 
 Args:
@@ -304,6 +325,31 @@ Returns:
     (cfg, source, errors). `source` is 'active' (the file was loaded), 'default' (no file), or a
     'default(fallback: ...)' reason (the file was bad JSON or failed validation); `errors` is the
     validation error list for whatever config was chosen.
+
+### `schema_version(cfg) -> str`
+
+The config-schema version a config was produced from ('' when it predates versioning).
+
+Args:
+    cfg - a config object (or None).
+
+Returns:
+    The 'version' string, or '' when absent.
+
+### `outdated(cfg, defaults=None)`
+
+Compare a config's schema version against the firmware's; the pair when they differ, else None.
+
+A mismatch does NOT change what runs (see load) -- it means the saved file was produced from a
+different config tree, so it may lack devices or defaults this firmware knows about. The operator
+re-saves to adopt them.
+
+Args:
+    cfg - the config to check (typically the loaded/active one).
+    defaults - the firmware default to compare against; None builds it.
+
+Returns:
+    (saved_version, firmware_version) when they differ, else None.
 
 ### `save(cfg, path: str='board.config') -> str`
 
@@ -431,11 +477,19 @@ Int ids (cheap to compare/store on MicroPython) plus the `STAGES` id->name mappi
 names; `in Stage.STAGES` is an O(1) key check). `NAMES` is the reverse (name->id) so config that
 names stages by string resolves to an id once.
 
+NULL = 0 is a SENTINEL, not a flight stage: it is what an unwritten NVS checkpoint reads back, so
+a warm-start knows "no checkpoint saved". The live stages start at SETTING = 1, so any non-zero
+saved id IS a real stage to recover into. NULL is deliberately kept OUT of STAGES/NAMES -- it is
+never set_stage()-able and never has an operator name.
+
 Kept here, in the stage machine's own module. flight/sequencer/hitl/led import it from controller
 -- a LIGHT coupling (the module loads fast, no heavy deps pulled just for the enum). It could move
 to commons.py as the shared domain enum to drop even that import, but the gain is marginal versus
 the cross-file churn; revisit only if importing controller solely for Stage ever bites.
 
+- `active(stage: int) -> bool` _(staticmethod)_ — True during the powered boost (BOOSTING only) -- the one active-thrust stage.
+- `passive(stage: int) -> bool` _(staticmethod)_ — True while gliding unpowered, post-separation (GLIDING..LANDING) -- the boost stack is gone.
+- `airborne(stage: int) -> bool` _(staticmethod)_ — True while off the ground -- the union of the active boost and the passive glide.
 
 ### `class Controller(inspector.Inspectable)`
 
@@ -746,16 +800,17 @@ _configure().
 _Tested by `test/test_governor.py`._
 
 The dynamic-pressure fin governor (doc/specs/coludo.md "Fin authority"), sibling of pid.py / mixer.py /
-airspeed.py. Owns the airspeed ESTIMATE (airspeed.AirspeedEstimator: accel backbone + GNSS
-corrector), the ADAPTIVE THROTTLE that keeps that float path off the GC-off hot loop once the glide
-settles, and the mixer authority cap (commons.fin_deflection_limit ∝ 1/v², × the board's
-fin_limit_multiplier safety dial). Extracted from tasks/flight.py so the throttle policy is
-unit-testable without a Flight task.
+airspeed.py. Owns the airspeed ESTIMATE (airspeed.AirspeedEstimator: the PITOT direct source when
+in-band, else the accel backbone + GNSS corrector), the ADAPTIVE THROTTLE that keeps that float path
+off the GC-off hot loop once the glide settles, and the mixer authority cap (commons.fin_deflection_limit
+∝ 1/v², × the board's fin_limit_multiplier safety dial). Extracted from tasks/flight.py so the throttle
+policy is unit-testable without a Flight task.
 
 Host-runnable by construction (tools/virtual_flight.py drives the REAL governor): the sensor
 dependencies are INJECTED databoard-style handles -- `accel.value()` -> (x, y, z) in g or None,
-`gnss_speed.read()` -> (m/s, source, age_ms) -- never the databoard itself, and nothing here touches
-time or the machine.
+`gnss_speed.read()` -> (m/s, source, age_ms), `pitot.read()` -> (airspeed m/s, source, age_ms) from the
+SDP810 (the DIRECT source, sdp810.py did the sqrt) -- never the databoard itself, and nothing here
+touches time or the machine.
 
 Why the estimator is throttled at all: the update is a FLOAT path (sqrt magnitude, integrate, GNSS
 blend) ~ the biggest GC-off allocator measured (~22 KB/s at 100 Hz). It runs FULL RATE where the
@@ -790,9 +845,10 @@ Cap the mixer's control authority by estimated airspeed (torque ∝ v²).
 step() each control slice decides full-rate vs throttled, updates the estimator over the
 accumulated dt, and writes the deflection cap into mixer.limit.
 
-- `__init__(config: GovernorConfig, mixer, accel, gnss_speed, fin_limit_multiplier: float=1.0)` — constructor
+- `__init__(config: GovernorConfig, mixer, accel, gnss_speed, pitot, fin_limit_multiplier: float=1.0)` — constructor
 - `airspeed() -> float` — The current airspeed estimate (m/s) -- the boost rod gate and telemetry read it here.
 - `cap() -> int` — The dynamic-pressure fin-authority cap (deg) the governor last set on the mixer -- the
+- `seed_airspeed(airspeed: float) -> None` — Restore the airspeed persisted by the warm-start crumb, and cap off it AT ONCE.
 - `step(dt: float, full_rate_override: bool, pitch: fixnum) -> None` — One control slice: accumulate `dt` and update the estimator + fin cap when due.
 
 ## `guidance.py`
@@ -821,10 +877,10 @@ INSTANCE SLOTS rather than a returned tuple -- decomposed WITHOUT adding a per-s
 The endgame HOLDING pattern, self-contained like controller.Stage.
 
 Int ids (cheap to compare/store on MicroPython) + the `PATTERNS` id->name mapping and `NAMES`
-reverse. Config names the pattern by string; resolve() turns 'auto'/'o'/'oo'/'o-o'
-(case-insensitive; 'o-o' aliases 'oo') into an id once. AUTO defers the choice to the Mission
-(mission.endgame_heading), which decides 'o' vs 'oo' from the zone's long/short aspect (a strip
-wider than OO_ASPECT flies the two-lobe 'oo').
+reverse. Config names the pattern by string; resolve() turns 'auto'/'o'/'ov'/'oo'/'o-o'
+(case-insensitive; 'o-o' aliases 'oo') into an id once. AUTO defers to the Mission
+(mission.endgame_heading), which picks by the zone's long/short aspect k: k < OVAL_ASPECT -> 'o'
+(single circle), OVAL_ASPECT <= k < OO_ASPECT -> 'ov' (centreline oval), k >= OO_ASPECT -> 'oo'.
 
 - `resolve(name) -> int` _(classmethod)_ — A config string -> the pattern id.
 
@@ -866,7 +922,7 @@ dispatches the stage's law and fills the setpoint slots.
 - `reachability(glide_ratio: float, wind_e: float=0.0, wind_n: float=0.0, airspeed: float=0.0)` — Can the glider still glide to the zone from here?
 - `min_turn_radius(bank_deg: float) -> float` — The tightest coordinated turn the airframe can HOLD at `bank_deg` and its LIVE airspeed.
 - `endgame_bank() -> float` — The steepest bank the ENDGAME spiral may hold at the LIVE airspeed, stall-margin bounded.
-- `landing_turn_radius() -> float` — The endgame turn-radius floor at the LAND-bank limit -- the precision bound reported for a
+- `landing_turn_radius()` — The endgame turn-radius floor at the bank the endgame will ACTUALLY hold -- the precision bound
 - `enter(heading: float, roll: fixnum, pitch: fixnum) -> None` — Entering a control stage (from a non-control one): capture the holds and reset the nav cache.
 - `compute(stage: int, setpoint: dict, heading: float, now_us: int) -> bool` — Run a stage's law: fill the setpoint slots and report whether the fins may actuate.
 
@@ -882,11 +938,27 @@ synchronous, so the lock is held only for the transaction. A glider-only module.
 
 ### `class Bus`
 
-One physical I2C bus, shared by every device on it; transactions are serialized by a lock.
+One physical I2C bus, shared by every device on it.
+
+NO PER-OPERATION LOCK, deliberately. Every operation below is ONE synchronous machine.I2C call
+with no `await` inside it, and MicroPython's asyncio is cooperative and single-threaded: a section
+that never yields cannot be interrupted, so the event loop already serialises them. The lock that
+used to wrap each call therefore protected nothing -- and it was not free: MEASURED on the board,
+`async with self._lock` cost **288 B of the 320 B** an `await bus.read_into()` allocated, against
+0 B for the underlying `readfrom_mem_into`. With eight drivers sampling at 10-50 Hz that was the
+single largest GC-off allocator on the board, far above telemetry.
+
+It also never gave what a lock is usually for: it was released BETWEEN calls, so a multi-step
+sequence (icp10111's measure-command, sleep, read) already interleaves with other drivers today
+and works, because an I2C device holds its own state per address. Anything that genuinely needs a
+sequence to be atomic across awaits should say so explicitly with `async with bus.transaction():`
+-- which is honest about the cost, rather than paying it on every single-shot read.
 
 - `__init__(bus_id: int, spec: dict)` — constructor
+- `transaction()` — Hold the bus across a MULTI-STEP sequence that must not interleave (the explicit escape hatch).
 - `retune(freq: int) -> None` — Re-init this I2C peripheral at `freq` Hz in place (bench frequency calibration; no reboot).
 - `read(addr: int, reg: int, count: int, addrsize: int=8) -> bytes`
+- `read_chip_id(addr: int, reg: int, addrsize: int=8) -> int` — Read a device's one-byte identity register (WHO_AM_I / CHIP_ID).
 - `read_into(addr: int, reg: int, buf, addrsize: int=8) -> None`
 - `write(addr: int, reg: int, data: bytes, addrsize: int=8) -> None`
 - `writeto(addr: int, data: bytes) -> None` — Raw write (no register) -- for command-based devices like the ICP-10111.
@@ -927,6 +999,7 @@ three for computed values.
 - `names() -> list` _(classmethod)_
 - `get(name: str)` _(classmethod)_
 - `probe_all() -> dict` _(classmethod)_ — Run probe() on every registered inspectable that implements it.
+- `calibration_all() -> dict` _(classmethod)_ — Calibration requirement + state for every registered device that declares one.
 - `inspect(name: str) -> dict` _(classmethod)_
 - `update(name: str, props: dict) -> list` _(classmethod)_
 - `stats(name: str) -> dict` _(classmethod)_
@@ -1009,25 +1082,29 @@ _Tested by `test/test_mixer.py`._
 
 Control-surface mixer (sibling of servo.py / gnss.py). Maps the control axes (roll, pitch, yaw --
 each a deflection command in degrees) to per-fin servo angles for the airframe's mixing: ELEVONS (the
-two elerons move together for pitch, differentially for roll) + a RUDDER (the yaw fin). Per-fin trim
-(mechanical neutral alignment) and a hard +/- limit on control deflection. Pure integer math, no
-hardware -- the flight control task (Phase 3) binds the resolved fin driver objects once (bind()) and
-then drives them straight from the mixing loop (actuate()); the per-driver clamp still guards the
-physical range. mix() keeps the dict form for tests/host tools.
+two elerons move together for pitch, differentially for roll) + a RUDDER (the yaw fin). A hard +/-
+limit on control deflection. Pure integer math, no hardware -- the flight control task (Phase 3) binds
+the resolved fin driver objects once (bind()) and then drives them straight from the mixing loop
+(actuate()); the per-driver clamp still guards the physical range. mix() keeps the dict form for
+tests/host tools.
 
-Signs are config (`surfaces` gains + `trim`), set during bench alignment: if a surface deflects the
-wrong way, flip its gain sign; if its neutral is off, set its trim.
+Signs are config (`surfaces` gains), set during bench alignment: if a surface deflects the wrong way,
+flip its gain sign. MECHANICAL NEUTRAL (each fin's true zero) is NOT here -- it lives in the servo
+driver (sg90 `trim`, per fin), so it applies to boot / failsafe / control alike; the mixer commands a
+COMMON neutral and the driver offsets each fin to its centre.
 
 ### `class Mixer`
 
 Mix (roll, pitch, yaw) deflection commands -> {fin_name: integer angle}.
 
-angle = neutral + trim + clamp(sum(gain * axis), +/- limit).
+angle = neutral + clamp(sum(gain * axis), +/- limit).  Each fin's mechanical zero is the servo
+driver's `trim`, applied downstream -- the mixer only commands the COMMON neutral.
 
 - `__init__(config: dict=None)` — constructor
 - `mix(roll: int=0, pitch: int=0, yaw: int=0) -> dict` — Per-fin integer angle for the given axis deflections (degrees).
 - `neutralise() -> dict` — The neutral (zero-deflection) angle per fin -- the safe / control-disabled output (shared dict).
 - `bind(fins: dict) -> None` — Fuse the resolved fin driver objects into the surface table.
+- `angles() -> dict` — {surface name: the angle currently commanded to its fin}.
 - `actuate(roll: int, pitch: int, yaw: int) -> None` — mix() fused with the servo write: clamp and set_angle() each bound fin in one loop.
 
 ## `navigation.py`
@@ -1252,8 +1329,9 @@ Returns:
 _Tested by `test/test_pid.py`._
 
 A minimal fixed-point PID controller for the flight stabilization loop (Phase 3), sibling of mixer.py.
-One instance per control axis. Integral anti-windup clamp + output clamp; reset() on (re)entering a
-control phase.
+One instance per control axis. Anti-windup is TWO mechanisms: the integral/output clamps bound the
+magnitude (and track the governor's live fin cap via set_limit()), and BACK-CALCULATION bleeds the
+integral by whatever demand the saturated fin could not fly. reset() on (re)entering a control phase.
 
 INTEGER fixed-point (fixed.fixnum in/out, integer-millisecond dt) so a step allocates NOTHING on the
 heap. The flight loop runs with GC DISABLED (sequencer disables it on BOOSTING), so every heap byte
@@ -1283,8 +1361,9 @@ no heap allocation. Error and output are fixnums (degrees × SCALE). The derivat
 `rate` (gyro, SCALE-deg/s) when given -- derivative-on-measurement, clean + no setpoint kick --
 else d(error)/dt (differentiated on the error).
 
-- `__init__(kp: float=0.0, ki: float=0.0, kd: float=0.0, integral_limit: int=_UNBOUNDED_DEG, output_limit: int=_UNBOUNDED_DEG)` — constructor
+- `__init__(kp: float=0.0, ki: float=0.0, kd: float=0.0, integral_limit: int=_UNBOUNDED_DEG, output_limit: int=_UNBOUNDED_DEG, anti_windup_shift: int=_ANTI_WINDUP_SHIFT)` — constructor
 - `reset() -> None` — Clear the integral + derivative history.
+- `set_limit(limit_deg: int) -> None` — Retune the output clamp + anti-windup integral clamp to a live authority limit (whole degrees).
 - `step(error: fixnum, dt_ms: int, rate: fixnum=None) -> fixnum`
 
 ## `recorder.py`
@@ -1300,6 +1379,17 @@ synchronously (struct.pack_into into a ring -- never slice-assignment, which is 
 this port); the async run() loop drains the rings to the UART via an asyncio.StreamWriter, telemetry
 (first priority) before logs. Logs are best-effort (dropped when full); telemetry is important (raises
 if a record will not fit).
+
+That trade continues on the RECORDER side, deliberately -- logging is what is spent to make telemetry
+trustworthy, so the two channels have different guarantees end to end:
+  * TELEMETRY is committed PER LINE, so a row that reached the link is on disk. That is what makes a
+    capture survive a crash mid-flight, and why anything that must be evidence belongs in tlm().
+  * LOGS are buffered and flushed roughly every 1000 telemetry messages, so a SHORT session can end
+    with log lines that were never written out. A log line is a convenience, never evidence -- do not
+    reason about a flight from one, and do not put a value there that a capture needs.
+  * SETUP-TIME messages reach NEITHER: drivers set up before the recorder task, so the log ring is
+    empty and the line is discarded. Use print() there -- the only channel that early (measured: an
+    sdp810 setup line never reached recorder.log, while print() shows on the console at boot).
 
 ### `class Ring`
 
@@ -1327,6 +1417,7 @@ The global telemetry + log singleton: enqueue synchronously, drain to the Luckfo
 - `cc_logs(duration_ms: int) -> dict` _(classmethod)_ — Poll-model CC log streaming (the `log <ms>` command).
 - `cc_telemetry(duration_ms: int) -> dict` _(classmethod)_ — Poll-model CC telemetry streaming (the `tlm <ms>` command).
 - `tlm(filename: str, content: str) -> None` _(classmethod)_ — Queue an important telemetry line "@<session>_<filename>@<content>".
+- `tlm_raw(data: bytes) -> None` _(classmethod)_ — Queue an ALREADY-ENCODED telemetry line (the hot path Telemetry.push uses).
 - `drain() -> int` _(classmethod)_ — Drain queued records to the UART, telemetry first then logs. Returns records drained.
 - `run() -> None` _(classmethod)_ — Event-driven drain loop: wait for a producer signal, then drain everything queued.
 - `inspect() -> dict` _(classmethod)_
@@ -1349,6 +1440,7 @@ decimated to a sane rate). `decimate_us=0` (the default) inherits the Recorder G
 non-zero value, else the board-wide `recorder.telemetry_us` prorates it.
 
 - `__init__(filename: str, fields: tuple, decimate_us: int=0)` — constructor
+- `due(now: int) -> bool` — Whether the decimation window has elapsed -- so a HOT-PATH producer can skip building its row.
 - `push(values) -> None`
 
 ## `servo.py`
@@ -1357,7 +1449,7 @@ _Tested by `test/test_servo.py`._
 
 Shared servo infrastructure, sibling of the bus helpers (i2cbus/spibus). The slew gate bounds how many
 fins slew at once (the boost-rail current transient): a process-wide counting semaphore so
-`servo_concurrency` (board config) caps total simultaneous slews across every servo driver.
+`fins.concurrency` (board config) caps total simultaneous slews across every servo driver.
 Servo-type-agnostic -- each driver (sg90, future mg90s/mg996r) imports the gate and adds its own pulse
 range + slew timing.
 
@@ -1385,6 +1477,30 @@ identically on the board (MicroPython) and on the host (CPython) -- the virtual 
 sim are then the SAME physics, only the harness around them differs. World frame is ENU metres from
 the launch pad; attitude is Euler degrees (roll, pitch, yaw=heading).
 
+### `class Faults`
+
+Sensor-fault injection for robustness runs (findings §27.20).
+
+The firmware is full of degradation paths -- databoard priority fallback, the unconfident airspeed
+cap floor, the GNSS jump/steep gates, pitot saturation, warm start -- and those are exactly the paths
+that run when a flight is already going badly. Only a roll spike and a manual BNO055 drop were ever
+exercised, so the rest were untested. This injects the rest at the PUBLISH boundary (where a harness
+hands a reading to the control stack), which is where a real sensor failure appears.
+
+Spec is a comma-separated list of `channel` or `channel@seconds` (when it starts, default 0):
+
+    'baro'              baro dead from t=0
+    'gnss@30,pitot@45'  GNSS drops at 30 s, the pitot rails at 45 s
+
+Modes per channel: a DEAD channel returns None (the driver stopped / the databoard aged it out); the
+pitot instead RAILS to its full-scale reading, because a saturated differential-pressure sensor
+under-reads airspeed rather than going silent -- the more dangerous failure, since a low airspeed
+LOOSENS the fin cap.
+
+- `__init__(spec: str='')` — constructor
+- `active(channel: str, t: float) -> bool` — Whether `channel` is faulted at time `t` (seconds since launch).
+- `apply(channel: str, value, t: float)` — The reading a faulted channel should publish; `value` unchanged when healthy.
+
 ### `class Body`
 
 Flight-dynamics state + integrator (PURE -- host-testable).
@@ -1401,15 +1517,29 @@ Flight-dynamics state + integrator (PURE -- host-testable).
 - `ground_speed() -> float` — Horizontal GNSS GROUND speed (m/s) -- the magnitude of the ground velocity, WITH the wind.
 - `sensors() -> dict` — Clean (pre-noise) sensor readings from the current state.
 
-### `noisy(value, frac: float, lo: float, hi: float)`
+### `noisy(value, frac: float, lo: float, hi: float, reference: float=None)`
 
-Perturb a scalar by +/- frac of its magnitude (uniform), clamped to [lo, hi].
+Perturb a scalar by +/- frac of a REFERENCE magnitude (uniform), clamped to [lo, hi].
+
+The reference defaults to `abs(value) + 1` -- noise proportional to the reading, which is right for
+a quantity whose error genuinely scales with it (speed, dynamic pressure, acceleration).
+
+It is WRONG for a CIRCULAR quantity, and that mattered. A compass heading lives on 0..360, so
+magnitude-proportional noise made "5 %" mean +-18 deg near 350 and +-0.5 deg near 10 -- as if north
+were more certain than south. A real BNO055 fused heading is ~+-1-2 deg wherever it points. Every
+noise>0 study was therefore exercising an absurdly hostile heading signal: measured on the host,
+switching heading to an absolute +-1 deg cut fin travel 22791 -> 16687 deg (-27 %) while touchdown
+moved 118.3 -> 118.4 m. So it never distorted the ACCURACY results, only the fin-activity and
+servo-power ones -- which is exactly what the numbers were being used for.
+
+Pass `reference` for such channels (see HEADING_NOISE_REF) to get an absolute error band instead.
 
 Args:
     value - the clean scalar to perturb.
-    frac - the noise fraction of magnitude (0 -> returned clean).
+    frac - the noise fraction (0 -> returned clean).
     lo - the lower clamp bound.
     hi - the upper clamp bound.
+    reference - noise scale to use instead of abs(value) + 1 (for circular / absolute-error channels).
 
 Returns:
     The perturbed, clamped value; the clean value clamped when frac is 0.
@@ -1436,6 +1566,8 @@ One physical SPI bus, shared by every device on it; transactions are serialized 
 The shared Bus for `bus_id`, created once from `spec` (sck/mosi/miso/baud/mode) and cached.
 
 ## `task.py`
+
+_Tested by `test/test_task.py`._
 
 Task base class and driver registry -- the unit the Controller creates and supervises.
 
@@ -1478,6 +1610,8 @@ Returns:
 - `__init__(name: str, config: dict=None, controller=None)` — constructor
 - `note(template: str=None, arg=None) -> None` — De-duplicated best-effort run-loop log + runtime-health flag.
 - `setup() -> bool` — Initialize or reset. Override. Return True on success, False otherwise.
+- `calibration() -> str` — What the OPERATOR must do to make this device flight-ready -- or '' when there is nothing.
+- `calibrate() -> str` — Start / enforce this device's calibration (the CC `calibrate <device>` command).
 - `probe() -> str` — On-demand self-test (the CC `probe` command, NOT run at boot).
 - `run() -> None` — The task's main activity loop.
 - `notify(callback) -> None` — Register callback(task, event) to be invoked on this task's updates.
@@ -1493,80 +1627,89 @@ Returns:
 _Tested by `test/test_warmstart.py`._
 
 In-flight reboot recovery (doc/specs/coludo.md "In-flight reboot & warm start"). A mid-air reset
-(watchdog, brownout-survivor, crash) must not turn the glider ballistic: the sequencer drops a tiny
-BREADCRUMB into NVS at BOOSTING entry (never a VFS file -- a filesystem write locks the scheduler and
-wears the data flash; esp32.NVS commits to its own partition in milliseconds) and clears it at DONE.
-At boot, main.py restores GLIDING when the breadcrumb AND two physical signals agree -- see
-should_restore() for the gate.
+(watchdog, brownout-survivor, crash) must not turn the glider ballistic: the Checkpoint task keeps a
+tiny CRUMB in NVS (never a VFS file -- a filesystem write locks the scheduler and wears the data
+flash; esp32.NVS commits to its own partition in milliseconds) carrying the live flight state. At
+boot, main.py restores the SAVED stage when the crumb and the per-stage physical signals agree -- see
+should_restore() for the gate -- and the normal detectors (separation / apogee / landing) re-evaluate
+from there.
 
-Storage layout: `flight` is a bare i32 flag (cheap to flip on the clear path), the payload is ONE JSON
-blob (`crumb`) -- full float precision, no per-field key bookkeeping, and a new field is a dict entry
-rather than an NVS schema change. The module degrades to no-ops off-board (CPython).
+The Checkpoint task writes the crumb every `checkpoint_s` while airborne (BOOSTING/GLIDING/LANDING;
+floored at 1 s) and once on entering each stage, but ONLY for an ARMED flight (a disarmed passive
+flight must never warm-start into an armed stage); it always writes the telemetry/log timeline.
+Recovery is stage-aware: SETTING recovers as a plain cold boot, DONE stays DONE (a landed glider never
+re-enters the flight sequence), and the passive glide stages must show the separation latch.
 
-### `save(launch: tuple, zone: tuple, pad_altitude: float, stamp: int) -> bool`
+Storage layout: the `stage` i32 IS the flag (Stage.NULL = 0 -> cold, non-zero -> recover it -- no
+separate key), the payload is ONE JSON blob (`crumb`) -- full float precision, no per-field key
+bookkeeping, and a new field is a dict entry rather than an NVS schema change. The module degrades to
+no-ops off-board (CPython).
 
-Drop the breadcrumb (called ONCE at BOOSTING entry, on the rod, before GC goes off).
+### `save(crumb: dict) -> bool`
+
+Commit the checkpoint crumb to NVS: the blob, then the stage i32 LAST.
+
+The Checkpoint task builds the crumb (the live flight state + the BOOSTING-captured identity);
+this is the raw write. There is no separate flag -- the `stage` i32 IS the flag via the Stage.NULL
+= 0 sentinel (0 -> cold, non-zero -> recover it), and it is written last so a torn write can never
+leave a live stage pointing at a half-written blob.
 
 Args:
-    launch - (lat, lon) of the live fix.
-    zone - ((lat, lon) TL, (lat, lon) BR), the landing-zone corners.
-    pad_altitude - the baro ABSOLUTE altitude at the pad (m -- NOT the boot-relative elevation, a
-        rebooted baro re-zeroes mid-air).
-    stamp - RTC epoch seconds.
+    crumb - the checkpoint dict: stage / armed / altitude / speed / ticks_ms / stamp, plus the
+        launch / zone / pad_altitude frozen at BOOSTING.
 
 Returns:
-    True when the breadcrumb was committed; False (never raises) when NVS is absent or full -- a
-    failed breadcrumb must not block a launch.
+    True when committed; False (never raises) when NVS is absent or full -- a failed checkpoint
+    must never block the flight.
 
 ### `clear() -> None`
 
-Down the flag (at DONE / after a rejected warm start).
+Reset the stage i32 to Stage.NULL = 0 (after a rejected warm start).
 
-The blob stays -- the flag alone decides, so the clear is a single fast i32 write.
+The blob stays -- the stage i32 alone decides, so the clear is a single fast write. Cold-boots the
+next start unambiguously (a fresh power-on already re-writes SETTING; this makes a rejected crumb
+stop pointing at a stale flight).
 
 Returns:
-    None. Clears the NVS `flight` flag; never raises (a failed clear is swallowed).
+    None. Zeroes the NVS `stage`; never raises (a failed clear is swallowed).
 
 ### `load()`
 
-Read back the breadcrumb dropped at BOOSTING entry.
+Read back the last checkpoint crumb (the stage i32 gates it, then the blob fills in).
 
 Returns:
-    The breadcrumb dict ({launch: [lat, lon], zone: [[TL], [BR]], pad_altitude, stamp}), or None
-    when no flight was in progress (flag absent/0) or the blob is missing/torn (-> cold boot).
+    The crumb dict (the blob fields + `stage` from the authoritative i32), or None when no flight
+    was checkpointed (stage absent / Stage.NULL) or the blob is missing/torn (-> cold boot).
 
-### `should_restore(crumb, separated: bool, altitude, cause_is_reset: bool, now_s, min_height_m: float=15.0, max_age_s: int=600) -> tuple`
+### `should_restore(crumb, separated: bool, cause_is_reset: bool, now_s) -> tuple`
 
-The warm-start gate -- ALL conditions must agree (defense in depth; any doubt -> cold boot).
+The warm-start gate: a legitimate mid-flight reset to recover the crumb's stage into?
 
-  1. a breadcrumb exists AND carries its `pad_altitude` + `stamp` (a torn/partial JSON blob with a
-     missing key REFUSES here rather than crashing the boot);
-  2. the separation switch reads SEPARATED -- the physical latch no software state can fake
-     (post-separation it stays LOW for the whole glide; a stack on the pad reads nested);
-  3. the baro ABSOLUTE altitude reads at least `min_height_m` above the breadcrumb's pad -- still
-     clearly in the air (None = baro not up in time -> refuse);
-  4. `cause_is_reset` -- machine.reset_cause() was WDT/SOFT/HARD. A battery insertion or power
-     switch reads PWRON -- exactly what a RECOVERY CREW's hands do to a glider that crash-landed
-     on a rise above the pad (where gate 3 alone would pass). A mid-air brownout also reads PWRON
-     and stays cold: a browning-out battery cannot be trusted to finish the glide;
-  5. `age_s` = `now_s` - crumb stamp is positive and under `max_age_s`. The RTC survives soft/WDT
-     resets, so the arithmetic holds exactly when a warm start is legitimate (even an unsynced
-     RTC -- continuity matters, not absolute truth); a power cycle restarts the RTC and breaks it
-     -> cold. Age is computed HERE from the crumb's stamp, so a missing stamp refuses cleanly.
+The periodic checkpoint keeps the crumb's `stage` fresh (re-stamped every second aloft, so it is
+at most ~1 s stale at a reset), so the STAGE itself is trustworthy -- the gate only has to confirm
+this is a genuine RECENT reset of a real flight, not that the altitude independently agrees (a
+height cross-check was an atavism of the old single-breadcrumb design and is gone):
+
+  * universal (every stage): a valid crumb (carries stage + stamp); `cause_is_reset` -- WDT/SOFT/
+    HARD, never a power-on (a battery insertion / power switch is a human -- a fresh flight or a
+    recovery crew -> cold); the crumb age in 0.._MAX_AGE_S (the RTC survives soft/WDT resets so the
+    continuity holds; a power cycle restarts it and breaks the arithmetic -> cold).
+  * passive stages (GLIDING/LANDING, the unpowered post-separation glide): the separation switch
+    reads SEPARATED -- the physical latch no software can fake, so a landed-then-nested glider can
+    never recover into a glide. BOOSTING is the active boost (pre-separation, latch nested), so
+    reset + age carry it; SETTING/DONE are on the ground and need neither (SETTING recovers as a
+    plain cold boot, DONE just stays DONE).
 
 Pure function of its inputs (host-testable).
 
 Args:
-    crumb - the breadcrumb dict from load(), or None.
+    crumb - the crumb dict from load(), or None.
     separated - the separation driver's latch reading (True = separated).
-    altitude - the baro ABSOLUTE altitude (m), or None if the baro is not up yet.
     cause_is_reset - True when machine.reset_cause() was WDT/SOFT/HARD (not a power-on).
     now_s - the current time (RTC epoch seconds).
-    min_height_m - the minimum height above the pad to accept as airborne (m).
-    max_age_s - the maximum breadcrumb age to accept (seconds).
 
 Returns:
-    (restore, reason): restore True with the passing reason when ALL gates agree, else False with
+    (restore, reason): restore True with the passing reason when the gate agrees, else False with
     the first failing reason.
 
 ### `restore(flight, cfg: dict, log=print) -> bool`
@@ -1581,12 +1724,26 @@ this is a normal cold boot.
 
 Args:
     flight - the controller to move into GLIDING on a passed gate.
-    cfg - the board config (warm_start toggle + the sensor list for the baros).
+    cfg - the board config (the checkpoint component's warm_start toggle + the sensor list for the baros).
     log - the log sink (defaults to print).
 
 Returns:
     True when a warm start was applied (-> gliding, armed, GC off); False on a normal cold boot or
     a rejected gate.
+
+### `class Checkpoint(task.Task)`
+
+Periodic + on-stage-change flight-state checkpoint to NVS -- the warm-start source.
+
+Every `checkpoint_s` while AIRBORNE (BOOSTING/GLIDING/LANDING; floored at 1 s) and once on
+entering each stage, write the live state to the NVS crumb -- but ONLY for an ARMED flight (a
+disarmed passive flight must never warm-start into an armed stage). The telemetry/log timeline is
+written on every checkpoint regardless. SETTING and DONE checkpoint once on entry and never
+periodically -- nothing moves during the long pad dwell / post-landing wait, so re-writing every
+period would only wear the flash.
+
+- `setup() -> bool`
+- `run() -> None` — Checkpoint on every stage change + every period_ms while airborne; forever.
 
 ## `wind.py`
 
@@ -1729,6 +1886,8 @@ accelerometer (g, including gravity) -> 'accel' as a low-g backup to the ADXL375
 
 - `setup() -> bool`
 - `sample() -> tuple` — Read the ACC..EUL block and return a FLAT 6-tuple (run() slices it).
+- `calibrated() -> bool` — True once the MAGNETOMETER is calibrated -- the axis that needs the operator's figure-8.
+- `calibration() -> str` — The figure-8 instruction while NDOF is unconverged, with the live reading folded in; '' once done.
 - `run() -> None`
 - `probe() -> str` — On-demand self-test: the chip id reads back, then one fused sample succeeds (each step logged).
 - `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault.
@@ -1753,6 +1912,8 @@ Elevation is metres above the startup ground zero, captured per-sensor so it is 
 `update {"rezero": true}` re-captures ground zero (e.g. after warm-up, just before launch).
 
 - `setup() -> bool`
+- `calibration() -> str` — The ground-reference instruction; '' once a ground zero is held.
+- `calibrate() -> str` — Re-capture ground zero from the live reading -- do it with the glider ON THE PAD.
 - `run() -> None`
 - `update(props: dict) -> list` — Apply an operator property change: re-zero or directly set the ground reference.
 - `probe() -> str` — On-demand self-test: confirm the run loop is producing pressure.
@@ -1830,6 +1991,36 @@ registers (0x22..0x2D), so one 12-byte read fetches both.
 - `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault behind an absent IMU.
 - `inspect() -> dict`
 
+## `mg90s.py`
+
+MG90S metal-gear positional fin servo. @task.driver('mg90s'). Electrically IDENTICAL to the SG90 (same
+50 Hz frame, ~500..2500 us pulse -> angle, open-loop, no feedback), so this is a THIN SG90 subclass --
+the angle->pulse math, per-fin `trim`, the shared slew gate, update()/move() and the probe() self-test
+are all inherited. What differs is MECHANICAL: metal gears give higher holding torque, so aerodynamic
+load cannot back-drive the horn (an SG90's plastic train lets wind slide the fin off its commanded
+angle). Preferred on the yaw fin (the rudder sees the most steady wind pressure).
+
+TRAVEL is per instance via the component's min_deg/max_deg, whose SPAN must equal the servo's
+mechanical travel so one command-degree maps to one degree of rotation. The 180deg variant uses the
+default (0..180) and drops in exactly where an SG90 was. The 360deg-travel MG90S wants its 360deg
+CENTRED on the mixer neutral (90): `min_deg: -90, max_deg: 270` -> command 90 = servo mid = 1500 us =
+fin centre (so boot / probe / failsafe all sit centred), and +/-45 command = +/-45deg of fin. A fin
+only uses neutral +/- the mixer limit, so the spare range is unused and the ~0.18deg pulse step is
+still plenty. MIXED fleets are fine -- each fin's `driver` is independent (e.g. mg90s yaw + sg90
+elevons); the mixer commands angles by name and is servo-type-blind.
+
+Slew is a touch quicker (metal gear) and the probe draw window is shifted up (more current). Both are
+datasheet-approximate TYPE defaults -- tune per built rig via the component's slew / engine_*_mw config.
+
+### `class MG90S(SG90)`
+
+MG90S metal-gear fin servo -- the SG90 protocol + logic with higher holding torque.
+
+Center the 360deg-travel instance on the mixer neutral with `min_deg: -90, max_deg: 270`; the
+180deg variant and the default match the SG90 elevons. Everything else (trim, clamp, slew gate,
+probe, open-loop reporting) is SG90's.
+
+
 ## `neo6mv2.py`
 
 GY-NEO6MV2 (u-blox NEO-6M) GNSS on a dedicated UART: a drop-in alternative to the ATGM336H on the SAME
@@ -1843,6 +2034,47 @@ ATGM. Graceful: an undefined bus -> setup False.
 
 u-blox NEO-6M: $PUBX,40 selects RMC + ~1 Hz GGA, UBX-CFG-RATE sets the measurement period.
 
+
+## `sdp810.py`
+
+SDP810-500Pa differential-pressure sensor (Sensirion SDP8xx, thermal flow-through) over the shared I2C
+bus: the pitot/static AIRSPEED channel. @task.driver('sdp810'). Command-based, not register-mapped:
+setup() clears any prior continuous mode, starts continuous measurement (differential-pressure temp-comp,
+average-till-read) and validates one CRC-checked frame; run() reads the 9-byte frame each period, scales
+the tared dynamic pressure (a `fixed` fixnum, Pa × SCALE) and derives airspeed once, publishing both to
+the databoard. Graceful: nothing acks / a corrupt frame -> setup False -> skipped.
+
+Bench-verified: 0x25 on i2c:0 (SDA 7 / SCL 8), scale factor 60 (Pa = raw/60), zero ~0.02 Pa. Tube
+polarity (blow-verified): P+ = pitot (total), P- = interior static. The interior-static PRESSURE bias is
+tared out by `zero_offset_pa` (a pad tare, `update {"zero": true}`); the position-span error folds into
+`air_density`, the single q->v knob (a GNSS-vs-q calm pass trims it).
+
+INTEGER internals, ONE float: the raw scaling and the pad-tared dynamic pressure stay a `fixed` fixnum
+(a small int, so the store never boxes). Airspeed = sqrt(2q/rho) is the ONE float, computed ONCE per read
+and reused for the airspeed channel (-> the governor's estimator, airspeed.py) AND the telemetry row -- no
+second conversion anywhere. The governor consumes the ready airspeed; it does no sqrt of its own.
+
+Polled at period_ms in continuous mode (no per-sample write). Uses the shared locked bus (i2cbus);
+shares i2c:0 with the other forward sensors.
+
+### `class Sdp810(task.Task)`
+
+Pitot/static airspeed + dynamic pressure to the databoard.
+
+`dynamic_pressure` is a `fixed` fixnum (Pa × SCALE, signed); `airspeed` is m/s, v = sqrt(2q/rho),
+derived once per read and shared with telemetry. The pad-tared zero cancels the interior-static
+PRESSURE bias; `air_density` is the single pressure->speed knob (it absorbs the position-span error,
+trimmed on a GNSS-vs-q calm pass). The saturation guard lives with the consumer (the governor drops
+back to the accel backbone when the pitot rails), so this driver just reports what it reads.
+
+- `setup() -> bool`
+- `calibration() -> str` — The still-air tare instruction; '' once a zero offset has been captured.
+- `calibrate() -> str` — Capture the current still-air reading as the zero offset -- the board can do this itself.
+- `run() -> None`
+- `update(props: dict) -> list` — Apply an operator property change: pad-tare the zero, set the zero offset, or set the density.
+- `probe() -> str` — On-demand self-test: confirm the run loop is producing readings.
+- `diagnose() -> str` — Deeper analysis when setup() failed: read one frame and classify the fault at the wire level.
+- `inspect() -> dict`
 
 ## `separation.py`
 
@@ -1899,7 +2131,7 @@ now; factor them into a servo base when a second type lands.
 
 Two ways to command a fin:
   update {"angle": d} -- IMMEDIATE, ungated: the operator override (sync, returns at once).
-  await move(d) -- GATED + settle-aware: passes through a SHARED slew gate so at most servo_concurrency
+  await move(d) -- GATED + settle-aware: passes through a SHARED slew gate so at most fins.concurrency
     (board config, default 3 = no limit) fins slew at once, then awaits the estimated travel so the
     caller knows it has (open-loop, no feedback) arrived. The flight control loop uses this.
 Both record the command to per-fin telemetry (<name>.csv: angle, pulse_us, done) -- done=0 when a
@@ -1914,16 +2146,22 @@ low-current signal on the PWM pin, never the servo supply.
 
 One PWM SG90 fin servo, commanded in integer degrees (clamped to [min_deg, max_deg]).
 
+Each fin has a per-engine `trim` (degrees; config or live via update {"trim": d}): its MECHANICAL
+zero offset, added to every command before the pulse map so boot / failsafe / control all land on
+this fin's true centre -- physical install is never exact, so each engine is zeroed individually.
+
 OPEN-LOOP -- reported angle is the last command, never a measurement (see module header; inspect
 carries 'feedback: None'). update {"angle": d} moves it immediately; await move(d) moves it through
 the shared slew gate; probe() sweeps it on demand.
 
+- `travel_ms(degrees: int, settle: bool=True) -> int` — How long a move of `degrees` occupies this servo (ms) -- the ONE place that converts angle to time.
 - `setup() -> bool`
 - `run() -> None` — Command-driven: no run loop. move() / update() are the entry points.
 - `probe() -> str` — On-demand self-test (CC 'probe', pre-flight -- never at boot): sweep min -> max -> neutral.
 - `move(angle) -> int` — Drive to angle (clamped, integer degrees) through the shared slew gate.
-- `update(props: dict) -> list` — {"angle": d} moves the servo IMMEDIATELY (integer degrees, clamped) -- the operator override.
+- `update(props: dict) -> list` — Operator overrides, IMMEDIATE and ungated. {"angle": d} moves the servo (integer degrees,
 - `set_angle(angle) -> int` — The 100 Hz flight-loop hot-path command (compare-and-set, no per-step dict).
+- `settle() -> None` — Apply a held reversal once the horn has arrived (call from the same loop as set_angle).
 - `finish() -> None` — Release the PWM (stop driving the pin) on shutdown.
 - `diagnose() -> str` — Deeper analysis when setup() failed: is the pin PWM-capable?
 - `inspect() -> dict`
@@ -2065,6 +2303,7 @@ With no `cc_host` configured the board dials the `.1` of whatever subnet it join
 by convention); an empty `cc_host` ('') disables CC and the board flies standalone.
 
 - `setup() -> bool`
+- `inspect() -> dict`
 - `run() -> None` — Park until the Wi-Fi dependency is up, then dial CC and serve until the link drops; retry.
 - `probe() -> str` — On-demand self-test: the CC hub address resolves (explicit or derived) and the Wi-Fi
 
@@ -2109,9 +2348,11 @@ the task is disabled by default -- it cannot move a surface until enabled + tune
 Attitude-hold stabilization: GLIDING-gated, timer- or asyncio-scheduled, fail-safe to neutral.
 
 - `setup() -> bool`
-- `run() -> None`
+- `run() -> None` — finally covers BOTH exits -- a crash out of _tick (uncaught exception in a control stage) and an
 - `finish() -> None`
 - `progress() -> tuple` — The public control-loop heartbeat, so a supervisor need not read private attributes.
+- `airspeed() -> float` — The fused airspeed estimate (m/s) -- what the checkpoint persists for a warm start.
+- `seed_airspeed(airspeed: float) -> None` — Restore the airspeed a warm-start crumb carried (warmstart.py calls this after the gate passes).
 - `vitals() -> dict` — The live flight-panel readout (CC dashboard).
 - `inspect() -> dict`
 
@@ -2173,7 +2414,7 @@ health/sequencer/servo. The records are decimated so the recorder link keeps up.
 The HITL simulator task: drive the model from the commanded fins and publish simulated sensors.
 
 - `setup() -> bool`
-- `run() -> None`
+- `run() -> None` — FIXED-TIMESTEP ACCUMULATOR. The sim must track the WALL clock, because the sequencer's stage
 - `inspect() -> dict`
 
 ## `recorder.py`
@@ -2356,6 +2597,8 @@ integration tests).
 - `run() -> None` — Run the board listener, operator console, and web bridge until cancelled.
 
 ## `web.py`
+
+_Tested by `test/test_web.py`._
 
 Web bridge -- the browser face of the Control hub (doc/specs/cc-protocol.md "Browser bridge").
 
