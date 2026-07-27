@@ -77,11 +77,18 @@ servos physically moving, real INA226 on the servo rail, real MCU memory.
 
 | measured on the board (3 runs) | value | before the pitot fix |
 |---|---|---|
-| touchdown | **118.6–124.5 m**, spread 6 m | 85–225 m, bimodal |
-| fin activity | 1869–1914 moves, **7736–8068°** (134–139 °/s) | ~1000 **or** ~5000–7000° |
-| servo energy | **30.7–37.2 J** (0.53–0.64 W avg) | 3.6 J or 27.8 J |
+| touchdown | **121.2 / 121.5 / 121.7 m** — 0.5 m spread | 85–225 m, bimodal |
+| fin activity | 1523–1593 moves, **3742–4068°** (65–70 °/s) | ~1000 **or** ~5000–7000° |
+| servo energy | **18.7–20.6 J** (0.32–0.36 W avg) | 3.6 J or 27.8 J |
 | `fin_cap` | **5° at boost speed → 45° at trim** — the real 1/v² schedule | pinned 14 or 45 |
 | airspeed estimate | ~50 m/s boost → **14.1 m/s glide** (sim trim = 14.0) | **0.00 all flight** |
+| GC-off leak | **250 KB/s → OOM ~131 s**, identical across all three | — |
+
+**Re-flown after the heading-noise correction**, which halved them: fin travel was 7736–8068° and
+energy 30.7–37.2 J when the sim was still injecting ±18° of heading noise. Removing that took out the
+chatter *and* most of the run-to-run variance — a 6 m touchdown spread became 0.5 m, and the leak is
+now bit-stable at 250 KB/s. The earlier board figures were measuring the sim's noise model, not the
+airframe.
 
 ### The bistability had a root cause, and it was a real flight bug
 
