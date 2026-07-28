@@ -46,7 +46,7 @@ class Wifi(task.Task):
         """
         wifi = self.controller.config.get('wifi', {})
         """
-        policy (CC-less field ops, specs/coludo.md): 'auto' (default) joins/rejoins on the retry
+        policy (CC-less field ops, doc/specs/coludo.md): 'auto' (default) joins/rejoins on the retry
         interval, quiescent while airborne; 'disabled' never touches the radio this session. (Distinct
         from the radio 'mode' key, which stays 'sta'.)
         """

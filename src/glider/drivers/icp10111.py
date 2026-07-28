@@ -13,9 +13,9 @@ Polled at period_ms. Uses the shared locked bus (i2cbus); shares i2c:0 with the 
 
 import asyncio
 import struct
+import time
 
 import commons
-import config
 import databoard
 import i2cbus
 import recorder
@@ -34,6 +34,7 @@ _CMD_OTP_UNLOCK = b'\xc5\x95\x00\x66\x9c'  # unlock OTP, then 4x read
 _CMD_OTP_READ = b'\xc7\xf7'
 _CMD_MEASURE = b'\x48\xa3'  # "measure pressure first", normal mode (6.3 ms, 1.6 Pa RMS)
 _RESET_TRIES = const(4)  # first-touch attempts spanning one max-length conversion window (~95 ms)
+_RECOVER_AFTER = const(3)  # consecutive run-loop read failures before escalating (see _recover)
 _RESET_RETRY_MS = const(30)
 _MEASURE_MS = const(12)  # conversion wait for normal mode (with margin)
 _ID_MASK = const(0x3F)
@@ -59,12 +60,11 @@ class Icp10111(task.Task):
     _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
 
     async def setup(self) -> bool:
-        bus_id = self.config.get('id', 0)
-        spec = config.bus(self.controller.config, self.config.get('bus', 'i2c'), bus_id)
-        if spec is None:
-            return False
-        self._bus = i2cbus.get(bus_id, spec)
-        self._addr: int = self.config.get('addr', _ADDR)
+        self._bus, self._addr = i2cbus.bind(self.controller.config, self.config, _ADDR)
+        if self._bus is None:
+            return False  # no such bus in config -> the Controller skips this device
+        self._sample = None
+        self._sample_ms: int = 0
         self._period_ms: int = self.config.get('period_ms', 100)  # ~10 Hz
         """
         OSError(19) hardening (measured after the 7/06 OOM-soak panic): a mid-conversion
@@ -121,7 +121,7 @@ class Icp10111(task.Task):
         """Average a short burst of altitude readings -> the per-sensor ground reference (m AMSL)."""
         total = 0.0
         for _ in range(_GROUND_SAMPLES):
-            altitude, _temp, _pressure = await self._read()
+            altitude, _temp, _pressure = await self._read(cached_ok=False)  # AVERAGE distinct samples
             total += altitude
         return total / _GROUND_SAMPLES
 
@@ -148,8 +148,47 @@ class Icp10111(task.Task):
         b = (p0 - a) * (s1 + c)
         return a + b / (c + p_raw)
 
-    async def _read(self) -> tuple:
-        """Measure and return (altitude m AMSL, temperature °C, pressure Pa)."""
+    async def _read(self, cached_ok: bool = True) -> tuple:
+        """
+        Measure and return (altitude m AMSL, temperature °C, pressure Pa) -- SERIALISED and cached.
+
+        This is a MULTI-STEP sequence: write-measure, await the conversion, then read. That await is a
+        yield point, so a second caller entering here mid-sequence issues its own measure command into
+        the middle of ours and both come back NAKing -- measured at a 20.8 % failure rate when a
+        diagnostic polled alongside the run loop. It is not a bus-sharing problem (peers on i2c:0 cost
+        nothing); it is this device's own state machine having exactly one conversation at a time.
+        probe() dodges it by issuing no I2C at all, which was a workaround for the missing guard here.
+
+        So: one owner at a time, and a caller arriving while a sample is already in flight gets the
+        RESULT rather than starting a competing conversation. A sample newer than period_ms is served
+        from cache untouched -- it is exactly as fresh as the run loop would have handed out anyway,
+        for zero bus traffic. A plain flag rather than asyncio.Lock: `async with lock` measures ~288 B
+        on this port and MicroPython's loop is cooperative, so the flag can only change across an await.
+
+        Args:
+            cached_ok - False forces a genuine conversion (ground_zero AVERAGES samples, so serving it
+                the same cached tuple repeatedly would collapse the average to one reading).
+
+        Returns:
+            (altitude m AMSL, temperature degC, pressure Pa).
+        """
+        if cached_ok and self._sample is not None \
+                and time.ticks_diff(time.ticks_ms(), self._sample_ms) < self._period_ms:
+            return self._sample
+        # someone else may own the conversation; while waiting, take THEIR answer rather than compete
+        while self._claimed:
+            await asyncio.sleep_ms(1)
+            if cached_ok and self._sample is not None \
+                    and time.ticks_diff(time.ticks_ms(), self._sample_ms) < self._period_ms:
+                return self._sample
+        await self.claim()
+        try:
+            return await self._measure()
+        finally:
+            self.unclaim()  # a raising read must not wedge every future caller
+
+    async def _measure(self) -> tuple:
+        """The bus conversation itself; only ever entered by the single owner _read() admits."""
         await self._bus.writeto(self._addr, _CMD_MEASURE)
         await asyncio.sleep_ms(_MEASURE_MS)
         data = await self._bus.readfrom(self._addr, 9)  # P[0,1],CRC, P[3],_,CRC, T[6,7],CRC
@@ -158,12 +197,60 @@ class Icp10111(task.Task):
         temp_c = -45.0 + 175.0 / 65536.0 * t_raw
         pressure = self._compensate(p_raw, t_raw)
         altitude = 0.0 if pressure <= 0.0 else 44330.0 * (1.0 - (pressure / _SEA_LEVEL_PA) ** 0.190294957)
-        return altitude, temp_c, pressure
+        self._sample = (altitude, temp_c, pressure)
+        self._sample_ms = time.ticks_ms()
+        return self._sample
+
+    async def _recover(self) -> None:
+        """
+        Un-wedge a part that has stopped answering MID-FLIGHT, with the escalation setup() proved.
+
+        setup() hardens the boot path against a latched core, but the run loop had no recovery at all:
+        a read that started failing simply logged once and kept failing, so a mid-air latch-up cost the
+        PRIMARY baro for the rest of the flight -- elevation drives the endgame band, the landing
+        fallback and the launch backup, so that is expensive even with bmp280 behind it.
+
+        Measured escalation (7/06 OOM soak, unchanged here): a NAK is usually just a conversion still
+        draining, so wait one period first; only a PERSISTENT failure gets the I2C GENERAL-CALL reset
+        (0x00 0x06), which is what actually recovered the latched bench part when the addressed soft
+        reset re-wedged it. The general call also resets peers that honour it (bmp280, ina226) -- they
+        re-apply their config-declared state, and this fires only when the primary baro is already lost.
+
+        Args:
+            (none)
+
+        Returns:
+            None; best-effort -- a still-dead part just fails the next read and tries again later.
+        """
+        await asyncio.sleep_ms(self._period_ms)  # a busy conversion drains on its own
+        try:
+            await self._bus.writeto(0x00, _GENERAL_CALL_RESET)
+        except OSError:
+            pass  # nothing honours general call -- nothing lost by asking
+        await asyncio.sleep_ms(_RESET_RETRY_MS)
+        recorder.Recorder.log(self.name, 'read recovery: general-call reset after %d failures'
+                              % _RECOVER_AFTER)
+
+    def calibration(self) -> str:
+        """The ground-reference instruction; '' once a ground zero is held."""
+        if self._ground is not None:
+            return ''
+        return 'stand the glider STILL on the pad -- this captures its ground reference'
+
+    async def calibrate(self) -> str:
+        """Re-capture ground zero from the live reading -- do it with the glider ON THE PAD."""
+        try:
+            self._ground = await self._ground_zero()
+        except Exception as error:
+            return 'ground zero: %s' % error
+        recorder.Recorder.log(self.name, 'calibrated: ground %.1f m AMSL' % self._ground)
+        return None
 
     async def run(self) -> None:
         while True:
             try:
                 altitude, temp_c, pressure = await self._read()
+                self.strike(False, _RECOVER_AFTER)  # good read rearms the run
                 elevation = altitude - self._ground
                 self._altitude.push(altitude)  # one step: push our channels directly
                 self._temperature.push(temp_c)
@@ -173,6 +260,8 @@ class Icp10111(task.Task):
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
                 self.note('icp10111 :: read %r', error)  # deduped: a persistent error logs once, not every tick
+                if self.strike(True, _RECOVER_AFTER):  # once, not every tick while it stays dead
+                    await self._recover()
             await asyncio.sleep_ms(self._period_ms)
 
     def update(self, props: dict) -> list:

@@ -13,7 +13,7 @@ The run therefore ENDS with the board resetting out from under mpremote -- that 
 observable. Afterwards check: machine.reset_cause(), the NVS crumb flag (cleared), and the recorder
 session's watchdog 'control loop stalled' line (Luckfox).
 
-Fly it like hitl_run (deploy first: cd src/glider && ./deploy.sh; then):
+Fly it like hitl_run (deploy first: tools/deploy.sh; then):
     printf 'import oom_soak\\noom_soak.soak("F15", 600)\\n' > /tmp/launch.py
     python3 tools/board_reboot.py PORT && mpremote connect PORT run /tmp/launch.py
 """

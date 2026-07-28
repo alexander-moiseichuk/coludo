@@ -12,7 +12,7 @@ subtracts it from the GNSS ground velocity before the wind triangle -- otherwise
 STRAIGHT into the wind estimate (wind = ground_velocity - airspeed*heading), reading as phantom wind.
 
 Position-nav is deliberately NOT corrected: the drift over a 60 s flight is a few metres, inside the
-~20 m turn-radius landing floor (specs/coludo.md), so it would not move the touchdown -- the win is a
+~20 m turn-radius landing floor (doc/specs/coludo.md), so it would not move the touchdown -- the win is a
 clean wind estimate. Slow loop (the drift is slow); Inspectable -> the operator sees the frozen drift.
 """
 

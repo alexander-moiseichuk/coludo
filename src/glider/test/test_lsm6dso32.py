@@ -50,6 +50,25 @@ async def amain():
         rest_dps = max(abs(fixed.to_float(gx)), abs(fixed.to_float(gy)), abs(fixed.to_float(gz)))
         assert rest_dps < 100.0, 'gyro %.1f dps too high at rest' % rest_dps
         assert await real.probe() is None  # who_am_i + sample self-test clean
+
+        """
+        INT-SILENT FALLBACK. A wired-but-DEAD INT1 is the dangerous state: the driver keeps sampling
+        (so it looks healthy) but only at fallback_ms -- measured 2.0 Hz on this bench, where `rate`
+        has a 20 ms freshness window and NO backup provider, so read() hands the flight loop
+        source=None and the PID's D term silently degrades to derivative-on-error. After
+        _INT_SILENT_LIMIT timeouts the loop must drop to polling at period_ms and SAY so.
+        """
+        real._int_missed = 2  # _INT_SILENT_LIMIT - 1 (an underscore const is stripped from the module)
+        real._int_silent = False
+        assert real.inspect()['interrupt_silent'] is False
+        real._int_missed = 3  # == _INT_SILENT_LIMIT
+        real._int_silent = True                       # what run() sets on the last timeout
+        assert real.inspect()['interrupt_silent'] is True, 'the degradation must be visible to an operator'
+        # a late edge resumes interrupt mode, so a merely NOISY line costs nothing permanent
+        real._edge_seen = False
+        assert real._ready_flagged() is False
+        real._on_data_ready(None)                     # an edge finally arrives
+        assert real._ready_flagged() is True and real._ready_flagged() is False  # read once, then cleared
         print('ok: lsm6dso32 registered; graceful absent; REAL device |a|=%.2f g, gyro ok' % magnitude)
     else:
         print('ok: lsm6dso32 registered; graceful absent setup (no device wired on cs 50 -- positive skipped)')

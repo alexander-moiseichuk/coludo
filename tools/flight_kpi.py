@@ -30,6 +30,8 @@ _M_PER_DEG: float = 111320.0
 
 def _fin_activity(fins) -> tuple:
     """Per-fin (moves, travel_deg, max_step) rows + the flight span in seconds from the fins stream."""
+    if fins is None:
+        return [], 1.0  # no fin stream in this capture -- report nothing rather than crash
     rows = []
     starts, ends = [], []
     for fin in _FINS:
@@ -57,8 +59,10 @@ def _servo_energy(power) -> tuple:
     pre-fixnums float `power` watts, so old and new captures land on the same axis.
 
     Returns:
-        (joules, duration_s) over the captured window.
+        (joules, duration_s) over the captured window; (0, 0) when the stream is absent or empty.
     """
+    if power is None:
+        return 0.0, 0.0  # no INA226 in this capture
     field = 'power_mw' if 'power_mw' in power.fields else 'power'
     times, values = power.column(field)
     if not times:  # empty power stream -- nothing to integrate
@@ -79,8 +83,11 @@ def _touchdown(gnss, zone: tuple) -> tuple:
         zone - the landing rectangle as ((lat, lon) TL, (lat, lon) BR).
 
     Returns:
-        (miss_m, inside): metres from the zone centre and whether the fix is inside the rectangle.
+        (miss_m, inside): metres from the zone centre and whether the fix is inside the rectangle;
+        (0.0, False) when there is no GNSS stream or it holds no fix.
     """
+    if gnss is None:
+        return 0.0, False  # no GNSS in this capture -- nothing to measure against the zone
     _times, latitudes = gnss.column('lat')
     _times, longitudes = gnss.column('lon')
     if not latitudes:  # empty GNSS stream -- no touchdown fix

@@ -4,7 +4,7 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 Board configuration loader / validator -- the foundational config layer the rest of the firmware
 builds its tasks from.
 
-Implements the three-layer model from specs/board-config.md:
+Implements the three-layer model from doc/specs/board-config.md:
   config_default.py -- firmware default / fallback
   board.config      -- saved active config, a full snapshot
   in-memory dict    -- validated, what the Controller builds tasks from
@@ -426,7 +426,48 @@ def load(path: str = 'board.config', defaults=None) -> tuple:
     errs = validate(data)
     if errs:
         return defaults, 'default(fallback: invalid board.config)', errs
-    return data, 'active', []
+    """
+    The SAVED config wins as-is -- what you saved is what flies, so a flight stays reproducible and a
+    board never silently starts running something you did not persist. But a config produced before a
+    newer firmware's tree simply LACKS its new devices, which would otherwise show up only as a sensor
+    that mysteriously never ran (findings §27.13). So the version travels with the file and any mismatch
+    is reported through `source` -- the boot log, the capture's provenance line and CC all show it.
+    """
+    stale = outdated(data, defaults)
+    return data, 'active' if not stale else 'active(config %s, firmware %s -- re-save to adopt)' % stale, []
+
+
+def schema_version(cfg) -> str:
+    """
+    The config-schema version a config was produced from ('' when it predates versioning).
+
+    Args:
+        cfg - a config object (or None).
+
+    Returns:
+        The 'version' string, or '' when absent.
+    """
+    return (cfg or {}).get('version', '') or ''
+
+
+def outdated(cfg, defaults=None):
+    """
+    Compare a config's schema version against the firmware's; the pair when they differ, else None.
+
+    A mismatch does NOT change what runs (see load) -- it means the saved file was produced from a
+    different config tree, so it may lack devices or defaults this firmware knows about. The operator
+    re-saves to adopt them.
+
+    Args:
+        cfg - the config to check (typically the loaded/active one).
+        defaults - the firmware default to compare against; None builds it.
+
+    Returns:
+        (saved_version, firmware_version) when they differ, else None.
+    """
+    firmware = schema_version(defaults if defaults is not None else _builtin_default())
+    saved = schema_version(cfg)
+    return None if saved == firmware else (saved or 'unversioned', firmware or 'unversioned')
 
 
 def save(cfg, path: str = 'board.config') -> str:

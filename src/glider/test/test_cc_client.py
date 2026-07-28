@@ -135,6 +135,30 @@ async def amain():
         def vitals(self):
             return _VITALS
 
+    class _Pitot:
+        """A device the board can calibrate itself -- the operator still has to hold it still."""
+
+        name = 'airspeed_sdp810'
+
+        def calibration(self):
+            return 'keep the pitot in STILL AIR -- this captures the zero tare'
+
+        async def calibrate(self):
+            return None
+
+    class _UncalibratedImu:
+        """A healthy BNO055 that simply has not been moved yet -- mag calibration still 0."""
+
+        calibration_state = (0, 3, 3, 0)
+        calibration_value = (0, 3, 3, 0)
+
+        @property
+        def calibration(self):
+            return self.calibration_value
+
+        def calibrated(self):
+            return self.calibration_value[3] >= 3
+
     class _FlightController:
         armed = True
         warm_started = True  # a degraded state -> annunciated
@@ -144,14 +168,34 @@ async def amain():
             return 'gliding'
 
         def active(self, name=None):
-            return [_FlightTask()] if name is None else (_FlightTask() if name == 'flight' else None)
+            if name is None:
+                return [_FlightTask()]
+            if name == 'flight':
+                return _FlightTask()
+            return _UncalibratedImu() if name == 'imu_bno055' else None
 
-    sd_flight = cc_client.create_dispatcher(config_default.default(), controller=_FlightController())
-    panel = json.loads(cc.parse(await sd_flight.handle('health')).args[0])
+    # the sweep reads REGISTERED inspectables, so the stub has to be one for the heartbeat to see it
+    inspector.Inspector.register(_Pitot())
+    try:
+        sd_flight = cc_client.create_dispatcher(config_default.default(), controller=_FlightController())
+        panel = json.loads(cc.parse(await sd_flight.handle('health')).args[0])
+    finally:
+        inspector.Inspector.unregister('airspeed_sdp810')
     assert panel['armed'] is True and panel['flight'] == _VITALS  # airspeed / fin cap / reach ride along
     assert 'agl' in panel  # low-altitude laser AGL rides the same heartbeat
     # degraded-mode annunciation: warm-started (from the controller flag) is surfaced
-    assert 'warm-started' in panel['degraded']
+    assert 'WARM-STARTED (rebooted in flight)' in panel['degraded']
+    """
+    An UNCALIBRATED BNO055 must reach the operator. It is invisible to probe() (the part answers
+    perfectly) and to _readiness() (it is not a config choice), yet NDOF fusion never converges without
+    motion -- so a still glider reaches launch with a frozen attitude on HEALTHY hardware. Not
+    reporting it is what got a working module condemned on this bench.
+    """
+    assert 'needs-calibration' in panel['degraded']
+    assert panel['imu_calibration'] == [0, 3, 3, 0]  # (sys, gyr, acc, mag) -- mag 0 shows the progress
+    # the pending sweep rides the heartbeat as {device: instruction}: the dashboard counts it for the
+    # `calibrate N` button and clears the not-ready row when it empties, with no extra round trip
+    assert isinstance(panel['calibration'], dict) and panel['calibration']
     # a clean board (no controller) reports an empty degraded list
     assert json.loads(cc.parse(await sd.handle('health')).args[0])['degraded'] == []
 
@@ -259,6 +303,13 @@ async def amain():
     assert batch['lines'][0].endswith('test :: hello'), batch
     assert json.loads(cc.parse(await sd5.handle('log 0')).args[0])['lines'] == []  # stop, drained
     assert recorder.Recorder._cc_log._deadline == 0
+    """
+    The tee is best-effort -- a full ring DISCARDS rather than raising -- so a live stream with a gap
+    looks exactly like a quiet sensor. The reply carries the discarded count so the hub can say the
+    window is incomplete instead of the operator reading absence as calm.
+    """
+    assert 'dropped' in batch, batch
+    assert json.loads(cc.parse(await sd5.handle('tlm 1000')).args[0])['dropped'] == 0
     assert 'badargs' in await sd5.handle('log notanumber')  # non-integer duration rejected
 
     # telemetry streaming: `tlm <ms>` mirrors `log` -- arms collection + returns {'samples': [...]}.

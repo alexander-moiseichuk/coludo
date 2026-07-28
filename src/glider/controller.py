@@ -2,7 +2,7 @@
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 Flight Controller -- creates and supervises the tasks described by a validated config, and tracks the
-flight stage machine. See specs/coludo.md ('Flight Controller', 'Tasks').
+flight stage machine. See doc/specs/coludo.md ('Flight Controller', 'Tasks').
 
 The Controller is the one task created explicitly; it creates the rest from config in a deterministic
 order. Task failures are reported, not fatal (the strict/operator-authority model): a component that

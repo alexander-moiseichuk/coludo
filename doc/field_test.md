@@ -24,7 +24,7 @@ first powered flight.
 ---
 
 ## Phase 0 — Bench pre-checks (before leaving)
-- [ ] Latest firmware deployed (`./deploy.sh`), correct board config; `make test` green
+- [ ] Latest firmware deployed (`tools/deploy.sh`), correct board config; `make test` green
 - [ ] Board boots to **main.py** running (boot log, not a bare REPL) and connects to CC
 - [ ] All components **verify/probe green** on CC — no sensor absent/garbage
 - [ ] Fins mechanically free, correct throw; each servo horn on the right spline (re-check after)
@@ -44,10 +44,22 @@ first powered flight.
 - [ ] **Airspeed:** dynamic pressure ≈ 0; do the **pad tare** (CC `update {"zero": true}` on
       `airspeed_sdp810`, glider still) → airspeed reads ~0
 - [ ] **Fins:** disarmed → all at neutral; verify each fin's **zero/trim** via the CC fin-zero UI
+      > ⚠️ **Drive servo checks through the firmware (CC / the driver), never raw PWM on one pin.** A
+      > servo whose signal line is left FLOATING hunts on its own, so a bench script that drives one fin
+      > and leaves the others unconfigured looks exactly like "all three fins move together" — a false
+      > wiring fault that cost real time on 7/25. `sg90.setup()` gives every fin a valid PWM at bring-up,
+      > which is why the fault never appears in normal operation. If you must poke a pin directly, hold
+      > the other fin pins as **OUTPUT LOW** first.
 - [ ] **Power:** INA226 servo-rail voltage/current sane at idle (no stall/short)
 - [ ] **Separation switch:** pads nested → pin reads **HIGH = nested**
 
 ## Phase 3 — Attitude / IMU (pick it up, rotate, tilt)
+- [ ] **CALIBRATE THE BNO055 BEFORE ARMING.** NDOF fusion does not converge without motion, and a
+      glider sits still on the pad — so a perfectly healthy part can reach launch with `sys`/`mag`
+      calibration at 0 and a FROZEN attitude. Move the airframe in a slow figure-8 until
+      `diag_bno_calib.py` shows **mag 3** and the euler bytes changing (took ~1 s on a good part).
+      Check the gyro column reads **> 5 °/s** while you do it — a still sample proves nothing, which
+      is how a working module was once wrongly condemned
 - [ ] Pitch nose up / down → **pitch tracks** the right sense; roll L/R → **roll tracks**
 - [ ] Yaw / spin → **heading tracks**; no glitches or freezes on quick moves (gyro rate feeds the PID D-term)
 - [ ] Return to level → attitude returns to ~0/0 and the heading settles
@@ -68,9 +80,20 @@ first powered flight.
 - [ ] *(if it runs on the ground)* the wind estimate populates from the GNSS triangle — sanity only
 
 ## Phase 6 — Airspeed in motion (the new SDP810)
-- [ ] Jog with the **pitot exposed to airflow** (or gently blow the **P+** tube) → dynamic pressure rises, airspeed reads a few m/s (a brisk 5 m/s jog ≈ 15 Pa ≈ 5 m/s)
+
+`src/glider/test/live_pitot.py` prints q, airspeed and the governor's own verdict live, so this whole
+phase is one run of it: `mpremote connect $PORT run live_pitot.py` (30 s window). Bench-validated
+2026-07-26 with the values below, so treat a deviation as a real finding.
+
+- [ ] **At rest** → q sits at the tare floor (**~-0.02 Pa**, ~0.2 m/s equivalent) → verdict **IGNORED
+      (below floor)**. A blocked or disconnected tube looks EXACTLY like this, which is why the floor
+      exists — a near-zero reading must never reach the estimate
+- [ ] Jog with the **pitot exposed to airflow** (or gently blow the **P+** = RIGHT tube) → **TRUSTED (in
+      band)**; measured 12–103 Pa → 4.5–13.2 m/s
 - [ ] Confirm the governor's airspeed now tracks the **pitot** (the fin-authority cap tightens as airspeed rises)
-- [ ] Blow **hard** → the reading **rails ~30 m/s** (±500 Pa) → the governor **drops back to the accel+GNSS backbone** (saturation guard) — the safety path
+- [ ] Blow **hard** → the cell **rails at ~546 Pa → 30.4 m/s** (a pinned, repeating value) → verdict
+      **IGNORED (railed)** → the governor drops back to the accel+GNSS backbone — the safety path.
+      `pitot_max_ms` 28 sits just below the rail, which is what makes the guard fire before the pin
 - [ ] At rest again → airspeed returns to ~0 (tare holds)
 
 ## Phase 7 — Minimal acceleration / boost-detect (no ignition)

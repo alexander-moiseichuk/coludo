@@ -29,8 +29,10 @@ import guidance
 import inspector
 import mixer
 import pid
+import recorder
 import task
 import wind
+from commons import const
 
 try:
     from machine import Timer
@@ -38,6 +40,26 @@ except ImportError:  # host (CPython): board-only; the timer-scheduled path runs
     Timer = None
 
 _STAGE = controller_mod.Stage
+
+
+def _round_or_none(value):
+    """
+    Round a metric that is legitimately ABSENT, without turning the absence into a number.
+
+    guidance.landing_turn_radius() returns None when the glider is too slow to bank -- the turn radius
+    is unbounded there, and round(None) would raise while a 0.0 would read on the panel as perfect
+    precision. None travels to the operator as 'no value', which is what it is.
+
+    Args:
+        value - the metric, or None when it does not exist right now.
+
+    Returns:
+        The rounded integer, or None.
+    """
+    return None if value is None else round(value)
+
+
+_TLM_PERIOD_US = const(100000)  # 10 Hz: the control state is SAMPLED, not traced (the loop runs at 100)
 
 
 @task.activity('flight')
@@ -102,6 +124,26 @@ class Flight(task.Task):
         self._glide_ratio: float = self.config.get('glide_ratio', 3.0)  # nominal L/D for the reach estimate
         self._active: bool = False  # in a control stage (PID engaged)
         self._stage = None  # the current control-stage name (for inspect)
+        """
+        flight.csv -- the control state, which NOTHING else records: what the loop BELIEVED (airspeed,
+        wind) and DEMANDED (setpoints, per-axis commands), plus the authority cap that clipped it. The
+        per-servo streams already hold the resulting fin angles, so those are not duplicated here; the
+        value of this stream is that command, cap and belief share ONE timestamp -- post-flight you can
+        see not just what the fins did but what limited them and why (findings §27.2).
+
+        SAMPLED at telemetry_us, not traced at the loop rate. _record() asks Telemetry.due() BEFORE
+        building the row, because push() takes an already-built tuple -- letting push() do the decimating
+        would still allocate 100x/s on a GC-off flight. due() reads push()'s own clock, so there is one
+        clock: a jittery slice can never advance a private counter past a window push() then refuses.
+        """
+        self._tlm_period_us: int = self.config.get('telemetry_us', _TLM_PERIOD_US)
+        self._telemetry = recorder.Telemetry(
+            'flight.csv', ('stage', 'active', 'airspeed_cms', 'fin_cap', 'roll_sp', 'pitch_sp',
+                           'heading_err', 'roll_cmd', 'pitch_cmd', 'yaw_cmd', 'wind_cms', 'wind_from'),
+            decimate_us=self._tlm_period_us)
+        self._roll_cmd: int = 0  # last per-axis demand (whole degrees) -> flight.csv; small ints, no boxing
+        self._pitch_cmd: int = 0
+        self._yaw_cmd: int = 0
         self._steps: int = 0  # control steps run (self-timing for load characterization)
         self._max_step_us: int = 0
         self._last_step_us: int = 0  # ticks_us of the previous control step -> actual dt
@@ -131,6 +173,7 @@ class Flight(task.Task):
         # stage authority stays with the task: pre-glide (boost + active decel) FORCES the governor to
         # full rate from outside; its own speed/dive triggers decide the rest (governor.step docstring)
         self._governor.step(self._dt, self.controller.stage < _STAGE.GLIDING, self._pitch_cd)
+        self._record(start)  # BEFORE the gates below: a degraded / neutral pass must be recorded too
         setpoint = self._guidance.setpoint(self.controller.stage)  # int key -> None if not control
         if setpoint is None or not self.controller.armed:  # not a control stage, or disarmed -> neutral
             if self._active:  # left the control stages (or disarmed) -> centre the fins
@@ -241,13 +284,23 @@ class Flight(task.Task):
         roll_pid.set_limit(cap)
         pitch_pid.set_limit(cap)
         yaw_pid.set_limit(cap)
-        rate = self._rate.value()  # (roll, pitch, yaw) rate or None -- no box: the gyro's stored tuple
+        # FRESH gyro only. A stale rate in a DERIVATIVE term is worse than none: it damps against a
+        # motion that already ended. pid.step() takes rate=None and falls back to derivative-on-error,
+        # which is the documented degraded mode -- so hand it None rather than a 500 ms-old sample
+        # (exactly what a silent LSM6DSO32 INT1 was producing before the poll fallback landed).
+        rate, rate_source, _rate_age = self._rate.read()
+        if rate_source is None:
+            rate = None
         roll_rate, pitch_rate, yaw_rate = rate if rate is not None else (None, None, None)
         roll_cmd = roll_pid.step(law.roll_setpoint - roll, dt_ms, roll_rate)
         pitch_cmd = pitch_pid.step(law.pitch_setpoint - pitch, dt_ms, pitch_rate)
         yaw_cmd = yaw_pid.step(law.heading_error * fixed.SCALE, dt_ms, yaw_rate)  # coordinate turn
+        # stash the per-axis demands (whole degrees) for flight.csv -- small-int stores, no boxing
+        self._roll_cmd = roll_cmd // fixed.SCALE
+        self._pitch_cmd = pitch_cmd // fixed.SCALE
+        self._yaw_cmd = yaw_cmd // fixed.SCALE
         # positional (not roll=...) so no kwargs dict is built on the hot path
-        self._actuate(roll_cmd // fixed.SCALE, pitch_cmd // fixed.SCALE, yaw_cmd // fixed.SCALE)
+        self._actuate(self._roll_cmd, self._pitch_cmd, self._yaw_cmd)
 
     def _actuate(self, roll: int, pitch: int, yaw: int) -> None:
         """
@@ -269,6 +322,41 @@ class Flight(task.Task):
             names = list(self._mixer.surfaces)  # the config surface names (mixer.surfaces is the gain map)
             self._mixer.bind(dict(zip(names, self.controller.find(names))))
         self._mixer.actuate(roll, pitch, yaw)
+
+    def _record(self, now: int) -> None:
+        """
+        Sample the control state into flight.csv (see setup for why this stream exists).
+
+        Called every tick BEFORE the stage/attitude gates, so a disarmed, degraded or neutral pass is
+        recorded too -- the flights worth reviewing are the ones that STOPPED controlling, and a stream
+        that goes quiet exactly then would be useless. The governor fields are fresh (it stepped this
+        tick); the setpoints/demands are the previous tick's, which a 10 Hz sample of a 100 Hz loop
+        cannot resolve anyway.
+
+        A ring overflow must never break the control loop, so unlike the sensor drivers (whose telemetry
+        is allowed to raise, per the error policy) this one is caught and deduped through note() --
+        visible as unhealthy on the CC panel, but the fins keep flying.
+
+        Args:
+            now - this tick's ticks_us.
+
+        Returns:
+            None; pushes one telemetry row when the sample period has elapsed.
+        """
+        if not self._telemetry.due(now):
+            return  # not due -- return BEFORE building the values tuple (no 100 Hz hot-path allocation)
+        law = self._guidance
+        try:
+            # centi-units, not floats: a float in the row is heap-BOXED on MicroPython and then
+            # str()-formatted, and it does not match the fixnum convention the rest of the
+            # control path already speaks. Ints cost nothing and the tools scale by SCALE.
+            self._telemetry.push((self.controller.stage, 1 if self._active else 0,
+                                  int(self._governor.airspeed() * fixed.SCALE), self._mixer.limit,
+                                  law.roll_setpoint, law.pitch_setpoint, law.heading_error,
+                                  self._roll_cmd, self._pitch_cmd, self._yaw_cmd,
+                                  int(self._wind.speed() * fixed.SCALE), int(self._wind.direction())))
+        except Exception as error:
+            self.note('flight :: telemetry %r', error)  # deduped; control continues regardless
 
     def _neutral(self) -> None:
         self._actuate(0, 0, 0)
@@ -333,6 +421,22 @@ class Flight(task.Task):
         """
         return self._active, self._steps, self._stage, self._last_step_us
 
+    def airspeed(self) -> float:
+        """The fused airspeed estimate (m/s) -- what the checkpoint persists for a warm start."""
+        return self._governor.airspeed()
+
+    def seed_airspeed(self, airspeed: float) -> None:
+        """
+        Restore the airspeed a warm-start crumb carried (warmstart.py calls this after the gate passes).
+
+        Args:
+            airspeed - the airspeed (m/s) saved by the last checkpoint before the reset.
+
+        Returns:
+            None -- seeds the governor's estimator and re-caps the mixer off it.
+        """
+        self._governor.seed_airspeed(airspeed)
+
     def vitals(self) -> dict:
         """
         The live flight-panel readout (CC dashboard).
@@ -347,8 +451,16 @@ class Flight(task.Task):
         """
         wind_e, wind_n = self._wind.components()
         reach = self._guidance.reachability(self._glide_ratio, wind_e, wind_n, self._governor.airspeed())
+        # attitude + the commanded fins make the panel a WALK-TEST HUD (findings §27.19): carrying the
+        # glider, the operator needs to see the fins answer the attitude, not just the derived numbers
+        value, source, _age = self._attitude.read()
+        attitude = None if (source is None or value is None) else {
+            'heading': round(fixed.to_float(value[0])) if isinstance(value[0], int) else round(value[0]),
+            'roll': round(fixed.to_float(value[1])), 'pitch': round(fixed.to_float(value[2]))}
         return {'airspeed': round(self._governor.airspeed(), 1), 'fin_cap': self._governor.cap(),
-                'active': self._active, 'reach': reach, 'r_min_m': round(self._guidance.landing_turn_radius()),
+                'active': self._active, 'reach': reach, 'r_min_m': _round_or_none(self._guidance.landing_turn_radius()),
+                'attitude': attitude, 'fins': self._mixer.angles(),
+                'heading_error': self._guidance.heading_error,
                 'wind': {'speed': round(self._wind.speed(), 1), 'from': round(self._wind.direction())}}
 
     def inspect(self) -> dict:

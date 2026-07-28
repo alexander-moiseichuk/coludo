@@ -3,7 +3,7 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 Task base class and driver registry -- the unit the Controller creates and supervises.
 
-Every component/system task follows the common lifecycle from specs/coludo.md:
+Every component/system task follows the common lifecycle from doc/specs/coludo.md:
   setup() async; initialize or reset; return True on success
   probe() async; ON-DEMAND self-test (the CC `probe` command, never at boot) -> None if healthy,
       else an error string. Default None; a sensor reports 'X not found on i2c:0', an actuator
@@ -24,6 +24,8 @@ component, and keeps its own INSTANCE directory -- find()/query(), "what is curr
 dependency lookup. Two deliberately separate lookups: class-by-name here, instance-by-name on the
 Controller. The driver/activity names share one registry for now; splitting drivers out later.
 """
+
+import asyncio
 
 import inspector
 
@@ -64,6 +66,8 @@ class Task(inspector.Inspectable):
         self._ok: bool = False
         self._subs: list = []
         self._healthy: bool = True  # RUNTIME read health (distinct from _ok = setup ok); note() tracks it
+        self._strikes: int = 0  # consecutive-failure run for strike() (see below)
+        self._claimed: bool = False  # a multi-step device conversation is in progress (claim())
 
     def note(self, template: str = None, arg=None) -> None:
         """
@@ -120,6 +124,107 @@ class Task(inspector.Inspectable):
     async def setup(self) -> bool:
         """Initialize or reset. Override. Return True on success, False otherwise."""
         raise NotImplementedError('Task.setup() must be overridden')
+
+    async def claim(self) -> None:
+        """
+        Wait until no other caller owns this device's MULTI-STEP conversation, then take it.
+
+        Some devices carry state across an await -- icp10111 is write-measure, sleep, read; vl53l4cx is
+        status, distance, then the interrupt clear that arms the next sample. A second caller entering
+        mid-sequence issues its own command into the middle of the first and both come back NAKing:
+        measured at a 20.8 % failure rate when a diagnostic polled alongside the run loop. It is not
+        bus SHARING (peers on the same bus cost nothing) -- it is one device having one conversation.
+
+        A plain flag, not asyncio.Lock: `async with lock` measures ~288 B on this port (see the
+        per-operation lock removed in 556f98c) and MicroPython's loop is cooperative, so the flag can
+        only change across an await. Always release in a `finally` -- a raising read must not wedge
+        every future caller.
+
+        What is NOT here: whether a waiting caller can be served from cache instead. That predicate is
+        device-specific (icp10111 by sample age, vl53l4cx by presence) and stays with the device.
+
+        Args:
+            (none)
+
+        Returns:
+            None; the caller owns the device until unclaim().
+        """
+        while self._claimed:
+            await asyncio.sleep_ms(1)
+        self._claimed = True
+
+    def unclaim(self) -> None:
+        """Release the claim taken by claim(); call it from a `finally`, never a happy path only."""
+        self._claimed = False
+
+    def strike(self, failed: bool, limit: int) -> bool:
+        """
+        Count a run of CONSECUTIVE failures; True exactly ONCE, when the run reaches `limit`.
+
+        Four drivers had hand-rolled this (icp10111 read failures -> general-call reset, sdp810 ->
+        continuous-mode restart, lsm6dso32 INT1 timeouts -> poll fallback, bno055 frozen-fusion ->
+        withhold attitude) and they had already drifted apart: two fired at `== limit`, one at
+        `>= limit`, and each kept its own counter and reset. The shape is identical every time and the
+        subtle part is the same every time -- act ONCE while the fault persists, not on every tick, and
+        rearm only on a genuine success.
+
+        Returning True only on the transition is what gives "once": a caller can escalate directly
+        without tracking whether it already has. A latch (bno055's withheld attitude, lsm6dso32's poll
+        mode) sets its own flag on that True and clears it on its own terms, since "recovered" means
+        something different per device and does not belong here.
+
+        Args:
+            failed - True when this pass failed; False on a good pass, which rearms the count.
+            limit - consecutive failures that constitute a real fault rather than a blip.
+
+        Returns:
+            True on the pass that reaches `limit`, False every other time (including further failures).
+        """
+        if not failed:
+            self._strikes = 0
+            return False
+        self._strikes += 1
+        return self._strikes == limit
+
+    def calibration(self) -> str:
+        """
+        What the OPERATOR must do to make this device flight-ready -- or '' when there is nothing.
+
+        A sibling of probe(), and needed because the two answer different questions. probe() asks "does
+        the hardware work" -- an uncalibrated BNO055 passes it, because the part responds perfectly.
+        This asks "is it ready to FLY", which for several devices means a physical act nobody can infer
+        from the config: the IMU wants motion, the pitot still air, the baro a settled ground reference.
+
+        ONE STRING, deliberately. '' means nothing to do -- device needs no calibration, or already
+        satisfied -- so a caller polls by simply re-reading until it empties, and the operator surfaces
+        need no state machine. Fold the live reading INTO the text ("...until mag reads 3 (now mag 1)")
+        so progress is visible while the instruction stays the thing being shown.
+
+        Args:
+            (none)
+
+        Returns:
+            '' when nothing to do, else the instruction for the operator.
+        """
+        return ''
+
+    async def calibrate(self) -> str:
+        """
+        Start / enforce this device's calibration (the CC `calibrate <device>` command).
+
+        Only meaningful where the board can DO something -- capture a tare, re-zero a reference. Where
+        calibration is inherently physical (the BNO055 needs the airframe moved) the device says so
+        through calibration() and this stays a no-op, so a caller can sweep every device without
+        special-casing. The operator precondition still applies to both: the board cannot capture a
+        still-air tare while somebody is waving the airframe about.
+
+        Args:
+            (none)
+
+        Returns:
+            None on success (or nothing to do), else a human-readable failure string.
+        """
+        return None
 
     async def probe(self) -> str:
         """

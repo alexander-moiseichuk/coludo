@@ -4,7 +4,7 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 Baked-in default board configuration for the WaveShare ESP32-P4-WIFI6 controller.
 
 Human-edited firmware default and the safe fallback when no valid board.config exists (see
-specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
+doc/specs/board-config.md). Pins come from doc/waveshare_esp32p4_pins.md (validated on hardware by
 test/test_pins.py). `default()` returns a FRESH dict each call so callers may mutate it freely.
 
 Topology: buses are grouped by type then id; a sensor/component addresses one by `bus` (the kind,
@@ -20,13 +20,27 @@ try:
 except ImportError:
     _FIRMWARE_VERSION = 'dev'
 
+"""
+CONFIG SCHEMA VERSION -- the date THIS file's structure or defaults last changed (YYYYMMDD).
+
+A saved board.config carries the version it was produced from, forever; `config.load()` keeps running
+the SAVED config (what you saved is what flies -- reproducible) but reports a mismatch against this
+constant, so a config predating a new sensor/section is visible instead of silently dropping devices
+(findings §27.13).
+
+**BUMP THIS on any change to the config TREE or its defaults** -- a new sensor/component, a renamed or
+moved key, a changed default value. Do NOT bump for a comment or a docstring edit. Bumping is what turns
+'my new sensor never ran' into a reported mismatch.
+"""
+CONFIG_VERSION: str = '20260725'  # mg90s yaw + airspeed_sdp810 + this version field
+
 
 def default() -> dict:
     board = {'id': 'taster', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION,
              'setup_retries': 3}  # re-attempt a flaky device setup at boot (breadboard contacts; 1 = no retry)
 
     """
-    warm start (specs/coludo.md "In-flight reboot & warm start"): a mid-air reset restores GLIDING
+    warm start (doc/specs/coludo.md "In-flight reboot & warm start"): a mid-air reset restores GLIDING
     when the NVS breadcrumb + the separation latch + baro-above-pad all agree. False -> every boot
     is cold (bench work with a separated stack on the desk).
     """
@@ -35,7 +49,7 @@ def default() -> dict:
     """
     Wi-Fi: STA-only (the sole supported radio mode; no `mode` knob exists).
 
-    policy (CC-less field ops, specs/coludo.md "Field operation without CC"): 'auto' joins/rejoins
+    policy (CC-less field ops, doc/specs/coludo.md "Field operation without CC"): 'auto' joins/rejoins
     every retry_ms on the ground, goes SILENT from BOOSTING through LANDING (no reconnect churn
     under GC-off) and resumes at DONE (recovery-crew hotspot); 'disabled' never touches the radio
     this session.
@@ -113,7 +127,7 @@ def default() -> dict:
     }
 
     """
-    Fin / servo control -- one home for every fin knob (specs/board-config.md "Fins").
+    Fin / servo control -- one home for every fin knob (doc/specs/board-config.md "Fins").
 
     concurrency: max fin servos allowed to SLEW at once via servo.move() -- caps the boost-rail
     current transient. 3 (== fin count) = no limit; drop to 2/1 if the rail sags on the built airframe.
@@ -168,7 +182,11 @@ def default() -> dict:
         'bus': 'spi', 'id': 1,  # shares the ADXL375 SPI1, own chip-select (mode 3, 5 MHz)
         'addr': 0x6A,  # kept for an i2c fallback (set bus 'i2c', id 0)
         'cs_pin': 'lsm6dso32_cs',  # SPI chip-select (GPIO50)
-        'int_pin': 'lsm6dso32_int1',  # INT1 accel data-ready drives the sampling (fallback_ms 500 if silent)
+        'int_pin': 'lsm6dso32_int1',  # INT1 accel data-ready drives the sampling
+        # POLL rate when INT1 is silent (see the driver's run loop). Must track the sensor's 104 Hz ODR
+        # and beat the 20 ms `rate` freshness window below -- the old 100 ms default would have left the
+        # PID's D term starved even in poll mode, so the fallback has to be fast, not merely present.
+        'period_ms': 10,
         'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
         'enabled': True,
         'provides': {'accel': {'priority': 0, 'timeout_ms': 20},   # PRIMARY accel (±32 g)
@@ -348,11 +366,11 @@ def default() -> dict:
         must stay inside (stall / no-load detection during the pre-flight self-test).
     """
     servos = [
-        # All SG90 for now. The `mg90s` driver (drivers/mg90s.py) is ready for the POSITIONAL metal-gear
-        # MG90S (holds a fin against wind back-drive): set a fin's `driver` to 'mg90s' once that servo is
-        # fitted -- a mixed fleet (mg90s + sg90) is supported. NB a continuous-rotation "360" MG90S is
-        # NOT a fin servo (pulse = speed, it spins and never holds an angle) -- use the 180deg positional.
-        {'name': 'servo_yaw', 'driver': 'sg90', 'pin': 'servo_yaw', 'enabled': True},
+        # MIXED FLEET: yaw is a POSITIONAL metal-gear MG90S 180deg (fitted 7/25 -- it holds the rudder
+        # against wind back-drive); the elerons stay SG90. Each fin's `driver` is independent, so mixing
+        # is supported. NB a continuous-rotation "360" MG90S is NOT a fin servo (pulse = speed, it spins
+        # and never holds an angle) -- only the 180deg positional part works here.
+        {'name': 'servo_yaw', 'driver': 'mg90s', 'pin': 'servo_yaw', 'enabled': True},
         {'name': 'servo_eleron_left', 'driver': 'sg90', 'pin': 'servo_eleron_left', 'enabled': True},
         {'name': 'servo_eleron_right', 'driver': 'sg90', 'pin': 'servo_eleron_right', 'enabled': True},
     ]
@@ -490,9 +508,17 @@ def default() -> dict:
     interval. airspeed_unconfident_ms: until the estimate is TRUSTED (a fresh boot / mid-air reset
     reads 0 before the accel integrator or a GNSS fix charge it) the fin cap is taken from THIS
     conservative speed, not the un-charged 0 (which would open authority to the full 45deg at high q).
+
+    pitot_min_ms / pitot_max_ms bound the band in which the SDP810 reading is TRUSTED over the estimate,
+    and both bounds guard the same failure: an out-of-band pitot UNDER-reads, and an under-read loosens
+    the fin cap (unsafe). Above max the +/-500 Pa cell rails (~30 m/s); below min the dynamic pressure
+    (q = 1/2 rho v^2 -- only ~5.5 Pa at 3 m/s) is inside the tare error, which is exactly what a BLOCKED,
+    iced or disconnected tube reads. It is also below stall, so it is never a valid airspeed in a control
+    stage. Out of band the accel backbone + GNSS corrector carry the estimate instead.
     """
     airspeed_governor = {'airspeed_floor_hz': 5, 'airspeed_ceiling_hz': 50, 'airspeed_dive_pitch': -45.0,
-                         'airspeed_unconfident_ms': 30.0}
+                         'airspeed_unconfident_ms': 30.0,
+                         'pitot_min_ms': 3.0, 'pitot_max_ms': 28.0, 'pitot_gain': 0.5}
 
     """
     GNSS corrector gate: at |pitch| >= gnss_steep_pitch (deg) the receiver's 2D GROUND speed cannot
@@ -571,7 +597,7 @@ def default() -> dict:
     health = {'name': 'health', 'activity': 'health', 'period_ms': 1000, 'probe_ms': 10, 'enabled': True}
 
     """
-    CC-less field agent (specs/coludo.md "Field operation without CC"), OFF by default: on the pad
+    CC-less field agent (doc/specs/coludo.md "Field operation without CC"), OFF by default: on the pad
     it selects the mission site by the first GNSS fix (nearest launch.config site within
     max_range_m; none -> a GENEROUS spiral-landing fallback box the spiral just lands inside:
     fallback_width_m (the wide side facing the pad, left-right) x fallback_depth_m, its near edge
@@ -587,7 +613,7 @@ def default() -> dict:
              'auto_arm': False, 'auto_arm_dwell_s': 60, 'still_g': 0.3}
 
     """
-    Warm-start checkpoint (warmstart.py, specs/coludo.md "In-flight reboot & warm start"): saves the
+    Warm-start checkpoint (warmstart.py, doc/specs/coludo.md "In-flight reboot & warm start"): saves the
     live flight state (stage, altitude, speed, uptime) to NVS so a mid-air reset recovers the SAVED
     stage instead of going ballistic -- but ONLY for an ARMED flight (a passive telemetry flight never
     warm-starts into an armed stage). checkpoint_s (floored at 1 s) is the cadence WHILE AIRBORNE;
@@ -622,6 +648,7 @@ def default() -> dict:
     ]
 
     return {
+        'version': CONFIG_VERSION,  # travels into board.config on save and stays there forever
         'board': board,
         'wifi': wifi,
         'buses': buses,

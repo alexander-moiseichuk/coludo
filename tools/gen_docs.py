@@ -13,16 +13,18 @@ _-internals).
 
 import ast
 import os
+import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SOURCES = [
-    ('src/glider', 'glider firmware (MicroPython)'),
-    ('src/glider/drivers', 'glider HAL drivers — `drivers/`'),
-    ('src/glider/tasks', 'glider subsystem tasks — `tasks/`'),
-    ('src/control', 'control (CPython)'),
-    ('src/control/commands', 'control operator commands — `commands/`'),
-]
-SKIP_PREFIXES = ('test_', 'itest_', 'bench_', 'gen_docs', '__init__', 'version')
+import sources
+
+ROOT = sources.ROOT
+TITLES = {  # the chapter heading each scanned directory gets (the dirs themselves live in sources)
+    'src/glider': 'glider firmware (MicroPython)',
+    'src/glider/drivers': 'glider HAL drivers — `drivers/`',
+    'src/glider/tasks': 'glider subsystem tasks — `tasks/`',
+    'src/control': 'control (CPython)',
+    'src/control/commands': 'control operator commands — `commands/`',
+}
 
 
 def module_header(tree: ast.Module) -> str:
@@ -99,9 +101,7 @@ def is_public(name: str) -> bool:
 
 
 def render_module(path: str, out: list) -> None:
-    with open(path) as handle:
-        source = handle.read()
-    tree = ast.parse(source)
+    tree = sources.parse(path)
     name = os.path.basename(path)
     out.append('## `%s`\n' % name)
     test = os.path.join(os.path.dirname(path), 'test', 'test_%s' % name)
@@ -133,28 +133,41 @@ def render_module(path: str, out: list) -> None:
                 out.append(doc.strip() + '\n')
 
 
-def main() -> None:
+def main(check: bool = False) -> None:
     out = ['# Coludo API reference', '',
            '_Generated from module docstrings by `tools/gen_docs.py` — do not edit by hand;'
            ' run `python3 tools/gen_docs.py` to regenerate._', '',
            'See [`architecture.md`](architecture.md) for the module dependency graph, class hierarchy,'
            ' and the annotated `Flight._step()` hot-path call tree (`tools/gen_graph.py`).', '']
-    for rel, title in SOURCES:
-        directory = os.path.join(ROOT, rel)
-        files = sorted(f for f in os.listdir(directory)
-                       if f.endswith('.py')
-                       and not f.startswith(SKIP_PREFIXES)
-                       and not os.path.islink(os.path.join(directory, f)))
-        if not files:
-            continue
-        out.append('# %s — `%s`\n' % (title, rel))
-        for name in files:
-            render_module(os.path.join(directory, name), out)
+    chapter = None
+    for relative, _name, path in sources.modules(sources.GLIDER_DIRS + sources.CONTROL_DIRS):
+        if relative != chapter:  # a directory with no sources never opens a chapter
+            out.append('# %s — `%s`\n' % (TITLES[relative], relative))
+            chapter = relative
+        render_module(path, out)
     target = os.path.join(ROOT, 'doc', 'api.md')
+    text = '\n'.join(out).rstrip() + '\n'
+    """
+    --check makes this gateable like the other three generators. It was the ONLY derived doc `make
+    check` did not enforce, and it silently rotted 417 lines (330+/87-) while gen_pinmap / gen_graph /
+    gen_schema stayed exact through the same period -- an API reference missing a session's worth of
+    modules and signatures is worse than none, because it reads as current.
+    """
+    if check:
+        existing = ''
+        if os.path.exists(target):
+            with open(target) as handle:
+                existing = handle.read()
+        if existing != text:
+            print('doc/api.md is STALE -- run: python3 tools/gen_docs.py', file=sys.stderr)
+            return 1
+        print('api doc up to date')
+        return 0
     with open(target, 'w') as handle:
-        handle.write('\n'.join(out).rstrip() + '\n')
+        handle.write(text)
     print('wrote %s (%d modules)' % (target, sum(1 for _ in out if _.startswith('## '))))
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main('--check' in sys.argv))

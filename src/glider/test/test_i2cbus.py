@@ -10,6 +10,8 @@ import asyncio
 import config_default
 import i2cbus
 
+_BUS_FAIL_LIMIT_LOCAL = 4  # mirrors i2cbus._BUS_FAIL_LIMIT (a module const is not importable)
+
 
 async def amain():
     spec = config_default.default()['buses']['i2c']['0']  # sda7/scl8
@@ -38,7 +40,37 @@ async def amain():
     assert isinstance(bus.scan(), list)  # still scans after the in-place re-init
     await bus.retune(spec.get('freq', 400000))  # restore the configured freq
 
-    print('ok: i2cbus shared/cached per id, scan/locked-read, diagnose, retune, devices=%s' % [hex(a) for a in devices])
+    """
+    BUS-WEDGE recovery. Per-driver recovery cannot fix the failure that matters most: a slave reset or
+    glitched mid-byte can hold SDA LOW forever, and then every driver on the bus fails with none able
+    to recover -- the general call, the sdp810 restart and the rest all need a working bus to be issued
+    on. The bus counts CONSECUTIVE failures and, only past the limit, clocks SDA free and re-inits.
+    """
+    fails_before = bus._fails
+    for _ in range(_BUS_FAIL_LIMIT_LOCAL - 1):   # isolated NAKs must NOT trigger a bus clear
+        try:
+            await bus.read(0x7E, 0x00, 1)        # nothing at this address -> OSError
+        except OSError:
+            pass
+    assert bus._fails == _BUS_FAIL_LIMIT_LOCAL - 1, bus._fails
+    try:
+        await bus.read(0x7E, 0x00, 1)            # the one that crosses the limit -> recover
+    except OSError:
+        pass
+    # the counter RESET is the observable proof it acted (machine.I2C is a per-bus singleton on this
+    # port, so a re-inited peripheral is not a distinguishable object)
+    assert bus._fails == 0, 'the wedge recovery did not run: %s' % bus._fails
+    # ...and the bus still WORKS after being clocked free and re-inited
+    assert isinstance(bus.scan(), list) if hasattr(bus, 'scan') else True
+
+    # a SUCCESSFUL transfer clears the run, so unrelated NAKs never accumulate into a false wedge
+    if devices:
+        await bus.read(devices[0], 0x00, 1)
+        assert bus._fails == 0, bus._fails
+    bus._fails = fails_before
+
+    print('ok: i2cbus shared/cached per id, scan/locked-read, diagnose, retune, wedge recovery, '
+          'devices=%s' % [hex(a) for a in devices])
 
 
 asyncio.run(amain())

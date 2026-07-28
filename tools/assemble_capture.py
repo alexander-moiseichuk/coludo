@@ -27,13 +27,16 @@ def assemble(session: str, indir: str, out: str) -> int:
         The number of rows written to `out`.
     """
     lines = []
+    inventory = {}
     for path in sorted(glob.glob(os.path.join(indir, session + '_*.csv'))):
         name = os.path.basename(path)[len(session) + 1:]  # strip the '<session>_' prefix
+        before = len(lines)
         with open(path) as handle:
             for row in handle:
                 row = row.rstrip('\r\n')
                 if row:
                     lines.append('@%s_%s@%s' % (session, name, row))
+        inventory[name] = len(lines) - before
         if name == 'sequencer.csv':  # synthesize stage-event log lines for the report markers
             with open(path) as handle:
                 for row in handle:
@@ -42,6 +45,17 @@ def assemble(session: str, indir: str, out: str) -> int:
                         lines.append('%s controller :: stage -> %s' % (fields[0], fields[1]))
     with open(out, 'w') as handle:
         handle.write('\n'.join(lines) + '\n')
+    """
+    REPORT WHAT WENT IN. A capture missing streams assembles into a file that looks exactly like a
+    whole flight -- there is no marker of absence -- and every downstream tool then renders a partial
+    flight as a complete one. That class has bitten twice (§27.1 hardcoded stream list, §27.8 a
+    5-stream fixture standing in for an 8-stream flight). The stream set is config-dependent (per-device
+    streams take their name from the device), so this cannot assert a fixed list; naming what IS here,
+    with row counts, is what lets a human or a caller notice what is NOT.
+    """
+    for name in sorted(inventory):
+        print('  %-28s %6d rows' % (name, inventory[name]))
+    print('  %-28s %6d streams' % ('TOTAL', len(inventory)))
     return len(lines)
 
 

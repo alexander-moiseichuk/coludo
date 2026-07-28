@@ -3,7 +3,7 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 Inspector -- the registry of Inspectable objects and the operator-facing introspection surface.
 Control's inspect/update/stats commands resolve an object by name through the Inspector
-(specs/cc-protocol.md). Any object an operator should see or tweak registers itself here.
+(doc/specs/cc-protocol.md). Any object an operator should see or tweak registers itself here.
 """
 
 
@@ -74,6 +74,27 @@ class Inspector:
             if run is not None:
                 results[name] = await run()
         return results
+
+    @classmethod
+    def calibration_all(cls) -> dict:
+        """
+        Calibration requirement + state for every registered device that declares one.
+
+        The sweep behind the CC `calibrate` status query and the dashboard: devices that need no
+        calibration are simply absent, so the operator sees a short list of what actually wants doing
+        rather than a wall of "n/a".
+
+        Returns:
+            {name: instruction} for devices with OUTSTANDING calibration; empty when all are satisfied.
+        """
+        states = {}
+        for name in cls.names():
+            report = getattr(cls.get(name), 'calibration', None)
+            if report is not None:
+                instruction = report()
+                if instruction:  # '' = nothing to do, so it never reaches the operator
+                    states[name] = instruction
+        return states
 
     @classmethod
     def inspect(cls, name: str) -> dict:

@@ -165,9 +165,13 @@ Alternative is to connect e.g. from [6F22 9V using plug](https://www.amazon.com/
 
 ## Converter
 The servo rail is driven by a **ND3A05SD DC-DC module (5 V / 3 A, isolated)**, separate from the
-controller rail. Three **MG90S at ~1.2 A stall each** give a **~3.5 A simultaneous peak that exceeds the
-3 A module**, so the rail carries a **reservoir capacitor** to source that transient — the decided,
-primary protection.
+controller rail. **MEASURED (2026-07-25, INA226 on the servo rail @ ~100 Hz, MG90S yaw, 10 × full
+0↔180° at max slew):** **peak 3.9 W = 0.79 A**, mean during travel ~1.4 W, ~625 mJ per 180° sweep,
+41 mW holding. So three moving together is **~2.4 A peak — inside the 3 A module**, not the ~3.5 A the
+earlier ~1.2 A/servo estimate suggested. (A USB power meter reads only ~2 W here: it updates at a few Hz
+and smooths, so it sees roughly the mean plus board baseline, never the sub-100 ms spike. Size the
+**capacitor from the peak** and the **converter from the mean**.) The rail still carries a **reservoir
+capacitor** to source the transient — the decided, primary protection — but it is headroom, not a rescue.
 
 The module maker also suggests a series **diode** (an isolated buck cannot sink current, so a
 back-driven motor's regenerative kick pushes the floating output up until something clamps it). **That
@@ -179,8 +183,8 @@ if any overvoltage is still a worry.
 
 ```
   battery  ──▶  ND3A05SD  ──▶ (D1 — omitted) ──┬──────────▶  3× MG90S servos
-  6F22/LiPo     5 V / 3 A                       │               ~1.2 A each
-                (isolated)                       │               ~3.5 A peak
+  6F22/LiPo     5 V / 3 A                       │            0.79 A each (measured)
+                (isolated)                       │            ~2.4 A if all three
                                       ┌──────────┴─────────┐
                                       │ Cbulk 1000 µF      │  reservoir (decided):
                                       │  ‖ 10 µF ‖ 100 nF  │  sources the spike AND
@@ -242,7 +246,7 @@ Candidates (SG90 expected primary — cheap, compact, light):
 **60° looks interesting** (gives **±30°** of fin throw at ~4× torque); 45° (±22.5°) is too little angle.
 
 **Power**: servos run from their **own converter rail** (5 V — see [Converter](#converter) above),
-separate from the controller. The ~3.5 A peak of 3× MG90S is handled by that rail's **reservoir
+separate from the controller. The measured ~2.4 A peak of 3× MG90S is handled by that rail's **reservoir
 capacitor**; a series diode is not used (small servos → low back-EMF, the cap absorbs it). The firmware
 fin `concurrency` gate staggers servo motion so they do not all draw at once.
 
@@ -252,7 +256,7 @@ fin `concurrency` gate staggers servo motion so they do not all draw at once.
 runs the *governed* fin at ~3–4 % of stall — **~25–30× torque margin, no gearing needed**. The only
 stress case is an un-governed ±45° hardover near burnout (servo back-drives at ~60–90 m/s), where the
 output-shaft **bending** load is the limit, not torque — the sole reason to prefer the metal-gear
-**MG90S** (~+3 g). Derivation: [`../specs/coludo.md`](../specs/coludo.md) → "Fin authority → Servo torque".
+**MG90S** (~+3 g). Derivation: [`../doc/specs/coludo.md`](../doc/specs/coludo.md) → "Fin authority → Servo torque".
 
 ## SD card
 Any suitable by size and throughput as code, videos and logs will be written here.
@@ -282,7 +286,7 @@ The detailed numbers are avaliable in the [TMS-7 readme.md file](../models/TMS-7
 
 The F15-4 mass above (98.8 g) is measured. The alternative **E16** motor is lighter — ~82.5 g loaded. Both motors'
 estimated flight envelope (peak accel / speed / apogee / glide range) is in
-[`specs/coludo.md` → Flight envelope](../specs/coludo.md).
+[`doc/specs/coludo.md` → Flight envelope](../doc/specs/coludo.md).
 
 
 # Potential configurations
@@ -299,3 +303,63 @@ There are a number of composition options possible
 |    4    | required and optional components |   144.4    | rich case, controllable on top level, but could be issues with power consumption |
 
 **Note:** sticky pads for attaching boards and engines furniture not added
+
+## v0.2 board — hardware TODO
+
+Found on the v0.1 hand-wired board (bench, 2026-07-26). **v0.1 PCB is already ordered**, so these are
+carried to v0.2. Each has a software mitigation on the branch, so none blocks flying v0.1 — but the
+mitigations are degradations, not equivalents.
+
+| # | Issue | Evidence | v0.2 action | Software mitigation today |
+|---|---|---|---|---|
+| 1 | **LSM6DSO32 INT1 not connected** | `INT1_CTRL` 0x01 written and read back, accel + gyro both at 104 Hz, `STATUS` continuously data-ready — yet **GPIO28 stuck low, never toggles** | Route INT1 to its GPIO and verify the net | Driver detects the silent line after 3 timeouts and polls at 10 ms instead (`rate` 2.0 → 72 Hz). Costs the interrupt's timing precision and some CPU |
+| 2 | **BNO055 attitude frozen — cause UNDETERMINED** | Bit-identical Euler triple, `sys`/`mag` calibration stuck at 0. Originally called a faulty fusion core; **that verdict does not hold** (see below) | Re-test with VERIFIED motion before condemning any part. Self-test does **not** exercise fusion (`ST_RESULT` 0x0F on a part that was not updating) | Driver withholds a frozen attitude *while rotating* so the priority-1 gyro backup takes over |
+| 3 | **Move the BNO055 to `i2c:1`** | Attitude (priority 0) shares `i2c:0` with four devices; a wedge, or the icp10111 latch-up recovery's general-call reset, takes the whole bus down together | Put the BNO055 on `i2c:1` with the INA226 | None possible in software — the buses are physical. See below for why this one matters most |
+| 4 | **BNO055 breakout has no 32.768 kHz crystal** | Selecting `CLK_SEL` external kills fusion outright (EUL all zeros) | Prefer a crystal-equipped module: Bosch specifies the external crystal for fusion modes | Driver leaves `CLK_SEL` internal |
+
+### The BNO055 "faulty part" call — retracted
+
+A v0.1 module was condemned as having a dead fusion core. **That conclusion was not supported.** Every
+test behind it was run with the board STATIONARY, and a stationary BNO055 legitimately repeats its
+fused output bit for bit — the replacement part does exactly the same at rest. The bench rig is fixed
+to a breadboard, so sustained motion is awkward, and three later runs that were *assumed* to be moving
+turned out to read 0.1–0.4 °/s. The diagnostics now print the gyro on every line and annotate a still
+sample as **"STILL — proves nothing"**, so the mistake cannot be repeated silently.
+
+What survives: the two parts behave identically at rest, and neither calibrates without motion. What
+does not: any claim that either is broken. Re-test with the gyro column showing >5 °/s before
+condemning hardware.
+
+**The operational consequence is the real finding.** NDOF fusion needs motion to calibrate, and a
+glider sits still on the pad — so the BNO055 can be uncalibrated and its attitude frozen *at launch*,
+on a perfectly good part. That is a pre-flight procedure item, not a hardware defect (see
+`doc/field_test.md` Phase 3).
+
+### v0.2 — BNO055 control lines to break out
+
+The v0.1 module is wired with a DFRobot Gravity 4-pin (VCC/GND/SDA/SCL), so every control pin the part
+offers is unreachable. Ranked by what this branch actually needed and could not do:
+
+| Pin | v0.2 | Why |
+|---|---|---|
+| **`RST`** | **MCU GPIO** | The escalation tier we are missing. Recovery today goes device → I2C general call → bus clear, and **all three stop short of "reset this specific part"**. The BNO055 pulled from v0.1 held its latched state through a full power cycle, and the icp10111 latch-up notes say only a rail cycle clears that one. A reset line turns "sensor lost for the rest of the flight" into "lost for 200 ms" |
+| **`INT`** | **MCU GPIO** | Data-ready sampling instead of polling. Worth less here than on the LSM6DSO32 (fusion is 100 Hz, we poll at 50), but the pin is cheap and it removes a poll loop |
+| `PS1` (+`PS0`) | **jumper** | Selects UART instead of I2C. The BNO055 is a documented I2C **clock-stretcher** — exactly the failure the bus-wedge recovery in `i2cbus` exists for, where one slave holding the line takes down four other devices. UART moves the worst offender off the shared bus entirely, which addresses #3 more thoroughly than relocating it to `i2c:1`. **Confirmed available:** UART3/4/5 all instantiate on this MicroPython build (uart1 = recorder, uart2 = GNSS), and 21 GPIOs are free — so a third UART costs pins, not peripherals |
+| `ADR` | solder pad | Selects 0x29 → a **second BNO055** (true attitude redundancy rather than gyro integration), or clash avoidance. No GPIO needed |
+| `BL_IND`, `NBOOT` | test pads | Reflashing the sensor's own firmware only |
+
+Free GPIOs after v0.1 (reserved straps excluded): **0, 1, 2, 9–13, 34–36, 39–45, 51–53**.
+
+**Every routed line must be continuity-checked at assembly.** `lsm6dso32_int1` is declared on GPIO28 in
+`config_default.py` and is not connected in copper: the driver silently sampled at 2 Hz, `rate` was
+stale 96 % of the time, and the PID's D term had quietly degraded to derivative-on-error. Nothing
+noticed until an unrelated investigation went looking. A routed-but-dead line is **worse** than an
+absent one, because the config claims it works. `diag_lsm_int.py` is the pattern: drive the pin, read
+it back, fail loudly.
+
+**Why #3 is the one worth spending layout on.** The attitude PRIMARY (BNO055, `i2c:0`) and its BACKUP
+(`tasks/attitude.py`, integrating the LSM6DSO32 on **SPI1**) are meant to be independent. Today they
+are — but only because the backup happens to be on SPI. Everything *else* the attitude path depends
+on shares `i2c:0`, so a single stuck slave on that bus takes out the primary plus the baro plus the
+pitot plus the laser at once. Moving the BNO055 to `i2c:1` leaves `i2c:0` as the "everything else"
+bus and gives the attitude chain no common failure point at all: primary on `i2c:1`, backup on SPI1.

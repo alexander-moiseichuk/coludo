@@ -136,6 +136,27 @@ fixnum like the rest of the control path.
 """
 
 _ATAN_CD = array.array('i', (4500, 2657, 1404, 713, 358, 179, 90, 45, 22, 11, 6, 3))  # atan(2^-i), cd
+"""
+PRE-NORMALISATION. The CORDIC's accuracy is set by how many bits its right-shifts have to give away,
+so a SMALL input vector is the inaccurate case, not a large one -- and atan2 is ratio-free, so
+scaling the vector up costs nothing and buys those bits back. Both cores below double (x, y) until
+one component reaches _NORM_MIN before iterating.
+
+Measured on the board (test/diag_fixed_nav.py), worst error over 120 directions, before -> after:
+
+    magnitude    3 : 36.45 deg -> 0.025    (1455x)
+    magnitude  100 :  0.74 deg -> 0.048      (15x)   <- attitude.py's centi-g accel products
+    magnitude 1000 :  0.11 deg -> 0.040     (2.8x)
+
+i.e. a flat ~0.05 deg floor at every magnitude instead of an error that explodes as the vector
+shrinks (9.88 deg at magnitude 1, where atan2_cd(0, 1) returned -988 instead of 0). Special-casing
+the axes would not have done this: the error is about magnitude, not direction -- atan2_cd(1, 1) was
+4326 rather than 4500, nowhere near an axis.
+
+_NORM_MIN is 2**14 so the normalised vector peaks near 2**15; the CORDIC's ~1.647 gain then leaves it
+around 2**16, far inside the 32-bit range the viper core works in.
+"""
+_NORM_MIN = const(1 << 14)
 
 
 def _cordic_vec_upy(y: int, x: int, atan) -> int:
@@ -150,6 +171,9 @@ def _cordic_vec_upy(y: int, x: int, atan) -> int:
     Returns:
         The accumulated angle in centidegrees.
     """
+    if x or y:  # scale up into the CORDIC's accurate range -- lossless, atan2 depends only on y/x
+        while x < _NORM_MIN and -_NORM_MIN < y < _NORM_MIN:
+            x, y = x << 1, y << 1
     z = 0
     for i in range(12):
         if y < 0:
@@ -161,6 +185,10 @@ def _cordic_vec_upy(y: int, x: int, atan) -> int:
 
 @micropython.viper
 def _cordic_vec_opt(y: int, x: int, atan: ptr32) -> int:
+    if x != 0 or y != 0:  # pre-normalise (see _ATAN_CD note); x >= 0 always -- atan2_cd reflects first
+        while x < 16384 and y < 16384 and y > -16384:
+            x = x << 1
+            y = y << 1
     z = 0
     i = 0
     while i < 12:
@@ -191,6 +219,16 @@ def atan2_cd(y: int, x: int) -> fixnum:
     typical / 1.8 deg worst over the glide envelope -- fine for the attitude backup; x1000 would tighten
     to ~0.16 deg if a caller ever needs it. CORDIC needs x >= 0, so x < 0 reflects into the right
     half-plane and the 180 deg is added back per quadrant.
+
+    The old magnitude floor is GONE -- the core pre-normalises (see the _ATAN_CD note), so the error
+    is a flat ~0.05 deg at every magnitude instead of exploding as the vector shrinks. Measured on
+    the board (test/diag_fixed_nav.py), worst error by magnitude: 1 -> 0.02 deg, 3 -> 0.025,
+    100 -> 0.048, 1000 -> 0.040. atan2_cd(1, 1) is now exactly 4500; the axes land within 0.02 deg.
+
+    What a caller still cannot get back is precision its INPUTS already threw away: two components
+    quantised to a coarse integer no longer carry the true ratio (a 10 cm vector at centimetre scale
+    holds ~10 % per component, so ~4 deg -- but only ~7 mm of position). Feed it the largest-magnitude
+    form of the vector available, and prefer raw sensor counts over pre-scaled values.
 
     Args:
         y - the direction vector's y component (integer, any magnitude).
@@ -303,3 +341,16 @@ def isqrt_opt(n: int) -> int:
 
 
 isqrt = isqrt_opt  # viper is safe on this firmware -> bind the optimised variant
+"""
+DOMAIN: n < 2**31. Past that it does not raise -- it returns a WRONG answer, quietly, because viper
+arithmetic is 32-bit machine ints. Measured on the board (test/diag_fixed_nav.py):
+
+    n = 2_499_952_050  -> 0      (truth 49_999)
+    n = 9_999_808_200  -> 37_548 (truth 99_999)
+
+A zero, not a small error. That is why navigation distance() cannot simply move to fixnum: east and
+north as CENTIMETRES square past 2**31 at only ~330 m of offset, so a 500 m range would report 0 m
+and every downstream range gate would read as "at the target". At METRE scale the same expression is
+exact to 32 km, which is the scale any integer distance() must use. attitude.py, the one caller
+today, feeds it centi-g accel products (~2e4) and is nowhere near the bound.
+"""

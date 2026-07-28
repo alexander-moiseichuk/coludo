@@ -22,6 +22,13 @@ dynamic pressure (the unsafe direction). `confident()` reports whether a TRUSTED
 flips True once the accel integrator charges a clearly-airborne speed (boost / a building dive) or the
 first sane GNSS fix anchors it (a direct set, not a slow blend). Until then the governor caps
 conservatively rather than off the un-charged 0. `confident` is a latch -- once trusted, it stays so.
+
+WARM START: the conservative cap keeps a recovered glider SAFE, but it is a blunt instrument -- pinned
+at `airspeed_unconfident_ms` (30 m/s) it also starves fin authority at the moment a glider that just
+rebooted mid-air most needs it. `seed()` closes that window from the warm-start crumb, so the recovery
+order is pitot -> saved -> GNSS: the crumb is available IMMEDIATELY at restore (no fix wait), the accel
+backbone integrates on from it, and the pitot -- a direct measurement -- overrides on its first in-band
+read. GNSS is last precisely because a fix can take tens of seconds to reacquire after a reset.
 """
 
 _CONFIDENT_MS: float = 5.0  # accel-charged speed above which the estimate is 'clearly airborne' -> trusted
@@ -60,6 +67,34 @@ class AirspeedEstimator:
             True once a trusted speed has been established.
         """
         return self._confident
+
+    def seed(self, airspeed: float) -> float:
+        """
+        Restore a PERSISTED airspeed (the warm-start crumb) as the starting estimate.
+
+        Distinct from `measure()`/`correct()`: the value is not a live reading but the last one this
+        airframe knew before the reset, so it is accepted whatever its magnitude -- including a below-
+        threshold one, which `measure()` would deliberately refuse to trust (a 0 on the pad must never
+        latch confidence). Here the CALLER has already established that a flight was genuinely in
+        progress (the warm-start gate: crumb + separation latch + baro above the pad), so a slow
+        airspeed is a real slow airspeed, not an un-charged zero.
+
+        Confidence latches, so the governor caps off this value instead of the blunt unconfident floor.
+        The estimate stays only as good as the crumb for a moment: `predict()` integrates the real accel
+        on from here (so a ballistic reboot gap is picked up), and the first in-band pitot read replaces
+        it outright. No over-read margin is added for the reboot gap -- its length is not knowable to
+        better than the crumb period, and inventing one would bias every recovery on a guess.
+
+        Args:
+            airspeed - the airspeed (m/s) persisted by the last checkpoint before the reset.
+
+        Returns:
+            The airspeed estimate (m/s), now seeded and confident. Ignores a negative/absurd value.
+        """
+        if 0.0 <= airspeed <= self._ceiling:
+            self._speed = airspeed
+            self._confident = True
+        return self._speed
 
     def predict(self, accel_along: float, dt: float) -> float:
         """

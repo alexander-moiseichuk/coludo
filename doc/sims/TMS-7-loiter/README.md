@@ -14,7 +14,14 @@ worst-case polar, calm, 5 % noise):
    the small motor lands in the zone too.
 
 Time aloft 121–148 % of the polar ceiling in every sweep case — objective ① (fly long) never paid
-for the precision. Full law + tuning history: specs/coludo.md "Gliding" and the guidance commit.
+for the precision. Full law + tuning history: doc/specs/coludo.md "Gliding" and the guidance commit.
 
-**Pending for this set:** the ON-BOARD confirmation matrix (glide-energy program step 3) replaces
-these host captures with device telemetry; until then treat the numbers as sim-predicted.
+> **SUPERSEDED (7/27) — the numbers above are ~100 m optimistic.** The pending on-board confirmation
+> is done: [`TMS-7-phase5_refactor`](../TMS-7-phase5_refactor/) flew this same law on the board and
+> got **121 m (F15) / 90 m (E16)**, not 18 / 17 m. These captures predate the harness correction
+> documented in [`TMS-7-physics_refresh`](../TMS-7-physics_refresh/) — the host servo applied every
+> command instantly, plus the circular-noise and control-rate defects. `physics_refresh` re-flew the
+> same F15 case on the corrected harness and got 119.2 m, which the board then independently
+> confirmed at 121.2 m. **The loiter LAW is unchanged and is what flew**; what was optimistic is the
+> harness it was measured on. Keep this set for the before/after of the law shape (racetrack vs
+> orbit+spiral), not for its absolute misses.

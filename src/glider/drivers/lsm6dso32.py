@@ -18,7 +18,6 @@ registers (0x22..0x2D), so one 12-byte read fetches both.
 import asyncio
 import struct
 
-import config
 import databoard
 import i2cbus
 import recorder
@@ -46,6 +45,7 @@ _INT1_CTRL = const(0x0D)  # INT1 routing (accel data-ready = bit 0)
 _OUTX_L_G = const(0x22)   # gyro X..Z then accel X..Z (12 bytes, signed LE, contiguous)
 _WHOAMI = const(0x6C)
 _DRDY_XL = const(0x01)    # INT1_CTRL: accel data-ready -> INT1
+_INT_SILENT_LIMIT = const(3)  # consecutive INT1 timeouts before declaring the line dead
 _CFG_XL = const(0x44)     # 104 Hz ODR, FS_XL = 01 = +/-32 g
 _CFG_G = const(0x4C)      # 104 Hz ODR, FS_G = 11 = +/-2000 dps
 _CFG_C = const(0x44)      # BDU=1, IF_INC=1, SIM=0 (4-wire)
@@ -60,19 +60,16 @@ class Lsm6dso32(task.Task):
     _dev = None  # class default: no transport until setup() builds it (diagnose reads directly)
 
     async def setup(self) -> bool:
-        kind = self.config.get('bus', 'spi')
-        bus_id = self.config.get('id', 1)
-        spec = config.bus(self.controller.config, kind, bus_id)
-        if spec is None:
-            return False
-        self._dev = self._transport(kind, bus_id, spec)  # register window: SPI chip-select or I2C addr
+        self._dev = self._transport()  # register window over whichever bus the config names
         if self._dev is None:
-            return False  # SPI selected but no cs_pin wired
+            return False  # no such bus in config, or SPI selected with no cs_pin wired
         self._period_ms: int = self.config.get('period_ms', 100)  # poll interval with no INT wired
         self._fallback_ms: int = self.config.get('fallback_ms', 500)  # safety sample if INT silent
         self._buf = bytearray(12)  # gyro(6) + accel(6)
         self._ready = asyncio.ThreadSafeFlag()
         self._int = None
+        self._edge_seen: bool = False  # non-blocking INT1 mark for the polling fallback
+        self._int_silent: bool = False  # the INT line is dead -> poll at period_ms instead
         try:
             whoami = 0
             for _ in range(5):  # the first SPI read after bus bring-up can glitch; retry the id check
@@ -96,25 +93,25 @@ class Lsm6dso32(task.Task):
         self._ok = True
         return True
 
-    def _transport(self, kind: str, bus_id: int, spec: dict):
+    def _transport(self):
         """
-        Build a register window over SPI (by chip-select) or I2C (by address).
+        A register window over the bus family the config names, so the rest of the driver is
+        bus-agnostic. LSM6DSO32 auto-increments via IF_INC, so the SPI window needs no address multi-byte bit.
 
-        LSM6DSO32 auto-increments via IF_INC, so the SPI device uses mb_bit=None (no address multi-byte
-        bit).
+        The bus lookup itself lives in i2cbus.bind()/spibus.bind(); this is only the dispatch.
 
         Args:
-            kind - the bus type, 'spi' or 'i2c'.
-            bus_id - the bus index within that type.
-            spec - the resolved bus spec (from config.bus).
+            (none) -- reads the component config.
 
         Returns:
-            The bus device for register access; None when SPI is selected but no cs_pin is wired.
+            The register-window device; None when the bus is undefined, or SPI is selected
+            with no cs_pin wired.
         """
-        if kind == 'spi':
-            cs = self._pin_gpio('cs_pin')
-            return spibus.get(bus_id, spec).device(cs, mb_bit=None) if cs is not None else None
-        return i2cbus.get(bus_id, spec).device(self.config.get('addr', _ADDR))
+        if self.config.get('bus', 'spi') == 'spi':
+            bus, cs = spibus.bind(self.controller.config, self.config), self._pin_gpio('cs_pin')
+            return bus.device(cs, mb_bit=None) if (bus is not None and cs is not None) else None
+        bus, addr = i2cbus.bind(self.controller.config, self.config, _ADDR)
+        return None if bus is None else bus.device(addr)
 
     async def _setup_interrupt(self) -> None:
         """
@@ -137,9 +134,28 @@ class Lsm6dso32(task.Task):
         self._int.irq(self._on_data_ready, Pin.IRQ_RISING)
         await self._dev.read_into(_OUTX_L_G, self._buf)  # clear data-ready -> next conversion = clean edge
 
+    def _ready_flagged(self) -> bool:
+        """
+        Did an INT1 edge arrive since the last check? Non-blocking, and clears the mark.
+
+        ThreadSafeFlag only offers a blocking wait(), which the polling fallback cannot use -- it would
+        re-block on the very line it stopped trusting. The IRQ therefore also sets a plain boolean,
+        which is safe because a MicroPython soft IRQ cannot interleave a Python bytecode.
+
+        Args:
+            (none)
+
+        Returns:
+            True when an edge arrived since the previous call.
+        """
+        seen = self._edge_seen
+        self._edge_seen = False
+        return seen
+
     def _on_data_ready(self, _unused_pin) -> None:
         """IRQ: a fresh sample is ready -- wake run(). ThreadSafeFlag.set() is interrupt-safe."""
         self._ready.set()
+        self._edge_seen = True  # plain mark too: the polling fallback cannot block on the flag
 
     async def sample(self) -> tuple:
         """
@@ -164,8 +180,18 @@ class Lsm6dso32(task.Task):
         """
         The sampling loop: publish the latest accel + gyro to the databoard, forever.
 
-        Sample on INT1 data-ready (or every fallback_ms if interrupts go silent; a plain poll when no
-        INT is wired), then push accel + rate to the databoard and telemetry.
+        Sample on INT1 data-ready, then push accel + rate to the databoard and telemetry.
+
+        INT-SILENT FALLBACK. `fallback_ms` was a SAFETY net for an occasional missed edge, but it also
+        silently became the sampling rate when the interrupt never arrives at all -- measured on the
+        bench at exactly 2.0 Hz (1/500 ms) with the driver still reporting healthy, because it IS
+        sampling, just 50x too slowly. `rate` has a 20 ms freshness window and NO backup provider, so
+        at 2 Hz it is stale 96 % of the time: `read()` hands the flight loop source=None and the PID's
+        D term quietly degrades to derivative-on-error. A dead wire must not masquerade as a healthy IMU.
+
+        So after `_INT_SILENT_LIMIT` consecutive timeouts the loop DROPS TO POLLING at period_ms (which
+        tracks the sensor's ODR, not a safety timeout) and says so once through note(). A single late
+        edge resumes interrupt mode, so a noisy line costs nothing permanent.
 
         Args:
             (none)
@@ -174,13 +200,20 @@ class Lsm6dso32(task.Task):
             None; runs forever (a wedged board reboots rather than exits).
         """
         while True:
-            if self._int is not None:
+            if self._int is not None and not self._int_silent:
                 try:
                     await asyncio.wait_for_ms(self._ready.wait(), self._fallback_ms)
+                    self.strike(False, _INT_SILENT_LIMIT)  # an edge arrived: rearm the run
                 except asyncio.TimeoutError:
-                    pass  # no interrupt within the window -> sample anyway (safety)
+                    if self.strike(True, _INT_SILENT_LIMIT):
+                        self._int_silent = True  # the line is dead, not merely jittery -> poll instead
+                        self.note('lsm6dso32 :: INT1 silent -- degraded to polling at %d ms',
+                                  self._period_ms)
             else:
                 await asyncio.sleep_ms(self._period_ms)
+                if self._int is not None and self._ready_flagged():
+                    self._int_silent = False  # an edge arrived after all -> back to interrupt-driven
+                    self.strike(False, _INT_SILENT_LIMIT)
             try:
                 sample = await self.sample()  # flat 6-tuple
                 self._accel.push(sample[:3])
@@ -247,6 +280,9 @@ class Lsm6dso32(task.Task):
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
         status['interrupt'] = self._int is not None
+        # a wired-but-DEAD INT1 is the dangerous state: sampling continues, `rate` goes stale,
+        # and the PID D term degrades -- so the operator sees the degradation, not just 'ok'
+        status['interrupt_silent'] = self._int_silent
         status['accel_g'] = self._accel.value()
         status['rate_dps'] = self._rate.value()
         return status

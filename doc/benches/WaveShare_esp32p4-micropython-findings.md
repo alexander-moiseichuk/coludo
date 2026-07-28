@@ -178,4 +178,4 @@ An out-of-range bus id should raise, not crash.
 - GC is collected at safe points and avoided during time-critical phases.
 
 These feed the latency budget and data-flow model in
-[`../../specs/coludo.md`](../../specs/coludo.md).
+[`../../doc/specs/coludo.md`](../../doc/specs/coludo.md).

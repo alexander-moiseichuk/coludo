@@ -1,7 +1,7 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-In-flight reboot recovery (specs/coludo.md "In-flight reboot & warm start"). A mid-air reset
+In-flight reboot recovery (doc/specs/coludo.md "In-flight reboot & warm start"). A mid-air reset
 (watchdog, brownout-survivor, crash) must not turn the glider ballistic: the Checkpoint task keeps a
 tiny CRUMB in NVS (never a VFS file -- a filesystem write locks the scheduler and wears the data
 flash; esp32.NVS commits to its own partition in milliseconds) carrying the live flight state. At
@@ -209,6 +209,27 @@ def _apply_restore(flight, crumb, cfg: dict) -> None:
         for baro in flight.find(baro_names):
             if baro is not None:
                 baro.update({'ground': pad_altitude})
+    """
+    AIRSPEED (findings §23.4): hand the saved airspeed back to the flight task BEFORE the loop runs, so
+    the fin cap comes off a real speed rather than the blunt `airspeed_unconfident_ms` floor. Recovery
+    order is pitot -> saved -> GNSS: this is the immediate one, the accel backbone integrates on from
+    it, and the first in-band pitot read overrides it. Absent on an older crumb -> unchanged behaviour.
+    """
+    """
+    Restore the pitot tare before anything reads airspeed. Without it a warm-started board flies on
+    dynamic pressure that still contains the interior-static bias, and the governor caps off the
+    result -- the same class as the baro rebase above, which exists for exactly this reason.
+    """
+    pitot_zero = crumb.get('pitot_zero')
+    if pitot_zero:
+        pitot = flight.find(['airspeed_sdp810'])[0]
+        if pitot is not None:
+            pitot.update({'zero_offset_pa': pitot_zero})
+    airspeed = crumb.get('airspeed')
+    if airspeed is not None:
+        flight_task = flight.find(['flight'])[0]
+        if flight_task is not None:
+            flight_task.seed_airspeed(airspeed)
     flight.set_stage(crumb['stage'])  # the SAVED stage; the detectors re-evaluate from here
     if crumb.get('armed'):
         flight.arm()  # only an armed flight ever checkpoints a recovery crumb -- re-arm to match
@@ -217,7 +238,7 @@ def _apply_restore(flight, crumb, cfg: dict) -> None:
 
 async def restore(flight, cfg: dict, log=print) -> bool:
     """
-    Warm start (specs/coludo.md "In-flight reboot & warm start") -- was main._restore_flight, moved
+    Warm start (doc/specs/coludo.md "In-flight reboot & warm start") -- was main._restore_flight, moved
     here so main.py stays a thin bring-up.
 
     A mid-air reset must not turn the glider ballistic: restore GLIDING when the NVS breadcrumb AND two
@@ -278,7 +299,11 @@ class Checkpoint(task.Task):
         self._poll_ms: int = min(500, self._period_ms)  # tick fast enough to catch a stage change promptly
         self._altitude = databoard.Databoard.parameter('altitude')
         self._speed = databoard.Databoard.parameter('speed')
-        self._telemetry = recorder.Telemetry('checkpoint.csv', ('stage', 'altitude', 'speed', 'ticks_ms'))
+        # the FUSED airspeed (not the GNSS ground speed above) is what a warm start needs back: it is the
+        # quantity the fin-authority cap is computed from, and a reacquiring GNSS cannot supply it in time
+        self._flight = None  # resolved lazily -- task setup order is not guaranteed
+        self._telemetry = recorder.Telemetry('checkpoint.csv',
+                                             ('stage', 'altitude', 'speed', 'airspeed', 'ticks_ms'))
         self._static: dict = {}  # launch / zone / pad_altitude, frozen at BOOSTING entry (empty until then)
         self._pad = None  # tracked while on the pad (SETTING) so BOOSTING freezes a true GROUND altitude
         self._ok = True
@@ -311,6 +336,18 @@ class Checkpoint(task.Task):
         pad = self._pad if self._pad is not None else self._altitude.value()  # last on-pad reading (fallback: now)
         if pad is not None:
             static['pad_altitude'] = pad
+        """
+        PITOT ZERO. The SDP810's tare lives in RAM, so a mid-air reboot comes back untared and every
+        dynamic-pressure reading then carries the full interior-static bias -- the airspeed the fin
+        governor caps off. Frozen here with the rest of the recovery IDENTITY rather than sampled per
+        checkpoint, because it is a CALIBRATION captured on the pad, not live flight state: re-reading
+        it in flight would persist whatever a disturbed sensor happened to show.
+        """
+        pitot = self.controller.find(['airspeed_sdp810'])[0]
+        if pitot is not None:
+            zero = pitot.inspect().get('zero_offset_pa')
+            if zero:
+                static['pitot_zero'] = zero
         self._static = static
 
     def _checkpoint(self, stage: int) -> None:
@@ -325,12 +362,15 @@ class Checkpoint(task.Task):
         """
         altitude = self._altitude.value()
         speed = self._speed.value()
+        if self._flight is None:
+            self._flight = self.controller.find(['flight'])[0]
+        airspeed = None if self._flight is None else round(self._flight.airspeed(), 1)
         ticks_ms = time.ticks_ms()
-        self._telemetry.push((stage, altitude, speed, ticks_ms))
+        self._telemetry.push((stage, altitude, speed, airspeed, ticks_ms))
         if self.controller.armed:  # only an armed flight is worth -- and safe -- to recover
             crumb = dict(self._static)  # launch/zone/pad from BOOSTING
             crumb.update({'stage': stage, 'armed': True, 'altitude': altitude, 'speed': speed,
-                          'ticks_ms': ticks_ms, 'stamp': int(time.time())})
+                          'airspeed': airspeed, 'ticks_ms': ticks_ms, 'stamp': int(time.time())})
             save(crumb)
         recorder.Recorder.log(self.name, 'checkpoint %s alt=%s' % (controller.Stage.STAGES.get(stage), altitude))
 

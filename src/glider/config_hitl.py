@@ -12,7 +12,14 @@ mutate freely. Run it instead of config_default for a simulation; the flight con
 import config_default
 
 _SIM_SENSORS = ('accel_adxl375', 'imu_lsm6dso32', 'imu_bno055', 'baro_icp10111', 'baro_bmp280',
-                'laser_agl', 'gnss')
+                'laser_agl', 'gnss', 'airspeed_sdp810')
+"""
+`airspeed_sdp810` masked (7/27): the sim now publishes `airspeed`/`dynamic_pressure` itself. Leaving
+the real part enabled meant a bench SDP810 in still air was the ONLY publisher of the fused airspeed
+channel on every board HITL flight -- the findings §28 bistability. That was patched at the consumer
+(`pitot_min_ms`), which is correct for a blocked tube in flight but left board HITL never exercising
+the pitot path while the host sim did. Masking it here closes the harness side.
+"""
 _OFF = ('separation', 'watchdog', 'wifi', 'cc', 'bluetooth')
 
 """

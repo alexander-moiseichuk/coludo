@@ -134,7 +134,7 @@ async def test_cc_stream():
 
     # off by default: log() does NOT collect for CC, but still goes to the UART ring
     assert recorder.Recorder.log('A', 'before') is True
-    assert recorder.Recorder.cc_logs(0) == {'lines': []}  # disabled -> empty batch
+    assert recorder.Recorder.cc_logs(0) == {'lines': [], 'dropped': 0}  # disabled -> empty batch
     assert tee._ring is None  # nothing allocated while off
 
     # `log 1000` sizes + allocates the ring, returns the (empty) batch so far, and arms a 1 s window
@@ -159,6 +159,19 @@ async def test_cc_stream():
     final = recorder.Recorder.cc_logs(0)['lines']
     assert len(final) == 1 and final[0].endswith('C :: last') and tee._deadline == 0
 
+    """
+    The tee DISCARDS when its ring fills (best-effort by policy -- it must never raise on a log path),
+    so a live stream can have a hole that looks exactly like a quiet sensor. The reply carries the
+    discarded count, which is what lets the hub say "this window is incomplete" instead of the operator
+    reading absence as calm.
+    """
+    recorder.Recorder.cc_logs(1000)                       # arm with a fresh ring
+    for index in range(tee._ring.capacity + 5):           # overrun it deliberately
+        recorder.Recorder.log('E', 'flood %d' % index)
+    flooded = recorder.Recorder.cc_logs(1000)
+    assert flooded['dropped'] > 0, flooded['dropped']     # the loss is REPORTED, not silent
+    assert recorder.Recorder.cc_logs(1000)['dropped'] == 0  # ...and the count resets per window
+
     # window lapse: a deadline already in the past -> the next log() discards + disables, no collection
     recorder.Recorder.cc_logs(1000)  # arm
     tee._deadline = recorder.time.ticks_add(recorder.time.ticks_us(), -1)  # already past
@@ -176,7 +189,7 @@ async def test_cc_telemetry():
 
     # off by default: tlm() does NOT collect for CC, but still reaches the primary _tlm ring
     recorder.Recorder.tlm('t.csv', 'a')
-    assert recorder.Recorder.cc_telemetry(0) == {'samples': []}  # disabled -> empty batch
+    assert recorder.Recorder.cc_telemetry(0) == {'samples': [], 'dropped': 0}  # disabled -> empty batch
     assert tee._ring is None
 
     # `tlm 1000` arms the window; subsequent tlm() rows are mirrored and drained on the next poll

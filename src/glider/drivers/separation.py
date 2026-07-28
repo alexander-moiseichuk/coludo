@@ -6,7 +6,7 @@ Stage-separation switch: two adhesive copper pads (one on the glider, one on the
 An IRQ on either edge wakes run(), which debounces, and on a confirmed separation during the Boosting
 stage drives the documented Boosting -> Gliding transition (the booster ejects the glider at apogee).
 The event is logged and emitted to subscribers; the discrete event is NOT a databoard quantity (per
-specs/coludo.md, events use notify/log).
+doc/specs/coludo.md, events use notify/log).
 
 The pin uses an internal pull-down so an open (separated) circuit reads LOW reliably; while nested the
 pads override it HIGH. A separation while not Boosting (e.g. a ground test in Setting) is logged but

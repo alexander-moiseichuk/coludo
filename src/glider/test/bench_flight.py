@@ -11,7 +11,7 @@ The BREAKDOWN section then prices where a step's time goes -- the whole _tick vs
 fixed-point PID: 3x pid.step + the fused mixer.actuate) vs navigation.steer (the float homing trig,
 recomputed only every nav_period_ms in flight). This is the evidence for the viperize question: if the
 integer PID is a small slice and the float trig dominates, viperizing the alloc-free PID is churn. Needs
-the firmware deployed (run `make test` or ../deploy.sh first). Results live in doc/plan.md.
+the firmware deployed (run `make test` or tools/deploy.sh first). Results live in doc/plan.md.
 """
 
 import asyncio
@@ -27,6 +27,9 @@ from tasks import flight
 
 
 class FakeFin:
+    def settle(self):
+        pass
+
     def set_angle(self, angle):
         pass
 

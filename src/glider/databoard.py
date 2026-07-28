@@ -1,7 +1,7 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-The shared latest-value store + sensor fusion for hot data (specs/coludo.md "Task Data-Flow and
+The shared latest-value store + sensor fusion for hot data (doc/specs/coludo.md "Task Data-Flow and
 Message Propagation"). Replaces a two-layer raw/fused store + a polling fusion task with a registry
 of Parameter objects whose fused value is computed on read.
 

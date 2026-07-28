@@ -38,23 +38,55 @@ import guidance  # noqa: E402 -- the REAL per-stage guidance law
 import mixer  # noqa: E402
 import navigation  # noqa: E402 -- zone geometry for the _Mission stub (memoized, mirrors mission.Mission)
 import pid  # noqa: E402
+import preflight  # noqa: E402 -- install + data-consistency gates, run before any flying
 import sim_model  # noqa: E402
 
 _STAGE = controller_mod.Stage
 _FINS = ('servo_eleron_left', 'servo_eleron_right', 'servo_yaw')
 _SPIKE_S = 3.0  # a transient 2x sensor glitch fires once every this many seconds (within 2-5 s)
 _GNSS_S = 0.1  # GNSS fix cadence (~10 Hz), for both the injected handles and the capture rows
+_LEAK_BPS = 15000.0   # measured GC-off control-path leak (B/s) -- doc/sims/TMS-7-guiding_refactoring
+_FREE_AT_BOOT = 33_000_000  # MEASURED on the ESP32-P4 (gc.mem_free() = 33.09 MB of PSRAM). The old
+# 4.19 MB guess was ~8x low, which -- with the sawtooth -- is why the report's time-to-OOM printed
+# absurdities. 33 MB at 15 KB/s = ~37 min, matching the real board's measured time-to-OOM.
+_SERVO_HOLD_MW = 41   # measured rail draw with the fins holding (INA226, 2026-07-25)
+_SERVO_MOVE_MW = 1400  # measured MEAN draw of one servo in travel (peak 3925 mW = 0.79 A)
+_SERVO_SLEW_S_PER_DEG = 0.1 / 60.0  # MG90S: ~0.1 s per 60 deg at max slew
 
 
 class _Fin:
-    """set_angle() stand-in for an sg90 driver: the fused mixer.actuate() writes the commanded angle
-    here and the sim reads it back (same role the servo task plays on the board)."""
+    """
+    Slew-limited sg90 stand-in: the fused mixer.actuate() commands an angle, the horn CHASES it.
 
-    def __init__(self, neutral: int):
+    It used to apply every command instantly, which quietly made the host unable to say anything about
+    fin activity or servo power -- a real horn needs `slew_ms_per_60` per 60 deg, so at 100 Hz it can
+    physically move only ~1 deg per tick, and instant application over-counted travel by several fold.
+    That is why a coalescing sweep on the host returned byte-identical results while the same sweep on
+    the board did not: there was no servo here to coalesce for.
+
+    `angle` is now the MODELLED HORN POSITION (what fins.csv records and the sim reads back for its
+    aerodynamics), `target` the last command. Set slew_ms_per_60 to 0 for the old instant behaviour.
+    """
+
+    def __init__(self, neutral: int, slew_ms_per_60: float = 150.0, dt: float = 0.01):
         self.angle = neutral
+        self.target = neutral
+        # degrees the horn can travel in one control tick; 0 -> instant (the pre-slew behaviour)
+        self._step = (60.0 * dt * 1000.0 / slew_ms_per_60) if slew_ms_per_60 else 0.0
+
+    def settle(self):
+        """Advance the horn toward the commanded target by one tick of physical travel."""
+        if not self._step:
+            self.angle = self.target
+            return
+        delta = self.target - self.angle
+        if abs(delta) <= self._step:
+            self.angle = self.target
+        else:
+            self.angle += self._step if delta > 0 else -self._step
 
     def set_angle(self, angle):
-        self.angle = angle
+        self.target = angle  # commanded; settle() moves the horn toward it at the servo's own rate
         return angle
 
 
@@ -124,7 +156,11 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     _seed = os.environ.get('VF_SEED')
     if _seed is not None:
         random.seed(int(_seed))
-    cfg = config_hitl.default(motor=motor, noise=noise, spike=spike)
+    # glider (glide) mass in grams: 270 = the full build, 215 = the light build -- the two weight
+    # variants every campaign flies. Env rather than an arg so a sweep script sets it per case.
+    glider_g = int(os.environ.get('VF_GLIDER_G', 0)) or None
+    cfg = (config_hitl.default(motor=motor, noise=noise, spike=spike, glider_g=glider_g) if glider_g
+           else config_hitl.default(motor=motor, noise=noise, spike=spike))
     flight_c = _component(cfg, 'flight')
     _endgame = os.environ.get('VF_ENDGAME')
     if _endgame:
@@ -150,6 +186,10 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     body = sim_model.Body(hitl_c.get('liftoff_g', 430) / 1000.0,
                           tuple(scenario['launch']), scenario['elevation_m'], scenario['heading_deg'])
     body.trim_sink = 14.0 / float(os.environ.get('VF_QUALITY', 2.0))  # air-quality (L/D) sink: 2 = worst-case floor
+    # robustness knobs (findings §27.20/§27.21); both default OFF so existing studies reproduce exactly
+    body.gust = float(os.environ.get('VF_GUST', 0.0))          # 1-sigma gust amplitude (m/s)
+    body.gust_tau = float(os.environ.get('VF_GUST_TAU', 3.0))  # gust correlation time (s)
+    faults = sim_model.Faults(os.environ.get('VF_FAULT', ''))  # e.g. 'gnss@30,pitot@45'
     pitot_on = os.environ.get('VF_PITOT', '1') != '0'  # feed the SDP810 direct airspeed to the fusion (default on)
     pitot_rail = (2.0 * 546.0 / 1.225) ** 0.5  # the ±500 Pa sensor rails ~29.85 m/s -> boost/dive fall back to accel
     body.imbalance_pitch = imbalance_pitch  # weight-imbalance torque during burn (deg/s^2)
@@ -157,10 +197,21 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     body.wind_e = wind * math.sin(math.radians(wind_dir))   # steady wind the glider must crab against
     body.wind_n = wind * math.cos(math.radians(wind_dir))
 
+    dt = 1.0 / sim_hz  # one rate here drives BOTH physics and control -- see the --hz help
     # the REAL control stack, exactly as tasks/flight.py builds it -- mixer with bound fins, the
     # governor and guidance over injected handles, one fixed-point PID per axis.
     mix = mixer.Mixer(cfg.get('mixer', {}))
-    fins_by_name = {name: _Fin(mix.neutral) for name in _FINS}
+    """
+    the fin's slew comes from the SERVO TYPE the board config names, so the host models whatever is
+    fitted (sg90 150 ms/60deg, mg90s 100) instead of an instant, physically impossible horn.
+    """
+    _SLEW_BY_DRIVER = {'sg90': 150.0, 'mg90s': 100.0}
+    servo_driver = {component['name']: component.get('driver')
+                    for component in cfg.get('components', [])}
+    fins_by_name = {name: _Fin(mix.neutral,
+                               _SLEW_BY_DRIVER.get(servo_driver.get(name), 150.0),
+                               dt)
+                    for name in _FINS}
     mix.bind(fins_by_name)
     accel_handle, speed_handle, pitot_handle, position_handle, agl_handle, elevation_handle = (
         _Handle(), _Handle(), _Handle(), _Handle(), _Handle(), _Handle())
@@ -176,7 +227,6 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     pids = {axis: pid.Pid(output_limit=mix.limit, integral_limit=mix.limit, **gains.get(axis, {}))
             for axis in ('roll', 'pitch', 'yaw')}
 
-    dt = 1.0 / sim_hz
     dt_ms = max(1, int(round(dt * 1000)))   # integer-ms slice the fixed-point PID expects (board parity)
     stage = 'setting'
     since = 0.0          # time the current sustained-detect window started
@@ -191,7 +241,8 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         # NOISE-degraded readings -- what the control loop and the recorder actually see (board parity:
         # accel/attitude/altitude/agl are noised; GNSS position is not -- see tasks/hitl._publish).
         accel_m = sim_model.noisy(sensors['accel'], noise, -200.0, 200.0)
-        heading_m = sim_model.noisy(sensors['heading'], noise, 0.0, 360.0)
+        # CIRCULAR: absolute error band, not a fraction of a 0..360 magnitude (sim_model.noisy)
+        heading_m = sim_model.noisy(sensors['heading'], noise, 0.0, 360.0, sim_model.HEADING_NOISE_REF)
         roll_m = sim_model.noisy(sensors['roll'], noise, -180.0, 180.0)
         pitch_m = sim_model.noisy(sensors['pitch'], noise, -180.0, 180.0)
         altitude_m = sim_model.noisy(sensors['altitude'], noise, -100.0, 10000.0)
@@ -263,23 +314,26 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         accel_handle.value_now = (0.0, 0.0, accel_m)   # boost-axis |a| in g (magnitude parity)
         accel_handle.source = 'sim'
         if pitot_on:  # SDP810 DIRECT airspeed (m/s) each tick, clamped at the rail so boost/dive saturates -> accel
-            pitot_handle.value_now = min((body.speed * body.speed + body.vu * body.vu) ** 0.5, pitot_rail)
-            pitot_handle.source = 'sim'
-        agl_handle.value_now = agl
-        agl_handle.source = 'sim'
-        elevation_handle.value_now = altitude_m - body.elev0  # noised baro elevation (endgame band)
-        elevation_handle.source = 'sim'
+            true_pitot = min((body.speed * body.speed + body.vu * body.vu) ** 0.5, pitot_rail)
+            pitot_handle.value_now = faults.apply('pitot', true_pitot, t)
+            pitot_handle.source = None if pitot_handle.value_now is None else 'sim'
+        agl_handle.value_now = faults.apply('laser', agl, t)
+        agl_handle.source = None if agl_handle.value_now is None else 'sim'
+        elevation_handle.value_now = faults.apply('baro', altitude_m - body.elev0, t)  # noised baro elevation
+        elevation_handle.source = None if elevation_handle.value_now is None else 'sim'
         if t - last_gnss >= _GNSS_S:                    # GNSS ~10 Hz, the board's fix cadence
             last_gnss = t
             # total speed (vertical + horizontal), matching what tasks/hitl publishes on 'speed' --
             # the estimator's corrector sees the same signal the on-board HITL feeds it
-            speed_handle.value_now = (body.vu * body.vu + body.speed * body.speed) ** 0.5
-            speed_handle.source = 'gnss'
-            position_handle.value_now = sensors['position']
-            position_handle.source = 'gnss'
+            true_speed = (body.vu * body.vu + body.speed * body.speed) ** 0.5
+            speed_handle.value_now = faults.apply('gnss', true_speed, t)
+            speed_handle.source = None if speed_handle.value_now is None else 'gnss'
+            position_handle.value_now = faults.apply('gnss', sensors['position'], t)
+            position_handle.source = None if position_handle.value_now is None else 'gnss'
 
         # --- the REAL control pipeline (mirrors flight._step): governor -> gate -> guidance -> PID ---
         stage_id = _STAGE.NAMES[stage]
+        roll_deg = pitch_deg = yaw_deg = 0  # per-axis demands for flight.csv (0 whenever fins are neutral)
         roll_cd = fixed.from_float(roll_m)
         pitch_cd = fixed.from_float(pitch_m)
         fin_governor.step(dt, stage_id < _STAGE.GLIDING, pitch_cd)
@@ -301,7 +355,10 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
                 roll_cmd = pids['roll'].step(law.roll_setpoint - roll_cd, dt_ms, roll_rate)
                 pitch_cmd = pids['pitch'].step(law.pitch_setpoint - pitch_cd, dt_ms, pitch_rate)
                 yaw_cmd = pids['yaw'].step(law.heading_error * fixed.SCALE, dt_ms, yaw_rate)
-                mix.actuate(roll_cmd // fixed.SCALE, pitch_cmd // fixed.SCALE, yaw_cmd // fixed.SCALE)
+                roll_deg = roll_cmd // fixed.SCALE
+                pitch_deg = pitch_cmd // fixed.SCALE
+                yaw_deg = yaw_cmd // fixed.SCALE
+                mix.actuate(roll_deg, pitch_deg, yaw_deg)
             else:                                       # boost still on the rod -> neutral
                 mix.actuate(0, 0, 0)
         fins = tuple(fins_by_name[name].angle for name in _FINS)
@@ -315,9 +372,18 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         else:                                           # non-control stage -> coast, fins neutral
             body.glide_step(dt, 0.0, 0.0, 0.0)
 
+        wind_speed = (body.wind_e ** 2 + body.wind_n ** 2) ** 0.5
+        wind_from = int(math.degrees(math.atan2(-body.wind_e, -body.wind_n))) % 360 if wind_speed else 0
         rows.sample(t, accel_m, altitude_m, sensors['altitude'] - body.elev0, heading_m, roll_m, pitch_m,
                     sensors['position'], agl, laser_range_m, body.speed, fins,
-                    (roll_rate_dps, pitch_rate_dps, yaw_rate_dps))
+                    (roll_rate_dps, pitch_rate_dps, yaw_rate_dps),
+                    dt=dt,
+                    pitot=(pitot_handle.value_now if pitot_on else None),
+                    control=(stage_id, 1 if active else 0, int(fin_governor.airspeed() * 100), mix.limit,
+                             law.roll_setpoint, law.pitch_setpoint, law.heading_error,
+                             roll_deg, pitch_deg, yaw_deg, int(wind_speed * 100), wind_from))
+        if stage == 'boosting':
+            rows.leak_starts(t)  # GC goes off at BOOSTING on the board -> the leak clock starts
         rows.health(t, stage)
         if body.gliding and body.alt <= 0.0:             # touched down
             rows.event(t, 'controller :: stage -> done')
@@ -336,6 +402,8 @@ class _Capture:
         self._lines = []
         self._last_gnss = -1.0
         self._last_health = -1.0
+        self._leak_from = None   # when GC went off (BOOSTING) -- the modelled leak's origin
+        self._fins_prev = None   # previous commanded fin angles -> which servos MOVED this tick
 
     def _tlm(self, file: str, row: str) -> None:
         self._lines.append('@%s_%s@%s' % (self._SESSION, file, row))
@@ -349,9 +417,18 @@ class _Capture:
         self._tlm('laser_agl.csv', 'uptime;agl')
         self._tlm('fins.csv', 'uptime;eleron_left;eleron_right;yaw')  # commanded servo angles (deg)
         self._tlm('health.csv', 'uptime;temp;mem_free;load')          # board vitals (board_health.py)
+        # flight.csv: the CONTROL STATE, byte-identical in shape to the board's (tasks/flight.py) so a
+        # sim capture exercises the same report panels a real capture will (findings §27.1/§27.2)
+        self._tlm('flight.csv', 'uptime;stage;active;airspeed_cms;fin_cap;roll_sp;pitch_sp;heading_err;'
+                                'roll_cmd;pitch_cmd;yaw_cmd;wind_cms;wind_from')
+        # the SDP810 pitot as the board's driver records it (Pa fixnum + derived m/s)
+        self._tlm('airspeed_sdp810.csv', 'uptime;dynamic_pressure;airspeed_cms;temperature')
+        # servo-rail power as the INA226 records it -- MODELLED from the measured MG90S figures, so
+        # the report's engine panel and flight_kpi's servo-energy metric are not blank on a sim run
+        self._tlm('power_ina226.csv', 'uptime;voltage_mv;current_ma;power_mw;alerts')
 
     def sample(self, t, accel, altitude, elevation, heading, roll, pitch, position, agl, laser_range, speed,
-               fins, rate):
+               fins, rate, control=None, pitot=None, dt=0.02):
         microseconds = int(t * 1e6)
         self._tlm('accel_adxl375.csv', '%u;0.000;0.000;%.3f' % (microseconds, accel))
         self._tlm('baro_icp10111.csv', '%u;%.2f;21.0;100000;%.2f' % (microseconds, altitude, elevation))
@@ -366,6 +443,31 @@ class _Capture:
                       % (microseconds, position[0], position[1], speed * 1.94384, heading))
         if agl <= laser_range:                           # the laser only resolves the last few metres
             self._tlm('laser_agl.csv', '%u;%.3f' % (microseconds, agl))
+        if pitot is not None:                            # SDP810: q = 0.5*rho*v^2, Pa as a x100 fixnum
+            self._tlm('airspeed_sdp810.csv', '%u;%d;%d;2500'
+                      % (microseconds, int(0.5 * 1.225 * pitot * pitot * 100), int(pitot * 100)))
+        """
+        SERVO POWER: a fin that CHANGED angle is travelling; at max slew it needs
+        |delta| * _SERVO_SLEW_S_PER_DEG seconds, during which the measured mean draw is
+        _SERVO_MOVE_MW. Spread that energy over this tick (a move shorter than dt averages down),
+        add the measured holding draw, and report it as the INA226 would.
+        """
+        moving_mw = 0.0
+        if self._fins_prev is not None and dt > 0:
+            for now_deg, was_deg in zip(fins, self._fins_prev):
+                travel_s = abs(now_deg - was_deg) * _SERVO_SLEW_S_PER_DEG
+                moving_mw += _SERVO_MOVE_MW * min(travel_s / dt, 1.0)
+        self._fins_prev = tuple(fins)
+        power_mw = int(_SERVO_HOLD_MW + moving_mw)
+        self._tlm('power_ina226.csv', '%u;5000;%d;%d;0' % (microseconds, power_mw // 5, power_mw))
+        if control is not None:                          # the control state the board's flight task records
+            self._tlm('flight.csv', '%u;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d;%d'
+                      % ((microseconds,) + control))
+
+    def leak_starts(self, t) -> None:
+        """Mark when GC went off (BOOSTING) so the modelled leak runs from there, as on the board."""
+        if self._leak_from is None:
+            self._leak_from = t
 
     def health(self, t, stage):
         """
@@ -373,9 +475,14 @@ class _Capture:
 
         SYNTHETIC + phase-modeled -- the host has no real MCU -- but shaped like the board would read:
         load tracks the work per stage (idle on the rod, high under boost sampling, steady in the glide
-        loop, highest while the laser hammers I2C on landing); temperature drifts up under load; free
-        memory stays consistent (the firmware pre-allocates and avoids churn, so GC is gentle -- only a
-        shallow sawtooth around ~4 MB).
+        loop, highest while the laser hammers I2C on landing); temperature drifts up under load.
+
+        mem_free follows the MEASURED GC-off leak (~15 KB/s settled at 100 Hz, doc/sims/
+        TMS-7-guiding_refactoring), declining monotonically once airborne. It used to be a 30 s
+        SAWTOOTH, which left a near-zero net slope over BOOSTING->DONE -- so flight_report's
+        time-to-OOM headline divided by ~0 and printed an absurd ~15000 s on every sim study. A
+        modelled number that matches the real board (~36 min to OOM) is honest; a fabricated flat one
+        that reads as a measurement is not.
         """
         if t - self._last_health < 1.0:
             return
@@ -383,7 +490,8 @@ class _Capture:
         load = {'setting': 5, 'boosting': 45, 'gliding': 30, 'landing': 60}.get(stage, 8)
         load = max(0, min(100, load + int(6 * math.sin(t * 2.5))))
         temp = min(63.0, 45.0 + 0.18 * t + (4.0 if stage == 'landing' else 0.0))
-        mem_free = 4_190_000 - int((t * 1000) % 30000)   # ~4 MB, a shallow GC sawtooth (memory is steady)
+        airborne = max(0.0, t - self._leak_from) if self._leak_from else 0.0
+        mem_free = int(_FREE_AT_BOOT - _LEAK_BPS * airborne)  # GC is OFF airborne -> monotonic decline
         self._tlm('health.csv', '%u;%.1f;%d;%d' % (int(t * 1e6), temp, mem_free, load))
 
     def event(self, t, line: str) -> None:
@@ -409,10 +517,26 @@ def main():
                         help='weight-imbalance torque on the ROLL axis during burn (deg/s^2)')
     parser.add_argument('--final-agl', type=float, default=None,
                         help=' final-approach trigger AGL override (0 = disabled / old blind flare)')
-    parser.add_argument('--hz', type=int, default=50, help='simulation rate (default 50)')
+    """
+    ONE rate drives both the physics and the control loop here, unlike the board, which decouples them
+    (hitl `sim_hz` 50 for physics, flight `schedule_hz` 100 for the loop). The default was 50, so the
+    tool stepped the PID HALF as often as the board does and under-reported fin activity roughly 2x --
+    which is why host and board fin numbers never lined up. Defaulting to 100 matches the board's
+    control rate; the physics simply integrate finer than the board's 50 Hz, which is harmless.
+    Decoupling them properly needs this loop to grow the board's accumulator -- worth doing when the
+    host is next asked to predict servo duty, not before.
+    """
+    parser.add_argument('--hz', type=int, default=100,
+                        help='simulation AND control rate (default 100, matching the board flight loop)')
     parser.add_argument('--seconds', type=float, default=240.0, help='max flight time (default 240)')
     parser.add_argument('-o', '--out', help='write capture here (default stdout)')
+    parser.add_argument('--no-preflight', action='store_true',
+                        help='skip the install/data-consistency gates (not recommended)')
     args = parser.parse_args()
+    if not args.no_preflight:
+        # gate BEFORE flying: a missing dep or a sim/board schema drift should cost a second here,
+        # not a whole sweep that produces captures the renderers cannot read (findings §27.6)
+        preflight.gate('simulation')
 
     capture = fly(args.motor, args.noise, args.spike, args.hz, args.seconds, args.wind, args.wind_dir,
                   args.final_agl, args.imbalance_pitch, args.imbalance_roll, args.endgame_alt)

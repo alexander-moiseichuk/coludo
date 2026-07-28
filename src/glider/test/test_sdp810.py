@@ -73,7 +73,55 @@ async def amain():
     assert probe.update({'zero_offset_pa': 1.5}) == ['zero_offset_pa'] and probe._zero == fixed.from_float(1.5)
     assert probe.update({'air_density': 1.2}) == ['air_density'] and probe._density == 1.2
 
-    print('ok: sdp810 driver registered; graceful-absent; @viper crc + Pa-fixnum scaling + airspeed')
+    """
+    The tare must survive a reboot, INCLUDING one mid-glide where nobody can re-tare. It lives in RAM,
+    so without this the board returns with zero offset and the whole interior-static bias lands in the
+    dynamic pressure -- which is the airspeed the fin governor caps off, so the error goes straight to
+    control authority. The warm-start crumb carries it too, but ONLY while armed and airborne and only
+    if the recovery gate accepts; NVS has neither condition.
+    """
+    """
+    SNAPSHOT AND RESTORE the stored tare. This key is the OPERATOR'S live calibration, not scratch
+    space: writing a test constant into it leaves the airframe flying on a fabricated zero while the
+    dashboard reports it calibrated -- and `make test` would do that on every run. Caught by rebooting
+    the board and finding the tare read back as this test's own -1.25.
+    """
+    previous = None
+    stored = False  # was there a tare BEFORE us? if not, the key must end up ABSENT, not set to ours
+    if sdp810._nvs is not None:
+        try:
+            previous = sdp810._nvs.get_i32(sdp810._NVS_ZERO)
+            stored = True
+        except Exception:
+            previous, stored = None, False
+    try:
+        keeper = sdp810.Sdp810('airspeed_sdp810', {}, _StubController())
+        keeper._zero = fixed.from_float(-1.25)
+        keeper._raw = fixed.from_float(-1.25)
+        keeper.note = lambda *args: None
+        keeper._persist_zero()           # best-effort: a board with no NVS must not raise here
+        if sdp810._nvs is not None:      # on the board, the fixnum round-trips through NVS
+            assert sdp810._nvs.get_i32(sdp810._NVS_ZERO) == keeper._zero
+    finally:
+        """
+        `previous is not None` was NOT enough, and it bit exactly as predicted: on the FIRST run on a
+        board with no stored tare, get_i32 raises, previous stays None, the restore is skipped -- and
+        the test's own -1.25 is left behind as the operator's calibration. Every later run then reads
+        -125 back and faithfully "restores" it, so the fabricated zero looks like a real one forever.
+        An absent key must be restored to ABSENT.
+        """
+        if sdp810._nvs is not None:
+            if stored:
+                sdp810._nvs.set_i32(sdp810._NVS_ZERO, previous)  # give the operator their tare back
+            else:
+                try:
+                    sdp810._nvs.erase_key(sdp810._NVS_ZERO)  # there was none -- leave none
+                except Exception:
+                    pass  # nothing stored and nothing to erase
+            sdp810._nvs.commit()
+
+    print('ok: sdp810 driver registered; graceful-absent; @viper crc + Pa-fixnum scaling + airspeed; '
+          'tare persisted to NVS')
 
 
 asyncio.run(amain())

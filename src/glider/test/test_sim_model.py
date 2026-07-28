@@ -101,10 +101,59 @@ def test_stall():
     assert _sink_after(45.0, 8.0) < _sink_after(45.0, 14.0) - 0.02, (_sink_after(45.0, 8.0), _sink_after(45.0, 14.0))
 
 
+def test_drag_polar():
+    """
+    Sink follows the airspeed POLAR, not just the bank (findings §27.22).
+
+    Normalised to 1.0 at trim; minimum sink sits BELOW trim (~0.76x) because minimum-sink speed is below
+    best-glide speed on a real glider -- so flying well off trim costs energy in BOTH directions, which is
+    what makes an airspeed-gated bank a genuine trade-off.
+    """
+    assert abs(sim_model._polar(sim_model._V_TRIM) - 1.0) < 1e-9  # exactly 1.0 at trim, by construction
+    assert sim_model._polar(30.0) > 3.0  # way fast -> profile drag (v^3) dominates, sink climbs hard
+    assert sim_model._polar(4.0) > 1.5   # way slow -> induced drag (1/v) dominates
+    minimum = min(sim_model._polar(v / 10.0) for v in range(40, 260))  # scan 4..26 m/s
+    assert minimum < 1.0, minimum  # min sink is cheaper than trim...
+    assert sim_model._polar(0.76 * sim_model._V_TRIM) < sim_model._polar(sim_model._V_TRIM)  # ...and sits below it
+    assert sim_model._polar(0.0) == sim_model._polar(sim_model._V_POLAR_FLOOR)  # floored, no 1/0
+
+
+def test_gusts():
+    """
+    Gusts are OFF by default (every existing study reproduces), and an OU process when enabled.
+
+    Correlated rather than white: a glider integrates gusts, so what matters is the slow wander.
+    """
+    body = sim_model.Body(0.43, (25.5, -80.4), 2.0, 30.0)
+    assert body.gust == 0.0 and body._advance_gust(0.02) == (0.0, 0.0)  # default calm -> exactly zero
+    body.gust = 2.0
+    samples = [body._advance_gust(0.02)[0] for _ in range(3000)]
+    spread = (sum(s * s for s in samples) / len(samples)) ** 0.5
+    assert 0.5 * body.gust < spread < 2.0 * body.gust, spread  # right order, not white noise or runaway
+    assert max(abs(s) for s in samples) < 10.0 * body.gust  # bounded: it decays toward zero, never walks off
+
+
+def test_faults():
+    """Fault injection: dead channels go None, but a saturated pitot RAILS (the dangerous under-read)."""
+    assert not sim_model.Faults('')  # empty spec -> no faults, falsy
+    faults = sim_model.Faults('gnss@30,baro')
+    assert faults and not faults.active('gnss', 29.9) and faults.active('gnss', 30.0)
+    assert faults.active('baro', 0.0)  # no '@' -> from t=0
+    assert faults.apply('gnss', 12.0, 10.0) == 12.0 and faults.apply('gnss', 12.0, 31.0) is None
+    assert faults.apply('laser', 3.0, 99.0) == 3.0  # a channel not in the spec is untouched
+    # a pitot fault RAILS instead of going silent: a saturated cell under-reads, which LOOSENS the fin cap
+    railed = sim_model.Faults('pitot')
+    assert railed.apply('pitot', 14.0, 0.0) == sim_model.Faults.RAIL_PITOT_MS
+    assert sim_model.Faults('junk@notanumber').active('junk', 0.0)  # a bad time degrades to t=0, never raises
+
+
 test_weathercock_and_control()
 test_speed_sensor()
 test_gyro_rates()
 test_gnss_drift()
 test_stall()
+test_drag_polar()
+test_gusts()
+test_faults()
 print('ok: sim_model -- boost weathercock vs fin restore, calm stays vertical, speed sensor, gyro rates, '
-      'gnss drift')
+      'gnss drift, stall, drag polar, gusts, fault injection')

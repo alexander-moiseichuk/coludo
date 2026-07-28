@@ -10,10 +10,10 @@ The glider version TMS-7 ![avaliable there](https://github.com/alexander-moiseic
 
 ## Where things live
 
-**Specifications — [`specs/`](specs/)**
-- [Architecture overview](specs/coludo.md) — the **main description**: flight lifecycle (Setting → Boosting → Gliding → Landing), flight controller, sensors, telemetry and logging. Authoritative for flight behaviour.
-- [Board configuration](specs/board-config.md) — the controller's config schema, the three config layers, and the save/reboot activation lifecycle.
-- [Control Center ↔ board protocol](specs/cc-protocol.md) — the wire protocol between the ground station and the boards, plus the browser bridge.
+**Specifications — [`doc/specs/`](doc/specs/)**
+- [Architecture overview](doc/specs/coludo.md) — the **main description**: flight lifecycle (Setting → Boosting → Gliding → Landing), flight controller, sensors, telemetry and logging. Authoritative for flight behaviour.
+- [Board configuration](doc/specs/board-config.md) — the controller's config schema, the three config layers, and the save/reboot activation lifecycle.
+- [Control Center ↔ board protocol](doc/specs/cc-protocol.md) — the wire protocol between the ground station and the boards, plus the browser bridge.
 
 **Documentation — [`doc/`](doc/)**
 - [Hardware](doc/hardware.md) — parts list, weights, power budget, and candidate build configurations.

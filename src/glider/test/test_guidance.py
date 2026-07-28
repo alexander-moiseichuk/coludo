@@ -27,13 +27,24 @@ class _PositionHandle:
 
 
 class _AglHandle:
-    """value() stand-in for the databoard agl Parameter."""
+    """
+    read() stand-in for the databoard agl Parameter.
 
-    def __init__(self, value=None):
+    Guidance reads the SOURCE as well as the value: the laser only reaches ~4 m, so out of range the
+    channel goes stale and an extrapolated agl would hold final approach on for the whole glide (see
+    sequencer._detect_landing -- the same staleness ended a real HITL flight at apogee). `fresh=False`
+    models the out-of-range laser: a value is still projected, but no source vouches for it.
+    """
+
+    def __init__(self, value=None, fresh=True):
         self.value_now = value
+        self.fresh = fresh
 
     def value(self):
         return self.value_now
+
+    def read(self):
+        return [self.value_now, 'laser' if (self.fresh and self.value_now is not None) else None, 0]
 
 
 class _StubGovernor:
@@ -211,6 +222,43 @@ def test_final_approach():
     tracking = unit._nav_heading
     assert homing != tracking  # approach() tracks the long-axis line, not the centre point
     assert abs(guidance.heading_error(tracking, 270.0)) <= 45  # intercept capped at final_intercept
+    """
+    A STALE baro must not open the ENDGAME band. Below endgame_alt_m the law unlocks FULL land-bank
+    authority, and `value()` extrapolates a stale scalar channel without bound -- so a dead baro could
+    unlock the endgame bank at the wrong height, or hold it open all glide. Same class as the stale-agl
+    and stale-elevation-launch bugs.
+    """
+    class _Band:
+        def __init__(self):
+            self.value_now, self.fresh = None, True
+
+        def value(self):
+            return self.value_now
+
+        def read(self):
+            return [self.value_now, 'baro' if (self.fresh and self.value_now is not None) else None, 0]
+
+    band = _Band()
+    banded, band_pos, _band_agl, _bg = _build({'endgame_alt_m': 50, 'land_bank_gain': 3.0})
+    banded._elevation = band
+    banded.enter(0.0, 0, 0)
+    band_pos.reading = ((48.0005, 11.020), 'gnss', 0)
+    band.value_now, band.fresh = 10.0, False     # low, but nothing vouches for it
+    banded.compute(Stage.GLIDING, {}, 270.0, 0)
+    stale_bank = banded.roll_setpoint
+    band.fresh = True                            # the same reading, now from a live baro
+    banded._nav_heading = None
+    banded.compute(Stage.GLIDING, {}, 270.0, 0)
+    assert banded.roll_setpoint != stale_bank or stale_bank == 0, 'a stale baro drove the endgame band'
+
+    # a STALE agl must not engage final approach: out of the laser's ~4 m range the channel extrapolates
+    # without bound, and a bogus low reading would hold centreline tracking for the whole glide
+    agl.value_now, agl.fresh = 4.0, False
+    unit._nav_heading = None
+    unit.compute(Stage.GLIDING, {}, 270.0, 0)
+    assert unit._nav_heading == homing, 'a stale agl engaged final approach'
+    agl.fresh = True
+
     # final_approach_agl 0 disables the final-approach switch (and an absent agl never triggers it)
     off, position, agl, _g = _build({'final_approach_agl': 0})
     off.enter(0.0, 0, 0)
@@ -233,9 +281,13 @@ def test_loiter_and_endgame_spiral():
     class _Elevation:
         def __init__(self):
             self.value_now = None
+            self.fresh = True   # guidance gates the endgame band on a FRESH baro (see _steer)
 
         def value(self):
             return self.value_now
+
+        def read(self):
+            return [self.value_now, 'baro' if (self.fresh and self.value_now is not None) else None, 0]
 
     elevation = _Elevation()
     unit, position, _agl, _gov = _build({'loiter_radius_m': 30, 'loiter_capture_m': 120,
@@ -304,9 +356,13 @@ def test_oo_endgame():
     class _Elevation:
         def __init__(self):
             self.value_now = None
+            self.fresh = True   # guidance gates the endgame band on a FRESH baro (see _steer)
 
         def value(self):
             return self.value_now
+
+        def read(self):
+            return [self.value_now, 'baro' if (self.fresh and self.value_now is not None) else None, 0]
 
     elevation = _Elevation()
     # _ZONE is a strip -> 'auto' resolves to 'oo'
@@ -403,7 +459,23 @@ def test_min_turn_radius():
                              _StubGovernor(14.0), _PositionHandle(), _AglHandle(), _AglHandle(100.0))
     assert abs(slow.min_turn_radius(45.0) - 20.0) < 0.5   # 14²/(9.81·tan45) ≈ 20 m -- the endgame floor
     assert abs(slow.min_turn_radius(30.0) - 34.6) < 0.5   # a gentler bank -> a wider turn
-    assert abs(slow.landing_turn_radius() - 20.0) < 0.5   # defaults to the 45° land-bank limit
+    """
+    landing_turn_radius() reports the floor at the bank the endgame ACTUALLY holds -- the gated bank
+    (5.2), not the fixed 45° land limit. At 14 m/s the gate allows ~60° (capped), so the reported
+    bound is ~11.5 m, not the 20.0 m the fixed limit would claim. Quoting 20 m under-states what the
+    glider can do, on the very panel used to decide land-short vs stretch.
+    """
+    assert abs(slow.landing_turn_radius() - slow.min_turn_radius(slow.endgame_bank())) < 1e-6
+    assert slow.landing_turn_radius() < 20.0, slow.landing_turn_radius()
+    # too slow to bank at all -> the radius is UNBOUNDED, reported as None. It used to be 0.0, which
+    # reads on the panel as PERFECT precision -- the exact inverse of the truth.
+    crawling = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(_ZONE),
+                                 _StubGovernor(5.0), _PositionHandle(), _AglHandle(), _AglHandle(100.0))
+    assert crawling.endgame_bank() == 0.0 and crawling.landing_turn_radius() is None
+    # gate disabled -> back to the fixed land-bank limit, unchanged behaviour
+    ungated = guidance.Guidance(guidance.GuidanceConfig({'stall_speed_1g': 0}, 1000), _StubMission(_ZONE),
+                                _StubGovernor(14.0), _PositionHandle(), _AglHandle(), _AglHandle(100.0))
+    assert abs(ungated.landing_turn_radius() - 20.0) < 0.5
     fast = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(_ZONE),
                              _StubGovernor(20.0), _PositionHandle(), _AglHandle(), _AglHandle(100.0))
     assert fast.min_turn_radius(45.0) > slow.min_turn_radius(45.0)  # R ∝ v² -> faster flight widens it

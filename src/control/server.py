@@ -11,6 +11,7 @@ cc_protocol.py is shared with the firmware (symlinked).
 
 import asyncio
 import json
+import os
 import time
 import traceback
 
@@ -47,9 +48,82 @@ class Server:
     integration tests).
     """
 
+    """
+    GLIDER ROSTER (gliders.json). The hub holds board state in memory only, so a restart forgets every
+    glider it has ever seen -- and an operator staring at an empty table cannot tell "never connected"
+    from "connected yesterday, not powered now". The roster is the difference: a glider that is KNOWN
+    but absent gets told what to do about it (reboot to re-login), because a board only registers with
+    the hub at boot.
+
+    JSON rather than CSV: the record grows fields (last seen, firmware, notes) without a format change,
+    which matters precisely because it must survive hub restarts written by a later version.
+
+    Same NAME from a different IP replaces the old entry -- a glider that moved network, or a rebuilt
+    board reusing the id. Two records for one glider would make the reboot hint ambiguous, which is
+    the one thing the roster exists to answer.
+    """
+
+    def _roster_load(self) -> dict:
+        """Read gliders.json; an unreadable or corrupt file is not worth failing a hub start over."""
+        try:
+            with open(self.roster_path) as handle:
+                return json.load(handle)
+        except Exception:
+            return {}
+
+    def _roster_seen(self, board_id: str, peer: str) -> None:
+        """
+        Record a glider that just connected, replacing any entry under the same name.
+
+        Args:
+            board_id - the glider's id from whoami.
+            peer - its 'ip:port' as seen by the hub.
+
+        Returns:
+            None; rewrites gliders.json (atomically -- a torn roster is worse than a stale one).
+        """
+        address = peer.rsplit(':', 1)[0] if peer else ''
+        previous = self.roster.get(board_id, {}).get('ip')
+        if previous and previous != address:
+            self.log('%s moved %s -> %s (roster entry replaced)' % (board_id, previous, address))
+        self.roster[board_id] = {'ip': address, 'last_seen': int(time.time())}
+        self._roster_save()
+
+    def _roster_save(self) -> None:
+        """Persist the roster; best-effort -- losing it must never take the hub down."""
+        try:
+            tmp = self.roster_path + '.tmp'
+            with open(tmp, 'w') as handle:
+                json.dump(self.roster, handle, indent=1, sort_keys=True)
+            os.replace(tmp, self.roster_path)
+        except Exception as error:
+            self.log('roster save failed: %r' % error)
+
+    def absent(self) -> list:
+        """
+        Gliders the roster knows that are not connected right now, with what to do about it.
+
+        A board registers with the hub only at BOOT, so a known-but-absent glider will not appear by
+        itself however long the operator waits -- it has to be power-cycled. Saying so is the whole
+        point; an empty row that might mean either is what sends people hunting the network.
+
+        Returns:
+            [{id, ip, last_seen, hint}] for each known glider with no live connection.
+        """
+        missing = []
+        for board_id, record in sorted(self.roster.items()):
+            live = self.boards.get(board_id)
+            if live is not None and live.online:
+                continue
+            missing.append({'id': board_id, 'ip': record.get('ip', ''),
+                            'last_seen': record.get('last_seen', 0),
+                            'hint': 'reboot %s (last seen at %s) -- a glider registers with the hub '
+                                    'only at boot' % (board_id, record.get('ip') or 'unknown')})
+        return missing
+
     def __init__(self, host: str = '0.0.0.0', port: int = 1234, operator_port: int = 1235,
                  web_port: int = 8080, on_board=None, log=print, heartbeat_s: float = HEARTBEAT_S,
-                 gps=None):
+                 gps=None, roster_path: str = None):
         self.host = host
         self.port = port
         self.operator_port = operator_port
@@ -60,6 +134,9 @@ class Server:
         self.heartbeat_s = heartbeat_s
         self.gps = gps  # optional host GPS (gps.Gps) for launch-position assist; None if unattached
         self.commands = commands.load()  # operator command registry, loaded from commands/ at start
+        self.roster_path = roster_path or os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                       'gliders.json')
+        self.roster = self._roster_load()  # id -> {ip, last_seen}: survives a hub restart
         self.streams = {}  # board id -> the log-streaming Task while `log <board>` is active
         self.log_subscribers = set()  # asyncio.Queue per /logs SSE listener (streamed log lines)
 
@@ -95,6 +172,12 @@ class Server:
                 # the degraded-mode annunciation (non-nominal states as one operator signal)
                 'agl': health.get('agl'), 'flight': health.get('flight'),
                 'degraded': health.get('degraded'),
+                # BNO055 (sys, gyr, acc, mag) 0..3 -- shown as its own dashboard column, because NDOF
+                # only converges with MOTION and a still glider reaches launch with a frozen attitude
+                'imu_calibration': health.get('imu_calibration'),
+                # {device: instruction} for anything still needing calibration -- drives the
+                # `calibrate N` button and clears the not-ready row when it empties
+                'calibration': health.get('calibration'),
                 'temp': health.get('temp'), 'mem_free': health.get('mem_free'),
             })
         return rows
@@ -134,6 +217,7 @@ class Server:
                 self.log('whoami failed from %s' % client.peer)
                 return
             self.boards[board_id] = client
+            self._roster_seen(board_id, client.peer)
             self.log('%s online %s' % (board_id, client.info))
             if self.on_board is not None:
                 await self.on_board(client)
@@ -195,7 +279,15 @@ class Server:
                 return  # board dropped -> _handle marks it offline and drops the stream
             if resp.command == 'ok' and resp.args:
                 try:
-                    items = json.loads(resp.args[0]).get(field, [])
+                    payload = json.loads(resp.args[0])
+                    items = payload.get(field, [])
+                    # the board's tee is best-effort: a full ring DISCARDS rather than raising, so a
+                    # gap in a live stream looks exactly like a quiet sensor. Say so once per window
+                    # instead of letting the operator read absence as calm.
+                    lost = payload.get('dropped') or 0
+                    if lost:
+                        self._emit_log(client.id, '[%s stream: %d record(s) DROPPED by the board tee '
+                                                  '-- this window is incomplete]' % (kind, lost))
                 except ValueError:
                     items = []
                 for line in items:

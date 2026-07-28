@@ -39,7 +39,15 @@ def test_fixture():
     assert az == [1.0, 1.0] and abs(times[0] - 0.0) < 1e-9 and abs(times[1] - 0.01) < 1e-9  # us -> s
 
     assert streams['atgm336h.csv'].column('lat')[1][0] == 48.1173  # GNSS numeric parse
-    assert flight_telemetry.parse('@20260609_101715_x.csv@1;notanumber')[0]['x.csv'].rows[0][1] == 'notanumber'
+    """
+    A non-numeric DATA cell becomes nan, not the raw string (findings §26.32): the string used to flow
+    downstream into arithmetic like `row[0] / 1e6` and raise TypeError far from the cause. nan keeps the
+    row parseable and poisons only what actually touches that cell. A BLANK cell still stays '' -- that
+    is the "no sample here" marker column() skips.
+    """
+    junk = flight_telemetry.parse('@20260609_101715_x.csv@1;notanumber')[0]['x.csv'].rows[0][1]
+    assert junk != junk, junk  # nan is the only value not equal to itself
+    assert flight_telemetry.parse('@20260609_101715_x.csv@1;')[0]['x.csv'].rows[0][1] == ''  # blank preserved
     # a non-numeric UPTIME drops the whole row (else column() would divide a str by 1e6 -> TypeError)
     gated = flight_telemetry.parse('@20260609_101715_x.csv@uptime;v\n'
                                    '@20260609_101715_x.csv@badtime;5\n'

@@ -109,7 +109,50 @@ async def amain():
     assert fin3.angle == 90 and isinstance(fin3.angle, int)  # ended at neutral, integer degrees
     await fin3.finish()
 
-    print('ok: sg90 int degrees/clamp/trim/update/set_angle(compare-and-set)/finish + move(), feedback:None, probe()')
+    """
+    SLEW COALESCING: while the horn is still travelling, a SMALL new command is folded into the move
+    under way instead of redirecting a moving servo (each redirect is a fresh current surge, and at
+    100 Hz sensor noise produces a burst of contradictory ones). A LARGE change still preempts at once
+    -- a real manoeuvre must never queue behind jitter -- and settle() issues the folded target once
+    the slew window elapses, so a command can never be silently dropped.
+    """
+    fin4 = sg90.SG90('servo_yaw', {'pin': 'servo_yaw', 'coalesce': True, 'coalesce_deg': 20,
+                                   'coalesce_margin_deg': 3}, _StubController())
+    await fin4.setup()
+    # travel_ms is the ONE angle->time function: move() and the coalescing deadline both use it, so a
+    # servo swap retunes both together. SG90 = 150 ms/60deg, +60 ms settle unless asked otherwise.
+    assert fin4.travel_ms(60) == 210 and fin4.travel_ms(60, settle=False) == 150
+    assert fin4.travel_ms(-60, settle=False) == 150      # sign ignored
+    assert fin4._margin_ms == fin4.travel_ms(3, settle=False)  # the margin is T(3 deg) on THIS servo
+    fin4.set_angle(110)                 # 20 deg from neutral -> written, horn busy ~50 ms (150ms/60deg)
+    assert fin4.angle == 110
+    fin4.set_angle(112)                 # busy -> COMBINED, whichever way it points
+    assert fin4.angle == 110 and fin4._pending == 112
+    fin4.set_angle(108)                 # a reversal is combined too -- the horn is still travelling
+    assert fin4.angle == 110 and fin4._pending == 108
+    fin4.set_angle(111)                 # only the LATEST survives the combine
+    assert fin4.angle == 110 and fin4._pending == 111
+    fin4.set_angle(150)                 # >= coalesce_deg -> a manoeuvre must not wait behind combining
+    assert fin4.angle == 150 and fin4._pending is None
+
+    # arrival writes the combined target, which opens a fresh window sized by ITS OWN travel
+    fin4.set_angle(152)
+    assert fin4.angle == 150 and fin4._pending == 152
+    await asyncio.sleep_ms(120)         # the 150->152 window has long elapsed
+    fin4.settle()
+    assert fin4.angle == 152 and fin4._pending is None
+
+    # off by default: every change writes through, the pre-existing behaviour
+    plain = sg90.SG90('servo_yaw', {'pin': 'servo_yaw'}, _StubController())
+    await plain.setup()
+    plain.set_angle(120)
+    plain.set_angle(119)
+    assert plain.angle == 119 and plain._pending is None
+    await fin4.finish()
+    await plain.finish()
+
+    print('ok: sg90 int degrees/clamp/trim/update/set_angle(compare-and-set)/finish + move(), feedback:None, '
+          'probe(), time-combined commands')
 
 
 asyncio.run(amain())

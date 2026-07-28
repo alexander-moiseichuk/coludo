@@ -24,7 +24,12 @@ shares i2c:0 with the other forward sensors.
 
 import asyncio
 
-import config
+try:
+    from esp32 import NVS
+    _nvs = NVS('coludo')
+except Exception:  # host / no NVS partition -- the tare simply stays in RAM
+    _nvs = None
+
 import databoard
 import fixed
 import i2cbus
@@ -40,6 +45,8 @@ _CMD_START: bytes = b'\x36\x15'  # start continuous: differential-pressure temp-
 _CMD_STOP: bytes = b'\x3f\xf9'  # stop continuous -> idle (required before re-starting after an unclean reboot)
 _FRAME = const(9)  # DP[0,1],CRC, T[3,4],CRC, Scale[6,7],CRC
 _FIRST_MS = const(20)  # first continuous result lands ~8 ms after start (with margin)
+_NVS_ZERO = 'sdp810_zero'  # NVS key: the tare as a fixnum i32, so it survives any reboot
+_RESTART_AFTER = const(5)  # consecutive read failures before re-issuing _CMD_START (see _restart)
 _STOP_MS = const(3)  # stop settles in ~0.5 ms before the part accepts the next command (with margin)
 _START_TRIES = const(2)  # start attempts: a stop+restart clears a part left mid-continuous
 _DEFAULT_SCALE = const(60)  # scale factor for the -500Pa part (Pa = raw / scale); the -125Pa reports 240
@@ -108,15 +115,27 @@ class Sdp810(task.Task):
     _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
 
     async def setup(self) -> bool:
-        bus_id = self.config.get('id', 0)
-        spec = config.bus(self.controller.config, self.config.get('bus', 'i2c'), bus_id)
-        if spec is None:
-            return False
-        self._bus = i2cbus.get(bus_id, spec)
-        self._addr: int = self.config.get('addr', _ADDR)
+        self._bus, self._addr = i2cbus.bind(self.controller.config, self.config, _ADDR)
+        if self._bus is None:
+            return False  # no such bus in config -> the Controller skips this device
         self._period_ms: int = self.config.get('period_ms', 20)  # ~50 Hz (tau63 < 3 ms allows fast poll)
         self._density: float = self.config.get('air_density', _AIR_DENSITY)  # the single q->v knob
         self._zero: fixed.fixnum = fixed.from_float(self.config.get('zero_offset_pa', 0.0))  # pad bias
+        """
+        A tare stored by a previous session WINS over the config default: it was measured on this
+        airframe with this tube run, where the config value is a guess. Restoring it means a reboot --
+        including one mid-glide, where nobody can re-tare -- comes back with a real zero instead of 0,
+        which would otherwise put the whole interior-static bias into the airspeed the governor caps off.
+        """
+        if _nvs is not None:
+            try:
+                self._zero = _nvs.get_i32(_NVS_ZERO)
+                # print(), not Recorder.log(): setup runs BEFORE the recorder task is up, so a logged
+                # line here goes nowhere (logs are best-effort by policy). The same reason icp10111 and
+                # bno055 print their setup failures. Runtime messages below still use the recorder.
+                print('sdp810 :: zero restored from NVS: %.2f Pa' % fixed.to_float(self._zero))
+            except Exception:
+                pass  # never stored yet -- keep the config default
         self._scale: int = _DEFAULT_SCALE
         self._raw: fixed.fixnum = 0  # last un-tared reading (Pa fixnum) -> the tare source
         self._temp_raw: int = 0  # last raw temperature word (raw / 200 -> °C)
@@ -147,7 +166,7 @@ class Sdp810(task.Task):
         self._pressure_ch, self._airspeed_ch = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'dynamic_pressure', 'airspeed')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
-                                       ('dynamic_pressure', 'airspeed', 'temperature'),  # Pa fixnum, m/s, °C fixnum
+                                       ('dynamic_pressure', 'airspeed_cms', 'temperature'),  # all fixnums (x SCALE)
                                        decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
         self._ok = True
         return True
@@ -190,6 +209,78 @@ class Sdp810(task.Task):
         q = fixed.to_float(pressure)
         return (2.0 * q / self._density) ** 0.5 if q > 0.0 else 0.0
 
+    async def _restart(self) -> None:
+        """
+        Re-issue the continuous-measurement command after the part has been reset out from under us.
+
+        This sensor holds its MODE in volatile state: it only streams because setup() sent _CMD_START.
+        Anything that resets it mid-flight silently drops it to idle, and every later read then fails
+        forever -- the run loop had no way back. The concrete trigger is a PEER: icp10111's latch-up
+        recovery fires an I2C GENERAL-CALL reset (0x00 0x06), which by design resets every device on
+        the bus that honours it, this one included. Observed here as `sdp810 :: read OSError(19)` with
+        the channel flatlined at 0.0 Hz while the part itself was perfectly healthy.
+
+        stop-then-start, because the part refuses a fresh start while still streaming (the same
+        sequence setup() uses after an unclean reboot).
+
+        Args:
+            (none)
+
+        Returns:
+            None; best-effort -- a still-dead part just fails the next read and retries later.
+        """
+        try:
+            await self._bus.writeto(self._addr, _CMD_STOP)
+            await asyncio.sleep_ms(_STOP_MS)
+            await self._bus.writeto(self._addr, _CMD_START)
+            await asyncio.sleep_ms(_FIRST_MS)
+            recorder.Recorder.log(self.name, 'restarted continuous mode after %d failures' % _RESTART_AFTER)
+        except OSError:
+            pass  # still gone -- the next read fails and we try again
+
+    def calibration(self) -> str:
+        """The still-air tare instruction; '' once a zero offset has been captured."""
+        if self._zero != 0:
+            return ''
+        return ('keep the pitot in STILL AIR -- do NOT blow into it, this captures the zero tare '
+                '(now %.2f Pa)' % fixed.to_float(self._pressure_ch.value() or 0))
+
+    async def calibrate(self) -> str:
+        """Capture the current still-air reading as the zero offset -- the board can do this itself."""
+        if self._raw is None:
+            return 'no reading yet'
+        self.update({'zero': True})
+        self._persist_zero()
+        recorder.Recorder.log(self.name, 'calibrated: zero_offset %.2f Pa' % fixed.to_float(self._zero))
+        return None
+
+    def _persist_zero(self) -> None:
+        """
+        Commit the tare to NVS so it survives ANY reboot, warm or cold.
+
+        The warm-start crumb already carries it, but only while the board is ARMED AND AIRBORNE, and it
+        is discarded whenever the recovery gate rejects -- so a reboot the gate refuses (a cold power
+        cycle at the pad, a cause it does not trust) still comes back untared. This is the same value
+        with none of those conditions: written when the operator tares, read at setup, so dynamic
+        pressure never silently carries the full interior-static bias.
+
+        Best-effort by design -- a board with no NVS partition simply keeps the in-RAM tare, exactly as
+        before. A failed commit must never take down a sensor that is otherwise working.
+
+        Args:
+            (none)
+
+        Returns:
+            None.
+        """
+        if _nvs is None:
+            return
+        try:
+            _nvs.set_i32(_NVS_ZERO, int(self._zero))  # the fixnum itself: an int, no float in NVS
+            _nvs.commit()
+        except Exception as error:
+            self.note('sdp810 :: zero persist %r', error)
+
     async def run(self) -> None:
         while True:
             try:
@@ -202,10 +293,14 @@ class Sdp810(task.Task):
                     self._temp_raw = _signed16(frame[3], frame[4])
                     self._pressure_ch.push(pressure)  # Pa fixnum -> small int, no boxing
                     self._airspeed_ch.push(airspeed)  # m/s -> the governor's estimator (airspeed.py)
-                    self._telemetry.push((pressure, airspeed, self._temp_raw // 2))  # every collected value
+                    # every collected value, all as fixnums -- a float in a row boxes on MicroPython
+                    self._telemetry.push((pressure, int(airspeed * fixed.SCALE), self._temp_raw // 2))
                     self.note(None)  # healthy pass -> let the next error log afresh
+                    self.strike(False, _RESTART_AFTER)  # good read rearms the run
             except Exception as error:
                 self.note('sdp810 :: read %r', error)  # deduped: a persistent error logs once, not every tick
+                if self.strike(True, _RESTART_AFTER):  # once, not every tick while it stays dead
+                    await self._restart()
             await asyncio.sleep_ms(self._period_ms)
 
     def update(self, props: dict) -> list:

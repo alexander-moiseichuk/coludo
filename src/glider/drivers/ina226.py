@@ -17,7 +17,6 @@ the effective value -- a 2-wire ohmmeter cannot resolve a 0.01 ohm shunt.
 import asyncio
 import struct
 
-import config
 import databoard
 import i2cbus
 import recorder
@@ -73,12 +72,9 @@ class Ina226(task.Task):
     _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
 
     async def setup(self) -> bool:
-        bus_id = self.config.get('id', 0)
-        spec = config.bus(self.controller.config, self.config.get('bus', 'i2c'), bus_id)
-        if spec is None:
-            return False
-        self._bus = i2cbus.get(bus_id, spec)
-        self._addr: int = self.config.get('addr', _ADDR)
+        self._bus, self._addr = i2cbus.bind(self.controller.config, self.config, _ADDR)
+        if self._bus is None:
+            return False  # no such bus in config -> the Controller skips this device
         self._period_ms: int = self.config.get('period_ms', 100)
         shunt_mohms: int = self.config.get('shunt_mohms', 10)  # shunt resistance in milli-ohms (was shunt_ohms)
         self._max_current_ma: int = self.config.get('max_current_ma', 5000)  # full-scale current, mA
@@ -132,6 +128,12 @@ class Ina226(task.Task):
         INTEGER milli-units, no float. Current is signed (a reversed shunt / charging current reads
         negative); power is positive. The power term divides by 32768 BEFORE the *25 so the intermediate
         stays a small int (no mpz).
+
+        THREE SEPARATE READS, DELIBERATELY. 0x02/0x03/0x04 are contiguous, so one 6-byte read looks like
+        an obvious saving -- it is not possible on this part. The INA226 has a register POINTER that does
+        NOT auto-increment: probed on the board, a 6-byte read from 0x02 returns the bus voltage and then
+        0xFFFF padding (`bus=0x0F95` then `[1]=0xFFFF [2]=0xFFFF`), not power and current. Each register
+        needs its own pointer write. Do not "optimise" this back into one read.
 
         Args:
             (none)

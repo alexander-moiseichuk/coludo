@@ -15,7 +15,6 @@ BMP280.
 import asyncio
 import struct
 
-import config
 import databoard
 import i2cbus
 import recorder
@@ -38,6 +37,15 @@ _CHIP_ID = const(0xA0)
 _MODE_CONFIG = const(0x00)
 _MODE_NDOF = const(0x0C)  # full 9-DOF absolute-orientation fusion
 _PWR_NORMAL = const(0x00)
+# consecutive bit-identical Euler reads (WHILE accel moves) that prove the fusion has latched;
+# 50 at the 50 Hz default is ~1 s -- long enough that a still airframe never trips it
+_REG_CALIB_STAT = const(0x35)  # sys[7:6] gyr[5:4] acc[3:2] mag[1:0], 3 = fully calibrated
+_MAG_CALIBRATED = const(3)     # magnetometer level that means the figure-8 is done
+_OFF_GYR = const(12)  # gyro within the ACC..EUL block (bytes 12..17)
+# |gx|+|gy|+|gz| above this means the part is genuinely ROTATING, so a frozen Euler is a fault
+# and not merely a still airframe. 16 LSB/deg/s, so ~5 deg/s summed across the axes.
+_TURNING_LSB = const(80)
+_STALL_SAMPLES = const(50)
 _DEG = 1.0 / 16.0
 _ACC_G = 1.0 / 980.665  # ACC_DATA is m/s² at 100 LSB/(m/s²); /100/9.80665 -> g (incl gravity)
 
@@ -54,14 +62,15 @@ class Bno055(task.Task):
     _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
 
     async def setup(self) -> bool:
-        bus_id = self.config.get('id', 0)
-        spec = config.bus(self.controller.config, self.config.get('bus', 'i2c'), bus_id)
-        if spec is None:
-            return False
-        self._bus = i2cbus.get(bus_id, spec)
-        self._addr: int = self.config.get('addr', _ADDR)
+        self._bus, self._addr = i2cbus.bind(self.controller.config, self.config, _ADDR)
+        if self._bus is None:
+            return False  # no such bus in config -> the Controller skips this device
         self._period_ms: int = self.config.get('period_ms', 20)  # 50 Hz (fusion runs at 100 Hz)
         self._buf = bytearray(24)  # ACC..EUL block
+        self._last_euler = None    # fusion-stall detector state (see _fusion_alive)
+        self._stalled: bool = False
+        self.calibration_state = None  # (sys, gyr, acc, mag) 0..3 each; None until first poll
+        self._calib_due: int = 1  # countdown to the next CALIB_STAT read (see _poll_calibration)
         try:
             if await self._bus.read_chip_id(self._addr, _REG_CHIP_ID) != _CHIP_ID:
                 return False  # not a BNO055 at this address
@@ -102,16 +111,110 @@ class Bno055(task.Task):
         return (heading * _DEG, roll * SCALE // 16, pitch * SCALE // 16,
                 ax * _ACC_G, ay * _ACC_G, az * _ACC_G)
 
+    def _fusion_alive(self, sample: tuple) -> bool:
+        """
+        Is the fusion engine still COMPUTING, or has it latched a constant?
+
+        A stalled BNO055 fusion core is the worst failure this driver can have, because the channel
+        stays FRESH: every staleness guard downstream passes, and the priority-1 attitude backup
+        (tasks/attitude.py) -- built for exactly this -- only takes over when the primary goes stale, so
+        it would never engage. The PID would be handed a constant attitude and nothing would notice.
+
+        Measured on this bench: the part returns a bit-identical Euler triple indefinitely while its RAW
+        accel and gyro keep streaming normally in the same 24-byte block read -- across a power cycle,
+        in both NDOF and IMU fusion modes, and on either clock source.
+
+        The judgement is made ONLY WHILE THE PART IS ROTATING, off its own gyro in the same block read.
+        A stationary BNO055 legitimately repeats its fused output bit for bit -- measured on a healthy
+        replacement sitting on the bench -- so an earlier version of this that keyed on accel dither
+        fired on a GOOD sensor, and would have withheld attitude on the pad and pushed the glider onto
+        the gyro backup before launch. Rotation is the only condition under which a frozen Euler is
+        provably wrong: turn the part and a working fusion MUST move.
+
+        The cost is that a stalled fusion is not detectable while the airframe is still, which is
+        correct rather than a gap -- the two are genuinely indistinguishable then, and a stationary
+        glider is not being controlled by attitude anyway. In flight there is always rotation.
+
+        Args:
+            sample - the flat 6-tuple from sample().
+
+        Returns:
+            True while the fusion output is live (or not yet proven dead).
+        """
+        euler = sample[:3]
+        if euler != self._last_euler:
+            self._last_euler = euler
+            self.strike(False, _STALL_SAMPLES)  # the fusion moved
+            self._stalled = False  # ...so clear the latch HERE: returning `not self._stalled` below
+            return True            # would otherwise keep reporting stalled forever after a recovery
+        # the part's OWN gyro, bytes 12..17 of the block sample() just read (16 LSB/deg/s)
+        gx, gy, gz = struct.unpack_from('<hhh', self._buf, _OFF_GYR)
+        rotating = abs(gx) + abs(gy) + abs(gz) > _TURNING_LSB  # only then is a frozen euler PROOF
+        if self.strike(rotating, _STALL_SAMPLES):
+            self._stalled = True  # latch: stays until the fusion moves again (cleared in run())
+        return not self._stalled
+
+    async def _poll_calibration(self) -> None:
+        """
+        Refresh CALIB_STAT at ~1 Hz so the OPERATOR can be told the IMU still needs calibrating.
+
+        NDOF fusion does not converge without motion, and a glider sits still on the pad -- so a
+        perfectly healthy part can reach LAUNCH with a frozen attitude, which is what made a working
+        module look broken on this bench. That is a pre-flight procedure item, and it only becomes one
+        if the board reports it: hence `calibrated` on the operator surfaces (cc_client degraded +
+        the `verify` readiness gate).
+
+        MAG is the gate. The magnetometer is the axis that needs the deliberate figure-8; the gyro
+        reaches 3 by itself within seconds of sitting still, and the accelerometer wants a few held
+        orientations but does not block heading. Decimated to ~1 Hz -- one extra byte off the bus, well
+        off the 50 Hz sampling path.
+
+        Args:
+            (none)
+
+        Returns:
+            None; refreshes self.calibration (sys, gyr, acc, mag) as a side effect.
+        """
+        self._calib_due -= 1
+        if self._calib_due > 0:
+            return
+        self._calib_due = max(1, 1000 // self._period_ms)
+        raw = (await self._bus.read(self._addr, _REG_CALIB_STAT, 1))[0]
+        self.calibration_state = (raw >> 6, (raw >> 4) & 3, (raw >> 2) & 3, raw & 3)
+
+    def calibrated(self) -> bool:
+        """True once the MAGNETOMETER is calibrated -- the axis that needs the operator's figure-8."""
+        return self.calibration_state is not None and self.calibration_state[3] >= _MAG_CALIBRATED
+
+    def calibration(self) -> str:
+        """The figure-8 instruction while NDOF is unconverged, with the live reading folded in; '' once done."""
+        if self.calibration_state is None:
+            return 'move the airframe in a slow figure-8 (BNO055 calibration not read yet)'
+        sys_, gyr, acc, mag = self.calibration_state
+        if mag >= _MAG_CALIBRATED:
+            return ''
+        return ('move the airframe in a slow FIGURE-8 until mag reads 3 '
+                '(now sys %d gyr %d acc %d mag %d)' % (sys_, gyr, acc, mag))
+
     async def run(self) -> None:
         while True:
             try:
                 sample = await self.sample()  # flat 6-tuple (heading°, roll_cd, pitch_cd, ax, ay, az g)
-                self._attitude.push(sample[:3])  # one step: push our channels directly (roll/pitch fixnum)
+                if self._fusion_alive(sample):
+                    self._attitude.push(sample[:3])  # push our channels directly (roll/pitch fixnum)
+                    self._stalled = False
+                elif not self._stalled:
+                    self._stalled = True
+                    # STOP publishing attitude so the channel goes stale and the databoard hands over to
+                    # the priority-1 backup. Accel keeps flowing -- that half of the part still works.
+                    recorder.Recorder.log(self.name, 'fusion STALLED (frozen euler while accel moves)'
+                                                     ' -- attitude withheld, backup takes over')
                 self._accel.push(sample[3:])  # low-g backup to the ADXL375
                 # roll/pitch are centidegree fixnum -> to_str for a human-readable, float-free CSV column
                 self._telemetry.push((sample[0], to_str(sample[1]), to_str(sample[2]),
                                       sample[3], sample[4], sample[5]))
                 self.note(None)  # healthy pass -> let the next error log afresh
+                await self._poll_calibration()
             except Exception as error:
                 self.note('bno055 :: read %r', error)  # deduped: a persistent error logs once, not at 50 Hz
             await asyncio.sleep_ms(self._period_ms)
@@ -170,4 +273,9 @@ class Bno055(task.Task):
         status = task.Task.inspect(self)
         status['attitude_deg'] = self._attitude.value()  # our channels' latest (no hot-path I2C)
         status['accel_g'] = self._accel.value()
+        # the operator must see a WITHHELD attitude: the channel simply going quiet looks like a
+        # missing sensor, and this says the part is alive with a dead fusion core
+        status['fusion_stalled'] = self._stalled
+        status['calibration'] = self.calibration_state  # (sys, gyr, acc, mag)
+        status['calibrated'] = self.calibrated()
         return status

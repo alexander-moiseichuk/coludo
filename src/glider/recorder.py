@@ -2,7 +2,7 @@
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 The single non-hot data path: telemetry + logs into PSRAM ring buffers, drained to the Luckfox
-recorder over UART. See specs/coludo.md ('Task Data-Flow', 'Logging', 'Telemetry', 'Storage Write
+recorder over UART. See doc/specs/coludo.md ('Task Data-Flow', 'Logging', 'Telemetry', 'Storage Write
 Constraints').
 
 Recorder is a singleton: any module calls Recorder.log() / Recorder.tlm() globally. Producers enqueue
@@ -10,6 +10,17 @@ synchronously (struct.pack_into into a ring -- never slice-assignment, which is 
 this port); the async run() loop drains the rings to the UART via an asyncio.StreamWriter, telemetry
 (first priority) before logs. Logs are best-effort (dropped when full); telemetry is important (raises
 if a record will not fit).
+
+That trade continues on the RECORDER side, deliberately -- logging is what is spent to make telemetry
+trustworthy, so the two channels have different guarantees end to end:
+  * TELEMETRY is committed PER LINE, so a row that reached the link is on disk. That is what makes a
+    capture survive a crash mid-flight, and why anything that must be evidence belongs in tlm().
+  * LOGS are buffered and flushed roughly every 1000 telemetry messages, so a SHORT session can end
+    with log lines that were never written out. A log line is a convenience, never evidence -- do not
+    reason about a flight from one, and do not put a value there that a capture needs.
+  * SETUP-TIME messages reach NEITHER: drivers set up before the recorder task, so the log ring is
+    empty and the line is discarded. Use print() there -- the only channel that early (measured: an
+    sdp810 setup line never reached recorder.log, while print() shows on the console at boot).
 """
 
 import asyncio
@@ -145,17 +156,23 @@ class _TeeSink:
             duration_ms - the next window in milliseconds (<= 0 stops after returning the batch).
 
         Returns:
-            The records buffered since the last call (decoded, right-stripped).
+            (records, dropped): the rows buffered since the last call (decoded, right-stripped), and
+            how many the ring DISCARDED in that window. The count matters because the tee is
+            best-effort by design -- a full ring drops rather than raising, so a live `tlm` session
+            with a gap looks exactly like a quiet sensor. Reporting it turns an invisible loss into a
+            number the operator can see.
         """
         self._deadline = 0
         if self._ring is None:
             if duration_ms <= 0:
-                return []
+                return [], 0
             self._ring = Ring(min(duration_ms * 10, 4 * _DEFAULT_CAPACITY), self._cell)  # first window sizes it
+        dropped = self._ring.dropped
+        self._ring.dropped = 0
         records = self._take()
         if duration_ms > 0:
             self._deadline = time.ticks_add(time.ticks_us(), duration_ms * 1000)
-        return records
+        return records, dropped
 
 
 class Recorder:
@@ -292,9 +309,10 @@ class Recorder:
             duration_ms - the next window in milliseconds (<= 0 stops).
 
         Returns:
-            {'lines': [...]} -- the buffered log lines.
+            {'lines': [...], 'dropped': n} -- the buffered log lines and how many the tee discarded.
         """
-        return {'lines': cls._cc_log.drain(duration_ms)}
+        lines, dropped = cls._cc_log.drain(duration_ms)
+        return {'lines': lines, 'dropped': dropped}
 
     @classmethod
     def cc_telemetry(cls, duration_ms: int) -> dict:
@@ -308,9 +326,11 @@ class Recorder:
             duration_ms - the next window in milliseconds (<= 0 stops).
 
         Returns:
-            {'samples': [...]} -- the buffered telemetry rows.
+            {'samples': [...], 'dropped': n} -- the buffered rows and how many the tee discarded
+            (non-zero means the operator is seeing a GAP, not a quiet sensor).
         """
-        return {'samples': cls._cc_tlm.drain(duration_ms)}
+        samples, dropped = cls._cc_tlm.drain(duration_ms)
+        return {'samples': samples, 'dropped': dropped}
 
     @classmethod
     def tlm(cls, filename: str, content: str) -> None:
@@ -329,7 +349,28 @@ class Recorder:
         Raises:
             _RecorderError - when the record will not fit or there is no room.
         """
-        data = ('@%s_%s@%s\n' % (cls.session(), filename, content)).encode()
+        cls.tlm_raw(('@%s_%s@%s\n' % (cls.session(), filename, content)).encode())
+
+    @classmethod
+    def tlm_raw(cls, data: bytes) -> None:
+        """
+        Queue an ALREADY-ENCODED telemetry line (the hot path Telemetry.push uses).
+
+        tlm() builds the wire line by formatting the session prefix around a row that the caller had
+        already formatted -- copying the whole row a second time, per sample. A stream knows its own
+        prefix, so it can format the complete line ONCE and hand the bytes straight here. Measured on
+        the board: 240 -> 144 B per push for a 3-field row, and telemetry is the single biggest
+        GC-off allocator on a busy capture.
+
+        Args:
+            data - the complete encoded record, newline included.
+
+        Returns:
+            None.
+
+        Raises:
+            _RecorderError - when the record will not fit or there is no room.
+        """
         if not cls._enqueue(cls._tlm, cls._cc_tlm.tee, data):  # CC mirror + primary ring
             raise _RecorderError('telemetry dropped (%d bytes)' % len(data))
 
@@ -431,19 +472,48 @@ class Telemetry:
         self._header: str = 'uptime;' + ';'.join(fields)  # constant CSV header, built once
         self._row_fmt: str = '%u;' + ';'.join('%s' for _ in fields)  # one reusable row-format string
         self._header_sent: bool = False
+        self._line_fmt: str = None  # '@<session>_<file>@' + the row format, resolved on the first push
         self._last_us: int = Recorder.timestamp() - self.decimate_us  # one window back -> first push emits
+
+    def due(self, now: int) -> bool:
+        """
+        Whether the decimation window has elapsed -- so a HOT-PATH producer can skip building its row.
+
+        push() takes an already-built `values` tuple, so a 100 Hz caller that lets push() do the
+        decimating still allocates that tuple 100x/s on a GC-off flight. Checking here first lets the
+        caller return before building it, against the SAME clock push() uses -- one clock, so a jittery
+        slice can never advance a private counter past a window push() then refuses (which would drop
+        the sample silently).
+
+        Args:
+            now - the current Recorder.timestamp() / ticks_us.
+
+        Returns:
+            True when a push() now would emit rather than decimate. False when the Recorder is not
+            running at all: with no ring to write to, push() would RAISE, and a hot-path producer
+            calling it every tick would pay for a raised-and-caught exception per tick (measured in
+            bench_flight, where the bench has no UART: it dominated the reported per-step cost). A
+            stream that has nowhere to go is simply not due.
+        """
+        return Recorder._tlm is not None and time.ticks_diff(now, self._last_us) >= self.decimate_us
 
     def push(self, values) -> None:
         if not self._header_sent:
             Recorder.tlm(self.filename, self._header)
             self._header_sent = True
+            # the session id is fixed for the boot, so the whole wire prefix folds into the row format
+            # ONCE here (%s substitutes the row format literally) instead of wrapping every sample
+            self._line_fmt = '@%s_%s@%s\n' % (Recorder.session(), self.filename, self._row_fmt)
         now = Recorder.timestamp()
         if time.ticks_diff(now, self._last_us) < self.decimate_us:
             return  # too soon since the last row -> decimate
         """
-        one % pass over a precomputed format string: no per-field str() generator, no intermediate ';'.join
-        list -- a GC-off flight decimates to ~10 Hz/stream, so trim the per-row allocations. ((now,) +
-        tuple(values), not (now, *values): this compiler rejects display star-unpack.)
+        ONE % pass over the precomputed full-line format, then one encode -- no per-field str()
+        generator, no ';'.join list, and no second copy of the row to add the prefix (tlm() used to do
+        that, which measured 240 B/push; this is 144 B). A tuple is passed through rather than rebuilt:
+        every hot caller already holds one. ((now,) + values, not (now, *values): this compiler rejects
+        display star-unpack.)
         """
-        Recorder.tlm(self.filename, self._row_fmt % ((now,) + tuple(values)))
+        Recorder.tlm_raw((self._line_fmt % ((now,) + (values if type(values) is tuple else tuple(values))))
+                         .encode())
         self._last_us = now

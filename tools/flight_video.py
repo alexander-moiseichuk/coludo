@@ -335,7 +335,12 @@ def load(label, path):
     uptime (large after soft-reboots -- ticks_ms doesn't reset) and the render pads dead air to ~uptime.
     """
     stages = [(t - launch, s) for t, s in stages]
-    gnss, baro, imu = streams.get('gnss.csv'), streams.get('baro_icp10111.csv'), streams.get('imu_bno055.csv')
+    # resolved by ROLE, not file name: a fallback flight (BMP280 surviving, LSM6DSO32 as accel) must
+    # still render rather than silently lose the panel (findings §27.5)
+    find = flight_telemetry.find_stream
+    gnss = find(streams, 'lat', 'lon')
+    baro = find(streams, 'elevation', prefer='icp') or find(streams, 'altitude')
+    imu = find(streams, 'roll', 'pitch', prefer='bno')
 
     def rel(stream, field):
         if stream is None or field not in stream.fields:
@@ -364,7 +369,7 @@ def load(label, path):
 
     # Load fins telemetry (eleron_left, eleron_right, yaw) -- optional
     fins = None
-    fins_str = streams.get('fins.csv')
+    fins_str = find(streams, 'eleron_left', 'eleron_right', 'yaw')  # sim-fused or rebuilt from per-servo
     if fins_str and 'eleron_left' in fins_str.fields:
         ft, fl = rel(fins_str, 'eleron_left')
         _, fr = rel(fins_str, 'eleron_right')
@@ -373,7 +378,7 @@ def load(label, path):
 
     # Load acceleration (ax, ay, az) -- optional
     accel = None
-    accel_str = streams.get('accel_adxl375.csv')
+    accel_str = find(streams, 'ax', 'ay', 'az', prefer='adxl')  # high-g if fitted, else the IMU's
     if accel_str and 'ax' in accel_str.fields:
         at, ax = rel(accel_str, 'ax')
         _, ay = rel(accel_str, 'ay')
@@ -383,7 +388,7 @@ def load(label, path):
     # Load board vitals (mem_free / CPU load / predicted oom) from health.csv -- optional; shown live in
     # the HUD so the operator watches the GC-off memory drain + CPU headroom as the flight progresses.
     health = None
-    health_str = streams.get('health.csv')
+    health_str = find(streams, 'load')  # board_health.csv
     if health_str and 'mem_free' in health_str.fields:
         # mem_free + load are on EVERY health row (aligned) -> zip is safe. oom_s/land_s blank out when
         # not shrinking (ragged), so they are left to the charts (flight_report), not the live HUD.

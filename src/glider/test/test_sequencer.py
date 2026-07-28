@@ -55,6 +55,8 @@ async def amain():
     assert await seq.setup() is True
     accel = databoard.Databoard.provide('imu', {'accel': {'priority': 0, 'timeout_ms': 1000}}, 'accel')
     agl = databoard.Databoard.provide('laser', {'agl': {'priority': 0, 'timeout_ms': 1000}}, 'agl')
+    elevation = databoard.Databoard.provide(
+        'baro', {'elevation': {'priority': 0, 'timeout_ms': 1000}}, 'elevation')
 
     # SETTING: 1 g at rest -> no launch
     accel.push((0.0, 0.0, 1.0))
@@ -88,12 +90,58 @@ async def amain():
     seq._tick(1810)  # 110 ms > land_ms 100 -> LANDING
     assert ctrl.stage == Stage.LANDING
 
+    """
+    STALE agl must NOT land the glider at altitude. The laser only reaches ~4 m, so above it the channel
+    goes stale and `value()` would LINEARLY PROJECT the last two samples to now without bound -- a real
+    HITL flight logged `landing; agl -9.6m` 0.38 s after `gliding; apogee 274m`, ending control at
+    apogee. _detect_landing now requires a FRESH source and falls back to the baro elevation.
+    """
+    ctrl.stage = Stage.GLIDING
+    seq._since = None
+    agl.push(0.2)                 # the last on-pad reading, then the laser goes out of range...
+    # REAL time must pass: databoard freshness is wall ticks_us, not the synthetic `now` fed to _tick
+    await asyncio.sleep_ms(1100)  # > the channel's 1000 ms timeout -> the agl channel is STALE
+    elevation.push(274.0)         # ...while the baro says we are at apogee
+    seq._tick(30000)
+    seq._tick(30500)              # sustained well past land_ms: a stale agl would have flared by now
+    assert ctrl.stage == Stage.GLIDING, 'stale agl landed the glider at 274 m'
+
+    # ...and the baro fallback still lands it when the elevation genuinely comes down
+    elevation.push(1.0)
+    seq._tick(31000)
+    seq._tick(31200)              # 200 ms > land_ms 100
+    assert ctrl.stage == Stage.LANDING
+
     # LANDING: ~1 g stationary sustained ground_ms -> done
     accel.push((0.0, 0.0, 1.0))
     seq._tick(1650)
     assert ctrl.stage == Stage.LANDING
     seq._tick(1960)  # 310 ms > ground_ms 300
     assert ctrl.stage == Stage.DONE
+
+    """
+    A STALE baro must not declare a FALSE LAUNCH on the pad. The baro backup trips BOOSTING when
+    elevation passes launch_alt_m regardless of accel, and `value()` answers a stale scalar channel by
+    extrapolating without bound -- so a baro that stops publishing (icp10111 read timeouts are real on
+    this hardware) lets the projection run away past the threshold while the glider sits still. That
+    would disable GC, arm the flight and start the stage machine on the ground.
+    """
+    ctrl.stage = Stage.SETTING
+    seq._stage_seen = None
+    seq._since = None
+    accel.push((0.0, 0.0, 1.0))        # 1 g: stationary, so ONLY the baro backup could trip launch
+    elevation.push(0.5)                # last real reading: on the pad
+    await asyncio.sleep_ms(1100)       # > the channel's 1000 ms timeout -> the baro is STALE
+    accel.push((0.0, 0.0, 1.0))        # keep accel fresh; only the baro went away
+    seq._tick(40000)
+    seq._tick(40200)
+    assert ctrl.stage == Stage.SETTING, 'a stale baro declared a false launch on the pad'
+
+    # ...and a FRESH baro genuinely above the threshold still trips it
+    elevation.push(15.0)
+    seq._tick(40400)
+    assert ctrl.stage == Stage.BOOSTING
+    elevation.push(3.0)  # back below launch_alt_m so the checks below are not pre-tripped by the baro
 
     # guard: a transient (high g that drops before launch_ms) does NOT trip launch
     ctrl.stage = Stage.SETTING
@@ -108,8 +156,6 @@ async def amain():
     # sub-launch_g accel -- a heavy stack boosting near the threshold still detects once it left the pad.
     ctrl.stage = Stage.SETTING
     seq._stage_seen = None
-    elevation = databoard.Databoard.provide(
-        'baro', {'elevation': {'priority': 0, 'timeout_ms': 1000}}, 'elevation')
     accel.push((0.0, 0.0, 2.0))  # only 2 g -- below this SPEC's 3 g launch_g
     elevation.push(3.0)          # still on/near the pad
     seq._tick(2100)
@@ -154,6 +200,9 @@ async def amain():
     class _NoReading:
         def value(self):
             return None  # a stale / absent databoard parameter
+
+        def read(self):
+            return [None, None, None]  # ...and no fresh source vouches for it either
 
     ctrl.stage = Stage.SETTING
     ctrl.manual = False

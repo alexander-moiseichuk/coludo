@@ -139,7 +139,7 @@ class GuidanceConfig:
         """
         self.endgame_alt_m: float = config.get('endgame_alt_m', 50)
         """
-        ENDGAME airspeed-gated bank (specs/coludo.md "Turn-radius limit"): instead of the fixed
+        ENDGAME airspeed-gated bank (doc/specs/coludo.md "Turn-radius limit"): instead of the fixed
         land_bank_limit, the endgame spiral banks as steep as the LIVE airspeed safely allows and no
         steeper. A coordinated turn at bank phi pulls load n=1/cos(phi), which raises the stall speed to
         stall_speed_1g*sqrt(n); holding airspeed >= stall_margin*that bounds phi -- steeper than 45 deg
@@ -259,7 +259,11 @@ class Guidance:
         """
         if self._mission is None or not self._mission.zone or self._elevation is None:
             return None
-        elevation = self._elevation.value()          # baro height above the pad (m)
+        # FRESH baro only -- a stale scalar channel extrapolates without bound, and this figure tells
+        # the operator whether the zone is still reachable (see sequencer._detect_launch)
+        elevation, elevation_source, _elevation_age = self._elevation.read()
+        if elevation_source is None:
+            elevation = None
         position, source, _age = self._position.read()
         geometry = self._mission.geometry()
         if elevation is None or position is None or source is None or geometry is None:
@@ -283,7 +287,7 @@ class Guidance:
         `R = v^2 / (g * tan(bank))`. A physical restriction, not a tuning knob -- the guidance clamps
         the commanded loiter/endgame radius to this so it never asks for a turn the airframe cannot fly
         (at the 45deg land-bank limit and ~14 m/s trim that floor is ~20 m, and it BOUNDS landing
-        accuracy; see specs/coludo.md 'Turn-radius limit').
+        accuracy; see doc/specs/coludo.md 'Turn-radius limit').
 
         Args:
             bank_deg - the bank angle to evaluate the radius at (degrees).
@@ -323,10 +327,27 @@ class Guidance:
             return 0.0  # too slow to bank without stalling -> hold the wings level until speed recovers
         return min(config.endgame_max_bank, math.degrees(math.acos((floor / airspeed) ** 2)))
 
-    def landing_turn_radius(self) -> float:
-        """The endgame turn-radius floor at the LAND-bank limit -- the precision bound reported for a
-        land-short-vs-stretch decision (flight-panel telemetry)."""
-        return self.min_turn_radius(self._config.land_bank_limit)
+    def landing_turn_radius(self):
+        """
+        The endgame turn-radius floor at the bank the endgame will ACTUALLY hold -- the precision bound
+        reported for a land-short-vs-stretch decision (flight-panel telemetry).
+
+        Off `endgame_bank()`, not the fixed `land_bank_limit`: since the airspeed-gated bank landed
+        (#5.2) the spiral banks as steep as the live airspeed safely allows, up to endgame_max_bank
+        (60 deg), so quoting the 45 deg figure UNDER-states what the glider can do -- 20.0 m against
+        11.5 m at 14 m/s. An operator deciding whether the zone is still reachable was reading a bound
+        the aircraft had already beaten.
+
+        Args:
+            (none -- reads the live gated bank)
+
+        Returns:
+            The minimum turn radius in metres; None when the glider is too slow to bank at all, where
+            the radius is UNBOUNDED. That case used to return 0.0 -- a radius of zero reads as perfect
+            precision on the panel, the exact inverse of the truth.
+        """
+        bank = self.endgame_bank()
+        return self.min_turn_radius(bank) if bank > 0.0 else None
 
     def enter(self, heading: float, roll: fixnum, pitch: fixnum) -> None:
         """
@@ -409,15 +430,24 @@ class Guidance:
         Returns:
             True -- the setpoint slots are always filled in GLIDING / LANDING.
         """
-        agl = self._agl.value()
+        # FRESH agl only: the laser reaches ~4 m, so out of range `value()` projects stale samples
+        # without bound and a bogus low reading would hold FINAL APPROACH on for the whole glide.
+        # See sequencer._detect_landing -- the same staleness ended a flight at apogee.
+        agl, agl_source, _agl_age = self._agl.read()
         config = self._config
-        final = config.final_agl and agl is not None and agl < config.final_agl  # low on final
+        final = config.final_agl and agl_source is not None and agl < config.final_agl  # low on final
         """
         the ENDGAME band: elevation below endgame_alt_m -> full land-bank authority (the turn
         radius halves, the last seconds spiral around the zone). Costs sink only briefly at the
         bottom, so the fly-long objective is untouched up high.
         """
-        elevation = self._elevation.value() if self._elevation is not None else None
+        # FRESH baro only: this opens the FULL land-bank authority, so an extrapolated
+        # elevation would unlock the endgame bank at the wrong height (or never)
+        elevation = None
+        if self._elevation is not None:
+            elevation, elevation_source, _elevation_age = self._elevation.read()
+            if elevation_source is None:
+                elevation = None
         # endgame = the remaining-altitude FRACTION of the band (None above it): the loiter radius
         # shrinks with it, so the orbit SPIRALS IN onto the centre as the energy runs out.
         endgame = None

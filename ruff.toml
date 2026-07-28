@@ -3,6 +3,12 @@
 line-length = 120
 target-version = 'py39'
 
+# VENDORED third-party sources are excluded, not fixed: ssd1306.py is upstream MicroPython-SSD1306
+# (MIT) carried verbatim so it can be re-synced, and reformatting it would fork it. Its defects belong
+# upstream (see findings §26.15). Everything we author is linted -- `ruff check .` from the repo root
+# is the gate `make lint` runs, so exclusions live here rather than in a caller's command line.
+exclude = ['tools/servos/ssd1306.py']
+
 [lint]
 select = ['E', 'F', 'W', 'I', 'B']   # pycodestyle, pyflakes, warnings, isort, bugbear
 

@@ -64,7 +64,7 @@ tuning, exactly what board provenance is for.
 ## Regenerate
 
 ```bash
-cd src/glider && ./deploy.sh              # deploy the firmware (incl. tasks/attitude.py + hitl drop flag)
+tools/deploy.sh              # deploy the firmware (incl. tasks/attitude.py + hitl drop flag)
 mpremote connect /dev/ttyACM0 cp tools/hitl_run.py :
 for case in "E16 e16_full 285 0" "E16 e16_half 235 0" "F15 f15_full 285 0" "F15 f15_half 235 0" \
             "E16 e16_full_drop 285 6.0" "F15 f15_full_drop 285 6.0"; do

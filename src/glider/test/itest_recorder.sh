@@ -23,7 +23,7 @@ command -v adb >/dev/null      || { echo "${R}error: adb not found${N}"; exit 2;
 adb get-state >/dev/null 2>&1  || { echo "${R}error: no adb device (recorder not connected?)${N}"; exit 2; }
 
 # deploy modules so the board can read its own config to find the recorder pins
-bash "$HERE/deploy_modules.sh" "$PORT" >/dev/null 2>&1 || true
+PORT="$PORT" bash "$HERE/../../../tools/deploy.sh" >/dev/null 2>&1 || true  # the one deploy path
 
 # unique marker so we never match a stale line
 marker="coludo-itest-$(date +%s)-${RANDOM}"

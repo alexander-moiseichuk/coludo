@@ -10,7 +10,7 @@ It reports: the backup-vs-truth attitude error just before the drop (was it mirr
 fused-source handover (imu/sim -> attitude backup), the backup-vs-truth error through the backup-flown
 descent, and whether the flight still reaches DONE (control stayed stable on the backup attitude).
 
-Deploy first (cd src/glider && ./deploy.sh), then:
+Deploy first (tools/deploy.sh), then:
   printf 'import attitude_soak\nattitude_soak.soak("F15", 6.0)\n' > /tmp/launch.py
   python3 tools/board_reboot.py PORT && mpremote connect PORT run /tmp/launch.py
 """

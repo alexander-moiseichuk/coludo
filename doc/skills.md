@@ -1,7 +1,7 @@
 # Coludo — Development & Testing Guide
 
 How we build, flash, and test Coludo across its components. This captures the working
-conventions; the architecture itself lives in [`specs/`](specs/) (`coludo.md`,
+conventions; the architecture itself lives in [`doc/specs/`](doc/specs/) (`coludo.md`,
 `board-config.md`, `cc-protocol.md`).
 
 ## Repository layout
@@ -12,7 +12,7 @@ conventions; the architecture itself lives in [`specs/`](specs/) (`coludo.md`,
 | `src/glider/test/` | Test cases for every glider module (**required** — see [Testing](#testing-requirements)) |
 | `src/control/` | Control Center (CC) application — **Python**, runs on the host/PC |
 | `src/camera/` | Recorder module (Luckfox Pico) — already implemented |
-| `specs/` | Architecture & protocol specs |
+| `doc/specs/` | Architecture & protocol specs |
 | `doc/`, `models/`, `videos/` | Hardware notes, STL models, flight footage |
 
 New controller code goes under `src/glider/`; **all Control Center code goes under
@@ -75,7 +75,7 @@ protocol parser) is verified on the real runtime. **Control** (`src/control/`) i
 so its tests run with `python3`: `cd src/control/test && make test`.
 
 **Running the tests.** `src/glider/test/run_tests.sh` (or `make test` in that directory) first
-deploys the glider modules (`src/glider/*.py`) to the board with `deploy_modules.sh` so tests
+deploys the glider modules to the board with `tools/deploy.sh` (the one deploy path) so tests
 can `import` them, then compiles every `test_*.py` with `mpy-cross -O3`, runs it on the board,
 and prints a pass/fail report. Convention: a test is named `test_*.py` and **passes if it
 compiles and runs to completion without raising** (mpremote exit 0); it **fails** on a compile
@@ -86,7 +86,7 @@ adb-backed recorder UART integration test (which reads its UART pins from the bo
 
 ## Coding conventions
 
-Follow these so code is right the first time; `ruff` and the `deploy.sh` gate enforce most of
+Follow these so code is right the first time; `ruff` and the `tools/deploy.sh` gate enforce most of
 them. `src/glider/` is **MicroPython** (the board); `src/control/` is **CPython 3.12** (the host);
 `cc_protocol.py` is **shared** (it lives in `src/glider/` and is symlinked into `src/control/`),
 so it must run on both.
@@ -195,7 +195,7 @@ so it must run on both.
   list is renumbered and force a lookup to understand the code. Write the *reason* instead: not
   "kept float (findings §18)" but "kept float — a fixnum rewrite under-reads speed → a looser fin
   cap (the unsafe direction)". A prose pointer to a stable spec by NAME is fine
-  (`specs/coludo.md "Turn-radius limit"`); a number that only means something against a mutable list is not.
+  (`doc/specs/coludo.md "Turn-radius limit"`); a number that only means something against a mutable list is not.
 - **Slim classes, YAGNI**: no unused parameters or speculative flexibility. If the class already
   holds a value, don't also pass it in.
 - **Error policy by criticality**: logs are best-effort — drop silently (or truncate) when the
@@ -211,10 +211,10 @@ so it must run on both.
 ### Tooling
 
 - **ruff** for lint + format (`ruff check`, `ruff format`; config in `ruff.toml`).
-- **`deploy.sh`** maps `src/glider/` → `/pyboard/`: each Python file is ruff-checked and
+- **`tools/deploy.sh`** maps `src/glider/` → `/pyboard/`: each Python file is ruff-checked and
   `mpy-cross`-compiled then pushed; non-Python files are pushed as-is; `test/` → `/pyboard/test`.
 - The Wi-Fi password is **not** committed: a `src/glider/<ssid>.creds` file (e.g. `panda.creds`,
-  one line — the plain password) is gitignored (`*.creds`) and pushed by `deploy.sh`; `wifi.py`
+  one line — the plain password) is gitignored (`*.creds`) and pushed by `tools/deploy.sh`; `wifi.py`
   reads it for the password.
 - **API docs**: `python3 tools/gen_docs.py` regenerates [`doc/api.md`](api.md) from module
   headers + docstrings by *parsing* the sources (stdlib `ast`, never imports them — so it works
@@ -230,7 +230,8 @@ All Control code lives in `src/control/` and is plain **CPython 3.12** for the h
 ## Typical dev loop
 
 1. Edit the module in `src/glider/`.
-2. `./deploy.sh` — ruff-checks + `mpy-cross`-compiles each Python file and pushes to `/pyboard/`
+2. `tools/deploy.sh` — ruff-checks + `mpy-cross`-compiles each Python file to **`.mpy`**, wipes the
+   board, and pushes to `/pyboard/` (only `main.py` stays source: the runtime needs that filename)
    (non-Python as-is); fails before touching the board if lint or compile fails.
 3. Run the tests on-device: `cd src/glider/test && make test` (or `./run_tests.sh`).
 4. Observe live behaviour through CC (telnet on 1235, browser on 8080) over the `panda` network.

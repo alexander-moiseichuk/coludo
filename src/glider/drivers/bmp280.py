@@ -14,7 +14,6 @@ locked bus (i2cbus) since it shares i2c:0 with the ADXL375 and BNO055.
 import asyncio
 import struct
 
-import config
 import databoard
 import i2cbus
 import recorder
@@ -51,12 +50,9 @@ class Bmp280(task.Task):
     _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
 
     async def setup(self) -> bool:
-        bus_id = self.config.get('id', 0)
-        spec = config.bus(self.controller.config, self.config.get('bus', 'i2c'), bus_id)
-        if spec is None:
-            return False
-        self._bus = i2cbus.get(bus_id, spec)
-        self._addr: int = self.config.get('addr', _ADDR)
+        self._bus, self._addr = i2cbus.bind(self.controller.config, self.config, _ADDR)
+        if self._bus is None:
+            return False  # no such bus in config -> the Controller skips this device
         self._period_ms: int = self.config.get('period_ms', 100)  # ~10 Hz (conversion is slow)
         self._buf = bytearray(6)
         try:

@@ -1,7 +1,7 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-Operator Control commands (specs/cc-protocol.md "Operator commands") as a drop-in registry.
+Operator Control commands (doc/specs/cc-protocol.md "Operator commands") as a drop-in registry.
 
 Each command is a small module in this package that registers itself with @command('name'); the
 hub calls load() once at start to import them all, so a new operator command is added by dropping

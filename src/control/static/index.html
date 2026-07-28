@@ -29,6 +29,13 @@
   .tick.no { color: #888; }
   .finctl { margin: 0 .5rem; white-space: nowrap; }
   .finctl span { display: inline-block; min-width: 2.2rem; text-align: center; font-weight: 600; }
+  /* a board that is NOT flight-ready: tinted row + red edge, so it is obvious at a glance */
+  tr.notready td { background: #fff2f2; }
+  tr.notready td:first-child { box-shadow: inset 3px 0 0 #c22; }
+  .warn { color: #c22; }
+  /* known-but-absent gliders: an action the operator can take, not a missing row */
+  .absent { margin: 4px 0; }
+  .absent:empty { display: none; }
 </style>
 </head>
 <body>
@@ -37,12 +44,13 @@
   <span class="muted" id="ccstatus">CC —</span>
 </div>
 
+<div id="absent" class="absent"></div>
 <table id="boards">
   <thead><tr>
-    <th>board</th><th>online</th><th>stage</th><th>flight</th><th>version</th><th>config</th><th>uptime</th>
+    <th>board</th><th>online</th><th>stage</th><th>flight</th><th>calibration</th><th>version</th><th>config</th><th>uptime</th>
     <th>board time</th><th></th><th>position</th><th>launchpad</th><th></th>
   </tr></thead>
-  <tbody><tr><td colspan="12" class="muted">waiting for boards…</td></tr></tbody>
+  <tbody><tr><td colspan="13" class="muted">waiting for boards…</td></tr></tbody>
 </table>
 <p class="muted">click a board to target it below · <span id="boardmsg"></span></p>
 
@@ -214,7 +222,23 @@ function fmtFlight(b) {
       : `<b style="color:#c22">zone ✗ ${r.margin_m}m</b>`);
   }
   const engaged = f.active ? '' : ' <span class="muted">idle</span>';
-  return `${armed}${degraded}<br><span class="muted">${bits.join(' · ')}</span>${engaged}`;
+  // WALK-TEST HUD (findings §27.19): carrying the glider, the operator watches the FINS answer the
+  // ATTITUDE -- that is the whole point of the no-ignition ground test, and neither was on screen.
+  let hud = '';
+  if (f.attitude) {
+    const a = f.attitude;
+    const err = (f.heading_error != null && f.heading_error !== 0)
+      ? ` <span class="muted">(zone ${f.heading_error > 0 ? '+' : ''}${f.heading_error}°)</span>` : '';
+    hud += `<br><span class="muted">hdg ${a.heading}° · roll ${a.roll}° · pitch ${a.pitch}°${err}</span>`;
+  }
+  if (f.fins) {
+    // deflection from the 90° neutral reads at a glance; a fin that never moves is the thing to spot
+    const fins = Object.entries(f.fins)
+      .filter(([, v]) => v != null)
+      .map(([k, v]) => `${k.replace('servo_', '').replace('eleron_', 'el-')} ${v - 90 >= 0 ? '+' : ''}${v - 90}°`);
+    if (fins.length) hud += `<br><span class="muted">fins ${fins.join(' · ')}</span>`;
+  }
+  return `${armed}${degraded}<br><span class="muted">${bits.join(' · ')}</span>${engaged}${hud}`;
 }
 function fmtPad(b) {
   if (!b.launchpad) return '<b style="color:#c22">no launchpad</b>';
@@ -235,15 +259,17 @@ new EventSource('/events').onmessage = (event) => {
   document.getElementById('ccstatus').textContent = `CC ${(cc.time || '').replace('T', ' ')} · GPS ${ccGps(cc.gps)}`;
   const ccHasFix = !!(cc.gps && cc.gps.usable);  // 'sync CC GPS' is offered only when CC has a fix
   if (!boards.length) {
-    tbody.innerHTML = '<tr><td colspan="12" class="muted">no boards connected</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="13" class="muted">no boards connected</td></tr>';
     return;
   }
+  renderAbsent();
   tbody.innerHTML = boards.map((b) => `
-    <tr class="click ${b.online ? 'on' : 'off'}" onclick="selectBoard('${b.id}')">
-      <td>${b.id}</td>
+    <tr class="click ${b.online ? 'on' : 'off'} ${notReady(b) ? 'notready' : ''}" onclick="selectBoard('${b.id}')">
+      <td>${notReady(b) ? `<b class="warn" title="NOT READY: ${b.degraded.join(', ')}">❗</b> ` : ''}${b.id}</td>
       <td><span class="dot">${b.online ? '●' : '○'}</span></td>
       <td>${b.stage || ''}</td>
       <td>${fmtFlight(b)}</td>
+      <td>${fmtImu(b)}</td>
       <td>${b.version || ''}</td>
       <td>${b.config_id || ''}</td>
       <td>${fmtUptime(b.uptime)}</td>
@@ -256,6 +282,114 @@ new EventSource('/events').onmessage = (event) => {
         : '<span class="muted">—</span>'}</td>
     </tr>`).join('');
 };
+
+// BNO055 calibration: NDOF fusion only converges with MOTION, and a glider sits still on the pad -- so
+// healthy hardware can reach launch with a FROZEN attitude and nothing else reports it (probe passes,
+// self-test passes, the config is fine). mag is the axis needing the operator's figure-8; gyr reaches 3
+// on its own and acc wants held orientations but does not block heading.
+// Gliders the hub has SEEN BEFORE but that are not connected now. A board registers with the hub only
+// at boot, so one that is powered but was missed will not appear however long you wait -- it has to be
+// rebooted. Without this an absent glider is simply a row that is not there, which reads identically to
+// one that was never set up.
+async function renderAbsent() {
+  const box = document.getElementById('absent');
+  if (!box) return;
+  let missing = [];
+  try { missing = await (await fetch('/api/absent')).json(); } catch (err) { return; }
+  box.innerHTML = missing.length
+    ? `<b class="warn">\u2757 ${missing.length} known glider${missing.length > 1 ? 's' : ''} not connected:</b> `
+      + missing.map(g => `<span title="${g.hint}">${g.id} (${g.ip || 'ip unknown'})</span>`).join(', ')
+      + ' — a glider registers with the hub only at boot, so power-cycle it to re-login'
+    : '';
+}
+
+// NOT READY TO LAUNCH: any degraded state (uncalibrated IMU, attitude on the backup, warm restart,
+// memory rescued, CC-less fallback). Flagged on the ROW rather than inside a cell -- an operator
+// scanning a table of boards must see which one needs attention without reading every column.
+function notReady(b) {
+  return !!(b.degraded && b.degraded.length);
+}
+
+// devices still needing calibration, straight off the heartbeat -- so the count falls and the row
+// clears itself as the operator works through them, with no extra round trip
+function pendingCalibration(b) {
+  return Object.keys(b.calibration || {});
+}
+
+// A BNO055 axis level (0..3) as words. "3/3" told an operator nothing -- the whole point of this
+// cell is that someone holding a glider in a field can read it without a datasheet.
+function calibWord(level) {
+  if (level >= 3) return 'OK';
+  if (level >= 1) return `partial (${level}/3)`;
+  return 'not calibrated';
+}
+
+// The full, plain-text calibration report -- shown in the tooltip and by the info button, so the
+// detail is there whether or not anything is outstanding.
+function calibrationReport(b) {
+  const lines = [];
+  const c = b.imu_calibration;
+  if (c) {
+    // `system` is DERIVED fusion confidence, not an axis anyone can calibrate: it lags the other three
+    // and dips whenever the airframe moves. Saying "not calibrated" there reads as a fault and sends
+    // an operator chasing something they cannot fix -- and gating on it would block a working IMU
+    // (measured here: sys 0 with gyro/accel/mag all 3 and the fusion tracking perfectly).
+    const sys = c[0] >= 1 ? 'settled' : 'settling (normal — it lags the others and dips while moving)';
+    lines.push(`imu — system: ${sys}, gyro: ${calibWord(c[1])}, accelerometer: ${calibWord(c[2])}`
+      + `, magnetometer: ${calibWord(c[3])}${c[3] >= 3 ? '' : ' ← move the airframe in a figure-8'}`);
+  }
+  const pending = b.calibration || {};
+  for (const name of Object.keys(pending)) lines.push(`${name} — TODO: ${pending[name]}`);
+  if (!Object.keys(pending).length) lines.push('all devices calibrated — nothing outstanding');
+  return lines.join('\n');
+}
+
+function fmtImu(b) {
+  const pending = pendingCalibration(b);
+  // the full plain-text report rides the TOOLTIP on whatever the cell shows -- the status itself is
+  // the hover target, so there is nothing extra to click and nothing disappears when all is well
+  const report = calibrationReport(b);
+  if (!pending.length) {
+    return `<span style="color:#2a2" title="${report}">✓ calibrated</span>`;
+  }
+  return `<b class="warn" title="${report}">⚠ ${pending.join(', ')}</b> `
+    + `<button onclick="event.stopPropagation(); calibrateBoard('${b.id}')" `
+    + `title="${report}">calibrate ${pending.length}</button>`;
+}
+
+// Guided calibration, ONE DEVICE PER PRESS. The board's `calibrate` sweep says which devices are
+// outstanding and what the operator must do for each; this takes the first, shows it, and stops. The
+// heartbeat then re-counts, the button becomes `calibrate 2`, `calibrate 1`, and finally disappears
+// as the row goes green -- so progress is visible without this holding the operator in a loop.
+// OK is them saying "done": a timed pause races the work, and a tare captured while the airframe is
+// still being set down is worse than none, because it looks valid.
+async function sweepCalibration(id) {
+  try { return JSON.parse((await cmd(id, 'calibrate', [])).args[0]); } catch (err) { return null; }
+}
+
+async function calibrateBoard(id) {
+  const pending = await sweepCalibration(id);
+  if (pending === null) { boardMsg(`${id} calibrate: board did not answer`); return; }
+  const names = Object.keys(pending);
+  if (!names.length) { boardMsg(`${id} calibrate: nothing outstanding — all devices ready`); return; }
+
+  const name = names[0];   // one at a time: the instructions conflict physically
+  const left = names.length;
+  if (!confirm(`Calibrate ${name}   (${left} device${left > 1 ? 's' : ''} outstanding)\n\n` +
+               `${pending[name]}\n\nPress OK when done.`)) {
+    boardMsg(`${id} calibrate: cancelled at ${name}`);
+    return;
+  }
+  const ran = await cmd(id, 'calibrate', [name]);   // no-op where the act is purely physical
+  if (ran.status !== 'ok') { boardMsg(`${id} calibrate ${name}: ${JSON.stringify(ran)}`); return; }
+
+  const now = await sweepCalibration(id);
+  const stillLeft = now ? Object.keys(now) : [];
+  if (stillLeft.includes(name)) { boardMsg(`${id} calibrate ${name}: STILL OUTSTANDING — ${now[name]}`); return; }
+  boardMsg(stillLeft.length
+    ? `${id} calibrate: ${name} done — ${stillLeft.length} left (${stillLeft.join(', ')})`
+    : `${id} calibrate: ${name} done — ALL DEVICES CALIBRATED`);
+}
 
 // top-table actions: set the board RTC from the PC clock (update mission epoch), and push the host
 // GPS position to the board launch config (/api/assist).

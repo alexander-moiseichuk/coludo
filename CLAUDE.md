@@ -2,7 +2,7 @@
 
 Rocket-powered autonomous glider. Firmware in `src/glider/` (**MicroPython** on a WaveShare
 ESP32-P4-WIFI6); ground station "Control" in `src/control/` (**CPython 3.12**). Architecture:
-`specs/` (`coludo.md`, `board-config.md`, `cc-protocol.md`). Status + roadmap: `doc/plan.md`.
+`doc/specs/` (`coludo.md`, `board-config.md`, `cc-protocol.md`). Status + roadmap: `doc/plan.md`.
 Hardware/dev guide + the full conventions: `doc/skills.md`.
 
 ## Read before coding: `doc/skills.md` → "Coding conventions". In short:
@@ -21,6 +21,7 @@ Hardware/dev guide + the full conventions: `doc/skills.md`.
 
 - `src/glider/` is MicroPython-only — verify on the board: `cd src/glider/test && make test`.
 - `cc_protocol.py` is **shared** with Control (symlinked); keep it CPython+MicroPython portable.
-- Lint + compile + push via `./deploy.sh` (ruff + `mpy-cross`). Never commit secrets
+- Lint + compile + push via `tools/deploy.sh` (ruff + `mpy-cross`; deploys **`.mpy`**, wipes the
+  board first). Never commit secrets
   (`src/glider/ssid.creds` is gitignored).
 - Commit only when asked; this repo commits to `main`.

@@ -2,7 +2,7 @@
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 One connected Coludo board as seen by the hub: lockstep request/response over its socket
-(specs/cc-protocol.md). The per-board lock makes every exchange strictly sequential, so the
+(doc/specs/cc-protocol.md). The per-board lock makes every exchange strictly sequential, so the
 heartbeat and operator traffic to one board can never overlap. CPython 3.12, stdlib asyncio only.
 """
 

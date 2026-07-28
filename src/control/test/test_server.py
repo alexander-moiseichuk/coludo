@@ -459,6 +459,47 @@ async def _handler_crash():
     assert any('crashed' in line for line in reply), reply
 
 
+def _glider_roster():
+    """
+    The roster answers a question live state cannot: is this glider ABSENT, or was it never here?
+
+    The board dials the hub, not the reverse, and it does so only at BOOT -- so a known glider that is
+    not connected will not turn up however long the operator waits; it has to be power-cycled. Without
+    a persisted roster an absent glider is just a row that is not there, indistinguishable from one
+    never set up, and a hub restart forgets every glider it ever saw.
+    """
+    import tempfile
+
+    path = os.path.join(tempfile.mkdtemp(), 'gliders.json')
+    hub = server.Server(roster_path=path)
+    hub.log = lambda *args: None
+
+    hub._roster_seen('taster', '192.168.102.152:60384')
+    assert hub.roster['taster']['ip'] == '192.168.102.152'      # port stripped: the host is the identity
+    assert [g['id'] for g in hub.absent()] == ['taster']        # known, no live link -> absent
+    assert 'reboot taster' in hub.absent()[0]['hint']           # ...and says what to do about it
+
+    # SAME NAME FROM A NEW IP replaces the old entry -- a glider that moved network, or a rebuilt board
+    # reusing the id. Two records for one glider would make the reboot hint ambiguous.
+    hub._roster_seen('taster', '10.0.0.9:5000')
+    assert hub.roster['taster']['ip'] == '10.0.0.9' and len(hub.roster) == 1
+
+    class _Live:
+        online = True
+
+    hub.boards['taster'] = _Live()      # a LIVE board drops out: the hint is only for gliders needing action
+    assert hub.absent() == []
+
+    # it SURVIVES a hub restart, which is the whole point of persisting it
+    assert server.Server(roster_path=path).roster['taster']['ip'] == '10.0.0.9'
+
+    # a corrupt roster must not stop the hub starting -- a lost roster is a nuisance, a dead hub is not
+    with open(path, 'w') as handle:
+        handle.write('{ this is not json')
+    assert server.Server(roster_path=path).roster == {}
+
+
+
 async def main():
     await _loopback()
     await _operator_console()
@@ -467,7 +508,9 @@ async def main():
     await _log_stream()
     await _handler_crash()
     _gps_device_resolve()
+    _glider_roster()
     print('ok: server accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) '
+          '+ glider roster (persist, same-name-new-ip, absent hint) '
           '+ gps assist/compare + log streaming + gps auto-detect')
 
 

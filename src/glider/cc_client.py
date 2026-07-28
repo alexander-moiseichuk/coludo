@@ -1,7 +1,7 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-Board side of the Control protocol (specs/cc-protocol.md). Board-first routing: Control strips the
+Board side of the Control protocol (doc/specs/cc-protocol.md). Board-first routing: Control strips the
 routing board id, so the board receives `command params` and replies `status params` (no id; only
 `iam` carries the board id, so Control can learn it on a new socket). Dispatcher turns a parsed line
 into a response (pure logic, unit-testable); Client is the thin networking that reads lines and
@@ -208,8 +208,9 @@ def _register_identity(dispatcher, ctx) -> None:
             info['launchpad_set'] = mission.latitude is not None and mission.longitude is not None
             info['site'] = mission.site or None
         agl = databoard.Databoard.parameter('agl')  # low-altitude laser AGL -> the flight panel
-        if agl is not None:
-            info['agl'] = agl.value()
+        if agl is not None:  # FRESH only -- out of the laser's ~4 m range an extrapolated agl is fiction
+            value, source, _age = agl.read()
+            info['agl'] = value if source is not None else None
         """
         degraded-mode annunciation: the non-nominal states, gathered into one operator signal so a glance
         shows the board is NOT flying clean (attitude on the backup, memory rescued, warm restart, CC-less
@@ -222,13 +223,38 @@ def _register_identity(dispatcher, ctx) -> None:
         health = inspector.Inspector.get('health')
         if getattr(health, 'rescues', 0) > 0:
             degraded.append('memory-rescued')
+        """
+        IMU NOT CALIBRATED is an operator ACTION, not a fault: NDOF fusion needs motion to converge and
+        a glider sits still on the pad, so a perfectly healthy BNO055 can reach launch with a frozen
+        attitude. It cost this project a wrongly-condemned module before anything reported it. The cure
+        is ten seconds of figure-8 with the airframe in hand -- but only if the panel says so.
+        """
+        """
+        OUTSTANDING CALIBRATION on the heartbeat, as {device: instruction}. The dashboard counts it for
+        the `calibrate N` button and clears the not-ready flag the moment it empties -- so the row goes
+        green by itself as the operator works through the devices, with no extra round trip. Cheap:
+        every calibration() reads cached state, none touches a bus.
+        """
+        pending = inspector.Inspector.calibration_all()
+        if pending:
+            info['calibration'] = pending
+            degraded.append('needs-calibration')
+        if ctx.controller is not None:
+            imu = ctx.controller.active('imu_bno055')
+            if imu is not None and hasattr(imu, 'calibration_state'):
+                # the raw (sys, gyr, acc, mag) as well, so the IMU column shows mag CLIMBING rather
+                # than a bare "not done" -- the operator can see the figure-8 working
+                info['imu_calibration'] = imu.calibration_state
         mission = inspector.Inspector.get('mission')
         if mission is not None and mission.site == 'fallback':
             degraded.append('cc-less-fallback')
         if ctx.controller is not None:
             info['armed'] = ctx.controller.armed
             if getattr(ctx.controller, 'warm_started', False):
-                degraded.append('warm-started')
+                # the loudest thing on the panel: this board REBOOTED MID-FLIGHT and recovered its
+                # stage from the crumb, so its baro rebase, pitot tare and airspeed are restored
+                # values rather than measured ones
+                degraded.append('WARM-STARTED (rebooted in flight)')
             flight = ctx.controller.active('flight')  # live flight panel: airspeed + fin cap + reach
             if flight is not None and hasattr(flight, 'vitals'):
                 info['flight'] = flight.vitals()
@@ -488,6 +514,18 @@ def _register_diagnostics(dispatcher, ctx) -> None:
             if result is not None:
                 problems[name] = result
         readiness = _readiness(ctx.cfg)
+        """
+        LIVE readiness on top of the config gate: an uncalibrated BNO055 is invisible to _readiness()
+        because it is not a config choice, and invisible to probe() because the part answers perfectly.
+        NDOF fusion only converges with motion, so a still glider reaches launch with a frozen attitude
+        on healthy hardware -- exactly the state that got a working module condemned here. Reported as
+        a readiness item, not a hardware `pass` failure: nothing is broken, the operator just has to
+        pick the airframe up.
+        """
+        imu = ctx.controller.active('imu_bno055')
+        if imu is not None and hasattr(imu, 'calibrated') and not imu.calibrated():
+            readiness['imu_calibration'] = ('BNO055 not calibrated %s -- move the airframe in a slow '
+                                            'figure-8 until mag reads 3' % (imu.calibration,))
         return cc.build('ok', [json.dumps({'pass': not problems, 'devices': devices, 'problems': problems,
                                            'ready': not readiness, 'readiness': readiness})])
 
@@ -517,6 +555,35 @@ def _register_diagnostics(dispatcher, ctx) -> None:
             return cc.build('err', ['badargs', 'freq must be an int (Hz)'])
         return cc.build('ok', [json.dumps(await ctx.controller.bustune(msg.args[0], msg.args[1], freq))])
 
+    async def calibrate(msg) -> str:
+        """
+        Report which devices need CALIBRATING, or run one device's calibration.
+
+        `calibrate` with no argument sweeps every device that declares a requirement -- the operator
+        gets a short list of what actually wants doing, not a wall of n/a. `calibrate <device>` runs
+        that one, where the board can do it alone (a pitot tare, a baro ground zero); where the act is
+        inherently physical the device says so through its `action` instead and this is a no-op.
+
+        A sibling of `probe` because they answer different questions: probe asks whether the hardware
+        WORKS -- an uncalibrated BNO055 passes it, the part responds perfectly -- while this asks
+        whether it is ready to FLY. Nothing in the config can reveal the difference, which is how a
+        healthy IMU with a frozen attitude reached the pad unnoticed.
+
+        Args:
+            msg - the request; args[0] optionally names one device.
+
+        Returns:
+            ok with {device: state} for the sweep, or {device: result} for a run (None = success).
+        """
+        if not msg.args:
+            return cc.build('ok', [json.dumps(inspector.Inspector.calibration_all())])
+        target = msg.args[0]
+        run = getattr(inspector.Inspector.get(target), 'calibrate', None)
+        if run is None:
+            return cc.build('err', ['badargs', 'no calibrate for ' + target])
+        return cc.build('ok', [json.dumps({target: await run()})])
+
+    dispatcher.on('calibrate', calibrate)
     dispatcher.on('probe', probe)
     dispatcher.on('verify', verify)
     dispatcher.on('bustune', bustune)

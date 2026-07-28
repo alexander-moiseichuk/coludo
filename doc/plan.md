@@ -1,7 +1,7 @@
 # Plan
 
 Required hardware and the phased development roadmap. Architecture lives in
-[`../specs/`](../specs/); working conventions in [`skills.md`](skills.md).
+[`../doc/specs/`](../doc/specs/); working conventions in [`skills.md`](skills.md).
 
 ## Status
 
@@ -234,7 +234,7 @@ control change.
    noise (16/17 m); calm median 31 m ≈ the ≤ 30 m target (residual is run variance — field
    calibration territory).
 6. **Glide energy management — the fly-long behaviour (tuned 7/06; program of 7/05).** Objectives
-   in strict priority order (specs/coludo.md "Gliding"): **① fly as long as possible, ② land
+   in strict priority order (doc/specs/coludo.md "Gliding"): **① fly as long as possible, ② land
    in-zone, ③ land near the midpoint**. Steps 1–2 DONE: six tuning iterations on the 24-case host
    sweep replaced the racetrack (steer-at-point + bank cap: 184 m leg swings, 129 m median,
    phase-luck landings) with the **loiter orbit + endgame spiral** (capture the tangent circle at
@@ -279,7 +279,7 @@ control change.
    wind); the +15 m touchdown growth is free-drift in the last low-authority descent (≈ wind × descent
    time), which a controlled-approach crab cannot fix. Board suite green (49/49).
 
-**Spec'd and IMPLEMENTED 7/04 (specs/coludo.md; 47/47 on-board):**
+**Spec'd and IMPLEMENTED 7/04 (doc/specs/coludo.md; 47/47 on-board):**
 
 8. ✅ **Warm-restart recovery** — `warmstart.py`: NVS breadcrumb (flag i32 + one JSON blob) dropped
    at BOOSTING entry for armed flights, cleared at DONE; `main._restore_flight()` restores
@@ -525,7 +525,7 @@ then per-phase behaviour); 5–6 harden it. All tasks positive + negative tests,
 
 ### `launch.config` (mission config)
 A separate config document, same layered/validated/save+reactivate form as `board.config`
-([`../specs/board-config.md`](../specs/board-config.md)), describing a *specific launch* rather
+([`../doc/specs/board-config.md`](../doc/specs/board-config.md)), describing a *specific launch* rather
 than the *board*:
 - landing zone (TL / BR corners, target point), entrance threshold, allowed-zone radius,
 - AGL landing-trigger altitude and vertical-speed/roll gates,
@@ -548,7 +548,7 @@ a sync loop that waits until GPS is ready.
 
 ## Task data-flow model
 
-Adopted and documented in [`../specs/coludo.md`](../specs/coludo.md) ("Task Data-Flow and
+Adopted and documented in [`../doc/specs/coludo.md`](../doc/specs/coludo.md) ("Task Data-Flow and
 Message Propagation"), grounded by on-board measurements (see
 [benchmark findings](benches/WaveShare_esp32p4-micropython-findings.md)). Not one paradigm — chosen per
 data class to respect the GC-pause and <10 ms control-loop budgets on MicroPython:
