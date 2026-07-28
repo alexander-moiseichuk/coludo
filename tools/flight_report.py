@@ -121,7 +121,7 @@ def build(streams, logs, go, make_subplots):
     series = make_subplots(rows=11, cols=1, shared_xaxes=True, vertical_spacing=0.017,
                            subplot_titles=('|accel| (g)', 'altitude / elevation (m)', 'speed (m/s)',
                                            'attitude (deg)', 'fins — commanded (deg)',
-                                           'board health — load %, temp °C, mem MB', 'agl (m)',
+                                           'board health — load %, temp °C, mem MB, rescues', 'agl (m)',
                                            'engine — mV / mA / mW / over-current alerts (INA226)',
                                            'gyro rate — LSM6DSO32 (deg/s) → PID D term',
                                            'airspeed (m/s) — pitot vs governor estimate vs GNSS ground',
@@ -160,6 +160,17 @@ def build(streams, logs, go, make_subplots):
         if 'mem_free' in health.fields:  # bytes -> MB so it shares the panel's scale
             times, mem = health.column('mem_free')
             series.add_trace(go.Scatter(x=times, y=[m / 1e6 for m in mem], name='mem MB'), row=6, col=1)
+        if 'rescues' in health.fields:
+            """
+            The emergency-collect COUNT, right after mem MB because it explains the steps in it: each
+            increment is a ~200 ms gc.collect() the flight loop did not schedule, i.e. ~20 control
+            steps at 100 Hz with the fins holding their last write. A rising staircase here is the
+            reason a mem MB sawtooth has teeth, and it is the one health series that marks a real
+            control-loop stall rather than a measurement.
+            """
+            times, values = health.column('rescues')
+            series.add_trace(go.Scatter(x=times, y=values, name='rescues', mode='lines',
+                                        line_shape='hv'), row=6, col=1)  # a step count, not a curve
     if laser is not None:
         times, values = laser.column('agl')
         series.add_trace(go.Scatter(x=times, y=values, name='agl', mode='markers'), row=7, col=1)

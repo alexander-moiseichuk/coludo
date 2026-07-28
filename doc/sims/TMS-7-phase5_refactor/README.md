@@ -30,8 +30,13 @@ host column is q2, not q5.
 | `f15_full`  | F15 | 270 g | **121.9 m** ✗ | 119.2 m ✗ | +2.7 m |
 | `f15_light` | F15 | 215 g | **87.0 m** ✗ | 110.0 m ✗ | **−23.0 m** |
 
+🎬 **[`phase5_refactor.mp4`](phase5_refactor.mp4)** — follow-cam of all four, FHD 30 FPS.
+
 [e16_full](e16_full.html) · [e16_light](e16_light.html) · [f15_full](f15_full.html) ·
 [f15_light](f15_light.html) · [**overlay plan**](plan_board.svg)
+
+The board-health panel of each report now carries a **`rescues` staircase right after `mem MB`** —
+every step is a ~200 ms emergency collect, so the teeth in the memory sawtooth have a labelled cause.
 
 **Three of four land within 3 m of the host prediction.** That is the headline: after a refactor round
 that touched the bus layer, the deploy pipeline, the trig primitive and the airspeed source, the board
