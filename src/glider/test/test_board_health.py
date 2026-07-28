@@ -110,21 +110,30 @@ async def test_memory_rescue():
     health = board_health.BoardHealth('health', {}, rig)
     assert await health.setup() is True
 
-    # build the two trends (the tracker clamps elapsed to whole seconds -> deltas ARE the
-    # per-second slopes here): memory dying in ~1 s vs sinking to the floor in ~6 min
-    health._track(1_000_000, 100.0)  # seeds both slopes
-    await asyncio.sleep_ms(20)
-    health._track(200_000, 99.0)  # 800 KB/s leak (EMA 200k), 1 m/s sink (EMA 25 cm/s)
+    # Build the two trends. The leak trend is CUMULATIVE and needs _LEAK_MIN_SAMPLES *intervals*
+    # before it reports anything -- the first _track only seeds _last_kb, so that is N+1 readings.
+    # An early guess is worse than none when the number arms a mid-glide control-loop pause.
+    free, sink = 4_000_000, 800_000  # ~780 KB/s leak against a 1 m/s sink
+    for step in range(board_health._LEAK_MIN_SAMPLES):
+        health._track(free - step * sink, 100.0 - step)
+        assert health.oom_s() is None, 'reported a trend after only %d intervals' % step
+    health._track(free - board_health._LEAK_MIN_SAMPLES * sink,
+                  100.0 - board_health._LEAK_MIN_SAMPLES)
     assert health.oom_s() is not None and health.land_s() is not None
     assert health.oom_s() < 2 * health.land_s()
     health._rescue(health.mem_free(), 99.0)  # dying before landing + safe altitude -> collect
     assert health.rescues == 1
-    assert health._leak_bps == 0  # the trend resets with the garbage
+    # the trend is CUMULATIVE SINCE THE LAST COLLECT, so the next _track sees the collect's jump and
+    # starts a new total -- the old one described garbage that no longer exists.
+    health._track(health.mem_free(), 99.0)
+    assert health._leak_kb == 0 and health._leak_ticks == 0
 
     # memory outliving the flight -> no pause: a trickle leak, oom_s >> 2x land_s
-    await asyncio.sleep_ms(20)
-    health._track(199_500, 98.5)  # 500 B/s (EMA 125) -> oom_s ~27 min, land ~4.7 min
-    assert health.oom_s() > 2 * health.land_s()
+    health._leak_kb = health._leak_ticks = health._leak_kbps = 0  # a fresh trend
+    health._last_kb = 0
+    for step in range(board_health._LEAK_MIN_SAMPLES):
+        health._track(200_000 - step * 500, 98.5 - step * 0.5)  # 500 B/s -> under 1 KB/s
+    assert health.oom_s() is None or health.oom_s() > 2 * health.land_s()
     health._rescue(health.mem_free(), 98.5)
     assert health.rescues == 1
 
@@ -132,9 +141,10 @@ async def test_memory_rescue():
     # always descends, so the rescue waits for a land_s it can weigh the pause against
     health._descent = 0
     health._last_free = 0
-    health._track(1_000_000, None)
-    await asyncio.sleep_ms(20)
-    health._track(0, None)  # catastrophic burn -> oom_s ~0, but no descent trend
+    health._leak_kb = health._leak_ticks = health._leak_kbps = 0
+    health._last_kb = 0
+    for step in range(board_health._LEAK_MIN_SAMPLES + 1):
+        health._track(4_000_000 - step * 1_000_000, None)  # catastrophic burn, no descent trend
     assert health.land_s() is None and health.oom_s() is not None
     rig.stage = controller_mod.Stage.BOOSTING
     health._rescue(health.mem_free(), 50.0)
@@ -166,22 +176,79 @@ async def test_memory_rescue():
     off._rescue(0, 100.0)
     assert off.rescues == 0
 
-    # oom_s trend mechanics: growth (a collect happened) invalidates the old slope
+    # oom_s trend mechanics. A SMALL rise is sampler noise and must NOT blank the forecast -- that
+    # was the defect: on a real flight one such sample zeroed the estimate and oom_s went None right
+    # when the glider needed it. Only a COLLECT-sized jump starts a new trend.
     health._last_free = 0
-    health._leak_bps = 0.0
-    health._track(1_000_000, None)
-    await asyncio.sleep_ms(20)
-    health._track(900_000, None)
+    health._last_kb = 0
+    health._leak_kb = health._leak_ticks = health._leak_kbps = 0
+    history = 20  # a real flight accumulates tens of samples; a blip should move a 1/n average little
+    for step in range(history + 1):
+        health._track(4_000_000 - step * 100_000, None)  # ~97 KB/s, steady
     assert health.oom_s() is not None
-    await asyncio.sleep_ms(20)
-    health._track(950_000, None)
-    assert health.oom_s() is None
+    steady = health.oom_s()
+    health._track(4_000_000 - history * 100_000 + 64 * 1024, None)  # a +64 KB sampler blip
+    assert health.oom_s() is not None, 'a sampler blip blanked the forecast'
+    assert abs(health.oom_s() - steady) <= max(4, steady // 4), 'a blip swung the forecast'
+    health._track(30_000_000, None)  # a collect: a different heap -> the old total is meaningless
+    assert health._leak_kb == 0 and health._leak_ticks == 0 and health.oom_s() is None
+
+
+async def test_leak_forecast_is_steady():
+    """
+    The OOM forecast must not swing sample to sample -- it ARMS a mid-glide control-loop pause.
+
+    Measured on a real board flight before this was fixed (doc/sims/TMS-7-phase5_refactor), successive
+    oom_s readings were 271, 155, 119, 109, None, 362, None, 206: a single sample where the heap grew
+    zeroed the whole estimate. Feed a steady leak with realistic sampler noise and a collect in the
+    middle, and assert the forecast stays within a tolerance band and never goes blank after the
+    collect.
+    """
+    recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
+
+    class _Rig:
+        stage = 0
+
+        def active(self, name=None):
+            return None
+
+    health = board_health.BoardHealth('health', {'rescue': False}, _Rig())
+    assert await health.setup() is True
+
+    free = 30_000_000        # a 30 MB PSRAM heap, as on the board
+    leak = 330 * 1024        # the 331 KB/s measured in flight
+    jitter = (0, 40_000, -25_000, 15_000, -35_000, 5_000)  # sampler noise, deterministic
+    collect_at = 14
+    quiet_until = collect_at + board_health._LEAK_MIN_SAMPLES  # the trend legitimately rebuilds here
+    forecasts = []
+    for step in range(34):
+        if step == collect_at:
+            free += 8_000_000  # a collect mid-run: the old estimator went blank right here
+        free -= leak
+        health._track(free + jitter[step % len(jitter)], 200.0 - step)
+        if board_health._LEAK_MIN_SAMPLES + 2 <= step and not (collect_at <= step <= quiet_until):
+            got = health.oom_s()
+            assert got is not None, 'forecast went blank at step %d' % step
+            forecasts.append((step, got))
+
+    # Within a segment (between collects) a steady leak gives a smooth countdown, not a random walk.
+    # ACROSS a collect it legitimately jumps up -- 8 MB was just reclaimed -- so only consecutive
+    # samples are compared, and the collect breaks the chain.
+    for (step_a, before), (step_b, after) in zip(forecasts, forecasts[1:]):
+        if step_b != step_a + 1:
+            continue  # the collect's rebuild gap: a step change here is the collect, not jitter
+        assert abs(after - before) <= max(4, before // 4), \
+            'forecast jumped %d -> %d s between steps %d and %d' % (before, after, step_a, step_b)
+    values = [value for _step, value in forecasts]
+    print('ok: leak forecast steady over %d samples (%d..%d s), survived a mid-run collect'
+          % (len(values), min(values), max(values)))
 
 
 async def amain():
     await test_basics()
     await test_load_tracking()
     await test_memory_rescue()
+    await test_leak_forecast_is_steady()
     print('ok: board_health registered, sample/inspect, first-row-at-startup, int load tracks CPU, '
           'physics rescue + oom_s/land_s')
 

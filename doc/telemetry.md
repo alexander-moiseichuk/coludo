@@ -15,7 +15,7 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | `fins.csv` | board | `hitl.py` | `eleron_left`, `eleron_right`, `yaw` |
 | `flight.csv` | board | `flight.py` | `stage`, `active`, `airspeed_cms`, `fin_cap`, `roll_sp`, `pitch_sp`, `heading_err`, `roll_cmd`, `pitch_cmd`, `yaw_cmd`, `wind_cms`, `wind_from` |
 | `gnss.csv` | board | `hitl.py` | `lat`, `lon`, `speed_kn`, `course` |
-| `health.csv` | board | `board_health.py` | `temp`, `mem_free`, `load`, `oom_s`, `land_s` |
+| `health.csv` | board | `board_health.py` | `temp`, `mem_free`, `load`, `oom_s`, `land_s`, `leak_kbps`, `rescues` |
 | `imu_bno055.csv` | board | `hitl.py` | `heading`, `roll`, `pitch` |
 | `imu_lsm6dso32.csv` | board | `hitl.py` | `ax`, `ay`, `az`, `gx`, `gy`, `gz` |
 | `laser_agl.csv` | board | `hitl.py` | `agl` |

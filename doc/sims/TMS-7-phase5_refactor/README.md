@@ -25,15 +25,15 @@ host column is q2, not q5.
 
 | case | motor | glider | **board (this study)** | host q2 (physics_refresh) | delta |
 |---|---|---|---|---|---|
-| `e16_full`  | E16 | 270 g | **89.5 m** ✗ | 90.1 m ✗ | −0.6 m |
-| `e16_light` | E16 | 215 g | **43.1 m** ✗ | 44.2 m ✗ | −1.1 m |
-| `f15_full`  | F15 | 270 g | **121.2 m** ✗ | 119.2 m ✗ | +2.0 m |
-| `f15_light` | F15 | 215 g | **86.9 m** ✗ | 110.0 m ✗ | **−23.1 m** |
+| `e16_full`  | E16 | 270 g | **88.7 m** ✗ | 90.1 m ✗ | −1.4 m |
+| `e16_light` | E16 | 215 g | **44.1 m** ✗ | 44.2 m ✗ | −0.1 m |
+| `f15_full`  | F15 | 270 g | **121.9 m** ✗ | 119.2 m ✗ | +2.7 m |
+| `f15_light` | F15 | 215 g | **87.0 m** ✗ | 110.0 m ✗ | **−23.0 m** |
 
 [e16_full](e16_full.html) · [e16_light](e16_light.html) · [f15_full](f15_full.html) ·
 [f15_light](f15_light.html) · [**overlay plan**](plan_board.svg)
 
-**Three of four land within 2 m of the host prediction.** That is the headline: after a refactor round
+**Three of four land within 3 m of the host prediction.** That is the headline: after a refactor round
 that touched the bus layer, the deploy pipeline, the trig primitive and the airspeed source, the board
 still reproduces the host matrix. `f15_light` is the one real move, 23 m better.
 
@@ -41,10 +41,10 @@ still reproduces the host matrix. `f15_light` is the one real move, 23 m better.
 
 | metric | **this study** | physics_refresh (3 runs) | verdict |
 |---|---|---|---|
-| touchdown | **121.2 m** | 121.2 / 121.5 / 121.7 m | inside the old 0.5 m spread |
-| fin moves | **1524** | 1523–1593 | inside |
-| fin travel | **3594°** (62 °/s) | 3742–4068° (65–70 °/s) | ~4 % below the old floor |
-| servo energy | **18.9 J** (0.33 W avg) | 18.7–20.6 J (0.32–0.36 W) | inside |
+| touchdown | **121.9 m** | 121.2 / 121.5 / 121.7 m | 0.2 m outside the old 0.5 m spread |
+| fin moves | **1482** | 1523–1593 | ~3 % below the old floor |
+| fin travel | **3694°** (64 °/s) | 3742–4068° (65–70 °/s) | ~1 % below the old floor |
+| servo energy | **18.8 J** (0.33 W avg) | 18.7–20.6 J (0.32–0.36 W) | inside |
 | `fin_cap` | **5° → 45°** | 5° → 45° | unchanged 1/v² schedule |
 
 Nothing regressed. The small drop in fin travel is consistent with the governor now flying a measured
@@ -97,12 +97,63 @@ re-measure q5, because the board's polar is fixed at the q2 default; that compar
 The refactor round is therefore **behaviour-neutral on the flight path** and has closed a real
 harness gap: board HITL now flies the pitot.
 
-## Caveat — the GC-off leak is NOT measured here
+## Memory: the leak IS measurable, and it was hiding two defects
 
-`physics_refresh` quotes 250 KB/s → OOM ~131 s for the board. These captures cannot confirm or refute
-it: `mem_free` sits at PSRAM scale (~30 MB) and *rose* over the capture window, so the flight-length
-slope is not the right instrument, and the board's own `oom_s` prediction ranges 51–568 s within a
-single run. Use `tools/oom_soak.py`, which exists for exactly this, before quoting a leak number.
+The first cut of this study said the leak could not be measured from a capture. That was wrong — the
+window I used straddled a collect. Measured properly, on the longest monotonic decline:
+
+**331 KB/s**, and the board's own estimator converges to **~350 KB/s** across all four cases. Not the
+250 KB/s `physics_refresh` recorded. On a ~30 MB heap that is **~85 s to exhaustion**, against flights
+of 33–66 s.
+
+Investigating it surfaced two real defects, both now fixed.
+
+### 1. The OOM forecast was unusable — and it arms a control-loop pause
+
+`oom_s` feeds `board_health._rescue()`, which spends a **~200 ms `gc.collect()` mid-glide**. Successive
+readings on the first run were **271, 155, 119, 109, None, 362, None, 206 s**. Two causes: a single
+sample where the heap grew zeroed the estimate outright (`if slope > 0 else 0`), and one 1 Hz
+difference *was* the slope, so sampler jitter went straight to the output.
+
+Replaced with the cumulative average since the last collect — with GC off the heap only shrinks, so
+accumulate the KB lost and the interval count and divide. It converges instead of oscillating, one
+noisy sample moves it by 1/n, and a collect is the natural reset. The forecast now targets a **512 KB
+reserve** rather than zero, since the last few hundred KB are too fragmented to serve a real
+allocation. Measured on the re-flown matrix:
+
+| case | leak KB/s | oom_s | max successive change |
+|---|---|---|---|
+| `e16_full`  | 299–370 | 60–100 s | 16 s |
+| `e16_light` | 293–359 | 63–103 s | 14 s |
+| `f15_full`  | 286–355 | 55–105 s | 13 s |
+| `f15_light` | 290–357 | 52–104 s | 13 s |
+
+A smooth monotonic countdown — **mean successive change 1.5 s** on `f15_full`, and the remaining
+larger steps are all at collect boundaries, where the countdown *should* jump because memory was just
+reclaimed.
+
+### 2. A capture could not show that the rescue had fired
+
+`rescues` lived in `inspect()` only, so a 200 ms control-loop pause left no trace in the record. It is
+in `health.csv` now, together with `leak_kbps` — and the first thing it showed is that the rescue is
+**not rare**:
+
+| case | flight | rescues | ≈ one per |
+|---|---|---|---|
+| `e16_full`  | 33.6 s | 1 | 34 s |
+| `e16_light` | 38.8 s | 2 | 19 s |
+| `f15_full`  | 57.6 s | 3 | 19 s |
+| `f15_light` | 65.6 s | 4 | 16 s |
+
+**Roughly one emergency collect every ~16–19 s of flight.** At 100 Hz a 200 ms pause is ~20 control
+steps with the fins frozen; `f15_light` spends ~800 ms of its 66 s that way. This is the documented
+design working as specified (`oom_s < 2 × land_s`, altitude proven, fins holding) — but its
+FREQUENCY was invisible until now, and it is a real control cost worth a decision rather than a
+default.
+
+**Caveat on the number.** This is HITL, and the sim allocates too. A previous flown A/B put the sim at
+~46 % of a HITL leak, which would put a real flight near ~190 KB/s and OOM ~160 s. That ratio has not
+been re-measured on this build — `tools/oom_soak.py` is the instrument for the production number.
 
 ## Reproduce
 

@@ -34,6 +34,11 @@ _RESCUE_PAUSE_MS: int = 200  # a CONSERVATIVE gc.collect() pause estimate (the t
                              # The rescue's whole safe-altitude floor is 2x THIS worth of descent (dynamic,
                              # from the live sink rate -- no fixed base): so the doubled, already-generous
                              # pause still leaves the glider clear of the ground after the collect.
+_LEAK_MIN_SAMPLES: int = 4   # refuse to report a trend from fewer -- an early guess is worse than none
+_COLLECT_KB: int = 256       # a mem_free RISE this large means a collect ran, not sampler noise
+_LEAK_SPARE_KB: int = 512    # forecast exhaustion at this RESERVE, not at zero: the last few hundred KB
+                             # are already too fragmented to serve a real allocation, so a countdown to
+                             # 0 promises time that does not exist.
 
 
 @task.activity('health')
@@ -55,13 +60,35 @@ class BoardHealth(task.Task):
         self._elevation = databoard.Databoard.parameter('elevation')  # rescue safety gate (baro height)
         self.load: int = 0  # CPU load as an integer percent 0..100 (from probe wake-up lateness)
         self.rescues: int = 0  # emergency in-flight collects performed (operator-visible)
-        self._leak_bps: int = 0  # EMA of the mem_free decay (bytes/s; 0 = not shrinking)
+        """
+        CUMULATIVE leak trend, not a per-sample EMA. Measured in flight
+        (doc/sims/TMS-7-phase5_refactor) the old estimator reported successive oom_s of 271, 155, 119,
+        109, None, 362, None, 206 -- and this number ARMS a safety action (_rescue spends a ~200 ms
+        collect mid-glide). It took one 1 Hz difference AS the slope, so sampler jitter went straight
+        to the output, and any single sample where the heap grew zeroed the estimate outright.
+
+        With GC off the heap only shrinks, so the honest statistic is the AVERAGE since the last
+        collect: accumulate the KB lost and the number of intervals, and divide. It converges instead
+        of oscillating, needs no window, and one noisy sample moves it by 1/n. A collect is the natural
+        reset -- it is a new heap, and the old total describes garbage that no longer exists.
+
+        Kilobytes throughout: bytes/s would want free * 1e6 // span_us, and free runs to ~3e7 here, so
+        that product leaves small-int range -- an mpz allocation inside the task that measures
+        allocation, with GC off.
+        """
+        self._leak_kbps: int = 0    # average mem_free decay since the last collect (KB/s)
+        self._leak_kb: int = 0      # total KB lost since the last collect
+        self._leak_ticks: int = 0   # intervals that total covers
+        self._last_kb: int = 0      # previous mem_free reading, in KB
         self._last_free: int = 0
         self._last_us: int = time.ticks_us()
         self._descent: fixed.fixnum = 0  # EMA of the sink rate (fixnum m/s down; 0 = not descending)
         self._last_elevation = None  # last baro elevation as a fixnum (m), for the sink slope + land_s
         self._last_elevation_us: int = time.ticks_us()
-        self._telemetry = recorder.Telemetry('health.csv', ('temp', 'mem_free', 'load', 'oom_s', 'land_s'))
+        # `rescues` is in the RECORD, not just inspect(): an emergency collect is a ~200 ms control-loop
+        # pause, and a capture that cannot show one happened cannot explain the flight it produced.
+        self._telemetry = recorder.Telemetry(
+            'health.csv', ('temp', 'mem_free', 'load', 'oom_s', 'land_s', 'leak_kbps', 'rescues'))
         self._ok = True
         return True
 
@@ -87,11 +114,12 @@ class BoardHealth(task.Task):
         Telemetry + `inspect health`; one side of the rescue decision.
 
         Returns:
-            Seconds to exhaustion at the current leak slope, or None while the heap is not shrinking.
+            Seconds to exhaustion at the current leak slope, or None while the heap is not shrinking
+            (or before the window holds enough samples to have a trustworthy slope).
         """
-        if self._leak_bps <= 0:
+        if self._leak_kbps <= 0:
             return None
-        return self._last_free // self._leak_bps
+        return max(0, self._last_free // 1024 - _LEAK_SPARE_KB) // self._leak_kbps
 
     def land_s(self):
         """
@@ -108,11 +136,12 @@ class BoardHealth(task.Task):
 
     def _track(self, free: int, elevation) -> None:
         """
-        Update the memory-decay and elevation-decay EMAs behind oom_s()/land_s().
+        Update the memory-decay window and the elevation-decay EMA behind oom_s()/land_s().
 
-        Both EMAs use alpha 1/4, all-int. Whole-second elapsed keeps every product inside small ints (a
-        1 Hz sampler; the EMA absorbs the rounding). Growth resets a slope -- a completed collect / a
-        climb invalidates the old trend.
+        The LEAK uses a window (see setup): one sample can no longer set or erase the slope, and a
+        collect clears the window while keeping the last rate. The SINK still uses an alpha-1/4 EMA --
+        it is a physical rate that genuinely changes, has no collect-like discontinuity, and a climb
+        resetting it is correct. All-int throughout.
 
         Args:
             free - the current gc.mem_free() reading (bytes).
@@ -122,10 +151,22 @@ class BoardHealth(task.Task):
             None; updates the decay-slope state as a side effect.
         """
         now = time.ticks_us()
-        elapsed_s = max(1, time.ticks_diff(now, self._last_us) // 1000000)
-        if self._last_free:
-            slope = (self._last_free - free) // elapsed_s  # bytes/s, positive = shrinking
-            self._leak_bps = (self._leak_bps * 3 + slope) // 4 if slope > 0 else 0
+        free_kb = free // 1024
+        if self._last_kb:
+            if free_kb - self._last_kb > _COLLECT_KB:
+                # a collect ran (pre-flight, a rescue, or post-flight). This is a different heap, and
+                # the accumulated total describes garbage that no longer exists -> start a new trend.
+                self._leak_kb = self._leak_ticks = self._leak_kbps = 0
+            else:
+                # every interval counts, shrinking or not: a slightly negative delta is sampler noise
+                # and belongs in the average, not thrown away (throwing it away is what biased the old
+                # estimator and made it jump).
+                self._leak_kb += self._last_kb - free_kb
+                self._leak_ticks += 1
+        self._last_kb = free_kb
+        if self._leak_ticks >= _LEAK_MIN_SAMPLES and self._leak_kb > 0:
+            # the sampler is periodic, so the interval COUNT is the clock -- no tick arithmetic
+            self._leak_kbps = self._leak_kb * 1000 // (self._leak_ticks * self.period_ms)
         self._last_free = free
         self._last_us = now
         if elevation is not None:
@@ -190,7 +231,10 @@ class BoardHealth(task.Task):
         if watchdog is not None:
             watchdog.kick()  # and hand the feed loop a fresh window on the way out
         self.rescues += 1
-        self._leak_bps = 0  # the old trend is gone with the garbage
+        # The slope SURVIVES the rescue. Zeroing it here was self-defeating: a rescue is proof the leak
+        # is real, and blanking the estimate meant oom_s went None for the next several samples -- so a
+        # glider that still needed rescuing could not ask for one. _track sees the collect's jump and
+        # rebuilds the window; the production rate is unchanged by reclaiming what it produced.
         recorder.Recorder.log(self.name, 'memory rescue: collect %d ms, %d -> %d KB free (oom %ss, land %ss)' % (
             paused_ms, free // 1024, gc.mem_free() // 1024, oom, land))
 
@@ -200,7 +244,7 @@ class BoardHealth(task.Task):
         self._track(vitals['mem_free'], elevation)
         self._rescue(vitals['mem_free'], elevation)
         self._telemetry.push((vitals['temp'], vitals['mem_free'], vitals['load'],
-                              self.oom_s(), self.land_s()))
+                              self.oom_s(), self.land_s(), self._leak_kbps, self.rescues))
 
     async def _probe_loop(self) -> None:
         """
