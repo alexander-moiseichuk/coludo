@@ -37,7 +37,7 @@ import inspector
 import recorder
 import sim_model
 import task
-from fixed import from_float  # attitude roll/pitch -> centidegree fixnum at the sim->control boundary
+from fixed import SCALE, from_float  # sim->control boundary: centidegree/Pa fixnums
 
 _STAGE = controller_mod.Stage
 _HPRC = sim_model.HPRC      # default scenario (HPRC launch site + landing zone)
@@ -46,6 +46,7 @@ Body = sim_model.Body       # the pure flight-dynamics model
 _noisy = sim_model.noisy    # the sensor-noise helper
 _KNOTS = 1.94384            # m/s -> knots (GNSS speed convention)
 _BARO_NOISE_SCALE = 0.05    # baro is ~20x more precise than the IMU/GNSS -> its noise is this x the nominal
+_PITOT_RAIL_MS = (2.0 * 546.0 / sim_model.RHO) ** 0.5  # the +/-500 Pa SDP810 rails ~29.9 m/s (matches the host sim)
 
 
 @task.activity('hitl')
@@ -101,9 +102,18 @@ class Hitl(task.Task):
             mission.update({'latitude': scenario['launch'][0], 'longitude': scenario['launch'][1],
                             'altitude': scenario['elevation_m'], 'zone': scenario['zone']})
         # provide the sim's sensor quantities to the databoard (priority 0 -> the control code reads these)
+        """
+        `airspeed`/`dynamic_pressure` are here for a reason worth remembering: without them the sim
+        published no airspeed at all, so the ONLY publisher of the fused `airspeed` channel on a board
+        HITL flight was the REAL bench SDP810 sitting in still air. That is what caused the bistability
+        (findings §28) -- fixed then with the `pitot_min_ms` consumer guard, which was right for a
+        blocked tube in flight but left the harness itself lying: board HITL never exercised the pitot
+        path, and the host sim (which does simulate it) flew the governor off a different source.
+        config_hitl._SIM_SENSORS now masks `airspeed_sdp810` too, so the bench part cannot get in.
+        """
         provided = {name: {'priority': 0, 'timeout_ms': 1000} for name in
                     ('accel', 'attitude', 'rate', 'agl', 'altitude', 'elevation', 'position', 'speed',
-                     'course')}
+                     'course', 'airspeed', 'dynamic_pressure')}
         self._ch = databoard.Databoard.provide(self.name, provided)
         """
         attitude-redundancy validation: a runner flips this True mid-glide to simulate a BNO055 death
@@ -125,6 +135,8 @@ class Hitl(task.Task):
         self._tlm_gnss = recorder.Telemetry('gnss.csv', ('lat', 'lon', 'speed_kn', 'course'), 100_000)  # 10 Hz
         self._tlm_laser = recorder.Telemetry('laser_agl.csv', ('agl',), sensor_us)
         self._tlm_fins = recorder.Telemetry('fins.csv', ('eleron_left', 'eleron_right', 'yaw'), sensor_us)
+        self._tlm_pitot = recorder.Telemetry(  # same name/fields/units as drivers/sdp810.py
+            'airspeed_sdp810.csv', ('dynamic_pressure', 'airspeed_cms', 'temperature'), sensor_us)
         self._ok = True
         return True
 
@@ -218,6 +230,19 @@ class Hitl(task.Task):
             self._ch['position'].push(position)
             self._ch['speed'].push(speed)
             self._ch['course'].push(course)
+        """
+        SDP810 pitot: the AIR-relative speed (body.speed is horizontal airspeed, vu vertical), NOT the
+        ground speed above -- a pitot cannot see wind. Railed like the real ±500 Pa part, which tops out
+        near 30 m/s: past that it under-reads, and an under-read LOOSENS the fin cap, so the governor's
+        `pitot_max_ms` guard must have something to fire on. Noised like every other channel here, which
+        the host sim does not do -- the board harness models the sensor, the host models the physics.
+        """
+        pitot = min((body.speed * body.speed + body.vu * body.vu) ** 0.5, _PITOT_RAIL_MS)
+        pitot = _noisy(pitot, noise, 0.0, _PITOT_RAIL_MS)
+        pressure_fx = int(0.5 * sim_model.RHO * pitot * pitot * SCALE)  # Pa fixnum, as the driver pushes
+        self._ch['airspeed'].push(pitot)              # m/s float -> the governor's estimator
+        self._ch['dynamic_pressure'].push(pressure_fx)  # Pa fixnum -> flight_report / airspeed_calibrate
+        self._tlm_pitot.push((pressure_fx, int(pitot * SCALE), 2500))  # temperature 25.00 C, as the host writes
         # telemetry -> the Luckfox (decimate_us rate-limits each stream so this can run every step)
         self._tlm_accel.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3)))
         self._tlm_imu.push((round(heading, 1), round(roll, 1), round(pitch, 1)))

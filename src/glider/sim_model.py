@@ -43,7 +43,8 @@ def _polar(speed: float) -> float:
 
 
 _G = 9.81
-_RHO = 1.225            # sea-level air density (kg/m^3)
+RHO = 1.225             # sea-level air density (kg/m^3) -- public: the HITL pitot model needs it too
+_RHO = RHO              # legacy in-module alias (the physics below reads _RHO throughout)
 _CDA = 0.6 * 0.0017     # Cd * frontal area (m^2) from the coludo.md envelope (~46 mm, ~17 cm^2)
 """
 STALL floor: the 1-g stall speed. A coordinated turn pulls load n = 1/cos(bank), and the wing needs

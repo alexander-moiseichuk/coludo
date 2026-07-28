@@ -18,6 +18,7 @@ import time
 
 import config_hitl
 import controller
+import databoard
 import drivers
 import mission
 import recorder
@@ -109,9 +110,17 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
         if stage == stages.GLIDING and time.ticks_diff(time.ticks_ms(), last_trace) >= 5000:
             last_trace = time.ticks_ms()
             body = flight.active('hitl')._body
-            print('  t=%ds alt=%.0f roll=%.0f pitch=%.0f hdg=%.0f dropgnss=%s'
+            # WHICH source the fused airspeed came from, and what the governor made of it. Board HITL
+            # used to have no simulated pitot at all, so this read 'None'/stale and the governor ran on
+            # the accel+GNSS estimate for the whole flight (findings 28/33) -- printing it keeps that
+            # honest: `pitot=` is the raw fused channel, `gov=` the governor's fused airspeed.
+            pitot = databoard.Databoard.read('airspeed')
+            control = flight.active('flight')
+            print('  t=%ds alt=%.0f roll=%.0f pitch=%.0f hdg=%.0f dropgnss=%s pitot=%s/%s gov=%.1f'
                   % (time.ticks_diff(time.ticks_ms(), started) // 1000, body.alt, body.roll,
-                     body.pitch, body.heading, flight.active('hitl').drop_gnss))
+                     body.pitch, body.heading, flight.active('hitl').drop_gnss,
+                     'None' if pitot[0] is None else ('%.1f' % pitot[0]), pitot[1],
+                     0.0 if control is None else control.airspeed()))
         await asyncio.sleep_ms(200)
     await asyncio.sleep_ms(1200)  # let the recorder flush the tail to the Luckfox
     await flight.finish()
