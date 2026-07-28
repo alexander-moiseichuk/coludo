@@ -35,6 +35,11 @@ Knobs: `VF_GUST`, `VF_GUST_TAU`, `VF_FAULT`, `VF_GLIDER_G` (+ the existing `VF_Q
 **Re-flown 7/26 on a corrected harness** (below). Every number moved; **every in-zone verdict is
 unchanged**, so the conclusions hold and the figures are now the trustworthy ones.
 
+> **Board-confirmed 7/27.** [`TMS-7-phase5_refactor`](../TMS-7-phase5_refactor/) re-flew this whole
+> matrix on the ESP32-P4 after the phase-5 refactor: **89.5 / 43.1 / 121.2 / 86.9 m** against the
+> q2 column's 90.1 / 44.2 / 119.2 / 110.0 — three of four inside 2 m. The q2 figures here are the
+> ones the hardware agrees with.
+
 [**Top-down plan**, all four at q5](plan_canonical.svg) · [**combined video** (FHD, 310 s)](physics_refresh.mp4).
 
 Consistent with the endgame study: **the polar dominates the landing**. Nothing reaches the zone at the
