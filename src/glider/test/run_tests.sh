@@ -26,7 +26,7 @@ if [ -t 1 ]; then G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; B=$'\e[1m'; N=$'\e[0m';
 command -v mpremote >/dev/null || { echo "${R}error: mpremote not found${N}"; exit 2; }
 # mpy-cross gate: prefer the repo-built RV32 cross so @micropython.native/viper tests (test_native_gate)
 # compile-check with the right -march -- without it mpy-cross errors 'invalid arch' on the native emitter.
-# -march is harmless on plain bytecode. Mirrors ../deploy.sh.
+# -march is harmless on plain bytecode. Mirrors tools/deploy.sh.
 MPYX="$HERE/../../../tools/mpy-cross.v1.29.0"; MARCH=(-march=rv32imc); have_mpycross=1
 if [ ! -x "$MPYX" ]; then
     if command -v mpy-cross >/dev/null; then MPYX=mpy-cross
@@ -38,7 +38,7 @@ if [ ! -e "${tests[0]}" ]; then echo "${Y}no tests found in $HERE (test_*.py)${N
 
 # deploy the glider modules so on-board tests can import them (config, ...)
 echo "deploying modules to $PORT..."
-bash "$HERE/deploy_modules.sh" "$PORT" || echo "${Y}warning: module deploy had issues${N}"
+PORT="$PORT" bash "$HERE/../../../tools/deploy.sh" || echo "${Y}warning: module deploy had issues${N}"
 
 tmpmpy="$(mktemp "$LOGDIR/compile_XXXX.mpy")"
 trap 'rm -f "$tmpmpy"' EXIT

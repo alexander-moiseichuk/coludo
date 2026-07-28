@@ -3,7 +3,7 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 Wind-estimation validation (MicroPython, runs ON the board). Flies a HITL glide with a KNOWN sim wind
 and prints the estimated wind (flight.vitals) vs the sim truth through the glide, so the triangle +
-loiter orbit-mean can be checked against ground truth. Deploy first (cd src/glider && ./deploy.sh), then:
+loiter orbit-mean can be checked against ground truth. Deploy first (tools/deploy.sh), then:
     printf 'import wind_soak\\nwind_soak.soak("F15", 6.0, 270.0)\\n' > /tmp/launch.py
     python3 tools/board_reboot.py PORT && mpremote connect PORT run /tmp/launch.py
 """

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Run the on-board MicroPython tests via `mpremote run` (boardrun is retired). Modules must already be
-# deployed (./deploy.sh). Each test is preceded by board_reboot for a fresh-VM isolation; a test PASSES
+# deployed (tools/deploy.sh). Each test is preceded by board_reboot for a fresh-VM isolation; a test PASSES
 # if its output has an 'ok:' line and no Traceback/Error/FAIL.
 #
 # Usage:  run_tests_board.sh [test_name ...]    # names like test_flight (default: all test/test_*.py)

@@ -24,7 +24,7 @@ first powered flight.
 ---
 
 ## Phase 0 — Bench pre-checks (before leaving)
-- [ ] Latest firmware deployed (`./deploy.sh`), correct board config; `make test` green
+- [ ] Latest firmware deployed (`tools/deploy.sh`), correct board config; `make test` green
 - [ ] Board boots to **main.py** running (boot log, not a bare REPL) and connects to CC
 - [ ] All components **verify/probe green** on CC — no sensor absent/garbage
 - [ ] Fins mechanically free, correct throw; each servo horn on the right spline (re-check after)

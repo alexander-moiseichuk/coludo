@@ -1597,6 +1597,27 @@ One physical SPI bus, shared by every device on it; transactions are serialized 
 
 The shared Bus for `bus_id`, created once from `spec` (sck/mosi/miso/baud/mode) and cached.
 
+### `bind(board: dict, device: dict)`
+
+Resolve a device's config block to the SPI bus it talks over -- i2cbus.bind's twin.
+
+The two dual-bus drivers (adxl375, lsm6dso32) pick their family at runtime, so each carried its own
+copy of the same `config.bus()` preamble to resolve EITHER family. With both modules exposing
+bind(), that preamble is gone from both and each driver's transport helper is just the dispatch.
+
+Returns the BUS ALONE, not i2cbus.bind's (bus, addr) pair, and the difference is real rather than an
+oversight: an I2C address is a plain integer sitting in the device block, but a chip-select is a
+board PIN, resolved through the pin map by Task._pin_gpio. Pin mapping is the task's job, so the
+caller passes the resolved GPIO to bus.device() itself.
+
+Args:
+    board - the whole board config (holds the `buses` section).
+    device - the component's own config block ('bus', 'id').
+
+Returns:
+    The shared Bus, or None when the config declares no such bus. Default id is 1: spi:1 is the
+    only SPI bus the board declares (i2cbus.bind defaults to 0 for the same reason).
+
 ## `task.py`
 
 _Tested by `test/test_task.py`._

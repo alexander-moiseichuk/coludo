@@ -9,6 +9,7 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | stream | origin | declared in | fields |
 |---|---|---|---|
 | `accel_adxl375.csv` | board | `hitl.py` | `ax`, `ay`, `az` |
+| `airspeed_sdp810.csv` | board | `hitl.py` | `dynamic_pressure`, `airspeed_cms`, `temperature` |
 | `baro_icp10111.csv` | board | `hitl.py` | `altitude`, `temperature`, `pressure`, `elevation` |
 | `checkpoint.csv` | board | `warmstart.py` | `stage`, `altitude`, `speed`, `airspeed`, `ticks_ms` |
 | `fins.csv` | board | `hitl.py` | `eleron_left`, `eleron_right`, `yaw` |

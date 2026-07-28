@@ -16,7 +16,7 @@ tight bench loop takes branches a real flight skips. The share reported at the e
 a flown A/B instead (see the table below), not from multiplying these by a rate; the two are printed
 side by side so a drift between them is visible.
 
-Needs the firmware deployed (`../deploy.sh` or `make test` first). Results live in
+Needs the firmware deployed (`tools/deploy.sh` or `make test` first). Results live in
 doc/sims/TMS-7-physics_refresh/README.md.
 """
 
