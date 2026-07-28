@@ -697,6 +697,16 @@ typical / 1.8 deg worst over the glide envelope -- fine for the attitude backup;
 to ~0.16 deg if a caller ever needs it. CORDIC needs x >= 0, so x < 0 reflects into the right
 half-plane and the 180 deg is added back per quadrant.
 
+The old magnitude floor is GONE -- the core pre-normalises (see the _ATAN_CD note), so the error
+is a flat ~0.05 deg at every magnitude instead of exploding as the vector shrinks. Measured on
+the board (test/diag_fixed_nav.py), worst error by magnitude: 1 -> 0.02 deg, 3 -> 0.025,
+100 -> 0.048, 1000 -> 0.040. atan2_cd(1, 1) is now exactly 4500; the axes land within 0.02 deg.
+
+What a caller still cannot get back is precision its INPUTS already threw away: two components
+quantised to a coarse integer no longer carry the true ratio (a 10 cm vector at centimetre scale
+holds ~10 % per component, so ~4 deg -- but only ~7 mm of position). Feed it the largest-magnitude
+form of the vector available, and prefer raw sensor counts over pre-scaled values.
+
 Args:
     y - the direction vector's y component (integer, any magnitude).
     x - the direction vector's x component (integer, any magnitude).
