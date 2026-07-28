@@ -19,7 +19,6 @@ Uses the shared locked I2C bus (i2cbus), as it shares i2c:0 with other sensors.
 import asyncio
 import struct
 
-import config
 import databoard
 import i2cbus
 import recorder
@@ -57,14 +56,9 @@ class Adxl375(task.Task):
     _dev = None  # class default: no transport until setup() builds it (diagnose reads directly)
 
     async def setup(self) -> bool:
-        kind = self.config.get('bus', 'i2c')
-        bus_id = self.config.get('id', 0)
-        spec = config.bus(self.controller.config, kind, bus_id)
-        if spec is None:
-            return False
-        self._dev = self._transport(kind, bus_id, spec)  # register window: I2C addr or SPI chip-select
+        self._dev = self._transport()  # register window over whichever bus the config names
         if self._dev is None:
-            return False  # SPI selected but no cs_pin wired
+            return False  # no such bus in config, or SPI selected with no cs_pin wired
         self._period_ms: int = self.config.get('period_ms', 100)  # poll interval with no INT wired
         self._fallback_ms: int = self.config.get('fallback_ms', 500)  # safety sample if INT silent
         self._buf = bytearray(6)
@@ -86,25 +80,25 @@ class Adxl375(task.Task):
         self._ok = True
         return True
 
-    def _transport(self, kind: str, bus_id: int, spec: dict):
+    def _transport(self):
         """
-        A register window over the selected bus, so the rest of the driver stays bus-agnostic.
+        A register window over the bus family the config names, so the rest of the driver is
+        bus-agnostic. I2C addresses by device address; SPI by chip-select.
 
-        I2C addresses by device address; SPI addresses by chip-select. SPI needs a `cs_pin` in the
-        component.
+        The bus lookup itself lives in i2cbus.bind()/spibus.bind(); this is only the dispatch.
 
         Args:
-            kind - the bus family, 'i2c' or 'spi'.
-            bus_id - which bus of that family (i2c:0, spi:1, ...).
-            spec - the bus config dict handed to the bus factory.
+            (none) -- reads the component config.
 
         Returns:
-            The register-window device; None when SPI is selected but no cs_pin is wired.
+            The register-window device; None when the bus is undefined, or SPI is selected
+            with no cs_pin wired.
         """
-        if kind == 'spi':
-            cs = self._pin_gpio('cs_pin')
-            return spibus.get(bus_id, spec).device(cs) if cs is not None else None
-        return i2cbus.get(bus_id, spec).device(self.config.get('addr', _ADDR))
+        if self.config.get('bus', 'i2c') == 'spi':
+            bus, cs = spibus.bind(self.controller.config, self.config), self._pin_gpio('cs_pin')
+            return bus.device(cs) if (bus is not None and cs is not None) else None
+        bus, addr = i2cbus.bind(self.controller.config, self.config, _ADDR)
+        return None if bus is None else bus.device(addr)
 
     async def _setup_interrupt(self) -> None:
         """Wire INT1 -> DATA_READY if the component declares an int_pin; else stay poll-only."""

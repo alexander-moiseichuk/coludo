@@ -18,7 +18,6 @@ registers (0x22..0x2D), so one 12-byte read fetches both.
 import asyncio
 import struct
 
-import config
 import databoard
 import i2cbus
 import recorder
@@ -61,14 +60,9 @@ class Lsm6dso32(task.Task):
     _dev = None  # class default: no transport until setup() builds it (diagnose reads directly)
 
     async def setup(self) -> bool:
-        kind = self.config.get('bus', 'spi')
-        bus_id = self.config.get('id', 1)
-        spec = config.bus(self.controller.config, kind, bus_id)
-        if spec is None:
-            return False
-        self._dev = self._transport(kind, bus_id, spec)  # register window: SPI chip-select or I2C addr
+        self._dev = self._transport()  # register window over whichever bus the config names
         if self._dev is None:
-            return False  # SPI selected but no cs_pin wired
+            return False  # no such bus in config, or SPI selected with no cs_pin wired
         self._period_ms: int = self.config.get('period_ms', 100)  # poll interval with no INT wired
         self._fallback_ms: int = self.config.get('fallback_ms', 500)  # safety sample if INT silent
         self._buf = bytearray(12)  # gyro(6) + accel(6)
@@ -99,25 +93,25 @@ class Lsm6dso32(task.Task):
         self._ok = True
         return True
 
-    def _transport(self, kind: str, bus_id: int, spec: dict):
+    def _transport(self):
         """
-        Build a register window over SPI (by chip-select) or I2C (by address).
+        A register window over the bus family the config names, so the rest of the driver is
+        bus-agnostic. LSM6DSO32 auto-increments via IF_INC, so the SPI window needs no address multi-byte bit.
 
-        LSM6DSO32 auto-increments via IF_INC, so the SPI device uses mb_bit=None (no address multi-byte
-        bit).
+        The bus lookup itself lives in i2cbus.bind()/spibus.bind(); this is only the dispatch.
 
         Args:
-            kind - the bus type, 'spi' or 'i2c'.
-            bus_id - the bus index within that type.
-            spec - the resolved bus spec (from config.bus).
+            (none) -- reads the component config.
 
         Returns:
-            The bus device for register access; None when SPI is selected but no cs_pin is wired.
+            The register-window device; None when the bus is undefined, or SPI is selected
+            with no cs_pin wired.
         """
-        if kind == 'spi':
-            cs = self._pin_gpio('cs_pin')
-            return spibus.get(bus_id, spec).device(cs, mb_bit=None) if cs is not None else None
-        return i2cbus.get(bus_id, spec).device(self.config.get('addr', _ADDR))
+        if self.config.get('bus', 'spi') == 'spi':
+            bus, cs = spibus.bind(self.controller.config, self.config), self._pin_gpio('cs_pin')
+            return bus.device(cs, mb_bit=None) if (bus is not None and cs is not None) else None
+        bus, addr = i2cbus.bind(self.controller.config, self.config, _ADDR)
+        return None if bus is None else bus.device(addr)
 
     async def _setup_interrupt(self) -> None:
         """
