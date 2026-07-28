@@ -20,14 +20,13 @@ import ast
 import os
 import sys
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.join(_HERE, '..')
+import sources
+
+_ROOT = sources.ROOT
 _DOC = os.path.join(_ROOT, 'doc', 'telemetry.md')
-_SOURCES = (
-    ('board', os.path.join(_ROOT, 'src', 'glider')),
-    ('board', os.path.join(_ROOT, 'src', 'glider', 'drivers')),
-    ('board', os.path.join(_ROOT, 'src', 'glider', 'tasks')),
-    ('host sim', os.path.join(_ROOT, 'tools')),
+_SOURCES = (  # where a stream can be declared -> the column that says who writes it
+    ('board', sources.GLIDER_DIRS),
+    ('host sim', ('tools',)),
 )
 
 
@@ -48,8 +47,7 @@ def _streams_in(path: str) -> list:
         (e.g. '%s.csv' % self.name -- a per-device stream whose name comes from the config).
     """
     try:
-        with open(path) as handle:
-            tree = ast.parse(handle.read(), filename=path)
+        tree = sources.parse(path)
     except (OSError, SyntaxError):
         return []
     found = []
@@ -73,13 +71,8 @@ def _streams_in(path: str) -> list:
 def collect() -> list:
     """(origin, module, stream, fields) for every declared telemetry stream, sorted for a stable doc."""
     rows = []
-    for origin, directory in _SOURCES:
-        if not os.path.isdir(directory):
-            continue
-        for entry in sorted(os.listdir(directory)):
-            if not entry.endswith('.py'):
-                continue
-            path = os.path.join(directory, entry)
+    for origin, directories in _SOURCES:
+        for _relative, entry, path in sources.modules(directories):
             for stream, fields in _streams_in(path):
                 rows.append((origin, entry[:-3], stream, fields))
     return sorted(rows, key=lambda row: (row[2] or '~runtime', row[1]))

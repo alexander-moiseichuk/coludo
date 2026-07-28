@@ -15,15 +15,16 @@ import ast
 import os
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SOURCES = [
-    ('src/glider', 'glider firmware (MicroPython)'),
-    ('src/glider/drivers', 'glider HAL drivers — `drivers/`'),
-    ('src/glider/tasks', 'glider subsystem tasks — `tasks/`'),
-    ('src/control', 'control (CPython)'),
-    ('src/control/commands', 'control operator commands — `commands/`'),
-]
-SKIP_PREFIXES = ('test_', 'itest_', 'bench_', 'gen_docs', '__init__', 'version')
+import sources
+
+ROOT = sources.ROOT
+TITLES = {  # the chapter heading each scanned directory gets (the dirs themselves live in sources)
+    'src/glider': 'glider firmware (MicroPython)',
+    'src/glider/drivers': 'glider HAL drivers — `drivers/`',
+    'src/glider/tasks': 'glider subsystem tasks — `tasks/`',
+    'src/control': 'control (CPython)',
+    'src/control/commands': 'control operator commands — `commands/`',
+}
 
 
 def module_header(tree: ast.Module) -> str:
@@ -100,9 +101,7 @@ def is_public(name: str) -> bool:
 
 
 def render_module(path: str, out: list) -> None:
-    with open(path) as handle:
-        source = handle.read()
-    tree = ast.parse(source)
+    tree = sources.parse(path)
     name = os.path.basename(path)
     out.append('## `%s`\n' % name)
     test = os.path.join(os.path.dirname(path), 'test', 'test_%s' % name)
@@ -140,17 +139,12 @@ def main(check: bool = False) -> None:
            ' run `python3 tools/gen_docs.py` to regenerate._', '',
            'See [`architecture.md`](architecture.md) for the module dependency graph, class hierarchy,'
            ' and the annotated `Flight._step()` hot-path call tree (`tools/gen_graph.py`).', '']
-    for rel, title in SOURCES:
-        directory = os.path.join(ROOT, rel)
-        files = sorted(f for f in os.listdir(directory)
-                       if f.endswith('.py')
-                       and not f.startswith(SKIP_PREFIXES)
-                       and not os.path.islink(os.path.join(directory, f)))
-        if not files:
-            continue
-        out.append('# %s — `%s`\n' % (title, rel))
-        for name in files:
-            render_module(os.path.join(directory, name), out)
+    chapter = None
+    for relative, _name, path in sources.modules(sources.GLIDER_DIRS + sources.CONTROL_DIRS):
+        if relative != chapter:  # a directory with no sources never opens a chapter
+            out.append('# %s — `%s`\n' % (TITLES[relative], relative))
+            chapter = relative
+        render_module(path, out)
     target = os.path.join(ROOT, 'doc', 'api.md')
     text = '\n'.join(out).rstrip() + '\n'
     """

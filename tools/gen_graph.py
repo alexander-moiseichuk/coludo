@@ -22,9 +22,9 @@ import ast
 import os
 import sys
 
-ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-GLIDER_DIRS = ['src/glider', 'src/glider/drivers', 'src/glider/tasks']
-SKIP_PREFIXES = ('test_', 'itest_', 'bench_', '__init__', 'version', 'example_', 'gen_')
+import sources
+
+ROOT = sources.ROOT
 HOT_ENTRY = ('flight', 'Flight', '_tick')  # the 100 Hz control step -> the hot-path trace root
 MAX_DEPTH = 8
 
@@ -46,15 +46,6 @@ class Module:
         self.from_import = {}    # imported symbol -> its module (from X import a)
         self.funcs = {}          # module-level function name -> node
         self.classes = {}        # class name -> {'bases': [str], 'methods': {name: node}, 'attrs': {a: (mod, cls)}}
-
-
-def _iter_sources():
-    for rel in GLIDER_DIRS:
-        directory = os.path.join(ROOT, rel)
-        for name in sorted(os.listdir(directory)):
-            if name.endswith('.py') and not name.startswith(SKIP_PREFIXES) \
-                    and not os.path.islink(os.path.join(directory, name)):
-                yield rel, name, os.path.join(directory, name)
 
 
 def _attr_type(value, module):
@@ -88,12 +79,11 @@ def _collect_attrs(class_node, module, attrs):
 def parse_modules():
     """Parse every on-device module into a Module (imports, functions, classes + attribute types)."""
     modules = {}
-    for rel, name, path in _iter_sources():
+    for rel, name, path in sources.modules(sources.GLIDER_DIRS):
         modname = name[:-3]
         kind = 'task' if rel.endswith('tasks') else ('driver' if rel.endswith('drivers') else 'core')
         module = Module(modname, path, kind)
-        with open(path) as handle:
-            tree = ast.parse(handle.read())
+        tree = sources.parse(path)
         for node in tree.body:
             if isinstance(node, ast.Import):
                 for alias in node.names:
