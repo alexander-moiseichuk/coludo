@@ -87,11 +87,13 @@ async def amain():
     the board and finding the tare read back as this test's own -1.25.
     """
     previous = None
+    stored = False  # was there a tare BEFORE us? if not, the key must end up ABSENT, not set to ours
     if sdp810._nvs is not None:
         try:
             previous = sdp810._nvs.get_i32(sdp810._NVS_ZERO)
+            stored = True
         except Exception:
-            previous = None
+            previous, stored = None, False
     try:
         keeper = sdp810.Sdp810('airspeed_sdp810', {}, _StubController())
         keeper._zero = fixed.from_float(-1.25)
@@ -101,8 +103,21 @@ async def amain():
         if sdp810._nvs is not None:      # on the board, the fixnum round-trips through NVS
             assert sdp810._nvs.get_i32(sdp810._NVS_ZERO) == keeper._zero
     finally:
-        if sdp810._nvs is not None and previous is not None:
-            sdp810._nvs.set_i32(sdp810._NVS_ZERO, previous)   # give the operator their tare back
+        """
+        `previous is not None` was NOT enough, and it bit exactly as predicted: on the FIRST run on a
+        board with no stored tare, get_i32 raises, previous stays None, the restore is skipped -- and
+        the test's own -1.25 is left behind as the operator's calibration. Every later run then reads
+        -125 back and faithfully "restores" it, so the fabricated zero looks like a real one forever.
+        An absent key must be restored to ABSENT.
+        """
+        if sdp810._nvs is not None:
+            if stored:
+                sdp810._nvs.set_i32(sdp810._NVS_ZERO, previous)  # give the operator their tare back
+            else:
+                try:
+                    sdp810._nvs.erase_key(sdp810._NVS_ZERO)  # there was none -- leave none
+                except Exception:
+                    pass  # nothing stored and nothing to erase
             sdp810._nvs.commit()
 
     print('ok: sdp810 driver registered; graceful-absent; @viper crc + Pa-fixnum scaling + airspeed; '
