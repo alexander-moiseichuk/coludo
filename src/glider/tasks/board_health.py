@@ -220,8 +220,24 @@ class BoardHealth(task.Task):
         if oom is None:
             return
         land = self.land_s()
-        if land is None or oom >= 2 * land:
-            return  # not descending yet, or we land long before memory dies -- no pause needed
+        """
+        Rescue when memory dies BEFORE the glider lands -- not at twice that, which is where this
+        started. The 2x was a third safety margin stacked on two that already exist, and it was
+        expensive: measured over the matrix it cost 1/2/3/4 pauses per flight, roughly one every
+        16-19 s, and f15_light spent ~800 ms of its 66 s with the fins frozen.
+
+        The two margins already in place, both conservative in the same direction:
+          * oom_s counts down to a _LEAK_SPARE_KB reserve, not to zero, so it ALREADY reports
+            exhaustion earlier than it happens;
+          * the safe-altitude floor prices the pause at _RESCUE_PAUSE_MS = 200 ms against a collect
+            measured at ~67 ms -- about 3x.
+        A third 2x on top does not buy safety, it just spends control slices.
+
+        The asymmetry still favours firing rather than not (an OOM mid-glide is the crash->neutral ->
+        watchdog -> reset chain), which is why the comparison is <= and not a fraction of land.
+        """
+        if land is None or oom > land:
+            return  # not descending yet, or memory outlives the flight -- no pause needed
         watchdog = self.controller.active('watchdog')  # None when the watchdog is disabled
         if watchdog is not None:
             watchdog.kick()  # the collect is atomic and unfeedable -- start it on a FULL WDT budget

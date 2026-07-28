@@ -25,10 +25,13 @@ host column is q2, not q5.
 
 | case | motor | glider | **board (this study)** | host q2 (physics_refresh) | delta |
 |---|---|---|---|---|---|
-| `e16_full`  | E16 | 270 g | **88.7 m** ✗ | 90.1 m ✗ | −1.4 m |
-| `e16_light` | E16 | 215 g | **44.1 m** ✗ | 44.2 m ✗ | −0.1 m |
-| `f15_full`  | F15 | 270 g | **121.9 m** ✗ | 119.2 m ✗ | +2.7 m |
-| `f15_light` | F15 | 215 g | **87.0 m** ✗ | 110.0 m ✗ | **−23.0 m** |
+| `e16_full`  | E16 | 270 g | **88.8 m** ✗ | 90.1 m ✗ | −1.3 m |
+| `e16_light` | E16 | 215 g | **45.7 m** ✗ | 44.2 m ✗ | +1.5 m |
+| `f15_full`  | F15 | 270 g | **121.7 m** ✗ | 119.2 m ✗ | +2.5 m |
+| `f15_light` | F15 | 215 g | **83.6 m** ✗ | 110.0 m ✗ | **−26.4 m** |
+
+Run-to-run spread across three flights of this matrix is ±3 m (the sim's 5 % sensor noise), so treat
+these as ±3, not as exact.
 
 🎬 **[`phase5_refactor.mp4`](phase5_refactor.mp4)** — follow-cam of all four, FHD 30 FPS.
 
@@ -46,10 +49,10 @@ still reproduces the host matrix. `f15_light` is the one real move, 23 m better.
 
 | metric | **this study** | physics_refresh (3 runs) | verdict |
 |---|---|---|---|
-| touchdown | **121.9 m** | 121.2 / 121.5 / 121.7 m | 0.2 m outside the old 0.5 m spread |
-| fin moves | **1482** | 1523–1593 | ~3 % below the old floor |
-| fin travel | **3694°** (64 °/s) | 3742–4068° (65–70 °/s) | ~1 % below the old floor |
-| servo energy | **18.8 J** (0.33 W avg) | 18.7–20.6 J (0.32–0.36 W) | inside |
+| touchdown | **121.7 m** | 121.2 / 121.5 / 121.7 m | inside the old spread |
+| fin moves | **1508** | 1523–1593 | ~1 % below the old floor |
+| fin travel | **3696°** (64 °/s) | 3742–4068° (65–70 °/s) | ~1 % below the old floor |
+| servo energy | **18.9 J** (0.33 W avg) | 18.7–20.6 J (0.32–0.36 W) | inside |
 | `fin_cap` | **5° → 45°** | 5° → 45° | unchanged 1/v² schedule |
 
 Nothing regressed. The small drop in fin travel is consistent with the governor now flying a measured
@@ -137,28 +140,39 @@ A smooth monotonic countdown — **mean successive change 1.5 s** on `f15_full`,
 larger steps are all at collect boundaries, where the countdown *should* jump because memory was just
 reclaimed.
 
-### 2. A capture could not show that the rescue had fired
+### 2. A capture could not show that the rescue had fired — and it was firing too often
 
 `rescues` lived in `inspect()` only, so a 200 ms control-loop pause left no trace in the record. It is
-in `health.csv` now, together with `leak_kbps` — and the first thing it showed is that the rescue is
-**not rare**:
+in `health.csv` now, together with `leak_kbps` — and flight_report draws it as a **staircase right
+after `mem MB`**, so the teeth in the memory sawtooth have a labelled cause.
 
-| case | flight | rescues | ≈ one per |
-|---|---|---|---|
-| `e16_full`  | 33.6 s | 1 | 34 s |
-| `e16_light` | 38.8 s | 2 | 19 s |
-| `f15_full`  | 57.6 s | 3 | 19 s |
-| `f15_light` | 65.6 s | 4 | 16 s |
+The first thing it showed is that the rescue was firing on a **third redundant safety margin**. The
+trigger was `oom_s < 2 × land_s` — collect when memory dies within *twice* the remaining flight —
+stacked on two margins that already point the same way:
 
-**Roughly one emergency collect every ~16–19 s of flight.** At 100 Hz a 200 ms pause is ~20 control
-steps with the fins frozen; `f15_light` spends ~800 ms of its 66 s that way. This is the documented
-design working as specified (`oom_s < 2 × land_s`, altitude proven, fins holding) — but its
-FREQUENCY was invisible until now, and it is a real control cost worth a decision rather than a
-default.
+- `oom_s` counts down to a **512 KB reserve**, not to zero, so it already reports exhaustion early;
+- the safe-altitude floor prices the pause at `_RESCUE_PAUSE_MS` = 200 ms against a collect measured
+  at **~67 ms** — about 3×.
 
-**Caveat on the number.** This is HITL, and the sim allocates too. A previous flown A/B put the sim at
-~46 % of a HITL leak, which would put a real flight near ~190 KB/s and OOM ~160 s. That ratio has not
-been re-measured on this build — `tools/oom_soak.py` is the instrument for the production number.
+A third 2× on top did not buy safety, it spent control slices. Now `oom_s <= land_s`: rescue when
+memory dies **before** the glider lands. Measured, same matrix, before and after:
+
+| case | flight | rescues @ 2× | **rescues @ 1×** | min free heap |
+|---|---|---|---|---|
+| `e16_full`  | 33 s | 1 | **0** | 22.5 MB |
+| `e16_light` | 38 s | 2 | **1** | 22.0 MB |
+| `f15_full`  | 57 s | 3 | **2** | 18.6 MB |
+| `f15_light` | 66 s | 4 | **2** | 16.0 MB |
+
+**Ten pauses across the matrix became five**, and the margin is plainly intact — the heap never fell
+below 16 MB of ~30 MB, nowhere near the reserve. `e16_full` now flies its whole 33 s without a single
+unscheduled pause. The asymmetry still favours firing (an OOM mid-glide is the crash→neutral →
+watchdog → reset chain), which is why the comparison is `<=` rather than a fraction of `land_s`.
+
+**Caveat on the leak number.** This is HITL, and the sim allocates too. A previous flown A/B put the
+sim at ~46 % of a HITL leak, which would put a real flight near ~190 KB/s and OOM ~160 s. That ratio
+has not been re-measured on this build — `tools/oom_soak.py` is the instrument for the production
+number.
 
 ## Reproduce
 

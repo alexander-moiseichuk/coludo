@@ -93,9 +93,10 @@ async def test_load_tracking():
 
 async def test_memory_rescue():
     """
-    the physics-based pre-OOM rescue: collect when the predicted time-to-OOM < 2x the time
-    left to sink to the ground (land_s), with a PROVEN safe altitude (elevation above the dynamic
-    floor = 2x the descent a ~200 ms pause costs), in BOOSTING..GLIDING only; no descent -> no rescue.
+    the physics-based pre-OOM rescue: collect when the predicted time-to-OOM is at or under the time
+    left to sink to the ground (land_s) -- i.e. memory dies BEFORE landing -- with a PROVEN safe
+    altitude (elevation above the dynamic floor = 2x the descent a ~200 ms pause costs), in
+    BOOSTING..GLIDING only; no descent -> no rescue.
     """
     import controller as controller_mod
 
@@ -120,7 +121,7 @@ async def test_memory_rescue():
     health._track(free - board_health._LEAK_MIN_SAMPLES * sink,
                   100.0 - board_health._LEAK_MIN_SAMPLES)
     assert health.oom_s() is not None and health.land_s() is not None
-    assert health.oom_s() < 2 * health.land_s()
+    assert health.oom_s() <= health.land_s()  # memory dies before touchdown -> rescue
     health._rescue(health.mem_free(), 99.0)  # dying before landing + safe altitude -> collect
     assert health.rescues == 1
     # the trend is CUMULATIVE SINCE THE LAST COLLECT, so the next _track sees the collect's jump and
@@ -133,7 +134,7 @@ async def test_memory_rescue():
     health._last_kb = 0
     for step in range(board_health._LEAK_MIN_SAMPLES):
         health._track(200_000 - step * 500, 98.5 - step * 0.5)  # 500 B/s -> under 1 KB/s
-    assert health.oom_s() is None or health.oom_s() > 2 * health.land_s()
+    assert health.oom_s() is None or health.oom_s() > health.land_s()  # outlives the flight
     health._rescue(health.mem_free(), 98.5)
     assert health.rescues == 1
 
