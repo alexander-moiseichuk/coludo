@@ -124,10 +124,27 @@ def test_dashboard_carries_the_imu_calibration_column():
     assert b'function notReady' in page and b'tr.notready' in page
     assert b'\xe2\x9d\x97' in page or b'&#10071;' in page or b'notready' in page  # the ❗ marker
 
-    # the server must forward the field verbatim rather than dropping it with the rest of `health`
+    """
+    The server must FORWARD the field rather than dropping it with the rest of `health`. Asserted by
+    RUNNING board_rows() over a stub board, not by grepping server.py's source for a literal: the old
+    string match broke on any reformat or rename while the behaviour was still correct, and -- worse
+    -- would have passed on a line that had been commented out.
+    """
     import server as server_module
-    with open(server_module.__file__) as handle:
-        assert "'imu_calibration': health.get('imu_calibration')" in handle.read()
+
+    class _StubBoard:
+        id, online, info = 'glider-01', True, {}
+        cache = {'health': {'imu_calibration': {'sys': 3, 'gyr': 3, 'acc': 2, 'mag': 0},
+                            'calibration': {'imu_bno055': 'make a figure 8'}}}
+
+    hub = server_module.Server.__new__(server_module.Server)  # no sockets: board_rows is pure
+    hub.boards = {'glider-01': _StubBoard()}
+    row = server_module.Server.board_rows(hub)[0]
+    assert row['imu_calibration'] == {'sys': 3, 'gyr': 3, 'acc': 2, 'mag': 0}, \
+        'board_rows dropped imu_calibration'
+    assert row['calibration'] == {'imu_bno055': 'make a figure 8'}, \
+        'board_rows dropped the calibration instructions'
+
 
 
 def test_malformed_request_line_does_not_hang():
