@@ -305,6 +305,16 @@ class Waiter:
     fallback it always had. The price is up to `slice_ms` of wake latency, nothing for a sensor whose
     data changes every 10 ms.
 
+    THE SLICE DOUBLES, and it starts short deliberately. Latency only matters on the FIRST check: a
+    live interrupt lands within one sample period, so the first slice must be small or a healthy
+    sensor waits needlessly. After that the line is late or dead, where latency stops mattering and
+    only the wake-up cost does -- so 10, 20, 40, 80... Starting instead at half the timeout and
+    halving would invert this: the first look comes at timeout/2, long after a healthy edge arrived.
+
+    For a 500 ms fallback that is ~6 sleeps instead of 50 when the interrupt is dead (288 B against
+    2400 B), while the healthy path still costs exactly ONE sleep. It also fixes the poll-only case,
+    where a driver with no interrupt at all would otherwise pay timeout/slice wake-ups per sample.
+
     A COUNTER rather than a bool, because it costs the same and holds more: a count above one means
     interrupts arrived faster than they were consumed, so a sampling overrun is recoverable evidence
     rather than a silently dropped sample. No separate miss counter -- that is the same fact stored
@@ -353,12 +363,14 @@ class Waiter:
             faster than this loop consumes them. Callers wanting a plain yes/no get it, since 0 is
             falsy; callers watching for dropped samples have the number without reaching inside.
         """
-        waited = 0
+        waited, slice_ms = 0, self._slice_ms
         while waited < timeout_ms:
-            await asyncio.sleep_ms(self._slice_ms)
-            waited += self._slice_ms
+            step = min(slice_ms, timeout_ms - waited)  # the LAST slice is trimmed to land exactly on
+            await asyncio.sleep_ms(step)               # the timeout, never past it
+            waited += step                             # count what was actually slept, not what was asked
             if self.kicks:      # take() inlined: this runs once per slice, so skip the bound-method
                 kicks = self.kicks
                 self.kicks = 0
                 return kicks
+            slice_ms += slice_ms  # nothing yet -> back off, doubling (see the class docstring)
         return 0
