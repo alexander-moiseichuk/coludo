@@ -344,14 +344,37 @@ across three board flights and fitting the line:
   ~0 because on the bench it never leaves SETTING — a real flight adds its 100 Hz control work on top,
   so treat 331 KB/s as a floor.
 
-  **Where it goes, and the route to 150 s.** The ADXL375's own sample path is already tight —
-  `read_into` into a preallocated buffer — yet it costs ~1.1 KB per sample at its 100 Hz ODR, far more
-  than the unpack tuple and three boxed floats explain. The prime suspect is
-  `asyncio.wait_for_ms(self._ready.wait(), fallback_ms)` in the run loop, which allocates a timeout
-  task per iteration; the same INT-with-fallback shape appears in `lsm6dso32`. Reaching 150 s needs
-  ~212 KB/s, i.e. **-120 KB/s from 331** — which the top two components alone could supply. Not yet
-  attempted: it wants its own careful pass with a per-call `bench_hitl` measurement, since these are
-  flight-critical drivers.
+  **Where it goes** — measured per call, not inferred (`test/diag_alloc_hotloop.py`):
+
+  | piece of the ADXL375 sample | B/call | rate | KB/s |
+  |---|---|---|---|
+  | `asyncio.wait_for_ms(flag.wait(), fallback)` | **560** | 100 Hz | **56.0** |
+  | `Telemetry.push` + its rounded tuple | 272 | 50 Hz | 13.6 |
+  | the `(x*s, y*s, z*s)` float tuple | 80 | 100 Hz | 8.0 |
+  | `struct.unpack('<hhh', buf)` | 32 | 100 Hz | 3.2 |
+  | `channel.push((x, y, z))` | **0** | 100 Hz | 0 |
+
+  That sums to ~81 of the measured 111 KB/s, the rest being loop overhead. Two conclusions:
+  `channel.push` is genuinely zero-alloc, so the databoard hot path is doing its job — and **the
+  timeout wrapper is over half the cost of the worst component**. A bare `ThreadSafeFlag.wait()` is
+  only **96 B**, so `wait_for_ms` adds **464 B of pure overhead per sample**.
+
+  **The route to 150 s** (needs ~212 KB/s, i.e. -120 from 331):
+
+  1. **Drop `wait_for_ms` from the INT path — about -46 KB/s.** Wait on the flag directly and let a
+     slow (~2 Hz) kicker set it when the interrupt goes quiet, so the fallback costs one timer instead
+     of a timeout object at 100 Hz. `lsm6dso32` has the same shape and does not pay it *only* because
+     its INT1 is unwired and it polls; wiring INT1 in v0.2 would make it start paying unless fixed
+     first.
+  2. **Route LSM6DSO32 INT1 in v0.2 — recovers part of its 63.7 KB/s**, since it currently polls at
+     100 Hz rather than sampling on data-ready.
+  3. **Decimate the accel/gyro telemetry streams** — 272 B per row is the second cost; halving those
+     stream rates is worth ~7 KB/s each and costs only plot resolution on channels sampled far above
+     what the reports render.
+
+  Steps 1 and 3 are software and independent of the board revision. None is attempted yet: these are
+  flight-critical drivers, so each wants its own change with a before/after measurement from the two
+  diagnostics above.
 
 - **Measured directly instead** (`test/diag_real_leak.py`: default config, real drivers, no sim, GC
   forced off): **~324 KB/s → OOM in ~99 s** from a 31.9 MB heap. That is well BELOW the ">150 s is
