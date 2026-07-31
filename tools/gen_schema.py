@@ -29,13 +29,12 @@ _SOURCES = (  # where a stream can be declared -> the column that says who write
     ('host sim', ('tools',)),
 )
 """
-The 'host sim' origin currently yields NOTHING, and that is a real gap rather than a quirk:
-tools/virtual_flight.py writes its streams by hand through its own _tlm() instead of constructing
-recorder.Telemetry(...), so the ast scan cannot see them. The generator that exists to catch host
-/ board schema drift is therefore blind to the host half -- the same class of divergence as the
-simulated-pitot asymmetry, where the two worlds disagreed and no tool could tell. render() calls
-this out in the generated doc so the emptiness cannot be mistaken for agreement. The fix is to make
-virtual_flight declare real Telemetry objects.
+Both halves are populated: the board declares streams via recorder.Telemetry, and tools/virtual_flight
+declares the same shapes through its own host-side Telemetry class -- the ast scan matches on the
+CONSTRUCTION, not the module, so one scanner covers both worlds. That is the point: a stream carried
+by both must agree field-for-field, or a host capture and a board capture stop being interchangeable
+to the renderers. The host half used to be invisible here, which is the same blind spot that let the
+simulated-pitot asymmetry live undetected.
 """
 
 
@@ -95,10 +94,10 @@ def render(rows: list) -> str:
            'after changing any `recorder.Telemetry(...)` declaration (`python3 tools/gen_schema.py`); '
            '`--check` fails the local gate if it is stale.',
            '',
-           '> **The `host sim` origin is currently EMPTY, and that is a known gap, not agreement.** '
-           '`tools/virtual_flight.py` builds its streams by hand rather than through '
-           '`recorder.Telemetry(...)`, so this generator cannot see them — host/board schema drift '
-           'would go undetected on the host side.',
+           '> A stream listed for BOTH `board` and `host sim` must carry the same fields in both — '
+           'that is what makes a host capture and a board capture interchangeable to every renderer. '
+           'The host declarations live in `tools/virtual_flight.py`; the board ones in the driver or '
+           'task that owns the stream.',
            '',
            'Every stream a capture can contain, and the fields in each. A recorder capture interleaves '
            '`@<session>_<file>@<row>` telemetry rows with plain log lines; `tools/flight_telemetry.py` '

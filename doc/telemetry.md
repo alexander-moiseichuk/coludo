@@ -2,7 +2,7 @@
 
 > **GENERATED from the sources by `tools/gen_schema.py` — do not hand-edit.** Regenerate after changing any `recorder.Telemetry(...)` declaration (`python3 tools/gen_schema.py`); `--check` fails the local gate if it is stale.
 
-> **The `host sim` origin is currently EMPTY, and that is a known gap, not agreement.** `tools/virtual_flight.py` builds its streams by hand rather than through `recorder.Telemetry(...)`, so this generator cannot see them — host/board schema drift would go undetected on the host side.
+> A stream listed for BOTH `board` and `host sim` must carry the same fields in both — that is what makes a host capture and a board capture interchangeable to every renderer. The host declarations live in `tools/virtual_flight.py`; the board ones in the driver or task that owns the stream.
 
 Every stream a capture can contain, and the fields in each. A recorder capture interleaves `@<session>_<file>@<row>` telemetry rows with plain log lines; `tools/flight_telemetry.py` demuxes them, and every renderer resolves streams **by role** (the fields they carry) rather than by file name — a capture's file names track the fitted hardware, so a fallback flight names them differently.
 
@@ -11,16 +11,27 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | stream | origin | declared in | fields |
 |---|---|---|---|
 | `accel_adxl375.csv` | board | `hitl.py` | `ax`, `ay`, `az` |
+| `accel_adxl375.csv` | host sim | `virtual_flight.py` | `ax`, `ay`, `az` |
 | `airspeed_sdp810.csv` | board | `hitl.py` | `dynamic_pressure`, `airspeed_cms`, `temperature` |
+| `airspeed_sdp810.csv` | host sim | `virtual_flight.py` | `dynamic_pressure`, `airspeed_cms`, `temperature` |
 | `baro_icp10111.csv` | board | `hitl.py` | `altitude`, `temperature`, `pressure`, `elevation` |
+| `baro_icp10111.csv` | host sim | `virtual_flight.py` | `altitude`, `temperature`, `pressure`, `elevation` |
 | `checkpoint.csv` | board | `warmstart.py` | `stage`, `altitude`, `speed`, `airspeed`, `ticks_ms` |
 | `fins.csv` | board | `hitl.py` | `eleron_left`, `eleron_right`, `yaw` |
+| `fins.csv` | host sim | `virtual_flight.py` | `eleron_left`, `eleron_right`, `yaw` |
 | `flight.csv` | board | `flight.py` | `stage`, `active`, `airspeed_cms`, `fin_cap`, `roll_sp`, `pitch_sp`, `heading_err`, `roll_cmd`, `pitch_cmd`, `yaw_cmd`, `wind_cms`, `wind_from` |
+| `flight.csv` | host sim | `virtual_flight.py` | `stage`, `active`, `airspeed_cms`, `fin_cap`, `roll_sp`, `pitch_sp`, `heading_err`, `roll_cmd`, `pitch_cmd`, `yaw_cmd`, `wind_cms`, `wind_from` |
 | `gnss.csv` | board | `hitl.py` | `lat`, `lon`, `speed_kn`, `course` |
+| `gnss.csv` | host sim | `virtual_flight.py` | `lat`, `lon`, `speed_kn`, `course` |
 | `health.csv` | board | `board_health.py` | `temp`, `mem_free`, `load`, `oom_s`, `land_s`, `leak_kbps`, `rescues`, `rescue_ms` |
+| `health.csv` | host sim | `virtual_flight.py` | `temp`, `mem_free`, `load`, `oom_s`, `land_s`, `leak_kbps`, `rescues`, `rescue_ms` |
 | `imu_bno055.csv` | board | `hitl.py` | `heading`, `roll`, `pitch` |
+| `imu_bno055.csv` | host sim | `virtual_flight.py` | `heading`, `roll`, `pitch` |
 | `imu_lsm6dso32.csv` | board | `hitl.py` | `ax`, `ay`, `az`, `gx`, `gy`, `gz` |
+| `imu_lsm6dso32.csv` | host sim | `virtual_flight.py` | `ax`, `ay`, `az`, `gx`, `gy`, `gz` |
 | `laser_agl.csv` | board | `hitl.py` | `agl` |
+| `laser_agl.csv` | host sim | `virtual_flight.py` | `agl` |
+| `power_ina226.csv` | host sim | `virtual_flight.py` | `voltage_mv`, `current_ma`, `power_mw`, `alerts` |
 | `separation.csv` | board | `separation.py` | `event`, `stage` |
 | _per-device_ (`<name>.csv`) | board | `adxl375.py` | `ax`, `ay`, `az` |
 | _per-device_ (`<name>.csv`) | board | `bmp280.py` | `altitude`, `temperature`, `pressure`, `elevation` |

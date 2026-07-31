@@ -54,6 +54,52 @@ _SERVO_MOVE_MW = 1400  # measured MEAN draw of one servo in travel (peak 3925 mW
 _SERVO_SLEW_S_PER_DEG = 0.1 / 60.0  # MG90S: ~0.1 s per 60 deg at max slew
 
 
+class Telemetry:
+    """
+    A host-side stream DECLARATION, mirroring recorder.Telemetry's (filename, fields) contract.
+
+    Not the board's implementation -- there is no Recorder here and no UART to drain; this only owns
+    the schema. That is deliberate and sufficient: what host/board drift detection needs is the field
+    list, and tools/gen_schema.py finds streams by looking for a `Telemetry(name, fields)` call, so
+    declaring them this way puts the host sim into the generated schema where it belongs.
+    """
+
+    def __init__(self, filename: str, fields: tuple):
+        self.filename: str = filename
+        self.fields: tuple = fields
+
+    def header(self) -> str:
+        """The CSV header line: the uptime column the recorder prepends, then the declared fields."""
+        return 'uptime;' + ';'.join(self.fields)
+
+
+_STREAMS = {
+    'accel': Telemetry('accel_adxl375.csv', ('ax', 'ay', 'az')),
+    'baro': Telemetry('baro_icp10111.csv', ('altitude', 'temperature', 'pressure', 'elevation')),
+    'imu': Telemetry('imu_bno055.csv', ('heading', 'roll', 'pitch')),
+    'gyro': Telemetry('imu_lsm6dso32.csv', ('ax', 'ay', 'az', 'gx', 'gy', 'gz')),
+    'gnss': Telemetry('gnss.csv', ('lat', 'lon', 'speed_kn', 'course')),
+    'laser': Telemetry('laser_agl.csv', ('agl',)),
+    'fins': Telemetry('fins.csv', ('eleron_left', 'eleron_right', 'yaw')),
+    # health.csv must carry the BOARD's field list, not a shorter one: a renderer resolves streams by
+    # the fields they carry, so a host capture missing these columns silently loses the panels they
+    # drive (the rescue staircase, the OOM countdown). The host models no GC and runs no rescue, so
+    # those columns are emitted EMPTY -- absent-but-declared, which is what the parsers expect.
+    'health': Telemetry('health.csv', ('temp', 'mem_free', 'load', 'oom_s', 'land_s', 'leak_kbps',
+                                       'rescues', 'rescue_ms')),
+    # flight.csv: the CONTROL STATE, byte-identical in shape to the board's (tasks/flight.py), so a
+    # sim capture exercises the same report panels a real capture will
+    'flight': Telemetry('flight.csv', ('stage', 'active', 'airspeed_cms', 'fin_cap', 'roll_sp',
+                                       'pitch_sp', 'heading_err', 'roll_cmd', 'pitch_cmd', 'yaw_cmd',
+                                       'wind_cms', 'wind_from')),
+    # the SDP810 pitot as the board's driver records it (Pa fixnum + derived m/s)
+    'pitot': Telemetry('airspeed_sdp810.csv', ('dynamic_pressure', 'airspeed_cms', 'temperature')),
+    # servo-rail power as the INA226 records it -- MODELLED from the measured MG90S figures, so the
+    # report's engine panel and flight_kpi's servo-energy metric are not blank on a sim run
+    'power': Telemetry('power_ina226.csv', ('voltage_mv', 'current_ma', 'power_mw', 'alerts')),
+}
+
+
 class _Fin:
     """
     Slew-limited sg90 stand-in: the fused mixer.actuate() commands an angle, the horn CHASES it.
@@ -408,24 +454,44 @@ class _Capture:
     def _tlm(self, file: str, row: str) -> None:
         self._lines.append('@%s_%s@%s' % (self._SESSION, file, row))
 
+    def _tlm_row(self, key: str, row: str) -> None:
+        """
+        Emit one row, CHECKED against its stream's declared field count.
+
+        The row formats are hand-written %-strings and the field list is declared separately, so a
+        column added to one and not the other used to produce a capture the parsers accept and
+        silently misread. One assert per row is cheap next to a sim run and turns that into a loud
+        failure at the first sample.
+
+        Args:
+            key - the _STREAMS key.
+            row - the formatted row, uptime column first.
+
+        Returns:
+            None; appends the wire line.
+        """
+        stream = _STREAMS[key]
+        columns = row.count(';') + 1
+        assert columns == len(stream.fields) + 1, \
+            '%s: row has %d columns, declaration says %d (uptime + %d fields)' % (
+                stream.filename, columns, len(stream.fields) + 1, len(stream.fields))
+        self._tlm(stream.filename, row)
+
     def header(self) -> None:
-        self._tlm('accel_adxl375.csv', 'uptime;ax;ay;az')
-        self._tlm('baro_icp10111.csv', 'uptime;altitude;temperature;pressure;elevation')
-        self._tlm('imu_bno055.csv', 'uptime;heading;roll;pitch')
-        self._tlm('imu_lsm6dso32.csv', 'uptime;ax;ay;az;gx;gy;gz')   # low-g accel + gyro rate (deg/s)
-        self._tlm('gnss.csv', 'uptime;lat;lon;speed_kn;course')
-        self._tlm('laser_agl.csv', 'uptime;agl')
-        self._tlm('fins.csv', 'uptime;eleron_left;eleron_right;yaw')  # commanded servo angles (deg)
-        self._tlm('health.csv', 'uptime;temp;mem_free;load')          # board vitals (board_health.py)
-        # flight.csv: the CONTROL STATE, byte-identical in shape to the board's (tasks/flight.py) so a
-        # sim capture exercises the same report panels a real capture will (findings §27.1/§27.2)
-        self._tlm('flight.csv', 'uptime;stage;active;airspeed_cms;fin_cap;roll_sp;pitch_sp;heading_err;'
-                                'roll_cmd;pitch_cmd;yaw_cmd;wind_cms;wind_from')
-        # the SDP810 pitot as the board's driver records it (Pa fixnum + derived m/s)
-        self._tlm('airspeed_sdp810.csv', 'uptime;dynamic_pressure;airspeed_cms;temperature')
-        # servo-rail power as the INA226 records it -- MODELLED from the measured MG90S figures, so
-        # the report's engine panel and flight_kpi's servo-energy metric are not blank on a sim run
-        self._tlm('power_ina226.csv', 'uptime;voltage_mv;current_ma;power_mw;alerts')
+        """
+        Emit every stream header FROM its declaration.
+
+        The headers used to be hand-written strings sitting beside hand-written row formats, with
+        nothing tying the two together -- add a column to one and the other silently disagreed. They
+        are declared once now, and `_tlm_row` checks each row against the declared field count.
+
+        Declaring them as `Telemetry(...)` also makes them VISIBLE to tools/gen_schema.py, which scans
+        for exactly that construction. Before this the generated telemetry schema's "host sim" half was
+        empty -- the tool that exists to catch host/board schema drift could not see the host at all,
+        which is the same blind spot that let the simulated-pitot asymmetry live undetected.
+        """
+        for stream in _STREAMS.values():
+            self._tlm(stream.filename, stream.header())
 
     def sample(self, t, accel, altitude, elevation, heading, roll, pitch, position, agl, laser_range, speed,
                fins, rate, control=None, pitot=None, dt=0.02):
@@ -492,7 +558,8 @@ class _Capture:
         temp = min(63.0, 45.0 + 0.18 * t + (4.0 if stage == 'landing' else 0.0))
         airborne = max(0.0, t - self._leak_from) if self._leak_from else 0.0
         mem_free = int(_FREE_AT_BOOT - _LEAK_BPS * airborne)  # GC is OFF airborne -> monotonic decline
-        self._tlm('health.csv', '%u;%.1f;%d;%d' % (int(t * 1e6), temp, mem_free, load))
+        # the five memory-forecast columns stay blank: no GC here, so no leak slope and no rescue
+        self._tlm_row('health', '%u;%.1f;%d;%d;;;;;' % (int(t * 1e6), temp, mem_free, load))
 
     def event(self, t, line: str) -> None:
         self._lines.append('%u %s' % (int(t * 1e6), line))
