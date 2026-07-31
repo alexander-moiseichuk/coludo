@@ -322,8 +322,15 @@ across three board flights and fitting the line:
 - The **HITL sim itself costs 166 KB/s at 50 Hz — 48 %** of the board-HITL total. This independently
   reproduces the earlier "~46 % of a HITL leak" A/B *on the current build*, simulated pitot included,
   so that method is validated rather than folklore.
-- **The production leak is the intercept: 187 KB/s**, i.e. a ~30 MB heap lasts **~160 s** — just
-  above the ">150 s is acceptable" bar, with the in-flight memory rescue as backstop.
+- **The intercept is 187 KB/s**, but that is *HITL with the sim's publishing removed*, not a real
+  flight — the sim still steps float physics at 50 Hz underneath it, while HITL masks seven real
+  sensors whose drivers a real flight runs. The two are not nested, so neither bounds the other.
+- **Measured directly instead** (`test/diag_real_leak.py`: default config, real drivers, no sim, GC
+  forced off): **~324 KB/s → OOM in ~99 s** from a 31.9 MB heap. That is well BELOW the ">150 s is
+  acceptable" bar and below what the HITL intercept suggested. Caveats both ways: the bench run
+  excludes the `flight` control task (a real flight leaks more) and includes an LSM6DSO32 polling at
+  100 Hz because its INT1 line is unwired on v0.1 (fixing that in v0.2 reduces it). The in-flight
+  memory rescue remains the backstop, and it is now measured at 34-45 ms per collect.
 - `oom_soak.py`'s header figure of "15-18 KB/s" measures the **control path alone**, without telemetry
   and recorder. Not wrong, but narrower than it reads.
 
