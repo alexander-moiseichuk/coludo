@@ -191,3 +191,28 @@ done
 python3 tools/flight_metrics.py captures/phase5_refactor --sort name
 python3 tools/flight_kpi.py captures/phase5_refactor/f15_full.txt
 ```
+
+## Open: the board flies 12–21 % longer than the host, and two theories are dead
+
+The board out-flies the host in every case — duration +12–21 %, and apogee +7.5–10 % on F15 (E16
+apogee matches). `f15_light` is simply where the most flight-time exists, and a converging endgame
+turns time into accuracy, which is the whole −26 m delta. Two hypotheses tested and **both refuted**:
+
+**Not load-induced sim lag.** If the board's real-time accumulator were falling behind under its
+100 Hz control + telemetry load, reducing that load would shrink the gap. Flying the same case at
+`inject_hz` 50 / 25 / 10 — a 5× cut that really did reduce work, the leak falling 347 → 210 KB/s —
+gives durations of **57.8 / 57.7 / 57.7 s** and apogees of **288 / 289 / 289 m**. Flat. The board is
+not lagging.
+
+**Not the physics integration rate.** The host drives physics and control from one rate (`--hz`,
+default 100) while the board decouples them (physics `sim_hz` 50, control `schedule_hz` 100), so the
+host integrates twice as finely. Running the host at `--hz 50` to match the board's physics should
+then reproduce the board — it does the opposite: **47.1 s / 258 m**, moving *away* from the board's
+57.8 s / 288 m. Coarser integration makes the host fly shorter and lower; the board, at the same
+50 Hz, flies longer and higher.
+
+So the cause is in how the two harnesses *drive* the shared `sim_model`, not in timing or step size.
+The next probe is to instrument the board's accumulator directly — log simulated time against wall
+time and the sub-step count per iteration — and compare the total simulated seconds each side spends
+in the glide. Until then, **host predictions carry an unquantified pessimistic bias** and cross-world
+comparisons of duration or apogee should be treated as indicative only.
