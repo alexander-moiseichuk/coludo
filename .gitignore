@@ -10,3 +10,7 @@ session-*.md
 .*.kate-swp
 gliders.json
 captures/
+# extracted Gerber/netlist working copies -- the .zip archives are the tracked artefact
+models/PCBs/main_board/
+models/PCBs/power_board/
+models/PCBs/*.net

@@ -50,14 +50,38 @@ async def _ballast(target_kb: int) -> list:
         The list of ballast bytearrays; the caller must hold the reference to keep the heap pinned.
     """
     hold = []
+    """
+    ONE try PER LOOP, not one around both. With a single try the coarse loop's MemoryError skipped
+    the fine loop entirely -- measured: it stopped at 5.03 MB free against a 600 KB target, 8x short,
+    so the soak never reached OOM and timed out in GLIDING. A coarse chunk failing is EXPECTED (it is
+    how the coarse stage ends on a fragmented tail); it means "switch to fine", not "stop ballasting".
+    """
+    """
+    COUNT the chunks from ONE reading instead of re-measuring per chunk. gc.mem_free() walks the whole
+    GC block table, which on this ~30 MB PSRAM heap is millions of blocks -- calling it per chunk made
+    ballasting O(n^2) and it MEASURED 80 s of wall time for 99 chunks, which starved the flight it is
+    supposed to be soaking (the glider was still in GLIDING at the 150 s cap instead of landing at
+    ~57 s). Re-measure only between stages, and let MemoryError end a stage.
+    """
+    def _fill(size: int, count: int):
+        for _ in range(count):
+            hold.append(bytearray(size))
+
     try:
-        while gc.mem_free() > target_kb * 1024 + 2 * _BIG:
-            hold.append(bytearray(_BIG))
-            await asyncio.sleep_ms(10)  # a real slot for the WDT feeder: a chunk (~100 ms of
-            # PSRAM zeroing) plus the full-heap mem_free() scan outpaces a sleep_ms(0) yield
-            # against the 500 ms watchdog
-        while gc.mem_free() > target_kb * 1024:
-            hold.append(bytearray(_FINE))
+        coarse = (gc.mem_free() - target_kb * 1024 - 2 * _BIG) // _BIG
+        while coarse > 0:
+            batch = min(coarse, 8)  # a batch, then a real slot for the WDT feeder
+            _fill(_BIG, batch)
+            coarse -= batch
+            await asyncio.sleep_ms(10)
+    except MemoryError:
+        pass  # coarse chunks no longer fit -- the fine loop below carves the rest
+    try:
+        fine = (gc.mem_free() - target_kb * 1024) // _FINE
+        while fine > 0:
+            batch = min(fine, 16)
+            _fill(_FINE, batch)
+            fine -= batch
             await asyncio.sleep_ms(10)
     except MemoryError:  # overshoot on a fragmented tail -- close enough, keep what we hold
         pass
