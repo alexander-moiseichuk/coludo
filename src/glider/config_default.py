@@ -97,7 +97,9 @@ def default() -> dict:
 
     buses = {
         'uart': {
-            '1': {'tx': 20, 'rx': 21, 'baud': 921600},  # recorder
+            # recorder: TX ONLY. The link is write-only and GPIO21 has no copper on the
+            # v0.1 PCB, so declaring rx here would claim an unconnected, floating pin.
+            '1': {'tx': 20, 'baud': 921600},
             '2': {'tx': 22, 'rx': 23, 'baud': 9600},  # gnss
         },
         'i2c': i2c_buses,

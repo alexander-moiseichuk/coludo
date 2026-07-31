@@ -216,8 +216,20 @@ class Recorder:
         if uart is None:
             entry = config_mod.device(config, driver='recorder') or {'bus': 'uart', 'id': 1}
             kind, bus_id = entry.get('bus', 'uart'), entry.get('id', 1)
-            spec = config_mod.bus(config, kind, bus_id) or {'tx': 20, 'rx': 21, 'baud': 921600}
-            uart = UART(bus_id, baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
+            spec = config_mod.bus(config, kind, bus_id) or {'tx': 20, 'baud': 921600}
+            """
+            RX is passed ONLY when the config declares one. The recorder link is write-only -- the
+            board streams telemetry to the Luckfox and never reads it back -- and on the v0.1 PCB
+            GPIO21 has no copper at all (the netlist routes 20 of 22 GPIOs; this is one of the two
+            absent). Naming it anyway claimed an unconnected pin as a UART input and left it floating,
+            which is precisely the class of fault that made every servo appear to move on the bench.
+            `rx=None` is not the escape hatch -- MicroPython rejects it with ValueError('invalid pin');
+            the kwarg has to be omitted, which is what the dict-splat below does.
+            """
+            pins = {'tx': spec['tx']}
+            if spec.get('rx') is not None:
+                pins['rx'] = spec['rx']
+            uart = UART(bus_id, baudrate=spec['baud'], **pins)
         # accept a pre-wrapped async writer (tests) or wrap a raw UART for async drain
         cls._uart = uart if hasattr(uart, 'drain') else asyncio.StreamWriter(uart, {})
         inspector.Inspector.register(cls)
