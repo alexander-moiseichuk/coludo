@@ -211,8 +211,28 @@ then reproduce the board — it does the opposite: **47.1 s / 258 m**, moving *a
 57.8 s / 288 m. Coarser integration makes the host fly shorter and lower; the board, at the same
 50 Hz, flies longer and higher.
 
-So the cause is in how the two harnesses *drive* the shared `sim_model`, not in timing or step size.
-The next probe is to instrument the board's accumulator directly — log simulated time against wall
-time and the sub-step count per iteration — and compare the total simulated seconds each side spends
-in the glide. Until then, **host predictions carry an unquantified pessimistic bias** and cross-world
-comparisons of duration or apogee should be treated as indicative only.
+So the cause is in how the two harnesses *drive* the shared `sim_model`. Reading both drivers
+identifies **two independent mechanisms**, which is why no single-variable test moved the numbers:
+
+**1 — the board discards wall time it cannot cover.** `tasks/hitl.py` accumulates real elapsed time
+into fixed sub-steps, but caps each iteration at `max_catchup = 0.5 s`:
+
+    accumulator += elapsed if elapsed < max_catchup else max_catchup
+
+Anything past the cap is dropped and never made up, so simulated time falls permanently behind wall
+time. That is a STRUCTURAL lag, not a load-dependent one — which is exactly why cutting the publish
+rate 5× did not move it. It stretches the wall-clock duration a capture reports without changing the
+trajectory, and it accounts for the duration gap in every case, E16 included.
+
+**2 — the host does not run the real stage machine.** `tools/virtual_flight.py` REIMPLEMENTS it: its
+own comments say "mirrors `tasks/sequencer.py`" and, for apogee detection, "mirror of
+`sequencer._detect_apogee` — the mirror had DRIFTED". A mirror that has drifted once can drift again,
+and stage-transition timing sets the separation altitude directly — which is the apogee. This explains
+why the apogee gap appears on **F15 and not E16**: the longer, faster boost gives a mirrored detector
+more room to disagree with the real one.
+
+The duration gap is therefore a board-side measurement artefact, and the apogee gap a host-side model
+divergence. Neither is a flight-control defect. **Fixing them properly means the board reporting
+SIMULATED time alongside wall time in its captures, and the host driving the real `sequencer` instead
+of a copy of it.** Until then, treat cross-world duration and apogee comparisons as indicative, and
+compare like-for-like within one world.
