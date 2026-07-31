@@ -239,17 +239,31 @@ class Gnss(task.Task):
         if spec is None:
             return 'no transport -- uart bus %s undefined in config' % bus_id
         uart = self._uart  # None until setup opens the port
+        """
+        OWN what we open. diagnose() is called precisely when setup FAILED, which is when self._uart
+        is None -- so this path opened a fresh UART peripheral every call and never released it. A few
+        rounds of `probe` on a dead GNSS would leak one peripheral instance each, and the later ones
+        can collide with the earlier on the same pins. Only the UART opened HERE is deinited; a live
+        one belongs to the run loop and must survive.
+        """
+        borrowed = uart is not None
         if uart is None:
             uart = UART(bus_id, baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
-        reader = asyncio.StreamReader(uart)
         seen = 0
         try:
+            reader = asyncio.StreamReader(uart)
             for _ in range(8):  # ~2 s window (longer than one NMEA interval)
                 raw = await asyncio.wait_for_ms(reader.readline(), 250)
                 if raw:
                     seen += 1
         except asyncio.TimeoutError:
             pass
+        finally:
+            if not borrowed:
+                try:
+                    uart.deinit()
+                except Exception:
+                    pass  # a peripheral that will not close must not sink the diagnosis it carried
         if seen == 0:
             return 'no NMEA on uart:%s -- GNSS unpowered / TX-RX swapped / no module' % bus_id
         return 'NMEA flowing (%d lines) on uart:%s -- link alive (a fix needs sky view)' % (seen, bus_id)
