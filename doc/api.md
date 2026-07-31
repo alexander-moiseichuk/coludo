@@ -312,6 +312,16 @@ dead interrupt the loop runs out its slices and the caller samples anyway, which
 fallback it always had. The price is up to `slice_ms` of wake latency, nothing for a sensor whose
 data changes every 10 ms.
 
+THE SLICE DOUBLES, and it starts short deliberately. Latency only matters on the FIRST check: a
+live interrupt lands within one sample period, so the first slice must be small or a healthy
+sensor waits needlessly. After that the line is late or dead, where latency stops mattering and
+only the wake-up cost does -- so 10, 20, 40, 80... Starting instead at half the timeout and
+halving would invert this: the first look comes at timeout/2, long after a healthy edge arrived.
+
+For a 500 ms fallback that is ~6 sleeps instead of 50 when the interrupt is dead (288 B against
+2400 B), while the healthy path still costs exactly ONE sleep. It also fixes the poll-only case,
+where a driver with no interrupt at all would otherwise pay timeout/slice wake-ups per sample.
+
 A COUNTER rather than a bool, because it costs the same and holds more: a count above one means
 interrupts arrived faster than they were consumed, so a sampling overrun is recoverable evidence
 rather than a silently dropped sample. No separate miss counter -- that is the same fact stored

@@ -368,9 +368,7 @@ class Waiter:
             step = min(slice_ms, timeout_ms - waited)  # the LAST slice is trimmed to land exactly on
             await asyncio.sleep_ms(step)               # the timeout, never past it
             waited += step                             # count what was actually slept, not what was asked
-            if self.kicks:      # take() inlined: this runs once per slice, so skip the bound-method
-                kicks = self.kicks
-                self.kicks = 0
-                return kicks
+            if self.kicks:        # cheap attribute test guards the call: most slices find nothing,
+                return self.take()  # and take() stays the ONE implementation of check-and-clear
             slice_ms += slice_ms  # nothing yet -> back off, doubling (see the class docstring)
         return 0
