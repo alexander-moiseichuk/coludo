@@ -18,6 +18,7 @@ registers (0x22..0x2D), so one 12-byte read fetches both.
 import asyncio
 import struct
 
+import commons
 import databoard
 import i2cbus
 import recorder
@@ -66,7 +67,7 @@ class Lsm6dso32(task.Task):
         self._period_ms: int = self.config.get('period_ms', 100)  # poll interval with no INT wired
         self._fallback_ms: int = self.config.get('fallback_ms', 500)  # safety sample if INT silent
         self._buf = bytearray(12)  # gyro(6) + accel(6)
-        self._ready = asyncio.ThreadSafeFlag()
+        self._ready = commons.Waiter()  # IRQ-kicked wake + sliced fallback (see commons.Waiter)
         self._int = None
         self._edge_seen: bool = False  # non-blocking INT1 mark for the polling fallback
         self._int_silent: bool = False  # the INT line is dead -> poll at period_ms instead
@@ -87,8 +88,9 @@ class Lsm6dso32(task.Task):
             return False
         self._accel, self._rate = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}), 'accel', 'rate')
+        self._irq_runs: int = 0
         self._telemetry = recorder.Telemetry(
-            '%s.csv' % self.name, ('ax', 'ay', 'az', 'gx', 'gy', 'gz'),
+            '%s.csv' % self.name, ('ax', 'ay', 'az', 'gx', 'gy', 'gz', 'irq_runs'),
             decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
         self._ok = True
         return True
@@ -131,16 +133,17 @@ class Lsm6dso32(task.Task):
             return
         await self._dev.write(_INT1_CTRL, bytes([_DRDY_XL]))  # accel data-ready -> INT1
         self._int = Pin(gpio, Pin.IN)
-        self._int.irq(self._on_data_ready, Pin.IRQ_RISING)
+        self._int.irq(self._ready.kick, Pin.IRQ_RISING)
         await self._dev.read_into(_OUTX_L_G, self._buf)  # clear data-ready -> next conversion = clean edge
 
     def _ready_flagged(self) -> bool:
         """
         Did an INT1 edge arrive since the last check? Non-blocking, and clears the mark.
 
-        ThreadSafeFlag only offers a blocking wait(), which the polling fallback cannot use -- it would
-        re-block on the very line it stopped trusting. The IRQ therefore also sets a plain boolean,
-        which is safe because a MicroPython soft IRQ cannot interleave a Python bytecode.
+        There used to be a SECOND mark here beside the ThreadSafeFlag, because that flag offers only a
+        blocking wait() and the polling fallback cannot use it -- it would re-block on the very line it
+        stopped trusting. Now that the flag IS a plain bool (commons.wait_for_ms), one mark serves both
+        paths. Safe from an ISR because a MicroPython soft IRQ cannot interleave a Python bytecode.
 
         Args:
             (none)
@@ -148,14 +151,7 @@ class Lsm6dso32(task.Task):
         Returns:
             True when an edge arrived since the previous call.
         """
-        seen = self._edge_seen
-        self._edge_seen = False
-        return seen
-
-    def _on_data_ready(self, _unused_pin) -> None:
-        """IRQ: a fresh sample is ready -- wake run(). ThreadSafeFlag.set() is interrupt-safe."""
-        self._ready.set()
-        self._edge_seen = True  # plain mark too: the polling fallback cannot block on the flag
+        return self._ready.take() > 0  # a real bool: this is a yes/no for the polling fallback
 
     async def sample(self) -> tuple:
         """
@@ -202,7 +198,7 @@ class Lsm6dso32(task.Task):
         while True:
             if self._int is not None and not self._int_silent:
                 try:
-                    await asyncio.wait_for_ms(self._ready.wait(), self._fallback_ms)
+                    self._irq_runs = await self._ready.wait(self._fallback_ms)
                     self.strike(False, _INT_SILENT_LIMIT)  # an edge arrived: rearm the run
                 except asyncio.TimeoutError:
                     if self.strike(True, _INT_SILENT_LIMIT):
@@ -219,8 +215,13 @@ class Lsm6dso32(task.Task):
                 self._accel.push(sample[:3])
                 self._rate.push(sample[3:])  # (roll, pitch, yaw) rate in centideg/s fixnum -> PID D term
                 # accel float g; gyro is centideg/s fixnum -> to_str for a human-readable, float-free column
+                # irq_runs, per row: 0 = no interrupt (the fallback timed out -- a dead or quiet
+                # line), 1 = healthy, >1 = the loop was late and edges piled up while it was elsewhere.
+                # That third case is a SCHEDULING symptom, not a sensor one, and it is invisible
+                # without recording it.
                 self._telemetry.push((sample[0], sample[1], sample[2],
-                                      to_str(sample[3]), to_str(sample[4]), to_str(sample[5])))
+                                      to_str(sample[3]), to_str(sample[4]), to_str(sample[5]),
+                                      self._irq_runs))
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
                 self.note('lsm6dso32 :: read %r', error)  # deduped: a persistent error logs once

@@ -127,13 +127,14 @@ class Hitl(task.Task):
         # record the simulated sensors as telemetry (same names/fields as the real drivers + the host
         # tool) -> a complete renderable capture on the Luckfox. Decimated to keep the link sane.
         sensor_us = int(1_000_000 / cfg.get('record_hz', 25))   # sensor telemetry cadence
-        self._tlm_accel = recorder.Telemetry('accel_adxl375.csv', ('ax', 'ay', 'az'), sensor_us)
+        self._tlm_accel = recorder.Telemetry('accel_adxl375.csv', ('ax', 'ay', 'az', 'irq_runs'), sensor_us)
         self._tlm_imu = recorder.Telemetry('imu_bno055.csv', ('heading', 'roll', 'pitch'), sensor_us)
-        self._tlm_gyro = recorder.Telemetry('imu_lsm6dso32.csv', ('ax', 'ay', 'az', 'gx', 'gy', 'gz'), sensor_us)
+        self._tlm_gyro = recorder.Telemetry('imu_lsm6dso32.csv', ('ax', 'ay', 'az', 'gx', 'gy', 'gz', 'irq_runs'),
+                                            sensor_us)
         self._tlm_baro = recorder.Telemetry('baro_icp10111.csv',
                                             ('altitude', 'temperature', 'pressure', 'elevation'), sensor_us)
         self._tlm_gnss = recorder.Telemetry('gnss.csv', ('lat', 'lon', 'speed_kn', 'course'), 100_000)  # 10 Hz
-        self._tlm_laser = recorder.Telemetry('laser_agl.csv', ('agl',), sensor_us)
+        self._tlm_laser = recorder.Telemetry('laser_agl.csv', ('agl', 'irq_runs'), sensor_us)
         self._tlm_fins = recorder.Telemetry('fins.csv', ('eleron_left', 'eleron_right', 'yaw'), sensor_us)
         """
         SIM CLOCK vs WALL CLOCK. The accumulator caps each iteration at `max_catchup`, so wall time the
@@ -253,15 +254,17 @@ class Hitl(task.Task):
         self._ch['dynamic_pressure'].push(pressure_fx)  # Pa fixnum -> flight_report / airspeed_calibrate
         self._tlm_pitot.push((pressure_fx, int(pitot * SCALE), 2500))  # temperature 25.00 C, as the host writes
         # telemetry -> the Luckfox (decimate_us rate-limits each stream so this can run every step)
-        self._tlm_accel.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3)))
+        # irq_runs 1: the sim hands over exactly one sample per publish, so the honest
+        # constant is the healthy case -- never 0 (no interrupt) and never an overrun
+        self._tlm_accel.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3), 1))
         self._tlm_imu.push((round(heading, 1), round(roll, 1), round(pitch, 1)))
         # the LSM6DSO32 stream a real board flight produces: low-g accel (reuse the boost-axis accel) +
         # the gyro rate (deg/s) the PID reads. Same fields as drivers/lsm6dso32 so flight_report keys on it.
         self._tlm_gyro.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3),
-                             round(roll_rate, 1), round(pitch_rate, 1), round(yaw_rate, 1)))
+                             round(roll_rate, 1), round(pitch_rate, 1), round(yaw_rate, 1), 1))
         self._tlm_baro.push((round(altitude, 2), 21.0, 100000, round(elevation, 2)))
         if in_range:
-            self._tlm_laser.push((round(agl_clean, 3),))
+            self._tlm_laser.push((round(agl_clean, 3), 1))
         left, right, yaw = self._fin_angles()
         self._tlm_fins.push((int(left), int(right), int(yaw)))
         lat, lon = position

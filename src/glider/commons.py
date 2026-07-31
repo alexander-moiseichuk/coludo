@@ -53,6 +53,7 @@ except ImportError:  # CPython (off-board tooling / tests) — everything degrad
         return new - old
 
 
+import asyncio
 import json
 import os
 
@@ -287,3 +288,77 @@ def apogee_step(elevation, now_ms: int, peak, since_ms, drop_m, dwell_ms: int) -
         return peak, since_ms, (now_ms - since_ms) >= dwell_ms
     return peak, None, False                 # inside the drop band (noise) -> not descending yet
 
+class Waiter:
+    """
+    An IRQ-kicked wake with a sliced fallback -- the cheap replacement for asyncio.wait_for_ms.
+
+    MEASURED on the board (test/diag_alloc_hotloop.py): `asyncio.wait_for_ms(ThreadSafeFlag.wait(), t)`
+    allocates **560 B per call**, against 96 B for a bare flag wait and **48 B for one
+    asyncio.sleep_ms**. On the ADXL375, whose IRQ fires at its 100 Hz ODR, that wrapper alone was
+    ~56 KB/s. It is not the waiting that costs, it is asking to be woken with a deadline attached.
+    Converting the three interrupt-driven drivers to this took the board's leak from **331 KB/s
+    (OOM ~96 s) to 191 KB/s (OOM ~167 s)**.
+
+    So: sleep in slices and check a counter between them. At a 100 Hz ODR the kick has already landed
+    when the first slice ends, so the normal path costs ONE sleep_ms -- 48 B instead of 560. With a
+    dead interrupt the loop runs out its slices and the caller samples anyway, which is the same
+    fallback it always had. The price is up to `slice_ms` of wake latency, nothing for a sensor whose
+    data changes every 10 ms.
+
+    A COUNTER rather than a bool, because it costs the same and holds more: a count above one means
+    interrupts arrived faster than they were consumed, so a sampling overrun is recoverable evidence
+    rather than a silently dropped sample. No separate miss counter -- that is the same fact stored
+    twice.
+
+    THE COUNTER IS INTERNAL. Callers use kick(), take() and wait(); nothing outside reads `kicks`,
+    because a driver that tests it directly has to remember to clear it, and one that forgets goes on
+    sampling forever on a stale edge. take() is the only non-blocking read, and it clears as it
+    reports -- which is exactly the form the polling fallbacks need, and what a ThreadSafeFlag cannot
+    give them (it offers only a blocking wait(), which is why those drivers used to carry a second
+    mark beside it). If an overrun count is ever wanted outside, add a method for it rather than
+    reaching in.
+    """
+
+    def __init__(self, slice_ms: int = 10):
+        self.kicks: int = 0       # incremented by the ISR, cleared by take()
+        self._slice_ms: int = slice_ms
+
+    def kick(self, _unused_pin=None) -> None:
+        """ISR entry: one small-int increment. No branch, no allocation, nothing to get wrong."""
+        self.kicks += 1
+
+    def take(self) -> int:
+        """
+        Non-blocking: HOW MANY kicks arrived since the last check. Clears the count.
+
+        The count, not a bool, because 0 and 1 and 3 mean different things and cost the same to
+        return: 0 is a dead or quiet interrupt, 1 is the healthy case, and anything above 1 is an
+        OVERRUN -- interrupts arriving faster than they are consumed, i.e. samples being dropped. A
+        caller that only wants truthiness still gets it, since 0 is falsy.
+        """
+        kicks = self.kicks
+        self.kicks = 0
+        return kicks
+
+    async def wait(self, timeout_ms: int) -> bool:
+        """
+        Sleep in slices until a kick lands or `timeout_ms` elapses.
+
+        Args:
+            timeout_ms - give up after this long.
+
+        Returns:
+            The number of kicks that landed, cleared as it is reported: **0 on timeout** (a dead or
+            quiet interrupt), 1 in the healthy case, and **above 1 an overrun** -- edges arriving
+            faster than this loop consumes them. Callers wanting a plain yes/no get it, since 0 is
+            falsy; callers watching for dropped samples have the number without reaching inside.
+        """
+        waited = 0
+        while waited < timeout_ms:
+            await asyncio.sleep_ms(self._slice_ms)
+            waited += self._slice_ms
+            if self.kicks:      # take() inlined: this runs once per slice, so skip the bound-method
+                kicks = self.kicks
+                self.kicks = 0
+                return kicks
+        return 0

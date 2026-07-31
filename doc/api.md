@@ -295,6 +295,41 @@ Args:
 Returns:
     (peak, since_ms, fired) -- the updated state, and True exactly when apogee is confirmed.
 
+### `class Waiter`
+
+An IRQ-kicked wake with a sliced fallback -- the cheap replacement for asyncio.wait_for_ms.
+
+MEASURED on the board (test/diag_alloc_hotloop.py): `asyncio.wait_for_ms(ThreadSafeFlag.wait(), t)`
+allocates **560 B per call**, against 96 B for a bare flag wait and **48 B for one
+asyncio.sleep_ms**. On the ADXL375, whose IRQ fires at its 100 Hz ODR, that wrapper alone was
+~56 KB/s. It is not the waiting that costs, it is asking to be woken with a deadline attached.
+Converting the three interrupt-driven drivers to this took the board's leak from **331 KB/s
+(OOM ~96 s) to 191 KB/s (OOM ~167 s)**.
+
+So: sleep in slices and check a counter between them. At a 100 Hz ODR the kick has already landed
+when the first slice ends, so the normal path costs ONE sleep_ms -- 48 B instead of 560. With a
+dead interrupt the loop runs out its slices and the caller samples anyway, which is the same
+fallback it always had. The price is up to `slice_ms` of wake latency, nothing for a sensor whose
+data changes every 10 ms.
+
+A COUNTER rather than a bool, because it costs the same and holds more: a count above one means
+interrupts arrived faster than they were consumed, so a sampling overrun is recoverable evidence
+rather than a silently dropped sample. No separate miss counter -- that is the same fact stored
+twice.
+
+THE COUNTER IS INTERNAL. Callers use kick(), take() and wait(); nothing outside reads `kicks`,
+because a driver that tests it directly has to remember to clear it, and one that forgets goes on
+sampling forever on a stale edge. take() is the only non-blocking read, and it clears as it
+reports -- which is exactly the form the polling fallbacks need, and what a ThreadSafeFlag cannot
+give them (it offers only a blocking wait(), which is why those drivers used to carry a second
+mark beside it). If an overrun count is ever wanted outside, add a method for it rather than
+reaching in.
+
+- `__init__(slice_ms: int=10)` — constructor
+- `kick(_unused_pin=None) -> None` — ISR entry: one small-int increment. No branch, no allocation, nothing to get wrong.
+- `take() -> int` — Non-blocking: HOW MANY kicks arrived since the last check. Clears the count.
+- `wait(timeout_ms: int) -> bool` — Sleep in slices until a kick lands or `timeout_ms` elapses.
+
 ## `config.py`
 
 _Tested by `test/test_config.py`._
@@ -1874,7 +1909,7 @@ device id) setup() returns False and the Controller skips it -- the board boots 
 unplugged.
 
 Sampling is interrupt-driven when an `int_pin` (INT1) is wired: the chip raises DATA_READY when a new
-sample is ready, an IRQ sets a ThreadSafeFlag, and run() awaits it -- so the coroutine sleeps until
+sample is ready, an IRQ sets a plain bool, and run() waits on it in slices -- so the coroutine sleeps until
 there is genuinely fresh data instead of blind-polling. A `fallback_ms` timeout still forces a sample if
 interrupts go silent (dead sensor / wiring). With no int_pin it falls back to a plain `period_ms` poll.
 Uses the shared locked I2C bus (i2cbus), as it shares i2c:0 with other sensors.

@@ -65,9 +65,9 @@ async def amain():
         real._int_silent = True                       # what run() sets on the last timeout
         assert real.inspect()['interrupt_silent'] is True, 'the degradation must be visible to an operator'
         # a late edge resumes interrupt mode, so a merely NOISY line costs nothing permanent
-        real._edge_seen = False
+        real._ready.take()                            # drain any pending edge
         assert real._ready_flagged() is False
-        real._on_data_ready(None)                     # an edge finally arrives
+        real._ready.kick()                            # an edge finally arrives (the ISR entry point)
         assert real._ready_flagged() is True and real._ready_flagged() is False  # read once, then cleared
         print('ok: lsm6dso32 registered; graceful absent; REAL device |a|=%.2f g, gyro ok' % magnitude)
     else:

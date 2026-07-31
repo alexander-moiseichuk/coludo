@@ -628,7 +628,13 @@ def default() -> dict:
 
     components = [
         # Recorder drain loop: a thin activity over the global Recorder, using uart:1.
-        {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True},
+        # telemetry_us is the GLOBAL decimation every stream inherits (a stream setting its own non-zero
+    # value keeps that instead). 25 Hz, not the old 50: measured per call, a Telemetry.push plus the
+    # rounded tuple it is handed costs 272 B, and the highest-rate sensors were emitting rows twice as
+    # fast as any report renders them. Halving the global rate is the cheapest leak reduction available
+    # -- it costs plot resolution nothing downstream was using.
+    {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True,
+     'telemetry_us': 40000},
         # Stage-separation switch (copper pads): HIGH=nested, LOW=separated -> Boosting->Gliding.
         # debounce_ms: the LOW must hold this long -- a contact bounce on the pads never deploys.
         {'name': 'separation', 'driver': 'separation', 'pin': 'separation_switch', 'enabled': True,

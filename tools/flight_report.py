@@ -53,6 +53,38 @@ def _nearest(times, values, targets):
     return out
 
 
+def irq_health(streams) -> str:
+    """
+    Summarise `irq_runs` across every stream that carries it.
+
+    Each row records how many interrupt edges that wake consumed: **0 = the fallback timed out** (a
+    dead or quiet line -- the driver is sampling blind on its timer), **1 = healthy**, and **>1 = an
+    overrun**, edges arriving faster than the loop consumed them, which is a SCHEDULING symptom rather
+    than a sensor one. Both failure modes are invisible in the sample values themselves, which is why
+    they are counted here rather than left to be eyeballed.
+
+    Args:
+        streams - the parsed capture streams.
+
+    Returns:
+        A one-line summary, or '' when no stream carries irq_runs.
+    """
+    parts = []
+    for name in sorted(streams):
+        stream = streams[name]
+        if 'irq_runs' not in stream.fields:
+            continue
+        _times, values = stream.column('irq_runs')
+        if not values:
+            continue
+        missed = sum(1 for v in values if v == 0)
+        over = sum(1 for v in values if v > 1)
+        if missed or over:
+            parts.append('%s %d missed / %d overrun of %d'
+                         % (name.replace('.csv', ''), missed, over, len(values)))
+    return ' · '.join(parts)
+
+
 def leak_estimate(health, events):
     """
     The GC-off PSRAM leak and the extrapolated time-to-OOM.
@@ -121,7 +153,7 @@ def build(streams, logs, go, make_subplots):
     series = make_subplots(rows=11, cols=1, shared_xaxes=True, vertical_spacing=0.017,
                            subplot_titles=('|accel| (g)', 'altitude / elevation (m)', 'speed (m/s)',
                                            'attitude (deg)', 'fins — commanded (deg)',
-                                           'board health — load %, temp °C, mem MB, rescues', 'agl (m)',
+                                           'board health — load %, temp °C, mem MB, rescues, irq_runs', 'agl (m)',
                                            'engine — mV / mA / mW / over-current alerts (INA226)',
                                            'gyro rate — LSM6DSO32 (deg/s) → PID D term',
                                            'airspeed (m/s) — pitot vs governor estimate vs GNSS ground',
@@ -171,6 +203,17 @@ def build(streams, logs, go, make_subplots):
             times, values = health.column('rescues')
             series.add_trace(go.Scatter(x=times, y=values, name='rescues', mode='lines',
                                         line_shape='hv'), row=6, col=1)  # a step count, not a curve
+    for name in sorted(streams):
+        stream = streams[name]
+        if 'irq_runs' in stream.fields:
+            """
+            One trace per interrupt-driven sensor. Flat at 1 is healthy; a dip to 0 is a missed
+            interrupt (the driver fell back to its timer) and a spike above 1 is an overrun. Drawn as
+            steps because it is a count per wake, not a continuous quantity.
+            """
+            times, values = stream.column('irq_runs')
+            series.add_trace(go.Scatter(x=times, y=values, name='irq %s' % name.replace('.csv', ''),
+                                        mode='lines', line_shape='hv'), row=6, col=1)
     if laser is not None:
         times, values = laser.column('agl')
         series.add_trace(go.Scatter(x=times, y=values, name='agl', mode='markers'), row=7, col=1)
@@ -247,6 +290,8 @@ def build(streams, logs, go, make_subplots):
                               text='leak %.0f KB/s · OOM ~%s' % (leak_kbps, oom_txt),
                               showarrow=False, xanchor='left', yanchor='bottom',
                               font=dict(color='crimson', size=12))
+    irq = irq_health(streams)
+    title += ' — IRQ %s' % irq if irq else ' — IRQ clean (every wake consumed exactly one edge)'
     # 'x unified' -> hovering (or clicking) any time shows every panel's value at that instant
     series.update_layout(height=2250, title=title, showlegend=True, hovermode='x unified')
     series.update_xaxes(title_text='time (s)', row=9, col=1)

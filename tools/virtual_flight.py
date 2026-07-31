@@ -75,12 +75,12 @@ class Telemetry:
 
 
 _STREAMS = {
-    'accel': Telemetry('accel_adxl375.csv', ('ax', 'ay', 'az')),
+    'accel': Telemetry('accel_adxl375.csv', ('ax', 'ay', 'az', 'irq_runs')),
     'baro': Telemetry('baro_icp10111.csv', ('altitude', 'temperature', 'pressure', 'elevation')),
     'imu': Telemetry('imu_bno055.csv', ('heading', 'roll', 'pitch')),
-    'gyro': Telemetry('imu_lsm6dso32.csv', ('ax', 'ay', 'az', 'gx', 'gy', 'gz')),
+    'gyro': Telemetry('imu_lsm6dso32.csv', ('ax', 'ay', 'az', 'gx', 'gy', 'gz', 'irq_runs')),
     'gnss': Telemetry('gnss.csv', ('lat', 'lon', 'speed_kn', 'course')),
-    'laser': Telemetry('laser_agl.csv', ('agl',)),
+    'laser': Telemetry('laser_agl.csv', ('agl', 'irq_runs')),
     'fins': Telemetry('fins.csv', ('eleron_left', 'eleron_right', 'yaw')),
     # health.csv must carry the BOARD's field list, not a shorter one: a renderer resolves streams by
     # the fields they carry, so a host capture missing these columns silently loses the panels they
@@ -494,11 +494,11 @@ class _Capture:
     def sample(self, t, accel, altitude, elevation, heading, roll, pitch, position, agl, laser_range, speed,
                fins, rate, control=None, pitot=None, dt=0.02):
         microseconds = int(t * 1e6)
-        self._tlm('accel_adxl375.csv', '%u;0.000;0.000;%.3f' % (microseconds, accel))
+        self._tlm_row('accel', '%u;0.000;0.000;%.3f;1' % (microseconds, accel))  # irq_runs 1: one sample per publish
         self._tlm('baro_icp10111.csv', '%u;%.2f;21.0;100000;%.2f' % (microseconds, altitude, elevation))
         self._tlm('imu_bno055.csv', '%u;%.1f;%.1f;%.1f' % (microseconds, heading, roll, pitch))
         # imu_lsm6dso32: the boost-axis low-g accel + the gyro rate (deg/s) the PID reads (board parity)
-        self._tlm('imu_lsm6dso32.csv', '%u;0.000;0.000;%.3f;%.1f;%.1f;%.1f'
+        self._tlm_row('gyro', '%u;0.000;0.000;%.3f;%.1f;%.1f;%.1f;1'
                   % (microseconds, accel, rate[0], rate[1], rate[2]))
         self._tlm('fins.csv', '%u;%d;%d;%d' % (microseconds, fins[0], fins[1], fins[2]))
         if t - self._last_gnss >= _GNSS_S:               # GNSS ~10 Hz
@@ -506,7 +506,7 @@ class _Capture:
             self._tlm('gnss.csv', '%u;%.6f;%.6f;%.1f;%.1f'    # speed in knots (GPS convention)
                       % (microseconds, position[0], position[1], speed * 1.94384, heading))
         if agl <= laser_range:                           # the laser only resolves the last few metres
-            self._tlm('laser_agl.csv', '%u;%.3f' % (microseconds, agl))
+            self._tlm_row('laser', '%u;%.3f;1' % (microseconds, agl))
         if pitot is not None:                            # SDP810: q = 0.5*rho*v^2, Pa as a x100 fixnum
             self._tlm('airspeed_sdp810.csv', '%u;%d;%d;2500'
                       % (microseconds, int(0.5 * 1.225 * pitot * pitot * 100), int(pitot * 100)))
