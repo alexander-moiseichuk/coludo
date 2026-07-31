@@ -350,6 +350,9 @@ collect 26 ms, and the post-flight collect — the whole airborne phase's deferr
 reserve (the rescue thrashes and the flight cannot progress), and `machine.reset_cause()` cannot be
 checked the way its header describes because `mpremote` soft-resets on connect and overwrites it.
 
+**Run-to-run repeatability of a board HITL flight is ~1 m** (three identical F15 flights: 121/122/121 m,
+no drift), so a difference above ~1 m in the matrix is a real change rather than scatter.
+
 ## Hardware roadmap — v0.2 and v1.0
 
 v0.1 PCBs are ordered and the Gerbers cross-check clean against `config_default.py`. The design

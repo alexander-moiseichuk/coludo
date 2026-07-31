@@ -30,8 +30,12 @@ host column is q2, not q5.
 | `f15_full`  | F15 | 270 g | **121.7 m** ✗ | 119.2 m ✗ | +2.5 m |
 | `f15_light` | F15 | 215 g | **83.6 m** ✗ | 110.0 m ✗ | **−26.4 m** |
 
-Run-to-run spread across three flights of this matrix is ±3 m (the sim's 5 % sensor noise), so treat
-these as ±3, not as exact.
+**Run-to-run repeatability is ~1 m, not ±3 m.** Three identical back-to-back F15 flights land at
+121 / 122 / 121 m (durations 57.8 / 57.7 / 57.7 s, apogees 288 / 289 / 288 m) with no drift across
+the sequence, so nothing stateful carries between runs. The ~3 m spread seen earlier in this study
+was measured across flights *separated by firmware changes* — the simulated pitot, the CORDIC
+pre-normalisation, the board_health rewrite — and was wrongly attributed to sensor noise. Treat a
+difference above ~1 m as a real change, not as scatter.
 
 🎬 **[`phase5_refactor.mp4`](phase5_refactor.mp4)** — follow-cam of all four, FHD 30 FPS.
 
