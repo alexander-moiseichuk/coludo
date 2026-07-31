@@ -70,26 +70,30 @@ async def _ballast(target_kb: int) -> list:
     chunk made ballasting O(n^2), measured at 80 s of wall time for 99 chunks, which starved the very
     flight being soaked (still GLIDING at the 150 s cap instead of landing at ~57 s).
     """
-    def _fill(size: int, count: int):
+    async def _fill(size: int, count: int) -> None:
+        """
+        Allocate `count` chunks, YIELDING AFTER EACH ONE.
+
+        The yield is per chunk and must stay that way: a 1 MB PSRAM bytearray is ~100 ms of zeroing,
+        and batching several between yields starves the watchdog feeder. Measured -- eight coarse
+        chunks per yield reset the board mid-ballast, and the trace simply stopped after
+        "STAGE 3 gliding" with no BALLAST line. The count comes from ONE mem_free() reading (that is
+        the O(n^2) fix); the yields are a separate concern and are not what was expensive.
+        """
         for _ in range(count):
             hold.append(bytearray(size))
+            await asyncio.sleep_ms(10)
 
     try:
         coarse = (gc.mem_free() - target_kb * 1024 - 2 * _BIG) // _BIG
-        while coarse > 0:
-            batch = min(coarse, 8)  # a batch, then a real slot for the WDT feeder
-            _fill(_BIG, batch)
-            coarse -= batch
-            await asyncio.sleep_ms(10)
+        if coarse > 0:
+            await _fill(_BIG, coarse)
     except MemoryError:
         pass  # coarse chunks no longer fit -- the fine loop below carves the rest
     try:
         fine = (gc.mem_free() - target_kb * 1024) // _FINE
-        while fine > 0:
-            batch = min(fine, 16)
-            _fill(_FINE, batch)
-            fine -= batch
-            await asyncio.sleep_ms(10)
+        if fine > 0:
+            await _fill(_FINE, fine)
     except MemoryError:  # overshoot on a fragmented tail -- close enough, keep what we hold
         pass
     return hold
@@ -102,11 +106,23 @@ async def _go(motor: str, target_kb: int, watchdog: bool) -> None:
     cfg = config_hitl.default(motor, 0.05, False, 0.0, 0.0, glider_g=285, inject_hz=25)
     by_name = {component['name']: component for component in cfg['components']}
     """
-    watchdog True = the OOM RESET chain under test (rescue collects on the ballast-full heap
-    take ~3.4 s and starve any WDT -- expect the panic/reboot). watchdog False = the memory
-    RESCUE under test: the physics trigger collects and the flight must complete to DONE.
+    The two modes test OPPOSING things, and the rescue setting has to follow, because the soak wants
+    an OOM and the memory rescue exists to prevent exactly that.
+
+      watchdog True  -> the OOM RESET chain. The rescue is DISABLED, else it keeps reclaiming the
+                        heap and the OOM under test never arrives. Expect the board to reset out from
+                        under mpremote; that dropped connection is the pass condition.
+      watchdog False -> the memory RESCUE itself. Rescue on, no WDT to trip, and the pass condition
+                        is that free heap stays FLAT under a leak it should not survive.
+
+    The old code left the rescue enabled in both, and promised the flight would "complete to DONE" in
+    the second. It cannot: measured at a 2000 KB ballast, the rescue fires continuously and each
+    collect on a near-full heap runs seconds, so the 2 s MEM trace came out ~7 s apart -- the loop was
+    ~70 % starved and the flight was still gliding at the 150 s cap instead of landing at ~57 s. The
+    heap held perfectly flat throughout, which is the rescue passing, not failing.
     """
     by_name['watchdog']['enabled'] = watchdog
+    by_name['health']['rescue'] = not watchdog
     flight = controller.Controller(cfg, log=lambda message: None)
     await flight.setup()
     await flight.start()
@@ -130,7 +146,8 @@ async def _go(motor: str, target_kb: int, watchdog: bool) -> None:
             tick = now
             print('MEM', time.ticks_diff(now, started) // 1000, gc.mem_free())
         if stage == stages.DONE:
-            print('DONE without OOM -- lower target_kb')  # the soak wants the crash, not a landing
+            # only meaningful in the OOM mode; with the rescue on, landing is a fine outcome
+            print('DONE without OOM -- lower target_kb' if watchdog else 'DONE (rescue carried it)')
             break
         if time.ticks_diff(now, started) > 150000:
             print('TIMEOUT', stage)
