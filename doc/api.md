@@ -270,6 +270,31 @@ Returns:
     A human-readable diagnosis string: 'ok' when read == expected, else the most likely wiring/
     power fault inferred from read (None / 0x00 / 0xFF / a wrong non-zero id).
 
+### `apogee_step(elevation, now_ms: int, peak, since_ms, drop_m, dwell_ms: int) -> tuple`
+
+One step of APOGEE detection: track the baro peak, report when it has fallen off it.
+
+Pure and stateless -- the caller owns `peak` and `since_ms` -- because this logic exists in two
+worlds and used to be written twice. `tasks/sequencer.py` runs it on the board; the host sim in
+`tools/virtual_flight.py` ran a hand-maintained MIRROR whose own comment records that it "had
+DRIFTED to timeout-only deploy, and a low arc could be back underground by the timeout". Stage
+timing sets the separation altitude, so a drifted mirror moves the host's apogee away from the
+board's -- which is exactly the divergence measured between them. One implementation, no mirror.
+
+The caller keeps the arming window (the motor's pressure wave corrupts the in-airframe baro during
+burn) and the burnout-timeout fallback: those need the caller's own clock and stage entry.
+
+Args:
+    elevation - the current baro height above the pad, or None while not armed / no reading.
+    now_ms - the caller's monotonic clock in milliseconds.
+    peak - the highest elevation seen so far, or None before the first reading.
+    since_ms - when the fall below the peak began, or None if not currently below it.
+    drop_m - how far below the peak counts as descending (same units as elevation).
+    dwell_ms - how long that fall must be sustained before it is apogee rather than a dip.
+
+Returns:
+    (peak, since_ms, fired) -- the updated state, and True exactly when apogee is confirmed.
+
 ## `config.py`
 
 _Tested by `test/test_config.py`._

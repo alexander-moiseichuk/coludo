@@ -252,3 +252,38 @@ def id_classify(read, expected: int) -> str:
     if read == 0xFF:
         return 'id reads 0xFF -- bus idle-high: no device driving MISO (absent / MISO miswired)'
     return 'id reads 0x%02X, expected 0x%02X -- wrong device on this bus/select (crosswired)' % (read, expected)
+
+def apogee_step(elevation, now_ms: int, peak, since_ms, drop_m, dwell_ms: int) -> tuple:
+    """
+    One step of APOGEE detection: track the baro peak, report when it has fallen off it.
+
+    Pure and stateless -- the caller owns `peak` and `since_ms` -- because this logic exists in two
+    worlds and used to be written twice. `tasks/sequencer.py` runs it on the board; the host sim in
+    `tools/virtual_flight.py` ran a hand-maintained MIRROR whose own comment records that it "had
+    DRIFTED to timeout-only deploy, and a low arc could be back underground by the timeout". Stage
+    timing sets the separation altitude, so a drifted mirror moves the host's apogee away from the
+    board's -- which is exactly the divergence measured between them. One implementation, no mirror.
+
+    The caller keeps the arming window (the motor's pressure wave corrupts the in-airframe baro during
+    burn) and the burnout-timeout fallback: those need the caller's own clock and stage entry.
+
+    Args:
+        elevation - the current baro height above the pad, or None while not armed / no reading.
+        now_ms - the caller's monotonic clock in milliseconds.
+        peak - the highest elevation seen so far, or None before the first reading.
+        since_ms - when the fall below the peak began, or None if not currently below it.
+        drop_m - how far below the peak counts as descending (same units as elevation).
+        dwell_ms - how long that fall must be sustained before it is apogee rather than a dip.
+
+    Returns:
+        (peak, since_ms, fired) -- the updated state, and True exactly when apogee is confirmed.
+    """
+    if elevation is None:
+        return peak, since_ms, False
+    if peak is None or elevation > peak:
+        return elevation, None, False        # still climbing -> raise the peak, reset the dwell
+    if elevation < peak - drop_m:            # fallen off the peak -> descending
+        since_ms = now_ms if since_ms is None else since_ms
+        return peak, since_ms, (now_ms - since_ms) >= dwell_ms
+    return peak, None, False                 # inside the drop band (noise) -> not descending yet
+

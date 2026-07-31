@@ -211,28 +211,55 @@ then reproduce the board — it does the opposite: **47.1 s / 258 m**, moving *a
 57.8 s / 288 m. Coarser integration makes the host fly shorter and lower; the board, at the same
 50 Hz, flies longer and higher.
 
-So the cause is in how the two harnesses *drive* the shared `sim_model`. Reading both drivers
-identifies **two independent mechanisms**, which is why no single-variable test moved the numbers:
+So the cause is in how the two harnesses *drive* the shared `sim_model`. Reading the two drivers
+suggested two mechanisms; **instrumenting them refuted both.** Recorded here because eliminating a
+plausible cause is worth as much as finding one, and both were asserted in this document before being
+measured.
 
-**1 — the board discards wall time it cannot cover.** `tasks/hitl.py` accumulates real elapsed time
-into fixed sub-steps, but caps each iteration at `max_catchup = 0.5 s`:
+**Refuted — the board is NOT discarding wall time.** `tasks/hitl.py` caps each iteration's catch-up at
+`max_catchup = 0.5 s`, and time beyond that is dropped and never made up, which would make simulated
+time fall behind wall time and inflate a wall-stamped duration. The board now records both
+(`hitl_clock.csv`: `sim_s`, `wall_s`, `lag_s`). Measured over a full flight: **sim 57.84 s, wall
+57.86 s, lag 0.02 s, ratio 1.000**. The accumulator keeps up. The board really does fly 57.84 s of
+SIMULATED time against the host's 48.8 s — a genuine trajectory difference, not a reporting artefact.
 
-    accumulator += elapsed if elapsed < max_catchup else max_catchup
+**Refuted — the host's stage machine was not drifting.** `virtual_flight` reimplemented apogee
+detection as a mirror of `sequencer._detect_apogee`, and its own comment recorded that the mirror
+*had* drifted once. Both now call one shared implementation (`commons.apogee_step`). The host's output
+after the change is **identical** — 48.8 s, 268 m, 119.2 m — so the mirror had already been corrected
+and is not the cause. The extraction is kept regardless: a hand-maintained copy that drifted once can
+drift again, and this removes the possibility rather than the symptom.
 
-Anything past the cap is dropped and never made up, so simulated time falls permanently behind wall
-time. That is a STRUCTURAL lag, not a load-dependent one — which is exactly why cutting the publish
-rate 5× did not move it. It stretches the wall-clock duration a capture reports without changing the
-trajectory, and it accounts for the duration gap in every case, E16 included.
+### Resolved — most of it is measurement SCOPE, not flight
 
-**2 — the host does not run the real stage machine.** `tools/virtual_flight.py` REIMPLEMENTS it: its
-own comments say "mirrors `tasks/sequencer.py`" and, for apogee detection, "mirror of
-`sequencer._detect_apogee` — the mirror had DRIFTED". A mirror that has drifted once can drift again,
-and stage-transition timing sets the separation altitude directly — which is the apogee. This explains
-why the apogee gap appears on **F15 and not E16**: the longer, faster boost gives a mirrored detector
-more room to disagree with the real one.
+Splitting the 9 s by stage settles it (F15, board vs host):
 
-The duration gap is therefore a board-side measurement artefact, and the apogee gap a host-side model
-divergence. Neither is a flight-control defect. **Fixing them properly means the board reporting
-SIMULATED time alongside wall time in its captures, and the host driving the real `sequencer` instead
-of a copy of it.** Until then, treat cross-world duration and apogee comparisons as indicative, and
-compare like-for-like within one world.
+| phase | board | host | delta |
+|---|---|---|---|
+| boost, up to GLIDING | 10.3 s | 7.1 s | **+3.2 s** |
+| glide, GLIDING→LANDING | 43.2 s | 41.4 s | +1.8 s |
+| **after touchdown** | 4.4 s | 0.4 s | **+4.0 s** |
+| total | 57.9 s | 48.9 s | **+9.0 s** |
+
+**The largest single contributor is a tail the host does not record at all.** The board runs the real
+stage machine through `LANDING → DONE` and keeps sampling for ~4.4 s after touchdown; the host stops
+0.4 s after LANDING and never enters DONE. That is visible directly on the reports as traces
+continuing past the landing.
+
+Of the rest, +3.2 s is the longer boost that goes with the higher apogee (288 m vs 268 m — the two are
+the same fact, since a higher arc takes longer to reach), and the **actual glide differs by 1.8 s,
+about 4 %**.
+
+So the headline "the board flies 12–21 % longer" was mostly comparing different spans of flight. The
+honest statement is: the board's GLIDE is ~4 % longer, its apogee ~7 % higher on F15, and the rest is
+that a board capture covers touchdown-to-DONE while a host capture ends at touchdown. `f15_light`
+still gains the most because it has the most glide, but the effect is far smaller than the raw
+duration column suggested.
+
+**Compare GLIDE spans, not capture durations,** when putting the two worlds side by side.
+
+Two things did come out of this that stand on their own: captures now carry the sim-vs-wall clock, so
+this class of question is answerable instead of arguable; and the apogee detector exists once.
+
+**Until it is explained, host predictions carry an unquantified pessimistic bias.** Compare
+like-for-like within one world; treat cross-world duration and apogee comparisons as indicative only.

@@ -135,6 +135,15 @@ class Hitl(task.Task):
         self._tlm_gnss = recorder.Telemetry('gnss.csv', ('lat', 'lon', 'speed_kn', 'course'), 100_000)  # 10 Hz
         self._tlm_laser = recorder.Telemetry('laser_agl.csv', ('agl',), sensor_us)
         self._tlm_fins = recorder.Telemetry('fins.csv', ('eleron_left', 'eleron_right', 'yaw'), sensor_us)
+        """
+        SIM CLOCK vs WALL CLOCK. The accumulator caps each iteration at `max_catchup`, so wall time the
+        loop could not cover is DROPPED and never made up -- simulated time falls permanently behind.
+        That is invisible in a capture whose every row is wall-stamped, and it is why board flights
+        read 12-21 % LONGER than the same case on the host: the trajectory is identical, the clock
+        reporting it is not. Recording both makes the lag measurable instead of inferred, so a
+        cross-world duration comparison can be done in SIM time where it is meaningful.
+        """
+        self._tlm_clock = recorder.Telemetry('hitl_clock.csv', ('sim_s', 'wall_s', 'lag_s'), 100_000)
         self._tlm_pitot = recorder.Telemetry(  # same name/fields/units as drivers/sdp810.py
             'airspeed_sdp810.csv', ('dynamic_pressure', 'airspeed_cms', 'temperature'), sensor_us)
         self._ok = True
@@ -276,6 +285,7 @@ class Hitl(task.Task):
         sim_time = 0.0
         accumulator = 0.0
         last = time.ticks_ms()
+        wall_start = last  # for the sim-vs-wall clock record; see the hitl_clock.csv declaration
         while True:
             await asyncio.sleep_ms(period)
             now = time.ticks_ms()
@@ -291,6 +301,17 @@ class Hitl(task.Task):
                 self._body.accel_g = 1.0
                 accumulator = 0.0
                 self._publish()
+                continue
+            if self.controller.stage >= _STAGE.DONE:
+                """
+                The flight is over: stop FLYING it. The runner still holds the loop open for ~1.2 s to
+                let the recorder drain its tail to the Luckfox, and the sim used to keep stepping the
+                body and publishing sensors through that -- so every capture ended with ~1.2 s of
+                samples of a glider sitting on the ground, visible on the reports as traces carrying
+                on past DONE. It also inflated the capture's duration, which is one of the numbers
+                the host and board were being compared on.
+                """
+                accumulator = 0.0
                 continue
             accumulator += elapsed if elapsed < max_catchup else max_catchup
             # follow the REAL stage machine: SETTING/BOOSTING -> 1-DoF boost/coast (provides the launch
@@ -311,6 +332,10 @@ class Hitl(task.Task):
                 accumulator -= fixed
                 sim_time += fixed
             self._publish()
+            # sim vs wall, decimated to 10 Hz: lag > 0 means the accumulator dropped uncoverable
+            # wall time, so a wall-stamped duration OVER-reads the flight by exactly this much
+            wall = time.ticks_diff(now, wall_start) / 1000.0
+            self._tlm_clock.push((round(sim_time, 2), round(wall, 2), round(wall - sim_time, 2)))
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)

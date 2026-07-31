@@ -25,6 +25,7 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | `gnss.csv` | host sim | `virtual_flight.py` | `lat`, `lon`, `speed_kn`, `course` |
 | `health.csv` | board | `board_health.py` | `temp`, `mem_free`, `load`, `oom_s`, `land_s`, `leak_kbps`, `rescues`, `rescue_ms` |
 | `health.csv` | host sim | `virtual_flight.py` | `temp`, `mem_free`, `load`, `oom_s`, `land_s`, `leak_kbps`, `rescues`, `rescue_ms` |
+| `hitl_clock.csv` | board | `hitl.py` | `sim_s`, `wall_s`, `lag_s` |
 | `imu_bno055.csv` | board | `hitl.py` | `heading`, `roll`, `pitch` |
 | `imu_bno055.csv` | host sim | `virtual_flight.py` | `heading`, `roll`, `pitch` |
 | `imu_lsm6dso32.csv` | board | `hitl.py` | `ax`, `ay`, `az`, `gx`, `gy`, `gz` |

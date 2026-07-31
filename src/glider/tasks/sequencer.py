@@ -291,18 +291,14 @@ class Sequencer(task.Task):
         """
         armed = self._boost_entry_ms is not None and \
             time.ticks_diff(now, self._boost_entry_ms) >= self._apogee_arm_ms
+        # the peak/dwell state machine is commons.apogee_step -- ONE implementation, because the host
+        # sim ran a copy of it and that copy had drifted (see the helper's docstring)
         elevation = self._elevation.value() if armed else None
-        if elevation is not None:
-            if self._apogee_max is None or elevation > self._apogee_max:
-                self._apogee_max = elevation  # still climbing -> raise the peak, reset the dwell
-                self._apogee_since = None
-            elif elevation < self._apogee_max - self._apogee_drop_m:  # fallen off the peak -> descending
-                self._apogee_since = now if self._apogee_since is None else self._apogee_since
-                if time.ticks_diff(now, self._apogee_since) >= self._launch_ms:  # sustained (not a dip)
-                    self._advance(_STAGE.GLIDING, 'apogee %.0fm' % self._apogee_max)
-                    return
-            else:
-                self._apogee_since = None  # within the drop band (noise) -> not yet descending
+        self._apogee_max, self._apogee_since, fired = commons.apogee_step(
+            elevation, now, self._apogee_max, self._apogee_since, self._apogee_drop_m, self._launch_ms)
+        if fired:
+            self._advance(_STAGE.GLIDING, 'apogee %.0fm' % self._apogee_max)
+            return
         if self._sustained(now, self._boost_timeout_ms):  # burnout timeout fallback (from BOOSTING entry)
             self._advance(_STAGE.GLIDING, 'burnout timeout (no separation)')
 

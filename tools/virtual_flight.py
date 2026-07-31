@@ -30,6 +30,7 @@ import sys
 _GLIDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'glider')
 sys.path.insert(0, _GLIDER)
 
+import commons  # noqa: E402 -- the SHARED apogee detector, so host and board cannot drift
 import config_hitl  # noqa: E402 -- the SAME board config the on-board HITL uses (host-importable)
 import controller as controller_mod  # noqa: E402 -- Stage ids (host-importable)
 import fixed  # noqa: E402 -- fixed-point convention: PID error/output in centidegree fixnum (board parity)
@@ -323,23 +324,20 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
                 since = t
         elif stage == 'boosting':
             """
-            APOGEE detect (mirror of sequencer._detect_apogee -- the mirror had DRIFTED to
-            timeout-only deploy, and a low arc could be back underground by the timeout): blind
-            for apogee_arm_ms after entry (burn pressure wave), then track the noised baro peak
-            and deploy once it falls apogee_drop_m below, sustained; the timeout stays fallback.
+            APOGEE detect: blind for apogee_arm_ms after entry (the burn pressure wave corrupts the
+            in-airframe baro), then the SAME peak/dwell state machine the board runs --
+            commons.apogee_step, called by both. This used to be a hand-maintained mirror of
+            sequencer._detect_apogee, and it had drifted to timeout-only deploy; the timeout stays
+            as the fallback it was always meant to be.
             """
             elevation_now = altitude_m - body.elev0
             if (t - since) * 1000.0 >= apogee_arm_ms:
-                if apogee_max is None or elevation_now > apogee_max:
-                    apogee_max, apogee_since = elevation_now, None
-                elif elevation_now < apogee_max - apogee_drop_m:
-                    apogee_since = t if apogee_since is None else apogee_since
-                    if (t - apogee_since) * 1000.0 >= launch_ms:
-                        stage, since = 'gliding', t
-                        body.begin_glide()
-                        rows.event(t, 'controller :: stage -> gliding')
-                else:
-                    apogee_since = None
+                apogee_max, apogee_since, fired = commons.apogee_step(
+                    elevation_now, t * 1000.0, apogee_max, apogee_since, apogee_drop_m, launch_ms)
+                if fired:
+                    stage, since = 'gliding', t
+                    body.begin_glide()
+                    rows.event(t, 'controller :: stage -> gliding')
             if stage == 'boosting' and (t - since) * 1000.0 >= boost_timeout_ms:
                 stage, since = 'gliding', t
                 body.begin_glide()
