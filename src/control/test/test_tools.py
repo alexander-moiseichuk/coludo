@@ -11,6 +11,7 @@ tools; every one of them is pinned below so it cannot come back. Run by `make te
 """
 
 import os
+import re
 import sys
 import tempfile
 
@@ -224,6 +225,52 @@ def test_parser_edge_cases():
     assert flight_telemetry.parse('')[0] == {}  # an empty capture is empty, not an exception
 
 
+
+def test_every_provided_quantity_has_a_consumer():
+    """
+    A quantity a device PROVIDES but nobody READS is a provider left behind by a refactor -- fused,
+    recorded and delivered to no one.
+
+    This check used to live in the board suite against a HARDCODED set of consumed names, which meant
+    adding a provider failed the test until someone edited the set, even when a real consumer existed.
+    Worse, the board now runs .mpy, so it has no source to scan and the set could never become
+    derived there. Here on the host the sources are present, so the consumed set is DERIVED from the
+    actual `Databoard.parameter('x')` call sites and cannot drift.
+    """
+    sys.path.insert(0, os.path.join(_ROOT, 'src', 'glider'))
+    import config_default
+    import sources
+
+    consumed = set()
+    for _relative, _name, path in sources.modules(sources.GLIDER_DIRS):
+        with open(path) as handle:
+            for match in re.finditer(r"parameter\(\s*'([a-z_0-9]+)'", handle.read()):
+                consumed.add(match.group(1))
+    assert consumed, 'found no Databoard.parameter() call sites -- the scan itself is broken'
+
+    provided = set()
+    for device in config_default.default()['sensors'] + config_default.default()['components']:
+        provided.update((device.get('provides') or {}).keys())
+
+    """
+    Not every provided quantity is READ by control, and that is legitimate -- some exist to be
+    recorded and shown. Naming them explicitly is the point: the old hardcoded `consumed` set listed
+    these alongside the real control inputs, which quietly asserted that the INA226's power figures
+    were steering something. They are not. This list states intent, and it is far smaller and more
+    meaningful to maintain than a mirror of every control input.
+    """
+    operator_only = {
+        'voltage', 'current', 'power',     # INA226 -> energy budget, dashboard, telemetry
+        'pressure', 'temperature',         # baro raw -> telemetry and the operator panel
+        'dynamic_pressure',                # pitot raw Pa -> flight_report + airspeed_calibrate (host)
+    }
+    orphans = provided - consumed - operator_only
+    assert not orphans, 'quantities provided but consumed by nobody: %s' % sorted(orphans)
+    # and the reverse: an operator_only entry that HAS become a control input is stale bookkeeping
+    stale = operator_only & consumed
+    assert not stale, 'listed operator-only but now read by control: %s' % sorted(stale)
+
+
 test_board_shape_is_readable()
 test_kpi_on_the_synthetic_flight()
 test_kpi_survives_a_partial_capture()
@@ -232,5 +279,6 @@ test_airspeed_calibration_recovers_a_known_density()
 test_airspeed_calibration_from_an_assembled_capture()
 test_ticks_us_wraparound_is_unwrapped()
 test_parser_edge_cases()
+test_every_provided_quantity_has_a_consumer()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, svg render, '
-      'airspeed calibration fit, parser edge cases')
+      'airspeed calibration fit, parser edge cases, provider/consumer closure')

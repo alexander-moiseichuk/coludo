@@ -158,18 +158,16 @@ def test_config_cross_references():
                 assert value in pins, 'device %r references pin %r, absent from the pins map' % (name, value)
 
     """
-    Every quantity a device PROVIDES should have a consumer somewhere, else it is recorded and fused for
-    nobody -- the cheap way to catch a provider left behind by a refactor. Checked as a warning-grade
-    assertion over the known consumers rather than by parsing every call site.
+    The provider/consumer closure check -- "every quantity a device PROVIDES is read by somebody" --
+    lives in the HOST suite now (src/control/test/test_tools.py), not here.
+
+    It used to compare against a hardcoded `consumed` set, so adding a provider failed this test until
+    someone edited the set even when a real consumer existed. Deriving the set instead needs the
+    Databoard.parameter() call sites, and the board runs .mpy -- there is no source here to scan. On
+    the host the sources are present, so the set is derived and cannot drift. Deriving it also
+    exposed what the hardcoded version hid: six quantities have no control consumer at all and exist
+    for telemetry and the operator, which the old set silently asserted otherwise.
     """
-    provided = set()
-    for device in devices:
-        provided.update((device.get('provides') or {}).keys())
-    consumed = {'accel', 'rate', 'attitude', 'altitude', 'elevation', 'pressure', 'temperature',
-                'agl', 'position', 'speed', 'course', 'voltage', 'current', 'power',
-                'dynamic_pressure', 'airspeed'}
-    orphans = provided - consumed
-    assert not orphans, 'quantities provided but consumed by nobody: %s' % sorted(orphans)
 
 
 test_registry()
