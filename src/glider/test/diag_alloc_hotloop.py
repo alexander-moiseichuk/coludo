@@ -15,6 +15,7 @@ import gc
 import struct
 
 import databoard
+import fixed
 import recorder
 
 
@@ -75,6 +76,21 @@ async def main() -> None:
     _alloc('Telemetry.push((x, y, z))', lambda: stream.push(sample))
     _alloc('the rounded telemetry tuple', lambda: (round(sample[0], 3), round(sample[1], 3),
                                                    round(sample[2], 3)))
+
+    print()
+    print('=== the LSM6DSO32 sample path (12-byte block, 3 accel floats + 3 gyro fixnums) ===')
+    buf12 = bytearray(12)
+    _alloc("struct.unpack('<hhhhhh', buf12)", lambda: struct.unpack('<hhhhhh', buf12))
+    six = struct.unpack('<hhhhhh', buf12)
+    _alloc('the 6-value sample tuple', lambda: (six[3] * 0.061, six[4] * 0.061, six[5] * 0.061,
+                                                six[0] * 70 // 10, six[1] * 70 // 10, six[2] * 70 // 10))
+    _alloc('to_str(fixnum) x3 -- REMOVED from the driver', lambda: (fixed.to_str(1234),
+                                                                    fixed.to_str(5678),
+                                                                    fixed.to_str(9012)))
+    gyro = recorder.Telemetry('bench_gyro.csv', ('ax', 'ay', 'az', 'gx', 'gy', 'gz', 'irq_runs'),
+                              decimate_us=-1)
+    row = (0.1, 0.2, 0.98, '1.23', '4.56', '7.89', 1)
+    _alloc('Telemetry.push(7 fields)', lambda: gyro.push(row))
 
     print()
     print('=== the WAIT, which is the suspect ===')

@@ -260,8 +260,10 @@ class Hitl(task.Task):
         self._tlm_imu.push((round(heading, 1), round(roll, 1), round(pitch, 1)))
         # the LSM6DSO32 stream a real board flight produces: low-g accel (reuse the boost-axis accel) +
         # the gyro rate (deg/s) the PID reads. Same fields as drivers/lsm6dso32 so flight_report keys on it.
+        # gyro as the centideg/s fixnum the real driver records, so a sim capture and a board capture
+        # carry the same UNITS and not merely the same column names
         self._tlm_gyro.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3),
-                             round(roll_rate, 1), round(pitch_rate, 1), round(yaw_rate, 1), 1))
+                             from_float(roll_rate), from_float(pitch_rate), from_float(yaw_rate), 1))
         self._tlm_baro.push((round(altitude, 2), 21.0, 100000, round(elevation, 2)))
         if in_range:
             self._tlm_laser.push((round(agl_clean, 3), 1))

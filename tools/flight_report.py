@@ -85,6 +85,9 @@ def irq_health(streams) -> str:
     return ' · '.join(parts)
 
 
+_FIXED_SCALE = 100  # fixed.SCALE -- gyro columns are centideg/s fixnums
+
+
 def leak_estimate(health, events):
     """
     The GC-off PSRAM leak and the extrapolated time-to-OOM.
@@ -223,10 +226,16 @@ def build(streams, logs, go, make_subplots):
                 times, values = power.column(field)
                 series.add_trace(go.Scatter(x=times, y=values, name=field), row=8, col=1)
     if gyro is not None:  # the gyro rate the PID reads as its D term (roll->gx, pitch->gy, yaw->gz)
+        """
+        gx/gy/gz are recorded as the CENTIDEG/S FIXNUM the PID consumes, not as formatted decimals --
+        the driver used to spend 224 B per sample building three strings, which is formatting rather
+        than measurement. Scaling belongs here, where it costs nothing.
+        """
         for field, label in (('gx', 'roll rate'), ('gy', 'pitch rate'), ('gz', 'yaw rate')):
             if field in gyro.fields:
                 times, values = gyro.column(field)
-                series.add_trace(go.Scatter(x=times, y=values, name=label), row=9, col=1)
+                series.add_trace(go.Scatter(x=times, y=[v / _FIXED_SCALE for v in values],
+                                            name='%s (deg/s)' % label), row=9, col=1)
     """
     AIRSPEED (findings §27.4): the pitot is the direct measurement, the governor estimate is what the fin
     cap was actually computed from, and GNSS ground speed is the third opinion -- overlaid, their spread

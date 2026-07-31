@@ -24,7 +24,7 @@ import i2cbus
 import recorder
 import spibus
 import task
-from fixed import SCALE, to_float, to_str  # gyro rate -> centideg/s fixnum; to_str/to_float for out
+from fixed import SCALE, to_float  # gyro rate -> centideg/s fixnum; to_float for the operator view
 
 try:
     from micropython import const
@@ -219,9 +219,12 @@ class Lsm6dso32(task.Task):
                 # line), 1 = healthy, >1 = the loop was late and edges piled up while it was elsewhere.
                 # That third case is a SCHEDULING symptom, not a sensor one, and it is invisible
                 # without recording it.
+                # gyro columns are the RAW centideg/s fixnum, not a formatted decimal. to_str() built
+                # three strings per sample and measured 224 B -- the single largest piece of this
+                # driver's sample, and it was FORMATTING, not measurement. The host tools divide by
+                # fixed.SCALE when they render; the board has no business spending heap on decimals.
                 self._telemetry.push((sample[0], sample[1], sample[2],
-                                      to_str(sample[3]), to_str(sample[4]), to_str(sample[5]),
-                                      self._irq_runs))
+                                      sample[3], sample[4], sample[5], self._irq_runs))
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
                 self.note('lsm6dso32 :: read %r', error)  # deduped: a persistent error logs once

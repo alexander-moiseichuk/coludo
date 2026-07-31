@@ -498,8 +498,10 @@ class _Capture:
         self._tlm('baro_icp10111.csv', '%u;%.2f;21.0;100000;%.2f' % (microseconds, altitude, elevation))
         self._tlm('imu_bno055.csv', '%u;%.1f;%.1f;%.1f' % (microseconds, heading, roll, pitch))
         # imu_lsm6dso32: the boost-axis low-g accel + the gyro rate (deg/s) the PID reads (board parity)
-        self._tlm_row('gyro', '%u;0.000;0.000;%.3f;%.1f;%.1f;%.1f;1'
-                  % (microseconds, accel, rate[0], rate[1], rate[2]))
+        # gyro in centideg/s fixnum, matching drivers/lsm6dso32.py -- same column names AND same units
+        self._tlm_row('gyro', '%u;0.000;0.000;%.3f;%d;%d;%d;1'
+                  % (microseconds, accel, rate[0] * fixed.SCALE, rate[1] * fixed.SCALE,
+                     rate[2] * fixed.SCALE))
         self._tlm('fins.csv', '%u;%d;%d;%d' % (microseconds, fins[0], fins[1], fins[2]))
         if t - self._last_gnss >= _GNSS_S:               # GNSS ~10 Hz
             self._last_gnss = t
