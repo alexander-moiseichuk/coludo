@@ -22,43 +22,47 @@ import drivers
 import mission
 import tasks
 
-_SECONDS = 40
+_SECONDS = 24  # long enough for the slope to converge (it settles by ~20 s), short enough to sweep
 
 
-async def _go() -> None:
+async def _go(off=()) -> None:
     drivers.load()
     tasks.load()
     mission.Mission(max_range_m=200)
     cfg = config_default.default()
     for component in cfg['components']:            # no flight loop, no watchdog: sensors + recorder only
-        # cc_link OFF too: with a hub reachable it reconnect-loops (OSError 104) and its churn
-        # -- plus the collects it provoked -- swamped the very slope being measured
-        if component['name'] in ('flight', 'watchdog', 'hitl', 'cc', 'cc_link', 'wifi'):
+        # cc_link OFF always: with a hub reachable it reconnect-loops (OSError 104) and its churn
+        # -- plus the collects it provoked -- swamped the very slope being measured. watchdog off so a
+        # deliberate leak cannot reset the board mid-measurement.
+        if component['name'] in ('watchdog', 'hitl', 'cc', 'cc_link', 'wifi') or component['name'] in off:
             component['enabled'] = False
+    for sensor in cfg['sensors']:
+        if sensor['name'] in off:
+            sensor['enabled'] = False
     board = controller.Controller(cfg, log=lambda message: None)
     await board.setup()
     await board.start()
-    print('SETUP: %d tasks running (real drivers, no sim)' % len(board.tasks))
+    print('SETUP %d tasks | disabled: %s' % (len(board.tasks), ','.join(off) or 'nothing'))
     await asyncio.sleep_ms(3000)                   # let every driver reach steady state first
     gc.collect()
     gc.disable()                                   # the airborne policy, forced here on the bench
     start, first = time.ticks_ms(), gc.mem_free()
-    print('%6s %12s %12s' % ('t_s', 'free_KB', 'KB/s'))
     while True:
         await asyncio.sleep_ms(4000)
         now, free = time.ticks_ms(), gc.mem_free()
         seconds = time.ticks_diff(now, start) / 1000.0
         if free > first:  # a collect ran despite gc.disable() -> the sample is not measuring a leak
-            print('%6.0f %12d   (heap ROSE -- collect, sample discarded)' % (seconds, free // 1024))
             continue
-        print('%6.0f %12d %12.1f' % (seconds, free // 1024, (first - free) / 1024.0 / seconds))
         if seconds >= _SECONDS:
             break
     gc.enable()
     slope = (first - gc.mem_free()) / 1024.0 / seconds
-    print('BOARD-ONLY LEAK %.1f KB/s -> OOM in %.0f s from a %d KB heap'
-          % (slope, (first // 1024) / slope if slope > 0 else -1, first // 1024))
+    print('LEAK %7.1f KB/s | OOM %5.0f s | off: %s'
+          % (slope, (first // 1024) / slope if slope > 0 else -1, ','.join(off) or 'nothing'))
     await board.finish()
 
 
-asyncio.run(_go())
+def probe(off=()) -> None:
+    """Measure the leak with `off` disabled; the DIFFERENCE against the baseline attributes it."""
+    asyncio.run(_go(off))
+

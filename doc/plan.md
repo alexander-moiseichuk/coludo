@@ -325,6 +325,34 @@ across three board flights and fitting the line:
 - **The intercept is 187 KB/s**, but that is *HITL with the sim's publishing removed*, not a real
   flight — the sim still steps float physics at 50 Hz underneath it, while HITL masks seven real
   sensors whose drivers a real flight runs. The two are not nested, so neither bounds the other.
+- **Profiled per component** (`test/diag_real_leak.py`, disable-one-and-diff against a 331 KB/s
+  baseline with `flight` enabled):
+
+  | component | KB/s | share |
+  |---|---|---|
+  | `accel_adxl375` | **111.3** | 34 % |
+  | `imu_lsm6dso32` | **63.7** | 19 % |
+  | `imu_bno055` | 34.4 | 10 % |
+  | `gnss` | 12.8 | 4 % |
+  | `airspeed_sdp810` | 12.7 | 4 % |
+  | `recorder` (drain task) | 11.7 | 4 % |
+  | `attitude` | 10.9 | 3 % |
+  | `baro_icp10111` | 10.5 | 3 % |
+
+  Three interrupt/high-rate IMU paths are **63 %** of the leak. Disabling `recorder` saves only
+  11.7 KB/s, so the cost is in the driver read/push paths, not the telemetry drain. `flight` measured
+  ~0 because on the bench it never leaves SETTING — a real flight adds its 100 Hz control work on top,
+  so treat 331 KB/s as a floor.
+
+  **Where it goes, and the route to 150 s.** The ADXL375's own sample path is already tight —
+  `read_into` into a preallocated buffer — yet it costs ~1.1 KB per sample at its 100 Hz ODR, far more
+  than the unpack tuple and three boxed floats explain. The prime suspect is
+  `asyncio.wait_for_ms(self._ready.wait(), fallback_ms)` in the run loop, which allocates a timeout
+  task per iteration; the same INT-with-fallback shape appears in `lsm6dso32`. Reaching 150 s needs
+  ~212 KB/s, i.e. **-120 KB/s from 331** — which the top two components alone could supply. Not yet
+  attempted: it wants its own careful pass with a per-call `bench_hitl` measurement, since these are
+  flight-critical drivers.
+
 - **Measured directly instead** (`test/diag_real_leak.py`: default config, real drivers, no sim, GC
   forced off): **~324 KB/s → OOM in ~99 s** from a 31.9 MB heap. That is well BELOW the ">150 s is
   acceptable" bar and below what the HITL intercept suggested. Caveats both ways: the bench run
