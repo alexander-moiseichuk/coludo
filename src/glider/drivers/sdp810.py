@@ -137,7 +137,10 @@ class Sdp810(task.Task):
             except Exception:
                 pass  # never stored yet -- keep the config default
         self._scale: int = _DEFAULT_SCALE
-        self._raw: fixed.fixnum = 0  # last un-tared reading (Pa fixnum) -> the tare source
+        # None until the first frame, NOT 0: calibrate()/update({'zero': True}) both guard on
+        # `_raw is None` to refuse a tare before there is a reading, and initialising to 0 made that
+        # guard dead code -- an operator taring straight after boot silently captured a zero tare.
+        self._raw = None  # last un-tared reading (Pa fixnum) -> the tare source
         self._temp_raw: int = 0  # last raw temperature word (raw / 200 -> °C)
         """
         A prior unclean reboot can leave the part mid-continuous, where a re-issued start is rejected;

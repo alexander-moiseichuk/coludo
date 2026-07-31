@@ -30,8 +30,13 @@ import os
 import statistics
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'glider'))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fixed  # noqa: E402 -- the firmware's fixed-point scale, so this cannot drift from the board
+import flight_telemetry  # noqa: E402
+
 _KNOTS_TO_MS = 0.514444  # NMEA RMC knots -> m/s (matches gnss._KNOTS_TO_MS)
-_SCALE = 100  # fixed.SCALE: the dynamic_pressure fixnum is Pa × SCALE
+_SCALE = fixed.SCALE  # the dynamic_pressure fixnum is Pa x SCALE -- read it, never restate it
 _MAX_PAIR_US = 200_000  # reject a GNSS sample with no pitot row within 200 ms (time-alignment guard)
 
 
@@ -62,9 +67,6 @@ def _read_capture(path: str) -> tuple:
     Returns:
         (pitot_rows, gnss_rows) -- each a list of {column: value} dicts, empty when the stream is absent.
     """
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import flight_telemetry
-
     with open(path) as handle:
         streams, _logs = flight_telemetry.parse(handle.read())
     pitot = flight_telemetry.find_stream(streams, 'dynamic_pressure')
