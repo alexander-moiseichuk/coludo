@@ -29,11 +29,21 @@ async def main():
     band = governor.GovernorConfig(flight)
     print('pitot band: %.1f .. %.1f m/s   (blow into P+, the RIGHT tube)' % (band.pitot_min_ms, band.pitot_max_ms))
     print('%8s %10s %9s   %s' % ('t', 'q (Pa)', 'v (m/s)', 'governor verdict'))
-    asyncio.create_task(driver.run())
+    runner = asyncio.create_task(driver.run())
+    # HOLD the task: fire-and-forget swallowed a crash in run(), and the script then printed zeros
+    # for pressure and airspeed -- indistinguishable from a blocked pitot tube, which is the exact
+    # fault this tool exists to tell apart.
     start = time.ticks_ms()
     peak = 0.0
     while time.ticks_diff(time.ticks_ms(), start) < 30000:
         await asyncio.sleep_ms(500)
+        if runner.done():  # run() died -- say so instead of printing zeros that look like a blocked tube
+            print('DRIVER STOPPED: the run loop exited. Zeros below would be the CRASH, not the tube.')
+            try:
+                runner.result()  # re-raises whatever killed it, so the traceback is visible
+            except Exception as error:
+                print('  cause: %r' % error)
+            break
         status = driver.inspect()
         q = status.get('dynamic_pressure_pa') or 0.0
         v = status.get('airspeed_ms') or 0.0

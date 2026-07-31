@@ -300,10 +300,18 @@ class Sdp810(task.Task):
                     self._telemetry.push((pressure, int(airspeed * fixed.SCALE), self._temp_raw // 2))
                     self.note(None)  # healthy pass -> let the next error log afresh
                     self.strike(False, _RESTART_AFTER)  # good read rearms the run
-            except Exception as error:
+            except OSError as error:
+                # OSError is the I2C bus fault this loop is built to ride out -- NAK, arbitration,
+                # a wedged peer -- so it gets the restart ladder.
                 self.note('sdp810 :: read %r', error)  # deduped: a persistent error logs once, not every tick
                 if self.strike(True, _RESTART_AFTER):  # once, not every tick while it stays dead
                     await self._restart()
+            except Exception as error:
+                # Anything else is a BUG, not a bus fault. It used to fall into the branch above and
+                # be reported as a transient read error, which is how an AttributeError survives a
+                # whole flight looking like flaky wiring. Named differently so it reads as what it is;
+                # the loop still survives, because a crashed driver is a lost sensor.
+                self.note('sdp810 :: BUG in read path %r', error)
             await asyncio.sleep_ms(self._period_ms)
 
     def update(self, props: dict) -> list:

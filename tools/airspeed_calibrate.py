@@ -52,6 +52,32 @@ def _read_csv(path: str) -> list:
     return rows
 
 
+def _is_capture(path: str) -> bool:
+    """
+    Is this an assembled capture? Decided by the WIRE MARKER, not the file extension.
+
+    `.txt` matched any stray log or config copy in the directory and produced a cryptic parse error
+    instead of a clear one. Every capture line carries the `@<session>_<stream>.csv@` prefix, so one
+    line is enough to tell.
+
+    Args:
+        path - the file to test.
+
+    Returns:
+        True when the first readable line carries a capture marker.
+    """
+    try:
+        with open(path) as handle:
+            for line in handle:
+                if line.startswith('@') and '.csv@' in line:
+                    return True
+                if line.strip():
+                    return False  # a real first line that is not a capture row -> not a capture
+    except OSError:
+        return False
+    return False
+
+
 def _read_capture(path: str) -> tuple:
     """
     Pull the pitot and GNSS rows out of an ASSEMBLED capture (.txt) -- the artifact every other tool eats.
@@ -253,7 +279,7 @@ def main() -> int:
                   file=sys.stderr)
             return 2
         pitot_rows, gnss_rows = _read_csv(pitot_path), _read_csv(gnss_path)
-    elif args.recording.endswith('.txt'):  # an assembled capture -- what every other tool consumes
+    elif _is_capture(args.recording):  # an assembled capture -- what every other tool consumes
         pitot_path = gnss_path = args.recording
         pitot_rows, gnss_rows = _read_capture(args.recording)
         if not pitot_rows or not gnss_rows:

@@ -2,6 +2,8 @@
 
 > **GENERATED from the sources by `tools/gen_schema.py` — do not hand-edit.** Regenerate after changing any `recorder.Telemetry(...)` declaration (`python3 tools/gen_schema.py`); `--check` fails the local gate if it is stale.
 
+> **The `host sim` origin is currently EMPTY, and that is a known gap, not agreement.** `tools/virtual_flight.py` builds its streams by hand rather than through `recorder.Telemetry(...)`, so this generator cannot see them — host/board schema drift would go undetected on the host side.
+
 Every stream a capture can contain, and the fields in each. A recorder capture interleaves `@<session>_<file>@<row>` telemetry rows with plain log lines; `tools/flight_telemetry.py` demuxes them, and every renderer resolves streams **by role** (the fields they carry) rather than by file name — a capture's file names track the fitted hardware, so a fallback flight names them differently.
 
 ## Streams
@@ -15,7 +17,7 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | `fins.csv` | board | `hitl.py` | `eleron_left`, `eleron_right`, `yaw` |
 | `flight.csv` | board | `flight.py` | `stage`, `active`, `airspeed_cms`, `fin_cap`, `roll_sp`, `pitch_sp`, `heading_err`, `roll_cmd`, `pitch_cmd`, `yaw_cmd`, `wind_cms`, `wind_from` |
 | `gnss.csv` | board | `hitl.py` | `lat`, `lon`, `speed_kn`, `course` |
-| `health.csv` | board | `board_health.py` | `temp`, `mem_free`, `load`, `oom_s`, `land_s`, `leak_kbps`, `rescues` |
+| `health.csv` | board | `board_health.py` | `temp`, `mem_free`, `load`, `oom_s`, `land_s`, `leak_kbps`, `rescues`, `rescue_ms` |
 | `imu_bno055.csv` | board | `hitl.py` | `heading`, `roll`, `pitch` |
 | `imu_lsm6dso32.csv` | board | `hitl.py` | `ax`, `ay`, `az`, `gx`, `gy`, `gz` |
 | `laser_agl.csv` | board | `hitl.py` | `agl` |
@@ -30,6 +32,7 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | _per-device_ (`<name>.csv`) | board | `sdp810.py` | `dynamic_pressure`, `airspeed_cms`, `temperature` |
 | _per-device_ (`<name>.csv`) | board | `sequencer.py` | `stage`, `reason` |
 | _per-device_ (`<name>.csv`) | board | `sg90.py` | `angle`, `pulse_us`, `done` |
+| _per-device_ (`<name>.csv`) | board | `task.py` | `event` |
 | _per-device_ (`<name>.csv`) | board | `vl53l4cx.py` | `agl` |
 
 ## Shapes that differ between the sim and the board

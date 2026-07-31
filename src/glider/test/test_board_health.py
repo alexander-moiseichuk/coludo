@@ -36,12 +36,15 @@ async def test_basics():
     # sample()/inspect() report the vitals; load is an int percent 0..100; the flight-safety
     # forecasts (oom_s / land_s) and the rescue counter ride along
     vitals = health.sample()
-    assert set(vitals.keys()) == {'temp', 'mem_free', 'load', 'oom_s', 'land_s', 'rescues'}
+    assert set(vitals.keys()) == {'temp', 'mem_free', 'load', 'oom_s', 'land_s', 'rescues',
+                                 'rescue_ms'}
     assert isinstance(vitals['mem_free'], int) and vitals['mem_free'] > 0
     assert isinstance(vitals['load'], int) and 0 <= vitals['load'] <= 100
-    assert vitals['rescues'] == 0 and vitals['oom_s'] is None and vitals['land_s'] is None
+    assert vitals['rescues'] == 0 and vitals['rescue_ms'] == 0  # no rescue yet -> no pause recorded
+    assert vitals['oom_s'] is None and vitals['land_s'] is None
     assert set(health.inspect().keys()) == {'name', 'ok', 'healthy',  # the common Task.inspect base
-                                            'temp', 'mem_free', 'load', 'oom_s', 'land_s', 'rescues'}
+                                            'temp', 'mem_free', 'load', 'oom_s', 'land_s', 'rescues',
+                                            'rescue_ms'}  # the MEASURED pause, not an assumed one
 
     # the FIRST telemetry row lands at startup -- not one period late
     runner = asyncio.create_task(health.run())

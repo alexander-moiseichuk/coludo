@@ -155,14 +155,14 @@ class Sequencer(task.Task):
             start = time.ticks_us()
             gc.collect()    # compact + free before the flight (a known pause, on the rod)
             took = time.ticks_diff(time.ticks_us(), start)
-            recorder.Recorder.log(self.name, 'gc pre-flight collect %d us' % took)
+            self.event('gc pre-flight collect %d us' % took)  # durable: log() alone loses it
             gc.disable()
         elif to_stage == _STAGE.DONE:
             gc.enable()
             start = time.ticks_us()
             gc.collect()
             took = time.ticks_diff(time.ticks_us(), start)
-            recorder.Recorder.log(self.name, 'gc post-flight collect %d us' % took)  # the deferred cost
+            self.event('gc post-flight collect %d us' % took)  # the deferred cost, durably
 
     async def finish(self) -> None:
         gc.enable()  # never leave GC disabled if the task stops mid-flight (defensive)

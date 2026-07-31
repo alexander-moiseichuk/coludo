@@ -1661,6 +1661,7 @@ Returns:
 ### `class Task(inspector.Inspectable)`
 
 - `__init__(name: str, config: dict=None, controller=None)` — constructor
+- `event(message: str) -> None` — A DURABLE diagnostic record -- for the handful of facts a flight must not be able to lose.
 - `note(template: str=None, arg=None) -> None` — De-duplicated best-effort run-loop log + runtime-health flag.
 - `setup() -> bool` — Initialize or reset. Override. Return True on success, False otherwise.
 - `claim() -> None` — Wait until no other caller owns this device's MULTI-STEP conversation, then take it.

@@ -151,8 +151,9 @@ trigger was `oom_s < 2 × land_s` — collect when memory dies within *twice* th
 stacked on two margins that already point the same way:
 
 - `oom_s` counts down to a **512 KB reserve**, not to zero, so it already reports exhaustion early;
-- the safe-altitude floor prices the pause at `_RESCUE_PAUSE_MS` = 200 ms against a collect measured
-  at **~67 ms** — about 3×.
+- the safe-altitude floor prices the pause at `_RESCUE_PAUSE_MS` = 200 ms against a collect
+  **measured in flight at 34–45 ms** — about 5×. (That figure only became readable once the rescue
+  line moved from `log()` to durable telemetry; the earlier ~67 ms came from a bench benchmark.)
 
 A third 2× on top did not buy safety, it spent control slices. Now `oom_s <= land_s`: rescue when
 memory dies **before** the glider lands. Measured, same matrix, before and after:

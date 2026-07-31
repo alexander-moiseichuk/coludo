@@ -28,6 +28,15 @@ _SOURCES = (  # where a stream can be declared -> the column that says who write
     ('board', sources.GLIDER_DIRS),
     ('host sim', ('tools',)),
 )
+"""
+The 'host sim' origin currently yields NOTHING, and that is a real gap rather than a quirk:
+tools/virtual_flight.py writes its streams by hand through its own _tlm() instead of constructing
+recorder.Telemetry(...), so the ast scan cannot see them. The generator that exists to catch host
+/ board schema drift is therefore blind to the host half -- the same class of divergence as the
+simulated-pitot asymmetry, where the two worlds disagreed and no tool could tell. render() calls
+this out in the generated doc so the emptiness cannot be mistaken for agreement. The fix is to make
+virtual_flight declare real Telemetry objects.
+"""
 
 
 def _literal(node):
@@ -85,6 +94,11 @@ def render(rows: list) -> str:
            '> **GENERATED from the sources by `tools/gen_schema.py` — do not hand-edit.** Regenerate '
            'after changing any `recorder.Telemetry(...)` declaration (`python3 tools/gen_schema.py`); '
            '`--check` fails the local gate if it is stale.',
+           '',
+           '> **The `host sim` origin is currently EMPTY, and that is a known gap, not agreement.** '
+           '`tools/virtual_flight.py` builds its streams by hand rather than through '
+           '`recorder.Telemetry(...)`, so this generator cannot see them — host/board schema drift '
+           'would go undetected on the host side.',
            '',
            'Every stream a capture can contain, and the fields in each. A recorder capture interleaves '
            '`@<session>_<file>@<row>` telemetry rows with plain log lines; `tools/flight_telemetry.py` '

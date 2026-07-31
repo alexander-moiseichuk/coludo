@@ -334,8 +334,17 @@ zeroed the estimate. It is now a cumulative average since the last collect, targ
 reserve, and reads to within ~1.5 s between samples. And the rescue trigger moved from
 `oom < 2 x land` to `oom <= land`: three stacked safety margins were one too many, and the change
 halved the unscheduled pauses across the matrix (10 → 5) with the heap never falling below 16 MB of
-~30. `rescues` and `leak_kbps` are now in `health.csv`, and the flight report draws the rescue count
-as a staircase beside free memory.
+~30. `rescues`, `leak_kbps` and `rescue_ms` are now in `health.csv`, and the flight report draws the rescue
+count as a staircase beside free memory.
+
+**Durable diagnostics.** `Recorder.log()` is best-effort — buffered, flushed roughly every 1000
+telemetry messages, so a short flight ends without them. Measured: a 57 s capture carried 5 log lines
+(the controller's stage transitions) while the sequencer's own stage lines, both gc-collect durations
+and every rescue line were absent. `Task.event()` now sends those down a per-component
+`<name>_events.csv` Telemetry stream — which commits per line — as well as through `log()` for the
+operator console. The first flight with it measured what had never been readable: **rescue collects
+take 34–45 ms** (not the ~67 ms bench figure the threshold was justified against), the pre-flight
+collect 26 ms, and the post-flight collect — the whole airborne phase's deferred cost — **159 ms**.
 
 **Still open on `oom_soak.py`:** its default `target_kb=600` is degenerate against the new 512 KB
 reserve (the rescue thrashes and the flight cannot progress), and `machine.reset_cause()` cannot be
