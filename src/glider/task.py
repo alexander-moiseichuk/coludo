@@ -99,9 +99,18 @@ class Task(inspector.Inspectable):
         Returns:
             None; writes one telemetry row and one best-effort log line.
         """
-        if self._events is None:
-            self._events = recorder.Telemetry('%s_events.csv' % self.name, ('event',), decimate_us=-1)
-        self._events.push((message,))
+        try:
+            if self._events is None:
+                self._events = recorder.Telemetry('%s_events.csv' % self.name, ('event',),
+                                                  decimate_us=-1)
+            self._events.push((message,))
+        except Exception:
+            # The stream is built on first use, which assumes the Recorder is already up. Every
+            # caller today is post-setup (a stage transition, a rescue), but SETUP-time diagnostics
+            # are exactly where the next person will reach for this -- and a diagnostic that CRASHES
+            # the task it is reporting on would be worse than the lossy log() it replaced. The log
+            # below still goes out either way.
+            pass
         recorder.Recorder.log(self.name, message)
 
     def note(self, template: str = None, arg=None) -> None:

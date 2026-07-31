@@ -350,6 +350,11 @@ collect 26 ms, and the post-flight collect — the whole airborne phase's deferr
 reserve (the rescue thrashes and the flight cannot progress), and `machine.reset_cause()` cannot be
 checked the way its header describes because `mpremote` soft-resets on connect and overwrites it.
 
+The leak is **steady across flight phases**: measured over three runs, the pre-glide (setting +
+boosting) slope is 281–298 KB/s against 329–343 KB/s in the glide — a consistent 0.86 ratio, not a
+separate boost anomaly. The glide is slightly higher because the guidance and endgame paths are only
+fully active there.
+
 **Run-to-run repeatability of a board HITL flight is ~1 m** (three identical F15 flights: 121/122/121 m,
 no drift), so a difference above ~1 m in the matrix is a real change rather than scatter.
 
