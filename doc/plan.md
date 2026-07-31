@@ -312,6 +312,54 @@ control change.
     the Luckfox (default: the latest), assembles the capture, and renders the SVG + HTML report + KPIs
     in one command (was hand-run per stream). Tested end-to-end against a live session.
 
+## Memory budget — resolved (2026-07-30)
+
+The GC-off leak had four disagreeing numbers on record. Measured by varying the sim's publish rate
+across three board flights and fitting the line:
+
+    leak = 187 + 3.32 * inject_hz   KB/s
+
+- The **HITL sim itself costs 166 KB/s at 50 Hz — 48 %** of the board-HITL total. This independently
+  reproduces the earlier "~46 % of a HITL leak" A/B *on the current build*, simulated pitot included,
+  so that method is validated rather than folklore.
+- **The production leak is the intercept: 187 KB/s**, i.e. a ~30 MB heap lasts **~160 s** — just
+  above the ">150 s is acceptable" bar, with the in-flight memory rescue as backstop.
+- `oom_soak.py`'s header figure of "15-18 KB/s" measures the **control path alone**, without telemetry
+  and recorder. Not wrong, but narrower than it reads.
+
+Two supporting fixes landed with it. `board_health`'s OOM forecast was unusable — successive readings
+of 271, 155, 119, 109, None, 362, None, 206 s, on a number that **arms a ~200 ms mid-glide
+`gc.collect()`** — because one 1 Hz difference *was* the slope and any sample where the heap grew
+zeroed the estimate. It is now a cumulative average since the last collect, targeting a 512 KB
+reserve, and reads to within ~1.5 s between samples. And the rescue trigger moved from
+`oom < 2 x land` to `oom <= land`: three stacked safety margins were one too many, and the change
+halved the unscheduled pauses across the matrix (10 → 5) with the heap never falling below 16 MB of
+~30. `rescues` and `leak_kbps` are now in `health.csv`, and the flight report draws the rescue count
+as a staircase beside free memory.
+
+**Still open on `oom_soak.py`:** its default `target_kb=600` is degenerate against the new 512 KB
+reserve (the rescue thrashes and the flight cannot progress), and `machine.reset_cause()` cannot be
+checked the way its header describes because `mpremote` soft-resets on connect and overwrites it.
+
+## Hardware roadmap — v0.2 and v1.0
+
+v0.1 PCBs are ordered and the Gerbers cross-check clean against `config_default.py`. The design
+review, the merge-to-one-board analysis and the bus-split decision live in
+[`hardware.md`](hardware.md); in short:
+
+- **v0.2, electrical:** ground pour on both layers (there is none today), and widen the servo rail —
+  the main board uses one 0.30 mm width (~1.0 A) for signal and power alike, against 0.79 A measured
+  per servo. The power board already gets this right.
+- **v0.2, layout:** merge main + power into one board with an **energy island** (~5.8 g saved, 2.7 %
+  of the light glide mass), keeping a bench power path so USB port-cycling still recovers a wedged
+  board.
+- **v0.2, buses:** `i2c:0` = `icp10111` alone, `i2c:1` = everything else. Altitude is the only
+  redundancy pair living entirely on I²C, and a dead barometer costs ~100 m of miss. Bandwidth is not
+  a factor — both buses sit under 5 % load.
+- **v1.0:** a BNO085 could collapse the IMU stack *if* real boost shock stays under 16 g. Measured
+  peak in sim is 3.3–4.3 g, but that model has no ignition transient, separation shock or landing
+  impact — the decision needs one real capture logging through separation first.
+
 ## Required hardware
 
 1. ESP32-P4 with Wi-Fi (or ESP32-C6 low-end variant) — Main Controller

@@ -314,7 +314,7 @@ mitigations are degradations, not equivalents.
 |---|---|---|---|---|
 | 1 | **LSM6DSO32 INT1 not connected** | `INT1_CTRL` 0x01 written and read back, accel + gyro both at 104 Hz, `STATUS` continuously data-ready — yet **GPIO28 stuck low, never toggles** | Route INT1 to its GPIO and verify the net | Driver detects the silent line after 3 timeouts and polls at 10 ms instead (`rate` 2.0 → 72 Hz). Costs the interrupt's timing precision and some CPU |
 | 2 | **BNO055 attitude frozen — cause UNDETERMINED** | Bit-identical Euler triple, `sys`/`mag` calibration stuck at 0. Originally called a faulty fusion core; **that verdict does not hold** (see below) | Re-test with VERIFIED motion before condemning any part. Self-test does **not** exercise fusion (`ST_RESULT` 0x0F on a part that was not updating) | Driver withholds a frozen attitude *while rotating* so the priority-1 gyro backup takes over |
-| 3 | **Move the BNO055 to `i2c:1`** | Attitude (priority 0) shares `i2c:0` with four devices; a wedge, or the icp10111 latch-up recovery's general-call reset, takes the whole bus down together | Put the BNO055 on `i2c:1` with the INA226 | None possible in software — the buses are physical. See below for why this one matters most |
+| 3 | **Split the I²C buses** — but isolate the **icp10111**, not the BNO055 | Five devices share `i2c:0`; a wedge, or the icp10111 latch-up recovery's general-call reset, takes them down together | **`i2c:0` = icp10111 alone; `i2c:1` = everything else.** Superseded the original "move the BNO055" plan — see *Which device to isolate* below | None possible in software — the buses are physical |
 | 4 | **BNO055 breakout has no 32.768 kHz crystal** | Selecting `CLK_SEL` external kills fusion outright (EUL all zeros) | Prefer a crystal-equipped module: Bosch specifies the external crystal for fusion modes | Driver leaves `CLK_SEL` internal |
 
 ### The BNO055 "faulty part" call — retracted
@@ -363,3 +363,128 @@ are — but only because the backup happens to be on SPI. Everything *else* the 
 on shares `i2c:0`, so a single stuck slave on that bus takes out the primary plus the baro plus the
 pitot plus the laser at once. Moving the BNO055 to `i2c:1` leaves `i2c:0` as the "everything else"
 bus and gives the attitude chain no common failure point at all: primary on `i2c:1`, backup on SPI1.
+
+### Which device to isolate — it is the icp10111, not the BNO055
+
+The original v0.2 plan was "move the BNO055 to `i2c:1`". Walking the redundancy pairs shows that buys
+little, because **attitude is already isolated across bus families**:
+
+| quantity | primary | backup | already isolated? |
+|---|---|---|---|
+| attitude | `lsm6dso32` (**SPI**) | `bno055` (I²C) | ✅ different bus families |
+| airspeed | `sdp810` (I²C) | accel+GNSS estimator (**not on a bus**) | ✅ fallback is not I²C |
+| power | `ina226` (I²C) | — | n/a, not flight-critical |
+| **altitude** | **`icp10111` (I²C)** | **`bmp280` (I²C)** + laser at rank 2 | ❌ **all on one bus** |
+
+Altitude is the only redundancy pair living entirely inside I²C, and it is the expensive one to lose:
+the host fault matrix priced a dead barometer at **100.2 m of miss**, because the endgame band is
+elevation-driven. So:
+
+```
+i2c:0  ->  icp10111 alone            (on-board, short, primary altitude)
+i2c:1  ->  bmp280 + bno055 (SEN0253), laser_agl, sdp810, ina226
+```
+
+A wedge on `i2c:1` then costs the backups and the pitot — and the pitot already degrades to an
+estimator built for exactly that — while **primary altitude survives**.
+
+**Bandwidth is not a factor and should not be argued about.** Measured from the configured poll rates
+and read sizes, `i2c:1` runs at **4.2 %** of a 400 kHz bus and `i2c:0` at **1.5 %**. Even at the
+cable-friendly 100 kHz they are 16.7 % and 6.1 %. This is purely a fault-isolation decision.
+
+**A code-level bonus for isolating this particular part.** `icp10111` clears digital latch-up with an
+I²C **general-call reset** (`0x00 0x06`), and its driver notes this "also resets peers that honour it
+(bmp280, ina226)" — collateral accepted because the alternative is losing the primary baro. Alone on
+`i2c:0`, the most aggressive recovery action in the codebase can no longer disturb anything else.
+
+## v0.2 PCB — design review of the v0.1 Gerbers
+
+Measured from the copper (`models/PCBs/*.zip`), not from the schematic. The netlist itself
+cross-checks clean against `config_default.py` — this is the separate question of whether it is a
+*good* board.
+
+| | main board | power board |
+|---|---|---|
+| outline | 39.88 × 97.16 mm | 40.00 × 43.94 mm |
+| track widths | **0.30 mm — one width for everything** | 0.50 mm signal + 2.75 mm power |
+| copper pours | **none** | **none** |
+| vias | 12 | 2 |
+
+IPC-2221, external trace, 1 oz copper, ΔT = 10 °C: 0.30 mm ≈ **1.0 A**, 0.50 mm ≈ 1.4 A,
+2.75 mm ≈ 5.0 A.
+
+**1 — No ground pour on either board, either layer.** Every return path is a point-to-point trace, on
+a board carrying 5 MHz SPI, two I²C buses, PWM to three servos with ~0.8 A transients, **and an
+INA226 resolving 2.5 µV per LSB across a shunt**. Servo return currents down a thin shared trace put
+a millivolt-scale IR drop across the very ground that measurement references — the power figures the
+energy budget rests on are the ones most exposed. *Fix: pour both layers, stitch every 5–10 mm along
+SPI/I²C and around the servo connectors. Free in EasyEDA, costs no board area.*
+
+**2 — The main board uses one trace width for signal and power alike.** 0.30 mm ≈ 1.0 A against a
+**measured 0.79 A per MG90S** and an INA226 over-current alert set at **3000 mA** — a threshold the
+trace feeding it cannot carry. Three servos moving together is ~2.4 A, so the shared servo feed is
+roughly **2.4× undersized**. Telling detail: the **power board already does this correctly**; the main
+board simply did not inherit the practice. *Fix: ≥1.5 mm for the servo rail and its return, 2.5 mm to
+match the power board's margin. 0.30 mm is fine for signals.*
+
+Smaller: only 12 vias on the main board (a pour will raise this naturally), and the two boards use
+different Gerber units (main mm, power inch) — cosmetic, but it will bite anyone cross-checking
+dimensions by hand.
+
+### Merging main + power onto one board — the energy island
+
+The v0.2 intent is a single board carrying an **energy island**: the main board fed 5 V from that
+island rather than from USB, a boost module supplying Recorder + main board, and the servos on an
+ND3A05SD with three-capacitor protection. Electrically that is what exists today, minus the wires and
+the inter-board grid.
+
+**The island is what makes the merge safe.** The objection to merging is that it puts ~2.4 A of servo
+return onto the INA226's copper; an energy island *is* the star ground, made explicit at layout time
+— provided it is a genuinely separate pour joined to signal ground at **exactly one point, at the
+shunt**, with no signal trace crossing the boundary anywhere else.
+
+**Weight, which is the real driver on a 215–270 g airframe:**
+
+| removed | mass |
+|---|---|
+| ~10 mm of length × 2 boards | 2.37 g |
+| 2 × 8-pin 2.54 mm headers | 2.20 g |
+| 8 jumper conductors, ~3 cm | 1.20 g |
+| **total** | **~5.8 g** |
+
+That is **2.7 % of the 215 g light glide mass** (2.1 % of 270 g full), and sink scales as √m, so
+~1.35 % less sink — before counting the mechanical failure point removed under a measured 3.3–4.3 g
+boost. The two bare boards together are only ~16.7 g, so this is a third of the connector-and-edge
+overhead. Area is not the obstacle: at the same 40 mm width the combined board is ~141 mm long, and
+width is what the body tube constrains.
+
+**Two things to get right while merging:**
+
+1. **The switcher versus the shunt.** The ND3A05SD and the boost module switch at hundreds of kHz to
+   MHz, and the INA226 resolves 2.5 µV/LSB on the rail they feed. Keep the Kelvin sense pair off the
+   inductor field, route it as a pair, and place the shunt **upstream of the servo bulk caps** so the
+   part measures load current rather than capacitor ripple.
+2. **USB stops being a power path — which changes the BENCH workflow.** Board recovery currently
+   depends on USB power: `uhubctl -l 1-3 -p 1 -a cycle` clears a wedged USB CDC by cutting the port's
+   5 V. Fed only from the island, that recovery ceases to exist and a wedged board needs the battery
+   unplugged. Keep a bench path — a diode-OR from USB 5 V, or a jumper selecting USB or island — or
+   accept the DTR/RTS reset as the only route. Decide it at layout, not at the bench.
+
+## v1.0 idea — if boost really stays under 16 g, the IMU stack collapses
+
+Measured peak acceleration across the board HITL matrix: **3.3 g** (F15 full), 3.7, 3.8, **4.3 g**
+(E16 light) — all far under 16 g, and consistent with the physics (F15 is 15 N average against a
+~467 g stack ≈ 3.3 g of thrust, plus 1 g static).
+
+If that holds on real hardware, a **BNO085** becomes interesting: it supersedes the BNO055 with SH-2
+fusion and, importantly here, without the calibration-state behaviour that cost a whole bench session
+(a part was declared faulty when it was merely uncalibrated). One part could then cover attitude +
+accel + gyro, retiring the BNO055 and possibly collapsing the LSM6DSO32/ADXL375 split.
+
+**What must be measured before buying anything:** those figures are *simulation* numbers from a thrust
+model containing **no ignition transient, no separation/ejection shock and no landing impact** — and
+shock, not thrust, is why a ±200 g ADXL375 is on the board at all. Sustained boost at ~4 g says
+nothing about a millisecond ejection spike. So: fly one real capture with the ADXL375 logging at full
+rate through boost, separation and landing; read the actual peak; only then decide what the BNO085
+replaces. Attitude alone is already a win — retiring the ADXL375 needs the shock number specifically.
+The same capture should re-check `launch_g` (2.5 g today, ~1 g of margin against a 3.3 g boost).
