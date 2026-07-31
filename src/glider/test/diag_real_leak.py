@@ -25,7 +25,7 @@ import tasks
 _SECONDS = 24  # long enough for the slope to converge (it settles by ~20 s), short enough to sweep
 
 
-async def _go(off=()) -> None:
+async def _go(off=(), slow: int = 1) -> None:
     drivers.load()
     tasks.load()
     mission.Mission(max_range_m=200)
@@ -39,10 +39,21 @@ async def _go(off=()) -> None:
     for sensor in cfg['sensors']:
         if sensor['name'] in off:
             sensor['enabled'] = False
+        elif slow > 1:
+            """
+            Divide every sensor's rate by `slow`. This is the validation the leak model implies: if
+            allocation really is per-read, halving the reads should halve the leak. Note it only
+            slows the POLLED drivers -- an interrupt-driven one samples at its sensor's ODR and
+            period_us is merely its fallback -- so a perfectly linear result is not expected; a clear
+            monotonic trend is what confirms the relationship.
+            """
+            if 'period_us' in sensor:
+                sensor['period_us'] *= slow
+            sensor['period_ms'] = sensor.get('period_ms', 100) * slow
     board = controller.Controller(cfg, log=lambda message: None)
     await board.setup()
     await board.start()
-    print('SETUP %d tasks | disabled: %s' % (len(board.tasks), ','.join(off) or 'nothing'))
+    print('SETUP %d tasks | disabled: %s | slow x%d' % (len(board.tasks), ','.join(off) or 'nothing', slow))
     await asyncio.sleep_ms(3000)                   # let every driver reach steady state first
     gc.collect()
     gc.disable()                                   # the airborne policy, forced here on the bench
@@ -57,12 +68,12 @@ async def _go(off=()) -> None:
             break
     gc.enable()
     slope = (first - gc.mem_free()) / 1024.0 / seconds
-    print('LEAK %7.1f KB/s | OOM %5.0f s | off: %s'
-          % (slope, (first // 1024) / slope if slope > 0 else -1, ','.join(off) or 'nothing'))
+    print('LEAK %7.1f KB/s | OOM %5.0f s | slow x%-2d | off: %s'
+          % (slope, (first // 1024) / slope if slope > 0 else -1, slow, ','.join(off) or 'nothing'))
     await board.finish()
 
 
-def probe(off=()) -> None:
-    """Measure the leak with `off` disabled; the DIFFERENCE against the baseline attributes it."""
-    asyncio.run(_go(off))
+def probe(off=(), slow: int = 1) -> None:
+    """Measure the leak with `off` disabled and every sensor rate divided by `slow`."""
+    asyncio.run(_go(off, slow))
 

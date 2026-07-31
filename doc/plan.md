@@ -394,9 +394,34 @@ across three board flights and fitting the line:
   dozen tasks. That changes the strategy — further wins come from the shared paths every driver uses
   (`Telemetry.push` at 192 B, the per-sample tuples at 80 B), not from another single hot spot.
 
-  **150 s needs ≤212 KB/s, i.e. −40 more.** `imu_bno055` alone is 47.9 and has never been looked at:
-  it reads a 24-byte block at 50 Hz and converts to floats, so `diag_alloc_hotloop` should price it
-  the way it priced the other two.
+  **Validated against read rate, and the hunt can stop here.** Dividing every sensor's rate by N
+  (`diag_real_leak.probe(slow=N)`):
+
+  | rate | leak | time-to-OOM |
+  |---|---|---|
+  | ×1 (100 Hz) | 252.0 KB/s | 127 s |
+  | **×2 (50 Hz)** | **175.2** | **182 s** |
+  | ×5 | 144.7 | 221 s |
+  | ×10 | 135.4 | 236 s |
+
+  The relationship holds — and the curve **asymptotes at ~130 KB/s rather than falling toward zero**.
+  Fitting `leak = fixed + variable/N` gives **~122 KB/s that is rate-INDEPENDENT** and ~130 KB/s that
+  scales with reads (the fit predicts 187 at ×2 and 148 at ×5 against 175.2 and 144.7 measured). So
+  the model matches the hardware, and there is a structural floor no sampling change can remove: the
+  recorder, the control loop, asyncio itself.
+
+  **Decision: stop optimising, mitigate instead.** 127 s is already ~2× the longest planned flight
+  (65 s), and the two levers are cheap:
+
+  1. **Halve the sensor rate to 50 Hz if 127 s ever looks tight** → ~175 KB/s, **182 s**, roughly 3×
+     the flight. The cost is resolution: ~30 cm of linear travel per sample at 15 m/s instead of
+     ~15 cm, which nothing in the control path needs.
+  2. **The OOM predictor is the backstop** if the estimate is ever wrong — and it is now trustworthy:
+     the forecast reads within ~1.5 s sample-to-sample, and the rescue it arms costs a measured
+     34–45 ms and fires 0–2 times per flight.
+
+  Remaining, if it is ever wanted: `imu_bno055` is the largest single consumer at 47.9 KB/s and has
+  never been examined (a 24-byte block read at 50 Hz with float conversion). Not needed for flight.
 
 - **Measured directly instead** (`test/diag_real_leak.py`: default config, real drivers, no sim, GC
   forced off): **~324 KB/s → OOM in ~99 s** from a 31.9 MB heap. That is well BELOW the ">150 s is
