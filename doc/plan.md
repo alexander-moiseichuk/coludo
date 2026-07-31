@@ -96,9 +96,27 @@ envelope + landing-zone numbers re-derive from the TMS-8 masses/geometry (`colud
 
 Supporting precision + tooling (continue alongside / from Phase 4):
 
-- **Nail the landing strip** — bank-to-turn lands ~85 m from the 40 m-wide strip centre (good sensors);
-  it drifts off on short final because LANDING goes wings-level. A tighter final-approach / flare (or a
-  smaller orbit radius), re-measured in the sim.
+- **Nail the landing strip** — bank-to-turn lands ~85 m from the 40 m-wide strip centre (good sensors).
+  **The cause recorded here was WRONG and is corrected (7/31).** It said the glider "drifts off on short
+  final because LANDING goes wings-level". Measured from a board capture, it does the opposite — it is
+  pinned at the FULL endgame bank right down to touchdown and only levels after it is on the ground:
+
+  | t (s) | elevation | roll setpoint | heading error |
+  |---|---|---|---|
+  | 44.5 | 71.8 m | −30° | −25° |
+  | 48.5 | 41.5 m | **−60°** | **−162°** |
+  | 51.5 | 17.4 m | **−60°** | −110° |
+  | 53.5 | 1.4 m | **−60°** | −64° |
+
+  So the endgame spiral **tightens to maximum bank and never converges**: the glider is still mid-turn
+  when the altitude runs out, and touchdown lands at whatever phase of the spiral it reached. That is
+  phase luck — the same failure the old racetrack law had, at a smaller radius.
+
+  The fix is therefore NOT more authority on final (there is already maximum authority). Two candidates
+  to evaluate: **roll out to wings-level and hold the final heading** once inside a commit point, or
+  **floor the spiral radius** at what the remaining altitude can complete (`R_min` is already computed
+  for the airspeed-gated bank, so the input exists). Either needs a sim sweep plus a `flight_kpi`
+  regression against the existing capture set before it goes near the airframe.
 - **High-noise robustness** (≥50 %): the bank loop reads attitude, so heavy noise degrades the orbit —
   a filter / rate-limit on the steering input.
 - **`launch.config` autogen** + GPX export of telemetry. Deferred hardware: outdoor GNSS fix.
