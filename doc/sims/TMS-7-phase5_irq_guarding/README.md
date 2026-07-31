@@ -26,14 +26,15 @@ capture to judge driver-level allocation work.** That is the lesson worth carryi
 
 | case | before | after | delta |
 |---|---|---|---|
-| `e16_full` | 88.8 m | 88.4 m | −0.4 |
-| `e16_light` | 45.7 m | 46.1 m | +0.4 |
-| `f15_full` | 121.7 m | 122.6 m | +0.9 |
-| `f15_light` | 83.6 m | 86.6 m | +3.0 |
+| `e16_full` | 88.8 m | 88.7 m | −0.1 |
+| `e16_light` | 45.7 m | 46.8 m | +1.1 |
+| `f15_full` | 121.7 m | 121.7 m | **0.0** |
+| `f15_light` | 83.6 m | 85.5 m | +1.9 |
 
-Run-to-run repeatability on this matrix is **~1 m** (measured over three identical flights), so three
-of four are inside the noise. `f15_light` at +3.0 m sits just outside it and is the one figure worth
-re-flying before being read as anything.
+Run-to-run repeatability on this matrix is **~1 m** (measured over three identical flights), so every
+case is at or inside the noise -- `f15_full` lands on the same 121.7 m to the decimetre. Re-flown with
+BOTH interrupt lines working (the earlier pass in this study had the LSM6DSO32's INT1 dead and the
+ADXL375 unplugged), which is why these supersede the first numbers written here.
 
 ### Glide span — unchanged
 
@@ -50,10 +51,10 @@ Within 0.2 s everywhere. The control path is untouched, which is what these conf
 
 | case | moves before → after | travel before → after | energy before → after |
 |---|---|---|---|
-| `e16_full` | 799 → 794 | 1840° → 1748° | 9.8 J → 9.3 J |
-| `e16_light` | 1031 → 1118 | 2316° → 2592° | 10.7 J → 12.7 J |
-| `f15_full` | 1508 → 1549 | 3696° → 3863° | 18.9 J → 18.9 J |
-| `f15_light` | 1826 → 1812 | 4334° → 4169° | 19.5 J → 20.2 J |
+| `e16_full` | 799 → 900 | 1840° → 2138° | 9.8 J → 9.8 J |
+| `e16_light` | 1031 → 1019 | 2316° → 2396° | 10.7 J → 12.8 J |
+| `f15_full` | 1508 → 1514 | 3696° → 3671° | 18.9 J → 18.6 J |
+| `f15_light` | 1826 → 1791 | 4334° → 4098° | 19.5 J → 19.4 J |
 
 Average power stays **0.28–0.33 W** on the servo rail in both, matching every earlier board run. The
 per-case wobble follows fin travel, which follows the sim's noise seed, not the change.
@@ -89,28 +90,33 @@ time-to-OOM, and the board-health panel plots one step trace per sensor.
 In HITL these come from the sim, which delivers one sample per publish, so a clean result here is a
 **plumbing check** — it proves the field is recorded, mirrored and rendered end to end.
 
-### The same measurement on REAL sensors — and it finds a fault
+### The same measurement on REAL sensors — it found a fault, and then confirmed the repair
 
 Run without HITL at all (`diag_real_leak.probe()`: default config, real drivers, recorder on), the
 capture tells a different story:
 
-| stream | samples | `irq_runs` |
+| stream | before the wiring fix | after |
 |---|---|---|
-| `accel_adxl375` | 928 | **all 1** — interrupt live, one edge per wake |
-| `imu_lsm6dso32` | 32 | **all 0** — the interrupt never fires |
+| `accel_adxl375` | 928 samples, **all 1** | 924 samples, **all 1** |
+| `imu_lsm6dso32` | **32 samples, all 0** | **920 samples, all 1** |
 
-That zero is the LSM6DSO32's unwired INT1 (GPIO28 has no copper on the v0.1 PCB), and it is now a
-**value in the telemetry** rather than a log line someone has to notice. The sample counts show what
-it costs: 928 against 32 over the same window, because that driver waits out its fallback on every
-wake instead of sampling on data-ready.
+The zero was the LSM6DSO32's INT1 landing on the wrong pad — a **value in the telemetry** rather than
+a log line someone has to notice. The sample counts price it: 32 against 920 over the same window,
+because that driver waited out its fallback on every wake instead of sampling on data-ready. After the
+operator moved the wire, the same measurement reports a clean 1 on every sample. `irq_runs` found the
+fault and then verified the repair, which is the whole reason for the column.
 
 This is the case `irq_runs` exists for. Nothing in the accel or gyro *values* looks wrong — a driver
 polling its fallback still produces entirely plausible data — so without this column the degradation
 is invisible. It is also the v0.2 hardware item (route INT1) with a number attached at last, and the
 check that will confirm the fix worked.
 
-**Board-only leak on that same run: 202 KB/s, OOM ~158 s** — the figure this HITL matrix structurally
-cannot show.
+**Board-only leak, both interrupts live: 265 KB/s, OOM ~120 s** — the figure this HITL matrix
+structurally cannot show. Read that against the 331 KB/s / 96 s baseline: the wake-up rewrite is worth
+**-20 % leak and +25 % survival**, but it is NOT the 199 KB/s figure measured mid-repair. That reading
+was taken while the LSM6DSO32's interrupt was dead and it was sampling 29x less often, so part of the
+apparent win was simply a sensor not doing its job. With both parts working at full rate the honest
+number is 265 KB/s, and the 150 s target is not yet met.
 
 ## What this study establishes
 
