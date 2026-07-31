@@ -15,7 +15,6 @@ wired, else a plain period_ms poll, mirroring the ADXL375 driver. Gyro + accel s
 registers (0x22..0x2D), so one 12-byte read fetches both.
 """
 
-import asyncio
 import struct
 
 import commons
@@ -64,8 +63,14 @@ class Lsm6dso32(task.Task):
         self._dev = self._transport()  # register window over whichever bus the config names
         if self._dev is None:
             return False  # no such bus in config, or SPI selected with no cs_pin wired
-        self._period_ms: int = self.config.get('period_ms', 100)  # poll interval with no INT wired
-        self._fallback_ms: int = self.config.get('fallback_ms', 500)  # safety sample if INT silent
+        """
+        ONE knob. `period_us` is both the sample period and the interrupt fallback, because
+        commons.Waiter made them the same thing: a live edge returns on the first slice, a dead one
+        runs the slices out and the sample is taken anyway. Two constants that had to be kept
+        consistent became one that cannot disagree with itself.
+        """
+        self._period_us: int = self.config.get('period_us', 500_000)
+        self._period_ms: int = max(1, self._period_us // 1000)  # the wait's unit, resolved once
         self._buf = bytearray(12)  # gyro(6) + accel(6)
         self._ready = commons.Waiter()  # IRQ-kicked wake + sliced fallback (see commons.Waiter)
         self._int = None
@@ -136,23 +141,6 @@ class Lsm6dso32(task.Task):
         self._int.irq(self._ready.kick, Pin.IRQ_RISING)
         await self._dev.read_into(_OUTX_L_G, self._buf)  # clear data-ready -> next conversion = clean edge
 
-    def _ready_flagged(self) -> bool:
-        """
-        Did an INT1 edge arrive since the last check? Non-blocking, and clears the mark.
-
-        There used to be a SECOND mark here beside the ThreadSafeFlag, because that flag offers only a
-        blocking wait() and the polling fallback cannot use it -- it would re-block on the very line it
-        stopped trusting. Now that the flag IS a plain bool (commons.wait_for_ms), one mark serves both
-        paths. Safe from an ISR because a MicroPython soft IRQ cannot interleave a Python bytecode.
-
-        Args:
-            (none)
-
-        Returns:
-            True when an edge arrived since the previous call.
-        """
-        return self._ready.take() > 0  # a real bool: this is a yes/no for the polling fallback
-
     async def sample(self) -> tuple:
         """
         Read one accel + gyro sample as a flat 6-tuple.
@@ -196,20 +184,21 @@ class Lsm6dso32(task.Task):
             None; runs forever (a wedged board reboots rather than exits).
         """
         while True:
-            if self._int is not None and not self._int_silent:
-                try:
-                    self._irq_runs = await self._ready.wait(self._fallback_ms)
-                    self.strike(False, _INT_SILENT_LIMIT)  # an edge arrived: rearm the run
-                except asyncio.TimeoutError:
-                    if self.strike(True, _INT_SILENT_LIMIT):
-                        self._int_silent = True  # the line is dead, not merely jittery -> poll instead
-                        self.note('lsm6dso32 :: INT1 silent -- degraded to polling at %d ms',
-                                  self._period_ms)
-            else:
-                await asyncio.sleep_ms(self._period_ms)
-                if self._int is not None and self._ready_flagged():
-                    self._int_silent = False  # an edge arrived after all -> back to interrupt-driven
-                    self.strike(False, _INT_SILENT_LIMIT)
+            """
+            No branch, and no degradation dance. wait() covers both cases -- a live edge returns on
+            the first slice, a dead one runs the period out and we sample anyway -- so the driver no
+            longer has to decide which mode it is in, nor switch between them. `interrupt_silent`
+            survives as the OPERATOR view, derived from what the wait actually returned rather than
+            from a separate counter that could disagree with it: irq_runs 0 is a timed-out fallback,
+            and _INT_SILENT_LIMIT of them in a row means the line is dead rather than jittery.
+            """
+            self._irq_runs = await self._ready.wait(self._period_ms)
+            if self.strike(self._irq_runs == 0, _INT_SILENT_LIMIT):
+                self._int_silent = True
+                self.note('lsm6dso32 :: INT1 silent -- sampling on the %d ms fallback',
+                          self._period_ms)
+            elif self._irq_runs:
+                self._int_silent = False  # an edge arrived -> interrupt-driven again
             try:
                 sample = await self.sample()  # flat 6-tuple
                 self._accel.push(sample[:3])

@@ -79,8 +79,14 @@ class Vl53l4cx(task.Task):
         self._bus, self._addr = i2cbus.bind(self.controller.config, self.config, _ADDR)
         if self._bus is None:
             return False  # no such bus in config -> the Controller skips this device
-        self._period_ms: int = self.config.get('period_ms', 50)  # poll interval with no INT wired
-        self._fallback_ms: int = self.config.get('fallback_ms', 500)  # safety sample if INT silent
+        """
+        ONE knob. `period_us` is both the sample period and the interrupt fallback, because
+        commons.Waiter made them the same thing: a live edge returns on the first slice, a dead one
+        runs the slices out and the sample is taken anyway. Two constants that had to be kept
+        consistent became one that cannot disagree with itself.
+        """
+        self._period_us: int = self.config.get('period_us', 500000)
+        self._period_ms: int = max(1, self._period_us // 1000)  # the wait's unit, resolved once
         self._ready = commons.Waiter()  # IRQ-kicked wake + sliced fallback (see commons.Waiter)
         self._int = None
         try:
@@ -252,13 +258,8 @@ class Vl53l4cx(task.Task):
             None; runs forever (a wedged board reboots rather than exits).
         """
         while True:
-            if self._int is not None:
-                try:
-                    self._irq_runs = await self._ready.wait(self._fallback_ms)
-                except asyncio.TimeoutError:
-                    pass  # no interrupt within the window -> sample anyway (safety)
-            else:
-                await asyncio.sleep_ms(self._period_ms)
+            # no branch on whether an interrupt exists: wait() covers both (see adxl375)
+            self._irq_runs = await self._ready.wait(self._period_ms)
             try:
                 agl = await self._range()
                 if agl is not None:

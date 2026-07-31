@@ -16,7 +16,6 @@ interrupts go silent (dead sensor / wiring). With no int_pin it falls back to a 
 Uses the shared locked I2C bus (i2cbus), as it shares i2c:0 with other sensors.
 """
 
-import asyncio
 import struct
 
 import commons
@@ -60,8 +59,14 @@ class Adxl375(task.Task):
         self._dev = self._transport()  # register window over whichever bus the config names
         if self._dev is None:
             return False  # no such bus in config, or SPI selected with no cs_pin wired
-        self._period_ms: int = self.config.get('period_ms', 100)  # poll interval with no INT wired
-        self._fallback_ms: int = self.config.get('fallback_ms', 500)  # safety sample if INT silent
+        """
+        ONE knob. `period_us` is both the sample period and the interrupt fallback, because
+        commons.Waiter made them the same thing: a live edge returns on the first slice, a dead one
+        runs the slices out and the sample is taken anyway. Two constants that had to be kept
+        consistent became one that cannot disagree with itself.
+        """
+        self._period_us: int = self.config.get('period_us', 500000)
+        self._period_ms: int = max(1, self._period_us // 1000)  # the wait's unit, resolved once
         self._buf = bytearray(6)
         self._ready = commons.Waiter()  # IRQ-kicked wake + sliced fallback (see commons.Waiter)
         self._int = None
@@ -149,13 +154,9 @@ class Adxl375(task.Task):
             None; loops forever, pushing each sample to the databoard 'accel' slot and telemetry.
         """
         while True:
-            if self._int is not None:
-                try:
-                    self._irq_runs = await self._ready.wait(self._fallback_ms)
-                except asyncio.TimeoutError:
-                    pass  # no interrupt within the window -> sample anyway (safety)
-            else:
-                await asyncio.sleep_ms(self._period_ms)
+            # no branch on whether an interrupt exists: wait() covers both. With one wired it
+            # returns on the first slice; with none it simply runs the period out and we sample.
+            self._irq_runs = await self._ready.wait(self._period_ms)
             try:
                 accel = await self.sample()
                 self._accel.push(accel)  # one step: push our channel directly
