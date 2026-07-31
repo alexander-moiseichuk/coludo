@@ -39,3 +39,4 @@ The backward grid of the main board is used to connect the following items:
 | 6 | Right Servo | 32 | Right Elevon Servo Control |
 | 7 | Yaw Servo | 26 | Yaw Servo Control |
 | 8 | Left Servo | 27 | Left Elevon Servo Control | 
+| — | *(unlabelled 9th pad)* | — | Present in the Gerbers at (38.499, −4.387) mm — offset from the row and ~4.6 mm inboard. Not a signal: a mounting hole or test-point via. Recorded so a future reader does not go looking for a net that is not there. |
