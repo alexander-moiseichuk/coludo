@@ -372,9 +372,31 @@ across three board flights and fitting the line:
      stream rates is worth ~7 KB/s each and costs only plot resolution on channels sampled far above
      what the reports render.
 
-  Steps 1 and 3 are software and independent of the board revision. None is attempted yet: these are
-  flight-critical drivers, so each wants its own change with a before/after measurement from the two
-  diagnostics above.
+  **Done, and re-measured (7/31).** `commons.Waiter` replaced `asyncio.wait_for_ms` in all three
+  interrupt drivers (560 B/call → 48 B, doubling backoff), `to_str` came out of the LSM6DSO32
+  telemetry (224 B/sample of string formatting), and `period_ms`/`fallback_ms` merged into one
+  `period_us` with the interrupt branch deleted. The operator also fixed two wiring faults `irq_runs`
+  exposed — a misplaced INT1 wire and an ADXL375 CS that had come out.
+
+  **331 → 252 KB/s, OOM 96 → 127 s (−24 % leak, +32 % survival)**, with both interrupts live so the
+  figure is honest. Re-attributed:
+
+  | component | before | now | note |
+  |---|---|---|---|
+  | `accel_adxl375` | 111.3 | **40.2** | −64 % |
+  | `imu_lsm6dso32` | 63.7 | **50.6** | −21 % *while sampling 29× more often* |
+  | `imu_bno055` | 34.4 | **47.9** | untouched — now the largest single consumer |
+  | `airspeed_sdp810` | 12.7 | 22.0 | |
+  | `gnss` | 12.8 | 12.1 | |
+
+  The profile has FLATTENED: there is no dominant consumer left, the top three sit within 10 KB/s of
+  each other and together are 55 % of the total, and the remaining ~80 KB/s is spread thin across a
+  dozen tasks. That changes the strategy — further wins come from the shared paths every driver uses
+  (`Telemetry.push` at 192 B, the per-sample tuples at 80 B), not from another single hot spot.
+
+  **150 s needs ≤212 KB/s, i.e. −40 more.** `imu_bno055` alone is 47.9 and has never been looked at:
+  it reads a 24-byte block at 50 Hz and converts to floats, so `diag_alloc_hotloop` should price it
+  the way it priced the other two.
 
 - **Measured directly instead** (`test/diag_real_leak.py`: default config, real drivers, no sim, GC
   forced off): **~324 KB/s → OOM in ~99 s** from a 31.9 MB heap. That is well BELOW the ">150 s is
