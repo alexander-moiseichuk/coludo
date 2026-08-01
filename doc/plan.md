@@ -174,10 +174,22 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   `imu_bno055` **44.4 KB/s** — together **40 % of the whole leak**. `accel_adxl375` not yet measured
   (the CDC wedged); it runs at the same 100 Hz and should be assumed comparable until measured.
 
-  **The telemetry ROW is the cost, not the float pushes.** `Telemetry.push` is already tight (one `%`
-  pass, one encode) yet still measures **144 B for a 4-field row and 160 B for 7 fields** — at 100 Hz
-  that is 14–16 KB/s PER STREAM, which is the right order to explain the two numbers above. Options,
-  all measured on the board:
+  **CORRECTION — the telemetry row is NOT the cost.** An earlier revision of this entry claimed it was,
+  by multiplying the measured row cost by 100 Hz. That was wrong: the recorder already applies a GLOBAL
+  25 Hz decimation (`telemetry_us: 40000`, itself already halved from 50 Hz as "the cheapest leak
+  reduction available"), which every stream inherits unless it sets its own. At 25 Hz a 160 B row is
+  **4 KB/s** — under 10 % of `imu_lsm6dso32`'s 50.9 KB/s. Global decimation is therefore SPENT as a
+  lever; it cannot be applied twice.
+
+  **The cost is the 100 Hz SAMPLE LOOP**, which runs at full rate regardless of telemetry decimation.
+  For `lsm6dso32` the accountable per-sample pieces are two 3-element slices (96 B), the sample tuple
+  (~96 B with floats) and two databoard pushes (~64 B) = ~256 B x 100 Hz = **~26 KB/s**, leaving ~25 KB/s
+  unaccounted — the prime suspect being the I2C `readfrom` allocating a fresh bytes buffer per read, at
+  100 Hz. **Measure that next** (`readinto` into a preallocated buffer is the standard fix), and measure
+  `accel_adxl375`, before touching the row encoding at all.
+
+  The row encodings below stay priced and correct as measurements, but they are a SMALL lever at 25 Hz
+  and should not be the next move:
 
   | row encoding | bytes | us | note |
   |---|---|---|---|
