@@ -160,6 +160,24 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   fail separately (a receiver with almanac but no fix keeps emitting GGA at quality 0 while RMC goes
   void), and since dead reckoning makes an outage nearly invisible in the trajectory, these events are
   the only record that the receiver was dead.
+  **Fault matrix RE-RUN on the board 2026-08-01** (F15, 270 g, all five DONE — nothing regressed):
+
+  | scenario | miss | vs calm | maxpad | dur |
+  |---|---|---|---|---|
+  | calm reference (zero noise, no faults) | **113 m** | — | 161 m | 59.0 s |
+  | clean (5 % noise) | 121 m | +8 | 155 m | 56.4 s |
+  | GNSS dead 60 s | **152 m** | +39 | 166 m | 56.1 s |
+  | attitude dead 30 s | 138 m | +25 | 157 m | 55.5 s |
+  | both dead | 121 m | +8 | 189 m | 54.8 s |
+
+  **A dead GNSS now costs 39 m against a perfect flight, where the old matrix priced it at 720 m.**
+  Attitude loss costs 25 m. But the number that matters most is the calm reference: **a flight with NO
+  noise and NO faults still misses by 113 m and is still not in-zone.** The faults add 8–39 m on top of
+  a 113 m baseline failure, so degradation is no longer the limiting factor — the endgame is (see
+  Landing-strip precision). Fault tolerance can be considered adequate; accuracy cannot.
+  **Do not rank the fault cases against each other from this table.** `gnss_drop_s`/`attitude_drop_s`
+  inject at a RANDOM glide moment, so one run per case carries large scatter — which is why "both dead"
+  lands better than either single fault, an artefact rather than a result. Ranking needs several seeds.
   **Still to measure:** GNSS position is noised in neither sim, so a *noisy* (as opposed to absent) fix
   remains untested.
 - **Float allocation is the leak, and the 100 Hz channels are where it lives** — **PARTLY DONE
