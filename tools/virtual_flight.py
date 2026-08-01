@@ -239,6 +239,8 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     apogee_drop_m = seq_c.get('apogee_drop_m', 5.0)
     apogee_max = None  # baro peak tracking (one boost per run, no reset needed)
     apogee_since = None
+    apogee_smooth = None  # IIR-smoothed elevation feeding the peak (commons.apogee_step)
+    launch_credit, launch_last = 0, None  # leaky launch dwell (commons.dwell_step)
     land_agl_m = seq_c.get('land_agl_m', 5.0)
     land_ms = seq_c.get('land_ms', 300)
     laser_range_m = hitl_c.get('laser_range_m', 4.0)
@@ -337,14 +339,20 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
             pitch_m *= 2.0
             accel_m *= 2.0
 
-        # --- stage machine (mirrors tasks/sequencer.py; separation off -> boost timeout drives glide) ---
+        # --- stage machine: the DETECTORS are commons (shared with tasks/sequencer.py); separation
+        # off -> boost timeout drives glide ---
         if stage == 'setting':
-            if accel_m > launch_g:
-                if (t - since) * 1000.0 >= launch_ms:
-                    stage, since = 'boosting', t
-                    rows.event(t, 'controller :: stage -> boosting')
-            else:
-                since = t
+            """
+            LAUNCH detect via commons.dwell_step, the same call the board makes. This was the last
+            hand-written copy of a board detector left in this file, and it hid a real result: the
+            noise-tolerance study measured THIS loop's launch detector and reported it as the board's.
+            Sharing the helper is what makes a fix here testable at all.
+            """
+            launch_credit, launch_last, fired = commons.dwell_step(
+                accel_m > launch_g, t * 1000.0, launch_credit, launch_last, launch_ms)
+            if fired:
+                stage, since = 'boosting', t
+                rows.event(t, 'controller :: stage -> boosting')
         elif stage == 'boosting':
             """
             APOGEE detect: blind for apogee_arm_ms after entry (the burn pressure wave corrupts the
@@ -355,8 +363,9 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
             """
             elevation_now = altitude_m - body.elev0
             if (t - since) * 1000.0 >= apogee_arm_ms:
-                apogee_max, apogee_since, fired = commons.apogee_step(
-                    elevation_now, t * 1000.0, apogee_max, apogee_since, apogee_drop_m, launch_ms)
+                apogee_max, apogee_since, apogee_smooth, fired = commons.apogee_step(
+                    elevation_now, t * 1000.0, apogee_max, apogee_since, apogee_smooth,
+                    apogee_drop_m, launch_ms)
                 if fired:
                     stage, since = 'gliding', t
                     body.begin_glide()

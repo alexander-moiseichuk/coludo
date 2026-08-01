@@ -40,6 +40,11 @@ _LOBE_B: int = 1   # the gate_b-side lobe
 _LOBE_A: int = -1  # the gate_a-side lobe
 
 
+_RECKON_MAX_STEP_US: int = const(500000)  # dead-reckoning integration step ceiling (0.5 s). A stage hop,
+# a GC pause or a first call after a long gap would otherwise integrate one huge step from a heading
+# sampled at the far end of it; skipping the advance loses a little travel and never invents any.
+
+
 class Heading:
     """
     The endgame HOLDING pattern, self-contained like controller.Stage.
@@ -194,13 +199,20 @@ class Guidance:
     dispatches the stage's law and fills the setpoint slots.
     """
 
-    def __init__(self, config: GuidanceConfig, mission, governor, position, agl, elevation=None):
+    def __init__(self, config: GuidanceConfig, mission, governor, position, agl, elevation=None,
+                 wind=None):
         self._config: GuidanceConfig = config
         self._mission = mission  # the landing zone + launch point live here (may be None)
         self._governor = governor  # airspeed estimate -> the boost rod gate
         self._position = position  # injected handle: read() -> ((lat, lon), source, age_ms)
         self._agl = agl  # injected handle: value() -> height above ground (m) or None
         self._elevation = elevation  # baro height above the pad (m) -> the endgame band (optional)
+        self._wind = wind  # injected WindEstimator: components() -> (east, north) m/s (optional)
+        self._reckoned = None  # the last real fix (lat, lon) -- the dead-reckoning SEED, never mutated
+        self._reckon_east: float = 0.0  # metres travelled east of that seed since the fix was lost
+        self._reckon_north: float = 0.0  # metres travelled north of it (see _reckon: metres, not degrees)
+        self._reckoned_us: int = 0  # when the reckoned offset was last advanced (ticks_us)
+        self.reckoning: bool = False  # True while navigating on dead reckoning -- telemetry reads it
         """
         per-stage law table (the sequencer._detect pattern): dispatch is O(1) and a new
         stage's law is one entry + one method. GLIDING and LANDING share the steering law (it
@@ -553,6 +565,9 @@ class Guidance:
         config = self._config
         position, source, age_ms = self._position.read()
         if source is not None and position is not None and age_ms < config.position_age_max_ms:
+            # keep the dead-reckoning seed fresh, so losing the fix starts from the last real one
+            self._reckoned, self._reckoned_us, self.reckoning = position, now_us, False
+            self._reckon_east = self._reckon_north = 0.0  # re-seeded: the offset restarts at the fix
             if final:
                 self._nav_heading = navigation.approach_to(position, target, gate_a, gate_b, heading,
                                                            config.final_cross_gain, config.final_intercept)
@@ -578,10 +593,78 @@ class Guidance:
                     self._nav_heading = navigation.steer_to(position, zone[0], zone[1],
                                                             target, gate_a, gate_b)[0]
         else:
-            launch = self._mission.launch_point()  # tier 2: open-loop from the launch point (CC-set)
-            self._nav_heading = navigation.steer_to(launch, zone[0], zone[1], target, gate_a, gate_b)[0] \
-                if launch is not None else self._heading_hold  # tier 3: blind
+            """
+            No usable fix. GNSS is EXPECTED to be missing for much of a flight -- the boost is a
+            high-g, high-vibration, antenna-shadowed few seconds and a receiver that loses lock there
+            can take tens of seconds to reacquire, which on a <60 s flight can mean it never returns.
+            So this branch is a design case, not an error path.
+
+            Tier 2 is DEAD RECKONING: advance the last known position by the velocity the glider can
+            still measure without GNSS -- airspeed along the current heading, plus the last wind
+            estimate. It degrades gradually (heading error and stale wind integrate) where the old
+            fallback did not degrade at all: it steered the pad->target bearing forever, ignoring that
+            the glider had moved, so it flew over the target and kept going. Every input here survives
+            a dead GNSS: airspeed is the pitot/governor, heading is the fused compass.
+
+            The wind estimate itself needs GNSS, so it necessarily freezes at its last value. That is
+            the dominant DR error and it is bounded and known -- a frozen 5 m/s estimate that is wrong
+            by 2 m/s costs ~80 m over 40 s, against the ~720 m a frozen position costs.
+            """
+            self.reckoning = self._reckoned is not None
+            self._nav_heading = self._reckon(now_us, heading, zone, target, gate_a, gate_b)
         return self._nav_heading
+
+    def _reckon(self, now_us: int, heading: float, zone: tuple, target: tuple,
+                gate_a: tuple, gate_b: tuple) -> float:
+        """
+        Navigate with no usable GNSS fix: dead-reckon the position, else fall back to the launch point.
+
+        Seeds from the last GNSS fix the moment one goes stale (`_reckoned` is refreshed on every
+        tier-1 pass), then integrates air velocity + wind per call. Falls through to the launch point
+        (tier 3) and finally the captured heading (tier 4) when there has never been a fix at all --
+        the pad IS a known position, so a GNSS that never locks still steers the right way initially.
+
+        Args:
+            now_us - the current time (ticks_us), for the integration step.
+            heading - the current fused heading (deg) the air velocity points along.
+            zone, target, gate_a, gate_b - the landing-zone geometry from the Mission.
+
+        Returns:
+            The heading to steer (deg).
+        """
+        if self._reckoned is None:
+            launch = self._mission.launch_point()  # tier 3: open-loop from the launch point (CC-set)
+            return navigation.steer_to(launch, zone[0], zone[1], target, gate_a, gate_b)[0] \
+                if launch is not None else self._heading_hold  # tier 4: blind
+        step_us = commons.ticks_diff(now_us, self._reckoned_us)
+        self._reckoned_us = now_us
+        if 0 < step_us < _RECKON_MAX_STEP_US:  # a stage hop / long gap leaves the position untouched
+            step_s = step_us / 1000000.0
+            airspeed = self._governor.airspeed()
+            radians = math.radians(heading)
+            east = airspeed * math.sin(radians)
+            north = airspeed * math.cos(radians)
+            if self._wind is not None:
+                wind_east, wind_north = self._wind.components()
+                east += wind_east
+                north += wind_north
+            """
+            Accumulate the displacement in METRES from the seed fix, and convert ONCE below -- do NOT
+            advance the latitude/longitude per step.
+
+            MEASURED on this board: MicroPython here is single-precision, so a latitude near 48 deg has
+            an ULP of ~0.4 m. Adding a 0.2 m step (2 m/s over a 100 ms tick) to it changes NOTHING --
+            `(48.01 + 0.2/M_PER_DEG - 48.01) * M_PER_DEG` returns exactly 0.0 -- and even a 4 m step
+            lands 4.5 % short at 3.82 m. Per-step integration in degrees therefore quantizes away
+            precisely when the glider is slow, which is exactly when dead reckoning has to work; it
+            would have looked correct and silently held position. Metres accumulate near zero where
+            float32 has resolution to spare, and the single conversion applies the quantization once to
+            the whole offset instead of once per tick.
+            """
+            self._reckon_east += east * step_s
+            self._reckon_north += north * step_s
+        reckoned = navigation.advance(self._reckoned, self._reckon_east, self._reckon_north)
+        return navigation.steer_to(reckoned, zone[0], zone[1], target, gate_a, gate_b)[0]
 
     def _circle_heading(self, east: float, north: float, span: float, endgame) -> float:
         """

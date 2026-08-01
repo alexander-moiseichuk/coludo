@@ -544,8 +544,20 @@ a phone hotspot or laptop is a convenience, never a dependency.
   "like Cape Canaveral"). At boot, the first GNSS fix selects the site whose pad is nearest,
   gated by `max_range_m` (200 m). On a match: that site's zone becomes the mission zone and the
   **live fix** (not the stored pad) becomes the launch point — kept live until **arm**, which
-  FREEZES the fix as the persistent launch point (so the tier-2 open-loop heading and the
+  FREEZES the fix as the persistent launch point (so the open-loop heading tier and the
   warm-start crumb's launch field survive a mid-flight fix loss; a CC-set position always wins).
+* **Navigating without a fix — four tiers.** GNSS is EXPECTED to drop through the boost (high-g,
+  vibration, antenna shadow) and may never reacquire inside a <60 s flight, so losing it is a design
+  case, not an error path. `guidance` degrades in order: **(1)** a fresh fix inside
+  `position_age_max_ms` steers normally; **(2)** no fresh fix but one seen earlier →
+  **dead reckoning**, advancing the last fix by airspeed × heading plus the last wind estimate (every
+  input survives a dead GNSS — pitot and fused compass), so the position keeps MOVING; **(3)** no fix
+  ever seen → the open-loop launch-point bearing, since the pad is itself a known position;
+  **(4)** no launch point either → hold the heading captured on entering control.
+  Tier 2 exists because tier 3 does not degrade — it steers the pad→target bearing forever and flies
+  over the target. Dead reckoning degrades gradually instead; the frozen wind estimate is the dominant
+  residual error (it needs GNSS to update), bounded at roughly 80 m per 2 m/s of error over 40 s.
+  `flight.csv`'s `reckoning` column records when the glider is flying on tier 2.
 * **No site within 200 m → the spiral-landing fallback.** The mission SYNTHESIZES a GENEROUS box
   the spiral just has to land INSIDE — we always know the pad, so this trades objective #3
   (near-centre) for #2 (in-zone) and needs no tight midpoint: a `fallback_width_m` (100 m, the

@@ -19,7 +19,7 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | `checkpoint.csv` | board | `warmstart.py` | `stage`, `altitude`, `speed`, `airspeed`, `ticks_ms` |
 | `fins.csv` | board | `hitl.py` | `eleron_left`, `eleron_right`, `yaw` |
 | `fins.csv` | host sim | `virtual_flight.py` | `eleron_left`, `eleron_right`, `yaw` |
-| `flight.csv` | board | `flight.py` | `stage`, `active`, `airspeed_cms`, `fin_cap`, `roll_sp`, `pitch_sp`, `heading_err`, `roll_cmd`, `pitch_cmd`, `yaw_cmd`, `wind_cms`, `wind_from` |
+| `flight.csv` | board | `flight.py` | `stage`, `active`, `airspeed_cms`, `fin_cap`, `roll_sp`, `pitch_sp`, `heading_err`, `roll_cmd`, `pitch_cmd`, `yaw_cmd`, `wind_cms`, `wind_from`, `reckoning` |
 | `flight.csv` | host sim | `virtual_flight.py` | `stage`, `active`, `airspeed_cms`, `fin_cap`, `roll_sp`, `pitch_sp`, `heading_err`, `roll_cmd`, `pitch_cmd`, `yaw_cmd`, `wind_cms`, `wind_from` |
 | `gnss.csv` | board | `hitl.py` | `lat`, `lon`, `speed_kn`, `course` |
 | `gnss.csv` | host sim | `virtual_flight.py` | `lat`, `lon`, `speed_kn`, `course` |

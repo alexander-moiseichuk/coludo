@@ -117,16 +117,39 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   **floor the spiral radius** at what the remaining altitude can complete (`R_min` is already computed
   for the airspeed-gated bank, so the input exists). Either needs a sim sweep plus a `flight_kpi`
   regression against the existing capture set before it goes near the airframe.
-- **High-noise robustness** — **RE-SCOPED (7/31, `doc/sims/TMS-7-noise_tolerance`).** The hypothesis
-  here was that "the bank loop reads attitude, so heavy noise degrades the orbit", wanting a filter or
-  rate-limit on the steering input. Measured per channel at 100 % noise, that is wrong: attitude, gyro
-  rate and heading at twenty times nominal move the landing by **at most 5 m**. The steering input
-  needs no protection. The fragility is in the **sequencer**: 100 % accel noise means launch is
-  **never detected** (the glider never leaves SETTING), and 100 % baro noise fires apogee **2.8 s
-  early**, separating at 168 m instead of 268 m. Re-scoped to (1) launch detect against accel noise —
-  and find out why the `launch_alt_m` baro backup did not save it, since that is its purpose — and
-  (2) apogee detect against baro noise, where the peak likely needs filtering before the `apogee_drop_m`
-  comparison. Both are cheap `sequencer` changes and both matter far more than the control law.
+- **High-noise robustness** — **RE-SCOPED, THEN DONE (7/31, `doc/sims/TMS-7-noise_tolerance`).** The
+  hypothesis here was that "the bank loop reads attitude, so heavy noise degrades the orbit", wanting a
+  filter or rate-limit on the steering input. Measured per channel at 100 % noise, that is wrong:
+  attitude, gyro rate and heading at twenty times nominal move the landing by **at most 5 m**. The
+  steering input needed no protection at all. The fragility was in the **sequencer**, and both halves
+  are now fixed and shared with the host sim through `commons`:
+  - **Launch** — a leaky dwell (`commons.dwell_step`): the condition must hold `launch_ms` of NET time,
+    and a dip drains the credit instead of resetting it. 100 % accel noise went from *never launching*
+    to flying **identically to the clean baseline** (268 m apogee, 48.9 s). Keeping the TIME unit was
+    the whole trick — a leaky *sample* count is equally noise-tolerant but silently turns `launch_ms`
+    into a sample count, so the trigger drifts with tick rate; `test_sequencer` caught that.
+  - **Apogee** — the peak is a running maximum, so one high sample was latched forever and every later
+    reading judged against it. `commons.apogee_step` now IIR-smooths elevation (1/4) before comparing.
+    Apogee improves at every noise level (15 %: 180→215 m, 50 %: 168→178 m, true 268 m). Heavier
+    smoothing was measured and rejected: no gain noisy, ~20 m of lag clean.
+  - The **100 % altitude case stays at 177 m and that is correct** — `noisy` scales by `abs(value)+1`,
+    so 100 % makes the baro uniform-random over `[0, 2×altitude]`, carrying zero information. What flies
+    it then is the burnout timeout, which is the fallback working. That case tests redundancy, not
+    filtering.
+  - Also fixed the study's own blind spot: `virtual_flight` had a private copy of launch detect, so the
+    original sweep graded the host, not the board. **A sim that reimplements the flight code grades
+    itself.**
+- **GNSS miss/absence tolerance** — **DONE (7/31).** The receiver is *expected* to lose lock through
+  the boost (high-g, vibration, antenna shadow) and may never reacquire inside a <60 s flight, so this
+  is a design case rather than an error path. The no-fix branch used to steer the pad→target bearing
+  forever, ignoring that the glider had moved — the 720 m the fault matrix priced. It now **dead-reckons**
+  (`guidance._reckon`): advance the last fix by airspeed × heading plus the last wind estimate, every
+  input of which survives a dead GNSS. Tiers are now 1 live fix → 2 dead reckoning → 3 launch point
+  (never locked at all) → 4 blind heading hold. `flight.csv` carries a `reckoning` column so the
+  operator sees it. Steps over 0.5 s are skipped rather than integrated in one jump. Frozen wind is the
+  dominant residual error and is bounded: a 2 m/s estimate error costs ~80 m over 40 s, against ~720 m
+  for a frozen position. **Still to measure:** the fault matrix's 720 m wants re-running, and GNSS
+  position is noised in neither sim, so a *noisy* (as opposed to absent) fix is untested.
 - **`launch.config` autogen** + GPX export of telemetry. Deferred hardware: outdoor GNSS fix.
 
 ### Near-term work from `findings.txt` (quality pass)

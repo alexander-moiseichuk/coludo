@@ -129,8 +129,8 @@ async def amain():
     """
     rows = _drain_stream('flight.csv')
     assert rows[0] == ('uptime;stage;active;airspeed_cms;fin_cap;roll_sp;pitch_sp;heading_err;'
-                       'roll_cmd;pitch_cmd;yaw_cmd;wind_cms;wind_from'), rows[0]
-    assert len(rows[1].split(';')) == 13  # uptime + the 12 control-state fields
+                       'roll_cmd;pitch_cmd;yaw_cmd;wind_cms;wind_from;reckoning'), rows[0]
+    assert len(rows[1].split(';')) == 14  # uptime + the 13 control-state fields
     unit._telemetry._last_us = time.ticks_add(time.ticks_us(), -unit._tlm_period_us)  # force due now
     unit._tick()
     live = _drain_stream('flight.csv')[0].split(';')

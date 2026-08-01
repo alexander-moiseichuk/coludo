@@ -62,6 +62,12 @@ import os
 M_PER_DEG: float = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat));
                              # shared by navigation + sim_model (flat-earth geo) -- one definition.
 
+APOGEE_SMOOTH: float = 4.0  # IIR weight divisor for the apogee peak tracker: the smoothed elevation
+                            # moves 1/4 of the way to each new sample. A running maximum latches any
+                            # single high spike forever, so the peak -- not just the descent -- needs
+                            # noise immunity; see apogee_step. Costs ~4 samples of lag, far inside
+                            # apogee_drop_m of altitude.
+
 SERVO_NEUTRAL_DEG: int = 90  # default fin/servo neutral angle (deg): the zero-deflection centre the mixer
                              # holds when disarmed/degraded and the HITL sim assumes when recovering fin
                              # deflections. A board may override per surface via config `mixer.neutral_deg`.
@@ -254,7 +260,44 @@ def id_classify(read, expected: int) -> str:
         return 'id reads 0xFF -- bus idle-high: no device driving MISO (absent / MISO miswired)'
     return 'id reads 0x%02X, expected 0x%02X -- wrong device on this bus/select (crosswired)' % (read, expected)
 
-def apogee_step(elevation, now_ms: int, peak, since_ms, drop_m, dwell_ms: int) -> tuple:
+def dwell_step(active: bool, now_ms: int, credit_ms: int, last_ms, threshold_ms: int) -> tuple:
+    """
+    One step of a LEAKY dwell: the condition must hold `threshold_ms` of NET time, dips only drain it.
+
+    The plain "sustained since" dwell it replaces reset its start on any single sample that missed, which
+    is fine for a clean signal and useless for a noisy one: at 100 % accel noise the magnitude crosses
+    the launch threshold in both directions every few samples, so an unbroken run of `launch_ms` never
+    happens and MEASURED (doc/sims/TMS-7-noise_tolerance) the glider never left the pad at all.
+
+    Draining rather than resetting keeps the tolerance without changing the UNIT. That distinction cost
+    a revert: replacing the dwell with a leaky count-of-samples also worked, but it silently redefined
+    `launch_ms` into a sample count, so the trigger's timing would drift with tick rate and a documented
+    config knob would quietly stop doing anything. Time in, time out -- a threshold_ms of 100 still means
+    100 ms, and a lone spike still drains to nothing and resets exactly as before.
+
+    Pure and stateless (the caller owns the state) for the same reason as apogee_step below: launch
+    detect exists on the board AND in the host sim, and the two must not drift apart.
+
+    Args:
+        active - whether the condition holds for THIS sample.
+        now_ms - the caller's monotonic clock in milliseconds.
+        credit_ms - net time the condition has held so far, from the previous call.
+        last_ms - the previous call's clock, or None when no dwell is in progress.
+        threshold_ms - the net time the condition must hold before it counts.
+
+    Returns:
+        (credit_ms, last_ms, fired) -- the updated state, and True once the dwell is satisfied.
+    """
+    if last_ms is None:  # no dwell in progress: an active sample starts the clock, at zero credit
+        return (0, now_ms, False) if active else (0, None, False)
+    step = now_ms - last_ms
+    credit = credit_ms + step if active else credit_ms - step
+    if credit <= 0:
+        return 0, None, False  # fully drained -> the dwell is over and must start afresh
+    return min(credit, threshold_ms), now_ms, credit >= threshold_ms
+
+
+def apogee_step(elevation, now_ms: int, peak, since_ms, smooth, drop_m, dwell_ms: int) -> tuple:
     """
     One step of APOGEE detection: track the baro peak, report when it has fallen off it.
 
@@ -271,22 +314,35 @@ def apogee_step(elevation, now_ms: int, peak, since_ms, drop_m, dwell_ms: int) -
     Args:
         elevation - the current baro height above the pad, or None while not armed / no reading.
         now_ms - the caller's monotonic clock in milliseconds.
-        peak - the highest elevation seen so far, or None before the first reading.
+        peak - the highest SMOOTHED elevation seen so far, or None before the first reading.
         since_ms - when the fall below the peak began, or None if not currently below it.
+        smooth - the smoothed elevation carried from the previous call, or None to seed it.
         drop_m - how far below the peak counts as descending (same units as elevation).
         dwell_ms - how long that fall must be sustained before it is apogee rather than a dip.
 
     Returns:
-        (peak, since_ms, fired) -- the updated state, and True exactly when apogee is confirmed.
+        (peak, since_ms, smooth, fired) -- the updated state, True exactly when apogee is confirmed.
     """
     if elevation is None:
-        return peak, since_ms, False
-    if peak is None or elevation > peak:
-        return elevation, None, False        # still climbing -> raise the peak, reset the dwell
-    if elevation < peak - drop_m:            # fallen off the peak -> descending
+        return peak, since_ms, smooth, False
+    """
+    SMOOTH BEFORE COMPARING, because the peak is a running MAXIMUM and a maximum has no noise immunity
+    at all: one high baro sample is latched forever, and every later reading is then judged against that
+    spike rather than against the trajectory. MEASURED at 100 % baro noise -- apogee fired 2.8 s early,
+    separating at 168 m instead of 268 m and cutting the flight from 48.8 s to 32.8 s. The drop band
+    below rejects noise on the DESCENDING side only; this is the same protection for the peak itself.
+
+    A first-order IIR, weight 1/APOGEE_SMOOTH, chosen over a sample window because it needs one scalar
+    of state rather than a ring buffer -- the flight slice runs with GC off and a per-call allocation
+    here is a leak. The lag it costs (~4 samples, tens of ms) is far inside apogee_drop_m of altitude.
+    """
+    smooth = elevation if smooth is None else smooth + (elevation - smooth) / APOGEE_SMOOTH
+    if peak is None or smooth > peak:
+        return smooth, None, smooth, False   # still climbing -> raise the peak, reset the dwell
+    if smooth < peak - drop_m:               # fallen off the peak -> descending
         since_ms = now_ms if since_ms is None else since_ms
-        return peak, since_ms, (now_ms - since_ms) >= dwell_ms
-    return peak, None, False                 # inside the drop band (noise) -> not descending yet
+        return peak, since_ms, smooth, (now_ms - since_ms) >= dwell_ms
+    return peak, None, smooth, False         # inside the drop band (noise) -> not descending yet
 
 class Waiter:
     """

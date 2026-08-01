@@ -168,20 +168,29 @@ async def amain():
     apogee detect: in BOOSTING the baro peaks then falls apogee_drop_m (5 m) -> deploy at the TOP of the
     arc (mass/motor-independent), before the long burnout-timeout fallback. The detector ARMS
     apogee_arm_ms (50 here) after the entry TICK -- a reading inside the window is ignored.
+
+    Elevation is IIR-smoothed before the peak comparison (commons.APOGEE_SMOOTH), because a running
+    maximum latches any single high sample forever and then judges the whole descent against that
+    spike. The cost is a few samples of lag, and this test pins it: one reading below the peak is no
+    longer enough to open the dwell, a short descending RAMP is. At the ~100 Hz the baro actually runs
+    that is tens of milliseconds, far inside apogee_drop_m of altitude.
     """
     seq._tick(2120)   # BOOSTING entry seen -> the arming clock starts here
     elevation.push(80.0)
     seq._tick(2140)   # 20 ms in: a burn spike INSIDE the arming window...
     assert seq._apogee_max is None           # ...does not poison the peak tracker
-    elevation.push(150.0)
-    seq._tick(2200)   # armed (80 ms past entry): climbing -> peak tracks up
     elevation.push(240.0)
-    seq._tick(2210)   # new peak
+    seq._tick(2200)   # armed (80 ms past entry): the first armed reading seeds the smoother
+    assert seq._apogee_max == 240.0          # seeded, not smoothed toward from zero
     elevation.push(233.0)
-    seq._tick(2220)   # fell 7 m below the 240 m peak -> the apogee dwell starts
-    assert ctrl.stage == Stage.BOOSTING      # not yet SUSTAINED (a single dip is not apogee)
+    seq._tick(2210)   # one sample below the peak: the SMOOTHED value is still inside the drop band
+    assert ctrl.stage == Stage.BOOSTING
+    for tick in range(2220, 2270, 10):       # a descending ramp -> the smoothed value falls off the peak
+        elevation.push(233.0)
+        seq._tick(tick)
+    assert ctrl.stage == Stage.BOOSTING      # falling, but not yet SUSTAINED (a dip is not apogee)
     elevation.push(232.0)
-    seq._tick(2330)   # still down, >100 ms later -> deploy
+    seq._tick(2400)   # still down, >100 ms after the dwell opened -> deploy
     assert ctrl.stage == Stage.GLIDING
 
     # operator hold (ground test): manual pauses auto-sequencing -- a sustained launch is ignored

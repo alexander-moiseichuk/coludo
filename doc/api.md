@@ -270,7 +270,35 @@ Returns:
     A human-readable diagnosis string: 'ok' when read == expected, else the most likely wiring/
     power fault inferred from read (None / 0x00 / 0xFF / a wrong non-zero id).
 
-### `apogee_step(elevation, now_ms: int, peak, since_ms, drop_m, dwell_ms: int) -> tuple`
+### `dwell_step(active: bool, now_ms: int, credit_ms: int, last_ms, threshold_ms: int) -> tuple`
+
+One step of a LEAKY dwell: the condition must hold `threshold_ms` of NET time, dips only drain it.
+
+The plain "sustained since" dwell it replaces reset its start on any single sample that missed, which
+is fine for a clean signal and useless for a noisy one: at 100 % accel noise the magnitude crosses
+the launch threshold in both directions every few samples, so an unbroken run of `launch_ms` never
+happens and MEASURED (doc/sims/TMS-7-noise_tolerance) the glider never left the pad at all.
+
+Draining rather than resetting keeps the tolerance without changing the UNIT. That distinction cost
+a revert: replacing the dwell with a leaky count-of-samples also worked, but it silently redefined
+`launch_ms` into a sample count, so the trigger's timing would drift with tick rate and a documented
+config knob would quietly stop doing anything. Time in, time out -- a threshold_ms of 100 still means
+100 ms, and a lone spike still drains to nothing and resets exactly as before.
+
+Pure and stateless (the caller owns the state) for the same reason as apogee_step below: launch
+detect exists on the board AND in the host sim, and the two must not drift apart.
+
+Args:
+    active - whether the condition holds for THIS sample.
+    now_ms - the caller's monotonic clock in milliseconds.
+    credit_ms - net time the condition has held so far, from the previous call.
+    last_ms - the previous call's clock, or None when no dwell is in progress.
+    threshold_ms - the net time the condition must hold before it counts.
+
+Returns:
+    (credit_ms, last_ms, fired) -- the updated state, and True once the dwell is satisfied.
+
+### `apogee_step(elevation, now_ms: int, peak, since_ms, smooth, drop_m, dwell_ms: int) -> tuple`
 
 One step of APOGEE detection: track the baro peak, report when it has fallen off it.
 
@@ -287,13 +315,14 @@ burn) and the burnout-timeout fallback: those need the caller's own clock and st
 Args:
     elevation - the current baro height above the pad, or None while not armed / no reading.
     now_ms - the caller's monotonic clock in milliseconds.
-    peak - the highest elevation seen so far, or None before the first reading.
+    peak - the highest SMOOTHED elevation seen so far, or None before the first reading.
     since_ms - when the fall below the peak began, or None if not currently below it.
+    smooth - the smoothed elevation carried from the previous call, or None to seed it.
     drop_m - how far below the peak counts as descending (same units as elevation).
     dwell_ms - how long that fall must be sustained before it is apogee rather than a dip.
 
 Returns:
-    (peak, since_ms, fired) -- the updated state, and True exactly when apogee is confirmed.
+    (peak, since_ms, smooth, fired) -- the updated state, True exactly when apogee is confirmed.
 
 ### `class Waiter`
 
@@ -997,7 +1026,7 @@ The per-stage control law.
 setpoint(stage) gates control stages; enter() captures the holds on entering control; compute()
 dispatches the stage's law and fills the setpoint slots.
 
-- `__init__(config: GuidanceConfig, mission, governor, position, agl, elevation=None)` — constructor
+- `__init__(config: GuidanceConfig, mission, governor, position, agl, elevation=None, wind=None)` — constructor
 - `setpoint(stage: int)` — The configured attitude setpoint dict for a stage, or None when it is not a CONTROL stage.
 - `reachability(glide_ratio: float, wind_e: float=0.0, wind_n: float=0.0, airspeed: float=0.0)` — Can the glider still glide to the zone from here?
 - `min_turn_radius(bank_deg: float) -> float` — The tightest coordinated turn the airframe can HOLD at `bank_deg` and its LIVE airspeed.
@@ -1254,6 +1283,22 @@ Args:
 
 Returns:
     (east, north) offset in metres.
+
+### `advance(position: tuple, east: float, north: float) -> tuple`
+
+Move a position by a metre (east, north) offset -- the inverse of offset(), same flat-earth model.
+
+Exists for DEAD RECKONING: with no GNSS fix the glider propagates its last known position by the
+air velocity it can still measure (airspeed x heading) plus the last wind estimate, so navigation
+keeps a moving position instead of a frozen one. Equirectangular like offset(), which is exact
+enough over the hundreds of metres a flight covers.
+
+Args:
+    position - the (latitude, longitude) to move from (decimal degrees).
+    east, north - the offset to apply (metres).
+
+Returns:
+    The new (latitude, longitude) in decimal degrees.
 
 ### `compass(east: float, north: float) -> float`
 

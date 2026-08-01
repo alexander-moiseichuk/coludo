@@ -134,12 +134,14 @@ def test_boost_hold():
 
 def test_heading_tiers():
     """The three GPS-degrading tiers of the glide target heading, and the freshness gate."""
-    # tier 3: no fix, no launch point -> hold the heading captured at enter() (blind)
+    # tier 4: no fix, no launch point -> hold the heading captured at enter() (blind)
     unit, position, _a, _g = _build()
     unit.enter(200.0, 0, 0)
     assert unit.compute(Stage.GLIDING, {}, 0.0, 0) is True
     assert unit.heading_error == guidance.heading_error(200.0, 0.0)
-    # tier 2: no fix, CC-set launch point (west of the zone) -> launch->left-gate bearing (~east, 90)
+    # tier 3: no fix EVER, CC-set launch point (west of the zone) -> launch->left-gate bearing (~east, 90).
+    # Tier 2 (dead reckoning) cannot apply until a fix has been seen, so this is what a receiver that
+    # never locks at all falls back to.
     unit, position, _a, _g = _build(launch=(48.0005, 10.990))
     unit.enter(200.0, 0, 0)
     unit.compute(Stage.GLIDING, {}, 0.0, 0)
@@ -149,11 +151,18 @@ def test_heading_tiers():
     unit._nav_heading = None  # invalidate the cache (inputs changed faster than nav_period on purpose)
     unit.compute(Stage.GLIDING, {}, 0.0, 0)
     assert abs(unit.heading_error - (-90)) < 5  # ~270 -> wrapped -90 from a 0 heading
-    # tier-1 freshness gate: an age past position_age_max_ms skips tier 1 even on a live fix
+    """
+    tier-1 freshness gate: an age past position_age_max_ms skips tier 1 even on a live fix, and what
+    catches it is now tier 2 -- DEAD RECKONING from the fix just seen (east of the zone, so still ~270)
+    rather than the launch point (west of it, ~90). This assertion used to read 90 and the change of
+    sign IS the fix: a receiver that drops out mid-flight used to throw away everything it had learned
+    and steer as if the glider were back on the pad.
+    """
     unit._config.position_age_max_ms = 0
     unit._nav_heading = None
     unit.compute(Stage.GLIDING, {}, 0.0, 0)
-    assert abs(unit.heading_error - 90) < 5  # gated off tier 1 -> tier 2 launch bearing
+    assert abs(unit.heading_error - (-90)) < 5  # gated off tier 1 -> tier 2 reckons on from the last fix
+    assert unit.reckoning is True
     # no zone at all -> blind hold regardless of the fix
     blind, position, _a, _g = _build(zone=None)
     position.reading = ((48.0005, 11.020), 'gnss', 0)
@@ -420,6 +429,87 @@ def test_hold_law():
     assert unit.heading_error == 10  # vs the captured 100, not the zone
 
 
+class _StubWind:
+    """Frozen wind estimate: the components() the dead reckoner adds to its air velocity."""
+
+    def __init__(self, east=0.0, north=0.0):
+        self.parts = (east, north)
+
+    def components(self):
+        return self.parts
+
+
+def test_dead_reckoning():
+    """
+    No usable GNSS fix -> dead-reckon the last fix forward (airspeed x heading + wind), because the
+    receiver is EXPECTED to lose lock through the boost and may never reacquire inside a 60 s flight.
+
+    Positive: the reckoned position moves, and moving it changes the steer -- the old fallback froze at
+    the launch point and steered one bearing forever. Negative: with no fix ever seen it must fall back
+    to the launch point, and with neither it must not crash but hold the captured heading.
+    """
+    position = _PositionHandle()
+    wind = _StubWind()
+    governor = _StubGovernor(20.0)  # 20 m/s along the heading
+    unit = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(_ZONE, launch=(48.010, 11.005)),
+                             governor, position, _AglHandle(), None, wind)
+    unit.enter(0.0, 0, 0)
+
+    # no fix EVER -> tier 3, the launch point; reckoning stays off (nothing to reckon from)
+    assert unit.compute(Stage.GLIDING, {}, 0.0, 0) is True
+    assert unit.reckoning is False
+
+    # a fix arrives -> tier 1 seeds the reckoner
+    position.reading = ((48.010, 11.005), 'gnss', 0)
+    unit.compute(Stage.GLIDING, {}, 180.0, 1000000)
+    assert unit.reckoning is False  # a live fix is not dead reckoning
+    seeded = unit._reckoned
+    assert seeded == (48.010, 11.005)
+
+    # the fix goes stale -> tier 2 takes over and the offset MOVES south (heading 180)
+    position.reading = ((48.010, 11.005), None, 99999)
+    unit.compute(Stage.GLIDING, {}, 180.0, 1200000)  # +0.2 s at 20 m/s = 4 m south
+    assert unit.reckoning is True
+    assert unit._reckoned == seeded  # the SEED is the last real fix and never moves
+    assert abs(unit._reckon_north - -4.0) < 0.01 and abs(unit._reckon_east) < 0.01
+
+    """
+    The offset is carried in METRES, not by advancing the latitude, and this assertion is why. Board
+    floats are single-precision: latitude 48.01 has a ~0.4 m ULP, so a 0.2 m step (2 m/s over a 100 ms
+    tick) added to it changes NOTHING -- measured, `(48.01 + 0.2/M_PER_DEG - 48.01) * M_PER_DEG` is
+    exactly 0.0. Integrating in degrees would have frozen the dead reckoning at low airspeed, looking
+    perfectly healthy while doing nothing. Fifty such steps must total 10 m, not 0.
+    """
+    slow = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(_ZONE), _StubGovernor(2.0),
+                             _PositionHandle(), _AglHandle(), None, _StubWind())
+    slow.enter(0.0, 0, 0)
+    slow._position.reading = ((48.010, 11.005), 'gnss', 0)
+    slow.compute(Stage.GLIDING, {}, 180.0, 0)
+    slow._position.reading = ((48.010, 11.005), None, 99999)
+    for step in range(1, 51):  # 50 x 100 ms at 2 m/s = 10 m of travel
+        slow._nav_heading = None  # the nav cache would otherwise skip most of these
+        slow.compute(Stage.GLIDING, {}, 180.0, step * 100000)
+    assert abs(slow._reckon_north - -10.0) < 0.1, slow._reckon_north
+
+    # wind is ADDED to the air velocity: a 10 m/s easterly pushes the reckoned offset east
+    wind.parts = (10.0, 0.0)
+    before = unit._reckon_east
+    unit.compute(Stage.GLIDING, {}, 180.0, 1400000)  # another 0.2 s
+    assert abs((unit._reckon_east - before) - 2.0) < 0.01  # 10 m/s x 0.2 s
+
+    # NEGATIVE: an implausibly long step is skipped rather than integrated in one huge jump
+    frozen = unit._reckon_north
+    unit.compute(Stage.GLIDING, {}, 180.0, 1400000 + 5000000)  # 5 s gap >> the 0.5 s ceiling
+    assert unit._reckon_north == frozen
+
+    # NEGATIVE: no fix and no launch point -> hold the captured heading, never crash
+    blind = guidance.Guidance(guidance.GuidanceConfig({}, 1000), _StubMission(_ZONE),
+                              _StubGovernor(20.0), _PositionHandle(), _AglHandle(), None, wind)
+    blind.enter(77.0, 0, 0)
+    assert blind.compute(Stage.GLIDING, {}, 77.0, 0) is True
+    assert blind.reckoning is False and blind.heading_error == 0  # steering its own captured heading
+
+
 def test_reachability():
     """
     reach = glide_ratio × elevation vs distance-to-zone -> reachable y/n + margin; None when a fix, zone,
@@ -519,6 +609,7 @@ test_endgame_pattern_selection()
 test_oo_endgame()
 test_steering_filter()
 test_reachability()
+test_dead_reckoning()
 test_min_turn_radius()
 test_endgame_bank()
 test_hold_law()
