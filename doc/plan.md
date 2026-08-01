@@ -229,6 +229,24 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   principle: the TDK compensation's `b` coefficient is **-4.23e12**, past MicroPython's unboxed 2^30 by
   ~4000x and past viper's 2^31 (which wraps SILENTLY) by ~2000x, so any integer form needs 64-bit
   intermediates = bignums = more allocation than the floats replaced.
+- **Catapult `board.config` profiles** — **DONE (2026-08-01), `tools/make_catapult_config.py` ->
+  `configs/tms7c.config`, `configs/tms7d.config`.** 7C is telemetry-only (all three servos AND the
+  flight activity disabled -- the airframe flies as instrumented ballast); 7D is full active control.
+  Both validate and load as `active`.
+  **The firmware defaults would have FAILED on a catapult, not merely degraded.** Worked from the
+  catapult's geometry (~1 m of boost, 45 deg, 15-20 m/s at release -> apogee **5.7-10.2 m** at
+  **1.08-1.44 s**, boost ~11 g for ~130 ms), four separate thresholds break:
+  `apogee_arm_ms` 4000 leaves the detector blind until well past apogee, so apogee is NEVER seen;
+  `boost_timeout_ms` 12000 then fires the fallback long after touchdown, so the glider would spend its
+  whole flight in BOOSTING with fins at the boost attitude; `launch_alt_m` 10.0 sits at or above the
+  entire arc so the baro backup can never trip; and `apogee_drop_m` 5.0 is most of the arc height.
+  Applied instead: arm 300 ms, timeout 1500 ms, launch_alt 3.0 m, drop 1.0 m, `launch_ms` 40 (the
+  ~130 ms pulse must CONTAIN the dwell, not race it), `flight_timeout_ms` 60 s. `launch_g` stays 2.5 --
+  the catapult pulls ~11 g, so that is the one threshold with margin to spare.
+  Generated rather than hand-written so the derivation stays attached to the numbers, and validated
+  through the firmware's own `config.validate`/`config.load` rather than trusted -- which caught a real
+  bug: 7D had `flight` disabled, because the generator only ever CLEARED the flag while the default
+  ships it off. A 7D built that way would have flown with no control loop.
 - **`launch.config` autogen** + GPX export of telemetry. Deferred hardware: outdoor GNSS fix.
 
 ### Near-term work from `findings.txt` (quality pass)
