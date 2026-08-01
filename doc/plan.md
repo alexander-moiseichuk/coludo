@@ -260,6 +260,21 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   through the firmware's own `config.validate`/`config.load` rather than trusted -- which caught a real
   bug: 7D had `flight` disabled, because the generator only ever CLEARED the flag while the default
   ships it off. A 7D built that way would have flown with no control loop.
+- **ADXL375 / LSM6DSO32 shock capture — solved by CONFIG, not code (2026-08-01).** Telemetry
+  decimation DROPS samples, so at the recorder's 25 Hz global a 100 Hz shock stream keeps one in four.
+  A peak-hold was written for this and REVERTED: setting a stream's own `telemetry_us` already
+  overrides the global, so **10 ms records every sample with no code at all**, and for an experiment
+  that is not just simpler but more correct — a shock's SHAPE (duration, ringing) is what makes the
+  trace worth having, and peak-hold throws the waveform away to keep only its extreme. It was also
+  quietly dishonest: the column stayed named `ax` while its meaning became "peak over the preceding
+  window", silently biasing anything that integrates it or takes an RMS. **If a column's meaning
+  changes, its name must change with it** — and reach for the config knob before the code change.
+  `accel_adxl375` and `imu_lsm6dso32` are pinned to 10 ms in both catapult profiles. 10 ms is the
+  CEILING, not a preference: the ADXL375's INT1 fires at its own 100 Hz ODR, so nothing faster exists
+  to record. **Caveat for impact analysis:** a true impact spike is ~1–5 ms, so 100 Hz under-samples it
+  (0–1 samples per event) — fine for boost (~130–260 ms) and separation (tens of ms), marginal for
+  touchdown. Raising the part's ODR (it supports up to 3200 Hz) is a separate change with real
+  bandwidth and leak cost; worth doing only if impact fidelity turns out to matter.
 - **`launch.config` autogen** + GPX export of telemetry. Deferred hardware: outdoor GNSS fix.
 
 ### Near-term work from `findings.txt` (quality pass)
