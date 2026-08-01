@@ -84,6 +84,9 @@ class Adxl375(task.Task):
         self._irq_runs: int = 0
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('ax', 'ay', 'az', 'irq_runs'),
                                        decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
+        # peak-hold across the decimation window (see run()): a LIST, not a tuple, so the hot loop
+        # updates in place instead of rebuilding a tuple per sample with GC off
+        self._peak: list = [0.0, 0.0, 0.0]
         self._ok = True
         return True
 
@@ -160,13 +163,51 @@ class Adxl375(task.Task):
             try:
                 accel = await self.sample()
                 self._accel.push(accel)  # one step: push our channel directly
-        # irq_runs: how many interrupt edges this wake consumed. 0 = the fallback timed out (a
-        # dead or quiet line), 1 = healthy, >1 = an OVERRUN, edges arriving faster than the loop
-        # consumes them. Recorded per row so a capture shows sampling health, not just samples.
-                self._telemetry.push((accel[0], accel[1], accel[2], self._irq_runs))
+                """
+                PEAK-HOLD between telemetry rows, rather than letting the decimator pick one sample.
+
+                This is a +/-200 g SHOCK sensor: it exists for separation, ignition and impact
+                transients, which are exactly the events that live between rows. Telemetry decimation
+                DROPS samples (recorder.Telemetry.push returns early inside the window), so at the
+                global 25 Hz a 100 Hz stream records one sample in four and silently discards the other
+                three -- including the peak, most of the time. A capture would show a plausible
+                acceleration trace with the shock simply missing, and nothing would say so.
+
+                So hold the largest-magnitude sample per axis across the window and emit THAT. Sign is
+                preserved (the extreme excursion, not its absolute value) because impact direction is
+                what distinguishes a nose-in from a tail-slide. Peaks are compared per axis rather than
+                on the vector magnitude: an axis-aligned shock is the common case, and a magnitude
+                comparison would let a large steady axis mask a spike on a quiet one.
+
+                due() is asked first, against the SAME clock push() uses, so the row tuple is not built
+                on the 75 % of iterations that would be decimated away.
+                """
+                self._fold_peak(accel)
+                if self._telemetry.due(recorder.Recorder.timestamp()):
+                    self._telemetry.push((self._peak[0], self._peak[1], self._peak[2], self._irq_runs))
+                    self._peak[0] = self._peak[1] = self._peak[2] = 0.0
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
                 self.note('adxl375 :: read %r', error)  # deduped: a persistent error logs once, not every tick
+
+    def _fold_peak(self, accel) -> None:
+        """
+        Fold one sample into the per-axis peak held across the decimation window.
+
+        Keeps the largest-MAGNITUDE value per axis while preserving its sign, so a capture reports the
+        extreme excursion rather than its absolute value -- impact direction is what separates a
+        nose-in from a tail-slide. Per axis rather than by vector magnitude so a large steady axis
+        cannot mask a spike on a quiet one.
+
+        Args:
+            accel - the (ax, ay, az) sample in g.
+
+        Returns:
+            None; updates self._peak in place.
+        """
+        for axis in range(3):
+            if abs(accel[axis]) > abs(self._peak[axis]):
+                self._peak[axis] = accel[axis]
 
     async def probe(self) -> str:
         """

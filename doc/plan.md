@@ -260,6 +260,18 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   through the firmware's own `config.validate`/`config.load` rather than trusted -- which caught a real
   bug: 7D had `flight` disabled, because the generator only ever CLEARED the flag while the default
   ships it off. A 7D built that way would have flown with no control loop.
+- **ADXL375 peak-hold across the decimation window** — **DONE (2026-08-01).** Telemetry decimation
+  DROPS samples (`Telemetry.push` returns early inside the window), so at the global 25 Hz a 100 Hz
+  stream recorded one sample in four and silently discarded the other three. On a +/-200 g SHOCK sensor
+  that is the wrong three: separation, ignition and impact transients are exactly what lives between
+  rows, and a capture would have looked entirely plausible with the shock simply absent. The driver now
+  holds the largest-magnitude sample per axis and emits that, asking `due()` first (same clock as
+  `push()`) so no row tuple is built on the 75 % of iterations that would be decimated away.
+  Sign is PRESERVED — impact direction separates a nose-in from a tail-slide — and peaks are per axis
+  rather than by vector magnitude, so a large steady axis cannot mask a spike on a quiet one. Measured
+  on a synthetic window: a -190 g spike that plain decimation reported as **0.01 g** now records as
+  -190 g. Matters immediately for 7C/7D, which exist to capture exactly these transients.
+  **Consider the same for `lsm6dso32`** (the gyro sees the separation kick) — not done.
 - **`launch.config` autogen** + GPX export of telemetry. Deferred hardware: outdoor GNSS fix.
 
 ### Near-term work from `findings.txt` (quality pass)
