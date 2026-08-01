@@ -147,9 +147,21 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   input of which survives a dead GNSS. Tiers are now 1 live fix → 2 dead reckoning → 3 launch point
   (never locked at all) → 4 blind heading hold. `flight.csv` carries a `reckoning` column so the
   operator sees it. Steps over 0.5 s are skipped rather than integrated in one jump. Frozen wind is the
-  dominant residual error and is bounded: a 2 m/s estimate error costs ~80 m over 40 s, against ~720 m
-  for a frozen position. **Still to measure:** the fault matrix's 720 m wants re-running, and GNSS
-  position is noised in neither sim, so a *noisy* (as opposed to absent) fix is untested.
+  dominant residual error and is bounded: a 2 m/s estimate error costs ~80 m over 40 s.
+  **MEASURED on the board** (`captures/gnss`, F15 270 g): a 60 s blackout covering essentially the whole
+  glide costs **30 m** — 122 m clean vs 152 m dead, with 368 of 522 flight rows flying on dead
+  reckoning — against the **720 m** the earlier fault matrix priced for the same failure.
+  Also: **board floats are single-precision**, so advancing a latitude near 48° by a 0.2 m step changes
+  it by exactly nothing (~0.4 m ULP). The reckoner accumulates metres and converts once; anything that
+  integrates small increments into a large absolute coordinate on this hardware is silently wrong, and
+  worst precisely when the increments are smallest.
+  Per-sentence **RMC/GGA outage events** now go to the durable `gnss_events.csv`, and GGA's quality /
+  satellites / HDOP / altitude — parsed but never recorded — get their own `gnss_gga.csv` stream. They
+  fail separately (a receiver with almanac but no fix keeps emitting GGA at quality 0 while RMC goes
+  void), and since dead reckoning makes an outage nearly invisible in the trajectory, these events are
+  the only record that the receiver was dead.
+  **Still to measure:** GNSS position is noised in neither sim, so a *noisy* (as opposed to absent) fix
+  remains untested.
 - **`launch.config` autogen** + GPX export of telemetry. Deferred hardware: outdoor GNSS fix.
 
 ### Near-term work from `findings.txt` (quality pass)
