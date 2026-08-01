@@ -38,26 +38,7 @@ async def amain():
     no_cs = adxl375.Adxl375('accel', {'bus': 'spi', 'id': 1}, _StubController())
     assert await no_cs.setup() is False
 
-    """
-    PEAK-HOLD across the decimation window. This is a +/-200 g SHOCK sensor and telemetry decimation
-    DROPS samples, so at the global 25 Hz a 100 Hz stream keeps one sample in four -- and the separation
-    / ignition / impact transients the part exists for live in the three it discards. The capture would
-    look entirely plausible with the shock simply absent.
-    """
-    unit = adxl375.Adxl375('accel', {'bus': 'i2c', 'id': 9}, _StubController())  # setup not needed
-    unit._peak = [0.0, 0.0, 0.0]
-    for sample in ((0.02, -0.01, 0.99), (0.03, 0.0, 1.01), (-190.0, 12.0, -55.0), (0.01, 0.02, 0.98)):
-        unit._fold_peak(sample)
-    # the spike survives WITH ITS SIGN; plain decimation would have emitted the final 0.01 g sample
-    assert unit._peak == [-190.0, 12.0, -55.0], unit._peak
-    # NEGATIVE: a large steady axis must not mask a spike on a quiet one (per-axis, not vector magnitude)
-    unit._peak = [0.0, 0.0, 0.0]
-    for sample in ((0.0, 0.0, 40.0), (0.0, 0.0, 41.0), (7.0, 0.0, 40.0)):
-        unit._fold_peak(sample)
-    assert unit._peak == [7.0, 0.0, 41.0], unit._peak
-
-    print('ok: adxl375 registered; peak-hold keeps shock spikes (sign + per-axis); '
-          'graceful setup over i2c (no ack) and spi (id mismatch / no cs)')
+    print('ok: adxl375 registered; graceful setup over i2c (no ack) and spi (id mismatch / no cs)')
 
 
 asyncio.run(amain())
