@@ -35,6 +35,9 @@ if the accel threshold is somehow missed, the baro still catches the climb well 
 `launch_ms` stays 40 ms: the gentler launch actually LENGTHENS the pulse to ~260 ms (lower
 acceleration over the same 1 m), so the dwell sits comfortably inside it at either end of the range.
 
+The two shock/rate streams are additionally recorded at full 100 Hz rather than the global 25 Hz --
+see _FULL_RATE below.
+
 Usage:
     python3 tools/make_catapult_config.py          # writes configs/tms7c.config, configs/tms7d.config
 Then upload the chosen profile to the board as board.config (via CC) and power-cycle.
@@ -63,6 +66,14 @@ _CATAPULT_SEQUENCER: dict = {
 
 _SERVOS: tuple = ('servo_yaw', 'servo_eleron_left', 'servo_eleron_right')
 
+# Streams recorded at FULL rate for these flights, overriding the recorder's 25 Hz global.
+# A catapult hop lasts seconds, so the leak argument that justifies decimating a 60 s rocket flight
+# does not apply -- and 7C/7D exist precisely to capture the launch, separation and impact transients,
+# which are what decimation drops. Recording every sample keeps the WAVEFORM (duration, ringing), not
+# just its extreme, which is what a shock trace has to show to be worth anything.
+_FULL_RATE_US: int = 10000  # 100 Hz, matching the sensors' own sample rate
+_FULL_RATE: tuple = ('accel_adxl375', 'imu_lsm6dso32')
+
 
 def _profile(name: str, servos: bool, flight: bool) -> dict:
     """
@@ -78,6 +89,11 @@ def _profile(name: str, servos: bool, flight: bool) -> dict:
     """
     cfg = config_default.default()
     cfg['name'] = name
+    # sensors and components are SEPARATE top-level lists; the shock/rate streams live under
+    # 'sensors', the servos and the flight activity under 'components'
+    for sensor in cfg['sensors']:
+        if sensor.get('name') in _FULL_RATE:
+            sensor['telemetry_us'] = _FULL_RATE_US
     for component in cfg['components']:
         component_name = component.get('name')
         if component_name == 'sequencer':
