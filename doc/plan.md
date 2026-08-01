@@ -233,16 +233,29 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   `configs/tms7c.config`, `configs/tms7d.config`.** 7C is telemetry-only (all three servos AND the
   flight activity disabled -- the airframe flies as instrumented ballast); 7D is full active control.
   Both validate and load as `active`.
-  **The firmware defaults would have FAILED on a catapult, not merely degraded.** Worked from the
-  catapult's geometry (~1 m of boost, 45 deg, 15-20 m/s at release -> apogee **5.7-10.2 m** at
-  **1.08-1.44 s**, boost ~11 g for ~130 ms), four separate thresholds break:
+  **Sized for the SMALLEST intended hop — a near-vertical ~3 m toss** (operator's call, safe side), so
+  the thresholds stay valid for anything larger; a bigger launch only ever adds margin. At 3 m:
+  `v_v = sqrt(2gh)` = **7.7 m/s**, apogee at **0.78 s**, boost over 1 m = **3.0 g** for ~260 ms.
+  Sizing low MOVES WHICH THRESHOLD IS MARGINAL, which is the point: at 3 m the boost is 3.0 g against a
+  `launch_g` of 2.5 — **20 % of margin** — where a 10 m launch pulls ~11 g and clears it fourfold. So
+  `launch_g` drops to **1.5**, erring low on purpose: a false launch on the ground merely advances the
+  stage and is recoverable, a MISSED launch yields no flight data at all, which is the whole point of
+  7C/7D. The 40 ms dwell plus the arming step guard against a carry bump, and `launch_alt_m` 1.0 m is an
+  independent second path if the accel threshold is missed.
+  **The firmware defaults would have FAILED on a catapult, not merely degraded.** Against the geometry
+  above, four separate thresholds break:
   `apogee_arm_ms` 4000 leaves the detector blind until well past apogee, so apogee is NEVER seen;
   `boost_timeout_ms` 12000 then fires the fallback long after touchdown, so the glider would spend its
   whole flight in BOOSTING with fins at the boost attitude; `launch_alt_m` 10.0 sits at or above the
   entire arc so the baro backup can never trip; and `apogee_drop_m` 5.0 is most of the arc height.
-  Applied instead: arm 300 ms, timeout 1500 ms, launch_alt 3.0 m, drop 1.0 m, `launch_ms` 40 (the
-  ~130 ms pulse must CONTAIN the dwell, not race it), `flight_timeout_ms` 60 s. `launch_g` stays 2.5 --
-  the catapult pulls ~11 g, so that is the one threshold with margin to spare.
+  Applied instead: `launch_g` 1.5, `launch_ms` 40 (the pulse is ~260 ms at 3 m and ~130 ms at 10 m, so
+  the dwell fits inside both), `launch_alt_m` 1.0, `apogee_drop_m` 0.5 (a third of the 3 m arc, still
+  ~2.5x the baro's ~20 cm real noise), `apogee_arm_ms` 200 (leaving ~580 ms of tracking before a 0.78 s
+  apogee), `boost_timeout_ms` 1200, `flight_timeout_ms` 30 s.
+  **Open until measured:** the airframe mass is being weighed 2026-08-02. Mass does not move the
+  ballistics above (apogee depends on release velocity, not weight) but it DOES set the release velocity
+  the catapult actually delivers for a given draw, so re-check `launch_g` against the measured
+  acceleration once 7A/7B have flown — that is the threshold with the least margin.
   Generated rather than hand-written so the derivation stays attached to the numbers, and validated
   through the firmware's own `config.validate`/`config.load` rather than trusted -- which caught a real
   bug: 7D had `flight` disabled, because the generator only ever CLEARED the flag while the default

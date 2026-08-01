@@ -4,12 +4,18 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 Generate the CATAPULT board.config profiles (TMS-7C telemetry-only, TMS-7D full control).
 
 The firmware defaults are shaped for a rocket motor and would FAIL on a rubber catapult -- not degrade,
-fail. Worked from the catapult's own geometry (~1 m of boost, launched at 45 deg, 15-20 m/s at release):
+fail. Sized for the SMALLEST intended hop, a near-vertical ~3 m toss, so the thresholds stay valid for
+anything larger; a bigger launch only ever gives them more margin:
 
-    vertical component  v_v = v * sin45      = 10.6 .. 14.1 m/s
-    apogee height       v_v^2 / 2g           =  5.7 .. 10.2 m
-    time to apogee      v_v / g              =  1.08 .. 1.44 s
-    boost acceleration  v^2 / 2s over 1 m    = ~11 g, lasting ~130 ms
+    apogee height       h (the design case)  =  3 m        (10 m at the top of the range)
+    release velocity    v_v = sqrt(2*g*h)    =  7.7 m/s    (14.1 m/s)
+    time to apogee      v_v / g              =  0.78 s     (1.44 s)
+    boost acceleration  v_v^2 / 2s over 1 m  =  3.0 g      (~11 g), lasting ~260 ms (~130 ms)
+
+Sizing for 3 m rather than 10 m moves which threshold is marginal, which is the whole reason to do it.
+At 3 m the boost is only **3.0 g against a launch_g of 2.5 -- 20 % of margin**, where a 10 m launch
+pulls ~11 g and clears it four times over. launch_g is therefore the one that needs loosening, not the
+one that has room to spare.
 
 Against that, the motor defaults break in four separate places:
 
@@ -18,11 +24,16 @@ Against that, the motor defaults break in four separate places:
   * `boost_timeout_ms` 12000 -- so the fallback fires 12 s in, long after the airframe has landed. The
     glider would spend its entire flight in BOOSTING with the fins held at the boost attitude.
   * `launch_alt_m` 10.0 -- a baro backup set AT or ABOVE the whole arc, so it can never trip.
-  * `apogee_drop_m` 5.0 -- most of the total arc height, so even an armed detector would be marginal.
+  * `apogee_drop_m` 5.0 -- larger than the entire 3 m arc, so even an armed detector could not fire.
 
-`launch_g` 2.5 stays: the catapult pulls ~11 g, four times the threshold, so it is not the marginal
-one. `launch_ms` drops to 40 ms because the pulse only lasts ~130 ms, and the dwell must complete
-comfortably inside it rather than racing it.
+`launch_g` drops 2.5 -> 1.5 because the 3 m case only pulls 3.0 g. Erring LOW is deliberate: a false
+launch on the ground merely advances the stage and is recoverable, while a missed launch yields no
+flight data at all, which is the entire point of 7C/7D. The 40 ms dwell plus the operator arming step
+are what keep a carry bump from tripping it, and `launch_alt_m` 1.0 m is an independent second path --
+if the accel threshold is somehow missed, the baro still catches the climb well below the 3 m apogee.
+
+`launch_ms` stays 40 ms: the gentler launch actually LENGTHENS the pulse to ~260 ms (lower
+acceleration over the same 1 m), so the dwell sits comfortably inside it at either end of the range.
 
 Usage:
     python3 tools/make_catapult_config.py          # writes configs/tms7c.config, configs/tms7d.config
@@ -41,13 +52,13 @@ _OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'configs')
 
 # Sequencer thresholds every catapult profile shares; see the module docstring for the derivation.
 _CATAPULT_SEQUENCER: dict = {
-    'launch_g': 2.5,          # the catapult pulls ~11 g -- unchanged, this one has margin to spare
-    'launch_ms': 40,          # the ~130 ms pulse must contain the dwell, not race it
-    'launch_alt_m': 3.0,      # baro backup BELOW the ~6-10 m arc so it can actually trip
-    'apogee_drop_m': 1.0,     # the whole arc is 5-10 m; 5 m was most of it
-    'apogee_arm_ms': 300,     # apogee lands at ~1.2 s -- 4000 meant it was never detected
-    'boost_timeout_ms': 1500,  # last-resort fallback just past the expected apogee, not 12 s
-    'flight_timeout_ms': 60000,  # RSO backstop: a catapult hop is seconds, not the 300 s of a rocket
+    'launch_g': 1.5,          # the 3 m case pulls only 3.0 g; err LOW -- a missed launch costs the flight
+    'launch_ms': 40,          # the pulse is ~260 ms at 3 m / ~130 ms at 10 m -- the dwell fits both
+    'launch_alt_m': 1.0,      # independent baro path, well below even the 3 m apogee
+    'apogee_drop_m': 0.5,     # a third of the 3 m arc; still ~2.5x the baro's ~20 cm real noise
+    'apogee_arm_ms': 200,     # apogee lands at 0.78 s -- leaves ~580 ms of tracking before it
+    'boost_timeout_ms': 1200,  # last-resort fallback just past the 0.78 s apogee, not 12 s
+    'flight_timeout_ms': 30000,  # RSO backstop: a 3 m hop is over in seconds, not the 300 s of a rocket
 }
 
 _SERVOS: tuple = ('servo_yaw', 'servo_eleron_left', 'servo_eleron_right')
