@@ -320,12 +320,21 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   physical floor sits 5 m below the command — **bank authority is NOT the constraint, and raising the
   bank would tighten a circle that is centred in the wrong place.** Note `land_bank_limit` is already
   45 deg; the 30 deg figure is `bank_limit`, the nav/cruise bank, a different phase.
-  The failure is therefore orbit-CENTRE tracking, not radius or authority: the glider flies a stable
-  limit cycle about a point ~95 m off target rather than converging on it. Next: instrument the
-  commanded-vs-achieved bank during the endgame (is the 45 deg demand actually reached, or is `fin_cap`
-  clipping it at low q?) and the `_circle_heading` radius error term — a limit cycle of exactly this
-  shape is what a heading command that lags the orbit produces. Pattern selection (o / oo / oval) is
-  NOT implicated and should be left as-is.
+  **ROOT CAUSE FOUND AND FIXED — `bank_limit` 30 -> 45 (operator's call, and it was right).** An
+  earlier revision of this entry said bank authority was not the constraint. That was WRONG: it checked
+  `land_bank_limit` (45, the final approach) when the LOITER orbit is flown under `bank_limit`, which
+  was 30. From `flight.csv`: `roll_sp` pinned at +/-30 for long stretches with `heading_err` sustained
+  at **112-157 deg**, while `fin_cap` sat at 45 the whole time — so fin authority genuinely never
+  clipped, but the DEMAND was capped at 30.
+  At the measured 15.6 m/s, `R_min = v^2/(g*tan bank)` is **~40 m at 30 deg** while `loiter_radius_m`
+  commands **30 m** — the law asked for a circle physically tighter than the bank could fly. It
+  saturated, overshot, and limit-cycled; the ~26 s period is just the time to come around at 30 deg.
+  At 45 deg the floor drops to ~25 m, inside the 30 m command.
+  **Measured on the board, calm reference: 113 m -> 51 m miss.** 54/54 still green.
+  Pattern selection (o / oo / oval) was NOT implicated and is unchanged.
+  **Still open:** 51 m is not yet in-zone, so the endgame has more to give — re-run the fault matrix at
+  the new bank (all five cases predate it), and check whether `loiter_radius_m` 30 m is now the binding
+  limit rather than the bank, since R_min ~25 m leaves only 5 m of headroom.
 - **`launch.config` autogen** + GPX export of telemetry. Deferred hardware: outdoor GNSS fix.
 
 ### Near-term work from `findings.txt` (quality pass)

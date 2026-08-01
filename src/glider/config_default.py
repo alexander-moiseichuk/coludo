@@ -434,7 +434,17 @@ def default() -> dict:
     at bank_limit deg) so the turn is tight and orbits the zone to bleed altitude rather than
     over-ranging it on a flat rudder skid. nav_bank_gain 0 -> rudder-only.
     """
-    bank_to_turn = {'nav_bank_gain': 1.5, 'bank_limit': 30}
+    """
+    bank_limit 45, not 30: the LOITER orbit is flown under this limit, and at 30 deg it commanded a
+    circle it could not fly. R_min = v^2/(g*tan bank), so at the measured 15.6 m/s a 30 deg bank floors
+    the turn at ~40 m while loiter_radius_m asks for 30 m -- physically unreachable, so the heading
+    controller saturated and the glider limit-cycled instead of orbiting. MEASURED in the calm capture:
+    roll_sp pinned at +/-30 with heading_err sustained at 112-157 deg, an orbit of ~65 m radius centred
+    ~95 m off target, oscillating 28 m <-> 163 m on a ~26 s period, and touching down 113 m out with no
+    noise or faults at all. fin_cap sat at 45 the whole time, so fin authority was never the limit --
+    the demand was. At 45 deg the floor drops to ~25 m, inside the 30 m command.
+    """
+    bank_to_turn = {'nav_bank_gain': 1.5, 'bank_limit': 45}
 
     """
     final approach: below final_approach_agl, track the strip CENTRELINE (not the centre point)
