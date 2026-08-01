@@ -162,6 +162,26 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   the only record that the receiver was dead.
   **Still to measure:** GNSS position is noised in neither sim, so a *noisy* (as opposed to absent) fix
   remains untested.
+- **Float allocation is the leak, and the 100 Hz channels are where it lives** — **OPEN, the biggest
+  measured lever (2026-08-01).** Measured on the board: a boxed float is exactly **16 B**, an int
+  operation allocates **0**, floats run ~22 % slower, and with GC off in flight none of it is transient.
+  Crucially `push` costs **32 B for a float and 0 for an int**, while `value()` costs ~0 for either — so
+  the cost is at the PRODUCER, scaling with its rate.
+  That kills the altitude/elevation migration (the baro runs at **10 Hz**: ~2.6 KB/s, OOM 130 → ~132 s,
+  for a refactor across drivers/databoard/guidance/sequencer/both sims/telemetry — not worth it) and
+  points at the **100 Hz channels instead: attitude, rate, accel**, where a 3-float tuple costs 64 B a
+  push ≈ **6.4 KB/s per channel**, roughly 10x the payoff for the same work. `imu_bno055` alone was
+  profiled at **47.9 KB/s** and has never been examined. Do that evaluation before any more of the leak
+  work — same method as the baro one, which is written up in the icp10111 commit.
+- **Do NOT migrate altitude/elevation to fixnum** — **CLOSED, evaluated and rejected (2026-08-01).**
+  The float32 ULP problem that motivated it does not exist in this domain: it was a lat/lon DYNAMIC
+  RANGE failure (48° encodes 5.34 Mm of arc), while altitude's ULP is **30 µm at 288 m**, 61 µm at
+  1000 m, `elevation = altitude - ground` differences to 0.06 mm and the ground average to 0.6 mm — four
+  to five orders inside the 10 cm border, against a part that resolves 8.9 cm. Speed and OOM gains are
+  ~15-22 % on the affected ops and ~2 s respectively. The driver ALSO cannot go integer even in
+  principle: the TDK compensation's `b` coefficient is **-4.23e12**, past MicroPython's unboxed 2^30 by
+  ~4000x and past viper's 2^31 (which wraps SILENTLY) by ~2000x, so any integer form needs 64-bit
+  intermediates = bignums = more allocation than the floats replaced.
 - **`launch.config` autogen** + GPX export of telemetry. Deferred hardware: outdoor GNSS fix.
 
 ### Near-term work from `findings.txt` (quality pass)
