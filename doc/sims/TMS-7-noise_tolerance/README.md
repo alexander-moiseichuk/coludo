@@ -63,8 +63,19 @@ because a missed launch or an early apogee costs the whole flight, while 100 % a
 
 ## Caveats
 
-- **Host sim, quality-2 polar.** The board's stage machine is the same code (`tasks/sequencer.py`),
-  but the host reimplements the *driving* of it, so confirm on-board before acting.
+- **These are the HOST's detectors, not the board's.** `virtual_flight.py` reimplements launch
+  detection (`if accel_m > launch_g` at line 342) rather than running `tasks/sequencer.py`. Apogee IS
+  shared (`commons.apogee_step`), launch is NOT. So the accel result above characterises the host
+  copy, and the board's own launch detector has NOT been tested against noise. **Confirm on-board HITL
+  before acting on the accel finding.**
+
+- **A first fix attempt was reverted, and why is worth knowing.** Replacing the board's contiguous
+  dwell with a leaky sample counter made `launch_ms` dead — the trigger became sample-based, so its
+  timing would drift with tick rate and a documented config knob would silently stop working.
+  `test_sequencer` caught it. The right shape keeps the TIME basis (`launch_ms`) and accumulates time
+  above the threshold rather than requiring an unbroken run; the noise tolerance comes from not
+  resetting on a single dip, not from changing the unit. Worth extracting to `commons` alongside
+  `apogee_step` so both worlds share one implementation — otherwise this same divergence recurs.
 - **GNSS position is never noised** in either sim (board parity — `tasks/hitl._publish` does the same),
   so this sweep says nothing about position-error tolerance. The earlier fault matrix priced a *dead*
   GNSS at 720 m; a *noisy* one is untested.
