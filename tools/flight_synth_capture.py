@@ -54,7 +54,9 @@ def generate() -> str:
 
         tlm('accel_adxl375.csv', '%u;%.3f;%.3f;%.3f' % (microseconds, 0.1 * math.sin(t), 0.1 * math.cos(t), az))
         tlm('baro_icp10111.csv', '%u;%.2f;21.0;%.0f;%.2f' % (microseconds, altitude, 100000.0, elevation))
-        tlm('imu_bno055.csv', '%u;%.1f;%.1f;%.1f' % (microseconds, heading, roll, pitch))
+        # roll/pitch: RAW centidegree fixnum, matching drivers/bno055.py
+        tlm('imu_bno055.csv', '%u;%.1f;%d;%d'
+            % (microseconds, heading, round(roll * 100), round(pitch * 100)))
         if int(t / 0.1) != int((t - step) / 0.1):  # GNSS ~10 Hz
             tlm('gnss.csv', '%u;%.6f;%.6f;0.0;0.0' % (microseconds, latitude, longitude))
         if elevation < 4.0:  # laser only resolves the last few metres

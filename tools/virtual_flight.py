@@ -530,7 +530,10 @@ class _Capture:
         microseconds = int(t * 1e6)
         self._tlm_row('accel', '%u;0.000;0.000;%.3f;1' % (microseconds, accel))  # irq_runs 1: one sample per publish
         self._tlm('baro_icp10111.csv', '%u;%.2f;21.0;100000;%.2f' % (microseconds, altitude, elevation))
-        self._tlm('imu_bno055.csv', '%u;%.1f;%.1f;%.1f' % (microseconds, heading, roll, pitch))
+        # roll/pitch as the RAW centidegree fixnum, matching drivers/bno055.py -- same columns AND
+        # same units. Heading stays degrees (it is not a fixnum on the board either).
+        self._tlm('imu_bno055.csv', '%u;%.1f;%d;%d'
+                  % (microseconds, heading, round(roll * 100), round(pitch * 100)))
         # imu_lsm6dso32: the boost-axis low-g accel + the gyro rate (deg/s) the PID reads (board parity)
         # gyro in centideg/s fixnum, matching drivers/lsm6dso32.py -- same column names AND same units
         self._tlm_row('gyro', '%u;0.000;0.000;%.3f;%d;%d;%d;1'

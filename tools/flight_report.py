@@ -176,9 +176,17 @@ def build(streams, logs, go, make_subplots):
         times, knots = gnss.column('speed_kn')
         series.add_trace(go.Scatter(x=times, y=[k / 1.94384 for k in knots], name='speed'), row=3, col=1)
     if attitude is not None:
+        """
+        roll/pitch arrive as the CENTIDEGREE FIXNUM the control path consumes, for the same reason the
+        gyro columns do -- the driver was spending 170 B a sample building two strings, which is
+        formatting rather than measurement. heading/yaw are plain degrees on the board, so only the two
+        fixnum columns are scaled here. Scaling belongs on this side, where it costs nothing.
+        """
         for field in ('heading', 'yaw', 'roll', 'pitch'):
             if field in attitude.fields:
                 times, values = attitude.column(field)
+                if field in ('roll', 'pitch'):
+                    values = [v / _FIXED_SCALE for v in values]
                 series.add_trace(go.Scatter(x=times, y=values, name=field), row=4, col=1)
     if fins is not None:
         for field in ('eleron_left', 'eleron_right', 'yaw'):

@@ -162,8 +162,15 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   the only record that the receiver was dead.
   **Still to measure:** GNSS position is noised in neither sim, so a *noisy* (as opposed to absent) fix
   remains untested.
-- **Float allocation is the leak, and the 100 Hz channels are where it lives** — **OPEN, the biggest
-  measured lever (2026-08-01).** Measured on the board: a boxed float is exactly **16 B**, an int
+- **Float allocation is the leak, and the 100 Hz channels are where it lives** — **PARTLY DONE
+  (2026-08-01).** First target closed: `bno055` was still building two `to_str` strings per sample,
+  MEASURED at 170 B — the single largest piece of that driver's sample, and formatting rather than
+  measurement. It is the same fix `lsm6dso32` already took for its gyro columns and this driver simply
+  never got. Removing it: **246.0 → 240.3 KB/s, OOM 130 → 133 s**. Both sims and `flight_report` were
+  moved to raw centidegrees with it, so board and host still agree — that divergence is exactly how the
+  noise study came to grade the wrong code. The two remaining `to_str` callers (`sdp810.probe`,
+  `attitude.inspect`) are cold and correct as they are.
+  Still open below.** Measured on the board: a boxed float is exactly **16 B**, an int
   operation allocates **0**, floats run ~22 % slower, and with GC off in flight none of it is transient.
   Crucially `push` costs **32 B for a float and 0 for an int**, while `value()` costs ~0 for either — so
   the cost is at the PRODUCER, scaling with its rate.
