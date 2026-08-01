@@ -546,6 +546,15 @@ a phone hotspot or laptop is a convenience, never a dependency.
   **live fix** (not the stored pad) becomes the launch point — kept live until **arm**, which
   FREEZES the fix as the persistent launch point (so the open-loop heading tier and the
   warm-start crumb's launch field survive a mid-flight fix loss; a CC-set position always wins).
+* **Per-channel accuracy budgets** (operator-set, 2026-08-01). These bound how coarse a
+  representation may be — the fixed-point scale, a cached calibration, a filter's lag:
+  **altitude 10 cm** is the safe border (the ICP-10111 itself is specified at 8.9 cm and realistically
+  ~20 cm, so the sensor, not the arithmetic, is the floor); **baro error up to 1 m** is acceptable;
+  **GNSS error up to 1 m** is a non-issue against its own ~10 m band; **the laser is the exception —
+  1 m would be alarming**, since AGL drives landing detection and the part resolves millimetres.
+  A `fixnum` SCALE of 100 (1 cm) therefore clears altitude and baro with two orders of margin, and the
+  laser should keep its native integer millimetres rather than being widened to centimetres.
+
 * **Navigating without a fix — four tiers.** GNSS is EXPECTED to drop through the boost (high-g,
   vibration, antenna shadow) and may never reacquire inside a <60 s flight, so losing it is a design
   case, not an error path. `guidance` degrades in order: **(1)** a fresh fix inside
