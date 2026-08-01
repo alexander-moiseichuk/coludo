@@ -170,7 +170,35 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   moved to raw centidegrees with it, so board and host still agree — that divergence is exactly how the
   noise study came to grade the wrong code. The two remaining `to_str` callers (`sdp810.probe`,
   `attitude.inspect`) are cold and correct as they are.
-  Still open below.** Measured on the board: a boxed float is exactly **16 B**, an int
+  **Ground truth, measured per driver against a 240.3 KB/s baseline:** `imu_lsm6dso32` **50.9 KB/s**,
+  `imu_bno055` **44.4 KB/s** — together **40 % of the whole leak**. `accel_adxl375` not yet measured
+  (the CDC wedged); it runs at the same 100 Hz and should be assumed comparable until measured.
+
+  **The telemetry ROW is the cost, not the float pushes.** `Telemetry.push` is already tight (one `%`
+  pass, one encode) yet still measures **144 B for a 4-field row and 160 B for 7 fields** — at 100 Hz
+  that is 14–16 KB/s PER STREAM, which is the right order to explain the two numbers above. Options,
+  all measured on the board:
+
+  | row encoding | bytes | us | note |
+  |---|---|---|---|
+  | `%`-format decimal (today) | 144 | 36.0 | |
+  | raw sensor COUNTS as `%d` | 128 | 35.7 | free — the driver already holds them |
+  | `struct.pack` + `hexlify` | 112 | 23.7 | better on BOTH axes; needs a header marker |
+  | raw binary `struct.pack` | 48 | 87.6 | **DO NOT** — see below |
+  | repack float→int, then `%d` | 208 | 67 | **net LOSS**, the conversion costs more than it saves |
+
+  Three conclusions worth keeping. **Converting floats to ints for telemetry loses** (`from_float` is
+  80 B for three values against 16 B saved) — the win only exists when the ints come FREE, i.e. the
+  driver logs the raw counts it already read and the host applies the scale, which is the `to_str`
+  lesson one level up. **Raw binary is not viable**: the recorder's wire format is line-framed
+  (`@session_file@...\n`), so packed bytes containing 0x0A or `@` would silently corrupt row
+  boundaries — hex keeps it ASCII-safe, which is why it is the right choice and not a compromise.
+  And a per-column encoding marker in the header (operator's suggestion, e.g. `name+` = hex-encoded)
+  makes the streams self-describing so the host decoder needs no per-file knowledge.
+
+  Next step: `accel_adxl375`'s number, then raw-counts + hex on the three 100 Hz streams. Every analysis
+  tool reads these columns, so board and host must move in the SAME commit — a column meaning different
+  things on the two sides is how the noise study came to grade the wrong code. Measured on the board: a boxed float is exactly **16 B**, an int
   operation allocates **0**, floats run ~22 % slower, and with GC off in flight none of it is transient.
   Crucially `push` costs **32 B for a float and 0 for an int**, while `value()` costs ~0 for either — so
   the cost is at the PRODUCER, scaling with its rate.
