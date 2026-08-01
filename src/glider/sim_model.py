@@ -12,6 +12,7 @@ import math
 import random
 
 import commons
+import navigation
 
 
 def _unit_noise() -> float:
@@ -433,6 +434,49 @@ HEADING_NOISE_REF: float = 20.0
 Noise reference for CIRCULAR channels (heading, GNSS course): frac 0.05 -> +-1 deg, a realistic BNO055
 fused-heading band, instead of the +-18 deg that scaling by a 0..360 magnitude produced. See noisy().
 """
+
+
+POSITION_NOISE_REF: float = 10.0
+"""
+Noise reference for GNSS POSITION, in METRES: frac 0.05 -> +-0.5 m, frac 1.0 -> +-10 m (a bad urban
+multipath fix, ~3x a typical consumer CEP). See noisy_position() for why this is not a fraction.
+"""
+
+
+def noisy_position(position, frac: float):
+    """
+    Perturb a (latitude, longitude) by a uniform +/- frac * POSITION_NOISE_REF METRES, per axis.
+
+    Position cannot go through noisy(): that scales by `abs(value) + 1`, so on a latitude of 48 a
+    "100 % noise" would mean +-49 DEGREES -- thousands of kilometres. It is the same mistake the
+    heading channel already made and HEADING_NOISE_REF already fixed, one step worse. A GNSS error is
+    an absolute distance on the ground and has nothing to do with where on the globe it is measured, so
+    the perturbation is applied in metres and converted by the one geographic primitive.
+
+    The conversion quantizes to the board's float32 grid (~0.42 m at latitude 48, see
+    guidance._reckon), which at a +-10 m band is ~4 % granularity -- and is exactly the resolution the
+    board would have for a real fix, so the sim inherits the hardware's own limit rather than
+    pretending to a precision the flight code does not have.
+
+    Args:
+        position - the clean (latitude, longitude), or None when there is no fix.
+        frac - the noise fraction; 0 (or no position) returns the input untouched.
+
+    Returns:
+        The perturbed (latitude, longitude).
+    """
+    if position is None:
+        return None
+    """
+    Draw UNCONDITIONALLY, even at frac 0, and scale afterwards. An early return at zero would consume
+    no randomness, so the clean run would sit on a different RNG stream from every noised one and the
+    control in a noise sweep would not be comparable to the cases it controls -- measured: the first
+    sweep put the frac-0 run 20 m apart in apogee purely from stream drift, which reads as a noise
+    effect and is not one. Costs two uniforms per sample on a sim-only path.
+    """
+    east = (random.random() * 2 - 1) * frac * POSITION_NOISE_REF
+    north = (random.random() * 2 - 1) * frac * POSITION_NOISE_REF
+    return navigation.advance(position, east, north)
 
 
 def noisy(value, frac: float, lo: float, hi: float, reference: float = None):

@@ -21,7 +21,6 @@ On-device modules layered leaves-first (a module depends only on lower layers, b
 - `fixed` (core) -> `commons`
 - `mixer` (core) -> `commons`
 - `navigation` (core) -> `commons`
-- `sim_model` (core) -> `commons`
 - `wind` (core) -> `inspector`
 
 **Layer 2**
@@ -30,6 +29,7 @@ On-device modules layered leaves-first (a module depends only on lower layers, b
 - `config_hitl` (core) -> `config_default`
 - `governor` (core) -> `airspeed`, `commons`, `fixed`
 - `pid` (core) -> `fixed`
+- `sim_model` (core) -> `commons`, `navigation`
 
 **Layer 3**
 

@@ -194,7 +194,7 @@ def _chan(name: str, default: float) -> float:
     Noise level for ONE sensor channel: `VF_NOISE_<NAME>` if set, else the global `--noise`.
 
     Args:
-        name - the channel ('accel', 'heading', 'roll', 'pitch', 'altitude', 'rate').
+        name - the channel ('accel', 'heading', 'roll', 'pitch', 'altitude', 'rate', 'position').
         default - the global level to fall back to.
 
     Returns:
@@ -303,7 +303,8 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         sensors = body.sensors()
         """
         NOISE-degraded readings -- what the control loop and the recorder actually see (board parity:
-        accel/attitude/altitude/agl are noised; GNSS position is not -- see tasks/hitl._publish).
+        accel/attitude/altitude/agl/position are all noised, position in METRES -- see
+        sim_model.noisy_position and tasks/hitl._publish, which does the same).
 
         PER-SENSOR override: `VF_NOISE_<CHANNEL>` replaces the global `--noise` for one channel only
         (accel, heading, roll, pitch, altitude, rate). A global sweep answers "how much noise can it
@@ -404,7 +405,8 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
             true_speed = (body.vu * body.vu + body.speed * body.speed) ** 0.5
             speed_handle.value_now = faults.apply('gnss', true_speed, t)
             speed_handle.source = None if speed_handle.value_now is None else 'gnss'
-            position_handle.value_now = faults.apply('gnss', sensors['position'], t)
+            noisy_fix = sim_model.noisy_position(sensors['position'], _chan('position', noise))
+            position_handle.value_now = faults.apply('gnss', noisy_fix, t)
             position_handle.source = None if position_handle.value_now is None else 'gnss'
 
         # --- the REAL control pipeline (mirrors flight._step): governor -> gate -> guidance -> PID ---

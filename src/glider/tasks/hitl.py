@@ -237,7 +237,9 @@ class Hitl(task.Task):
         self._ch['altitude'].push(altitude)
         self._ch['elevation'].push(elevation)
         if not self.drop_gnss:  # simulated GNSS dropout -> position/speed/course go stale (baro stays)
-            self._ch['position'].push(position)
+            # position noise is METRES on the ground (sim_model.noisy_position), never a fraction of a
+            # latitude -- scaling by abs(48)+1 would make "100 % noise" mean thousands of kilometres
+            self._ch['position'].push(sim_model.noisy_position(position, noise))
             self._ch['speed'].push(speed)
             self._ch['course'].push(course)
         """
