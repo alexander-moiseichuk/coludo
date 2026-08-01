@@ -189,6 +189,20 @@ def _component(cfg: dict, name: str) -> dict:
     return next(c for c in cfg['components'] if c['name'] == name)
 
 
+def _chan(name: str, default: float) -> float:
+    """
+    Noise level for ONE sensor channel: `VF_NOISE_<NAME>` if set, else the global `--noise`.
+
+    Args:
+        name - the channel ('accel', 'heading', 'roll', 'pitch', 'altitude', 'rate').
+        default - the global level to fall back to.
+
+    Returns:
+        The noise fraction to apply to that channel.
+    """
+    return float(os.environ.get('VF_NOISE_%s' % name.upper(), default))
+
+
 def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         wind: float = 0.0, wind_dir: float = 0.0, final_agl_override: float = None,
         imbalance_pitch: float = 0.0, imbalance_roll: float = 0.0,
@@ -285,20 +299,29 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     t = 0.0
     while t < seconds:
         sensors = body.sensors()
-        # NOISE-degraded readings -- what the control loop and the recorder actually see (board parity:
-        # accel/attitude/altitude/agl are noised; GNSS position is not -- see tasks/hitl._publish).
-        accel_m = sim_model.noisy(sensors['accel'], noise, -200.0, 200.0)
+        """
+        NOISE-degraded readings -- what the control loop and the recorder actually see (board parity:
+        accel/attitude/altitude/agl are noised; GNSS position is not -- see tasks/hitl._publish).
+
+        PER-SENSOR override: `VF_NOISE_<CHANNEL>` replaces the global `--noise` for one channel only
+        (accel, heading, roll, pitch, altitude, rate). A global sweep answers "how much noise can it
+        take"; only a per-channel sweep answers "which sensor is it actually sensitive to", and those
+        are different questions -- a law that reads attitude hard and altitude softly degrades very
+        differently depending on which part is the noisy one.
+        """
+        accel_m = sim_model.noisy(sensors['accel'], _chan('accel', noise), -200.0, 200.0)
         # CIRCULAR: absolute error band, not a fraction of a 0..360 magnitude (sim_model.noisy)
-        heading_m = sim_model.noisy(sensors['heading'], noise, 0.0, 360.0, sim_model.HEADING_NOISE_REF)
-        roll_m = sim_model.noisy(sensors['roll'], noise, -180.0, 180.0)
-        pitch_m = sim_model.noisy(sensors['pitch'], noise, -180.0, 180.0)
-        altitude_m = sim_model.noisy(sensors['altitude'], noise, -100.0, 10000.0)
+        heading_m = sim_model.noisy(sensors['heading'], _chan('heading', noise), 0.0, 360.0,
+                                    sim_model.HEADING_NOISE_REF)
+        roll_m = sim_model.noisy(sensors['roll'], _chan('roll', noise), -180.0, 180.0)
+        pitch_m = sim_model.noisy(sensors['pitch'], _chan('pitch', noise), -180.0, 180.0)
+        altitude_m = sim_model.noisy(sensors['altitude'], _chan('altitude', noise), -100.0, 10000.0)
         agl = sensors['agl']
         # gyro angular rates the PID D term reads -- noised deg/s (recorded to imu_lsm6dso32, board parity),
         # converted once to centideg/s fixnum for the PID (same unit + mapping as tasks/hitl + the driver)
-        roll_rate_dps = sim_model.noisy(sensors['roll_rate'], noise, -2000.0, 2000.0)
-        pitch_rate_dps = sim_model.noisy(sensors['pitch_rate'], noise, -2000.0, 2000.0)
-        yaw_rate_dps = sim_model.noisy(sensors['yaw_rate'], noise, -2000.0, 2000.0)
+        roll_rate_dps = sim_model.noisy(sensors['roll_rate'], _chan('rate', noise), -2000.0, 2000.0)
+        pitch_rate_dps = sim_model.noisy(sensors['pitch_rate'], _chan('rate', noise), -2000.0, 2000.0)
+        yaw_rate_dps = sim_model.noisy(sensors['yaw_rate'], _chan('rate', noise), -2000.0, 2000.0)
         roll_rate = fixed.from_float(roll_rate_dps)
         pitch_rate = fixed.from_float(pitch_rate_dps)
         yaw_rate = fixed.from_float(yaw_rate_dps)

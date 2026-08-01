@@ -117,8 +117,16 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   **floor the spiral radius** at what the remaining altitude can complete (`R_min` is already computed
   for the airspeed-gated bank, so the input exists). Either needs a sim sweep plus a `flight_kpi`
   regression against the existing capture set before it goes near the airframe.
-- **High-noise robustness** (≥50 %): the bank loop reads attitude, so heavy noise degrades the orbit —
-  a filter / rate-limit on the steering input.
+- **High-noise robustness** — **RE-SCOPED (7/31, `doc/sims/TMS-7-noise_tolerance`).** The hypothesis
+  here was that "the bank loop reads attitude, so heavy noise degrades the orbit", wanting a filter or
+  rate-limit on the steering input. Measured per channel at 100 % noise, that is wrong: attitude, gyro
+  rate and heading at twenty times nominal move the landing by **at most 5 m**. The steering input
+  needs no protection. The fragility is in the **sequencer**: 100 % accel noise means launch is
+  **never detected** (the glider never leaves SETTING), and 100 % baro noise fires apogee **2.8 s
+  early**, separating at 168 m instead of 268 m. Re-scoped to (1) launch detect against accel noise —
+  and find out why the `launch_alt_m` baro backup did not save it, since that is its purpose — and
+  (2) apogee detect against baro noise, where the peak likely needs filtering before the `apogee_drop_m`
+  comparison. Both are cheap `sequencer` changes and both matter far more than the control law.
 - **`launch.config` autogen** + GPX export of telemetry. Deferred hardware: outdoor GNSS fix.
 
 ### Near-term work from `findings.txt` (quality pass)
