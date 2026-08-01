@@ -310,9 +310,22 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   converges on the centre rather than holding a fixed wide circle; (2) a commit-to-land point past which
   it rolls wings-level and stops orbiting; (3) floor the radius at what the remaining altitude can
   actually complete, so it never starts a circle it cannot finish.
-  **Measure before choosing:** log the live orbit radius against `r_min_m` (already in vitals) through
-  the endgame — if the radius is at the floor the bank is the limit, and if it is far above it the
-  radius command is.
+  **MEASURED 2026-08-01 (calm_reference capture, zero noise/faults) — and it rules out the bank fix.**
+  Distance to target through the glide: 45 m (11.6 s) -> **162.7 m** (26.1 s) -> **28.0 m** (40.6 s) ->
+  **144.6 m** (52.1 s) -> 112.6 m at touchdown. That is a steady oscillation between ~28 m and ~163 m
+  with a **~26 s period**; at the measured 15.6 m/s that is ~406 m of path per cycle, i.e. a circle of
+  **~65 m radius centred ~95 m from the target**.
+  Against that: airspeed holds 15.6 m/s so **`r_min` at the endgame's 45 deg bank is ~25 m**, and
+  `loiter_radius_m` commands **30 m**. So the orbit is more than DOUBLE its commanded radius while the
+  physical floor sits 5 m below the command — **bank authority is NOT the constraint, and raising the
+  bank would tighten a circle that is centred in the wrong place.** Note `land_bank_limit` is already
+  45 deg; the 30 deg figure is `bank_limit`, the nav/cruise bank, a different phase.
+  The failure is therefore orbit-CENTRE tracking, not radius or authority: the glider flies a stable
+  limit cycle about a point ~95 m off target rather than converging on it. Next: instrument the
+  commanded-vs-achieved bank during the endgame (is the 45 deg demand actually reached, or is `fin_cap`
+  clipping it at low q?) and the `_circle_heading` radius error term — a limit cycle of exactly this
+  shape is what a heading command that lags the orbit produces. Pattern selection (o / oo / oval) is
+  NOT implicated and should be left as-is.
 - **`launch.config` autogen** + GPX export of telemetry. Deferred hardware: outdoor GNSS fix.
 
 ### Near-term work from `findings.txt` (quality pass)
