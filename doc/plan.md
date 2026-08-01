@@ -275,6 +275,26 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   (0–1 samples per event) — fine for boost (~130–260 ms) and separation (tens of ms), marginal for
   touchdown. Raising the part's ODR (it supports up to 3200 Hz) is a separate change with real
   bandwidth and leak cost; worth doing only if impact fidelity turns out to matter.
+- **Landing-strip precision** — **DIAGNOSED 2026-08-01, fix not yet written.** The 121 m miss is NOT a
+  navigation or reachability failure, and the headline number actively misleads about which.
+  Geometry first: the zone centre is **49.5 m from the pad** (zone is a 187 x 40 m strip, TL at 134 m
+  bearing 298 deg, BR at 72 m bearing 72 deg), while a 288 m apogee at L/D ~3 gives roughly **860 m of
+  glide range**. The glider has to dissipate ~860 m of range over a 49.5 m trip — an ENERGY EXCESS
+  problem, not a range one.
+  Traced against the target through a flight (`captures/gnoise/s1_pos0.0.txt`, 505 fixes): distance to
+  target goes 49.5 m at separation -> **minimum 27.5 m at 74 % of the flight** -> **121.0 m at
+  touchdown**. It CAPTURES the zone and then leaves it. The final quarter of the flight undoes the
+  approach, which is why `maxpad` (157 m) exceeds the target distance threefold.
+  So the failing component is the ENDGAME hold, not `steer_to`/`approach_to`. The orbit is not
+  collapsing: at 15 m/s the physical floor is R = v^2/(g*tan bank) = ~40 m at 30 deg bank and ~23 m at
+  45 deg, yet the glider is circling wide enough to touch down 121 m out. Candidate fixes, in order of
+  how well they match the trace: (1) collapse the spiral radius with REMAINING ALTITUDE so the orbit
+  converges on the centre rather than holding a fixed wide circle; (2) a commit-to-land point past which
+  it rolls wings-level and stops orbiting; (3) floor the radius at what the remaining altitude can
+  actually complete, so it never starts a circle it cannot finish.
+  **Measure before choosing:** log the live orbit radius against `r_min_m` (already in vitals) through
+  the endgame — if the radius is at the floor the bank is the limit, and if it is far above it the
+  radius command is.
 - **`launch.config` autogen** + GPX export of telemetry. Deferred hardware: outdoor GNSS fix.
 
 ### Near-term work from `findings.txt` (quality pass)
