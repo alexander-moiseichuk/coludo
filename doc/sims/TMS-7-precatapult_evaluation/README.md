@@ -66,6 +66,14 @@ Two readability fixes to `flight_report.py`, applied to every HTML here:
   and the arrow form ran wide enough to overlap its neighbours whenever two transitions landed close
   together; wrapping fixed that but left the two short lines crowding the line itself, so the offset and
   alignment finish the job — both lines end at the edge nearest the marker they describe.
+- **Stage markers carry the stage's DURATION** as a third line, and neighbouring markers alternate
+  vertically. `setting` and `boosting` are ~0.1 s apart, so no horizontal offset can separate them —
+  one has to move down. Alternating by index holds whatever the spacing, where a proximity test would
+  fail on a run of three close transitions.
+- **The motor BURN is shaded inside BOOSTING** (`--motor E16|F15`). BOOSTING spans burn *plus* coast to
+  separation, and only the coast is under meaningful aerodynamic control — the fins have little
+  authority while the motor dominates. The band makes that split visible rather than inferred, and a
+  separation falling *inside* the burn is a fault the eye catches at once.
 - **The 3D track is coloured BY STAGE**, one trace each, replacing the Viridis time gradient. A time
   ramp answers "when", which the hover already gives to a tenth of a second; the question actually asked
   of that chart is where it boosted, where it glided, where it turned for the landing. Stage boundaries
@@ -85,4 +93,6 @@ bash tools/hitl_collect.sh F15 calm          0.0  0.0 210.0 False captures/preca
 bash tools/hitl_collect.sh F15 gnss_dead     0.05 0.0 210.0 False captures/precatapult 270 0 0 False 0  60
 bash tools/hitl_collect.sh F15 attitude_dead 0.05 0.0 210.0 False captures/precatapult 270 0 0 False 30 0
 python3 tools/flight_metrics.py captures/precatapult --sort name
+# reports: pass the motor so the burn band is drawn inside BOOSTING
+python3 tools/flight_report.py captures/precatapult/f15_full.txt --motor F15 -o f15_full.html
 ```

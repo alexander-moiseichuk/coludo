@@ -96,6 +96,10 @@ _FIXED_SCALE = 100  # fixed.SCALE -- gyro columns are centideg/s fixnums
 # which a sequential scale cannot do.
 _STAGE_COLORS: tuple = ('#7f7f7f', '#d62728', '#1f77b4', '#2ca02c', '#ff7f0e', '#9467bd', '#8c564b')
 
+# Average burn seconds per motor -- the same table sim_model.MOTORS carries, restated here because this
+# tool is host-side and must not import firmware. Used to shade the BURN inside BOOSTING (--motor).
+_MOTOR_BURN_S: dict = {'E16': 1.77, 'F15': 3.45}
+
 
 def leak_estimate(health, events):
     """
@@ -125,7 +129,7 @@ def leak_estimate(health, events):
     return (leak_bps / 1000.0, oom_s, m0 / 1e6, m1 / 1e6)
 
 
-def build(streams, logs, go, make_subplots):
+def build(streams, logs, go, make_subplots, motor=None):
     accel = find_stream(streams, 'ax', 'ay', 'az', prefer='adxl')  # high-g, not the IMU's low-g accel
     attitude = find_stream(streams, 'roll', 'pitch', prefer='bno')  # BNO055 emits heading/roll/pitch
     baro = find_stream(streams, 'elevation', prefer='icp') or find_stream(streams, 'altitude')
@@ -322,19 +326,54 @@ def build(streams, logs, go, make_subplots):
                                    'have none). Telemetry below is unaffected.',
                               xref='paper', yref='paper', x=0, y=1.02, showarrow=False,
                               font={'color': 'crimson'})
-    for time_s, label in events:
-        """
-        Shifted LEFT of the vline and right-aligned against it, not butted up to it.
+    """
+    STAGGERED VERTICALLY, because the horizontal fixes could not solve this one.
 
-        Wrapping the label onto two lines fixed the horizontal overlap between neighbouring markers but
-        left the text crowding its own line, so the two short lines read as one squeezed block. xshift
-        moves the whole annotation clear, and align='right' makes both lines end at the same edge -- the
-        edge nearest the line they belong to -- so it is unambiguous which marker a label describes when
-        two transitions land close together.
+    Wrapping onto two lines and shifting clear of the vline both helped, but SETTING and BOOSTING are
+    only ~0.1 s apart on a rocket profile -- and far closer still on the catapult profiles, where
+    apogee_arm_ms is 200 ms against a 12 s rocket arming window. Two markers at effectively the same x
+    cannot be separated by any horizontal offset; one has to move DOWN. Alternating the vertical shift
+    by index guarantees adjacent labels never collide whatever their spacing in time, which a
+    proximity test would not -- a run of three close transitions defeats pairwise nudging.
+
+    Each label stays right-aligned and offset left of its own line, so which marker it belongs to is
+    still unambiguous once they sit at different heights.
+    """
+    _STAGGER_PX: int = 34  # ~two lines at font 10, so a shifted label clears its neighbour entirely
+    for index, (time_s, label) in enumerate(events):
         """
+        Third line: how long the stage LASTED, not just when it started.
+
+        For BOOSTING that duration is the number worth reading -- it is the motor burn plus the coast to
+        separation, so it says directly whether the airframe separated when the motor and the
+        apogee-arming window predicted (F15 burns 3.45 s, E16 1.77 s, and apogee detect is blind for
+        apogee_arm_ms after entry). A start time alone forces that subtraction by eye across two
+        staggered labels. The last stage has no successor, so it carries no duration.
+        """
+        span = events[index + 1][0] - time_s if index + 1 < len(events) else None
+        text = label if span is None else '%s<br>%.1f s' % (label, span)
         series.add_vline(x=time_s, line_dash='dash', line_color='crimson',
-                         annotation_text=label, annotation_position='top left',
-                         annotation=dict(xshift=-10, align='right', font=dict(size=10)))
+                         annotation_text=text, annotation_position='top left',
+                         annotation=dict(xshift=-10, yshift=-_STAGGER_PX * (index % 2),
+                                         align='right', font=dict(size=10)))
+    """
+    Shade the motor BURN inside BOOSTING, when the motor is known (--motor).
+
+    BOOSTING spans burn PLUS coast to separation, and only the second part is under aerodynamic
+    control -- the fins have no authority to speak of until the motor stops dominating. Drawing the burn
+    makes that split visible instead of inferred: the boost band is thrust, the remainder is the coast
+    the apogee detector arms across (apogee_arm_ms), and separation should fall at the end of it. A
+    separation landing INSIDE the burn band is a fault the eye now catches immediately.
+    """
+    if motor and motor.upper() in _MOTOR_BURN_S:
+        boost = next((t for t, label in events if 'boosting' in label), None)
+        if boost is not None:
+            burn = _MOTOR_BURN_S[motor.upper()]
+            series.add_vrect(x0=boost, x1=boost + burn, fillcolor='#d62728', opacity=0.10,
+                             line_width=0, annotation_text='%s burn %.2f s' % (motor.upper(), burn),
+                             annotation_position='bottom left',
+                             annotation=dict(font=dict(size=9, color='#d62728')))
+
     # GC-off leak + time-to-OOM headline (mem_free slope over the airborne, GC-disabled window)
     leak = leak_estimate(health, events)
     title = 'flight parameters'
@@ -383,13 +422,14 @@ def main():
     parser.add_argument('capture', help='recorder capture (the UART stream saved by the Luckfox)')
     parser.add_argument('-o', '--out', default='flight.html', help='output HTML (default flight.html)')
     parser.add_argument('--cdn', action='store_true', help='load plotly.js from the CDN (tiny file, needs net)')
+    parser.add_argument('--motor', choices=sorted(_MOTOR_BURN_S), help='shade the motor burn inside BOOSTING')
     args = parser.parse_args()
     go, pio, make_subplots = _require_plotly()
     with open(args.capture) as handle:
         streams, logs = flight_telemetry.parse(handle.read())
     if not streams:
         sys.exit('no telemetry streams found in %s' % args.capture)
-    trajectory, series = build(streams, logs, go, make_subplots)
+    trajectory, series = build(streams, logs, go, make_subplots, args.motor)
     write_html(trajectory, series, args.out, pio, 'cdn' if args.cdn else True)
     print('wrote %s (%d streams, %d log lines)' % (args.out, len(streams), len(logs)))
 
