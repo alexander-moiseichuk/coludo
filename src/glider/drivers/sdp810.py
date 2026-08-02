@@ -137,7 +137,10 @@ class Sdp810(task.Task):
             except Exception:
                 pass  # never stored yet -- keep the config default
         self._scale: int = _DEFAULT_SCALE
-        self._raw: fixed.fixnum = 0  # last un-tared reading (Pa fixnum) -> the tare source
+        # None until the first frame, NOT 0: calibrate()/update({'zero': True}) both guard on
+        # `_raw is None` to refuse a tare before there is a reading, and initialising to 0 made that
+        # guard dead code -- an operator taring straight after boot silently captured a zero tare.
+        self._raw = None  # last un-tared reading (Pa fixnum) -> the tare source
         self._temp_raw: int = 0  # last raw temperature word (raw / 200 -> °C)
         """
         A prior unclean reboot can leave the part mid-continuous, where a re-issued start is rejected;
@@ -167,7 +170,7 @@ class Sdp810(task.Task):
             self.name, self.config.get('provides', {}), 'dynamic_pressure', 'airspeed')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
                                        ('dynamic_pressure', 'airspeed_cms', 'temperature'),  # all fixnums (x SCALE)
-                                       decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
+                                       decimate_us=self.config.get('telemetry_ms', 0) * 1000)  # 0 -> global
         self._ok = True
         return True
 
@@ -297,10 +300,18 @@ class Sdp810(task.Task):
                     self._telemetry.push((pressure, int(airspeed * fixed.SCALE), self._temp_raw // 2))
                     self.note(None)  # healthy pass -> let the next error log afresh
                     self.strike(False, _RESTART_AFTER)  # good read rearms the run
-            except Exception as error:
+            except OSError as error:
+                # OSError is the I2C bus fault this loop is built to ride out -- NAK, arbitration,
+                # a wedged peer -- so it gets the restart ladder.
                 self.note('sdp810 :: read %r', error)  # deduped: a persistent error logs once, not every tick
                 if self.strike(True, _RESTART_AFTER):  # once, not every tick while it stays dead
                     await self._restart()
+            except Exception as error:
+                # Anything else is a BUG, not a bus fault. It used to fall into the branch above and
+                # be reported as a transient read error, which is how an AttributeError survives a
+                # whole flight looking like flaky wiring. Named differently so it reads as what it is;
+                # the loop still survives, because a crashed driver is a lost sensor.
+                self.note('sdp810 :: BUG in read path %r', error)
             await asyncio.sleep_ms(self._period_ms)
 
     def update(self, props: dict) -> list:

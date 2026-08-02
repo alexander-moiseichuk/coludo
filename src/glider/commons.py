@@ -53,6 +53,7 @@ except ImportError:  # CPython (off-board tooling / tests) — everything degrad
         return new - old
 
 
+import asyncio
 import json
 import os
 
@@ -60,6 +61,12 @@ import os
 
 M_PER_DEG: float = 111320.0  # metres per degree of latitude (and per degree longitude * cos(lat));
                              # shared by navigation + sim_model (flat-earth geo) -- one definition.
+
+APOGEE_SMOOTH: float = 4.0  # IIR weight divisor for the apogee peak tracker: the smoothed elevation
+                            # moves 1/4 of the way to each new sample. A running maximum latches any
+                            # single high spike forever, so the peak -- not just the descent -- needs
+                            # noise immunity; see apogee_step. Costs ~4 samples of lag, far inside
+                            # apogee_drop_m of altitude.
 
 SERVO_NEUTRAL_DEG: int = 90  # default fin/servo neutral angle (deg): the zero-deflection centre the mixer
                              # holds when disarmed/degraded and the HITL sim assumes when recovering fin
@@ -252,3 +259,172 @@ def id_classify(read, expected: int) -> str:
     if read == 0xFF:
         return 'id reads 0xFF -- bus idle-high: no device driving MISO (absent / MISO miswired)'
     return 'id reads 0x%02X, expected 0x%02X -- wrong device on this bus/select (crosswired)' % (read, expected)
+
+def dwell_step(active: bool, now_ms: int, credit_ms: int, last_ms, threshold_ms: int) -> tuple:
+    """
+    One step of a LEAKY dwell: the condition must hold `threshold_ms` of NET time, dips only drain it.
+
+    The plain "sustained since" dwell it replaces reset its start on any single sample that missed, which
+    is fine for a clean signal and useless for a noisy one: at 100 % accel noise the magnitude crosses
+    the launch threshold in both directions every few samples, so an unbroken run of `launch_ms` never
+    happens and MEASURED (doc/sims/TMS-7-noise_tolerance) the glider never left the pad at all.
+
+    Draining rather than resetting keeps the tolerance without changing the UNIT. That distinction cost
+    a revert: replacing the dwell with a leaky count-of-samples also worked, but it silently redefined
+    `launch_ms` into a sample count, so the trigger's timing would drift with tick rate and a documented
+    config knob would quietly stop doing anything. Time in, time out -- a threshold_ms of 100 still means
+    100 ms, and a lone spike still drains to nothing and resets exactly as before.
+
+    Pure and stateless (the caller owns the state) for the same reason as apogee_step below: launch
+    detect exists on the board AND in the host sim, and the two must not drift apart.
+
+    Args:
+        active - whether the condition holds for THIS sample.
+        now_ms - the caller's monotonic clock in milliseconds.
+        credit_ms - net time the condition has held so far, from the previous call.
+        last_ms - the previous call's clock, or None when no dwell is in progress.
+        threshold_ms - the net time the condition must hold before it counts.
+
+    Returns:
+        (credit_ms, last_ms, fired) -- the updated state, and True once the dwell is satisfied.
+    """
+    if last_ms is None:  # no dwell in progress: an active sample starts the clock, at zero credit
+        return (0, now_ms, False) if active else (0, None, False)
+    step = now_ms - last_ms
+    credit = credit_ms + step if active else credit_ms - step
+    if credit <= 0:
+        return 0, None, False  # fully drained -> the dwell is over and must start afresh
+    return min(credit, threshold_ms), now_ms, credit >= threshold_ms
+
+
+def apogee_step(elevation, now_ms: int, peak, since_ms, smooth, drop_m, dwell_ms: int) -> tuple:
+    """
+    One step of APOGEE detection: track the baro peak, report when it has fallen off it.
+
+    Pure and stateless -- the caller owns `peak` and `since_ms` -- because this logic exists in two
+    worlds and used to be written twice. `tasks/sequencer.py` runs it on the board; the host sim in
+    `tools/virtual_flight.py` ran a hand-maintained MIRROR whose own comment records that it "had
+    DRIFTED to timeout-only deploy, and a low arc could be back underground by the timeout". Stage
+    timing sets the separation altitude, so a drifted mirror moves the host's apogee away from the
+    board's -- which is exactly the divergence measured between them. One implementation, no mirror.
+
+    The caller keeps the arming window (the motor's pressure wave corrupts the in-airframe baro during
+    burn) and the burnout-timeout fallback: those need the caller's own clock and stage entry.
+
+    Args:
+        elevation - the current baro height above the pad, or None while not armed / no reading.
+        now_ms - the caller's monotonic clock in milliseconds.
+        peak - the highest SMOOTHED elevation seen so far, or None before the first reading.
+        since_ms - when the fall below the peak began, or None if not currently below it.
+        smooth - the smoothed elevation carried from the previous call, or None to seed it.
+        drop_m - how far below the peak counts as descending (same units as elevation).
+        dwell_ms - how long that fall must be sustained before it is apogee rather than a dip.
+
+    Returns:
+        (peak, since_ms, smooth, fired) -- the updated state, True exactly when apogee is confirmed.
+    """
+    if elevation is None:
+        return peak, since_ms, smooth, False
+    """
+    SMOOTH BEFORE COMPARING, because the peak is a running MAXIMUM and a maximum has no noise immunity
+    at all: one high baro sample is latched forever, and every later reading is then judged against that
+    spike rather than against the trajectory. MEASURED at 100 % baro noise -- apogee fired 2.8 s early,
+    separating at 168 m instead of 268 m and cutting the flight from 48.8 s to 32.8 s. The drop band
+    below rejects noise on the DESCENDING side only; this is the same protection for the peak itself.
+
+    A first-order IIR, weight 1/APOGEE_SMOOTH, chosen over a sample window because it needs one scalar
+    of state rather than a ring buffer -- the flight slice runs with GC off and a per-call allocation
+    here is a leak. The lag it costs (~4 samples, tens of ms) is far inside apogee_drop_m of altitude.
+    """
+    smooth = elevation if smooth is None else smooth + (elevation - smooth) / APOGEE_SMOOTH
+    if peak is None or smooth > peak:
+        return smooth, None, smooth, False   # still climbing -> raise the peak, reset the dwell
+    if smooth < peak - drop_m:               # fallen off the peak -> descending
+        since_ms = now_ms if since_ms is None else since_ms
+        return peak, since_ms, smooth, (now_ms - since_ms) >= dwell_ms
+    return peak, None, smooth, False         # inside the drop band (noise) -> not descending yet
+
+class Waiter:
+    """
+    An IRQ-kicked wake with a sliced fallback -- the cheap replacement for asyncio.wait_for_ms.
+
+    MEASURED on the board (test/diag_alloc_hotloop.py): `asyncio.wait_for_ms(ThreadSafeFlag.wait(), t)`
+    allocates **560 B per call**, against 96 B for a bare flag wait and **48 B for one
+    asyncio.sleep_ms**. On the ADXL375, whose IRQ fires at its 100 Hz ODR, that wrapper alone was
+    ~56 KB/s. It is not the waiting that costs, it is asking to be woken with a deadline attached.
+    Converting the three interrupt-driven drivers to this took the board's leak from **331 KB/s
+    (OOM ~96 s) to 191 KB/s (OOM ~167 s)**.
+
+    So: sleep in slices and check a counter between them. At a 100 Hz ODR the kick has already landed
+    when the first slice ends, so the normal path costs ONE sleep_ms -- 48 B instead of 560. With a
+    dead interrupt the loop runs out its slices and the caller samples anyway, which is the same
+    fallback it always had. The price is up to `slice_ms` of wake latency, nothing for a sensor whose
+    data changes every 10 ms.
+
+    THE SLICE DOUBLES, and it starts short deliberately. Latency only matters on the FIRST check: a
+    live interrupt lands within one sample period, so the first slice must be small or a healthy
+    sensor waits needlessly. After that the line is late or dead, where latency stops mattering and
+    only the wake-up cost does -- so 10, 20, 40, 80... Starting instead at half the timeout and
+    halving would invert this: the first look comes at timeout/2, long after a healthy edge arrived.
+
+    For a 500 ms fallback that is ~6 sleeps instead of 50 when the interrupt is dead (288 B against
+    2400 B), while the healthy path still costs exactly ONE sleep. It also fixes the poll-only case,
+    where a driver with no interrupt at all would otherwise pay timeout/slice wake-ups per sample.
+
+    A COUNTER rather than a bool, because it costs the same and holds more: a count above one means
+    interrupts arrived faster than they were consumed, so a sampling overrun is recoverable evidence
+    rather than a silently dropped sample. No separate miss counter -- that is the same fact stored
+    twice.
+
+    THE COUNTER IS INTERNAL. Callers use kick(), take() and wait(); nothing outside reads `kicks`,
+    because a driver that tests it directly has to remember to clear it, and one that forgets goes on
+    sampling forever on a stale edge. take() is the only non-blocking read, and it clears as it
+    reports -- which is exactly the form the polling fallbacks need, and what a ThreadSafeFlag cannot
+    give them (it offers only a blocking wait(), which is why those drivers used to carry a second
+    mark beside it). If an overrun count is ever wanted outside, add a method for it rather than
+    reaching in.
+    """
+
+    def __init__(self, slice_ms: int = 10):
+        self.kicks: int = 0       # incremented by the ISR, cleared by take()
+        self._slice_ms: int = slice_ms
+
+    def kick(self, _unused_pin=None) -> None:
+        """ISR entry: one small-int increment. No branch, no allocation, nothing to get wrong."""
+        self.kicks += 1
+
+    def take(self) -> int:
+        """
+        Non-blocking: HOW MANY kicks arrived since the last check. Clears the count.
+
+        The count, not a bool, because 0 and 1 and 3 mean different things and cost the same to
+        return: 0 is a dead or quiet interrupt, 1 is the healthy case, and anything above 1 is an
+        OVERRUN -- interrupts arriving faster than they are consumed, i.e. samples being dropped. A
+        caller that only wants truthiness still gets it, since 0 is falsy.
+        """
+        kicks = self.kicks
+        self.kicks = 0
+        return kicks
+
+    async def wait(self, timeout_ms: int) -> bool:
+        """
+        Sleep in slices until a kick lands or `timeout_ms` elapses.
+
+        Args:
+            timeout_ms - give up after this long.
+
+        Returns:
+            The number of kicks that landed, cleared as it is reported: **0 on timeout** (a dead or
+            quiet interrupt), 1 in the healthy case, and **above 1 an overrun** -- edges arriving
+            faster than this loop consumes them. Callers wanting a plain yes/no get it, since 0 is
+            falsy; callers watching for dropped samples have the number without reaching inside.
+        """
+        waited, slice_ms = 0, self._slice_ms
+        while waited < timeout_ms:
+            step = min(slice_ms, timeout_ms - waited)  # the LAST slice is trimmed to land exactly on
+            await asyncio.sleep_ms(step)               # the timeout, never past it
+            waited += step                             # count what was actually slept, not what was asked
+            if self.kicks:        # cheap attribute test guards the call: most slices find nothing,
+                return self.take()  # and take() stays the ONE implementation of check-and-clear
+            slice_ms += slice_ms  # nothing yet -> back off, doubling (see the class docstring)
+        return 0

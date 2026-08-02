@@ -111,6 +111,9 @@ class Sequencer(task.Task):
         self._advanced_to = None  # the stage _advance() itself set -> _tick tells self- from external moves
         self._apogee_max = None  # peak elevation seen in BOOSTING (apogee detect); reset on BOOSTING entry
         self._apogee_since = None  # start of the descending-past-peak dwell (rejects a baro noise dip)
+        self._apogee_smooth = None  # IIR-smoothed elevation feeding the peak (commons.apogee_step)
+        self._launch_credit: int = 0  # leaky launch dwell: NET ms of |a| over launch_g (commons.dwell_step)
+        self._launch_last = None  # previous launch-dwell tick, or None when no dwell is in progress
         self._boost_entry_ms = None  # _tick time of BOOSTING entry -> apogee arming + the flight timeout
         self._detect = {_STAGE.SETTING: self._detect_launch, _STAGE.BOOSTING: self._detect_apogee,
                         _STAGE.GLIDING: self._detect_landing, _STAGE.LANDING: self._detect_stationary}
@@ -155,14 +158,14 @@ class Sequencer(task.Task):
             start = time.ticks_us()
             gc.collect()    # compact + free before the flight (a known pause, on the rod)
             took = time.ticks_diff(time.ticks_us(), start)
-            recorder.Recorder.log(self.name, 'gc pre-flight collect %d us' % took)
+            self.event('gc pre-flight collect %d us' % took)  # durable: log() alone loses it
             gc.disable()
         elif to_stage == _STAGE.DONE:
             gc.enable()
             start = time.ticks_us()
             gc.collect()
             took = time.ticks_diff(time.ticks_us(), start)
-            recorder.Recorder.log(self.name, 'gc post-flight collect %d us' % took)  # the deferred cost
+            self.event('gc post-flight collect %d us' % took)  # the deferred cost, durably
 
     async def finish(self) -> None:
         gc.enable()  # never leave GC disabled if the task stops mid-flight (defensive)
@@ -221,6 +224,7 @@ class Sequencer(task.Task):
             if stage == _STAGE.BOOSTING:  # start apogee peak-tracking fresh for this flight
                 self._apogee_max = None
                 self._apogee_since = None
+                self._apogee_smooth = None
                 self._boost_entry_ms = now  # arms the apogee detector + starts the flight timeout
             elif self._boost_entry_ms is None and (stage == _STAGE.GLIDING or stage == _STAGE.LANDING):
                 """
@@ -267,11 +271,22 @@ class Sequencer(task.Task):
         g_sq = _magnitude_sq(self._accel.value())
         if elevation is not None and elevation > self._launch_alt_m:
             self._advance(_STAGE.BOOSTING, 'launch alt=%.0fm' % elevation)
-        elif g_sq is not None and g_sq > self._launch_g_sq:  # |a| over launch_g, squared
-            if self._sustained(now, self._launch_ms):
-                self._advance(_STAGE.BOOSTING, 'launch |a|=%.1fg' % math.sqrt(g_sq))
         else:
-            self._since = None
+            """
+            A LEAKY dwell (commons.dwell_step), not a contiguous one: |a| over launch_g must hold
+            launch_ms of NET time, and a sample that dips below drains the credit instead of wiping it.
+            The contiguous form could not survive a noisy accel channel -- MEASURED at 100 % noise, the
+            unbroken run never happened and the glider never left the pad. Shared with the host sim,
+            which had its own copy of this until the same measurement showed the copy was what the
+            noise study had actually been grading.
+            """
+            self._launch_credit, self._launch_last, fired = commons.dwell_step(
+                g_sq is not None and g_sq > self._launch_g_sq,
+                now, self._launch_credit, self._launch_last, self._launch_ms)
+            if fired:  # g_sq may be None on the very tick a satisfied dwell reports (a dropped sample
+                # drains but cannot un-fire) -- so the reason line reads the credit, never sqrt(None)
+                self._advance(_STAGE.BOOSTING, 'launch |a|=%.1fg dwell=%dms' % (
+                    math.sqrt(g_sq) if g_sq is not None else 0.0, self._launch_credit))
 
     def _detect_apogee(self, now: int) -> None:
         """
@@ -291,18 +306,15 @@ class Sequencer(task.Task):
         """
         armed = self._boost_entry_ms is not None and \
             time.ticks_diff(now, self._boost_entry_ms) >= self._apogee_arm_ms
+        # the peak/dwell state machine is commons.apogee_step -- ONE implementation, because the host
+        # sim ran a copy of it and that copy had drifted (see the helper's docstring)
         elevation = self._elevation.value() if armed else None
-        if elevation is not None:
-            if self._apogee_max is None or elevation > self._apogee_max:
-                self._apogee_max = elevation  # still climbing -> raise the peak, reset the dwell
-                self._apogee_since = None
-            elif elevation < self._apogee_max - self._apogee_drop_m:  # fallen off the peak -> descending
-                self._apogee_since = now if self._apogee_since is None else self._apogee_since
-                if time.ticks_diff(now, self._apogee_since) >= self._launch_ms:  # sustained (not a dip)
-                    self._advance(_STAGE.GLIDING, 'apogee %.0fm' % self._apogee_max)
-                    return
-            else:
-                self._apogee_since = None  # within the drop band (noise) -> not yet descending
+        self._apogee_max, self._apogee_since, self._apogee_smooth, fired = commons.apogee_step(
+            elevation, now, self._apogee_max, self._apogee_since, self._apogee_smooth,
+            self._apogee_drop_m, self._launch_ms)
+        if fired:
+            self._advance(_STAGE.GLIDING, 'apogee %.0fm' % self._apogee_max)
+            return
         if self._sustained(now, self._boost_timeout_ms):  # burnout timeout fallback (from BOOSTING entry)
             self._advance(_STAGE.GLIDING, 'burnout timeout (no separation)')
 

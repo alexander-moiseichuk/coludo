@@ -55,6 +55,16 @@ async def amain():
 
     # gnss base (atgm336h + neo6mv2 share it) -- undefined uart -> no transport
     assert 'no transport' in await atgm336h.Atgm336h('g', {'bus': 'uart', 'id': 9}, stub).diagnose()
+    """
+    REPEATABLE on a DEFINED bus. diagnose() is called exactly when setup() failed, i.e. when the
+    driver holds no UART -- so it opens one itself, and it used to never release it. Every probe of a
+    dead GNSS leaked another peripheral instance, and a later one can collide with an earlier on the
+    same pins. Calling it several times is the test: it must answer every time, not just the first.
+    """
+    for attempt in range(3):
+        verdict = await atgm336h.Atgm336h('g', {'bus': 'uart', 'id': 2}, stub).diagnose()
+        assert verdict and ('NMEA' in verdict or 'no NMEA' in verdict), \
+            'diagnose attempt %d gave %r -- the UART it opens is not being released' % (attempt, verdict)
 
     # present devices, only when wired: the real icp (0x63) / vl53 (0x29) report present/ok
     addrs = _bus0().scan()

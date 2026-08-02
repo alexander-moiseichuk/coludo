@@ -96,11 +96,245 @@ envelope + landing-zone numbers re-derive from the TMS-8 masses/geometry (`colud
 
 Supporting precision + tooling (continue alongside / from Phase 4):
 
-- **Nail the landing strip** — bank-to-turn lands ~85 m from the 40 m-wide strip centre (good sensors);
-  it drifts off on short final because LANDING goes wings-level. A tighter final-approach / flare (or a
-  smaller orbit radius), re-measured in the sim.
-- **High-noise robustness** (≥50 %): the bank loop reads attitude, so heavy noise degrades the orbit —
-  a filter / rate-limit on the steering input.
+- **Nail the landing strip** — bank-to-turn lands ~85 m from the 40 m-wide strip centre (good sensors).
+  **The cause recorded here was WRONG and is corrected (7/31).** It said the glider "drifts off on short
+  final because LANDING goes wings-level". Measured from a board capture, it does the opposite — it is
+  pinned at the FULL endgame bank right down to touchdown and only levels after it is on the ground:
+
+  | t (s) | elevation | roll setpoint | heading error |
+  |---|---|---|---|
+  | 44.5 | 71.8 m | −30° | −25° |
+  | 48.5 | 41.5 m | **−60°** | **−162°** |
+  | 51.5 | 17.4 m | **−60°** | −110° |
+  | 53.5 | 1.4 m | **−60°** | −64° |
+
+  So the endgame spiral **tightens to maximum bank and never converges**: the glider is still mid-turn
+  when the altitude runs out, and touchdown lands at whatever phase of the spiral it reached. That is
+  phase luck — the same failure the old racetrack law had, at a smaller radius.
+
+  The fix is therefore NOT more authority on final (there is already maximum authority). Two candidates
+  to evaluate: **roll out to wings-level and hold the final heading** once inside a commit point, or
+  **floor the spiral radius** at what the remaining altitude can complete (`R_min` is already computed
+  for the airspeed-gated bank, so the input exists). Either needs a sim sweep plus a `flight_kpi`
+  regression against the existing capture set before it goes near the airframe.
+- **High-noise robustness** — **RE-SCOPED, THEN DONE (7/31, `doc/sims/TMS-7-noise_tolerance`).** The
+  hypothesis here was that "the bank loop reads attitude, so heavy noise degrades the orbit", wanting a
+  filter or rate-limit on the steering input. Measured per channel at 100 % noise, that is wrong:
+  attitude, gyro rate and heading at twenty times nominal move the landing by **at most 5 m**. The
+  steering input needed no protection at all. The fragility was in the **sequencer**, and both halves
+  are now fixed and shared with the host sim through `commons`:
+  - **Launch** — a leaky dwell (`commons.dwell_step`): the condition must hold `launch_ms` of NET time,
+    and a dip drains the credit instead of resetting it. 100 % accel noise went from *never launching*
+    to flying **identically to the clean baseline** (268 m apogee, 48.9 s). Keeping the TIME unit was
+    the whole trick — a leaky *sample* count is equally noise-tolerant but silently turns `launch_ms`
+    into a sample count, so the trigger drifts with tick rate; `test_sequencer` caught that.
+  - **Apogee** — the peak is a running maximum, so one high sample was latched forever and every later
+    reading judged against it. `commons.apogee_step` now IIR-smooths elevation (1/4) before comparing.
+    Apogee improves at every noise level (15 %: 180→215 m, 50 %: 168→178 m, true 268 m). Heavier
+    smoothing was measured and rejected: no gain noisy, ~20 m of lag clean.
+  - The **100 % altitude case stays at 177 m and that is correct** — `noisy` scales by `abs(value)+1`,
+    so 100 % makes the baro uniform-random over `[0, 2×altitude]`, carrying zero information. What flies
+    it then is the burnout timeout, which is the fallback working. That case tests redundancy, not
+    filtering.
+  - Also fixed the study's own blind spot: `virtual_flight` had a private copy of launch detect, so the
+    original sweep graded the host, not the board. **A sim that reimplements the flight code grades
+    itself.**
+- **GNSS miss/absence tolerance** — **DONE (7/31).** The receiver is *expected* to lose lock through
+  the boost (high-g, vibration, antenna shadow) and may never reacquire inside a <60 s flight, so this
+  is a design case rather than an error path. The no-fix branch used to steer the pad→target bearing
+  forever, ignoring that the glider had moved — the 720 m the fault matrix priced. It now **dead-reckons**
+  (`guidance._reckon`): advance the last fix by airspeed × heading plus the last wind estimate, every
+  input of which survives a dead GNSS. Tiers are now 1 live fix → 2 dead reckoning → 3 launch point
+  (never locked at all) → 4 blind heading hold. `flight.csv` carries a `reckoning` column so the
+  operator sees it. Steps over 0.5 s are skipped rather than integrated in one jump. Frozen wind is the
+  dominant residual error and is bounded: a 2 m/s estimate error costs ~80 m over 40 s.
+  **MEASURED on the board** (`captures/gnss`, F15 270 g): a 60 s blackout covering essentially the whole
+  glide costs **30 m** — 122 m clean vs 152 m dead, with 368 of 522 flight rows flying on dead
+  reckoning — against the **720 m** the earlier fault matrix priced for the same failure.
+  Also: **board floats are single-precision**, so advancing a latitude near 48° by a 0.2 m step changes
+  it by exactly nothing (~0.4 m ULP). The reckoner accumulates metres and converts once; anything that
+  integrates small increments into a large absolute coordinate on this hardware is silently wrong, and
+  worst precisely when the increments are smallest.
+  Per-sentence **RMC/GGA outage events** now go to the durable `gnss_events.csv`, and GGA's quality /
+  satellites / HDOP / altitude — parsed but never recorded — get their own `gnss_gga.csv` stream. They
+  fail separately (a receiver with almanac but no fix keeps emitting GGA at quality 0 while RMC goes
+  void), and since dead reckoning makes an outage nearly invisible in the trajectory, these events are
+  the only record that the receiver was dead.
+  **Fault matrix RE-RUN on the board 2026-08-01** (F15, 270 g, all five DONE — nothing regressed):
+
+  | scenario | miss | vs calm | maxpad | dur |
+  |---|---|---|---|---|
+  | calm reference (zero noise, no faults) | **113 m** | — | 161 m | 59.0 s |
+  | clean (5 % noise) | 121 m | +8 | 155 m | 56.4 s |
+  | GNSS dead 60 s | **152 m** | +39 | 166 m | 56.1 s |
+  | attitude dead 30 s | 138 m | +25 | 157 m | 55.5 s |
+  | both dead | 121 m | +8 | 189 m | 54.8 s |
+
+  **A dead GNSS now costs 39 m against a perfect flight, where the old matrix priced it at 720 m.**
+  Attitude loss costs 25 m. But the number that matters most is the calm reference: **a flight with NO
+  noise and NO faults still misses by 113 m and is still not in-zone.** The faults add 8–39 m on top of
+  a 113 m baseline failure, so degradation is no longer the limiting factor — the endgame is (see
+  Landing-strip precision). Fault tolerance can be considered adequate; accuracy cannot.
+  **Do not rank the fault cases against each other from this table.** `gnss_drop_s`/`attitude_drop_s`
+  inject at a RANDOM glide moment, so one run per case carries large scatter — which is why "both dead"
+  lands better than either single fault, an artefact rather than a result. Ranking needs several seeds.
+  **Still to measure:** GNSS position is noised in neither sim, so a *noisy* (as opposed to absent) fix
+  remains untested.
+- **Float allocation is the leak, and the 100 Hz channels are where it lives** — **PARTLY DONE
+  (2026-08-01).** First target closed: `bno055` was still building two `to_str` strings per sample,
+  MEASURED at 170 B — the single largest piece of that driver's sample, and formatting rather than
+  measurement. It is the same fix `lsm6dso32` already took for its gyro columns and this driver simply
+  never got. Removing it: **246.0 → 240.3 KB/s, OOM 130 → 133 s**. Both sims and `flight_report` were
+  moved to raw centidegrees with it, so board and host still agree — that divergence is exactly how the
+  noise study came to grade the wrong code. The two remaining `to_str` callers (`sdp810.probe`,
+  `attitude.inspect`) are cold and correct as they are.
+  **Ground truth, measured per driver against a 240.3 KB/s baseline:** `imu_lsm6dso32` **50.9 KB/s**,
+  `imu_bno055` **44.4 KB/s** — together **40 % of the whole leak**. `accel_adxl375` not yet measured
+  (the CDC wedged); it runs at the same 100 Hz and should be assumed comparable until measured.
+
+  **CORRECTION — the telemetry row is NOT the cost.** An earlier revision of this entry claimed it was,
+  by multiplying the measured row cost by 100 Hz. That was wrong: the recorder already applies a GLOBAL
+  25 Hz decimation (`telemetry_us: 40000`, itself already halved from 50 Hz as "the cheapest leak
+  reduction available"), which every stream inherits unless it sets its own. At 25 Hz a 160 B row is
+  **4 KB/s** — under 10 % of `imu_lsm6dso32`'s 50.9 KB/s. Global decimation is therefore SPENT as a
+  lever; it cannot be applied twice.
+
+  **The cost is the 100 Hz SAMPLE LOOP**, which runs at full rate regardless of telemetry decimation.
+  For `lsm6dso32` the accountable per-sample pieces are two 3-element slices (96 B), the sample tuple
+  (~96 B with floats) and two databoard pushes (~64 B) = ~256 B x 100 Hz = **~26 KB/s**, leaving ~25 KB/s
+  unaccounted — the prime suspect being the I2C `readfrom` allocating a fresh bytes buffer per read, at
+  100 Hz. **Measure that next** (`readinto` into a preallocated buffer is the standard fix), and measure
+  `accel_adxl375`, before touching the row encoding at all.
+
+  The row encodings below stay priced and correct as measurements, but they are a SMALL lever at 25 Hz
+  and should not be the next move:
+
+  | row encoding | bytes | us | note |
+  |---|---|---|---|
+  | `%`-format decimal (today) | 144 | 36.0 | |
+  | raw sensor COUNTS as `%d` | 128 | 35.7 | free — the driver already holds them |
+  | `struct.pack` + `hexlify` | 112 | 23.7 | better on BOTH axes; needs a header marker |
+  | raw binary `struct.pack` | 48 | 87.6 | **DO NOT** — see below |
+  | repack float→int, then `%d` | 208 | 67 | **net LOSS**, the conversion costs more than it saves |
+
+  Three conclusions worth keeping. **Converting floats to ints for telemetry loses** (`from_float` is
+  80 B for three values against 16 B saved) — the win only exists when the ints come FREE, i.e. the
+  driver logs the raw counts it already read and the host applies the scale, which is the `to_str`
+  lesson one level up. **Raw binary is not viable**: the recorder's wire format is line-framed
+  (`@session_file@...\n`), so packed bytes containing 0x0A or `@` would silently corrupt row
+  boundaries — hex keeps it ASCII-safe, which is why it is the right choice and not a compromise.
+  And a per-column encoding marker in the header (operator's suggestion, e.g. `name+` = hex-encoded)
+  makes the streams self-describing so the host decoder needs no per-file knowledge.
+
+  Next step: `accel_adxl375`'s number, then raw-counts + hex on the three 100 Hz streams. Every analysis
+  tool reads these columns, so board and host must move in the SAME commit — a column meaning different
+  things on the two sides is how the noise study came to grade the wrong code. Measured on the board: a boxed float is exactly **16 B**, an int
+  operation allocates **0**, floats run ~22 % slower, and with GC off in flight none of it is transient.
+  Crucially `push` costs **32 B for a float and 0 for an int**, while `value()` costs ~0 for either — so
+  the cost is at the PRODUCER, scaling with its rate.
+  That kills the altitude/elevation migration (the baro runs at **10 Hz**: ~2.6 KB/s, OOM 130 → ~132 s,
+  for a refactor across drivers/databoard/guidance/sequencer/both sims/telemetry — not worth it) and
+  points at the **100 Hz channels instead: attitude, rate, accel**, where a 3-float tuple costs 64 B a
+  push ≈ **6.4 KB/s per channel**, roughly 10x the payoff for the same work. `imu_bno055` alone was
+  profiled at **47.9 KB/s** and has never been examined. Do that evaluation before any more of the leak
+  work — same method as the baro one, which is written up in the icp10111 commit.
+- **Do NOT migrate altitude/elevation to fixnum** — **CLOSED, evaluated and rejected (2026-08-01).**
+  The float32 ULP problem that motivated it does not exist in this domain: it was a lat/lon DYNAMIC
+  RANGE failure (48° encodes 5.34 Mm of arc), while altitude's ULP is **30 µm at 288 m**, 61 µm at
+  1000 m, `elevation = altitude - ground` differences to 0.06 mm and the ground average to 0.6 mm — four
+  to five orders inside the 10 cm border, against a part that resolves 8.9 cm. Speed and OOM gains are
+  ~15-22 % on the affected ops and ~2 s respectively. The driver ALSO cannot go integer even in
+  principle: the TDK compensation's `b` coefficient is **-4.23e12**, past MicroPython's unboxed 2^30 by
+  ~4000x and past viper's 2^31 (which wraps SILENTLY) by ~2000x, so any integer form needs 64-bit
+  intermediates = bignums = more allocation than the floats replaced.
+- **Catapult `board.config` profiles** — **DONE (2026-08-01), `tools/make_catapult_config.py` ->
+  `configs/tms7c.config`, `configs/tms7d.config`.** 7C is telemetry-only (all three servos AND the
+  flight activity disabled -- the airframe flies as instrumented ballast); 7D is full active control.
+  Both validate and load as `active`.
+  **Sized for the SMALLEST intended hop — a near-vertical ~3 m toss** (operator's call, safe side), so
+  the thresholds stay valid for anything larger; a bigger launch only ever adds margin. At 3 m:
+  `v_v = sqrt(2gh)` = **7.7 m/s**, apogee at **0.78 s**, boost over 1 m = **3.0 g** for ~260 ms.
+  Sizing low MOVES WHICH THRESHOLD IS MARGINAL, which is the point: at 3 m the boost is 3.0 g against a
+  `launch_g` of 2.5 — **20 % of margin** — where a 10 m launch pulls ~11 g and clears it fourfold. So
+  `launch_g` drops to **1.5**, erring low on purpose: a false launch on the ground merely advances the
+  stage and is recoverable, a MISSED launch yields no flight data at all, which is the whole point of
+  7C/7D. The 40 ms dwell plus the arming step guard against a carry bump, and `launch_alt_m` 1.0 m is an
+  independent second path if the accel threshold is missed.
+  **The firmware defaults would have FAILED on a catapult, not merely degraded.** Against the geometry
+  above, four separate thresholds break:
+  `apogee_arm_ms` 4000 leaves the detector blind until well past apogee, so apogee is NEVER seen;
+  `boost_timeout_ms` 12000 then fires the fallback long after touchdown, so the glider would spend its
+  whole flight in BOOSTING with fins at the boost attitude; `launch_alt_m` 10.0 sits at or above the
+  entire arc so the baro backup can never trip; and `apogee_drop_m` 5.0 is most of the arc height.
+  Applied instead: `launch_g` 1.5, `launch_ms` 40 (the pulse is ~260 ms at 3 m and ~130 ms at 10 m, so
+  the dwell fits inside both), `launch_alt_m` 1.0, `apogee_drop_m` 0.5 (a third of the 3 m arc, still
+  ~2.5x the baro's ~20 cm real noise), `apogee_arm_ms` 200 (leaving ~580 ms of tracking before a 0.78 s
+  apogee), `boost_timeout_ms` 1200, `flight_timeout_ms` 30 s.
+  **Open until measured:** the airframe mass is being weighed 2026-08-02. Mass does not move the
+  ballistics above (apogee depends on release velocity, not weight) but it DOES set the release velocity
+  the catapult actually delivers for a given draw, so re-check `launch_g` against the measured
+  acceleration once 7A/7B have flown — that is the threshold with the least margin.
+  Generated rather than hand-written so the derivation stays attached to the numbers, and validated
+  through the firmware's own `config.validate`/`config.load` rather than trusted -- which caught a real
+  bug: 7D had `flight` disabled, because the generator only ever CLEARED the flag while the default
+  ships it off. A 7D built that way would have flown with no control loop.
+- **ADXL375 / LSM6DSO32 shock capture — solved by CONFIG, not code (2026-08-01).** Telemetry
+  decimation DROPS samples, so at the recorder's 25 Hz global a 100 Hz shock stream keeps one in four.
+  A peak-hold was written for this and REVERTED: setting a stream's own `telemetry_us` already
+  overrides the global, so **10 ms records every sample with no code at all**, and for an experiment
+  that is not just simpler but more correct — a shock's SHAPE (duration, ringing) is what makes the
+  trace worth having, and peak-hold throws the waveform away to keep only its extreme. It was also
+  quietly dishonest: the column stayed named `ax` while its meaning became "peak over the preceding
+  window", silently biasing anything that integrates it or takes an RMS. **If a column's meaning
+  changes, its name must change with it** — and reach for the config knob before the code change.
+  `accel_adxl375` and `imu_lsm6dso32` are pinned to 10 ms in both catapult profiles. 10 ms is the
+  CEILING, not a preference: the ADXL375's INT1 fires at its own 100 Hz ODR, so nothing faster exists
+  to record. **Caveat for impact analysis:** a true impact spike is ~1–5 ms, so 100 Hz under-samples it
+  (0–1 samples per event) — fine for boost (~130–260 ms) and separation (tens of ms), marginal for
+  touchdown. Raising the part's ODR (it supports up to 3200 Hz) is a separate change with real
+  bandwidth and leak cost; worth doing only if impact fidelity turns out to matter.
+- **Landing-strip precision** — **DIAGNOSED 2026-08-01, fix not yet written.** The 121 m miss is NOT a
+  navigation or reachability failure, and the headline number actively misleads about which.
+  Geometry first: the zone centre is **49.5 m from the pad** (zone is a 187 x 40 m strip, TL at 134 m
+  bearing 298 deg, BR at 72 m bearing 72 deg), while a 288 m apogee at L/D ~3 gives roughly **860 m of
+  glide range**. The glider has to dissipate ~860 m of range over a 49.5 m trip — an ENERGY EXCESS
+  problem, not a range one.
+  Traced against the target through a flight (`captures/gnoise/s1_pos0.0.txt`, 505 fixes): distance to
+  target goes 49.5 m at separation -> **minimum 27.5 m at 74 % of the flight** -> **121.0 m at
+  touchdown**. It CAPTURES the zone and then leaves it. The final quarter of the flight undoes the
+  approach, which is why `maxpad` (157 m) exceeds the target distance threefold.
+  So the failing component is the ENDGAME hold, not `steer_to`/`approach_to`. The orbit is not
+  collapsing: at 15 m/s the physical floor is R = v^2/(g*tan bank) = ~40 m at 30 deg bank and ~23 m at
+  45 deg, yet the glider is circling wide enough to touch down 121 m out. Candidate fixes, in order of
+  how well they match the trace: (1) collapse the spiral radius with REMAINING ALTITUDE so the orbit
+  converges on the centre rather than holding a fixed wide circle; (2) a commit-to-land point past which
+  it rolls wings-level and stops orbiting; (3) floor the radius at what the remaining altitude can
+  actually complete, so it never starts a circle it cannot finish.
+  **MEASURED 2026-08-01 (calm_reference capture, zero noise/faults) — and it rules out the bank fix.**
+  Distance to target through the glide: 45 m (11.6 s) -> **162.7 m** (26.1 s) -> **28.0 m** (40.6 s) ->
+  **144.6 m** (52.1 s) -> 112.6 m at touchdown. That is a steady oscillation between ~28 m and ~163 m
+  with a **~26 s period**; at the measured 15.6 m/s that is ~406 m of path per cycle, i.e. a circle of
+  **~65 m radius centred ~95 m from the target**.
+  Against that: airspeed holds 15.6 m/s so **`r_min` at the endgame's 45 deg bank is ~25 m**, and
+  `loiter_radius_m` commands **30 m**. So the orbit is more than DOUBLE its commanded radius while the
+  physical floor sits 5 m below the command — **bank authority is NOT the constraint, and raising the
+  bank would tighten a circle that is centred in the wrong place.** Note `land_bank_limit` is already
+  45 deg; the 30 deg figure is `bank_limit`, the nav/cruise bank, a different phase.
+  **ROOT CAUSE FOUND AND FIXED — `bank_limit` 30 -> 45 (operator's call, and it was right).** An
+  earlier revision of this entry said bank authority was not the constraint. That was WRONG: it checked
+  `land_bank_limit` (45, the final approach) when the LOITER orbit is flown under `bank_limit`, which
+  was 30. From `flight.csv`: `roll_sp` pinned at +/-30 for long stretches with `heading_err` sustained
+  at **112-157 deg**, while `fin_cap` sat at 45 the whole time — so fin authority genuinely never
+  clipped, but the DEMAND was capped at 30.
+  At the measured 15.6 m/s, `R_min = v^2/(g*tan bank)` is **~40 m at 30 deg** while `loiter_radius_m`
+  commands **30 m** — the law asked for a circle physically tighter than the bank could fly. It
+  saturated, overshot, and limit-cycled; the ~26 s period is just the time to come around at 30 deg.
+  At 45 deg the floor drops to ~25 m, inside the 30 m command.
+  **Measured on the board, calm reference: 113 m -> 51 m miss.** 54/54 still green.
+  Pattern selection (o / oo / oval) was NOT implicated and is unchanged.
+  **Still open:** 51 m is not yet in-zone, so the endgame has more to give — re-run the fault matrix at
+  the new bank (all five cases predate it), and check whether `loiter_radius_m` 30 m is now the binding
+  limit rather than the bank, since R_min ~25 m leaves only 5 m of headroom.
 - **`launch.config` autogen** + GPX export of telemetry. Deferred hardware: outdoor GNSS fix.
 
 ### Near-term work from `findings.txt` (quality pass)
@@ -311,6 +545,176 @@ control change.
 11. ✅ **One-shot field capture pull** (7/07, `tools/flight_pull.sh`) — pulls ONE recorder session off
     the Luckfox (default: the latest), assembles the capture, and renders the SVG + HTML report + KPIs
     in one command (was hand-run per stream). Tested end-to-end against a live session.
+
+## Memory budget — resolved (2026-07-30)
+
+The GC-off leak had four disagreeing numbers on record. Measured by varying the sim's publish rate
+across three board flights and fitting the line:
+
+    leak = 187 + 3.32 * inject_hz   KB/s
+
+- The **HITL sim itself costs 166 KB/s at 50 Hz — 48 %** of the board-HITL total. This independently
+  reproduces the earlier "~46 % of a HITL leak" A/B *on the current build*, simulated pitot included,
+  so that method is validated rather than folklore.
+- **The intercept is 187 KB/s**, but that is *HITL with the sim's publishing removed*, not a real
+  flight — the sim still steps float physics at 50 Hz underneath it, while HITL masks seven real
+  sensors whose drivers a real flight runs. The two are not nested, so neither bounds the other.
+- **Profiled per component** (`test/diag_real_leak.py`, disable-one-and-diff against a 331 KB/s
+  baseline with `flight` enabled):
+
+  | component | KB/s | share |
+  |---|---|---|
+  | `accel_adxl375` | **111.3** | 34 % |
+  | `imu_lsm6dso32` | **63.7** | 19 % |
+  | `imu_bno055` | 34.4 | 10 % |
+  | `gnss` | 12.8 | 4 % |
+  | `airspeed_sdp810` | 12.7 | 4 % |
+  | `recorder` (drain task) | 11.7 | 4 % |
+  | `attitude` | 10.9 | 3 % |
+  | `baro_icp10111` | 10.5 | 3 % |
+
+  Three interrupt/high-rate IMU paths are **63 %** of the leak. Disabling `recorder` saves only
+  11.7 KB/s, so the cost is in the driver read/push paths, not the telemetry drain. `flight` measured
+  ~0 because on the bench it never leaves SETTING — a real flight adds its 100 Hz control work on top,
+  so treat 331 KB/s as a floor.
+
+  **Where it goes** — measured per call, not inferred (`test/diag_alloc_hotloop.py`):
+
+  | piece of the ADXL375 sample | B/call | rate | KB/s |
+  |---|---|---|---|
+  | `asyncio.wait_for_ms(flag.wait(), fallback)` | **560** | 100 Hz | **56.0** |
+  | `Telemetry.push` + its rounded tuple | 272 | 50 Hz | 13.6 |
+  | the `(x*s, y*s, z*s)` float tuple | 80 | 100 Hz | 8.0 |
+  | `struct.unpack('<hhh', buf)` | 32 | 100 Hz | 3.2 |
+  | `channel.push((x, y, z))` | **0** | 100 Hz | 0 |
+
+  That sums to ~81 of the measured 111 KB/s, the rest being loop overhead. Two conclusions:
+  `channel.push` is genuinely zero-alloc, so the databoard hot path is doing its job — and **the
+  timeout wrapper is over half the cost of the worst component**. A bare `ThreadSafeFlag.wait()` is
+  only **96 B**, so `wait_for_ms` adds **464 B of pure overhead per sample**.
+
+  **The route to 150 s** (needs ~212 KB/s, i.e. -120 from 331):
+
+  1. **Drop `wait_for_ms` from the INT path — about -46 KB/s.** Wait on the flag directly and let a
+     slow (~2 Hz) kicker set it when the interrupt goes quiet, so the fallback costs one timer instead
+     of a timeout object at 100 Hz. `lsm6dso32` has the same shape and does not pay it *only* because
+     its INT1 is unwired and it polls; wiring INT1 in v0.2 would make it start paying unless fixed
+     first.
+  2. **Route LSM6DSO32 INT1 in v0.2 — recovers part of its 63.7 KB/s**, since it currently polls at
+     100 Hz rather than sampling on data-ready.
+  3. **Decimate the accel/gyro telemetry streams** — 272 B per row is the second cost; halving those
+     stream rates is worth ~7 KB/s each and costs only plot resolution on channels sampled far above
+     what the reports render.
+
+  **Done, and re-measured (7/31).** `commons.Waiter` replaced `asyncio.wait_for_ms` in all three
+  interrupt drivers (560 B/call → 48 B, doubling backoff), `to_str` came out of the LSM6DSO32
+  telemetry (224 B/sample of string formatting), and `period_ms`/`fallback_ms` merged into one
+  `period_us` with the interrupt branch deleted. The operator also fixed two wiring faults `irq_runs`
+  exposed — a misplaced INT1 wire and an ADXL375 CS that had come out.
+
+  **331 → 252 KB/s, OOM 96 → 127 s (−24 % leak, +32 % survival)**, with both interrupts live so the
+  figure is honest. Re-attributed:
+
+  | component | before | now | note |
+  |---|---|---|---|
+  | `accel_adxl375` | 111.3 | **40.2** | −64 % |
+  | `imu_lsm6dso32` | 63.7 | **50.6** | −21 % *while sampling 29× more often* |
+  | `imu_bno055` | 34.4 | **47.9** | untouched — now the largest single consumer |
+  | `airspeed_sdp810` | 12.7 | 22.0 | |
+  | `gnss` | 12.8 | 12.1 | |
+
+  The profile has FLATTENED: there is no dominant consumer left, the top three sit within 10 KB/s of
+  each other and together are 55 % of the total, and the remaining ~80 KB/s is spread thin across a
+  dozen tasks. That changes the strategy — further wins come from the shared paths every driver uses
+  (`Telemetry.push` at 192 B, the per-sample tuples at 80 B), not from another single hot spot.
+
+  **Validated against read rate, and the hunt can stop here.** Dividing every sensor's rate by N
+  (`diag_real_leak.probe(slow=N)`):
+
+  | rate | leak | time-to-OOM |
+  |---|---|---|
+  | ×1 (100 Hz) | 252.0 KB/s | 127 s |
+  | **×2 (50 Hz)** | **175.2** | **182 s** |
+  | ×5 | 144.7 | 221 s |
+  | ×10 | 135.4 | 236 s |
+
+  The relationship holds — and the curve **asymptotes at ~130 KB/s rather than falling toward zero**.
+  Fitting `leak = fixed + variable/N` gives **~122 KB/s that is rate-INDEPENDENT** and ~130 KB/s that
+  scales with reads (the fit predicts 187 at ×2 and 148 at ×5 against 175.2 and 144.7 measured). So
+  the model matches the hardware, and there is a structural floor no sampling change can remove: the
+  recorder, the control loop, asyncio itself.
+
+  **Decision: stop optimising, mitigate instead.** 127 s is already ~2× the longest planned flight
+  (65 s), and the two levers are cheap:
+
+  1. **Halve the sensor rate to 50 Hz if 127 s ever looks tight** → ~175 KB/s, **182 s**, roughly 3×
+     the flight. The cost is resolution: ~30 cm of linear travel per sample at 15 m/s instead of
+     ~15 cm, which nothing in the control path needs.
+  2. **The OOM predictor is the backstop** if the estimate is ever wrong — and it is now trustworthy:
+     the forecast reads within ~1.5 s sample-to-sample, and the rescue it arms costs a measured
+     34–45 ms and fires 0–2 times per flight.
+
+  Remaining, if it is ever wanted: `imu_bno055` is the largest single consumer at 47.9 KB/s and has
+  never been examined (a 24-byte block read at 50 Hz with float conversion). Not needed for flight.
+
+- **Measured directly instead** (`test/diag_real_leak.py`: default config, real drivers, no sim, GC
+  forced off): **~324 KB/s → OOM in ~99 s** from a 31.9 MB heap. That is well BELOW the ">150 s is
+  acceptable" bar and below what the HITL intercept suggested. Caveats both ways: the bench run
+  excludes the `flight` control task (a real flight leaks more) and includes an LSM6DSO32 polling at
+  100 Hz because its INT1 line is unwired on v0.1 (fixing that in v0.2 reduces it). The in-flight
+  memory rescue remains the backstop, and it is now measured at 34-45 ms per collect.
+- `oom_soak.py`'s header figure of "15-18 KB/s" measures the **control path alone**, without telemetry
+  and recorder. Not wrong, but narrower than it reads.
+
+Two supporting fixes landed with it. `board_health`'s OOM forecast was unusable — successive readings
+of 271, 155, 119, 109, None, 362, None, 206 s, on a number that **arms a ~200 ms mid-glide
+`gc.collect()`** — because one 1 Hz difference *was* the slope and any sample where the heap grew
+zeroed the estimate. It is now a cumulative average since the last collect, targeting a 512 KB
+reserve, and reads to within ~1.5 s between samples. And the rescue trigger moved from
+`oom < 2 x land` to `oom <= land`: three stacked safety margins were one too many, and the change
+halved the unscheduled pauses across the matrix (10 → 5) with the heap never falling below 16 MB of
+~30. `rescues`, `leak_kbps` and `rescue_ms` are now in `health.csv`, and the flight report draws the rescue
+count as a staircase beside free memory.
+
+**Durable diagnostics.** `Recorder.log()` is best-effort — buffered, flushed roughly every 1000
+telemetry messages, so a short flight ends without them. Measured: a 57 s capture carried 5 log lines
+(the controller's stage transitions) while the sequencer's own stage lines, both gc-collect durations
+and every rescue line were absent. `Task.event()` now sends those down a per-component
+`<name>_events.csv` Telemetry stream — which commits per line — as well as through `log()` for the
+operator console. The first flight with it measured what had never been readable: **rescue collects
+take 34–45 ms** (not the ~67 ms bench figure the threshold was justified against), the pre-flight
+collect 26 ms, and the post-flight collect — the whole airborne phase's deferred cost — **159 ms**.
+
+**Still open on `oom_soak.py`:** its default `target_kb=600` is degenerate against the new 512 KB
+reserve (the rescue thrashes and the flight cannot progress), and `machine.reset_cause()` cannot be
+checked the way its header describes because `mpremote` soft-resets on connect and overwrites it.
+
+The leak is **steady across flight phases**: measured over three runs, the pre-glide (setting +
+boosting) slope is 281–298 KB/s against 329–343 KB/s in the glide — a consistent 0.86 ratio, not a
+separate boost anomaly. The glide is slightly higher because the guidance and endgame paths are only
+fully active there.
+
+**Run-to-run repeatability of a board HITL flight is ~1 m** (three identical F15 flights: 121/122/121 m,
+no drift), so a difference above ~1 m in the matrix is a real change rather than scatter.
+
+## Hardware roadmap — v0.2 and v1.0
+
+v0.1 PCBs are ordered and the Gerbers cross-check clean against `config_default.py`. The design
+review, the merge-to-one-board analysis and the bus-split decision live in
+[`hardware.md`](hardware.md); in short:
+
+- **v0.2, electrical:** ground pour on both layers (there is none today), and widen the servo rail —
+  the main board uses one 0.30 mm width (~1.0 A) for signal and power alike, against 0.79 A measured
+  per servo. The power board already gets this right.
+- **v0.2, layout:** merge main + power into one board with an **energy island** (~5.8 g saved, 2.7 %
+  of the light glide mass), keeping a bench power path so USB port-cycling still recovers a wedged
+  board.
+- **v0.2, buses:** `i2c:0` = `icp10111` alone, `i2c:1` = everything else. Altitude is the only
+  redundancy pair living entirely on I²C, and a dead barometer costs ~100 m of miss. Bandwidth is not
+  a factor — both buses sit under 5 % load.
+- **v1.0:** a BNO085 could collapse the IMU stack *if* real boost shock stays under 16 g. Measured
+  peak in sim is 3.3–4.3 g, but that model has no ignition transient, separation shock or landing
+  impact — the decision needs one real capture logging through separation first.
 
 ## Required hardware
 

@@ -119,7 +119,8 @@ class Flight(task.Task):
         window_ms = max(position.window_us, gnss_speed.window_us) // 1000
         self._mission = inspector.Inspector.get('mission')  # the landing zone lives here (may be None)
         self._guidance = guidance.Guidance(guidance.GuidanceConfig(self.config, window_ms),
-                                           self._mission, self._governor, position, agl, elevation)
+                                           self._mission, self._governor, position, agl, elevation,
+                                           self._wind)  # wind feeds the no-GNSS dead reckoning
         self._pitch_cd: int = 0  # last measured pitch (centidegrees) -> the governor's dive detector
         self._glide_ratio: float = self.config.get('glide_ratio', 3.0)  # nominal L/D for the reach estimate
         self._active: bool = False  # in a control stage (PID engaged)
@@ -131,15 +132,16 @@ class Flight(task.Task):
         value of this stream is that command, cap and belief share ONE timestamp -- post-flight you can
         see not just what the fins did but what limited them and why (findings §27.2).
 
-        SAMPLED at telemetry_us, not traced at the loop rate. _record() asks Telemetry.due() BEFORE
+        SAMPLED at telemetry_ms, not traced at the loop rate. _record() asks Telemetry.due() BEFORE
         building the row, because push() takes an already-built tuple -- letting push() do the decimating
         would still allocate 100x/s on a GC-off flight. due() reads push()'s own clock, so there is one
         clock: a jittery slice can never advance a private counter past a window push() then refuses.
         """
-        self._tlm_period_us: int = self.config.get('telemetry_us', _TLM_PERIOD_US)
+        self._tlm_period_us: int = self.config.get('telemetry_ms', _TLM_PERIOD_US // 1000) * 1000
         self._telemetry = recorder.Telemetry(
             'flight.csv', ('stage', 'active', 'airspeed_cms', 'fin_cap', 'roll_sp', 'pitch_sp',
-                           'heading_err', 'roll_cmd', 'pitch_cmd', 'yaw_cmd', 'wind_cms', 'wind_from'),
+                           'heading_err', 'roll_cmd', 'pitch_cmd', 'yaw_cmd', 'wind_cms', 'wind_from',
+                           'reckoning'),  # 1 = navigating dead-reckoned, no usable GNSS fix
             decimate_us=self._tlm_period_us)
         self._roll_cmd: int = 0  # last per-axis demand (whole degrees) -> flight.csv; small ints, no boxing
         self._pitch_cmd: int = 0
@@ -354,7 +356,8 @@ class Flight(task.Task):
                                   int(self._governor.airspeed() * fixed.SCALE), self._mixer.limit,
                                   law.roll_setpoint, law.pitch_setpoint, law.heading_error,
                                   self._roll_cmd, self._pitch_cmd, self._yaw_cmd,
-                                  int(self._wind.speed() * fixed.SCALE), int(self._wind.direction())))
+                                  int(self._wind.speed() * fixed.SCALE), int(self._wind.direction()),
+                                  1 if law.reckoning else 0))
         except Exception as error:
             self.note('flight :: telemetry %r', error)  # deduped; control continues regardless
 

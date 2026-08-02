@@ -28,6 +28,7 @@ Controller. The driver/activity names share one registry for now; splitting driv
 import asyncio
 
 import inspector
+import recorder
 
 ACTIVITIES: dict = {}  # CLASS registry: name -> Task subclass (instance lookup is Controller.find/query)
 
@@ -57,6 +58,7 @@ driver = activity  # alias: drivers/ files read as @task.driver, tasks/ files as
 
 
 class Task(inspector.Inspectable):
+    _events = None  # class default: the durable diagnostic stream, opened lazily by event()
     kind: str = 'task'
 
     def __init__(self, name: str, config: dict = None, controller=None):
@@ -68,6 +70,48 @@ class Task(inspector.Inspectable):
         self._healthy: bool = True  # RUNTIME read health (distinct from _ok = setup ok); note() tracks it
         self._strikes: int = 0  # consecutive-failure run for strike() (see below)
         self._claimed: bool = False  # a multi-step device conversation is in progress (claim())
+
+    def event(self, message: str) -> None:
+        """
+        A DURABLE diagnostic record -- for the handful of facts a flight must not be able to lose.
+
+        `Recorder.log()` is best-effort by design: logs are buffered and flushed roughly every 1000
+        telemetry messages, so a short flight ends without them. Measured on a 57 s board capture, the
+        record contained 5 log lines -- the controller's stage transitions -- while the sequencer's own
+        stage lines, BOTH gc-collect duration lines and EVERY memory-rescue line were missing. The
+        rescue pause is the number the rescue's own trigger threshold is justified by, and it could not
+        be read back from any flight.
+
+        Telemetry, by contrast, commits per line. So an event goes down a per-component
+        `<name>_events.csv` Telemetry stream and is therefore in the capture, AND through log() so the
+        operator console still shows it. One call, both audiences, and the durable one cannot be
+        dropped.
+
+        `decimate_us=-1` is load-bearing. The default 0 inherits the Recorder's global 50 Hz rate,
+        which would silently discard a second event arriving within 20 ms of the first -- exactly the
+        burst case (a stage change and the collect it triggers) this exists to capture. -1 rather than
+        1 because the test is `ticks_diff(now, last) < decimate_us`: at 1, two events in the SAME
+        microsecond still collide (0 < 1). At -1 no elapsed time can ever be below it.
+
+        Args:
+            message - the already-formatted diagnostic line.
+
+        Returns:
+            None; writes one telemetry row and one best-effort log line.
+        """
+        try:
+            if self._events is None:
+                self._events = recorder.Telemetry('%s_events.csv' % self.name, ('event',),
+                                                  decimate_us=-1)
+            self._events.push((message,))
+        except Exception:
+            # The stream is built on first use, which assumes the Recorder is already up. Every
+            # caller today is post-setup (a stage transition, a rescue), but SETUP-time diagnostics
+            # are exactly where the next person will reach for this -- and a diagnostic that CRASHES
+            # the task it is reporting on would be worse than the lossy log() it replaced. The log
+            # below still goes out either way.
+            pass
+        recorder.Recorder.log(self.name, message)
 
     def note(self, template: str = None, arg=None) -> None:
         """

@@ -9,7 +9,7 @@
 | `i2c` | 0 | sda 7, scl 8 @ 400000 |
 | `i2c` | 1 | sda 31, scl 30 @ 400000 |
 | `spi` | 1 | sck 48, mosi 47, miso 46, mode 3 @ 5000000 |
-| `uart` | 1 | tx 20, rx 21 @ 921600 |
+| `uart` | 1 | tx 20 @ 921600 |
 | `uart` | 2 | tx 22, rx 23 @ 9600 |
 
 ## GPIO assignments
@@ -22,7 +22,6 @@
 | 7 | i2c:0 sda |
 | 8 | i2c:0 scl |
 | 20 | uart:1 tx |
-| 21 | uart:1 rx |
 | 22 | uart:2 tx |
 | 23 | uart:2 rx |
 | 26 | servo_yaw.pin |

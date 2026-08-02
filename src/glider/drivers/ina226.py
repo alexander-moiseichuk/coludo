@@ -91,7 +91,7 @@ class Ina226(task.Task):
             self.name, self.config.get('provides', {}), 'voltage', 'current', 'power')  # values now mV / mA / mW
         self._telemetry = recorder.Telemetry(
             '%s.csv' % self.name, ('voltage_mv', 'current_ma', 'power_mw', 'alerts'),
-            decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
+            decimate_us=self.config.get('telemetry_ms', 0) * 1000)  # 0 -> global
         """
         optional hardware over-current ALERT (config `alert_pin` -> a GPIO): the INA asserts it
         (open-drain, active-low) each time the shunt voltage crosses the trip -- a stall / short flag

@@ -22,6 +22,9 @@ import flight_telemetry  # noqa: E402
 _PALETTE = ('#1f77b4', '#17becf', '#2ca02c', '#bcbd22', '#ff7f0e', '#d62728', '#9467bd', '#8c564b')
 
 
+_FIXED_SCALE = 100  # fixed.SCALE -- bno055 roll/pitch are centidegree fixnums
+
+
 def _find(streams, *fields):
     """The first stream carrying all the given fields (e.g. 'lat','lon' -> the GNSS stream)."""
     for stream in streams.values():
@@ -104,6 +107,7 @@ def _timeseries(streams, box):
     imu = _find(streams, 'roll')
     at, av = baro.column('altitude') if baro else ([], [])
     rt, rv = imu.column('roll') if imu else ([], [])
+    rv = [v / _FIXED_SCALE for v in rv]  # bno055 roll is a centidegree fixnum; scale at render time
     out = ['<rect x="%d" y="%d" width="%d" height="%d" fill="#fbfbfb" stroke="#ddd"/>' % (x0, y0, w, h)]
     if not at and not rt:
         return ''.join(out)

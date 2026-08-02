@@ -97,7 +97,9 @@ def default() -> dict:
 
     buses = {
         'uart': {
-            '1': {'tx': 20, 'rx': 21, 'baud': 921600},  # recorder
+            # recorder: TX ONLY. The link is write-only and GPIO21 has no copper on the
+            # v0.1 PCB, so declaring rx here would claim an unconnected, floating pin.
+            '1': {'tx': 20, 'baud': 921600},
             '2': {'tx': 22, 'rx': 23, 'baud': 9600},  # gnss
         },
         'i2c': i2c_buses,
@@ -165,8 +167,10 @@ def default() -> dict:
         'addr': 0x53,  # kept for an i2c fallback (set bus 'i2c', id 0)
         'cs_pin': 'adxl375_cs',  # SPI chip-select
         'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — drives the sampling;
-        # fallback_ms 500 (default): a timed safety sample keeps data flowing if INT goes silent
-        'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
+        # POLL rate when INT1 is silent: must beat the 20 ms `accel` freshness window below, so it is
+        # the sensor's own 100 Hz ODR rather than a slow safety tick
+        'period_ms': 10,
+        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, 25 Hz)
         'enabled': True,
         'provides': {'accel': {'priority': 1, 'timeout_ms': 20}},  # >32 g backstop behind lsm6dso32
     }
@@ -187,7 +191,7 @@ def default() -> dict:
         # and beat the 20 ms `rate` freshness window below -- the old 100 ms default would have left the
         # PID's D term starved even in poll mode, so the fallback has to be fast, not merely present.
         'period_ms': 10,
-        'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
+        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, 25 Hz)
         'enabled': True,
         'provides': {'accel': {'priority': 0, 'timeout_ms': 20},   # PRIMARY accel (±32 g)
                      'rate': {'priority': 0, 'timeout_ms': 20}},    # sole gyro `rate` source
@@ -198,7 +202,7 @@ def default() -> dict:
         'driver': 'bno055',
         'bus': 'i2c', 'id': 0,
         'addr': 0x28,
-        'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
+        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, 25 Hz)
         'enabled': True,
         'provides': {'attitude': {'priority': 0, 'timeout_ms': 40},
                      'accel': {'priority': 2, 'timeout_ms': 40}},  # fused fallback behind lsm/adxl
@@ -280,7 +284,10 @@ def default() -> dict:
         'bus': 'i2c', 'id': 0,
         'addr': 0x29,
         'xshut_pin': 'laser_xshut',  # enable/reset
-        'int_pin': 'laser_int',  # GPIO1 data-ready (fallback_ms 500: timed safety sample if INT goes silent)
+        'int_pin': 'laser_int',  # GPIO1 data-ready
+        # POLL rate when INT is silent: must beat the 100 ms `agl` freshness window below, else AGL sits
+        # perma-stale and the landing/approach gates fall back to baro elevation for the whole flight
+        'period_ms': 50,
         'timing_budget_ms': 100,  # ranging integration (10..200); higher = lower sigma, slower
         'enabled': True,
         # laser gives AGL (ground distance), not AMSL altitude, so it provides 'agl' only;
@@ -432,7 +439,17 @@ def default() -> dict:
     at bank_limit deg) so the turn is tight and orbits the zone to bleed altitude rather than
     over-ranging it on a flat rudder skid. nav_bank_gain 0 -> rudder-only.
     """
-    bank_to_turn = {'nav_bank_gain': 1.5, 'bank_limit': 30}
+    """
+    bank_limit 45, not 30: the LOITER orbit is flown under this limit, and at 30 deg it commanded a
+    circle it could not fly. R_min = v^2/(g*tan bank), so at the measured 15.6 m/s a 30 deg bank floors
+    the turn at ~40 m while loiter_radius_m asks for 30 m -- physically unreachable, so the heading
+    controller saturated and the glider limit-cycled instead of orbiting. MEASURED in the calm capture:
+    roll_sp pinned at +/-30 with heading_err sustained at 112-157 deg, an orbit of ~65 m radius centred
+    ~95 m off target, oscillating 28 m <-> 163 m on a ~26 s period, and touching down 113 m out with no
+    noise or faults at all. fin_cap sat at 45 the whole time, so fin authority was never the limit --
+    the demand was. At 45 deg the floor drops to ~25 m, inside the 30 m command.
+    """
+    bank_to_turn = {'nav_bank_gain': 1.5, 'bank_limit': 45}
 
     """
     final approach: below final_approach_agl, track the strip CENTRELINE (not the centre point)
@@ -626,7 +643,13 @@ def default() -> dict:
 
     components = [
         # Recorder drain loop: a thin activity over the global Recorder, using uart:1.
-        {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True},
+        # telemetry_ms is the GLOBAL decimation every stream inherits (a stream setting its own non-zero
+    # value keeps that instead). 25 Hz, not the old 50: measured per call, a Telemetry.push plus the
+    # rounded tuple it is handed costs 272 B, and the highest-rate sensors were emitting rows twice as
+    # fast as any report renders them. Halving the global rate is the cheapest leak reduction available
+    # -- it costs plot resolution nothing downstream was using.
+    {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True,
+     'telemetry_ms': 40},
         # Stage-separation switch (copper pads): HIGH=nested, LOW=separated -> Boosting->Gliding.
         # debounce_ms: the LOW must hold this long -- a contact bounce on the pads never deploys.
         {'name': 'separation', 'driver': 'separation', 'pin': 'separation_switch', 'enabled': True,

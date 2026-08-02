@@ -185,7 +185,7 @@ class SG90(task.Task):
         self._engine_min_mw: int = self.config.get('engine_min_mw', self._ENGINE_MIN_MW)  # INA226 'power' is mW
         self._engine_max_mw: int = self.config.get('engine_max_mw', self._ENGINE_MAX_MW)
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('angle', 'pulse_us', 'done'),
-                                       decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
+                                       decimate_us=self.config.get('telemetry_ms', 0) * 1000)  # 0 -> global
         self._pwm = PWM(Pin(gpio), freq=50, duty_u16=0)
         self._apply(self.config.get('angle', self._neutral))  # neutral by default
         self._ok = True

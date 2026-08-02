@@ -18,6 +18,7 @@ import asyncio
 import struct
 import time
 
+import commons
 import databoard
 import i2cbus
 import recorder
@@ -78,9 +79,18 @@ class Vl53l4cx(task.Task):
         self._bus, self._addr = i2cbus.bind(self.controller.config, self.config, _ADDR)
         if self._bus is None:
             return False  # no such bus in config -> the Controller skips this device
-        self._period_ms: int = self.config.get('period_ms', 50)  # poll interval with no INT wired
-        self._fallback_ms: int = self.config.get('fallback_ms', 500)  # safety sample if INT silent
-        self._ready = asyncio.ThreadSafeFlag()
+        """
+        ONE knob. `period_us` is both the sample period and the interrupt fallback, because
+        commons.Waiter made them the same thing: a live edge returns on the first slice, a dead one
+        runs the slices out and the sample is taken anyway. Two constants that had to be kept
+        consistent became one that cannot disagree with itself.
+        """
+        # INT-silent fallback cadence. Reads `period_ms`, the key the CONFIG actually supplies --
+        # this used to read `period_us`, which appears in no config, so every one of these drivers
+        # silently fell back to 500 ms against a 100 ms freshness window. That is the exact
+        # "dead wire masquerading as a healthy sensor" the irq_runs work exists to expose.
+        self._period_ms: int = max(1, self.config.get('period_ms', 50))
+        self._ready = commons.Waiter()  # IRQ-kicked wake + sliced fallback (see commons.Waiter)
         self._int = None
         try:
             if not await self._reset():  # pulse XSHUT (if wired) and wait for the firmware to boot
@@ -104,8 +114,9 @@ class Vl53l4cx(task.Task):
             print('vl53l4cx :: %r' % error)
             return False
         self._agl = databoard.Databoard.provide(self.name, self.config.get('provides', {}), 'agl')
-        self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('agl',),
-                                       decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
+        self._irq_runs: int = 0
+        self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('agl', 'irq_runs'),
+                                       decimate_us=self.config.get('telemetry_ms', 0) * 1000)  # 0 -> global
         self._ok = True
         return True
 
@@ -190,7 +201,7 @@ class Vl53l4cx(task.Task):
         if gpio is None:
             return
         self._int = Pin(gpio, Pin.IN, Pin.PULL_UP)
-        self._int.irq(lambda pin: self._ready.set(), Pin.IRQ_FALLING)
+        self._int.irq(self._ready.kick, Pin.IRQ_FALLING)
 
     _sample = None        # last good range (m), or None when out of range
     _sample_ms: int = 0   # when it was taken (0 = never)
@@ -250,18 +261,16 @@ class Vl53l4cx(task.Task):
             None; runs forever (a wedged board reboots rather than exits).
         """
         while True:
-            if self._int is not None:
-                try:
-                    await asyncio.wait_for_ms(self._ready.wait(), self._fallback_ms)
-                except asyncio.TimeoutError:
-                    pass  # no interrupt within the window -> sample anyway (safety)
-            else:
-                await asyncio.sleep_ms(self._period_ms)
+            # no branch on whether an interrupt exists: wait() covers both (see adxl375)
+            self._irq_runs = await self._ready.wait(self._period_ms)
             try:
                 agl = await self._range()
                 if agl is not None:
                     self._agl.push(agl)  # one step: push our channel directly
-                    self._telemetry.push((agl,))
+        # irq_runs: how many interrupt edges this wake consumed. 0 = the fallback timed out (a
+        # dead or quiet line), 1 = healthy, >1 = an OVERRUN, edges arriving faster than the loop
+        # consumes them. Recorded per row so a capture shows sampling health, not just samples.
+                    self._telemetry.push((agl, self._irq_runs))
             except Exception as error:
                 self.note('vl53l4cx :: read %r', error)  # deduped: a persistent I2C error logs once, not at poll rate
 

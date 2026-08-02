@@ -28,7 +28,7 @@ pin is reserved so you can solder the INT for debugging · **tie** = not wired, 
 | VL53L4CX INT | 3 | laser data-ready | **dbg** (poll via `fallback_ms`) |
 | VL53L4CX XSHUT | 5 | laser enable/reset | **tie** high on the I2C carrier (single laser, no addr conflict) |
 | UART2 TX / RX | 22 / 23 | GNSS (ATGM336H) | **req** |
-| UART1 TX / RX | 20 / 21 | Recorder (Luckfox) | **req** |
+| UART1 TX / RX | 20 / 21 | Recorder (Luckfox) | **req** — TX only on the v0.1 PCB; see below |
 | Servo PWM ×3 | 26 / 27 / 32 | yaw / eleron-L / eleron-R | **req** |
 | Separation switch | 33 | copper pads: HIGH=nested, LOW=separated | **req** |
 
@@ -150,3 +150,18 @@ disabled pin never collides in `verify`.
   `config_default` by `tools/gen_pinmap.py` (`--check` gates staleness); GPIO 2 / LED removed.
 - **When you wire it:** the debug INTs (ADXL 4, VL53 3) are on by default and self-poll if silent;
   set them (and `laser_xshut`) to `null` per board once you finalise which are physically connected.
+
+## GPIO21 (UART1 RX) is not wired on the v0.1 PCB
+
+The netlist confirms it: **20 of 22 GPIOs route to their connector pads, and GPIO21 has no copper.**
+UART1 TX (GPIO20) reaches the Recorder's RX through front pin 8, but the return path — Recorder TX
+back to GPIO21 — was never routed.
+
+That is **fine today and intentional in effect**: the Recorder link is telemetry-write-only, the board
+never reads UART1, and nothing in the firmware expects a backchannel. It is recorded here because it
+is invisible from the schematic side and would otherwise be discovered the hard way by whoever first
+wants bidirectional Recorder comms — at which point it needs either a patch wire to a free Recorder
+GPIO, or a route in the next board revision.
+
+(The other absent GPIO, 5 / `laser_xshut`, is deliberate: XSHUT is strapped high on the VL53L4CX
+carrier, since a single laser has no address conflict to resolve.)

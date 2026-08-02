@@ -30,7 +30,8 @@ try:
 except ImportError:
     esp32 = None
 
-_RESCUE_PAUSE_MS: int = 200  # a CONSERVATIVE gc.collect() pause estimate (the typical collect is ~67 ms).
+_RESCUE_PAUSE_MS: int = 200  # a CONSERVATIVE gc.collect() pause estimate. MEASURED in flight, once the
+                             # rescue line became durable telemetry: 34-45 ms. So this is ~5x, not ~3x.
                              # The rescue's whole safe-altitude floor is 2x THIS worth of descent (dynamic,
                              # from the live sink rate -- no fixed base): so the doubled, already-generous
                              # pause still leaves the glider clear of the ground after the collect.
@@ -60,6 +61,7 @@ class BoardHealth(task.Task):
         self._elevation = databoard.Databoard.parameter('elevation')  # rescue safety gate (baro height)
         self.load: int = 0  # CPU load as an integer percent 0..100 (from probe wake-up lateness)
         self.rescues: int = 0  # emergency in-flight collects performed (operator-visible)
+        self._rescue_ms: int = 0  # duration of the LAST rescue collect (ms); 0 = none yet
         """
         CUMULATIVE leak trend, not a per-sample EMA. Measured in flight
         (doc/sims/TMS-7-phase5_refactor) the old estimator reported successive oom_s of 271, 155, 119,
@@ -88,7 +90,8 @@ class BoardHealth(task.Task):
         # `rescues` is in the RECORD, not just inspect(): an emergency collect is a ~200 ms control-loop
         # pause, and a capture that cannot show one happened cannot explain the flight it produced.
         self._telemetry = recorder.Telemetry(
-            'health.csv', ('temp', 'mem_free', 'load', 'oom_s', 'land_s', 'leak_kbps', 'rescues'))
+            'health.csv', ('temp', 'mem_free', 'load', 'oom_s', 'land_s', 'leak_kbps', 'rescues',
+                           'rescue_ms'))
         self._ok = True
         return True
 
@@ -105,7 +108,8 @@ class BoardHealth(task.Task):
 
     def sample(self) -> dict:
         return {'temp': self.temperature(), 'mem_free': self.mem_free(), 'load': self.load,
-                'oom_s': self.oom_s(), 'land_s': self.land_s(), 'rescues': self.rescues}
+                'oom_s': self.oom_s(), 'land_s': self.land_s(), 'rescues': self.rescues,
+                'rescue_ms': self._rescue_ms}
 
     def oom_s(self):
         """
@@ -207,7 +211,7 @@ class BoardHealth(task.Task):
             return  # safe altitude must be PROVEN, not assumed
         """
         DYNAMIC floor, no base: 2x the descent the ~pause would cost. A faster sink needs more headroom,
-        and doubling a pause estimate that is ALREADY conservative (typical collect ~67 ms) leaves the
+        and doubling a pause estimate that is ALREADY conservative (measured in flight: 34-45 ms) leaves the
         glider ~200 ms clear of the ground after the collect. The stage gate excludes the LANDING flare.
         """
         floor = self._descent * 2 * _RESCUE_PAUSE_MS // 1000  # fixnum m: same SCALE as the elevation below
@@ -230,7 +234,7 @@ class BoardHealth(task.Task):
           * oom_s counts down to a _LEAK_SPARE_KB reserve, not to zero, so it ALREADY reports
             exhaustion earlier than it happens;
           * the safe-altitude floor prices the pause at _RESCUE_PAUSE_MS = 200 ms against a collect
-            measured at ~67 ms -- about 3x.
+            MEASURED IN FLIGHT at 34-45 ms -- about 5x, not the ~3x assumed from an older bench figure.
         A third 2x on top does not buy safety, it just spends control slices.
 
         The asymmetry still favours firing rather than not (an OOM mid-glide is the crash->neutral ->
@@ -251,7 +255,11 @@ class BoardHealth(task.Task):
         # is real, and blanking the estimate meant oom_s went None for the next several samples -- so a
         # glider that still needed rescuing could not ask for one. _track sees the collect's jump and
         # rebuilds the window; the production rate is unchanged by reclaiming what it produced.
-        recorder.Recorder.log(self.name, 'memory rescue: collect %d ms, %d -> %d KB free (oom %ss, land %ss)' % (
+        # the PAUSE DURATION is the number the rescue's own trigger threshold is justified by, so it
+        # goes out as a numeric telemetry field as well as an event -- quoting a benchmark from another
+        # session was the alternative, and that is what this whole change exists to stop.
+        self._rescue_ms = paused_ms
+        self.event('memory rescue: collect %d ms, %d -> %d KB free (oom %ss, land %ss)' % (
             paused_ms, free // 1024, gc.mem_free() // 1024, oom, land))
 
     def _row(self) -> None:
@@ -260,7 +268,8 @@ class BoardHealth(task.Task):
         self._track(vitals['mem_free'], elevation)
         self._rescue(vitals['mem_free'], elevation)
         self._telemetry.push((vitals['temp'], vitals['mem_free'], vitals['load'],
-                              self.oom_s(), self.land_s(), self._leak_kbps, self.rescues))
+                              self.oom_s(), self.land_s(), self._leak_kbps, self.rescues,
+                              self._rescue_ms))
 
     async def _probe_loop(self) -> None:
         """

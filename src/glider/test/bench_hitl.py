@@ -89,12 +89,16 @@ def _cost(label: str, call, reps: int = _REPS) -> float:
     """
     gc.collect()
     gc.disable()
-    before = gc.mem_free()
-    for _ in range(reps):
-        call()
-    used = before - gc.mem_free()
-    gc.enable()
-    gc.collect()
+    try:
+        # try/finally, because a raise here used to leave GC OFF for the whole rest of the
+        # benchmark run -- every later measurement would then be reading a heap nobody collects.
+        before = gc.mem_free()
+        for _ in range(reps):
+            call()
+        used = before - gc.mem_free()
+    finally:
+        gc.enable()
+        gc.collect()
     per_call = used / reps
     print('  %-28s: %7.1f B/call' % (label, per_call))
     return per_call

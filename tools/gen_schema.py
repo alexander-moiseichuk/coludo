@@ -28,6 +28,14 @@ _SOURCES = (  # where a stream can be declared -> the column that says who write
     ('board', sources.GLIDER_DIRS),
     ('host sim', ('tools',)),
 )
+"""
+Both halves are populated: the board declares streams via recorder.Telemetry, and tools/virtual_flight
+declares the same shapes through its own host-side Telemetry class -- the ast scan matches on the
+CONSTRUCTION, not the module, so one scanner covers both worlds. That is the point: a stream carried
+by both must agree field-for-field, or a host capture and a board capture stop being interchangeable
+to the renderers. The host half used to be invisible here, which is the same blind spot that let the
+simulated-pitot asymmetry live undetected.
+"""
 
 
 def _literal(node):
@@ -85,6 +93,11 @@ def render(rows: list) -> str:
            '> **GENERATED from the sources by `tools/gen_schema.py` — do not hand-edit.** Regenerate '
            'after changing any `recorder.Telemetry(...)` declaration (`python3 tools/gen_schema.py`); '
            '`--check` fails the local gate if it is stale.',
+           '',
+           '> A stream listed for BOTH `board` and `host sim` must carry the same fields in both — '
+           'that is what makes a host capture and a board capture interchangeable to every renderer. '
+           'The host declarations live in `tools/virtual_flight.py`; the board ones in the driver or '
+           'task that owns the stream.',
            '',
            'Every stream a capture can contain, and the fields in each. A recorder capture interleaves '
            '`@<session>_<file>@<row>` telemetry rows with plain log lines; `tools/flight_telemetry.py` '

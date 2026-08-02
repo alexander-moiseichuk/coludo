@@ -69,6 +69,28 @@ def offset(lat1: float, lon1: float, lat2: float, lon2: float) -> tuple:
     return east, north
 
 
+def advance(position: tuple, east: float, north: float) -> tuple:
+    """
+    Move a position by a metre (east, north) offset -- the inverse of offset(), same flat-earth model.
+
+    Exists for DEAD RECKONING: with no GNSS fix the glider propagates its last known position by the
+    air velocity it can still measure (airspeed x heading) plus the last wind estimate, so navigation
+    keeps a moving position instead of a frozen one. Equirectangular like offset(), which is exact
+    enough over the hundreds of metres a flight covers.
+
+    Args:
+        position - the (latitude, longitude) to move from (decimal degrees).
+        east, north - the offset to apply (metres).
+
+    Returns:
+        The new (latitude, longitude) in decimal degrees.
+    """
+    latitude = position[0] + north / M_PER_DEG
+    scale = math.cos(math.radians((position[0] + latitude) / 2.0))  # same mid-latitude as offset()
+    longitude = position[1] + (east / (M_PER_DEG * scale) if scale > 1e-9 else 0.0)  # 0 at the poles
+    return latitude, longitude
+
+
 def compass(east: float, north: float) -> float:
     """
     Convert an (east, north) metre offset to a compass bearing.

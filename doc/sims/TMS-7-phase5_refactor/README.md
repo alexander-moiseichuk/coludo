@@ -30,8 +30,12 @@ host column is q2, not q5.
 | `f15_full`  | F15 | 270 g | **121.7 m** ✗ | 119.2 m ✗ | +2.5 m |
 | `f15_light` | F15 | 215 g | **83.6 m** ✗ | 110.0 m ✗ | **−26.4 m** |
 
-Run-to-run spread across three flights of this matrix is ±3 m (the sim's 5 % sensor noise), so treat
-these as ±3, not as exact.
+**Run-to-run repeatability is ~1 m, not ±3 m.** Three identical back-to-back F15 flights land at
+121 / 122 / 121 m (durations 57.8 / 57.7 / 57.7 s, apogees 288 / 289 / 288 m) with no drift across
+the sequence, so nothing stateful carries between runs. The ~3 m spread seen earlier in this study
+was measured across flights *separated by firmware changes* — the simulated pitot, the CORDIC
+pre-normalisation, the board_health rewrite — and was wrongly attributed to sensor noise. Treat a
+difference above ~1 m as a real change, not as scatter.
 
 🎬 **[`phase5_refactor.mp4`](phase5_refactor.mp4)** — follow-cam of all four, FHD 30 FPS.
 
@@ -151,8 +155,9 @@ trigger was `oom_s < 2 × land_s` — collect when memory dies within *twice* th
 stacked on two margins that already point the same way:
 
 - `oom_s` counts down to a **512 KB reserve**, not to zero, so it already reports exhaustion early;
-- the safe-altitude floor prices the pause at `_RESCUE_PAUSE_MS` = 200 ms against a collect measured
-  at **~67 ms** — about 3×.
+- the safe-altitude floor prices the pause at `_RESCUE_PAUSE_MS` = 200 ms against a collect
+  **measured in flight at 34–45 ms** — about 5×. (That figure only became readable once the rescue
+  line moved from `log()` to durable telemetry; the earlier ~67 ms came from a bench benchmark.)
 
 A third 2× on top did not buy safety, it spent control slices. Now `oom_s <= land_s`: rescue when
 memory dies **before** the glider lands. Measured, same matrix, before and after:
@@ -186,3 +191,75 @@ done
 python3 tools/flight_metrics.py captures/phase5_refactor --sort name
 python3 tools/flight_kpi.py captures/phase5_refactor/f15_full.txt
 ```
+
+## Open: the board flies 12–21 % longer than the host, and two theories are dead
+
+The board out-flies the host in every case — duration +12–21 %, and apogee +7.5–10 % on F15 (E16
+apogee matches). `f15_light` is simply where the most flight-time exists, and a converging endgame
+turns time into accuracy, which is the whole −26 m delta. Two hypotheses tested and **both refuted**:
+
+**Not load-induced sim lag.** If the board's real-time accumulator were falling behind under its
+100 Hz control + telemetry load, reducing that load would shrink the gap. Flying the same case at
+`inject_hz` 50 / 25 / 10 — a 5× cut that really did reduce work, the leak falling 347 → 210 KB/s —
+gives durations of **57.8 / 57.7 / 57.7 s** and apogees of **288 / 289 / 289 m**. Flat. The board is
+not lagging.
+
+**Not the physics integration rate.** The host drives physics and control from one rate (`--hz`,
+default 100) while the board decouples them (physics `sim_hz` 50, control `schedule_hz` 100), so the
+host integrates twice as finely. Running the host at `--hz 50` to match the board's physics should
+then reproduce the board — it does the opposite: **47.1 s / 258 m**, moving *away* from the board's
+57.8 s / 288 m. Coarser integration makes the host fly shorter and lower; the board, at the same
+50 Hz, flies longer and higher.
+
+So the cause is in how the two harnesses *drive* the shared `sim_model`. Reading the two drivers
+suggested two mechanisms; **instrumenting them refuted both.** Recorded here because eliminating a
+plausible cause is worth as much as finding one, and both were asserted in this document before being
+measured.
+
+**Refuted — the board is NOT discarding wall time.** `tasks/hitl.py` caps each iteration's catch-up at
+`max_catchup = 0.5 s`, and time beyond that is dropped and never made up, which would make simulated
+time fall behind wall time and inflate a wall-stamped duration. The board now records both
+(`hitl_clock.csv`: `sim_s`, `wall_s`, `lag_s`). Measured over a full flight: **sim 57.84 s, wall
+57.86 s, lag 0.02 s, ratio 1.000**. The accumulator keeps up. The board really does fly 57.84 s of
+SIMULATED time against the host's 48.8 s — a genuine trajectory difference, not a reporting artefact.
+
+**Refuted — the host's stage machine was not drifting.** `virtual_flight` reimplemented apogee
+detection as a mirror of `sequencer._detect_apogee`, and its own comment recorded that the mirror
+*had* drifted once. Both now call one shared implementation (`commons.apogee_step`). The host's output
+after the change is **identical** — 48.8 s, 268 m, 119.2 m — so the mirror had already been corrected
+and is not the cause. The extraction is kept regardless: a hand-maintained copy that drifted once can
+drift again, and this removes the possibility rather than the symptom.
+
+### Resolved — most of it is measurement SCOPE, not flight
+
+Splitting the 9 s by stage settles it (F15, board vs host):
+
+| phase | board | host | delta |
+|---|---|---|---|
+| boost, up to GLIDING | 10.3 s | 7.1 s | **+3.2 s** |
+| glide, GLIDING→LANDING | 43.2 s | 41.4 s | +1.8 s |
+| **after touchdown** | 4.4 s | 0.4 s | **+4.0 s** |
+| total | 57.9 s | 48.9 s | **+9.0 s** |
+
+**The largest single contributor is a tail the host does not record at all.** The board runs the real
+stage machine through `LANDING → DONE` and keeps sampling for ~4.4 s after touchdown; the host stops
+0.4 s after LANDING and never enters DONE. That is visible directly on the reports as traces
+continuing past the landing.
+
+Of the rest, +3.2 s is the longer boost that goes with the higher apogee (288 m vs 268 m — the two are
+the same fact, since a higher arc takes longer to reach), and the **actual glide differs by 1.8 s,
+about 4 %**.
+
+So the headline "the board flies 12–21 % longer" was mostly comparing different spans of flight. The
+honest statement is: the board's GLIDE is ~4 % longer, its apogee ~7 % higher on F15, and the rest is
+that a board capture covers touchdown-to-DONE while a host capture ends at touchdown. `f15_light`
+still gains the most because it has the most glide, but the effect is far smaller than the raw
+duration column suggested.
+
+**Compare GLIDE spans, not capture durations,** when putting the two worlds side by side.
+
+Two things did come out of this that stand on their own: captures now carry the sim-vs-wall clock, so
+this class of question is answerable instead of arguable; and the apogee detector exists once.
+
+**Until it is explained, host predictions carry an unquantified pessimistic bias.** Compare
+like-for-like within one world; treat cross-world duration and apogee comparisons as indicative only.

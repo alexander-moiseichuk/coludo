@@ -39,7 +39,11 @@ def stage_events(logs):
     events = []
     for microseconds, line in logs:
         if microseconds is not None and 'stage ->' in line:
-            events.append((microseconds / 1e6, line.split('::', 1)[-1].strip()))
+            # TWO LINES, not "stage -> setting": these annotations sit on a vline in an 11-row stack,
+            # and the arrow form ran wide enough to overlap its neighbours whenever two transitions
+            # landed close together. Plotly annotations honour <br>, so the label wraps instead.
+            label = line.split('::', 1)[-1].strip()
+            events.append((microseconds / 1e6, label.replace(' -> ', '<br>').replace('->', '<br>')))
     return events
 
 
@@ -51,6 +55,50 @@ def _nearest(times, values, targets):
             index += 1
         out.append(values[index] if values else 0.0)
     return out
+
+
+def irq_health(streams) -> str:
+    """
+    Summarise `irq_runs` across every stream that carries it.
+
+    Each row records how many interrupt edges that wake consumed: **0 = the fallback timed out** (a
+    dead or quiet line -- the driver is sampling blind on its timer), **1 = healthy**, and **>1 = an
+    overrun**, edges arriving faster than the loop consumed them, which is a SCHEDULING symptom rather
+    than a sensor one. Both failure modes are invisible in the sample values themselves, which is why
+    they are counted here rather than left to be eyeballed.
+
+    Args:
+        streams - the parsed capture streams.
+
+    Returns:
+        A one-line summary, or '' when no stream carries irq_runs.
+    """
+    parts = []
+    for name in sorted(streams):
+        stream = streams[name]
+        if 'irq_runs' not in stream.fields:
+            continue
+        _times, values = stream.column('irq_runs')
+        if not values:
+            continue
+        missed = sum(1 for v in values if v == 0)
+        over = sum(1 for v in values if v > 1)
+        if missed or over:
+            parts.append('%s %d missed / %d overrun of %d'
+                         % (name.replace('.csv', ''), missed, over, len(values)))
+    return ' · '.join(parts)
+
+
+_FIXED_SCALE = 100  # fixed.SCALE -- gyro columns are centideg/s fixnums
+
+# One colour per flight stage on the 3D track, in transition order (pre-launch, then each logged
+# stage). Qualitative and high-contrast on purpose -- adjacent stages must be told apart at a glance,
+# which a sequential scale cannot do.
+_STAGE_COLORS: tuple = ('#7f7f7f', '#d62728', '#1f77b4', '#2ca02c', '#ff7f0e', '#9467bd', '#8c564b')
+
+# Average burn seconds per motor -- the same table sim_model.MOTORS carries, restated here because this
+# tool is host-side and must not import firmware. Used to shade the BURN inside BOOSTING (--motor).
+_MOTOR_BURN_S: dict = {'E16': 1.77, 'F15': 3.45}
 
 
 def leak_estimate(health, events):
@@ -81,7 +129,7 @@ def leak_estimate(health, events):
     return (leak_bps / 1000.0, oom_s, m0 / 1e6, m1 / 1e6)
 
 
-def build(streams, logs, go, make_subplots):
+def build(streams, logs, go, make_subplots, motor=None):
     accel = find_stream(streams, 'ax', 'ay', 'az', prefer='adxl')  # high-g, not the IMU's low-g accel
     attitude = find_stream(streams, 'roll', 'pitch', prefer='bno')  # BNO055 emits heading/roll/pitch
     baro = find_stream(streams, 'elevation', prefer='icp') or find_stream(streams, 'altitude')
@@ -92,6 +140,7 @@ def build(streams, logs, go, make_subplots):
     power = find_stream(streams, 'voltage_mv', 'current_ma', 'power_mw')  # power_ina226.csv: integer mV/mA/mW
     gyro = find_stream(streams, 'gx', 'gy', 'gz', prefer='lsm')  # imu_lsm6dso32.csv: gyro rate (deg/s) -> PID D term
     pitot = find_stream(streams, 'dynamic_pressure')  # airspeed_sdp810.csv: the DIRECT pitot measurement
+    events = stage_events(logs)  # hoisted: the 3D track colours BY STAGE, so it needs these first
     control = find_stream(streams, 'fin_cap')  # flight.csv: the control state (findings §27.2)
     # telemetry carries centi-units (fixnums), never floats -- a float in a row heap-boxes on
     # MicroPython, so every rate is x100 on the wire and scaled here
@@ -108,11 +157,32 @@ def build(streams, logs, go, make_subplots):
         # per-point hover so a click on the 3D track reads out everything known at that instant
         text = ['t=%.1fs<br>height=%.0f m<br>speed=%.1f m/s<br>heading=%.0f deg' % point
                 for point in zip(times, height, speed, course)]
-        trajectory.add_trace(go.Scatter3d(
-            x=longitude, y=latitude, z=height, mode='lines+markers', name='trajectory',
-            text=text, hoverinfo='text',
-            line=dict(width=4), marker=dict(size=2, color=times, colorscale='Viridis',
-                                            colorbar=dict(title='t (s)'))))
+        """
+        One TRACE PER STAGE, each its own colour, rather than one trace shaded by time.
+
+        A Viridis time gradient answers "when" -- which the hover already gives to a tenth of a second --
+        while the question actually asked of this chart is "where did it BOOST, where did it GLIDE, where
+        did it turn for the LANDING". Stage boundaries are the structure worth seeing, and a continuous
+        ramp hides them: the eye cannot find the boost/glide transition on a smooth gradient. Splitting
+        also puts each stage in the legend, so a stage can be toggled off to see what is underneath it.
+        """
+        bounds = [0.0] + [t for t, _ in events] + [times[-1] + 1.0 if times else 0.0]
+        names = ['pre-launch'] + [label.replace('<br>', ' ') for _, label in events]
+        for index in range(len(names)):
+            lo, hi = bounds[index], bounds[index + 1]
+            pick = [i for i, t in enumerate(times) if lo <= t < hi]
+            if not pick:
+                continue
+            trajectory.add_trace(go.Scatter3d(
+                x=[longitude[i] for i in pick], y=[latitude[i] for i in pick],
+                z=[height[i] for i in pick], mode='lines+markers',
+                name=names[index], text=[text[i] for i in pick], hoverinfo='text',
+                line=dict(width=4, color=_STAGE_COLORS[index % len(_STAGE_COLORS)]),
+                marker=dict(size=2, color=_STAGE_COLORS[index % len(_STAGE_COLORS)])))
+        if not events:  # no stage markers in this capture -> one trace, so the track still renders
+            trajectory.add_trace(go.Scatter3d(
+                x=longitude, y=latitude, z=height, mode='lines+markers', name='trajectory',
+                text=text, hoverinfo='text', line=dict(width=4), marker=dict(size=2)))
         trajectory.update_layout(title='trajectory — GNSS ground-track + baro height (hover/click a point)',
                                  scene=dict(xaxis_title='lon', yaxis_title='lat', zaxis_title='height (m)'))
     else:
@@ -121,7 +191,7 @@ def build(streams, logs, go, make_subplots):
     series = make_subplots(rows=11, cols=1, shared_xaxes=True, vertical_spacing=0.017,
                            subplot_titles=('|accel| (g)', 'altitude / elevation (m)', 'speed (m/s)',
                                            'attitude (deg)', 'fins — commanded (deg)',
-                                           'board health — load %, temp °C, mem MB, rescues', 'agl (m)',
+                                           'board health — load %, temp °C, mem MB, rescues, irq_runs', 'agl (m)',
                                            'engine — mV / mA / mW / over-current alerts (INA226)',
                                            'gyro rate — LSM6DSO32 (deg/s) → PID D term',
                                            'airspeed (m/s) — pitot vs governor estimate vs GNSS ground',
@@ -141,9 +211,17 @@ def build(streams, logs, go, make_subplots):
         times, knots = gnss.column('speed_kn')
         series.add_trace(go.Scatter(x=times, y=[k / 1.94384 for k in knots], name='speed'), row=3, col=1)
     if attitude is not None:
+        """
+        roll/pitch arrive as the CENTIDEGREE FIXNUM the control path consumes, for the same reason the
+        gyro columns do -- the driver was spending 170 B a sample building two strings, which is
+        formatting rather than measurement. heading/yaw are plain degrees on the board, so only the two
+        fixnum columns are scaled here. Scaling belongs on this side, where it costs nothing.
+        """
         for field in ('heading', 'yaw', 'roll', 'pitch'):
             if field in attitude.fields:
                 times, values = attitude.column(field)
+                if field in ('roll', 'pitch'):
+                    values = [v / _FIXED_SCALE for v in values]
                 series.add_trace(go.Scatter(x=times, y=values, name=field), row=4, col=1)
     if fins is not None:
         for field in ('eleron_left', 'eleron_right', 'yaw'):
@@ -171,6 +249,17 @@ def build(streams, logs, go, make_subplots):
             times, values = health.column('rescues')
             series.add_trace(go.Scatter(x=times, y=values, name='rescues', mode='lines',
                                         line_shape='hv'), row=6, col=1)  # a step count, not a curve
+    for name in sorted(streams):
+        stream = streams[name]
+        if 'irq_runs' in stream.fields:
+            """
+            One trace per interrupt-driven sensor. Flat at 1 is healthy; a dip to 0 is a missed
+            interrupt (the driver fell back to its timer) and a spike above 1 is an overrun. Drawn as
+            steps because it is a count per wake, not a continuous quantity.
+            """
+            times, values = stream.column('irq_runs')
+            series.add_trace(go.Scatter(x=times, y=values, name='irq %s' % name.replace('.csv', ''),
+                                        mode='lines', line_shape='hv'), row=6, col=1)
     if laser is not None:
         times, values = laser.column('agl')
         series.add_trace(go.Scatter(x=times, y=values, name='agl', mode='markers'), row=7, col=1)
@@ -180,10 +269,16 @@ def build(streams, logs, go, make_subplots):
                 times, values = power.column(field)
                 series.add_trace(go.Scatter(x=times, y=values, name=field), row=8, col=1)
     if gyro is not None:  # the gyro rate the PID reads as its D term (roll->gx, pitch->gy, yaw->gz)
+        """
+        gx/gy/gz are recorded as the CENTIDEG/S FIXNUM the PID consumes, not as formatted decimals --
+        the driver used to spend 224 B per sample building three strings, which is formatting rather
+        than measurement. Scaling belongs here, where it costs nothing.
+        """
         for field, label in (('gx', 'roll rate'), ('gy', 'pitch rate'), ('gz', 'yaw rate')):
             if field in gyro.fields:
                 times, values = gyro.column(field)
-                series.add_trace(go.Scatter(x=times, y=values, name=label), row=9, col=1)
+                series.add_trace(go.Scatter(x=times, y=[v / _FIXED_SCALE for v in values],
+                                            name='%s (deg/s)' % label), row=9, col=1)
     """
     AIRSPEED (findings §27.4): the pitot is the direct measurement, the governor estimate is what the fin
     cap was actually computed from, and GNSS ground speed is the third opinion -- overlaid, their spread
@@ -225,16 +320,60 @@ def build(streams, logs, go, make_subplots):
     committed per line and is trustworthy; the log channel is what was traded away for that (see
     recorder.py). Say when the markers are missing rather than drawing a flight that appears stageless.
     """
-    events = stage_events(logs)
     if not events:
         series.add_annotation(text='no stage markers — this capture carries no log lines '
                                    '(logs flush ~every 1000 telemetry rows, so a short session may '
                                    'have none). Telemetry below is unaffected.',
                               xref='paper', yref='paper', x=0, y=1.02, showarrow=False,
                               font={'color': 'crimson'})
-    for time_s, label in events:
+    """
+    STAGGERED VERTICALLY, because the horizontal fixes could not solve this one.
+
+    Wrapping onto two lines and shifting clear of the vline both helped, but SETTING and BOOSTING are
+    only ~0.1 s apart on a rocket profile -- and far closer still on the catapult profiles, where
+    apogee_arm_ms is 200 ms against a 12 s rocket arming window. Two markers at effectively the same x
+    cannot be separated by any horizontal offset; one has to move DOWN. Alternating the vertical shift
+    by index guarantees adjacent labels never collide whatever their spacing in time, which a
+    proximity test would not -- a run of three close transitions defeats pairwise nudging.
+
+    Each label stays right-aligned and offset left of its own line, so which marker it belongs to is
+    still unambiguous once they sit at different heights.
+    """
+    _STAGGER_PX: int = 34  # ~two lines at font 10, so a shifted label clears its neighbour entirely
+    for index, (time_s, label) in enumerate(events):
+        """
+        Third line: how long the stage LASTED, not just when it started.
+
+        For BOOSTING that duration is the number worth reading -- it is the motor burn plus the coast to
+        separation, so it says directly whether the airframe separated when the motor and the
+        apogee-arming window predicted (F15 burns 3.45 s, E16 1.77 s, and apogee detect is blind for
+        apogee_arm_ms after entry). A start time alone forces that subtraction by eye across two
+        staggered labels. The last stage has no successor, so it carries no duration.
+        """
+        span = events[index + 1][0] - time_s if index + 1 < len(events) else None
+        text = label if span is None else '%s<br>%.1f s' % (label, span)
         series.add_vline(x=time_s, line_dash='dash', line_color='crimson',
-                         annotation_text=label, annotation_position='top left')
+                         annotation_text=text, annotation_position='top left',
+                         annotation=dict(xshift=-10, yshift=-_STAGGER_PX * (index % 2),
+                                         align='right', font=dict(size=10)))
+    """
+    Shade the motor BURN inside BOOSTING, when the motor is known (--motor).
+
+    BOOSTING spans burn PLUS coast to separation, and only the second part is under aerodynamic
+    control -- the fins have no authority to speak of until the motor stops dominating. Drawing the burn
+    makes that split visible instead of inferred: the boost band is thrust, the remainder is the coast
+    the apogee detector arms across (apogee_arm_ms), and separation should fall at the end of it. A
+    separation landing INSIDE the burn band is a fault the eye now catches immediately.
+    """
+    if motor and motor.upper() in _MOTOR_BURN_S:
+        boost = next((t for t, label in events if 'boosting' in label), None)
+        if boost is not None:
+            burn = _MOTOR_BURN_S[motor.upper()]
+            series.add_vrect(x0=boost, x1=boost + burn, fillcolor='#d62728', opacity=0.10,
+                             line_width=0, annotation_text='%s burn %.2f s' % (motor.upper(), burn),
+                             annotation_position='bottom left',
+                             annotation=dict(font=dict(size=9, color='#d62728')))
+
     # GC-off leak + time-to-OOM headline (mem_free slope over the airborne, GC-disabled window)
     leak = leak_estimate(health, events)
     title = 'flight parameters'
@@ -247,6 +386,8 @@ def build(streams, logs, go, make_subplots):
                               text='leak %.0f KB/s · OOM ~%s' % (leak_kbps, oom_txt),
                               showarrow=False, xanchor='left', yanchor='bottom',
                               font=dict(color='crimson', size=12))
+    irq = irq_health(streams)
+    title += ' — IRQ %s' % irq if irq else ' — IRQ clean (every wake consumed exactly one edge)'
     # 'x unified' -> hovering (or clicking) any time shows every panel's value at that instant
     series.update_layout(height=2250, title=title, showlegend=True, hovermode='x unified')
     series.update_xaxes(title_text='time (s)', row=9, col=1)
@@ -281,13 +422,14 @@ def main():
     parser.add_argument('capture', help='recorder capture (the UART stream saved by the Luckfox)')
     parser.add_argument('-o', '--out', default='flight.html', help='output HTML (default flight.html)')
     parser.add_argument('--cdn', action='store_true', help='load plotly.js from the CDN (tiny file, needs net)')
+    parser.add_argument('--motor', choices=sorted(_MOTOR_BURN_S), help='shade the motor burn inside BOOSTING')
     args = parser.parse_args()
     go, pio, make_subplots = _require_plotly()
     with open(args.capture) as handle:
         streams, logs = flight_telemetry.parse(handle.read())
     if not streams:
         sys.exit('no telemetry streams found in %s' % args.capture)
-    trajectory, series = build(streams, logs, go, make_subplots)
+    trajectory, series = build(streams, logs, go, make_subplots, args.motor)
     write_html(trajectory, series, args.out, pio, 'cdn' if args.cdn else True)
     print('wrote %s (%d streams, %d log lines)' % (args.out, len(streams), len(logs)))
 

@@ -8,6 +8,7 @@ _StubGnss subclass exercises the base independently of any module driver. Run by
 """
 
 import asyncio
+import time
 
 import config_default
 import databoard
@@ -86,7 +87,29 @@ async def amain():
     unit._parse('$GPRMC,123521,A,1234.000,N,01234.000,E,0,0,230394,,*00')  # bad checksum
     assert databoard.Databoard.value('position') == previous
 
-    print('ok: gnss base -- NMEA helpers; RMC->position+speed, GGA->altitude+elevation(ground); void/bad ignored')
+    """
+    RMC and GGA outages are EVENTED separately, because they fail separately -- a receiver holding
+    almanac but no fix keeps emitting GGA (quality 0) while RMC goes void. Guidance dead-reckons
+    through a GNSS loss by design, so the trajectory looks normal and these events are the only record
+    that the receiver was dead; they go to the durable per-component stream, not to best-effort logs.
+    """
+    events = []
+    unit.event = lambda message: events.append(message)
+    unit._seen_us = {'RMC': time.ticks_us(), 'GGA': time.ticks_us()}
+    unit._absent = {'RMC': False, 'GGA': False}
+    unit._sweep(time.ticks_add(time.ticks_us(), 1000000))  # 1 s quiet -> jitter, not an outage
+    assert events == []
+    unit._sweep(time.ticks_add(time.ticks_us(), 4000000))  # 4 s -> BOTH sentences are out
+    assert len(events) == 2 and any('RMC lost' in e for e in events) and any('GGA lost' in e for e in events)
+    unit._sweep(time.ticks_add(time.ticks_us(), 5000000))  # still out -> each edge fires ONCE, no spam
+    assert len(events) == 2
+    # only RMC comes back -> exactly one recovery event, and GGA stays flagged out
+    unit._parse(_line('GPRMC,123522,A,4807.038,N,01131.000,E,022.4,084.4,230394,003.1,W'))
+    assert len(events) == 3 and 'RMC back' in events[2]
+    assert unit._absent['GGA'] is True and unit._absent['RMC'] is False
+
+    print('ok: gnss base -- NMEA helpers; RMC->position+speed, GGA->altitude+elevation(ground)+quality; '
+          'per-sentence outage events; void/bad ignored')
 
 
 asyncio.run(amain())

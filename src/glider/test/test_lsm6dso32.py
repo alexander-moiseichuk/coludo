@@ -65,10 +65,15 @@ async def amain():
         real._int_silent = True                       # what run() sets on the last timeout
         assert real.inspect()['interrupt_silent'] is True, 'the degradation must be visible to an operator'
         # a late edge resumes interrupt mode, so a merely NOISY line costs nothing permanent
-        real._edge_seen = False
-        assert real._ready_flagged() is False
-        real._on_data_ready(None)                     # an edge finally arrives
-        assert real._ready_flagged() is True and real._ready_flagged() is False  # read once, then cleared
+        # the driver no longer wraps this: commons.Waiter.take() IS the non-blocking check now, and
+        # it returns the COUNT so an overrun is distinguishable from a single edge
+        real._ready.take()                            # drain any pending edge
+        assert real._ready.take() == 0
+        real._ready.kick()                            # an edge arrives (the ISR entry point)
+        assert real._ready.take() == 1 and real._ready.take() == 0  # read once, then cleared
+        real._ready.kick()
+        real._ready.kick()
+        assert real._ready.take() == 2                # two edges before a read == an overrun
         print('ok: lsm6dso32 registered; graceful absent; REAL device |a|=%.2f g, gyro ok' % magnitude)
     else:
         print('ok: lsm6dso32 registered; graceful absent setup (no device wired on cs 50 -- positive skipped)')

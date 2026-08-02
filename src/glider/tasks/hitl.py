@@ -127,14 +127,24 @@ class Hitl(task.Task):
         # record the simulated sensors as telemetry (same names/fields as the real drivers + the host
         # tool) -> a complete renderable capture on the Luckfox. Decimated to keep the link sane.
         sensor_us = int(1_000_000 / cfg.get('record_hz', 25))   # sensor telemetry cadence
-        self._tlm_accel = recorder.Telemetry('accel_adxl375.csv', ('ax', 'ay', 'az'), sensor_us)
+        self._tlm_accel = recorder.Telemetry('accel_adxl375.csv', ('ax', 'ay', 'az', 'irq_runs'), sensor_us)
         self._tlm_imu = recorder.Telemetry('imu_bno055.csv', ('heading', 'roll', 'pitch'), sensor_us)
-        self._tlm_gyro = recorder.Telemetry('imu_lsm6dso32.csv', ('ax', 'ay', 'az', 'gx', 'gy', 'gz'), sensor_us)
+        self._tlm_gyro = recorder.Telemetry('imu_lsm6dso32.csv', ('ax', 'ay', 'az', 'gx', 'gy', 'gz', 'irq_runs'),
+                                            sensor_us)
         self._tlm_baro = recorder.Telemetry('baro_icp10111.csv',
                                             ('altitude', 'temperature', 'pressure', 'elevation'), sensor_us)
         self._tlm_gnss = recorder.Telemetry('gnss.csv', ('lat', 'lon', 'speed_kn', 'course'), 100_000)  # 10 Hz
-        self._tlm_laser = recorder.Telemetry('laser_agl.csv', ('agl',), sensor_us)
+        self._tlm_laser = recorder.Telemetry('laser_agl.csv', ('agl', 'irq_runs'), sensor_us)
         self._tlm_fins = recorder.Telemetry('fins.csv', ('eleron_left', 'eleron_right', 'yaw'), sensor_us)
+        """
+        SIM CLOCK vs WALL CLOCK. The accumulator caps each iteration at `max_catchup`, so wall time the
+        loop could not cover is DROPPED and never made up -- simulated time falls permanently behind.
+        That is invisible in a capture whose every row is wall-stamped, and it is why board flights
+        read 12-21 % LONGER than the same case on the host: the trajectory is identical, the clock
+        reporting it is not. Recording both makes the lag measurable instead of inferred, so a
+        cross-world duration comparison can be done in SIM time where it is meaningful.
+        """
+        self._tlm_clock = recorder.Telemetry('hitl_clock.csv', ('sim_s', 'wall_s', 'lag_s'), 100_000)
         self._tlm_pitot = recorder.Telemetry(  # same name/fields/units as drivers/sdp810.py
             'airspeed_sdp810.csv', ('dynamic_pressure', 'airspeed_cms', 'temperature'), sensor_us)
         self._ok = True
@@ -227,7 +237,9 @@ class Hitl(task.Task):
         self._ch['altitude'].push(altitude)
         self._ch['elevation'].push(elevation)
         if not self.drop_gnss:  # simulated GNSS dropout -> position/speed/course go stale (baro stays)
-            self._ch['position'].push(position)
+            # position noise is METRES on the ground (sim_model.noisy_position), never a fraction of a
+            # latitude -- scaling by abs(48)+1 would make "100 % noise" mean thousands of kilometres
+            self._ch['position'].push(sim_model.noisy_position(position, noise))
             self._ch['speed'].push(speed)
             self._ch['course'].push(course)
         """
@@ -244,15 +256,19 @@ class Hitl(task.Task):
         self._ch['dynamic_pressure'].push(pressure_fx)  # Pa fixnum -> flight_report / airspeed_calibrate
         self._tlm_pitot.push((pressure_fx, int(pitot * SCALE), 2500))  # temperature 25.00 C, as the host writes
         # telemetry -> the Luckfox (decimate_us rate-limits each stream so this can run every step)
-        self._tlm_accel.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3)))
+        # irq_runs 1: the sim hands over exactly one sample per publish, so the honest
+        # constant is the healthy case -- never 0 (no interrupt) and never an overrun
+        self._tlm_accel.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3), 1))
         self._tlm_imu.push((round(heading, 1), round(roll, 1), round(pitch, 1)))
         # the LSM6DSO32 stream a real board flight produces: low-g accel (reuse the boost-axis accel) +
         # the gyro rate (deg/s) the PID reads. Same fields as drivers/lsm6dso32 so flight_report keys on it.
+        # gyro as the centideg/s fixnum the real driver records, so a sim capture and a board capture
+        # carry the same UNITS and not merely the same column names
         self._tlm_gyro.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3),
-                             round(roll_rate, 1), round(pitch_rate, 1), round(yaw_rate, 1)))
+                             from_float(roll_rate), from_float(pitch_rate), from_float(yaw_rate), 1))
         self._tlm_baro.push((round(altitude, 2), 21.0, 100000, round(elevation, 2)))
         if in_range:
-            self._tlm_laser.push((round(agl_clean, 3),))
+            self._tlm_laser.push((round(agl_clean, 3), 1))
         left, right, yaw = self._fin_angles()
         self._tlm_fins.push((int(left), int(right), int(yaw)))
         lat, lon = position
@@ -276,6 +292,7 @@ class Hitl(task.Task):
         sim_time = 0.0
         accumulator = 0.0
         last = time.ticks_ms()
+        wall_start = last  # for the sim-vs-wall clock record; see the hitl_clock.csv declaration
         while True:
             await asyncio.sleep_ms(period)
             now = time.ticks_ms()
@@ -291,6 +308,17 @@ class Hitl(task.Task):
                 self._body.accel_g = 1.0
                 accumulator = 0.0
                 self._publish()
+                continue
+            if self.controller.stage >= _STAGE.DONE:
+                """
+                The flight is over: stop FLYING it. The runner still holds the loop open for ~1.2 s to
+                let the recorder drain its tail to the Luckfox, and the sim used to keep stepping the
+                body and publishing sensors through that -- so every capture ended with ~1.2 s of
+                samples of a glider sitting on the ground, visible on the reports as traces carrying
+                on past DONE. It also inflated the capture's duration, which is one of the numbers
+                the host and board were being compared on.
+                """
+                accumulator = 0.0
                 continue
             accumulator += elapsed if elapsed < max_catchup else max_catchup
             # follow the REAL stage machine: SETTING/BOOSTING -> 1-DoF boost/coast (provides the launch
@@ -311,6 +339,10 @@ class Hitl(task.Task):
                 accumulator -= fixed
                 sim_time += fixed
             self._publish()
+            # sim vs wall, decimated to 10 Hz: lag > 0 means the accumulator dropped uncoverable
+            # wall time, so a wall-stamped duration OVER-reads the flight by exactly this much
+            wall = time.ticks_diff(now, wall_start) / 1000.0
+            self._tlm_clock.push((round(sim_time, 2), round(wall, 2), round(wall - sim_time, 2)))
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)

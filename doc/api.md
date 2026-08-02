@@ -270,6 +270,105 @@ Returns:
     A human-readable diagnosis string: 'ok' when read == expected, else the most likely wiring/
     power fault inferred from read (None / 0x00 / 0xFF / a wrong non-zero id).
 
+### `dwell_step(active: bool, now_ms: int, credit_ms: int, last_ms, threshold_ms: int) -> tuple`
+
+One step of a LEAKY dwell: the condition must hold `threshold_ms` of NET time, dips only drain it.
+
+The plain "sustained since" dwell it replaces reset its start on any single sample that missed, which
+is fine for a clean signal and useless for a noisy one: at 100 % accel noise the magnitude crosses
+the launch threshold in both directions every few samples, so an unbroken run of `launch_ms` never
+happens and MEASURED (doc/sims/TMS-7-noise_tolerance) the glider never left the pad at all.
+
+Draining rather than resetting keeps the tolerance without changing the UNIT. That distinction cost
+a revert: replacing the dwell with a leaky count-of-samples also worked, but it silently redefined
+`launch_ms` into a sample count, so the trigger's timing would drift with tick rate and a documented
+config knob would quietly stop doing anything. Time in, time out -- a threshold_ms of 100 still means
+100 ms, and a lone spike still drains to nothing and resets exactly as before.
+
+Pure and stateless (the caller owns the state) for the same reason as apogee_step below: launch
+detect exists on the board AND in the host sim, and the two must not drift apart.
+
+Args:
+    active - whether the condition holds for THIS sample.
+    now_ms - the caller's monotonic clock in milliseconds.
+    credit_ms - net time the condition has held so far, from the previous call.
+    last_ms - the previous call's clock, or None when no dwell is in progress.
+    threshold_ms - the net time the condition must hold before it counts.
+
+Returns:
+    (credit_ms, last_ms, fired) -- the updated state, and True once the dwell is satisfied.
+
+### `apogee_step(elevation, now_ms: int, peak, since_ms, smooth, drop_m, dwell_ms: int) -> tuple`
+
+One step of APOGEE detection: track the baro peak, report when it has fallen off it.
+
+Pure and stateless -- the caller owns `peak` and `since_ms` -- because this logic exists in two
+worlds and used to be written twice. `tasks/sequencer.py` runs it on the board; the host sim in
+`tools/virtual_flight.py` ran a hand-maintained MIRROR whose own comment records that it "had
+DRIFTED to timeout-only deploy, and a low arc could be back underground by the timeout". Stage
+timing sets the separation altitude, so a drifted mirror moves the host's apogee away from the
+board's -- which is exactly the divergence measured between them. One implementation, no mirror.
+
+The caller keeps the arming window (the motor's pressure wave corrupts the in-airframe baro during
+burn) and the burnout-timeout fallback: those need the caller's own clock and stage entry.
+
+Args:
+    elevation - the current baro height above the pad, or None while not armed / no reading.
+    now_ms - the caller's monotonic clock in milliseconds.
+    peak - the highest SMOOTHED elevation seen so far, or None before the first reading.
+    since_ms - when the fall below the peak began, or None if not currently below it.
+    smooth - the smoothed elevation carried from the previous call, or None to seed it.
+    drop_m - how far below the peak counts as descending (same units as elevation).
+    dwell_ms - how long that fall must be sustained before it is apogee rather than a dip.
+
+Returns:
+    (peak, since_ms, smooth, fired) -- the updated state, True exactly when apogee is confirmed.
+
+### `class Waiter`
+
+An IRQ-kicked wake with a sliced fallback -- the cheap replacement for asyncio.wait_for_ms.
+
+MEASURED on the board (test/diag_alloc_hotloop.py): `asyncio.wait_for_ms(ThreadSafeFlag.wait(), t)`
+allocates **560 B per call**, against 96 B for a bare flag wait and **48 B for one
+asyncio.sleep_ms**. On the ADXL375, whose IRQ fires at its 100 Hz ODR, that wrapper alone was
+~56 KB/s. It is not the waiting that costs, it is asking to be woken with a deadline attached.
+Converting the three interrupt-driven drivers to this took the board's leak from **331 KB/s
+(OOM ~96 s) to 191 KB/s (OOM ~167 s)**.
+
+So: sleep in slices and check a counter between them. At a 100 Hz ODR the kick has already landed
+when the first slice ends, so the normal path costs ONE sleep_ms -- 48 B instead of 560. With a
+dead interrupt the loop runs out its slices and the caller samples anyway, which is the same
+fallback it always had. The price is up to `slice_ms` of wake latency, nothing for a sensor whose
+data changes every 10 ms.
+
+THE SLICE DOUBLES, and it starts short deliberately. Latency only matters on the FIRST check: a
+live interrupt lands within one sample period, so the first slice must be small or a healthy
+sensor waits needlessly. After that the line is late or dead, where latency stops mattering and
+only the wake-up cost does -- so 10, 20, 40, 80... Starting instead at half the timeout and
+halving would invert this: the first look comes at timeout/2, long after a healthy edge arrived.
+
+For a 500 ms fallback that is ~6 sleeps instead of 50 when the interrupt is dead (288 B against
+2400 B), while the healthy path still costs exactly ONE sleep. It also fixes the poll-only case,
+where a driver with no interrupt at all would otherwise pay timeout/slice wake-ups per sample.
+
+A COUNTER rather than a bool, because it costs the same and holds more: a count above one means
+interrupts arrived faster than they were consumed, so a sampling overrun is recoverable evidence
+rather than a silently dropped sample. No separate miss counter -- that is the same fact stored
+twice.
+
+THE COUNTER IS INTERNAL. Callers use kick(), take() and wait(); nothing outside reads `kicks`,
+because a driver that tests it directly has to remember to clear it, and one that forgets goes on
+sampling forever on a stale edge. take() is the only non-blocking read, and it clears as it
+reports -- which is exactly the form the polling fallbacks need, and what a ThreadSafeFlag cannot
+give them (it offers only a blocking wait(), which is why those drivers used to carry a second
+mark beside it). If an overrun count is ever wanted outside, add a method for it rather than
+reaching in.
+
+- `__init__(slice_ms: int=10)` — constructor
+- `kick(_unused_pin=None) -> None` — ISR entry: one small-int increment. No branch, no allocation, nothing to get wrong.
+- `take() -> int` — Non-blocking: HOW MANY kicks arrived since the last check. Clears the count.
+- `wait(timeout_ms: int) -> bool` — Sleep in slices until a kick lands or `timeout_ms` elapses.
+
 ## `config.py`
 
 _Tested by `test/test_config.py`._
@@ -927,7 +1026,7 @@ The per-stage control law.
 setpoint(stage) gates control stages; enter() captures the holds on entering control; compute()
 dispatches the stage's law and fills the setpoint slots.
 
-- `__init__(config: GuidanceConfig, mission, governor, position, agl, elevation=None)` — constructor
+- `__init__(config: GuidanceConfig, mission, governor, position, agl, elevation=None, wind=None)` — constructor
 - `setpoint(stage: int)` — The configured attitude setpoint dict for a stage, or None when it is not a CONTROL stage.
 - `reachability(glide_ratio: float, wind_e: float=0.0, wind_n: float=0.0, airspeed: float=0.0)` — Can the glider still glide to the zone from here?
 - `min_turn_radius(bank_deg: float) -> float` — The tightest coordinated turn the airframe can HOLD at `bank_deg` and its LIVE airspeed.
@@ -1184,6 +1283,22 @@ Args:
 
 Returns:
     (east, north) offset in metres.
+
+### `advance(position: tuple, east: float, north: float) -> tuple`
+
+Move a position by a metre (east, north) offset -- the inverse of offset(), same flat-earth model.
+
+Exists for DEAD RECKONING: with no GNSS fix the glider propagates its last known position by the
+air velocity it can still measure (airspeed x heading) plus the last wind estimate, so navigation
+keeps a moving position instead of a frozen one. Equirectangular like offset(), which is exact
+enough over the hundreds of metres a flight covers.
+
+Args:
+    position - the (latitude, longitude) to move from (decimal degrees).
+    east, north - the offset to apply (metres).
+
+Returns:
+    The new (latitude, longitude) in decimal degrees.
 
 ### `compass(east: float, north: float) -> float`
 
@@ -1469,7 +1584,7 @@ Recorder session prefix, so file names are stable.
 have passed since the last emitted row (a fast sensor can push every sample and have its telemetry
 decimated to a sane rate). `decimate_us=0` (the default) inherits the Recorder GLOBAL rate
 (`Recorder.telemetry_decimate_us`, 50 Hz) -- so a stream opts into an individual rate by passing a
-non-zero value, else the board-wide `recorder.telemetry_us` prorates it.
+non-zero value, else the board-wide `recorder.telemetry_ms` prorates it.
 
 - `__init__(filename: str, fields: tuple, decimate_us: int=0)` — constructor
 - `due(now: int) -> bool` — Whether the decimation window has elapsed -- so a HOT-PATH producer can skip building its row.
@@ -1548,6 +1663,28 @@ Flight-dynamics state + integrator (PURE -- host-testable).
 - `track() -> float` — Ground-track bearing (deg) -- the direction the glider MOVES over the ground.
 - `ground_speed() -> float` — Horizontal GNSS GROUND speed (m/s) -- the magnitude of the ground velocity, WITH the wind.
 - `sensors() -> dict` — Clean (pre-noise) sensor readings from the current state.
+
+### `noisy_position(position, frac: float)`
+
+Perturb a (latitude, longitude) by a uniform +/- frac * POSITION_NOISE_REF METRES, per axis.
+
+Position cannot go through noisy(): that scales by `abs(value) + 1`, so on a latitude of 48 a
+"100 % noise" would mean +-49 DEGREES -- thousands of kilometres. It is the same mistake the
+heading channel already made and HEADING_NOISE_REF already fixed, one step worse. A GNSS error is
+an absolute distance on the ground and has nothing to do with where on the globe it is measured, so
+the perturbation is applied in metres and converted by the one geographic primitive.
+
+The conversion quantizes to the board's float32 grid (~0.42 m at latitude 48, see
+guidance._reckon), which at a +-10 m band is ~4 % granularity -- and is exactly the resolution the
+board would have for a real fix, so the sim inherits the hardware's own limit rather than
+pretending to a precision the flight code does not have.
+
+Args:
+    position - the clean (latitude, longitude), or None when there is no fix.
+    frac - the noise fraction; 0 (or no position) returns the input untouched.
+
+Returns:
+    The perturbed (latitude, longitude).
 
 ### `noisy(value, frac: float, lo: float, hi: float, reference: float=None)`
 
@@ -1661,6 +1798,7 @@ Returns:
 ### `class Task(inspector.Inspectable)`
 
 - `__init__(name: str, config: dict=None, controller=None)` — constructor
+- `event(message: str) -> None` — A DURABLE diagnostic record -- for the handful of facts a flight must not be able to lose.
 - `note(template: str=None, arg=None) -> None` — De-duplicated best-effort run-loop log + runtime-health flag.
 - `setup() -> bool` — Initialize or reset. Override. Return True on success, False otherwise.
 - `claim() -> None` — Wait until no other caller owns this device's MULTI-STEP conversation, then take it.
@@ -1848,7 +1986,7 @@ device id) setup() returns False and the Controller skips it -- the board boots 
 unplugged.
 
 Sampling is interrupt-driven when an `int_pin` (INT1) is wired: the chip raises DATA_READY when a new
-sample is ready, an IRQ sets a ThreadSafeFlag, and run() awaits it -- so the coroutine sleeps until
+sample is ready, an IRQ sets a plain bool, and run() waits on it in slices -- so the coroutine sleeps until
 there is genuinely fresh data instead of blind-polling. A `fallback_ms` timeout still forces a sample if
 interrupts go silent (dead sensor / wiring). With no int_pin it falls back to a plain `period_ms` poll.
 Uses the shared locked I2C bus (i2cbus), as it shares i2c:0 with other sensors.

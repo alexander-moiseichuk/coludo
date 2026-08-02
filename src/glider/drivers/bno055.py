@@ -19,7 +19,7 @@ import databoard
 import i2cbus
 import recorder
 import task
-from fixed import SCALE, to_str  # attitude roll/pitch -> centidegree fixnum; to_str for float-free telemetry
+from fixed import SCALE  # attitude roll/pitch -> centidegree fixnum
 
 try:
     from micropython import const
@@ -86,7 +86,7 @@ class Bno055(task.Task):
             self.name, self.config.get('provides', {}), 'attitude', 'accel')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
                                              ('heading', 'roll', 'pitch', 'ax', 'ay', 'az'),
-                                             decimate_us=self.config.get('telemetry_us', 0))  # 0 -> global rate
+                                             decimate_us=self.config.get('telemetry_ms', 0) * 1000)  # 0 -> global rate
         self._ok = True
         return True
 
@@ -210,8 +210,14 @@ class Bno055(task.Task):
                     recorder.Recorder.log(self.name, 'fusion STALLED (frozen euler while accel moves)'
                                                      ' -- attitude withheld, backup takes over')
                 self._accel.push(sample[3:])  # low-g backup to the ADXL375
-                # roll/pitch are centidegree fixnum -> to_str for a human-readable, float-free CSV column
-                self._telemetry.push((sample[0], to_str(sample[1]), to_str(sample[2]),
+                # roll/pitch columns are the RAW centidegree fixnum, not formatted decimals. to_str()
+                # built two strings per sample and MEASURED 170 B -- the single largest piece of this
+                # driver's sample, and it was FORMATTING, not measurement. At 50 Hz that is 8.5 KB/s of
+                # heap that never comes back with GC off in flight. The host tools divide by fixed.SCALE
+                # when they render (flight_report already does it for the gyro columns); the board has no
+                # business spending heap on decimals. Same fix lsm6dso32 took for its gyro columns --
+                # this driver simply never got it.
+                self._telemetry.push((sample[0], sample[1], sample[2],
                                       sample[3], sample[4], sample[5]))
                 self.note(None)  # healthy pass -> let the next error log afresh
                 await self._poll_calibration()

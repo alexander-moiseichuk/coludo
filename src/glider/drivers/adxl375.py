@@ -10,15 +10,15 @@ device id) setup() returns False and the Controller skips it -- the board boots 
 unplugged.
 
 Sampling is interrupt-driven when an `int_pin` (INT1) is wired: the chip raises DATA_READY when a new
-sample is ready, an IRQ sets a ThreadSafeFlag, and run() awaits it -- so the coroutine sleeps until
+sample is ready, an IRQ sets a plain bool, and run() waits on it in slices -- so the coroutine sleeps until
 there is genuinely fresh data instead of blind-polling. A `fallback_ms` timeout still forces a sample if
 interrupts go silent (dead sensor / wiring). With no int_pin it falls back to a plain `period_ms` poll.
 Uses the shared locked I2C bus (i2cbus), as it shares i2c:0 with other sensors.
 """
 
-import asyncio
 import struct
 
+import commons
 import databoard
 import i2cbus
 import recorder
@@ -59,10 +59,19 @@ class Adxl375(task.Task):
         self._dev = self._transport()  # register window over whichever bus the config names
         if self._dev is None:
             return False  # no such bus in config, or SPI selected with no cs_pin wired
-        self._period_ms: int = self.config.get('period_ms', 100)  # poll interval with no INT wired
-        self._fallback_ms: int = self.config.get('fallback_ms', 500)  # safety sample if INT silent
+        """
+        ONE knob. `period_us` is both the sample period and the interrupt fallback, because
+        commons.Waiter made them the same thing: a live edge returns on the first slice, a dead one
+        runs the slices out and the sample is taken anyway. Two constants that had to be kept
+        consistent became one that cannot disagree with itself.
+        """
+        # INT-silent fallback cadence. Reads `period_ms`, the key the CONFIG actually supplies --
+        # this used to read `period_us`, which appears in no config, so every one of these drivers
+        # silently fell back to 500 ms against a 20 ms freshness window. That is the exact
+        # "dead wire masquerading as a healthy sensor" the irq_runs work exists to expose.
+        self._period_ms: int = max(1, self.config.get('period_ms', 10))
         self._buf = bytearray(6)
-        self._ready = asyncio.ThreadSafeFlag()
+        self._ready = commons.Waiter()  # IRQ-kicked wake + sliced fallback (see commons.Waiter)
         self._int = None
         try:
             if (await self._dev.read(_REG_DEVID, 1))[0] != _DEVID:
@@ -75,8 +84,9 @@ class Adxl375(task.Task):
             print('adxl375 :: %r' % error)
             return False
         self._accel = databoard.Databoard.provide(self.name, self.config.get('provides', {}), 'accel')
-        self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('ax', 'ay', 'az'),
-                                       decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
+        self._irq_runs: int = 0
+        self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('ax', 'ay', 'az', 'irq_runs'),
+                                       decimate_us=self.config.get('telemetry_ms', 0) * 1000)  # 0 -> global
         self._ok = True
         return True
 
@@ -115,12 +125,8 @@ class Adxl375(task.Task):
         INT1 low, so the next conversion is a clean rising edge the IRQ catches.
         """
         self._int = Pin(gpio, Pin.IN)
-        self._int.irq(self._on_data_ready, Pin.IRQ_RISING)
+        self._int.irq(self._ready.kick, Pin.IRQ_RISING)
         await self._dev.read_into(_REG_DATAX0, self._buf)  # clear -> INT1 low -> next conversion = clean edge
-
-    def _on_data_ready(self, _unused_pin) -> None:
-        """IRQ: a fresh sample is ready -- wake run(). ThreadSafeFlag.set() is interrupt-safe."""
-        self._ready.set()
 
     async def sample(self) -> tuple:
         """
@@ -151,17 +157,16 @@ class Adxl375(task.Task):
             None; loops forever, pushing each sample to the databoard 'accel' slot and telemetry.
         """
         while True:
-            if self._int is not None:
-                try:
-                    await asyncio.wait_for_ms(self._ready.wait(), self._fallback_ms)
-                except asyncio.TimeoutError:
-                    pass  # no interrupt within the window -> sample anyway (safety)
-            else:
-                await asyncio.sleep_ms(self._period_ms)
+            # no branch on whether an interrupt exists: wait() covers both. With one wired it
+            # returns on the first slice; with none it simply runs the period out and we sample.
+            self._irq_runs = await self._ready.wait(self._period_ms)
             try:
                 accel = await self.sample()
                 self._accel.push(accel)  # one step: push our channel directly
-                self._telemetry.push(accel)
+        # irq_runs: how many interrupt edges this wake consumed. 0 = the fallback timed out (a
+        # dead or quiet line), 1 = healthy, >1 = an OVERRUN, edges arriving faster than the loop
+        # consumes them. Recorded per row so a capture shows sampling health, not just samples.
+                self._telemetry.push((accel[0], accel[1], accel[2], self._irq_runs))
                 self.note(None)  # healthy pass -> let the next error log afresh
             except Exception as error:
                 self.note('adxl375 :: read %r', error)  # deduped: a persistent error logs once, not every tick

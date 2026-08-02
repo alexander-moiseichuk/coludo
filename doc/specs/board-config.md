@@ -62,6 +62,16 @@ identical behaviour every time.
 
 `board.config` (and the dict produced by `config_default.py`) has these top-level sections.
 
+> **This example is an ABRIDGED SHAPE ILLUSTRATION, not a working config.** It shows a handful of
+> sensors so the section structure is readable; the live board carries ten, on three bus families,
+> with pin names this excerpt omits. **`src/glider/config_default.py` is the only source of truth** —
+> copying this block will not boot a glider. To see the real thing:
+>
+> ```bash
+> python3 -c "import sys, json; sys.path.insert(0,'src/glider'); \
+>             import config_default; print(json.dumps(config_default.default(), indent=2))"
+> ```
+
 ```json
 {
   "version": "20260725",
@@ -107,8 +117,8 @@ identical behaviour every time.
   },
 
   "sensors": [
-    { "name": "accel_adxl375", "driver": "adxl375", "bus": "i2c", "id": 0, "addr": 83,
-      "enabled": true,
+    { "name": "accel_adxl375", "driver": "adxl375", "bus": "spi", "id": 1,
+      "cs_pin": "adxl375_cs", "enabled": true,
       "provides": { "accel": { "priority": 0, "timeout_ms": 5 } } },
 
     { "name": "baro_icp10111", "driver": "icp10111", "bus": "i2c", "id": 0, "addr": 99,
@@ -119,7 +129,7 @@ identical behaviour every time.
       "enabled": true,
       "provides": { "altitude": { "priority": 1, "timeout_ms": 200 } } },
 
-    { "name": "laser_agl", "driver": "sen0648", "bus": "i2c", "id": 0, "addr": 80,
+    { "name": "laser_agl", "driver": "vl53l4cx", "bus": "i2c", "id": 0, "addr": 41,
       "enabled": true,
       "provides": { "agl":      { "priority": 0, "timeout_ms": 20 },
                     "altitude": { "priority": 2, "timeout_ms": 20 } } },

@@ -10,13 +10,19 @@ consumers fall back.
 """
 
 import asyncio
+import time
 
+import commons
 import config
 import databoard
 import micropython
 import recorder
 import task
 from machine import UART  # board-only, like `micropython` above (this module never imports off-board)
+
+_SENTENCE_GAP_US: int = commons.const(3000000)  # a sentence quiet this long (3 s) is an OUTAGE, not jitter. The
+# module is configured at 1 Hz, so three missed intervals -- loose enough that a busy loop or a single
+# dropped line never cries wolf, tight enough to catch the loss well inside a <60 s flight.
 
 _KNOTS_TO_MS: float = 0.514444  # NMEA RMC speed is in knots; the airspeed governor wants m/s
 
@@ -123,8 +129,25 @@ class Gnss(task.Task):
          self._course) = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}),
             'position', 'altitude', 'elevation', 'speed', 'course')
+        telemetry_us = self.config.get('telemetry_ms', 0) * 1000
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('lat', 'lon', 'speed_kn', 'course'),
-                                       decimate_us=self.config.get('telemetry_us', 0))
+                                       decimate_us=telemetry_us)
+        """
+        GGA gets its OWN stream rather than extra columns on the RMC one. The two sentences carry
+        different things (RMC the fix, GGA the signal quality behind it) and arrive independently, so
+        merging them means padding every row with the other's stale values and losing which sentence
+        actually updated. A separate stream keeps each one's real cadence -- and makes an outage in one
+        of them visible as a gap in that stream alone.
+
+        These fields were parsed but never recorded: fix quality, satellites and HDOP are exactly the
+        numbers that say whether a fix loss was the sky, the antenna or the receiver, and after a flight
+        with no GNSS they are the evidence for which.
+        """
+        self._gga_telemetry = recorder.Telemetry(
+            '%s_gga.csv' % self.name, ('altitude_m', 'elevation_m', 'quality', 'satellites', 'hdop_cd'),
+            decimate_us=telemetry_us)
+        self._seen_us: dict = {'RMC': 0, 'GGA': 0}  # last arrival per sentence -> the outage events
+        self._absent: dict = {'RMC': False, 'GGA': False}  # currently-out flag, so each edge fires once
         self._fix: bool = False
         self._fix_quality: int = 0  # GGA field 6: 0 none / 1 GPS / 2 DGPS -- signal-quality snapshot
         self._satellites: int = 0   # GGA field 7: satellites used in the fix (more = a better antenna/sky)
@@ -144,6 +167,8 @@ class Gnss(task.Task):
             return
         fields = line.split('*')[0].split(',')
         kind = fields[0][3:]  # drop '$' + the 2-char talker id (GP/GN/BD) -> RMC / GGA / ...
+        if kind in self._seen_us:
+            self._mark(kind, time.ticks_us())
         if kind == 'RMC' and len(fields) > 9:
             self._fix = fields[2] == 'A'  # A = valid fix, V = void
             latitude = degrees(fields[3], fields[4])
@@ -167,7 +192,62 @@ class Gnss(task.Task):
                 self._altitude.push(altitude)
                 if self._ground is None:
                     self._ground = altitude  # first valid GGA fixes the GNSS ground reference
-                self._elevation.push(altitude - self._ground)
+                elevation = altitude - self._ground
+                self._elevation.push(elevation)
+            else:
+                altitude = elevation = 0.0  # quality-only GGA (no fix yet) -- still worth recording
+            # hdop as centi-units (int), matching the fixnum convention: no boxed float in the row
+            self._gga_telemetry.push((altitude, elevation, self._fix_quality, self._satellites,
+                                      int(self._hdop * 100)))
+
+    def _mark(self, kind: str, now_us: int) -> None:
+        """
+        Note that `kind` just arrived, and EVENT the transitions in and out of an outage.
+
+        RMC and GGA are tracked separately because they fail separately: a receiver holding almanac but
+        no fix keeps emitting GGA (quality 0) while RMC goes void, and a sentence-selection mistake can
+        silence one alone. Recording only "GNSS is quiet" would blur those into one symptom.
+
+        These go through event() rather than log(), because a lost fix is precisely the kind of fact a
+        flight must not be able to lose: logs flush roughly every 1000 telemetry messages and a short
+        flight ends without them, while telemetry commits per line. Guidance now dead-reckons through a
+        GNSS outage (guidance._reckon), which is by design almost invisible in the trajectory -- so
+        without these events the capture would show a normal-looking flight and no record of the
+        receiver having been dead for most of it.
+
+        Args:
+            kind - the sentence type that arrived ('RMC' or 'GGA').
+            now_us - the arrival time (ticks_us).
+
+        Returns:
+            None; pushes an event on each edge, nothing on a steady stream.
+        """
+        if self._absent[kind]:
+            self._absent[kind] = False
+            self.event('%s back after %d ms' % (
+                kind, commons.ticks_diff(now_us, self._seen_us[kind]) // 1000))
+        self._seen_us[kind] = now_us
+
+    def _sweep(self, now_us: int) -> None:
+        """
+        Fire the outage event for any sentence that has gone quiet past _SENTENCE_GAP_US.
+
+        Detecting absence needs a clock that runs when nothing arrives, so it cannot live in _parse --
+        a receiver that goes completely silent parses nothing and would never notice. The run loop
+        calls this on every line AND on its read timeout.
+
+        Args:
+            now_us - the current time (ticks_us).
+
+        Returns:
+            None; pushes one event per sentence per outage.
+        """
+        for kind in self._seen_us:
+            if not self._absent[kind] and self._seen_us[kind] and \
+                    commons.ticks_diff(now_us, self._seen_us[kind]) > _SENTENCE_GAP_US:
+                self._absent[kind] = True
+                self.event('%s lost (quiet %d ms)' % (
+                    kind, commons.ticks_diff(now_us, self._seen_us[kind]) // 1000))
 
     async def run(self) -> None:
         """
@@ -190,6 +270,7 @@ class Gnss(task.Task):
                     self._parse(raw.decode().strip())
                 except (UnicodeError, ValueError, IndexError):
                     pass  # noise byte / malformed field -> drop the line
+            self._sweep(time.ticks_us())  # also on an empty read: a silent receiver must still be seen
 
     async def probe(self) -> str:
         """
@@ -239,17 +320,31 @@ class Gnss(task.Task):
         if spec is None:
             return 'no transport -- uart bus %s undefined in config' % bus_id
         uart = self._uart  # None until setup opens the port
+        """
+        OWN what we open. diagnose() is called precisely when setup FAILED, which is when self._uart
+        is None -- so this path opened a fresh UART peripheral every call and never released it. A few
+        rounds of `probe` on a dead GNSS would leak one peripheral instance each, and the later ones
+        can collide with the earlier on the same pins. Only the UART opened HERE is deinited; a live
+        one belongs to the run loop and must survive.
+        """
+        borrowed = uart is not None
         if uart is None:
             uart = UART(bus_id, baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
-        reader = asyncio.StreamReader(uart)
         seen = 0
         try:
+            reader = asyncio.StreamReader(uart)
             for _ in range(8):  # ~2 s window (longer than one NMEA interval)
                 raw = await asyncio.wait_for_ms(reader.readline(), 250)
                 if raw:
                     seen += 1
         except asyncio.TimeoutError:
             pass
+        finally:
+            if not borrowed:
+                try:
+                    uart.deinit()
+                except Exception:
+                    pass  # a peripheral that will not close must not sink the diagnosis it carried
         if seen == 0:
             return 'no NMEA on uart:%s -- GNSS unpowered / TX-RX swapped / no module' % bus_id
         return 'NMEA flowing (%d lines) on uart:%s -- link alive (a fix needs sky view)' % (seen, bus_id)

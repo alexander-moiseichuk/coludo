@@ -30,6 +30,7 @@ import sys
 _GLIDER = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'glider')
 sys.path.insert(0, _GLIDER)
 
+import commons  # noqa: E402 -- the SHARED apogee detector, so host and board cannot drift
 import config_hitl  # noqa: E402 -- the SAME board config the on-board HITL uses (host-importable)
 import controller as controller_mod  # noqa: E402 -- Stage ids (host-importable)
 import fixed  # noqa: E402 -- fixed-point convention: PID error/output in centidegree fixnum (board parity)
@@ -52,6 +53,52 @@ _FREE_AT_BOOT = 33_000_000  # MEASURED on the ESP32-P4 (gc.mem_free() = 33.09 MB
 _SERVO_HOLD_MW = 41   # measured rail draw with the fins holding (INA226, 2026-07-25)
 _SERVO_MOVE_MW = 1400  # measured MEAN draw of one servo in travel (peak 3925 mW = 0.79 A)
 _SERVO_SLEW_S_PER_DEG = 0.1 / 60.0  # MG90S: ~0.1 s per 60 deg at max slew
+
+
+class Telemetry:
+    """
+    A host-side stream DECLARATION, mirroring recorder.Telemetry's (filename, fields) contract.
+
+    Not the board's implementation -- there is no Recorder here and no UART to drain; this only owns
+    the schema. That is deliberate and sufficient: what host/board drift detection needs is the field
+    list, and tools/gen_schema.py finds streams by looking for a `Telemetry(name, fields)` call, so
+    declaring them this way puts the host sim into the generated schema where it belongs.
+    """
+
+    def __init__(self, filename: str, fields: tuple):
+        self.filename: str = filename
+        self.fields: tuple = fields
+
+    def header(self) -> str:
+        """The CSV header line: the uptime column the recorder prepends, then the declared fields."""
+        return 'uptime;' + ';'.join(self.fields)
+
+
+_STREAMS = {
+    'accel': Telemetry('accel_adxl375.csv', ('ax', 'ay', 'az', 'irq_runs')),
+    'baro': Telemetry('baro_icp10111.csv', ('altitude', 'temperature', 'pressure', 'elevation')),
+    'imu': Telemetry('imu_bno055.csv', ('heading', 'roll', 'pitch')),
+    'gyro': Telemetry('imu_lsm6dso32.csv', ('ax', 'ay', 'az', 'gx', 'gy', 'gz', 'irq_runs')),
+    'gnss': Telemetry('gnss.csv', ('lat', 'lon', 'speed_kn', 'course')),
+    'laser': Telemetry('laser_agl.csv', ('agl', 'irq_runs')),
+    'fins': Telemetry('fins.csv', ('eleron_left', 'eleron_right', 'yaw')),
+    # health.csv must carry the BOARD's field list, not a shorter one: a renderer resolves streams by
+    # the fields they carry, so a host capture missing these columns silently loses the panels they
+    # drive (the rescue staircase, the OOM countdown). The host models no GC and runs no rescue, so
+    # those columns are emitted EMPTY -- absent-but-declared, which is what the parsers expect.
+    'health': Telemetry('health.csv', ('temp', 'mem_free', 'load', 'oom_s', 'land_s', 'leak_kbps',
+                                       'rescues', 'rescue_ms')),
+    # flight.csv: the CONTROL STATE, byte-identical in shape to the board's (tasks/flight.py), so a
+    # sim capture exercises the same report panels a real capture will
+    'flight': Telemetry('flight.csv', ('stage', 'active', 'airspeed_cms', 'fin_cap', 'roll_sp',
+                                       'pitch_sp', 'heading_err', 'roll_cmd', 'pitch_cmd', 'yaw_cmd',
+                                       'wind_cms', 'wind_from')),
+    # the SDP810 pitot as the board's driver records it (Pa fixnum + derived m/s)
+    'pitot': Telemetry('airspeed_sdp810.csv', ('dynamic_pressure', 'airspeed_cms', 'temperature')),
+    # servo-rail power as the INA226 records it -- MODELLED from the measured MG90S figures, so the
+    # report's engine panel and flight_kpi's servo-energy metric are not blank on a sim run
+    'power': Telemetry('power_ina226.csv', ('voltage_mv', 'current_ma', 'power_mw', 'alerts')),
+}
 
 
 class _Fin:
@@ -142,6 +189,20 @@ def _component(cfg: dict, name: str) -> dict:
     return next(c for c in cfg['components'] if c['name'] == name)
 
 
+def _chan(name: str, default: float) -> float:
+    """
+    Noise level for ONE sensor channel: `VF_NOISE_<NAME>` if set, else the global `--noise`.
+
+    Args:
+        name - the channel ('accel', 'heading', 'roll', 'pitch', 'altitude', 'rate', 'position').
+        default - the global level to fall back to.
+
+    Returns:
+        The noise fraction to apply to that channel.
+    """
+    return float(os.environ.get('VF_NOISE_%s' % name.upper(), default))
+
+
 def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
         wind: float = 0.0, wind_dir: float = 0.0, final_agl_override: float = None,
         imbalance_pitch: float = 0.0, imbalance_roll: float = 0.0,
@@ -178,6 +239,8 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     apogee_drop_m = seq_c.get('apogee_drop_m', 5.0)
     apogee_max = None  # baro peak tracking (one boost per run, no reset needed)
     apogee_since = None
+    apogee_smooth = None  # IIR-smoothed elevation feeding the peak (commons.apogee_step)
+    launch_credit, launch_last = 0, None  # leaky launch dwell (commons.dwell_step)
     land_agl_m = seq_c.get('land_agl_m', 5.0)
     land_ms = seq_c.get('land_ms', 300)
     laser_range_m = hitl_c.get('laser_range_m', 4.0)
@@ -238,20 +301,30 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     t = 0.0
     while t < seconds:
         sensors = body.sensors()
-        # NOISE-degraded readings -- what the control loop and the recorder actually see (board parity:
-        # accel/attitude/altitude/agl are noised; GNSS position is not -- see tasks/hitl._publish).
-        accel_m = sim_model.noisy(sensors['accel'], noise, -200.0, 200.0)
+        """
+        NOISE-degraded readings -- what the control loop and the recorder actually see (board parity:
+        accel/attitude/altitude/agl/position are all noised, position in METRES -- see
+        sim_model.noisy_position and tasks/hitl._publish, which does the same).
+
+        PER-SENSOR override: `VF_NOISE_<CHANNEL>` replaces the global `--noise` for one channel only
+        (accel, heading, roll, pitch, altitude, rate). A global sweep answers "how much noise can it
+        take"; only a per-channel sweep answers "which sensor is it actually sensitive to", and those
+        are different questions -- a law that reads attitude hard and altitude softly degrades very
+        differently depending on which part is the noisy one.
+        """
+        accel_m = sim_model.noisy(sensors['accel'], _chan('accel', noise), -200.0, 200.0)
         # CIRCULAR: absolute error band, not a fraction of a 0..360 magnitude (sim_model.noisy)
-        heading_m = sim_model.noisy(sensors['heading'], noise, 0.0, 360.0, sim_model.HEADING_NOISE_REF)
-        roll_m = sim_model.noisy(sensors['roll'], noise, -180.0, 180.0)
-        pitch_m = sim_model.noisy(sensors['pitch'], noise, -180.0, 180.0)
-        altitude_m = sim_model.noisy(sensors['altitude'], noise, -100.0, 10000.0)
+        heading_m = sim_model.noisy(sensors['heading'], _chan('heading', noise), 0.0, 360.0,
+                                    sim_model.HEADING_NOISE_REF)
+        roll_m = sim_model.noisy(sensors['roll'], _chan('roll', noise), -180.0, 180.0)
+        pitch_m = sim_model.noisy(sensors['pitch'], _chan('pitch', noise), -180.0, 180.0)
+        altitude_m = sim_model.noisy(sensors['altitude'], _chan('altitude', noise), -100.0, 10000.0)
         agl = sensors['agl']
         # gyro angular rates the PID D term reads -- noised deg/s (recorded to imu_lsm6dso32, board parity),
         # converted once to centideg/s fixnum for the PID (same unit + mapping as tasks/hitl + the driver)
-        roll_rate_dps = sim_model.noisy(sensors['roll_rate'], noise, -2000.0, 2000.0)
-        pitch_rate_dps = sim_model.noisy(sensors['pitch_rate'], noise, -2000.0, 2000.0)
-        yaw_rate_dps = sim_model.noisy(sensors['yaw_rate'], noise, -2000.0, 2000.0)
+        roll_rate_dps = sim_model.noisy(sensors['roll_rate'], _chan('rate', noise), -2000.0, 2000.0)
+        pitch_rate_dps = sim_model.noisy(sensors['pitch_rate'], _chan('rate', noise), -2000.0, 2000.0)
+        yaw_rate_dps = sim_model.noisy(sensors['yaw_rate'], _chan('rate', noise), -2000.0, 2000.0)
         roll_rate = fixed.from_float(roll_rate_dps)
         pitch_rate = fixed.from_float(pitch_rate_dps)
         yaw_rate = fixed.from_float(yaw_rate_dps)
@@ -267,33 +340,37 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
             pitch_m *= 2.0
             accel_m *= 2.0
 
-        # --- stage machine (mirrors tasks/sequencer.py; separation off -> boost timeout drives glide) ---
+        # --- stage machine: the DETECTORS are commons (shared with tasks/sequencer.py); separation
+        # off -> boost timeout drives glide ---
         if stage == 'setting':
-            if accel_m > launch_g:
-                if (t - since) * 1000.0 >= launch_ms:
-                    stage, since = 'boosting', t
-                    rows.event(t, 'controller :: stage -> boosting')
-            else:
-                since = t
+            """
+            LAUNCH detect via commons.dwell_step, the same call the board makes. This was the last
+            hand-written copy of a board detector left in this file, and it hid a real result: the
+            noise-tolerance study measured THIS loop's launch detector and reported it as the board's.
+            Sharing the helper is what makes a fix here testable at all.
+            """
+            launch_credit, launch_last, fired = commons.dwell_step(
+                accel_m > launch_g, t * 1000.0, launch_credit, launch_last, launch_ms)
+            if fired:
+                stage, since = 'boosting', t
+                rows.event(t, 'controller :: stage -> boosting')
         elif stage == 'boosting':
             """
-            APOGEE detect (mirror of sequencer._detect_apogee -- the mirror had DRIFTED to
-            timeout-only deploy, and a low arc could be back underground by the timeout): blind
-            for apogee_arm_ms after entry (burn pressure wave), then track the noised baro peak
-            and deploy once it falls apogee_drop_m below, sustained; the timeout stays fallback.
+            APOGEE detect: blind for apogee_arm_ms after entry (the burn pressure wave corrupts the
+            in-airframe baro), then the SAME peak/dwell state machine the board runs --
+            commons.apogee_step, called by both. This used to be a hand-maintained mirror of
+            sequencer._detect_apogee, and it had drifted to timeout-only deploy; the timeout stays
+            as the fallback it was always meant to be.
             """
             elevation_now = altitude_m - body.elev0
             if (t - since) * 1000.0 >= apogee_arm_ms:
-                if apogee_max is None or elevation_now > apogee_max:
-                    apogee_max, apogee_since = elevation_now, None
-                elif elevation_now < apogee_max - apogee_drop_m:
-                    apogee_since = t if apogee_since is None else apogee_since
-                    if (t - apogee_since) * 1000.0 >= launch_ms:
-                        stage, since = 'gliding', t
-                        body.begin_glide()
-                        rows.event(t, 'controller :: stage -> gliding')
-                else:
-                    apogee_since = None
+                apogee_max, apogee_since, apogee_smooth, fired = commons.apogee_step(
+                    elevation_now, t * 1000.0, apogee_max, apogee_since, apogee_smooth,
+                    apogee_drop_m, launch_ms)
+                if fired:
+                    stage, since = 'gliding', t
+                    body.begin_glide()
+                    rows.event(t, 'controller :: stage -> gliding')
             if stage == 'boosting' and (t - since) * 1000.0 >= boost_timeout_ms:
                 stage, since = 'gliding', t
                 body.begin_glide()
@@ -328,7 +405,8 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
             true_speed = (body.vu * body.vu + body.speed * body.speed) ** 0.5
             speed_handle.value_now = faults.apply('gnss', true_speed, t)
             speed_handle.source = None if speed_handle.value_now is None else 'gnss'
-            position_handle.value_now = faults.apply('gnss', sensors['position'], t)
+            noisy_fix = sim_model.noisy_position(sensors['position'], _chan('position', noise))
+            position_handle.value_now = faults.apply('gnss', noisy_fix, t)
             position_handle.source = None if position_handle.value_now is None else 'gnss'
 
         # --- the REAL control pipeline (mirrors flight._step): governor -> gate -> guidance -> PID ---
@@ -408,41 +486,66 @@ class _Capture:
     def _tlm(self, file: str, row: str) -> None:
         self._lines.append('@%s_%s@%s' % (self._SESSION, file, row))
 
+    def _tlm_row(self, key: str, row: str) -> None:
+        """
+        Emit one row, CHECKED against its stream's declared field count.
+
+        The row formats are hand-written %-strings and the field list is declared separately, so a
+        column added to one and not the other used to produce a capture the parsers accept and
+        silently misread. One assert per row is cheap next to a sim run and turns that into a loud
+        failure at the first sample.
+
+        Args:
+            key - the _STREAMS key.
+            row - the formatted row, uptime column first.
+
+        Returns:
+            None; appends the wire line.
+        """
+        stream = _STREAMS[key]
+        columns = row.count(';') + 1
+        assert columns == len(stream.fields) + 1, \
+            '%s: row has %d columns, declaration says %d (uptime + %d fields)' % (
+                stream.filename, columns, len(stream.fields) + 1, len(stream.fields))
+        self._tlm(stream.filename, row)
+
     def header(self) -> None:
-        self._tlm('accel_adxl375.csv', 'uptime;ax;ay;az')
-        self._tlm('baro_icp10111.csv', 'uptime;altitude;temperature;pressure;elevation')
-        self._tlm('imu_bno055.csv', 'uptime;heading;roll;pitch')
-        self._tlm('imu_lsm6dso32.csv', 'uptime;ax;ay;az;gx;gy;gz')   # low-g accel + gyro rate (deg/s)
-        self._tlm('gnss.csv', 'uptime;lat;lon;speed_kn;course')
-        self._tlm('laser_agl.csv', 'uptime;agl')
-        self._tlm('fins.csv', 'uptime;eleron_left;eleron_right;yaw')  # commanded servo angles (deg)
-        self._tlm('health.csv', 'uptime;temp;mem_free;load')          # board vitals (board_health.py)
-        # flight.csv: the CONTROL STATE, byte-identical in shape to the board's (tasks/flight.py) so a
-        # sim capture exercises the same report panels a real capture will (findings §27.1/§27.2)
-        self._tlm('flight.csv', 'uptime;stage;active;airspeed_cms;fin_cap;roll_sp;pitch_sp;heading_err;'
-                                'roll_cmd;pitch_cmd;yaw_cmd;wind_cms;wind_from')
-        # the SDP810 pitot as the board's driver records it (Pa fixnum + derived m/s)
-        self._tlm('airspeed_sdp810.csv', 'uptime;dynamic_pressure;airspeed_cms;temperature')
-        # servo-rail power as the INA226 records it -- MODELLED from the measured MG90S figures, so
-        # the report's engine panel and flight_kpi's servo-energy metric are not blank on a sim run
-        self._tlm('power_ina226.csv', 'uptime;voltage_mv;current_ma;power_mw;alerts')
+        """
+        Emit every stream header FROM its declaration.
+
+        The headers used to be hand-written strings sitting beside hand-written row formats, with
+        nothing tying the two together -- add a column to one and the other silently disagreed. They
+        are declared once now, and `_tlm_row` checks each row against the declared field count.
+
+        Declaring them as `Telemetry(...)` also makes them VISIBLE to tools/gen_schema.py, which scans
+        for exactly that construction. Before this the generated telemetry schema's "host sim" half was
+        empty -- the tool that exists to catch host/board schema drift could not see the host at all,
+        which is the same blind spot that let the simulated-pitot asymmetry live undetected.
+        """
+        for stream in _STREAMS.values():
+            self._tlm(stream.filename, stream.header())
 
     def sample(self, t, accel, altitude, elevation, heading, roll, pitch, position, agl, laser_range, speed,
                fins, rate, control=None, pitot=None, dt=0.02):
         microseconds = int(t * 1e6)
-        self._tlm('accel_adxl375.csv', '%u;0.000;0.000;%.3f' % (microseconds, accel))
+        self._tlm_row('accel', '%u;0.000;0.000;%.3f;1' % (microseconds, accel))  # irq_runs 1: one sample per publish
         self._tlm('baro_icp10111.csv', '%u;%.2f;21.0;100000;%.2f' % (microseconds, altitude, elevation))
-        self._tlm('imu_bno055.csv', '%u;%.1f;%.1f;%.1f' % (microseconds, heading, roll, pitch))
+        # roll/pitch as the RAW centidegree fixnum, matching drivers/bno055.py -- same columns AND
+        # same units. Heading stays degrees (it is not a fixnum on the board either).
+        self._tlm('imu_bno055.csv', '%u;%.1f;%d;%d'
+                  % (microseconds, heading, round(roll * 100), round(pitch * 100)))
         # imu_lsm6dso32: the boost-axis low-g accel + the gyro rate (deg/s) the PID reads (board parity)
-        self._tlm('imu_lsm6dso32.csv', '%u;0.000;0.000;%.3f;%.1f;%.1f;%.1f'
-                  % (microseconds, accel, rate[0], rate[1], rate[2]))
+        # gyro in centideg/s fixnum, matching drivers/lsm6dso32.py -- same column names AND same units
+        self._tlm_row('gyro', '%u;0.000;0.000;%.3f;%d;%d;%d;1'
+                  % (microseconds, accel, rate[0] * fixed.SCALE, rate[1] * fixed.SCALE,
+                     rate[2] * fixed.SCALE))
         self._tlm('fins.csv', '%u;%d;%d;%d' % (microseconds, fins[0], fins[1], fins[2]))
         if t - self._last_gnss >= _GNSS_S:               # GNSS ~10 Hz
             self._last_gnss = t
             self._tlm('gnss.csv', '%u;%.6f;%.6f;%.1f;%.1f'    # speed in knots (GPS convention)
                       % (microseconds, position[0], position[1], speed * 1.94384, heading))
         if agl <= laser_range:                           # the laser only resolves the last few metres
-            self._tlm('laser_agl.csv', '%u;%.3f' % (microseconds, agl))
+            self._tlm_row('laser', '%u;%.3f;1' % (microseconds, agl))
         if pitot is not None:                            # SDP810: q = 0.5*rho*v^2, Pa as a x100 fixnum
             self._tlm('airspeed_sdp810.csv', '%u;%d;%d;2500'
                       % (microseconds, int(0.5 * 1.225 * pitot * pitot * 100), int(pitot * 100)))
@@ -492,7 +595,8 @@ class _Capture:
         temp = min(63.0, 45.0 + 0.18 * t + (4.0 if stage == 'landing' else 0.0))
         airborne = max(0.0, t - self._leak_from) if self._leak_from else 0.0
         mem_free = int(_FREE_AT_BOOT - _LEAK_BPS * airborne)  # GC is OFF airborne -> monotonic decline
-        self._tlm('health.csv', '%u;%.1f;%d;%d' % (int(t * 1e6), temp, mem_free, load))
+        # the five memory-forecast columns stay blank: no GC here, so no leak slope and no rescue
+        self._tlm_row('health', '%u;%.1f;%d;%d;;;;;' % (int(t * 1e6), temp, mem_free, load))
 
     def event(self, t, line: str) -> None:
         self._lines.append('%u %s' % (int(t * 1e6), line))

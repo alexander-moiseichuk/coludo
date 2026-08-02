@@ -30,8 +30,13 @@ import os
 import statistics
 import sys
 
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'glider'))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fixed  # noqa: E402 -- the firmware's fixed-point scale, so this cannot drift from the board
+import flight_telemetry  # noqa: E402
+
 _KNOTS_TO_MS = 0.514444  # NMEA RMC knots -> m/s (matches gnss._KNOTS_TO_MS)
-_SCALE = 100  # fixed.SCALE: the dynamic_pressure fixnum is Pa × SCALE
+_SCALE = fixed.SCALE  # the dynamic_pressure fixnum is Pa x SCALE -- read it, never restate it
 _MAX_PAIR_US = 200_000  # reject a GNSS sample with no pitot row within 200 ms (time-alignment guard)
 
 
@@ -45,6 +50,32 @@ def _read_csv(path: str) -> list:
             if len(parts) == len(header):
                 rows.append(dict(zip(header, parts)))
     return rows
+
+
+def _is_capture(path: str) -> bool:
+    """
+    Is this an assembled capture? Decided by the WIRE MARKER, not the file extension.
+
+    `.txt` matched any stray log or config copy in the directory and produced a cryptic parse error
+    instead of a clear one. Every capture line carries the `@<session>_<stream>.csv@` prefix, so one
+    line is enough to tell.
+
+    Args:
+        path - the file to test.
+
+    Returns:
+        True when the first readable line carries a capture marker.
+    """
+    try:
+        with open(path) as handle:
+            for line in handle:
+                if line.startswith('@') and '.csv@' in line:
+                    return True
+                if line.strip():
+                    return False  # a real first line that is not a capture row -> not a capture
+    except OSError:
+        return False
+    return False
 
 
 def _read_capture(path: str) -> tuple:
@@ -62,9 +93,6 @@ def _read_capture(path: str) -> tuple:
     Returns:
         (pitot_rows, gnss_rows) -- each a list of {column: value} dicts, empty when the stream is absent.
     """
-    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-    import flight_telemetry
-
     with open(path) as handle:
         streams, _logs = flight_telemetry.parse(handle.read())
     pitot = flight_telemetry.find_stream(streams, 'dynamic_pressure')
@@ -251,7 +279,7 @@ def main() -> int:
                   file=sys.stderr)
             return 2
         pitot_rows, gnss_rows = _read_csv(pitot_path), _read_csv(gnss_path)
-    elif args.recording.endswith('.txt'):  # an assembled capture -- what every other tool consumes
+    elif _is_capture(args.recording):  # an assembled capture -- what every other tool consumes
         pitot_path = gnss_path = args.recording
         pitot_rows, gnss_rows = _read_capture(args.recording)
         if not pitot_rows or not gnss_rows:

@@ -14,6 +14,7 @@ so every generator reads the sources with `ast` instead. parse() is that shared 
 
 import ast
 import os
+import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 GLIDER_DIRS: tuple = ('src/glider', 'src/glider/drivers', 'src/glider/tasks')
@@ -45,6 +46,9 @@ def modules(directories, skip_prefixes: tuple = SKIP_PREFIXES):
     for relative in directories:
         directory = os.path.join(ROOT, relative)
         if not os.path.isdir(directory):
+            # LOUD: a typo or a moved package would otherwise drop a whole file group from every
+            # generated doc with no sign that anything was missing.
+            print('sources: no such directory, skipped: %s' % relative, file=sys.stderr)
             continue
         for name in sorted(os.listdir(directory)):
             if not name.endswith('.py') or name.startswith(skip_prefixes):

@@ -116,7 +116,18 @@ async def _chain() -> str:
         if len(collected) >= len(_board_samples()):
             break
     await hub.stop_stream(client.id)
+    """
+    close() only SCHEDULES the shutdown, so without an await asyncio.run() tore the loop down with the
+    transports still closing and printed "Task was destroyed but it is pending" -- noise that trains
+    the reader to ignore warnings from a test whose whole job is to prove this path is clean.
+
+    The CONNECTION is awaited; the two SERVERS are not. asyncio.Server.wait_closed() waits for every
+    accepted connection to finish, and the hub keeps its board sockets open by design -- awaiting it
+    hangs the test forever (measured: killed at 300 s). Closing the listeners is enough to stop them
+    accepting; the loop teardown reaps the rest.
+    """
     writer.close()
+    await writer.wait_closed()
     listener.close()
     board.close()
     return '\n'.join(collected)

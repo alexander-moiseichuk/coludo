@@ -303,7 +303,7 @@ deflection_limit(v) = clamp(K / v², 5°, 45°) × fins.limit_multiplier     (K 
 * **5° ceiling of restraint near burnout** (≥50 m/s): high `q`, highest consequence — but never 0°, so some authority always remains.
 * **`fins.limit_multiplier` (board.config, default 1.0)** scales the whole schedule. It is the safety dial: if a flight starts **losing fins or control in the air** (flutter, servo stall, structural failure), drop it (e.g. 0.5) to halve authority everywhere without re-deriving the table.
 * Stored as a **precomputed lookup table** indexed by integer m/s, so the 100 Hz path does a table read, not a `1/v²` division.
-* **Airspeed estimate** (no pitot tube): integrated vertical acceleration during boost; GNSS ground speed once gliding. The estimate is biased to *over*-read when uncertain — over-estimating airspeed tightens the cap, which is the safe direction.
+* **Airspeed** comes from a **pitot tube**: the SDP810-500Pa differential-pressure cell is the rank-0 primary source (`airspeed_sdp810`), band-gated at both ends — below `pitot_min_ms` (3 m/s ≈ 5.5 Pa) the reading is tare noise, above `pitot_max_ms` (28 m/s) the ±500 Pa cell rails and *under*-reads, and an under-read loosens the cap. Outside that band, and whenever the cell is absent or blocked, the fusion falls back to the **rank-1 estimator**: integrated vertical acceleration during boost, GNSS ground speed once gliding. That estimator is biased to *over*-read when uncertain — over-estimating airspeed tightens the cap, the safe direction. Measured on the board, the pitot and the governor agree to ~0.2 m/s in glide.
 
 During boosting the **wings are folded inside the booster body tube** (rubber-band deployed to the flight position only after separation), so the fins here steer the slim *booster + folded-glider stack* — the CG and ~146 mm fin moment arm in the `models/TMS-7` analysis are the stack's, which is why the boost-torque numbers come out as they do. After separation the same fins control the deployed glider.
 
@@ -544,8 +544,29 @@ a phone hotspot or laptop is a convenience, never a dependency.
   "like Cape Canaveral"). At boot, the first GNSS fix selects the site whose pad is nearest,
   gated by `max_range_m` (200 m). On a match: that site's zone becomes the mission zone and the
   **live fix** (not the stored pad) becomes the launch point — kept live until **arm**, which
-  FREEZES the fix as the persistent launch point (so the tier-2 open-loop heading and the
+  FREEZES the fix as the persistent launch point (so the open-loop heading tier and the
   warm-start crumb's launch field survive a mid-flight fix loss; a CC-set position always wins).
+* **Per-channel accuracy budgets** (operator-set, 2026-08-01). These bound how coarse a
+  representation may be — the fixed-point scale, a cached calibration, a filter's lag:
+  **altitude 10 cm** is the safe border (the ICP-10111 itself is specified at 8.9 cm and realistically
+  ~20 cm, so the sensor, not the arithmetic, is the floor); **baro error up to 1 m** is acceptable;
+  **GNSS error up to 1 m** is a non-issue against its own ~10 m band; **the laser is the exception —
+  1 m would be alarming**, since AGL drives landing detection and the part resolves millimetres.
+  A `fixnum` SCALE of 100 (1 cm) therefore clears altitude and baro with two orders of margin, and the
+  laser should keep its native integer millimetres rather than being widened to centimetres.
+
+* **Navigating without a fix — four tiers.** GNSS is EXPECTED to drop through the boost (high-g,
+  vibration, antenna shadow) and may never reacquire inside a <60 s flight, so losing it is a design
+  case, not an error path. `guidance` degrades in order: **(1)** a fresh fix inside
+  `position_age_max_ms` steers normally; **(2)** no fresh fix but one seen earlier →
+  **dead reckoning**, advancing the last fix by airspeed × heading plus the last wind estimate (every
+  input survives a dead GNSS — pitot and fused compass), so the position keeps MOVING; **(3)** no fix
+  ever seen → the open-loop launch-point bearing, since the pad is itself a known position;
+  **(4)** no launch point either → hold the heading captured on entering control.
+  Tier 2 exists because tier 3 does not degrade — it steers the pad→target bearing forever and flies
+  over the target. Dead reckoning degrades gradually instead; the frozen wind estimate is the dominant
+  residual error (it needs GNSS to update), bounded at roughly 80 m per 2 m/s of error over 40 s.
+  `flight.csv`'s `reckoning` column records when the glider is flying on tier 2.
 * **No site within 200 m → the spiral-landing fallback.** The mission SYNTHESIZES a GENEROUS box
   the spiral just has to land INSIDE — we always know the pad, so this trades objective #3
   (near-centre) for #2 (in-zone) and needs no tight midpoint: a `fallback_width_m` (100 m, the
@@ -869,7 +890,7 @@ The resulting state transition instantly alters the input pin logic to HIGH, inv
 
 ## Servos
 
-Three independent Beffkkip SG90 micro-servos drive the vertical stabilizer and dual elevon surfaces. These servos provide a nominal stall torque of 1.2–1.4 kg·cm and an actuation speed of 0.11 seconds per 60 degrees. Due to significant manufacturer variability among component clones, custom hardware pulse-width modulation (PWM) calibration maps must be verified during system setup.To mitigate severe voltage drops on the primary 5V power line (as individual micro-servos can draw up to 1A under stall loads), the flight software enforces strict electrical safety protocols:
+Three independent micro-servos drive the vertical stabilizer and dual elevon surfaces: **two SG90 on the elevons and one metal-gear MG90S on the yaw fin** (`config_default.py` drivers `sg90` / `mg90s`). They are electrically interchangeable — same PWM interface and rail — so the figures below apply to both. These servos provide a nominal stall torque of 1.2–1.4 kg·cm and an actuation speed of 0.11 seconds per 60 degrees. Due to significant manufacturer variability among component clones, custom hardware pulse-width modulation (PWM) calibration maps must be verified during system setup.To mitigate severe voltage drops on the primary 5V power line (as individual micro-servos can draw up to 1A under stall loads), the flight software enforces strict electrical safety protocols:
 - Position update commands are suppressed if the target angle matches the current surface deflection state.
 - Target positioning parameters are checked against baseline calibration maps loaded during system setup.
 - The Flight Controller triggers servo updates sequentially rather than simultaneously to prevent additive current spikes.
