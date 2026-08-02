@@ -57,6 +57,19 @@ moment, so single-seed scatter is large.
   limit rather than the bank; check before reaching for more bank angle.
 - Pattern selection (o / oo / oval) was never implicated and is unchanged.
 
+## Chart changes in this round
+
+Two readability fixes to `flight_report.py`, applied to every HTML here:
+
+- **Stage markers wrap onto two lines** (`stage` / `setting`) instead of `stage -> setting`. They sit on
+  a vline in an eleven-row stack, and the arrow form ran wide enough to overlap its neighbours whenever
+  two transitions landed close together.
+- **The 3D track is coloured BY STAGE**, one trace each, replacing the Viridis time gradient. A time
+  ramp answers "when", which the hover already gives to a tenth of a second; the question actually asked
+  of that chart is where it boosted, where it glided, where it turned for the landing. Stage boundaries
+  are invisible on a smooth gradient. Each stage is now a legend entry, so it can be toggled off to see
+  what lies underneath.
+
 ## Reproduce
 
 ```bash

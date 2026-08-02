@@ -39,7 +39,11 @@ def stage_events(logs):
     events = []
     for microseconds, line in logs:
         if microseconds is not None and 'stage ->' in line:
-            events.append((microseconds / 1e6, line.split('::', 1)[-1].strip()))
+            # TWO LINES, not "stage -> setting": these annotations sit on a vline in an 11-row stack,
+            # and the arrow form ran wide enough to overlap its neighbours whenever two transitions
+            # landed close together. Plotly annotations honour <br>, so the label wraps instead.
+            label = line.split('::', 1)[-1].strip()
+            events.append((microseconds / 1e6, label.replace(' -> ', '<br>').replace('->', '<br>')))
     return events
 
 
@@ -87,6 +91,11 @@ def irq_health(streams) -> str:
 
 _FIXED_SCALE = 100  # fixed.SCALE -- gyro columns are centideg/s fixnums
 
+# One colour per flight stage on the 3D track, in transition order (pre-launch, then each logged
+# stage). Qualitative and high-contrast on purpose -- adjacent stages must be told apart at a glance,
+# which a sequential scale cannot do.
+_STAGE_COLORS: tuple = ('#7f7f7f', '#d62728', '#1f77b4', '#2ca02c', '#ff7f0e', '#9467bd', '#8c564b')
+
 
 def leak_estimate(health, events):
     """
@@ -127,6 +136,7 @@ def build(streams, logs, go, make_subplots):
     power = find_stream(streams, 'voltage_mv', 'current_ma', 'power_mw')  # power_ina226.csv: integer mV/mA/mW
     gyro = find_stream(streams, 'gx', 'gy', 'gz', prefer='lsm')  # imu_lsm6dso32.csv: gyro rate (deg/s) -> PID D term
     pitot = find_stream(streams, 'dynamic_pressure')  # airspeed_sdp810.csv: the DIRECT pitot measurement
+    events = stage_events(logs)  # hoisted: the 3D track colours BY STAGE, so it needs these first
     control = find_stream(streams, 'fin_cap')  # flight.csv: the control state (findings §27.2)
     # telemetry carries centi-units (fixnums), never floats -- a float in a row heap-boxes on
     # MicroPython, so every rate is x100 on the wire and scaled here
@@ -143,11 +153,32 @@ def build(streams, logs, go, make_subplots):
         # per-point hover so a click on the 3D track reads out everything known at that instant
         text = ['t=%.1fs<br>height=%.0f m<br>speed=%.1f m/s<br>heading=%.0f deg' % point
                 for point in zip(times, height, speed, course)]
-        trajectory.add_trace(go.Scatter3d(
-            x=longitude, y=latitude, z=height, mode='lines+markers', name='trajectory',
-            text=text, hoverinfo='text',
-            line=dict(width=4), marker=dict(size=2, color=times, colorscale='Viridis',
-                                            colorbar=dict(title='t (s)'))))
+        """
+        One TRACE PER STAGE, each its own colour, rather than one trace shaded by time.
+
+        A Viridis time gradient answers "when" -- which the hover already gives to a tenth of a second --
+        while the question actually asked of this chart is "where did it BOOST, where did it GLIDE, where
+        did it turn for the LANDING". Stage boundaries are the structure worth seeing, and a continuous
+        ramp hides them: the eye cannot find the boost/glide transition on a smooth gradient. Splitting
+        also puts each stage in the legend, so a stage can be toggled off to see what is underneath it.
+        """
+        bounds = [0.0] + [t for t, _ in events] + [times[-1] + 1.0 if times else 0.0]
+        names = ['pre-launch'] + [label.replace('<br>', ' ') for _, label in events]
+        for index in range(len(names)):
+            lo, hi = bounds[index], bounds[index + 1]
+            pick = [i for i, t in enumerate(times) if lo <= t < hi]
+            if not pick:
+                continue
+            trajectory.add_trace(go.Scatter3d(
+                x=[longitude[i] for i in pick], y=[latitude[i] for i in pick],
+                z=[height[i] for i in pick], mode='lines+markers',
+                name=names[index], text=[text[i] for i in pick], hoverinfo='text',
+                line=dict(width=4, color=_STAGE_COLORS[index % len(_STAGE_COLORS)]),
+                marker=dict(size=2, color=_STAGE_COLORS[index % len(_STAGE_COLORS)])))
+        if not events:  # no stage markers in this capture -> one trace, so the track still renders
+            trajectory.add_trace(go.Scatter3d(
+                x=longitude, y=latitude, z=height, mode='lines+markers', name='trajectory',
+                text=text, hoverinfo='text', line=dict(width=4), marker=dict(size=2)))
         trajectory.update_layout(title='trajectory — GNSS ground-track + baro height (hover/click a point)',
                                  scene=dict(xaxis_title='lon', yaxis_title='lat', zaxis_title='height (m)'))
     else:
@@ -285,7 +316,6 @@ def build(streams, logs, go, make_subplots):
     committed per line and is trustworthy; the log channel is what was traded away for that (see
     recorder.py). Say when the markers are missing rather than drawing a flight that appears stageless.
     """
-    events = stage_events(logs)
     if not events:
         series.add_annotation(text='no stage markers — this capture carries no log lines '
                                    '(logs flush ~every 1000 telemetry rows, so a short session may '
