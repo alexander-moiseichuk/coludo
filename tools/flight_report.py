@@ -323,8 +323,18 @@ def build(streams, logs, go, make_subplots):
                               xref='paper', yref='paper', x=0, y=1.02, showarrow=False,
                               font={'color': 'crimson'})
     for time_s, label in events:
+        """
+        Shifted LEFT of the vline and right-aligned against it, not butted up to it.
+
+        Wrapping the label onto two lines fixed the horizontal overlap between neighbouring markers but
+        left the text crowding its own line, so the two short lines read as one squeezed block. xshift
+        moves the whole annotation clear, and align='right' makes both lines end at the same edge -- the
+        edge nearest the line they belong to -- so it is unambiguous which marker a label describes when
+        two transitions land close together.
+        """
         series.add_vline(x=time_s, line_dash='dash', line_color='crimson',
-                         annotation_text=label, annotation_position='top left')
+                         annotation_text=label, annotation_position='top left',
+                         annotation=dict(xshift=-10, align='right', font=dict(size=10)))
     # GC-off leak + time-to-OOM headline (mem_free slope over the airborne, GC-disabled window)
     leak = leak_estimate(health, events)
     title = 'flight parameters'

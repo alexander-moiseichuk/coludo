@@ -61,9 +61,11 @@ moment, so single-seed scatter is large.
 
 Two readability fixes to `flight_report.py`, applied to every HTML here:
 
-- **Stage markers wrap onto two lines** (`stage` / `setting`) instead of `stage -> setting`. They sit on
-  a vline in an eleven-row stack, and the arrow form ran wide enough to overlap its neighbours whenever
-  two transitions landed close together.
+- **Stage markers wrap onto two lines** (`stage` / `setting`) instead of `stage -> setting`, and are
+  shifted clear of their vline and right-aligned against it. They sit on a vline in an eleven-row stack,
+  and the arrow form ran wide enough to overlap its neighbours whenever two transitions landed close
+  together; wrapping fixed that but left the two short lines crowding the line itself, so the offset and
+  alignment finish the job — both lines end at the edge nearest the marker they describe.
 - **The 3D track is coloured BY STAGE**, one trace each, replacing the Viridis time gradient. A time
   ramp answers "when", which the hover already gives to a tenth of a second; the question actually asked
   of that chart is where it boosted, where it glided, where it turned for the landing. Stage boundaries
