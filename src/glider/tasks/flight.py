@@ -132,12 +132,12 @@ class Flight(task.Task):
         value of this stream is that command, cap and belief share ONE timestamp -- post-flight you can
         see not just what the fins did but what limited them and why (findings §27.2).
 
-        SAMPLED at telemetry_us, not traced at the loop rate. _record() asks Telemetry.due() BEFORE
+        SAMPLED at telemetry_ms, not traced at the loop rate. _record() asks Telemetry.due() BEFORE
         building the row, because push() takes an already-built tuple -- letting push() do the decimating
         would still allocate 100x/s on a GC-off flight. due() reads push()'s own clock, so there is one
         clock: a jittery slice can never advance a private counter past a window push() then refuses.
         """
-        self._tlm_period_us: int = self.config.get('telemetry_us', _TLM_PERIOD_US)
+        self._tlm_period_us: int = self.config.get('telemetry_ms', _TLM_PERIOD_US // 1000) * 1000
         self._telemetry = recorder.Telemetry(
             'flight.csv', ('stage', 'active', 'airspeed_cms', 'fin_cap', 'roll_sp', 'pitch_sp',
                            'heading_err', 'roll_cmd', 'pitch_cmd', 'yaw_cmd', 'wind_cms', 'wind_from',

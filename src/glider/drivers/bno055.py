@@ -86,7 +86,7 @@ class Bno055(task.Task):
             self.name, self.config.get('provides', {}), 'attitude', 'accel')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
                                              ('heading', 'roll', 'pitch', 'ax', 'ay', 'az'),
-                                             decimate_us=self.config.get('telemetry_us', 0))  # 0 -> global rate
+                                             decimate_us=self.config.get('telemetry_ms', 0) * 1000)  # 0 -> global rate
         self._ok = True
         return True
 

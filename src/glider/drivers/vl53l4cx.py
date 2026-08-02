@@ -85,8 +85,11 @@ class Vl53l4cx(task.Task):
         runs the slices out and the sample is taken anyway. Two constants that had to be kept
         consistent became one that cannot disagree with itself.
         """
-        self._period_us: int = self.config.get('period_us', 500000)
-        self._period_ms: int = max(1, self._period_us // 1000)  # the wait's unit, resolved once
+        # INT-silent fallback cadence. Reads `period_ms`, the key the CONFIG actually supplies --
+        # this used to read `period_us`, which appears in no config, so every one of these drivers
+        # silently fell back to 500 ms against a 100 ms freshness window. That is the exact
+        # "dead wire masquerading as a healthy sensor" the irq_runs work exists to expose.
+        self._period_ms: int = max(1, self.config.get('period_ms', 50))
         self._ready = commons.Waiter()  # IRQ-kicked wake + sliced fallback (see commons.Waiter)
         self._int = None
         try:
@@ -113,7 +116,7 @@ class Vl53l4cx(task.Task):
         self._agl = databoard.Databoard.provide(self.name, self.config.get('provides', {}), 'agl')
         self._irq_runs: int = 0
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('agl', 'irq_runs'),
-                                       decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
+                                       decimate_us=self.config.get('telemetry_ms', 0) * 1000)  # 0 -> global
         self._ok = True
         return True
 

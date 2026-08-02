@@ -112,6 +112,9 @@ def _norm(a):
     return (a[0] / m, a[1] / m, a[2] / m)
 
 
+_FIXED_SCALE = 100  # fixed.SCALE -- bno055 roll/pitch are centidegree fixnums
+
+
 def _axes(heading, pitch, roll):
     th, ph, ro = math.radians(heading), math.radians(pitch), math.radians(roll)
     f = (math.cos(ph) * math.sin(th), math.cos(ph) * math.cos(th), math.sin(ph))
@@ -353,8 +356,16 @@ def load(label, path):
     spd_t, knots = rel(gnss, 'speed_kn')
     hgt = rel(baro, 'elevation') if (baro and 'elevation' in baro.fields) else rel(baro, 'altitude')
     hgt = (hgt[0], _smooth(_smooth(hgt[1], 11), 11))
+    """
+    roll/pitch arrive as the CENTIDEGREE FIXNUM the control path speaks -- drivers/bno055.py records the
+    raw value rather than spending heap formatting decimals in its sample loop, and the host scales when
+    it renders (flight_report.py does the same). Without this the model banks ~100x too far and the HUD
+    reads "roll +5000 deg".
+    """
     pit = rel(imu, 'pitch')
     rol = rel(imu, 'roll')
+    pit = (pit[0], [v / _FIXED_SCALE for v in pit[1]])
+    rol = (rol[0], [v / _FIXED_SCALE for v in rol[1]])
     pit = (pit[0], _smooth(_smooth(pit[1], 7), 7))
     rol = (rol[0], _smooth(_smooth(rol[1], 7), 7))
     ex = _smooth(_smooth([_to_m(la, lo)[0] for la, lo in zip(lat, lon)], 21), 21)

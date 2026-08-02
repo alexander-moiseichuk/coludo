@@ -170,7 +170,7 @@ class Sdp810(task.Task):
             self.name, self.config.get('provides', {}), 'dynamic_pressure', 'airspeed')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
                                        ('dynamic_pressure', 'airspeed_cms', 'temperature'),  # all fixnums (x SCALE)
-                                       decimate_us=self.config.get('telemetry_us', 0))  # 0 -> Recorder global rate
+                                       decimate_us=self.config.get('telemetry_ms', 0) * 1000)  # 0 -> global
         self._ok = True
         return True
 

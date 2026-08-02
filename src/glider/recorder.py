@@ -46,7 +46,9 @@ _DEFAULT_CELL_SIZE = const(256)  # bytes per ring cell (record + 2-byte length h
 _DEFAULT_CAPACITY = const(1024)  # cells per ring
 _LENGTH_BYTES = const(2)  # uint16 record-length header
 _STATS_PERIOD_MS = const(1000)  # how often run() logs a buffer-stats line
-_DEFAULT_TELEMETRY_US = const(20000)  # global telemetry decimation default (50 Hz); a stream's 0 -> this
+_DEFAULT_TELEMETRY_MS = const(20)  # global telemetry decimation default (50 Hz); a stream's 0 -> this.
+# CONFIG knobs are milliseconds everywhere -- one unit in the file, converted to us at the boundary,
+# so no reader has to remember which of two suffixes a given key used.
 
 
 class _RecorderError(ValueError):
@@ -193,10 +195,10 @@ class Recorder:
     _last_stats_ms: int = 0
     """
     global telemetry decimation (µs between emitted rows): every Telemetry stream whose own decimate_us is
-    0 uses this, so `recorder.telemetry_us` in the board config prorates ALL streams at once, while a stream
-    that sets a non-zero telemetry_us keeps its individual rate. Default 50 Hz.
+    0 uses this, so `recorder.telemetry_ms` in the board config prorates ALL streams at once, while a stream
+    that sets a non-zero telemetry_ms keeps its individual rate. Default 50 Hz.
     """
-    telemetry_decimate_us: int = _DEFAULT_TELEMETRY_US
+    telemetry_decimate_us: int = _DEFAULT_TELEMETRY_MS * 1000
 
     @classmethod
     def setup(cls, config: dict, uart=None) -> None:
@@ -212,7 +214,7 @@ class Recorder:
         cls._flag = asyncio.ThreadSafeFlag()
         cls._stats_ms = recorder.get('stats_ms', _STATS_PERIOD_MS)
         cls._last_stats_ms = time.ticks_ms()
-        cls.telemetry_decimate_us = recorder.get('telemetry_us', _DEFAULT_TELEMETRY_US)  # global rate knob
+        cls.telemetry_decimate_us = recorder.get('telemetry_ms', _DEFAULT_TELEMETRY_MS) * 1000  # global rate knob
         if uart is None:
             entry = config_mod.device(config, driver='recorder') or {'bus': 'uart', 'id': 1}
             kind, bus_id = entry.get('bus', 'uart'), entry.get('id', 1)
@@ -474,7 +476,7 @@ class Telemetry:
     have passed since the last emitted row (a fast sensor can push every sample and have its telemetry
     decimated to a sane rate). `decimate_us=0` (the default) inherits the Recorder GLOBAL rate
     (`Recorder.telemetry_decimate_us`, 50 Hz) -- so a stream opts into an individual rate by passing a
-    non-zero value, else the board-wide `recorder.telemetry_us` prorates it.
+    non-zero value, else the board-wide `recorder.telemetry_ms` prorates it.
     """
 
     def __init__(self, filename: str, fields: tuple, decimate_us: int = 0):

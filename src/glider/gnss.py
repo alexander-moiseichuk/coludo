@@ -129,7 +129,7 @@ class Gnss(task.Task):
          self._course) = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}),
             'position', 'altitude', 'elevation', 'speed', 'course')
-        telemetry_us = self.config.get('telemetry_us', 0)
+        telemetry_us = self.config.get('telemetry_ms', 0) * 1000
         self._telemetry = recorder.Telemetry('%s.csv' % self.name, ('lat', 'lon', 'speed_kn', 'course'),
                                        decimate_us=telemetry_us)
         """

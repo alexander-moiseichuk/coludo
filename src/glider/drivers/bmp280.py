@@ -72,7 +72,7 @@ class Bmp280(task.Task):
             self.name, self.config.get('provides', {}), 'altitude', 'temperature', 'pressure', 'elevation')
         self._telemetry = recorder.Telemetry('%s.csv' % self.name,
                                              ('altitude', 'temperature', 'pressure', 'elevation'),
-                                             decimate_us=self.config.get('telemetry_us', 0))  # 0 -> global rate
+                                             decimate_us=self.config.get('telemetry_ms', 0) * 1000)  # 0 -> global rate
         self._ok = True
         return True
 

@@ -167,8 +167,10 @@ def default() -> dict:
         'addr': 0x53,  # kept for an i2c fallback (set bus 'i2c', id 0)
         'cs_pin': 'adxl375_cs',  # SPI chip-select
         'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — drives the sampling;
-        # fallback_ms 500 (default): a timed safety sample keeps data flowing if INT goes silent
-        'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
+        # POLL rate when INT1 is silent: must beat the 20 ms `accel` freshness window below, so it is
+        # the sensor's own 100 Hz ODR rather than a slow safety tick
+        'period_ms': 10,
+        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, 25 Hz)
         'enabled': True,
         'provides': {'accel': {'priority': 1, 'timeout_ms': 20}},  # >32 g backstop behind lsm6dso32
     }
@@ -189,7 +191,7 @@ def default() -> dict:
         # and beat the 20 ms `rate` freshness window below -- the old 100 ms default would have left the
         # PID's D term starved even in poll mode, so the fallback has to be fast, not merely present.
         'period_ms': 10,
-        'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
+        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, 25 Hz)
         'enabled': True,
         'provides': {'accel': {'priority': 0, 'timeout_ms': 20},   # PRIMARY accel (±32 g)
                      'rate': {'priority': 0, 'timeout_ms': 20}},    # sole gyro `rate` source
@@ -200,7 +202,7 @@ def default() -> dict:
         'driver': 'bno055',
         'bus': 'i2c', 'id': 0,
         'addr': 0x28,
-        'telemetry_us': 0,  # 0 -> the Recorder global rate (recorder.telemetry_us, 50 Hz)
+        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, 25 Hz)
         'enabled': True,
         'provides': {'attitude': {'priority': 0, 'timeout_ms': 40},
                      'accel': {'priority': 2, 'timeout_ms': 40}},  # fused fallback behind lsm/adxl
@@ -282,7 +284,10 @@ def default() -> dict:
         'bus': 'i2c', 'id': 0,
         'addr': 0x29,
         'xshut_pin': 'laser_xshut',  # enable/reset
-        'int_pin': 'laser_int',  # GPIO1 data-ready (fallback_ms 500: timed safety sample if INT goes silent)
+        'int_pin': 'laser_int',  # GPIO1 data-ready
+        # POLL rate when INT is silent: must beat the 100 ms `agl` freshness window below, else AGL sits
+        # perma-stale and the landing/approach gates fall back to baro elevation for the whole flight
+        'period_ms': 50,
         'timing_budget_ms': 100,  # ranging integration (10..200); higher = lower sigma, slower
         'enabled': True,
         # laser gives AGL (ground distance), not AMSL altitude, so it provides 'agl' only;
@@ -638,13 +643,13 @@ def default() -> dict:
 
     components = [
         # Recorder drain loop: a thin activity over the global Recorder, using uart:1.
-        # telemetry_us is the GLOBAL decimation every stream inherits (a stream setting its own non-zero
+        # telemetry_ms is the GLOBAL decimation every stream inherits (a stream setting its own non-zero
     # value keeps that instead). 25 Hz, not the old 50: measured per call, a Telemetry.push plus the
     # rounded tuple it is handed costs 272 B, and the highest-rate sensors were emitting rows twice as
     # fast as any report renders them. Halving the global rate is the cheapest leak reduction available
     # -- it costs plot resolution nothing downstream was using.
     {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True,
-     'telemetry_us': 40000},
+     'telemetry_ms': 40},
         # Stage-separation switch (copper pads): HIGH=nested, LOW=separated -> Boosting->Gliding.
         # debounce_ms: the LOW must hold this long -- a contact bounce on the pads never deploys.
         {'name': 'separation', 'driver': 'separation', 'pin': 'separation_switch', 'enabled': True,

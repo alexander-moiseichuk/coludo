@@ -71,7 +71,7 @@ _SERVOS: tuple = ('servo_yaw', 'servo_eleron_left', 'servo_eleron_right')
 # does not apply -- and 7C/7D exist precisely to capture the launch, separation and impact transients,
 # which are what decimation drops. Recording every sample keeps the WAVEFORM (duration, ringing), not
 # just its extreme, which is what a shock trace has to show to be worth anything.
-_FULL_RATE_US: int = 10000  # 100 Hz, matching the sensors' own sample rate
+_FULL_RATE_MS: int = 10  # 100 Hz, matching the sensors' own sample rate
 _FULL_RATE: tuple = ('accel_adxl375', 'imu_lsm6dso32')
 
 
@@ -93,7 +93,7 @@ def _profile(name: str, servos: bool, flight: bool) -> dict:
     # 'sensors', the servos and the flight activity under 'components'
     for sensor in cfg['sensors']:
         if sensor.get('name') in _FULL_RATE:
-            sensor['telemetry_us'] = _FULL_RATE_US
+            sensor['telemetry_ms'] = _FULL_RATE_MS
     for component in cfg['components']:
         component_name = component.get('name')
         if component_name == 'sequencer':

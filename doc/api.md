@@ -1584,7 +1584,7 @@ Recorder session prefix, so file names are stable.
 have passed since the last emitted row (a fast sensor can push every sample and have its telemetry
 decimated to a sane rate). `decimate_us=0` (the default) inherits the Recorder GLOBAL rate
 (`Recorder.telemetry_decimate_us`, 50 Hz) -- so a stream opts into an individual rate by passing a
-non-zero value, else the board-wide `recorder.telemetry_us` prorates it.
+non-zero value, else the board-wide `recorder.telemetry_ms` prorates it.
 
 - `__init__(filename: str, fields: tuple, decimate_us: int=0)` — constructor
 - `due(now: int) -> bool` — Whether the decimation window has elapsed -- so a HOT-PATH producer can skip building its row.
