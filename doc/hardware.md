@@ -133,10 +133,37 @@ Practical notes: the ±16 g accelerometer is the same ceiling as the BNO055's, s
 primary boost accel either — **LSM6DSO32 (±32 g) stays** the lead `accel`. Prefer the **UART** variant if
 adopted: `i2c:0` already carries five devices (BNO055, BMP280, ICP-10111, VL53L4CX, SDP810).
 
-**Decision:** if the need is *more airframes*, buy **more BNO055 (sen0253)** — drop-in, zero software.
-If the need is *removing the BNO055 dependency*, this is the right part; buy one now, integrate the
-magnetometer after the passive flights, and let real flight data decide whether the full AHRS is worth
-it. See *Flight criticality* above.
+**DECISION (2026-08-06): not adopted — we stay on BNO055.** With **5+ BNO055 on hand** the unit-count
+blocker is gone, and that was the only pressing reason to move. Keeping the fused part also keeps the
+magnetometer calibration problem inside Bosch's black box. Recorded here so the comparison does not have
+to be redone; revisit only if a *new* need appears (a board with no BNO055, or a measured attitude
+problem the backup cannot fix).
+
+## Post-flight consolidation — measure first, then remove
+
+The goal after the passive flights is a **minimal device count and a simpler PCB**. Every part below is
+carried because of an *assumption*; the flights turn each into a measurement. Nothing is removed on
+opinion — the point of flying both is to earn the right to delete one.
+
+| Candidate | What decides it | Drop when | What removal buys |
+| --- | --- | --- | --- |
+| **ADXL375** (±200 g) | `flight_kpi` prints **peak \|a\|** for both accels + a KEEP/DROP verdict | LSM6DSO32 never approaches its ±32 g rail **and** the ADXL never exceeds 32 g | a SPI chip-select + an INT pin, ~1 g, board area — **and possibly the whole SPI bus (see below)** |
+| **VL53L4CX** (AGL laser) | does it return valid AGL **outdoors in Florida sun**? (Phase 2/9 of `field_test.md`) | it is blind or noise-dominated in daylight | an I²C device, INT + XSHUT pins — but a **replacement landing trigger** is then required |
+| **SDP810** (pitot) | does the pitot actually beat the accel+GNSS estimate? (`flight.csv` records both — the airspeed panel overlays them) | the fused estimate is no better than the pre-pitot baseline | an I²C device + the pitot plumbing |
+| **BMP280** | is a second baro worth its I²C address? | ICP-10111 alone detects apogee cleanly | little physically — it **rides on the sen0253 board with the BNO055**, so it is nearly free to keep |
+| **ATGM336H** (GNSS) | — | never: navigation and the zone logic depend on it | — |
+
+**The big PCB simplification hides behind the ADXL375.** It shares `spi:1` with the LSM6DSO32. If the
+measured boost never clips ±32 g and the ADXL goes, the LSM6DSO32 is the **only** device left on SPI —
+at which point the question becomes whether it can move to `i2c:0` and let the **entire SPI bus
+disappear** (SCK/MOSI/MISO + 2 chip-selects + an INT = up to **6 GPIOs** and a bus's worth of routing).
+It sits on SPI today for clean high-rate reads, so that is a bench question — can `i2c:0` carry a 104 Hz
+6-DoF alongside its existing devices without hurting the gyro `rate` the PID D-term depends on? Worth
+answering deliberately, because it is the single largest layout win available.
+
+Measure it with: `python3 tools/flight_kpi.py <label>:<capture>` — the first lines are the G envelope and
+the high-g verdict. (In *sim* captures both accel streams carry the same synthetic value, so the verdict
+is only meaningful on a **real** flight, where the ADXL is the only sensor that can read past 32 g.)
 
 ### ADXL375 → SPI wiring (Adafruit 5374 → ESP32-P4)
 

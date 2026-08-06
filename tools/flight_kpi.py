@@ -26,6 +26,9 @@ import flight_telemetry  # noqa: E402
 _FINS: tuple = ('eleron_left', 'eleron_right', 'yaw')
 _ZONE_DEFAULT: str = '25.514944,-80.392972,25.514583,-80.391111'  # HPRC zone (TL, BR), as in hitl_matrix
 _M_PER_DEG: float = 111320.0
+_PRIMARY_RANGE_G: float = 32.0    # LSM6DSO32 full scale -- the range the backstop has to beat to matter
+_BACKSTOP_RANGE_G: float = 200.0  # ADXL375 full scale
+_CLIP_FRACTION: float = 0.95      # within this of the primary's rail counts as clipped
 
 
 def _fin_activity(fins) -> tuple:
@@ -102,12 +105,80 @@ def _touchdown(gnss, zone: tuple) -> tuple:
     return math.hypot(north, east), inside
 
 
+def _peak_g(stream) -> tuple:
+    """
+    Peak |a| (g) in one accel stream and when it happened.
+
+    Args:
+        stream - an accel stream carrying ax/ay/az, or None.
+
+    Returns:
+        (peak_g, time_s, samples); (0.0, 0.0, 0) for an absent or empty stream.
+    """
+    if stream is None or 'ax' not in stream.fields:
+        return 0.0, 0.0, 0
+    times, ax = stream.column('ax')
+    _, ay = stream.column('ay')
+    _, az = stream.column('az')
+    peak, when = 0.0, 0.0
+    for moment, x, y, z in zip(times, ax, ay, az):
+        magnitude = math.sqrt(x * x + y * y + z * z)
+        if magnitude > peak:
+            peak, when = magnitude, moment
+    return peak, when, len(times)
+
+
+def _accel_envelope(streams) -> None:
+    """
+    Report the measured G envelope and turn it into a KEEP/DROP verdict for the high-g backstop.
+
+    The ADXL375 (±200 g) exists for ONE reason: to survive a shock the LSM6DSO32's ±32 g would clip.
+    Whether it earns its mass, its SPI chip-select and its PCB area is a MEASUREMENT, not an opinion --
+    so fly both, then read it off here. Only two outcomes matter:
+      * the primary CLIPPED (peak at/near its rail) -> the backstop is load-bearing, keep it;
+      * the backstop never saw more than the primary's range -> it recorded nothing the primary could
+        not, and it is a candidate to drop when simplifying the board.
+
+    Args:
+        streams - the parsed capture streams.
+
+    Returns:
+        None; prints the envelope and the verdict.
+    """
+    find = flight_telemetry.find_stream
+    primary = find(streams, 'ax', 'ay', 'az', 'gx', prefer='lsm') or find(streams, 'ax', 'ay', 'az', 'gx')
+    backstop = find(streams, 'ax', 'ay', 'az', prefer='adxl')
+    if backstop is primary:
+        backstop = None
+    primary_peak, primary_when, primary_n = _peak_g(primary)
+    backstop_peak, backstop_when, backstop_n = _peak_g(backstop)
+    if not primary_n and not backstop_n:
+        return
+    if primary_n:
+        print('  peak |a| lsm  : %6.1f g at t=%.1fs (%d samples, +/-%.0f g range)'
+              % (primary_peak, primary_when, primary_n, _PRIMARY_RANGE_G))
+    if backstop_n:
+        print('  peak |a| adxl : %6.1f g at t=%.1fs (%d samples, +/-%.0f g range)'
+              % (backstop_peak, backstop_when, backstop_n, _BACKSTOP_RANGE_G))
+    if primary_n and primary_peak >= _PRIMARY_RANGE_G * _CLIP_FRACTION:
+        print('  high-g verdict: KEEP the +/-200 g backstop -- the primary reached %.1f g, at/near its '
+              '+/-%.0f g rail (clipping)' % (primary_peak, _PRIMARY_RANGE_G))
+    elif backstop_n and backstop_peak <= _PRIMARY_RANGE_G:
+        print('  high-g verdict: DROP candidate -- the backstop never exceeded %.1f g, inside the '
+              'primary\'s +/-%.0f g range (it recorded nothing the primary could not)'
+              % (backstop_peak, _PRIMARY_RANGE_G))
+    elif backstop_n:
+        print('  high-g verdict: KEEP -- the backstop saw %.1f g, beyond the primary\'s +/-%.0f g range'
+              % (backstop_peak, _PRIMARY_RANGE_G))
+
+
 def report(label: str, path: str, zone: tuple) -> None:
     """Print the KPI block for one capture."""
     with open(path) as handle:
         streams, _logs = flight_telemetry.parse(handle.read())
     fins = next((s for name, s in streams.items() if 'fins' in name), None)
     print(label)
+    _accel_envelope(streams)  # the G envelope + the high-g KEEP/DROP verdict (device-count decision)
     if fins is None:
         print('  (no fins stream)')
         return
