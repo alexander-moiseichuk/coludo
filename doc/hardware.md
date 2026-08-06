@@ -35,7 +35,9 @@ wiring is in [`waveshare_esp32p4_pins.md`](waveshare_esp32p4_pins.md).
 [AHT20+BMP280](https://www.aliexpress.us/item/3256806546750874.html) (temp + baro),
 [MPU6050](https://www.amazon.com/dp/B0BMY15TC4) (cheap IMU, noisy under high-g),
 [VL53L0X / VL53L1X](https://www.aliexpress.us/item/3256807793059841.html) (alternate ToF for the `agl`
-quantity). These provide the same quantities, so the fusion layer can use them as drop-in fallbacks.
+quantity), [Gravity 10DOF BMI323+BMM350+BMP581](https://www.dfrobot.com/product-3126.html) (better RAW
+IMU/mag/baro data than the BNO055 but **no on-chip fusion** — see *The BNO055 successor path* below).
+These provide the same quantities, so the fusion layer can use them as drop-in fallbacks.
 
 ## Flight criticality — what we cannot fly without
 
@@ -85,6 +87,44 @@ Three parts split the IMU job; the roles do **not** overlap, so dropping one is 
   flight; keep it for telemetry / data-quality launches where both accels log side by side.
 
 MPU6050 stays a cheap fallback IMU only.
+
+### The BNO055 successor path — BMI323 + BMM350 + BMP581 (10-DOF)
+
+[Gravity 10DOF IMU](https://www.dfrobot.com/product-3126.html) ($19.90, I²C/UART) or the smaller
+[Fermion SEN0697](https://wiki.dfrobot.com/sen0697/) carry **BMI323** (6-axis) + **BMM350** (mag) +
+**BMP581** (baro). On raw data they beat the BNO055 on every axis that matters:
+
+| | BNO055 (current) | BMI323 / BMM350 / BMP581 |
+| --- | --- | --- |
+| Accelerometer | **14-bit**, ±16 g | **16-bit**, ±16 g — **4× finer resolution** |
+| Gyroscope | 16-bit, ±2000 °/s | 16-bit, ±2000 °/s, ±1 °/s zero-rate offset |
+| Sample rate | **100 Hz** (fusion-capped) | **up to 6400 Hz** — no fusion cap |
+| Magnetometer | ~0.3 µT resolution | **~0.1 µT**, 190 nT rms noise (X/Y) |
+| Barometer | (BMP280 alongside) | **BMP581: 1/64 Pa resolution**, ±6 Pa relative, 240 Hz |
+| Current | Cortex-M0+ fusion core, substantially more | **1.1–3.6 mA** |
+| Orientation output | **fused on-chip** | **raw only** |
+
+**The catch is the last row, and it is the whole reason BNO055 is flight-critical.** BNO055 ships a
+32-bit Cortex-M0+ running Bosch's fusion, so it emits absolute heading/roll/pitch ready for the
+stabilisation PID and bank-to-turn navigation. The 10-DOF board emits *ingredients* — an AHRS would
+have to run on the ESP32-P4, in MicroPython, on the single most flight-critical signal we have. That
+is not a drop-in swap and not something to introduce immediately before field testing.
+
+**The incremental path is the attractive one.** `tasks/attitude.py` already runs a complementary-filter
+backup (integer CORDIC) at priority 1, and its one real weakness is that it has **no magnetometer** —
+yaw is gyro-only, so it drifts and leans on a course-pull to correct. Adding **just the BMM350** turns
+that backup into a genuine 9-DoF attitude source and removes the drift, without touching the BNO055
+primary or writing a full AHRS. One driver, one clear win, and it directly attacks the BNO055
+single-point-of-failure.
+
+Practical notes: the ±16 g accelerometer is the same ceiling as the BNO055's, so this **cannot** be the
+primary boost accel either — **LSM6DSO32 (±32 g) stays** the lead `accel`. Prefer the **UART** variant if
+adopted: `i2c:0` already carries five devices (BNO055, BMP280, ICP-10111, VL53L4CX, SDP810).
+
+**Decision:** if the need is *more airframes*, buy **more BNO055 (sen0253)** — drop-in, zero software.
+If the need is *removing the BNO055 dependency*, this is the right part; buy one now, integrate the
+magnetometer after the passive flights, and let real flight data decide whether the full AHRS is worth
+it. See *Flight criticality* above.
 
 ### ADXL375 → SPI wiring (Adafruit 5374 → ESP32-P4)
 
