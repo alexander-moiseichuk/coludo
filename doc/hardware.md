@@ -104,18 +104,30 @@ MPU6050 stays a cheap fallback IMU only.
 | Current | Cortex-M0+ fusion core, substantially more | **1.1–3.6 mA** |
 | Orientation output | **fused on-chip** | **raw only** |
 
-**The catch is the last row, and it is the whole reason BNO055 is flight-critical.** BNO055 ships a
-32-bit Cortex-M0+ running Bosch's fusion, so it emits absolute heading/roll/pitch ready for the
-stabilisation PID and bank-to-turn navigation. The 10-DOF board emits *ingredients* — an AHRS would
-have to run on the ESP32-P4, in MicroPython, on the single most flight-critical signal we have. That
-is not a drop-in swap and not something to introduce immediately before field testing.
+**"No on-chip fusion" sounds fatal, but for THIS architecture it mostly is not — we already fuse on the
+MCU.** `tasks/attitude.py` is a complementary-filter AHRS running today: gyro integration plus an accel
+gravity-vector re-anchor through the integer CORDIC `fixed.atan2_cd`, with a coordinated-turn gate so a
+banked turn cannot roll the estimate flat. It is integer/fixnum throughout (the only boxed float is the
+heading the channel format requires), runs at 50 Hz beside the 100 Hz flight loop, and is **flight-proven**:
+in [TMS-7-attitude](sims/TMS-7-attitude/) the BNO055 is killed mid-glide and the backup flies to a
+controlled landing (E16 **15 m in-zone**), tracking truth to **~1° roll / ~0.5° pitch** (`attitude_soak`).
+So the question is not "can the P4 fuse?" — it demonstrably can — but "what would a magnetometer add,
+and what does owning the fusion cost?".
 
-**The incremental path is the attractive one.** `tasks/attitude.py` already runs a complementary-filter
-backup (integer CORDIC) at priority 1, and its one real weakness is that it has **no magnetometer** —
-yaw is gyro-only, so it drifts and leans on a course-pull to correct. Adding **just the BMM350** turns
-that backup into a genuine 9-DoF attitude source and removes the drift, without touching the BNO055
-primary or writing a full AHRS. One driver, one clear win, and it directly attacks the BNO055
-single-point-of-failure.
+**What the magnetometer actually adds.** The backup's yaw is *not* free-running: it already has an
+absolute reference, a weak pull toward the **GNSS ground track**. Its two real weaknesses are narrow but
+real — the course reference needs **motion** (`course_gate` ~5 m/s, so it is useless on the pad and at
+low speed), and in a **crosswind crab the ground track is not the heading**, which the weak blend can
+only average out. A magnetometer answers both: true heading, at rest, crab-free.
+
+**The real cost is calibration, not the filter.** Rolling our own 9-DoF means owning **hard- and
+soft-iron magnetometer calibration** — near a carbon airframe, servo currents and a booster — and that is
+exactly the messy part the BNO055's black box hides. Budget that, not the AHRS math.
+
+**So the incremental path is the attractive one:** add **just the BMM350** as an extra input to the
+filter that already exists. One driver, no new fusion architecture, no change to the BNO055 primary,
+and it directly attacks the BNO055 single-point-of-failure. Only if that proves out does replacing the
+BNO055 outright become a real question.
 
 Practical notes: the ±16 g accelerometer is the same ceiling as the BNO055's, so this **cannot** be the
 primary boost accel either — **LSM6DSO32 (±32 g) stays** the lead `accel`. Prefer the **UART** variant if
