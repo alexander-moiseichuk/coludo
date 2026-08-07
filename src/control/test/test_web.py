@@ -88,6 +88,26 @@ def test_routes():
     assert b'404' in _request(b'GET /nope HTTP/1.1\r\n\r\n')
 
 
+def test_hud_is_served_and_offline_safe():
+    """
+    The walk-test HUD (findings §27.19) is served at /hud and must stay FIELD-USABLE.
+
+    Two things are asserted rather than assumed. It renders the live flight vitals the walk test is
+    actually watching -- attitude, fins, airspeed, the authority cap -- so a rename on the board side
+    that empties the page fails here instead of at the launch site. And it references NOTHING external:
+    the field has no internet, so a CDN font or library would turn the HUD into a blank screen exactly
+    where it is needed. The dashboard follows the same rule.
+    """
+    page = _request(b'GET /hud HTTP/1.1\r\n\r\n')
+    assert b'200 OK' in page, 'the HUD route is not served'
+    body = page.split(b'\r\n\r\n', 1)[1]
+    for field in (b'airspeed', b'fin_cap', b'attitude', b'fins', b'heading_error', b'degraded'):
+        assert field in body, 'the HUD stopped reading %r from the vitals' % field
+    assert b'http://' not in body and b'https://' not in body, (
+        'the HUD must stay self-contained -- the field has no internet')
+    assert b'/events' in body and b'/api/boards' in body, 'the HUD needs the live feed + its fallback'
+
+
 def test_dashboard_carries_the_imu_calibration_column():
     """
     The IMU calibration must survive the whole path board -> health -> /api/boards -> table.
@@ -189,6 +209,7 @@ def test_post_with_bad_json_is_answered():
 
 
 test_routes()
+test_hud_is_served_and_offline_safe()
 test_dashboard_carries_the_imu_calibration_column()
 test_malformed_request_line_does_not_hang()
 test_bad_content_length_still_routes()

@@ -20,14 +20,15 @@ import os
 
 _REASON = {200: 'OK', 400: 'Bad Request', 404: 'Not Found', 500: 'Internal Server Error', 502: 'Bad Gateway'}
 _PAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'index.html')
+_HUD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'hud.html')
 
 
-def _load_page() -> str:
+def _load_page(path: str = None) -> str:
     try:
-        with open(_PAGE_PATH) as page:
+        with open(path or _PAGE_PATH) as page:
             return page.read()
     except OSError:
-        return '<!doctype html><title>Coludo</title><h1>Coludo Control</h1><p>static/index.html missing</p>'
+        return '<!doctype html><title>Coludo</title><h1>Coludo Control</h1><p>static page missing</p>'
 
 
 async def _send(writer, status: int, content_type: str, body) -> None:
@@ -100,6 +101,10 @@ class Web:
             # re-read per request, not once at startup: editing the dashboard should need a
             # browser reload, never a hub restart (that cost a debugging round here)
             return await _send(writer, 200, 'text/html; charset=utf-8', _load_page())
+        if method == 'GET' and route == '/hud':
+            # the walk-test HUD (findings §27.19): the same live rows the dashboard gets, rendered
+            # big and glanceable for an operator holding the airframe in a field
+            return await _send(writer, 200, 'text/html; charset=utf-8', _load_page(_HUD_PATH))
         if method == 'GET' and route == '/api/boards':
             return await _send_json(writer, 200, self.hub.board_rows())
         if method == 'GET' and route == '/api/absent':
