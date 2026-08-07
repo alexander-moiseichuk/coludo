@@ -43,6 +43,12 @@ first powered flight.
 - [ ] **GNSS:** fix acquired — satellites up, HDOP low; position matches the spot
 - [ ] **Airspeed:** dynamic pressure ≈ 0; do the **pad tare** (CC `update {"zero": true}` on
       `airspeed_sdp810`, glider still) → airspeed reads ~0
+> 💡 **Open the walk-test HUD: `http://<cc-host>:8080/hud`.** It puts the live attitude horizon, the
+> per-fin commanded angles, airspeed, the authority cap, heading-to-zone, wind, AGL and the
+> stage/armed/loop-engaged state on one screen — so phases 3–5 below are *watched* rather than
+> inferred. It is fully offline (no CDN) and dims itself with an age counter if the link goes stale,
+> so a frozen page cannot be mistaken for a live one.
+
 - [ ] **Fins:** disarmed → all at neutral; verify each fin's **zero/trim** via the CC fin-zero UI
       > ⚠️ **Drive servo checks through the firmware (CC / the driver), never raw PWM on one pin.** A
       > servo whose signal line is left FLOATING hunts on its own, so a bench script that drives one fin
