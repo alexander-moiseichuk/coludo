@@ -121,11 +121,30 @@ def default() -> dict:
         # (GPIO30 became i2c:1 SCL when the INA226 moved to the aft power bus; ALERT -> 29)
     }
 
+    """
+    Recorder: PSRAM ring sizes + stats cadence, and the SESSION prefix every capture file is named by.
+
+    `session` is normally absent, and the board then synthesises `YYYYMMDD_HHMMSS_<6-digit random>`. It
+    has no battery-backed RTC, so without a time sync that date is 2000-01-01 and only the random part
+    separates one boot from the next -- an audit of a real Luckfox found ~150 unsynced boots sharing a
+    900-value suffix, with the expected ~12 collisions APPENDING two flights into one CSV.
+
+    Set `session` from CC -- which has both a trustworthy clock and the run's identity -- to assign the
+    WHOLE prefix verbatim, e.g. '20260807_143012_catapult-run3'. Keep the `YYYYMMDD_HHMMSS_<tag>` shape:
+    host tools strip the date/time by pattern and derive the tag from the capture, so tag-less, random
+    and labelled captures all parse alike; a run label makes a capture self-identifying on disk.
+
+    CAUTION: this is a PER-RUN value, and config is immutable-per-run and SAVED. A `session` left in the
+    saved config is reused verbatim by every later boot, which is a *guaranteed* collision -- strictly
+    worse than the random suffix it replaces, since colliding boots append into each other's files. Set
+    it per run or leave it out.
+    """
     recorder = {  # PSRAM ring sizes + stats cadence (Recorder)
         'tlm_capacity': 256,  # measured peak ~16 buffered records -> 256 is ~16x headroom
         'log_capacity': 256,
         'cell_size': 256,  # power-of-two cell; ~64 KB/ring, nothing on 32 MB PSRAM
         'stats_ms': 1000,
+        # 'session': '20260807_143012_taster',  # CC assigns the whole prefix; absent -> board synthesises
     }
 
     """

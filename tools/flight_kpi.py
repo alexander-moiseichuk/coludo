@@ -220,6 +220,17 @@ def report(label: str, path: str, zone: tuple) -> None:
         streams, _logs = flight_telemetry.parse(handle.read())
     fins = next((s for name, s in streams.items() if 'fins' in name), None)
     print(label)
+    """
+    A spliced capture is not one flight, so say so BEFORE any number derived from it is printed. Two
+    boots that shared a session prefix append into the same file on the Luckfox, and the result reads
+    as a single long run whose uptime restarts midway -- every duration, rate and envelope below is
+    then computed across two flights glued together. There is no automatic repair: the rows carry no
+    boot identity, so only the operator can decide which run they wanted.
+    """
+    damaged = flight_telemetry.spliced(streams)
+    if damaged:
+        print('  !! SPLICED CAPTURE -- two recorder sessions share this prefix: %s' % ', '.join(damaged))
+        print('  !! numbers below span BOTH boots; re-pull with distinct `recorder.session` prefixes')
     _accel_envelope(streams)  # the G envelope + the high-g KEEP/DROP verdict (device-count decision)
     if fins is None:
         print('  (no fins stream)')

@@ -188,7 +188,8 @@ class Recorder:
     _cc_tlm = _TeeSink()  # CC mirror of the telemetry stream (the `tlm <ms>` command)
     _uart = None  # asyncio.StreamWriter wrapping the recorder UART
     _flag = None  # ThreadSafeFlag set by producers, waited on by run()
-    _session: str = None  # 'YYYYMMDD_HHMMSS', produced on first tlm(), fixed for the boot
+    _prefix: str = ''  # whole session prefix assigned by config (`recorder.session`); '' -> synthesise
+    _session: str = None  # 'YYYYMMDD_HHMMSS_<tag>', settled on first tlm(), fixed for the boot
     _tlm_max: int = 0  # high-water mark of queued telemetry records
     _log_max: int = 0  # high-water mark of queued log records
     _stats_ms: int = _STATS_PERIOD_MS
@@ -209,6 +210,22 @@ class Recorder:
         cls._cc_log.reset(cell_size)  # off at boot: nothing mirrored to CC until it asks
         cls._cc_tlm.reset(cell_size)
         cls._session = None
+        """
+        The WHOLE session prefix can come from config (`recorder.session`), used verbatim.
+
+        The board has no battery-backed RTC, so its own clock is 2000-01-01 until something tells it
+        otherwise -- which is exactly why unsynced boots used to pile into look-alike session ids. CC
+        has a good clock and knows which run it is configuring, so letting it assign the whole prefix
+        puts the decision where the reliable information is, instead of having the board synthesise one
+        from a clock it cannot trust.
+
+        Expected shape is `YYYYMMDD_HHMMSS_<tag>` (e.g. 20260807_143012_taster): host tools strip the
+        date/time by pattern and derive the tag from the capture. Absent the key, the board falls back
+        to synthesising date/time plus a 6-digit random, which is all it can do alone -- and that
+        fallback stays the SAFE default, because a stale `session` in a saved config would be reused by
+        every boot and collide every time.
+        """
+        cls._prefix = str(recorder.get('session', '') or '').strip().replace(' ', '-')
         cls._tlm_max = 0
         cls._log_max = 0
         cls._flag = asyncio.ThreadSafeFlag()
@@ -258,12 +275,28 @@ class Recorder:
         if cls._session is None:
             now = time.localtime()
             """
-            a random suffix disambiguates boots that start before the RTC ticks (fast restarts share the
+            A random suffix disambiguates boots that start before the RTC ticks (fast restarts share the
             same wall-clock second otherwise -> colliding session ids -> telemetry files clobbered / a
             header spliced mid-file on the Luckfox).
+
+            SIX digits, not three. The original 3-digit suffix gave only 900 values, and the birthday
+            bound makes that far weaker than it looks: N boots collide about N^2/2M times, so 150 boots
+            over 900 values expects ~12 collisions -- and a Luckfox audit found exactly that. Boots that
+            collide APPEND INTO EACH OTHER'S FILES, so two flights end up interleaved in one CSV with
+            uptime restarting midway, which no amount of downstream parsing can separate. One session had
+            77 stream files instead of the usual 13 and a 542 MB accelerometer CSV.
+
+            The RNG itself was fine (150 distinct suffixes observed, so it IS seeded per boot); the range
+            was the defect. At 900000 values the same 150 boots expect 0.01 collisions, and even 1000
+            boots expect 0.6. A synced RTC makes the whole question moot -- the timestamp is then unique
+            on its own -- but the board must stay safe when it flies without CC, which is the normal case
+            in a field.
             """
-            cls._session = '%04d%02d%02d_%02d%02d%02d_%d' % (
-                now[0], now[1], now[2], now[3], now[4], now[5], random.randint(100, 1000))
+            if cls._prefix:  # CC assigned the whole thing -- trust it over our own clock
+                cls._session = cls._prefix
+            else:
+                cls._session = '%04d%02d%02d_%02d%02d%02d_%d' % (
+                    now[0], now[1], now[2], now[3], now[4], now[5], random.randint(100000, 999999))
         return cls._session
 
     @classmethod

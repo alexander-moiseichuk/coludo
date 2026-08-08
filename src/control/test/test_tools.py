@@ -226,6 +226,68 @@ def test_parser_edge_cases():
 
 
 
+def test_session_tail_variants_all_key_the_same():
+    """
+    Every session-tag ERA parses to the same stream names.
+
+    The tag after the date/time has changed shape three times -- absent (oldest captures), a random
+    disambiguator, and now an operator label CC sets via `recorder.session` -- and all three are the
+    same SHAPE as a stream whose own name starts with a word ('imu_bno055.csv'). Getting this wrong is
+    silent: the streams still parse, they are just keyed under names no tool looks for, so every panel
+    goes empty on a capture that is perfectly good. Each era below must land on identical keys.
+    """
+    def keys(tag):
+        return set(flight_telemetry.parse(
+            '@20260726_090000_%shealth.csv@uptime;mem_free\n' % tag +
+            '@20260726_090000_%shealth.csv@1000000;90000\n' % tag +
+            '@20260726_090000_%simu_bno055.csv@uptime;roll\n' % tag +
+            '@20260726_090000_%simu_bno055.csv@1000000;3\n' % tag)[0])
+
+    expected = {'health.csv', 'imu_bno055.csv'}
+    assert keys('') == expected, 'legacy tag-less capture'
+    assert keys('989510_') == expected, 'the board random disambiguator'
+    assert keys('catapult-run3_') == expected, 'an operator label from recorder.session'
+
+    # a lone stream still gets its numeric tag stripped -- digits can only ever be a tag
+    assert set(flight_telemetry.parse('@20260726_090000_1_flight.csv@uptime;v\n')[0]) == {'flight.csv'}
+
+    """
+    The trap that makes this subtle: per-servo streams SHARE a leading word by construction, and a
+    servo-only capture is exactly what a fin bench run produces. Stripping 'servo_' as if it were a
+    tag would break the fins.csv synthesis every fin tool depends on.
+    """
+    streams, _logs = flight_telemetry.parse(
+        '@20260726_090000_servo_yaw.csv@uptime;angle\n'
+        '@20260726_090000_servo_yaw.csv@1000000;95\n'
+        '@20260726_090000_servo_eleron_left.csv@uptime;angle\n'
+        '@20260726_090000_servo_eleron_left.csv@1000000;85\n')
+    assert 'servo_yaw.csv' in streams, sorted(streams)
+    assert streams['fins.csv'].fields == ['eleron_left', 'yaw'], streams['fins.csv'].fields
+
+
+def test_a_spliced_capture_is_reported_not_swallowed():
+    """
+    Two boots appended into one file must be VISIBLE, not silently half-eaten.
+
+    When two recorder sessions land on the same prefix the Luckfox appends, so the file carries a
+    second `uptime;...` header partway down. The parser used to drop that row on the floor (it fails
+    the uptime parse), leaving a capture that looks like one long flight whose clock restarts midway --
+    every duration and rate then spans two flights. Nothing here can repair it (the rows carry no boot
+    identity), so the requirement is simply that it is detected and the rows survive.
+    """
+    streams, _logs = flight_telemetry.parse(
+        '@20260726_090000_1_x.csv@uptime;v\n'
+        '@20260726_090000_1_x.csv@1000000;5\n'
+        '@20260726_090000_1_x.csv@uptime;v\n'      # <- second boot appended into the same file
+        '@20260726_090000_1_x.csv@1000;7\n')
+    assert flight_telemetry.spliced(streams) == ['x.csv']
+    assert len(streams['x.csv'].rows) == 2, 'the data rows must survive the detection'
+
+    clean, _logs = flight_telemetry.parse('@20260726_090000_1_x.csv@uptime;v\n'
+                                          '@20260726_090000_1_x.csv@1000000;5\n')
+    assert flight_telemetry.spliced(clean) == [], 'a single session must not be flagged'
+
+
 def test_every_provided_quantity_has_a_consumer():
     """
     A quantity a device PROVIDES but nobody READS is a provider left behind by a refactor -- fused,
@@ -279,6 +341,9 @@ test_airspeed_calibration_recovers_a_known_density()
 test_airspeed_calibration_from_an_assembled_capture()
 test_ticks_us_wraparound_is_unwrapped()
 test_parser_edge_cases()
+test_session_tail_variants_all_key_the_same()
+test_a_spliced_capture_is_reported_not_swallowed()
 test_every_provided_quantity_has_a_consumer()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, svg render, '
-      'airspeed calibration fit, parser edge cases, provider/consumer closure')
+      'airspeed calibration fit, parser edge cases, session-tag eras, '
+      'spliced-capture detection, provider/consumer closure')

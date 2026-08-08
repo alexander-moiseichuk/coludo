@@ -429,6 +429,11 @@ def main():
         streams, logs = flight_telemetry.parse(handle.read())
     if not streams:
         sys.exit('no telemetry streams found in %s' % args.capture)
+    damaged = flight_telemetry.spliced(streams)
+    if damaged:
+        # two boots appended into one file -- the plot would draw them as one flight; see flight_kpi
+        print('!! SPLICED CAPTURE -- two recorder sessions share this prefix: %s' % ', '.join(damaged))
+        print('!! the report below spans BOTH boots and its timeline is not one flight')
     trajectory, series = build(streams, logs, go, make_subplots, args.motor)
     write_html(trajectory, series, args.out, pio, 'cdn' if args.cdn else True)
     print('wrote %s (%d streams, %d log lines)' % (args.out, len(streams), len(logs)))

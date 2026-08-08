@@ -12,9 +12,12 @@ stays importable in the test suite; the plotly rendering lives in flight_report.
 
 import re
 
-# the session prefix on each telemetry @tag: YYYYMMDD_HHMMSS, optionally with a _<rand> disambiguator
-# (recorder.session()); both shapes strip down to the bare file name.
-_SESSION = re.compile(r'^\d{8}_\d{6}(?:_\d+)?_')
+# The date/time every session tag opens with. What FOLLOWS it varies by firmware era and config: a
+# 6-digit random the board synthesises, an operator label CC set via `recorder.session`, or -- on the
+# oldest captures, before the disambiguator existed -- nothing at all. Those are the same SHAPE
+# ('taster_imu_bno055.csv' vs 'imu_bno055.csv'), so the extra token is DERIVED FROM THE DATA by
+# _session_tail rather than guessed by pattern.
+_SESSION = re.compile(r'^\d{8}_\d{6}_')
 _SERVO = re.compile(r'^servo_(.+)\.csv$')  # a board's per-servo stream -> the surface name it drives
 
 
@@ -25,6 +28,7 @@ class Stream:
         self.name: str = name  # the file, e.g. 'adxl375.csv' (session prefix stripped)
         self.fields: list = []  # column names after the leading 'uptime'
         self.rows: list = []  # [uptime_us, v1, v2, ...] per row (floats; '' for a missing/blank cell)
+        self.spliced: bool = False  # a second header row appeared -> two boots appended into this file
 
     def column(self, field: str):
         """
@@ -175,6 +179,57 @@ def _unwrap(streams: dict, logs: list) -> None:
         previous = stamp + offset
 
 
+def _session_tail(names: list) -> str:
+    """
+    The extra session token shared by every tag in ONE capture, or '' when there is none.
+
+    Args:
+        names - the post-date/time remainders of every tag seen in the capture.
+
+    Returns:
+        The common leading token including its underscore, or '' when there is none.
+    """
+    if not names:
+        return ''
+    if any(_SERVO.match(name) for name in names):
+        """
+        A name that ALREADY parses as a bare 'servo_<surface>.csv' proves there is no tag: with one
+        present those names read '<tag>_servo_yaw.csv' and cannot match. Without this, a capture whose
+        streams happen to share a structural prefix -- a servo-only capture does -- has that prefix
+        mistaken for a session tag, and stripping it breaks the very fin synthesis that depends on it.
+        """
+        return ''
+    heads = {name.split('_', 1)[0] for name in names if '_' in name}
+    if len(heads) != 1:
+        return ''  # streams disagree -> no shared tag
+    head = heads.pop()
+    if '.' in head:
+        return ''  # a tag never contains a dot; this is a lone stream name like 'laser_agl.csv'
+    if head.isdigit():
+        return '%s_' % head  # unambiguous: no stream is named '<digits>_...', so it can only be the tag
+    """
+    A WORD tag ('taster') is shape-identical to a stream's first word ('imu'), so it needs corroborating
+    evidence: EVERY stream must carry it. A single name with no underscore at all ('health.csv') is proof
+    there is no shared tag -- and every real capture has several such streams.
+    """
+    if len(names) >= 2 and all('_' in name for name in names):
+        return '%s_' % head
+    return ''
+
+
+def spliced(streams: dict) -> list:
+    """
+    The streams that carry more than one recorder session, i.e. two boots appended into one file.
+
+    Args:
+        streams - the parsed {file -> Stream} map.
+
+    Returns:
+        The sorted names of spliced streams; empty when the capture is one clean session.
+    """
+    return sorted(name for name, stream in streams.items() if stream.spliced)
+
+
 def parse(text: str):
     """
     Parse a raw capture into aligned streams and log lines.
@@ -189,7 +244,12 @@ def parse(text: str):
     """
     streams = {}
     logs = []
-    for raw in text.splitlines():
+    lines = text.splitlines()
+    # first pass: learn this capture's session tail before any stream is keyed by it
+    tail = _session_tail(sorted({_SESSION.sub('', line[1:].partition('@')[0])
+                                 for line in (raw.strip() for raw in lines)
+                                 if line.startswith('@') and line[1:].partition('@')[2]}))
+    for raw in lines:
         line = raw.strip()
         if not line:
             continue
@@ -197,13 +257,28 @@ def parse(text: str):
             tag, _, row = line[1:].partition('@')
             if not row:
                 continue
-            name = _SESSION.sub('', tag)  # 'YYYYMMDD_HHMMSS_imu.csv' -> 'imu.csv'
+            name = _SESSION.sub('', tag)  # 'YYYYMMDD_HHMMSS_<tail>imu.csv' -> '<tail>imu.csv'
+            if tail and name.startswith(tail):
+                name = name[len(tail):]  # ... -> 'imu.csv'
             stream = streams.get(name)
             if stream is None:
                 stream = streams[name] = Stream(name)
             cells = row.split(';')
-            if not stream.fields and cells[0] == 'uptime':
-                stream.fields = cells[1:]  # the header row
+            if cells[0] == 'uptime':
+                """
+                A header row. A SECOND one in the same stream means two boots wrote the same file --
+                the Luckfox appends, so their rows are now interleaved with uptime restarting midway,
+                and no downstream parsing can separate them. That happens when two sessions land on the
+                same prefix: the old 3-digit random collided about 12 times in 150 unsynced boots, and a
+                stale `recorder.session` in a saved config collides EVERY boot. The corruption used to
+                be invisible here -- the repeat header failed the uptime parse and was dropped silently
+                -- so it is flagged on the stream, and `spliced()` puts it in front of whoever reads the
+                capture. Nothing is thrown away: the rows still parse, they are just not one flight.
+                """
+                if stream.fields:
+                    stream.spliced = True
+                else:
+                    stream.fields = cells[1:]
             else:
                 values = [_number(cell) for cell in cells]
                 try:

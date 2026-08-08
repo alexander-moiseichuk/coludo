@@ -189,6 +189,22 @@ identical behaviour every time.
 - **`components`** — the declarative hardware list. Each entry has a `name`, a `driver`, a
   `bus` reference, an optional `addr`, an `enabled` flag, and a `provides` map. JSON has no
   hex literals, so addresses are decimal (`0x28` → `40`); `config_default.py` may use hex.
+- **`recorder`** — PSRAM ring sizes (`tlm_capacity`, `log_capacity`, `cell_size`), the stats
+  cadence (`stats_ms`), and the optional **`session`** — the prefix every capture file on the
+  Luckfox is named by, `<session>_<stream>.csv`. Normally absent: the board then synthesises
+  `YYYYMMDD_HHMMSS_<6-digit random>`. Set it from CC to assign the **whole** prefix verbatim, e.g.
+  `20260807_143012_catapult-run3`.
+  > **Keep the `YYYYMMDD_HHMMSS_<tag>` shape.** The board has no battery-backed RTC, so left to
+  > itself its date is 2000-01-01 and only the random part separates one boot from the next — CC
+  > has the trustworthy clock, and a run label there makes a capture self-identifying on disk.
+  > Host tools strip the date/time by pattern and then **derive** the trailing tag from the capture
+  > (`flight_telemetry._session_tail`), so tag-less, random-tagged and labelled captures all parse
+  > to the same stream names.
+  >
+  > ⚠️ **Set it per run, or leave it out.** Config is immutable-per-run and *saved*, so a `session`
+  > left behind is reused verbatim by every later boot — a guaranteed collision, strictly worse than
+  > the random suffix it replaces. Colliding boots **append into each other's files**: two flights
+  > land in one CSV with uptime restarting midway, which no downstream parsing can separate.
 
 ### Fusion is derived, not duplicated
 
