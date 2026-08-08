@@ -120,12 +120,49 @@ def _peak_g(stream) -> tuple:
     times, ax = stream.column('ax')
     _, ay = stream.column('ay')
     _, az = stream.column('az')
-    peak, when = 0.0, 0.0
+    """
+    Non-finite samples are DROPPED before anything is computed. A NaN here is a corrupted telemetry
+    record (flight_telemetry maps an unparseable cell to nan rather than letting a string reach the
+    arithmetic), and NaN poisons every comparison silently: `min`/`max` return whichever operand they
+    saw first, so a median filter built on them passes the garbage straight through. Found on a real
+    board capture -- a lone 21 g on the ADXL375 sat directly beside a nan, i.e. it was the corrupt
+    record's neighbour, not a shock. Left in, it would have argued to KEEP the +/-200 g backstop.
+    """
+    magnitudes, stamps = [], []
     for moment, x, y, z in zip(times, ax, ay, az):
         magnitude = math.sqrt(x * x + y * y + z * z)
-        if magnitude > peak:
-            peak, when = magnitude, moment
+        if magnitude == magnitude and magnitude != float('inf'):  # nan != nan
+            magnitudes.append(magnitude)
+            stamps.append(moment)
+    if not magnitudes:
+        return 0.0, 0.0, 0
+    times = stamps
+    """
+    MEDIAN-FILTER the peak. A raw max is one sample, and one sample is exactly what a bad SPI read
+    looks like -- found on a real board capture where the ADXL375 (known-intermittent on SPI, and
+    logging `setup attempt 1/3 failed` that boot) reported a lone 21 g while the LSM6DSO32 beside it,
+    sampling the same window at the same rate, never exceeded 3.3 g. A genuine shock moves both.
+    Since this number decides whether the +/-200 g backstop stays on the board, an isolated glitch must
+    not cast the vote: a 3-sample median keeps any event that lasts more than one sample and discards
+    the ones that do not.
+    """
+    filtered = [max(min(magnitudes[i - 1], magnitudes[i]), min(max(magnitudes[i - 1], magnitudes[i]),
+                magnitudes[i + 1])) for i in range(1, len(magnitudes) - 1)] or magnitudes
+    peak = max(filtered)
+    when = times[magnitudes.index(peak)] if peak in magnitudes else times[0]
     return peak, when, len(times)
+
+
+def _raw_peak(stream) -> float:
+    """The UNFILTERED max |a| -- compared against the filtered peak to expose single-sample glitches."""
+    if stream is None or 'ax' not in stream.fields:
+        return 0.0
+    _t, ax = stream.column('ax')
+    _t, ay = stream.column('ay')
+    _t, az = stream.column('az')
+    values = [math.sqrt(x * x + y * y + z * z) for x, y, z in zip(ax, ay, az)]
+    values = [v for v in values if v == v and v != float('inf')]  # drop corrupt (nan) records
+    return max(values) if values else 0.0
 
 
 def _accel_envelope(streams) -> None:
@@ -160,6 +197,11 @@ def _accel_envelope(streams) -> None:
     if backstop_n:
         print('  peak |a| adxl : %6.1f g at t=%.1fs (%d samples, +/-%.0f g range)'
               % (backstop_peak, backstop_when, backstop_n, _BACKSTOP_RANGE_G))
+        raw = _raw_peak(backstop)
+        if raw > backstop_peak * 1.5 + 1.0:  # the max is far above anything that lasted 2 samples
+            print('    (raw max %.1f g was a SINGLE sample -- treated as a glitch, not a shock;'
+                  % raw)
+            print('     a real event registers on consecutive samples and on the other accel too)')
     if primary_n and primary_peak >= _PRIMARY_RANGE_G * _CLIP_FRACTION:
         print('  high-g verdict: KEEP the +/-200 g backstop -- the primary reached %.1f g, at/near its '
               '+/-%.0f g rail (clipping)' % (primary_peak, _PRIMARY_RANGE_G))
