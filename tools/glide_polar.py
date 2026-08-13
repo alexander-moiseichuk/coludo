@@ -4,11 +4,16 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 Measure the airframe's GLIDE QUALITY (L/D) from a flight capture -- the number the whole simulation
 rests on.
 
-`sim_model.trim_sink` is currently a guess: 7.0 m/s, "air quality 2", the deliberately pessimistic
-worst-case floor (L/D 2). The real airframe is expected at L/D 4-6, and that difference decides real
-things -- the endgame study (doc/sims/TMS-7_endgame_x3) found the converging 'ov' pattern WINS at
-quality 5 and LOSES at quality 2. So every landing-accuracy claim we make is conditional on a number
-nobody has measured. This tool measures it.
+`sim_model.AIR_QUALITY` was a guess for most of this project's life: L/D 2, the deliberately
+pessimistic worst-case floor (7.0 m/s of trim sink). That difference decides real things -- the
+endgame study (doc/sims/TMS-7_endgame_x3) found the converging 'ov' pattern WINS at quality 5 and
+LOSES at quality 2 -- so every landing-accuracy claim rested on it.
+
+It is now measured: **5.5**, set on 2026-08-12 from a hand-toss glide ratio (TMS-7B, 8.0 m of glide
+from a 1.40 m release against a 2.70 m ballistic reference thrown with an inert dummy of equal mass).
+That measurement is crude by this tool's standards -- one number from a 1.5 s flight, below trim speed
+-- which is exactly why this tool still matters: the first capture with a few seconds of steady glide
+supersedes it, and the printout below flags any disagreement with the shipped constant.
 
 L/D = horizontal speed / sink rate, and crucially that needs only a STEADY SEGMENT, not a long glide:
 a catapult launch from 1-2 m gives a couple of seconds, which is plenty when the sink is ~1.8 m/s and
@@ -29,11 +34,13 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'glider'))
 import flight_telemetry  # noqa: E402
+import sim_model  # noqa: E402
 
 _MIN_SPAN_S: float = 0.8      # below this a sink fit is noise, not a measurement
 _SETTLE_S: float = 0.4        # skip after the apex: the launch transient is not a glide
-_SIM_TRIM_MS: float = 14.0    # sim_model's trim speed -- trim_sink = _SIM_TRIM_MS / (L/D)
+_SIM_TRIM_MS: float = sim_model.TRIM_SPEED_MS  # the sim's trim speed -- trim_sink = it / (L/D)
 
 
 def _fit_sink(times: list, elevation: list) -> tuple:
@@ -182,12 +189,18 @@ def report(label: str, path: str, start: float, end: float) -> None:
         print('  NOTE: only %.1f s of glide. Launch from more height for a tighter number.'
               % result['span'])
     """
-    Close the loop on the sim: `VF_QUALITY` IS the L/D (sim_model.trim_sink = 14 / quality), so a
-    measured L/D drops straight into every study and stops the landing-accuracy claims resting on a
-    guess. See doc/sims/TMS-7_endgame_x3 -- the endgame pattern choice flips between quality 2 and 5.
+    Close the loop on the sim: `VF_QUALITY` IS the L/D (sim_model.trim_sink = TRIM_SPEED_MS / quality),
+    so a measured L/D drops straight into every study. This is what retired the old guess -- a hand-toss
+    measurement set sim_model.AIR_QUALITY to 5.5 on 2026-08-12; print the delta so a later capture that
+    disagrees with the shipped number is visible rather than quietly divergent.
     """
+    measured_ld = result['lift_drag']
     print('  sim calibration: VF_QUALITY=%.1f  (sim_model.trim_sink = %.2f at its %.0f m/s trim)'
-          % (result['lift_drag'], _SIM_TRIM_MS / result['lift_drag'], _SIM_TRIM_MS))
+          % (measured_ld, _SIM_TRIM_MS / measured_ld, _SIM_TRIM_MS))
+    print('  shipped sim_model.AIR_QUALITY = %.1f  -> this capture is %+.1f (%s)'
+          % (sim_model.AIR_QUALITY, measured_ld - sim_model.AIR_QUALITY,
+             'sim is pessimistic, the safe direction' if measured_ld >= sim_model.AIR_QUALITY
+             else 'sim is OPTIMISTIC -- it promises more glide than the airframe delivers'))
 
 
 def main() -> int:

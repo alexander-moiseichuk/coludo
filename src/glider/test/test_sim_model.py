@@ -86,16 +86,23 @@ def test_gnss_drift():
 def test_stall():
     # the stall floor: a coordinated turn needs airspeed >= V_stall_1g*sqrt(load); below it the
     # wing stalls -> a hard sink break on top of induced drag.
+    # seed each probe AT the trim sink rather than a hardcoded -7.0. That constant used to BE the trim
+    # sink, so the coupling was invisible; once AIR_QUALITY became a measured number the seed no longer
+    # matched the equilibrium and the negative case below passed for the wrong reason (any value above
+    # a fixed -7.5 satisfies it, stalled or not).
+    trim_sink = sim_model.TRIM_SPEED_MS / sim_model.AIR_QUALITY
+
     def _sink_after(bank, speed):  # vu after ONE step at a fixed bank/speed (a clean isolation)
         body = sim_model.Body(0.285, (48.0, 11.0), 100.0, 90.0)
         body.begin_glide()
         body.alt = 100.0  # above ground -> no ground-contact reset of vu
-        body.roll, body.speed, body.vu = bank, speed, -7.0
+        body.roll, body.speed, body.vu = bank, speed, -trim_sink
         body.glide_step(0.02, 0.0, 0.0, 0.0)
         return body.vu
 
-    # NEGATIVE: a trimmed straight glide (14 m/s, level) is ~1.5x above the 1-g stall -> normal trim sink.
-    assert _sink_after(0.0, 14.0) > -7.5  # not stalled, no break
+    # NEGATIVE: a trimmed straight glide (14 m/s, level) is ~1.5x above the 1-g stall -> it HOLDS trim
+    # sink exactly (seeded at equilibrium, so a correct model does not move it).
+    assert _sink_after(0.0, 14.0) > -trim_sink * 1.01, _sink_after(0.0, 14.0)
     # POSITIVE: a 45deg bank (stall speed ~10.7 m/s) flown at 8 m/s is STALLED and sinks HARDER than the
     # same bank flown at 14 m/s (above stall) -- the extra drop is the stall break, not just the load.
     assert _sink_after(45.0, 8.0) < _sink_after(45.0, 14.0) - 0.02, (_sink_after(45.0, 8.0), _sink_after(45.0, 14.0))

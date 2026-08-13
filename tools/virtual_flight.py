@@ -248,7 +248,9 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
 
     body = sim_model.Body(hitl_c.get('liftoff_g', 430) / 1000.0,
                           tuple(scenario['launch']), scenario['elevation_m'], scenario['heading_deg'])
-    body.trim_sink = 14.0 / float(os.environ.get('VF_QUALITY', 2.0))  # air-quality (L/D) sink: 2 = worst-case floor
+    # air-quality (L/D) sink. The DEFAULT is sim_model.AIR_QUALITY -- the same number the board HITL
+    # flies -- so a host study and a board study describe the same airframe unless VF_QUALITY says so.
+    body.trim_sink = sim_model.TRIM_SPEED_MS / float(os.environ.get('VF_QUALITY', sim_model.AIR_QUALITY))
     # robustness knobs (findings §27.20/§27.21); both default OFF so existing studies reproduce exactly
     body.gust = float(os.environ.get('VF_GUST', 0.0))          # 1-sigma gust amplitude (m/s)
     body.gust_tau = float(os.environ.get('VF_GUST_TAU', 3.0))  # gust correlation time (s)

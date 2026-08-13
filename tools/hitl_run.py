@@ -9,7 +9,7 @@ Board-side HITL flight runner (MicroPython, runs ON the board). Deploy it with
 
 It brings up config_hitl (real sensors off; the hitl sim feeds the REAL sequencer/flight/pid/mixer/nav),
 ARMS the controller (else the flight loop holds the fins neutral -> no bank -> no descent), and flies to
-DONE (or a 95 s cap). The Recorder streams every stream to the Luckfox (/userdata/recordings/<session>_*
+DONE (or a 150 s cap). The Recorder streams every stream to the Luckfox (/userdata/recordings/<session>_*
 .csv); pull with adb and assemble with tools/assemble_capture.py. See doc memory `board-data-workflow`.
 """
 
@@ -177,7 +177,7 @@ def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0, wind_dir: fl
         reboot_s: float = 0.0, no_cc: bool = False, attitude_drop_s: float = 0.0,
         gnss_drop_s: float = 0.0) -> None:
     """
-    Fly one HITL scenario to completion (or a 95 s cap), recording every stream to the Luckfox.
+    Fly one HITL scenario to completion (or a 150 s cap), recording every stream to the Luckfox.
 
     `glider_g` is the glider (glide) mass in grams (TMS-7 v3: 285 full, 235 light); the booster adds to
     it for boost then ejects, so a lighter glider glides longer -- the memory-leak stress case.

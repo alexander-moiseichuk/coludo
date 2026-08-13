@@ -163,8 +163,9 @@ def main() -> int:
     parser.add_argument('--launch-height', type=float, default=1.0, help='release height (m)')
     parser.add_argument('--motor', default=None, choices=sorted(sim_model.MOTORS), help='rocket motor')
     parser.add_argument('--mass', type=float, default=0.176, help='airframe mass (kg, default 0.176)')
-    parser.add_argument('--quality', type=float, default=2.0,
-                        help='glide L/D -- MEASURE it with tools/glide_polar.py (default 2.0 = the guess)')
+    parser.add_argument('--quality', type=float, default=sim_model.AIR_QUALITY,
+                        help='glide L/D (default %.1f = sim_model.AIR_QUALITY, the measured airframe)'
+                             % sim_model.AIR_QUALITY)
     parser.add_argument('-o', '--out', default=None, help='overlay HTML path')
     args = parser.parse_args()
     preflight.gate('prediction')
@@ -200,9 +201,11 @@ def main() -> int:
                   % len(active))
             print('        uncontrolled glide, so it will over-predict duration. The gap is the cost of')
             print('        turning, not sim error. Compare against an UNGUIDED glide for a clean check.')
-    if args.quality == 2.0:
-        print('  NOTE: L/D is the DEFAULT GUESS (2.0). Measure it with tools/glide_polar.py and pass')
-        print('        --quality, or this compares the flight against a number nobody verified.')
+    if args.quality == sim_model.AIR_QUALITY:
+        print('  NOTE: L/D is the shipped sim_model.AIR_QUALITY (%.1f), measured by hand toss below trim'
+              % sim_model.AIR_QUALITY)
+        print('        speed -- a FLOOR. Measure this airframe with tools/glide_polar.py once it flies')
+        print('        long enough for a real polar, and pass --quality.')
     if args.out:
         render(real, sim, args.out)
     return 0

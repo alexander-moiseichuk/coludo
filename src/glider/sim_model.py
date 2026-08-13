@@ -55,7 +55,27 @@ bank (>~66 deg at trim) or when a degraded speed sags. This is the physical limi
 endgame bank (in guidance) is gated to respect -- the sim PENALISES a gate that over-commands.
 """
 _V_STALL_1G = 9.0       # m/s -- 1-g stall speed (below the 14 m/s trim)
-_V_TRIM = 14.0          # m/s -- the speed the airframe trims to; the polar's minimum-sink point
+TRIM_SPEED_MS: float = 14.0  # public: the host tools derive a sink from it (glide_polar, flight_predict)
+_V_TRIM = TRIM_SPEED_MS      # legacy in-module alias (the physics below reads _V_TRIM throughout)
+"""
+AIR QUALITY is the glide L/D, and it is the ONE number the whole sim's energy budget hangs on:
+`trim_sink = TRIM_SPEED_MS / AIR_QUALITY`, so it sets how long a flight lasts and therefore how much
+of the endgame the glider gets to fly. It lives here, once, because the board HITL and the host
+virtual flight must not disagree about the airframe -- they are the same physics by construction, and
+a second copy of this number is how they would silently drift apart.
+
+MEASURED, not guessed, since 2026-08-12: 5.5, the midpoint of a hand-toss glide-ratio measurement on
+TMS-7B (8.0 m of glide from a 1.40 m release, against a 2.70 m ballistic reference thrown with an
+inert dummy of the same mass -- L/D 5.3-5.7 over the residual distance/height uncertainty). It
+replaces the long-standing worst-case floor of 2.0, which was an explicit placeholder awaiting
+exactly this measurement.
+
+Treat 5.5 as a FLOOR rather than a best estimate. It was measured at ~5 m/s, below the airframe's
+trim speed and at Re ~44 000, where a thin wing is well short of its best L/D; the figure at the
+7-10 m/s a catapult or boost delivers should be better. The sim being slightly pessimistic is the
+safe direction -- it under-promises endurance and range.
+"""
+AIR_QUALITY: float = 5.5
 """
 DRAG POLAR: sink varies with AIRSPEED, not just bank (findings §27.22). `trim_sink` is the sink AT trim;
 away from it the classic decomposition applies -- profile/parasite drag grows as v^3, induced drag as
@@ -173,7 +193,7 @@ class Body:
         self.pn = 0.0          # position north (m from pad)
         self.alt = 0.0         # altitude above the pad (m)
         self.vu = 0.0          # vertical speed (m/s)
-        self.trim_sink = 7.0   # trim sink (m/s) at load 1 = 14/(L/D); 7.0 = "air quality 2" worst-case polar
+        self.trim_sink = TRIM_SPEED_MS / AIR_QUALITY  # trim sink (m/s) at load 1; see AIR_QUALITY above
         self.speed = 0.0       # horizontal airspeed (m/s)
         self.heading = glide_heading  # deg (0 = north)
         self.roll = 0.0        # deg
@@ -334,11 +354,11 @@ class Body:
         heading_rad = math.radians(self.heading)  # cached: pe + pn reuse it (was 2 radians() calls)
         self.speed += (14.0 - self.speed) * 0.5 * dt
         """
-        sink: the straight-TRIM glide settles at ~-7 m/s = "air quality 2", the WORST-CASE polar
-        (14 m/s / L/D 2: 200 m of altitude buys ~400 m of air path). Deliberately pessimistic:
-        the real airframe is expected at quality 4-6 (capacity ~10 min aloft), but simulating
-        that makes every HITL campaign crazy long -- the sim stays conservative and the polar
-        RE-CALIBRATES from the first real glide telemetry. A bank raises sink by the induced-drag
+        sink: the straight-TRIM glide settles at -TRIM_SPEED_MS/AIR_QUALITY, so at the measured
+        quality 5.5 that is ~-2.5 m/s (200 m of altitude buys ~1100 m of air path, against the
+        ~400 m the old worst-case floor of 2.0 assumed). This is the re-calibration that docstring
+        used to promise: the number is now measured off the airframe rather than held pessimistic
+        while waiting for telemetry. A bank raises sink by the induced-drag
         law (load factor n^1.5: x1.24 at 30 deg, x1.68 at 45) -- the physical cost, replacing the
         old raw G*(1-cos) term (~10x too harsh, every turn hemorrhaged what trim saved). An
         off-trim pitch still adds sink, so holding trim flies longest and altitude bleeds through

@@ -32,7 +32,7 @@ constant, so a config predating a new sensor/section is visible instead of silen
 moved key, a changed default value. Do NOT bump for a comment or a docstring edit. Bumping is what turns
 'my new sensor never ran' into a reported mismatch.
 """
-CONFIG_VERSION: str = '20260725'  # mg90s yaw + airspeed_sdp810 + this version field
+CONFIG_VERSION: str = '20260812'  # recorder.session prefix + measured reachability glide_ratio 5.5
 
 
 def default() -> dict:
@@ -513,10 +513,19 @@ def default() -> dict:
 
     """
     reachability (flight panel): nominal glide ratio (L/D) -> reach = glide_ratio * elevation vs the
-    distance to the zone -> 'zone reachable y/n'. Conservative default (the quality-2 polar is ~2; a
-    real airframe re-derives it from the first glide telemetry).
+    distance to the zone -> 'zone reachable y/n'.
+
+    5.5 is the MEASURED airframe (see sim_model.AIR_QUALITY -- a hand-toss glide ratio on TMS-7B,
+    2026-08-12), replacing the 3.0 that was carried while the polar was a guess. It stays honest as a
+    conservative value even though it is no longer a guess: the measurement was taken below trim speed
+    at low Reynolds number, so it is a FLOOR, and the panel under-promising reach is the safe error --
+    it says 'unreachable' early rather than talking the operator into a zone the glider cannot make.
+
+    ADVISORY ONLY: this feeds tasks/flight._flight_panel() for the CC dashboard and steers nothing. The
+    guidance does not consult it, which is why the old 3.0 cost nothing in flight -- but it did tell the
+    operator the wrong thing about a zone that was in fact reachable.
     """
-    reachability = {'glide_ratio': 3.0}
+    reachability = {'glide_ratio': 5.5}
 
     """
     wind estimation (wind.py) -- the estimator owns this `wind` subtree (Inspectable, CC-tunable):
