@@ -262,6 +262,20 @@ Plumbing it backwards is **not damaging** and not a calibration problem — the 
 its ports are symmetric, so it simply reads negative. Fix by swapping the tubes or negating in the
 driver; no recalibration.
 
+**Build convention for the remaining units — let the LENGTH carry the label.** Keep **P+ at full
+length** and cut **P− to half**. After that the part is self-documenting: the long barb is the pitot,
+and no viewpoint, silkscreen or memory is involved. Use the pin anchor above once, to decide which one
+to cut; the length encodes it permanently for the rest of the build and for whoever opens the airframe
+next.
+
+Cut P− to *half*, not flush, deliberately — it stays long enough to push a tube onto, so a wrong call
+is still recoverable by swapping the two lines instead of by scrapping the sensor. (Half also stays
+within the "≥ 1 cm, ~2 cm clear of the camera board" the bay wants.)
+
+The asymmetry is pneumatically harmless: unequal tube volume shifts the *response time* of each side by
+milliseconds at these lengths, not the steady reading, and the airspeed the governor consumes is a
+steady-flight quantity.
+
 **Plumbing (integrated into the printed body, sensor fully inside — do NOT strip the calibrated
 flow-through cap):**
 - **P+ (total) → a forward-facing pitot** integrated into the body, parallel to the body bottom, on the
