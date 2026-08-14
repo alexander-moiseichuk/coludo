@@ -8,10 +8,12 @@ average-till-read) and validates one CRC-checked frame; run() reads the 9-byte f
 the tared dynamic pressure (a `fixed` fixnum, Pa × SCALE) and derives airspeed once, publishing both to
 the databoard. Graceful: nothing acks / a corrupt frame -> setup False -> skipped.
 
-Bench-verified: 0x25 on i2c:0 (SDA 7 / SCL 8), scale factor 60 (Pa = raw/60), zero ~0.02 Pa. Tube
-polarity (blow-verified): P+ = pitot (total), P- = interior static. The interior-static PRESSURE bias is
-tared out by `zero_offset_pa` (a pad tare, `update {"zero": true}`); the position-span error folds into
-`air_density`, the single q->v knob (a GNSS-vs-q calm pass trims it).
+Bench-verified: 0x25 on i2c:0 (SDA 7 / SCL 8), scale factor 60 (Pa = raw/60), zero ~0.2 Pa. Tube
+polarity (blow-verified 2026-08-14, and anchored to a PIN because left/right got it wrong once):
+P+ = the barb OPPOSITE the '1'/SCL mark -> pitot (total); P- = the '1'/SCL-side barb -> interior
+static. The interior-static PRESSURE bias is tared out by `zero_offset_pa` (a pad tare,
+`update {"zero": true}`); the position-span error folds into `air_density`, the single q->v knob
+(a GNSS-vs-q calm pass trims it).
 
 INTEGER internals, ONE float: the raw scaling and the pad-tared dynamic pressure stay a `fixed` fixnum
 (a small int, so the store never boxes). Airspeed = sqrt(2q/rho) is the ONE float, computed ONCE per read

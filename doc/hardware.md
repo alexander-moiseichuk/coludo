@@ -216,6 +216,52 @@ pressure, one airspeed float per read) fuses into the fin governor as the **dire
 of the accel+GNSS backbone; it rails past ±500 Pa (boost / a steep dive), where the governor drops back to
 the accel backbone.
 
+### Pins and tube polarity
+
+Pins number from the one marked **"1"** on the package; the datasheet defines pin 1 = SCL.
+
+| Pin | Name | Connect to |
+| --- | --- | --- |
+| **1** (marked ●) | **SCL** | I²C clock — GPIO **8** (`i2c:0`) |
+| **2** | **VDD** | **3.3 V** |
+| **3** | **GND** | ground |
+| **4** | **SDA** | I²C data — GPIO **7** (`i2c:0`) |
+
+```
+  looking AT THE PIN SIDE (pins toward you):
+
+     [4]    [3]    [2]    [1●]        ● = the "1" mark
+     SDA    GND    VDD    SCL
+      |                      |
+     P+                     P−        measured -- see below
+   (pitot)               (static)
+```
+
+**Anchor each tube to a PIN, never to "left" or "right".** Left/right swaps with which face you look
+at, and that ambiguity produced a *wrong recorded result* here — see below. Stated pin-wise there is
+nothing to get backwards:
+
+- **P+** (total → the nose pitot) is the barb on the **SDA / pin-4 side**, i.e. **opposite the "1" mark**.
+- **P−** (static → the interior bay) is the barb on the **SCL / pin-1 side**.
+
+Measured 2026-08-14 on a unit that had already had **one barb cut off**, which is what makes it
+conclusive: with a single tube left there is no left/right to confuse. Blowing it produced **eight
+sustained plateaus pinned at the +546 Pa rail (116 railed samples, longest 4.2 s) and not one railed
+negative sample**. Blowing raises the blown port, so that port is P+. The short (≤0.8 s, never railing)
+negative dips in the trace each land immediately *before* a rail — the inhale before the blow, not the
+port.
+
+> ⚠️ **This reverses the 2026-07-26 bench note**, which recorded "right tube = P+, left tube = P−" and
+> was repeated in `test/live_pitot.py` and `field_test.md`. That run read its *signs* correctly — the
+> sensor was **upside-down**, so "left" then and "left" later were opposite barbs. Nothing was wrong
+> with the instrument or the method; the label frame moved. Which is the whole reason this section
+> names a pin and not a side. It also means the design intent holds as written: the **P− barb is the
+> one to cut back to ~2 cm** for the interior bay, and P+ is the one that must reach the nose.
+
+Plumbing it backwards is **not damaging** and not a calibration problem — the cell is differential and
+its ports are symmetric, so it simply reads negative. Fix by swapping the tubes or negating in the
+driver; no recalibration.
+
 **Plumbing (integrated into the printed body, sensor fully inside — do NOT strip the calibrated
 flow-through cap):**
 - **P+ (total) → a forward-facing pitot** integrated into the body, parallel to the body bottom, on the

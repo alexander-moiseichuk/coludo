@@ -3,7 +3,8 @@ Live SDP810 readout: verify the governor's pitot BAND against real breath pressu
 
 Prints the tared dynamic pressure, the derived airspeed and the verdict the governor would reach --
 IGNORED below pitot_min_ms (tare noise / a blocked tube), TRUSTED in band, IGNORED above pitot_max_ms
-(a railed cell). Blow into P+ (the RIGHT tube) to drive it through the floor. Ctrl-C / timeout ends it.
+(a railed cell). Blow into P+ -- the barb OPPOSITE the '1'/SCL mark, never identified by left/right
+(see doc/hardware.md) -- to drive it through the band. Ctrl-C / timeout ends it.
 """
 
 import asyncio
@@ -27,7 +28,8 @@ async def main():
         return
     flight = {component['name']: component for component in Ctrl.config['components']}['flight']
     band = governor.GovernorConfig(flight)
-    print('pitot band: %.1f .. %.1f m/s   (blow into P+, the RIGHT tube)' % (band.pitot_min_ms, band.pitot_max_ms))
+    print('pitot band: %.1f .. %.1f m/s   (blow P+, the barb opposite the "1"/SCL mark)'
+          % (band.pitot_min_ms, band.pitot_max_ms))
     print('%8s %10s %9s   %s' % ('t', 'q (Pa)', 'v (m/s)', 'governor verdict'))
     runner = asyncio.create_task(driver.run())
     # HOLD the task: fire-and-forget swallowed a crash in run(), and the script then printed zeros

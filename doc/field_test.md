@@ -94,7 +94,8 @@ phase is one run of it: `mpremote connect $PORT run live_pitot.py` (30 s window)
 - [ ] **At rest** → q sits at the tare floor (**~-0.02 Pa**, ~0.2 m/s equivalent) → verdict **IGNORED
       (below floor)**. A blocked or disconnected tube looks EXACTLY like this, which is why the floor
       exists — a near-zero reading must never reach the estimate
-- [ ] Jog with the **pitot exposed to airflow** (or gently blow the **P+** = RIGHT tube) → **TRUSTED (in
+- [ ] Jog with the **pitot exposed to airflow** (or gently blow **P+** = the barb OPPOSITE the
+      "1"/SCL mark — see hardware.md; do NOT go by left/right) → **TRUSTED (in
       band)**; measured 12–103 Pa → 4.5–13.2 m/s
 - [ ] Confirm the governor's airspeed now tracks the **pitot** (the fin-authority cap tightens as airspeed rises)
 - [ ] Blow **hard** → the cell **rails at ~546 Pa → 30.4 m/s** (a pinned, repeating value) → verdict
