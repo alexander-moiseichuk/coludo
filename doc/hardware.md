@@ -326,18 +326,34 @@ if any overvoltage is still a worry.
                 (isolated)                       │            ~2.4 A if all three
                                       ┌──────────┴─────────┐
                                       │ Cbulk 1000 µF      │  reservoir (decided):
-                                      │  ‖ 10 µF ‖ 100 nF  │  sources the spike AND
+                                      │  ‖ 100 nF          │  sources the spike AND
                                       │  ‖ TVS 5 V (opt.)  │  absorbs the small regen
                                       └──────────┬─────────┘
                                                 GND
   module 0 V ──────────── bond to system GND ───────────────▶ (shared PWM reference)
 ```
 
-**Reservoir capacitor — the decided protection.** A **1000 µF low-ESR aluminium (16 V, 105 °C — or a
-polymer type for the vibration/temperature of a flight article)** plus **10 µF X7R + 100 nF ceramics**,
-placed **right at the servo header** so the spike path (cap → servos) carries no series impedance. Keep
-the module's own output cap as well. 470 µF is the minimum; 2200 µF is fine but watch the power-on inrush
-tripping the module soft-start. Bond the module output − to system ground so the servo PWM shares the
+**Reservoir capacitor — the decided protection.** **TWO capacitors (simplified 2026-08-14 from three):
+a 1000 µF bulk + a 100 nF ceramic**, placed **right at the servo header** so the spike path
+(cap → servos) carries no series impedance. Keep the module's own output cap as well. 470 µF is the
+minimum; 2200 µF is fine but watch the power-on inrush tripping the module soft-start.
+
+The **1000 µF is the one to keep, not 470 µF**, on two grounds. Droop while the converter's loop catches
+up is ΔV = I·Δt/C, so at the measured 2.4 A the bulk sets the margin: over a 100 µs window 1000 µF droops
+0.24 V against 470 µF's 0.51 V, and the MG90S sit near their limit around 4.2 V — the same headroom
+argument that rejects two series diodes. More importantly the **series diode is omitted *because* the
+bulk cap is the regen sink** ("ΔV = Q/C is tiny for a small kick into 1000 µF"): halving the reservoir
+doubles that kick and quietly erodes the reasoning that justified leaving the diode out. The two
+decisions are coupled — do not shrink the bulk without revisiting the diode.
+
+**The dropped part is the 10 µF X7R**, and it is the right one to lose: the 1000 µF covers the servo
+transient and the 100 nF the high-frequency bypass, which are the two jobs that matter here. It is not
+free, though — the 10 µF bridged the band between them, roughly 100 kHz–1 MHz, which is exactly where
+the ND3A05SD switches. Two mitigations, both already in the design: the module keeps its own output cap
+(local to its own ripple), and for a flight article **prefer the polymer 1000 µF over aluminium
+electrolytic** — its much lower ESR holds impedance down through most of the band the 10 µF was
+filling, so the simplification costs little. With a plain aluminium part the mid-band notch is real,
+if still not flight-critical. Bond the module output − to system ground so the servo PWM shares the
 logic reference.
 
 **If a diode is ever wanted** (a bigger single motor, or reverse-polarity protection): use a **Schottky**,
@@ -574,8 +590,8 @@ dimensions by hand.
 
 The v0.2 intent is a single board carrying an **energy island**: the main board fed 5 V from that
 island rather than from USB, a boost module supplying Recorder + main board, and the servos on an
-ND3A05SD with three-capacitor protection. Electrically that is what exists today, minus the wires and
-the inter-board grid.
+ND3A05SD with two-capacitor protection (1000 µF + 100 nF). Electrically that is what exists today,
+minus the wires and the inter-board grid.
 
 **The island is what makes the merge safe.** The objection to merging is that it puts ~2.4 A of servo
 return onto the INA226's copper; an energy island *is* the star ground, made explicit at layout time
