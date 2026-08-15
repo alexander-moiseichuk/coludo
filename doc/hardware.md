@@ -349,12 +349,28 @@ decisions are coupled — do not shrink the bulk without revisiting the diode.
 **The dropped part is the 10 µF X7R**, and it is the right one to lose: the 1000 µF covers the servo
 transient and the 100 nF the high-frequency bypass, which are the two jobs that matter here. It is not
 free, though — the 10 µF bridged the band between them, roughly 100 kHz–1 MHz, which is exactly where
-the ND3A05SD switches. Two mitigations, both already in the design: the module keeps its own output cap
-(local to its own ripple), and for a flight article **prefer the polymer 1000 µF over aluminium
-electrolytic** — its much lower ESR holds impedance down through most of the band the 10 µF was
-filling, so the simplification costs little. With a plain aluminium part the mid-band notch is real,
-if still not flight-critical. Bond the module output − to system ground so the servo PWM shares the
-logic reference.
+the ND3A05SD switches. The module keeps its own output cap, local to its own ripple, which covers most
+of it; the residual mid-band notch is real but not flight-critical.
+
+**What the bulk part must be: LOW-ESR. That matters far more than aluminium-vs-polymer.** Two separate
+things happen when the servos snatch 2.4 A — the droop over time is I·Δt/C (capacitance), but the
+INSTANTANEOUS step is I × ESR and lands the moment current flows:
+
+| 1000 µF type | typical ESR @100 kHz | instant drop at 2.4 A |
+| --- | --- | --- |
+| general-purpose aluminium | ~0.15 Ω | **0.36 V** |
+| **low-ESR aluminium (the baseline)** | ~0.04 Ω | 0.10 V |
+| polymer (optional upgrade) | ~0.015 Ω | 0.04 V |
+
+Against a ~0.6–0.8 V budget a general-purpose part spends half of it before the capacitance does any
+work, so the gap general-purpose→low-ESR dwarfs the gap low-ESR→polymer. A **ripple-current rating
+≥ ~1 A at 100 kHz** is the reliable way to tell a low-ESR part from a generic one. Polymer is worth it
+for a flight article for its *mechanical* properties — no electrolyte to dry out, ESR nearly flat when
+cold, better under vibration — not because the electrical margin demands it. **If the only 1000 µF to
+hand is general-purpose, two 470 µF in parallel beat it** (~940 µF at half the ESR), at the cost of the
+part count this simplification just bought back.
+
+Bond the module output − to system ground so the servo PWM shares the logic reference.
 
 **If a diode is ever wanted** (a bigger single motor, or reverse-polarity protection): use a **Schottky**,
 V_F as low as possible, **I_F ≥ 8 A**, **V_RRM ≥ 20 V**, on the **+ rail only** — never one in each line
