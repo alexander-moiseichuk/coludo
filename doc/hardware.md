@@ -304,7 +304,7 @@ Alternative is to connect e.g. from [6F22 9V using plug](https://www.amazon.com/
 
 ## Converter
 The servo rail is driven by a **ND3A05SD DC-DC module (5 V / 3 A, isolated)**, separate from the
-controller rail. **MEASURED (2026-07-25, INA226 on the servo rail @ ~100 Hz, MG90S yaw, 10 × full
+controller rail. **MEASURED (2026-07-25, INA226 then on the servo rail @ ~100 Hz, MG90S yaw, 10 × full
 0↔180° at max slew):** **peak 3.9 W = 0.79 A**, mean during travel ~1.4 W, ~625 mJ per 180° sweep,
 41 mW holding. So three moving together is **~2.4 A peak — inside the 3 A module**, not the ~3.5 A the
 earlier ~1.2 A/servo estimate suggested. (A USB power meter reads only ~2 W here: it updates at a few Hz

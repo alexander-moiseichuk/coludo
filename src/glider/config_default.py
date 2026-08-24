@@ -314,16 +314,38 @@ def default() -> dict:
         'provides': {'agl': {'priority': 0, 'timeout_ms': 100}},
     }
 
+    """
+    INA226 power monitor -- it sits at the BATTERY, not on the 5 V servo rail.
+
+    So in flight it measures the WHOLE system (MCU + servos) at the source, which is what an energy
+    budget wants: one number that accounts for every joule leaving the cell. Vbus therefore tracks the
+    single-cell LiPo, 3.3-4.2 V, NOT 5 V -- a reading near 5 V means it is sensing the wrong node.
+
+    Two consequences that bite when reading captures:
+
+    - On the BENCH the MCU is usually on USB, so the INA sees the servos alone and the idle draw looks
+      implausibly small (measured 5-14 mA). That is the harness, not a healthy board.
+    - Battery-side current is HIGHER than servo-rail current for the same power, by the voltage ratio
+      over converter efficiency. Measured both ways on one servo sweep: 1.33 A x 3.26 V = 4.34 W at the
+      battery against 0.79 A x 5.00 V = 3.95 W at the rail -- 91 % efficiency, and the two measurements
+      confirm each other. It also means the 2026-07-25 servo-rail figures are NOT directly comparable
+      to a flight capture's `power`, which now carries the MCU baseline as well.
+    """
     power_ina226 = {
         'name': 'power_ina226',
         'driver': 'ina226',
         'bus': 'i2c', 'id': 1,  # aft power bus (i2c:1, sda 31 / scl 30); off the forward i2c:0
-        'addr': 0x40,  # INA226, A0=A1=GND (scan-confirmed on i2c:1: mfr 'TI', Vbus ~5 V)
+        'addr': 0x40,  # INA226, A0=A1=GND (scan-confirmed on i2c:1: mfr 'TI'); Vbus = the battery
         'shunt_mohms': 10,  # installed 2512 R010 (10 mΩ); calibrate vs a known current for <1% absolute
         'max_current_ma': 5000,  # Current_LSB = 5000mA/2^15 ≈ 153 µA -> CAL = 167772160//(mA·mΩ) ≈ 3355
         'period_ms': 100,  # 10 Hz poll (conversion ~9 ms at 4-sample averaging)
         'alert_pin': 'ina226_alert',  # INA226 ALERT (open-drain) -> GPIO29: hardware over-current trip
-        'alert_ma': 3000,  # ALERT fires above this (mA) -- over the ~2.4 A 3-servo peak: a stall/short flag
+        # ALERT fires above this (mA) -- a stall/short flag. NOTE 3000 was chosen against the ~2.4 A
+        # 3-servo peak measured on the SERVO RAIL; the INA now measures the BATTERY, where the same
+        # movement draws ~2.8 A at a full cell and ~3.6 A at 3.3 V, so a normal 3-fin slew crosses it.
+        # The alert only COUNTS (transient, no latch -- it cuts nothing), so this corrupts a statistic
+        # rather than a flight; see doc/hardware.md before re-tuning.
+        'alert_ma': 3000,
         'enabled': True,
         'provides': {'voltage': {'priority': 0, 'timeout_ms': 500},
                      'current': {'priority': 0, 'timeout_ms': 500},

@@ -56,7 +56,9 @@ first powered flight.
       > wiring fault that cost real time on 7/25. `sg90.setup()` gives every fin a valid PWM at bring-up,
       > which is why the fault never appears in normal operation. If you must poke a pin directly, hold
       > the other fin pins as **OUTPUT LOW** first.
-- [ ] **Power:** INA226 servo-rail voltage/current sane at idle (no stall/short)
+- [ ] **Power:** INA226 sane at idle. It reads the **battery** (3.3-4.2 V single cell), not the 5 V
+      servo rail -- ~5 V means it is sensing the wrong node. On the bench with the MCU on USB it sees
+      the servos alone, so idle current looks tiny (5-14 mA); on battery it carries the MCU too
 - [ ] **Separation switch:** pads nested → pin reads **HIGH = nested**
 
 ## Phase 3 — Attitude / IMU (pick it up, rotate, tilt)
@@ -77,7 +79,8 @@ first powered flight.
 - [ ] In GLIDING, tilt the glider → **fins deflect to counter** the attitude (stabilisation PID) — confirm the **sense is correct** (a nose-up disturbance drives the fins to push it back)
 - [ ] Rotate the glider relative to the landing zone → fins **bias for the bank-to-turn heading** toward the zone
 - [ ] At ~0 airspeed the **fin-authority cap is wide** (low q, safe); confirm the governor isn't clamping hard on the ground
-- [ ] No servo buzz/overheat; INA226 current stays within the servo-rail budget during active tracking
+- [ ] No servo buzz/overheat; INA226 current stays within budget during active tracking (BATTERY-side
+      current, so ~1.6x the servo-rail figure for the same power -- see hardware.md)
 
 ## Phase 5 — GNSS / position + zone guidance (walk the patch)
 - [ ] Set/confirm the **landing zone** in CC (e.g. `assist` hands a launch/zone position → the mission updates)
