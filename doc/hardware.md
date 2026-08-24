@@ -626,8 +626,13 @@ shunt**, with no signal trace crossing the boundary anywhere else.
 That is **2.7 % of the 215 g light glide mass** (2.1 % of 270 g full), and sink scales as √m, so
 ~1.35 % less sink — before counting the mechanical failure point removed under a measured 3.3–4.3 g
 boost. The two bare boards together are only ~16.7 g, so this is a third of the connector-and-edge
-overhead. Area is not the obstacle: at the same 40 mm width the combined board is ~141 mm long, and
-width is what the body tube constrains.
+overhead. Area is not the obstacle: at the same 40 mm width the combined board is ~141 mm long.
+
+> ⚠️ **Corrected 2026-08-24: LENGTH is the binding constraint, not width.** This paragraph used to
+> end "and width is what the body tube constrains", which is wrong for the built airframe -- the
+> GNSS + main + power boards in series do not fit the TMS-7 body nose-to-tail. Any layout reasoning
+> that trades length for width is therefore backwards. Merging still helps, but because it removes a
+> BOARD FROM THE CHAIN, not because it saves area.
 
 **Two things to get right while merging:**
 
@@ -640,6 +645,28 @@ width is what the body tube constrains.
    5 V. Fed only from the island, that recovery ceases to exist and a wedged board needs the battery
    unplugged. Keep a bench path — a diode-OR from USB 5 V, or a jumper selecting USB or island — or
    accept the DTR/RTS reset as the only route. Decide it at layout, not at the bench.
+
+### Decided direction (2026-08-24): simplify the TMS-7 board, defer the flying wing
+
+Two routes were weighed. **Chosen: shorten the existing board** — move the GNSS onto the main board,
+drop the separate power board via the energy island above, and remove the ADXL375 / LSM6DSO32 *if the
+flight data licenses it* (see below). That takes two boards out of the nose-to-tail chain, which is
+what the length constraint actually needs.
+
+**Deferred ~3 months: "TMS-8", a flying wing** whose wider body would take a shorter, wider board with
+the island built in. It is a sound idea and is not rejected — it is sequenced. The reason is that it
+resets the AERODYNAMICS, not the electronics: `sim_model.AIR_QUALITY` 5.5, the stall bracket, the
+catapult energy calibration and every sim conclusion resting on that polar were all measured on the
+TMS-7 tube body. A flying wing returns the polar to a guess, which is exactly what those measurements
+just eliminated. Build it later on electronics already proven, so one variable changes at a time.
+
+Removal order matters, and is not the obvious one. `hardware.md` classes the **ADXL375 as Optional**
+("LSM6DSO32 ±32 g already covers the 8-12 g boost") and the **LSM6DSO32 as Critical** ("the only gyro
+`rate`"). So dropping the ADXL375 alone is nearly free — ~25x18 mm at no functional cost — while
+dropping both costs the gyro and puts `accel` on the BNO055's ±16 g against an 8-12 g boost. The gyro
+loss is separately recoverable: `drivers/bno055.py` already reads its own gyro every sample (bytes
+12..17 of the block it fetches anyway) and discards it; publishing it as `rate` restores the PID D
+term and the attitude backup with no extra part.
 
 ## v1.0 idea — if boost really stays under 16 g, the IMU stack collapses
 
