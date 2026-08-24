@@ -160,26 +160,24 @@ def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple
         """
         NO DECIMATION: log every sample a driver produces.
 
-        `Telemetry.decimate_us` of 0 does NOT mean "off" -- it INHERITS the recorder global, so
-        switching decimation off means zeroing the global AND clearing the per-device overrides, or
-        the overrides silently keep rate-limiting the very streams this is meant to open up.
+        Set EXPLICITLY per device, never via the global, because the global does not reach them.
+        `Telemetry.__init__` does `decimate_us or Recorder.telemetry_decimate_us`, which LATCHES the
+        global at construction -- and drivers set up BEFORE the recorder task does, so they capture the
+        class default (50 Hz) and never see a configured value. Measured on the board: with
+        `recorder.telemetry_ms` 0 every stream still ran at decimate_us 20000.
 
-        Affordable because almost nothing here samples above the 50 Hz global it replaces: the ADXL375
-        is the only 100 Hz source, so the extra volume is the handful of sensors polling between 20 and
-        100 Hz. It buys full-rate baro and pitot through the glide, which is what L/D is made of.
+        1 ms is the value because 0 means "inherit", not "off" -- the one reading that would silently
+        reinstate the 50 Hz cap. 1 ms caps at 1 kHz, above every source here, so nothing is dropped.
 
-        Applied AFTER the _FULL_RATE pass, which would otherwise put the overrides straight back. And
-        the ADXL's own 10 ms override is CLEARED rather than kept: at today's 100 Hz ODR the two are
-        identical, but the override is a CAP -- raise the ODR later and telemetry would silently stay
-        at 100 Hz while the sensor sampled faster. Inheriting "no decimation" tracks the ODR instead.
-
-        Telemetry RAISES on overflow by policy (logs drop, telemetry does not), so this trades a little
-        of that margin for data. Acceptable on 7C specifically: it carries no control loop for an
-        exception to endanger, and data is the entire point of the airframe.
+        Affordable because almost nothing samples above the 50 Hz it replaces: the ADXL375 is the only
+        100 Hz source. It buys full-rate baro and pitot through the glide, which is what L/D is made
+        of. Telemetry RAISES on overflow by policy, so this spends a little of that margin -- fine on
+        7C, which carries no control loop for an exception to endanger.
         """
-        cfg['recorder']['telemetry_ms'] = 0
+        cfg['recorder']['telemetry_ms'] = 1  # global too, so a stream added later inherits no cap
         for device in cfg['sensors'] + cfg['components']:
-            device.pop('telemetry_ms', None)
+            if device.get('enabled', True):
+                device['telemetry_ms'] = 1
     return cfg
 
 
