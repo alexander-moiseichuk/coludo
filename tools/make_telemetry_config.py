@@ -1,7 +1,11 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-Generate the CATAPULT board.config profiles (TMS-7C telemetry-only, TMS-7D full control).
+Generate the per-airframe board.config profiles (TMS-7C telemetry-only, TMS-7D full control).
+
+Named for what it produces rather than how the airframe is launched: the sequencer thresholds
+below are still sized for the catapult, but the profiles now carry each board's whole identity --
+which devices it physically has, its telemetry rates, its slew concurrency, its id.
 
 The firmware defaults are shaped for a rocket motor and would FAIL on a rubber catapult -- not degrade,
 fail. Sized for the SMALLEST intended hop, a near-vertical ~3 m toss, so the thresholds stay valid for
@@ -39,7 +43,7 @@ The two shock/rate streams are additionally recorded at full 100 Hz rather than 
 see _FULL_RATE below.
 
 Usage:
-    python3 tools/make_catapult_config.py          # writes configs/tms7c.config, configs/tms7d.config
+    python3 tools/make_telemetry_config.py          # writes configs/tms7c.config, configs/tms7d.config
 Then upload the chosen profile to the board as board.config (via CC) and power-cycle.
 """
 
