@@ -88,7 +88,7 @@ _TMS7C_ABSENT: tuple = ('power_ina226', 'imu_lsm6dso32', 'attitude')
 
 
 def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple = (),
-             concurrency: int = None) -> dict:
+             concurrency: int = None, raw_telemetry: bool = False) -> dict:
     """
     Build one catapult profile from the firmware defaults.
 
@@ -103,6 +103,7 @@ def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple
             there, and leaving them enabled costs a failed setup and a failed probe on every boot --
             and `cc arm` refuses on any failed probe.
         concurrency - max fins slewing at once; None keeps the firmware default. See below.
+        raw_telemetry - True logs every sample (no decimation, global or per-device).
 
     Returns:
         The complete config dict, ready to serialise as board.config.
@@ -124,11 +125,19 @@ def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple
     """
     if concurrency is not None:
         cfg['fins']['concurrency'] = concurrency
+
     # sensors and components are SEPARATE top-level lists; the shock/rate streams live under
     # 'sensors', the servos and the flight activity under 'components'
     for sensor in cfg['sensors']:
         if sensor.get('name') in absent:
             sensor['enabled'] = False
+            """
+            Drop `alert_pin` with the part. The INA226's hardware over-current ALERT is gated on that
+            pin resolving, so removing it is what switches the alert off -- NOT `alert_ma: 0`, which
+            computes a trip limit of zero and would fire on any current at all. Moot while the device
+            is disabled, stated so the intent survives someone re-enabling it.
+            """
+            sensor.pop('alert_pin', None)
         if sensor.get('name') in _FULL_RATE:
             sensor['telemetry_ms'] = _FULL_RATE_MS
     for component in cfg['components']:
@@ -139,24 +148,50 @@ def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple
             component['enabled'] = servos
         elif component_name in absent:
             component['enabled'] = False
+            component.pop('alert_pin', None)  # no part -> no hardware ALERT; see the sensors loop
         elif component_name == 'flight':
             # set EXPLICITLY both ways, never only cleared: the firmware default ships `flight`
             # disabled, so a profile that merely refrains from disabling it produces a 7D that would
             # have flown with no control loop at all. Caught by validating the output instead of
             # trusting it.
             component['enabled'] = flight
+
+    if raw_telemetry:
+        """
+        NO DECIMATION: log every sample a driver produces.
+
+        `Telemetry.decimate_us` of 0 does NOT mean "off" -- it INHERITS the recorder global, so
+        switching decimation off means zeroing the global AND clearing the per-device overrides, or
+        the overrides silently keep rate-limiting the very streams this is meant to open up.
+
+        Affordable because almost nothing here samples above the 50 Hz global it replaces: the ADXL375
+        is the only 100 Hz source, so the extra volume is the handful of sensors polling between 20 and
+        100 Hz. It buys full-rate baro and pitot through the glide, which is what L/D is made of.
+
+        Applied AFTER the _FULL_RATE pass, which would otherwise put the overrides straight back. And
+        the ADXL's own 10 ms override is CLEARED rather than kept: at today's 100 Hz ODR the two are
+        identical, but the override is a CAP -- raise the ODR later and telemetry would silently stay
+        at 100 Hz while the sensor sampled faster. Inheriting "no decimation" tracks the ODR instead.
+
+        Telemetry RAISES on overflow by policy (logs drop, telemetry does not), so this trades a little
+        of that margin for data. Acceptable on 7C specifically: it carries no control loop for an
+        exception to endanger, and data is the entire point of the airframe.
+        """
+        cfg['recorder']['telemetry_ms'] = 0
+        for device in cfg['sensors'] + cfg['components']:
+            device.pop('telemetry_ms', None)
     return cfg
 
 
 def main() -> None:
     """Write both catapult profiles to configs/ and report what differs from the defaults."""
     os.makedirs(_OUT, exist_ok=True)
-    for name, board_id, servos, flight, absent, concurrency, note in (
-        ('tms7c', 'TMS-7C', False, False, _TMS7C_ABSENT, 1,
-         'telemetry only -- servos and control DISABLED, the airframe is ballast'),
-        ('tms7d', 'TMS-7D', True, True, (), None, 'full active control'),
+    for name, board_id, servos, flight, absent, concurrency, raw_telemetry, note in (
+        ('tms7c', 'TMS-7C', False, False, _TMS7C_ABSENT, 1, True,
+         'telemetry only -- no decimation, servos and control DISABLED, the airframe is ballast'),
+        ('tms7d', 'TMS-7D', True, True, (), None, False, 'full active control'),
     ):
-        cfg = _profile(name, board_id, servos, flight, absent, concurrency)
+        cfg = _profile(name, board_id, servos, flight, absent, concurrency, raw_telemetry)
         path = os.path.join(_OUT, '%s.config' % name)
         with open(path, 'w') as handle:
             json.dump(cfg, handle, indent=1, sort_keys=True)
