@@ -686,3 +686,19 @@ nothing about a millisecond ejection spike. So: fly one real capture with the AD
 rate through boost, separation and landing; read the actual peak; only then decide what the BNO085
 replaces. Attitude alone is already a win — retiring the ADXL375 needs the shock number specifically.
 The same capture should re-check `launch_g` (2.5 g today, ~1 g of margin against a 3.3 g boost).
+
+> ⚠️ **"Full rate" is 100 Hz today, and that does NOT resolve an ejection spike.** The driver reads one
+> sample per poll, the poll floor is the ~10 ms asyncio floor, and the ODR is set to match at 100 Hz —
+> so anti-alias bandwidth is ~50 Hz and a millisecond event is attenuated in the analogue path before
+> it is ever sampled. Decimation is not the limiter either: `telemetry_ms` 10 against a 10 ms poll is
+> already 1:1, so turning decimation off changes nothing.
+>
+> **A comfortable ~4 g peak from such a capture is therefore evidence about SUSTAINED BOOST ONLY and
+> says nothing about shock** — do not retire the ADXL375 on it. What the capture *does* answer:
+> sustained boost g, L/D and sink, wind, landing impact (tens of ms, so 100 Hz catches it), and the
+> whole pipeline end to end.
+>
+> Measuring shock needs the sensor's 32-sample FIFO drained per poll — 800 Hz gives 8 samples per
+> 10 ms poll, ~40 KB/s of the 92 KB/s recorder link, and ~400 Hz of anti-alias bandwidth. Deliberately
+> NOT done before the first flights: it rewrites a tested driver's read path, and the flight is worth
+> more than the extra number.
