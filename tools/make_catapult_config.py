@@ -73,25 +73,62 @@ _SERVOS: tuple = ('servo_yaw', 'servo_eleron_left', 'servo_eleron_right')
 # just its extreme, which is what a shock trace has to show to be worth anything.
 _FULL_RATE_MS: int = 10  # 100 Hz, matching the sensors' own sample rate
 _FULL_RATE: tuple = ('accel_adxl375', 'imu_lsm6dso32')
+"""
+What TMS-7C does NOT carry, so its config must not expect them.
+
+- power_ina226: 7C flies a small battery->5 V board (~1 A) sized for telemetry alone. There is no
+  current-sense shunt on it, so the part is not merely unused, it is absent.
+- imu_lsm6dso32: this airframe's part has an open DO/MISO line -- silent on SPI and I2C alike --
+  measured 2026-08-24. The `accel` channel falls back to the ADXL375; there is then NO gyro at all.
+- attitude: the complementary-filter backup. It survives a missing gyro (it still has accel levelling
+  and a GNSS-course yaw reference) but its probe() hard-fails on `rate is None`, and cc arm refuses on
+  ANY failed probe -- so on a gyro-less airframe it would block arming while contributing little.
+"""
+_TMS7C_ABSENT: tuple = ('power_ina226', 'imu_lsm6dso32', 'attitude')
 
 
-def _profile(name: str, servos: bool, flight: bool) -> dict:
+def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple = (),
+             concurrency: int = None) -> dict:
     """
     Build one catapult profile from the firmware defaults.
 
     Args:
         name - profile name, recorded in the config so a capture identifies its own provenance.
+        board_id - the airframe identity; it reaches the boot log, CC and every capture, so a config
+            built for one board cannot quietly fly on another.
         servos - False disables all three surfaces (7C flies as ballast, nothing may deflect).
         flight - False disables the control activity (no PID, no mixer, no fin commands at all).
+        absent - devices this airframe does not physically carry, disabled by name. Distinct from
+            `servos`/`flight`, which are a POLICY choice about a fitted part; these are simply not
+            there, and leaving them enabled costs a failed setup and a failed probe on every boot --
+            and `cc arm` refuses on any failed probe.
+        concurrency - max fins slewing at once; None keeps the firmware default. See below.
 
     Returns:
         The complete config dict, ready to serialise as board.config.
     """
     cfg = config_default.default()
     cfg['name'] = name
+    cfg['board']['id'] = board_id
+    """
+    Slew concurrency follows the POWER BOARD, so it is per-profile and never global.
+
+    7C carries a small battery->5 V board rated ~1 A, and one MG90S alone draws ~1.3 A at the battery
+    on a full-throw slew -- three cannot be served. Its surfaces are disabled anyway, so 1 simply
+    stands as the safe value if any are ever fitted for a bench check.
+
+    7D keeps the default 3: it flies the ND3A05SD (5 V / 3 A) against a ~2.4 A three-servo peak, and
+    capping it there would SERIALISE the fin commands the control loop issues together -- a real loss
+    of authority, not a saving. An earlier revision of this generator set 1 for both and would have
+    done exactly that.
+    """
+    if concurrency is not None:
+        cfg['fins']['concurrency'] = concurrency
     # sensors and components are SEPARATE top-level lists; the shock/rate streams live under
     # 'sensors', the servos and the flight activity under 'components'
     for sensor in cfg['sensors']:
+        if sensor.get('name') in absent:
+            sensor['enabled'] = False
         if sensor.get('name') in _FULL_RATE:
             sensor['telemetry_ms'] = _FULL_RATE_MS
     for component in cfg['components']:
@@ -100,6 +137,8 @@ def _profile(name: str, servos: bool, flight: bool) -> dict:
             component.update(_CATAPULT_SEQUENCER)
         elif component_name in _SERVOS:
             component['enabled'] = servos
+        elif component_name in absent:
+            component['enabled'] = False
         elif component_name == 'flight':
             # set EXPLICITLY both ways, never only cleared: the firmware default ships `flight`
             # disabled, so a profile that merely refrains from disabling it produces a 7D that would
@@ -112,11 +151,12 @@ def _profile(name: str, servos: bool, flight: bool) -> dict:
 def main() -> None:
     """Write both catapult profiles to configs/ and report what differs from the defaults."""
     os.makedirs(_OUT, exist_ok=True)
-    for name, servos, flight, note in (
-        ('tms7c', False, False, 'telemetry only -- servos and control DISABLED, the airframe is ballast'),
-        ('tms7d', True, True, 'full active control'),
+    for name, board_id, servos, flight, absent, concurrency, note in (
+        ('tms7c', 'TMS-7C', False, False, _TMS7C_ABSENT, 1,
+         'telemetry only -- servos and control DISABLED, the airframe is ballast'),
+        ('tms7d', 'TMS-7D', True, True, (), None, 'full active control'),
     ):
-        cfg = _profile(name, servos, flight)
+        cfg = _profile(name, board_id, servos, flight, absent, concurrency)
         path = os.path.join(_OUT, '%s.config' % name)
         with open(path, 'w') as handle:
             json.dump(cfg, handle, indent=1, sort_keys=True)
