@@ -89,6 +89,19 @@ What TMS-7C does NOT carry, so its config must not expect them.
   ANY failed probe -- so on a gyro-less airframe it would block arming while contributing little.
 """
 _TMS7C_ABSENT: tuple = ('power_ina226', 'imu_lsm6dso32', 'attitude')
+"""
+What TMS-7D does not carry. It is 7C's list MINUS the INA226, because 7D HAS one and it probes
+healthy -- disabling a fitted, working current sensor would cost the energy budget and, more
+immediately, the servo probe's closed-loop draw check, which is the only thing that distinguishes a
+live servo from a lost PWM pin or an unpowered rail.
+
+Its LSM6DSO32 fails exactly as 7C's does (WHO_AM_I 0x00, silent on SPI at every candidate chip-select
+and on I2C too, while the ADXL375 on the same bus answers). Two independently soldered boards failing
+identically points at the footprint rather than the assembly; disabled here so the airframe is usable
+while that is resolved. `attitude` follows it: the backup runs without a gyro but its probe() does not,
+and cc arm refuses on any failed probe.
+"""
+_TMS7D_ABSENT: tuple = ('imu_lsm6dso32', 'attitude')
 
 
 def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple = (),
@@ -195,7 +208,13 @@ def main() -> None:
     for name, board_id, servos, flight, absent, concurrency, raw_telemetry, note in (
         ('tms7c', 'TMS-7C', False, False, _TMS7C_ABSENT, 1, True,
          'telemetry only -- no decimation, servos and control DISABLED, the airframe is ballast'),
-        ('tms7d', 'TMS-7D', True, True, (), None, False, 'full active control'),
+        # 7D as it flies the telemetry ladder: same data posture as 7C, but the servos ARE fitted, so
+        # they stay enabled and exercisable. Control stays OFF -- fins move only for probe()/CC, never
+        # under a PID. concurrency 1: the bench runs the same 4 V / 1 A supply as 7C.
+        ('tms7d', 'TMS-7D', True, False, _TMS7D_ABSENT, 1, True,
+         'telemetry + servos fitted, no active control -- no decimation'),
+        # kept for when the ladder reaches active control; nothing flies it yet
+        ('tms7d_control', 'TMS-7D', True, True, (), None, False, 'full active control'),
     ):
         cfg = _profile(name, board_id, servos, flight, absent, concurrency, raw_telemetry)
         path = os.path.join(_OUT, '%s.config' % name)
@@ -205,7 +224,7 @@ def main() -> None:
         print('%-6s %s' % (name, note))
         print('       -> %s' % os.path.normpath(path))
     print()
-    print('sequencer thresholds applied to both:')
+    print('sequencer thresholds applied to every profile:')
     for key, value in sorted(_CATAPULT_SEQUENCER.items()):
         print('  %-20s %s' % (key, value))
 
