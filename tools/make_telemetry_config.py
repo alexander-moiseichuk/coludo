@@ -82,13 +82,11 @@ What TMS-7C does NOT carry, so its config must not expect them.
 
 - power_ina226: 7C flies a small battery->5 V board (~1 A) sized for telemetry alone. There is no
   current-sense shunt on it, so the part is not merely unused, it is absent.
-- imu_lsm6dso32: this airframe's part has an open DO/MISO line -- silent on SPI and I2C alike --
-  measured 2026-08-24. The `accel` channel falls back to the ADXL375; there is then NO gyro at all.
-- attitude: the complementary-filter backup. It survives a missing gyro (it still has accel levelling
-  and a GNSS-course yaw reference) but its probe() hard-fails on `rate is None`, and cc arm refuses on
-  ANY failed probe -- so on a gyro-less airframe it would block arming while contributing little.
+Its LSM6DSO32 is NOT absent: it reads 0x6c after the same two-jumper rework as 7D (SCK to the primary
+SCL, MISO to the primary DO -- see _TMS7D_ABSENT below for the netlist errors behind it), so the gyro,
+the PID D term and the complementary-filter attitude backup are all live on this airframe too.
 """
-_TMS7C_ABSENT: tuple = ('power_ina226', 'imu_lsm6dso32', 'attitude')
+_TMS7C_ABSENT: tuple = ('power_ina226',)
 """
 What TMS-7D does not carry. It is 7C's list MINUS the INA226, because 7D HAS one and it probes
 healthy -- disabling a fitted, working current sensor would cost the energy budget and, more
@@ -216,8 +214,9 @@ def main() -> None:
          'telemetry only -- no decimation, servos and control DISABLED, the airframe is ballast'),
         # 7D as it flies the telemetry ladder: same data posture as 7C, but the servos ARE fitted, so
         # they stay enabled and exercisable. Control stays OFF -- fins move only for probe()/CC, never
-        # under a PID. concurrency 1: the bench runs the same 4 V / 1 A supply as 7C.
-        ('tms7d', 'TMS-7D', True, False, _TMS7D_ABSENT, 1, True,
+        # under a PID. concurrency 3 (all three may slew together) needs the flight power board: one
+        # MG90S alone draws ~1.3 A at the battery, so three is ~4 A and a 1 A bench supply browns out.
+        ('tms7d', 'TMS-7D', True, False, _TMS7D_ABSENT, 3, True,
          'telemetry + servos fitted, no active control -- no decimation'),
         # kept for when the ladder reaches active control; nothing flies it yet
         ('tms7d_control', 'TMS-7D', True, True, (), None, False, 'full active control'),
