@@ -95,13 +95,19 @@ healthy -- disabling a fitted, working current sensor would cost the energy budg
 immediately, the servo probe's closed-loop draw check, which is the only thing that distinguishes a
 live servo from a lost PWM pin or an unpowered rail.
 
-Its LSM6DSO32 fails exactly as 7C's does (WHO_AM_I 0x00, silent on SPI at every candidate chip-select
-and on I2C too, while the ADXL375 on the same bus answers). Two independently soldered boards failing
-identically points at the footprint rather than the assembly; disabled here so the airframe is usable
-while that is resolved. `attitude` follows it: the backup runs without a gyro but its probe() does not,
-and cc arm refuses on any failed probe.
+Its LSM6DSO32 is now WORKING and therefore absent from this list. It read WHO_AM_I 0x00 until two
+netlist errors were patched, both the same mistake -- a signal taken from the module's AUXILIARY row
+instead of its primary one. The part has SCX/SDX/CS/DO on a second row beside SCL/SDA/DO/CS on the
+first, and the layout picked the clock and the data-out from the wrong side:
+
+    SCK  (GPIO48) -> SCX (aux clock)     should be SCL, bottom row
+    MISO (GPIO46) -> aux DO              should be DO,  bottom row
+
+MOSI, CS, INT1, VIN and GND were correct throughout. Two jumpers to the primary pads bring it up at
+0x6c on the shipped mode-3/5 MHz bus, alongside the ADXL375 at 0xe5. FIX THE NETLIST FOR v0.2 -- both
+built boards need the same rework, and nothing was ever wrong with the part or the soldering.
 """
-_TMS7D_ABSENT: tuple = ('imu_lsm6dso32', 'attitude')
+_TMS7D_ABSENT: tuple = ()
 
 
 def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple = (),
