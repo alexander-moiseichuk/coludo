@@ -86,11 +86,29 @@ async def test_recorder():
     recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
     recorder.Recorder.telemetry_decimate_us = 50000
     glob = recorder.Telemetry('g.csv', ('v',))  # no per-stream rate -> the global
-    assert glob.decimate_us == 50000
+    assert glob.decimate_us == 0, glob.decimate_us   # its OWN rate: 0 means inherit
+    assert glob.window == 50000, glob.window         # ...and `window` is what it actually decimates by
     glob.push((1,))  # header + first row
     glob.push((2,))  # within the global window -> decimated
     await recorder.Recorder.drain()
     assert len(recorder.Recorder._uart.items) == 2, recorder.Recorder._uart.items
+
+    """
+    The global must reach a stream BUILT BEFORE IT WAS SET. That ordering is the real one: drivers
+    construct their Telemetry during setup(), and the controller runs every device's setup before the
+    recorder task's, so on a real boot every stream predates the configured global. Telemetry used to
+    fold the global into decimate_us in __init__, so those streams silently kept the 50 Hz class
+    default and `recorder.telemetry_ms` did nothing -- a config asking for full-rate logging held a
+    100 Hz accelerometer at 50, and nothing failed. No test covered this order, which is why it shipped.
+    """
+    recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
+    early = recorder.Telemetry('early.csv', ('v',))          # built while the global is the default
+    recorder.Recorder.telemetry_decimate_us = 0              # ...then the config turns decimation OFF
+    assert early.window == 0, early.window
+    for value in range(4):
+        early.push((value,))                                 # every push must emit: no window at all
+    await recorder.Recorder.drain()
+    assert len(recorder.Recorder._uart.items) == 5, recorder.Recorder._uart.items  # header + 4 rows
 
 
 async def test_error_policy():

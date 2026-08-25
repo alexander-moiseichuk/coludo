@@ -1583,10 +1583,18 @@ Recorder session prefix, so file names are stable.
 `decimate_us` rate-limits the stream: push() emits only when at least `decimate_us` microseconds
 have passed since the last emitted row (a fast sensor can push every sample and have its telemetry
 decimated to a sane rate). `decimate_us=0` (the default) inherits the Recorder GLOBAL rate
-(`Recorder.telemetry_decimate_us`, 50 Hz) -- so a stream opts into an individual rate by passing a
+(`Recorder.telemetry_decimate_us`) -- so a stream opts into an individual rate by passing a
 non-zero value, else the board-wide `recorder.telemetry_ms` prorates it.
 
+THE GLOBAL IS RESOLVED AT USE, NOT AT CONSTRUCTION. It used to be folded into `self.decimate_us`
+in __init__, which quietly broke the inheritance it was documenting: drivers build their streams
+during their own setup(), and the controller runs every device's setup BEFORE the recorder task's,
+so a stream latched the CLASS DEFAULT and never saw the configured value. Measured on the board --
+with `recorder.telemetry_ms` 0 every stream still ran at 20000 us -- and it cost a config that
+claimed full-rate logging while capping the 100 Hz accelerometer at 50.
+
 - `__init__(filename: str, fields: tuple, decimate_us: int=0)` — constructor
+- `window() -> int` _(property)_ — The decimation window in microseconds: this stream's own, else the Recorder global.
 - `due(now: int) -> bool` — Whether the decimation window has elapsed -- so a HOT-PATH producer can skip building its row.
 - `push(values) -> None`
 

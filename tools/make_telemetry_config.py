@@ -162,26 +162,30 @@ def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple
 
     if raw_telemetry:
         """
-        NO DECIMATION: log every sample a driver produces.
+        NO DECIMATION: one global knob, and every stream inherits it.
 
-        Set EXPLICITLY per device, never via the global, because the global does not reach them.
-        `Telemetry.__init__` does `decimate_us or Recorder.telemetry_decimate_us`, which LATCHES the
-        global at construction -- and drivers set up BEFORE the recorder task does, so they capture the
-        class default (50 Hz) and never see a configured value. Measured on the board: with
-        `recorder.telemetry_ms` 0 every stream still ran at decimate_us 20000.
+        0 at the GLOBAL means no decimation at all: a stream's own 0 inherits the global, the global's
+        0 makes the window 0, and a 0 window admits every push. (0 at a STREAM still means "inherit",
+        which is why per-device values are removed rather than zeroed.)
 
-        1 ms is the value because 0 means "inherit", not "off" -- the one reading that would silently
-        reinstate the 50 Hz cap. 1 ms caps at 1 kHz, above every source here, so nothing is dropped.
+        Only the profile is set to 0, not the firmware default `_DEFAULT_TELEMETRY_MS`. That 50 Hz
+        default protects every OTHER board -- a control flight has a 100 Hz loop, a finite UART and a
+        telemetry path that RAISES on overflow, so uncapping it board-wide is a different decision
+        from uncapping a ballast airframe whose entire purpose is data.
+
+        This works only because Telemetry resolves the global AT USE. It used to latch it in
+        __init__, and since drivers set up before the recorder task they captured the class default
+        and ignored the config entirely -- measured on the board, and it silently held the 100 Hz
+        accelerometer at 50. Per-device overrides were the workaround; the fix removed the need.
 
         Affordable because almost nothing samples above the 50 Hz it replaces: the ADXL375 is the only
         100 Hz source. It buys full-rate baro and pitot through the glide, which is what L/D is made
         of. Telemetry RAISES on overflow by policy, so this spends a little of that margin -- fine on
         7C, which carries no control loop for an exception to endanger.
         """
-        cfg['recorder']['telemetry_ms'] = 1  # global too, so a stream added later inherits no cap
+        cfg['recorder']['telemetry_ms'] = 0
         for device in cfg['sensors'] + cfg['components']:
-            if device.get('enabled', True):
-                device['telemetry_ms'] = 1
+            device.pop('telemetry_ms', None)  # inherit the global; an override here is a CAP
     return cfg
 
 

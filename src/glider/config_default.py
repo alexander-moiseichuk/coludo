@@ -32,7 +32,7 @@ constant, so a config predating a new sensor/section is visible instead of silen
 moved key, a changed default value. Do NOT bump for a comment or a docstring edit. Bumping is what turns
 'my new sensor never ran' into a reported mismatch.
 """
-CONFIG_VERSION: str = '20260812'  # recorder.session prefix + measured reachability glide_ratio 5.5
+CONFIG_VERSION: str = '20260824'  # wifi prefers coludo (panda fallback); telemetry decimation fix
 
 
 def default() -> dict:
@@ -63,10 +63,14 @@ def default() -> dict:
     """
     wifi = {
         'policy': 'auto',
-        'ssid': 'panda',
+        # `ssid` is only the fallback for a config with NO `networks` list -- it does not set priority.
+        # ORDER does: _next_network starts its round-robin at index 0, so the first entry is tried
+        # first. Fallback needs no configuring and is not one-way: the rotation reaches every network
+        # whose own retry_ms has elapsed, so whichever AP is actually present gets joined.
+        'ssid': 'coludo',
         'networks': [
-            {'ssid': 'panda', 'enabled': True, 'retry_ms': 10000},
-            {'ssid': 'coludo', 'enabled': True, 'retry_ms': 10000},
+            {'ssid': 'coludo', 'enabled': True, 'retry_ms': 10000},  # preferred: the field AP
+            {'ssid': 'panda', 'enabled': True, 'retry_ms': 10000},   # fallback: the bench laptop
         ],
         'password': '',
         # no cc_host -> the board dials the `.1` of whatever subnet it joins (the hub by

@@ -23,10 +23,14 @@ async def amain():
     radio = wifi.Wifi('wifi', {}, _StubController())
     assert await radio.setup() is True and radio.validate()
 
-    # params come from the `wifi` config section; the default networks are the panda+coludo pair,
-    # each a FULL entry inheriting the top-level keys (the proven panda shape, replicated)
-    assert radio.ssid == 'panda' and radio.tx_power == 11 and radio._policy == 'auto'
-    assert [n['ssid'] for n in radio._networks] == ['panda', 'coludo']
+    # params come from the `wifi` config section; the default networks are the coludo+panda pair,
+    # each a FULL entry inheriting the top-level keys (the proven panda shape, replicated).
+    # ORDER IS THE PREFERENCE: _next_network round-robins from index 0, so entry 0 is tried first.
+    # coludo (the field AP) leads, panda (the bench laptop) is the fallback -- and the fallback is
+    # not one-way: the rotation reaches every network whose own retry_ms has elapsed, so whichever
+    # AP is actually present gets joined regardless of which one leads.
+    assert radio.ssid == 'coludo' and radio.tx_power == 11 and radio._policy == 'auto'
+    assert [n['ssid'] for n in radio._networks] == ['coludo', 'panda']
     assert radio._networks[0]['retry_ms'] == 10000 and radio._networks[0]['tx_power_dbm'] == 11
 
     # per-network parsing: strings are ssid sugar, missing keys inherit the top level, entry keys
@@ -65,7 +69,7 @@ async def amain():
     snapshot = radio.inspect()
     assert set(snapshot.keys()) == {'name', 'ok', 'healthy',  # the common Task.inspect base
                                     'ssid', 'tx_power', 'connected', 'rssi', 'ip', 'networks'}
-    assert snapshot['ssid'] == 'panda' and snapshot['connected'] is False
+    assert snapshot['ssid'] == 'coludo' and snapshot['connected'] is False
 
     # update: re-applying the same tx_power changes nothing
     assert radio.update({'tx_power': radio.tx_power}) == []

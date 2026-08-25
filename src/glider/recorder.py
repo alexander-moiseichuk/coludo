@@ -508,19 +508,35 @@ class Telemetry:
     `decimate_us` rate-limits the stream: push() emits only when at least `decimate_us` microseconds
     have passed since the last emitted row (a fast sensor can push every sample and have its telemetry
     decimated to a sane rate). `decimate_us=0` (the default) inherits the Recorder GLOBAL rate
-    (`Recorder.telemetry_decimate_us`, 50 Hz) -- so a stream opts into an individual rate by passing a
+    (`Recorder.telemetry_decimate_us`) -- so a stream opts into an individual rate by passing a
     non-zero value, else the board-wide `recorder.telemetry_ms` prorates it.
+
+    THE GLOBAL IS RESOLVED AT USE, NOT AT CONSTRUCTION. It used to be folded into `self.decimate_us`
+    in __init__, which quietly broke the inheritance it was documenting: drivers build their streams
+    during their own setup(), and the controller runs every device's setup BEFORE the recorder task's,
+    so a stream latched the CLASS DEFAULT and never saw the configured value. Measured on the board --
+    with `recorder.telemetry_ms` 0 every stream still ran at 20000 us -- and it cost a config that
+    claimed full-rate logging while capping the 100 Hz accelerometer at 50.
     """
 
     def __init__(self, filename: str, fields: tuple, decimate_us: int = 0):
         self.filename: str = filename
         self.fields: tuple = fields
-        self.decimate_us = decimate_us or Recorder.telemetry_decimate_us  # 0 -> the global default rate
+        self.decimate_us = decimate_us  # 0 -> inherit the global, read through `window` at each use
         self._header: str = 'uptime;' + ';'.join(fields)  # constant CSV header, built once
         self._row_fmt: str = '%u;' + ';'.join('%s' for _ in fields)  # one reusable row-format string
         self._header_sent: bool = False
         self._line_fmt: str = None  # '@<session>_<file>@' + the row format, resolved on the first push
-        self._last_us: int = Recorder.timestamp() - self.decimate_us  # one window back -> first push emits
+        # seed one FULL window back so the first push always emits. It must use THIS stream's own
+        # window, not the global: seeding a 50 ms stream only 20 ms back decimates its very first row
+        # away (caught by test_recorder). Resolving `or` here as well as in `window` is deliberate --
+        # this one only has to make push #1 fire, while `window` must track a global set later.
+        self._last_us: int = Recorder.timestamp() - (decimate_us or Recorder.telemetry_decimate_us)
+
+    @property
+    def window(self) -> int:
+        """The decimation window in microseconds: this stream's own, else the Recorder global."""
+        return self.decimate_us or Recorder.telemetry_decimate_us
 
     def due(self, now: int) -> bool:
         """
@@ -542,7 +558,7 @@ class Telemetry:
             bench_flight, where the bench has no UART: it dominated the reported per-step cost). A
             stream that has nowhere to go is simply not due.
         """
-        return Recorder._tlm is not None and time.ticks_diff(now, self._last_us) >= self.decimate_us
+        return Recorder._tlm is not None and time.ticks_diff(now, self._last_us) >= self.window
 
     def push(self, values) -> None:
         if not self._header_sent:
@@ -552,7 +568,7 @@ class Telemetry:
             # ONCE here (%s substitutes the row format literally) instead of wrapping every sample
             self._line_fmt = '@%s_%s@%s\n' % (Recorder.session(), self.filename, self._row_fmt)
         now = Recorder.timestamp()
-        if time.ticks_diff(now, self._last_us) < self.decimate_us:
+        if time.ticks_diff(now, self._last_us) < self.window:
             return  # too soon since the last row -> decimate
         """
         ONE % pass over the precomputed full-line format, then one encode -- no per-field str()
