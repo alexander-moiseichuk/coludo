@@ -190,6 +190,47 @@ chip-select (cs 50) — see [`waveshare_esp32p4_pins.md`](waveshare_esp32p4_pins
 
 **Optional (>32 g high-g backstop), weight 1.0 g**
 
+### LSM6DSO32 → SPI wiring — it has TWO clock pins and TWO data-out pins
+
+The same label trap as the ADXL375 above, and worse: this breakout carries a **second, AUXILIARY**
+interface alongside the primary one, so `SCL`/`SCX` and `DO`/`DO` both appear on the board.
+
+```
+  bottom row (PRIMARY -- use this one):   VIN  3Vo  GND  SCL  SDA  DO  CS  I1  I2
+  top row    (AUXILIARY -- do NOT use):   SCX  SDX  CS   DO   GND
+```
+
+The auxiliary port is the sensor-hub / OIS interface for an external magnetometer. It is a **separate
+peripheral**: clocking it does nothing for the primary bus.
+
+| LSM6DSO32 pin | meaning | ESP32-P4 GPIO |
+| --- | --- | --- |
+| VIN *(bottom 1)* | power | 3V3 |
+| GND *(top 5)* | ground | GND |
+| **SCL** *(bottom 4)* | SPI clock (SCK) — **NOT `SCX`** | **48** |
+| **SDA** *(bottom 5)* | SPI MOSI (SDI) | **47** |
+| **DO** *(bottom 6)* | SPI MISO (SDO) — **NOT the top-row `DO`** | **46** |
+| CS *(bottom 7)* | chip-select | **50** |
+| I1 *(bottom 8)* | INT1 data-ready | **28** |
+
+> ⚠️ **v0.1 GOT THIS WRONG, ON BOTH BUILT BOARDS — fix the netlist for v0.2.** The layout took the
+> clock from `SCX` and the data-out from the top-row `DO`, i.e. both from the auxiliary side. MOSI,
+> CS, INT1, VIN and GND were correct. Repaired on TMS-7C and TMS-7D with two jumpers from the MCU
+> header to the primary pads; both then read `WHO_AM_I 0x6c` on the shipped mode-3 / 5 MHz bus.
+>
+> **Why it was so hard to see (2026-08-24/25).** With the clock on the auxiliary pin the part is
+> silent on **SPI *and* I²C** — both need that same primary `SCL` — so it reads exactly like an
+> absent or dead device, and no chip-select experiment helps. What broke it open was proving `CS` and
+> `SDA` good *independently*: driving CS low removes the part from an I²C scan (so CS is wired), and
+> I²C data flowing at all proves SDA. That left the clock as the only untested input.
+>
+> **Two diagnostics that DO NOT work here, both tried:** the I²C address strap is **latched at
+> power-up**, not sampled live, so touching a wire to `DO`/SA0 cannot flip `0x6a`↔`0x6b` and cannot be
+> used to find the pad — the ADXL375 proved it by holding `0x53` while its SDO demonstrably worked.
+> And do not interleave `SoftI2C` and `SPI` on these pins in one script: it leaves them misconfigured
+> and produces convincing nonsense (a false "only SPI mode 0 works", with the ADXL375 degrading to
+> `0xff` in the same run as the tell).
+
 ## Altimeter (pressure)
 Primary is the [Gravity: ICP-10111 Pressure Sensor](https://www.dfrobot.com/product-2525.html) (on hand as
 **sen0517**) — accuracy (8.5 cm), sampling rate and power (2 mA) all look good. The **BMP280** on the sen0253
@@ -476,6 +517,12 @@ There are a number of composition options possible
 **Note:** sticky pads for attaching boards and engines furniture not added
 
 ## v0.2 board — hardware TODO
+
+- [ ] **LSM6DSO32: move SCK to the primary `SCL` and MISO to the primary `DO`.** v0.1 routes both to
+      the module's AUXILIARY row (`SCX`, top-row `DO`), so the part is unreachable on SPI and I²C
+      alike — confirmed on both built boards and jumper-repaired on each. Full detail and the
+      diagnosis in *LSM6DSO32 → SPI wiring* above. This is the single highest-value netlist fix:
+      without it every board needs the same two-wire rework.
 
 Found on the v0.1 hand-wired board (bench, 2026-07-26). **v0.1 PCB is already ordered**, so these are
 carried to v0.2. Each has a software mitigation on the branch, so none blocks flying v0.1 — but the

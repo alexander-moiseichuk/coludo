@@ -26,6 +26,14 @@ first powered flight.
 ## Phase 0 — Bench pre-checks (before leaving)
 - [ ] Latest firmware deployed (`tools/deploy.sh`), correct board config; `make test` green
 - [ ] Board boots to **main.py** running (boot log, not a bare REPL) and connects to CC
+- [ ] **On a NEWLY SOLDERED board, run this BEFORE assembly** — it needs only USB, takes ~90 s, and
+      reports the per-device failure reason rather than a bare pass/fail:
+      `mpremote connect $PORT run src/glider/test/diag_devices.py`
+      > Earned the hard way on 2026-08-24: a mis-routed IMU was invisible until a driver tried to talk
+      > to it, by which point the board was built into the airframe and awkward to reach. Read the
+      > result as a GROUP — several devices down together is usually one bus or one connector, not
+      > several faults (BNO055 + BMP280 are one sen0253 module; a whole I²C bus dying at once is a
+      > stuck line, and it can hard-panic the MCU rather than NAK cleanly).
 - [ ] All components **verify/probe green** on CC — no sensor absent/garbage
 - [ ] Fins mechanically free, correct throw; each servo horn on the right spline (re-check after)
 - [ ] Confirm **no motor** and the booster is inert
