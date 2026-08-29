@@ -35,7 +35,7 @@ from a board — no async push, no subscriptions, no out-of-band events. The con
   bounded by a timeout (**10 s**, `board.EXCHANGE_TIMEOUT_S`): a wedged board raises rather than
   hanging the hub, so one stuck board never blocks the others.
 - **Data is pulled, not pushed.** The board maintains bounded ring buffers (in PSRAM) for log
-  and telemetry records. CC retrieves slices on demand (`log`, `tel`). The same buffers feed
+  and telemetry records. CC retrieves slices on demand (`log`, `tlm`). The same buffers feed
   the Recorder over UART, so there is one producer and two drains.
 - **"Events" are just log lines.** Since nothing is pushed, notable occurrences (validation
   failures, fallbacks) surface either as the `err` response to the command that caused them,
@@ -125,6 +125,7 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `disarm` | — | `ok {armed:false}` | disable actuation (the control loop holds the fins neutral) |
 | `log` | `<ms>` | `ok {lines:[...]}` | poll-model: lines buffered since the last `log`; re-arm teeing for `ms` (`0` stops) |
 | `tlm` | `<ms>` | `ok {samples:[...]}` | poll-model: telemetry rows buffered since the last `tlm`; re-arm teeing for `ms` (`0` stops) |
+| `bustune` | `<kind> <id> <freq>` | `ok {per-device health}` | retune an i2c/spi bus to `<freq>` Hz in place (no reboot) and report which devices stay healthy — the bench frequency sweep. Never persisted; CC saves the chosen freq to `board.config` |
 | `report` | — | `ok {stage, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
 | `objects` | — | `ok [name, ...]` | names of all `Inspectable` objects (for the `inspect`/`update`/`stats` targets) |
 | `inspect` | `<object>` | `ok {props}` | `Inspectable.inspect()` of a named object |
@@ -234,8 +235,9 @@ from cc ok [{"id":"taster","online":true,"stage":"setting","config_id":"a1b2"},
 > select taster
 from cc ok {"selected":"taster"}
 > health                         (routed as: taster health)
-from taster ok {"temp":54,"mem_free":812000,"load":31,"uptime":90422,
-                 "components":[{"name":"gnss","ok":false},{"name":"baro_icp10111","ok":true}]}
+from taster ok {"temp":54,"mem_free":812000,"uptime":90422,"stage":"setting",
+                 "position":[25.5144,-80.3918],"clock":"2026-08-28T21:00:00","armed":false,
+                 "agl":3.2,"flight":{"airspeed":14.2,"fin_cap":30,"active":true}}
 > inspect wifi
 from taster ok {"ssid":"panda","rssi":-52,"tx_power_dbm":11}
 > all ping
