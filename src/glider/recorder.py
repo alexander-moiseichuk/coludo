@@ -44,6 +44,9 @@ except ImportError:  # host (CPython): board-only; the Luckfox UART is opened on
 
 _DEFAULT_CELL_SIZE = const(256)  # bytes per ring cell (record + 2-byte length header)
 _DEFAULT_CAPACITY = const(1024)  # cells per ring
+_DEFAULT_TXBUF = const(8192)     # UART TX ring; see setup() -- the 256-byte default silently truncates
+_DRAIN_CHUNK = const(32)         # records flushed before yielding, so the TX buffer never has to hold
+                                 # a whole ring pass; an await, not a sleep, so it costs no wall time
 _LENGTH_BYTES = const(2)  # uint16 record-length header
 _STATS_PERIOD_MS = const(1000)  # how often run() logs a buffer-stats line
 _DEFAULT_TELEMETRY_MS = const(20)  # global telemetry decimation default (50 Hz); a stream's 0 -> this.
@@ -267,7 +270,20 @@ class Recorder:
             pins = {'tx': spec['tx']}
             if spec.get('rx') is not None:
                 pins['rx'] = spec['rx']
-            uart = UART(bus_id, baudrate=spec['baud'], **pins)
+            """
+            txbuf, explicitly. The MicroPython default is 256 bytes, and drain() pushes the WHOLE ring
+            in one pass -- 1024 cells of 256 bytes, so a burst can be orders of magnitude past that.
+            An overrun does not raise; the UART silently drops the tail of whatever record it was
+            mid-way through, which is exactly the corruption measured on real captures: a record cut
+            mid-field with its newline gone and the next record running onto the same line, 20 times in
+            1,004,804 rows across 48 flights (about one flight in three).
+
+            Sizing rather than sleeping: at the measured 424 records/s, a "drain + sleep 1 ms per line"
+            costs 0.4 s of sleep per second of flight at a true 1 ms, and 4.2 s/s at this board's
+            MEASURED ~10 ms asyncio floor -- it would throttle telemetry roughly fourfold. A bigger
+            buffer costs RAM once and nothing per record.
+            """
+            uart = UART(bus_id, baudrate=spec['baud'], txbuf=spec.get('txbuf', _DEFAULT_TXBUF), **pins)
         # accept a pre-wrapped async writer (tests) or wrap a raw UART for async drain
         cls._uart = uart if hasattr(uart, 'drain') else asyncio.StreamWriter(uart, {})
         inspector.Inspector.register(cls)
@@ -458,11 +474,21 @@ class Recorder:
             cls._log_max = queued
         drained = 0
         writer = cls._uart
+        """
+        Flush in CHUNKS rather than buffering an entire ring pass before the single drain.
+
+        The buffer only ever has to hold _DRAIN_CHUNK records, so a backlog cannot present the UART
+        with more than it can take -- which is the other half of the truncation the txbuf sizing
+        addresses. This is an await, not a sleep: it yields only as long as the UART actually needs,
+        so it costs no wall time at the 424 records/s these flights produce.
+        """
         for ring in (cls._tlm, cls._log):
             record = ring.read()
             while record is not None:
                 writer.write(record)
                 drained += 1
+                if drained % _DRAIN_CHUNK == 0:
+                    await writer.drain()
                 record = ring.read()
         if drained:
             await writer.drain()

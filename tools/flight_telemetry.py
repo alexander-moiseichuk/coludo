@@ -43,9 +43,34 @@ class Stream:
         if field not in self.fields:
             return [], []
         index = self.fields.index(field) + 1  # +1 past the uptime column
+        width = len(self.fields) + 1          # what a COMPLETE row of this stream looks like
         times, values = [], []
         for row in self.rows:
-            if len(row) > index and row[index] != '':
+            """
+            A row whose width does not match the header is TRUNCATED or MERGED, and its boundary cell
+            cannot be trusted -- so the guard is on the row's shape, not just on the cell existing.
+
+            Both failure modes were measured on real captures, and both survive a cell-exists check:
+
+              SHORT -- the record was cut on the wire. `...;4500;-6` is a truncated `-600`, which
+              reads as a perfectly reasonable wrong number.
+
+              LONG -- the newline was lost and the next record ran on, so cells past the header's width
+              belong to a different stream. One capture read airspeed_cms as 1441938442469, which is
+              simply 1441 with the next record's timestamp glued to it.
+
+            A short row is dropped ENTIRELY rather than trimmed to its last cell, and that is the
+            conservative choice on purpose. Trimming assumes the loss was at the tail; if a cell went
+            missing mid-row instead, every later cell shifts left and lands in the wrong column while
+            still parsing cleanly. A real capture showed exactly that -- heading_err reading 255 in a
+            9-cell row of a 14-cell stream, at a position the tail-trim left untouched. There is no way
+            to tell from the row where the loss happened, so no part of it is trustworthy.
+
+            The cost is negligible and was measured: 20 mis-width rows in 1,004,804 across 48 flights.
+            """
+            if len(row) != width:
+                continue                      # see above: a mis-width row is not partially trustworthy
+            if index < len(row) and row[index] != '':
                 times.append(row[0] / 1e6)
                 values.append(row[index])
         return times, values
