@@ -332,12 +332,33 @@ class Controller(inspector.Inspectable):
                 self._runners[name] = asyncio.create_task(self._supervise(name, pending_task))
 
     async def _supervise(self, name: str, supervised_task: task.Task) -> None:
-        """Run a task to completion; on crash, log it (restart policy is a later concern)."""
+        """
+        Run a task to completion; on crash, mark it DOWN and record it durably.
+
+        A crashed run loop used to be reported to the console and nowhere else: the task stayed in
+        self.tasks, stayed out of self.failures, and kept `_ok` True -- so a sensor whose loop had died
+        still answered `validate()` healthy and passed the operator readiness gate that `cc arm`
+        checks. Its data simply stopped appearing, which reads like a quiet sensor rather than a dead
+        one.
+
+        All three surfaces are updated, because each answers a different question: `_ok` is what
+        `verify`/`arm` consult, `failures` is what the bring-up report lists, and event() is DURABLE --
+        Recorder.log is best-effort and a short flight ends without it, so a console-only record of the
+        one moment a task died is exactly the fact task.event exists to preserve.
+
+        Restart policy remains a later concern; being honest about the death is not.
+        """
         try:
             await supervised_task.run()
         except asyncio.CancelledError:
             raise
         except Exception as e:
+            supervised_task._ok = False  # verify/arm must not pass a task whose loop is gone
+            self.failures[name] = 'run loop crashed: %r' % e
+            try:
+                supervised_task.event('run loop crashed: %r' % e)  # durable: reaches the capture
+            except Exception:
+                pass  # a dead task must not be able to take the supervisor down with it
             self.log("controller :: task '%s' crashed: %r" % (name, e))
 
     async def close(self, name: str) -> None:

@@ -239,7 +239,36 @@ async def amain():
     assert c.tasks == {}
     assert c.stage == controller.Stage.DONE
 
-    print('ok: controller directory/create/setup/run/active/inspect/stats/validate/close/finish + pin_gpio')
+    """
+    A task whose RUN LOOP crashes must be reported as down, not left healthy.
+
+    It used to be logged to the console and nowhere else: the task stayed in tasks, stayed out of
+    failures, and kept validate() True -- so a sensor whose loop had died still passed the readiness
+    gate `cc arm` consults, and its data merely stopped appearing, which reads like a quiet sensor
+    rather than a dead one. Only a failed SETUP was covered before; a crash after a successful setup
+    was not.
+    """
+    class Exploding(task.Task):
+        async def setup(self) -> bool:
+            self._ok = True
+            return True
+
+        async def run(self) -> None:
+            raise RuntimeError('loop died')
+
+    crash_cfg = {'board': {'id': 'c', 'mcu': 'esp32p4'},
+                 'components': [{'name': 'boom', 'driver': 'boom', 'enabled': True}]}
+    cc_ctl = controller.Controller(crash_cfg, registry={'boom': Exploding}, log=lambda m: None)
+    assert await cc_ctl.setup() is True
+    assert cc_ctl.active('boom').validate() is True and cc_ctl.failures == {}  # healthy until it runs
+    await cc_ctl.start()
+    await asyncio.sleep_ms(50)                       # let the loop run and die
+    assert cc_ctl.active('boom').validate() is False, 'a crashed loop must not still report healthy'
+    assert 'boom' in cc_ctl.failures, cc_ctl.failures
+    await cc_ctl.finish()
+
+    print('ok: controller directory/create/setup/run/active/inspect/stats/validate/close/finish + pin_gpio '
+          '+ crashed run loop reported down')
 
 
 asyncio.run(amain())
