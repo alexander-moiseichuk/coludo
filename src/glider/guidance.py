@@ -11,8 +11,11 @@ if/elif.
 
 Host-runnable by construction (tools/virtual_flight.py drives the REAL law): dependencies are
 INJECTED -- the mission (zone/launch_point), the governor (airspeed for the boost rod gate), and
-databoard-style handles (`position.read()` -> ((lat, lon), source, age_ms), `agl.value()` -> m or
-None). Timing comes in as `now_us` from the caller; only commons.ticks_diff touches ticks.
+databoard-style handles, all read with `read()` -> (value, source, age_ms). NOT `value()`: the
+laser agl is out of range for most of a flight, and value() answers a stale channel with an unbounded
+extrapolation -- the failure that once ended a flight at apogee. Gate on the SOURCE.
+
+Timing comes in as `now_us` from the caller; only commons.ticks_diff touches ticks.
 
 Results land in the roll_setpoint/pitch_setpoint (centidegree fixnum) + heading_error (int degrees)
 INSTANCE SLOTS rather than a returned tuple -- decomposed WITHOUT adding a per-step heap allocation
@@ -205,7 +208,11 @@ class Guidance:
         self._mission = mission  # the landing zone + launch point live here (may be None)
         self._governor = governor  # airspeed estimate -> the boost rod gate
         self._position = position  # injected handle: read() -> ((lat, lon), source, age_ms)
-        self._agl = agl  # injected handle: value() -> height above ground (m) or None
+        # injected handle. READ IT WITH read(), NEVER value(): the laser reaches ~4 m, so this channel
+        # is legitimately stale for most of a flight and value() would answer with an unbounded linear
+        # extrapolation of the last two samples -- confident fiction whose sign is set by noise. That
+        # is what ended a flight at apogee; _steer() below gates on the SOURCE for exactly this reason.
+        self._agl = agl
         self._elevation = elevation  # baro height above the pad (m) -> the endgame band (optional)
         self._wind = wind  # injected WindEstimator: components() -> (east, north) m/s (optional)
         self._reckoned = None  # the last real fix (lat, lon) -- the dead-reckoning SEED, never mutated

@@ -974,8 +974,11 @@ if/elif.
 
 Host-runnable by construction (tools/virtual_flight.py drives the REAL law): dependencies are
 INJECTED -- the mission (zone/launch_point), the governor (airspeed for the boost rod gate), and
-databoard-style handles (`position.read()` -> ((lat, lon), source, age_ms), `agl.value()` -> m or
-None). Timing comes in as `now_us` from the caller; only commons.ticks_diff touches ticks.
+databoard-style handles, all read with `read()` -> (value, source, age_ms). NOT `value()`: the
+laser agl is out of range for most of a flight, and value() answers a stale channel with an unbounded
+extrapolation -- the failure that once ended a flight at apogee. Gate on the SOURCE.
+
+Timing comes in as `now_us` from the caller; only commons.ticks_diff touches ticks.
 
 Results land in the roll_setpoint/pitch_setpoint (centidegree fixnum) + heading_error (int degrees)
 INSTANCE SLOTS rather than a returned tuple -- decomposed WITHOUT adding a per-step heap allocation
