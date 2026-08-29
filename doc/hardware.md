@@ -594,6 +594,22 @@ little, because **attitude is already isolated across bus families**:
 | power | `ina226` (I²C) | — | n/a, not flight-critical |
 | **altitude** | **`icp10111` (I²C)** | **`bmp280` (I²C)** + laser at rank 2 | ❌ **all on one bus** |
 
+> ⚠️ **Measured: 0.50 % of ICP-10111 frames arrive corrupted on this I²C bus** (2 of 400, bench, board
+> idle). Both failures were a SINGLE BIT flipped in the frame's own CRC byte — `0xe9` received where
+> `0xf9` is correct — with plausible data bytes either side, and good frames validate exactly. So this
+> is bus signal integrity, not a bad sensor and not a bad validator.
+>
+> The sensor appends a CRC to each of its three words and the driver used to discard all three. At the
+> 10 Hz read rate that is a corrupt frame every ~20 s, and since 6 of the 9 bytes are data rather than
+> CRC, roughly **one wrong altitude every 30 s was being accepted silently** — into `elevation`, which
+> drives the endgame band, the landing trigger and the launch baro backup. The frames are now checked
+> and refused; a refused frame costs one sample and takes the same path as a sensor that stopped
+> answering (`_recover()` after repeated strikes), with the BMP280 holding the channel up meanwhile.
+>
+> **This is a v0.2 layout input.** The altitude row above is already the one redundancy gap — primary
+> and backup share a bus — and that bus is now measured to be dropping bits. Shortening the run,
+> revisiting the pull-ups and isolating the ICP-10111 all get more valuable, not less.
+
 Altitude is the only redundancy pair living entirely inside I²C, and it is the expensive one to lose:
 the host fault matrix priced a dead barometer at **100.2 m of miss**, because the endgame band is
 elevation-driven. So:
