@@ -476,6 +476,11 @@ class Recorder:
             cls._log_max = queued
         drained = 0
         writer = cls._uart
+        # Whether this writer reports its fill. The real StreamWriter does; the test stubs that stand in
+        # for it need not, and production code must not require a stub to grow an attribute to stay
+        # usable. Resolved ONCE -- `out_buf` is REBOUND on every write, so a captured reference goes
+        # stale and only the name can be re-read.
+        reports_fill = hasattr(writer, 'out_buf')
         """
         Flush on BUFFER FILL, not on a record count -- back-pressure only when there is pressure.
 
@@ -499,7 +504,7 @@ class Recorder:
             while record is not None:
                 writer.write(record)
                 drained += 1
-                if len(writer.out_buf) >= _DRAIN_HIGH_WATER:
+                if reports_fill and len(writer.out_buf) >= _DRAIN_HIGH_WATER:
                     await writer.drain()
                 record = ring.read()
         if drained:
