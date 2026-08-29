@@ -129,6 +129,14 @@ async def test_error_policy():
     assert recorder.Recorder.log('X', 'y' * 300) is True
     await recorder.Recorder.drain()
     assert len(recorder.Recorder._uart.items[0]) <= 64
+    """
+    ...and it MUST still end with a newline. The wire protocol is line-framed, so truncating the '\n'
+    away merges the over-long log line with whatever record follows it on the UART -- and when that is
+    a telemetry row, the row is swallowed into the log line and lost from its CSV, silently, on the
+    channel the error policy promises is durable. The length check alone passed either way, which is
+    why this went unnoticed.
+    """
+    assert recorder.Recorder._uart.items[0].endswith(b'\n'), recorder.Recorder._uart.items[0][-16:]
 
     # logs drop (return False) when the buffer is full -- no raise
     recorder.Recorder.setup(_config(8, 2, 64), uart=FakeWriter())  # log ring holds 1

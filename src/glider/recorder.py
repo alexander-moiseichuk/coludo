@@ -360,7 +360,14 @@ class Recorder:
             return False  # not set up yet -> drop (logs are best-effort)
         data = ('%u %s :: %s\n' % (cls.timestamp(), descriptor, message)).encode()
         if len(data) > cls._log.max_payload:
-            data = data[: cls._log.max_payload]
+            """
+            KEEP THE NEWLINE. The wire protocol is line-framed, so a plain slice truncates the '\n'
+            off the end and the over-long log line then MERGES with whatever record follows it on the
+            UART. If that next record is a telemetry row, the row is swallowed into the log line and
+            lost from its CSV -- silently, and on the channel the error policy promises is durable.
+            Truncate the text instead and re-terminate.
+            """
+            data = data[: cls._log.max_payload - 1] + b'\n'
         return cls._enqueue(cls._log, cls._cc_log.tee, data)
 
     @classmethod
