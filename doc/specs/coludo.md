@@ -407,9 +407,15 @@ altitude runs out.
   CIRCLE TANGENT plus an inward correction (`bearing_to_centre + 90° − gain·(distance − R)`,
   R = 30 m, gain 3), so the glider CAPTURES a constant-radius orbit around the centre instead of
   bang-banging between overfly and U-turn (the old point-steer law swung 184 m racetrack legs and
-  landed on phase luck). The ~26° orbit bank sits inside the cruise `bank_limit`; altitude bleeds
-  through the turn at the induced-drag rate — this IS objective #1's energy management. R must not
-  be set below the cruise-bank minimum radius (~34 m at 30°) or the orbit destabilizes.
+  landed on phase luck). The orbit bank sits inside the cruise `bank_limit`; altitude bleeds
+  through the turn at the induced-drag rate — this IS objective #1's energy management. R must not be
+  set below the cruise-bank minimum radius `R_min = v²/(g·tan φ)`, or the law commands a circle
+  tighter than the airframe can fly and the heading controller saturates into a limit cycle. At the
+  shipped `bank_limit` **45°** and the measured 15.6 m/s that floor is **~25 m**, so `R = 30 m` clears
+  it by only ~5 m — the precatapult study flagged the radius as the next binding limit, ahead of bank.
+  (This paragraph previously quoted a ~34 m floor derived from a 30° `bank_limit` that no longer
+  ships. At 30° the true floor is ~43 m, which the recommended R = 30 m violates outright — that is
+  exactly the saturation that cost the first in-zone landings until the bank was raised.)
 * **Endgame spiral** (below `endgame_alt_m` = 50 m): the loiter radius scales with the remaining
   altitude fraction, collapsing the orbit onto the centre exactly as the energy runs out, with the
   full `land_bank_limit` 45° available (`land_bank_gain` 3.0 — at 1.5 the rotating-target P-loop
