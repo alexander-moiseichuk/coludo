@@ -15,11 +15,15 @@ ZONE=25.514944,-80.392972,25.514583,-80.391111
 SCENARIOS='noise05 noise10 noise25 noise50 noise100 wind00 wind03 wind06 wind09 wind12 corner_spike corner_stress'
 
 mpremote connect "$PORT" cp "$ROOT/tools/hitl_run.py" : >/dev/null 2>&1   # deploy the runner (boardrun retired)
-while read -r name noise wind dir spike; do
+# The scenario list is fed on FD 3, not stdin, and the flight is given </dev/null.
+# Both halves are needed: `mpremote run` inside hitl_collect.sh reads stdin, so on plain stdin it
+# swallowed the REST of this heredoc after the first flight -- the matrix then flew exactly one
+# scenario and printed "matrix done", a silent 1-of-12 that looks like a full run in the log.
+while read -r name noise wind dir spike <&3; do
   [ -z "$name" ] && continue
-  bash "$ROOT/tools/hitl_collect.sh" "$motor" "$name" "$noise" "$wind" "$dir" "$spike" "$outdir" \
+  bash "$ROOT/tools/hitl_collect.sh" "$motor" "$name" "$noise" "$wind" "$dir" "$spike" "$outdir" </dev/null \
     || echo "skip $motor/$name (flight failed)"   # one flaky flight must not abort the matrix
-done <<'SCN'
+done 3<<'SCN'
 noise05 0.05 0.0 210.0 False
 noise10 0.10 0.0 210.0 False
 noise25 0.25 0.0 210.0 False
