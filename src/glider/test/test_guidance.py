@@ -253,12 +253,27 @@ def test_final_approach():
     banded.enter(0.0, 0, 0)
     band_pos.reading = ((48.0005, 11.020), 'gnss', 0)
     band.value_now, band.fresh = 10.0, False     # low, but nothing vouches for it
-    banded.compute(Stage.GLIDING, {}, 270.0, 0)
+    banded._nav_heading = None
+    banded.compute(Stage.GLIDING, {}, 0.0, 0)
     stale_bank = banded.roll_setpoint
     band.fresh = True                            # the same reading, now from a live baro
     banded._nav_heading = None
-    banded.compute(Stage.GLIDING, {}, 270.0, 0)
-    assert banded.roll_setpoint != stale_bank or stale_bank == 0, 'a stale baro drove the endgame band'
+    banded.compute(Stage.GLIDING, {}, 0.0, 0)
+    """
+    The two cases must reach DIFFERENT laws, and the assertion has to say which.
+
+    This previously read `roll_setpoint != stale_bank or stale_bank == 0`, and both sides computed 0 --
+    the escape hatch carried it. The cause was the scenario, not the tolerance: it flew heading 270 at a
+    target due west, so the heading error was ~0 and no bank was demanded either way. The test could not
+    have failed no matter what the endgame did with a stale baro.
+
+    Flying heading 0 across the same target separates them. A stale baro must leave ORDINARY steering in
+    charge -- a real bank toward the zone -- while a fresh 10 m reading (inside endgame_alt_m 50) engages
+    final approach and levels the wings.
+    """
+    assert stale_bank != 0, 'a stale baro suppressed ordinary steering'
+    assert banded.roll_setpoint == 0, 'fresh low baro did not engage final approach: %r' % banded.roll_setpoint
+    assert stale_bank != banded.roll_setpoint, 'stale and fresh baro reached the same law'
 
     # a STALE agl must not engage final approach: out of the laser's ~4 m range the channel extrapolates
     # without bound, and a bogus low reading would hold centreline tracking for the whole glide

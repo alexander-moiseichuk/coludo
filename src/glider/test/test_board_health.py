@@ -137,7 +137,17 @@ async def test_memory_rescue():
     health._last_kb = 0
     for step in range(board_health._LEAK_MIN_SAMPLES):
         health._track(200_000 - step * 500, 98.5 - step * 0.5)  # 500 B/s -> under 1 KB/s
-    assert health.oom_s() is None or health.oom_s() > health.land_s()  # outlives the flight
+    """
+    A trickle leak must produce NO forecast at all, which is stronger than "None or big".
+
+    This read `oom_s() is None or oom_s() > land_s()`, and oom_s() returns None here -- so the second
+    branch never ran, and a forecast broken into returning None for any reason would still have passed.
+    Pinning the None states the real behaviour: at 500 B/s the trend sits below the floor worth alarming
+    on, and the forecast declines to predict rather than emitting a huge number the rescue logic would
+    then have to reason about.
+    """
+    assert health.oom_s() is None, 'a 500 B/s trickle produced a forecast: %r' % health.oom_s()
+    assert health.land_s() > 0, 'no landing estimate to weigh a pause against'
     health._rescue(health.mem_free(), 98.5)
     assert health.rescues == 1
 
