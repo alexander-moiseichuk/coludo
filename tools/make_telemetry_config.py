@@ -57,7 +57,19 @@ import config_default  # noqa: E402 -- needs the path above
 
 _OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'configs')
 
-# Sequencer thresholds every catapult profile shares; see the module docstring for the derivation.
+# Sequencer thresholds for a CATAPULT hop, and ONLY a catapult hop. Opt-in per profile via
+# launch_mode='catapult'; every one is derived from a ~3 m arc and is actively unsafe on a rocket:
+#
+#   apogee_arm_ms 200      -- arms the apogee detector DURING the motor burn, whose pressure wave is
+#                             exactly what the 4000 ms rocket default exists to sit out. False apogee.
+#   boost_timeout_ms 1200  -- the last-resort stage fallback fires 1.2 s in, i.e. mid-burn.
+#   flight_timeout_ms 30 s -- a rocket flight is minutes; this aborts it.
+#   launch_g 1.5 / launch_ms 40 / launch_alt_m 1.0 / apogee_drop_m 0.5 -- all sized for a 3 m hop, all
+#                             loose enough that handling or baro noise can trip them on the pad.
+#
+# The catapult was a MEASUREMENT instrument for the glide polar (it yielded AIR_QUALITY 5.5, which is a
+# property of the airframe and stays), not a launch mode. It was never flown, because it puts 2x or more
+# shock through the airframe at release. So these values must never be the default.
 _CATAPULT_SEQUENCER: dict = {
     'launch_g': 1.5,          # the 3 m case pulls only 3.0 g; err LOW -- a missed launch costs the flight
     'launch_ms': 40,          # the pulse is ~260 ms at 3 m / ~130 ms at 10 m -- the dwell fits both
@@ -68,13 +80,22 @@ _CATAPULT_SEQUENCER: dict = {
     'flight_timeout_ms': 30000,  # RSO backstop: a 3 m hop is over in seconds, not the 300 s of a rocket
 }
 
+# The launch these profiles are generated FOR. Rocket, for the 2026-09-05 flights of TMS-7/7A/7B/7C/7D.
+# Switch to 'catapult' only to regenerate profiles for a bench hop, and switch it back afterwards.
+_LAUNCH_MODE: str = 'rocket'
+
 _SERVOS: tuple = ('servo_yaw', 'servo_eleron_left', 'servo_eleron_right')
 
-# Streams recorded at FULL rate for these flights, overriding the recorder's 25 Hz global.
-# A catapult hop lasts seconds, so the leak argument that justifies decimating a 60 s rocket flight
-# does not apply -- and 7C/7D exist precisely to capture the launch, separation and impact transients,
-# which are what decimation drops. Recording every sample keeps the WAVEFORM (duration, ringing), not
-# just its extreme, which is what a shock trace has to show to be worth anything.
+# Streams recorded at FULL rate, overriding the recorder global.
+# 7C/7D exist precisely to capture the launch, separation and impact transients, which are what
+# decimation drops. Recording every sample keeps the WAVEFORM (duration, ringing), not just its
+# extreme, which is what a shock trace has to show to be worth anything.
+#
+# This used to be justified by the hop being SHORT ("the leak argument that justifies decimating a 60 s
+# rocket flight does not apply"). That argument inverts on the rocket flights these profiles now build
+# for, so it was replaced with a measurement: a full HITL capture runs 642 KB over 49 s of flight, about
+# 13 KB/s, against the ~92 KB/s a 921600-baud UART carries. That is 14 % utilisation, so a 300 s rocket
+# flight streams roughly 4 MB and never approaches the link -- full rate stays, on its own merits.
 _FULL_RATE_MS: int = 10  # 100 Hz, matching the sensors' own sample rate
 _FULL_RATE: tuple = ('accel_adxl375', 'imu_lsm6dso32')
 """
@@ -109,6 +130,7 @@ _TMS7D_ABSENT: tuple = ()
 
 
 def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple = (),
+             launch_mode: str = 'rocket',
              concurrency: int = None, raw_telemetry: bool = False) -> dict:
     """
     Build one catapult profile from the firmware defaults.
@@ -164,7 +186,21 @@ def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple
     for component in cfg['components']:
         component_name = component.get('name')
         if component_name == 'sequencer':
-            component.update(_CATAPULT_SEQUENCER)
+            """
+            Sequencer thresholds follow launch_mode, and the DEFAULT is rocket.
+
+            This used to apply _CATAPULT_SEQUENCER unconditionally, so every generated profile carried
+            3 m-hop thresholds whatever it was going to fly on. Two of them fire during a motor burn
+            (apogee_arm_ms 200, boost_timeout_ms 1200), so a rocket flight on a catapult profile does
+            not merely degrade -- it advances stages mid-boost.
+
+            Rocket mode deliberately writes NOTHING: the profile inherits config_default's thresholds,
+            so there is one definition of the rocket numbers and a profile cannot drift from it.
+            """
+            if launch_mode == 'catapult':
+                component.update(_CATAPULT_SEQUENCER)
+            elif launch_mode != 'rocket':
+                raise ValueError('unknown launch_mode %r (expected rocket or catapult)' % launch_mode)
         elif component_name in _SERVOS:
             component['enabled'] = servos
         elif component_name in absent:
@@ -207,7 +243,7 @@ def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple
 
 
 def main() -> None:
-    """Write both catapult profiles to configs/ and report what differs from the defaults."""
+    """Write every board profile to configs/ and report the launch mode they were built for."""
     os.makedirs(_OUT, exist_ok=True)
     for name, board_id, servos, flight, absent, concurrency, raw_telemetry, note in (
         ('tms7c', 'TMS-7C', False, False, _TMS7C_ABSENT, 1, True,
@@ -221,7 +257,7 @@ def main() -> None:
         # kept for when the ladder reaches active control; nothing flies it yet
         ('tms7d_control', 'TMS-7D', True, True, (), None, False, 'full active control'),
     ):
-        cfg = _profile(name, board_id, servos, flight, absent, concurrency, raw_telemetry)
+        cfg = _profile(name, board_id, servos, flight, absent, _LAUNCH_MODE, concurrency, raw_telemetry)
         path = os.path.join(_OUT, '%s.config' % name)
         with open(path, 'w') as handle:
             json.dump(cfg, handle, indent=1, sort_keys=True)
@@ -229,9 +265,14 @@ def main() -> None:
         print('%-6s %s' % (name, note))
         print('       -> %s' % os.path.normpath(path))
     print()
-    print('sequencer thresholds applied to every profile:')
-    for key, value in sorted(_CATAPULT_SEQUENCER.items()):
-        print('  %-20s %s' % (key, value))
+    print('launch mode: %s' % _LAUNCH_MODE.upper())
+    if _LAUNCH_MODE == 'rocket':
+        print('  sequencer thresholds INHERITED from config_default -- no overrides written, so the')
+        print('  rocket numbers have exactly one definition and a profile cannot drift from it.')
+    else:
+        print('  CATAPULT thresholds applied to every profile -- BENCH HOP ONLY, do not fly a motor:')
+        for key, value in sorted(_CATAPULT_SEQUENCER.items()):
+            print('    %-20s %s' % (key, value))
 
 
 if __name__ == '__main__':
