@@ -737,8 +737,9 @@ The same capture should re-check `launch_g` (2.5 g today, ~1 g of margin against
 > ⚠️ **"Full rate" is 100 Hz today, and that does NOT resolve an ejection spike.** The driver reads one
 > sample per poll, the poll floor is the ~10 ms asyncio floor, and the ODR is set to match at 100 Hz —
 > so anti-alias bandwidth is ~50 Hz and a millisecond event is attenuated in the analogue path before
-> it is ever sampled. Decimation is not the limiter either: `telemetry_ms` 10 against a 10 ms poll is
-> already 1:1, so turning decimation off changes nothing.
+> it is ever sampled. Decimation is not the limiter either: the flight profiles set
+> `telemetry_ms` 0 (no global decimation), so every ADXL sample the 10 ms poll produces is already
+> recorded and there is nothing left to turn off.
 >
 > **A comfortable ~4 g peak from such a capture is therefore evidence about SUSTAINED BOOST ONLY and
 > says nothing about shock** — do not retire the ADXL375 on it. What the capture *does* answer:

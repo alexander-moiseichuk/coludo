@@ -158,7 +158,13 @@ def default() -> dict:
         # nothing merges a component's keys into a section -- so the same value written on the recorder
         # COMPONENT entry (where it sat until 2026-08-28) is read by nobody and the 20 ms class default
         # silently wins, so the intended halving never took effect. 0 means NO decimation, not 'default'.
-        'telemetry_ms': 40,
+        # 0 = NO global decimation: every stream emits at its own poll rate. This was 40, which was a
+        # regression introduced by moving the key here: sitting on the recorder COMPONENT it was never
+        # read, so the effective global was the code default (_DEFAULT_TELEMETRY_MS, 20 ms / 50 Hz).
+        # Moving it made 40 live for the first time and quietly HALVED the default rate to 25 Hz. The
+        # flight profiles (tms7c/tms7d) already set 0, so the default now matches what actually flies;
+        # tms7d_control keeps 40, where a control board does not need the full stream.
+        'telemetry_ms': 0,
         # 'session': '20260807_143012_taster',  # CC assigns the whole prefix; absent -> board synthesises
     }
 
@@ -204,7 +210,7 @@ def default() -> dict:
         # POLL rate when INT1 is silent: must beat the 20 ms `accel` freshness window below, so it is
         # the sensor's own 100 Hz ODR rather than a slow safety tick
         'period_ms': 10,
-        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, 25 Hz)
+        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, itself 0 = uncapped)
         'enabled': True,
         'provides': {'accel': {'priority': 1, 'timeout_ms': 20}},  # >32 g backstop behind lsm6dso32
     }
@@ -225,7 +231,7 @@ def default() -> dict:
         # and beat the 20 ms `rate` freshness window below -- the old 100 ms default would have left the
         # PID's D term starved even in poll mode, so the fallback has to be fast, not merely present.
         'period_ms': 10,
-        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, 25 Hz)
+        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, itself 0 = uncapped)
         'enabled': True,
         'provides': {'accel': {'priority': 0, 'timeout_ms': 20},   # PRIMARY accel (±32 g)
                      'rate': {'priority': 0, 'timeout_ms': 20}},    # sole gyro `rate` source
@@ -236,7 +242,7 @@ def default() -> dict:
         'driver': 'bno055',
         'bus': 'i2c', 'id': 0,
         'addr': 0x28,
-        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, 25 Hz)
+        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, itself 0 = uncapped)
         'enabled': True,
         'provides': {'attitude': {'priority': 0, 'timeout_ms': 40},
                      'accel': {'priority': 2, 'timeout_ms': 40}},  # fused fallback behind lsm/adxl
