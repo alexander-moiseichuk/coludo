@@ -96,7 +96,12 @@ _SERVOS: tuple = ('servo_yaw', 'servo_eleron_left', 'servo_eleron_right')
 # for, so it was replaced with a measurement: a full HITL capture runs 642 KB over 49 s of flight, about
 # 13 KB/s, against the ~92 KB/s a 921600-baud UART carries. That is 14 % utilisation, so a 300 s rocket
 # flight streams roughly 4 MB and never approaches the link -- full rate stays, on its own merits.
-_FULL_RATE_MS: int = 10  # 100 Hz, matching the sensors' own sample rate
+# 0 = inherit the recorder global, which is itself 0 = NO decimation. This was 10 ms, which made sense
+# when the global was 25 Hz -- it RAISED these two streams to 100 Hz. With the global uncapped it does
+# the opposite and CAPS them at 100 Hz, so it is now the only thing prorating the shock traces these
+# flights exist to capture. Kept as an explicit 0 rather than deleted, because the two streams named
+# below are the ones whose rate must never be quietly reduced again.
+_FULL_RATE_MS: int = 0
 _FULL_RATE: tuple = ('accel_adxl375', 'imu_lsm6dso32')
 """
 What TMS-7C does NOT carry, so its config must not expect them.
