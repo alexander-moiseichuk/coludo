@@ -7,6 +7,7 @@ expiry handover (rank 0 expires -> rank 1 takes over), and stale extrapolation. 
 
 import time
 
+import databoard
 import inspector
 from databoard import Databoard
 
@@ -124,8 +125,31 @@ def main():
     # a non-reconciled param never learns an offset (the shared-window 'pri'/'sec' pair above)
     assert Databoard.parameter('w').offsets() == {}
 
+    """
+    FRESHNESS ACROSS THE ticks_us WRAP. ticks_us wraps at 2**30 us (~17.9 min) and ticks_diff returns
+    a SIGNED value in [-2**29, 2**29), so a channel silent for 8.95-17.9 minutes yields a NEGATIVE
+    elapsed -- and a bare `elapsed <= window` calls that FRESH, reporting a dead sensor as live. Not
+    reachable inside a 2-minute flight, but entirely reachable on the pad while waiting for a GNSS
+    fix, where a dead sensor would then pass the operator readiness gate.
+
+    Driven directly on a _Channel because the condition needs a ~9-minute-old timestamp: the test
+    fabricates the tick, rather than waiting for one.
+    """
+    channel = databoard._Channel('probe', 0)
+    window = 200_000
+    channel.t1 = 0
+    assert channel.fresh(100_000, window) is True            # 0.1 s old -> fresh
+    assert channel.fresh(500_000, window) is False           # 0.5 s old -> stale
+    for silent_us in (537_000_000, 700_000_000, 1_000_000_000):   # 8.95 min .. 16.7 min
+        now = silent_us % (1 << 30)
+        assert channel.fresh(now, window) is False, ('wrap read as fresh at %d us' % silent_us)
+    # a push landing between the caller sampling `now` and the check reads stale for ONE cycle --
+    # the deliberate direction: a false stale costs a fallback source, a false fresh costs the flight
+    channel.t1 = 20
+    assert channel.fresh(0, window) is False
+
     print('ok: databoard provide/parameter ergonomics, rank-preference, shared-window handover, '
-          'primary extrapolation, offset reconciliation')
+          'primary extrapolation, offset reconciliation, freshness across the ticks_us wrap')
 
 
 main()
