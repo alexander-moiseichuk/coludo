@@ -333,7 +333,11 @@ class Checkpoint(task.Task):
                 launch = ((zone[0][0] + zone[1][0]) / 2, (zone[0][1] + zone[1][1]) / 2)
             static['launch'] = [launch[0], launch[1]]
             static['zone'] = [[zone[0][0], zone[0][1]], [zone[1][0], zone[1][1]]]
-        pad = self._pad if self._pad is not None else self._altitude.value()  # last on-pad reading (fallback: now)
+        if self._pad is not None:
+            pad = self._pad                             # the latched on-pad reading (the good case)
+        else:                                           # never latched -> a FRESH reading only
+            pad, pad_source, _pad_age = self._altitude.read()
+            pad = pad if pad_source is not None else None
         if pad is not None:
             static['pad_altitude'] = pad
         """
@@ -390,8 +394,17 @@ class Checkpoint(task.Task):
             await asyncio.sleep_ms(self._poll_ms)
             stage = self.controller.stage
             if stage == controller.Stage.SETTING:  # on the pad -> keep the latest ground altitude
-                pad = self._altitude.value()
-                if pad is not None:
+                """
+                read(), NOT value(). This latches the pad altitude that a warm start rebases BOTH baros
+                to, so a wrong value re-grounds the whole post-reboot flight. value() answers a channel
+                with no fresh source by extrapolating its last two samples with no horizon -- so a baro
+                that goes quiet during the long pad dwell (the board can sit in SETTING for many
+                minutes waiting on a GNSS fix) hands back a confidently drifting number and this
+                latches it. Gate on the SOURCE: no fresh reading means keep the last good pad, not a
+                projection of one.
+                """
+                pad, pad_source, _pad_age = self._altitude.read()
+                if pad is not None and pad_source is not None:
                     self._pad = pad
             changed = stage != last_stage
             if changed and stage == controller.Stage.BOOSTING:
