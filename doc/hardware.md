@@ -589,7 +589,7 @@ little, because **attitude is already isolated across bus families**:
 
 | quantity | primary | backup | already isolated? |
 |---|---|---|---|
-| attitude | `lsm6dso32` (**SPI**) | `bno055` (I²C) | ✅ different bus families |
+| attitude | **`bno055` (I²C)** | complementary filter (`attitude`), fed by the **SPI** gyro + GNSS | ✅ different bus families |
 | airspeed | `sdp810` (I²C) | accel+GNSS estimator (**not on a bus**) | ✅ fallback is not I²C |
 | power | `ina226` (I²C) | — | n/a, not flight-critical |
 | **altitude** | **`icp10111` (I²C)** | **`bmp280` (I²C)** + laser at rank 2 | ❌ **all on one bus** |
