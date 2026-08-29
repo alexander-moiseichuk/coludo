@@ -658,14 +658,28 @@ def default() -> dict:
     Watchdog + heartbeat: feeds a hardware WDT (a total event-loop wedge -> hard reset) and
     supervises the control loop (stall in a control stage -> full reset; boot re-centres the fins).
     Disabled by default -- a live WDT also resets the board when you drop the running firmware to the
-    REPL for bench work; enable it for flight. wdt_timeout 1000: the frozen-fin bound at a hard OOM
-    (7/06 soak: ~1.4 s to reset). NOT lower: a rescue gc.collect() is atomic (nothing can feed
-    mid-sweep) and its cost scales with heap FILL -- ~65-260 ms on a mostly-free heap (the
-    real-anomaly rescue case) but measured 3.4 s on a ballast-full one; 500 ms killed the rescue in
-    HITL. Fast control-loop-death detection is stall_ms below, independent of this timeout.
+    REPL for bench work; enable it for flight (the 7C/7D profiles do).
+
+    wdt_timeout 5000, and it is a MEASURED FLOOR rather than a preference. Two independent limits meet
+    here and both rule out the 1000 ms this used to carry:
+
+      * BOOT. At 1000 ms the board does not boot -- it resets every ~8.5 s forever. The ESP-IDF task
+        watchdog aborts on `mpy_machine_wdt` exactly `timeout` after arming, with BOTH cores idle, so
+        it is not loop starvation: the firmware's own feed loop was verified running at its 200 ms
+        cadence with a substituted counter, and the real WDT was verified being fed without raising.
+        Measured on the board: 1000 ms loops, 5000 ms is stable across two soaks (90 s and 60 s, one
+        POWERON reset and nothing else).
+      * RESCUE. A rescue gc.collect() is ATOMIC -- nothing can feed mid-sweep, which is why the task
+        exposes kick() to hand the block a full budget -- and its cost scales with heap FILL: ~65-260 ms
+        on a mostly-free heap, but measured 3.4 s on a ballast-full one. A 1000 ms budget could not
+        cover that even with a kick, so the old value would have shot down the very rescue it was
+        sized around. 5000 ms clears the measured worst case.
+
+    Frozen fins at a hard OOM are bounded by the reset either way (7/06 soak: ~1.4 s to the reset), and
+    fast control-loop-death detection is stall_ms below, independent of this timeout.
     """
     watchdog = {'name': 'watchdog', 'activity': 'watchdog', 'enabled': False,
-                'wdt_timeout_ms': 1000, 'period_ms': 200, 'stall_ms': 500}
+                'wdt_timeout_ms': 5000, 'period_ms': 200, 'stall_ms': 500}
 
     """
     Board vitals (temperature/memory/load) -> telemetry every period_ms. probe_ms is the load
