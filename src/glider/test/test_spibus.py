@@ -23,6 +23,8 @@ _ADXL_DEVID: int = 0x00  # ADXL375 device-id register -> 0xE5
 _ADXL_ID: int = 0xE5
 _LSM_WHOAMI: int = 0x0F  # LSM6DSO32 WHO_AM_I -> 0x6C
 _LSM_ID: int = 0x6C
+_LSM_CTRL3_C: int = 0x12  # BDU + IF_INC (auto-increment) + SIM (4-wire SPI)
+_LSM_CFG_C: int = 0x44    # the value the driver writes at setup -- idempotent, so safe to repeat here
 
 
 async def amain():
@@ -45,6 +47,19 @@ async def amain():
 
     adxl = bus.device(pins['adxl375_cs'])                    # mb_bit 6 (ADXL family default)
     lsm = bus.device(pins['lsm6dso32_cs'], mb_bit=None)      # increments via CTRL3_C.IF_INC instead
+
+    """
+    Put the LSM into the state this test is about to make assertions against.
+
+    Two reasons, both learned the hard way when this test failed on the board at a DIFFERENT line on
+    each run. First, the auto-increment being tested below IS CTRL3_C.IF_INC -- asserting that a 2-byte
+    read increments while leaving IF_INC clear tests nothing and passes only by luck. Second, the part
+    answers on BOTH I2C (0x6A) and SPI and does not commit to one until the interface is pinned, so a
+    cold chip returns 0x00 for its first several SPI transactions; measured 6-11 of them here before it
+    locked on and stayed locked. The driver writes exactly this at setup, so repeating it is idempotent
+    and leaves a running driver undisturbed.
+    """
+    await lsm.write(_LSM_CTRL3_C, bytes([_LSM_CFG_C]))
 
     # single-register reads: both parts answer with their documented id
     assert (await adxl.read(_ADXL_DEVID, 1))[0] == _ADXL_ID, 'ADXL375 DEVID'

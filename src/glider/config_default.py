@@ -433,7 +433,7 @@ def default() -> dict:
         # against wind back-drive); the elerons stay SG90. Each fin's `driver` is independent, so mixing
         # is supported. NB a continuous-rotation "360" MG90S is NOT a fin servo (pulse = speed, it spins
         # and never holds an angle) -- only the 180deg positional part works here.
-        {'name': 'servo_yaw', 'driver': 'mg90s', 'pin': 'servo_yaw', 'enabled': True},
+        {'name': 'servo_yaw', 'driver': 'sg90', 'pin': 'servo_yaw', 'enabled': True},
         {'name': 'servo_eleron_left', 'driver': 'sg90', 'pin': 'servo_eleron_left', 'enabled': True},
         {'name': 'servo_eleron_right', 'driver': 'sg90', 'pin': 'servo_eleron_right', 'enabled': True},
     ]

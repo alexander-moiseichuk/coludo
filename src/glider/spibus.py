@@ -99,10 +99,13 @@ class Bus:
         self._spi = SPI(bus_id, baudrate=spec.get('baud', 5_000_000), polarity=mode >> 1, phase=mode & 1,
                         sck=Pin(spec['sck']), mosi=Pin(spec['mosi']), miso=Pin(spec['miso']))
         self._lock = asyncio.Lock()
+        self._devices: list = []  # every window handed out, so retune() can resync them
 
     def device(self, cs: int, mb_bit: int = 6) -> _Device:
         """A register window for one chip-select on this bus (matches i2cbus.Bus.device)."""
-        return _Device(self, cs, mb_bit)
+        window = _Device(self, cs, mb_bit)
+        self._devices.append(window)  # remembered so retune() can resync each one; see there
+        return window
 
     async def retune(self, freq: int) -> None:
         """
@@ -123,6 +126,28 @@ class Bus:
             self._spi = SPI(self._bus_id, baudrate=freq, polarity=mode >> 1, phase=mode & 1,
                             sck=Pin(self._spec['sck']), mosi=Pin(self._spec['mosi']),
                             miso=Pin(self._spec['miso']))
+            """
+            Resync every device: replacing the peripheral leaves some parts one transaction out of step.
+
+            Measured on the LSM6DSO32, deterministically -- after a retune its FIRST framed read returns
+            0x00 and the second is correct, on every trial. The ADXL375 alongside it on the same bus is
+            unaffected, which is why this cannot be left to the caller: the symptom is one device
+            reporting dead at whatever frequency was just set.
+
+            That matters because the only caller is the bustune frequency sweep, which retunes and then
+            immediately health-checks. Without this, the sweep would blame the LSM6DSO32 at EVERY step of
+            the ladder and pick a needlessly low SPI speed -- a wrong answer from the tool whose entire
+            job is choosing that number.
+
+            One throwaway read of register 0 per device; both parts treat it as side-effect-free. The
+            cost lands here, in a bench-only operation, rather than as a per-transaction check on the
+            100 Hz IMU path.
+            """
+            for window in self._devices:
+                try:
+                    await window.read(0x00, 1)
+                except Exception:
+                    pass  # a device that is absent stays absent; this is only a resync, not a probe
 
 
 def get(bus_id: int, spec: dict) -> Bus:
