@@ -12,16 +12,26 @@ import recorder
 
 
 class FakeWriter:
-    """Stands in for the asyncio.StreamWriter over the recorder UART."""
+    """
+    Stands in for the asyncio.StreamWriter over the recorder UART.
+
+    Carries `out_buf` because the real StreamWriter does and Recorder.drain() reads it to decide when to
+    flush -- a stub without it makes the high-water path both untestable and fatal. Counts flushes so a
+    test can assert back-pressure actually happened rather than assuming it.
+    """
 
     def __init__(self):
         self.items = []
+        self.out_buf = b''      # pending bytes, exactly as the real StreamWriter exposes them
+        self.flushes = 0
 
     def write(self, data):
         self.items.append(bytes(data))
+        self.out_buf += bytes(data)
 
     async def drain(self):
-        pass
+        self.out_buf = b''
+        self.flushes += 1
 
 
 def _config(tlm_capacity, log_capacity, cell_size):
@@ -284,14 +294,48 @@ async def test_run_loop():
     assert len(recorder.Recorder._uart.items) >= 1
 
 
+async def test_back_pressure():
+    """
+    drain() must flush MID-PASS once pending bytes reach the high-water mark, not buffer a whole ring.
+
+    The UART was created with MicroPython's 256-byte default txbuf while the ring holds 256 KB, so one
+    pass could hand the peripheral orders of magnitude more than it can take -- and an overrun does not
+    raise, it silently drops the tail of whatever record is in flight. That is the exact shape of the
+    corruption measured on real captures: a record cut mid-field, its newline gone, and the next record
+    running onto the same line (20 in 1,004,804 rows across 48 flights).
+
+    Flushing on FILL rather than on a record count adapts to record size and link speed: a quiet stream
+    never flushes early, a burst flushes as often as it needs. A fixed sleep per line was measured
+    against instead -- 4.2 s of sleep per second of flight at this board's ~10 ms asyncio floor.
+    """
+    writer = FakeWriter()
+    recorder.Recorder.setup(config_default.default(), uart=writer)
+    payload = b'y' * 200
+    for _ in range(60):                     # 12000 bytes: must cross the 2048 mark several times
+        recorder.Recorder._tlm.write(payload)
+    drained = await recorder.Recorder.drain()
+    assert drained == 60, drained
+    assert writer.flushes >= 2, 'back-pressure never engaged: %d flush(es)' % writer.flushes
+    assert len(writer.items) == 60, len(writer.items)          # nothing dropped while flushing
+
+    # NEGATIVE: a small pass must NOT flush early -- back-pressure only when there is pressure
+    quiet = FakeWriter()
+    recorder.Recorder.setup(config_default.default(), uart=quiet)
+    recorder.Recorder._tlm.write(b'z' * 50)
+    await recorder.Recorder.drain()
+    assert quiet.flushes == 1, 'a 50-byte pass flushed %d times, not once' % quiet.flushes
+
+
 async def _amain():
     await test_recorder()
     await test_error_policy()
     await test_cc_stream()
     await test_cc_telemetry()
     await test_run_loop()
+    await test_back_pressure()
 
 
 test_ring()
 asyncio.run(_amain())
-print('ok: recorder SPSC ring, async drain/priority, log-drop vs tlm-raise, Telemetry, cc log+tlm stream, run loop')
+print('ok: recorder SPSC ring, async drain/priority, log-drop vs tlm-raise, Telemetry, cc log+tlm '
+      'stream, run loop, high-water back-pressure +/-')

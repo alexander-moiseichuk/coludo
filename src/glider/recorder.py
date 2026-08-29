@@ -44,9 +44,11 @@ except ImportError:  # host (CPython): board-only; the Luckfox UART is opened on
 
 _DEFAULT_CELL_SIZE = const(256)  # bytes per ring cell (record + 2-byte length header)
 _DEFAULT_CAPACITY = const(1024)  # cells per ring
-_DEFAULT_TXBUF = const(8192)     # UART TX ring; see setup() -- the 256-byte default silently truncates
-_DRAIN_CHUNK = const(32)         # records flushed before yielding, so the TX buffer never has to hold
-                                 # a whole ring pass; an await, not a sleep, so it costs no wall time
+_DEFAULT_TXBUF = const(4096)     # UART TX ring; the 256-byte default silently truncates (see setup()).
+                                 # 4096 rather than more because back-pressure is held at the RING
+                                 # level below -- the buffer only has to absorb one high-water burst,
+                                 # not a whole ring pass, and RAM is scarce on this board.
+_DRAIN_HIGH_WATER = const(2048)  # half of _DEFAULT_TXBUF: flush when the pending bytes reach it
 _LENGTH_BYTES = const(2)  # uint16 record-length header
 _STATS_PERIOD_MS = const(1000)  # how often run() logs a buffer-stats line
 _DEFAULT_TELEMETRY_MS = const(20)  # global telemetry decimation default (50 Hz); a stream's 0 -> this.
@@ -475,19 +477,29 @@ class Recorder:
         drained = 0
         writer = cls._uart
         """
-        Flush in CHUNKS rather than buffering an entire ring pass before the single drain.
+        Flush on BUFFER FILL, not on a record count -- back-pressure only when there is pressure.
 
-        The buffer only ever has to hold _DRAIN_CHUNK records, so a backlog cannot present the UART
-        with more than it can take -- which is the other half of the truncation the txbuf sizing
-        addresses. This is an await, not a sleep: it yields only as long as the UART actually needs,
-        so it costs no wall time at the 424 records/s these flights produce.
+        The writer's pending bytes are directly observable (`out_buf`), so the flush happens when the
+        buffer actually reaches its high water mark rather than every N records. That adapts to record
+        size and to how fast the link is draining: a quiet stream never flushes early, a burst flushes
+        as often as it needs to, and the UART is never handed more than it can hold.
+
+        This is an await, not a sleep. A fixed `sleep_ms(1)` per line was considered and measured
+        against: at the 424 records/s these flights produce it costs 0.4 s of sleep per second of
+        flight if it truly slept 1 ms, and 4.2 s/s at this board's MEASURED ~10 ms asyncio floor --
+        throttling telemetry roughly fourfold. drain() yields only as long as the UART actually needs.
+
+        Honest note on effect: sizing txbuf and flushing early showed NO measurable reduction in wire
+        corruption over a 24-flight run (40 events against a 41/42/49 baseline, inside its own spread).
+        The sender was not the bottleneck. This is kept because it is strictly better-behaved than
+        buffering a whole ring pass, not because it is demonstrated to fix anything.
         """
         for ring in (cls._tlm, cls._log):
             record = ring.read()
             while record is not None:
                 writer.write(record)
                 drained += 1
-                if drained % _DRAIN_CHUNK == 0:
+                if len(writer.out_buf) >= _DRAIN_HIGH_WATER:
                     await writer.drain()
                 record = ring.read()
         if drained:
