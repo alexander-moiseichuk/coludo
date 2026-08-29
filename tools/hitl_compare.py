@@ -58,7 +58,34 @@ _PANELS: tuple = (
     ('rows total',            None, None, None, 'rows'),
 )
 
-_ANOMALY_FACTOR: float = 3.0   # a run this far outside the others' spread is called out, not just listed
+_SPREAD_FLOOR: float = 1e-3   # below this |mean|, a ratio is noise about zero and says nothing
+
+# PHYSICAL bounds per panel. A spread ratio cannot tell "noisy" from "corrupt" -- a heading error of
+# 15300 deg and one of 175 deg differ by 195 %, which ranks them next to a memory figure that merely
+# varies. These bounds catch the first kind outright. Every one is a limit of the QUANTITY, not a
+# tuning choice: a heading error is an angle, an airspeed has a stall and a never-exceed, |a| is
+# bounded by the ADXL375's own range.
+_BOUNDS: dict = {
+    'accel |a| peak': (0.0, 200.0),          # ADXL375 full scale
+    'accel |a| mean': (0.0, 200.0),
+    'altitude peak': (-500.0, 5000.0),       # metres AMSL over a field
+    'elevation peak': (-100.0, 3000.0),
+    'speed max': (0.0, 200.0),               # knots
+    'attitude roll range': (0.0, 360.0),
+    'attitude pitch range': (0.0, 360.0),
+    'fin eleron_left range': (0.0, 360.0),
+    'fin yaw range': (0.0, 360.0),
+    'health load max': (0.0, 100.0),         # a percentage
+    'agl min': (-50.0, 5000.0),
+    'engine power peak': (0.0, 50000.0),     # mW; three servos stall well under this
+    'engine mA peak': (0.0, 10000.0),
+    'gyro gx range': (0.0, 40000.0),         # centideg/s: LSM6DSO32 at +/-2000 dps
+    'gyro gz range': (0.0, 40000.0),
+    'airspeed pitot max': (0.0, 20000.0),    # cm/s -- 200 m/s, far past this airframe
+    'fin cap min': (0.0, 90.0),              # degrees of authority
+    'heading_err max': (-180.0, 180.0),      # an angle: cannot exceed 180 by definition
+    'duration s': (0.0, 600.0),
+}
 
 
 def _reduce(values: list, how: str):
@@ -125,7 +152,7 @@ def _spread(values: list) -> tuple:
         return None, None, None
     low, high = min(live), max(live)
     mean = sum(live) / len(live)
-    return low, high, (abs(high - low) / abs(mean) if abs(mean) > 1e-9 else None)
+    return low, high, (abs(high - low) / abs(mean) if abs(mean) > _SPREAD_FLOOR else None)
 
 
 def compare(runs: dict, motors: list) -> dict:
@@ -168,6 +195,19 @@ def compare(runs: dict, motors: list) -> dict:
                     anomalies.append({'motor': motor, 'scenario': scenario, 'panel': panel,
                                       'kind': 'channel present in %s, absent in %s'
                                               % (','.join(present), ','.join(absent))})
+                """
+                IMPOSSIBLE values are reported separately from wide ones, because they are a different
+                fault. A run that merely varies is telling you about the flight; a heading error of
+                15300 degrees is telling you a sample is corrupt, and no amount of spread arithmetic
+                distinguishes the two -- both come out as a large percentage.
+                """
+                low_bound, high_bound = _BOUNDS.get(panel, (None, None))
+                if low_bound is not None:
+                    for label, value in zip(labels, values):
+                        if value is not None and not (low_bound <= value <= high_bound):
+                            anomalies.append({'motor': motor, 'scenario': scenario, 'panel': panel,
+                                              'kind': 'IMPOSSIBLE in %s: %.6g outside [%g, %g]'
+                                                      % (label, value, low_bound, high_bound)})
     return {'rows': rows, 'anomalies': anomalies, 'missing': missing, 'labels': labels}
 
 
@@ -204,8 +244,13 @@ def main() -> None:
         print('%-5s %-14s %-24s %8.1f%%   %s' % (row['motor'], row['scenario'], row['panel'],
                                                  100 * row['spread'], shown))
     print()
-    print('ANOMALIES (channel present in some runs, absent in others): %d' % len(result['anomalies']))
-    for item in result['anomalies'][:20]:
+    impossible = [a for a in result['anomalies'] if a['kind'].startswith('IMPOSSIBLE')]
+    dropouts = [a for a in result['anomalies'] if not a['kind'].startswith('IMPOSSIBLE')]
+    print('IMPOSSIBLE VALUES (outside the quantity\'s physical range): %d' % len(impossible))
+    for item in impossible[:20]:
+        print('    %s/%s %s -- %s' % (item['motor'], item['scenario'], item['panel'], item['kind']))
+    print('CHANNEL DROPOUTS (present in some runs, absent in others): %d' % len(dropouts))
+    for item in dropouts[:20]:
         print('    %s/%s %s -- %s' % (item['motor'], item['scenario'], item['panel'], item['kind']))
     if args.json:
         with open(args.json, 'w') as handle:

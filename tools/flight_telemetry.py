@@ -252,6 +252,20 @@ def spliced(streams: dict) -> list:
     return sorted(name for name, stream in streams.items() if stream.spliced)
 
 
+_MARKER = re.compile(r'@[0-9]{8}_[0-9]{6}_[A-Za-z0-9]*_?[a-z0-9_]+\.csv@')
+_SPLICED: list = []      # stream names whose line was found spliced, reset per parse()
+
+
+def name_hint(tag: str) -> str:
+    """The stream name from a record tag, for reporting which stream lost a row."""
+    return _SESSION.sub('', tag)
+
+
+def spliced_rows() -> int:
+    """How many spliced lines the LAST parse() split apart (0 on a clean capture)."""
+    return len(_SPLICED)
+
+
 def parse(text: str):
     """
     Parse a raw capture into aligned streams and log lines.
@@ -266,6 +280,7 @@ def parse(text: str):
     """
     streams = {}
     logs = []
+    del _SPLICED[:]          # per-parse, so spliced_rows() describes THIS capture
     lines = text.splitlines()
     # first pass: learn this capture's session tail before any stream is keyed by it
     tail = _session_tail(sorted({_SESSION.sub('', line[1:].partition('@')[0])
@@ -279,6 +294,31 @@ def parse(text: str):
             tag, _, row = line[1:].partition('@')
             if not row:
                 continue
+            """
+            SPLICED LINE -- two records that ran together because the first lost its newline.
+
+            Measured on the real recorder path (board -> UART -> Luckfox -> adb): 20 lines in 1,004,804
+            across 48 flights, so about one in three flights carries one. The first record is TRUNCATED
+            mid-field and the next record's whole `@session_stream@...` text follows it on the same line.
+
+            Left alone this is silently destructive, not merely lossy: the truncated row keeps parsing,
+            and the SECOND record's fields land in the FIRST record's columns. That is where the
+            impossible values come from -- an airspeed of 1.4e12 cm/s and a heading error of 15330 deg,
+            both of which are simply the next stream's numbers read in the wrong place. A tool then
+            treats them as flight data (this class already produced a reported L/D of 64).
+
+            So the line is SPLIT at the second marker and both halves parsed where they belong. The
+            truncated half loses its tail to the short-row guard, which is correct -- that data really
+            is gone -- but nothing is misattributed, and `dropped_spliced` counts them so a capture can
+            say how much it lost rather than looking clean.
+            """
+            marker = _MARKER.search(row)
+            if marker is not None:
+                lines.append('@' + row[marker.start() + 1:])   # re-queue the second record intact
+                row = row[: marker.start()]
+                _SPLICED.append(name_hint(tag))
+                if not row:
+                    continue
             name = _SESSION.sub('', tag)  # 'YYYYMMDD_HHMMSS_<tail>imu.csv' -> '<tail>imu.csv'
             if tail and name.startswith(tail):
                 name = name[len(tail):]  # ... -> 'imu.csv'

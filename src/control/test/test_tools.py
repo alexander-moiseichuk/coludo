@@ -164,6 +164,33 @@ def test_airspeed_calibration_from_an_assembled_capture():
     with open(capture, 'w') as handle:
         handle.write('\n'.join(pitot_lines + gnss_lines) + '\n')
 
+    """
+    A SPLICED line -- two records run together because the first lost its newline -- must be split, not
+    silently mis-parsed.
+
+    Measured on the real recorder path: 20 lines in 1,004,804 across 48 flights, roughly one flight in
+    three. The damage is not the lost tail, it is the MISATTRIBUTION: the second record's fields land in
+    the first record's columns, so the row keeps parsing and produces plausible-looking nonsense. That
+    is where an airspeed of 1.4e12 cm/s and a heading error of 15330 deg came from -- both were simply
+    the next stream's numbers read in the wrong place, and a tool downstream reported an L/D of 64 from
+    exactly this class.
+    """
+    spliced_text = (
+        '@20260101_010101_x_flight.csv@uptime;stage;fin_cap;heading_err\n'
+        '@20260101_010101_x_airspeed_sdp810.csv@uptime;dynamic_pressure;airspeed_cms\n'
+        '@20260101_010101_x_flight.csv@1000;3;45;120\n'
+        '@20260101_010101_x_flight.csv@2000;3;45;1@20260101_010101_x_airspeed_sdp810.csv@2001;13000;1500\n'
+    )
+    spliced_streams, _unused_logs = flight_telemetry.parse(spliced_text)
+    assert flight_telemetry.spliced_rows() == 1, flight_telemetry.spliced_rows()
+    flight_stream = flight_telemetry.find_stream(spliced_streams, 'heading_err')
+    _stamps, headings = flight_stream.column('heading_err')
+    live = [v for v in headings if v is not None]
+    assert max(live) <= 180, 'the airspeed record leaked into heading_err: %r' % live
+    air = flight_telemetry.find_stream(spliced_streams, 'dynamic_pressure')
+    _stamps, speeds = air.column('airspeed_cms')
+    assert 1500 in [v for v in speeds if v is not None], 'the second record was lost, not re-queued'
+
     pitot_rows, gnss_rows = airspeed_calibrate._read_capture(capture)
     assert len(pitot_rows) == 400 and len(gnss_rows) == 400
 
