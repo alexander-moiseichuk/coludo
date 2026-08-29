@@ -453,11 +453,28 @@ Following booster separation, the Gliding phase executes, maneuvering the aircra
 
 ## Landing
 
-The Pre-Landing sequence triggers when the glider drops to 4-12 meters AGL (Above Ground Level) relative to the launch pad elevation and speed is vertical speed < −1.5 m/s and roll < 10°. The priority shifts from destination tracking to structural preservation:
-* **Attitude Lock:** The flight surfaces lock into a straight-and-level attitude glide. All aggressive rolling, pitching, or yawing maneuvers are suppressed to ensure clean underbelly contact with the ground.
-* **Data Logging Surge:** To capture maximum high-resolution structural and aerodynamic impact data, the telemetry and multimedia flush rates are boosted from 1 Hz to 10 Hz.
-* **Touchdown Detection:** Ground impact is verified when horizontal/vertical velocities decay to near-zero margins and barometric altitude output stabilizes completely.
-* **De-initialization:** Following a 5-second confirmation window of absolute silence, the flight is officially flagged as completed. All open data streams are flushed to the Recorder over UART (the controller has no local filesystem to unmount), and the controller puts the hardware into a low-power state via the ESP32 `machine.deepsleep()` API (the earlier `pyb.stop()`/`pyb.standby()` calls are pyboard-only and do not apply to the ESP32 port).
+GLIDING -> LANDING fires on **height alone**: the AGL drops below `land_agl_m` (**5.0 m** by default)
+and STAYS there for `land_ms` (**300 ms**). The dwell is what makes it safe -- a single low sample never
+flares, and a reading that rises back or is lost resets the timer.
+
+* **Height source:** the VL53L4CX laser is primary, and it is read with `read()` and gated on the
+  SOURCE being fresh. That gate is load-bearing, not tidiness: the laser reaches only ~4 m, so the
+  channel is legitimately stale for most of a flight, and an extrapolated value once fired
+  `landing; agl -9.6m` **0.38 s after apogee at 274 m**, ending a flight under control. With no fresh
+  laser reading the barometric elevation is the fallback.
+* **There is NO attitude lock.** LANDING shares the GLIDING steering law -- `guidance` dispatches both
+  stages to the same `_steer` -- so the glider keeps steering for the zone all the way down. Nothing
+  suppresses roll or pitch, and no vertical-speed or roll term takes part in the trigger.
+* **No telemetry rate change.** The recorder runs at its configured global rate throughout; there is no
+  flush-rate surge at LANDING.
+* **LANDING -> DONE:** |accel| back to ~1 g, sustained `ground_ms` -- stopped on the ground.
+* **At DONE:** garbage collection is re-enabled and a collect runs (it was disabled at launch), and the
+  fins return to neutral. The controller does **not** enter a low-power state: there is no
+  `machine.deepsleep()` call anywhere in the firmware, and the board stays awake so the recovery crew
+  can reach it over CC.
+
+> The thresholds above are the config defaults (`land_agl_m`, `land_ms`, `ground_ms` in the
+> `sequencer` section); `src/glider/tasks/sequencer.py` is the source of truth for the logic.
 
 Horizontally (longitude) stretched landing zone
 ```
@@ -873,7 +890,7 @@ The Flight Controller continually correlates accelerometer vectors alongside GNS
 
 ## Altimeter
 
-High-resolution altitude tracking uses a Gravity: ICP-10111 Pressure Sensor, selected for its 8.5cm operational accuracy and low 2mA current consumption. Barometric calculations are cross-checked against a secondary onboard BMP280 Digital Pressure Sensor and incoming GNSS elevation metrics.A verified vertical delta $\le 3\text{ meters}$ AGL acts as the absolute trigger to drop the master stage machine from Gliding to Landing mode. Due to low altitude mode not working very well on the barometer the laser range finder is mandatory for safety.
+High-resolution altitude tracking uses a Gravity: ICP-10111 Pressure Sensor, selected for its 8.5cm operational accuracy and low 2mA current consumption. Barometric calculations are cross-checked against a secondary onboard BMP280 Digital Pressure Sensor and incoming GNSS elevation metrics.The GLIDING -> LANDING trigger is the laser AGL below `land_agl_m` (5.0 m default) sustained for `land_ms` -- see [Landing](#landing); the barometer is the FALLBACK height source there, not the trigger. Due to low altitude mode not working very well on the barometer the laser range finder is mandatory for safety.
 
 ## Separation Sensor (Switch or Breakaway Wire)
 
