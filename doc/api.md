@@ -1514,7 +1514,7 @@ else d(error)/dt (differentiated on the error).
 - `__init__(kp: float=0.0, ki: float=0.0, kd: float=0.0, integral_limit: int=_UNBOUNDED_DEG, output_limit: int=_UNBOUNDED_DEG, anti_windup_shift: int=_ANTI_WINDUP_SHIFT)` — constructor
 - `reset() -> None` — Clear the integral + derivative history.
 - `set_limit(limit_deg: int) -> None` — Retune the output clamp + anti-windup integral clamp to a live authority limit (whole degrees).
-- `step(error: fixnum, dt_ms: int, rate: fixnum=None) -> fixnum`
+- `step(error: fixnum, dt_ms: int, rate: fixnum=None) -> fixnum` — Accumulate in SCALE-degree-MILLIseconds and convert on use, rather than truncating every step.
 
 ## `recorder.py`
 
