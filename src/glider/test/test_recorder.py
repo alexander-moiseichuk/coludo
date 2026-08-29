@@ -97,13 +97,22 @@ async def test_recorder():
     The CONFIG's global rate must actually reach the Recorder. Nothing here asserted that: every test
     set Recorder.telemetry_decimate_us by hand, so a knob written into the wrong dict was invisible.
     It was -- config_default carried telemetry_ms on the recorder COMPONENT while setup() reads the
-    top-level SECTION, so the documented 50 -> 25 Hz leak reduction never took effect and the 20 ms
-    class default silently won. Drive setup() with the real default config and check the result.
+    top-level SECTION, so the rate never took effect and the 20 ms class default silently won. Drive
+    setup() with the real default config and check the result.
+
+    The expectation is DERIVED from the config, not written as a literal. It was 40000 and broke the
+    moment the default legitimately changed to 0 (uncapped) -- a test that has to be edited every time
+    the value it guards moves is testing the value, when what matters is the WIRING. The guard that
+    keeps it honest is the assert above it: if the config ever equals the class default, this test
+    could not distinguish "read correctly" from "fell back", so it says so instead of passing.
     """
+    expected_us = config_default.default()['recorder']['telemetry_ms'] * 1000
+    class_default_us = 20000  # recorder._DEFAULT_TELEMETRY_MS: a const(), so folded at compile time
+    assert expected_us != class_default_us, 'config equals the class default -- this test cannot fail'
     recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
-    assert recorder.Recorder.telemetry_decimate_us == 40000, recorder.Recorder.telemetry_decimate_us
+    assert recorder.Recorder.telemetry_decimate_us == expected_us, recorder.Recorder.telemetry_decimate_us
     # and a stream that declares no rate of its own must inherit exactly that
-    assert recorder.Telemetry('inherit.csv', ('v',)).window == 40000
+    assert recorder.Telemetry('inherit.csv', ('v',)).window == expected_us
 
     """
     The global must reach a stream BUILT BEFORE IT WAS SET. That ordering is the real one: drivers
