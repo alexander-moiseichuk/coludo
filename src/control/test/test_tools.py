@@ -166,6 +166,23 @@ def test_airspeed_calibration_from_an_assembled_capture():
 
     pitot_rows, gnss_rows = airspeed_calibrate._read_capture(capture)
     assert len(pitot_rows) == 400 and len(gnss_rows) == 400
+
+    """
+    A TRUNCATED telemetry line must be skipped, not crash the calibration. Rows were rebuilt with a
+    bare zip(), which stops at the shorter sequence -- so a short row produced a dict missing its
+    trailing keys and the caller's float(row['dynamic_pressure']) raised KeyError, losing the whole
+    calibration to one bad line. Captures really do contain them: q55/e16_full.txt carries a 3-cell
+    row where 4 are expected.
+    """
+    with open(capture) as handle:
+        body = handle.read().rstrip('\n').split('\n')
+    body.insert(3, '@s_airspeed_sdp810.csv@240000;13000')   # 2 cells where 4 are expected
+    truncated = os.path.join(tempfile.mkdtemp(), 'truncated.txt')
+    with open(truncated, 'w') as handle:
+        handle.write('\n'.join(body) + '\n')
+    short_pitot, short_gnss = airspeed_calibrate._read_capture(truncated)
+    assert len(short_pitot) == 400, len(short_pitot)   # the bad row skipped, the good ones kept
+    assert airspeed_calibrate.calibrate(short_pitot, short_gnss, 8.0, 1.225)['samples'] > 0
     result = airspeed_calibrate.calibrate(pitot_rows, gnss_rows, min_speed=8.0, current=1.225)
     assert abs(result['air_density'] - true_rho) < 0.01, result['air_density']
 

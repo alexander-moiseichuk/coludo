@@ -111,10 +111,23 @@ def _read_capture(path: str) -> tuple:
     gnss = flight_telemetry.find_stream(streams, 'speed_kn')
 
     def rows(stream):
+        """
+        Row dicts for one stream, SKIPPING truncated rows.
+
+        `zip` stops at the shorter sequence, so a short row silently yields a dict missing its trailing
+        keys and the caller's `float(row['dynamic_pressure'])` raises KeyError -- the whole calibration
+        dies on one bad line. Captures do contain them: a real one here carries a 3-cell row where 4
+        are expected, from a telemetry line truncated in transit.
+
+        Skipping matches the shared parser, which applies the same guard per field
+        (flight_telemetry.Stream.column: `if len(row) > index and row[index] != ''`). One lost sample
+        out of hundreds costs the fit nothing; crashing costs the operator the calibration.
+        """
         if stream is None:
             return []
         names = ['uptime'] + list(stream.fields)
-        return [dict(zip(names, [str(cell) for cell in row])) for row in stream.rows]
+        return [dict(zip(names, [str(cell) for cell in row]))
+                for row in stream.rows if len(row) >= len(names)]
 
     return rows(pitot), rows(gnss)
 
