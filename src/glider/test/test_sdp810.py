@@ -67,6 +67,18 @@ async def amain():
     Calibration: a pad tare captures the at-rest bias (a Pa fixnum) so a still glider reads 0; a direct
     set applies a Pa offset; air_density is the q->v span knob. update() reports the changed names (CC).
     """
+    """
+    NEGATIVE FIRST: a tare BEFORE any frame has arrived must be refused, not stored. `_raw` is None
+    until the first read, and storing that would make _pressure()'s `self._raw - self._zero` raise on
+    every subsequent sample -- killing the airspeed channel for the rest of the flight and persisting
+    the None to NVS. `update {"zero": true}` is the documented pad-tare command, so issuing it a
+    moment too early is the natural operator mistake, not an exotic one.
+    """
+    before = probe._zero
+    probe._raw = None
+    assert probe.update({'zero': True}) == []      # refused: nothing changed
+    assert probe._zero == before                   # ...and the existing tare is untouched
+
     probe._pressure(200)  # +200 raw -> _raw = 333 fixnum -> becomes the tare source
     assert probe.update({'zero': True}) == ['zero_offset_pa'] and probe._zero == 333  # 200*100//60
     assert probe._pressure(200) == 0  # same reading, now tared to zero

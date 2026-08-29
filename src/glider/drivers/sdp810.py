@@ -332,6 +332,19 @@ class Sdp810(task.Task):
         """
         changed = []
         if props.get('zero'):
+            """
+            GUARD ON _raw. The tare captures the last raw reading, and `_raw` is None until the first
+            frame arrives -- so a tare issued before then would store None, and _pressure()'s
+            `self._raw - self._zero` would raise on every subsequent read, killing the airspeed channel
+            for the rest of the flight AND persisting the None to NVS.
+
+            Directly operator-reachable: `update {"zero": true}` is the documented pad-tare command
+            (doc/field_test.md phase 2), and doing it a moment too early is the natural mistake.
+            calibrate() has always guarded this; update() did not, while setup()'s own comment claimed
+            both did.
+            """
+            if self._raw is None:
+                return changed  # no reading yet -- leave the tare alone rather than poison it
             self._zero = self._raw
             changed.append('zero_offset_pa')
         if 'zero_offset_pa' in props:
