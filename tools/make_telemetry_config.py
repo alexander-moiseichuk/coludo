@@ -135,7 +135,7 @@ _TMS7D_ABSENT: tuple = ()
 
 
 def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple = (),
-             launch_mode: str = 'rocket',
+             launch_mode: str = 'rocket', watchdog: bool = True,
              concurrency: int = None, raw_telemetry: bool = False) -> dict:
     """
     Build one catapult profile from the firmware defaults.
@@ -211,6 +211,21 @@ def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple
         elif component_name in absent:
             component['enabled'] = False
             component.pop('alert_pin', None)  # no part -> no hardware ALERT; see the sensors loop
+        elif component_name == 'watchdog':
+            """
+            Armed for flight, and set EXPLICITLY -- the firmware default is DISABLED.
+
+            That default is a bench convenience, not a safety judgement: a live hardware WDT also
+            resets the board whenever you drop the running firmware to the REPL, which makes
+            mpremote work impossible. It is exactly wrong for a flight, where a wedged event loop
+            means recording simply stops and the airframe is lost with no data.
+
+            Layer 2 (the control-loop heartbeat) is inert here by construction: 7C and 7D fly with
+            `flight` disabled, controller.find() returns None for it, and _stalled(None) is False.
+            So on these profiles the watchdog is purely the wedge backstop -- it cannot reset the
+            board for a control reason, because there is no control loop to supervise.
+            """
+            component['enabled'] = watchdog
         elif component_name == 'flight':
             # set EXPLICITLY both ways, never only cleared: the firmware default ships `flight`
             # disabled, so a profile that merely refrains from disabling it produces a 7D that would
@@ -262,7 +277,11 @@ def main() -> None:
         # kept for when the ladder reaches active control; nothing flies it yet
         ('tms7d_control', 'TMS-7D', True, True, (), None, False, 'full active control'),
     ):
-        cfg = _profile(name, board_id, servos, flight, absent, _LAUNCH_MODE, concurrency, raw_telemetry)
+        # KEYWORDS, not positions: adding launch_mode/watchdog as positional parameters silently
+        # shifted `concurrency` into `watchdog` here, and the result still generated valid-looking
+        # configs (watchdog "enabled": 3). Only diffing the output caught it.
+        cfg = _profile(name, board_id, servos, flight, absent=absent, launch_mode=_LAUNCH_MODE,
+                       concurrency=concurrency, raw_telemetry=raw_telemetry)
         path = os.path.join(_OUT, '%s.config' % name)
         with open(path, 'w') as handle:
             json.dump(cfg, handle, indent=1, sort_keys=True)
