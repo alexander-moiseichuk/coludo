@@ -43,6 +43,26 @@ _SETTLE_S: float = 0.4        # skip after the apex: the launch transient is not
 _SIM_TRIM_MS: float = sim_model.TRIM_SPEED_MS  # the sim's trim speed -- trim_sink = it / (L/D)
 
 
+def _finite(values: list) -> list:
+    """
+    Drop non-finite samples.
+
+    The parser maps an unparseable telemetry cell to nan rather than discarding the row, so a capture
+    carries occasional nans among good data -- a truncated line, a sensor mid-reset. nan then
+    propagates through any sum/mean and poisons the whole statistic: a REAL capture here had 2
+    non-finite cells out of 1762 airspeed samples, which was enough to make L/D nan and every number
+    derived from it meaningless. Filtering is right rather than merely defensive, because the mean of
+    the good samples is the honest answer to "how fast was it going".
+
+    Args:
+        values - samples, possibly containing nan or inf.
+
+    Returns:
+        Only the finite ones, order preserved.
+    """
+    return [v for v in values if v == v and v not in (float('inf'), float('-inf'))]
+
+
 def _fit_sink(times: list, elevation: list) -> tuple:
     """
     Least-squares sink rate over a segment.
@@ -119,6 +139,9 @@ def analyse(streams, start: float, end: float) -> dict:
     window = [(t, h) for t, h in zip(times, elevation) if begin <= t <= finish]
     if len(window) < 4:
         return {'error': 'only %d baro samples inside the glide window' % len(window)}
+    window = [(t, h) for t, h in window if h == h]  # a nan height would poison the least-squares fit
+    if len(window) < 4:
+        return {'error': 'too few finite baro samples in the glide window'}
     sink, quality = _fit_sink([t for t, _h in window], [h for _t, h in window])
 
     pitot = find(streams, 'dynamic_pressure')
@@ -133,6 +156,7 @@ def analyse(streams, start: float, end: float) -> dict:
         if gnss is not None and 'speed_kn' in gnss.fields:
             speeds = [k / 1.94384 for t, k in zip(*gnss.column('speed_kn')) if begin <= t <= finish]
             source = 'GNSS ground speed (DEGRADED: wind folds into the result)'
+    speeds = _finite(speeds)  # 2 bad cells in 1762 were enough to make the whole result nan
     if not speeds:
         return {'error': 'no airspeed or ground speed in the glide window'}
     airspeed = sum(speeds) / len(speeds)
@@ -195,6 +219,18 @@ def report(label: str, path: str, start: float, end: float) -> None:
     disagrees with the shipped number is visible rather than quietly divergent.
     """
     measured_ld = result['lift_drag']
+    """
+    A NON-FINITE L/D must stop here, and the guard is not defensive tidiness. NaN compares False
+    against everything, so `measured_ld >= AIR_QUALITY` was False for a NaN and the verdict below fell
+    through to its else branch -- printing "sim is OPTIMISTIC, it promises more glide than the airframe
+    delivers" from no measurement at all. Seen on a real capture whose glide window yielded no usable
+    sink. That is the worst failure this tool can have: a confident, actionable, entirely unfounded
+    claim about the constant every landing-accuracy study rests on.
+    """
+    if not (measured_ld == measured_ld and abs(measured_ld) != float('inf')):
+        print('  sim calibration: NOT MEASURABLE from this capture (L/D came out %s -- the window'
+              ' had no usable sink or airspeed). No verdict on sim_model.AIR_QUALITY.' % measured_ld)
+        return
     print('  sim calibration: VF_QUALITY=%.1f  (sim_model.trim_sink = %.2f at its %.0f m/s trim)'
           % (measured_ld, _SIM_TRIM_MS / measured_ld, _SIM_TRIM_MS))
     print('  shipped sim_model.AIR_QUALITY = %.1f  -> this capture is %+.1f (%s)'

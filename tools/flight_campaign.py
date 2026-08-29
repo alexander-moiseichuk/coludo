@@ -116,6 +116,17 @@ def main() -> int:
         label, _, path = entry.rpartition(':')
         if not path:
             label, path = os.path.splitext(os.path.basename(entry))[0], entry
+        if os.path.isdir(path):
+            """
+            A DIRECTORY is the natural mistake here, because flight_metrics.py takes one -- so the
+            operator reasonably tries the same argument on this tool. os.path.exists() said yes and
+            open() then raised IsADirectoryError with a traceback, which reads like a tool bug rather
+            than a usage one. Name the difference instead: this tool groups labelled runs.
+            """
+            print('%s is a directory -- this tool takes LABEL:capture.txt entries, not a folder.\n'
+                  '  try:  %s/*.txt        (or flight_metrics.py %s for a whole directory)'
+                  % (path, path.rstrip('/'), path), file=sys.stderr)
+            continue
         if not os.path.exists(path):
             print('missing: %s' % path, file=sys.stderr)
             continue
