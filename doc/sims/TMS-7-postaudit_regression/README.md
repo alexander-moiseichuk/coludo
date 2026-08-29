@@ -148,7 +148,56 @@ second of flight if it truly slept 1 ms — and **4.2 s/s at this board's measur
 throttling telemetry roughly fourfold. The instinct was right; the timing does not survive this
 scheduler.
 
-## 5. Regression verdict
+## 5. Is it reproducible at a high level? Yes — with one caveat
+
+At the RUN level the four runs agree closely. These are medians over 24 flights each:
+
+| | r1 | r2 | r3 | r4 | spread |
+|---|---|---|---|---|---|
+| flight duration | 96.5 s | 99.3 s | 99.5 s | 99.2 s | **3.0 %** |
+| servo energy | 57.0 J | 59.1 J | 60.4 J | 57.2 J | **5.8 %** |
+| miss (median) | 79.4 m | 87.5 m | 89.3 m | 82.6 m | **11.7 %** |
+| miss p25 | 69.6 m | 64.8 m | 65.3 m | 71.5 m | 10 % |
+
+Use the MEDIAN, not the mean. The mean spans 124.8–138.6 m and is unstable, because `corner_stress`
+at 550–770 m dominates it — a heavy tail, not a measurement problem. Same 17 streams in every run,
+96 of 96 flights, zero channel dropouts.
+
+**Scenario ORDERING reproduces too**, which is the stronger test — Spearman rank correlation of
+scenario difficulty, run against run:
+
+| pair | ρ |
+|---|---|
+| r2 vs r3 | 0.935 |
+| r2 vs r4 | 0.943 |
+| r3 vs r4 | **0.959** |
+| r1 vs r2 | 0.670 |
+| r1 vs r3 | 0.797 |
+| r1 vs r4 | 0.770 |
+
+`noise100` holds rank 20 of 24 in **all four** runs; `wind06` holds 1–2; `corner_stress` holds 22–23.
+The hard scenarios stay hard and the easy ones stay easy.
+
+### The caveat: r1 is the odd one out
+
+r2/r3/r4 agree with each other at **0.946** mean, but r1 agrees with them at only **0.746** — a Fisher
+z separation of **2.7 σ**. Suggestive, not conclusive, and the correlations share runs so they are not
+independent; the true significance is lower.
+
+**And it could not be resolved from the data.** `main.py` logs the build and config identity at boot
+precisely so a recording can be attributed to what produced it — but a log line carries no
+`@session_file@` prefix, the Luckfox never routes it to a `.csv`, and `hitl_collect` pulls only
+`*.csv`. Every HITL capture ever taken threw that provenance away at the transport. So the question
+"did r1 fly the same firmware?" had no answer in the data.
+
+Fixed going forward: captures now carry `0 capture :: build <firmware> <config_id> <source>`, validated
+rather than recorded blind. It does not rescue r1 — those captures predate the stamp — but the next
+comparison will not have the hole.
+
+**Practical reading:** treat r2/r3/r4 as the repeatability baseline (ρ ≈ 0.95, aggregate within 3–12 %)
+and treat r1 as suspect until a stamped run replaces it.
+
+## 6. Regression verdict
 
 Against the q5.5 baseline ([catapult_evaluation](../TMS-7-catapult_evaluation/), 42–97 m, 1 in-zone of
 7): the wind and low-noise families land at **48–95 m across all four runs**, the same family, with
