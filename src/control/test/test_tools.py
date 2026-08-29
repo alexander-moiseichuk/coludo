@@ -288,6 +288,44 @@ def test_a_spliced_capture_is_reported_not_swallowed():
     assert flight_telemetry.spliced(clean) == [], 'a single session must not be flagged'
 
 
+def test_calibration_refuses_a_simulated_capture():
+    """
+    air_density must never be fitted from a HITL capture, and the tool must SAY so.
+
+    In the sim the pitot pressure and the GNSS ground speed are both derived from one body state, so
+    fitting one against the other measures the model's constants rather than the atmosphere. Without
+    this guard the calibrator still printed a plausible density and an `apply:` line offering to write
+    it onto real hardware -- a confident recommendation from data that cannot support one, which is
+    the same failure mode as reporting a glide ratio from a nan.
+    """
+    lines = ['@s_airspeed_sdp810.csv@uptime;dynamic_pressure;airspeed_cms;temperature',
+             '@s_gnss.csv@uptime;lat;lon;speed_kn;course',
+             '@s_hitl_clock.csv@uptime;drift_ms']      # <- the sim's own clock stream: the marker
+    for i in range(20):
+        stamp = i * 20000
+        lines.append('@s_airspeed_sdp810.csv@%d;13000;1500;21.0' % stamp)
+        lines.append('@s_gnss.csv@%d;25.5;-80.4;29.2;90.0' % stamp)
+        lines.append('@s_hitl_clock.csv@%d;0' % stamp)
+    capture = os.path.join(tempfile.mkdtemp(), 'hitl_run.txt')
+    with open(capture, 'w') as handle:
+        handle.write('\n'.join(lines) + '\n')
+
+    streams, _logs = flight_telemetry.parse(open(capture).read())
+    assert flight_telemetry.simulated(streams) is True
+    try:
+        airspeed_calibrate._read_capture(capture)
+        raise AssertionError('a HITL capture must be refused, not calibrated')
+    except SystemExit as exit_code:
+        assert exit_code.code == 2, exit_code.code
+
+    # NEGATIVE: the same data WITHOUT the sim clock is a real capture and must still calibrate
+    real = os.path.join(tempfile.mkdtemp(), 'real_pass.txt')
+    with open(real, 'w') as handle:
+        handle.write('\n'.join(row for row in lines if 'hitl_clock' not in row) + '\n')
+    assert flight_telemetry.simulated(flight_telemetry.parse(open(real).read())[0]) is False
+    assert len(airspeed_calibrate._read_capture(real)[0]) == 20
+
+
 def test_every_provided_quantity_has_a_consumer():
     """
     A quantity a device PROVIDES but nobody READS is a provider left behind by a refactor -- fused,
@@ -343,7 +381,8 @@ test_ticks_us_wraparound_is_unwrapped()
 test_parser_edge_cases()
 test_session_tail_variants_all_key_the_same()
 test_a_spliced_capture_is_reported_not_swallowed()
+test_calibration_refuses_a_simulated_capture()
 test_every_provided_quantity_has_a_consumer()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, svg render, '
       'airspeed calibration fit, parser edge cases, session-tag eras, '
-      'spliced-capture detection, provider/consumer closure')
+      'spliced-capture detection, sim-capture refusal, provider/consumer closure')

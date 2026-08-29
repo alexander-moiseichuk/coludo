@@ -217,6 +217,28 @@ def _session_tail(names: list) -> str:
     return ''
 
 
+def simulated(streams: dict) -> bool:
+    """
+    Did this capture come from the HITL sim rather than a real flight?
+
+    The sim task records its own `hitl_clock.csv`; nothing on a real flight writes it. The distinction
+    matters because a simulated capture cannot support every kind of analysis: in the sim the pitot
+    reading and the GNSS ground speed are both derived from one body state, so fitting one to the other
+    measures the model rather than the atmosphere. A tool that recommends a HARDWARE setting from that
+    is confidently wrong, and nothing about the output would say so.
+
+    Measuring the sim on purpose is legitimate (it is how glide_polar's accuracy was calibrated), so
+    this reports rather than forbids -- the caller decides whether it is validation or a mistake.
+
+    Args:
+        streams - the parsed {file -> Stream} map.
+
+    Returns:
+        True when the capture carries the sim's own clock stream.
+    """
+    return 'hitl_clock.csv' in streams
+
+
 def spliced(streams: dict) -> list:
     """
     The streams that carry more than one recorder session, i.e. two boots appended into one file.
