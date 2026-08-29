@@ -103,6 +103,17 @@ class Ring:
         self.tail = 0 if nxt == self.capacity else nxt
         return record
 
+    def discard(self) -> None:
+        """
+        Drop every queued record without reading it -- O(1), zero allocation.
+
+        For the case where the consumer has gone away and the buffered records are worthless (a lapsed
+        CC tee window). Draining with read() would allocate a bytes copy per record; this just moves
+        the reader forward. Safe from either side here because MicroPython's asyncio is cooperative
+        and no await separates the two: nothing can interleave between reading `head` and storing it.
+        """
+        self.tail = self.head
+
     def count(self) -> int:
         """Records currently queued (a stats snapshot)."""
         delta = self.head - self.tail
@@ -136,8 +147,16 @@ class _TeeSink:
         if time.ticks_diff(self._deadline, time.ticks_us()) > 0:
             self._ring.write(data)  # within the window (best-effort, bounded)
         else:
-            self._deadline = 0  # window lapsed with no follow-up request -> stop and discard
-            self._take()
+            """
+            Window lapsed with no follow-up request -> stop and discard. DISCARD WITHOUT DECODING:
+            this runs on the PRODUCER's path (tee() is reached from _enqueue on every log() and
+            tlm_raw(), i.e. inside Telemetry.push at 100 Hz with GC off). _take() would build a list
+            and decode every buffered record into a str only to drop it on the floor -- a burst of
+            allocation, at the worst possible moment, for a result nobody reads.
+            """
+            self._deadline = 0
+            if self._ring is not None:
+                self._ring.discard()
 
     def _take(self) -> list:
         records = []

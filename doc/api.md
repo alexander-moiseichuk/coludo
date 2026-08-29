@@ -1554,6 +1554,7 @@ await). Holds `capacity - 1` records (one cell separates full from empty).
 - `__init__(capacity: int=_DEFAULT_CAPACITY, cell_size: int=_DEFAULT_CELL_SIZE)` — constructor
 - `write(data: bytes) -> bool`
 - `read() -> bytes` — Return the oldest record as bytes (a copy) and advance, or None if empty.
+- `discard() -> None` — Drop every queued record without reading it -- O(1), zero allocation.
 - `count() -> int` — Records currently queued (a stats snapshot).
 
 ### `class Recorder`

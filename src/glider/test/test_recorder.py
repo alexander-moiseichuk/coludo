@@ -202,11 +202,23 @@ async def test_cc_stream():
     assert flooded['dropped'] > 0, flooded['dropped']     # the loss is REPORTED, not silent
     assert recorder.Recorder.cc_logs(1000)['dropped'] == 0  # ...and the count resets per window
 
-    # window lapse: a deadline already in the past -> the next log() discards + disables, no collection
+    """
+    Window lapse: a deadline already in the past -> the next log() discards + disables, no collection.
+
+    Lapsed with a LOADED ring, not an empty one. The discard runs on the PRODUCER's path (tee() is
+    reached from every log()/tlm_raw(), i.e. inside Telemetry.push at 100 Hz with GC off), and it used
+    to call _take(), which builds a list and decodes every buffered record into a str purely to throw
+    it away -- a burst of allocation at the worst possible moment. An empty ring made that free, which
+    is why the old version of this test could not see it. Load the ring first.
+    """
     recorder.Recorder.cc_logs(1000)  # arm
+    for index in range(20):
+        recorder.Recorder.log('D', 'buffered %d' % index)   # real records waiting in the tee ring
+    assert tee._ring.count() > 0, 'the ring must be LOADED for the discard to mean anything'
     tee._deadline = recorder.time.ticks_add(recorder.time.ticks_us(), -1)  # already past
     recorder.Recorder.log('D', 'after-lapse')
     assert tee._deadline == 0  # log() saw the lapse and disabled
+    assert tee._ring.count() == 0, 'the lapse must empty the ring, not leave it holding records'
     assert recorder.Recorder.cc_logs(0)['lines'] == []  # nothing collected after the lapse
 
 
