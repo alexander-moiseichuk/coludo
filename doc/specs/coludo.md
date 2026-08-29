@@ -212,7 +212,7 @@ Upon electronic initialization, the following sequential operations are executed
 * **Calibration:** The system zeroes out the altimeter, digital compass, accelerometer, and gyroscope while performing a full deflection check of the fin servos.
 * **Network Connectivity:** The board joins the Control Center's Wi-Fi network as a **station** (see [`board-config.md`](board-config.md)) and establishes a connection with the ground control station (PC) to facilitate remote diagnostics and real-time monitoring.
 * **Recorder Link:** If the Recorder module is present, the UART telemetry/log sink is opened (the controller has no local SD card; the Recorder owns video and storage).
-* **GNSS Lock:** The GPS module begins polling at 1 Hz to acquire a multi-satellite 3D fix. The coordinates of the target landing zone must fall within a 200-meter threshold vector relative to the launch point. System time is automatically synchronized to the GPS atomic clock.
+* **GNSS Lock:** The GPS module runs at its configured rate (10 Hz) from setup and acquires a multi-satellite 3D fix. The coordinates of the target landing zone must fall within a 200-meter threshold vector relative to the launch point. The board clock is NOT set from GNSS: it has no battery-backed RTC, and **CC sets the time over the link** (`update mission base64:{"epoch":...}`, see `mission.py`).
 * **Validation:** The Flight Controller polls all subsystems. If all validation gates pass, the LED status changes to a "Ready" heartbeat pattern (100ms ON / 900ms OFF).
 * **Staging:** The vehicle is cleared to be mounted vertically on the launch rail.
 
@@ -333,7 +333,7 @@ So **torque is never the binding constraint** — the plastic-gear SG90, direct-
 
 The Boosting phase spans engine ignition through booster separation. While a zero-delay motor (like an F15-0) would trigger instantly, the operational profile utilizes motors featuring a built-in 4–6 second delay tracking element to coast cleanly to apogee:
 * **Attitude Maintenance:** The airframe occupies a vertical stance on the launching rail. The Flight Controller dynamically monitors the pitch and roll axes to maintain a trajectory perpendicular to the local horizon.
-* **GNSS Acceleration:** Upon detecting launch rail departure, the GPS module is programmatically escalated to a high-speed update mode (5 Hz or 10 Hz) to maximize spatial resolution during high-velocity ascent.
+* **GNSS rate:** unchanged at launch. The receiver already runs at 10 Hz from setup, so there is no escalation step to fail at the moment the glider leaves the rail.
 * **Dynamic Stabilization:** The Flight Controller actively manipulates the control surfaces to counteract wind shear and aerodynamic instability.
 * **Separation Matrix:** At peak altitude, the motor's integrated black powder ejection charge fires, pressurizing the interior of the booster body tube. This pressure forces the glider upward and out of the booster. During the boosting phase, the glider’s wingtips are nested inside the booster's main body tube to hold them securely folded against aerodynamic drag. As the glider is pushed clear of the airframe, tension from rubber bands anchored at the front of the airplane automatically pulls the wings outward into their locked, deployed flight configuration. Concurrently, a dedicated separation loop—monitored via a physical pressure switch or a breakaway wire pulled from a flight computer socket—flags the physical separation event, outputting a digital logic change to instantly transition the software into Gliding mode.
 
@@ -864,25 +864,34 @@ The bno055 geomagnetic sensor extracts absolute magnetic heading vectors. It ser
 
 ## Navigation
 
-Horizontal position tracking uses an ATGM336H-5N-31 high-sensitivity GNSS array. The module operates in a low-power 1 Hz mode during ground staging. Upon detecting vertical launch acceleration, the controller forces a command down the serial line to escalate the update frequency to a high-speed 10 Hz rate.
+Horizontal position tracking uses an ATGM336H-5N-31 high-sensitivity GNSS array. It is configured **once, at setup**, to the rate in the config (`gnss.hz`, **10 Hz**) and stays there for the whole flight. There is no low-power ground mode and no launch-triggered escalation: the driver's `_configure()` is called from `Gnss.setup()` and from nowhere else, so there is no command to get wrong at the one moment the glider is leaving the rail.
 
-The standard serial driver structure must be modified to use Interrupt Service Routines (ISR) to handle the higher data rates supported by the core AT6558 chip architecture, replacing standard polling examples found in open-source references:
+The driver POLLS the UART from its async loop; it does not use an ISR. At 10 Hz RMC the link carries
+~700 B/s against 960 available, so there is no rate pressure to justify interrupt handling -- and an
+ISR that allocates is a liability on a board that runs with GC off in flight. Open-source references
+consulted:
 
 - PermatechCA ATGM336H Library
 - Liuyufanlyf MaixPy GNSS Driver
 - Albresky ATGM336H Driver Repository
 
-To scale the data processing up to the 10 Hz threshold without overflowing the serial buffers, the system follows standard NMEA high-rate command structures:
+**The link stays at 9600 baud.** It is not escalated, and it does not need to be: the driver asks for
+RMC at `hz` (position) plus GGA at only ~1 Hz (altitude, a baro backup), which is ~700 B/s + ~70 B/s
+against 960 B/s available. Trading a working link for headroom nothing uses would be a bad bargain --
+a baud change is the kind of thing that half-works and leaves the receiver mute.
 
-- The serial interface speed (Baud Rate) escalates from 9600 to 115200 bits per second via a $PCAS01,5*19\r\n control string.
+What the driver actually sends at setup (`src/glider/drivers/atgm336h.py`), PCAS being the CASIC
+command set with a PMTK pair as the fallback for modules that speak MTK:
 
-- Unnecessary NMEA sentences (such as GSV or GSA) are suppressed using the $PCAS03 mask to minimize data packet sizes, leaving only GNGGA and GNRMC strings active.
+```
+$PCAS03,...     # sentence mask: RMC + a decimated GGA, everything else off
+$PCAS02,<ms>    # update period, from `hz` (10 Hz -> 100 ms)
+```
 
-$PCAS10,3*1F<cr><lf>    # Enforces factory cold restart
-$PCAS01,5*19<cr><lf>    # Escalates interface speed to 115200 baud
-$PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0*02<cr><lf>  # Filters out all sentences except GNGGA and GNRMC
+**Not sent, despite older revisions of this document:** `$PCAS01` (baud escalation to 115200) and
+`$PCAS10` (factory cold restart). A cold restart in particular would throw away the almanac and make
+the next fix slower, which is the opposite of what a launch wants.
 
-- The update rate is shifted to 100ms intervals using the tracking string $PCAS02,100*1E\r\n.
 
 A verified MicroPython initialization snippet handles this handshake sequence.
 
