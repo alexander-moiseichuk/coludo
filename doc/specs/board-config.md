@@ -190,7 +190,13 @@ identical behaviour every time.
   `bus` reference, an optional `addr`, an `enabled` flag, and a `provides` map. JSON has no
   hex literals, so addresses are decimal (`0x28` → `40`); `config_default.py` may use hex.
 - **`recorder`** — PSRAM ring sizes (`tlm_capacity`, `log_capacity`, `cell_size`), the stats
-  cadence (`stats_ms`), and the optional **`session`** — the prefix every capture file on the
+  cadence (`stats_ms`), the global telemetry rate **`telemetry_ms`**, and the optional **`session`**.
+  > **`telemetry_ms` is the GLOBAL decimation every stream inherits**; a stream declaring its own
+  > non-zero rate keeps that instead, and **`0` means no decimation at all**, not "the default".
+  > It must sit in THIS section: `Recorder.setup()` reads `config['recorder']['telemetry_ms']` and
+  > nothing merges a component's keys into a section, so the same key on the recorder *component*
+  > entry is read by nobody and the 20 ms class default silently wins. That is exactly what happened
+  > between 2026-08-02 and 2026-08-28, and the key being undocumented here is how it went unnoticed — the prefix every capture file on the
   Luckfox is named by, `<session>_<stream>.csv`. Normally absent: the board then synthesises
   `YYYYMMDD_HHMMSS_<6-digit random>`. Set it from CC to assign the **whole** prefix verbatim, e.g.
   `20260807_143012_catapult-run3`.

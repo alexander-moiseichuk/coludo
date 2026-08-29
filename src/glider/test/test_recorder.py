@@ -94,6 +94,18 @@ async def test_recorder():
     assert len(recorder.Recorder._uart.items) == 2, recorder.Recorder._uart.items
 
     """
+    The CONFIG's global rate must actually reach the Recorder. Nothing here asserted that: every test
+    set Recorder.telemetry_decimate_us by hand, so a knob written into the wrong dict was invisible.
+    It was -- config_default carried telemetry_ms on the recorder COMPONENT while setup() reads the
+    top-level SECTION, so the documented 50 -> 25 Hz leak reduction never took effect and the 20 ms
+    class default silently won. Drive setup() with the real default config and check the result.
+    """
+    recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
+    assert recorder.Recorder.telemetry_decimate_us == 40000, recorder.Recorder.telemetry_decimate_us
+    # and a stream that declares no rate of its own must inherit exactly that
+    assert recorder.Telemetry('inherit.csv', ('v',)).window == 40000
+
+    """
     The global must reach a stream BUILT BEFORE IT WAS SET. That ordering is the real one: drivers
     construct their Telemetry during setup(), and the controller runs every device's setup before the
     recorder task's, so on a real boot every stream predates the configured global. Telemetry used to

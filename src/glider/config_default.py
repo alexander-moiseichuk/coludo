@@ -32,7 +32,7 @@ constant, so a config predating a new sensor/section is visible instead of silen
 moved key, a changed default value. Do NOT bump for a comment or a docstring edit. Bumping is what turns
 'my new sensor never ran' into a reported mismatch.
 """
-CONFIG_VERSION: str = '20260824'  # wifi prefers coludo (panda fallback); telemetry decimation fix
+CONFIG_VERSION: str = '20260828'  # recorder.telemetry_ms moved into the section that is read
 
 
 def default() -> dict:
@@ -148,6 +148,17 @@ def default() -> dict:
         'log_capacity': 256,
         'cell_size': 256,  # power-of-two cell; ~64 KB/ring, nothing on 32 MB PSRAM
         'stats_ms': 1000,
+        # telemetry_ms: the GLOBAL decimation every stream inherits (a stream setting its own non-zero
+        # value keeps that instead). 25 Hz, not the old 50: measured per call, a Telemetry.push plus the
+        # rounded tuple it is handed costs 272 B, and the highest-rate sensors were emitting rows twice
+        # as fast as any report renders them. Halving the global rate is the cheapest leak reduction
+        # available -- it costs plot resolution nothing downstream was using.
+        #
+        # IT MUST LIVE IN THIS SECTION. Recorder.setup() reads config['recorder']['telemetry_ms'], and
+        # nothing merges a component's keys into a section -- so the same value written on the recorder
+        # COMPONENT entry (where it sat until 2026-08-28) is read by nobody and the 20 ms class default
+        # silently wins, so the intended halving never took effect. 0 means NO decimation, not 'default'.
+        'telemetry_ms': 40,
         # 'session': '20260807_143012_taster',  # CC assigns the whole prefix; absent -> board synthesises
     }
 
@@ -696,14 +707,10 @@ def default() -> dict:
                   'warm_start': warm_start}
 
     components = [
-        # Recorder drain loop: a thin activity over the global Recorder, using uart:1.
-        # telemetry_ms is the GLOBAL decimation every stream inherits (a stream setting its own non-zero
-    # value keeps that instead). 25 Hz, not the old 50: measured per call, a Telemetry.push plus the
-    # rounded tuple it is handed costs 272 B, and the highest-rate sensors were emitting rows twice as
-    # fast as any report renders them. Halving the global rate is the cheapest leak reduction available
-    # -- it costs plot resolution nothing downstream was using.
-    {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True,
-     'telemetry_ms': 40},
+        # Recorder drain loop: a thin activity over the global Recorder, using uart:1. The global
+        # telemetry rate is NOT here -- it is `recorder.telemetry_ms` in the section above, which is
+        # where Recorder.setup() reads it from.
+        {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True},
         # Stage-separation switch (copper pads): HIGH=nested, LOW=separated -> Boosting->Gliding.
         # debounce_ms: the LOW must hold this long -- a contact bounce on the pads never deploys.
         {'name': 'separation', 'driver': 'separation', 'pin': 'separation_switch', 'enabled': True,
