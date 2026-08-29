@@ -511,16 +511,28 @@ class Server:
 
     """Listeners: accept board, operator, and web connections and run them together."""
 
+    """
+    STREAM LINE LIMIT. asyncio.start_server defaults to 64 KiB, and every reply here is ONE LINE read
+    with readline() -- a `tlm`/`log` batch is a single base64 JSON token by design. The board's tee
+    ring holds 1024 cells x 256 B = 256 KiB of records, which base64 inflates by 4/3 to ~350 KiB, so a
+    full window overruns the default and readline raises ValueError: the reply is discarded, the
+    stream task dies, and the buffered records are lost -- exactly the data the operator asked for,
+    lost because they asked for a lot of it. Sized well above that worst case.
+    """
+    _STREAM_LIMIT: int = 2 * 1024 * 1024
+
     async def serve_forever(self) -> None:
         """Accept board connections on `port` (board-facing listener)."""
-        server = await asyncio.start_server(self._handle, self.host, self.port)
+        server = await asyncio.start_server(self._handle, self.host, self.port,
+                                            limit=self._STREAM_LIMIT)
         self.log('boards on %s:%d' % (self.host, self.port))
         async with server:
             await server.serve_forever()
 
     async def serve_operators(self) -> None:
         """Accept operator connections on `operator_port` (telnet-friendly console)."""
-        server = await asyncio.start_server(self._operator, self.host, self.operator_port)
+        server = await asyncio.start_server(self._operator, self.host, self.operator_port,
+                                            limit=self._STREAM_LIMIT)
         self.log('operators on %s:%d' % (self.host, self.operator_port))
         async with server:
             await server.serve_forever()
