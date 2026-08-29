@@ -170,8 +170,11 @@ mission object.
 ### Log / telemetry retrieval
 
 `log taster 5000` means "the log records from the **last 5000 ms**." The board keeps a bounded
-ring buffer; if the requested window is older than the buffer holds, it returns what it has and
-sets `"truncated": true`. For continuous tailing, CC polls with a window at least as wide as
+ring buffer; if it overflows during the window, the reply carries how many records were **`dropped`**
+-- `ok {lines:[...], dropped:n}` (and `ok {samples:[...], dropped:n}` for `tlm`). The count matters
+because the tee is best-effort by policy: a full ring discards rather than raising, so a live stream
+with a hole looks exactly like a quiet sensor unless the number is reported. There is no
+`"truncated"` field -- the board has never sent one. For continuous tailing, CC polls with a window at least as wide as
 its poll interval and de-duplicates by record uptime (each record carries its uptime, per the
 `coludo.md` logging format). `tlm` behaves the same way for telemetry rows (`ok {samples:[...]}`).
 
@@ -211,7 +214,11 @@ A first token that is a known board id (or `all`) routes to a board; otherwise i
 | `help` | `from cc ok {commands:[...]}` — all commands; `help <command>` for one |
 | `list` | `from cc ok [{id, online, stage, config_id}]` — connected boards |
 | `select <board>` | set this session's **sticky** target; afterwards a bare `<command>` is routed to it |
-| `who` | `from cc ok {selected, since}` — current selection |
+| `who` | `from cc ok {selected}` — current selection |
+| `cache` | `from cc ok {...}` — a board's cached properties (config/inspect/stats/health) without touching it; defaults to the selected board |
+| `assist` | push the host GPS position into a board's mission (launch-site sync) |
+| `gps` | the host GPS fix; `gps <board>` also shows that board's on-board GNSS for comparison |
+| `bustune <board> <i2c\|spi> <id>` | sweep a sensor bus UP a frequency ladder to its max stable rate |
 
 **Sticky select / broadcast:** after `select taster`, typing `health` is routed as `taster
 health`; an explicit `<board>`/`all` first token overrides it for that line. Control tags every
@@ -259,6 +266,13 @@ CC exposes the same capabilities to the browser without the browser ever speakin
 - **`GET /events`** — a **Server-Sent Events** stream of the board list, pushed every heartbeat
   (the live table). SSE is chosen over WebSocket because the live need is server→browser
   streaming, it is plain HTTP (no extra dependency), and browser→board actions are ordinary POSTs.
+- **`GET /hud`** — the walk-test HUD: attitude horizon, per-fin commanded angles, airspeed, fin cap,
+  heading-to-zone, wind and AGL on one glanceable page. Fully offline (no CDN), because the field has
+  no internet.
+- **`GET /logs`** — an SSE feed of the log lines CC is polling from the boards.
+- **`GET /api/board/<id>`**, **`GET /api/log`**, **`POST /api/op`**, **`GET /api/assist`**,
+  **`GET /api/absent`** — the per-board detail, log slice, operator-command bridge, GPS assist push,
+  and the roster's not-currently-connected list.
 - **`POST /api/log`** — body `{board, interval_ms}` (≤ 0 stops); starts/stops the hub's per-board
   log stream from the dashboard, the same toggle as the operator's `<board> log <ms>`.
 - **`GET /logs`** — a **Server-Sent Events** stream of `{board, line}` log lines, pushed as the
