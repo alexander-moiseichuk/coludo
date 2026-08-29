@@ -67,6 +67,15 @@ async def amain():
 
     dispatcher.on('boom', boom)
     assert 'internal' in await dispatcher.handle('boom')  # handler exception
+    """
+    A MALFORMED LINE must answer, not raise. cc.parse() throws binascii.Error on a bad `base64:`
+    token, and it used to sit outside handle()'s guard -- so the exception propagated past the read
+    loop and dropped the CC link. One mistyped operator token disconnecting the board is the wrong
+    failure: the link is how the operator recovers from mistakes, so it has to survive them.
+    """
+    assert 'badargs' in await dispatcher.handle('ping base64:!!!not-base64!!!')
+    assert 'badargs' in await dispatcher.handle('ping base64:AB')  # incorrect padding
+    assert await dispatcher.handle('ping') == 'pong'  # ...and the dispatcher still works afterwards
 
     # standard handlers
     sd = cc_client.create_dispatcher(config_default.default())

@@ -73,7 +73,7 @@ unit-testable off a live connection. Register handlers with on(); dispatch a lin
 
 - `__init__()` — constructor
 - `on(command: str, fn) -> None`
-- `handle(line: str) -> str`
+- `handle(line: str) -> str` — Parse one request line and run its handler, answering an error rather than raising.
 
 ### `class Client`
 

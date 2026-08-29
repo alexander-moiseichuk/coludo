@@ -102,7 +102,19 @@ class Dispatcher:
         self.handlers[command] = fn
 
     async def handle(self, line: str) -> str:
-        msg = cc.parse(line)
+        """
+        Parse one request line and run its handler, answering an error rather than raising.
+
+        cc.parse() is INSIDE the guard because it raises: a malformed `base64:` token (bad padding,
+        non-alphabet characters) throws binascii.Error, and that used to propagate out of handle(),
+        past the read loop, and drop the CC link. One mistyped operator token disconnecting the board
+        is the wrong failure -- the link is how the operator recovers from mistakes, so it must
+        survive them. A garbled line over a lossy field radio does the same thing.
+        """
+        try:
+            msg = cc.parse(line)
+        except Exception as error:
+            return cc.build('err', ['badargs', repr(error)])
         if msg.command is None:
             return None
         handler = self.handlers.get(msg.command)
