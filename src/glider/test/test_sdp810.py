@@ -12,6 +12,7 @@ source + the governor's in-band/saturation gate) is tested in test_airspeed / te
 import asyncio
 import struct
 
+import commons
 import config_default
 import fixed
 import task
@@ -29,7 +30,7 @@ def _frame(dp_raw, temp_raw=5000, scale=60):
     body[3:5] = struct.pack('>h', temp_raw)
     body[6:8] = struct.pack('>H', scale)
     for base in (0, 3, 6):
-        body[base + 2] = sdp810._crc8(body[base], body[base + 1])  # @viper crc over the word's two bytes
+        body[base + 2] = commons.sensirion_crc8(body[base], body[base + 1])  # crc over the word's two bytes
     return bytes(body)
 
 
@@ -44,7 +45,7 @@ async def amain():
     Sensirion CRC-8 (poly 0x31, seed 0xFF): the datasheet worked example 0xBEEF -> 0x92, and a
     round-trip through the frame builder must validate while a single flipped bit must not.
     """
-    assert sdp810._crc8(0xBE, 0xEF) == 0x92
+    assert commons.sensirion_crc8(0xBE, 0xEF) == 0x92
     good = _frame(8100)  # +135 Pa at scale 60
     assert sdp810._frame_ok(good)
     bad = bytearray(good)

@@ -49,33 +49,6 @@ _PCAL = (45000.0, 80000.0, 105000.0)  # calibration pressures for the conversion
 _GROUND_SAMPLES = const(8)  # readings averaged at startup to fix the ground-zero reference
 
 
-def _crc8(byte_a: int, byte_b: int) -> int:
-    """
-    Sensirion CRC-8 over the two data bytes of one word (poly 0x31, init 0xFF).
-
-    Verified against the real part before being trusted: 5 frames out of 5 matched all three of the
-    sensor's own CRC bytes. That check came first deliberately -- a validator with the wrong polynomial
-    rejects every GOOD frame, which would take out the primary baro entirely and look exactly like the
-    latch-up _recover() exists for.
-
-    Plain Python, not @viper: this runs over 6 bytes per measurement, so the compiler pragma would buy
-    nothing measurable and costs the int-typing constraints viper imposes.
-
-    Args:
-        byte_a - the high data byte of the word.
-        byte_b - the low data byte of the word.
-
-    Returns:
-        The 8-bit CRC the sensor should have appended to that word.
-    """
-    crc = 0xFF
-    for value in (byte_a, byte_b):
-        crc ^= value
-        for _ in range(8):
-            crc = ((crc << 1) ^ 0x31) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
-    return crc
-
-
 @task.driver('icp10111')
 class Icp10111(task.Task):
     """
@@ -268,8 +241,9 @@ class Icp10111(task.Task):
         escalates to _recover(), so a frame failing CRC takes the SAME path as a part that stopped
         answering, and the bmp280 behind it keeps the channel alive meanwhile.
         """
-        if (_crc8(data[0], data[1]) != data[2] or _crc8(data[3], data[4]) != data[5]
-                or _crc8(data[6], data[7]) != data[8]):
+        crc8 = commons.sensirion_crc8
+        if (crc8(data[0], data[1]) != data[2] or crc8(data[3], data[4]) != data[5]
+                or crc8(data[6], data[7]) != data[8]):
             raise ValueError('icp10111 CRC')
         p_raw = (data[0] << 16) | (data[1] << 8) | data[3]
         t_raw = (data[6] << 8) | data[7]

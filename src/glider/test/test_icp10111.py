@@ -8,6 +8,7 @@ not an ICP-10111 is wired. Run by `make test`.
 
 import asyncio
 
+import commons
 import config_default
 import task
 from drivers import icp10111
@@ -54,12 +55,12 @@ async def amain():
     everything (a wrong polynomial) would silently take out the primary baro.
     """
     live = bytearray(b'\xae\x54\xa9\x3d\x00\x73\x6e\x7a\x9a')  # captured from the real part
-    assert icp10111._crc8(live[0], live[1]) == live[2], 'live pressure word failed its own CRC'
-    assert icp10111._crc8(live[3], live[4]) == live[5], 'live second word failed its own CRC'
-    assert icp10111._crc8(live[6], live[7]) == live[8], 'live temperature word failed its own CRC'
+    assert commons.sensirion_crc8(live[0], live[1]) == live[2], 'live pressure word failed its own CRC'
+    assert commons.sensirion_crc8(live[3], live[4]) == live[5], 'live second word failed its own CRC'
+    assert commons.sensirion_crc8(live[6], live[7]) == live[8], 'live temperature word failed its own CRC'
     corrupt = bytearray(live)
     corrupt[0] ^= 0x01                                    # one flipped bit, CRC byte left alone
-    assert icp10111._crc8(corrupt[0], corrupt[1]) != corrupt[2], 'a corrupted word passed CRC'
+    assert commons.sensirion_crc8(corrupt[0], corrupt[1]) != corrupt[2], 'a corrupted word passed CRC'
 
     # conversion against real OTP + raw values captured live from the wired sensor -> ~101797 Pa
     probe = icp10111.Icp10111('baro', {}, _StubController())

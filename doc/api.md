@@ -185,6 +185,10 @@ between; switch to _opt when a bench shows a gain).
 
 ### `wrap180_opt(degrees: int) -> int`
 
+### `sensirion_crc8_upy(byte0: int, byte1: int) -> int`
+
+### `sensirion_crc8_opt(byte0: int, byte1: int) -> int`
+
 ### `between_upy(low: float, value: float, high: float) -> float`
 
 Clamp `value` to the inclusive range [low, high]: `low` if below, `high` if above, else `value`.

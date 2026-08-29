@@ -32,6 +32,7 @@ try:
 except Exception:  # host / no NVS partition -- the tare simply stays in RAM
     _nvs = None
 
+import commons
 import databoard
 import fixed
 import i2cbus
@@ -56,43 +57,10 @@ _TEMP_LSB = const(200)  # sensor temperature = raw / 200 -> °C; logged as a °C
 _AIR_DENSITY: float = 1.18  # kg/m^3 (~25 °C sea level -- Florida, not ISA 15 °C); the calm-pass trim overrides it
 
 
-@micropython.viper
-def _crc8(byte0: int, byte1: int) -> int:
-    """
-    Sensirion CRC-8 (polynomial 0x31, seed 0xFF) over the two data bytes of a frame word.
-
-    Integer-only -> @viper. Takes the two bytes as ints (not a buffer) so it stays a pure typed
-    function; the caller compares the result against the word's trailing checksum byte.
-
-    Args:
-        byte0 - the word's first (high) byte.
-        byte1 - the word's second (low) byte.
-
-    Returns:
-        The computed 8-bit checksum.
-    """
-    crc: int = 0xFF
-    current: int = byte0
-    word: int = 0
-    bit: int = 0
-    while word < 2:
-        crc = crc ^ current
-        bit = 0
-        while bit < 8:
-            if crc & 0x80:
-                crc = ((crc << 1) ^ 0x31) & 0xFF
-            else:
-                crc = (crc << 1) & 0xFF
-            bit += 1
-        current = byte1
-        word += 1
-    return crc & 0xFF
-
-
 @micropython.native
 def _frame_ok(data: bytes) -> bool:
     """Validate the differential-pressure word's CRC (the flight-relevant field of the 9-byte frame)."""
-    return len(data) == _FRAME and _crc8(data[0], data[1]) == data[2]
+    return len(data) == _FRAME and commons.sensirion_crc8(data[0], data[1]) == data[2]
 
 
 @micropython.native
