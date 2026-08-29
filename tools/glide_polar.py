@@ -24,6 +24,17 @@ AIRSPEED, not ground speed: the pitot (airspeed_sdp810) measures through the AIR
 wind-independent. Falling back to GNSS ground speed works but folds the wind straight into the answer,
 so it is reported as degraded.
 
+HOW ACCURATE IS IT? Measured 2026-08-28 against sim captures whose true quality is known, because the
+answer decides sim_model.AIR_QUALITY and therefore every landing-accuracy claim:
+
+    true 2.0  ->  2.17, 2.64        (over-reports by 8-32 %)
+    true 5.5  ->  4.44, 4.61, 4.78, 4.99   (under-reports by 9-19 %)
+
+So read the straight-flight number as a FLOOR at high L/D, good to roughly +/-20 %. The under-report is
+expected rather than a defect: every one of those windows carried 15-17 deg of mean bank, and the n^1.5
+de-rating only approximates what a turning glide costs. A capture with genuinely straight flight will
+read higher and closer to truth -- which is why the tool keeps telling you to fly one.
+
   python3 tools/glide_polar.py LABEL:capture.txt [LABEL:capture.txt ...]
   python3 tools/glide_polar.py run1:a.txt --from 2.5 --to 6.0     # manual window
 """
@@ -159,7 +170,23 @@ def analyse(streams, start: float, end: float) -> dict:
     speeds = _finite(speeds)  # 2 bad cells in 1762 were enough to make the whole result nan
     if not speeds:
         return {'error': 'no airspeed or ground speed in the glide window'}
-    airspeed = sum(speeds) / len(speeds)
+    """
+    MEDIAN, not mean. A mean gives a single corrupt sample unbounded leverage over the answer, and
+    captures do contain them: one reading of 13 992 500 cm/s (1399 km/s) among 786 good samples pulled
+    a correct 14.3 m/s mean to 192 m/s, and the tool then reported L/D 64 for an airframe that glides
+    at ~5. Nothing caught it -- the sink fit was clean (r2 0.996), so every quality check passed while
+    the airspeed was nonsense. The median of the same window is 14.25 m/s.
+
+    A spike like that is a telemetry artefact, not flight: a truncated line reassembling into a
+    plausible integer. The median ignores it without needing to know how it arose, which is the right
+    property for a number that decides sim_model.AIR_QUALITY.
+    """
+    ordered = sorted(speeds)
+    airspeed = ordered[len(ordered) // 2]
+    outliers = [v for v in speeds if v > airspeed * 3.0]
+    if outliers:
+        print('  NOTE: %d airspeed sample(s) above 3x the median (max %.1f m/s) ignored by the median '
+              '-- telemetry spikes, not flight' % (len(outliers), max(outliers)))
     if sink <= 0:
         return {'error': 'the window is not descending (sink %.2f m/s) -- pick one with --from/--to' % sink}
     horizontal = math.sqrt(max(airspeed ** 2 - sink ** 2, 0.0))  # airspeed is along the path, not level
