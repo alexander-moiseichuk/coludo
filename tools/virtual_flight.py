@@ -281,7 +281,7 @@ def fly(motor: str, noise: float, spike: bool, sim_hz: int, seconds: float,
     accel_handle, speed_handle, pitot_handle, position_handle, agl_handle, elevation_handle = (
         _Handle(), _Handle(), _Handle(), _Handle(), _Handle(), _Handle())
     fin_governor = governor.Governor(governor.GovernorConfig(flight_c), mix, accel_handle, speed_handle,
-                                     pitot_handle, cfg.get('fin_limit_multiplier', 1.0))
+                                     pitot_handle, cfg.get('fins', {}).get('limit_multiplier', 1.0))
     law = guidance.Guidance(guidance.GuidanceConfig(flight_c, int(_GNSS_S * 2000)), _Mission(zone),
                             fin_governor, position_handle, agl_handle, elevation_handle)
     if final_agl_override is not None:
