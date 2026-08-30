@@ -96,6 +96,36 @@ def _build(config=None, zone=_ZONE, launch=None, airspeed=0.0):
     return unit, position, agl, gov
 
 
+def test_filter_rounding():
+    """
+    The steering filter must not bias a symmetric error -- integer floor division is not symmetric.
+
+    `//` rounds a negative state AWAY from zero (-15 // 16 == -1) and a positive one toward it, so an
+    error that alternates evenly comes out one-sided. Measured before the fix: -0.5 deg of steady-state
+    output for a +/-8 deg input whose true mean is zero, in the same direction regardless of which way
+    the oscillation starts. It always pushes the same way, so it does not average out over a flight.
+
+    Constant-error tracking must stay exact, which is the property a naive "just round differently"
+    change would break.
+    """
+    unit, _position, _agl, _governor = _build()
+    unit.enter(0.0, 0, 0)
+    outputs = []
+    for step in range(600):
+        outputs.append(unit._filter_error(8 if step % 2 == 0 else -8))
+    settled = outputs[-100:]
+    bias = sum(settled) / len(settled)
+    assert abs(bias) < 0.01, 'symmetric error biased the steering command by %+.3f deg' % bias
+
+    # and a CONSTANT error must still settle exactly on itself, in both signs
+    for constant in (1, -1, 5, -5, 12, -12, 45, -45):
+        steady, _position, _agl, _governor = _build()
+        steady.enter(0.0, 0, 0)
+        for _ in range(80):
+            got = steady._filter_error(constant)
+        assert got == constant, 'constant %+d settled at %+d' % (constant, got)
+
+
 def test_heading_error():
     """Shortest signed wrap: 350 -> 10 is +20, not -340; the +/-180 boundary keeps its sign."""
     assert guidance.heading_error(10.0, 350.0) == 20
@@ -623,6 +653,7 @@ test_loiter_and_endgame_spiral()
 test_endgame_pattern_selection()
 test_oo_endgame()
 test_steering_filter()
+test_filter_rounding()
 test_reachability()
 test_dead_reckoning()
 test_min_turn_radius()

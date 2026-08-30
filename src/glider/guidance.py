@@ -532,7 +532,24 @@ class Guidance:
             self._error_filtered16 = error16  # seed / follow a real change immediately
             return error
         self._error_filtered16 += (error16 - self._error_filtered16) >> shift
-        return self._error_filtered16 // 16
+        """
+        Round the 1/16 state toward ZERO, not toward negative infinity.
+
+        `//` floors, so it rounds a negative state AWAY from zero (-15 // 16 == -1) and a positive one
+        toward it (15 // 16 == 0). On a symmetric oscillation that leaves a persistent one-sided bias
+        in the STEERING command: measured -0.5 deg of steady-state output for a +/-8 deg input whose
+        true mean is zero, independent of which way the oscillation starts. Small, but systematic --
+        it always pushes the same way, so it does not average out over a flight.
+
+        Only the final division needed it. Making the >> shift symmetric as well was measured and
+        changes nothing (still -0.5), and tracking of a CONSTANT error was exact before and stays
+        exact after -- this only affects the case where the error alternates.
+
+        Same class as the pid.py integral ratchet: integer floor division is not symmetric about zero,
+        and every control path that averages a signed quantity has to say which way it rounds.
+        """
+        state = self._error_filtered16
+        return state // 16 if state >= 0 else -((-state) // 16)
 
     def _target_heading(self, heading: float, final: bool, now_us: int,
                         endgame=None) -> float:
