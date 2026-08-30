@@ -21,7 +21,13 @@ command -v adb >/dev/null || { echo "error: adb not found (need the Luckfox reco
 
 ses=${1:-}
 if [ -z "$ses" ]; then                       # default: the newest session (by its health stream)
-  ses=$(adb shell "ls -t $REC/*_health.csv 2>/dev/null | head -1" | sed "s|.*/||; s|_health.csv.*||" | tr -d '\r')
+  # Any stream identifies the session, not `health` specifically: a profile with board_health
+  # disabled produced NO *_health.csv, so this returned empty and reported "no recorder session"
+  # on a board that had just recorded a full flight. hitl_collect.sh already keys on any *_*.csv.
+  # The prefix is the leading YYYYMMDD_HHMMSS_<tag>, so strip from the LAST underscore-group on
+  # (a literal-anchored sed, not `_*` which is a regex meaning "zero or more underscores").
+  ses=$(adb shell "ls -t $REC/*_*.csv 2>/dev/null | head -1" \
+        | sed -e "s|.*/||" -e "s|\.csv$||" -e "s|_[a-z0-9]*$||" | tr -d '\r')
   [ -z "$ses" ] && { echo "error: no recorder session found on the Luckfox"; exit 1; }
   echo "latest session: $ses"
 fi

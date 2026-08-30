@@ -52,7 +52,10 @@ async def bustune_command(hub, tokens, session) -> list:
         resp = await board.command('bustune', kind, str(ident), str(freq))
         if resp is None or resp.command != 'ok':
             return ['from cc err bustune %s' % (' '.join(map(str, resp.args)) if resp else 'offline')]
-        report = json.loads(resp.args[0])
+        try:
+            report = json.loads(resp.args[0])   # a garbled `ok` must end the sweep, not crash it
+        except ValueError:
+            return ['from cc err board sent a malformed bustune reply']
         rungs.append({'freq': freq, 'all_ok': report.get('all_ok')})
         if report.get('all_ok'):
             ceiling = freq

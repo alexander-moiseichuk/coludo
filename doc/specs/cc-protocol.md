@@ -270,7 +270,7 @@ CC exposes the same capabilities to the browser without the browser ever speakin
   heading-to-zone, wind and AGL on one glanceable page. Fully offline (no CDN), because the field has
   no internet.
 - **`GET /logs`** — an SSE feed of the log lines CC is polling from the boards.
-- **`GET /api/board/<id>`**, **`GET /api/log`**, **`POST /api/op`**, **`GET /api/assist`**,
+- **`GET /api/board/<id>`**, **`POST /api/log`**, **`POST /api/op`**, **`POST /api/assist`**,
   **`GET /api/absent`** — the per-board detail, log slice, operator-command bridge, GPS assist push,
   and the roster's not-currently-connected list.
 - **`POST /api/log`** — body `{board, interval_ms}` (≤ 0 stops); starts/stops the hub's per-board

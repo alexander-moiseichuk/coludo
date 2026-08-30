@@ -49,6 +49,9 @@ async def _send_json(writer, status: int, payload) -> None:
     await _send(writer, status, 'application/json', json.dumps(payload))
 
 
+_MAX_PARAMS: int = 16  # a bounded splat into board.command(); a request is not a scripting surface
+
+
 class Web:
     """The HTTP/SSE server. Holds the hub for the board registry + routing; one per hub."""
 
@@ -151,13 +154,28 @@ class Web:
             request = json.loads(body or b'{}')
         except ValueError:
             return await _send_json(writer, 400, {'error': 'bad json'})
-        board = self.hub.boards.get(request.get('board'))
+        """
+        Validate TYPES, not just presence -- these values are splatted into the board protocol.
+
+        `board.command(command, *params)` sends whatever it is given down the wire. A non-string
+        command, or params that are a string rather than a list, does not fail here: `*"hi"` splats
+        into two arguments `h` and `i`, so a malformed request becomes a malformed COMMAND to a flight
+        board. The old checks were `if board is None` and `if not command`, which pass all of that.
+        """
+        board_id = request.get('board')
         command = request.get('command')
+        params = request.get('params', [])
+        if not isinstance(board_id, str) or not isinstance(command, str) or not command:
+            return await _send_json(writer, 400, {'error': 'board and command must be strings'})
+        if not isinstance(params, list) or len(params) > _MAX_PARAMS:
+            return await _send_json(writer, 400,
+                                    {'error': 'params must be a list of at most %d' % _MAX_PARAMS})
+        if any(not isinstance(item, (str, int, float, bool)) for item in params):
+            return await _send_json(writer, 400, {'error': 'params must be scalars'})
+        board = self.hub.boards.get(board_id)
         if board is None or not board.online:
-            return await _send_json(writer, 404, {'error': 'no online board %r' % request.get('board')})
-        if not command:
-            return await _send_json(writer, 400, {'error': 'no command'})
-        resp = await board.command(command, *request.get('params', []))
+            return await _send_json(writer, 404, {'error': 'no online board %r' % board_id})
+        resp = await board.command(command, *params)
         if resp is None:
             return await _send_json(writer, 502, {'board': board.id, 'error': 'offline'})
         return await _send_json(writer, 200, {'board': board.id, 'status': resp.command, 'args': resp.args})
@@ -244,10 +262,13 @@ class Web:
         if kind not in ('log', 'tlm'):
             return await _send_json(writer, 400, {'error': "kind must be 'log' or 'tlm'"})
         interval_ms = request.get('interval_ms', 1000)
-        if not isinstance(interval_ms, int) or interval_ms <= 0:
+        # int OR float: the dashboard sends 1000.0 from JSON, which isinstance(..., int) rejected --
+        # so asking the UI for a 1 s stream silently STOPPED it. bool is excluded because it is an int
+        # subclass and `interval_ms: true` is not a rate.
+        if isinstance(interval_ms, bool) or not isinstance(interval_ms, (int, float)) or interval_ms <= 0:
             await self.hub.stop_stream(board.id)
             return await _send_json(writer, 200, {'board': board.id, 'streaming': False})
-        self.hub.start_stream(board, interval_ms, kind)
+        self.hub.start_stream(board, int(interval_ms), kind)   # float from JSON -> int ms
         return await _send_json(writer, 200,
                                 {'board': board.id, 'streaming': True, 'kind': kind, 'interval_ms': interval_ms})
 
