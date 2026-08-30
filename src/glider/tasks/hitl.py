@@ -259,7 +259,22 @@ class Hitl(task.Task):
         # irq_runs 1: the sim hands over exactly one sample per publish, so the honest
         # constant is the healthy case -- never 0 (no interrupt) and never an overrun
         self._tlm_accel.push((round(accel[0], 3), round(accel[1], 3), round(accel[2], 3), 1))
-        self._tlm_imu.push((round(heading, 1), round(roll, 1), round(pitch, 1)))
+        """
+        roll/pitch as the CENTIDEGREE FIXNUM, matching drivers/bno055.py and the host sim.
+
+        This pushed plain degrees while every other producer writes centidegrees -- the real BNO055
+        records "the RAW centidegree fixnum", and virtual_flight does `round(roll * 100)` under a
+        comment saying explicitly that a sim capture and a board capture must carry the same UNITS and
+        not merely the same column names. Board HITL was the one exception.
+
+        Every renderer divides roll/pitch by fixed.SCALE, so the attitude panel of an on-board HITL
+        capture came out 100x too small and drew a flat line: a real flight banking +/-29 deg rendered
+        as 0.577 deg of total travel. The panel has been useless in every board capture ever taken, and
+        a host-vs-board comparison reads it as a 100x attitude change.
+
+        heading stays float degrees -- it is not a fixnum on the board either.
+        """
+        self._tlm_imu.push((round(heading, 1), from_float(roll), from_float(pitch)))
         # the LSM6DSO32 stream a real board flight produces: low-g accel (reuse the boost-axis accel) +
         # the gyro rate (deg/s) the PID reads. Same fields as drivers/lsm6dso32 so flight_report keys on it.
         # gyro as the centideg/s fixnum the real driver records, so a sim capture and a board capture

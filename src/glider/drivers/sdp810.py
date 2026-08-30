@@ -59,8 +59,29 @@ _AIR_DENSITY: float = 1.18  # kg/m^3 (~25 Â°C sea level -- Florida, not ISA 15 Â
 
 @micropython.native
 def _frame_ok(data: bytes) -> bool:
-    """Validate the differential-pressure word's CRC (the flight-relevant field of the 9-byte frame)."""
-    return len(data) == _FRAME and commons.sensirion_crc8(data[0], data[1]) == data[2]
+    """
+    Validate ALL THREE CRCs in the 9-byte frame: DP[0,1], temperature[3,4], scale[6,7].
+
+    This checked only the differential-pressure word, on the grounds that it was "the flight-relevant
+    field". The SCALE word is more flight-relevant than that: setup latches it into self._scale
+    (`:134`) and every pressure reading afterwards is DIVIDED by it (`:167`), so one corrupted scale
+    silently mis-scales the entire airspeed channel for the rest of the flight -- and it is stored, so
+    a single bad frame does permanent damage rather than costing one sample.
+
+    That is not hypothetical on this board: the ICP-10111 on the same I2C bus was measured dropping a
+    bit in 0.50 % of its frames (2 of 400, board idle, both a single flipped bit). A 1-in-200 chance of
+    poisoning airspeed for a whole flight is not a risk worth two skipped CRC checks over six bytes.
+
+    Args:
+        data - the 9-byte frame as read from the sensor.
+
+    Returns:
+        True when the length and all three CRCs are correct.
+    """
+    return (len(data) == _FRAME
+            and commons.sensirion_crc8(data[0], data[1]) == data[2]
+            and commons.sensirion_crc8(data[3], data[4]) == data[5]
+            and commons.sensirion_crc8(data[6], data[7]) == data[8])
 
 
 @micropython.native
