@@ -109,10 +109,16 @@ class Upload:
 
     def begin(self, name: str, size: int, sha: str) -> str:
         """
-        Open staging for a new upload, replacing any upload already in progress.
+        Open staging for a new upload, DISCARDING any upload already in progress.
+
+        Discarding rather than merely forgetting: an operator who starts one push and then starts a
+        different one -- a typo, a change of mind, a retry under another name -- would otherwise strand
+        the first file's `.ota` on the flash with nothing that ever removes it. On a board with a few
+        megabytes and no shell, a leak with no reclaim path is the kind that is only noticed when a
+        write fails much later, for an unrelated reason.
 
         Args:
-            name - the destination filename (a bare leaf, checked here).
+            name - the destination path, relative to the board's working directory (checked here).
             size - the total byte count the sender will send.
             sha - the SHA-256 hex digest of the complete file.
 
@@ -128,7 +134,7 @@ class Upload:
             return 'size %d outside 1..%d' % (size, _MAX_BYTES)
         if len(sha) != 64:
             return 'sha must be the 64-char hex SHA-256 of the file'
-        self.reset()
+        self.discard()  # a previous transfer's staging file must not outlive it
         self.name, self.size, self.sha = name, size, sha
         self._digest = hashlib.sha256()
         try:

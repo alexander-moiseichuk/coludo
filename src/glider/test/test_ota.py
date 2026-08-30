@@ -41,9 +41,22 @@ async def amain():
 
     nested = 'drivers/' + _NAME  # drivers/ exists on the board; this is the case bare-leaf-only broke
     assert upload.begin(nested, len(_BODY), sha) is None, 'refused a legitimate subdirectory path'
-    upload.discard()
+    assert upload.chunk(0, _BODY[:32]) is None
+
+    """
+    Starting a DIFFERENT upload must not strand the first one's staging file. A board with a few
+    megabytes and no shell has no way to reclaim it, so the leak would only surface much later as an
+    unrelated write failure.
+    """
+    assert upload.begin(_NAME, len(_BODY), sha) is None
     try:
         os.stat(nested + '.ota')
+        raise AssertionError('a superseded transfer left its staging file on the flash')
+    except OSError:
+        pass
+    upload.discard()
+    try:
+        os.stat(_NAME + '.ota')
         raise AssertionError('discard left the staging file behind')
     except OSError:
         pass
