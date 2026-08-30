@@ -1,6 +1,6 @@
 # TMS-7 — post-audit regression, flown four times
 
-**96 board flights**: the 12-scenario matrix × F15-4 and E16-4 × four independent runs. `r1`–`r3` are
+**144 board flights**: the 12-scenario matrix × F15-4 and E16-4 × four independent runs. `r1`–`r3` are
 the same build flown three times; `r4` adds one recorder change and re-flies it to test that change.
 
 The point is not any single run. It is that **a comparison against a baseline is meaningless until you
@@ -197,7 +197,66 @@ comparison will not have the hole.
 **Practical reading:** treat r2/r3/r4 as the repeatability baseline (ρ ≈ 0.95, aggregate within 3–12 %)
 and treat r1 as suspect until a stamped run replaces it.
 
-## 6. Regression verdict
+## 6. r5 and r6 — re-flown after the findings §41 fixes
+
+Two more matrix runs, each isolating a change, flown against the r2–r4 baseline:
+
+* **r5** — HITL attitude units (§41.2) + SDP810 CRC widened to all three words (§41.22)
+* **r6** — the above plus the steering-filter rounding fix (§41.12)
+
+### The units fix, verified as a positive control
+
+Attitude roll range, median over 24 flights, in the units as recorded:
+
+| run | raw | rendered |
+|---|---|---|
+| r2 | 58.4 | 0.58° |
+| r3 | 57.8 | 0.58° |
+| r4 | 58.3 | 0.58° |
+| **r5** | **5751.5** | **57.52°** |
+
+Three baseline runs agreeing to the second decimal, then a **98.6× step** exactly where the fix landed —
+the residual 1.4% being real flight-to-flight bank variation. Before r5 the attitude panel drew a glider
+banking ±29° as 0.58° of total travel: a flat line, in every board HITL capture ever taken.
+
+### Flight behaviour: unchanged, as intended
+
+| | r3 | r4 | r5 | r6 | spread |
+|---|---|---|---|---|---|
+| miss (median) | 89.3 m | 82.6 m | 89.2 m | 91.8 m | 10.3% |
+| duration | 99.5 s | 99.2 s | 98.7 s | 99.2 s | **0.8%** |
+
+Wind-family spreads across r4/r5/r6 are 1.3–9.6 m, all inside the ~7.7 m baseline. Neither fix moved
+the aircraft, which is the expected result: the units change is telemetry-only, and the filter bias it
+corrected was −0.5°, two orders of magnitude below this matrix's ~20 m detection floor.
+
+### A servo died mid-session, and the energy metric caught it
+
+Servo energy fell 57.2 J → 36.4 J at r5 and stayed there. It was **not** a code effect:
+
+| run | median mA | median fin travel |
+|---|---|---|
+| r3 | 75.0 | 11821° |
+| r4 | 73.0 | 11719° |
+| r5 | 48.8 | 11824° |
+| r6 | 36.8 | — |
+
+Identical fin travel, monotonically falling current at constant ~4.9 V. `diag_servos` found it:
+**`servo_eleron_right` draws 25 mW against its partner's 2925 mW — a 117× asymmetry, dead.** The
+config is correct (enabled, GPIO32), so it is physical — a lead disturbed during the watchdog testing.
+
+Two consequences, and they differ:
+
+* **The flight data in r5/r6 is VALID.** HITL flies from the *commanded* fin angles the mixer emits;
+  the simulator never learns a servo is unplugged. Miss, duration, moves and travel are unaffected,
+  which is exactly what the table above shows.
+* **The servo-energy metric is NOT a flight metric.** It integrates the INA226 rail, so it measures
+  the bench. It should not be compared across runs separated by bench work, and it was wrong to read
+  the r5 drop as a code change before checking the rail.
+
+**Action before 2026-09-05: `servo_eleron_right` needs re-seating and re-probing.**
+
+## 7. Regression verdict
 
 Against the q5.5 baseline ([catapult_evaluation](../TMS-7-catapult_evaluation/), 42–97 m, 1 in-zone of
 7): the wind and low-noise families land at **48–95 m across all four runs**, the same family, with
@@ -210,8 +269,8 @@ high-noise and corner families this study can conclude nothing, and says so.
 ## Layout
 
 ```
-r1/ r2/ r3/ r4/     per-run plotly HTML + comparison SVGs (both motors)
-comparison.json     full 552-row panel comparison across all four runs
+r1/ .. r6/          per-run plotly HTML + comparison SVGs (both motors)
+comparison.json     full 552-row panel comparison across all runs
 ```
 
 ## Reproducing

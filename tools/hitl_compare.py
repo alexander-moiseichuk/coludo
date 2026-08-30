@@ -71,8 +71,11 @@ _BOUNDS: dict = {
     'altitude peak': (-500.0, 5000.0),       # metres AMSL over a field
     'elevation peak': (-100.0, 3000.0),
     'speed max': (0.0, 200.0),               # knots
-    'attitude roll range': (0.0, 360.0),
-    'attitude pitch range': (0.0, 360.0),
+    # CENTIDEGREES, not degrees: bno055 and both sims record the raw centidegree fixnum, and board
+    # HITL joined them at the §41.2 fix. A capture from BEFORE that fix records plain degrees and will
+    # sit at ~1/100 of this range -- which is the bug, correctly visible, not a bounds error.
+    'attitude roll range': (0.0, 36000.0),
+    'attitude pitch range': (0.0, 36000.0),
     'fin eleron_left range': (0.0, 360.0),
     'fin yaw range': (0.0, 360.0),
     'health load max': (0.0, 100.0),         # a percentage
