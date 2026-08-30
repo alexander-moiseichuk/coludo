@@ -1478,6 +1478,47 @@ Args:
 Returns:
     The heading to fly (degrees).
 
+## `ota.py`
+
+_Tested by `test/test_ota.py`._
+
+Over-the-air module updates: stage a .mpy over the CC link, verify it, install it atomically.
+
+Deploying by USB means opening the airframe. Once the glider is packed -- and on a launch day, once it
+is on the rail -- that is the difference between shipping a fix and flying the bug. This carries a
+module over the link the board already holds to Control, so a change reaches a sealed airframe.
+
+The transfer is deliberately three steps (`push-begin`, `push`, `push-commit`) rather than one
+command per file. Nothing touches the live module until the LAST byte has arrived and the SHA-256 of
+what landed matches what the sender promised: a link that drops mid-transfer leaves a half-written
+file in staging, which is inert, instead of a half-written module that the next boot would try to
+import. The previous version is kept as `.bak` by the same commit, so a bad-but-valid module can be
+put back over the link without opening anything.
+
+REBOOT IS REQUIRED for an installed module to take effect -- MicroPython caches imports, and the
+running firmware holds the old code until it restarts. `push-commit` says so in its reply.
+
+What this deliberately does NOT do: recover a board whose new module breaks the boot. The staging and
+the checksum stop a CORRUPT file from ever being installed, but a module that is intact and wrong
+will import and fail, and the board is then a USB recovery. Treat an OTA push as a real deployment,
+not a scratchpad -- push what has been through `make test` on the bench board.
+
+### `class Upload`
+
+The one in-progress upload.
+
+One at a time by design: two concurrent pushes over a single line-oriented link would interleave
+their chunks with no way to tell them apart, and there is no case for it -- the operator pushes a
+module, then pushes the next.
+
+- `__init__()` — constructor
+- `discard() -> None` — Remove the staging file and forget the upload -- the failure path, so nothing is left behind.
+- `reset() -> None` — Forget any in-progress upload (the `push-abort` path); see discard() to also drop the staging file.
+- `begin(name: str, size: int, sha: str) -> str` — Open staging for a new upload, replacing any upload already in progress.
+- `chunk(seq: int, data: bytes) -> str` — Append one chunk, in order.
+- `commit(path: str=None, sha: str=None) -> tuple` — Verify the staged file and install it, keeping the outgoing version as `.bak`.
+- `status() -> dict` — What is staged right now, for the operator and for a resumed session to orient itself.
+
 ## `pid.py`
 
 _Tested by `test/test_pid.py`._
@@ -2109,8 +2150,9 @@ accelerometer (g, including gravity) -> 'accel' as a low-g backup to the ADXL375
 
 - `setup() -> bool`
 - `sample() -> tuple` — Read the ACC..EUL block and return a FLAT 6-tuple (run() slices it).
-- `calibrated() -> bool` — True once the MAGNETOMETER is calibrated -- the axis that needs the operator's figure-8.
+- `calibrated() -> bool` — Has the magnetometer EVER converged this session (or been restored from a saved profile)?
 - `calibration() -> str` — The figure-8 instruction while NDOF is unconverged, with the live reading folded in; '' once done.
+- `calibrate() -> str` — Persist the chip's learned calibration profile, once the operator's figure-8 has landed.
 - `run() -> None`
 - `probe() -> str` — On-demand self-test: the chip id reads back, then one fused sample succeeds (each step logged).
 - `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault.
@@ -2948,6 +2990,23 @@ trusting it / using `assist`. Requires a GPS attached to the Control host (main.
 `list` -- the connected boards and their last-known status.
 
 ### `list_command(hub, tokens, session) -> list`
+
+## `push.py`
+
+_Tested by `test/test_push.py`._
+
+`push <board> <file> [name]` -- send a module to a board over WiFi and install it.
+
+The counterpart to the board's push-begin / push / push-commit. Reads a local file (a .mpy from
+tools/deploy.sh, a .config, a .creds), carries it over the link the board already holds, and installs
+it only once the board has confirmed the SHA-256 of what landed. Nothing on the board is touched
+until that check passes, so a link that drops mid-push costs a retry and nothing else.
+
+Deploying by USB means opening the airframe; this does not. It is still a real deployment -- push
+what has been through `make test` on the bench board, and reboot the board afterwards, because
+MicroPython holds the old module until it restarts.
+
+### `push_command(hub, tokens, session) -> list`
 
 ## `select.py`
 
