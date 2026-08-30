@@ -100,7 +100,23 @@ async def _run(args, hub) -> None:
         None; runs until cancelled.
     """
     if hub.gps is not None:
-        await asyncio.gather(hub.run(), hub.gps.serve(args.gps_device, args.gps_baud))
+        """
+        The hub is the job; the host GPS is an OPTIONAL extra. gather() couples them.
+
+        A bare gather() propagates the FIRST exception and cancels the sibling, so anything escaping
+        serve() -- it catches OSError, but not CancelledError or an unexpected error mid-read -- takes
+        the board listener down with it. Losing the whole fleet because a USB GPS was unplugged is the
+        wrong trade, and it is a field-day failure: that dongle gets knocked constantly.
+
+        return_exceptions keeps the pair independent, and the GPS outcome is logged rather than
+        swallowed so a dead assist is visible instead of merely absent.
+        """
+        results = await asyncio.gather(hub.run(),
+                                       hub.gps.serve(args.gps_device, args.gps_baud),
+                                       return_exceptions=True)
+        for label, outcome in zip(('hub', 'host gps'), results):
+            if isinstance(outcome, BaseException) and not isinstance(outcome, asyncio.CancelledError):
+                hub.log('%s stopped: %r' % (label, outcome))
     else:
         await hub.run()
 

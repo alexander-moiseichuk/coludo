@@ -100,6 +100,13 @@ class Server:
             tmp = self.roster_path + '.tmp'
             with open(tmp, 'w') as handle:
                 json.dump(self.roster, handle, indent=1, sort_keys=True)
+                # fsync BEFORE the rename. os.replace is atomic with respect to the DIRECTORY, but it
+                # does not guarantee the file's bytes reached the disk -- a power cut can leave the
+                # entry pointing at an empty file, and the hub then forgets every glider it has ever
+                # seen. The roster is small and written rarely, so the flush costs nothing that
+                # matters and buys the one property it exists for: surviving a hard power-off.
+                handle.flush()
+                os.fsync(handle.fileno())
             os.replace(tmp, self.roster_path)
         except Exception as error:
             self.log('roster save failed: %r' % error)
