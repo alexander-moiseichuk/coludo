@@ -54,7 +54,7 @@ On-device modules layered leaves-first (a module depends only on lower layers, b
 - `guidance` (core) -> `commons`, `controller`, `fixed`, `navigation`
 - `hitl` (task) -> `commons`, `controller`, `databoard`, `fixed`, `inspector`, `recorder`, `sim_model`, `task`
 - `i2cbus` (core) -> `commons`, `config`, `recorder`
-- `icp10111` (driver) -> `commons`, `databoard`, `i2cbus`, `recorder`, `task`
+- `icp10111` (driver) -> `commons`, `databoard`, `i2cbus`, `inspector`, `recorder`, `task`
 - `ina226` (driver) -> `databoard`, `i2cbus`, `recorder`, `task`
 - `led` (driver) -> `controller`, `recorder`, `task`
 - `lsm6dso32` (driver) -> `commons`, `databoard`, `fixed`, `i2cbus`, `recorder`, `spibus`, `task`
@@ -80,7 +80,7 @@ On-device modules layered leaves-first (a module depends only on lower layers, b
 - `commons` — imported by 23: `adxl375`, `attitude`, `config`, `config_default`, `field`, `fixed`, `flight`, `gnss`, `governor`, `guidance`, `hitl`, `i2cbus`, `icp10111`, `lsm6dso32`, `mission`, `mixer`, `navigation`, `sdp810`, `sequencer`, `sg90`, `sim_model`, `spibus`, `vl53l4cx`
 - `databoard` — imported by 20: `adxl375`, `attitude`, `bmp280`, `bno055`, `board_health`, `cc_client`, `field`, `flight`, `gnss`, `gnss_calib`, `hitl`, `icp10111`, `ina226`, `lsm6dso32`, `mission`, `sdp810`, `sequencer`, `sg90`, `vl53l4cx`, `warmstart`
 - `controller` — imported by 12: `board_health`, `field`, `flight`, `gnss_calib`, `guidance`, `hitl`, `led`, `main`, `separation`, `sequencer`, `warmstart`, `wifi`
-- `inspector` — imported by 11: `cc_client`, `controller`, `databoard`, `field`, `flight`, `hitl`, `mission`, `sequencer`, `task`, `warmstart`, `wind`
+- `inspector` — imported by 12: `cc_client`, `controller`, `databoard`, `field`, `flight`, `hitl`, `icp10111`, `mission`, `sequencer`, `task`, `warmstart`, `wind`
 - `fixed` — imported by 10: `attitude`, `bno055`, `board_health`, `flight`, `governor`, `guidance`, `hitl`, `lsm6dso32`, `pid`, `sdp810`
 - `i2cbus` — imported by 8: `adxl375`, `bmp280`, `bno055`, `icp10111`, `ina226`, `lsm6dso32`, `sdp810`, `vl53l4cx`
 

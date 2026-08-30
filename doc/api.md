@@ -2079,6 +2079,7 @@ Elevation is metres above the startup ground zero, captured per-sensor so it is 
 `update {"rezero": true}` re-captures ground zero (e.g. after warm-up, just before launch).
 
 - `setup() -> bool`
+- `rearm() -> None` — Re-apply the mode/filter this driver set at setup, after something reset the part underneath it.
 - `run() -> None`
 - `update(props: dict) -> list` — Apply an operator property change: re-zero or directly set the ground reference.
 - `probe() -> str` — On-demand self-test: the chip id reads back, then one conversion reads (each step logged).
@@ -2170,6 +2171,7 @@ No float -- pushed to the databoard + per-sample telemetry. Current/power scale 
 wrong/absent die id -> setup False.
 
 - `setup() -> bool`
+- `rearm() -> None` — Re-write the calibration register after a bus-wide reset cleared it.
 - `run() -> None`
 - `probe() -> str` — On-demand self-test: the die id reads back, then one live read (each step logged).
 - `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault behind an absent monitor.

@@ -18,6 +18,7 @@ import time
 import commons
 import databoard
 import i2cbus
+import inspector
 import recorder
 import task
 
@@ -266,8 +267,8 @@ class Icp10111(task.Task):
         Measured escalation (7/06 OOM soak, unchanged here): a NAK is usually just a conversion still
         draining, so wait one period first; only a PERSISTENT failure gets the I2C GENERAL-CALL reset
         (0x00 0x06), which is what actually recovered the latched bench part when the addressed soft
-        reset re-wedged it. The general call also resets peers that honour it (bmp280, ina226) -- they
-        re-apply their config-declared state, and this fires only when the primary baro is already lost.
+        reset re-wedged it. The general call also resets peers that honour it (bmp280, ina226), which do NOT
+        re-apply their own config -- so this re-arms them explicitly afterwards; see below.
 
         Args:
             (none)
@@ -281,7 +282,28 @@ class Icp10111(task.Task):
         except OSError:
             pass  # nothing honours general call -- nothing lost by asking
         await asyncio.sleep_ms(_RESET_RETRY_MS)
-        recorder.Recorder.log(self.name, 'read recovery: general-call reset after %d failures'
+        """
+        RE-ARM the peers this reset just knocked over.
+
+        The docstring above claimed they "re-apply their config-declared state". They do not: bmp280
+        and ina226 each write their configuration exactly once, in setup(), and never again. So the
+        general call left the BACKUP BARO in its power-on CTRL_MEAS 0x00 -- SLEEP, no longer
+        converting, returning its last sample forever -- and the INA226 with CALIB cleared, so current
+        and power read WRONG rather than absent.
+
+        Recovering the primary baro therefore disabled its own backup, silently, at the moment
+        redundancy mattered most. Each peer now exposes rearm(); this calls it, best-effort, and a
+        peer that is genuinely gone just fails its next read as before.
+        """
+        for name in ('baro_bmp280', 'power_ina226'):
+            peer = inspector.Inspector.get(name)
+            rearm = getattr(peer, 'rearm', None)
+            if rearm is not None:
+                try:
+                    await rearm()
+                except Exception as error:
+                    recorder.Recorder.log(self.name, 'peer %s rearm failed: %r' % (name, error))
+        recorder.Recorder.log(self.name, 'read recovery: general-call reset + peer rearm after %d failures'
                               % _RECOVER_AFTER)
 
     def calibration(self) -> str:
