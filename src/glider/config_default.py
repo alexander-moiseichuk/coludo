@@ -667,13 +667,18 @@ def default() -> dict:
         watchdog aborts on `mpy_machine_wdt` exactly `timeout` after arming, with BOTH cores idle, so
         it is not loop starvation: the firmware's own feed loop was verified running at its 200 ms
         cadence with a substituted counter, and the real WDT was verified being fed without raising.
-        Measured on the board: 1000 ms loops, 5000 ms is stable across two soaks (90 s and 60 s, one
-        POWERON reset and nothing else).
+        Measured on the board, and the FLOOR was bisected rather than assumed: 3000 ms still
+        boot-loops (8 resets in 70 s), 4000 ms is stable, 5000 ms is stable across three further soaks
+        (90 s, 60 s, 240 s -- one POWERON reset and nothing else). So the boot requirement sits between
+        3 and 4 s and 5000 clears it by only ~1.25x, NOT the wide margin the old 1000 ms implied. The
+        bisect was run with servos DISABLED, because a boot loop with servos enabled is destructive --
+        that is how servo_eleron_right died.
       * RESCUE. A rescue gc.collect() is ATOMIC -- nothing can feed mid-sweep, which is why the task
         exposes kick() to hand the block a full budget -- and its cost scales with heap FILL: ~65-260 ms
         on a mostly-free heap, but measured 3.4 s on a ballast-full one. A 1000 ms budget could not
         cover that even with a kick, so the old value would have shot down the very rescue it was
-        sized around. 5000 ms clears the measured worst case.
+        sized around. 5000 ms clears the measured worst case -- by 1.6 s, which is the tighter of the
+        two margins and the reason not to lower this knob without re-measuring BOTH demands.
 
     Frozen fins at a hard OOM are bounded by the reset either way (7/06 soak: ~1.4 s to the reset), and
     fast control-loop-death detection is stall_ms below, independent of this timeout.
