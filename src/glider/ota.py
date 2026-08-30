@@ -231,6 +231,69 @@ class Upload:
                 'chunks': self.next_seq}
 
 
+def orphans() -> list:
+    """
+    Staging files left behind by a transfer whose in-RAM state did not survive.
+
+    A push interrupted by a REBOOT is the case nothing else cleans up: `discard` needs an upload in
+    memory to know what to remove, and after a restart there is none -- while the `.ota` is still on
+    the flash. Since the board has no shell, an orphan that cannot be listed is an orphan that cannot
+    be removed, so this is what makes `sweep` usable rather than a guess.
+
+    Scans the working directory and one level down, which is the whole of the module tree
+    (`drivers/`, `tasks/`, `test/`); the staging suffix cannot occur deeper because a push cannot
+    create directories.
+
+    Args:
+        (none)
+
+    Returns:
+        The paths of every staging file found, without the suffix stripped.
+    """
+    found = []
+    for entry in _listdir(''):
+        if entry.endswith(_STAGE_SUFFIX):
+            found.append(entry)
+            continue
+        for nested in _listdir(entry):        # empty for a plain file, so this needs no isdir()
+            if nested.endswith(_STAGE_SUFFIX):
+                found.append('%s/%s' % (entry, nested))
+    return found
+
+
+def _listdir(path: str) -> list:
+    """Entries of `path`, or empty when it is a file, is missing, or cannot be read."""
+    try:
+        return os.listdir(path) if path else os.listdir()
+    except OSError:
+        return []
+
+
+def sweep(path: str) -> str:
+    """
+    Remove one staging file by PATH, whether or not an upload is open.
+
+    The counterpart to discard(), which can only remove the staging of a transfer it still holds in
+    memory. This addresses the file directly, so a `.ota` orphaned by a reboot -- the usual way a push
+    goes stale -- can be cleared and the push restarted, on a board with no shell and, by assumption,
+    no USB attached.
+
+    Args:
+        path - the destination path whose staging file should be removed.
+
+    Returns:
+        None when the staging file is gone, else the reason it was refused.
+    """
+    bad = _safe_path(path)
+    if bad is not None:
+        return bad
+    try:
+        os.remove(path + _STAGE_SUFFIX)
+    except OSError:
+        return 'no staging file for %s' % path
+    return None
+
+
 def _replace(name: str, staged: str, backup: str) -> bool:
     """
     Move the staged file over the live one, keeping the outgoing version.

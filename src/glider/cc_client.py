@@ -795,14 +795,46 @@ def _register_ota(dispatcher, ctx) -> None:
             return cc.build('err', ['badargs', refused])
         return cc.build('ok', [json.dumps(info)])
 
-    async def push_abort(_unused_msg) -> str:
-        """Drop an in-progress upload AND its staging file, so an abandoned push leaves nothing behind."""
+    async def push_abort(msg) -> str:
+        """
+        Throw away a staged upload: `push-abort [path]`.
+
+        With no argument this drops the upload held in memory along with its staging file. With a
+        path it removes that staging file DIRECTLY, whether or not an upload is open -- which is the
+        only way to clear a `.ota` orphaned by a reboot mid-push, the usual way a transfer goes stale.
+        After a restart there is no in-memory upload for the no-argument form to find, while the file
+        is still on the flash, and the board has no shell to remove it with.
+
+        Args:
+            msg - the request; args[0], when present, is the path whose staging to remove.
+
+        Returns:
+            ok {aborted} or {swept}; err badargs when the path is unsafe or has no staging file.
+        """
+        if msg.args:
+            refused = ota.sweep(msg.args[0])
+            if refused is not None:
+                return cc.build('err', ['badargs', refused])
+            return cc.build('ok', [json.dumps({'swept': msg.args[0]})])
         _upload.discard()
         return cc.build('ok', [json.dumps({'aborted': True})])
 
     async def push_status(_unused_msg) -> str:
-        """What is staged right now -- so a reconnecting operator can see where a push got to."""
-        return cc.build('ok', [json.dumps(_upload.status())])
+        """
+        What is staged right now, plus any ORPHANED staging files.
+
+        The orphan list is the discoverable half of `push-abort <path>`: on a board with no shell, a
+        leftover `.ota` that cannot be listed is one that will never be removed.
+
+        Args:
+            msg - the request (unused).
+
+        Returns:
+            ok with the in-progress upload and the orphaned staging paths.
+        """
+        status = _upload.status()
+        status['orphans'] = ota.orphans()
+        return cc.build('ok', [json.dumps(status)])
 
     dispatcher.on('push-begin', push_begin)
     dispatcher.on('push', push)

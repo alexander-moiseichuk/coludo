@@ -121,10 +121,32 @@ async def amain():
         assert handle.read() == b'previous version', 'the outgoing version was not kept'
     assert upload.status()['uploading'] is None, 'commit must clear the in-progress upload'
 
+    """
+    The ORPHAN case: a push interrupted by a reboot leaves a staging file with no upload in memory to
+    describe it. discard() cannot help -- it has nothing to discard -- and the board has no shell, so
+    without a path-addressed sweep the file is unreachable for the life of the deployment.
+    """
+    with open(_NAME + '.ota', 'wb') as handle:
+        handle.write(b'a transfer that did not survive a reboot')
+    fresh = ota.Upload()                       # nothing in memory, exactly as after a restart
+    fresh.discard()
+    assert os.stat(_NAME + '.ota')[6] > 0, 'discard cannot reach an orphan, and must not pretend to'
+    assert _NAME + '.ota' in ota.orphans(), ota.orphans()
+    assert ota.sweep('../escape.mpy') is not None, 'sweep must apply the same path check'
+    assert ota.sweep(_NAME) is None
+    try:
+        os.stat(_NAME + '.ota')
+        raise AssertionError('sweep did not remove the orphaned staging file')
+    except OSError:
+        pass
+    assert ota.sweep(_NAME) is not None, 'sweeping nothing must report it, not claim success'
+    assert _NAME + '.ota' not in ota.orphans()
+
     _cleanup()
     print('ok: ota accepts subdirectory paths and rejects traversal, out-of-order and overrunning '
           'chunks, a wrong digest and a mis-aimed commit; discards staging on failure; installs a '
-          'verified file atomically and keeps the previous version as .bak')
+          'verified file atomically and keeps the previous version as .bak; sweeps a staging '
+          'file orphaned by a reboot')
 
 
 asyncio.run(amain())
