@@ -64,8 +64,27 @@ def _resolve_gps_device(arg: str):
     if arg == 'auto':
         import glob
 
-        found = sorted(glob.glob('/dev/ttyUSB*'))
-        return found[0] if found else None
+        import serial
+
+        """
+        PROBE for NMEA before claiming a port. /dev/ttyUSB* is whatever happened to enumerate first --
+        a printer, an SDR, the Luckfox UART -- and taking it blind meant the hub logged "host gps on
+        /dev/ttyUSB0" and then "host gps lost", with the real receiver sitting unused on ttyUSB1.
+        Worse, opening someone else's serial port can disturb it.
+
+        A GPS emits `$G...` continuously, so a short listen is a definitive test. Each candidate gets
+        one second; the first that talks NMEA wins, and if none does we return None rather than
+        guessing -- an explicit --gps-device is the honest fallback.
+        """
+        for candidate in sorted(glob.glob('/dev/ttyUSB*')):
+            try:
+                with serial.Serial(candidate, 9600, timeout=0.25) as link:
+                    for _attempt in range(4):        # ~1 s: a live receiver sends several sentences
+                        if b'$G' in link.readline():
+                            return candidate
+            except Exception:
+                continue                              # busy, permission-denied, not a serial device
+        return None
     return arg
 
 

@@ -77,7 +77,19 @@ async def amain():
     """
     before = probe._zero
     probe._raw = None
-    assert probe.update({'zero': True}) == []      # refused: nothing changed
+    """
+    The refusal must be VISIBLE, not merely correct.
+
+    This used to return `[]`, which is indistinguishable from success in the CC reply -- the operator
+    sees `changed: []` for the one command whose entire purpose is to change something, and believes
+    the pad tare happened. calibrate() has always answered 'no reading yet'; update() now raises the
+    same message and cc_client turns it into `err refused ...`.
+    """
+    try:
+        probe.update({'zero': True})
+        raise AssertionError('tare before the first frame was accepted')
+    except ValueError as error:
+        assert 'no reading yet' in str(error), error
     assert probe._zero == before                   # ...and the existing tare is untouched
 
     probe._pressure(200)  # +200 raw -> _raw = 333 fixnum -> becomes the tare source

@@ -264,7 +264,12 @@ class BoardHealth(task.Task):
 
     def _row(self) -> None:
         vitals = self.sample()
-        elevation = self._elevation.value()
+        # read(), not value(): land_s is the sink-rate forecast the memory rescue weighs a GC pause
+        # against, so an extrapolated elevation makes the board decide how long it can afford to stall
+        # using a number no sensor produced.
+        elevation, elevation_source, _elevation_age = self._elevation.read()
+        if elevation_source is None:
+            elevation = None
         self._track(vitals['mem_free'], elevation)
         self._rescue(vitals['mem_free'], elevation)
         self._telemetry.push((vitals['temp'], vitals['mem_free'], vitals['load'],

@@ -82,7 +82,7 @@ def save(crumb: dict) -> bool:
         _nvs.set_i32('stage', crumb['stage'])
         _nvs.commit()
         return True
-    except OSError:
+    except (OSError, ValueError, TypeError):
         return False
 
 
@@ -102,7 +102,7 @@ def clear() -> None:
     try:
         _nvs.set_i32('stage', controller.Stage.NULL)
         _nvs.commit()
-    except OSError:
+    except (OSError, ValueError, TypeError):
         pass
 
 

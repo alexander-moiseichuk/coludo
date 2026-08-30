@@ -548,8 +548,24 @@ class Server:
             return [await self._stream_toggle(client, command_tokens[1:]) for client in targets]
         line = ' '.join(command_tokens)
         out = []
+        """
+        One target's failure must not cost the REST of the fleet.
+
+        exchange() raises on timeout, and this loop had no guard: a single unresponsive board aborted
+        the whole fan-out, so every board AFTER it in the iteration silently never received the
+        command and the operator saw a traceback instead of a per-board result. `all reboot` with one
+        wedged glider left the others un-rebooted with nothing saying which.
+
+        The stakes rose when exchange() started marking the link down on timeout rather than leaving
+        it desynced -- correct in itself, but it makes the raise more likely, so the caller has to
+        cope. Each target now reports its own outcome and the loop continues.
+        """
         for client in targets:
-            resp = await client.exchange(line)
+            try:
+                resp = await client.exchange(line)
+            except Exception as error:      # timeout / link lost -- report THIS board, keep going
+                out.append('from %s err %s' % (client.id, type(error).__name__.lower()))
+                continue
             out.append('from %s %s' % (client.id, _render(resp)) if resp else 'from %s err offline' % client.id)
         return out
 

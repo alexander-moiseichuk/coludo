@@ -84,7 +84,12 @@ class Web:
                     try:
                         length = int(value.strip())
                     except ValueError:
-                        length = 0  # a non-numeric Content-Length -> no body, still route the request
+                        # A non-numeric Content-Length means 'no body', and routing continues (§26.5).
+                        # Deliberately NOT a 400: the unread-body / request-smuggling concern needs
+                        # keep-alive, and this server sends `Connection: close` on every response and
+                        # closes the writer in `finally` -- one request per connection, so there is no
+                        # next request to smuggle into. test_bad_content_length_still_routes pins it.
+                        length = 0
             body = await reader.readexactly(length) if length else b''
             await self._route(method, path, body, writer)
         except (ConnectionError, asyncio.IncompleteReadError, asyncio.CancelledError,

@@ -88,10 +88,11 @@ identical behaviour every time.
   },
 
   "buses": {
-    "uart": { "1": { "tx": 20, "rx": 21, "baud": 921600 },
+    "uart": { "1": { "tx": 20, "baud": 921600 },
               "2": { "tx": 22, "rx": 23, "baud": 9600 } },
-    "i2c":  { "0": { "sda": 7, "scl": 8, "freq": 400000 } },
-    "spi":  {}
+    "i2c":  { "0": { "sda": 7, "scl": 8, "freq": 400000 },
+              "1": { "sda": 31, "scl": 30, "freq": 400000 } },
+    "spi":  { "1": { "sck": 48, "mosi": 47, "miso": 46, "baud": 5000000, "mode": 3 } }
   },
 
   "pins": {

@@ -59,7 +59,7 @@ The GC policy above is implemented in `tasks/sequencer.py`, gated behind the sta
   pause at the end. GC is held off through the flare and the collect is paid only once stopped.
 
 Disabling GC for the entire flight is only safe because the hot paths are near-zero-alloc: the mixer
-pre-resolves its surfaces and rewrites a shared output dict (, ~0 bytes/call), and the flight loop
+pre-resolves its surfaces and rewrites a shared output dict (~0 bytes/call), and the flight loop
 caches the landing-zone steering heading at GPS cadence instead of running `navigation.steer()` trig
 (~174 µs) every 100 Hz step. The **PID is fixed-point** (`pid.py`): every MicroPython float `*`/`+`/`/`
 boxes a heap float, so the old float PID leaked a **measured 176 bytes/step** — ×3 axes ×100 Hz ≈

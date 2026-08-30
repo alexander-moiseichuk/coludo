@@ -333,7 +333,11 @@ class Sdp810(task.Task):
             both did.
             """
             if self._raw is None:
-                return changed  # no reading yet -- leave the tare alone rather than poison it
+                # RAISE, do not return quietly. Returning `changed: []` told the operator nothing while
+                # looking like success, and this is the documented pad-tare command -- issuing it a
+                # moment too early is the natural mistake, so the refusal has to be legible. calibrate()
+                # has always answered 'no reading yet'; update() now says the same thing out loud.
+                raise ValueError('no reading yet -- wait for the first frame before taring')
             self._zero = self._raw
             changed.append('zero_offset_pa')
         if 'zero_offset_pa' in props:

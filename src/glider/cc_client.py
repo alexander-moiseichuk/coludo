@@ -382,6 +382,11 @@ def _register_inspection(dispatcher) -> None:
             changed = inspector.Inspector.update(msg.args[0], json.loads(msg.args[1]))
         except KeyError:
             return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
+        except ValueError as error:
+            # A driver refusing a property change must reach the OPERATOR, not the dispatcher's generic
+            # handler. sdp810 refuses a tare before its first frame, and answering `changed: []` looked
+            # like success for the one command whose whole purpose is to change something.
+            return cc.build('err', ['refused', str(error)])
         return cc.build('ok', [json.dumps({'changed': changed})])
 
     async def stats(msg) -> str:

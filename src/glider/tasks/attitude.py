@@ -104,7 +104,19 @@ class Attitude(task.Task):
         Returns:
             None; advances the free-run roll/pitch/yaw state as a side effect.
         """
-        rate = self._rate.value()  # (gx, gy, gz) centideg/s fixnum, or None
+        """
+        read(), not value(), for every input to the BACKUP attitude.
+
+        This task exists to keep an attitude when the BNO055 has failed -- the case where its inputs
+        are most likely to be stale too. value() extrapolates without bound, so the backup would blend
+        an invented gyro rate or gravity vector and report an attitude with the same confidence as a
+        real one. A backup that cannot tell fresh from invented is not redundancy.
+
+        gnss_calib and the wind feed were migrated for the same reason; this task was missed.
+        """
+        rate, rate_source, _rate_age = self._rate.read()
+        if rate_source is None:
+            rate = None
         roll_d = pitch_d = yaw_d = 0  # gyro-integration deltas this step (centidegree fixnum)
         turning = True
         if rate is not None:
@@ -118,8 +130,10 @@ class Attitude(task.Task):
         steers by anyway. Weak blend (course_shift) so a crosswind crab averages out.
         """
         self._yaw_cd = (self._yaw_cd + yaw_d) % 36000
-        course = self._course.value()
-        speed = self._speed.value()
+        course, course_source, _course_age = self._course.read()
+        speed, speed_source, _speed_age = self._speed.read()
+        if course_source is None or speed_source is None:
+            course = speed = None
         if course is not None and speed is not None and speed > self._course_gate:
             err = ((fixed.from_float(course) - self._yaw_cd + 18000) % 36000) - 18000  # wrapped (-180,180] cd
             self._yaw_cd = (self._yaw_cd + (err >> self._course_shift)) % 36000
@@ -129,7 +143,9 @@ class Attitude(task.Task):
         now = time.ticks_us()
         if not turning and time.ticks_diff(now, self._accel_us) >= self._accel_period_us:
             self._accel_us = now
-            accel = self._accel.value()  # (ax, ay, az) float g, or None
+            accel, accel_source, _accel_age = self._accel.read()   # (ax, ay, az) float g, or None
+            if accel_source is None:
+                accel = None
             if accel is not None:
                 axi = fixed.from_float(accel[0])  # the one float boundary: g -> centi-g fixnum for the CORDIC
                 ayi = fixed.from_float(accel[1])  # (~0.5 deg typical over the glide envelope -- coludo.md)
@@ -162,7 +178,7 @@ class Attitude(task.Task):
             if value is not None and source != self.name:
                 self._mirror(value)  # a higher-priority source is winning -> mirror it (stay warm/fresh)
                 self._free = False
-            elif self._seeded or self._accel.value() is not None:
+            elif self._seeded or self._accel.read()[1] is not None:
                 self._integrate(dt_ms)  # the primary is gone (source is us / stale) -> free-run
                 self._free = True
             else:
@@ -183,7 +199,7 @@ class Attitude(task.Task):
         """
         try:
             recorder.Recorder.log(self.name, 'probe: gyro rate ...')
-            if self._rate.value() is None:
+            if self._rate.read()[1] is None:
                 raise ValueError('no gyro rate -- attitude backup blind')
         except Exception as error:
             message = 'attitude backup: %s' % error

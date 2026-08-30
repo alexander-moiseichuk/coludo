@@ -56,6 +56,12 @@ async def bustune_command(hub, tokens, session) -> list:
             report = json.loads(resp.args[0])   # a garbled `ok` must end the sweep, not crash it
         except ValueError:
             return ['from cc err board sent a malformed bustune reply']
+        if 'error' in report:
+            # An `ok` carrying an error is the board REFUSING (no controller, unknown bus), not a rung
+            # that failed. Without this it fell to the else branch and was reported as "the bus failed
+            # at this frequency" with an empty failing-device list -- an invented result, and the sweep
+            # stopped there as though it had found the ceiling.
+            return ['from cc err bustune refused at %d Hz: %s' % (freq, report['error'])]
         rungs.append({'freq': freq, 'all_ok': report.get('all_ok')})
         if report.get('all_ok'):
             ceiling = freq

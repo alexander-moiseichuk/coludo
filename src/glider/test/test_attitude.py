@@ -130,8 +130,20 @@ async def amain():
 
 
 class _Blind:
+    """
+    A channel with NOTHING behind it -- no value and no source.
+
+    Carries read() as well as value() because the task was migrated to read(): a stub that implements
+    only the old accessor makes the new code path untestable, and here it made probe() silently take
+    the healthy branch. A stand-in has to expose the same interface as the thing it stands in for, or
+    the test measures the stub instead of the code.
+    """
+
     def value(self):
         return None
+
+    def read(self):
+        return None, None, 0    # (value, source, age) -- source None means "nothing fresh"
 
 
 asyncio.run(amain())
