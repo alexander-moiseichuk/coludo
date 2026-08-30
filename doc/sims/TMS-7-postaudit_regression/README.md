@@ -1,6 +1,6 @@
 # TMS-7 — post-audit regression, flown four times
 
-**168 board flights**: the 12-scenario matrix × F15-4 and E16-4 × four independent runs. `r1`–`r3` are
+**216 board flights**: the 12-scenario matrix × F15-4 and E16-4 × four independent runs. `r1`–`r3` are
 the same build flown three times; `r4` adds one recorder change and re-flies it to test that change.
 
 The point is not any single run. It is that **a comparison against a baseline is meaningless until you
@@ -299,7 +299,47 @@ r7 produced one `accel az = 100000 g` against the ADXL375's ±200 g range, in a 
 (5 of 5) — a bit flip inside a field, invisible to every structural guard. Only the physical-bounds
 check in `hitl_compare` catches it, which it did. One event in 24 flights.
 
-## 7. Regression verdict
+## 7. r8 and r9 — the findings-42 fixes, and why r9 was worth flying
+
+* **r8** — after the §41 addendum-2 set (bank fallbacks, tick wraparound, pitot tare, GNSS staleness,
+  NaN wind, mixer reporting) plus the host-side pipeline work.
+* **r9** — after the §41 addendum-3 and §42 set, which is the one that needed flying: it changed
+  `tasks/sequencer.py`, the stage machine every HITL flight runs.
+
+### Why r9 was not optional
+
+All four stage detectors — launch, apogee, landing, stationary — were switched from `value()` to a
+source-gated `read()`. A gate that is too strict does not raise: the stage simply never advances, and
+a unit test cannot see it because only a full flight exercises the sequence.
+
+**24 of 24 flights in r9 reached BOOSTING and GLIDING**, and a representative flight runs
+`setting → boosting@243s → gliding@253s → landing@337s → done@340s`. The gating holds.
+
+### Nothing moved
+
+| | r7 | r8 | r9 | spread |
+|---|---|---|---|---|
+| miss (median) | 89.8 m | 86.5 m | 89.0 m | **3.7%** |
+| servo energy | 53.8 J | 55.0 J | 56.1 J | 4.2% |
+| duration | 98.6 s | 98.9 s | 99.9 s | **1.3%** |
+
+The tightest three-run agreement in this study — miss within 3.2 m and duration within 1.3 s across
+three different builds. These fixes are guards against states the matrix does not produce, so
+behaviour-neutral is the correct result and the numbers say it plainly.
+
+### Two things the harness caught during these runs
+
+* **r8 reported `svg: 0, html: 0`** while flying 24 of 24. Binding `_FIXED_SCALE` to `fixed.SCALE` had
+  broken both renderers — `fixed` lives in `src/glider`, not beside the tools. Before this study's
+  `hitl_matrix` work all 17 failures would have vanished behind `|| true` under a "matrix done".
+* **r9's E16 half refused to start**: `FATAL: cannot upload hitl_run.py -- board wedged?`. The old
+  script muted that upload and would have exited 1 with an empty log and no flights. It was re-run
+  after an unwedge.
+
+One residual, unchanged in character: r9 produced an airspeed of 298529 cm/s in a row of correct
+width — a bit flip inside a field, catchable only by the physical-bounds check, which caught it.
+
+## 8. Regression verdict
 
 Against the q5.5 baseline ([catapult_evaluation](../TMS-7-catapult_evaluation/), 42–97 m, 1 in-zone of
 7): the wind and low-noise families land at **48–95 m across all four runs**, the same family, with
@@ -312,7 +352,7 @@ high-noise and corner families this study can conclude nothing, and says so.
 ## Layout
 
 ```
-r1/ .. r7/          per-run plotly HTML + comparison SVGs (both motors)
+r1/ .. r9/          per-run plotly HTML + comparison SVGs (both motors)
 comparison.json     full 552-row panel comparison across all runs
 ```
 
