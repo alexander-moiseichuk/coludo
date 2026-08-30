@@ -40,6 +40,40 @@ def main():
     tx_only['buses']['uart']['9'] = {'tx': 44, 'baud': 9600}
     assert not [e for e in config.validate(tx_only) if 'uart:9' in e], config.validate(tx_only)
 
+    """
+    Fields the CONTROL PATH does arithmetic on must be numbers, checked while a human is still present.
+
+    A JSON config carries any type, and a string that looks like a number survives save() and load()
+    untouched -- then TypeErrors at 100 Hz, in flight, inside the governor or a servo write. `validate()`
+    is the last moment anyone can see it.
+
+    fins.limit_multiplier is checked separately because it is a TOP-LEVEL section, not a component
+    field: it reaches the governor via flight.py's `board.get('fins', {})`, so a component-only sweep
+    misses exactly the field that multiplies the fin cap.
+    """
+    def _find(cfg, name):
+        return [item for item in cfg['components'] if item['name'] == name][0]
+
+    for mutate, needle in (
+            (lambda c: _find(c, 'flight').update({'bank_limit': '45'}), 'bank_limit'),
+            (lambda c: _find(c, 'servo_yaw').update({'trim': '2.5'}), 'trim'),
+            (lambda c: _find(c, 'flight').setdefault('gains', {})
+                .setdefault('roll', {}).update({'kp': '0.8'}), 'gains.roll.kp'),
+            (lambda c: c.setdefault('fins', {}).update({'limit_multiplier': '1.0'}), 'fins.limit_multiplier')):
+        broken = config_default.default()
+        mutate(broken)
+        errs = config.validate(broken)
+        assert any(needle in e and 'must be a number' in e for e in errs), '%s not caught: %r' % (needle, errs)
+
+    # NEGATIVE: bool is an int subclass -- True must NOT pass as a number for a gain or a multiplier
+    truthy = config_default.default()
+    truthy.setdefault('fins', {})['limit_multiplier'] = True
+    assert any('limit_multiplier' in e for e in config.validate(truthy))
+    # ...and a legitimate float must still pass
+    good = config_default.default()
+    good.setdefault('fins', {})['limit_multiplier'] = 0.5
+    assert not [e for e in config.validate(good) if 'limit_multiplier' in e]
+
     # pin uniqueness across nested buses + pins
     dup = config_default.default()
     dup['pins']['servo_yaw'] = dup['buses']['i2c']['0']['sda']  # collide with GPIO7

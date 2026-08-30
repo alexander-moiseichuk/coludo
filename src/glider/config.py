@@ -197,6 +197,53 @@ def _validate_buses(buses, errs: list, pin_owner: dict, bus_refs: set) -> None:
                 errs.append('bus %s.mode must be 0..3 (got %r)' % (label, spec.get('mode')))
 
 
+# Component fields the CONTROL PATH does arithmetic on. A JSON config can carry any type, and a
+# string that looks like a number survives save() and load() untouched -- then TypeErrors at 100 Hz,
+# in flight, deep inside the governor or a servo write. These are checked at validate() time because
+# that is the last moment a human is present.
+_NUMERIC_FIELDS: tuple = ('limit_multiplier', 'trim', 'still_g', 'stall_speed_1g', 'stall_margin',
+                          'nav_bank_gain', 'land_bank_gain', 'loiter_gain', 'final_cross_gain',
+                          'pitot_gain', 'glide_ratio', 'bank_limit', 'land_bank_limit')
+
+
+def _numeric(value) -> bool:
+    """A real number, and NOT a bool (True would otherwise pass every arithmetic check as 1)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _validate_numeric(component: dict, label: str, errs: list) -> None:
+    """
+    Type-check the component fields the control path multiplies, and the PID gain maps.
+
+    `validate()` is what stands between a saved config and a flight, and it checked structure but not
+    these types. A `"limit_multiplier": "1.0"` survives save(), then `* self._multiplier` raises
+    TypeError inside the governor at 100 Hz -- an in-flight crash from a quoted number.
+
+    Args:
+        component - the component dict to check.
+        label - its name, for the error message.
+        errs - the accumulating error list.
+
+    Returns:
+        None; appends to errs.
+    """
+    for key in _NUMERIC_FIELDS:
+        if key in component and not _numeric(component[key]):
+            errs.append('%s.%s must be a number (got %r)' % (label, key, component[key]))
+    fins = component.get('fins')
+    if isinstance(fins, dict) and 'limit_multiplier' in fins and not _numeric(fins['limit_multiplier']):
+        errs.append('%s.fins.limit_multiplier must be a number (got %r)' % (label, fins['limit_multiplier']))
+    gains = component.get('gains')
+    if isinstance(gains, dict):
+        for axis, terms in gains.items():
+            if not isinstance(terms, dict):
+                errs.append('%s.gains.%s must be an object' % (label, axis))
+                continue
+            for term, value in terms.items():
+                if not _numeric(value):
+                    errs.append('%s.gains.%s.%s must be a number (got %r)' % (label, axis, term, value))
+
+
 def _validate_rate_band(component: dict, label: str, errs: list) -> None:
     """
     The governor's airspeed rate band must be positive and ordered, or it divides by zero at boot.
@@ -331,6 +378,7 @@ def _validate_devices(items, label: str, errs: list, bus_refs: set, seen_names: 
         if 'enabled' in dev and not isinstance(dev['enabled'], bool):
             errs.append('%s.enabled must be a bool' % where)
         _validate_rate_band(dev, where, errs)   # governor: a zero/inverted band divides by zero at boot
+        _validate_numeric(dev, where, errs)      # a "1.0" string TypeErrors in the 100 Hz control path
         kind = dev.get('bus')  # a device addresses its bus by kind ('i2c') + id (0)
         if kind is not None:
             ident = dev.get('id')
@@ -384,6 +432,10 @@ def validate(cfg) -> list:
     _validate_pins(cfg.get('pins'), errs, pin_owner)
     _validate_reserved(mcu, pin_owner, errs)
     _validate_recorder(cfg.get('recorder'), errs)
+    # `fins` is a TOP-LEVEL section, not a component field -- limit_multiplier reaches the governor
+    # via flight.py's `board.get('fins', {})`, so a component-only sweep never sees it. This is the
+    # exact field the finding named, and the one the 100 Hz `* self._multiplier` would TypeError on.
+    _validate_numeric(cfg.get('fins') or {}, 'fins', errs)
     _validate_devices(cfg.get('sensors'), 'sensors', errs, bus_refs, seen_names)
     _validate_devices(cfg.get('components'), 'components', errs, bus_refs, seen_names)
     return errs

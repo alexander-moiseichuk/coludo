@@ -15,7 +15,6 @@ REC=/userdata/recordings
 PAD=${PAD:-25.514379,-80.391795}
 ZONE=${ZONE:-25.514944,-80.392972,25.514583,-80.391111}
 PLY=${PLY:-$HOME/.local/share/pipx/venvs/plotly/bin/python}
-STREAMS="accel_adxl375 baro_icp10111 baro_bmp280 imu_bno055 imu_lsm6dso32 gnss laser_agl fins health sequencer power_ina226"
 
 command -v adb >/dev/null || { echo "error: adb not found (need the Luckfox recorder)"; exit 2; }
 
@@ -38,12 +37,27 @@ fi
 out=${2:-/tmp/flights/$ses}
 mkdir -p "$out"; rm -f "$out"/*.csv
 
+# Pull EVERY stream this session wrote -- never a hardcoded list. The old fixed STREAMS omitted
+# airspeed_sdp810, flight, checkpoint and the per-servo servo_*.csv, so a pulled capture was missing
+# data the board HAD recorded and nothing said so: it assembles into a file that looks like a whole
+# flight and every downstream tool renders it as one. hitl_collect.sh already learned this.
+# The Luckfox shell does not expand a glob here and its `ls` emits ANSI colour codes + CR, so strip
+# both before matching or every name silently fails to match.
+expected=$(adb shell "ls $REC/" 2>/dev/null \
+           | sed -e "s/\x1b\[[0-9;]*m//g" -e "s/\r//g" | grep "^${ses}_.*\.csv$")
 n=0
-for stream in $STREAMS; do
-  adb pull "$REC/${ses}_${stream}.csv" "$out/" >/dev/null 2>&1 && n=$((n + 1))
+for name in $expected; do
+  adb pull "$REC/$name" "$out/" >/dev/null 2>&1 && n=$((n + 1))
 done
+want=$(echo "$expected" | grep -c . || true)
 [ "$n" -eq 0 ] && { echo "error: session $ses has no streams on the Luckfox"; exit 1; }
-echo "pulled $n streams"
+# VERIFY the pull, do not just count it. A PARTIAL pull is the dangerous case: it still assembles.
+if [ "$n" -ne "$want" ]; then
+  echo "error: pulled $n of $want streams for $ses -- capture would be INCOMPLETE" >&2
+  echo "  missing: $(for name in $expected; do [ -f "$out/$name" ] || printf '%s ' "$name"; done)" >&2
+  exit 1
+fi
+echo "pulled $n streams (all the session wrote)"
 
 cap="$out/$ses.txt"
 python3 "$ROOT/tools/assemble_capture.py" "$ses" "$out" "$cap" >/dev/null || { echo "assemble failed"; exit 1; }
