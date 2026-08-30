@@ -69,8 +69,61 @@ async def amain():
     assert detector._fusion_alive((149.0, 840, -16870) + (0.1, 0.2, 0.9)) is True
     assert detector._strikes == 0 and detector._stalled is False
 
+    """
+    The CONVERGENCE LATCH, and the regression that made it necessary.
+
+    CALIB_STAT is the chip's confidence in its RECENT magnetometer data, not a record of what it has
+    learned. Measured on TMS-7C: the operator's figure-8 drove mag to 3, and it fell back to 2 within
+    a minute of the airframe sitting still -- while the learned offsets, and the heading, were
+    unchanged. Reading it live made the ready gate a coin toss and told an operator who had done the
+    figure-8 correctly to do it again.
+    """
+    class _CalibBus:
+        """Minimal stub: serves one CALIB_STAT byte, so the latch is driven through the real path."""
+        def __init__(self):
+            self.raw = 0x00
+
+        async def read(self, addr, reg, count, addrsize=8):
+            return bytes([self.raw])
+
+    bus = _CalibBus()
+    imu = bno055.Bno055('imu_bno055', {}, _StubController())
+    imu._bus, imu._addr, imu._period_ms = bus, 0x28, 20
+    imu.calibration_state, imu._converged, imu._restored = None, False, False
+    imu._calib_due = 1
+
+    bus.raw = 0b00_11_01_00                 # sys 0 gyr 3 acc 1 mag 0 -- the state 7C booted in
+    await imu._poll_calibration()
+    assert imu.calibration_state == (0, 3, 1, 0)
+    assert imu.calibrated() is False
+    assert 'FIGURE-8' in imu.calibration()
+
+    """
+    `calibrate` must not answer SUCCESS for a device it cannot calibrate.
+
+    The base task.Task.calibrate() returns None, which cc_client documents as success -- so
+    `calibrate imu_bno055` replied `ok {"imu_bno055": null}` however many times it was run, while the
+    magnetometer sat at 0 and nothing had changed. That reply is why the figure-8 was repeated.
+    """
+    outstanding = await imu.calibrate()
+    assert outstanding is not None, 'an inert calibrate must not report success'
+    assert 'FIGURE-8' in outstanding
+
+    imu._calib_due = 1
+    bus.raw = 0b11_11_01_11                 # the figure-8 lands: mag 3
+    await imu._poll_calibration()
+    assert imu.calibrated() is True and imu.calibration() == ''
+
+    imu._calib_due = 1
+    bus.raw = 0b11_11_01_10                 # ...and mag regresses to 2 sitting still
+    await imu._poll_calibration()
+    assert imu.calibration_state[3] == 2, 'the LIVE register must still show the regression'
+    assert imu.calibrated() is True, 'the latch must survive it -- offsets do not un-learn'
+    assert imu.calibration() == '', 'and the operator must not be re-asked for the figure-8'
+
     print('ok: bno055 driver registered; setup fails gracefully when no device answers; '
-          'fusion-stall detector fires under rotation, never when still')
+          'fusion-stall detector fires under rotation, never when still; '
+          'calibration latches through a mag regression and inert calibrate reports what is owed')
 
 
 asyncio.run(amain())
