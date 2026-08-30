@@ -122,7 +122,11 @@ class Flight(task.Task):
                                            self._mission, self._governor, position, agl, elevation,
                                            self._wind)  # wind feeds the no-GNSS dead reckoning
         self._pitch_cd: int = 0  # last measured pitch (centidegrees) -> the governor's dive detector
-        self._glide_ratio: float = self.config.get('glide_ratio', 3.0)  # nominal L/D for the reach estimate
+        # nominal L/D for the reach estimate. The fallback matches config_default's shipped 5.5 (the
+        # MEASURED polar) rather than the 3.0 carried while it was a guess -- three numbers, one value.
+        # Inert for a full config, since the merge always supplies the reachability group, but a
+        # partial or legacy config omitting it flew the reach ~45 % pessimistic with no way to see it.
+        self._glide_ratio: float = self.config.get('glide_ratio', 5.5)
         self._active: bool = False  # in a control stage (PID engaged)
         self._stage = None  # the current control-stage name (for inspect)
         """

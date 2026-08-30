@@ -51,7 +51,9 @@ _DEFAULT_TXBUF = const(4096)     # UART TX ring; the 256-byte default silently t
 _DRAIN_HIGH_WATER = const(2048)  # half of _DEFAULT_TXBUF: flush when the pending bytes reach it
 _LENGTH_BYTES = const(2)  # uint16 record-length header
 _STATS_PERIOD_MS = const(1000)  # how often run() logs a buffer-stats line
-_DEFAULT_TELEMETRY_MS = const(20)  # global telemetry decimation default (50 Hz); a stream's 0 -> this.
+_DEFAULT_TELEMETRY_MS = const(20)  # CODE fallback only (50 Hz). The SHIPPED config sets 0 = uncapped
+                                   # (config_default recorder.telemetry_ms, and every configs/*.config),
+                                   # so this applies only to a config that omits the recorder section.
 # CONFIG knobs are milliseconds everywhere -- one unit in the file, converted to us at the boundary,
 # so no reader has to remember which of two suffixes a given key used.
 
@@ -221,7 +223,8 @@ class Recorder:
     """
     global telemetry decimation (µs between emitted rows): every Telemetry stream whose own decimate_us is
     0 uses this, so `recorder.telemetry_ms` in the board config prorates ALL streams at once, while a stream
-    that sets a non-zero telemetry_ms keeps its individual rate. Default 50 Hz.
+    that sets a non-zero telemetry_ms keeps its individual rate. The code fallback is 50 Hz; the
+    SHIPPED config is 0 = uncapped, so in flight nothing decimates unless a profile asks for it.
     """
     telemetry_decimate_us: int = _DEFAULT_TELEMETRY_MS * 1000
 
