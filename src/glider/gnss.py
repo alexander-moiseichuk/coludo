@@ -18,7 +18,18 @@ import databoard
 import micropython
 import recorder
 import task
-from machine import UART  # board-only, like `micropython` above (this module never imports off-board)
+from machine import UART  # board-only, like `micropython` above
+
+# WHY THIS MODULE IS NOT HOST-IMPORTABLE, and what it would cost to change.
+# findings §43.1 asks for guarded imports so drivers can be unit-tested on CPython. A guard alone is
+# not enough here: _xor_checksum is @micropython.viper and annotates `ptr8`, a viper BUILTIN TYPE that
+# exists only under the real compiler, so the annotation fails at def time on CPython however the
+# imports are written. Making this importable means restructuring that hot path (quote the
+# annotations, or split the viper body into a board-only module).
+# Deliberately not done: it is a testability improvement, not a defect, and it would rewrite the NMEA
+# checksum -- the one function in here that a GNSS dropout depends on -- for no in-flight benefit.
+# The rest of the tree already guards these imports; this module is the single exception, and the
+# reason is recorded here so the next reader does not "fix" it with a try/except that cannot work.
 
 _SENTENCE_GAP_US: int = commons.const(3000000)  # a sentence quiet this long (3 s) is an OUTAGE, not jitter. The
 # module is configured at 1 Hz, so three missed intervals -- loose enough that a busy loop or a single
