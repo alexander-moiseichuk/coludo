@@ -20,6 +20,26 @@ def main():
     assert config.config_id(a) != config.config_id(b)
     assert isinstance(config.config_id(a), str) and len(config.config_id(a)) >= 8
 
+    """
+    A bus missing its DRIVING pins must fail validation, not fail at bring-up.
+
+    `{i2c: {9: {freq: 400000}}}` used to validate cleanly -- validation claimed only the pins that
+    happened to be PRESENT -- and then raised KeyError at Pin(spec['scl']) during bring-up, losing the
+    whole bus and every device on it. validate() exists to catch that before a config is saved and
+    flown, so passing it WAS the failure.
+    """
+    for kind, needed in (('i2c', ('scl', 'sda')), ('spi', ('sck', 'mosi', 'miso')), ('uart', ('tx',))):
+        broken = config_default.default()
+        broken['buses'][kind]['9'] = {'freq': 400000, 'baud': 9600}
+        errs = config.validate(broken)
+        for key in needed:
+            assert any(key in e and '9' in e for e in errs), '%s without %r validated: %r' % (kind, key, errs)
+
+    # NEGATIVE: uart with tx and NO rx must still pass -- that is the shipped recorder link, tx-only
+    tx_only = config_default.default()
+    tx_only['buses']['uart']['9'] = {'tx': 44, 'baud': 9600}
+    assert not [e for e in config.validate(tx_only) if 'uart:9' in e], config.validate(tx_only)
+
     # pin uniqueness across nested buses + pins
     dup = config_default.default()
     dup['pins']['servo_yaw'] = dup['buses']['i2c']['0']['sda']  # collide with GPIO7

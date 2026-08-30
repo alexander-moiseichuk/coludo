@@ -40,6 +40,12 @@ RESERVED_PINS = {
 }
 
 _BUS_PIN_KEYS = ('sda', 'scl', 'tx', 'rx', 'sck', 'mosi', 'miso')
+# The pins each bus kind cannot be constructed WITHOUT. Validation used to claim only the pins that
+# happened to be present, so `{i2c: {0: {freq: 400000}}}` validated cleanly and then raised KeyError
+# at Pin(spec['scl']) during bring-up -- losing the whole bus and every device on it, after save().
+# `rx` is deliberately absent for uart: the recorder link is tx-only (recorder.py builds pins from
+# spec['tx'] and adds rx only when present), so requiring it would reject a config that flies.
+_BUS_REQUIRED_PINS: dict = {'i2c': ('scl', 'sda'), 'spi': ('sck', 'mosi', 'miso'), 'uart': ('tx',)}
 
 
 def _is_int(x) -> bool:
@@ -182,7 +188,12 @@ def _validate_buses(buses, errs: list, pin_owner: dict, bus_refs: set) -> None:
             for key in _BUS_PIN_KEYS:
                 if key in spec:
                     _claim(errs, pin_owner, label + '.' + key, spec[key])
-            if kind == 'spi' and spec.get('mode', 0) not in (0, 1, 2, 3):  # machine.SPI: polarity/phase in {0,1}
+            for key in _BUS_REQUIRED_PINS.get(kind, ()):
+                if key not in spec:
+                    errs.append('bus %s is missing %r -- it would KeyError at bring-up' % (label, key))
+            # default 3, matching spibus.get()/retune(); the old 0 here implied a default the runtime
+            # does not use. Both are valid values, so nothing mis-ran -- but the code said otherwise.
+            if kind == 'spi' and spec.get('mode', 3) not in (0, 1, 2, 3):  # machine.SPI: polarity/phase in {0,1}
                 errs.append('bus %s.mode must be 0..3 (got %r)' % (label, spec.get('mode')))
 
 
