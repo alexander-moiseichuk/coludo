@@ -70,12 +70,26 @@ first powered flight.
 - [ ] **Separation switch:** pads nested → pin reads **HIGH = nested**
 
 ## Phase 3 — Attitude / IMU (pick it up, rotate, tilt)
-- [ ] **CALIBRATE THE BNO055 BEFORE ARMING.** NDOF fusion does not converge without motion, and a
+- [ ] **CALIBRATE THE BNO055 — ONCE PER BOARD.** NDOF fusion does not converge without motion, and a
       glider sits still on the pad — so a perfectly healthy part can reach launch with `sys`/`mag`
-      calibration at 0 and a FROZEN attitude. Move the airframe in a slow figure-8 until
-      `diag_bno_calib.py` shows **mag 3** and the euler bytes changing (took ~1 s on a good part).
-      Check the gyro column reads **> 5 °/s** while you do it — a still sample proves nothing, which
-      is how a working module was once wrongly condemned
+      calibration at 0 and a FROZEN attitude.
+      - **Rotate the airframe, don't just trace a path.** The magnetometer is fitting a sphere to the
+        field vectors it has seen, so what it needs is ORIENTATION DIVERSITY: nose up, nose down,
+        rolled left and right, yawed through a full circle, the 8 traced in a vertical plane as well
+        as a horizontal one. A flat figure-8 with the nose on one heading shows the part almost the
+        same vector throughout and leaves `mag` at 0–1 — this is the usual reason it "won't calibrate".
+      - **Away from steel and magnets** — the rail, a steel bench, speakers, the motor, a laptop.
+        Hard-iron distortion is the thing being measured; calibrating beside a steel table teaches it
+        the table.
+      - Slow and smooth, ~15–30 s, until `mag` reads **3** and the euler bytes change. Check the gyro
+        column reads **> 5 °/s** while you do it — a still sample proves nothing, which is how a
+        working module was once wrongly condemned.
+      - Then **`calibrate imu_bno055`** over CC to save the profile to NVS. It is restored on every
+        later boot, so this is a once-per-board bench job and NOT a pad procedure — which matters,
+        because nobody can figure-8 an airframe that is already on the rail.
+      - `mag` dropping back to 2 afterwards is EXPECTED and no longer means anything: the register is
+        the chip's confidence in its recent data, not what it has learned. The board latches the
+        convergence, so `calibrated` stays true
 - [ ] Pitch nose up / down → **pitch tracks** the right sense; roll L/R → **roll tracks**
 - [ ] Yaw / spin → **heading tracks**; no glitches or freezes on quick moves (gyro rate feeds the PID D-term)
 - [ ] Return to level → attitude returns to ~0/0 and the heading settles
