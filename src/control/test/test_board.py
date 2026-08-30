@@ -59,6 +59,25 @@ async def main():
     # command() returns None on disconnect (empty readline)
     assert await Board(_Reader([]), _Writer()).command('ping') is None
 
+    """
+    A GARBLED reply costs the reply, not the board.
+
+    cc.parse() raises binascii.Error on a corrupt `base64:` token, and exchange() called it bare. That
+    exception is not in server._handle's caught set, so it reached the generic handler: traceback
+    logged, `finally` ran, stream dropped, board marked OFFLINE. One flipped bit on the link removed a
+    board from the hub.
+
+    The board side already guards the mirror case on purpose -- a garbled line over a lossy field radio
+    must survive -- so the asymmetry was the bug: identical corruption was survivable inbound and fatal
+    outbound. A dropped reply reads as None, which every caller already handles because a timeout
+    produces the same thing.
+    """
+    garbled = Board(_Reader(['ok base64:!!!not-base64!!!\n']), _Writer())
+    assert await garbled.command('health') is None       # survived; no exception escaped
+    # NEGATIVE: a WELL-FORMED base64 reply must still parse, or the guard is hiding real replies
+    good = Board(_Reader([cc.build('ok', [json.dumps({'temp': 41})]) + '\n']), _Writer())
+    assert (await good.command('health')).command == 'ok'
+
     # identify() learns the id + info from iam
     iam = cc.build('iam', ['glider2', json.dumps({'mcu': 'esp32p4'})])
     board = Board(_Reader([iam + '\n']), _Writer())
@@ -111,7 +130,7 @@ async def main():
         raised = True
     assert raised
 
-    print('ok: board lockstep command / identify / disconnect / timeout')
+    print('ok: board lockstep command / identify / disconnect / timeout / garbled reply +/-')
 
 
 asyncio.run(main())

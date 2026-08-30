@@ -73,7 +73,24 @@ class Board:
         if not raw:
             return None
         self.last_seen = time.monotonic()
-        msg = cc.parse(reply)
+        """
+        A GARBLED reply must cost the reply, not the board.
+
+        cc.parse() raises binascii.Error/ValueError on a corrupt `base64:` token, and this call was
+        bare. That exception is not in server._handle's caught set, so it fell to the generic handler:
+        traceback logged, `finally` runs, stream dropped, board marked offline. ONE flipped bit on the
+        link therefore removed a board from the hub until it reconnected.
+
+        The board side already guards the mirror case deliberately -- "a garbled line over a lossy
+        field radio ... must survive" -- so the asymmetry was the bug: the same corruption was
+        survivable in one direction and fatal in the other. Treated here as a lost reply, which is what
+        it is, and which the caller already handles because a timeout produces the same None.
+        """
+        try:
+            msg = cc.parse(reply)
+        except Exception as error:                 # binascii.Error / ValueError from a corrupt token
+            self._log('%s <- UNPARSEABLE %r (reply dropped, link kept)' % (tag, error))
+            return None
         self._remember(line, msg)
         return msg
 
