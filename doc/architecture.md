@@ -71,13 +71,13 @@ On-device modules layered leaves-first (a module depends only on lower layers, b
 - `vl53l4cx` (driver) -> `commons`, `databoard`, `i2cbus`, `recorder`, `task`
 - `warmstart` (core) -> `config`, `controller`, `databoard`, `inspector`, `recorder`, `task`
 - `watchdog` (task) -> `recorder`, `task`
-- `wifi` (driver) -> `controller`, `recorder`, `task`
+- `wifi` (driver) -> `commons`, `controller`, `recorder`, `task`
 
 **Most depended-on (fan-in)** — a change here ripples widest:
 
 - `recorder` — imported by 29: `adxl375`, `attitude`, `bluetooth`, `bmp280`, `bno055`, `board_health`, `cc_client`, `cc_link`, `field`, `flight`, `gnss`, `gnss_calib`, `hitl`, `i2cbus`, `icp10111`, `ina226`, `led`, `lsm6dso32`, `main`, `mission`, `sdp810`, `separation`, `sequencer`, `sg90`, `task`, `vl53l4cx`, `warmstart`, `watchdog`, `wifi`
 - `task` — imported by 29: `adxl375`, `atgm336h`, `attitude`, `bluetooth`, `bmp280`, `bno055`, `board_health`, `cc_link`, `controller`, `field`, `flight`, `gnss`, `gnss_calib`, `hitl`, `icp10111`, `ina226`, `led`, `lsm6dso32`, `mg90s`, `neo6mv2`, `recorder`, `sdp810`, `separation`, `sequencer`, `sg90`, `vl53l4cx`, `warmstart`, `watchdog`, `wifi`
-- `commons` — imported by 23: `adxl375`, `attitude`, `config`, `config_default`, `field`, `fixed`, `flight`, `gnss`, `governor`, `guidance`, `hitl`, `i2cbus`, `icp10111`, `lsm6dso32`, `mission`, `mixer`, `navigation`, `sdp810`, `sequencer`, `sg90`, `sim_model`, `spibus`, `vl53l4cx`
+- `commons` — imported by 24: `adxl375`, `attitude`, `config`, `config_default`, `field`, `fixed`, `flight`, `gnss`, `governor`, `guidance`, `hitl`, `i2cbus`, `icp10111`, `lsm6dso32`, `mission`, `mixer`, `navigation`, `sdp810`, `sequencer`, `sg90`, `sim_model`, `spibus`, `vl53l4cx`, `wifi`
 - `databoard` — imported by 20: `adxl375`, `attitude`, `bmp280`, `bno055`, `board_health`, `cc_client`, `field`, `flight`, `gnss`, `gnss_calib`, `hitl`, `icp10111`, `ina226`, `lsm6dso32`, `mission`, `sdp810`, `sequencer`, `sg90`, `vl53l4cx`, `warmstart`
 - `controller` — imported by 12: `board_health`, `field`, `flight`, `gnss_calib`, `guidance`, `hitl`, `led`, `main`, `separation`, `sequencer`, `warmstart`, `wifi`
 - `inspector` — imported by 12: `cc_client`, `controller`, `databoard`, `field`, `flight`, `hitl`, `icp10111`, `mission`, `sequencer`, `task`, `warmstart`, `wind`
