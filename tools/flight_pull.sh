@@ -26,8 +26,12 @@ if [ -z "$ses" ]; then                       # default: the newest session (by i
   # on a board that had just recorded a full flight. hitl_collect.sh already keys on any *_*.csv.
   # The prefix is the leading YYYYMMDD_HHMMSS_<tag>, so strip from the LAST underscore-group on
   # (a literal-anchored sed, not `_*` which is a regex meaning "zero or more underscores").
+  # MATCH the session prefix, do not strip the suffix. The prefix has a known shape --
+  # YYYYMMDD_HHMMSS_<tag> -- while stream names do NOT have a known underscore count: stripping the
+  # last group turned `..._servo_eleron_left.csv` into `..._servo_eleron`. Anchoring on the prefix is
+  # correct for every stream name, however many underscores it carries.
   ses=$(adb shell "ls -t $REC/*_*.csv 2>/dev/null | head -1" \
-        | sed -e "s|.*/||" -e "s|\.csv$||" -e "s|_[a-z0-9]*$||" | tr -d '\r')
+        | sed -nE "s|.*/||; s|^([0-9]{8}_[0-9]{6}_[A-Za-z0-9]+)_.*\.csv$|\1|p" | tr -d '\r')
   [ -z "$ses" ] && { echo "error: no recorder session found on the Luckfox"; exit 1; }
   echo "latest session: $ses"
 fi

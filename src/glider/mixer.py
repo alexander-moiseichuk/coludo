@@ -56,6 +56,10 @@ class Mixer:
                                 for name, gains in self.surfaces.items()]
         self._out: dict = {name: base for name, base, _r, _p, _y in self._surfaces}
         self.bound: bool = False  # bind() resolved the fin drivers -> actuate() is armed
+        # Surfaces bind() found no driver for. Initialised HERE and not only in bind(), because an
+        # attribute that exists only after a method call is an AttributeError waiting for the first
+        # caller who checks it earlier -- and the whole point of tracking it is that `verify` should.
+        self.missing: list = []
         self._fins: list = []  # (fin, base, roll_gain, pitch_gain, yaw_gain) per bound surface
         self._names: list = []  # the bound surface names, parallel to _fins (operator view only)
 

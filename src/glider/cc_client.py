@@ -79,6 +79,22 @@ def _readiness(cfg: dict) -> dict:
     if multiplier != 1.0:
         problems['fins.limit_multiplier'] = '%g: a bench derating is still applied' % multiplier
 
+    """
+    A control surface with no driver -- the failure that has actually happened here.
+
+    Mixer.bind() skips a surface whose driver is missing, disabled or failed setup; that fin then holds
+    its last angle while the others fly, costing a third of the control authority. servo_eleron_right
+    died on the bench and TWO full 12-scenario matrix runs completed before anything noticed, and only
+    then because the INA226 rail current happened to be plotted. 7C has no power monitor, so on 7C
+    there would have been no signal at all.
+
+    verify is where an operator asks "is this airframe ready", so it is where the answer belongs.
+    """
+    flight_task = inspector.Inspector.get('flight')
+    unbound = getattr(getattr(flight_task, '_mixer', None), 'missing', None)
+    if unbound:
+        problems['fins'] = 'no driver for ' + ', '.join(unbound) + ' -- reduced control authority'
+
     # No landing zone and no CC-less site to select one from.
     mission = inspector.Inspector.get('mission')
     if mission is not None and mission.zone is None and not mission.sites:

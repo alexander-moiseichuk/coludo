@@ -217,12 +217,31 @@ class Bus:
         self._ok()
 
     async def writeto(self, addr: int, data: bytes) -> None:
-        """Raw write (no register) -- for command-based devices like the ICP-10111."""
-        self._i2c.writeto(addr, data)
+        """
+        Raw write (no register) -- for command-based devices like the ICP-10111.
+
+        Accounted through _failed()/_ok() exactly like the register ops. Without it the bus recovery
+        could never fire for the devices it was BUILT for: _failed()'s own docstring names the
+        ICP-10111 general call as "the failure that matters most", and both the ICP-10111 and the
+        SDP810 do ALL their traffic through these raw ops. A wedged SDA on those parts only triggered
+        the SCL-pulse recovery if some unrelated register-based device happened to fail alongside it.
+        """
+        try:
+            self._i2c.writeto(addr, data)
+        except OSError:
+            self._failed()
+            raise
+        self._ok()
 
     async def readfrom(self, addr: int, count: int) -> bytes:
-        """Raw read (no register) -- pairs with writeto() for command-based devices."""
-        return self._i2c.readfrom(addr, count)
+        """Raw read (no register) -- pairs with writeto(); accounted, see writeto for why."""
+        try:
+            data = self._i2c.readfrom(addr, count)
+        except OSError:
+            self._failed()
+            raise
+        self._ok()
+        return data
 
     def device(self, addr: int) -> _Device:
         """A register window for one address on this bus (matches spibus.Bus.device)."""

@@ -1078,7 +1078,7 @@ sequence to be atomic across awaits should say so explicitly with `async with bu
 - `read_into(addr: int, reg: int, buf, addrsize: int=8) -> None`
 - `write(addr: int, reg: int, data: bytes, addrsize: int=8) -> None`
 - `writeto(addr: int, data: bytes) -> None` — Raw write (no register) -- for command-based devices like the ICP-10111.
-- `readfrom(addr: int, count: int) -> bytes` — Raw read (no register) -- pairs with writeto() for command-based devices.
+- `readfrom(addr: int, count: int) -> bytes` — Raw read (no register) -- pairs with writeto(); accounted, see writeto for why.
 - `device(addr: int) -> _Device` — A register window for one address on this bus (matches spibus.Bus.device).
 - `scan() -> list`
 
