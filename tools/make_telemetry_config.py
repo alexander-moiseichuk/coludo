@@ -272,6 +272,13 @@ def main() -> None:
         # they stay enabled and exercisable. Control stays OFF -- fins move only for probe()/CC, never
         # under a PID. concurrency 3 (all three may slew together) needs the flight power board: one
         # MG90S alone draws ~1.3 A at the battery, so three is ~4 A and a 1 A bench supply browns out.
+        #
+        # DO NOT INSTALL THIS PROFILE ON THE BENCH. On 2026-08-29 it was installed on the bench board
+        # for watchdog testing while that board boot-looped every ~8.5 s, re-centring all three fins
+        # together on every boot against the 4 V / 1 A bench supply. servo_eleron_right was dead by the
+        # next matrix run -- median PEAK rail current per scenario fell 1108/1086 mA to 836/823 on the
+        # run boundary, nearly every scenario, with fin travel unchanged. Use concurrency 1 on the
+        # bench, or clear board.config so the firmware default applies.
         ('tms7d', 'TMS-7D', True, False, _TMS7D_ABSENT, 3, True,
          'telemetry + servos fitted, no active control -- no decimation'),
         # kept for when the ladder reaches active control; nothing flies it yet
