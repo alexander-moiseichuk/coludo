@@ -1,6 +1,6 @@
 # TMS-7 — post-audit regression, flown four times
 
-**144 board flights**: the 12-scenario matrix × F15-4 and E16-4 × four independent runs. `r1`–`r3` are
+**168 board flights**: the 12-scenario matrix × F15-4 and E16-4 × four independent runs. `r1`–`r3` are
 the same build flown three times; `r4` adds one recorder change and re-flies it to test that change.
 
 The point is not any single run. It is that **a comparison against a baseline is meaningless until you
@@ -254,7 +254,50 @@ Two consequences, and they differ:
   the bench. It should not be compared across runs separated by bench work, and it was wrong to read
   the r5 drop as a code change before checking the rail.
 
-**Action before 2026-09-05: `servo_eleron_right` needs re-seating and re-probing.**
+### r7 — the servo replaced, and what that proves
+
+`servo_eleron_right` was replaced and r7 re-flown. The result closes the loop cleanly:
+
+| | r3 | r4 | **r5** | **r6** | r7 |
+|---|---|---|---|---|---|
+| servo state | ok | ok | **RIGHT DEAD** | **RIGHT DEAD** | ok (replaced) |
+| median peak rail mA | 1108 | 1086 | **836** | **823** | **1052** |
+| servo energy | 60.4 J | 57.2 J | **36.4 J** | **37.6 J** | **53.8 J** |
+| miss (median) | 89.3 m | 82.6 m | 89.2 m | 91.8 m | 89.8 m |
+| duration | 99.5 s | 99.2 s | 98.7 s | 99.2 s | 98.6 s |
+
+**Energy and rail current drop for exactly r5/r6 and recover at r7, while miss and duration never
+move.** That is the controlled demonstration: a dead actuator changes what the RAIL sees and nothing
+about what the aircraft does, because HITL flies from the *commanded* fin angles the mixer emits and
+the simulator never learns a servo is unplugged.
+
+So, precisely:
+
+* **r5 and r6 flight data is VALID** — miss, duration, moves, travel, attitude, every control panel.
+* **r5 and r6 servo-energy figures are VOID.** They measure a two-servo airframe.
+* **r7 is directly comparable to r1–r4** on every metric including energy.
+
+The replacement also settled pin-vs-servo. The prediction was that a pin fault would still read zero;
+the new servo draws 1875–2850 mW and the pair now matches at 1.08×, so GPIO32 was always fine.
+
+### How the servo died, and it was avoidable
+
+`configs/tms7d.config` carries **fin concurrency 3** — all three servos may slew together, ~4 A at the
+battery — and it was installed on the BENCH board (4 V / 1 A) for watchdog testing. At the then-shipped
+`wdt_timeout_ms` 1000 that board boot-looped every ~8.5 s, re-centring all three fins simultaneously on
+every boot, for minutes.
+
+Both warnings already existed: the config generator's own comment says three servos are ~4 A and "a 1 A
+bench supply browns out", and the operator had twice said the supply is 1 A and to block three
+simultaneous runs. **A boot loop with servos enabled is actively destructive, not merely noisy** — it
+was left running while being characterised, which is what turned a configuration mistake into a dead
+part. The generator now states that consequence rather than the arithmetic.
+
+### Residual corruption, still present
+
+r7 produced one `accel az = 100000 g` against the ADXL375's ±200 g range, in a row of **correct width**
+(5 of 5) — a bit flip inside a field, invisible to every structural guard. Only the physical-bounds
+check in `hitl_compare` catches it, which it did. One event in 24 flights.
 
 ## 7. Regression verdict
 
@@ -269,7 +312,7 @@ high-noise and corner families this study can conclude nothing, and says so.
 ## Layout
 
 ```
-r1/ .. r6/          per-run plotly HTML + comparison SVGs (both motors)
+r1/ .. r7/          per-run plotly HTML + comparison SVGs (both motors)
 comparison.json     full 552-row panel comparison across all runs
 ```
 
