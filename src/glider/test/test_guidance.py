@@ -9,6 +9,7 @@ injected stubs -- no Flight task, no databoard. Run by `make test`.
 
 import math
 
+import config_default
 import fixed
 import guidance
 from controller import Stage
@@ -94,6 +95,27 @@ def _build(config=None, zone=_ZONE, launch=None, airspeed=0.0):
     unit = guidance.Guidance(guidance.GuidanceConfig(config or {}, 1000),
                              _StubMission(zone, launch), gov, position, agl)
     return unit, position, agl, gov
+
+
+def test_fallbacks_match_shipped():
+    """
+    Every guidance fallback must equal what config_default ships, or a partial config flies a
+    DIFFERENT law than the panel reports.
+
+    bank_limit fell back to 30 -- the exact value the measured 30->45 fix replaced, because at 30 deg
+    the turn floor R_min is ~40 m at 15.6 m/s while the loiter law commands 30 m, so the heading
+    controller saturates into a limit cycle. land_bank_gain fell back to 1.5, where the endgame P-loop
+    saturates near 25 deg and the spiral freezes at ~44 m against the ~20 m an in-zone miss needs.
+
+    Both are invisible: `inspect` reports the shipped value while the law uses the fallback. Asserting
+    equality here is what stops the next measured retune from leaving a stale twin behind.
+    """
+    empty = guidance.GuidanceConfig({}, 1000)      # no keys at all -> every fallback exercised
+    shipped = [c for c in config_default.default()['components'] if c['name'] == 'flight'][0]
+    for key in ('bank_limit', 'land_bank_gain', 'land_bank_limit', 'loiter_radius_m', 'endgame_alt_m'):
+        if key in shipped:
+            assert getattr(empty, key) == shipped[key], (
+                '%s fallback %r != shipped %r' % (key, getattr(empty, key), shipped[key]))
 
 
 def test_filter_rounding():
@@ -653,6 +675,7 @@ test_loiter_and_endgame_spiral()
 test_endgame_pattern_selection()
 test_oo_endgame()
 test_steering_filter()
+test_fallbacks_match_shipped()
 test_filter_rounding()
 test_reachability()
 test_dead_reckoning()

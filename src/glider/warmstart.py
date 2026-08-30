@@ -221,7 +221,10 @@ def _apply_restore(flight, crumb, cfg: dict) -> None:
     result -- the same class as the baro rebase above, which exists for exactly this reason.
     """
     pitot_zero = crumb.get('pitot_zero')
-    if pitot_zero:
+    # `is not None`, not truthiness: 0.0 Pa is a LEGITIMATE tare (a perfectly zeroed pitot) and was
+    # being discarded as falsy, so the reboot flew on the full interior-static bias -- about +/-5 Pa,
+    # roughly 10 % of airspeed at 3 m/s. Same class as the sdp810 `if not self._raw` guard.
+    if pitot_zero is not None:
         pitot = flight.find(['airspeed_sdp810'])[0]
         if pitot is not None:
             pitot.update({'zero_offset_pa': pitot_zero})
@@ -350,7 +353,7 @@ class Checkpoint(task.Task):
         pitot = self.controller.find(['airspeed_sdp810'])[0]
         if pitot is not None:
             zero = pitot.inspect().get('zero_offset_pa')
-            if zero:
+            if zero is not None:   # 0.0 Pa is a valid tare; see the restore path above
                 static['pitot_zero'] = zero
         self._static = static
 

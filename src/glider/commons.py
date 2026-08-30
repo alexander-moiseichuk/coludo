@@ -328,7 +328,10 @@ def dwell_step(active: bool, now_ms: int, credit_ms: int, last_ms, threshold_ms:
     """
     if last_ms is None:  # no dwell in progress: an active sample starts the clock, at zero credit
         return (0, now_ms, False) if active else (0, None, False)
-    step = now_ms - last_ms
+    # ticks_diff, not raw subtraction: ticks_ms wraps at 2**30 ms (~12.4 days). A bench board left in
+    # SETTING across the wrap then launching would see a huge positive delta and satisfy any dwell in
+    # one step -- a FALSE LAUNCH from arithmetic, on the detector that starts the flight.
+    step = ticks_diff(now_ms, last_ms)
     credit = credit_ms + step if active else credit_ms - step
     if credit <= 0:
         return 0, None, False  # fully drained -> the dwell is over and must start afresh
@@ -379,7 +382,7 @@ def apogee_step(elevation, now_ms: int, peak, since_ms, smooth, drop_m, dwell_ms
         return smooth, None, smooth, False   # still climbing -> raise the peak, reset the dwell
     if smooth < peak - drop_m:               # fallen off the peak -> descending
         since_ms = now_ms if since_ms is None else since_ms
-        return peak, since_ms, smooth, (now_ms - since_ms) >= dwell_ms
+        return peak, since_ms, smooth, ticks_diff(now_ms, since_ms) >= dwell_ms
     return peak, None, smooth, False         # inside the drop band (noise) -> not descending yet
 
 class Waiter:

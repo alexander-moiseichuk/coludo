@@ -119,11 +119,11 @@ The resolved call tree from the control step, with GC-off risk flags per functio
       - `wind.WindEstimator.components`  — ⚠Tuple x2 …
   - `guidance.Guidance.setpoint`  — ⌕.get()
   - `flight.Flight._run_pid`  — ⚠Tuple
-    - `flight.Flight._actuate`  — ⌕.find()
+    - `flight.Flight._actuate`  — ⚠'%'-format; ⌕.find()
       - `mixer.Mixer.actuate`
-      - `mixer.Mixer.bind`  — ⚠ListComp x2, Tuple; ⌕.get() x2
+      - `mixer.Mixer.bind`  — ⚠ListComp x3, Tuple; ⌕.get() x3
   - `flight.Flight._neutral`
-    - `flight.Flight._actuate`  — ⌕.find() …
+    - `flight.Flight._actuate`  — ⚠'%'-format; ⌕.find() …
   - `guidance.Guidance.enter`
   - `guidance.Guidance.compute`  — ⌕.get()
   - `flight.Flight._feed_wind`  — ⚠Tuple; ∿math.atan2, math.cos, math.degrees, math.radians, math.sin, math.sqrt; ⌕.get()
@@ -141,8 +141,8 @@ Candidates to review (a flag in a GC-off 100 Hz path is a per-step heap-churn / 
 - `wind.WindEstimator.speed` — ∿math.sqrt
 - `guidance.Guidance.setpoint` — ⌕.get()
 - `flight.Flight._run_pid` — ⚠Tuple
-- `flight.Flight._actuate` — ⌕.find()
-- `mixer.Mixer.bind` — ⚠ListComp x2, Tuple; ⌕.get() x2
+- `flight.Flight._actuate` — ⚠'%'-format; ⌕.find()
+- `mixer.Mixer.bind` — ⚠ListComp x3, Tuple; ⌕.get() x3
 - `guidance.Guidance.compute` — ⌕.get()
 - `flight.Flight._feed_wind` — ⚠Tuple; ∿math.atan2, math.cos, math.degrees, math.radians, math.sin, math.sqrt; ⌕.get()
 - `wind.WindEstimator.observe` — ⚠Tuple; ∿math.cos x2, math.radians x2, math.sin x2

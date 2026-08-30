@@ -134,10 +134,18 @@ class GuidanceConfig:
         (which over-ranges a small zone). gain 0 -> rudder-only steering.
         """
         self.bank_gain: float = config.get('nav_bank_gain', 1.5)
-        self.bank_limit: float = config.get('bank_limit', 30)
+        # 45, matching config_default. The fallback was 30 -- the value the 30->45 measured fix
+        # REPLACED, because at 30 deg the turn floor R_min is ~40 m at 15.6 m/s while the loiter law
+        # commands 30 m, so the heading controller saturates into a limit cycle (roll_sp pinned +/-30,
+        # heading_err 112-157 deg). A partial config omitting the key flew that, while `inspect` showed
+        # the shipped 45. Same class as the glide_ratio 3.0/5.5 split.
+        self.bank_limit: float = config.get('bank_limit', 45)
         # final approach / landing: track the strip CENTRELINE with the FULL fin authority to crab
         # the crosswind out -- keep it gliding, not rolling-and-dropping. final_agl 0 -> disabled.
-        self.land_bank_gain: float = config.get('land_bank_gain', 1.5)
+        # 3.0, matching config_default. At the old 1.5 fallback the endgame P-loop saturates near
+        # 25 deg and the spiral freezes at that bank's ~44 m radius -- against the ~20 m R_min the
+        # in-zone miss needs.
+        self.land_bank_gain: float = config.get('land_bank_gain', 3.0)
         self.land_bank_limit: float = config.get('land_bank_limit', 45)
         """
         the ENDGAME band (fly-long objectives, coludo.md "Gliding"): below this ELEVATION the

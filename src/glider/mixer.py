@@ -112,6 +112,24 @@ class Mixer:
                       for name, base, roll_gain, pitch_gain, yaw_gain in self._surfaces
                       if fins.get(name) is not None]
         self._names = [name for name, _b, _r, _p, _y in self._surfaces if fins.get(name) is not None]
+        """
+        SAY WHICH SURFACES DID NOT BIND. Skipping them silently is what makes this dangerous.
+
+        A surface whose driver is missing, disabled or failed setup is simply never written -- it holds
+        whatever angle it was last left at while the other two fly, so the airframe loses a third of its
+        control authority and nothing reports it. `inspect()` showed the commanded angles, `verify` was
+        clean, and the capture looked normal.
+
+        That is not hypothetical: servo_eleron_right died on the bench and TWO full 12-scenario matrix
+        runs completed before anything noticed, and then only because the INA226 rail current happened
+        to be plotted. On an airframe with no power monitor -- which is 7C -- there would have been no
+        signal at all.
+
+        The missing set is kept rather than logged from here: the mixer imports nothing but commons,
+        and the caller (flight.setup) already has the Recorder and the operator-facing surfaces. So
+        verify/inspect can fail on it instead of the operator inferring it from a current trace.
+        """
+        self.missing: list = [name for name, _b, _r, _p, _y in self._surfaces if fins.get(name) is None]
         self.bound = True
 
     def angles(self) -> dict:

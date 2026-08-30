@@ -51,9 +51,20 @@ class GnssCalib(task.Task):
         return True
 
     def _sample(self) -> None:
-        """Fold one on-the-pad reading into the mean drift velocity (stationary -> velocity = drift)."""
-        speed = self._speed.value()
-        course = self._course.value()
+        """
+        Fold one on-the-pad reading into the mean drift velocity (stationary -> velocity = drift).
+
+        read(), not value(): a stale GNSS fix must not enter the drift average.
+
+        value() extrapolates a stale scalar without bound -- the documented databoard contract is to
+        gate on read()'s source -- so a brief dropout hands this averager an invented speed/course. The
+        drift it freezes is then biased for the whole flight, and the wind triangle is DE-BIASED by that
+        drift, so one dropout on the pad poisons wind estimation from launch to landing.
+        """
+        speed, speed_source, _speed_age = self._speed.read()
+        course, course_source, _course_age = self._course.read()
+        if speed_source is None or course_source is None:
+            return
         if speed is None or course is None:
             return
         course_r = math.radians(course)

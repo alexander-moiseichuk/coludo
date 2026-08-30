@@ -197,6 +197,33 @@ def _validate_buses(buses, errs: list, pin_owner: dict, bus_refs: set) -> None:
                 errs.append('bus %s.mode must be 0..3 (got %r)' % (label, spec.get('mode')))
 
 
+def _validate_rate_band(component: dict, label: str, errs: list) -> None:
+    """
+    The governor's airspeed rate band must be positive and ordered, or it divides by zero at boot.
+
+    GovernorConfig builds its interval table as `1.0 / min(ceiling, max(floor, speed))`. A floor of 0
+    is a ZeroDivisionError during __init__ -- the board does not fly, it fails to boot -- and an
+    inverted band (floor 50, ceiling 5) silently throttles the airspeed estimator to the WRONG end,
+    leaving a stale fin cap at high speed. Neither is caught anywhere else, and both are one typo in a
+    saved config.
+
+    Args:
+        component - the component dict to check.
+        label - its name, for the error message.
+        errs - the accumulating error list.
+
+    Returns:
+        None; appends to errs.
+    """
+    floor = component.get('airspeed_floor_hz')
+    ceiling = component.get('airspeed_ceiling_hz')
+    for key, value in (('airspeed_floor_hz', floor), ('airspeed_ceiling_hz', ceiling)):
+        if value is not None and (not _is_int(value) or value <= 0):
+            errs.append('%s.%s must be a positive int (got %r)' % (label, key, value))
+    if _is_int(floor) and _is_int(ceiling) and 0 < floor and 0 < ceiling and floor > ceiling:
+        errs.append('%s.airspeed_floor_hz %d exceeds airspeed_ceiling_hz %d' % (label, floor, ceiling))
+
+
 def _validate_pins(pins, errs: list, pin_owner: dict) -> None:
     """
     Validate the discrete `pins` map, claiming each into `pin_owner`.
@@ -303,6 +330,7 @@ def _validate_devices(items, label: str, errs: list, bus_refs: set, seen_names: 
             errs.append('%s must name an implementation: `driver` (drivers/) or `activity` (tasks/)' % where)
         if 'enabled' in dev and not isinstance(dev['enabled'], bool):
             errs.append('%s.enabled must be a bool' % where)
+        _validate_rate_band(dev, where, errs)   # governor: a zero/inverted band divides by zero at boot
         kind = dev.get('bus')  # a device addresses its bus by kind ('i2c') + id (0)
         if kind is not None:
             ident = dev.get('id')

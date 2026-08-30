@@ -226,8 +226,12 @@ class Flight(task.Task):
             None; feeds one observation to the wind estimator, or nothing when the course/speed is
             missing or the ground speed is below the meaningful threshold.
         """
-        course = self._course.value()
-        speed = self._gnss_speed.value()
+        # read(), not value(): value() extrapolates a dead fix without bound and the wind EMA keeps it
+        # for the rest of the flight. Same gate as gnss_calib, for the same reason.
+        course, course_source, _course_age = self._course.read()
+        speed, speed_source, _speed_age = self._gnss_speed.read()
+        if course_source is None or speed_source is None:
+            return
         if course is None or speed is None or speed <= self._wind_min_speed:
             return
         if self._gnss_calib is None:  # resolve the pad-drift calibrator once (registered by its own task)
@@ -327,6 +331,11 @@ class Flight(task.Task):
         if not self._mixer.bound:
             names = list(self._mixer.surfaces)  # the config surface names (mixer.surfaces is the gain map)
             self._mixer.bind(dict(zip(names, self.controller.find(names))))
+            for surface in self._mixer.missing:
+                # A surface with no driver is never written -- it holds its last angle while the others
+                # fly, costing a third of the control authority with nothing to show for it. Reported
+                # HERE because the mixer imports only commons; see mixer.bind for why that matters.
+                recorder.Recorder.log(self.name, 'surface %s has NO driver -- reduced authority' % surface)
         self._mixer.actuate(roll, pitch, yaw)
 
     def _record(self, now: int) -> None:
