@@ -137,6 +137,7 @@ class Upload:
         self.discard()  # a previous transfer's staging file must not outlive it
         self.name, self.size, self.sha = name, size, sha
         self._digest = hashlib.sha256()
+        _make_parents(name)  # a push may be the first thing to put a module in a new package
         try:
             open(name + _STAGE_SUFFIX, 'wb').close()  # truncate any leftover staging from a dropped push
         except OSError as error:
@@ -267,6 +268,36 @@ def _listdir(path: str) -> list:
         return os.listdir(path) if path else os.listdir()
     except OSError:
         return []
+
+
+def _make_parents(path: str) -> str:
+    """
+    Create the destination's parent directories, as `mkdir -p` would.
+
+    A push to a directory the board does not have yet would otherwise fail at the staging open() with
+    ENOENT, which reads as a broken transfer rather than a missing directory -- and there is no way to
+    create one over the link, so the push could never succeed. That case arrives the first time a
+    module is added to a package the running firmware predates.
+
+    Safe only because _safe_path has already run: the path is relative with no `..`, so every
+    directory made here is inside the module tree. Existing directories are not an error; a directory
+    that cannot be made is left for the open() to report, since that carries the real errno.
+
+    Args:
+        path - the destination path, already checked.
+
+    Returns:
+        None (always) -- failures surface at the open() that follows.
+    """
+    parts = path.split('/')[:-1]
+    built = ''
+    for part in parts:
+        built = part if not built else built + '/' + part
+        try:
+            os.mkdir(built)
+        except OSError:
+            pass  # already there, or cannot be made -- the staging open() reports the latter
+    return None
 
 
 def sweep(path: str) -> str:

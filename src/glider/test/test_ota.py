@@ -122,6 +122,23 @@ async def amain():
     assert upload.status()['uploading'] is None, 'commit must clear the in-progress upload'
 
     """
+    A push may be the FIRST thing to put a module in a package the running firmware predates, so the
+    destination directory will not exist. Without creating it the staging open() fails with ENOENT,
+    which reads as a broken transfer -- and nothing over the link could ever create the directory, so
+    that push could never succeed at all.
+    """
+    deep = 'ota_selfdir/nested/' + _NAME
+    assert upload.begin(deep, len(_BODY), sha) is None, 'refused a path whose directory did not exist'
+    assert upload.chunk(0, _BODY) is None
+    info, refused = upload.commit()
+    assert refused is None, refused
+    with open(deep, 'rb') as handle:
+        assert handle.read() == _BODY
+    os.remove(deep)
+    os.rmdir('ota_selfdir/nested')
+    os.rmdir('ota_selfdir')
+
+    """
     The ORPHAN case: a push interrupted by a reboot leaves a staging file with no upload in memory to
     describe it. discard() cannot help -- it has nothing to discard -- and the board has no shell, so
     without a path-addressed sweep the file is unreachable for the life of the deployment.
