@@ -17,6 +17,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fixed
 import flight_telemetry  # noqa: E402
 
 
@@ -89,7 +90,7 @@ def irq_health(streams) -> str:
     return ' · '.join(parts)
 
 
-_FIXED_SCALE = 100  # fixed.SCALE -- gyro columns are centideg/s fixnums
+_FIXED_SCALE = fixed.SCALE  # fixed.SCALE -- gyro columns are centideg/s fixnums
 
 # One colour per flight stage on the 3D track, in transition order (pre-launch, then each logged
 # stage). Qualitative and high-contrast on purpose -- adjacent stages must be told apart at a glance,

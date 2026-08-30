@@ -20,6 +20,11 @@ import commands
 import web
 
 HEARTBEAT_S: float = 2.0  # poll an idle board this often to prove it is alive
+# Consecutive missed beats before a board is marked offline. cc-protocol.md promises "~5 s of silence
+# (a couple of missed beats)", so 3 x HEARTBEAT_S = 6 s honours that; ONE miss did not, and one miss is
+# cheap -- a 10 s exchange timeout on a busy board, or a single bit error now that a garbled reply
+# returns None instead of raising.
+_MISSED_BEATS: int = 3
 BROADCAST: str = 'all'  # the one broadcast target -- a clean token for scripting (no '*')
 
 
@@ -216,6 +221,8 @@ class Server:
             if not board_id:
                 self.log('whoami failed from %s' % client.peer)
                 return
+            if board_id in self.boards and self.boards[board_id] is not client:
+                self.log('%s reconnected -- replacing the previous connection' % board_id)
             self.boards[board_id] = client
             self._roster_seen(board_id, client.peer)
             self.log('%s online %s' % (board_id, client.info))
@@ -227,7 +234,23 @@ class Server:
         except Exception as error:  # keep the traceback so the root cause is visible
             self.log('error %r\n%s' % (error, traceback.format_exc()))
         finally:
-            self._drop_stream(client.id)  # stop any log stream for this board
+            """
+            Clean up only if THIS connection is still the registered one.
+
+            Two connections can carry the same board id -- a glider that reconnects before the hub
+            noticed the old socket, which is exactly what a flaky field link produces. `self.boards[id]
+            = client` replaces the first silently, and then the FIRST handler's finally ran
+            unconditionally: it dropped the SECOND connection's log stream and left the live board
+            without one, while the operator saw a board that looked online and streamed nothing.
+
+            The identity guard makes the loser clean up after itself and leave the winner alone. The
+            registry entry is removed only when the departing connection still owns it.
+            """
+            if client.id and self.boards.get(client.id) is client:
+                self._drop_stream(client.id)      # only OUR stream; the successor keeps its own
+                del self.boards[client.id]
+            elif client.id:
+                self.log('%s: stale connection closed, live one kept' % client.id)
             client.online = False
             client.close()
             self.log('%s offline' % (client.id or client.peer))
@@ -401,17 +424,38 @@ class Server:
         Returns:
             None; returns on disconnect (so _handle marks the board offline).
         """
-        alive = None  # last heartbeat outcome (None until the first poll) -> log only on transition
+        """
+        A board is dropped after _MISSED_BEATS consecutive failures, not after ONE.
+
+        This returned on the first `health` that did not answer, and returning marks the board offline.
+        The protocol spec promises a couple of missed beats before that, and one miss is cheap to get:
+        a 10 s exchange timeout on a busy board, or -- since the garbled-reply guard now returns None
+        rather than crashing -- a SINGLE BIT ERROR on the link. Dropping a glider from the hub for one
+        flipped bit is exactly the fragility that guard was added to remove, so it would have moved the
+        failure rather than fixed it.
+
+        Each miss is logged, so a board that is degrading is visible before it is disconnected, which a
+        single silent retry would hide.
+        """
+        alive = None   # last heartbeat outcome (None until the first poll) -> log only on transition
+        missed = 0
         while True:
             await asyncio.sleep(self.heartbeat_s)
             if time.monotonic() - client.last_seen < self.heartbeat_s:
                 continue  # a recent exchange already proved liveness
             healthy = await client.command('health', quiet=True) is not None
+            if healthy:
+                if missed:
+                    self.log('%s heartbeat recovered after %d missed' % (client.id, missed))
+                missed = 0
+            else:
+                missed += 1
+                self.log('%s heartbeat missed %d/%d' % (client.id, missed, _MISSED_BEATS))
             if healthy != alive:
                 self.log('%s heartbeat %s' % (client.id, 'ok' if healthy else 'lost'))
                 alive = healthy
-            if not healthy:
-                return  # disconnected -> _handle marks it offline
+            if missed >= _MISSED_BEATS:
+                return  # sustained silence -> _handle marks it offline
 
     """Operator side: read console lines, route board-id-first ones to boards, the rest to commands."""
 

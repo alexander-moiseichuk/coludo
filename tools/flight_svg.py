@@ -17,12 +17,13 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fixed
 import flight_telemetry  # noqa: E402
 
 _PALETTE = ('#1f77b4', '#17becf', '#2ca02c', '#bcbd22', '#ff7f0e', '#d62728', '#9467bd', '#8c564b')
 
 
-_FIXED_SCALE = 100  # fixed.SCALE -- bno055 roll/pitch are centidegree fixnums
+_FIXED_SCALE = fixed.SCALE  # fixed.SCALE -- bno055 roll/pitch are centidegree fixnums
 
 
 def _find(streams, *fields):

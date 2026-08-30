@@ -75,8 +75,13 @@ def metrics(path: str):
     accel = flight_telemetry.find_stream(streams, 'ax', 'ay', 'az', prefer='adxl')
     peak_g = 0.0
     if accel is not None:
-        magnitudes = [math.sqrt(x * x + y * y + z * z) for x, y, z in
-                      zip(accel.column('ax')[1], accel.column('ay')[1], accel.column('az')[1])]
+        # FINITE only. flight_kpi already filters nan/inf here because a single corrupt sample was
+        # measured reading 21 g; this path had no guard, and one nan makes max() return nan (or hide
+        # the true peak), so the metric silently reports garbage rather than the flight's real peak.
+        magnitudes = [magnitude for magnitude in
+                      (math.sqrt(x * x + y * y + z * z) for x, y, z in
+                       zip(accel.column('ax')[1], accel.column('ay')[1], accel.column('az')[1]))
+                      if magnitude == magnitude and magnitude != float('inf')]
         peak_g = max(magnitudes) if magnitudes else 0.0
     return {
         'miss': _meters(touchdown, _CENTER),
