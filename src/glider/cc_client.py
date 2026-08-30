@@ -9,6 +9,7 @@ writes responses.
 """
 
 import asyncio
+import binascii
 import gc
 import json
 import time
@@ -17,6 +18,7 @@ import cc_protocol as cc
 import config as config_mod
 import databoard
 import inspector
+import ota
 import recorder
 
 try:
@@ -674,6 +676,132 @@ def _register_streaming(dispatcher) -> None:
     dispatcher.on('tlm', tlm)
 
 
+def _register_ota(dispatcher, ctx) -> None:
+    """push-begin / push / push-commit / push-abort -- carry a module to the board over the link."""
+
+    _upload = ota.Upload()  # one per dispatcher: a board serves a single Control link
+    _GROUND = ('setting', 'done')  # the stages where nothing is flying and a module swap is harmless
+
+    def _grounded() -> str:
+        """
+        Refuse an upload unless the board is on the ground and disarmed.
+
+        Writing the VFS competes with the recorder for the same flash and the same GC-off heap, and an
+        install swaps a module out from under a running import. Neither belongs anywhere near a live
+        flight, and the operator surface makes this reachable at any moment -- so the gate is here, at
+        the entry to every push command, rather than trusted to the person typing.
+
+        Args:
+            (none)
+
+        Returns:
+            The reason the board is not accepting uploads, or None when it is.
+        """
+        if ctx.controller is not None and ctx.controller.armed:
+            return 'board is ARMED -- disarm before pushing a module'
+        stage = ctx.stage()
+        if stage not in _GROUND:
+            return 'stage is %s -- uploads are ground-only (%s)' % (stage, '/'.join(_GROUND))
+        return None
+
+    async def push_begin(msg) -> str:
+        """
+        Open an upload: `push-begin <name> <size> <sha256>`.
+
+        Args:
+            msg - the request; args are the destination filename, the byte count and the hex digest.
+
+        Returns:
+            ok {staging, size} once staging is open; err unsafe when airborne/armed, err badargs
+            when the name, size or digest is not acceptable.
+        """
+        blocked = _grounded()
+        if blocked is not None:
+            return cc.build('err', ['unsafe', blocked])
+        if len(msg.args) < 3:
+            return cc.build('err', ['badargs', 'push-begin <name> <size> <sha256>'])
+        try:
+            size = int(msg.args[1])
+        except ValueError:
+            return cc.build('err', ['badargs', 'size must be an integer'])
+        refused = _upload.begin(msg.args[0], size, msg.args[2])
+        if refused is not None:
+            return cc.build('err', ['badargs', refused])
+        return cc.build('ok', [json.dumps({'staging': msg.args[0], 'size': size})])
+
+    async def push(msg) -> str:
+        """
+        Append one chunk: `push <seq> <hex>`.
+
+        HEX, not the protocol's usual base64: a .mpy is binary, and neither half of the base64 path
+        survives it. cc_protocol.decode() finishes with a utf-8 .decode(), which fails outright on the
+        bytes above 0x7f that make up most of a compiled module; and base64's '=' padding is not in
+        the protocol's safe set, so an unprefixed payload would be split as a key=value named param.
+        Hex is 0-9a-f -- every character already safe, no padding, no escaping, and unhexlify is exact.
+        The cost is one extra byte per byte on a link that carries a module in a couple of seconds.
+
+        Args:
+            msg - the request; args are the chunk index and the hex-encoded payload.
+
+        Returns:
+            ok {received, size}; err badargs on a malformed, out-of-order or overrunning chunk.
+        """
+        blocked = _grounded()
+        if blocked is not None:
+            return cc.build('err', ['unsafe', blocked])
+        if len(msg.args) < 2:
+            return cc.build('err', ['badargs', 'push <seq> <hex>'])
+        try:
+            seq = int(msg.args[0])
+        except ValueError:
+            return cc.build('err', ['badargs', 'seq must be an integer'])
+        try:
+            payload = binascii.unhexlify(msg.args[1])
+        except Exception:
+            return cc.build('err', ['badargs', 'payload is not valid hex'])
+        refused = _upload.chunk(seq, payload)
+        if refused is not None:
+            return cc.build('err', ['badargs', refused])
+        return cc.build('ok', [json.dumps({'received': _upload.received, 'size': _upload.size})])
+
+    async def push_commit(_unused_msg) -> str:
+        """
+        Verify the staged file and install it, keeping the previous version as `.bak`.
+
+        Args:
+            msg - the request (unused).
+
+        Returns:
+            ok with the install info (including reboot_required); err badargs when the transfer was
+            incomplete or the digest did not match -- in which case NOTHING was installed.
+        """
+        blocked = _grounded()
+        if blocked is not None:
+            return cc.build('err', ['unsafe', blocked])
+        try:
+            info, refused = _upload.commit()
+        except Exception as error:  # a VFS that is full or read-only surfaces here, not as a crash
+            return cc.build('err', ['badargs', 'install failed: %r' % error])
+        if refused is not None:
+            return cc.build('err', ['badargs', refused])
+        return cc.build('ok', [json.dumps(info)])
+
+    async def push_abort(_unused_msg) -> str:
+        """Drop an in-progress upload; the staged file is left behind and reused by the next begin."""
+        _upload.reset()
+        return cc.build('ok', [json.dumps({'aborted': True})])
+
+    async def push_status(_unused_msg) -> str:
+        """What is staged right now -- so a reconnecting operator can see where a push got to."""
+        return cc.build('ok', [json.dumps(_upload.status())])
+
+    dispatcher.on('push-begin', push_begin)
+    dispatcher.on('push', push)
+    dispatcher.on('push-commit', push_commit)
+    dispatcher.on('push-abort', push_abort)
+    dispatcher.on('push-status', push_status)
+
+
 def _register_system(dispatcher, ctx) -> None:
     """reboot -- restart the board (delayed so the `ok` reply flushes before the reset)."""
 
@@ -716,5 +844,6 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
     _register_config(dispatcher, ctx)
     _register_diagnostics(dispatcher, ctx)
     _register_streaming(dispatcher)
+    _register_ota(dispatcher, ctx)
     _register_system(dispatcher, ctx)
     return dispatcher
