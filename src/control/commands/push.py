@@ -13,13 +13,14 @@ what has been through `make test` on the bench board, and reboot the board after
 MicroPython holds the old module until it restarts.
 """
 
+import base64
 import hashlib
 import json
 import os
 
 from . import command
 
-_CHUNK = 512      # raw bytes per chunk -> ~1 KB hex lines, comfortable for the board's readline()
+_CHUNK = 256      # raw bytes per chunk -> ~344-char base64 lines, comfortable for readline()
 _PROGRESS_EVERY = 8   # log a progress line every N chunks, so a big push is not silent
 
 
@@ -68,7 +69,10 @@ async def push_command(hub, tokens, session) -> list:
 
     for seq in range(total):
         piece = blob[seq * _CHUNK:(seq + 1) * _CHUNK]
-        sent = await board.command('push', str(seq), piece.hex(), quiet=True)
+        # unpadded base64: '=' is the one character of the alphabet the protocol would misread, as a
+        # key=value separator; length alone determines the padding, so the board restores it exactly
+        token = base64.b64encode(piece).decode().rstrip('=')
+        sent = await board.command('push', str(seq), token, quiet=True)
         if sent is None:
             return ['from cc err offline %s (chunk %d of %d -- nothing was installed)'
                     % (target, seq, total)]
@@ -81,7 +85,8 @@ async def push_command(hub, tokens, session) -> list:
         if seq and seq % _PROGRESS_EVERY == 0:
             hub.log('  push %s: %d/%d chunks' % (remote, seq, total))
 
-    installed = await board.command('push-commit')
+    # restate what is being finished: a commit that reaches the wrong open transfer must fail loudly
+    installed = await board.command('push-commit', remote, digest)
     if installed is None:
         return ['from cc err offline %s (during commit -- nothing was installed)' % target]
     if installed.command != 'ok':

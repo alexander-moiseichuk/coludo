@@ -138,16 +138,18 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `set-config` | `<name> <json>` | `ok {config_id}` / `err invalid <msg>` | save a named config: `board` validates + replaces the full snapshot (running config unchanged until reboot); `launch` merge-applies the fields into the mission + persists `launch.config` |
 | `reset-config` | — | `ok` | delete `board.config`; next boot uses `config_default.py` |
 | `reboot` | — | `ok` then disconnect | ack, then hard reset → boots from saved config |
-| `push-begin` | `<name> <size> <sha256>` | `ok {staging, size}` / `err unsafe <why>` / `err badargs <why>` | open an upload. `name` must be a bare leaf ending `.mpy`/`.py`/`.config`/`.creds` -- a name with a path separator or `..` is refused, since `open()` would follow it. Ground-only: refused while armed or in any stage but `setting`/`done` |
-| `push` | `<seq> <hex>` | `ok {received, size}` / `err badargs <why>` | append chunk `seq` (from 0), strictly in order. HEX, not the usual `base64:` -- a `.mpy` is binary, and `decode()` finishes with a utf-8 `.decode()` that fails on it, while base64's `=` padding would be parsed as a named param |
-| `push-commit` | — | `ok {installed, bytes, sha, backup, reboot_required}` / `err badargs <why>` | verify the staged file's SHA-256 and install it atomically, keeping the previous version as `<name>.bak`. A short or mismatched transfer installs NOTHING. **Reboot to load it** -- MicroPython holds the old module |
-| `push-abort` | — | `ok {aborted}` | drop an in-progress upload |
+| `push-begin` | `<path> <size> <sha256>` | `ok {staging, size}` / `err unsafe <why>` / `err badargs <why>` | open an upload. `path` is RELATIVE and may name a subdirectory (`drivers/bno055.mpy`) -- most of the firmware lives in `drivers/`, `tasks/`, `test/`. Refused if absolute, if any component is `..` or dot-led, or if the suffix is not `.mpy`/`.py`/`.config`/`.creds`: `open()` follows whatever it is given. Ground-only -- refused while armed or in any stage but `setting`/`done` |
+| `push` | `<seq> <base64>` | `ok {received, size}` / `err badargs <why>` | append chunk `seq` (from 0), strictly in order, 256 raw bytes per chunk. Bare UNPADDED base64, not the usual `base64:` token -- a `.mpy` is binary and `decode()` finishes with a utf-8 `.decode()` that fails on it. `+` and `/` are already safe characters; only `=` is not, so the sender strips it and the board restores it (length determines it exactly) |
+| `push-commit` | `[path] [sha256]` | `ok {installed, bytes, sha, backup, reboot_required}` / `err badargs <why>` | verify the staged file's SHA-256 and install it atomically, keeping the previous version as `<path>.bak`. `path`/`sha256` are optional (so it stays typeable) but when given must match the open upload, so a commit aimed at the wrong transfer fails instead of installing whatever is staged. A short or mismatched transfer installs NOTHING and DISCARDS the staging file. **Reboot to load it** -- MicroPython holds the old module |
+| `push-abort` | — | `ok {aborted}` | drop an in-progress upload and delete its staging file |
 | `push-status` | — | `ok {uploading, received, size, chunks}` | what is staged, so a reconnecting operator can orient |
 
 Module updates (`push-*`) exist because deploying by USB means opening the airframe, which on a launch
 day means unpacking a glider that is ready to fly. The three steps are deliberate: nothing touches the
 live module until the last byte has arrived AND its digest matches, so a link that drops mid-transfer
-leaves an inert `.ota` staging file rather than a half-written module the next boot would import. What
+leaves an inert `.ota` staging file rather than a half-written module the next boot would import. (`.ota`,
+not `.tmp`: `commons.atomic_write_json` already writes `<path>.tmp` for config and mission saves, and a push
+of `board.config` would collide with the board's own save.) What
 this does NOT do is recover a board whose new module breaks the boot -- staging and the checksum stop a
 CORRUPT file from being installed, but an intact-and-wrong one will import and fail, and that is a USB
 recovery. Push what has been through `make test` on the bench board.

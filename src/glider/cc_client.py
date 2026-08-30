@@ -731,17 +731,18 @@ def _register_ota(dispatcher, ctx) -> None:
 
     async def push(msg) -> str:
         """
-        Append one chunk: `push <seq> <hex>`.
+        Append one chunk: `push <seq> <base64>`.
 
-        HEX, not the protocol's usual base64: a .mpy is binary, and neither half of the base64 path
-        survives it. cc_protocol.decode() finishes with a utf-8 .decode(), which fails outright on the
-        bytes above 0x7f that make up most of a compiled module; and base64's '=' padding is not in
-        the protocol's safe set, so an unprefixed payload would be split as a key=value named param.
-        Hex is 0-9a-f -- every character already safe, no padding, no escaping, and unhexlify is exact.
-        The cost is one extra byte per byte on a link that carries a module in a couple of seconds.
+        Base64 with the PADDING STRIPPED, and deliberately not the protocol's `base64:` token. Both
+        halves of that path break on binary: cc_protocol.decode() finishes with a utf-8 `.decode()`,
+        which fails outright on the bytes above 0x7f that make up most of a compiled module. Sent bare
+        instead, the alphabet is already safe -- `+` and `/` are both in the protocol's safe set -- with
+        the single exception of `=`, which parse() would read as a key=value separator and split the
+        payload in half. So the sender strips it and the padding is restored here, which is exact:
+        base64 length is fully determined by the byte count.
 
         Args:
-            msg - the request; args are the chunk index and the hex-encoded payload.
+            msg - the request; args are the chunk index and the unpadded base64 payload.
 
         Returns:
             ok {received, size}; err badargs on a malformed, out-of-order or overrunning chunk.
@@ -750,36 +751,44 @@ def _register_ota(dispatcher, ctx) -> None:
         if blocked is not None:
             return cc.build('err', ['unsafe', blocked])
         if len(msg.args) < 2:
-            return cc.build('err', ['badargs', 'push <seq> <hex>'])
+            return cc.build('err', ['badargs', 'push <seq> <base64>'])
         try:
             seq = int(msg.args[0])
         except ValueError:
             return cc.build('err', ['badargs', 'seq must be an integer'])
+        token = msg.args[1]
         try:
-            payload = binascii.unhexlify(msg.args[1])
+            payload = binascii.a2b_base64(token + '=' * (-len(token) % 4))
         except Exception:
-            return cc.build('err', ['badargs', 'payload is not valid hex'])
+            return cc.build('err', ['badargs', 'payload is not valid base64'])
         refused = _upload.chunk(seq, payload)
         if refused is not None:
             return cc.build('err', ['badargs', refused])
         return cc.build('ok', [json.dumps({'received': _upload.received, 'size': _upload.size})])
 
-    async def push_commit(_unused_msg) -> str:
+    async def push_commit(msg) -> str:
         """
-        Verify the staged file and install it, keeping the previous version as `.bak`.
+        Verify the staged file and install it: `push-commit [path] [sha256]`.
+
+        The path and digest are optional so the command stays typeable by hand, but when the sender
+        supplies them they must match the upload that is open -- so a commit aimed at the wrong
+        transfer is an error rather than an install of whatever happens to be staged.
 
         Args:
-            msg - the request (unused).
+            msg - the request; args, when present, are the destination path and its digest.
 
         Returns:
             ok with the install info (including reboot_required); err badargs when the transfer was
-            incomplete or the digest did not match -- in which case NOTHING was installed.
+            incomplete or the digest did not match -- in which case NOTHING was installed and the
+            staging file was discarded.
         """
         blocked = _grounded()
         if blocked is not None:
             return cc.build('err', ['unsafe', blocked])
+        path = msg.args[0] if msg.args else None
+        sha = msg.args[1] if len(msg.args) > 1 else None
         try:
-            info, refused = _upload.commit()
+            info, refused = _upload.commit(path, sha)
         except Exception as error:  # a VFS that is full or read-only surfaces here, not as a crash
             return cc.build('err', ['badargs', 'install failed: %r' % error])
         if refused is not None:
@@ -787,8 +796,8 @@ def _register_ota(dispatcher, ctx) -> None:
         return cc.build('ok', [json.dumps(info)])
 
     async def push_abort(_unused_msg) -> str:
-        """Drop an in-progress upload; the staged file is left behind and reused by the next begin."""
-        _upload.reset()
+        """Drop an in-progress upload AND its staging file, so an abandoned push leaves nothing behind."""
+        _upload.discard()
         return cc.build('ok', [json.dumps({'aborted': True})])
 
     async def push_status(_unused_msg) -> str:

@@ -45,28 +45,36 @@ _BACKUP_SUFFIX = '.bak'      # the outgoing version, kept so a bad push can be r
 _ALLOWED_SUFFIX = ('.mpy', '.py', '.config', '.creds')
 
 
-def _safe_name(name: str) -> str:
+def _safe_path(path: str) -> str:
     """
-    Reject any filename that could write outside the board's module directory.
+    Reject any destination that could write outside the board's own module tree.
 
-    The name arrives from the network, and `open()` on this VFS will follow whatever it is given --
-    so a name carrying a separator or a parent reference is a write-anywhere primitive, not a module
-    update. Only a bare leaf name with a known suffix is accepted.
+    The path arrives from the network and `open()` follows whatever it is given, so this is the only
+    thing standing between a module update and a write-anywhere primitive. What it must still ALLOW is
+    a subdirectory: `drivers/`, `tasks/` and `test/` are where most of the firmware lives, and a rule
+    that accepted only bare leaf names could not update any of it.
+
+    So: relative only, no `..` in any component, no component starting with a dot, and a known suffix.
+    That admits `drivers/bno055.mpy` and refuses `../main.py`, `/etc/passwd` and `a/../../x.mpy`.
 
     Args:
-        name - the requested filename.
+        path - the requested destination path, relative to the board's working directory.
 
     Returns:
         The reason it was rejected, or None when it is safe to write.
     """
-    if not name or len(name) > 64:
-        return 'name missing or too long'
-    if '/' in name or '\\' in name or name.startswith('.') or '..' in name:
-        return 'name must be a bare filename (no path)'
+    if not path or len(path) > 96:
+        return 'path missing or too long'
+    if path[0] == '/' or '\\' in path:
+        return 'path must be relative (no leading / and no backslashes)'
+    parts = path.split('/')
+    for part in parts:
+        if not part or part == '..' or part[0] == '.':
+            return 'path must not contain empty, dotted or parent components'
     for suffix in _ALLOWED_SUFFIX:
-        if name.endswith(suffix):
+        if path.endswith(suffix):
             return None
-    return 'name must end in one of %s' % (', '.join(_ALLOWED_SUFFIX),)
+    return 'path must end in one of %s' % (', '.join(_ALLOWED_SUFFIX),)
 
 
 class Upload:
@@ -81,8 +89,17 @@ class Upload:
     def __init__(self):
         self.reset()
 
+    def discard(self) -> None:
+        """Remove the staging file and forget the upload -- the failure path, so nothing is left behind."""
+        if self.name is not None:
+            try:
+                os.remove(self.name + _STAGE_SUFFIX)
+            except OSError:
+                pass  # never created, or already gone: either way there is nothing to clean up
+        self.reset()
+
     def reset(self) -> None:
-        """Drop any in-progress upload (also the `push-abort` path); the staged file is left to be overwritten."""
+        """Forget any in-progress upload (the `push-abort` path); see discard() to also drop the staging file."""
         self.name: str = None
         self.size: int = 0
         self.sha: str = ''
@@ -104,7 +121,7 @@ class Upload:
         """
         if hashlib is None:
             return 'no hashlib on this firmware -- refusing an unverifiable upload'
-        bad = _safe_name(name)
+        bad = _safe_path(name)
         if bad is not None:
             return bad
         if size <= 0 or size > _MAX_BYTES:
@@ -156,28 +173,41 @@ class Upload:
         self.next_seq += 1
         return None
 
-    def commit(self) -> tuple:
+    def commit(self, path: str = None, sha: str = None) -> tuple:
         """
         Verify the staged file and install it, keeping the outgoing version as `.bak`.
 
         The digest is checked BEFORE anything is moved, so a truncated or corrupted transfer cannot
-        reach the module the next boot imports.
+        reach the module the next boot imports. A failed check DELETES the staging file: a board with
+        a few megabytes of flash must not accumulate the debris of every abandoned push, and a stale
+        `.ota` left next to a module is exactly the sort of thing a later reader mistakes for state.
+
+        The commit restates the path and digest it believes it is finishing. They are optional so an
+        operator can still type `push-commit` by hand, but when given they must match what the upload
+        was opened with -- which is what turns a commit sent against the wrong transfer into an error
+        rather than an install of whatever happened to be staged.
 
         Args:
-            (none)
+            path - the destination the caller believes it is committing (optional, checked).
+            sha - the digest the caller believes it sent (optional, checked).
 
         Returns:
             (info, None) once installed -- info carries the name, size and whether a backup was kept;
-            (None, reason) when the upload was incomplete or the digest did not match.
+            (None, reason) when the upload was incomplete, mismatched, or did not verify.
         """
         if self.name is None:
             return None, 'no upload in progress'
+        if path is not None and path != self.name:
+            return None, 'commit is for %s, but %s is staged' % (path, self.name)
+        if sha is not None and sha != self.sha:
+            return None, 'commit digest does not match the one push-begin was given'
         if self.received != self.size:
             return None, 'incomplete: %d of %d bytes' % (self.received, self.size)
         actual = binascii.hexlify(self._digest.digest()).decode()
         if actual != self.sha:
-            self.reset()
-            return None, 'sha mismatch: got %s, expected %s' % (actual[:16], self.sha[:16])
+            self.discard()
+            return None, 'sha mismatch: got %s, expected %s -- staging discarded' % (
+                actual[:16], self.sha[:16])
         name, staged, backup = self.name, self.name + _STAGE_SUFFIX, self.name + _BACKUP_SUFFIX
         kept = _replace(name, staged, backup)
         recorder.Recorder.log('ota', 'installed %s (%d bytes, sha %s) -- reboot to load it'

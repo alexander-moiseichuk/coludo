@@ -15,6 +15,7 @@ is why `push` is hex, and a change back would fail here rather than on a board a
 """
 
 import asyncio
+import base64
 import hashlib
 import json
 import os
@@ -43,9 +44,12 @@ class _FakeBoard:
             refused = self.upload.begin(args[0], int(args[1]), args[2])
         elif command == 'push':
             self.chunks += 1
-            refused = self.upload.chunk(int(args[0]), bytes.fromhex(args[1]))
+            token = args[1]
+            assert '=' not in token, 'padding would be parsed as a named param on the wire'
+            refused = self.upload.chunk(int(args[0]),
+                                        base64.b64decode(token + '=' * (-len(token) % 4)))
         elif command == 'push-commit':
-            info, refused = self.upload.commit()
+            info, refused = self.upload.commit(*args)
             if refused is None:
                 return _Reply('ok', [json.dumps(info)])
         elif command == 'push-abort':
@@ -91,9 +95,9 @@ async def amain():
         assert result['installed'] == _REMOTE and result['bytes'] == len(_BLOB), result
         assert result['reboot_required'] is True, 'the operator must be told a reboot is needed'
 
-        # 2308 bytes over 512-byte chunks is 5 chunks, the last one short -- the boundary that an
-        # off-by-one in the range/slice arithmetic would silently truncate
-        assert board.chunks == 5, board.chunks
+        # 2308 bytes over 256-byte chunks is 10, the last carrying only 4 -- the short-final-chunk
+        # boundary that an off-by-one in the range/slice arithmetic would silently truncate
+        assert board.chunks == 10, board.chunks
         with open(_REMOTE, 'rb') as handle:
             landed = handle.read()
         assert landed == _BLOB, 'installed bytes differ from the source file'
@@ -109,8 +113,8 @@ async def amain():
         os.remove(source)
         _cleanup()
 
-    print('ok: push chunks a binary file, the board stages and verifies it, and the installed bytes '
-          'match the source exactly (short final chunk included)')
+    print('ok: push carries a binary file as unpadded base64, the board stages and verifies it, and '
+          'the installed bytes match the source exactly (short final chunk included)')
 
 
 asyncio.run(amain())

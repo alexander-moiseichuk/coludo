@@ -31,11 +31,22 @@ async def amain():
     upload = ota.Upload()
 
     """
-    A name arriving off the network is a write-anywhere primitive unless it is checked. These are the
-    shapes that would escape the module directory or overwrite something that is not a module.
+    A path arriving off the network is a write-anywhere primitive unless it is checked -- but the check
+    must still admit a SUBDIRECTORY, because drivers/, tasks/ and test/ are where most of the firmware
+    lives and a bare-leaf-only rule could not update any of it.
     """
-    for bad in ('../main.py', '/main.py', 'sub/dir.mpy', '.hidden.mpy', 'noext', 'x' * 70 + '.mpy'):
-        assert upload.begin(bad, len(_BODY), sha) is not None, 'accepted unsafe name %r' % bad
+    for bad in ('../main.py', '/main.py', 'a/../../x.mpy', '.hidden.mpy', 'noext', 'x' * 100 + '.mpy',
+                'drivers//x.mpy', 'drivers/.hidden.mpy'):
+        assert upload.begin(bad, len(_BODY), sha) is not None, 'accepted unsafe path %r' % bad
+
+    nested = 'drivers/' + _NAME  # drivers/ exists on the board; this is the case bare-leaf-only broke
+    assert upload.begin(nested, len(_BODY), sha) is None, 'refused a legitimate subdirectory path'
+    upload.discard()
+    try:
+        os.stat(nested + '.ota')
+        raise AssertionError('discard left the staging file behind')
+    except OSError:
+        pass
 
     assert upload.begin(_NAME, 0, sha) is not None, 'accepted a zero size'
     assert upload.begin(_NAME, 999999999, sha) is not None, 'accepted a size past the cap'
@@ -68,6 +79,11 @@ async def amain():
         raise AssertionError('a corrupt upload was installed')
     except OSError:
         pass  # correct: nothing was put in place
+    try:
+        os.stat(_NAME + '.ota')
+        raise AssertionError('a failed verify left its staging file on the flash')
+    except OSError:
+        pass  # correct: the debris of a failed push is not kept
 
     # the happy path, in two chunks, over a file that already exists -> the old one is kept as .bak
     with open(_NAME, 'wb') as handle:
@@ -76,7 +92,14 @@ async def amain():
     assert upload.chunk(0, _BODY[:600]) is None
     assert upload.status()['received'] == 600
     assert upload.chunk(1, _BODY[600:]) is None
-    info, refused = upload.commit()
+
+    # a commit aimed at a different transfer must fail rather than install what happens to be staged
+    info, refused = upload.commit('some_other.mpy', sha)
+    assert info is None and 'is staged' in refused, refused
+    info, refused = upload.commit(_NAME, 'f' * 64)
+    assert info is None and 'digest' in refused, refused
+
+    info, refused = upload.commit(_NAME, sha)
     assert refused is None, refused
     assert info['installed'] == _NAME and info['bytes'] == len(_BODY) and info['backup'] is True
     with open(_NAME, 'rb') as handle:
@@ -86,8 +109,9 @@ async def amain():
     assert upload.status()['uploading'] is None, 'commit must clear the in-progress upload'
 
     _cleanup()
-    print('ok: ota rejects unsafe names, out-of-order and overrunning chunks, and a wrong digest; '
-          'installs a verified file atomically and keeps the previous version as .bak')
+    print('ok: ota accepts subdirectory paths and rejects traversal, out-of-order and overrunning '
+          'chunks, a wrong digest and a mis-aimed commit; discards staging on failure; installs a '
+          'verified file atomically and keeps the previous version as .bak')
 
 
 asyncio.run(amain())
