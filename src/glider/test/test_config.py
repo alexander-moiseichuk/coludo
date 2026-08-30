@@ -54,6 +54,9 @@ def main():
     def _find(cfg, name):
         return [item for item in cfg['components'] if item['name'] == name][0]
 
+    def _find_sensor(cfg, name):
+        return [item for item in cfg['sensors'] if item['name'] == name][0]
+
     for mutate, needle in (
             (lambda c: _find(c, 'flight').update({'bank_limit': '45'}), 'bank_limit'),
             (lambda c: _find(c, 'servo_yaw').update({'trim': '2.5'}), 'trim'),
@@ -64,6 +67,31 @@ def main():
         mutate(broken)
         errs = config.validate(broken)
         assert any(needle in e and 'must be a number' in e for e in errs), '%s not caught: %r' % (needle, errs)
+
+    """
+    Device TIMING fields, and the recorder's own rate. Both were missed by the first numeric pass.
+
+    period_ms goes straight into asyncio.sleep_ms(); telemetry_ms is multiplied by 1000 for
+    decimate_us -- and in Python `"20" * 1000` is a valid 2000-character STRING, so it constructs
+    without error and only fails later at a comparison, far from the config that caused it.
+
+    recorder.telemetry_ms is checked separately because ZERO is legal there and is the shipped value
+    ("no decimation"). Folding it into the positive-int loop would have rejected the config that flies,
+    which is why the test pins 0 as accepted alongside the rejections.
+    """
+    for mutate, needle in (
+            (lambda c: _find_sensor(c, 'baro_icp10111').update({'period_ms': '100'}), 'period_ms'),
+            (lambda c: _find_sensor(c, 'accel_adxl375').update({'telemetry_ms': '20'}), 'telemetry_ms')):
+        broken = config_default.default()
+        mutate(broken)
+        assert any(needle in e and 'must be a number' in e for e in config.validate(broken)), needle
+    for bad in ('500', -1, True):
+        broken = config_default.default()
+        broken['recorder']['telemetry_ms'] = bad
+        assert any('recorder.telemetry_ms' in e for e in config.validate(broken)), bad
+    zeroed = config_default.default()
+    zeroed['recorder']['telemetry_ms'] = 0          # the SHIPPED value: no decimation
+    assert not [e for e in config.validate(zeroed) if 'recorder.telemetry_ms' in e]
 
     # NEGATIVE: bool is an int subclass -- True must NOT pass as a number for a gain or a multiplier
     truthy = config_default.default()

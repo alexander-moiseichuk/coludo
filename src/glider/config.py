@@ -203,7 +203,14 @@ def _validate_buses(buses, errs: list, pin_owner: dict, bus_refs: set) -> None:
 # that is the last moment a human is present.
 _NUMERIC_FIELDS: tuple = ('limit_multiplier', 'trim', 'still_g', 'stall_speed_1g', 'stall_margin',
                           'nav_bank_gain', 'land_bank_gain', 'loiter_gain', 'final_cross_gain',
-                          'pitot_gain', 'glide_ratio', 'bank_limit', 'land_bank_limit')
+                          'pitot_gain', 'glide_ratio', 'bank_limit', 'land_bank_limit',
+                          # period_ms and telemetry_ms appear on EVERY device and are the two that
+                          # fail most confusingly. `telemetry_ms` is multiplied by 1000 for
+                          # decimate_us, and in Python "20" * 1000 is a valid 2000-character STRING --
+                          # so it constructs without error and only fails later at a comparison,
+                          # somewhere with no clue where it came from. `period_ms` goes straight into
+                          # asyncio.sleep_ms().
+                          'period_ms', 'telemetry_ms')
 
 
 def _numeric(value) -> bool:
@@ -334,6 +341,10 @@ def _validate_recorder(rec, errs: list) -> None:
     for key in ('tlm_capacity', 'log_capacity', 'cell_size', 'stats_ms'):
         if key in rec and not (_is_int(rec[key]) and rec[key] > 0):
             errs.append('recorder.%s must be a positive int' % key)
+    # telemetry_ms separately, because ZERO is legal here and means "no decimation" -- the shipped
+    # value. The loop above demands > 0, so folding it in would reject the config that flies.
+    if 'telemetry_ms' in rec and not (_is_int(rec['telemetry_ms']) and rec['telemetry_ms'] >= 0):
+        errs.append('recorder.telemetry_ms must be a non-negative int (0 = no decimation)')
 
 
 def _validate_devices(items, label: str, errs: list, bus_refs: set, seen_names: set) -> None:
