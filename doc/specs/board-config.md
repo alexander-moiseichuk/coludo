@@ -164,7 +164,9 @@ identical behaviour every time.
   and lets the firmware select MCU-specific behaviour. `setup_retries` is the boot setup-attempt
   count per device (flaky breadboard contacts; `1` = no retry).
 - **`fins`** — one home for fin/servo control: `concurrency` (max servos slewing at once, caps the
-  boost-rail current transient; `== fin count` = no limit), `limit_multiplier` (the dynamic-pressure
+  boost-rail current transient; `== fin count` = no limit). **Defaults to `1`** — safe on the bench
+  rig's 1 A supply, which is the only board that runs without a profile; each flight profile sets its
+  own value (TMS-7C `1`, TMS-7D `3`) to match the power board actually fitted, `limit_multiplier` (the dynamic-pressure
   governor's safety dial, `1.0` nominal), and the `mixer` (the elevon + rudder mixing matrix —
   `surfaces` gains, `neutral_deg`, `limit_deg`). Each fin's mechanical zero is the servo component's
   own per-fin `trim` (degrees), NOT here.
