@@ -83,9 +83,16 @@ class Field(task.Task):
             return
         if self._mission is not None and self._mission.zone is None:
             return  # no landing zone -> never auto-arm (a blind flight is a HUMAN decision)
-        accel = self._accel.value()
-        if accel is None:
-            self._still_since = None
+        accel, accel_source, _accel_age = self._accel.read()
+        """
+        read(), NOT value(). This gate ARMS THE AIRCRAFT with no human in the loop, so the one reading
+        it must never accept is an invented one. A dead accel extrapolates toward a steady ~1 g, which
+        lands inside the 0.7-1.3 g stationary band and holds there -- so a board being carried with a
+        silent IMU looks perfectly still, satisfies the dwell, and arms itself. `position` above is
+        already read()-gated for the same reason; the accel was the remaining unguarded half.
+        """
+        if accel_source is None:
+            self._still_since = None  # no fresh accel -> cannot claim stillness; the dwell restarts
             return
         g_sq = commons.magnitude_sq(accel[0], accel[1], accel[2])
         if not (self._still_lo_sq < g_sq < self._still_hi_sq):
