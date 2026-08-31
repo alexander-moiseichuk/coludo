@@ -367,8 +367,19 @@ class Checkpoint(task.Task):
         Returns:
             None; pushes a telemetry row + a log line, and (armed only) commits the NVS crumb.
         """
-        altitude = self._altitude.value()
-        speed = self._speed.value()
+        altitude, altitude_source, _altitude_age = self._altitude.read()
+        speed, speed_source, _speed_age = self._speed.read()
+        """
+        read(), NOT value(). These two are RECORDED (telemetry row, crumb, log line), not consumed by
+        the restore -- `should_restore()` dropped its height cross-check, the baros rebase from
+        `pad_altitude` (read()-gated above) and the governor seeds from `flight.airspeed()`. So an
+        extrapolated value here cannot fly the aircraft; it can only lie in checkpoint.csv about how
+        high the flight was when it reset, which is precisely the record a post-mortem trusts.
+        """
+        if altitude_source is None:
+            altitude = None
+        if speed_source is None:
+            speed = None
         if self._flight is None:
             self._flight = self.controller.find(['flight'])[0]
         airspeed = None if self._flight is None else round(self._flight.airspeed(), 1)
