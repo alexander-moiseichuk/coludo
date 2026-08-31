@@ -46,7 +46,7 @@ def _parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def _resolve_gps_device(arg: str):
+def _resolve_gps_device(arg: str, baud: int = 9600):
     """
     Resolve the --gps-device argument to a device path or None.
 
@@ -75,10 +75,15 @@ def _resolve_gps_device(arg: str):
         A GPS emits `$G...` continuously, so a short listen is a definitive test. Each candidate gets
         one second; the first that talks NMEA wins, and if none does we return None rather than
         guessing -- an explicit --gps-device is the honest fallback.
+
+        PROBE AT THE CONFIGURED BAUD, not a hardcoded 9600. A u-blox left at 115200 emits nothing
+        legible at 9600, so the probe saw silence and reported no GPS while the receiver was sitting
+        there talking -- and `--gps-baud` had been set correctly all along, because it was only ever
+        applied to serve(), never to the probe that decides whether serve() gets a port at all.
         """
         for candidate in sorted(glob.glob('/dev/ttyUSB*')):
             try:
-                with serial.Serial(candidate, 9600, timeout=0.25) as link:
+                with serial.Serial(candidate, baud, timeout=0.25) as link:
                     for _attempt in range(4):        # ~1 s: a live receiver sends several sentences
                         if b'$G' in link.readline():
                             return candidate
@@ -123,7 +128,7 @@ async def _run(args, hub) -> None:
 
 def main() -> None:
     args = _parse_args()
-    args.gps_device = _resolve_gps_device(args.gps_device)  # 'auto' -> first /dev/ttyUSB* (or None)
+    args.gps_device = _resolve_gps_device(args.gps_device, args.gps_baud)  # 'auto' -> probe /dev/ttyUSB*
     gps = gps_mod.Gps(log=_log) if args.gps_device else None
     hub = server.Server(host=args.host, port=args.port, operator_port=args.operator_port,
                         web_port=args.web_port, gps=gps, log=_log)
