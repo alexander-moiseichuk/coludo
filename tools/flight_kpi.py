@@ -50,7 +50,11 @@ def _fin_activity(fins) -> tuple:
             starts.append(times[0])
             ends.append(times[-1])
         rows.append((fin, len(angles), moves, travel, biggest))
-    span = max(max(ends) - min(starts), 1e-9) if starts else 1.0  # single non-zero span for all fins
+    # Single non-zero span for all fins. The 1e-9 floor cannot be reached by a single-sample stream --
+    # `len(times) > 1` above excludes those from starts/ends, and no qualifying stream at all takes the
+    # `else 1.0`. It is reachable only if every retained sample shares one timestamp, which the recorder
+    # does not produce. Not a live divide-by-near-zero; leave it as the last-resort floor it is.
+    span = max(max(ends) - min(starts), 1e-9) if starts else 1.0
     return rows, span
 
 

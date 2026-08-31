@@ -90,6 +90,12 @@ class WindEstimator(inspector.Inspectable):
             return
         if wind_e * wind_e + wind_n * wind_n > self.max_speed * self.max_speed:
             return  # beyond the physical envelope -> a GNSS jump, not wind: reject (keep the EMA)
+        """
+        INFINITY is handled, and by the envelope above rather than the NaN test -- +/-inf squares to
+        inf, which exceeds max_speed^2, so it returns. That is why there is no math.isfinite() here:
+        it would add an import to this path to re-test what the envelope already rejects. The two
+        branches together are total over the non-finite cases.
+        """
         if self._seen:
             self._we += self.triangle_alpha * (wind_e - self._we)
             self._wn += self.triangle_alpha * (wind_n - self._wn)

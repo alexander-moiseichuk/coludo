@@ -590,7 +590,10 @@ class Guidance:
             return self._heading_hold
         if self._nav_heading is not None and \
                 commons.ticks_diff(now_us, self._nav_updated_us) < self._config.nav_period_us:
-            return self._nav_heading  # cached -- skip the trig this step
+            # cached -- skip the trig this step. The key is time-only ON PURPOSE: a stage change cannot
+            # serve a stale heading because enter() (called on every control-stage entry) sets
+            # _nav_heading = None, which invalidates this branch outright. Do not add a stage token.
+            return self._nav_heading
         self._nav_updated_us = now_us
         zone = self._mission.zone
         target, gate_a, gate_b = self._mission.zone_points()  # per-flight-constant geometry, memoized

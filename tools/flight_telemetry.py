@@ -197,6 +197,9 @@ def _unwrap(streams: dict, logs: list) -> None:
     offset, previous = 0, None
     for index, (stamp, line) in enumerate(logs):
         if stamp is None:
+            # A malformed log line carries NO stamp, so there is nothing to correct and nothing to go
+            # stale. Both `offset` and `previous` survive the skip, so the next stamped line is still
+            # compared against the last VALID one and a wrap across the gap is still detected.
             continue
         if previous is not None and stamp + offset < previous - half:
             offset += _TICKS_PERIOD
