@@ -150,20 +150,36 @@ def test_dashboard_carries_the_imu_calibration_column():
     string match broke on any reformat or rename while the behaviour was still correct, and -- worse
     -- would have passed on a line that had been commented out.
     """
+    import time as _time
+
     import server as server_module
 
     class _StubBoard:
         id, online, info = 'glider-01', True, {}
+        last_seen = _time.monotonic()
         cache = {'health': {'imu_calibration': {'sys': 3, 'gyr': 3, 'acc': 2, 'mag': 0},
                             'calibration': {'imu_bno055': 'make a figure 8'}}}
 
     hub = server_module.Server.__new__(server_module.Server)  # no sockets: board_rows is pure
     hub.boards = {'glider-01': _StubBoard()}
+    hub.heartbeat_s = server_module.HEARTBEAT_S
     row = server_module.Server.board_rows(hub)[0]
     assert row['imu_calibration'] == {'sys': 3, 'gyr': 3, 'acc': 2, 'mag': 0}, \
         'board_rows dropped imu_calibration'
     assert row['calibration'] == {'imu_bno055': 'make a figure 8'}, \
         'board_rows dropped the calibration instructions'
+    assert row['stale'] is False and row['health_age'] < 1.0, \
+        'a board seen just now must not be flagged stale'
+
+    """
+    NEGATIVE: a board last seen long ago is still `online` (offline takes _MISSED_BEATS), so without
+    the flag the row would present handshake-age `stage` as live. The flag is the only thing that
+    distinguishes them.
+    """
+    _StubBoard.last_seen = _time.monotonic() - (server_module.HEARTBEAT_S * 5)
+    stale_row = server_module.Server.board_rows(hub)[0]
+    assert stale_row['online'] is True, 'the stub is still online -- that is the point'
+    assert stale_row['stale'] is True, 'a board silent for 5 heartbeats must be flagged stale'
 
 
 
