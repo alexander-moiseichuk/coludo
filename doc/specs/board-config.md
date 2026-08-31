@@ -104,7 +104,7 @@ identical behaviour every time.
   },
 
   "fins": {
-    "concurrency": 3,
+    "concurrency": 1,
     "limit_multiplier": 1.0,
     "mixer": {
       "neutral_deg": 90,
