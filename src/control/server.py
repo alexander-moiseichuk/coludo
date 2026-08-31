@@ -424,6 +424,15 @@ class Server:
             interval_ms = int(arg)
         except ValueError:
             return 'from %s err badargs log [ms|off]' % client.id
+        """
+        A non-positive interval must be refused, not clamped. `_stream` sleeps `interval_ms / 1000`
+        and asyncio.sleep() does NOT raise on a negative delay -- it returns immediately -- so `log -5`
+        or `log 00` (which the 'off'/'0' test above does not catch, being a string compare) turns the
+        poll loop into a busy spin that hammers the board with `log` commands and starves the hub's
+        event loop. An operator typo should cost an error line, not the link.
+        """
+        if interval_ms <= 0:
+            return 'from %s err badargs log [ms|off] -- interval must be > 0' % client.id
         self.start_stream(client, interval_ms)
         return 'from %s ok %s' % (client.id, json.dumps({'log': 'on', 'interval_ms': interval_ms}))
 

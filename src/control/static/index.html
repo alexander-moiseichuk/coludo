@@ -303,11 +303,11 @@ new EventSource('/events').onmessage = (event) => {
     <tr class="click ${b.online ? 'on' : 'off'} ${notReady(b) ? 'notready' : ''}" data-board="${escAttr(b.id)}">
       <td>${notReady(b) ? `<b class="warn" title="NOT READY: ${b.degraded.join(', ')}">❗</b> ` : ''}${escAttr(b.id)}</td>
       <td><span class="dot">${b.online ? '●' : '○'}</span></td>
-      <td>${b.stage || ''}</td>
+      <td>${escAttr(b.stage || '')}</td>
       <td>${fmtFlight(b)}</td>
       <td>${fmtImu(b)}</td>
-      <td>${b.version || ''}</td>
-      <td>${b.config_id || ''}</td>
+      <td>${escAttr(b.version || '')}</td>
+      <td>${escAttr(b.config_id || '')}</td>
       <td>${fmtUptime(b.uptime)}</td>
       <td>${(b.clock || '').replace('T', ' ')}</td>
       <td><button class="synctime" data-board="${escAttr(b.id)}" title="set the board RTC to the CC clock">sync CC time</button></td>
