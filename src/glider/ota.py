@@ -175,6 +175,15 @@ class Upload:
                 handle.write(data)
         except OSError as error:
             return 'staging write failed: %s' % error
+        """
+        Deliberately NOT fsync'd per chunk. A reset mid-transfer can leave a torn `.ota` on flash whose
+        length looks right and whose digest does not -- but that is already handled downstream: commit()
+        discards on a sha mismatch, a re-`push-begin` truncates the stage, and `push-status` lists
+        orphans for `sweep`. The window is wider than it needs to be and the fix is cheap in principle;
+        it is skipped because this port has NO `os.fsync` (checked on the board: only a global
+        `os.sync()`, which flushes every filesystem, not this handle). Paying a whole-FS sync per chunk
+        to narrow a window the digest already closes is the worse trade.
+        """
         self._digest.update(data)
         self.received += len(data)
         self.next_seq += 1
