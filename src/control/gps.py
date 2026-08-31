@@ -21,9 +21,19 @@ IDEAL_SATELLITES: int = 4  # a 3D fix with this many satellites is the ideal lau
 
 
 def _checksum_ok(sentence: str) -> bool:
-    """Verify the NMEA `*hh` XOR checksum. Sentences without one are tolerated (some emit none)."""
+    """
+    Verify the NMEA `*hh` XOR checksum. A sentence WITHOUT one is REJECTED.
+
+    This matches `glider/gnss.py:_checksum_ok`, which returns False when it finds no `*`, and the two
+    must agree because this parser is not just a display: `assist <board>` turns the fix it produces
+    into `update mission`, i.e. the board's launch position. Tolerating an unverifiable sentence here
+    meant the hub could hand the board a pad coordinate the board's own parser would have thrown away
+    -- the two `position` sources diverging precisely under the noisy serial that makes checksums
+    matter. NMEA 0183 mandates the field; a receiver omitting it is broken or being misread, and
+    finding that out is worth more than a fix nobody can verify.
+    """
     if '*' not in sentence:
-        return True
+        return False
     body, _, checksum = sentence[1:].partition('*')
     got = 0
     for character in body:
