@@ -3,7 +3,8 @@ Live SDP810 readout: verify the governor's pitot BAND against real breath pressu
 
 Prints the tared dynamic pressure, the derived airspeed and the verdict the governor would reach --
 IGNORED below pitot_min_ms (tare noise / a blocked tube), TRUSTED in band, IGNORED above pitot_max_ms
-(a railed cell). Blow into P+ (the RIGHT tube) to drive it through the floor. Ctrl-C / timeout ends it.
+(a railed cell). Blow into P+ -- the barb OPPOSITE the '1'/SCL mark, never identified by left/right
+(see doc/hardware.md) -- to drive it through the band. Ctrl-C / timeout ends it.
 """
 
 import asyncio
@@ -11,6 +12,7 @@ import time
 
 import config_default
 import governor
+import recorder
 import task
 from drivers import sdp810  # noqa: F401 -- registers the driver
 
@@ -20,6 +22,17 @@ class Ctrl:
 
 
 async def main():
+    """
+    The driver PUSHES telemetry on every read, so the Recorder's rings have to exist even though this
+    bench tool has nowhere to send them. Without this the first read raised inside the telemetry path
+    and printed 'sdp810 :: BUG in read path AttributeError(...write...)' -- alarming, and pure harness
+    artifact: at boot `controller.setup()` completes for EVERY task (the recorder included) before
+    `start()` launches any run loop, so a real flight can never push telemetry to an unset recorder.
+    No uart is passed, so the rings fill and DROP -- and telemetry drops raise by this project's error
+    policy, which is correct, not a bug. So the sampling loop below drains them each tick and discards
+    the records: a bench run wants the driver exercised exactly as it is in flight, not a special case.
+    """
+    recorder.Recorder.setup(Ctrl.config)
     cfg = {sensor['name']: sensor for sensor in Ctrl.config['sensors']}['airspeed_sdp810']
     driver = task.ACTIVITIES['sdp810']('airspeed_sdp810', cfg, Ctrl())
     if not await driver.setup():
@@ -27,7 +40,8 @@ async def main():
         return
     flight = {component['name']: component for component in Ctrl.config['components']}['flight']
     band = governor.GovernorConfig(flight)
-    print('pitot band: %.1f .. %.1f m/s   (blow into P+, the RIGHT tube)' % (band.pitot_min_ms, band.pitot_max_ms))
+    print('pitot band: %.1f .. %.1f m/s   (blow P+, the barb opposite the "1"/SCL mark)'
+          % (band.pitot_min_ms, band.pitot_max_ms))
     print('%8s %10s %9s   %s' % ('t', 'q (Pa)', 'v (m/s)', 'governor verdict'))
     runner = asyncio.create_task(driver.run())
     # HOLD the task: fire-and-forget swallowed a crash in run(), and the script then printed zeros
@@ -37,6 +51,7 @@ async def main():
     peak = 0.0
     while time.ticks_diff(time.ticks_ms(), start) < 30000:
         await asyncio.sleep_ms(500)
+        await recorder.Recorder.drain()  # nothing else empties the rings here; a full ring RAISES
         if runner.done():  # run() died -- say so instead of printing zeros that look like a blocked tube
             print('DRIVER STOPPED: the run loop exited. Zeros below would be the CRASH, not the tube.')
             try:

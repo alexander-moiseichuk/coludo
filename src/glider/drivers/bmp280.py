@@ -127,6 +127,31 @@ class Bmp280(task.Task):
         altitude = 0.0 if pressure <= 0.0 else 44330.0 * (1.0 - (pressure / _SEA_LEVEL_PA) ** 0.190294957)
         return altitude, temp_c, pressure
 
+    async def rearm(self) -> None:
+        """
+        Re-apply the mode/filter this driver set at setup, after something reset the part underneath it.
+
+        The ICP-10111's recovery sends an I2C GENERAL-CALL reset, which every device on the bus that
+        honours it obeys -- including this one. Its power-on CTRL_MEAS is 0x00, SLEEP: the chip stops
+        converting and simply returns its last sample forever. So recovering the PRIMARY baro silently
+        disabled its own BACKUP, and the only visible symptom would be an altitude that stopped moving.
+
+        Config is written once in setup() and never again, which is correct while nothing resets the
+        part behind our back. Once something does, "set it once" becomes "set it until someone else
+        clears it".
+
+        Args:
+            (none)
+
+        Returns:
+            None; best-effort -- a part that is still gone fails its next read as before.
+        """
+        try:
+            await self._bus.write(self._addr, _REG_CONFIG, bytes([_CONFIG_FILTER]))
+            await self._bus.write(self._addr, _REG_CTRL_MEAS, bytes([_CTRL_NORMAL]))
+        except Exception as error:
+            recorder.Recorder.log(self.name, 'rearm failed: %r' % error)
+
     async def run(self) -> None:
         while True:
             try:

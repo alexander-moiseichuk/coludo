@@ -9,6 +9,7 @@ writes responses.
 """
 
 import asyncio
+import binascii
 import gc
 import json
 import time
@@ -17,6 +18,7 @@ import cc_protocol as cc
 import config as config_mod
 import databoard
 import inspector
+import ota
 import recorder
 
 try:
@@ -79,6 +81,22 @@ def _readiness(cfg: dict) -> dict:
     if multiplier != 1.0:
         problems['fins.limit_multiplier'] = '%g: a bench derating is still applied' % multiplier
 
+    """
+    A control surface with no driver -- the failure that has actually happened here.
+
+    Mixer.bind() skips a surface whose driver is missing, disabled or failed setup; that fin then holds
+    its last angle while the others fly, costing a third of the control authority. servo_eleron_right
+    died on the bench and TWO full 12-scenario matrix runs completed before anything noticed, and only
+    then because the INA226 rail current happened to be plotted. 7C has no power monitor, so on 7C
+    there would have been no signal at all.
+
+    verify is where an operator asks "is this airframe ready", so it is where the answer belongs.
+    """
+    flight_task = inspector.Inspector.get('flight')
+    unbound = getattr(getattr(flight_task, '_mixer', None), 'missing', None)
+    if unbound:
+        problems['fins'] = 'no driver for ' + ', '.join(unbound) + ' -- reduced control authority'
+
     # No landing zone and no CC-less site to select one from.
     mission = inspector.Inspector.get('mission')
     if mission is not None and mission.zone is None and not mission.sites:
@@ -102,7 +120,19 @@ class Dispatcher:
         self.handlers[command] = fn
 
     async def handle(self, line: str) -> str:
-        msg = cc.parse(line)
+        """
+        Parse one request line and run its handler, answering an error rather than raising.
+
+        cc.parse() is INSIDE the guard because it raises: a malformed `base64:` token (bad padding,
+        non-alphabet characters) throws binascii.Error, and that used to propagate out of handle(),
+        past the read loop, and drop the CC link. One mistyped operator token disconnecting the board
+        is the wrong failure -- the link is how the operator recovers from mistakes, so it must
+        survive them. A garbled line over a lossy field radio does the same thing.
+        """
+        try:
+            msg = cc.parse(line)
+        except Exception as error:
+            return cc.build('err', ['badargs', repr(error)])
         if msg.command is None:
             return None
         handler = self.handlers.get(msg.command)
@@ -354,6 +384,11 @@ def _register_inspection(dispatcher) -> None:
             changed = inspector.Inspector.update(msg.args[0], json.loads(msg.args[1]))
         except KeyError:
             return cc.build('err', ['badargs', 'no object ' + msg.args[0]])
+        except ValueError as error:
+            # A driver refusing a property change must reach the OPERATOR, not the dispatcher's generic
+            # handler. sdp810 refuses a tare before its first frame, and answering `changed: []` looked
+            # like success for the one command whose whole purpose is to change something.
+            return cc.build('err', ['refused', str(error)])
         return cc.build('ok', [json.dumps({'changed': changed})])
 
     async def stats(msg) -> str:
@@ -641,6 +676,173 @@ def _register_streaming(dispatcher) -> None:
     dispatcher.on('tlm', tlm)
 
 
+def _register_ota(dispatcher, ctx) -> None:
+    """push-begin / push / push-commit / push-abort -- carry a module to the board over the link."""
+
+    _upload = ota.Upload()  # one per dispatcher: a board serves a single Control link
+    _GROUND = ('setting', 'done')  # the stages where nothing is flying and a module swap is harmless
+
+    def _grounded() -> str:
+        """
+        Refuse an upload unless the board is on the ground and disarmed.
+
+        Writing the VFS competes with the recorder for the same flash and the same GC-off heap, and an
+        install swaps a module out from under a running import. Neither belongs anywhere near a live
+        flight, and the operator surface makes this reachable at any moment -- so the gate is here, at
+        the entry to every push command, rather than trusted to the person typing.
+
+        Args:
+            (none)
+
+        Returns:
+            The reason the board is not accepting uploads, or None when it is.
+        """
+        if ctx.controller is not None and ctx.controller.armed:
+            return 'board is ARMED -- disarm before pushing a module'
+        stage = ctx.stage()
+        if stage not in _GROUND:
+            return 'stage is %s -- uploads are ground-only (%s)' % (stage, '/'.join(_GROUND))
+        return None
+
+    async def push_begin(msg) -> str:
+        """
+        Open an upload: `push-begin <name> <size> <sha256>`.
+
+        Args:
+            msg - the request; args are the destination filename, the byte count and the hex digest.
+
+        Returns:
+            ok {staging, size} once staging is open; err unsafe when airborne/armed, err badargs
+            when the name, size or digest is not acceptable.
+        """
+        blocked = _grounded()
+        if blocked is not None:
+            return cc.build('err', ['unsafe', blocked])
+        if len(msg.args) < 3:
+            return cc.build('err', ['badargs', 'push-begin <name> <size> <sha256>'])
+        try:
+            size = int(msg.args[1])
+        except ValueError:
+            return cc.build('err', ['badargs', 'size must be an integer'])
+        refused = _upload.begin(msg.args[0], size, msg.args[2])
+        if refused is not None:
+            return cc.build('err', ['badargs', refused])
+        return cc.build('ok', [json.dumps({'staging': msg.args[0], 'size': size})])
+
+    async def push(msg) -> str:
+        """
+        Append one chunk: `push <seq> <base64>`.
+
+        Base64 with the PADDING STRIPPED, and deliberately not the protocol's `base64:` token. Both
+        halves of that path break on binary: cc_protocol.decode() finishes with a utf-8 `.decode()`,
+        which fails outright on the bytes above 0x7f that make up most of a compiled module. Sent bare
+        instead, the alphabet is already safe -- `+` and `/` are both in the protocol's safe set -- with
+        the single exception of `=`, which parse() would read as a key=value separator and split the
+        payload in half. So the sender strips it and the padding is restored here, which is exact:
+        base64 length is fully determined by the byte count.
+
+        Args:
+            msg - the request; args are the chunk index and the unpadded base64 payload.
+
+        Returns:
+            ok {received, size}; err badargs on a malformed, out-of-order or overrunning chunk.
+        """
+        blocked = _grounded()
+        if blocked is not None:
+            return cc.build('err', ['unsafe', blocked])
+        if len(msg.args) < 2:
+            return cc.build('err', ['badargs', 'push <seq> <base64>'])
+        try:
+            seq = int(msg.args[0])
+        except ValueError:
+            return cc.build('err', ['badargs', 'seq must be an integer'])
+        token = msg.args[1]
+        try:
+            payload = binascii.a2b_base64(token + '=' * (-len(token) % 4))
+        except Exception:
+            return cc.build('err', ['badargs', 'payload is not valid base64'])
+        refused = _upload.chunk(seq, payload)
+        if refused is not None:
+            return cc.build('err', ['badargs', refused])
+        return cc.build('ok', [json.dumps({'received': _upload.received, 'size': _upload.size})])
+
+    async def push_commit(msg) -> str:
+        """
+        Verify the staged file and install it: `push-commit [path] [sha256]`.
+
+        The path and digest are optional so the command stays typeable by hand, but when the sender
+        supplies them they must match the upload that is open -- so a commit aimed at the wrong
+        transfer is an error rather than an install of whatever happens to be staged.
+
+        Args:
+            msg - the request; args, when present, are the destination path and its digest.
+
+        Returns:
+            ok with the install info (including reboot_required); err badargs when the transfer was
+            incomplete or the digest did not match -- in which case NOTHING was installed and the
+            staging file was discarded.
+        """
+        blocked = _grounded()
+        if blocked is not None:
+            return cc.build('err', ['unsafe', blocked])
+        path = msg.args[0] if msg.args else None
+        sha = msg.args[1] if len(msg.args) > 1 else None
+        try:
+            info, refused = _upload.commit(path, sha)
+        except Exception as error:  # a VFS that is full or read-only surfaces here, not as a crash
+            return cc.build('err', ['badargs', 'install failed: %r' % error])
+        if refused is not None:
+            return cc.build('err', ['badargs', refused])
+        return cc.build('ok', [json.dumps(info)])
+
+    async def push_abort(msg) -> str:
+        """
+        Throw away a staged upload: `push-abort [path]`.
+
+        With no argument this drops the upload held in memory along with its staging file. With a
+        path it removes that staging file DIRECTLY, whether or not an upload is open -- which is the
+        only way to clear a `.ota` orphaned by a reboot mid-push, the usual way a transfer goes stale.
+        After a restart there is no in-memory upload for the no-argument form to find, while the file
+        is still on the flash, and the board has no shell to remove it with.
+
+        Args:
+            msg - the request; args[0], when present, is the path whose staging to remove.
+
+        Returns:
+            ok {aborted} or {swept}; err badargs when the path is unsafe or has no staging file.
+        """
+        if msg.args:
+            refused = ota.sweep(msg.args[0])
+            if refused is not None:
+                return cc.build('err', ['badargs', refused])
+            return cc.build('ok', [json.dumps({'swept': msg.args[0]})])
+        _upload.discard()
+        return cc.build('ok', [json.dumps({'aborted': True})])
+
+    async def push_status(_unused_msg) -> str:
+        """
+        What is staged right now, plus any ORPHANED staging files.
+
+        The orphan list is the discoverable half of `push-abort <path>`: on a board with no shell, a
+        leftover `.ota` that cannot be listed is one that will never be removed.
+
+        Args:
+            msg - the request (unused).
+
+        Returns:
+            ok with the in-progress upload and the orphaned staging paths.
+        """
+        status = _upload.status()
+        status['orphans'] = ota.orphans()
+        return cc.build('ok', [json.dumps(status)])
+
+    dispatcher.on('push-begin', push_begin)
+    dispatcher.on('push', push)
+    dispatcher.on('push-commit', push_commit)
+    dispatcher.on('push-abort', push_abort)
+    dispatcher.on('push-status', push_status)
+
+
 def _register_system(dispatcher, ctx) -> None:
     """reboot -- restart the board (delayed so the `ok` reply flushes before the reset)."""
 
@@ -683,5 +885,6 @@ def create_dispatcher(cfg: dict, controller=None, on_reboot=None,
     _register_config(dispatcher, ctx)
     _register_diagnostics(dispatcher, ctx)
     _register_streaming(dispatcher)
+    _register_ota(dispatcher, ctx)
     _register_system(dispatcher, ctx)
     return dispatcher

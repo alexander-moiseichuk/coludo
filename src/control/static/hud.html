@@ -1,0 +1,217 @@
+<!doctype html>
+<!--
+  Coludo walk-test HUD (findings §27.19).
+
+  field_test.md phases 3-5 are "carry the glider, watch the fins react to attitude and the zone
+  bearing" -- a manual eyeball-and-tick loop, while CC was already streaming every number needed to
+  SEE it. This is that view: one glanceable page for the operator holding the airframe.
+
+  Deliberately self-contained -- no CDN, no fonts, no libraries. The field has no internet, and a HUD
+  that needs one is a HUD that does not work where it is used. Same rule the dashboard follows.
+  High contrast + big type because it is read outdoors at arm's length, in sun.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Coludo — walk-test HUD</title>
+<style>
+  :root {
+    --bg: #0b0f14; --panel: #151c25; --line: #2b3644; --dim: #7c8ba0;
+    --ok: #35d07f; --warn: #ffb020; --bad: #ff4d4f; --live: #4da3ff; --text: #eaf0f7;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  header { display: flex; align-items: center; gap: 14px; padding: 10px 16px;
+           border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+  header h1 { font-size: 16px; margin: 0; letter-spacing: .04em; text-transform: uppercase; color: var(--dim); }
+  select { background: var(--panel); color: var(--text); border: 1px solid var(--line);
+           border-radius: 6px; padding: 6px 10px; font-size: 15px; }
+  .pill { padding: 5px 12px; border-radius: 999px; font-weight: 700; font-size: 15px;
+          border: 1px solid var(--line); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); gap: 12px; padding: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; }
+  .card h2 { margin: 0 0 8px; font-size: 12px; letter-spacing: .14em; text-transform: uppercase; color: var(--dim); }
+  .big { font-size: 42px; font-weight: 700; line-height: 1; font-variant-numeric: tabular-nums; }
+  .unit { font-size: 15px; color: var(--dim); font-weight: 400; }
+  .row { display: flex; justify-content: space-between; padding: 3px 0; font-variant-numeric: tabular-nums; }
+  .row span:first-child { color: var(--dim); }
+  canvas { display: block; width: 100%; height: 150px; }
+  .bar { height: 22px; background: #0d131a; border: 1px solid var(--line); border-radius: 4px;
+         position: relative; margin: 5px 0 9px; }
+  .bar i { position: absolute; top: 2px; bottom: 2px; background: var(--live); border-radius: 2px; }
+  .bar b { position: absolute; top: -1px; bottom: -1px; width: 2px; background: var(--dim); left: 50%; }
+  .stale { opacity: .35; }
+  footer { padding: 8px 16px; color: var(--dim); font-size: 12px; border-top: 1px solid var(--line); }
+</style>
+
+<header>
+  <h1>Walk-test HUD</h1>
+  <select id="board"></select>
+  <span class="pill" id="stage">—</span>
+  <span class="pill" id="armed">—</span>
+  <span class="pill" id="active">—</span>
+  <span class="pill" id="degraded" style="display:none"></span>
+</header>
+
+<div class="grid">
+  <div class="card">
+    <h2>Attitude</h2>
+    <canvas id="horizon" width="420" height="150"></canvas>
+    <div class="row"><span>heading</span><b id="hdg">—</b></div>
+    <div class="row"><span>roll</span><b id="roll">—</b></div>
+    <div class="row"><span>pitch</span><b id="pitch">—</b></div>
+  </div>
+
+  <div class="card">
+    <h2>Fins — commanded</h2>
+    <div id="fins"></div>
+    <div class="row"><span>fin cap (authority)</span><b id="cap">—</b></div>
+  </div>
+
+  <div class="card">
+    <h2>Airspeed</h2>
+    <div class="big"><span id="airspeed">—</span><span class="unit"> m/s</span></div>
+    <div class="row"><span>wind</span><b id="wind">—</b></div>
+    <div class="row"><span>AGL</span><b id="agl">—</b></div>
+  </div>
+
+  <div class="card">
+    <h2>Landing zone</h2>
+    <div class="big"><span id="hdgerr">—</span><span class="unit">° to steer</span></div>
+    <div class="row"><span>reachability</span><b id="reach">—</b></div>
+    <div class="row"><span>min turn radius</span><b id="rmin">—</b></div>
+  </div>
+
+  <div class="card">
+    <h2>IMU calibration</h2>
+    <div class="row"><span>sys / gyr / acc / mag</span><b id="imucal">—</b></div>
+    <div class="row"><span>fix</span><b id="fix">—</b></div>
+    <div class="row"><span>uptime</span><b id="uptime">—</b></div>
+  </div>
+</div>
+
+<footer id="status">connecting…</footer>
+
+<script>
+'use strict';
+const $ = (id) => document.getElementById(id);
+let rows = [], selected = null, lastSeen = 0;
+
+function paintPill(el, text, colour) {
+  el.textContent = text;
+  el.style.color = colour;
+  el.style.borderColor = colour;
+}
+
+function horizon(roll, pitch) {
+  const c = $('horizon'), g = c.getContext('2d');
+  const w = c.width, h = c.height;
+  g.save();
+  g.clearRect(0, 0, w, h);
+  g.beginPath(); g.rect(0, 0, w, h); g.clip();
+  g.translate(w / 2, h / 2);
+  g.rotate(-(roll || 0) * Math.PI / 180);
+  const drop = (pitch || 0) * 2.2;              // px per degree of pitch
+  g.fillStyle = '#2d6cb5'; g.fillRect(-w, -h + drop, w * 2, h);          // sky
+  g.fillStyle = '#6b4a2a'; g.fillRect(-w, drop, w * 2, h);               // ground
+  g.strokeStyle = '#eaf0f7'; g.lineWidth = 2;
+  g.beginPath(); g.moveTo(-w, drop); g.lineTo(w, drop); g.stroke();      // horizon line
+  g.restore();
+  g.strokeStyle = '#ffb020'; g.lineWidth = 3;                            // fixed aircraft reference
+  g.beginPath();
+  g.moveTo(w / 2 - 46, h / 2); g.lineTo(w / 2 - 14, h / 2);
+  g.moveTo(w / 2 + 14, h / 2); g.lineTo(w / 2 + 46, h / 2);
+  g.moveTo(w / 2, h / 2 - 3);  g.lineTo(w / 2, h / 2 + 3);
+  g.stroke();
+}
+
+function fins(map) {
+  const host = $('fins');
+  const names = Object.keys(map || {});
+  if (!names.length) { host.textContent = '—'; return; }
+  if (host.children.length !== names.length * 2) {
+    host.innerHTML = names.map((n) =>
+      `<div class="row"><span>${n}</span><b id="fv-${n}">—</b></div>
+       <div class="bar"><b></b><i id="fb-${n}"></i></div>`).join('');
+  }
+  names.forEach((n) => {
+    const deg = map[n];                     // servo angle; 90 = neutral, +/-45 is the usable throw
+    const frac = Math.max(0, Math.min(1, (deg - 45) / 90));
+    const bar = $(`fb-${n}`), val = $(`fv-${n}`);
+    if (!bar) return;
+    const mid = 50, pos = frac * 100;
+    bar.style.left = Math.min(mid, pos) + '%';
+    bar.style.width = Math.abs(pos - mid) + '%';
+    val.textContent = `${deg}°`;
+  });
+}
+
+function render() {
+  const board = rows.find((r) => r.id === selected) || rows[0];
+  if (!board) { $('status').textContent = 'no boards connected'; return; }
+  const flight = board.flight || {};
+  const att = flight.attitude || {};
+  const wind = flight.wind || {};
+
+  paintPill($('stage'), (board.stage || '—').toUpperCase(),
+            board.stage === 'gliding' ? 'var(--ok)' : 'var(--live)');
+  paintPill($('armed'), board.armed ? 'ARMED' : 'disarmed',
+            board.armed ? 'var(--bad)' : 'var(--dim)');
+  paintPill($('active'), flight.active ? 'LOOP ENGAGED' : 'loop idle',
+            flight.active ? 'var(--ok)' : 'var(--dim)');
+  const deg = $('degraded');
+  if (board.degraded) { deg.style.display = ''; paintPill(deg, String(board.degraded), 'var(--warn)'); }
+  else { deg.style.display = 'none'; }
+
+  horizon(att.roll, att.pitch);
+  $('hdg').textContent = att.heading != null ? `${att.heading}°` : '—';
+  $('roll').textContent = att.roll != null ? `${att.roll}°` : '—';
+  $('pitch').textContent = att.pitch != null ? `${att.pitch}°` : '—';
+
+  fins(flight.fins);
+  $('cap').textContent = flight.fin_cap != null ? `±${flight.fin_cap}°` : '—';
+  $('airspeed').textContent = flight.airspeed != null ? flight.airspeed.toFixed(1) : '—';
+  $('wind').textContent = wind.speed != null ? `${wind.speed} m/s from ${wind.from}°` : '—';
+  $('agl').textContent = board.agl != null ? `${board.agl} m` : '—';
+  $('hdgerr').textContent = flight.heading_error != null ? flight.heading_error : '—';
+  $('reach').textContent = flight.reach != null ? flight.reach : '—';
+  $('rmin').textContent = flight.r_min_m != null ? `${flight.r_min_m} m` : '—';
+  const cal = board.imu_calibration;
+  $('imucal').textContent = cal ? (Array.isArray(cal) ? cal.join(' / ') : String(cal)) : '—';
+  $('fix').textContent = board.position ? board.position.map((v) => v.toFixed(5)).join(', ') : 'no fix';
+  $('uptime').textContent = board.uptime != null ? `${board.uptime} s` : '—';
+
+  const age = (Date.now() - lastSeen) / 1000;
+  document.body.classList.toggle('stale', age > 5);
+  $('status').textContent = age > 5
+    ? `STALE — no update for ${age.toFixed(0)} s (board silent or link down)`
+    : `live — ${board.id} · firmware ${board.version || '?'} · updated ${age.toFixed(1)} s ago`;
+}
+
+function boards(list) {
+  rows = list || [];
+  lastSeen = Date.now();
+  const picker = $('board');
+  const ids = rows.map((r) => r.id).join(',');
+  if (picker.dataset.ids !== ids) {                 // only rebuild when the roster changes
+    picker.dataset.ids = ids;
+    picker.innerHTML = rows.map((r) => `<option value="${r.id}">${r.id}</option>`).join('');
+    if (rows.length && !rows.some((r) => r.id === selected)) selected = rows[0].id;
+    picker.value = selected || '';
+  }
+  render();
+}
+
+$('board').addEventListener('change', (e) => { selected = e.target.value; render(); });
+
+// SSE is the live path (same feed the dashboard uses); the poll is the fallback when it drops.
+new EventSource('/events').onmessage = (event) => {
+  try { boards(JSON.parse(event.data)); } catch (err) { /* keep the last good frame */ }
+};
+async function poll() {
+  try { boards(await (await fetch('/api/boards')).json()); } catch (err) { render(); }
+}
+poll();
+setInterval(poll, 2000);
+setInterval(render, 500);        // keep the staleness clock honest even with no new data
+</script>

@@ -75,6 +75,19 @@ class WindEstimator(inspector.Inspectable):
         heading_r = math.radians(heading)
         wind_e = ground_speed * math.sin(course_r) - airspeed * math.sin(heading_r)
         wind_n = ground_speed * math.cos(course_r) - airspeed * math.cos(heading_r)
+        """
+        Reject NON-FINITE before the envelope test, because the envelope test cannot see them.
+
+        Every comparison against NaN is False, so `> max_speed**2` does not reject a NaN -- it admits
+        it. One NaN then enters the EMA and the EMA is NaN for the rest of the flight: components()
+        returns NaN, guidance._reckon advects a NaN position, and dead reckoning is poisoned with no
+        error and no way back, since every subsequent blend is also NaN.
+
+        Cheap to guard and impossible to recover from, which is the trade that makes it worth a branch
+        on this path.
+        """
+        if wind_e != wind_e or wind_n != wind_n:      # NaN != itself; no math import needed here
+            return
         if wind_e * wind_e + wind_n * wind_n > self.max_speed * self.max_speed:
             return  # beyond the physical envelope -> a GNSS jump, not wind: reject (keep the EMA)
         if self._seen:

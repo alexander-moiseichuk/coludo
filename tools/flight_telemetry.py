@@ -12,9 +12,12 @@ stays importable in the test suite; the plotly rendering lives in flight_report.
 
 import re
 
-# the session prefix on each telemetry @tag: YYYYMMDD_HHMMSS, optionally with a _<rand> disambiguator
-# (recorder.session()); both shapes strip down to the bare file name.
-_SESSION = re.compile(r'^\d{8}_\d{6}(?:_\d+)?_')
+# The date/time every session tag opens with. What FOLLOWS it varies by firmware era and config: a
+# 6-digit random the board synthesises, an operator label CC set via `recorder.session`, or -- on the
+# oldest captures, before the disambiguator existed -- nothing at all. Those are the same SHAPE
+# ('taster_imu_bno055.csv' vs 'imu_bno055.csv'), so the extra token is DERIVED FROM THE DATA by
+# _session_tail rather than guessed by pattern.
+_SESSION = re.compile(r'^\d{8}_\d{6}_')
 _SERVO = re.compile(r'^servo_(.+)\.csv$')  # a board's per-servo stream -> the surface name it drives
 
 
@@ -25,6 +28,7 @@ class Stream:
         self.name: str = name  # the file, e.g. 'adxl375.csv' (session prefix stripped)
         self.fields: list = []  # column names after the leading 'uptime'
         self.rows: list = []  # [uptime_us, v1, v2, ...] per row (floats; '' for a missing/blank cell)
+        self.spliced: bool = False  # a second header row appeared -> two boots appended into this file
 
     def column(self, field: str):
         """
@@ -39,9 +43,34 @@ class Stream:
         if field not in self.fields:
             return [], []
         index = self.fields.index(field) + 1  # +1 past the uptime column
+        width = len(self.fields) + 1          # what a COMPLETE row of this stream looks like
         times, values = [], []
         for row in self.rows:
-            if len(row) > index and row[index] != '':
+            """
+            A row whose width does not match the header is TRUNCATED or MERGED, and its boundary cell
+            cannot be trusted -- so the guard is on the row's shape, not just on the cell existing.
+
+            Both failure modes were measured on real captures, and both survive a cell-exists check:
+
+              SHORT -- the record was cut on the wire. `...;4500;-6` is a truncated `-600`, which
+              reads as a perfectly reasonable wrong number.
+
+              LONG -- the newline was lost and the next record ran on, so cells past the header's width
+              belong to a different stream. One capture read airspeed_cms as 1441938442469, which is
+              simply 1441 with the next record's timestamp glued to it.
+
+            A short row is dropped ENTIRELY rather than trimmed to its last cell, and that is the
+            conservative choice on purpose. Trimming assumes the loss was at the tail; if a cell went
+            missing mid-row instead, every later cell shifts left and lands in the wrong column while
+            still parsing cleanly. A real capture showed exactly that -- heading_err reading 255 in a
+            9-cell row of a 14-cell stream, at a position the tail-trim left untouched. There is no way
+            to tell from the row where the loss happened, so no part of it is trustworthy.
+
+            The cost is negligible and was measured: 20 mis-width rows in 1,004,804 across 48 flights.
+            """
+            if len(row) != width:
+                continue                      # see above: a mis-width row is not partially trustworthy
+            if index < len(row) and row[index] != '':
                 times.append(row[0] / 1e6)
                 values.append(row[index])
         return times, values
@@ -175,6 +204,93 @@ def _unwrap(streams: dict, logs: list) -> None:
         previous = stamp + offset
 
 
+def _session_tail(names: list) -> str:
+    """
+    The extra session token shared by every tag in ONE capture, or '' when there is none.
+
+    Args:
+        names - the post-date/time remainders of every tag seen in the capture.
+
+    Returns:
+        The common leading token including its underscore, or '' when there is none.
+    """
+    if not names:
+        return ''
+    if any(_SERVO.match(name) for name in names):
+        """
+        A name that ALREADY parses as a bare 'servo_<surface>.csv' proves there is no tag: with one
+        present those names read '<tag>_servo_yaw.csv' and cannot match. Without this, a capture whose
+        streams happen to share a structural prefix -- a servo-only capture does -- has that prefix
+        mistaken for a session tag, and stripping it breaks the very fin synthesis that depends on it.
+        """
+        return ''
+    heads = {name.split('_', 1)[0] for name in names if '_' in name}
+    if len(heads) != 1:
+        return ''  # streams disagree -> no shared tag
+    head = heads.pop()
+    if '.' in head:
+        return ''  # a tag never contains a dot; this is a lone stream name like 'laser_agl.csv'
+    if head.isdigit():
+        return '%s_' % head  # unambiguous: no stream is named '<digits>_...', so it can only be the tag
+    """
+    A WORD tag ('taster') is shape-identical to a stream's first word ('imu'), so it needs corroborating
+    evidence: EVERY stream must carry it. A single name with no underscore at all ('health.csv') is proof
+    there is no shared tag -- and every real capture has several such streams.
+    """
+    if len(names) >= 2 and all('_' in name for name in names):
+        return '%s_' % head
+    return ''
+
+
+def simulated(streams: dict) -> bool:
+    """
+    Did this capture come from the HITL sim rather than a real flight?
+
+    The sim task records its own `hitl_clock.csv`; nothing on a real flight writes it. The distinction
+    matters because a simulated capture cannot support every kind of analysis: in the sim the pitot
+    reading and the GNSS ground speed are both derived from one body state, so fitting one to the other
+    measures the model rather than the atmosphere. A tool that recommends a HARDWARE setting from that
+    is confidently wrong, and nothing about the output would say so.
+
+    Measuring the sim on purpose is legitimate (it is how glide_polar's accuracy was calibrated), so
+    this reports rather than forbids -- the caller decides whether it is validation or a mistake.
+
+    Args:
+        streams - the parsed {file -> Stream} map.
+
+    Returns:
+        True when the capture carries the sim's own clock stream.
+    """
+    return 'hitl_clock.csv' in streams
+
+
+def spliced(streams: dict) -> list:
+    """
+    The streams that carry more than one recorder session, i.e. two boots appended into one file.
+
+    Args:
+        streams - the parsed {file -> Stream} map.
+
+    Returns:
+        The sorted names of spliced streams; empty when the capture is one clean session.
+    """
+    return sorted(name for name, stream in streams.items() if stream.spliced)
+
+
+_MARKER = re.compile(r'@[0-9]{8}_[0-9]{6}_[A-Za-z0-9]*_?[a-z0-9_]+\.csv@')
+_SPLICED: list = []      # stream names whose line was found spliced, reset per parse()
+
+
+def name_hint(tag: str) -> str:
+    """The stream name from a record tag, for reporting which stream lost a row."""
+    return _SESSION.sub('', tag)
+
+
+def spliced_rows() -> int:
+    """How many spliced lines the LAST parse() split apart (0 on a clean capture)."""
+    return len(_SPLICED)
+
+
 def parse(text: str):
     """
     Parse a raw capture into aligned streams and log lines.
@@ -189,7 +305,13 @@ def parse(text: str):
     """
     streams = {}
     logs = []
-    for raw in text.splitlines():
+    del _SPLICED[:]          # per-parse, so spliced_rows() describes THIS capture
+    lines = text.splitlines()
+    # first pass: learn this capture's session tail before any stream is keyed by it
+    tail = _session_tail(sorted({_SESSION.sub('', line[1:].partition('@')[0])
+                                 for line in (raw.strip() for raw in lines)
+                                 if line.startswith('@') and line[1:].partition('@')[2]}))
+    for raw in lines:
         line = raw.strip()
         if not line:
             continue
@@ -197,13 +319,53 @@ def parse(text: str):
             tag, _, row = line[1:].partition('@')
             if not row:
                 continue
-            name = _SESSION.sub('', tag)  # 'YYYYMMDD_HHMMSS_imu.csv' -> 'imu.csv'
+            """
+            SPLICED LINE -- two records that ran together because the first lost its newline.
+
+            Measured on the real recorder path (board -> UART -> Luckfox -> adb): 20 lines in 1,004,804
+            across 48 flights, so about one in three flights carries one. The first record is TRUNCATED
+            mid-field and the next record's whole `@session_stream@...` text follows it on the same line.
+
+            Left alone this is silently destructive, not merely lossy: the truncated row keeps parsing,
+            and the SECOND record's fields land in the FIRST record's columns. That is where the
+            impossible values come from -- an airspeed of 1.4e12 cm/s and a heading error of 15330 deg,
+            both of which are simply the next stream's numbers read in the wrong place. A tool then
+            treats them as flight data (this class already produced a reported L/D of 64).
+
+            So the line is SPLIT at the second marker and both halves parsed where they belong. The
+            truncated half loses its tail to the short-row guard, which is correct -- that data really
+            is gone -- but nothing is misattributed, and `dropped_spliced` counts them so a capture can
+            say how much it lost rather than looking clean.
+            """
+            marker = _MARKER.search(row)
+            if marker is not None:
+                lines.append('@' + row[marker.start() + 1:])   # re-queue the second record intact
+                row = row[: marker.start()]
+                _SPLICED.append(name_hint(tag))
+                if not row:
+                    continue
+            name = _SESSION.sub('', tag)  # 'YYYYMMDD_HHMMSS_<tail>imu.csv' -> '<tail>imu.csv'
+            if tail and name.startswith(tail):
+                name = name[len(tail):]  # ... -> 'imu.csv'
             stream = streams.get(name)
             if stream is None:
                 stream = streams[name] = Stream(name)
             cells = row.split(';')
-            if not stream.fields and cells[0] == 'uptime':
-                stream.fields = cells[1:]  # the header row
+            if cells[0] == 'uptime':
+                """
+                A header row. A SECOND one in the same stream means two boots wrote the same file --
+                the Luckfox appends, so their rows are now interleaved with uptime restarting midway,
+                and no downstream parsing can separate them. That happens when two sessions land on the
+                same prefix: the old 3-digit random collided about 12 times in 150 unsynced boots, and a
+                stale `recorder.session` in a saved config collides EVERY boot. The corruption used to
+                be invisible here -- the repeat header failed the uptime parse and was dropped silently
+                -- so it is flagged on the stream, and `spliced()` puts it in front of whoever reads the
+                capture. Nothing is thrown away: the rows still parse, they are just not one flight.
+                """
+                if stream.fields:
+                    stream.spliced = True
+                else:
+                    stream.fields = cells[1:]
             else:
                 values = [_number(cell) for cell in cells]
                 try:

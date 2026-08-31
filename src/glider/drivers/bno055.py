@@ -15,6 +15,12 @@ BMP280.
 import asyncio
 import struct
 
+try:
+    from esp32 import NVS
+    _nvs = NVS('coludo')
+except Exception:  # host / no NVS partition -- the profile simply is not persisted
+    _nvs = None
+
 import databoard
 import i2cbus
 import recorder
@@ -41,6 +47,9 @@ _PWR_NORMAL = const(0x00)
 # 50 at the 50 Hz default is ~1 s -- long enough that a still airframe never trips it
 _REG_CALIB_STAT = const(0x35)  # sys[7:6] gyr[5:4] acc[3:2] mag[1:0], 3 = fully calibrated
 _MAG_CALIBRATED = const(3)     # magnetometer level that means the figure-8 is done
+_REG_CALIB_DATA = const(0x55)  # ACC_OFFSET_X_LSB .. MAG_RADIUS_MSB: the fusion's learned profile
+_CALIB_BYTES = const(22)       # that block's length; readable/writable in CONFIG mode ONLY
+_NVS_CALIB = 'bno055_calib'    # NVS key holding it across power cycles
 _OFF_GYR = const(12)  # gyro within the ACC..EUL block (bytes 12..17)
 # |gx|+|gy|+|gz| above this means the part is genuinely ROTATING, so a frozen Euler is a fault
 # and not merely a still airframe. 16 LSB/deg/s, so ~5 deg/s summed across the axes.
@@ -70,6 +79,8 @@ class Bno055(task.Task):
         self._last_euler = None    # fusion-stall detector state (see _fusion_alive)
         self._stalled: bool = False
         self.calibration_state = None  # (sys, gyr, acc, mag) 0..3 each; None until first poll
+        self._converged: bool = False  # LATCH: mag has reached 3 at some point (see _poll_calibration)
+        self._restored: bool = False   # the latch came from NVS rather than a figure-8 this session
         self._calib_due: int = 1  # countdown to the next CALIB_STAT read (see _poll_calibration)
         try:
             if await self._bus.read_chip_id(self._addr, _REG_CHIP_ID) != _CHIP_ID:
@@ -77,6 +88,7 @@ class Bno055(task.Task):
             await self._bus.write(self._addr, _REG_OPR_MODE, bytes([_MODE_CONFIG]))
             await asyncio.sleep_ms(25)  # mode switch settle
             await self._bus.write(self._addr, _REG_PWR_MODE, bytes([_PWR_NORMAL]))
+            await self._restore_profile()  # HERE: the offsets are writable in CONFIG mode only
             await self._bus.write(self._addr, _REG_OPR_MODE, bytes([_MODE_NDOF]))
             await asyncio.sleep_ms(25)  # config -> fusion settle
         except Exception as error:
@@ -181,20 +193,133 @@ class Bno055(task.Task):
         self._calib_due = max(1, 1000 // self._period_ms)
         raw = (await self._bus.read(self._addr, _REG_CALIB_STAT, 1))[0]
         self.calibration_state = (raw >> 6, (raw >> 4) & 3, (raw >> 2) & 3, raw & 3)
+        if not self._converged and self.calibration_state[3] >= _MAG_CALIBRATED:
+            self._converged = True  # LATCHED here and never cleared -- see calibrated()
+            recorder.Recorder.log(self.name, 'magnetometer converged (mag 3)'
+                                             ' -- run `calibrate imu_bno055` to keep it across reboots')
 
     def calibrated(self) -> bool:
-        """True once the MAGNETOMETER is calibrated -- the axis that needs the operator's figure-8."""
-        return self.calibration_state is not None and self.calibration_state[3] >= _MAG_CALIBRATED
+        """
+        Has the magnetometer EVER converged this session (or been restored from a saved profile)?
+
+        Deliberately a latch, not the live register. CALIB_STAT is the chip's confidence in its RECENT
+        magnetometer data, not a record of what it has learned: measured on this bench, mag reaches 3
+        during the operator's figure-8 and falls back to 2 within a minute of the airframe sitting
+        still, while the learned offsets -- and the heading they produce -- are unchanged. Reading it
+        live made the ready gate a coin toss, and an operator who had done the figure-8 correctly was
+        told to do it again. The offsets, once learned, do not un-learn.
+        """
+        return self._converged
 
     def calibration(self) -> str:
         """The figure-8 instruction while NDOF is unconverged, with the live reading folded in; '' once done."""
         if self.calibration_state is None:
             return 'move the airframe in a slow figure-8 (BNO055 calibration not read yet)'
         sys_, gyr, acc, mag = self.calibration_state
-        if mag >= _MAG_CALIBRATED:
-            return ''
+        if self._converged:
+            return ''  # the latch, not `mag` -- see calibrated() for why the live value regresses
         return ('move the airframe in a slow FIGURE-8 until mag reads 3 '
                 '(now sys %d gyr %d acc %d mag %d)' % (sys_, gyr, acc, mag))
+
+    async def _restore_profile(self) -> None:
+        """
+        Write a previously saved calibration profile back into the chip (CONFIG mode, at setup).
+
+        Without this every power cycle starts the fusion from nothing, and the magnetometer needs the
+        operator's figure-8 again -- on the pad, with the airframe on the rail, which is not a thing
+        anyone can do. The BNO055 keeps its learned offsets in a 22-byte block that is meant to be read
+        out once and written back on each boot; that is the manufacturer's intended flow and the same
+        shape as the pitot tare this board already persists.
+
+        Restoring also SETS the converged latch. The chip rebuilds its own CALIB_STAT confidence over
+        the following seconds, so a boot that has valid offsets would otherwise still report
+        `needs-calibration` and hold the arm gate shut with nothing for the operator to do about it.
+
+        Best-effort by design, exactly like the pitot tare: no NVS, no saved profile, or a bus error
+        simply leaves the chip in its power-on state and the operator is told to do the figure-8.
+
+        Args:
+            (none)
+
+        Returns:
+            None.
+        """
+        if _nvs is None:
+            return
+        buffer = bytearray(_CALIB_BYTES)
+        try:
+            if _nvs.get_blob(_NVS_CALIB, buffer) != _CALIB_BYTES:
+                return  # a short/garbage blob is not a profile -- leave the chip alone
+        except Exception:
+            return  # never saved on this board yet: the figure-8 is still owed
+        try:
+            await self._bus.write(self._addr, _REG_CALIB_DATA, bytes(buffer))
+            self._converged = True
+            self._restored = True
+            # print(), not Recorder.log(): setup runs before the recorder task is up (same reason
+            # as the sdp810 tare restore and this driver's own setup failures).
+            print('bno055 :: calibration profile restored from NVS')
+        except Exception as error:
+            print('bno055 :: calibration restore failed %r' % error)
+
+    async def calibrate(self) -> str:
+        """
+        Persist the chip's learned calibration profile, once the operator's figure-8 has landed.
+
+        Overrides the base no-op, which returned None -- the protocol's SUCCESS -- for a device that
+        could not calibrate itself. `calibrate imu_bno055` therefore answered "ok" however many times
+        it was run, while the magnetometer sat at 0 and nothing on the board had changed. An operator
+        following that reply had no way to learn the command was inert.
+
+        So it now does the half the board CAN do. The figure-8 itself is still physical and still the
+        operator's: until it converges this reports what is outstanding, as a failure string. After it
+        converges this captures the result so no future boot needs one.
+
+        Args:
+            (none)
+
+        Returns:
+            None once the profile is saved; the outstanding figure-8 instruction otherwise.
+        """
+        if not self._converged:
+            return self.calibration()  # honest: nothing was saved, and here is what is still owed
+        if _nvs is None:
+            return 'no NVS partition -- calibration holds for this session only'
+        try:
+            profile = await self._save_profile()
+        except Exception as error:
+            return 'profile read failed: %s' % error
+        try:
+            _nvs.set_blob(_NVS_CALIB, profile)
+            _nvs.commit()
+        except Exception as error:
+            return 'profile persist failed: %s' % error
+        recorder.Recorder.log(self.name, 'calibration profile saved (%d bytes) -- survives power cycles'
+                                         % len(profile))
+        return None
+
+    async def _save_profile(self) -> bytes:
+        """
+        Read the 22-byte calibration block, which the chip exposes in CONFIG mode ONLY.
+
+        Fusion stops for the round trip, so attitude pauses for ~50 ms. That is why this is on the
+        operator command and not on the poll path: it is a ground action, and the run loop must never
+        drop the attitude channel to bookkeep. NDOF is restored in `finally` so a failed read cannot
+        leave the part parked in CONFIG with the fusion off and the channel silently frozen.
+
+        Args:
+            (none)
+
+        Returns:
+            The profile bytes; raises on a bus error (the caller reports it).
+        """
+        try:
+            await self._bus.write(self._addr, _REG_OPR_MODE, bytes([_MODE_CONFIG]))
+            await asyncio.sleep_ms(25)  # fusion -> config settle
+            return bytes(await self._bus.read(self._addr, _REG_CALIB_DATA, _CALIB_BYTES))
+        finally:
+            await self._bus.write(self._addr, _REG_OPR_MODE, bytes([_MODE_NDOF]))
+            await asyncio.sleep_ms(25)  # config -> fusion settle
 
     async def run(self) -> None:
         while True:
@@ -282,6 +407,7 @@ class Bno055(task.Task):
         # the operator must see a WITHHELD attitude: the channel simply going quiet looks like a
         # missing sensor, and this says the part is alive with a dead fusion core
         status['fusion_stalled'] = self._stalled
-        status['calibration'] = self.calibration_state  # (sys, gyr, acc, mag)
-        status['calibrated'] = self.calibrated()
+        status['calibration'] = self.calibration_state  # (sys, gyr, acc, mag), the LIVE register
+        status['calibrated'] = self.calibrated()        # the latch -- regularly disagrees with mag
+        status['calibration_restored'] = self._restored  # latched from NVS, not from a figure-8 here
         return status

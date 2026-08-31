@@ -59,7 +59,7 @@ The GC policy above is implemented in `tasks/sequencer.py`, gated behind the sta
   pause at the end. GC is held off through the flare and the collect is paid only once stopped.
 
 Disabling GC for the entire flight is only safe because the hot paths are near-zero-alloc: the mixer
-pre-resolves its surfaces and rewrites a shared output dict (, ~0 bytes/call), and the flight loop
+pre-resolves its surfaces and rewrites a shared output dict (~0 bytes/call), and the flight loop
 caches the landing-zone steering heading at GPS cadence instead of running `navigation.steer()` trig
 (~174 µs) every 100 Hz step. The **PID is fixed-point** (`pid.py`): every MicroPython float `*`/`+`/`/`
 boxes a heap float, so the old float PID leaked a **measured 176 bytes/step** — ×3 axes ×100 Hz ≈
@@ -212,7 +212,7 @@ Upon electronic initialization, the following sequential operations are executed
 * **Calibration:** The system zeroes out the altimeter, digital compass, accelerometer, and gyroscope while performing a full deflection check of the fin servos.
 * **Network Connectivity:** The board joins the Control Center's Wi-Fi network as a **station** (see [`board-config.md`](board-config.md)) and establishes a connection with the ground control station (PC) to facilitate remote diagnostics and real-time monitoring.
 * **Recorder Link:** If the Recorder module is present, the UART telemetry/log sink is opened (the controller has no local SD card; the Recorder owns video and storage).
-* **GNSS Lock:** The GPS module begins polling at 1 Hz to acquire a multi-satellite 3D fix. The coordinates of the target landing zone must fall within a 200-meter threshold vector relative to the launch point. System time is automatically synchronized to the GPS atomic clock.
+* **GNSS Lock:** The GPS module runs at its configured rate (10 Hz) from setup and acquires a multi-satellite 3D fix. The coordinates of the target landing zone must fall within a 200-meter threshold vector relative to the launch point. The board clock is NOT set from GNSS: it has no battery-backed RTC, and **CC sets the time over the link** (`update mission base64:{"epoch":...}`, see `mission.py`).
 * **Validation:** The Flight Controller polls all subsystems. If all validation gates pass, the LED status changes to a "Ready" heartbeat pattern (100ms ON / 900ms OFF).
 * **Staging:** The vehicle is cleared to be mounted vertically on the launch rail.
 
@@ -333,7 +333,7 @@ So **torque is never the binding constraint** — the plastic-gear SG90, direct-
 
 The Boosting phase spans engine ignition through booster separation. While a zero-delay motor (like an F15-0) would trigger instantly, the operational profile utilizes motors featuring a built-in 4–6 second delay tracking element to coast cleanly to apogee:
 * **Attitude Maintenance:** The airframe occupies a vertical stance on the launching rail. The Flight Controller dynamically monitors the pitch and roll axes to maintain a trajectory perpendicular to the local horizon.
-* **GNSS Acceleration:** Upon detecting launch rail departure, the GPS module is programmatically escalated to a high-speed update mode (5 Hz or 10 Hz) to maximize spatial resolution during high-velocity ascent.
+* **GNSS rate:** unchanged at launch. The receiver already runs at 10 Hz from setup, so there is no escalation step to fail at the moment the glider leaves the rail.
 * **Dynamic Stabilization:** The Flight Controller actively manipulates the control surfaces to counteract wind shear and aerodynamic instability.
 * **Separation Matrix:** At peak altitude, the motor's integrated black powder ejection charge fires, pressurizing the interior of the booster body tube. This pressure forces the glider upward and out of the booster. During the boosting phase, the glider’s wingtips are nested inside the booster's main body tube to hold them securely folded against aerodynamic drag. As the glider is pushed clear of the airframe, tension from rubber bands anchored at the front of the airplane automatically pulls the wings outward into their locked, deployed flight configuration. Concurrently, a dedicated separation loop—monitored via a physical pressure switch or a breakaway wire pulled from a flight computer socket—flags the physical separation event, outputting a digital logic change to instantly transition the software into Gliding mode.
 
@@ -407,9 +407,15 @@ altitude runs out.
   CIRCLE TANGENT plus an inward correction (`bearing_to_centre + 90° − gain·(distance − R)`,
   R = 30 m, gain 3), so the glider CAPTURES a constant-radius orbit around the centre instead of
   bang-banging between overfly and U-turn (the old point-steer law swung 184 m racetrack legs and
-  landed on phase luck). The ~26° orbit bank sits inside the cruise `bank_limit`; altitude bleeds
-  through the turn at the induced-drag rate — this IS objective #1's energy management. R must not
-  be set below the cruise-bank minimum radius (~34 m at 30°) or the orbit destabilizes.
+  landed on phase luck). The orbit bank sits inside the cruise `bank_limit`; altitude bleeds
+  through the turn at the induced-drag rate — this IS objective #1's energy management. R must not be
+  set below the cruise-bank minimum radius `R_min = v²/(g·tan φ)`, or the law commands a circle
+  tighter than the airframe can fly and the heading controller saturates into a limit cycle. At the
+  shipped `bank_limit` **45°** and the measured 15.6 m/s that floor is **~25 m**, so `R = 30 m` clears
+  it by only ~5 m — the precatapult study flagged the radius as the next binding limit, ahead of bank.
+  (This paragraph previously quoted a ~34 m floor derived from a 30° `bank_limit` that no longer
+  ships. At 30° the true floor is ~43 m, which the recommended R = 30 m violates outright — that is
+  exactly the saturation that cost the first in-zone landings until the bank was raised.)
 * **Endgame spiral** (below `endgame_alt_m` = 50 m): the loiter radius scales with the remaining
   altitude fraction, collapsing the orbit onto the centre exactly as the energy runs out, with the
   full `land_bank_limit` 45° available (`land_bank_gain` 3.0 — at 1.5 the rotating-target P-loop
@@ -453,11 +459,28 @@ Following booster separation, the Gliding phase executes, maneuvering the aircra
 
 ## Landing
 
-The Pre-Landing sequence triggers when the glider drops to 4-12 meters AGL (Above Ground Level) relative to the launch pad elevation and speed is vertical speed < −1.5 m/s and roll < 10°. The priority shifts from destination tracking to structural preservation:
-* **Attitude Lock:** The flight surfaces lock into a straight-and-level attitude glide. All aggressive rolling, pitching, or yawing maneuvers are suppressed to ensure clean underbelly contact with the ground.
-* **Data Logging Surge:** To capture maximum high-resolution structural and aerodynamic impact data, the telemetry and multimedia flush rates are boosted from 1 Hz to 10 Hz.
-* **Touchdown Detection:** Ground impact is verified when horizontal/vertical velocities decay to near-zero margins and barometric altitude output stabilizes completely.
-* **De-initialization:** Following a 5-second confirmation window of absolute silence, the flight is officially flagged as completed. All open data streams are flushed to the Recorder over UART (the controller has no local filesystem to unmount), and the controller puts the hardware into a low-power state via the ESP32 `machine.deepsleep()` API (the earlier `pyb.stop()`/`pyb.standby()` calls are pyboard-only and do not apply to the ESP32 port).
+GLIDING -> LANDING fires on **height alone**: the AGL drops below `land_agl_m` (**5.0 m** by default)
+and STAYS there for `land_ms` (**300 ms**). The dwell is what makes it safe -- a single low sample never
+flares, and a reading that rises back or is lost resets the timer.
+
+* **Height source:** the VL53L4CX laser is primary, and it is read with `read()` and gated on the
+  SOURCE being fresh. That gate is load-bearing, not tidiness: the laser reaches only ~4 m, so the
+  channel is legitimately stale for most of a flight, and an extrapolated value once fired
+  `landing; agl -9.6m` **0.38 s after apogee at 274 m**, ending a flight under control. With no fresh
+  laser reading the barometric elevation is the fallback.
+* **There is NO attitude lock.** LANDING shares the GLIDING steering law -- `guidance` dispatches both
+  stages to the same `_steer` -- so the glider keeps steering for the zone all the way down. Nothing
+  suppresses roll or pitch, and no vertical-speed or roll term takes part in the trigger.
+* **No telemetry rate change.** The recorder runs at its configured global rate throughout; there is no
+  flush-rate surge at LANDING.
+* **LANDING -> DONE:** |accel| back to ~1 g, sustained `ground_ms` -- stopped on the ground.
+* **At DONE:** garbage collection is re-enabled and a collect runs (it was disabled at launch), and the
+  fins return to neutral. The controller does **not** enter a low-power state: there is no
+  `machine.deepsleep()` call anywhere in the firmware, and the board stays awake so the recovery crew
+  can reach it over CC.
+
+> The thresholds above are the config defaults (`land_agl_m`, `land_ms`, `ground_ms` in the
+> `sequencer` section); `src/glider/tasks/sequencer.py` is the source of truth for the logic.
 
 Horizontally (longitude) stretched landing zone
 ```
@@ -847,25 +870,34 @@ The bno055 geomagnetic sensor extracts absolute magnetic heading vectors. It ser
 
 ## Navigation
 
-Horizontal position tracking uses an ATGM336H-5N-31 high-sensitivity GNSS array. The module operates in a low-power 1 Hz mode during ground staging. Upon detecting vertical launch acceleration, the controller forces a command down the serial line to escalate the update frequency to a high-speed 10 Hz rate.
+Horizontal position tracking uses an ATGM336H-5N-31 high-sensitivity GNSS array. It is configured **once, at setup**, to the rate in the config (`gnss.hz`, **10 Hz**) and stays there for the whole flight. There is no low-power ground mode and no launch-triggered escalation: the driver's `_configure()` is called from `Gnss.setup()` and from nowhere else, so there is no command to get wrong at the one moment the glider is leaving the rail.
 
-The standard serial driver structure must be modified to use Interrupt Service Routines (ISR) to handle the higher data rates supported by the core AT6558 chip architecture, replacing standard polling examples found in open-source references:
+The driver POLLS the UART from its async loop; it does not use an ISR. At 10 Hz RMC the link carries
+~700 B/s against 960 available, so there is no rate pressure to justify interrupt handling -- and an
+ISR that allocates is a liability on a board that runs with GC off in flight. Open-source references
+consulted:
 
 - PermatechCA ATGM336H Library
 - Liuyufanlyf MaixPy GNSS Driver
 - Albresky ATGM336H Driver Repository
 
-To scale the data processing up to the 10 Hz threshold without overflowing the serial buffers, the system follows standard NMEA high-rate command structures:
+**The link stays at 9600 baud.** It is not escalated, and it does not need to be: the driver asks for
+RMC at `hz` (position) plus GGA at only ~1 Hz (altitude, a baro backup), which is ~700 B/s + ~70 B/s
+against 960 B/s available. Trading a working link for headroom nothing uses would be a bad bargain --
+a baud change is the kind of thing that half-works and leaves the receiver mute.
 
-- The serial interface speed (Baud Rate) escalates from 9600 to 115200 bits per second via a $PCAS01,5*19\r\n control string.
+What the driver actually sends at setup (`src/glider/drivers/atgm336h.py`), PCAS being the CASIC
+command set with a PMTK pair as the fallback for modules that speak MTK:
 
-- Unnecessary NMEA sentences (such as GSV or GSA) are suppressed using the $PCAS03 mask to minimize data packet sizes, leaving only GNGGA and GNRMC strings active.
+```
+$PCAS03,...     # sentence mask: RMC + a decimated GGA, everything else off
+$PCAS02,<ms>    # update period, from `hz` (10 Hz -> 100 ms)
+```
 
-$PCAS10,3*1F<cr><lf>    # Enforces factory cold restart
-$PCAS01,5*19<cr><lf>    # Escalates interface speed to 115200 baud
-$PCAS03,1,0,0,0,1,0,0,0,0,0,,,0,0*02<cr><lf>  # Filters out all sentences except GNGGA and GNRMC
+**Not sent, despite older revisions of this document:** `$PCAS01` (baud escalation to 115200) and
+`$PCAS10` (factory cold restart). A cold restart in particular would throw away the almanac and make
+the next fix slower, which is the opposite of what a launch wants.
 
-- The update rate is shifted to 100ms intervals using the tracking string $PCAS02,100*1E\r\n.
 
 A verified MicroPython initialization snippet handles this handshake sequence.
 
@@ -873,7 +905,7 @@ The Flight Controller continually correlates accelerometer vectors alongside GNS
 
 ## Altimeter
 
-High-resolution altitude tracking uses a Gravity: ICP-10111 Pressure Sensor, selected for its 8.5cm operational accuracy and low 2mA current consumption. Barometric calculations are cross-checked against a secondary onboard BMP280 Digital Pressure Sensor and incoming GNSS elevation metrics.A verified vertical delta $\le 3\text{ meters}$ AGL acts as the absolute trigger to drop the master stage machine from Gliding to Landing mode. Due to low altitude mode not working very well on the barometer the laser range finder is mandatory for safety.
+High-resolution altitude tracking uses a Gravity: ICP-10111 Pressure Sensor, selected for its 8.5cm operational accuracy and low 2mA current consumption. Barometric calculations are cross-checked against a secondary onboard BMP280 Digital Pressure Sensor and incoming GNSS elevation metrics.The GLIDING -> LANDING trigger is the laser AGL below `land_agl_m` (5.0 m default) sustained for `land_ms` -- see [Landing](#landing); the barometer is the FALLBACK height source there, not the trigger. Due to low altitude mode not working very well on the barometer the laser range finder is mandatory for safety.
 
 ## Separation Sensor (Switch or Breakaway Wire)
 

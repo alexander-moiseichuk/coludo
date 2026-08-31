@@ -26,6 +26,14 @@ first powered flight.
 ## Phase 0 — Bench pre-checks (before leaving)
 - [ ] Latest firmware deployed (`tools/deploy.sh`), correct board config; `make test` green
 - [ ] Board boots to **main.py** running (boot log, not a bare REPL) and connects to CC
+- [ ] **On a NEWLY SOLDERED board, run this BEFORE assembly** — it needs only USB, takes ~90 s, and
+      reports the per-device failure reason rather than a bare pass/fail:
+      `mpremote connect $PORT run src/glider/test/diag_devices.py`
+      > Earned the hard way on 2026-08-24: a mis-routed IMU was invisible until a driver tried to talk
+      > to it, by which point the board was built into the airframe and awkward to reach. Read the
+      > result as a GROUP — several devices down together is usually one bus or one connector, not
+      > several faults (BNO055 + BMP280 are one sen0253 module; a whole I²C bus dying at once is a
+      > stuck line, and it can hard-panic the MCU rather than NAK cleanly).
 - [ ] All components **verify/probe green** on CC — no sensor absent/garbage
 - [ ] Fins mechanically free, correct throw; each servo horn on the right spline (re-check after)
 - [ ] Confirm **no motor** and the booster is inert
@@ -43,6 +51,12 @@ first powered flight.
 - [ ] **GNSS:** fix acquired — satellites up, HDOP low; position matches the spot
 - [ ] **Airspeed:** dynamic pressure ≈ 0; do the **pad tare** (CC `update {"zero": true}` on
       `airspeed_sdp810`, glider still) → airspeed reads ~0
+> 💡 **Open the walk-test HUD: `http://<cc-host>:8080/hud`.** It puts the live attitude horizon, the
+> per-fin commanded angles, airspeed, the authority cap, heading-to-zone, wind, AGL and the
+> stage/armed/loop-engaged state on one screen — so phases 3–5 below are *watched* rather than
+> inferred. It is fully offline (no CDN) and dims itself with an age counter if the link goes stale,
+> so a frozen page cannot be mistaken for a live one.
+
 - [ ] **Fins:** disarmed → all at neutral; verify each fin's **zero/trim** via the CC fin-zero UI
       > ⚠️ **Drive servo checks through the firmware (CC / the driver), never raw PWM on one pin.** A
       > servo whose signal line is left FLOATING hunts on its own, so a bench script that drives one fin
@@ -50,16 +64,32 @@ first powered flight.
       > wiring fault that cost real time on 7/25. `sg90.setup()` gives every fin a valid PWM at bring-up,
       > which is why the fault never appears in normal operation. If you must poke a pin directly, hold
       > the other fin pins as **OUTPUT LOW** first.
-- [ ] **Power:** INA226 servo-rail voltage/current sane at idle (no stall/short)
+- [ ] **Power:** INA226 sane at idle. It reads the **battery** (3.3-4.2 V single cell), not the 5 V
+      servo rail -- ~5 V means it is sensing the wrong node. On the bench with the MCU on USB it sees
+      the servos alone, so idle current looks tiny (5-14 mA); on battery it carries the MCU too
 - [ ] **Separation switch:** pads nested → pin reads **HIGH = nested**
 
 ## Phase 3 — Attitude / IMU (pick it up, rotate, tilt)
-- [ ] **CALIBRATE THE BNO055 BEFORE ARMING.** NDOF fusion does not converge without motion, and a
+- [ ] **CALIBRATE THE BNO055 — ONCE PER BOARD.** NDOF fusion does not converge without motion, and a
       glider sits still on the pad — so a perfectly healthy part can reach launch with `sys`/`mag`
-      calibration at 0 and a FROZEN attitude. Move the airframe in a slow figure-8 until
-      `diag_bno_calib.py` shows **mag 3** and the euler bytes changing (took ~1 s on a good part).
-      Check the gyro column reads **> 5 °/s** while you do it — a still sample proves nothing, which
-      is how a working module was once wrongly condemned
+      calibration at 0 and a FROZEN attitude.
+      - **Rotate the airframe, don't just trace a path.** The magnetometer is fitting a sphere to the
+        field vectors it has seen, so what it needs is ORIENTATION DIVERSITY: nose up, nose down,
+        rolled left and right, yawed through a full circle, the 8 traced in a vertical plane as well
+        as a horizontal one. A flat figure-8 with the nose on one heading shows the part almost the
+        same vector throughout and leaves `mag` at 0–1 — this is the usual reason it "won't calibrate".
+      - **Away from steel and magnets** — the rail, a steel bench, speakers, the motor, a laptop.
+        Hard-iron distortion is the thing being measured; calibrating beside a steel table teaches it
+        the table.
+      - Slow and smooth, ~15–30 s, until `mag` reads **3** and the euler bytes change. Check the gyro
+        column reads **> 5 °/s** while you do it — a still sample proves nothing, which is how a
+        working module was once wrongly condemned.
+      - Then **`calibrate imu_bno055`** over CC to save the profile to NVS. It is restored on every
+        later boot, so this is a once-per-board bench job and NOT a pad procedure — which matters,
+        because nobody can figure-8 an airframe that is already on the rail.
+      - `mag` dropping back to 2 afterwards is EXPECTED and no longer means anything: the register is
+        the chip's confidence in its recent data, not what it has learned. The board latches the
+        convergence, so `calibrated` stays true
 - [ ] Pitch nose up / down → **pitch tracks** the right sense; roll L/R → **roll tracks**
 - [ ] Yaw / spin → **heading tracks**; no glitches or freezes on quick moves (gyro rate feeds the PID D-term)
 - [ ] Return to level → attitude returns to ~0/0 and the heading settles
@@ -71,7 +101,8 @@ first powered flight.
 - [ ] In GLIDING, tilt the glider → **fins deflect to counter** the attitude (stabilisation PID) — confirm the **sense is correct** (a nose-up disturbance drives the fins to push it back)
 - [ ] Rotate the glider relative to the landing zone → fins **bias for the bank-to-turn heading** toward the zone
 - [ ] At ~0 airspeed the **fin-authority cap is wide** (low q, safe); confirm the governor isn't clamping hard on the ground
-- [ ] No servo buzz/overheat; INA226 current stays within the servo-rail budget during active tracking
+- [ ] No servo buzz/overheat; INA226 current stays within budget during active tracking (BATTERY-side
+      current, so ~1.6x the servo-rail figure for the same power -- see hardware.md)
 
 ## Phase 5 — GNSS / position + zone guidance (walk the patch)
 - [ ] Set/confirm the **landing zone** in CC (e.g. `assist` hands a launch/zone position → the mission updates)
@@ -88,7 +119,8 @@ phase is one run of it: `mpremote connect $PORT run live_pitot.py` (30 s window)
 - [ ] **At rest** → q sits at the tare floor (**~-0.02 Pa**, ~0.2 m/s equivalent) → verdict **IGNORED
       (below floor)**. A blocked or disconnected tube looks EXACTLY like this, which is why the floor
       exists — a near-zero reading must never reach the estimate
-- [ ] Jog with the **pitot exposed to airflow** (or gently blow the **P+** = RIGHT tube) → **TRUSTED (in
+- [ ] Jog with the **pitot exposed to airflow** (or gently blow **P+** = the barb OPPOSITE the
+      "1"/SCL mark — see hardware.md; do NOT go by left/right) → **TRUSTED (in
       band)**; measured 12–103 Pa → 4.5–13.2 m/s
 - [ ] Confirm the governor's airspeed now tracks the **pitot** (the fin-authority cap tightens as airspeed rises)
 - [ ] Blow **hard** → the cell **rails at ~546 Pa → 30.4 m/s** (a pinned, repeating value) → verdict

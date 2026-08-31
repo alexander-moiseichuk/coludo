@@ -35,7 +35,7 @@ from a board — no async push, no subscriptions, no out-of-band events. The con
   bounded by a timeout (**10 s**, `board.EXCHANGE_TIMEOUT_S`): a wedged board raises rather than
   hanging the hub, so one stuck board never blocks the others.
 - **Data is pulled, not pushed.** The board maintains bounded ring buffers (in PSRAM) for log
-  and telemetry records. CC retrieves slices on demand (`log`, `tel`). The same buffers feed
+  and telemetry records. CC retrieves slices on demand (`log`, `tlm`). The same buffers feed
   the Recorder over UART, so there is one producer and two drains.
 - **"Events" are just log lines.** Since nothing is pushed, notable occurrences (validation
   failures, fallbacks) surface either as the `err` response to the command that caused them,
@@ -125,6 +125,7 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `disarm` | — | `ok {armed:false}` | disable actuation (the control loop holds the fins neutral) |
 | `log` | `<ms>` | `ok {lines:[...]}` | poll-model: lines buffered since the last `log`; re-arm teeing for `ms` (`0` stops) |
 | `tlm` | `<ms>` | `ok {samples:[...]}` | poll-model: telemetry rows buffered since the last `tlm`; re-arm teeing for `ms` (`0` stops) |
+| `bustune` | `<kind> <id> <freq>` | `ok {per-device health}` | retune an i2c/spi bus to `<freq>` Hz in place (no reboot) and report which devices stay healthy — the bench frequency sweep. Never persisted; CC saves the chosen freq to `board.config` |
 | `report` | — | `ok {stage, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
 | `objects` | — | `ok [name, ...]` | names of all `Inspectable` objects (for the `inspect`/`update`/`stats` targets) |
 | `inspect` | `<object>` | `ok {props}` | `Inspectable.inspect()` of a named object |
@@ -137,6 +138,21 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `set-config` | `<name> <json>` | `ok {config_id}` / `err invalid <msg>` | save a named config: `board` validates + replaces the full snapshot (running config unchanged until reboot); `launch` merge-applies the fields into the mission + persists `launch.config` |
 | `reset-config` | — | `ok` | delete `board.config`; next boot uses `config_default.py` |
 | `reboot` | — | `ok` then disconnect | ack, then hard reset → boots from saved config |
+| `push-begin` | `<path> <size> <sha256>` | `ok {staging, size}` / `err unsafe <why>` / `err badargs <why>` | open an upload. `path` is RELATIVE and may name a subdirectory (`drivers/bno055.mpy`) -- most of the firmware lives in `drivers/`, `tasks/`, `test/`. Refused if absolute, if any component is `..` or dot-led, or if the suffix is not `.mpy`/`.py`/`.config`/`.creds`: `open()` follows whatever it is given. Missing parent directories are CREATED, so a push can be the first thing to put a module in a package the running firmware predates. Ground-only -- refused while armed or in any stage but `setting`/`done` |
+| `push` | `<seq> <base64>` | `ok {received, size}` / `err badargs <why>` | append chunk `seq` (from 0), strictly in order, 256 raw bytes per chunk. Bare UNPADDED base64, not the usual `base64:` token -- a `.mpy` is binary and `decode()` finishes with a utf-8 `.decode()` that fails on it. `+` and `/` are already safe characters; only `=` is not, so the sender strips it and the board restores it (length determines it exactly) |
+| `push-commit` | `[path] [sha256]` | `ok {installed, bytes, sha, backup, reboot_required}` / `err badargs <why>` | verify the staged file's SHA-256 and install it atomically, keeping the previous version as `<path>.bak`. `path`/`sha256` are optional (so it stays typeable) but when given must match the open upload, so a commit aimed at the wrong transfer fails instead of installing whatever is staged. A short or mismatched transfer installs NOTHING and DISCARDS the staging file. **Reboot to load it** -- MicroPython holds the old module |
+| `push-abort` | `[path]` | `ok {aborted}` / `ok {swept}` / `err badargs <why>` | no arg: drop the upload held in memory and delete its staging file. With a path: remove that `.ota` DIRECTLY, open upload or not -- the only way to clear staging orphaned by a reboot mid-push, since after a restart there is no in-memory upload to drop and the board has no shell |
+| `push-status` | — | `ok {uploading, received, size, chunks, orphans}` | what is staged, so a reconnecting operator can orient, plus `orphans`: staging files left by transfers that did not survive. A leftover that cannot be listed is one that will never be removed, so this is the discoverable half of `push-abort <path>` |
+
+Module updates (`push-*`) exist because deploying by USB means opening the airframe, which on a launch
+day means unpacking a glider that is ready to fly. The three steps are deliberate: nothing touches the
+live module until the last byte has arrived AND its digest matches, so a link that drops mid-transfer
+leaves an inert `.ota` staging file rather than a half-written module the next boot would import. (`.ota`,
+not `.tmp`: `commons.atomic_write_json` already writes `<path>.tmp` for config and mission saves, and a push
+of `board.config` would collide with the board's own save.) What
+this does NOT do is recover a board whose new module breaks the boot -- staging and the checksum stop a
+CORRUPT file from being installed, but an intact-and-wrong one will import and fail, and that is a USB
+recovery. Push what has been through `make test` on the bench board.
 
 `inspect`/`update`/`stats` address an object by name (`inspect wifi`, `update servo_yaw <json>`);
 the board resolves it from the registry of `Inspectable`s. `update` applies only supported,
@@ -169,8 +185,11 @@ mission object.
 ### Log / telemetry retrieval
 
 `log taster 5000` means "the log records from the **last 5000 ms**." The board keeps a bounded
-ring buffer; if the requested window is older than the buffer holds, it returns what it has and
-sets `"truncated": true`. For continuous tailing, CC polls with a window at least as wide as
+ring buffer; if it overflows during the window, the reply carries how many records were **`dropped`**
+-- `ok {lines:[...], dropped:n}` (and `ok {samples:[...], dropped:n}` for `tlm`). The count matters
+because the tee is best-effort by policy: a full ring discards rather than raising, so a live stream
+with a hole looks exactly like a quiet sensor unless the number is reported. There is no
+`"truncated"` field -- the board has never sent one. For continuous tailing, CC polls with a window at least as wide as
 its poll interval and de-duplicates by record uptime (each record carries its uptime, per the
 `coludo.md` logging format). `tlm` behaves the same way for telemetry rows (`ok {samples:[...]}`).
 
@@ -210,7 +229,11 @@ A first token that is a known board id (or `all`) routes to a board; otherwise i
 | `help` | `from cc ok {commands:[...]}` — all commands; `help <command>` for one |
 | `list` | `from cc ok [{id, online, stage, config_id}]` — connected boards |
 | `select <board>` | set this session's **sticky** target; afterwards a bare `<command>` is routed to it |
-| `who` | `from cc ok {selected, since}` — current selection |
+| `who` | `from cc ok {selected}` — current selection |
+| `cache` | `from cc ok {...}` — a board's cached properties (config/inspect/stats/health) without touching it; defaults to the selected board |
+| `assist` | push the host GPS position into a board's mission (launch-site sync) |
+| `gps` | the host GPS fix; `gps <board>` also shows that board's on-board GNSS for comparison |
+| `bustune <board> <i2c\|spi> <id>` | sweep a sensor bus UP a frequency ladder to its max stable rate |
 
 **Sticky select / broadcast:** after `select taster`, typing `health` is routed as `taster
 health`; an explicit `<board>`/`all` first token overrides it for that line. Control tags every
@@ -234,8 +257,9 @@ from cc ok [{"id":"taster","online":true,"stage":"setting","config_id":"a1b2"},
 > select taster
 from cc ok {"selected":"taster"}
 > health                         (routed as: taster health)
-from taster ok {"temp":54,"mem_free":812000,"load":31,"uptime":90422,
-                 "components":[{"name":"gnss","ok":false},{"name":"baro_icp10111","ok":true}]}
+from taster ok {"temp":54,"mem_free":812000,"uptime":90422,"stage":"setting",
+                 "position":[25.5144,-80.3918],"clock":"2026-08-28T21:00:00","armed":false,
+                 "agl":3.2,"flight":{"airspeed":14.2,"fin_cap":30,"active":true}}
 > inspect wifi
 from taster ok {"ssid":"panda","rssi":-52,"tx_power_dbm":11}
 > all ping
@@ -257,6 +281,13 @@ CC exposes the same capabilities to the browser without the browser ever speakin
 - **`GET /events`** — a **Server-Sent Events** stream of the board list, pushed every heartbeat
   (the live table). SSE is chosen over WebSocket because the live need is server→browser
   streaming, it is plain HTTP (no extra dependency), and browser→board actions are ordinary POSTs.
+- **`GET /hud`** — the walk-test HUD: attitude horizon, per-fin commanded angles, airspeed, fin cap,
+  heading-to-zone, wind and AGL on one glanceable page. Fully offline (no CDN), because the field has
+  no internet.
+- **`GET /logs`** — an SSE feed of the log lines CC is polling from the boards.
+- **`GET /api/board/<id>`**, **`POST /api/log`**, **`POST /api/op`**, **`POST /api/assist`**,
+  **`GET /api/absent`** — the per-board detail, log slice, operator-command bridge, GPS assist push,
+  and the roster's not-currently-connected list.
 - **`POST /api/log`** — body `{board, interval_ms}` (≤ 0 stops); starts/stops the hub's per-board
   log stream from the dashboard, the same toggle as the operator's `<board> log <ms>`.
 - **`GET /logs`** — a **Server-Sent Events** stream of `{board, line}` log lines, pushed as the

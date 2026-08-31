@@ -11,8 +11,11 @@ if/elif.
 
 Host-runnable by construction (tools/virtual_flight.py drives the REAL law): dependencies are
 INJECTED -- the mission (zone/launch_point), the governor (airspeed for the boost rod gate), and
-databoard-style handles (`position.read()` -> ((lat, lon), source, age_ms), `agl.value()` -> m or
-None). Timing comes in as `now_us` from the caller; only commons.ticks_diff touches ticks.
+databoard-style handles, all read with `read()` -> (value, source, age_ms). NOT `value()`: the
+laser agl is out of range for most of a flight, and value() answers a stale channel with an unbounded
+extrapolation -- the failure that once ended a flight at apogee. Gate on the SOURCE.
+
+Timing comes in as `now_us` from the caller; only commons.ticks_diff touches ticks.
 
 Results land in the roll_setpoint/pitch_setpoint (centidegree fixnum) + heading_error (int degrees)
 INSTANCE SLOTS rather than a returned tuple -- decomposed WITHOUT adding a per-step heap allocation
@@ -131,10 +134,18 @@ class GuidanceConfig:
         (which over-ranges a small zone). gain 0 -> rudder-only steering.
         """
         self.bank_gain: float = config.get('nav_bank_gain', 1.5)
-        self.bank_limit: float = config.get('bank_limit', 30)
+        # 45, matching config_default. The fallback was 30 -- the value the 30->45 measured fix
+        # REPLACED, because at 30 deg the turn floor R_min is ~40 m at 15.6 m/s while the loiter law
+        # commands 30 m, so the heading controller saturates into a limit cycle (roll_sp pinned +/-30,
+        # heading_err 112-157 deg). A partial config omitting the key flew that, while `inspect` showed
+        # the shipped 45. Same class as the glide_ratio 3.0/5.5 split.
+        self.bank_limit: float = config.get('bank_limit', 45)
         # final approach / landing: track the strip CENTRELINE with the FULL fin authority to crab
         # the crosswind out -- keep it gliding, not rolling-and-dropping. final_agl 0 -> disabled.
-        self.land_bank_gain: float = config.get('land_bank_gain', 1.5)
+        # 3.0, matching config_default. At the old 1.5 fallback the endgame P-loop saturates near
+        # 25 deg and the spiral freezes at that bank's ~44 m radius -- against the ~20 m R_min the
+        # in-zone miss needs.
+        self.land_bank_gain: float = config.get('land_bank_gain', 3.0)
         self.land_bank_limit: float = config.get('land_bank_limit', 45)
         """
         the ENDGAME band (fly-long objectives, coludo.md "Gliding"): below this ELEVATION the
@@ -205,7 +216,11 @@ class Guidance:
         self._mission = mission  # the landing zone + launch point live here (may be None)
         self._governor = governor  # airspeed estimate -> the boost rod gate
         self._position = position  # injected handle: read() -> ((lat, lon), source, age_ms)
-        self._agl = agl  # injected handle: value() -> height above ground (m) or None
+        # injected handle. READ IT WITH read(), NEVER value(): the laser reaches ~4 m, so this channel
+        # is legitimately stale for most of a flight and value() would answer with an unbounded linear
+        # extrapolation of the last two samples -- confident fiction whose sign is set by noise. That
+        # is what ended a flight at apogee; _steer() below gates on the SOURCE for exactly this reason.
+        self._agl = agl
         self._elevation = elevation  # baro height above the pad (m) -> the endgame band (optional)
         self._wind = wind  # injected WindEstimator: components() -> (east, north) m/s (optional)
         self._reckoned = None  # the last real fix (lat, lon) -- the dead-reckoning SEED, never mutated
@@ -525,7 +540,24 @@ class Guidance:
             self._error_filtered16 = error16  # seed / follow a real change immediately
             return error
         self._error_filtered16 += (error16 - self._error_filtered16) >> shift
-        return self._error_filtered16 // 16
+        """
+        Round the 1/16 state toward ZERO, not toward negative infinity.
+
+        `//` floors, so it rounds a negative state AWAY from zero (-15 // 16 == -1) and a positive one
+        toward it (15 // 16 == 0). On a symmetric oscillation that leaves a persistent one-sided bias
+        in the STEERING command: measured -0.5 deg of steady-state output for a +/-8 deg input whose
+        true mean is zero, independent of which way the oscillation starts. Small, but systematic --
+        it always pushes the same way, so it does not average out over a flight.
+
+        Only the final division needed it. Making the >> shift symmetric as well was measured and
+        changes nothing (still -0.5), and tracking of a CONSTANT error was exact before and stays
+        exact after -- this only affects the case where the error alternates.
+
+        Same class as the pid.py integral ratchet: integer floor division is not symmetric about zero,
+        and every control path that averages a signed quantity has to say which way it rounds.
+        """
+        state = self._error_filtered16
+        return state // 16 if state >= 0 else -((-state) // 16)
 
     def _target_heading(self, heading: float, final: bool, now_us: int,
                         endgame=None) -> float:

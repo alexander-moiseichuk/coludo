@@ -7,19 +7,39 @@
 # Env: PORT (default /dev/ttyACM0); PLOTLY_PY (python with plotly for the HTML reports; default python3).
 set -e
 PORT=${PORT:-/dev/ttyACM0}
-PLY=${PLOTLY_PY:-python3}
+# plotly lives in a pipx venv here, not in the system python. Resolve it ONCE rather than letting
+# every report fail: the render loop used to swallow the failure with `|| true`, so a full 12-flight
+# matrix produced zero HTML reports and still printed "matrix done".
+PLY=${PLOTLY_PY:-}
+if [ -z "$PLY" ]; then
+  for candidate in python3 "$HOME"/.local/share/pipx/venvs/plotly/bin/python; do
+    if command -v "$candidate" >/dev/null 2>&1 && "$candidate" -c 'import plotly' 2>/dev/null; then
+      PLY=$candidate; break
+    fi
+  done
+fi
+[ -z "$PLY" ] && echo "WARNING: no python with plotly found -- HTML reports will be SKIPPED" >&2
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 motor=$1; outdir=${2:-/tmp/hitl/$motor}
 PAD=25.514379,-80.391795
 ZONE=25.514944,-80.392972,25.514583,-80.391111
 SCENARIOS='noise05 noise10 noise25 noise50 noise100 wind00 wind03 wind06 wind09 wind12 corner_spike corner_stress'
 
-mpremote connect "$PORT" cp "$ROOT/tools/hitl_run.py" : >/dev/null 2>&1   # deploy the runner (boardrun retired)
-while read -r name noise wind dir spike; do
+# Deploy the runner. NOT muted: this used to be `>/dev/null 2>&1`, and under `set -e` a wedged CDC
+# killed the whole matrix here with an empty log and exit 1 -- no flights, no message, nothing to read.
+if ! mpremote connect "$PORT" cp "$ROOT/tools/hitl_run.py" : ; then
+  echo "FATAL: cannot upload hitl_run.py to $PORT -- board wedged? try tools/board_unwedge.py" >&2
+  exit 1
+fi
+# The scenario list is fed on FD 3, not stdin, and the flight is given </dev/null.
+# Both halves are needed: `mpremote run` inside hitl_collect.sh reads stdin, so on plain stdin it
+# swallowed the REST of this heredoc after the first flight -- the matrix then flew exactly one
+# scenario and printed "matrix done", a silent 1-of-12 that looks like a full run in the log.
+while read -r name noise wind dir spike <&3; do
   [ -z "$name" ] && continue
-  bash "$ROOT/tools/hitl_collect.sh" "$motor" "$name" "$noise" "$wind" "$dir" "$spike" "$outdir" \
+  bash "$ROOT/tools/hitl_collect.sh" "$motor" "$name" "$noise" "$wind" "$dir" "$spike" "$outdir" </dev/null \
     || echo "skip $motor/$name (flight failed)"   # one flaky flight must not abort the matrix
-done <<'SCN'
+done 3<<'SCN'
 noise05 0.05 0.0 210.0 False
 noise10 0.10 0.0 210.0 False
 noise25 0.25 0.0 210.0 False
@@ -34,18 +54,29 @@ corner_spike 0.10 0.0 210.0 True
 corner_stress 0.50 12.0 210.0 True
 SCN
 
+# Renders are best-effort -- a failed plot must not discard flights that cost board time -- but a
+# failure is REPORTED. Swallowing it with `|| true` is how a matrix came to produce zero HTML reports
+# and still look successful.
+svg_bad=0
 for scen in $SCENARIOS; do
-  [ -f "$outdir/$scen.txt" ] && python3 "$ROOT/tools/flight_svg.py" "$outdir/$scen.txt" \
-    -o "$outdir/report_$scen.svg" --pad $PAD --zone $ZONE >/dev/null 2>&1 || true
+  [ -f "$outdir/$scen.txt" ] || continue
+  python3 "$ROOT/tools/flight_svg.py" "$outdir/$scen.txt" \
+    -o "$outdir/report_$scen.svg" --pad $PAD --zone $ZONE >/dev/null 2>&1 || { svg_bad=$((svg_bad+1)); }
 done
+[ "$svg_bad" -gt 0 ] && echo "WARNING: $svg_bad SVG render(s) failed" >&2
+html_bad=0
 for scen in corner_spike corner_stress noise05 noise50 wind00; do
-  [ -f "$outdir/$scen.txt" ] && "$PLY" "$ROOT/tools/flight_report.py" "$outdir/$scen.txt" \
-    -o "$outdir/report_$scen.html" --cdn >/dev/null 2>&1 || true
+  [ -f "$outdir/$scen.txt" ] || continue
+  [ -z "$PLY" ] && { html_bad=$((html_bad+1)); continue; }
+  "$PLY" "$ROOT/tools/flight_report.py" "$outdir/$scen.txt" \
+    -o "$outdir/report_$scen.html" --cdn >/dev/null 2>&1 || { html_bad=$((html_bad+1)); }
 done
+[ "$html_bad" -gt 0 ] && echo "WARNING: $html_bad HTML report(s) failed (PLY=${PLY:-none})" >&2
 python3 "$ROOT/tools/flight_svg.py" "$outdir"/noise05.txt "$outdir"/noise10.txt "$outdir"/noise25.txt \
   "$outdir"/noise50.txt "$outdir"/noise100.txt --overlay -o "$outdir/compare_noise.svg" \
   --labels '5%,10%,25%,50%,100%' --pad $PAD --zone $ZONE >/dev/null 2>&1 || true
 python3 "$ROOT/tools/flight_svg.py" "$outdir"/wind00.txt "$outdir"/wind03.txt "$outdir"/wind06.txt \
   "$outdir"/wind09.txt "$outdir"/wind12.txt --overlay -o "$outdir/compare_wind.svg" \
   --labels 'calm,3,6,9,12 m/s' --pad $PAD --zone $ZONE >/dev/null 2>&1 || true
-echo "matrix $motor done -> $outdir"
+flights=$(ls "$outdir"/*.txt 2>/dev/null | wc -l)
+echo "matrix $motor done -> $outdir  (flights: $flights, svg: $(ls "$outdir"/*.svg 2>/dev/null | wc -l), html: $(ls "$outdir"/*.html 2>/dev/null | wc -l))"

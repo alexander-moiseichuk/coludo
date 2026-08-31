@@ -58,7 +58,7 @@ def flight_ready() -> dict:
     by_name['watchdog']['enabled'] = True         # a wedged flight loop must reboot
     by_name['flight']['enabled'] = True           # the control loop must run
     by_name['flight']['gains'] = _sim_gains()      # proposed (sim) gains -> the loop can act
-    cfg['fin_limit_multiplier'] = 1.0             # no bench derating
+    cfg['fins']['limit_multiplier'] = 1.0         # no bench derating (the knob flight.py reads)
     cfg['wifi']['policy'] = 'auto'                # quiesce: silent airborne, live on the ground
     return cfg
 

@@ -35,7 +35,9 @@ wiring is in [`waveshare_esp32p4_pins.md`](waveshare_esp32p4_pins.md).
 [AHT20+BMP280](https://www.aliexpress.us/item/3256806546750874.html) (temp + baro),
 [MPU6050](https://www.amazon.com/dp/B0BMY15TC4) (cheap IMU, noisy under high-g),
 [VL53L0X / VL53L1X](https://www.aliexpress.us/item/3256807793059841.html) (alternate ToF for the `agl`
-quantity). These provide the same quantities, so the fusion layer can use them as drop-in fallbacks.
+quantity), [Gravity 10DOF BMI323+BMM350+BMP581](https://www.dfrobot.com/product-3126.html) (better RAW
+IMU/mag/baro data than the BNO055 but **no on-chip fusion** — see *The BNO055 successor path* below).
+These provide the same quantities, so the fusion layer can use them as drop-in fallbacks.
 
 ## Flight criticality — what we cannot fly without
 
@@ -86,6 +88,83 @@ Three parts split the IMU job; the roles do **not** overlap, so dropping one is 
 
 MPU6050 stays a cheap fallback IMU only.
 
+### The BNO055 successor path — BMI323 + BMM350 + BMP581 (10-DOF)
+
+[Gravity 10DOF IMU](https://www.dfrobot.com/product-3126.html) ($19.90, I²C/UART) or the smaller
+[Fermion SEN0697](https://wiki.dfrobot.com/sen0697/) carry **BMI323** (6-axis) + **BMM350** (mag) +
+**BMP581** (baro). On raw data they beat the BNO055 on every axis that matters:
+
+| | BNO055 (current) | BMI323 / BMM350 / BMP581 |
+| --- | --- | --- |
+| Accelerometer | **14-bit**, ±16 g | **16-bit**, ±16 g — **4× finer resolution** |
+| Gyroscope | 16-bit, ±2000 °/s | 16-bit, ±2000 °/s, ±1 °/s zero-rate offset |
+| Sample rate | **100 Hz** (fusion-capped) | **up to 6400 Hz** — no fusion cap |
+| Magnetometer | ~0.3 µT resolution | **~0.1 µT**, 190 nT rms noise (X/Y) |
+| Barometer | (BMP280 alongside) | **BMP581: 1/64 Pa resolution**, ±6 Pa relative, 240 Hz |
+| Current | Cortex-M0+ fusion core, substantially more | **1.1–3.6 mA** |
+| Orientation output | **fused on-chip** | **raw only** |
+
+**"No on-chip fusion" sounds fatal, but for THIS architecture it mostly is not — we already fuse on the
+MCU.** `tasks/attitude.py` is a complementary-filter AHRS running today: gyro integration plus an accel
+gravity-vector re-anchor through the integer CORDIC `fixed.atan2_cd`, with a coordinated-turn gate so a
+banked turn cannot roll the estimate flat. It is integer/fixnum throughout (the only boxed float is the
+heading the channel format requires), runs at 50 Hz beside the 100 Hz flight loop, and is **flight-proven**:
+in [TMS-7-attitude](sims/TMS-7-attitude/) the BNO055 is killed mid-glide and the backup flies to a
+controlled landing (E16 **15 m in-zone**), tracking truth to **~1° roll / ~0.5° pitch** (`attitude_soak`).
+So the question is not "can the P4 fuse?" — it demonstrably can — but "what would a magnetometer add,
+and what does owning the fusion cost?".
+
+**What the magnetometer actually adds.** The backup's yaw is *not* free-running: it already has an
+absolute reference, a weak pull toward the **GNSS ground track**. Its two real weaknesses are narrow but
+real — the course reference needs **motion** (`course_gate` ~5 m/s, so it is useless on the pad and at
+low speed), and in a **crosswind crab the ground track is not the heading**, which the weak blend can
+only average out. A magnetometer answers both: true heading, at rest, crab-free.
+
+**The real cost is calibration, not the filter.** Rolling our own 9-DoF means owning **hard- and
+soft-iron magnetometer calibration** — near a carbon airframe, servo currents and a booster — and that is
+exactly the messy part the BNO055's black box hides. Budget that, not the AHRS math.
+
+**So the incremental path is the attractive one:** add **just the BMM350** as an extra input to the
+filter that already exists. One driver, no new fusion architecture, no change to the BNO055 primary,
+and it directly attacks the BNO055 single-point-of-failure. Only if that proves out does replacing the
+BNO055 outright become a real question.
+
+Practical notes: the ±16 g accelerometer is the same ceiling as the BNO055's, so this **cannot** be the
+primary boost accel either — **LSM6DSO32 (±32 g) stays** the lead `accel`. Prefer the **UART** variant if
+adopted: `i2c:0` already carries five devices (BNO055, BMP280, ICP-10111, VL53L4CX, SDP810).
+
+**DECISION (2026-08-06): not adopted — we stay on BNO055.** With **5+ BNO055 on hand** the unit-count
+blocker is gone, and that was the only pressing reason to move. Keeping the fused part also keeps the
+magnetometer calibration problem inside Bosch's black box. Recorded here so the comparison does not have
+to be redone; revisit only if a *new* need appears (a board with no BNO055, or a measured attitude
+problem the backup cannot fix).
+
+## Post-flight consolidation — measure first, then remove
+
+The goal after the passive flights is a **minimal device count and a simpler PCB**. Every part below is
+carried because of an *assumption*; the flights turn each into a measurement. Nothing is removed on
+opinion — the point of flying both is to earn the right to delete one.
+
+| Candidate | What decides it | Drop when | What removal buys |
+| --- | --- | --- | --- |
+| **ADXL375** (±200 g) | `flight_kpi` prints **peak \|a\|** for both accels + a KEEP/DROP verdict | LSM6DSO32 never approaches its ±32 g rail **and** the ADXL never exceeds 32 g | a SPI chip-select + an INT pin, ~1 g, board area — **and possibly the whole SPI bus (see below)** |
+| **VL53L4CX** (AGL laser) | does it return valid AGL **outdoors in Florida sun**? (Phase 2/9 of `field_test.md`) | it is blind or noise-dominated in daylight | an I²C device, INT + XSHUT pins — but a **replacement landing trigger** is then required |
+| **SDP810** (pitot) | does the pitot actually beat the accel+GNSS estimate? (`flight.csv` records both — the airspeed panel overlays them) | the fused estimate is no better than the pre-pitot baseline | an I²C device + the pitot plumbing |
+| **BMP280** | is a second baro worth its I²C address? | ICP-10111 alone detects apogee cleanly | little physically — it **rides on the sen0253 board with the BNO055**, so it is nearly free to keep |
+| **ATGM336H** (GNSS) | — | never: navigation and the zone logic depend on it | — |
+
+**The big PCB simplification hides behind the ADXL375.** It shares `spi:1` with the LSM6DSO32. If the
+measured boost never clips ±32 g and the ADXL goes, the LSM6DSO32 is the **only** device left on SPI —
+at which point the question becomes whether it can move to `i2c:0` and let the **entire SPI bus
+disappear** (SCK/MOSI/MISO + 2 chip-selects + an INT = up to **6 GPIOs** and a bus's worth of routing).
+It sits on SPI today for clean high-rate reads, so that is a bench question — can `i2c:0` carry a 104 Hz
+6-DoF alongside its existing devices without hurting the gyro `rate` the PID D-term depends on? Worth
+answering deliberately, because it is the single largest layout win available.
+
+Measure it with: `python3 tools/flight_kpi.py <label>:<capture>` — the first lines are the G envelope and
+the high-g verdict. (In *sim* captures both accel streams carry the same synthetic value, so the verdict
+is only meaningful on a **real** flight, where the ADXL is the only sensor that can read past 32 g.)
+
 ### ADXL375 → SPI wiring (Adafruit 5374 → ESP32-P4)
 
 The ADXL375 runs on its own **SPI(1)** bus (mode 3, 5 MHz), off the shared I²C so its ~100 Hz reads
@@ -110,6 +189,47 @@ To revert to I²C: tie CS high, wire SDA/SCL to GPIO7/8, and set the component `
 chip-select (cs 50) — see [`waveshare_esp32p4_pins.md`](waveshare_esp32p4_pins.md) for both.
 
 **Optional (>32 g high-g backstop), weight 1.0 g**
+
+### LSM6DSO32 → SPI wiring — it has TWO clock pins and TWO data-out pins
+
+The same label trap as the ADXL375 above, and worse: this breakout carries a **second, AUXILIARY**
+interface alongside the primary one, so `SCL`/`SCX` and `DO`/`DO` both appear on the board.
+
+```
+  bottom row (PRIMARY -- use this one):   VIN  3Vo  GND  SCL  SDA  DO  CS  I1  I2
+  top row    (AUXILIARY -- do NOT use):   SCX  SDX  CS   DO   GND
+```
+
+The auxiliary port is the sensor-hub / OIS interface for an external magnetometer. It is a **separate
+peripheral**: clocking it does nothing for the primary bus.
+
+| LSM6DSO32 pin | meaning | ESP32-P4 GPIO |
+| --- | --- | --- |
+| VIN *(bottom 1)* | power | 3V3 |
+| GND *(top 5)* | ground | GND |
+| **SCL** *(bottom 4)* | SPI clock (SCK) — **NOT `SCX`** | **48** |
+| **SDA** *(bottom 5)* | SPI MOSI (SDI) | **47** |
+| **DO** *(bottom 6)* | SPI MISO (SDO) — **NOT the top-row `DO`** | **46** |
+| CS *(bottom 7)* | chip-select | **50** |
+| I1 *(bottom 8)* | INT1 data-ready | **28** |
+
+> ⚠️ **v0.1 GOT THIS WRONG, ON BOTH BUILT BOARDS — fix the netlist for v0.2.** The layout took the
+> clock from `SCX` and the data-out from the top-row `DO`, i.e. both from the auxiliary side. MOSI,
+> CS, INT1, VIN and GND were correct. Repaired on TMS-7C and TMS-7D with two jumpers from the MCU
+> header to the primary pads; both then read `WHO_AM_I 0x6c` on the shipped mode-3 / 5 MHz bus.
+>
+> **Why it was so hard to see (2026-08-24/25).** With the clock on the auxiliary pin the part is
+> silent on **SPI *and* I²C** — both need that same primary `SCL` — so it reads exactly like an
+> absent or dead device, and no chip-select experiment helps. What broke it open was proving `CS` and
+> `SDA` good *independently*: driving CS low removes the part from an I²C scan (so CS is wired), and
+> I²C data flowing at all proves SDA. That left the clock as the only untested input.
+>
+> **Two diagnostics that DO NOT work here, both tried:** the I²C address strap is **latched at
+> power-up**, not sampled live, so touching a wire to `DO`/SA0 cannot flip `0x6a`↔`0x6b` and cannot be
+> used to find the pad — the ADXL375 proved it by holding `0x53` while its SDO demonstrably worked.
+> And do not interleave `SoftI2C` and `SPI` on these pins in one script: it leaves them misconfigured
+> and produces convincing nonsense (a false "only SPI mode 0 works", with the ADXL375 degrading to
+> `0xff` in the same run as the tell).
 
 ## Altimeter (pressure)
 Primary is the [Gravity: ICP-10111 Pressure Sensor](https://www.dfrobot.com/product-2525.html) (on hand as
@@ -136,6 +256,66 @@ scale factor 60 (Pa = raw/60), zero ~0.02 Pa. Driver `drivers/sdp810.py` (@viper
 pressure, one airspeed float per read) fuses into the fin governor as the **direct** airspeed source ahead
 of the accel+GNSS backbone; it rails past ±500 Pa (boost / a steep dive), where the governor drops back to
 the accel backbone.
+
+### Pins and tube polarity
+
+Pins number from the one marked **"1"** on the package; the datasheet defines pin 1 = SCL.
+
+| Pin | Name | Connect to |
+| --- | --- | --- |
+| **1** (marked ●) | **SCL** | I²C clock — GPIO **8** (`i2c:0`) |
+| **2** | **VDD** | **3.3 V** |
+| **3** | **GND** | ground |
+| **4** | **SDA** | I²C data — GPIO **7** (`i2c:0`) |
+
+```
+  looking AT THE PIN SIDE (pins toward you):
+
+     [4]    [3]    [2]    [1●]        ● = the "1" mark
+     SDA    GND    VDD    SCL
+      |                      |
+     P+                     P−        measured -- see below
+   (pitot)               (static)
+```
+
+**Anchor each tube to a PIN, never to "left" or "right".** Left/right swaps with which face you look
+at, and that ambiguity produced a *wrong recorded result* here — see below. Stated pin-wise there is
+nothing to get backwards:
+
+- **P+** (total → the nose pitot) is the barb on the **SDA / pin-4 side**, i.e. **opposite the "1" mark**.
+- **P−** (static → the interior bay) is the barb on the **SCL / pin-1 side**.
+
+Measured 2026-08-14 on a unit that had already had **one barb cut off**, which is what makes it
+conclusive: with a single tube left there is no left/right to confuse. Blowing it produced **eight
+sustained plateaus pinned at the +546 Pa rail (116 railed samples, longest 4.2 s) and not one railed
+negative sample**. Blowing raises the blown port, so that port is P+. The short (≤0.8 s, never railing)
+negative dips in the trace each land immediately *before* a rail — the inhale before the blow, not the
+port.
+
+> ⚠️ **This reverses the 2026-07-26 bench note**, which recorded "right tube = P+, left tube = P−" and
+> was repeated in `test/live_pitot.py` and `field_test.md`. That run read its *signs* correctly — the
+> sensor was **upside-down**, so "left" then and "left" later were opposite barbs. Nothing was wrong
+> with the instrument or the method; the label frame moved. Which is the whole reason this section
+> names a pin and not a side. It also means the design intent holds as written: the **P− barb is the
+> one to cut back to ~2 cm** for the interior bay, and P+ is the one that must reach the nose.
+
+Plumbing it backwards is **not damaging** and not a calibration problem — the cell is differential and
+its ports are symmetric, so it simply reads negative. Fix by swapping the tubes or negating in the
+driver; no recalibration.
+
+**Build convention for the remaining units — let the LENGTH carry the label.** Keep **P+ at full
+length** and cut **P− to half**. After that the part is self-documenting: the long barb is the pitot,
+and no viewpoint, silkscreen or memory is involved. Use the pin anchor above once, to decide which one
+to cut; the length encodes it permanently for the rest of the build and for whoever opens the airframe
+next.
+
+Cut P− to *half*, not flush, deliberately — it stays long enough to push a tube onto, so a wrong call
+is still recoverable by swapping the two lines instead of by scrapping the sensor. (Half also stays
+within the "≥ 1 cm, ~2 cm clear of the camera board" the bay wants.)
+
+The asymmetry is pneumatically harmless: unequal tube volume shifts the *response time* of each side by
+milliseconds at these lengths, not the steady reading, and the airspeed the governor consumes is a
+steady-flight quantity.
 
 **Plumbing (integrated into the printed body, sensor fully inside — do NOT strip the calibrated
 flow-through cap):**
@@ -165,7 +345,7 @@ Alternative is to connect e.g. from [6F22 9V using plug](https://www.amazon.com/
 
 ## Converter
 The servo rail is driven by a **ND3A05SD DC-DC module (5 V / 3 A, isolated)**, separate from the
-controller rail. **MEASURED (2026-07-25, INA226 on the servo rail @ ~100 Hz, MG90S yaw, 10 × full
+controller rail. **MEASURED (2026-07-25, INA226 then on the servo rail @ ~100 Hz, MG90S yaw, 10 × full
 0↔180° at max slew):** **peak 3.9 W = 0.79 A**, mean during travel ~1.4 W, ~625 mJ per 180° sweep,
 41 mW holding. So three moving together is **~2.4 A peak — inside the 3 A module**, not the ~3.5 A the
 earlier ~1.2 A/servo estimate suggested. (A USB power meter reads only ~2 W here: it updates at a few Hz
@@ -187,19 +367,51 @@ if any overvoltage is still a worry.
                 (isolated)                       │            ~2.4 A if all three
                                       ┌──────────┴─────────┐
                                       │ Cbulk 1000 µF      │  reservoir (decided):
-                                      │  ‖ 10 µF ‖ 100 nF  │  sources the spike AND
+                                      │  ‖ 100 nF          │  sources the spike AND
                                       │  ‖ TVS 5 V (opt.)  │  absorbs the small regen
                                       └──────────┬─────────┘
                                                 GND
   module 0 V ──────────── bond to system GND ───────────────▶ (shared PWM reference)
 ```
 
-**Reservoir capacitor — the decided protection.** A **1000 µF low-ESR aluminium (16 V, 105 °C — or a
-polymer type for the vibration/temperature of a flight article)** plus **10 µF X7R + 100 nF ceramics**,
-placed **right at the servo header** so the spike path (cap → servos) carries no series impedance. Keep
-the module's own output cap as well. 470 µF is the minimum; 2200 µF is fine but watch the power-on inrush
-tripping the module soft-start. Bond the module output − to system ground so the servo PWM shares the
-logic reference.
+**Reservoir capacitor — the decided protection.** **TWO capacitors (simplified 2026-08-14 from three):
+a 1000 µF bulk + a 100 nF ceramic**, placed **right at the servo header** so the spike path
+(cap → servos) carries no series impedance. Keep the module's own output cap as well. 470 µF is the
+minimum; 2200 µF is fine but watch the power-on inrush tripping the module soft-start.
+
+The **1000 µF is the one to keep, not 470 µF**, on two grounds. Droop while the converter's loop catches
+up is ΔV = I·Δt/C, so at the measured 2.4 A the bulk sets the margin: over a 100 µs window 1000 µF droops
+0.24 V against 470 µF's 0.51 V, and the MG90S sit near their limit around 4.2 V — the same headroom
+argument that rejects two series diodes. More importantly the **series diode is omitted *because* the
+bulk cap is the regen sink** ("ΔV = Q/C is tiny for a small kick into 1000 µF"): halving the reservoir
+doubles that kick and quietly erodes the reasoning that justified leaving the diode out. The two
+decisions are coupled — do not shrink the bulk without revisiting the diode.
+
+**The dropped part is the 10 µF X7R**, and it is the right one to lose: the 1000 µF covers the servo
+transient and the 100 nF the high-frequency bypass, which are the two jobs that matter here. It is not
+free, though — the 10 µF bridged the band between them, roughly 100 kHz–1 MHz, which is exactly where
+the ND3A05SD switches. The module keeps its own output cap, local to its own ripple, which covers most
+of it; the residual mid-band notch is real but not flight-critical.
+
+**What the bulk part must be: LOW-ESR. That matters far more than aluminium-vs-polymer.** Two separate
+things happen when the servos snatch 2.4 A — the droop over time is I·Δt/C (capacitance), but the
+INSTANTANEOUS step is I × ESR and lands the moment current flows:
+
+| 1000 µF type | typical ESR @100 kHz | instant drop at 2.4 A |
+| --- | --- | --- |
+| general-purpose aluminium | ~0.15 Ω | **0.36 V** |
+| **low-ESR aluminium (the baseline)** | ~0.04 Ω | 0.10 V |
+| polymer (optional upgrade) | ~0.015 Ω | 0.04 V |
+
+Against a ~0.6–0.8 V budget a general-purpose part spends half of it before the capacitance does any
+work, so the gap general-purpose→low-ESR dwarfs the gap low-ESR→polymer. A **ripple-current rating
+≥ ~1 A at 100 kHz** is the reliable way to tell a low-ESR part from a generic one. Polymer is worth it
+for a flight article for its *mechanical* properties — no electrolyte to dry out, ESR nearly flat when
+cold, better under vibration — not because the electrical margin demands it. **If the only 1000 µF to
+hand is general-purpose, two 470 µF in parallel beat it** (~940 µF at half the ESR), at the cost of the
+part count this simplification just bought back.
+
+Bond the module output − to system ground so the servo PWM shares the logic reference.
 
 **If a diode is ever wanted** (a bigger single motor, or reverse-polarity protection): use a **Schottky**,
 V_F as low as possible, **I_F ≥ 8 A**, **V_RRM ≥ 20 V**, on the **+ rail only** — never one in each line
@@ -306,6 +518,12 @@ There are a number of composition options possible
 
 ## v0.2 board — hardware TODO
 
+- [ ] **LSM6DSO32: move SCK to the primary `SCL` and MISO to the primary `DO`.** v0.1 routes both to
+      the module's AUXILIARY row (`SCX`, top-row `DO`), so the part is unreachable on SPI and I²C
+      alike — confirmed on both built boards and jumper-repaired on each. Full detail and the
+      diagnosis in *LSM6DSO32 → SPI wiring* above. This is the single highest-value netlist fix:
+      without it every board needs the same two-wire rework.
+
 Found on the v0.1 hand-wired board (bench, 2026-07-26). **v0.1 PCB is already ordered**, so these are
 carried to v0.2. Each has a software mitigation on the branch, so none blocks flying v0.1 — but the
 mitigations are degradations, not equivalents.
@@ -371,10 +589,26 @@ little, because **attitude is already isolated across bus families**:
 
 | quantity | primary | backup | already isolated? |
 |---|---|---|---|
-| attitude | `lsm6dso32` (**SPI**) | `bno055` (I²C) | ✅ different bus families |
+| attitude | **`bno055` (I²C)** | complementary filter (`attitude`), fed by the **SPI** gyro + GNSS | ✅ different bus families |
 | airspeed | `sdp810` (I²C) | accel+GNSS estimator (**not on a bus**) | ✅ fallback is not I²C |
 | power | `ina226` (I²C) | — | n/a, not flight-critical |
 | **altitude** | **`icp10111` (I²C)** | **`bmp280` (I²C)** + laser at rank 2 | ❌ **all on one bus** |
+
+> ⚠️ **Measured: 0.50 % of ICP-10111 frames arrive corrupted on this I²C bus** (2 of 400, bench, board
+> idle). Both failures were a SINGLE BIT flipped in the frame's own CRC byte — `0xe9` received where
+> `0xf9` is correct — with plausible data bytes either side, and good frames validate exactly. So this
+> is bus signal integrity, not a bad sensor and not a bad validator.
+>
+> The sensor appends a CRC to each of its three words and the driver used to discard all three. At the
+> 10 Hz read rate that is a corrupt frame every ~20 s, and since 6 of the 9 bytes are data rather than
+> CRC, roughly **one wrong altitude every 30 s was being accepted silently** — into `elevation`, which
+> drives the endgame band, the landing trigger and the launch baro backup. The frames are now checked
+> and refused; a refused frame costs one sample and takes the same path as a sensor that stopped
+> answering (`_recover()` after repeated strikes), with the BMP280 holding the channel up meanwhile.
+>
+> **This is a v0.2 layout input.** The altitude row above is already the one redundancy gap — primary
+> and backup share a bus — and that bus is now measured to be dropping bits. Shortening the run,
+> revisiting the pull-ups and isolating the ICP-10111 all get more valuable, not less.
 
 Altitude is the only redundancy pair living entirely inside I²C, and it is the expensive one to lose:
 the host fault matrix priced a dead barometer at **100.2 m of miss**, because the endgame band is
@@ -435,8 +669,8 @@ dimensions by hand.
 
 The v0.2 intent is a single board carrying an **energy island**: the main board fed 5 V from that
 island rather than from USB, a boost module supplying Recorder + main board, and the servos on an
-ND3A05SD with three-capacitor protection. Electrically that is what exists today, minus the wires and
-the inter-board grid.
+ND3A05SD with two-capacitor protection (1000 µF + 100 nF). Electrically that is what exists today,
+minus the wires and the inter-board grid.
 
 **The island is what makes the merge safe.** The objection to merging is that it puts ~2.4 A of servo
 return onto the INA226's copper; an energy island *is* the star ground, made explicit at layout time
@@ -455,8 +689,13 @@ shunt**, with no signal trace crossing the boundary anywhere else.
 That is **2.7 % of the 215 g light glide mass** (2.1 % of 270 g full), and sink scales as √m, so
 ~1.35 % less sink — before counting the mechanical failure point removed under a measured 3.3–4.3 g
 boost. The two bare boards together are only ~16.7 g, so this is a third of the connector-and-edge
-overhead. Area is not the obstacle: at the same 40 mm width the combined board is ~141 mm long, and
-width is what the body tube constrains.
+overhead. Area is not the obstacle: at the same 40 mm width the combined board is ~141 mm long.
+
+> ⚠️ **Corrected 2026-08-24: LENGTH is the binding constraint, not width.** This paragraph used to
+> end "and width is what the body tube constrains", which is wrong for the built airframe -- the
+> GNSS + main + power boards in series do not fit the TMS-7 body nose-to-tail. Any layout reasoning
+> that trades length for width is therefore backwards. Merging still helps, but because it removes a
+> BOARD FROM THE CHAIN, not because it saves area.
 
 **Two things to get right while merging:**
 
@@ -469,6 +708,28 @@ width is what the body tube constrains.
    5 V. Fed only from the island, that recovery ceases to exist and a wedged board needs the battery
    unplugged. Keep a bench path — a diode-OR from USB 5 V, or a jumper selecting USB or island — or
    accept the DTR/RTS reset as the only route. Decide it at layout, not at the bench.
+
+### Decided direction (2026-08-24): simplify the TMS-7 board, defer the flying wing
+
+Two routes were weighed. **Chosen: shorten the existing board** — move the GNSS onto the main board,
+drop the separate power board via the energy island above, and remove the ADXL375 / LSM6DSO32 *if the
+flight data licenses it* (see below). That takes two boards out of the nose-to-tail chain, which is
+what the length constraint actually needs.
+
+**Deferred ~3 months: "TMS-8", a flying wing** whose wider body would take a shorter, wider board with
+the island built in. It is a sound idea and is not rejected — it is sequenced. The reason is that it
+resets the AERODYNAMICS, not the electronics: `sim_model.AIR_QUALITY` 5.5, the stall bracket, the
+catapult energy calibration and every sim conclusion resting on that polar were all measured on the
+TMS-7 tube body. A flying wing returns the polar to a guess, which is exactly what those measurements
+just eliminated. Build it later on electronics already proven, so one variable changes at a time.
+
+Removal order matters, and is not the obvious one. `hardware.md` classes the **ADXL375 as Optional**
+("LSM6DSO32 ±32 g already covers the 8-12 g boost") and the **LSM6DSO32 as Critical** ("the only gyro
+`rate`"). So dropping the ADXL375 alone is nearly free — ~25x18 mm at no functional cost — while
+dropping both costs the gyro and puts `accel` on the BNO055's ±16 g against an 8-12 g boost. The gyro
+loss is separately recoverable: `drivers/bno055.py` already reads its own gyro every sample (bytes
+12..17 of the block it fetches anyway) and discards it; publishing it as `rate` restores the PID D
+term and the attitude backup with no extra part.
 
 ## v1.0 idea — if boost really stays under 16 g, the IMU stack collapses
 
@@ -488,3 +749,20 @@ nothing about a millisecond ejection spike. So: fly one real capture with the AD
 rate through boost, separation and landing; read the actual peak; only then decide what the BNO085
 replaces. Attitude alone is already a win — retiring the ADXL375 needs the shock number specifically.
 The same capture should re-check `launch_g` (2.5 g today, ~1 g of margin against a 3.3 g boost).
+
+> ⚠️ **"Full rate" is 100 Hz today, and that does NOT resolve an ejection spike.** The driver reads one
+> sample per poll, the poll floor is the ~10 ms asyncio floor, and the ODR is set to match at 100 Hz —
+> so anti-alias bandwidth is ~50 Hz and a millisecond event is attenuated in the analogue path before
+> it is ever sampled. Decimation is not the limiter either: the flight profiles set
+> `telemetry_ms` 0 (no global decimation), so every ADXL sample the 10 ms poll produces is already
+> recorded and there is nothing left to turn off.
+>
+> **A comfortable ~4 g peak from such a capture is therefore evidence about SUSTAINED BOOST ONLY and
+> says nothing about shock** — do not retire the ADXL375 on it. What the capture *does* answer:
+> sustained boost g, L/D and sink, wind, landing impact (tens of ms, so 100 Hz catches it), and the
+> whole pipeline end to end.
+>
+> Measuring shock needs the sensor's 32-sample FIFO drained per poll — 800 Hz gives 8 samples per
+> 10 ms poll, ~40 KB/s of the 92 KB/s recorder link, and ~400 Hz of anti-alias bandwidth. Deliberately
+> NOT done before the first flights: it rewrites a tested driver's read path, and the flight is worth
+> more than the extra number.

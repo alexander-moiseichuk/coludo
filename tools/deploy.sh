@@ -163,7 +163,28 @@ for entry in os.listdir('/'):
     if entry.endswith('.py') or entry.endswith('.mpy'):
         try: os.remove('/' + entry)
         except OSError: pass
-" || warn "warning: wipe incomplete -- stale modules may survive"
+" || { echo "FATAL: board wipe failed -- see below" >&2; wipe_failed=1; }
+    # VERIFY the wipe, do not merely hope. A surviving .py SHADOWS the new .mpy (MicroPython prefers
+    # source), so the board boots stale code and the fix under test appears to have no effect -- the
+    # worst possible failure, because it looks like the change was wrong rather than absent. This used
+    # to be a warn-and-continue.
+    leftovers=$(board_do "wipe check" exec "
+import os
+stale = [e for e in os.listdir('/') if e.endswith('.py') or e.endswith('.mpy')]
+for d in ('/drivers', '/tasks', '/test'):
+    try:
+        stale += [d + '/' + e for e in os.listdir(d)]
+    except OSError:
+        pass
+print('STALE:' + ','.join(stale))
+" 2>/dev/null | grep -oE "STALE:.*" | sed "s/^STALE://")
+    if [ -n "$leftovers" ] || [ -n "${wipe_failed:-}" ]; then
+        echo "FATAL: wipe left files on the board: ${leftovers:-<wipe command failed>}" >&2
+        echo "  A surviving .py shadows the new .mpy, so the board would boot STALE code and the" >&2
+        echo "  change would look ineffective rather than missing. Refusing to deploy over it." >&2
+        echo "  Recover: tools/board_unwedge.py, then re-run tools/deploy.sh" >&2
+        exit 1
+    fi
 }
 
 # One chained mpremote session: batching keeps the deploy to a single board reset, where per-file

@@ -12,6 +12,7 @@ source + the governor's in-band/saturation gate) is tested in test_airspeed / te
 import asyncio
 import struct
 
+import commons
 import config_default
 import fixed
 import task
@@ -29,7 +30,7 @@ def _frame(dp_raw, temp_raw=5000, scale=60):
     body[3:5] = struct.pack('>h', temp_raw)
     body[6:8] = struct.pack('>H', scale)
     for base in (0, 3, 6):
-        body[base + 2] = sdp810._crc8(body[base], body[base + 1])  # @viper crc over the word's two bytes
+        body[base + 2] = commons.sensirion_crc8(body[base], body[base + 1])  # crc over the word's two bytes
     return bytes(body)
 
 
@@ -44,7 +45,7 @@ async def amain():
     Sensirion CRC-8 (poly 0x31, seed 0xFF): the datasheet worked example 0xBEEF -> 0x92, and a
     round-trip through the frame builder must validate while a single flipped bit must not.
     """
-    assert sdp810._crc8(0xBE, 0xEF) == 0x92
+    assert commons.sensirion_crc8(0xBE, 0xEF) == 0x92
     good = _frame(8100)  # +135 Pa at scale 60
     assert sdp810._frame_ok(good)
     bad = bytearray(good)
@@ -67,6 +68,30 @@ async def amain():
     Calibration: a pad tare captures the at-rest bias (a Pa fixnum) so a still glider reads 0; a direct
     set applies a Pa offset; air_density is the q->v span knob. update() reports the changed names (CC).
     """
+    """
+    NEGATIVE FIRST: a tare BEFORE any frame has arrived must be refused, not stored. `_raw` is None
+    until the first read, and storing that would make _pressure()'s `self._raw - self._zero` raise on
+    every subsequent sample -- killing the airspeed channel for the rest of the flight and persisting
+    the None to NVS. `update {"zero": true}` is the documented pad-tare command, so issuing it a
+    moment too early is the natural operator mistake, not an exotic one.
+    """
+    before = probe._zero
+    probe._raw = None
+    """
+    The refusal must be VISIBLE, not merely correct.
+
+    This used to return `[]`, which is indistinguishable from success in the CC reply -- the operator
+    sees `changed: []` for the one command whose entire purpose is to change something, and believes
+    the pad tare happened. calibrate() has always answered 'no reading yet'; update() now raises the
+    same message and cc_client turns it into `err refused ...`.
+    """
+    try:
+        probe.update({'zero': True})
+        raise AssertionError('tare before the first frame was accepted')
+    except ValueError as error:
+        assert 'no reading yet' in str(error), error
+    assert probe._zero == before                   # ...and the existing tare is untouched
+
     probe._pressure(200)  # +200 raw -> _raw = 333 fixnum -> becomes the tare source
     assert probe.update({'zero': True}) == ['zero_offset_pa'] and probe._zero == 333  # 200*100//60
     assert probe._pressure(200) == 0  # same reading, now tared to zero

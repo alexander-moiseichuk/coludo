@@ -17,12 +17,17 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# fixed lives in the firmware tree, not beside these tools -- add it to the path the way
+# airspeed_calibrate does. Importing the real constant is the point: restating 100 here is what let
+# the renderers and the producers disagree about attitude units in the first place.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'glider'))
+import fixed  # noqa: E402 -- the firmware's fixed-point scale, so this cannot drift from the board
 import flight_telemetry  # noqa: E402
 
 _PALETTE = ('#1f77b4', '#17becf', '#2ca02c', '#bcbd22', '#ff7f0e', '#d62728', '#9467bd', '#8c564b')
 
 
-_FIXED_SCALE = 100  # fixed.SCALE -- bno055 roll/pitch are centidegree fixnums
+_FIXED_SCALE = fixed.SCALE  # fixed.SCALE -- bno055 roll/pitch are centidegree fixnums
 
 
 def _find(streams, *fields):

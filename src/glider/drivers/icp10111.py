@@ -18,6 +18,7 @@ import time
 import commons
 import databoard
 import i2cbus
+import inspector
 import recorder
 import task
 
@@ -228,6 +229,23 @@ class Icp10111(task.Task):
         await self._bus.writeto(self._addr, _CMD_MEASURE)
         await asyncio.sleep_ms(_MEASURE_MS)
         data = await self._bus.readfrom(self._addr, 9)  # P[0,1],CRC, P[3],_,CRC, T[6,7],CRC
+        """
+        Check the three CRCs the sensor sends and REFUSE a frame that fails one.
+
+        They were read and discarded. That is the expensive kind of silence: a corrupted I2C word does
+        not raise, it produces a plausible altitude -- and elevation drives the endgame band, the
+        landing trigger and the launch backup, so a wrong-but-believable number gets acted on. This part
+        has a documented latch-up habit on this board (hence _recover), which is exactly the condition
+        that puts bad bytes on the wire.
+
+        Raising is the right signal rather than returning None: run() already catches, counts and
+        escalates to _recover(), so a frame failing CRC takes the SAME path as a part that stopped
+        answering, and the bmp280 behind it keeps the channel alive meanwhile.
+        """
+        crc8 = commons.sensirion_crc8
+        if (crc8(data[0], data[1]) != data[2] or crc8(data[3], data[4]) != data[5]
+                or crc8(data[6], data[7]) != data[8]):
+            raise ValueError('icp10111 CRC')
         p_raw = (data[0] << 16) | (data[1] << 8) | data[3]
         t_raw = (data[6] << 8) | data[7]
         temp_c = -45.0 + 175.0 / 65536.0 * t_raw
@@ -249,8 +267,8 @@ class Icp10111(task.Task):
         Measured escalation (7/06 OOM soak, unchanged here): a NAK is usually just a conversion still
         draining, so wait one period first; only a PERSISTENT failure gets the I2C GENERAL-CALL reset
         (0x00 0x06), which is what actually recovered the latched bench part when the addressed soft
-        reset re-wedged it. The general call also resets peers that honour it (bmp280, ina226) -- they
-        re-apply their config-declared state, and this fires only when the primary baro is already lost.
+        reset re-wedged it. The general call also resets peers that honour it (bmp280, ina226), which do NOT
+        re-apply their own config -- so this re-arms them explicitly afterwards; see below.
 
         Args:
             (none)
@@ -264,7 +282,28 @@ class Icp10111(task.Task):
         except OSError:
             pass  # nothing honours general call -- nothing lost by asking
         await asyncio.sleep_ms(_RESET_RETRY_MS)
-        recorder.Recorder.log(self.name, 'read recovery: general-call reset after %d failures'
+        """
+        RE-ARM the peers this reset just knocked over.
+
+        The docstring above claimed they "re-apply their config-declared state". They do not: bmp280
+        and ina226 each write their configuration exactly once, in setup(), and never again. So the
+        general call left the BACKUP BARO in its power-on CTRL_MEAS 0x00 -- SLEEP, no longer
+        converting, returning its last sample forever -- and the INA226 with CALIB cleared, so current
+        and power read WRONG rather than absent.
+
+        Recovering the primary baro therefore disabled its own backup, silently, at the moment
+        redundancy mattered most. Each peer now exposes rearm(); this calls it, best-effort, and a
+        peer that is genuinely gone just fails its next read as before.
+        """
+        for name in ('baro_bmp280', 'power_ina226'):
+            peer = inspector.Inspector.get(name)
+            rearm = getattr(peer, 'rearm', None)
+            if rearm is not None:
+                try:
+                    await rearm()
+                except Exception as error:
+                    recorder.Recorder.log(self.name, 'peer %s rearm failed: %r' % (name, error))
+        recorder.Recorder.log(self.name, 'read recovery: general-call reset + peer rearm after %d failures'
                               % _RECOVER_AFTER)
 
     def calibration(self) -> str:

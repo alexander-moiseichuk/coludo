@@ -17,6 +17,11 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# fixed lives in the firmware tree, not beside these tools -- add it to the path the way
+# airspeed_calibrate does. Importing the real constant is the point: restating 100 here is what let
+# the renderers and the producers disagree about attitude units in the first place.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'glider'))
+import fixed  # noqa: E402 -- the firmware's fixed-point scale, so this cannot drift from the board
 import flight_telemetry  # noqa: E402
 
 
@@ -89,7 +94,7 @@ def irq_health(streams) -> str:
     return ' · '.join(parts)
 
 
-_FIXED_SCALE = 100  # fixed.SCALE -- gyro columns are centideg/s fixnums
+_FIXED_SCALE = fixed.SCALE  # fixed.SCALE -- gyro columns are centideg/s fixnums
 
 # One colour per flight stage on the 3D track, in transition order (pre-launch, then each logged
 # stage). Qualitative and high-contrast on purpose -- adjacent stages must be told apart at a glance,
@@ -429,6 +434,11 @@ def main():
         streams, logs = flight_telemetry.parse(handle.read())
     if not streams:
         sys.exit('no telemetry streams found in %s' % args.capture)
+    damaged = flight_telemetry.spliced(streams)
+    if damaged:
+        # two boots appended into one file -- the plot would draw them as one flight; see flight_kpi
+        print('!! SPLICED CAPTURE -- two recorder sessions share this prefix: %s' % ', '.join(damaged))
+        print('!! the report below spans BOTH boots and its timeline is not one flight')
     trajectory, series = build(streams, logs, go, make_subplots, args.motor)
     write_html(trajectory, series, args.out, pio, 'cdn' if args.cdn else True)
     print('wrote %s (%d streams, %d log lines)' % (args.out, len(streams), len(logs)))

@@ -20,7 +20,11 @@ printf 'import hitl_run\nhitl_run.fly("%s", %s, %s, %s, %s, %s, %s, %s, %s, %s, 
   "$motor" "$noise" "$wind" "$dir" "$spike" "$glider_g" "$inject_hz" "$reboot_s" "$no_cc" \
   "$attitude_drop_s" "$gnss_drop_s" > /tmp/launch.py
 python3 "$ROOT/tools/board_reboot.py" "$PORT" >/dev/null 2>&1 || true   # clean VM -> fresh recorder session
-out=$(timeout 190 mpremote connect "$PORT" run /tmp/launch.py 2>&1) || true   # a CDC wedge must not abort (set -e)
+# 300 s, not 190: the board flight runs in REAL TIME and its own cap is 150 s, so the wall-clock
+# budget has to cover the flight plus boot, config and the GNSS-fix wait. At the measured air quality
+# (sim_model.AIR_QUALITY 5.5) a light-airframe F15 glide lasts ~118 s where the old worst-case polar
+# gave ~58 s -- 190 s would have truncated the longest cases into a false TIMEOUT.
+out=$(timeout 300 mpremote connect "$PORT" run /tmp/launch.py 2>&1) || true   # a CDC wedge must not abort (set -e)
 ses=$(echo "$out" | grep -oE 'SESSION [0-9_]+' | awk '{print $2}')
 [ -z "$ses" ] && { echo "FAIL $motor/$scen: $(echo "$out" | tail -1)"; exit 1; }
 # Pull EVERY stream this session wrote -- never a hardcoded list. The old fixed list silently dropped
@@ -46,4 +50,19 @@ if [ "$pulled" -ne "$want" ]; then
 fi
 [ "$want" -eq 0 ] && { echo "FAIL $motor/$scen: session $ses produced no streams"; exit 1; }
 python3 "$ROOT/tools/assemble_capture.py" "$ses" "$d" "$outdir/$scen.txt" >/dev/null
+# PROVENANCE. main.py logs the build+config identity at boot, but a log line carries no
+# `@session_file@` prefix, so the Luckfox never routes it to a .csv and this script -- which pulls only
+# *.csv -- cannot see it. A HITL capture therefore could not name the firmware that produced it, which
+# is precisely what a run-to-run comparison needs: four matrix runs disagreed and there was no way to
+# ask from the data whether they flew the same build. Asked directly and written as a log-shaped line,
+# which the parser already routes to logs and no downstream tool has to learn about.
+build=$(timeout 30 mpremote connect "$PORT" exec \
+  'import config; b,src,_=config.load(); print("BUILD", b["board"].get("firmware_version","?"), config.config_id(b), src)' \
+  2>/dev/null | grep -oE "BUILD .*" | head -1)
+# VALIDATE, do not just record. A failed query returns an empty string or an mpremote artefact, and a
+# capture stamped `build b''` is worse than one stamped UNKNOWN -- it looks like an answer.
+case "$build" in
+  BUILD\ [0-9]*) echo "0 capture :: ${build#BUILD }" | sed 's/^0 capture :: /0 capture :: build /' >> "$outdir/$scen.txt" ;;
+  *)             echo "0 capture :: build UNKNOWN (board did not answer)" >> "$outdir/$scen.txt" ;;
+esac
 echo "OK $motor/$scen session=$ses $(echo "$out" | grep -oE 'DONE|TIMEOUT [0-9]+' | head -1)"

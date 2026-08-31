@@ -100,13 +100,42 @@ def is_public(name: str) -> bool:
     return not name.startswith('_')
 
 
+def _test_for(path: str, name: str) -> str:
+    """
+    The test file covering `path`, or '' when there is none.
+
+    Walks UP from the module to the nearest ancestor holding a `test/` directory, because tests are
+    collected per PACKAGE, not per directory: every glider test lives in src/glider/test/, including
+    those for drivers/ and tasks/ modules. Looking only beside the module (the original behaviour)
+    resolved for top-level modules and silently failed for every one in a subdirectory, so the
+    generated API reference marked well-tested drivers as untested -- a doc that under-reports
+    coverage is worse than one that omits it, because it invites someone to "add the missing test".
+
+    Args:
+        path - the module's path.
+        name - its basename, e.g. 'adxl375.py'.
+
+    Returns:
+        The test path relative to the package root (e.g. 'test/test_adxl375.py'), else ''.
+    """
+    directory = os.path.dirname(os.path.abspath(path))
+    while True:
+        candidate = os.path.join(directory, 'test', 'test_%s' % name)
+        if os.path.exists(candidate):
+            return 'test/test_%s' % name
+        parent = os.path.dirname(directory)
+        if parent == directory:
+            return ''
+        directory = parent
+
+
 def render_module(path: str, out: list) -> None:
     tree = sources.parse(path)
     name = os.path.basename(path)
     out.append('## `%s`\n' % name)
-    test = os.path.join(os.path.dirname(path), 'test', 'test_%s' % name)
-    if os.path.exists(test):
-        out.append('_Tested by `test/test_%s`._\n' % name)
+    test = _test_for(path, name)
+    if test:
+        out.append('_Tested by `%s`._\n' % test)
     header = module_header(tree)
     if header:
         out.append(header + '\n')

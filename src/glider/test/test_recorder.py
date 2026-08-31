@@ -12,16 +12,26 @@ import recorder
 
 
 class FakeWriter:
-    """Stands in for the asyncio.StreamWriter over the recorder UART."""
+    """
+    Stands in for the asyncio.StreamWriter over the recorder UART.
+
+    Carries `out_buf` because the real StreamWriter does and Recorder.drain() reads it to decide when to
+    flush -- a stub without it makes the high-water path both untestable and fatal. Counts flushes so a
+    test can assert back-pressure actually happened rather than assuming it.
+    """
 
     def __init__(self):
         self.items = []
+        self.out_buf = b''      # pending bytes, exactly as the real StreamWriter exposes them
+        self.flushes = 0
 
     def write(self, data):
         self.items.append(bytes(data))
+        self.out_buf += bytes(data)
 
     async def drain(self):
-        pass
+        self.out_buf = b''
+        self.flushes += 1
 
 
 def _config(tlm_capacity, log_capacity, cell_size):
@@ -86,11 +96,50 @@ async def test_recorder():
     recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
     recorder.Recorder.telemetry_decimate_us = 50000
     glob = recorder.Telemetry('g.csv', ('v',))  # no per-stream rate -> the global
-    assert glob.decimate_us == 50000
+    assert glob.decimate_us == 0, glob.decimate_us   # its OWN rate: 0 means inherit
+    assert glob.window == 50000, glob.window         # ...and `window` is what it actually decimates by
     glob.push((1,))  # header + first row
     glob.push((2,))  # within the global window -> decimated
     await recorder.Recorder.drain()
     assert len(recorder.Recorder._uart.items) == 2, recorder.Recorder._uart.items
+
+    """
+    The CONFIG's global rate must actually reach the Recorder. Nothing here asserted that: every test
+    set Recorder.telemetry_decimate_us by hand, so a knob written into the wrong dict was invisible.
+    It was -- config_default carried telemetry_ms on the recorder COMPONENT while setup() reads the
+    top-level SECTION, so the rate never took effect and the 20 ms class default silently won. Drive
+    setup() with the real default config and check the result.
+
+    The expectation is DERIVED from the config, not written as a literal. It was 40000 and broke the
+    moment the default legitimately changed to 0 (uncapped) -- a test that has to be edited every time
+    the value it guards moves is testing the value, when what matters is the WIRING. The guard that
+    keeps it honest is the assert above it: if the config ever equals the class default, this test
+    could not distinguish "read correctly" from "fell back", so it says so instead of passing.
+    """
+    expected_us = config_default.default()['recorder']['telemetry_ms'] * 1000
+    class_default_us = 20000  # recorder._DEFAULT_TELEMETRY_MS: a const(), so folded at compile time
+    assert expected_us != class_default_us, 'config equals the class default -- this test cannot fail'
+    recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
+    assert recorder.Recorder.telemetry_decimate_us == expected_us, recorder.Recorder.telemetry_decimate_us
+    # and a stream that declares no rate of its own must inherit exactly that
+    assert recorder.Telemetry('inherit.csv', ('v',)).window == expected_us
+
+    """
+    The global must reach a stream BUILT BEFORE IT WAS SET. That ordering is the real one: drivers
+    construct their Telemetry during setup(), and the controller runs every device's setup before the
+    recorder task's, so on a real boot every stream predates the configured global. Telemetry used to
+    fold the global into decimate_us in __init__, so those streams silently kept the 50 Hz class
+    default and `recorder.telemetry_ms` did nothing -- a config asking for full-rate logging held a
+    100 Hz accelerometer at 50, and nothing failed. No test covered this order, which is why it shipped.
+    """
+    recorder.Recorder.setup(config_default.default(), uart=FakeWriter())
+    early = recorder.Telemetry('early.csv', ('v',))          # built while the global is the default
+    recorder.Recorder.telemetry_decimate_us = 0              # ...then the config turns decimation OFF
+    assert early.window == 0, early.window
+    for value in range(4):
+        early.push((value,))                                 # every push must emit: no window at all
+    await recorder.Recorder.drain()
+    assert len(recorder.Recorder._uart.items) == 5, recorder.Recorder._uart.items  # header + 4 rows
 
 
 async def test_error_policy():
@@ -99,6 +148,14 @@ async def test_error_policy():
     assert recorder.Recorder.log('X', 'y' * 300) is True
     await recorder.Recorder.drain()
     assert len(recorder.Recorder._uart.items[0]) <= 64
+    """
+    ...and it MUST still end with a newline. The wire protocol is line-framed, so truncating the '\n'
+    away merges the over-long log line with whatever record follows it on the UART -- and when that is
+    a telemetry row, the row is swallowed into the log line and lost from its CSV, silently, on the
+    channel the error policy promises is durable. The length check alone passed either way, which is
+    why this went unnoticed.
+    """
+    assert recorder.Recorder._uart.items[0].endswith(b'\n'), recorder.Recorder._uart.items[0][-16:]
 
     # logs drop (return False) when the buffer is full -- no raise
     recorder.Recorder.setup(_config(8, 2, 64), uart=FakeWriter())  # log ring holds 1
@@ -172,11 +229,23 @@ async def test_cc_stream():
     assert flooded['dropped'] > 0, flooded['dropped']     # the loss is REPORTED, not silent
     assert recorder.Recorder.cc_logs(1000)['dropped'] == 0  # ...and the count resets per window
 
-    # window lapse: a deadline already in the past -> the next log() discards + disables, no collection
+    """
+    Window lapse: a deadline already in the past -> the next log() discards + disables, no collection.
+
+    Lapsed with a LOADED ring, not an empty one. The discard runs on the PRODUCER's path (tee() is
+    reached from every log()/tlm_raw(), i.e. inside Telemetry.push at 100 Hz with GC off), and it used
+    to call _take(), which builds a list and decodes every buffered record into a str purely to throw
+    it away -- a burst of allocation at the worst possible moment. An empty ring made that free, which
+    is why the old version of this test could not see it. Load the ring first.
+    """
     recorder.Recorder.cc_logs(1000)  # arm
+    for index in range(20):
+        recorder.Recorder.log('D', 'buffered %d' % index)   # real records waiting in the tee ring
+    assert tee._ring.count() > 0, 'the ring must be LOADED for the discard to mean anything'
     tee._deadline = recorder.time.ticks_add(recorder.time.ticks_us(), -1)  # already past
     recorder.Recorder.log('D', 'after-lapse')
     assert tee._deadline == 0  # log() saw the lapse and disabled
+    assert tee._ring.count() == 0, 'the lapse must empty the ring, not leave it holding records'
     assert recorder.Recorder.cc_logs(0)['lines'] == []  # nothing collected after the lapse
 
 
@@ -225,14 +294,48 @@ async def test_run_loop():
     assert len(recorder.Recorder._uart.items) >= 1
 
 
+async def test_back_pressure():
+    """
+    drain() must flush MID-PASS once pending bytes reach the high-water mark, not buffer a whole ring.
+
+    The UART was created with MicroPython's 256-byte default txbuf while the ring holds 256 KB, so one
+    pass could hand the peripheral orders of magnitude more than it can take -- and an overrun does not
+    raise, it silently drops the tail of whatever record is in flight. That is the exact shape of the
+    corruption measured on real captures: a record cut mid-field, its newline gone, and the next record
+    running onto the same line (20 in 1,004,804 rows across 48 flights).
+
+    Flushing on FILL rather than on a record count adapts to record size and link speed: a quiet stream
+    never flushes early, a burst flushes as often as it needs. A fixed sleep per line was measured
+    against instead -- 4.2 s of sleep per second of flight at this board's ~10 ms asyncio floor.
+    """
+    writer = FakeWriter()
+    recorder.Recorder.setup(config_default.default(), uart=writer)
+    payload = b'y' * 200
+    for _ in range(60):                     # 12000 bytes: must cross the 2048 mark several times
+        recorder.Recorder._tlm.write(payload)
+    drained = await recorder.Recorder.drain()
+    assert drained == 60, drained
+    assert writer.flushes >= 2, 'back-pressure never engaged: %d flush(es)' % writer.flushes
+    assert len(writer.items) == 60, len(writer.items)          # nothing dropped while flushing
+
+    # NEGATIVE: a small pass must NOT flush early -- back-pressure only when there is pressure
+    quiet = FakeWriter()
+    recorder.Recorder.setup(config_default.default(), uart=quiet)
+    recorder.Recorder._tlm.write(b'z' * 50)
+    await recorder.Recorder.drain()
+    assert quiet.flushes == 1, 'a 50-byte pass flushed %d times, not once' % quiet.flushes
+
+
 async def _amain():
     await test_recorder()
     await test_error_policy()
     await test_cc_stream()
     await test_cc_telemetry()
     await test_run_loop()
+    await test_back_pressure()
 
 
 test_ring()
 asyncio.run(_amain())
-print('ok: recorder SPSC ring, async drain/priority, log-drop vs tlm-raise, Telemetry, cc log+tlm stream, run loop')
+print('ok: recorder SPSC ring, async drain/priority, log-drop vs tlm-raise, Telemetry, cc log+tlm '
+      'stream, run loop, high-water back-pressure +/-')

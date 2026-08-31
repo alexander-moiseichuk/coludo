@@ -93,4 +93,21 @@ test_wrap180()
 test_fin_deflection_limit()
 test_id_classify()
 test_alias()
-print('ok: commons -- between, magnitude_sq, bank_demand, clamp_int, wrap180, id_classify; _opt==_upy')
+"""
+sensirion_crc8 -- shared by the SDP810 pitot and the ICP-10111 baro, so it is checked here once.
+
+Both parts append this CRC to every frame word. The consequence of a wrong polynomial is symmetrical
+and nasty: it rejects every GOOD frame and presents as a dead sensor, which on the baro means losing
+the primary altitude source. So this pins a known vector, two words captured live from the real
+ICP-10111, and the _opt == _upy equivalence the rest of this file demands of every optimised primitive.
+"""
+assert commons.sensirion_crc8(0xBE, 0xEF) == 0x92                    # known Sensirion vector
+assert commons.sensirion_crc8(0xAE, 0x54) == 0xA9                    # live ICP-10111 pressure word
+assert commons.sensirion_crc8(0x6E, 0x7A) == 0x9A                    # live ICP-10111 temperature word
+for _byte0, _byte1 in ((0x00, 0x00), (0xFF, 0xFF), (0x01, 0x80), (0xBE, 0xEF), (0xAE, 0x54)):
+    assert commons.sensirion_crc8_opt(_byte0, _byte1) == commons.sensirion_crc8_upy(_byte0, _byte1)
+# NEGATIVE: one flipped bit must change the checksum, or it would never catch a corrupted word
+assert commons.sensirion_crc8(0xAE ^ 0x01, 0x54) != 0xA9
+
+print('ok: commons -- between, magnitude_sq, bank_demand, clamp_int, wrap180, sensirion_crc8 +/-, '
+      'id_classify; _opt==_upy')

@@ -40,6 +40,12 @@ RESERVED_PINS = {
 }
 
 _BUS_PIN_KEYS = ('sda', 'scl', 'tx', 'rx', 'sck', 'mosi', 'miso')
+# The pins each bus kind cannot be constructed WITHOUT. Validation used to claim only the pins that
+# happened to be present, so `{i2c: {0: {freq: 400000}}}` validated cleanly and then raised KeyError
+# at Pin(spec['scl']) during bring-up -- losing the whole bus and every device on it, after save().
+# `rx` is deliberately absent for uart: the recorder link is tx-only (recorder.py builds pins from
+# spec['tx'] and adds rx only when present), so requiring it would reject a config that flies.
+_BUS_REQUIRED_PINS: dict = {'i2c': ('scl', 'sda'), 'spi': ('sck', 'mosi', 'miso'), 'uart': ('tx',)}
 
 
 def _is_int(x) -> bool:
@@ -182,8 +188,94 @@ def _validate_buses(buses, errs: list, pin_owner: dict, bus_refs: set) -> None:
             for key in _BUS_PIN_KEYS:
                 if key in spec:
                     _claim(errs, pin_owner, label + '.' + key, spec[key])
-            if kind == 'spi' and spec.get('mode', 0) not in (0, 1, 2, 3):  # machine.SPI: polarity/phase in {0,1}
+            for key in _BUS_REQUIRED_PINS.get(kind, ()):
+                if key not in spec:
+                    errs.append('bus %s is missing %r -- it would KeyError at bring-up' % (label, key))
+            # default 3, matching spibus.get()/retune(); the old 0 here implied a default the runtime
+            # does not use. Both are valid values, so nothing mis-ran -- but the code said otherwise.
+            if kind == 'spi' and spec.get('mode', 3) not in (0, 1, 2, 3):  # machine.SPI: polarity/phase in {0,1}
                 errs.append('bus %s.mode must be 0..3 (got %r)' % (label, spec.get('mode')))
+
+
+# Component fields the CONTROL PATH does arithmetic on. A JSON config can carry any type, and a
+# string that looks like a number survives save() and load() untouched -- then TypeErrors at 100 Hz,
+# in flight, deep inside the governor or a servo write. These are checked at validate() time because
+# that is the last moment a human is present.
+_NUMERIC_FIELDS: tuple = ('limit_multiplier', 'trim', 'still_g', 'stall_speed_1g', 'stall_margin',
+                          'nav_bank_gain', 'land_bank_gain', 'loiter_gain', 'final_cross_gain',
+                          'pitot_gain', 'glide_ratio', 'bank_limit', 'land_bank_limit',
+                          # period_ms and telemetry_ms appear on EVERY device and are the two that
+                          # fail most confusingly. `telemetry_ms` is multiplied by 1000 for
+                          # decimate_us, and in Python "20" * 1000 is a valid 2000-character STRING --
+                          # so it constructs without error and only fails later at a comparison,
+                          # somewhere with no clue where it came from. `period_ms` goes straight into
+                          # asyncio.sleep_ms().
+                          'period_ms', 'telemetry_ms')
+
+
+def _numeric(value) -> bool:
+    """A real number, and NOT a bool (True would otherwise pass every arithmetic check as 1)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _validate_numeric(component: dict, label: str, errs: list) -> None:
+    """
+    Type-check the component fields the control path multiplies, and the PID gain maps.
+
+    `validate()` is what stands between a saved config and a flight, and it checked structure but not
+    these types. A `"limit_multiplier": "1.0"` survives save(), then `* self._multiplier` raises
+    TypeError inside the governor at 100 Hz -- an in-flight crash from a quoted number.
+
+    Args:
+        component - the component dict to check.
+        label - its name, for the error message.
+        errs - the accumulating error list.
+
+    Returns:
+        None; appends to errs.
+    """
+    for key in _NUMERIC_FIELDS:
+        if key in component and not _numeric(component[key]):
+            errs.append('%s.%s must be a number (got %r)' % (label, key, component[key]))
+    fins = component.get('fins')
+    if isinstance(fins, dict) and 'limit_multiplier' in fins and not _numeric(fins['limit_multiplier']):
+        errs.append('%s.fins.limit_multiplier must be a number (got %r)' % (label, fins['limit_multiplier']))
+    gains = component.get('gains')
+    if isinstance(gains, dict):
+        for axis, terms in gains.items():
+            if not isinstance(terms, dict):
+                errs.append('%s.gains.%s must be an object' % (label, axis))
+                continue
+            for term, value in terms.items():
+                if not _numeric(value):
+                    errs.append('%s.gains.%s.%s must be a number (got %r)' % (label, axis, term, value))
+
+
+def _validate_rate_band(component: dict, label: str, errs: list) -> None:
+    """
+    The governor's airspeed rate band must be positive and ordered, or it divides by zero at boot.
+
+    GovernorConfig builds its interval table as `1.0 / min(ceiling, max(floor, speed))`. A floor of 0
+    is a ZeroDivisionError during __init__ -- the board does not fly, it fails to boot -- and an
+    inverted band (floor 50, ceiling 5) silently throttles the airspeed estimator to the WRONG end,
+    leaving a stale fin cap at high speed. Neither is caught anywhere else, and both are one typo in a
+    saved config.
+
+    Args:
+        component - the component dict to check.
+        label - its name, for the error message.
+        errs - the accumulating error list.
+
+    Returns:
+        None; appends to errs.
+    """
+    floor = component.get('airspeed_floor_hz')
+    ceiling = component.get('airspeed_ceiling_hz')
+    for key, value in (('airspeed_floor_hz', floor), ('airspeed_ceiling_hz', ceiling)):
+        if value is not None and (not _is_int(value) or value <= 0):
+            errs.append('%s.%s must be a positive int (got %r)' % (label, key, value))
+    if _is_int(floor) and _is_int(ceiling) and 0 < floor and 0 < ceiling and floor > ceiling:
+        errs.append('%s.airspeed_floor_hz %d exceeds airspeed_ceiling_hz %d' % (label, floor, ceiling))
 
 
 def _validate_pins(pins, errs: list, pin_owner: dict) -> None:
@@ -249,6 +341,10 @@ def _validate_recorder(rec, errs: list) -> None:
     for key in ('tlm_capacity', 'log_capacity', 'cell_size', 'stats_ms'):
         if key in rec and not (_is_int(rec[key]) and rec[key] > 0):
             errs.append('recorder.%s must be a positive int' % key)
+    # telemetry_ms separately, because ZERO is legal here and means "no decimation" -- the shipped
+    # value. The loop above demands > 0, so folding it in would reject the config that flies.
+    if 'telemetry_ms' in rec and not (_is_int(rec['telemetry_ms']) and rec['telemetry_ms'] >= 0):
+        errs.append('recorder.telemetry_ms must be a non-negative int (0 = no decimation)')
 
 
 def _validate_devices(items, label: str, errs: list, bus_refs: set, seen_names: set) -> None:
@@ -292,6 +388,8 @@ def _validate_devices(items, label: str, errs: list, bus_refs: set, seen_names: 
             errs.append('%s must name an implementation: `driver` (drivers/) or `activity` (tasks/)' % where)
         if 'enabled' in dev and not isinstance(dev['enabled'], bool):
             errs.append('%s.enabled must be a bool' % where)
+        _validate_rate_band(dev, where, errs)   # governor: a zero/inverted band divides by zero at boot
+        _validate_numeric(dev, where, errs)      # a "1.0" string TypeErrors in the 100 Hz control path
         kind = dev.get('bus')  # a device addresses its bus by kind ('i2c') + id (0)
         if kind is not None:
             ident = dev.get('id')
@@ -345,6 +443,10 @@ def validate(cfg) -> list:
     _validate_pins(cfg.get('pins'), errs, pin_owner)
     _validate_reserved(mcu, pin_owner, errs)
     _validate_recorder(cfg.get('recorder'), errs)
+    # `fins` is a TOP-LEVEL section, not a component field -- limit_multiplier reaches the governor
+    # via flight.py's `board.get('fins', {})`, so a component-only sweep never sees it. This is the
+    # exact field the finding named, and the one the 100 Hz `* self._multiplier` would TypeError on.
+    _validate_numeric(cfg.get('fins') or {}, 'fins', errs)
     _validate_devices(cfg.get('sensors'), 'sensors', errs, bus_refs, seen_names)
     _validate_devices(cfg.get('components'), 'components', errs, bus_refs, seen_names)
     return errs

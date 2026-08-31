@@ -95,14 +95,39 @@ def _read_capture(path: str) -> tuple:
     """
     with open(path) as handle:
         streams, _logs = flight_telemetry.parse(handle.read())
+    if flight_telemetry.simulated(streams):
+        """
+        A HITL capture cannot calibrate air_density, and the failure is invisible: in the sim the pitot
+        pressure and the GNSS ground speed are both derived from ONE body state, so fitting one against
+        the other measures the model's own constants, not the atmosphere. The tool would still print a
+        plausible number and an `apply:` line offering to write it onto real hardware.
+        """
+        print('REFUSING: %s is a HITL capture (it carries the sim clock stream).\n'
+              '  air_density is fitted from pitot-vs-GNSS disagreement, and in the sim both come from\n'
+              '  the same body state -- the result would describe the model, not the air. Fly a calm\n'
+              '  pass on the real airframe and calibrate from that.' % path, file=sys.stderr)
+        raise SystemExit(2)  # terminal: falling through would print a misleading 'no pitot stream'
     pitot = flight_telemetry.find_stream(streams, 'dynamic_pressure')
     gnss = flight_telemetry.find_stream(streams, 'speed_kn')
 
     def rows(stream):
+        """
+        Row dicts for one stream, SKIPPING truncated rows.
+
+        `zip` stops at the shorter sequence, so a short row silently yields a dict missing its trailing
+        keys and the caller's `float(row['dynamic_pressure'])` raises KeyError -- the whole calibration
+        dies on one bad line. Captures do contain them: a real one here carries a 3-cell row where 4
+        are expected, from a telemetry line truncated in transit.
+
+        Skipping matches the shared parser, which applies the same guard per field
+        (flight_telemetry.Stream.column: `if len(row) > index and row[index] != ''`). One lost sample
+        out of hundreds costs the fit nothing; crashing costs the operator the calibration.
+        """
         if stream is None:
             return []
         names = ['uptime'] + list(stream.fields)
-        return [dict(zip(names, [str(cell) for cell in row])) for row in stream.rows]
+        return [dict(zip(names, [str(cell) for cell in row]))
+                for row in stream.rows if len(row) >= len(names)]
 
     return rows(pitot), rows(gnss)
 

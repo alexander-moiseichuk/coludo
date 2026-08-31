@@ -9,6 +9,7 @@ injected stubs -- no Flight task, no databoard. Run by `make test`.
 
 import math
 
+import config_default
 import fixed
 import guidance
 from controller import Stage
@@ -94,6 +95,57 @@ def _build(config=None, zone=_ZONE, launch=None, airspeed=0.0):
     unit = guidance.Guidance(guidance.GuidanceConfig(config or {}, 1000),
                              _StubMission(zone, launch), gov, position, agl)
     return unit, position, agl, gov
+
+
+def test_fallbacks_match_shipped():
+    """
+    Every guidance fallback must equal what config_default ships, or a partial config flies a
+    DIFFERENT law than the panel reports.
+
+    bank_limit fell back to 30 -- the exact value the measured 30->45 fix replaced, because at 30 deg
+    the turn floor R_min is ~40 m at 15.6 m/s while the loiter law commands 30 m, so the heading
+    controller saturates into a limit cycle. land_bank_gain fell back to 1.5, where the endgame P-loop
+    saturates near 25 deg and the spiral freezes at ~44 m against the ~20 m an in-zone miss needs.
+
+    Both are invisible: `inspect` reports the shipped value while the law uses the fallback. Asserting
+    equality here is what stops the next measured retune from leaving a stale twin behind.
+    """
+    empty = guidance.GuidanceConfig({}, 1000)      # no keys at all -> every fallback exercised
+    shipped = [c for c in config_default.default()['components'] if c['name'] == 'flight'][0]
+    for key in ('bank_limit', 'land_bank_gain', 'land_bank_limit', 'loiter_radius_m', 'endgame_alt_m'):
+        if key in shipped:
+            assert getattr(empty, key) == shipped[key], (
+                '%s fallback %r != shipped %r' % (key, getattr(empty, key), shipped[key]))
+
+
+def test_filter_rounding():
+    """
+    The steering filter must not bias a symmetric error -- integer floor division is not symmetric.
+
+    `//` rounds a negative state AWAY from zero (-15 // 16 == -1) and a positive one toward it, so an
+    error that alternates evenly comes out one-sided. Measured before the fix: -0.5 deg of steady-state
+    output for a +/-8 deg input whose true mean is zero, in the same direction regardless of which way
+    the oscillation starts. It always pushes the same way, so it does not average out over a flight.
+
+    Constant-error tracking must stay exact, which is the property a naive "just round differently"
+    change would break.
+    """
+    unit, _position, _agl, _governor = _build()
+    unit.enter(0.0, 0, 0)
+    outputs = []
+    for step in range(600):
+        outputs.append(unit._filter_error(8 if step % 2 == 0 else -8))
+    settled = outputs[-100:]
+    bias = sum(settled) / len(settled)
+    assert abs(bias) < 0.01, 'symmetric error biased the steering command by %+.3f deg' % bias
+
+    # and a CONSTANT error must still settle exactly on itself, in both signs
+    for constant in (1, -1, 5, -5, 12, -12, 45, -45):
+        steady, _position, _agl, _governor = _build()
+        steady.enter(0.0, 0, 0)
+        for _ in range(80):
+            got = steady._filter_error(constant)
+        assert got == constant, 'constant %+d settled at %+d' % (constant, got)
 
 
 def test_heading_error():
@@ -253,12 +305,27 @@ def test_final_approach():
     banded.enter(0.0, 0, 0)
     band_pos.reading = ((48.0005, 11.020), 'gnss', 0)
     band.value_now, band.fresh = 10.0, False     # low, but nothing vouches for it
-    banded.compute(Stage.GLIDING, {}, 270.0, 0)
+    banded._nav_heading = None
+    banded.compute(Stage.GLIDING, {}, 0.0, 0)
     stale_bank = banded.roll_setpoint
     band.fresh = True                            # the same reading, now from a live baro
     banded._nav_heading = None
-    banded.compute(Stage.GLIDING, {}, 270.0, 0)
-    assert banded.roll_setpoint != stale_bank or stale_bank == 0, 'a stale baro drove the endgame band'
+    banded.compute(Stage.GLIDING, {}, 0.0, 0)
+    """
+    The two cases must reach DIFFERENT laws, and the assertion has to say which.
+
+    This previously read `roll_setpoint != stale_bank or stale_bank == 0`, and both sides computed 0 --
+    the escape hatch carried it. The cause was the scenario, not the tolerance: it flew heading 270 at a
+    target due west, so the heading error was ~0 and no bank was demanded either way. The test could not
+    have failed no matter what the endgame did with a stale baro.
+
+    Flying heading 0 across the same target separates them. A stale baro must leave ORDINARY steering in
+    charge -- a real bank toward the zone -- while a fresh 10 m reading (inside endgame_alt_m 50) engages
+    final approach and levels the wings.
+    """
+    assert stale_bank != 0, 'a stale baro suppressed ordinary steering'
+    assert banded.roll_setpoint == 0, 'fresh low baro did not engage final approach: %r' % banded.roll_setpoint
+    assert stale_bank != banded.roll_setpoint, 'stale and fresh baro reached the same law'
 
     # a STALE agl must not engage final approach: out of the laser's ~4 m range the channel extrapolates
     # without bound, and a bogus low reading would hold centreline tracking for the whole glide
@@ -608,6 +675,8 @@ test_loiter_and_endgame_spiral()
 test_endgame_pattern_selection()
 test_oo_endgame()
 test_steering_filter()
+test_fallbacks_match_shipped()
+test_filter_rounding()
 test_reachability()
 test_dead_reckoning()
 test_min_turn_radius()

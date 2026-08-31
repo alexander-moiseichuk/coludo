@@ -247,7 +247,7 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   principle: the TDK compensation's `b` coefficient is **-4.23e12**, past MicroPython's unboxed 2^30 by
   ~4000x and past viper's 2^31 (which wraps SILENTLY) by ~2000x, so any integer form needs 64-bit
   intermediates = bignums = more allocation than the floats replaced.
-- **Catapult `board.config` profiles** — **DONE (2026-08-01), `tools/make_catapult_config.py` ->
+- **Catapult `board.config` profiles** — **DONE (2026-08-01), `tools/make_telemetry_config.py` ->
   `configs/tms7c.config`, `configs/tms7d.config`.** 7C is telemetry-only (all three servos AND the
   flight activity disabled -- the airframe flies as instrumented ballast); 7D is full active control.
   Both validate and load as `active`.

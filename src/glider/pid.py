@@ -36,6 +36,11 @@ except ImportError:  # CPython (tooling / off-board checks)
 
 _KU = const(100)  # GAIN scale: kp 1.50 -> 150 (0.01 gain resolution) -- distinct from fixed.SCALE (angle)
 _UNBOUNDED_DEG = const(1000000)  # default 'no limit' -- ×SCALE stays a small int, so the clamp is a no-op
+# Ceiling for the millisecond accumulator's bound. _UNBOUNDED_DEG × SCALE is a small int, but × 1000
+# again is 1e11 -- far past the 2**30 the 0-allocation guarantee rests on. 2**28 SCALE-degree-ms is
+# ~2684 degree-seconds of integral, orders of magnitude beyond anything a fin loop reaches, so it is
+# still "unbounded" in practice while keeping every product boxed-int free.
+_ACCUM_LIMIT_MAX = const(268435456)
 _ANTI_WINDUP_SHIFT = const(2)  # back-calculation gain = 1/4 of the unflyable demand per step (see step())
 
 
@@ -59,8 +64,10 @@ class Pid:
         self.kd: int = int(kd * _KU)
         self.anti_windup_shift: int = anti_windup_shift  # back-calculation strength; see step()
         self.integral_limit: fixnum = int(integral_limit * SCALE)  # SCALE-degree-seconds
+        self.integral_limit_ms: int = min(self.integral_limit * 1000, _ACCUM_LIMIT_MAX)
         self.output_limit: fixnum = int(output_limit * SCALE)  # SCALE-degrees
-        self._integral: int = 0
+        self._integral: int = 0        # SCALE-degree-seconds (what the ki term consumes)
+        self._integral_ms: int = 0     # the same quantity in SCALE-degree-MILLIseconds; see step()
         self._previous = None  # last error (mdeg); None until the first step -> no derivative kick on entry
 
     def reset(self) -> None:
@@ -78,6 +85,7 @@ class Pid:
             None -- resets self._integral and self._previous in place.
         """
         self._integral = 0
+        self._integral_ms = 0
         self._previous = None
 
     def set_limit(self, limit_deg: int) -> None:
@@ -97,10 +105,36 @@ class Pid:
         """
         self.output_limit = limit_deg * SCALE
         self.integral_limit = limit_deg * SCALE
+        self.integral_limit_ms = min(limit_deg * SCALE * 1000, _ACCUM_LIMIT_MAX)
 
     def step(self, error: fixnum, dt_ms: int, rate: fixnum = None) -> fixnum:
-        # integral += error*dt in SCALE-degree-seconds (the //1000 is TIME, ms -> s); clamped for anti-windup
-        integral = clamp(-self.integral_limit, self._integral + error * dt_ms // 1000, self.integral_limit)
+        """
+        Accumulate in SCALE-degree-MILLIseconds and convert on use, rather than truncating every step.
+
+        This read `self._integral + error * dt_ms // 1000`, which discards the remainder on EVERY step,
+        and integer floor division is not symmetric about zero. Two defects fell out of that, both
+        measured before this was changed:
+
+          RATCHET -- floor sends -0.5 to -1 but +0.5 to 0, so a perfectly symmetric oscillation
+          accumulates only on the negative half. A +/-0.5deg error over 200 steps at 10 ms drifted the
+          integral to -100 when the correct answer is exactly 0. The integral would wander off under a
+          disturbance that averages to nothing.
+
+          DEADBAND -- any error small enough that error*dt_ms < 1000 truncates to zero and never
+          accumulates at all. A steady +0.5deg error at 10 ms steps stays at integral 0 forever, which
+          is precisely the standing error an integral term exists to remove.
+
+        Keeping the fine accumulator costs one extra int store per step and no allocation. Its bound is
+        the same limit scaled by 1000, so the largest value here is ~4.5e6 -- comfortably inside the
+        2**30 the 0-allocation guarantee depends on (bench_pid_alloc guards it).
+
+        LATENT until now, not harmless: every shipped config leaves `gains` empty so ki is 0. This is
+        the shape of bug that stays invisible until the first person turns the integral on.
+        """
+        accumulated = clamp(-self.integral_limit_ms, self._integral_ms + error * dt_ms,
+                            self.integral_limit_ms)
+        self._integral_ms = accumulated
+        integral = accumulated // 1000
         self._integral = integral
         if rate is not None:
             """
@@ -146,4 +180,5 @@ class Pid:
             """
             integral = max(0, unwound) if integral > 0 else min(0, unwound)
             self._integral = integral
+            self._integral_ms = integral * 1000  # keep the fine accumulator in step with the bleed
         return limited

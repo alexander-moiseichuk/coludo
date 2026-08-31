@@ -164,8 +164,52 @@ def test_airspeed_calibration_from_an_assembled_capture():
     with open(capture, 'w') as handle:
         handle.write('\n'.join(pitot_lines + gnss_lines) + '\n')
 
+    """
+    A SPLICED line -- two records run together because the first lost its newline -- must be split, not
+    silently mis-parsed.
+
+    Measured on the real recorder path: 20 lines in 1,004,804 across 48 flights, roughly one flight in
+    three. The damage is not the lost tail, it is the MISATTRIBUTION: the second record's fields land in
+    the first record's columns, so the row keeps parsing and produces plausible-looking nonsense. That
+    is where an airspeed of 1.4e12 cm/s and a heading error of 15330 deg came from -- both were simply
+    the next stream's numbers read in the wrong place, and a tool downstream reported an L/D of 64 from
+    exactly this class.
+    """
+    spliced_text = (
+        '@20260101_010101_x_flight.csv@uptime;stage;fin_cap;heading_err\n'
+        '@20260101_010101_x_airspeed_sdp810.csv@uptime;dynamic_pressure;airspeed_cms\n'
+        '@20260101_010101_x_flight.csv@1000;3;45;120\n'
+        '@20260101_010101_x_flight.csv@2000;3;45;1@20260101_010101_x_airspeed_sdp810.csv@2001;13000;1500\n'
+    )
+    spliced_streams, _unused_logs = flight_telemetry.parse(spliced_text)
+    assert flight_telemetry.spliced_rows() == 1, flight_telemetry.spliced_rows()
+    flight_stream = flight_telemetry.find_stream(spliced_streams, 'heading_err')
+    _stamps, headings = flight_stream.column('heading_err')
+    live = [v for v in headings if v is not None]
+    assert max(live) <= 180, 'the airspeed record leaked into heading_err: %r' % live
+    air = flight_telemetry.find_stream(spliced_streams, 'dynamic_pressure')
+    _stamps, speeds = air.column('airspeed_cms')
+    assert 1500 in [v for v in speeds if v is not None], 'the second record was lost, not re-queued'
+
     pitot_rows, gnss_rows = airspeed_calibrate._read_capture(capture)
     assert len(pitot_rows) == 400 and len(gnss_rows) == 400
+
+    """
+    A TRUNCATED telemetry line must be skipped, not crash the calibration. Rows were rebuilt with a
+    bare zip(), which stops at the shorter sequence -- so a short row produced a dict missing its
+    trailing keys and the caller's float(row['dynamic_pressure']) raised KeyError, losing the whole
+    calibration to one bad line. Captures really do contain them: q55/e16_full.txt carries a 3-cell
+    row where 4 are expected.
+    """
+    with open(capture) as handle:
+        body = handle.read().rstrip('\n').split('\n')
+    body.insert(3, '@s_airspeed_sdp810.csv@240000;13000')   # 2 cells where 4 are expected
+    truncated = os.path.join(tempfile.mkdtemp(), 'truncated.txt')
+    with open(truncated, 'w') as handle:
+        handle.write('\n'.join(body) + '\n')
+    short_pitot, short_gnss = airspeed_calibrate._read_capture(truncated)
+    assert len(short_pitot) == 400, len(short_pitot)   # the bad row skipped, the good ones kept
+    assert airspeed_calibrate.calibrate(short_pitot, short_gnss, 8.0, 1.225)['samples'] > 0
     result = airspeed_calibrate.calibrate(pitot_rows, gnss_rows, min_speed=8.0, current=1.225)
     assert abs(result['air_density'] - true_rho) < 0.01, result['air_density']
 
@@ -226,6 +270,106 @@ def test_parser_edge_cases():
 
 
 
+def test_session_tail_variants_all_key_the_same():
+    """
+    Every session-tag ERA parses to the same stream names.
+
+    The tag after the date/time has changed shape three times -- absent (oldest captures), a random
+    disambiguator, and now an operator label CC sets via `recorder.session` -- and all three are the
+    same SHAPE as a stream whose own name starts with a word ('imu_bno055.csv'). Getting this wrong is
+    silent: the streams still parse, they are just keyed under names no tool looks for, so every panel
+    goes empty on a capture that is perfectly good. Each era below must land on identical keys.
+    """
+    def keys(tag):
+        return set(flight_telemetry.parse(
+            '@20260726_090000_%shealth.csv@uptime;mem_free\n' % tag +
+            '@20260726_090000_%shealth.csv@1000000;90000\n' % tag +
+            '@20260726_090000_%simu_bno055.csv@uptime;roll\n' % tag +
+            '@20260726_090000_%simu_bno055.csv@1000000;3\n' % tag)[0])
+
+    expected = {'health.csv', 'imu_bno055.csv'}
+    assert keys('') == expected, 'legacy tag-less capture'
+    assert keys('989510_') == expected, 'the board random disambiguator'
+    assert keys('catapult-run3_') == expected, 'an operator label from recorder.session'
+
+    # a lone stream still gets its numeric tag stripped -- digits can only ever be a tag
+    assert set(flight_telemetry.parse('@20260726_090000_1_flight.csv@uptime;v\n')[0]) == {'flight.csv'}
+
+    """
+    The trap that makes this subtle: per-servo streams SHARE a leading word by construction, and a
+    servo-only capture is exactly what a fin bench run produces. Stripping 'servo_' as if it were a
+    tag would break the fins.csv synthesis every fin tool depends on.
+    """
+    streams, _logs = flight_telemetry.parse(
+        '@20260726_090000_servo_yaw.csv@uptime;angle\n'
+        '@20260726_090000_servo_yaw.csv@1000000;95\n'
+        '@20260726_090000_servo_eleron_left.csv@uptime;angle\n'
+        '@20260726_090000_servo_eleron_left.csv@1000000;85\n')
+    assert 'servo_yaw.csv' in streams, sorted(streams)
+    assert streams['fins.csv'].fields == ['eleron_left', 'yaw'], streams['fins.csv'].fields
+
+
+def test_a_spliced_capture_is_reported_not_swallowed():
+    """
+    Two boots appended into one file must be VISIBLE, not silently half-eaten.
+
+    When two recorder sessions land on the same prefix the Luckfox appends, so the file carries a
+    second `uptime;...` header partway down. The parser used to drop that row on the floor (it fails
+    the uptime parse), leaving a capture that looks like one long flight whose clock restarts midway --
+    every duration and rate then spans two flights. Nothing here can repair it (the rows carry no boot
+    identity), so the requirement is simply that it is detected and the rows survive.
+    """
+    streams, _logs = flight_telemetry.parse(
+        '@20260726_090000_1_x.csv@uptime;v\n'
+        '@20260726_090000_1_x.csv@1000000;5\n'
+        '@20260726_090000_1_x.csv@uptime;v\n'      # <- second boot appended into the same file
+        '@20260726_090000_1_x.csv@1000;7\n')
+    assert flight_telemetry.spliced(streams) == ['x.csv']
+    assert len(streams['x.csv'].rows) == 2, 'the data rows must survive the detection'
+
+    clean, _logs = flight_telemetry.parse('@20260726_090000_1_x.csv@uptime;v\n'
+                                          '@20260726_090000_1_x.csv@1000000;5\n')
+    assert flight_telemetry.spliced(clean) == [], 'a single session must not be flagged'
+
+
+def test_calibration_refuses_a_simulated_capture():
+    """
+    air_density must never be fitted from a HITL capture, and the tool must SAY so.
+
+    In the sim the pitot pressure and the GNSS ground speed are both derived from one body state, so
+    fitting one against the other measures the model's constants rather than the atmosphere. Without
+    this guard the calibrator still printed a plausible density and an `apply:` line offering to write
+    it onto real hardware -- a confident recommendation from data that cannot support one, which is
+    the same failure mode as reporting a glide ratio from a nan.
+    """
+    lines = ['@s_airspeed_sdp810.csv@uptime;dynamic_pressure;airspeed_cms;temperature',
+             '@s_gnss.csv@uptime;lat;lon;speed_kn;course',
+             '@s_hitl_clock.csv@uptime;drift_ms']      # <- the sim's own clock stream: the marker
+    for i in range(20):
+        stamp = i * 20000
+        lines.append('@s_airspeed_sdp810.csv@%d;13000;1500;21.0' % stamp)
+        lines.append('@s_gnss.csv@%d;25.5;-80.4;29.2;90.0' % stamp)
+        lines.append('@s_hitl_clock.csv@%d;0' % stamp)
+    capture = os.path.join(tempfile.mkdtemp(), 'hitl_run.txt')
+    with open(capture, 'w') as handle:
+        handle.write('\n'.join(lines) + '\n')
+
+    streams, _logs = flight_telemetry.parse(open(capture).read())
+    assert flight_telemetry.simulated(streams) is True
+    try:
+        airspeed_calibrate._read_capture(capture)
+        raise AssertionError('a HITL capture must be refused, not calibrated')
+    except SystemExit as exit_code:
+        assert exit_code.code == 2, exit_code.code
+
+    # NEGATIVE: the same data WITHOUT the sim clock is a real capture and must still calibrate
+    real = os.path.join(tempfile.mkdtemp(), 'real_pass.txt')
+    with open(real, 'w') as handle:
+        handle.write('\n'.join(row for row in lines if 'hitl_clock' not in row) + '\n')
+    assert flight_telemetry.simulated(flight_telemetry.parse(open(real).read())[0]) is False
+    assert len(airspeed_calibrate._read_capture(real)[0]) == 20
+
+
 def test_every_provided_quantity_has_a_consumer():
     """
     A quantity a device PROVIDES but nobody READS is a provider left behind by a refactor -- fused,
@@ -279,6 +423,10 @@ test_airspeed_calibration_recovers_a_known_density()
 test_airspeed_calibration_from_an_assembled_capture()
 test_ticks_us_wraparound_is_unwrapped()
 test_parser_edge_cases()
+test_session_tail_variants_all_key_the_same()
+test_a_spliced_capture_is_reported_not_swallowed()
+test_calibration_refuses_a_simulated_capture()
 test_every_provided_quantity_has_a_consumer()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, svg render, '
-      'airspeed calibration fit, parser edge cases, provider/consumer closure')
+      'airspeed calibration fit, parser edge cases, session-tag eras, '
+      'spliced-capture detection, sim-capture refusal, provider/consumer closure')

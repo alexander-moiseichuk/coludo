@@ -16,6 +16,9 @@ import cc_protocol as cc  # noqa: E402
 import server  # noqa: E402
 
 PORT = 18234
+BIG_BOARD_PORT = 18291
+BIG_OPERATOR_PORT = 18292
+BIG_WEB_PORT = 18293
 BOARD_PORT = 18235
 OPERATOR_PORT = 18236
 WEB_PORT = 18237
@@ -500,6 +503,58 @@ def _glider_roster():
 
 
 
+async def _large_reply():
+    """
+    A board reply LARGER than asyncio's default 64 KiB stream limit must survive.
+
+    Every reply here is one line read with readline(), and `tlm`/`log` batches are a single base64
+    JSON token by design. The board's tee ring holds 1024 cells x 256 B = 256 KiB of records, which
+    base64 inflates to ~350 KiB -- so a full window overruns the default limit, readline raises
+    ValueError, the reply is discarded and the stream task dies. The operator loses exactly the data
+    they asked for, because they asked for a lot of it. This drives a reply past the old ceiling.
+    """
+    hub = server.Server(host='127.0.0.1', port=BIG_BOARD_PORT, operator_port=BIG_OPERATOR_PORT,
+                        web_port=BIG_WEB_PORT, log=lambda message: None, heartbeat_s=5.0)
+    hub_task = asyncio.create_task(hub.run())
+    await asyncio.sleep(0.1)
+
+    payload = 'x' * 200_000          # 200 KB: over the 64 KiB default, under the new 2 MiB limit
+    reader, writer = await asyncio.open_connection('127.0.0.1', BIG_BOARD_PORT)
+
+    async def board():
+        """Answers the hub's whoami/health normally, and `ping` with a huge SINGLE line."""
+        while True:
+            raw = await reader.readline()
+            if not raw:
+                return
+            msg = cc.parse(raw.decode().strip())
+            if msg.command == 'whoami':
+                info = {'mcu': 'esp32p4', 'firmware_version': 'big', 'stage': 'setting'}
+                reply = cc.build('iam', ['glider-big', json.dumps(info)])
+            elif msg.command == 'ping':
+                reply = cc.build('pong', [payload])     # the oversized one
+            else:
+                reply = cc.build('ok', [json.dumps({'stage': 'setting', 'mem_free': 1000})])
+            writer.write((reply + '\n').encode())
+            await writer.drain()
+
+    board_task = asyncio.create_task(board())
+    for _ in range(80):
+        if 'glider-big' in hub.boards:
+            break
+        await asyncio.sleep(0.02)
+    assert 'glider-big' in hub.boards, 'the board never registered'
+
+    reply = await hub.boards['glider-big'].exchange('ping', timeout=3)
+    assert reply is not None, 'a 200 KB reply was dropped -- the stream limit is too low'
+    assert reply.args and len(reply.args[0]) == len(payload), \
+        len(reply.args[0]) if reply.args else 'no args'
+
+    board_task.cancel()
+    hub_task.cancel()
+    writer.close()
+
+
 async def main():
     await _loopback()
     await _operator_console()
@@ -507,11 +562,12 @@ async def main():
     await _gps_assist()
     await _log_stream()
     await _handler_crash()
+    await _large_reply()
     _gps_device_resolve()
     _glider_roster()
     print('ok: server accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) '
           '+ glider roster (persist, same-name-new-ip, absent hint) '
-          '+ gps assist/compare + log streaming + gps auto-detect')
+          '+ gps assist/compare + log streaming + gps auto-detect + oversized reply')
 
 
 asyncio.run(main())

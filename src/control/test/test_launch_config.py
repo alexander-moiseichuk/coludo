@@ -28,7 +28,11 @@ def test():
     assert by_name['flight']['enabled'] is True
     assert by_name['flight']['gains']['roll']  # proposed (sim) gains present -> the loop can act
     assert cfg['wifi']['policy'] == 'auto'  # quiesced, not disabled (live pre-launch / post-land)
-    assert cfg['fin_limit_multiplier'] == 1.0
+    # the REAL knob is nested under `fins` -- the one tasks/flight.py and cc_client.py read. A
+    # top-level `fin_limit_multiplier` is read by nobody on the board, and this assertion used to pin
+    # that phantom key, so the generator and the host sim agreed with each other and with nothing else.
+    assert cfg['fins']['limit_multiplier'] == 1.0
+    assert 'fin_limit_multiplier' not in cfg, 'the phantom top-level key must not come back'
 
     # negative: the plain default (bench) config is NOT flight-ready -- watchdog + flight are off
     assert set(cc_client._readiness(config_default.default())) == {'watchdog', 'flight'}

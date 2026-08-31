@@ -24,5 +24,13 @@ async def gps_command(hub, tokens, session) -> list:
     if board is None or not board.online:
         return ['from cc err noboard %s' % target]
     resp = await board.command('inspect', 'gnss')  # the board's own fix/position
-    onboard = json.loads(resp.args[0]) if resp and resp.command == 'ok' and resp.args else None
+    # A malformed `ok` payload must not crash the handler. json.loads raises ValueError, which
+    # server._handle logs as "handler gps crashed" and answers the operator with `internal` -- an
+    # unhelpful reply to a board that is merely confused, and it happens on any garbled link.
+    onboard = None
+    if resp and resp.command == 'ok' and resp.args:
+        try:
+            onboard = json.loads(resp.args[0])
+        except ValueError:
+            return ['from cc err board sent a malformed gnss reply']
     return ['from cc ok %s' % json.dumps({'host': host, 'board': target, 'onboard': onboard})]

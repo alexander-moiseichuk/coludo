@@ -213,6 +213,19 @@ so it must run on both.
 - **ruff** for lint + format (`ruff check`, `ruff format`; config in `ruff.toml`).
 - **`tools/deploy.sh`** maps `src/glider/` → `/pyboard/`: each Python file is ruff-checked and
   `mpy-cross`-compiled then pushed; non-Python files are pushed as-is; `test/` → `/pyboard/test`.
+- **`tools/ota_push.sh`** pushes one or two files to a board **over WiFi** through the CC hub, for
+  when the airframe is packed and reaching USB is the expensive part:
+  `tools/ota_push.sh TMS-7C src/glider/drivers/bno055.py`. It compiles with the same toolchain
+  and flags as `deploy.sh` and derives the DEVICE path from the source's place in the tree
+  (`src/glider/drivers/bno055.py` → `drivers/bno055.mpy`) — passing a bare basename is the mistake
+  it exists to prevent, since the file would land in the root, the real module would be untouched,
+  and the push would report success. A reboot is REQUIRED for a new module to load, and is a
+  SEPARATE step (`--reboot`, with or without files) because a fix is often several files pushed
+  across several invocations -- rebooting per invocation would restart the board into a
+  half-updated tree, repeatedly.
+  It is not a `deploy.sh` replacement: no wipe, one file at a time, and it cannot rescue a board
+  whose new module breaks the boot — the checksum stops a corrupt file being installed, but an
+  intact-and-wrong one imports and fails, and that is a USB recovery.
 - The Wi-Fi password is **not** committed: a `src/glider/<ssid>.creds` file (e.g. `panda.creds`,
   one line — the plain password) is gitignored (`*.creds`) and pushed by `tools/deploy.sh`; `wifi.py`
   reads it for the password.

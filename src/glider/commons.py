@@ -102,6 +102,44 @@ def wrap180_opt(degrees: int) -> int:
 
 wrap180 = wrap180_opt  # viper is safe on this firmware -> bind the optimised variant
 
+# sensirion_crc8: CRC-8 (polynomial 0x31, seed 0xFF) over the two data bytes of one Sensirion frame
+# word. TWO parts on this airframe speak it -- the SDP810 pitot and the ICP-10111 baro -- and each had
+# grown (or was about to grow) its own copy. One definition, because the failure mode of a WRONG
+# polynomial is identical for both: it rejects every good frame and presents as a dead sensor.
+# Takes the bytes as ints rather than a buffer so it stays a pure typed function under @viper.
+
+def sensirion_crc8_upy(byte0: int, byte1: int) -> int:
+    crc = 0xFF
+    for current in (byte0, byte1):
+        crc ^= current
+        for _ in range(8):
+            crc = ((crc << 1) ^ 0x31) & 0xFF if crc & 0x80 else (crc << 1) & 0xFF
+    return crc
+
+
+@micropython.viper
+def sensirion_crc8_opt(byte0: int, byte1: int) -> int:
+    crc: int = 0xFF
+    current: int = byte0
+    word: int = 0
+    bit: int = 0
+    while word < 2:
+        crc = crc ^ current
+        bit = 0
+        while bit < 8:
+            if crc & 0x80:
+                crc = ((crc << 1) ^ 0x31) & 0xFF
+            else:
+                crc = (crc << 1) & 0xFF
+            bit += 1
+        current = byte1
+        word += 1
+    return crc & 0xFF
+
+
+sensirion_crc8 = sensirion_crc8_opt  # viper is safe on this firmware -> bind the optimised variant
+
+
 
 """Float math -- the @native (FPU) primitives."""
 
@@ -290,7 +328,10 @@ def dwell_step(active: bool, now_ms: int, credit_ms: int, last_ms, threshold_ms:
     """
     if last_ms is None:  # no dwell in progress: an active sample starts the clock, at zero credit
         return (0, now_ms, False) if active else (0, None, False)
-    step = now_ms - last_ms
+    # ticks_diff, not raw subtraction: ticks_ms wraps at 2**30 ms (~12.4 days). A bench board left in
+    # SETTING across the wrap then launching would see a huge positive delta and satisfy any dwell in
+    # one step -- a FALSE LAUNCH from arithmetic, on the detector that starts the flight.
+    step = ticks_diff(now_ms, last_ms)
     credit = credit_ms + step if active else credit_ms - step
     if credit <= 0:
         return 0, None, False  # fully drained -> the dwell is over and must start afresh
@@ -341,7 +382,7 @@ def apogee_step(elevation, now_ms: int, peak, since_ms, smooth, drop_m, dwell_ms
         return smooth, None, smooth, False   # still climbing -> raise the peak, reset the dwell
     if smooth < peak - drop_m:               # fallen off the peak -> descending
         since_ms = now_ms if since_ms is None else since_ms
-        return peak, since_ms, smooth, (now_ms - since_ms) >= dwell_ms
+        return peak, since_ms, smooth, ticks_diff(now_ms, since_ms) >= dwell_ms
     return peak, None, smooth, False         # inside the drop band (noise) -> not descending yet
 
 class Waiter:

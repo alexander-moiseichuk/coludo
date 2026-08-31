@@ -22,6 +22,9 @@ except ImportError:  # host (CPython): board-only; buses/devices are constructed
 _buses: dict = {}  # bus id -> Bus
 
 
+_RESYNC_READS: int = 16  # discarded framed reads after a peripheral appears; measured need is 1..11
+
+
 class _Device:
     """
     A register window for one chip-select on a shared SPI bus.
@@ -38,6 +41,38 @@ class _Device:
         self._bus = bus
         self._cs = Pin(cs, Pin.OUT, value=1)  # idle high; pulled low only during a transaction
         self._multi = (1 << mb_bit) if mb_bit is not None else 0
+        self._synced: bool = False  # see _resync: the FIRST transaction on a new peripheral is discarded
+
+    def _resync(self) -> None:
+        """
+        Discard one framed read the first time this window is used on a given peripheral.
+
+        Measured on the board: after an SPI peripheral is created (or replaced by retune) the first
+        framed reads return 0x00 and every read after them is correct. The count VARIES -- 1 read in the
+        steady case, 6 to 11 observed on a freshly created peripheral -- which is why this discards
+        _RESYNC_READS of them rather than the single read a first fix assumed. It is reproducible at
+        every baud from 1 to 8 MHz, so it is not signal integrity, and unaffected by delays from 0 to
+        50 ms, so it is not settling time. The device is simply out of step with a peripheral that
+        appeared underneath it.
+
+        Left unhandled this is a quiet correctness bug, not a noisy one: adxl375.setup() checks its DEVID
+        with a SINGLE read and no retry, so a discarded-read-shaped fault at bring-up reads as a chip
+        that is absent or wrong -- exactly the verdict that sent this project chasing a dead LSM6DSO32
+        through two netlist errors.
+
+        One bool test per transaction pays for it, which is cheaper than the alternative of every caller
+        knowing to throw its first read away.
+        """
+        self._synced = True
+        scratch = bytearray(1)
+        try:
+            for _ in range(_RESYNC_READS):
+                self._cs(0)
+                self._bus._spi.write(b'\x80')   # read register 0: side-effect-free on both parts here
+                self._bus._spi.readinto(scratch)
+                self._cs(1)
+        except Exception:
+            pass  # an absent device stays absent; this is a resync, never a probe
 
     async def read(self, reg: int, count: int) -> bytes:
         buf = bytearray(count)
@@ -54,6 +89,8 @@ class _Device:
         property that matters here (LSM6DSO32 and ADXL375 share SPI1), and it comes from the
         scheduler, not from the lock. The lock cost ~288 B per call, measured.
         """
+        if not self._synced:
+            self._resync()
         cmd = 0x80 | reg | (self._multi if len(buf) > 1 else 0)
         self._cs(0)
         self._bus._spi.write(bytes((cmd,)))
@@ -62,6 +99,8 @@ class _Device:
 
     async def write(self, reg: int, data: bytes) -> None:
         """One CS-framed register write; unlocked for the same reason as read_into above."""
+        if not self._synced:
+            self._resync()
         cmd = reg | (self._multi if len(data) > 1 else 0)
         self._cs(0)
         self._bus._spi.write(bytes((cmd,)) + bytes(data))
@@ -99,10 +138,13 @@ class Bus:
         self._spi = SPI(bus_id, baudrate=spec.get('baud', 5_000_000), polarity=mode >> 1, phase=mode & 1,
                         sck=Pin(spec['sck']), mosi=Pin(spec['mosi']), miso=Pin(spec['miso']))
         self._lock = asyncio.Lock()
+        self._devices: list = []  # every window handed out, so retune() can resync them
 
     def device(self, cs: int, mb_bit: int = 6) -> _Device:
         """A register window for one chip-select on this bus (matches i2cbus.Bus.device)."""
-        return _Device(self, cs, mb_bit)
+        window = _Device(self, cs, mb_bit)
+        self._devices.append(window)  # remembered so retune() can resync each one; see there
+        return window
 
     async def retune(self, freq: int) -> None:
         """
@@ -123,6 +165,25 @@ class Bus:
             self._spi = SPI(self._bus_id, baudrate=freq, polarity=mode >> 1, phase=mode & 1,
                             sck=Pin(self._spec['sck']), mosi=Pin(self._spec['mosi']),
                             miso=Pin(self._spec['miso']))
+            """
+            Resync every device: replacing the peripheral leaves some parts one transaction out of step.
+
+            Measured on the LSM6DSO32, deterministically -- after a retune its FIRST framed read returns
+            0x00 and the second is correct, on every trial. The ADXL375 alongside it on the same bus is
+            unaffected, which is why this cannot be left to the caller: the symptom is one device
+            reporting dead at whatever frequency was just set.
+
+            That matters because the only caller is the bustune frequency sweep, which retunes and then
+            immediately health-checks. Without this, the sweep would blame the LSM6DSO32 at EVERY step of
+            the ladder and pick a needlessly low SPI speed -- a wrong answer from the tool whose entire
+            job is choosing that number.
+
+            One throwaway read of register 0 per device; both parts treat it as side-effect-free. The
+            cost lands here, in a bench-only operation, rather than as a per-transaction check on the
+            100 Hz IMU path.
+            """
+            for window in self._devices:
+                window._synced = False  # re-arm the one-read discard; _resync runs on next use
 
 
 def get(bus_id: int, spec: dict) -> Bus:

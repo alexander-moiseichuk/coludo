@@ -94,6 +94,18 @@ class _Channel:
         Born stale + a window <= _DEFAULT_EXPIRE means a fresh channel always has data -- no v1-None
         check is needed here or downstream.
 
+        THE LOWER BOUND IS NOT OPTIONAL. ticks_us wraps at 2**30 us and ticks_diff returns a SIGNED
+        value in [-2**29, 2**29), so a channel silent for 8.95-17.9 minutes produces a NEGATIVE diff --
+        and `diff <= window_us` is then trivially true, reporting a dead sensor as fresh. Measured:
+        silent 537 s -> diff -536741824 -> fresh. Not reachable inside a 2-minute flight, but entirely
+        reachable on the PAD, where the board sits in SETTING waiting for a GNSS fix; a sensor that
+        died there would pass the operator readiness gate.
+
+        Requiring diff >= 0 fails STALE rather than fresh, which is the safe direction: `now` is
+        sampled once before the caller's loop, so a push landing mid-loop makes t1 momentarily newer
+        than `now` and the channel reads stale for exactly one cycle. A false stale costs one cycle of
+        a fallback source; a false fresh costs the flight.
+
         Args:
             now - the current ticks_us.
             window_us - the freshness window in microseconds.
@@ -101,7 +113,8 @@ class _Channel:
         Returns:
             True when the last push is within the window, else False.
         """
-        return time.ticks_diff(now, self.t1) <= window_us
+        elapsed = time.ticks_diff(now, self.t1)
+        return 0 <= elapsed <= window_us
 
     def value(self):
         """This channel's latest reading (None until first push). The handle a source reads back."""

@@ -64,8 +64,27 @@ def _resolve_gps_device(arg: str):
     if arg == 'auto':
         import glob
 
-        found = sorted(glob.glob('/dev/ttyUSB*'))
-        return found[0] if found else None
+        import serial
+
+        """
+        PROBE for NMEA before claiming a port. /dev/ttyUSB* is whatever happened to enumerate first --
+        a printer, an SDR, the Luckfox UART -- and taking it blind meant the hub logged "host gps on
+        /dev/ttyUSB0" and then "host gps lost", with the real receiver sitting unused on ttyUSB1.
+        Worse, opening someone else's serial port can disturb it.
+
+        A GPS emits `$G...` continuously, so a short listen is a definitive test. Each candidate gets
+        one second; the first that talks NMEA wins, and if none does we return None rather than
+        guessing -- an explicit --gps-device is the honest fallback.
+        """
+        for candidate in sorted(glob.glob('/dev/ttyUSB*')):
+            try:
+                with serial.Serial(candidate, 9600, timeout=0.25) as link:
+                    for _attempt in range(4):        # ~1 s: a live receiver sends several sentences
+                        if b'$G' in link.readline():
+                            return candidate
+            except Exception:
+                continue                              # busy, permission-denied, not a serial device
+        return None
     return arg
 
 
@@ -81,7 +100,23 @@ async def _run(args, hub) -> None:
         None; runs until cancelled.
     """
     if hub.gps is not None:
-        await asyncio.gather(hub.run(), hub.gps.serve(args.gps_device, args.gps_baud))
+        """
+        The hub is the job; the host GPS is an OPTIONAL extra. gather() couples them.
+
+        A bare gather() propagates the FIRST exception and cancels the sibling, so anything escaping
+        serve() -- it catches OSError, but not CancelledError or an unexpected error mid-read -- takes
+        the board listener down with it. Losing the whole fleet because a USB GPS was unplugged is the
+        wrong trade, and it is a field-day failure: that dongle gets knocked constantly.
+
+        return_exceptions keeps the pair independent, and the GPS outcome is logged rather than
+        swallowed so a dead assist is visible instead of merely absent.
+        """
+        results = await asyncio.gather(hub.run(),
+                                       hub.gps.serve(args.gps_device, args.gps_baud),
+                                       return_exceptions=True)
+        for label, outcome in zip(('hub', 'host gps'), results):
+            if isinstance(outcome, BaseException) and not isinstance(outcome, asyncio.CancelledError):
+                hub.log('%s stopped: %r' % (label, outcome))
     else:
         await hub.run()
 

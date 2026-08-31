@@ -8,6 +8,7 @@ not an ICP-10111 is wired. Run by `make test`.
 
 import asyncio
 
+import commons
 import config_default
 import task
 from drivers import icp10111
@@ -38,6 +39,28 @@ async def amain():
     """
     absent = icp10111.Icp10111('baro', {'bus': 'i2c', 'id': 0, 'addr': 0x7F}, _StubController())
     assert await absent.setup() is False
+
+    """
+    FRAME CRCs -- positive and negative.
+
+    The sensor appends a CRC to each of its three words and the driver used to read them and throw them
+    away. That is the expensive kind of silence: a corrupted I2C word does not raise, it yields a
+    plausible altitude, and elevation drives the endgame band, the landing trigger and the launch
+    backup. This part also has a documented latch-up habit on this board, which is exactly the state
+    that puts bad bytes on the wire.
+
+    POSITIVE: a frame captured live from the wired sensor validates. NEGATIVE: flipping ONE bit in a
+    data byte -- leaving its CRC untouched, which is what a corrupted read looks like -- must be
+    refused. Both matter: a validator that accepts everything is worthless, and one that rejects
+    everything (a wrong polynomial) would silently take out the primary baro.
+    """
+    live = bytearray(b'\xae\x54\xa9\x3d\x00\x73\x6e\x7a\x9a')  # captured from the real part
+    assert commons.sensirion_crc8(live[0], live[1]) == live[2], 'live pressure word failed its own CRC'
+    assert commons.sensirion_crc8(live[3], live[4]) == live[5], 'live second word failed its own CRC'
+    assert commons.sensirion_crc8(live[6], live[7]) == live[8], 'live temperature word failed its own CRC'
+    corrupt = bytearray(live)
+    corrupt[0] ^= 0x01                                    # one flipped bit, CRC byte left alone
+    assert commons.sensirion_crc8(corrupt[0], corrupt[1]) != corrupt[2], 'a corrupted word passed CRC'
 
     # conversion against real OTP + raw values captured live from the wired sensor -> ~101797 Pa
     probe = icp10111.Icp10111('baro', {}, _StubController())
@@ -86,7 +109,7 @@ async def amain():
     assert len(recoveries) == 2, recoveries
     task_handle.cancel()
 
-    print('ok: icp10111 driver registered; graceful-absent; conversion ~%d Pa; run-loop recovery' % pa)
+    print('ok: icp10111 driver registered; graceful-absent; conversion ~%d Pa; frame CRC +/-; run-loop recovery' % pa)
 
 
 asyncio.run(amain())

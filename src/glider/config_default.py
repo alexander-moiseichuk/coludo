@@ -32,7 +32,7 @@ constant, so a config predating a new sensor/section is visible instead of silen
 moved key, a changed default value. Do NOT bump for a comment or a docstring edit. Bumping is what turns
 'my new sensor never ran' into a reported mismatch.
 """
-CONFIG_VERSION: str = '20260725'  # mg90s yaw + airspeed_sdp810 + this version field
+CONFIG_VERSION: str = '20260828'  # recorder.telemetry_ms moved into the section that is read
 
 
 def default() -> dict:
@@ -63,10 +63,14 @@ def default() -> dict:
     """
     wifi = {
         'policy': 'auto',
-        'ssid': 'panda',
+        # `ssid` is only the fallback for a config with NO `networks` list -- it does not set priority.
+        # ORDER does: _next_network starts its round-robin at index 0, so the first entry is tried
+        # first. Fallback needs no configuring and is not one-way: the rotation reaches every network
+        # whose own retry_ms has elapsed, so whichever AP is actually present gets joined.
+        'ssid': 'coludo',
         'networks': [
-            {'ssid': 'panda', 'enabled': True, 'retry_ms': 10000},
-            {'ssid': 'coludo', 'enabled': True, 'retry_ms': 10000},
+            {'ssid': 'coludo', 'enabled': True, 'retry_ms': 10000},  # preferred: the field AP
+            {'ssid': 'panda', 'enabled': True, 'retry_ms': 10000},   # fallback: the bench laptop
         ],
         'password': '',
         # no cc_host -> the board dials the `.1` of whatever subnet it joins (the hub by
@@ -121,11 +125,47 @@ def default() -> dict:
         # (GPIO30 became i2c:1 SCL when the INA226 moved to the aft power bus; ALERT -> 29)
     }
 
+    """
+    Recorder: PSRAM ring sizes + stats cadence, and the SESSION prefix every capture file is named by.
+
+    `session` is normally absent, and the board then synthesises `YYYYMMDD_HHMMSS_<6-digit random>`. It
+    has no battery-backed RTC, so without a time sync that date is 2000-01-01 and only the random part
+    separates one boot from the next -- an audit of a real Luckfox found ~150 unsynced boots sharing a
+    900-value suffix, with the expected ~12 collisions APPENDING two flights into one CSV.
+
+    Set `session` from CC -- which has both a trustworthy clock and the run's identity -- to assign the
+    WHOLE prefix verbatim, e.g. '20260807_143012_catapult-run3'. Keep the `YYYYMMDD_HHMMSS_<tag>` shape:
+    host tools strip the date/time by pattern and derive the tag from the capture, so tag-less, random
+    and labelled captures all parse alike; a run label makes a capture self-identifying on disk.
+
+    CAUTION: this is a PER-RUN value, and config is immutable-per-run and SAVED. A `session` left in the
+    saved config is reused verbatim by every later boot, which is a *guaranteed* collision -- strictly
+    worse than the random suffix it replaces, since colliding boots append into each other's files. Set
+    it per run or leave it out.
+    """
     recorder = {  # PSRAM ring sizes + stats cadence (Recorder)
         'tlm_capacity': 256,  # measured peak ~16 buffered records -> 256 is ~16x headroom
         'log_capacity': 256,
         'cell_size': 256,  # power-of-two cell; ~64 KB/ring, nothing on 32 MB PSRAM
         'stats_ms': 1000,
+        # telemetry_ms: the GLOBAL decimation every stream inherits (a stream setting its own non-zero
+        # value keeps that instead). 25 Hz, not the old 50: measured per call, a Telemetry.push plus the
+        # rounded tuple it is handed costs 272 B, and the highest-rate sensors were emitting rows twice
+        # as fast as any report renders them. Halving the global rate is the cheapest leak reduction
+        # available -- it costs plot resolution nothing downstream was using.
+        #
+        # IT MUST LIVE IN THIS SECTION. Recorder.setup() reads config['recorder']['telemetry_ms'], and
+        # nothing merges a component's keys into a section -- so the same value written on the recorder
+        # COMPONENT entry (where it sat until 2026-08-28) is read by nobody and the 20 ms class default
+        # silently wins, so the intended halving never took effect. 0 means NO decimation, not 'default'.
+        # 0 = NO global decimation: every stream emits at its own poll rate. This was 40, which was a
+        # regression introduced by moving the key here: sitting on the recorder COMPONENT it was never
+        # read, so the effective global was the code default (_DEFAULT_TELEMETRY_MS, 20 ms / 50 Hz).
+        # Moving it made 40 live for the first time and quietly HALVED the default rate to 25 Hz. The
+        # flight profiles (tms7c/tms7d) already set 0, so the default now matches what actually flies;
+        # tms7d_control keeps 40, where a control board does not need the full stream.
+        'telemetry_ms': 0,
+        # 'session': '20260807_143012_taster',  # CC assigns the whole prefix; absent -> board synthesises
     }
 
     """
@@ -170,7 +210,7 @@ def default() -> dict:
         # POLL rate when INT1 is silent: must beat the 20 ms `accel` freshness window below, so it is
         # the sensor's own 100 Hz ODR rather than a slow safety tick
         'period_ms': 10,
-        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, 25 Hz)
+        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, itself 0 = uncapped)
         'enabled': True,
         'provides': {'accel': {'priority': 1, 'timeout_ms': 20}},  # >32 g backstop behind lsm6dso32
     }
@@ -191,7 +231,7 @@ def default() -> dict:
         # and beat the 20 ms `rate` freshness window below -- the old 100 ms default would have left the
         # PID's D term starved even in poll mode, so the fallback has to be fast, not merely present.
         'period_ms': 10,
-        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, 25 Hz)
+        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, itself 0 = uncapped)
         'enabled': True,
         'provides': {'accel': {'priority': 0, 'timeout_ms': 20},   # PRIMARY accel (±32 g)
                      'rate': {'priority': 0, 'timeout_ms': 20}},    # sole gyro `rate` source
@@ -202,7 +242,7 @@ def default() -> dict:
         'driver': 'bno055',
         'bus': 'i2c', 'id': 0,
         'addr': 0x28,
-        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, 25 Hz)
+        'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, itself 0 = uncapped)
         'enabled': True,
         'provides': {'attitude': {'priority': 0, 'timeout_ms': 40},
                      'accel': {'priority': 2, 'timeout_ms': 40}},  # fused fallback behind lsm/adxl
@@ -295,16 +335,38 @@ def default() -> dict:
         'provides': {'agl': {'priority': 0, 'timeout_ms': 100}},
     }
 
+    """
+    INA226 power monitor -- it sits at the BATTERY, not on the 5 V servo rail.
+
+    So in flight it measures the WHOLE system (MCU + servos) at the source, which is what an energy
+    budget wants: one number that accounts for every joule leaving the cell. Vbus therefore tracks the
+    single-cell LiPo, 3.3-4.2 V, NOT 5 V -- a reading near 5 V means it is sensing the wrong node.
+
+    Two consequences that bite when reading captures:
+
+    - On the BENCH the MCU is usually on USB, so the INA sees the servos alone and the idle draw looks
+      implausibly small (measured 5-14 mA). That is the harness, not a healthy board.
+    - Battery-side current is HIGHER than servo-rail current for the same power, by the voltage ratio
+      over converter efficiency. Measured both ways on one servo sweep: 1.33 A x 3.26 V = 4.34 W at the
+      battery against 0.79 A x 5.00 V = 3.95 W at the rail -- 91 % efficiency, and the two measurements
+      confirm each other. It also means the 2026-07-25 servo-rail figures are NOT directly comparable
+      to a flight capture's `power`, which now carries the MCU baseline as well.
+    """
     power_ina226 = {
         'name': 'power_ina226',
         'driver': 'ina226',
         'bus': 'i2c', 'id': 1,  # aft power bus (i2c:1, sda 31 / scl 30); off the forward i2c:0
-        'addr': 0x40,  # INA226, A0=A1=GND (scan-confirmed on i2c:1: mfr 'TI', Vbus ~5 V)
+        'addr': 0x40,  # INA226, A0=A1=GND (scan-confirmed on i2c:1: mfr 'TI'); Vbus = the battery
         'shunt_mohms': 10,  # installed 2512 R010 (10 mΩ); calibrate vs a known current for <1% absolute
         'max_current_ma': 5000,  # Current_LSB = 5000mA/2^15 ≈ 153 µA -> CAL = 167772160//(mA·mΩ) ≈ 3355
         'period_ms': 100,  # 10 Hz poll (conversion ~9 ms at 4-sample averaging)
         'alert_pin': 'ina226_alert',  # INA226 ALERT (open-drain) -> GPIO29: hardware over-current trip
-        'alert_ma': 3000,  # ALERT fires above this (mA) -- over the ~2.4 A 3-servo peak: a stall/short flag
+        # ALERT fires above this (mA) -- a stall/short flag. NOTE 3000 was chosen against the ~2.4 A
+        # 3-servo peak measured on the SERVO RAIL; the INA now measures the BATTERY, where the same
+        # movement draws ~2.8 A at a full cell and ~3.6 A at 3.3 V, so a normal 3-fin slew crosses it.
+        # The alert only COUNTS (transient, no latch -- it cuts nothing), so this corrupts a statistic
+        # rather than a flight; see doc/hardware.md before re-tuning.
+        'alert_ma': 3000,
         'enabled': True,
         'provides': {'voltage': {'priority': 0, 'timeout_ms': 500},
                      'current': {'priority': 0, 'timeout_ms': 500},
@@ -377,7 +439,7 @@ def default() -> dict:
         # against wind back-drive); the elerons stay SG90. Each fin's `driver` is independent, so mixing
         # is supported. NB a continuous-rotation "360" MG90S is NOT a fin servo (pulse = speed, it spins
         # and never holds an angle) -- only the 180deg positional part works here.
-        {'name': 'servo_yaw', 'driver': 'mg90s', 'pin': 'servo_yaw', 'enabled': True},
+        {'name': 'servo_yaw', 'driver': 'sg90', 'pin': 'servo_yaw', 'enabled': True},
         {'name': 'servo_eleron_left', 'driver': 'sg90', 'pin': 'servo_eleron_left', 'enabled': True},
         {'name': 'servo_eleron_right', 'driver': 'sg90', 'pin': 'servo_eleron_right', 'enabled': True},
     ]
@@ -494,10 +556,19 @@ def default() -> dict:
 
     """
     reachability (flight panel): nominal glide ratio (L/D) -> reach = glide_ratio * elevation vs the
-    distance to the zone -> 'zone reachable y/n'. Conservative default (the quality-2 polar is ~2; a
-    real airframe re-derives it from the first glide telemetry).
+    distance to the zone -> 'zone reachable y/n'.
+
+    5.5 is the MEASURED airframe (see sim_model.AIR_QUALITY -- a hand-toss glide ratio on TMS-7B,
+    2026-08-12), replacing the 3.0 that was carried while the polar was a guess. It stays honest as a
+    conservative value even though it is no longer a guess: the measurement was taken below trim speed
+    at low Reynolds number, so it is a FLOOR, and the panel under-promising reach is the safe error --
+    it says 'unreachable' early rather than talking the operator into a zone the glider cannot make.
+
+    ADVISORY ONLY: this feeds tasks/flight._flight_panel() for the CC dashboard and steers nothing. The
+    guidance does not consult it, which is why the old 3.0 cost nothing in flight -- but it did tell the
+    operator the wrong thing about a zone that was in fact reachable.
     """
-    reachability = {'glide_ratio': 3.0}
+    reachability = {'glide_ratio': 5.5}
 
     """
     wind estimation (wind.py) -- the estimator owns this `wind` subtree (Inspectable, CC-tunable):
@@ -587,14 +658,33 @@ def default() -> dict:
     Watchdog + heartbeat: feeds a hardware WDT (a total event-loop wedge -> hard reset) and
     supervises the control loop (stall in a control stage -> full reset; boot re-centres the fins).
     Disabled by default -- a live WDT also resets the board when you drop the running firmware to the
-    REPL for bench work; enable it for flight. wdt_timeout 1000: the frozen-fin bound at a hard OOM
-    (7/06 soak: ~1.4 s to reset). NOT lower: a rescue gc.collect() is atomic (nothing can feed
-    mid-sweep) and its cost scales with heap FILL -- ~65-260 ms on a mostly-free heap (the
-    real-anomaly rescue case) but measured 3.4 s on a ballast-full one; 500 ms killed the rescue in
-    HITL. Fast control-loop-death detection is stall_ms below, independent of this timeout.
+    REPL for bench work; enable it for flight (the 7C/7D profiles do).
+
+    wdt_timeout 5000, and it is a MEASURED FLOOR rather than a preference. Two independent limits meet
+    here and both rule out the 1000 ms this used to carry:
+
+      * BOOT. At 1000 ms the board does not boot -- it resets every ~8.5 s forever. The ESP-IDF task
+        watchdog aborts on `mpy_machine_wdt` exactly `timeout` after arming, with BOTH cores idle, so
+        it is not loop starvation: the firmware's own feed loop was verified running at its 200 ms
+        cadence with a substituted counter, and the real WDT was verified being fed without raising.
+        Measured on the board, and the FLOOR was bisected rather than assumed: 3000 ms still
+        boot-loops (8 resets in 70 s), 4000 ms is stable, 5000 ms is stable across three further soaks
+        (90 s, 60 s, 240 s -- one POWERON reset and nothing else). So the boot requirement sits between
+        3 and 4 s and 5000 clears it by only ~1.25x, NOT the wide margin the old 1000 ms implied. The
+        bisect was run with servos DISABLED, because a boot loop with servos enabled is destructive --
+        that is how servo_eleron_right died.
+      * RESCUE. A rescue gc.collect() is ATOMIC -- nothing can feed mid-sweep, which is why the task
+        exposes kick() to hand the block a full budget -- and its cost scales with heap FILL: ~65-260 ms
+        on a mostly-free heap, but measured 3.4 s on a ballast-full one. A 1000 ms budget could not
+        cover that even with a kick, so the old value would have shot down the very rescue it was
+        sized around. 5000 ms clears the measured worst case -- by 1.6 s, which is the tighter of the
+        two margins and the reason not to lower this knob without re-measuring BOTH demands.
+
+    Frozen fins at a hard OOM are bounded by the reset either way (7/06 soak: ~1.4 s to the reset), and
+    fast control-loop-death detection is stall_ms below, independent of this timeout.
     """
     watchdog = {'name': 'watchdog', 'activity': 'watchdog', 'enabled': False,
-                'wdt_timeout_ms': 1000, 'period_ms': 200, 'stall_ms': 500}
+                'wdt_timeout_ms': 5000, 'period_ms': 200, 'stall_ms': 500}
 
     """
     Board vitals (temperature/memory/load) -> telemetry every period_ms. probe_ms is the load
@@ -642,14 +732,10 @@ def default() -> dict:
                   'warm_start': warm_start}
 
     components = [
-        # Recorder drain loop: a thin activity over the global Recorder, using uart:1.
-        # telemetry_ms is the GLOBAL decimation every stream inherits (a stream setting its own non-zero
-    # value keeps that instead). 25 Hz, not the old 50: measured per call, a Telemetry.push plus the
-    # rounded tuple it is handed costs 272 B, and the highest-rate sensors were emitting rows twice as
-    # fast as any report renders them. Halving the global rate is the cheapest leak reduction available
-    # -- it costs plot resolution nothing downstream was using.
-    {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True,
-     'telemetry_ms': 40},
+        # Recorder drain loop: a thin activity over the global Recorder, using uart:1. The global
+        # telemetry rate is NOT here -- it is `recorder.telemetry_ms` in the section above, which is
+        # where Recorder.setup() reads it from.
+        {'name': 'recorder', 'activity': 'recorder', 'bus': 'uart', 'id': 1, 'enabled': True},
         # Stage-separation switch (copper pads): HIGH=nested, LOW=separated -> Boosting->Gliding.
         # debounce_ms: the LOW must hold this long -- a contact bounce on the pads never deploys.
         {'name': 'separation', 'driver': 'separation', 'pin': 'separation_switch', 'enabled': True,

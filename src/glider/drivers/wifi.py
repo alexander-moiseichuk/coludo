@@ -18,11 +18,17 @@ import time
 import controller as controller_mod
 import recorder
 import task
+from commons import const  # micropython.const on the board, identity on CPython
 
 try:
     import network
 except ImportError:  # host (CPython): board-only; _ensure_radio() then reports no Wi-Fi interface
     network = None
+
+
+# Let a cancelled association settle before starting the next one. The ESP-Hosted RPC to the C6 is
+# asynchronous, so issuing connect() immediately after disconnect() races the cancel.
+_DISCONNECT_SETTLE_MS = const(300)
 
 
 @task.driver('wifi')
@@ -135,6 +141,38 @@ class Wifi(task.Task):
             self.note('wifi :: no Wi-Fi interface (%r)', error)
             return False
 
+    async def _clear_pending(self) -> None:
+        """
+        Cancel any connect still in flight, so the NEXT attempt is allowed to start.
+
+        MicroPython's connect() only STARTS an association; it does not wait. When the SSID is absent
+        the attempt stays pending inside the ESP32-C6 long after isconnected() has gone False, and a
+        second connect() then raises `Wifi Internal Error` -- ESP_ERR_WIFI_CONN (0x3007, RPC resp
+        12295), which means "already connecting", not "broken". Every retry hit the same pending
+        attempt, so the board could never reach the hub again: measured, one connect to an absent SSID
+        cost CC for the entire session.
+
+        disconnect() clears it. Demonstrated on the board, in this order: connect(absent) accepted ->
+        connect(real) raises -> disconnect() -> connect(real) ACCEPTED. Tearing the STA interface down
+        and rebuilding it does NOT help (tried at 0.5 s, 2 s and 5 s settle), which is the evidence
+        that the radio was never the problem.
+
+        Called before every attempt rather than only after a failure, because the pending state is
+        left by the PREVIOUS attempt -- a board that boots with an absent SSID first in its list would
+        otherwise never make a successful first attempt on the second one.
+
+        Args:
+            (none)
+
+        Returns:
+            None; best-effort -- disconnect() on an idle interface is harmless.
+        """
+        try:
+            self.wlan.disconnect()
+        except Exception:
+            pass          # nothing pending, or the interface will not take it -- connect() decides
+        await asyncio.sleep_ms(_DISCONNECT_SETTLE_MS)
+
     async def run(self) -> None:
         """
         (Re)join every retry_ms -- but ONLY on the ground.
@@ -206,6 +244,7 @@ class Wifi(task.Task):
         """
         if self.wlan is None or self.wlan.isconnected():
             return self.wlan is not None and self.wlan.isconnected()
+        await self._clear_pending()   # a PREVIOUS attempt still in flight makes this one raise
         print('wifi :: connecting to "%s"' % self.ssid)
         try:
             self.wlan.connect(self.ssid, self.password)
@@ -215,7 +254,10 @@ class Wifi(task.Task):
         start = time.ticks_ms()
         while not self.wlan.isconnected():
             if time.ticks_diff(time.ticks_ms(), start) > timeout_ms:
+                # The attempt is still pending in the C6 even now; _clear_pending() cancels it before
+                # the next one, which is what stops a timeout here costing every LATER attempt.
                 print('wifi :: connect timeout')
+                await self._clear_pending()
                 return False
             await asyncio.sleep_ms(200)
         print('wifi :: connected %s' % str(self.ifconfig()))

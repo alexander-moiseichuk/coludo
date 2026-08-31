@@ -26,6 +26,9 @@ import flight_telemetry  # noqa: E402
 _FINS: tuple = ('eleron_left', 'eleron_right', 'yaw')
 _ZONE_DEFAULT: str = '25.514944,-80.392972,25.514583,-80.391111'  # HPRC zone (TL, BR), as in hitl_matrix
 _M_PER_DEG: float = 111320.0
+_PRIMARY_RANGE_G: float = 32.0    # LSM6DSO32 full scale -- the range the backstop has to beat to matter
+_BACKSTOP_RANGE_G: float = 200.0  # ADXL375 full scale
+_CLIP_FRACTION: float = 0.95      # within this of the primary's rail counts as clipped
 
 
 def _fin_activity(fins) -> tuple:
@@ -102,12 +105,133 @@ def _touchdown(gnss, zone: tuple) -> tuple:
     return math.hypot(north, east), inside
 
 
+def _peak_g(stream) -> tuple:
+    """
+    Peak |a| (g) in one accel stream and when it happened.
+
+    Args:
+        stream - an accel stream carrying ax/ay/az, or None.
+
+    Returns:
+        (peak_g, time_s, samples); (0.0, 0.0, 0) for an absent or empty stream.
+    """
+    if stream is None or 'ax' not in stream.fields:
+        return 0.0, 0.0, 0
+    times, ax = stream.column('ax')
+    _, ay = stream.column('ay')
+    _, az = stream.column('az')
+    """
+    Non-finite samples are DROPPED before anything is computed. A NaN here is a corrupted telemetry
+    record (flight_telemetry maps an unparseable cell to nan rather than letting a string reach the
+    arithmetic), and NaN poisons every comparison silently: `min`/`max` return whichever operand they
+    saw first, so a median filter built on them passes the garbage straight through. Found on a real
+    board capture -- a lone 21 g on the ADXL375 sat directly beside a nan, i.e. it was the corrupt
+    record's neighbour, not a shock. Left in, it would have argued to KEEP the +/-200 g backstop.
+    """
+    magnitudes, stamps = [], []
+    for moment, x, y, z in zip(times, ax, ay, az):
+        magnitude = math.sqrt(x * x + y * y + z * z)
+        if magnitude == magnitude and magnitude != float('inf'):  # nan != nan
+            magnitudes.append(magnitude)
+            stamps.append(moment)
+    if not magnitudes:
+        return 0.0, 0.0, 0
+    times = stamps
+    """
+    MEDIAN-FILTER the peak. A raw max is one sample, and one sample is exactly what a bad SPI read
+    looks like -- found on a real board capture where the ADXL375 (known-intermittent on SPI, and
+    logging `setup attempt 1/3 failed` that boot) reported a lone 21 g while the LSM6DSO32 beside it,
+    sampling the same window at the same rate, never exceeded 3.3 g. A genuine shock moves both.
+    Since this number decides whether the +/-200 g backstop stays on the board, an isolated glitch must
+    not cast the vote: a 3-sample median keeps any event that lasts more than one sample and discards
+    the ones that do not.
+    """
+    filtered = [max(min(magnitudes[i - 1], magnitudes[i]), min(max(magnitudes[i - 1], magnitudes[i]),
+                magnitudes[i + 1])) for i in range(1, len(magnitudes) - 1)] or magnitudes
+    peak = max(filtered)
+    when = times[magnitudes.index(peak)] if peak in magnitudes else times[0]
+    return peak, when, len(times)
+
+
+def _raw_peak(stream) -> float:
+    """The UNFILTERED max |a| -- compared against the filtered peak to expose single-sample glitches."""
+    if stream is None or 'ax' not in stream.fields:
+        return 0.0
+    _t, ax = stream.column('ax')
+    _t, ay = stream.column('ay')
+    _t, az = stream.column('az')
+    values = [math.sqrt(x * x + y * y + z * z) for x, y, z in zip(ax, ay, az)]
+    values = [v for v in values if v == v and v != float('inf')]  # drop corrupt (nan) records
+    return max(values) if values else 0.0
+
+
+def _accel_envelope(streams) -> None:
+    """
+    Report the measured G envelope and turn it into a KEEP/DROP verdict for the high-g backstop.
+
+    The ADXL375 (±200 g) exists for ONE reason: to survive a shock the LSM6DSO32's ±32 g would clip.
+    Whether it earns its mass, its SPI chip-select and its PCB area is a MEASUREMENT, not an opinion --
+    so fly both, then read it off here. Only two outcomes matter:
+      * the primary CLIPPED (peak at/near its rail) -> the backstop is load-bearing, keep it;
+      * the backstop never saw more than the primary's range -> it recorded nothing the primary could
+        not, and it is a candidate to drop when simplifying the board.
+
+    Args:
+        streams - the parsed capture streams.
+
+    Returns:
+        None; prints the envelope and the verdict.
+    """
+    find = flight_telemetry.find_stream
+    primary = find(streams, 'ax', 'ay', 'az', 'gx', prefer='lsm') or find(streams, 'ax', 'ay', 'az', 'gx')
+    backstop = find(streams, 'ax', 'ay', 'az', prefer='adxl')
+    if backstop is primary:
+        backstop = None
+    primary_peak, primary_when, primary_n = _peak_g(primary)
+    backstop_peak, backstop_when, backstop_n = _peak_g(backstop)
+    if not primary_n and not backstop_n:
+        return
+    if primary_n:
+        print('  peak |a| lsm  : %6.1f g at t=%.1fs (%d samples, +/-%.0f g range)'
+              % (primary_peak, primary_when, primary_n, _PRIMARY_RANGE_G))
+    if backstop_n:
+        print('  peak |a| adxl : %6.1f g at t=%.1fs (%d samples, +/-%.0f g range)'
+              % (backstop_peak, backstop_when, backstop_n, _BACKSTOP_RANGE_G))
+        raw = _raw_peak(backstop)
+        if raw > backstop_peak * 1.5 + 1.0:  # the max is far above anything that lasted 2 samples
+            print('    (raw max %.1f g was a SINGLE sample -- treated as a glitch, not a shock;'
+                  % raw)
+            print('     a real event registers on consecutive samples and on the other accel too)')
+    if primary_n and primary_peak >= _PRIMARY_RANGE_G * _CLIP_FRACTION:
+        print('  high-g verdict: KEEP the +/-200 g backstop -- the primary reached %.1f g, at/near its '
+              '+/-%.0f g rail (clipping)' % (primary_peak, _PRIMARY_RANGE_G))
+    elif backstop_n and backstop_peak <= _PRIMARY_RANGE_G:
+        print('  high-g verdict: DROP candidate -- the backstop never exceeded %.1f g, inside the '
+              'primary\'s +/-%.0f g range (it recorded nothing the primary could not)'
+              % (backstop_peak, _PRIMARY_RANGE_G))
+    elif backstop_n:
+        print('  high-g verdict: KEEP -- the backstop saw %.1f g, beyond the primary\'s +/-%.0f g range'
+              % (backstop_peak, _PRIMARY_RANGE_G))
+
+
 def report(label: str, path: str, zone: tuple) -> None:
     """Print the KPI block for one capture."""
     with open(path) as handle:
         streams, _logs = flight_telemetry.parse(handle.read())
     fins = next((s for name, s in streams.items() if 'fins' in name), None)
     print(label)
+    """
+    A spliced capture is not one flight, so say so BEFORE any number derived from it is printed. Two
+    boots that shared a session prefix append into the same file on the Luckfox, and the result reads
+    as a single long run whose uptime restarts midway -- every duration, rate and envelope below is
+    then computed across two flights glued together. There is no automatic repair: the rows carry no
+    boot identity, so only the operator can decide which run they wanted.
+    """
+    damaged = flight_telemetry.spliced(streams)
+    if damaged:
+        print('  !! SPLICED CAPTURE -- two recorder sessions share this prefix: %s' % ', '.join(damaged))
+        print('  !! numbers below span BOTH boots; re-pull with distinct `recorder.session` prefixes')
+    _accel_envelope(streams)  # the G envelope + the high-g KEEP/DROP verdict (device-count decision)
     if fins is None:
         print('  (no fins stream)')
         return

@@ -83,6 +83,7 @@ class Ina226(task.Task):
                 return False  # not an INA226 at this address
             await self._bus.write(self._addr, _REG_CONFIG, struct.pack('>H', _CONFIG_DEFAULT))
             cal = _CAL_NUM // (self._max_current_ma * shunt_mohms)  # integer, milli-unit inputs
+            self._cal: int = cal  # kept so rearm() re-writes the SAME value, never a re-derivation
             await self._bus.write(self._addr, _REG_CALIB, struct.pack('>H', cal))
         except Exception as error:
             print('ina226 :: %r' % error)
@@ -147,6 +148,26 @@ class Ina226(task.Task):
         return (bus_raw * 5 // 4,                                             # mV (1.25 mV/LSB)
                 current_raw * self._max_current_ma // 32768,                 # mA
                 power_raw * self._max_current_ma // 32768 * _POWER_LSB_RATIO)  # mW
+
+    async def rearm(self) -> None:
+        """
+        Re-write the calibration register after a bus-wide reset cleared it.
+
+        The ICP-10111 recovery sends an I2C general-call reset; this part honours it and comes back
+        with CALIB = 0, which makes every current and power reading wrong rather than absent. See
+        bmp280.rearm for the same problem on the backup baro.
+
+        Args:
+            (none)
+
+        Returns:
+            None; best-effort.
+        """
+        try:
+            await self._bus.write(self._addr, _REG_CONFIG, struct.pack('>H', _CONFIG_DEFAULT))
+            await self._bus.write(self._addr, _REG_CALIB, struct.pack('>H', self._cal))
+        except Exception as error:
+            recorder.Recorder.log(self.name, 'rearm failed: %r' % error)
 
     async def run(self) -> None:
         while True:

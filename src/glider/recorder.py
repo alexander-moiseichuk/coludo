@@ -44,9 +44,16 @@ except ImportError:  # host (CPython): board-only; the Luckfox UART is opened on
 
 _DEFAULT_CELL_SIZE = const(256)  # bytes per ring cell (record + 2-byte length header)
 _DEFAULT_CAPACITY = const(1024)  # cells per ring
+_DEFAULT_TXBUF = const(4096)     # UART TX ring; the 256-byte default silently truncates (see setup()).
+                                 # 4096 rather than more because back-pressure is held at the RING
+                                 # level below -- the buffer only has to absorb one high-water burst,
+                                 # not a whole ring pass, and RAM is scarce on this board.
+_DRAIN_HIGH_WATER = const(2048)  # half of _DEFAULT_TXBUF: flush when the pending bytes reach it
 _LENGTH_BYTES = const(2)  # uint16 record-length header
 _STATS_PERIOD_MS = const(1000)  # how often run() logs a buffer-stats line
-_DEFAULT_TELEMETRY_MS = const(20)  # global telemetry decimation default (50 Hz); a stream's 0 -> this.
+_DEFAULT_TELEMETRY_MS = const(20)  # CODE fallback only (50 Hz). The SHIPPED config sets 0 = uncapped
+                                   # (config_default recorder.telemetry_ms, and every configs/*.config),
+                                   # so this applies only to a config that omits the recorder section.
 # CONFIG knobs are milliseconds everywhere -- one unit in the file, converted to us at the boundary,
 # so no reader has to remember which of two suffixes a given key used.
 
@@ -103,6 +110,17 @@ class Ring:
         self.tail = 0 if nxt == self.capacity else nxt
         return record
 
+    def discard(self) -> None:
+        """
+        Drop every queued record without reading it -- O(1), zero allocation.
+
+        For the case where the consumer has gone away and the buffered records are worthless (a lapsed
+        CC tee window). Draining with read() would allocate a bytes copy per record; this just moves
+        the reader forward. Safe from either side here because MicroPython's asyncio is cooperative
+        and no await separates the two: nothing can interleave between reading `head` and storing it.
+        """
+        self.tail = self.head
+
     def count(self) -> int:
         """Records currently queued (a stats snapshot)."""
         delta = self.head - self.tail
@@ -136,8 +154,16 @@ class _TeeSink:
         if time.ticks_diff(self._deadline, time.ticks_us()) > 0:
             self._ring.write(data)  # within the window (best-effort, bounded)
         else:
-            self._deadline = 0  # window lapsed with no follow-up request -> stop and discard
-            self._take()
+            """
+            Window lapsed with no follow-up request -> stop and discard. DISCARD WITHOUT DECODING:
+            this runs on the PRODUCER's path (tee() is reached from _enqueue on every log() and
+            tlm_raw(), i.e. inside Telemetry.push at 100 Hz with GC off). _take() would build a list
+            and decode every buffered record into a str only to drop it on the floor -- a burst of
+            allocation, at the worst possible moment, for a result nobody reads.
+            """
+            self._deadline = 0
+            if self._ring is not None:
+                self._ring.discard()
 
     def _take(self) -> list:
         records = []
@@ -188,7 +214,8 @@ class Recorder:
     _cc_tlm = _TeeSink()  # CC mirror of the telemetry stream (the `tlm <ms>` command)
     _uart = None  # asyncio.StreamWriter wrapping the recorder UART
     _flag = None  # ThreadSafeFlag set by producers, waited on by run()
-    _session: str = None  # 'YYYYMMDD_HHMMSS', produced on first tlm(), fixed for the boot
+    _prefix: str = ''  # whole session prefix assigned by config (`recorder.session`); '' -> synthesise
+    _session: str = None  # 'YYYYMMDD_HHMMSS_<tag>', settled on first tlm(), fixed for the boot
     _tlm_max: int = 0  # high-water mark of queued telemetry records
     _log_max: int = 0  # high-water mark of queued log records
     _stats_ms: int = _STATS_PERIOD_MS
@@ -196,7 +223,8 @@ class Recorder:
     """
     global telemetry decimation (µs between emitted rows): every Telemetry stream whose own decimate_us is
     0 uses this, so `recorder.telemetry_ms` in the board config prorates ALL streams at once, while a stream
-    that sets a non-zero telemetry_ms keeps its individual rate. Default 50 Hz.
+    that sets a non-zero telemetry_ms keeps its individual rate. The code fallback is 50 Hz; the
+    SHIPPED config is 0 = uncapped, so in flight nothing decimates unless a profile asks for it.
     """
     telemetry_decimate_us: int = _DEFAULT_TELEMETRY_MS * 1000
 
@@ -209,6 +237,22 @@ class Recorder:
         cls._cc_log.reset(cell_size)  # off at boot: nothing mirrored to CC until it asks
         cls._cc_tlm.reset(cell_size)
         cls._session = None
+        """
+        The WHOLE session prefix can come from config (`recorder.session`), used verbatim.
+
+        The board has no battery-backed RTC, so its own clock is 2000-01-01 until something tells it
+        otherwise -- which is exactly why unsynced boots used to pile into look-alike session ids. CC
+        has a good clock and knows which run it is configuring, so letting it assign the whole prefix
+        puts the decision where the reliable information is, instead of having the board synthesise one
+        from a clock it cannot trust.
+
+        Expected shape is `YYYYMMDD_HHMMSS_<tag>` (e.g. 20260807_143012_taster): host tools strip the
+        date/time by pattern and derive the tag from the capture. Absent the key, the board falls back
+        to synthesising date/time plus a 6-digit random, which is all it can do alone -- and that
+        fallback stays the SAFE default, because a stale `session` in a saved config would be reused by
+        every boot and collide every time.
+        """
+        cls._prefix = str(recorder.get('session', '') or '').strip().replace(' ', '-')
         cls._tlm_max = 0
         cls._log_max = 0
         cls._flag = asyncio.ThreadSafeFlag()
@@ -231,7 +275,20 @@ class Recorder:
             pins = {'tx': spec['tx']}
             if spec.get('rx') is not None:
                 pins['rx'] = spec['rx']
-            uart = UART(bus_id, baudrate=spec['baud'], **pins)
+            """
+            txbuf, explicitly. The MicroPython default is 256 bytes, and drain() pushes the WHOLE ring
+            in one pass -- 1024 cells of 256 bytes, so a burst can be orders of magnitude past that.
+            An overrun does not raise; the UART silently drops the tail of whatever record it was
+            mid-way through, which is exactly the corruption measured on real captures: a record cut
+            mid-field with its newline gone and the next record running onto the same line, 20 times in
+            1,004,804 rows across 48 flights (about one flight in three).
+
+            Sizing rather than sleeping: at the measured 424 records/s, a "drain + sleep 1 ms per line"
+            costs 0.4 s of sleep per second of flight at a true 1 ms, and 4.2 s/s at this board's
+            MEASURED ~10 ms asyncio floor -- it would throttle telemetry roughly fourfold. A bigger
+            buffer costs RAM once and nothing per record.
+            """
+            uart = UART(bus_id, baudrate=spec['baud'], txbuf=spec.get('txbuf', _DEFAULT_TXBUF), **pins)
         # accept a pre-wrapped async writer (tests) or wrap a raw UART for async drain
         cls._uart = uart if hasattr(uart, 'drain') else asyncio.StreamWriter(uart, {})
         inspector.Inspector.register(cls)
@@ -258,12 +315,28 @@ class Recorder:
         if cls._session is None:
             now = time.localtime()
             """
-            a random suffix disambiguates boots that start before the RTC ticks (fast restarts share the
+            A random suffix disambiguates boots that start before the RTC ticks (fast restarts share the
             same wall-clock second otherwise -> colliding session ids -> telemetry files clobbered / a
             header spliced mid-file on the Luckfox).
+
+            SIX digits, not three. The original 3-digit suffix gave only 900 values, and the birthday
+            bound makes that far weaker than it looks: N boots collide about N^2/2M times, so 150 boots
+            over 900 values expects ~12 collisions -- and a Luckfox audit found exactly that. Boots that
+            collide APPEND INTO EACH OTHER'S FILES, so two flights end up interleaved in one CSV with
+            uptime restarting midway, which no amount of downstream parsing can separate. One session had
+            77 stream files instead of the usual 13 and a 542 MB accelerometer CSV.
+
+            The RNG itself was fine (150 distinct suffixes observed, so it IS seeded per boot); the range
+            was the defect. At 900000 values the same 150 boots expect 0.01 collisions, and even 1000
+            boots expect 0.6. A synced RTC makes the whole question moot -- the timestamp is then unique
+            on its own -- but the board must stay safe when it flies without CC, which is the normal case
+            in a field.
             """
-            cls._session = '%04d%02d%02d_%02d%02d%02d_%d' % (
-                now[0], now[1], now[2], now[3], now[4], now[5], random.randint(100, 1000))
+            if cls._prefix:  # CC assigned the whole thing -- trust it over our own clock
+                cls._session = cls._prefix
+            else:
+                cls._session = '%04d%02d%02d_%02d%02d%02d_%d' % (
+                    now[0], now[1], now[2], now[3], now[4], now[5], random.randint(100000, 999999))
         return cls._session
 
     @classmethod
@@ -308,7 +381,14 @@ class Recorder:
             return False  # not set up yet -> drop (logs are best-effort)
         data = ('%u %s :: %s\n' % (cls.timestamp(), descriptor, message)).encode()
         if len(data) > cls._log.max_payload:
-            data = data[: cls._log.max_payload]
+            """
+            KEEP THE NEWLINE. The wire protocol is line-framed, so a plain slice truncates the '\n'
+            off the end and the over-long log line then MERGES with whatever record follows it on the
+            UART. If that next record is a telemetry row, the row is swallowed into the log line and
+            lost from its CSV -- silently, and on the channel the error policy promises is durable.
+            Truncate the text instead and re-terminate.
+            """
+            data = data[: cls._log.max_payload - 1] + b'\n'
         return cls._enqueue(cls._log, cls._cc_log.tee, data)
 
     @classmethod
@@ -399,11 +479,36 @@ class Recorder:
             cls._log_max = queued
         drained = 0
         writer = cls._uart
+        # Whether this writer reports its fill. The real StreamWriter does; the test stubs that stand in
+        # for it need not, and production code must not require a stub to grow an attribute to stay
+        # usable. Resolved ONCE -- `out_buf` is REBOUND on every write, so a captured reference goes
+        # stale and only the name can be re-read.
+        reports_fill = hasattr(writer, 'out_buf')
+        """
+        Flush on BUFFER FILL, not on a record count -- back-pressure only when there is pressure.
+
+        The writer's pending bytes are directly observable (`out_buf`), so the flush happens when the
+        buffer actually reaches its high water mark rather than every N records. That adapts to record
+        size and to how fast the link is draining: a quiet stream never flushes early, a burst flushes
+        as often as it needs to, and the UART is never handed more than it can hold.
+
+        This is an await, not a sleep. A fixed `sleep_ms(1)` per line was considered and measured
+        against: at the 424 records/s these flights produce it costs 0.4 s of sleep per second of
+        flight if it truly slept 1 ms, and 4.2 s/s at this board's MEASURED ~10 ms asyncio floor --
+        throttling telemetry roughly fourfold. drain() yields only as long as the UART actually needs.
+
+        Honest note on effect: sizing txbuf and flushing early showed NO measurable reduction in wire
+        corruption over a 24-flight run (40 events against a 41/42/49 baseline, inside its own spread).
+        The sender was not the bottleneck. This is kept because it is strictly better-behaved than
+        buffering a whole ring pass, not because it is demonstrated to fix anything.
+        """
         for ring in (cls._tlm, cls._log):
             record = ring.read()
             while record is not None:
                 writer.write(record)
                 drained += 1
+                if reports_fill and len(writer.out_buf) >= _DRAIN_HIGH_WATER:
+                    await writer.drain()
                 record = ring.read()
         if drained:
             await writer.drain()
@@ -475,19 +580,35 @@ class Telemetry:
     `decimate_us` rate-limits the stream: push() emits only when at least `decimate_us` microseconds
     have passed since the last emitted row (a fast sensor can push every sample and have its telemetry
     decimated to a sane rate). `decimate_us=0` (the default) inherits the Recorder GLOBAL rate
-    (`Recorder.telemetry_decimate_us`, 50 Hz) -- so a stream opts into an individual rate by passing a
+    (`Recorder.telemetry_decimate_us`) -- so a stream opts into an individual rate by passing a
     non-zero value, else the board-wide `recorder.telemetry_ms` prorates it.
+
+    THE GLOBAL IS RESOLVED AT USE, NOT AT CONSTRUCTION. It used to be folded into `self.decimate_us`
+    in __init__, which quietly broke the inheritance it was documenting: drivers build their streams
+    during their own setup(), and the controller runs every device's setup BEFORE the recorder task's,
+    so a stream latched the CLASS DEFAULT and never saw the configured value. Measured on the board --
+    with `recorder.telemetry_ms` 0 every stream still ran at 20000 us -- and it cost a config that
+    claimed full-rate logging while capping the 100 Hz accelerometer at 50.
     """
 
     def __init__(self, filename: str, fields: tuple, decimate_us: int = 0):
         self.filename: str = filename
         self.fields: tuple = fields
-        self.decimate_us = decimate_us or Recorder.telemetry_decimate_us  # 0 -> the global default rate
+        self.decimate_us = decimate_us  # 0 -> inherit the global, read through `window` at each use
         self._header: str = 'uptime;' + ';'.join(fields)  # constant CSV header, built once
         self._row_fmt: str = '%u;' + ';'.join('%s' for _ in fields)  # one reusable row-format string
         self._header_sent: bool = False
         self._line_fmt: str = None  # '@<session>_<file>@' + the row format, resolved on the first push
-        self._last_us: int = Recorder.timestamp() - self.decimate_us  # one window back -> first push emits
+        # seed one FULL window back so the first push always emits. It must use THIS stream's own
+        # window, not the global: seeding a 50 ms stream only 20 ms back decimates its very first row
+        # away (caught by test_recorder). Resolving `or` here as well as in `window` is deliberate --
+        # this one only has to make push #1 fire, while `window` must track a global set later.
+        self._last_us: int = Recorder.timestamp() - (decimate_us or Recorder.telemetry_decimate_us)
+
+    @property
+    def window(self) -> int:
+        """The decimation window in microseconds: this stream's own, else the Recorder global."""
+        return self.decimate_us or Recorder.telemetry_decimate_us
 
     def due(self, now: int) -> bool:
         """
@@ -509,7 +630,7 @@ class Telemetry:
             bench_flight, where the bench has no UART: it dominated the reported per-step cost). A
             stream that has nowhere to go is simply not due.
         """
-        return Recorder._tlm is not None and time.ticks_diff(now, self._last_us) >= self.decimate_us
+        return Recorder._tlm is not None and time.ticks_diff(now, self._last_us) >= self.window
 
     def push(self, values) -> None:
         if not self._header_sent:
@@ -519,7 +640,7 @@ class Telemetry:
             # ONCE here (%s substitutes the row format literally) instead of wrapping every sample
             self._line_fmt = '@%s_%s@%s\n' % (Recorder.session(), self.filename, self._row_fmt)
         now = Recorder.timestamp()
-        if time.ticks_diff(now, self._last_us) < self.decimate_us:
+        if time.ticks_diff(now, self._last_us) < self.window:
             return  # too soon since the last row -> decimate
         """
         ONE % pass over the precomputed full-line format, then one encode -- no per-field str()

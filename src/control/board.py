@@ -64,16 +64,52 @@ class Board:
             if not quiet:
                 self._log('%s -> %s' % (tag, line))  # CC sends (tx); logged before the wait
             self._writer.write((line + '\n').encode())
-            # bound the drain too: TCP backpressure held under the lock must not hang every later exchange
-            await asyncio.wait_for(self._writer.drain(), timeout)
-            raw = await asyncio.wait_for(self._reader.readline(), timeout)
+            """
+            A TIMEOUT here desyncs the protocol unless the connection is given up.
+
+            The command has already been written. If drain() or readline() times out, the board may
+            still reply LATER -- and the next exchange() takes the lock and readline()s that stale
+            reply, believing it answers the new command. _remember() then caches it under the wrong
+            line, so the desync is not merely one wrong answer: it persists in the cache.
+
+            The link is therefore marked down rather than left in an unknown state. This is a lockstep
+            protocol with one outstanding command; once the stream position is uncertain there is no
+            way to resynchronise from the client side, so pretending otherwise is worse than
+            reconnecting.
+            """
+            try:
+                # bound the drain too: TCP backpressure held under the lock must not hang every later exchange
+                await asyncio.wait_for(self._writer.drain(), timeout)
+                raw = await asyncio.wait_for(self._reader.readline(), timeout)
+            except asyncio.TimeoutError:
+                self.online = False       # stream position unknown -> do not reuse this connection
+                self._log('%s <- TIMEOUT after %.0fs (link marked down; a late reply would desync)'
+                          % (self.id or self.peer, timeout))
+                raise
         reply = raw.decode().strip()
         if not quiet:
             self._log('%s <- %s' % (tag, reply if raw else '<disconnected>'))  # board replies (rx)
         if not raw:
             return None
         self.last_seen = time.monotonic()
-        msg = cc.parse(reply)
+        """
+        A GARBLED reply must cost the reply, not the board.
+
+        cc.parse() raises binascii.Error/ValueError on a corrupt `base64:` token, and this call was
+        bare. That exception is not in server._handle's caught set, so it fell to the generic handler:
+        traceback logged, `finally` runs, stream dropped, board marked offline. ONE flipped bit on the
+        link therefore removed a board from the hub until it reconnected.
+
+        The board side already guards the mirror case deliberately -- "a garbled line over a lossy
+        field radio ... must survive" -- so the asymmetry was the bug: the same corruption was
+        survivable in one direction and fatal in the other. Treated here as a lost reply, which is what
+        it is, and which the caller already handles because a timeout produces the same None.
+        """
+        try:
+            msg = cc.parse(reply)
+        except Exception as error:                 # binascii.Error / ValueError from a corrupt token
+            self._log('%s <- UNPARSEABLE %r (reply dropped, link kept)' % (tag, error))
+            return None
         self._remember(line, msg)
         return msg
 

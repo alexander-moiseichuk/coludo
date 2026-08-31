@@ -120,6 +120,37 @@ def test_back_calculation():
         free.step(fixed.from_float(1), 20)
     assert free._integral > 0 and free.step(fixed.from_float(1), 20) > 0
 
+    """
+    ACCUMULATION RESOLUTION -- the integral must not ratchet, and must not have a deadband.
+
+    The accumulator used to truncate `error * dt_ms // 1000` on every step. Integer floor division is
+    not symmetric about zero, and two defects followed:
+
+      RATCHET: floor sends -0.5 to -1 but +0.5 to 0, so a symmetric oscillation only accumulates on its
+      negative half. Measured before the fix: a +/-0.5deg error over 200 steps at 10 ms drove the
+      integral to -100 when the correct answer is exactly 0.
+
+      DEADBAND: any error with error*dt_ms < 1000 truncated away entirely, so a steady +0.5deg error at
+      10 ms never accumulated at all -- the standing error an integral term exists to remove.
+
+    Both were LATENT because every shipped config leaves `gains` empty (ki = 0), which is exactly why
+    they need a test: nothing else would notice until someone turns the integral on.
+    """
+    balanced = pid.Pid(ki=1.0, integral_limit=45, output_limit=45)
+    for step_index in range(200):
+        balanced.step(fixed.from_float(0.5 if step_index % 2 == 0 else -0.5), 10)
+    assert balanced._integral == 0, 'integral ratcheted on a symmetric error: %r' % balanced._integral
+
+    creeping = pid.Pid(ki=1.0, integral_limit=45, output_limit=45)
+    for _ in range(100):
+        creeping.step(fixed.from_float(0.5), 10)
+    assert creeping._integral > 0, 'a steady small error never accumulated (deadband): %r' % creeping._integral
+    assert creeping.step(fixed.from_float(0.5), 10) > 0, 'the I term produced no output for a standing error'
+
+    # the fine accumulator stays inside the small-int range the 0-allocation guarantee needs
+    assert pid.Pid().integral_limit_ms <= 2 ** 30, 'unbounded limit escaped the small-int range'
+    assert pid.Pid(integral_limit=45).integral_limit_ms == 45 * fixed.SCALE * 1000
+
     # NEGATIVE: ki == 0 -> no integral to unwind, and no division by zero
     assert pid.Pid(kp=100.0, output_limit=5).step(fixed.from_float(30), 20) == fixed.from_float(5)
 

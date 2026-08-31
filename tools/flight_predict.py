@@ -1,19 +1,26 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-Compare a REAL flight against what `sim_model` predicted for it — the artifact `plan.md` asks for and
-findings §27.15 flags as missing.
+Overlay the SIMULATOR'S PREDICTION on a real flight capture (findings §27.15) -- the artifact that
+either earns or destroys trust in `sim_model`.
 
-Every landing-accuracy claim in `doc/sims/` rests on the sim being a fair model of the airframe, and
-until the two are drawn on the same axes that trust is untested. This flies the SAME `sim_model.Body`
-the studies use, from the capture's own motor + liftoff mass, and lines the prediction up against the
-measured accelerometer and barometer traces.
+Every landing-accuracy number in `doc/sims/` rests on the sim being right, and the sim has never been
+drawn on the same axes as a real flight. This runs `sim_model` from the SAME initial conditions as a
+capture and reports where the two diverge: apogee, duration, and the altitude/speed traces.
 
-    python3 tools/flight_predict.py capture.txt --motor F15 --mass 471
-    python3 tools/flight_predict.py capture.txt --motor F15 --mass 471 --svg predict.svg
+Two launch modes, because both matter now:
 
-Reads what the capture already carries (accel magnitude, baro elevation) so it works on a passive
-telemetry flight — no control data required.
+  * CATAPULT (the current glide ladder) -- give it the launch speed/angle/height and it predicts the
+    ballistic arc plus the glide. Pair it with tools/glide_polar.py: measure L/D from the capture, feed
+    it back as --quality, and the question becomes "does the sim reproduce the whole trajectory once
+    its ONE free parameter is measured rather than guessed?"
+  * ROCKET -- give it the motor and mass and it predicts boost -> coast -> glide.
+
+A prediction that matches is evidence the sim's endgame/landing conclusions transfer. A prediction that
+does NOT match is more valuable still: it says which term is wrong while there is still time to fix it.
+
+  python3 tools/flight_predict.py capture.txt --launch-speed 8.2 --launch-angle 45 --quality 5.1
+  python3 tools/flight_predict.py capture.txt --motor F15 --mass 0.45 -o predict.html
 """
 
 import argparse
@@ -21,164 +28,186 @@ import math
 import os
 import sys
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, _HERE)
-sys.path.insert(0, os.path.join(_HERE, '..', 'src', 'glider'))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'src', 'glider'))
 import flight_telemetry  # noqa: E402
 import preflight  # noqa: E402
 import sim_model  # noqa: E402
 
-_STEP = 0.02  # s -- prediction integration step
-
-
-def predict(motor: str, liftoff_g: float, glider_g: float, seconds: float) -> dict:
-    """
-    Fly the model open-loop (fins neutral) and return the predicted traces.
-
-    Open-loop on purpose: the point is to test the PHYSICS against a real boost/coast, not the control
-    law, and a passive telemetry flight has no active control to reproduce anyway.
-
-    Args:
-        motor - the motor key ('E16' / 'F15').
-        liftoff_g - whole-stack mass at liftoff (grams).
-        glider_g - glider-only mass after separation (grams).
-        seconds - how long to integrate.
-
-    Returns:
-        {'t': [...], 'accel_g': [...], 'elevation_m': [...], 'apogee_m': float, 'peak_g': float}.
-    """
-    thrust, burn = sim_model.MOTORS[motor]
-    body = sim_model.Body(liftoff_g / 1000.0, sim_model.HPRC['launch'], 0.0,
-                          sim_model.HPRC['heading_deg'], glide_mass=glider_g / 1000.0)
-    times, accel, elevation = [], [], []
-    t = 0.0
-    apogee = 0.0
-    gliding = False
-    while t < seconds:
-        if not gliding:
-            body.boost_step(_STEP, thrust if t < burn else 0.0, 0.0, 0.0)
-            if body.vu <= 0.0 and t > burn:  # apogee -> the booster ejects and the glide begins
-                body.begin_glide()
-                gliding = True
-        else:
-            body.glide_step(_STEP, 0.0, 0.0, 0.0)
-        times.append(t)
-        accel.append(body.accel_g)
-        elevation.append(body.alt)
-        apogee = max(apogee, body.alt)
-        if gliding and body.alt <= 0.0:
-            break
-        t += _STEP
-    return {'t': times, 'accel_g': accel, 'elevation_m': elevation,
-            'apogee_m': apogee, 'peak_g': max(accel) if accel else 0.0}
+_STEP_S: float = 0.01     # sim integration step; well under the sensor rates being compared against
+_MAX_S: float = 600.0     # runaway guard for a prediction that never lands
 
 
 def measured(streams) -> dict:
     """
-    The comparable traces from the capture: |accel| (g) and baro elevation (m).
+    Pull the comparable traces out of a real capture.
+
+    Args:
+        streams - parsed telemetry streams.
 
     Returns:
-        {'t_accel', 'accel_g', 't_elev', 'elevation_m', 'apogee_m', 'peak_g'}; empty lists when absent.
+        {'time': [...], 'elevation': [...], 'speed': ([t], [v]), 'apogee': m, 'duration': s}.
     """
-    accel_stream = flight_telemetry.find_stream(streams, 'ax', 'ay', 'az', prefer='adxl')
-    baro = (flight_telemetry.find_stream(streams, 'elevation', prefer='icp')
-            or flight_telemetry.find_stream(streams, 'altitude'))
-    out = {'t_accel': [], 'accel_g': [], 't_elev': [], 'elevation_m': [], 'apogee_m': 0.0, 'peak_g': 0.0}
-    if accel_stream is not None:
-        times, ax = accel_stream.column('ax')
-        _, ay = accel_stream.column('ay')
-        _, az = accel_stream.column('az')
-        out['t_accel'] = times
-        out['accel_g'] = [math.sqrt(x * x + y * y + z * z) for x, y, z in zip(ax, ay, az)]
-        out['peak_g'] = max(out['accel_g']) if out['accel_g'] else 0.0
-    if baro is not None:
-        field = 'elevation' if 'elevation' in baro.fields else 'altitude'
-        times, values = baro.column(field)
-        if field == 'altitude' and values:  # altitude is AMSL -> re-base to the pad so both are AGL
-            ground = min(values)
-            values = [v - ground for v in values]
-        out['t_elev'], out['elevation_m'] = times, values
-        out['apogee_m'] = max(values) if values else 0.0
-    return out
+    find = flight_telemetry.find_stream
+    baro = find(streams, 'elevation', prefer='icp') or find(streams, 'elevation') or find(streams, 'altitude')
+    if baro is None:
+        return {}
+    field = 'elevation' if 'elevation' in baro.fields else 'altitude'
+    times, elevation = baro.column(field)
+    if not times:
+        return {}
+    pitot = find(streams, 'dynamic_pressure')
+    speed_t, speed_v = [], []
+    if pitot is not None and 'airspeed_cms' in pitot.fields:
+        speed_t, raw = pitot.column('airspeed_cms')
+        speed_v = [v / 100.0 for v in raw]
+    elif pitot is not None and 'airspeed' in pitot.fields:
+        speed_t, speed_v = pitot.column('airspeed')
+    return {'time': times, 'elevation': elevation, 'speed': (speed_t, speed_v),
+            'apogee': max(elevation), 'duration': times[-1] - times[0]}
 
 
-def _svg(prediction: dict, real: dict, path: str, title: str) -> None:
-    """Write a two-panel SVG (accel, elevation) with predicted vs measured overlaid. Stdlib only."""
-    width, height, pad = 980, 620, 60
-    panel = (height - 3 * pad) / 2
+def predict(mode: str, speed: float, angle: float, height: float, motor: str,
+            mass: float, quality: float) -> dict:
+    """
+    Run sim_model from the given launch condition and return the predicted traces.
 
-    def scale(values, lo, hi, y0):
-        span = (hi - lo) or 1.0
-        return lambda v: y0 + panel - (v - lo) / span * panel
+    Args:
+        mode - 'catapult' or 'rocket'.
+        speed - catapult release speed (m/s).
+        angle - catapult release angle (deg above horizontal).
+        height - catapult release height (m).
+        motor - rocket motor key (sim_model.MOTORS).
+        mass - airframe mass (kg).
+        quality - glide L/D; sim_model.trim_sink = 14 / quality.
 
-    def line(times, values, fx, fy, colour, dash=''):
-        if not times:
-            return ''
-        points = ' '.join('%.1f,%.1f' % (fx(t), fy(v)) for t, v in zip(times, values))
-        return ('<polyline points="%s" fill="none" stroke="%s" stroke-width="1.8"%s/>'
-                % (points, colour, ' stroke-dasharray="6 4"' if dash else ''))
+    Returns:
+        {'time': [...], 'elevation': [...], 'speed': ([t],[v]), 'apogee': m, 'duration': s}.
+    """
+    body = sim_model.Body(mass, (25.514379, -80.391795), 0.0, 0.0)
+    body.trim_sink = 14.0 / quality
+    times, elevation, speeds = [], [], []
+    moment = 0.0
+    if mode == 'rocket':
+        thrust, burn = sim_model.MOTORS[motor]
+        while moment < burn * 3 and body.alt >= 0.0 and moment < _MAX_S:
+            body.boost_step(_STEP_S, thrust if moment < burn else 0.0)
+            times.append(moment)
+            elevation.append(body.alt)
+            speeds.append(math.hypot(body.speed, body.vu))
+            moment += _STEP_S
+            if moment > burn and body.vu <= 0.0:  # apogee -> the glide begins
+                break
+        body.begin_glide()
+    else:
+        """
+        CATAPULT: seed the body straight into the glide at the release condition. There is no boost to
+        model -- the launch is over in 0.2 s, far shorter than anything the baro resolves, so it is an
+        initial condition rather than a phase.
+        """
+        body.alt = height
+        body.speed = speed * math.cos(math.radians(angle))
+        body.vu = speed * math.sin(math.radians(angle))
+        body.pitch = angle
+        body.begin_glide()
+    while body.alt > 0.0 and moment < _MAX_S:
+        body.glide_step(_STEP_S, 0.0, 0.0, 0.0)  # no control input: the AIRFRAME's own glide
+        times.append(moment)
+        elevation.append(body.alt)
+        speeds.append(math.hypot(body.speed, body.vu))
+        moment += _STEP_S
+    return {'time': times, 'elevation': elevation, 'speed': (times, speeds),
+            'apogee': max(elevation) if elevation else 0.0,
+            'duration': times[-1] - times[0] if times else 0.0}
 
-    span_t = max(max(prediction['t'] or [1]), max(real['t_accel'] or [1]), max(real['t_elev'] or [1]), 1.0)
-    fx = lambda t: pad + t / span_t * (width - 2 * pad)  # noqa: E731
-    body = ['<rect width="%d" height="%d" fill="white"/>' % (width, height),
-            '<text x="%d" y="28" font-size="17" font-family="sans-serif">%s</text>' % (pad, title)]
-    for index, (key_pred, key_t, key_real, label, colour) in enumerate(
-            (('accel_g', 't_accel', 'accel_g', '|accel| (g)', '#d62728'),
-             ('elevation_m', 't_elev', 'elevation_m', 'elevation (m)', '#1f77b4'))):
-        y0 = pad + index * (panel + pad)
-        values = list(prediction[key_pred]) + list(real[key_real])
-        lo, hi = (min(values), max(values)) if values else (0.0, 1.0)
-        fy = scale(values, lo, hi, y0)
-        body.append('<rect x="%d" y="%.0f" width="%d" height="%.0f" fill="#fbfbfb" stroke="#ddd"/>'
-                    % (pad, y0, width - 2 * pad, panel))
-        body.append('<text x="%d" y="%.0f" font-size="13" font-family="sans-serif">%s</text>'
-                    % (pad, y0 - 6, label))
-        body.append(line(prediction['t'], prediction[key_pred], fx, fy, colour, dash=True))
-        body.append(line(real[key_t], real[key_real], fx, fy, colour))
-        body.append('<text x="%d" y="%.0f" font-size="11" fill="%s" font-family="sans-serif">'
-                    '- - predicted     —— measured</text>' % (width - 240, y0 + 14, colour))
-    with open(path, 'w') as handle:
-        handle.write('<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d" '
-                     'viewBox="0 0 %d %d">%s</svg>\n' % (width, height, width, height, ''.join(body)))
+
+def _delta(name: str, actual: float, expected: float, unit: str) -> str:
+    """One comparison row: measured, predicted, and the error as both absolute and percent."""
+    error = expected - actual
+    percent = (100.0 * error / actual) if actual else float('nan')
+    return '  %-12s measured %8.2f %-3s | predicted %8.2f %-3s | error %+7.2f (%+.1f%%)' % (
+        name, actual, unit, expected, unit, error, percent)
 
 
-def _delta(predicted: float, actual: float) -> str:
-    """A signed percentage difference, or 'n/a' when there is nothing measured to compare against."""
-    if not actual:
-        return '   n/a'
-    return '%+5.0f%%' % (100.0 * (predicted - actual) / actual)
+def render(real: dict, sim: dict, path: str) -> None:
+    """Write the overlay HTML (plotly), or explain why it was skipped."""
+    try:
+        import plotly.graph_objects as go
+        import plotly.io as pio
+        from plotly.subplots import make_subplots
+    except ImportError:
+        print('  (no plotly -- numbers only; pip install plotly for the overlay)')
+        return
+    figure = make_subplots(rows=2, cols=1, shared_xaxes=True, vertical_spacing=0.06,
+                           subplot_titles=('altitude (m) — measured vs predicted',
+                                           'speed (m/s) — measured vs predicted'))
+    figure.add_trace(go.Scatter(x=real['time'], y=real['elevation'], name='measured'), row=1, col=1)
+    figure.add_trace(go.Scatter(x=sim['time'], y=sim['elevation'], name='predicted',
+                                line=dict(dash='dash')), row=1, col=1)
+    if real['speed'][0]:
+        figure.add_trace(go.Scatter(x=real['speed'][0], y=real['speed'][1], name='measured speed'),
+                         row=2, col=1)
+    figure.add_trace(go.Scatter(x=sim['speed'][0], y=sim['speed'][1], name='predicted speed',
+                                line=dict(dash='dash')), row=2, col=1)
+    figure.update_layout(height=820, hovermode='x unified',
+                         title='predicted vs measured — does sim_model reproduce the real flight?')
+    pio.write_html(figure, file=path, include_plotlyjs='cdn', auto_open=False)
+    print('  wrote %s' % path)
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description='Compare a flight capture against the sim prediction.')
-    parser.add_argument('capture', help='the recorder capture to measure')
-    parser.add_argument('--motor', default='F15', choices=sorted(sim_model.MOTORS), help='motor (default F15)')
-    parser.add_argument('--mass', type=float, default=471.0, help='liftoff mass, grams (default 471)')
-    parser.add_argument('--glider', type=float, default=270.0, help='glider mass after separation, g')
-    parser.add_argument('--seconds', type=float, default=240.0, help='prediction horizon (default 240)')
-    parser.add_argument('--svg', help='also write a predicted-vs-measured overlay here')
+    parser = argparse.ArgumentParser(description='Overlay the sim prediction on a real capture.')
+    parser.add_argument('capture', help='the recorder capture to compare against')
+    parser.add_argument('--launch-speed', type=float, default=None, help='catapult release speed (m/s)')
+    parser.add_argument('--launch-angle', type=float, default=0.0, help='release angle above horizontal (deg)')
+    parser.add_argument('--launch-height', type=float, default=1.0, help='release height (m)')
+    parser.add_argument('--motor', default=None, choices=sorted(sim_model.MOTORS), help='rocket motor')
+    parser.add_argument('--mass', type=float, default=0.176, help='airframe mass (kg, default 0.176)')
+    parser.add_argument('--quality', type=float, default=sim_model.AIR_QUALITY,
+                        help='glide L/D (default %.1f = sim_model.AIR_QUALITY, the measured airframe)'
+                             % sim_model.AIR_QUALITY)
+    parser.add_argument('-o', '--out', default=None, help='overlay HTML path')
     args = parser.parse_args()
     preflight.gate('prediction')
+    if args.motor is None and args.launch_speed is None:
+        return parser.error('give either --motor (rocket) or --launch-speed (catapult)')
 
     with open(args.capture) as handle:
         streams, _logs = flight_telemetry.parse(handle.read())
     real = measured(streams)
-    prediction = predict(args.motor, args.mass, args.glider, args.seconds)
+    if not real:
+        print('cannot compare: the capture has no baro trace', file=sys.stderr)
+        return 1
+    mode = 'rocket' if args.motor else 'catapult'
+    sim = predict(mode, args.launch_speed or 0.0, args.launch_angle, args.launch_height,
+                  args.motor, args.mass, args.quality)
 
-    print('capture : %s' % args.capture)
-    print('model   : %s, liftoff %.0f g -> glider %.0f g' % (args.motor, args.mass, args.glider))
-    print()
-    print('  metric            predicted    measured     delta')
-    print('  ---------------------------------------------------')
-    print('  peak |accel|      %7.1f g   %7.1f g   %s'
-          % (prediction['peak_g'], real['peak_g'], _delta(prediction['peak_g'], real['peak_g'])))
-    print('  apogee            %7.1f m   %7.1f m   %s'
-          % (prediction['apogee_m'], real['apogee_m'], _delta(prediction['apogee_m'], real['apogee_m'])))
-    if not real['accel_g'] and not real['elevation_m']:
-        print('\n  NOTE: the capture carries neither accel nor baro -- nothing to compare against.')
-    if args.svg:
-        _svg(prediction, real, args.svg, 'predicted vs measured — %s, %.0f g' % (args.motor, args.mass))
-        print('\nwrote %s' % args.svg)
+    print('%s  (%s launch, mass %.3f kg, L/D %.1f)' % (os.path.basename(args.capture), mode,
+                                                       args.mass, args.quality))
+    print(_delta('apogee', real['apogee'], sim['apogee'], 'm'))
+    print(_delta('duration', real['duration'], sim['duration'], 's'))
+    """
+    A CONTROLLED flight is not an apples-to-apples comparison and must say so. The prediction flies the
+    airframe's own straight glide with NO control input, while a guided capture turns, loiters and runs
+    an endgame -- and every turn costs energy (induced drag scales n^1.5). So against a guided flight the
+    prediction will over-predict duration, and that gap is the CONTROL cost, not sim error. The clean
+    comparison is an unguided glide: exactly what the catapult ladder produces.
+    """
+    control = flight_telemetry.find_stream(streams, 'fin_cap')
+    if control is not None:
+        active = [v for v in control.column('active')[1] if v] if 'active' in control.fields else []
+        if active:
+            print('  NOTE: this capture was GUIDED for %d samples -- the prediction flies a straight,'
+                  % len(active))
+            print('        uncontrolled glide, so it will over-predict duration. The gap is the cost of')
+            print('        turning, not sim error. Compare against an UNGUIDED glide for a clean check.')
+    if args.quality == sim_model.AIR_QUALITY:
+        print('  NOTE: L/D is the shipped sim_model.AIR_QUALITY (%.1f), measured by hand toss below trim'
+              % sim_model.AIR_QUALITY)
+        print('        speed -- a FLOOR. Measure this airframe with tools/glide_polar.py once it flies')
+        print('        long enough for a real polar, and pass --quality.')
+    if args.out:
+        render(real, sim, args.out)
     return 0
 
 

@@ -64,14 +64,24 @@ def metrics(path: str):
     apogee = 0.0
     if baro is not None:
         field = 'elevation' if 'elevation' in baro.fields else 'altitude'
-        values = baro.column(field)[1]
+        # finite-only: the parser maps an unparseable cell to nan, and a bare max() over a column
+        # containing one would report nan as the apogee. Measured across ~90 captures no baro column
+        # carries one today, so this is PREVENTIVE -- but the class is proven: a single corrupt
+        # airspeed sample (1.4e7 cm/s) once made glide_polar report L/D 64 for a 5-ish airframe, and
+        # apogee is read the same way from the same kind of column.
+        values = [v for v in baro.column(field)[1] if v == v and abs(v) != float('inf')]
         if values:  # an AMSL altitude is re-based to the pad so both shapes report height above ground
             apogee = max(values) - (min(values) if field == 'altitude' else 0.0)
     accel = flight_telemetry.find_stream(streams, 'ax', 'ay', 'az', prefer='adxl')
     peak_g = 0.0
     if accel is not None:
-        magnitudes = [math.sqrt(x * x + y * y + z * z) for x, y, z in
-                      zip(accel.column('ax')[1], accel.column('ay')[1], accel.column('az')[1])]
+        # FINITE only. flight_kpi already filters nan/inf here because a single corrupt sample was
+        # measured reading 21 g; this path had no guard, and one nan makes max() return nan (or hide
+        # the true peak), so the metric silently reports garbage rather than the flight's real peak.
+        magnitudes = [magnitude for magnitude in
+                      (math.sqrt(x * x + y * y + z * z) for x, y, z in
+                       zip(accel.column('ax')[1], accel.column('ay')[1], accel.column('az')[1]))
+                      if magnitude == magnitude and magnitude != float('inf')]
         peak_g = max(magnitudes) if magnitudes else 0.0
     return {
         'miss': _meters(touchdown, _CENTER),

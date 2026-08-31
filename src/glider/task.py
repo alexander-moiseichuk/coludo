@@ -257,10 +257,15 @@ class Task(inspector.Inspectable):
         Start / enforce this device's calibration (the CC `calibrate <device>` command).
 
         Only meaningful where the board can DO something -- capture a tare, re-zero a reference. Where
-        calibration is inherently physical (the BNO055 needs the airframe moved) the device says so
-        through calibration() and this stays a no-op, so a caller can sweep every device without
-        special-casing. The operator precondition still applies to both: the board cannot capture a
-        still-air tare while somebody is waving the airframe about.
+        calibration is inherently physical (the BNO055 needs the airframe moved) there is nothing to
+        run, so this reports what is still OUTSTANDING rather than succeeding: returning None for a
+        device that cannot calibrate itself made `calibrate imu_bno055` answer ok/null however many
+        times an operator ran it, while the magnetometer sat at 0 and nothing on the board changed.
+        A caller can still sweep every device without special-casing -- a device with no requirement
+        has an empty calibration() and so still returns success here.
+
+        The operator precondition applies either way: the board cannot capture a still-air tare while
+        somebody is waving the airframe about.
 
         Args:
             (none)
@@ -268,7 +273,7 @@ class Task(inspector.Inspectable):
         Returns:
             None on success (or nothing to do), else a human-readable failure string.
         """
-        return None
+        return self.calibration() or None  # '' (nothing outstanding) -> None, the protocol's success
 
     async def probe(self) -> str:
         """

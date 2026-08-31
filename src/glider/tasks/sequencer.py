@@ -268,7 +268,11 @@ class Sequencer(task.Task):
         elevation, elevation_source, _elevation_age = self._elevation.read()
         if elevation_source is None:
             elevation = None  # no fresh baro -> the accel trigger carries launch detect alone
-        g_sq = _magnitude_sq(self._accel.value())
+        # The accel needs the same gate the baro above already has. It is the trigger that STARTS the
+        # flight, and with the baro path already gated an extrapolated accel would be the only input
+        # left -- a false launch on the pad from a channel no sensor was feeding.
+        accel, accel_source, _accel_age = self._accel.read()
+        g_sq = _magnitude_sq(accel if accel_source is not None else None)
         if elevation is not None and elevation > self._launch_alt_m:
             self._advance(_STAGE.BOOSTING, 'launch alt=%.0fm' % elevation)
         else:
@@ -308,7 +312,10 @@ class Sequencer(task.Task):
             time.ticks_diff(now, self._boost_entry_ms) >= self._apogee_arm_ms
         # the peak/dwell state machine is commons.apogee_step -- ONE implementation, because the host
         # sim ran a copy of it and that copy had drifted (see the helper's docstring)
-        elevation = self._elevation.value() if armed else None
+        # read(), not value(): an extrapolated elevation feeds the PEAK TRACKER, and a peak is
+        # latched -- one invented high sample poisons apogee detection for the rest of the climb.
+        elevation, elevation_source, _elevation_age = self._elevation.read()
+        elevation = elevation if (armed and elevation_source is not None) else None
         self._apogee_max, self._apogee_since, self._apogee_smooth, fired = commons.apogee_step(
             elevation, now, self._apogee_max, self._apogee_since, self._apogee_smooth,
             self._apogee_drop_m, self._launch_ms)
@@ -339,8 +346,25 @@ class Sequencer(task.Task):
         Returns:
             None; advances to LANDING once the height holds below land_agl_m, else resets the dwell.
         """
+        """
+        BOTH height sources are source-gated. The laser already was; the baro fallback was not.
+
+        `value()` extrapolates a stale channel without bound, so a dead baro behind an out-of-range
+        laser handed the landing trigger an invented height -- and this project has already lost a
+        flight to exactly that shape, when an extrapolated agl read -9.6 m 0.38 s after apogee at
+        274 m. Gating the primary and leaving the FALLBACK ungated just moves where the invented
+        number comes from.
+
+        With neither source fresh, height is None and the dwell resets, which is the correct
+        behaviour: no reading is not the same as a low reading.
+        """
         agl, agl_source, _agl_age = self._agl.read()
-        height = agl if agl_source is not None else self._elevation.value()
+        if agl_source is not None:
+            height = agl
+        else:
+            height, elevation_source, _elevation_age = self._elevation.read()
+            if elevation_source is None:
+                height = None
         if height is not None and height < self._land_agl_m:  # below the landing height...
             if self._sustained(now, self._land_ms):  # ...and SUSTAINED (not a single spike)
                 self._advance(_STAGE.LANDING, 'agl %.1fm' % height)
@@ -357,7 +381,11 @@ class Sequencer(task.Task):
         Returns:
             None; advances to DONE once the still-band holds for ground_ms, else resets the dwell.
         """
-        g_sq = _magnitude_sq(self._accel.value())
+        # Gated for the mirror reason: an extrapolated accel settles toward a plausible ~1 g, which is
+        # exactly the still-band this looks for -- so a dead accel would read as "landed" and end the
+        # flight while it is still flying.
+        accel, accel_source, _accel_age = self._accel.read()
+        g_sq = _magnitude_sq(accel if accel_source is not None else None)
         if g_sq is not None and self._still_lo_sq < g_sq < self._still_hi_sq:  # ~1 g, squared
             if self._sustained(now, self._ground_ms):
                 self._advance(_STAGE.DONE, 'stationary %.1fg' % math.sqrt(g_sq))

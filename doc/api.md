@@ -73,7 +73,7 @@ unit-testable off a live connection. Register handlers with on(); dispatch a lin
 
 - `__init__()` — constructor
 - `on(command: str, fn) -> None`
-- `handle(line: str) -> str`
+- `handle(line: str) -> str` — Parse one request line and run its handler, answering an error rather than raising.
 
 ### `class Client`
 
@@ -184,6 +184,10 @@ between; switch to _opt when a bench shows a gain).
 ### `wrap180_upy(degrees: int) -> int`
 
 ### `wrap180_opt(degrees: int) -> int`
+
+### `sensirion_crc8_upy(byte0: int, byte1: int) -> int`
+
+### `sensirion_crc8_opt(byte0: int, byte1: int) -> int`
 
 ### `between_upy(low: float, value: float, high: float) -> float`
 
@@ -974,8 +978,11 @@ if/elif.
 
 Host-runnable by construction (tools/virtual_flight.py drives the REAL law): dependencies are
 INJECTED -- the mission (zone/launch_point), the governor (airspeed for the boost rod gate), and
-databoard-style handles (`position.read()` -> ((lat, lon), source, age_ms), `agl.value()` -> m or
-None). Timing comes in as `now_us` from the caller; only commons.ticks_diff touches ticks.
+databoard-style handles, all read with `read()` -> (value, source, age_ms). NOT `value()`: the
+laser agl is out of range for most of a flight, and value() answers a stale channel with an unbounded
+extrapolation -- the failure that once ended a flight at apogee. Gate on the SOURCE.
+
+Timing comes in as `now_us` from the caller; only commons.ticks_diff touches ticks.
 
 Results land in the roll_setpoint/pitch_setpoint (centidegree fixnum) + heading_error (int degrees)
 INSTANCE SLOTS rather than a returned tuple -- decomposed WITHOUT adding a per-step heap allocation
@@ -1071,7 +1078,7 @@ sequence to be atomic across awaits should say so explicitly with `async with bu
 - `read_into(addr: int, reg: int, buf, addrsize: int=8) -> None`
 - `write(addr: int, reg: int, data: bytes, addrsize: int=8) -> None`
 - `writeto(addr: int, data: bytes) -> None` — Raw write (no register) -- for command-based devices like the ICP-10111.
-- `readfrom(addr: int, count: int) -> bytes` — Raw read (no register) -- pairs with writeto() for command-based devices.
+- `readfrom(addr: int, count: int) -> bytes` — Raw read (no register) -- pairs with writeto(); accounted, see writeto for why.
 - `device(addr: int) -> _Device` — A register window for one address on this bus (matches spibus.Bus.device).
 - `scan() -> list`
 
@@ -1471,6 +1478,47 @@ Args:
 Returns:
     The heading to fly (degrees).
 
+## `ota.py`
+
+_Tested by `test/test_ota.py`._
+
+Over-the-air module updates: stage a .mpy over the CC link, verify it, install it atomically.
+
+Deploying by USB means opening the airframe. Once the glider is packed -- and on a launch day, once it
+is on the rail -- that is the difference between shipping a fix and flying the bug. This carries a
+module over the link the board already holds to Control, so a change reaches a sealed airframe.
+
+The transfer is deliberately three steps (`push-begin`, `push`, `push-commit`) rather than one
+command per file. Nothing touches the live module until the LAST byte has arrived and the SHA-256 of
+what landed matches what the sender promised: a link that drops mid-transfer leaves a half-written
+file in staging, which is inert, instead of a half-written module that the next boot would try to
+import. The previous version is kept as `.bak` by the same commit, so a bad-but-valid module can be
+put back over the link without opening anything.
+
+REBOOT IS REQUIRED for an installed module to take effect -- MicroPython caches imports, and the
+running firmware holds the old code until it restarts. `push-commit` says so in its reply.
+
+What this deliberately does NOT do: recover a board whose new module breaks the boot. The staging and
+the checksum stop a CORRUPT file from ever being installed, but a module that is intact and wrong
+will import and fail, and the board is then a USB recovery. Treat an OTA push as a real deployment,
+not a scratchpad -- push what has been through `make test` on the bench board.
+
+### `class Upload`
+
+The one in-progress upload.
+
+One at a time by design: two concurrent pushes over a single line-oriented link would interleave
+their chunks with no way to tell them apart, and there is no case for it -- the operator pushes a
+module, then pushes the next.
+
+- `__init__()` — constructor
+- `discard() -> None` — Remove the staging file and forget the upload -- the failure path, so nothing is left behind.
+- `reset() -> None` — Forget any in-progress upload (the `push-abort` path); see discard() to also drop the staging file.
+- `begin(name: str, size: int, sha: str) -> str` — Open staging for a new upload, replacing any upload already in progress.
+- `chunk(seq: int, data: bytes) -> str` — Append one chunk, in order.
+- `commit(path: str=None, sha: str=None) -> tuple` — Verify the staged file and install it, keeping the outgoing version as `.bak`.
+- `status() -> dict` — What is staged right now, for the operator and for a resumed session to orient itself.
+
 ## `pid.py`
 
 _Tested by `test/test_pid.py`._
@@ -1511,7 +1559,7 @@ else d(error)/dt (differentiated on the error).
 - `__init__(kp: float=0.0, ki: float=0.0, kd: float=0.0, integral_limit: int=_UNBOUNDED_DEG, output_limit: int=_UNBOUNDED_DEG, anti_windup_shift: int=_ANTI_WINDUP_SHIFT)` — constructor
 - `reset() -> None` — Clear the integral + derivative history.
 - `set_limit(limit_deg: int) -> None` — Retune the output clamp + anti-windup integral clamp to a live authority limit (whole degrees).
-- `step(error: fixnum, dt_ms: int, rate: fixnum=None) -> fixnum`
+- `step(error: fixnum, dt_ms: int, rate: fixnum=None) -> fixnum` — Accumulate in SCALE-degree-MILLIseconds and convert on use, rather than truncating every step.
 
 ## `recorder.py`
 
@@ -1551,6 +1599,7 @@ await). Holds `capacity - 1` records (one cell separates full from empty).
 - `__init__(capacity: int=_DEFAULT_CAPACITY, cell_size: int=_DEFAULT_CELL_SIZE)` — constructor
 - `write(data: bytes) -> bool`
 - `read() -> bytes` — Return the oldest record as bytes (a copy) and advance, or None if empty.
+- `discard() -> None` — Drop every queued record without reading it -- O(1), zero allocation.
 - `count() -> int` — Records currently queued (a stats snapshot).
 
 ### `class Recorder`
@@ -1583,10 +1632,18 @@ Recorder session prefix, so file names are stable.
 `decimate_us` rate-limits the stream: push() emits only when at least `decimate_us` microseconds
 have passed since the last emitted row (a fast sensor can push every sample and have its telemetry
 decimated to a sane rate). `decimate_us=0` (the default) inherits the Recorder GLOBAL rate
-(`Recorder.telemetry_decimate_us`, 50 Hz) -- so a stream opts into an individual rate by passing a
+(`Recorder.telemetry_decimate_us`) -- so a stream opts into an individual rate by passing a
 non-zero value, else the board-wide `recorder.telemetry_ms` prorates it.
 
+THE GLOBAL IS RESOLVED AT USE, NOT AT CONSTRUCTION. It used to be folded into `self.decimate_us`
+in __init__, which quietly broke the inheritance it was documenting: drivers build their streams
+during their own setup(), and the controller runs every device's setup BEFORE the recorder task's,
+so a stream latched the CLASS DEFAULT and never saw the configured value. Measured on the board --
+with `recorder.telemetry_ms` 0 every stream still ran at 20000 us -- and it cost a config that
+claimed full-rate logging while capping the 100 Hz accelerometer at 50.
+
 - `__init__(filename: str, fields: tuple, decimate_us: int=0)` — constructor
+- `window() -> int` _(property)_ — The decimation window in microseconds: this stream's own, else the Recorder global.
 - `due(now: int) -> bool` — Whether the decimation window has elapsed -- so a HOT-PATH producer can skip building its row.
 - `push(values) -> None`
 
@@ -1714,6 +1771,8 @@ Returns:
     The perturbed, clamped value; the clean value clamped when frac is 0.
 
 ## `spibus.py`
+
+_Tested by `test/test_spibus.py`._
 
 Shared, lock-serialized SPI buses, mirroring i2cbus. A sensor may move off the shared I2C bus onto SPI
 (e.g. the ADXL375, for clean high-rate reads): each bus id gets ONE machine.SPI plus an asyncio.Lock,
@@ -1977,6 +2036,8 @@ read the estimate; inspect()/update() publish + retune the config subtree.
 
 ## `adxl375.py`
 
+_Tested by `test/test_adxl375.py`._
+
 ADXL375 ±200 g high-G accelerometer: the boost-phase accel channel. Works over I2C (shared bus) OR SPI
 (its own bus, for clean high-rate reads) -- the component's `bus` field selects, and a shared
 register-window device (i2cbus/spibus .device()) keeps the driver code bus-agnostic.
@@ -2004,6 +2065,8 @@ High-G accel: samples (x, y, z) in g to the databoard 'accel' slot, interrupt-dr
 
 ## `atgm336h.py`
 
+_Tested by `test/test_atgm336h.py`._
+
 ATGM336H GNSS (GPS + BDS, CASIC chip) on a dedicated UART. @task.driver('atgm336h'). All NMEA
 reading/parsing lives in the shared gnss.Gnss base; this driver only adds the CASIC reconfiguration:
 RMC at `hz` (position) plus GGA at ~1 Hz (altitude/elevation, a baro backup) -- both fit 9600 baud
@@ -2017,6 +2080,8 @@ ATGM336H (CASIC): RMC at `hz` for position + GGA at ~1 Hz for altitude/elevation
 
 
 ## `bluetooth.py`
+
+_Tested by `test/test_bluetooth.py`._
 
 Set the BLE radio to the state declared in config at boot. The component field `radio` (true/false,
 default false) says whether Bluetooth should be ON; the driver applies it -- transparent, so nobody is
@@ -2036,6 +2101,8 @@ Apply the configured BLE radio state. Inspectable: `radio` requested, `active` a
 
 ## `bmp280.py`
 
+_Tested by `test/test_bmp280.py`._
+
 BMP280 barometric pressure sensor (on the SEN0253) over the shared I2C bus: the backup altitude
 channel. @task.driver('bmp280'). setup() probes the chip id, reads the factory calibration and starts
 normal-mode conversion; run() reads pressure, applies Bosch compensation and writes pressure (Pa),
@@ -2053,6 +2120,7 @@ Elevation is metres above the startup ground zero, captured per-sensor so it is 
 `update {"rezero": true}` re-captures ground zero (e.g. after warm-up, just before launch).
 
 - `setup() -> bool`
+- `rearm() -> None` — Re-apply the mode/filter this driver set at setup, after something reset the part underneath it.
 - `run() -> None`
 - `update(props: dict) -> list` — Apply an operator property change: re-zero or directly set the ground reference.
 - `probe() -> str` — On-demand self-test: the chip id reads back, then one conversion reads (each step logged).
@@ -2060,6 +2128,8 @@ Elevation is metres above the startup ground zero, captured per-sensor so it is 
 - `inspect() -> dict`
 
 ## `bno055.py`
+
+_Tested by `test/test_bno055.py`._
 
 BNO055 9-DOF IMU (on the SEN0253) over the shared I2C bus: the attitude channel.
 @task.driver('bno055'). In NDOF fusion mode the chip computes absolute orientation on-chip; run() reads
@@ -2080,14 +2150,17 @@ accelerometer (g, including gravity) -> 'accel' as a low-g backup to the ADXL375
 
 - `setup() -> bool`
 - `sample() -> tuple` — Read the ACC..EUL block and return a FLAT 6-tuple (run() slices it).
-- `calibrated() -> bool` — True once the MAGNETOMETER is calibrated -- the axis that needs the operator's figure-8.
+- `calibrated() -> bool` — Has the magnetometer EVER converged this session (or been restored from a saved profile)?
 - `calibration() -> str` — The figure-8 instruction while NDOF is unconverged, with the live reading folded in; '' once done.
+- `calibrate() -> str` — Persist the chip's learned calibration profile, once the operator's figure-8 has landed.
 - `run() -> None`
 - `probe() -> str` — On-demand self-test: the chip id reads back, then one fused sample succeeds (each step logged).
 - `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault.
 - `inspect() -> dict`
 
 ## `icp10111.py`
+
+_Tested by `test/test_icp10111.py`._
 
 ICP-10111 barometric pressure sensor (TDK ICP-101xx, on the SEN0517) over the shared I2C bus: the
 PRIMARY altitude channel (8.5 cm accuracy). @task.driver('icp10111'). Command-based, not
@@ -2116,6 +2189,8 @@ Elevation is metres above the startup ground zero, captured per-sensor so it is 
 
 ## `ina226.py`
 
+_Tested by `test/test_ina226.py`._
+
 INA226 high-side current / voltage / power monitor over the shared I2C bus: the battery (or 5 V)
 supply-line sensor for consumption tracking. @task.driver('ina226'). setup() verifies the die id,
 programs the conversion config, and computes + writes the calibration register from the shunt
@@ -2138,12 +2213,15 @@ No float -- pushed to the databoard + per-sample telemetry. Current/power scale 
 wrong/absent die id -> setup False.
 
 - `setup() -> bool`
+- `rearm() -> None` — Re-write the calibration register after a bus-wide reset cleared it.
 - `run() -> None`
 - `probe() -> str` — On-demand self-test: the die id reads back, then one live read (each step logged).
 - `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault behind an absent monitor.
 - `inspect() -> dict`
 
 ## `led.py`
+
+_Tested by `test/test_led.py`._
 
 Status LED driver. One GPIO shows the board state at a glance: fast blink when a task is unhealthy
 (error), slow blink while setting up / standing by, solid once flying. The pin role (default
@@ -2160,6 +2238,8 @@ Blink a status pattern on one GPIO derived from the controller's state + health.
 - `inspect() -> dict`
 
 ## `lsm6dso32.py`
+
+_Tested by `test/test_lsm6dso32.py`._
 
 LSM6DSO32 6-DoF IMU: the primary raw accel + the sole gyro 'rate'. A +/-32 g accel range (covers the
 8-12 g boost without clipping, fine 1 g resolution for the airspeed integrator) plus a +/-2000 dps
@@ -2186,6 +2266,8 @@ registers (0x22..0x2D), so one 12-byte read fetches both.
 - `inspect() -> dict`
 
 ## `mg90s.py`
+
+_Tested by `test/test_mg90s.py`._
 
 MG90S metal-gear positional fin servo. @task.driver('mg90s'). Electrically IDENTICAL to the SG90 (same
 50 Hz frame, ~500..2500 us pulse -> angle, open-loop, no feedback), so this is a THIN SG90 subclass --
@@ -2217,6 +2299,8 @@ probe, open-loop reporting) is SG90's.
 
 ## `neo6mv2.py`
 
+_Tested by `test/test_neo6mv2.py`._
+
 GY-NEO6MV2 (u-blox NEO-6M) GNSS on a dedicated UART: a drop-in alternative to the ATGM336H on the SAME
 UART -- swap the component `driver` to 'neo6mv2' in config (and lower `hz`; the NEO-6M tops out near
 5 Hz). @task.driver('neo6mv2'). NMEA read/parse is the shared gnss.Gnss base; this driver only adds the
@@ -2231,6 +2315,8 @@ u-blox NEO-6M: $PUBX,40 selects RMC + ~1 Hz GGA, UBX-CFG-RATE sets the measureme
 
 ## `sdp810.py`
 
+_Tested by `test/test_sdp810.py`._
+
 SDP810-500Pa differential-pressure sensor (Sensirion SDP8xx, thermal flow-through) over the shared I2C
 bus: the pitot/static AIRSPEED channel. @task.driver('sdp810'). Command-based, not register-mapped:
 setup() clears any prior continuous mode, starts continuous measurement (differential-pressure temp-comp,
@@ -2238,10 +2324,12 @@ average-till-read) and validates one CRC-checked frame; run() reads the 9-byte f
 the tared dynamic pressure (a `fixed` fixnum, Pa × SCALE) and derives airspeed once, publishing both to
 the databoard. Graceful: nothing acks / a corrupt frame -> setup False -> skipped.
 
-Bench-verified: 0x25 on i2c:0 (SDA 7 / SCL 8), scale factor 60 (Pa = raw/60), zero ~0.02 Pa. Tube
-polarity (blow-verified): P+ = pitot (total), P- = interior static. The interior-static PRESSURE bias is
-tared out by `zero_offset_pa` (a pad tare, `update {"zero": true}`); the position-span error folds into
-`air_density`, the single q->v knob (a GNSS-vs-q calm pass trims it).
+Bench-verified: 0x25 on i2c:0 (SDA 7 / SCL 8), scale factor 60 (Pa = raw/60), zero ~0.2 Pa. Tube
+polarity (blow-verified 2026-08-14, and anchored to a PIN because left/right got it wrong once):
+P+ = the barb OPPOSITE the '1'/SCL mark -> pitot (total); P- = the '1'/SCL-side barb -> interior
+static. The interior-static PRESSURE bias is tared out by `zero_offset_pa` (a pad tare,
+`update {"zero": true}`); the position-span error folds into `air_density`, the single q->v knob
+(a GNSS-vs-q calm pass trims it).
 
 INTEGER internals, ONE float: the raw scaling and the pad-tared dynamic pressure stay a `fixed` fixnum
 (a small int, so the store never boxes). Airspeed = sqrt(2q/rho) is the ONE float, computed ONCE per read
@@ -2271,6 +2359,8 @@ back to the accel backbone when the pitot rails), so this driver just reports wh
 - `inspect() -> dict`
 
 ## `separation.py`
+
+_Tested by `test/test_separation.py`._
 
 Stage-separation switch: two adhesive copper pads (one on the glider, one on the booster) that route
 3V3 to a pin while nested (HIGH) and open on separation (LOW). A HAL input, @task.driver('separation').
@@ -2302,6 +2392,8 @@ Detect stage separation (HIGH=nested -> LOW=separated) and trigger Boosting -> G
 - `inspect() -> dict`
 
 ## `sg90.py`
+
+_Tested by `test/test_sg90.py`._
 
 SG90 micro fin servo on a PWM pin. @task.driver('sg90'), one instance per fin (yaw / left eleron /
 right eleron), each naming its 'pin'. 50 Hz frame; the command unit is INTEGER DEGREES, linearly mapped
@@ -2362,6 +2454,8 @@ the shared slew gate; probe() sweeps it on demand.
 
 ## `vl53l4cx.py`
 
+_Tested by `test/test_vl53l4cx.py`._
+
 VL53L4CX time-of-flight laser ranger (Adafruit 5425) over the shared I2C bus: the above-ground-level
 (AGL) channel for the last metres of the glide, where the barometer is useless.
 @task.driver('vl53l4cx'). The VL53 family uses 16-BIT register addresses (i2cbus addrsize=16). This
@@ -2388,6 +2482,8 @@ GPIO1 is wired.
 - `inspect() -> dict`
 
 ## `wifi.py`
+
+_Tested by `test/test_wifi.py`._
 
 Wi-Fi station driver: joins the configured network and keeps it joined, exposing signal/ip to the
 operator. HAL (it drives the radio), so @task.driver('wifi'). STA only; SSID / CC host / TX power come
@@ -2419,6 +2515,8 @@ Join + maintain the STA link; Inspectable as 'wifi'.
 # glider subsystem tasks — `tasks/` — `src/glider/tasks`
 
 ## `attitude.py`
+
+_Tested by `test/test_attitude.py`._
 
 Attitude REDUNDANCY: a complementary-filter backup for the BNO055 (coludo.md "Sensors Fusion/Backup").
 The BNO055 is the sole fused-attitude source; losing it mid-flight would leave the flight loop with
@@ -2452,6 +2550,8 @@ Complementary-filter attitude backup (heading, roll, pitch) at priority 1 behind
 
 ## `board_health.py`
 
+_Tested by `test/test_board_health.py`._
+
 Board vitals task: samples temperature, free memory and CPU load every period, pushes a telemetry row
 (health.csv) and exposes the latest to the operator. Registered as @task.activity('health') so the
 Controller creates and supervises it.
@@ -2482,6 +2582,8 @@ Periodic vitals -> telemetry (health.csv) + `inspect health`.
 
 ## `cc_link.py`
 
+_Tested by `test/test_cc_link.py`._
+
 The Control link task: once Wi-Fi is up it dials the CC hub and serves the command dispatcher,
 reconnecting with backoff. @task.activity('cc'). Telemetry-first: with no Wi-Fi up it simply waits, so
 the board flies fine without CC. The hub address is the configured `cc_host`, or -- when unset -- the
@@ -2503,6 +2605,8 @@ by convention); an empty `cc_host` ('') disables CC and the board flies standalo
 
 ## `field.py`
 
+_Tested by `test/test_field.py`._
+
 The CC-less field agent (doc/specs/coludo.md "Field operation without CC"). @task.activity('field'),
 DISABLED by default. On the pad (SETTING) it makes at most two decisions:
   1. SITE BY GPS -- on the first fresh fix, the mission adopts the nearest launch.config site within
@@ -2521,6 +2625,8 @@ Site-by-GPS + optional auto-arm, so a board can fly with no Control hub present.
 - `run() -> None`
 
 ## `flight.py`
+
+_Tested by `test/test_flight.py`._
 
 Phase 3 stabilization loop. @task.activity('flight'). At `schedule_hz` it runs the control PIPELINE:
 dt -> airspeed Governor (fin-authority cap, adaptively throttled) -> control-stage gate -> attitude ->
@@ -2552,6 +2658,8 @@ Attitude-hold stabilization: GLIDING-gated, timer- or asyncio-scheduled, fail-sa
 
 ## `gnss_calib.py`
 
+_Tested by `test/test_gnss_calib.py`._
+
 GNSS consistent-drift calibration on the pad. @task.activity('gnss_calib').
 
 A STATIONARY GNSS position walks slowly (changing satellite geometry, ionospheric delay, multipath).
@@ -2579,6 +2687,8 @@ drift() hands it to the flight loop to de-bias the wind.
 - `inspect() -> dict`
 
 ## `hitl.py`
+
+_Tested by `test/test_hitl.py`._
 
 Hardware-In-The-Loop flight simulator (Phase-5). @task.activity('hitl').
 
@@ -2613,6 +2723,8 @@ The HITL simulator task: drive the model from the commanded fins and publish sim
 
 ## `recorder.py`
 
+_Tested by `test/test_recorder.py`._
+
 The Recorder's task adapter. The data path itself is the top-level `recorder` singleton (used directly
 by every module via recorder.Recorder.log/tlm); this thin @task.activity plugs it into the Controller's
 task graph so the `recorder` component (its bus selects the UART) is created and supervised like any
@@ -2632,6 +2744,8 @@ Everything else keeps logging/telemetering through the global recorder.Recorder.
 - `update(props) -> list`
 
 ## `sequencer.py`
+
+_Tested by `test/test_sequencer.py`._
 
 Phase 3 flight-stage automation. @task.activity('sequencer'). Watches the databoard and drives the
 guarded, forward-only stage machine that the control loop gates on:
@@ -2656,6 +2770,8 @@ Drive the flight-stage machine from sensor signals (forward-only, guarded, logge
 - `run() -> None`
 
 ## `watchdog.py`
+
+_Tested by `test/test_watchdog.py`._
 
 Watchdog + heartbeat supervisor. @task.activity('watchdog'). Two layers:
   1. a hardware machine.WDT fed every period -> a TOTAL event-loop wedge (any task stuck below the
@@ -2826,6 +2942,8 @@ board. Requires a GPS attached to the Control host (main.py --gps-device).
 
 ## `bustune.py`
 
+_Tested by `test/test_bustune.py`._
+
 `bustune <board> <i2c|spi> <id> [margin-steps]` -- find a sensor bus's max stable frequency.
 
 NAMED FOR THE PRIMITIVE IT DRIVES. It was `calibrate`, which collided with the board's own
@@ -2852,6 +2970,8 @@ health), last-known values without touching the board. Defaults to the session's
 
 ## `gps.py`
 
+_Tested by `test/test_gps.py`._
+
 `gps` -- the host GPS fix status (3D + satellites), so the operator knows when the launch site has a
 usable position. `gps <board>` also fetches that board's on-board GNSS (`inspect gnss`) and shows it
 beside the host fix, to check what the on-board receiver delivers against the USB reference before
@@ -2870,6 +2990,23 @@ trusting it / using `assist`. Requires a GPS attached to the Control host (main.
 `list` -- the connected boards and their last-known status.
 
 ### `list_command(hub, tokens, session) -> list`
+
+## `push.py`
+
+_Tested by `test/test_push.py`._
+
+`push <board> <file> [name]` -- send a module to a board over WiFi and install it.
+
+The counterpart to the board's push-begin / push / push-commit. Reads a local file (a .mpy from
+tools/deploy.sh, a .config, a .creds), carries it over the link the board already holds, and installs
+it only once the board has confirmed the SHA-256 of what landed. Nothing on the board is touched
+until that check passes, so a link that drops mid-push costs a retry and nothing else.
+
+Deploying by USB means opening the airframe; this does not. It is still a real deployment -- push
+what has been through `make test` on the bench board, and reboot the board afterwards, because
+MicroPython holds the old module until it restarts.
+
+### `push_command(hub, tokens, session) -> list`
 
 ## `select.py`
 
