@@ -19,15 +19,23 @@
 # stops a CORRUPT file being installed, but an intact-and-wrong one imports and fails, and that is a
 # USB recovery. Push what has been through `make test`.
 #
-# Usage: tools/ota_push.sh [-h HOST] [-p PORT] [-r] [-n] <board> <file[:device-path]> ...
-#   -h  CC hub host (default 127.0.0.1; the panda AP is 192.168.102.1)
-#   -p  operator port (default 1235)
-#   -r  reboot the board once every file is installed
-#   -n  dry run: show what would be pushed where, touch nothing
+# Usage: tools/ota_push.sh [--host HOST] [--port PORT] [--reboot] [--dry-run]
+#                          <board> [file[:device-path] ...]
+#   --host, -H  CC hub host (default 127.0.0.1; the panda AP is 192.168.102.1)
+#   --port, -p  operator port (default 1235)
+#   --reboot    reboot the board once every file in THIS invocation is installed
+#   --dry-run, -n   show what would be pushed where, touch nothing
+#   --help, -h  this text
+#
+# REBOOT IS A SEPARATE STEP on purpose. A fix is often several files, and they may be pushed across
+# several invocations -- so rebooting per invocation would restart the board into a half-updated
+# tree, repeatedly. Push everything, then reboot once. With no files, --reboot just reboots.
 #
 # Examples:
 #   tools/ota_push.sh TMS-7C src/glider/drivers/bno055.py        # -> drivers/bno055.mpy
-#   tools/ota_push.sh -r TMS-7C src/glider/pid.py src/glider/mixer.py
+#   tools/ota_push.sh TMS-7C src/glider/pid.py src/glider/mixer.py
+#   tools/ota_push.sh --reboot TMS-7C                            # ...then reboot once, separately
+#   tools/ota_push.sh --reboot TMS-7C src/glider/governor.py     # or push and reboot together
 #   tools/ota_push.sh TMS-7C configs/tms7c.config:board.config
 
 set -u
@@ -44,18 +52,28 @@ if [ -t 1 ]; then G=$'\e[32m'; R=$'\e[31m'; Y=$'\e[33m'; N=$'\e[0m'; else G=; R=
 die()  { echo "${R}$*${N}" >&2; exit 1; }
 warn() { echo "${Y}$*${N}" >&2; }
 
-while getopts 'h:p:rn' opt; do
-    case "$opt" in
-        h) HOST="$OPTARG" ;;
-        p) PORT="$OPTARG" ;;
-        r) REBOOT=1 ;;
-        n) DRYRUN=1 ;;
-        *) die "usage: ota_push.sh [-h HOST] [-p PORT] [-r] [-n] <board> <file[:device-path]> ..." ;;
+USAGE="usage: ota_push.sh [--host HOST] [--port PORT] [--reboot] [--dry-run] <board> [file[:device-path] ...]"
+
+# Hand-rolled rather than getopts, which cannot do long options -- and --reboot wants to be spelled
+# out, being the one flag here that restarts a flight computer.
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --host|-H) HOST="${2:-}"; [ -n "$HOST" ] || die "$1 needs a value"; shift 2 ;;
+        --port|-p) PORT="${2:-}"; [ -n "$PORT" ] || die "$1 needs a value"; shift 2 ;;
+        --reboot)  REBOOT=1; shift ;;
+        --dry-run|-n) DRYRUN=1; shift ;;
+        --help|-h) echo "$USAGE"; exit 0 ;;
+        --) shift; break ;;
+        -*) die "unknown option $1
+$USAGE" ;;
+        *) break ;;
     esac
 done
-shift $((OPTIND - 1))
-[ "$#" -ge 2 ] || die "usage: ota_push.sh [-h HOST] [-p PORT] [-r] [-n] <board> <file[:device-path]> ..."
+[ "$#" -ge 1 ] || die "$USAGE"
 BOARD="$1"; shift
+# No files is legitimate ONLY with --reboot: that is the "push a few times, then reboot once" step.
+[ "$#" -ge 1 ] || [ "$REBOOT" = 1 ] || die "nothing to push (and no --reboot)
+$USAGE"
 
 command -v nc >/dev/null || die "nc not found (needed to reach the CC operator port)"
 
@@ -162,6 +180,7 @@ if [ "$REBOOT" = 1 ] && [ "$DRYRUN" != 1 ]; then
     echo "rebooting $BOARD to load the new modules..."
     ask "$BOARD reboot" >/dev/null
     echo "${G}done${N} -- give it ~20 s to come back on the hub"
-else
-    [ "$DRYRUN" = 1 ] || echo "${Y}REBOOT REQUIRED${N}: the board still runs the old modules (-r does it for you)"
+elif [ "$DRYRUN" != 1 ] && [ "$#" -gt 0 ]; then
+    echo "${Y}REBOOT REQUIRED${N}: the board still runs the old modules."
+    echo "  push anything else first, then:  $0 --reboot $BOARD"
 fi
