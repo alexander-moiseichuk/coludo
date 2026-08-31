@@ -4,7 +4,11 @@
 # and renders per-flight SVGs + the 5 plotly HTML reports + compare overlays into <outdir>.
 #
 # Usage: hitl_matrix.sh <F15|E16> [outdir]
-# Env: PORT (default /dev/ttyACM0); PLOTLY_PY (python with plotly for the HTML reports; default python3).
+# Env: PORT (default /dev/ttyACM0); PLOTLY_PY (python with plotly for the HTML reports; default python3);
+#      GLIDER_G (glide mass in grams -- TMS-7 v3: 285 = airframe + FULL payload, 235 = + HALF payload);
+#      SCENARIOS (space-separated subset of the 12 below, to shorten a matrix).
+# The motor and GLIDER_G together are the load/thrust combo: E16 carries 28.5 N.s, F15 49.7 N.s, so
+# e16@285 is the worst combo, f15@285 typical, f15@235 the best.
 set -e
 PORT=${PORT:-/dev/ttyACM0}
 # plotly lives in a pipx venv here, not in the system python. Resolve it ONCE rather than letting
@@ -21,9 +25,10 @@ fi
 [ -z "$PLY" ] && echo "WARNING: no python with plotly found -- HTML reports will be SKIPPED" >&2
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 motor=$1; outdir=${2:-/tmp/hitl/$motor}
+GLIDER_G=${GLIDER_G:-285}
 PAD=25.514379,-80.391795
 ZONE=25.514944,-80.392972,25.514583,-80.391111
-SCENARIOS='noise05 noise10 noise25 noise50 noise100 wind00 wind03 wind06 wind09 wind12 corner_spike corner_stress'
+SCENARIOS=${SCENARIOS:-'noise05 noise10 noise25 noise50 noise100 wind00 wind03 wind06 wind09 wind12 corner_spike corner_stress'}
 
 # Deploy the runner. NOT muted: this used to be `>/dev/null 2>&1`, and under `set -e` a wedged CDC
 # killed the whole matrix here with an empty log and exit 1 -- no flights, no message, nothing to read.
@@ -37,7 +42,10 @@ fi
 # scenario and printed "matrix done", a silent 1-of-12 that looks like a full run in the log.
 while read -r name noise wind dir spike <&3; do
   [ -z "$name" ] && continue
-  bash "$ROOT/tools/hitl_collect.sh" "$motor" "$name" "$noise" "$wind" "$dir" "$spike" "$outdir" </dev/null \
+  # SCENARIOS is the filter as well as the render list, so a shortened matrix does not try to render
+  # the flights it never flew. The table below stays complete: a subset is a selection, not an edit.
+  case " $SCENARIOS " in *" $name "*) ;; *) continue ;; esac
+  bash "$ROOT/tools/hitl_collect.sh" "$motor" "$name" "$noise" "$wind" "$dir" "$spike" "$outdir" "$GLIDER_G" </dev/null \
     || echo "skip $motor/$name (flight failed)"   # one flaky flight must not abort the matrix
 done 3<<'SCN'
 noise05 0.05 0.0 210.0 False
@@ -79,4 +87,4 @@ python3 "$ROOT/tools/flight_svg.py" "$outdir"/wind00.txt "$outdir"/wind03.txt "$
   "$outdir"/wind09.txt "$outdir"/wind12.txt --overlay -o "$outdir/compare_wind.svg" \
   --labels 'calm,3,6,9,12 m/s' --pad $PAD --zone $ZONE >/dev/null 2>&1 || true
 flights=$(ls "$outdir"/*.txt 2>/dev/null | wc -l)
-echo "matrix $motor done -> $outdir  (flights: $flights, svg: $(ls "$outdir"/*.svg 2>/dev/null | wc -l), html: $(ls "$outdir"/*.html 2>/dev/null | wc -l))"
+echo "matrix $motor ${GLIDER_G}g done -> $outdir  (flights: $flights, svg: $(ls "$outdir"/*.svg 2>/dev/null | wc -l), html: $(ls "$outdir"/*.html 2>/dev/null | wc -l))"
