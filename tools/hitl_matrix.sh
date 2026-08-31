@@ -80,11 +80,23 @@ for scen in corner_spike corner_stress noise05 noise50 wind00; do
     -o "$outdir/report_$scen.html" --cdn >/dev/null 2>&1 || { html_bad=$((html_bad+1)); }
 done
 [ "$html_bad" -gt 0 ] && echo "WARNING: $html_bad HTML report(s) failed (PLY=${PLY:-none})" >&2
-python3 "$ROOT/tools/flight_svg.py" "$outdir"/noise05.txt "$outdir"/noise10.txt "$outdir"/noise25.txt \
-  "$outdir"/noise50.txt "$outdir"/noise100.txt --overlay -o "$outdir/compare_noise.svg" \
-  --labels '5%,10%,25%,50%,100%' --pad $PAD --zone $ZONE >/dev/null 2>&1 || true
-python3 "$ROOT/tools/flight_svg.py" "$outdir"/wind00.txt "$outdir"/wind03.txt "$outdir"/wind06.txt \
-  "$outdir"/wind09.txt "$outdir"/wind12.txt --overlay -o "$outdir/compare_wind.svg" \
-  --labels 'calm,3,6,9,12 m/s' --pad $PAD --zone $ZONE >/dev/null 2>&1 || true
+# The overlays are built from the flights that EXIST, not a hardcoded five. With SCENARIOS narrowing
+# the matrix, naming absent captures made flight_svg fail -- and `|| true` swallowed it, so a shortened
+# run silently lost its comparison chart. That is the same best-effort-hides-the-failure trap the
+# per-scenario renders above were fixed for; an overlay of two curves is still worth drawing.
+overlay() {   # overlay <out.svg> <label-for> <scenario>...
+  local out=$1 kind=$2; shift 2
+  local files=() labels=()
+  for scen in "$@"; do
+    [ -f "$outdir/$scen.txt" ] || continue
+    files+=("$outdir/$scen.txt"); labels+=("${scen#$kind}")
+  done
+  [ "${#files[@]}" -lt 2 ] && return 0   # one curve is not a comparison
+  python3 "$ROOT/tools/flight_svg.py" "${files[@]}" --overlay -o "$out" \
+    --labels "$(IFS=,; echo "${labels[*]}")" --pad $PAD --zone $ZONE >/dev/null 2>&1 \
+    || echo "WARNING: $(basename "$out") render failed" >&2
+}
+overlay "$outdir/compare_noise.svg" noise noise05 noise10 noise25 noise50 noise100
+overlay "$outdir/compare_wind.svg" wind wind00 wind03 wind06 wind09 wind12
 flights=$(ls "$outdir"/*.txt 2>/dev/null | wc -l)
 echo "matrix $motor ${GLIDER_G}g done -> $outdir  (flights: $flights, svg: $(ls "$outdir"/*.svg 2>/dev/null | wc -l), html: $(ls "$outdir"/*.html 2>/dev/null | wc -l))"
