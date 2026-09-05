@@ -54,6 +54,13 @@ the biggest available cut: three of the seven carriers stop being carriers at al
 Two of the three removed plugs were not simplifications of the harness but deletions of it: the power
 and GNSS cables stop existing rather than getting shorter.
 
+**That is the point, and it is measured in grams rather than tidiness.** The deleted harnesses, the
+connectors that went with them and the shorter nose (7D runs 10 cm longer than 7C) are expected to save
+**30–50 g**, taking the glider from 287.5 g to **237–257 g**. On this airframe 50 g is worth **45 m of
+median miss and seven in-zone landings** (`TMS-7-preflight`: 285 g → 88–91 m and 0/10, against 235 g →
+37–46 m and 7/10). No control change available to us moves accuracy nearly that far — so the carrier
+count above is an accuracy argument, not a housekeeping one.
+
 # Transition v0.1 → v1.0
 
 Physical work, in the order it is least annoying to do. The per-GPIO delta is generated in

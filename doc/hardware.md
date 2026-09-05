@@ -590,6 +590,32 @@ estimated flight envelope (peak accel / speed / apogee / glide range) is in
 The board to be ordered. Two I2C clusters split **on-board vs front-panel**, the LSM6DSO32 alone on SPI,
 GNSS and power merged onto the main board, no ADXL375.
 
+## Why v1.0 is worth building: it is a MASS change, not an accuracy change
+
+The board's value does not arrive through control behaviour, and measuring it that way asks the wrong
+question. It arrives through **grams**, and [`TMS-7-preflight`](sims/TMS-7-preflight/) already
+quantified exactly what grams are worth on this airframe:
+
+| combo | glide mass | median miss | in zone |
+|---|---|---|---|
+| `f15_full` | 285 g | 88-91 m | **0 / 10** |
+| `f15_half` | 235 g | **37-46 m** | **7 / 10** |
+
+**50 g bought 45 m of median miss and seven in-zone landings** -- about 0.9 m per gram, over three runs
+each, with the in-zone set reproducing exactly. Nothing else measured on this project moves accuracy
+that far.
+
+TMS-7D's glider is **287.5 g**, which is `f15_full` almost exactly. The v1.0 savings -- a shorter nose
+(7D runs 10 cm longer than 7C), the deleted power and GNSS harnesses, and the connectors that go with
+them -- are expected at **30-50 g**, putting the airframe at **237-257 g**. The optimistic end lands on
+`f15_half`'s mass, the configuration that put 7 of 10 in the zone.
+
+**So the flight-validation result should be read accordingly.** `TMS-7-board_v1.0_validation` found the
+rewire behaviour-neutral to within the endgame's own phase variance, and **that is the desired
+outcome, not a disappointment**: the board is meant to fly the SAME while weighing less. A layout
+change that altered control behaviour would be a reason to investigate, not to celebrate. The accuracy
+comes from the scale, and the scale is measured.
+
 ## v1.0 allocation — DECIDED
 
 Two clusters split **on-board vs front-panel**, which is simultaneously the fast/slow split, the
