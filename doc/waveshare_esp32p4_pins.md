@@ -62,6 +62,31 @@ The board being ordered. Derived by applying the v1.0 revision to the firmware d
 | `wifi` | - | - |
 | `cc` | - | - |
 
+## Module solder maps (label traps)
+
+The breakouts whose silk labels do not match their SPI function. Every GPIO below is read from the same config the firmware uses, so this cannot drift from it.
+
+### LSM6DSO32 breakout — PRIMARY row only
+
+This breakout carries a **second, AUXILIARY** interface (the sensor-hub / OIS port for an external magnetometer), so `SCL`/`SCX` and `DO`/`DO` BOTH appear on the board. The auxiliary port is a separate peripheral: clocking it does nothing for the primary bus, and a part wired to it goes silent on SPI **and** I²C — reading exactly like a dead chip.
+
+```
+  bottom row (PRIMARY -- use this one):   VIN  3Vo  GND  SCL  SDA  DO  CS  I1  I2
+  top row    (AUXILIARY -- do NOT use):   SCX  SDX  CS   DO   GND
+```
+
+| module pin | meaning | ESP32-P4 GPIO |
+|---|---|---|
+| VIN *(bottom 1)* | power | 3V3 |
+| GND *(top 5)* | ground | GND |
+| **SCL** *(bottom 4)* | SPI clock (SCK) — **NOT `SCX`** | **48** |
+| **SDA** *(bottom 5)* | SPI MOSI (SDI) | **47** |
+| **DO** *(bottom 6)* | SPI **MISO** (SDO) — **NOT the top-row `DO`** | **46** |
+| CS *(bottom 7)* | chip-select | **50** |
+| I1 *(bottom 8)* | INT1 data-ready | **28** |
+
+> ⚠️ **v0.1 got this wrong on both built boards**, taking the clock from `SCX` and the data-out from the top-row `DO` — both auxiliary. MOSI, CS, INT1, VIN and GND were correct, which is why two jumpers repaired TMS-7C and TMS-7D.
+
 **Not fitted on this revision:** `accel_adxl375` -- physically absent, disabled in config, claiming no pins.
 
 ## Reserved (never assign)
@@ -166,6 +191,45 @@ TMS-7C, TMS-7D and the breadboard until the transition above is done. A config w
 | `bluetooth` | - | - |
 | `wifi` | - | - |
 | `cc` | - | - |
+
+## Module solder maps (label traps)
+
+The breakouts whose silk labels do not match their SPI function. Every GPIO below is read from the same config the firmware uses, so this cannot drift from it.
+
+### ADXL375 breakout — SPI pins silk-printed with I²C names
+
+On the Adafruit board the SPI data pins carry their I²C labels, so the mapping is not one-to-one: **SDA = MOSI** and **SDO = MISO**.
+
+| module pin | meaning | ESP32-P4 GPIO |
+|---|---|---|
+| VIN | power | 3V3 |
+| GND | ground | GND |
+| SCL | SPI clock (SCK) | **48** |
+| **SDA** | SPI **MOSI** (SDI) | **47** |
+| **SDO** | SPI **MISO** | **46** |
+| CS | chip-select (active low) | **49** |
+| INT1 | DATA_READY | **4** |
+
+### LSM6DSO32 breakout — PRIMARY row only
+
+This breakout carries a **second, AUXILIARY** interface (the sensor-hub / OIS port for an external magnetometer), so `SCL`/`SCX` and `DO`/`DO` BOTH appear on the board. The auxiliary port is a separate peripheral: clocking it does nothing for the primary bus, and a part wired to it goes silent on SPI **and** I²C — reading exactly like a dead chip.
+
+```
+  bottom row (PRIMARY -- use this one):   VIN  3Vo  GND  SCL  SDA  DO  CS  I1  I2
+  top row    (AUXILIARY -- do NOT use):   SCX  SDX  CS   DO   GND
+```
+
+| module pin | meaning | ESP32-P4 GPIO |
+|---|---|---|
+| VIN *(bottom 1)* | power | 3V3 |
+| GND *(top 5)* | ground | GND |
+| **SCL** *(bottom 4)* | SPI clock (SCK) — **NOT `SCX`** | **48** |
+| **SDA** *(bottom 5)* | SPI MOSI (SDI) | **47** |
+| **DO** *(bottom 6)* | SPI **MISO** (SDO) — **NOT the top-row `DO`** | **46** |
+| CS *(bottom 7)* | chip-select | **50** |
+| I1 *(bottom 8)* | INT1 data-ready | **28** |
+
+> ⚠️ **v0.1 got this wrong on both built boards**, taking the clock from `SCX` and the data-out from the top-row `DO` — both auxiliary. MOSI, CS, INT1, VIN and GND were correct, which is why two jumpers repaired TMS-7C and TMS-7D.
 
 ## Reserved (never assign)
 

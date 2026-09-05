@@ -59,6 +59,82 @@ def _pin_users(cfg: dict) -> dict:
     return users
 
 
+"""
+Breakout modules whose SILK LABELS do not match their SPI function -- the ones this project has
+mis-soldered before. Rendered per revision so the table only appears where the part is fitted.
+
+`source` is how the GPIO is resolved: ('spi', key) reads the bus spec, ('pin', field) reads the
+device's own pin field. Nothing here is a literal GPIO, so the table cannot drift from the config the
+firmware actually uses -- which is the whole reason a hand-written copy of this went wrong.
+"""
+_MODULE_PINOUT: dict = {
+    'imu_lsm6dso32': {
+        'title': 'LSM6DSO32 breakout — PRIMARY row only',
+        'note': ('This breakout carries a **second, AUXILIARY** interface (the sensor-hub / OIS port for '
+                 'an external magnetometer), so `SCL`/`SCX` and `DO`/`DO` BOTH appear on the board. The '
+                 'auxiliary port is a separate peripheral: clocking it does nothing for the primary bus, '
+                 'and a part wired to it goes silent on SPI **and** I²C — reading exactly like a dead chip.'),
+        'rows': (('VIN *(bottom 1)*', 'power', None, '3V3'),
+                 ('GND *(top 5)*', 'ground', None, 'GND'),
+                 ('**SCL** *(bottom 4)*', 'SPI clock (SCK) — **NOT `SCX`**', ('spi', 'sck'), None),
+                 ('**SDA** *(bottom 5)*', 'SPI MOSI (SDI)', ('spi', 'mosi'), None),
+                 ('**DO** *(bottom 6)*', 'SPI **MISO** (SDO) — **NOT the top-row `DO`**', ('spi', 'miso'), None),
+                 ('CS *(bottom 7)*', 'chip-select', ('pin', 'cs_pin'), None),
+                 ('I1 *(bottom 8)*', 'INT1 data-ready', ('pin', 'int_pin'), None)),
+        'rows_ascii': ('  bottom row (PRIMARY -- use this one):   VIN  3Vo  GND  SCL  SDA  DO  CS  I1  I2\n'
+                       '  top row    (AUXILIARY -- do NOT use):   SCX  SDX  CS   DO   GND'),
+        'history': ('**v0.1 got this wrong on both built boards**, taking the clock from `SCX` and the '
+                    'data-out from the top-row `DO` — both auxiliary. MOSI, CS, INT1, VIN and GND were '
+                    'correct, which is why two jumpers repaired TMS-7C and TMS-7D.'),
+    },
+    'accel_adxl375': {
+        'title': 'ADXL375 breakout — SPI pins silk-printed with I²C names',
+        'note': ('On the Adafruit board the SPI data pins carry their I²C labels, so the mapping is not '
+                 'one-to-one: **SDA = MOSI** and **SDO = MISO**.'),
+        'rows': (('VIN', 'power', None, '3V3'),
+                 ('GND', 'ground', None, 'GND'),
+                 ('SCL', 'SPI clock (SCK)', ('spi', 'sck'), None),
+                 ('**SDA**', 'SPI **MOSI** (SDI)', ('spi', 'mosi'), None),
+                 ('**SDO**', 'SPI **MISO**', ('spi', 'miso'), None),
+                 ('CS', 'chip-select (active low)', ('pin', 'cs_pin'), None),
+                 ('INT1', 'DATA_READY', ('pin', 'int_pin'), None)),
+        'rows_ascii': None,
+        'history': None,
+    },
+}
+
+
+def _module_tables(cfg: dict) -> list:
+    """Per-module solder tables for the parts whose labels have caused a mis-wire here."""
+    pins = cfg.get('pins', {})
+    out = []
+    for device in _devices(cfg):
+        entry = _MODULE_PINOUT.get(device.get('name'))
+        if entry is None or not device.get('enabled', True):
+            continue
+        spec = cfg.get('buses', {}).get(device.get('bus'), {}).get(str(device.get('id')), {})
+        out.append('### %s\n' % entry['title'])
+        out.append(entry['note'] + '\n')
+        if entry['rows_ascii']:
+            out.append('```')
+            out.append(entry['rows_ascii'])
+            out.append('```\n')
+        out.append('| module pin | meaning | ESP32-P4 GPIO |')
+        out.append('|---|---|---|')
+        for label, meaning, source, literal in entry['rows']:
+            if literal is not None:
+                gpio = literal
+            elif source[0] == 'spi':
+                gpio = '**%s**' % spec.get(source[1], '?')
+            else:
+                gpio = '**%s**' % pins.get(device.get(source[1]), '?')
+            out.append('| %s | %s | %s |' % (label, meaning, gpio))
+        out.append('')
+        if entry['history']:
+            out.append('> ⚠️ ' + entry['history'] + '\n')
+    return out
+
+
 def _section(cfg: dict, title: str, note: str) -> list:
     """One revision's buses / GPIO / device tables."""
     pins = cfg.get('pins', {})
@@ -114,6 +190,11 @@ def _section(cfg: dict, title: str, note: str) -> list:
     # HARDWARE only: a disabled device that names a bus or a pin is a part that is not on the board,
     # while a disabled `flight` / `field` / `watchdog` is a software task switched off. Listing them
     # together under "not fitted" would read as missing silicon.
+    out.append('## Module solder maps (label traps)\n')
+    out.append('The breakouts whose silk labels do not match their SPI function. Every GPIO below is '
+               'read from the same config the firmware uses, so this cannot drift from it.\n')
+    out += _module_tables(cfg)
+
     absent = sorted(d['name'] for d in _devices(cfg)
                     if not d.get('enabled', True)
                     and ('bus' in d or any(d.get(f) for f in _PIN_FIELDS)))
