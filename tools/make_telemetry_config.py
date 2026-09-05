@@ -43,10 +43,12 @@ The two shock/rate streams are additionally recorded at full 100 Hz rather than 
 see _FULL_RATE below.
 
 Usage:
-    python3 tools/make_telemetry_config.py          # writes configs/tms7c.config, configs/tms7d.config
+    python3 tools/make_telemetry_config.py          # writes into the newest launches/<date>/<BOARD>/
+    python3 tools/make_telemetry_config.py --launch 20261003
 Then upload the chosen profile to the board as board.config (via CC) and power-cycle.
 """
 
+import argparse
 import json
 import os
 import sys
@@ -55,7 +57,24 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 
 import config_default  # noqa: E402 -- needs the path above
 
-_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'configs')
+_ROOT = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..')
+_LAUNCHES = os.path.join(_ROOT, 'launches')
+
+
+def _latest_launch() -> str:
+    """
+    The newest launches/<YYYYMMDD>/ directory.
+
+    Board configs live under the LAUNCH they were built for, not in one shared configs/, because a
+    profile is only meaningful next to the airframe masses, motor and fin setting it was written
+    against -- and those change from launch to launch. Writing into the newest launch is the safe
+    default; --launch targets an older one.
+    """
+    dates = sorted(name for name in os.listdir(_LAUNCHES)
+                   if name.isdigit() and os.path.isdir(os.path.join(_LAUNCHES, name)))
+    if not dates:
+        raise SystemExit('no launches/<YYYYMMDD>/ directory to write into')
+    return dates[-1]
 
 # Sequencer thresholds for a CATAPULT hop, and ONLY a catapult hop. Opt-in per profile via
 # launch_mode='catapult'; every one is derived from a ~3 m arc and is actively unsafe on a rocket:
@@ -263,8 +282,11 @@ def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple
 
 
 def main() -> None:
-    """Write every board profile to configs/ and report the launch mode they were built for."""
-    os.makedirs(_OUT, exist_ok=True)
+    """Write every board profile into its launch/board folder and report the launch mode built for."""
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--launch', default=None,
+                        help='launches/<YYYYMMDD> to write into (default: the newest)')
+    launch = parser.parse_args().launch or _latest_launch()
     for name, board_id, servos, flight, absent, concurrency, raw_telemetry, note in (
         ('tms7c', 'TMS-7C', False, False, _TMS7C_ABSENT, 1, True,
          'telemetry only -- no decimation, servos and control DISABLED, the airframe is ballast'),
@@ -281,15 +303,21 @@ def main() -> None:
         # bench, or clear board.config so the firmware default applies.
         ('tms7d', 'TMS-7D', True, False, _TMS7D_ABSENT, 3, True,
          'telemetry + servos fitted, no active control -- no decimation'),
-        # kept for when the ladder reaches active control; nothing flies it yet
-        ('tms7d_control', 'TMS-7D', True, True, (), None, False, 'full active control'),
+        # Kept for when the ladder reaches active control; nothing flies it yet. concurrency is stated
+        # EXPLICITLY (3, matching tms7d -- same airframe, same flight power board) rather than left as
+        # None to inherit. It did inherit, and when the firmware default moved 3 -> 1 this profile
+        # silently followed it, which is the wrong direction for the one profile that flies fins under
+        # a PID. A flight profile should not change because a bench-safety default changed.
+        ('tms7d_control', 'TMS-7D', True, True, (), 3, False, 'full active control'),
     ):
         # KEYWORDS, not positions: adding launch_mode/watchdog as positional parameters silently
         # shifted `concurrency` into `watchdog` here, and the result still generated valid-looking
         # configs (watchdog "enabled": 3). Only diffing the output caught it.
         cfg = _profile(name, board_id, servos, flight, absent=absent, launch_mode=_LAUNCH_MODE,
                        concurrency=concurrency, raw_telemetry=raw_telemetry)
-        path = os.path.join(_OUT, '%s.config' % name)
+        out = os.path.join(_LAUNCHES, launch, board_id)   # beside the airframe it was written for
+        os.makedirs(out, exist_ok=True)
+        path = os.path.join(out, '%s.config' % name)
         with open(path, 'w') as handle:
             json.dump(cfg, handle, indent=1, sort_keys=True)
             handle.write('\n')

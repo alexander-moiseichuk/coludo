@@ -75,7 +75,7 @@ def checksum_ok(sentence: str) -> bool:
     """
     star = sentence.rfind('*')
     if star < 0:
-        return False
+        return False  # no `*hh` -> unverifiable; control/gps.py:_checksum_ok holds the SAME policy
     got = _xor_checksum(sentence.encode(), 1, star)
     try:
         return got == int(sentence[star + 1:star + 3], 16)

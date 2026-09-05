@@ -52,7 +52,7 @@ _DRAIN_HIGH_WATER = const(2048)  # half of _DEFAULT_TXBUF: flush when the pendin
 _LENGTH_BYTES = const(2)  # uint16 record-length header
 _STATS_PERIOD_MS = const(1000)  # how often run() logs a buffer-stats line
 _DEFAULT_TELEMETRY_MS = const(20)  # CODE fallback only (50 Hz). The SHIPPED config sets 0 = uncapped
-                                   # (config_default recorder.telemetry_ms, and every configs/*.config),
+                                   # (config_default recorder.telemetry_ms, and every launches/*/*/*.config),
                                    # so this applies only to a config that omits the recorder section.
 # CONFIG knobs are milliseconds everywhere -- one unit in the file, converted to us at the boundary,
 # so no reader has to remember which of two suffixes a given key used.

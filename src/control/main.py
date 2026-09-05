@@ -14,6 +14,8 @@ import datetime
 import gps as gps_mod
 import server
 
+_DEFAULT_GPS_BAUD: int = 9600  # what the ATGM336H and most USB dongles ship at
+
 
 def _log(message: str) -> None:
     """
@@ -42,11 +44,12 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument('--gps-device', default='auto',
                         help="serial GPS for launch-site assist: 'auto' (default) picks the first "
                              "/dev/ttyUSB*, an explicit path overrides, 'off' disables")
-    parser.add_argument('--gps-baud', type=int, default=9600, help='host GPS baud (default 9600)')
+    parser.add_argument('--gps-baud', type=int, default=_DEFAULT_GPS_BAUD,
+                        help='host GPS baud (default %d)' % _DEFAULT_GPS_BAUD)
     return parser.parse_args()
 
 
-def _resolve_gps_device(arg: str):
+def _resolve_gps_device(arg: str, baud: int = _DEFAULT_GPS_BAUD):
     """
     Resolve the --gps-device argument to a device path or None.
 
@@ -75,15 +78,27 @@ def _resolve_gps_device(arg: str):
         A GPS emits `$G...` continuously, so a short listen is a definitive test. Each candidate gets
         one second; the first that talks NMEA wins, and if none does we return None rather than
         guessing -- an explicit --gps-device is the honest fallback.
+
+        PROBE AT EVERY PLAUSIBLE BAUD, not a hardcoded 9600. A u-blox left at 115200 emits nothing
+        legible at 9600, so the probe saw silence and reported no GPS while the receiver was sitting
+        there talking -- and `--gps-baud` had been set correctly all along, because it was only ever
+        applied to serve(), never to the probe that decides whether serve() gets a port at all.
+
+        Both bauds are tried, not just the configured one: 9600 is the default the ATGM336H and most
+        USB dongles ship at, so probing ONLY a non-default `--gps-baud` would trade one silent miss for
+        the opposite silent miss. The port is not opened anywhere else before this, so a second 1 s
+        listen costs nothing but that second.
         """
+        bauds = [baud] if baud == _DEFAULT_GPS_BAUD else [baud, _DEFAULT_GPS_BAUD]
         for candidate in sorted(glob.glob('/dev/ttyUSB*')):
-            try:
-                with serial.Serial(candidate, 9600, timeout=0.25) as link:
-                    for _attempt in range(4):        # ~1 s: a live receiver sends several sentences
-                        if b'$G' in link.readline():
-                            return candidate
-            except Exception:
-                continue                              # busy, permission-denied, not a serial device
+            for rate in bauds:
+                try:
+                    with serial.Serial(candidate, rate, timeout=0.25) as link:
+                        for _attempt in range(4):    # ~1 s: a live receiver sends several sentences
+                            if b'$G' in link.readline():
+                                return candidate
+                except Exception:
+                    continue                          # busy, permission-denied, not a serial device
         return None
     return arg
 
@@ -123,7 +138,7 @@ async def _run(args, hub) -> None:
 
 def main() -> None:
     args = _parse_args()
-    args.gps_device = _resolve_gps_device(args.gps_device)  # 'auto' -> first /dev/ttyUSB* (or None)
+    args.gps_device = _resolve_gps_device(args.gps_device, args.gps_baud)  # 'auto' -> probe /dev/ttyUSB*
     gps = gps_mod.Gps(log=_log) if args.gps_device else None
     hub = server.Server(host=args.host, port=args.port, operator_port=args.operator_port,
                         web_port=args.web_port, gps=gps, log=_log)

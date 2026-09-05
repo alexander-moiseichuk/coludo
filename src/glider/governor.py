@@ -246,8 +246,17 @@ class Governor:
         Returns:
             None -- advances the estimator and writes the fin-authority cap into mixer.limit.
         """
-        accel = self._accel.value()
-        if accel is not None:
+        accel, accel_source, _accel_age = self._accel.read()
+        """
+        read(), NOT value(). value() extrapolates a stale channel without bound, and this is the
+        estimator's BACKBONE -- every predict() compounds into the airspeed the fin cap comes off, and
+        that same airspeed is what the checkpoint persists and a warm start seeds back. A dead IMU
+        extrapolates toward a steady ~1 g, which reads as level flight and drifts the estimate roughly
+        0.5 m/s^2 toward the ceiling: safe in DIRECTION (a high estimate tightens the cap) but it defeats
+        the whole point of the freshness-throttled update, and it survives a reboot through the crumb.
+        No sample is better than an invented one -- the corrector still has the pitot and GNSS.
+        """
+        if accel_source is not None:
             self._estimator.predict(
                 (commons.magnitude_sq(accel[0], accel[1], accel[2]) ** 0.5 - 1.0) * 9.81, dt)
         # PITOT FIRST: a fresh, IN-BAND airspeed is a DIRECT measurement (the driver already did the sqrt)

@@ -61,7 +61,7 @@ Required hardware and the phased development roadmap. Architecture lives in
 - **Phase 5 — field testing (next).** Staged ladder: maket walk-test → telemetry launch → powered
   launch, likely on the wider **TMS-8** airframe. See below.
 - **Firmware / toolchain — PINNED at `v1.29.0-preview.414.g533a154c8a`** for Phase 5 (repo `mpy-cross`
-  gate at `preview.417`, same mpy v6.3; `deploy.sh` ships `.py`, the board compiles on-device). This
+  gate at `preview.417`, same mpy v6.3; `deploy.sh` ships **`.mpy`**, cross-compiled on the host -- `main.py` is the one source file left on the board). This
   build already carries the **PSRAM speed-up** — heap memcpy 11.8 → **33.5 MB/s (2.85×)**
   (`doc/benches/WaveShare_esp32p4-micropython-findings.md`) — which cascades into every PSRAM-bound path
   (slice-assign, the Recorder rings). **Do not chase newer previews.** Reviewed 414→434 (20 commits): all
@@ -248,7 +248,7 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   ~4000x and past viper's 2^31 (which wraps SILENTLY) by ~2000x, so any integer form needs 64-bit
   intermediates = bignums = more allocation than the floats replaced.
 - **Catapult `board.config` profiles** — **DONE (2026-08-01), `tools/make_telemetry_config.py` ->
-  `configs/tms7c.config`, `configs/tms7d.config`.** 7C is telemetry-only (all three servos AND the
+  `launches/<date>/TMS-7C/tms7c.config`, `launches/<date>/TMS-7D/tms7d.config`.** 7C is telemetry-only (all three servos AND the
   flight activity disabled -- the airframe flies as instrumented ballast); 7D is full active control.
   Both validate and load as `active`.
   **Sized for the SMALLEST intended hop — a near-vertical ~3 m toss** (operator's call, safe side), so
@@ -347,7 +347,7 @@ Supporting precision + tooling (continue alongside / from Phase 4):
   `StreamWriter` drain, drop `stop`/`sink`/`also`/`limit`, log-drop vs tlm-raise, `const`, type
   annotations) + finish the `_Msg` rename in `cc_protocol`; sync tests. ✅
 - **Config schema reorg** (board-config.md): nested `buses: {uart:{1,2}, i2c:{0,1}, spi:{}}`, a
-  `sensors:` section, no abbreviations, configs in a `configs/` subfolder. ✅ (doc + code)
+  `sensors:` section, no abbreviations, configs under `launches/<YYYYMMDD>/<BOARD>/`. ✅ (doc + code)
 - **`Inspectable` mixin** (`inspect`/`update`/`stats` + `type`/`name`) — design then adopt. ✅
 - **`BoardHealth` task** — `esp32.mcu_temperature()`, `idf_heap_info()` (PSRAM-aware), idle/load,
   periodic Telemetry every ~1 s. ✅

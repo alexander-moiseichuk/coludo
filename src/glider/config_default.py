@@ -172,7 +172,15 @@ def default() -> dict:
     Fin / servo control -- one home for every fin knob (doc/specs/board-config.md "Fins").
 
     concurrency: max fin servos allowed to SLEW at once via servo.move() -- caps the boost-rail
-    current transient. 3 (== fin count) = no limit; drop to 2/1 if the rail sags on the built airframe.
+    current transient. `== fin count` (3) = no limit; the FLIGHT boards raise it to 3 in their own
+    profile, where a real power board carries the ~4 A transient.
+
+    The DEFAULT is 1 deliberately, and it is a safety default rather than a performance one. This value
+    governs exactly one class of board: the un-profiled bench rig (board id 'taster' below), which is
+    the one running off a 4 V / 1 A supply -- and three SG90s slewing together brown that supply out.
+    Shipping 3 here once cost a real servo: the bench board boot-looped with fins enabled and re-centred
+    all three on every boot until one died. A default cannot know the rail it is on, so it assumes the
+    weakest one and lets a profile opt up.
 
     limit_multiplier: the dynamic-pressure fin governor's safety dial (coludo.md "Fin authority";
     commons.fin_deflection_limit, ∝ 1/v²) -- scales the whole schedule. 1.0 = nominal; drop (e.g. 0.5)
@@ -184,7 +192,7 @@ def default() -> dict:
     limit_deg bounds control deflection.
     """
     fins = {
-        'concurrency': 3,
+        'concurrency': 1,  # safe for an unknown rail; flight profiles raise it -- see above
         'limit_multiplier': 1.0,
         'mixer': {
             'neutral_deg': commons.SERVO_NEUTRAL_DEG,

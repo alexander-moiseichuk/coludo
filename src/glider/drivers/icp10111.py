@@ -357,8 +357,18 @@ class Icp10111(task.Task):
         if 'ground' in props:
             self._ground = float(props['ground'])
             return ['ground']
-        if props.get('rezero') and self._altitude.value() is not None:
-            self._ground = self._altitude.value()
+        if props.get('rezero'):
+            altitude, altitude_source, _altitude_age = self._altitude.read()
+            """
+            read(), NOT value(). A re-zero LATCHES a number permanently -- every later `elevation` is
+            reported against it -- so accepting an extrapolated altitude here biases the channel for the
+            rest of the flight, silently and without a second chance. value() extrapolates a stale
+            channel without bound, so the old `value() is not None` test passed happily on a dead baro.
+            Refuse instead of returning [], so the operator sees why (as sdp810's tare does).
+            """
+            if altitude_source is None:
+                raise ValueError('no fresh altitude to re-zero from')
+            self._ground = altitude
             return ['ground']
         return []
 

@@ -161,9 +161,17 @@ async def amain():
         calibration_state = (0, 3, 3, 0)
         calibration_value = (0, 3, 3, 0)
 
-        @property
         def calibration(self):
-            return self.calibration_value
+            """
+            A METHOD returning a STRING, because that is what drivers/bno055.py:214 is.
+
+            This stub used to be a @property returning the tuple, and that shape difference hid a real
+            bug: cc_client read `imu.calibration` without calling it, so the board rendered
+            "<bound_method>" into the readiness line while the test -- reading a property -- saw a
+            tidy tuple and passed. A double that cannot express the failure cannot catch it.
+            """
+            return ('move the airframe in a slow FIGURE-8 until mag reads 3 '
+                    '(now sys %d gyr %d acc %d mag %d)' % self.calibration_value)
 
         def calibrated(self):
             return self.calibration_value[3] >= 3
@@ -274,6 +282,23 @@ async def amain():
     # the flight-readiness config gate rides along: the DEFAULT config is a bench config -- watchdog
     # and flight both disabled -> not ready, each named (hardware `pass` is judged separately)
     assert report['ready'] is False
+
+    """
+    The readiness line has to TELL the operator something. It shipped reading `imu.calibration` without
+    calling it, so a real board rendered "BNO055 not calibrated <bound_method ...>" -- the one message
+    whose entire job is to say which axes are still short said nothing, and it reached a live airframe.
+    Assert the driver's text arrives and the repr does not.
+    """
+    class _UncalibratedVerifyController(_VerifyController):
+        def active(self, name):
+            return _UncalibratedImu() if name == 'imu_bno055' else None
+
+    sd_calib = cc_client.create_dispatcher(config_default.default(),
+                                           controller=_UncalibratedVerifyController())
+    calib_report = json.loads(cc.parse(await sd_calib.handle('verify')).args[0])
+    line = calib_report['readiness']['imu_calibration']
+    assert 'bound_method' not in line and '<' not in line, 'readiness rendered a repr: %r' % line
+    assert 'FIGURE-8' in line and 'mag 0' in line, 'readiness lost the instruction/counts: %r' % line
     assert report['readiness']['watchdog'].startswith('disabled') and 'flight' in report['readiness']
     assert 'unsupported' in await cc_client.create_dispatcher(config_default.default()).handle('verify')
 

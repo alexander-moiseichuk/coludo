@@ -559,8 +559,11 @@ def _register_diagnostics(dispatcher, ctx) -> None:
         """
         imu = ctx.controller.active('imu_bno055')
         if imu is not None and hasattr(imu, 'calibrated') and not imu.calibrated():
-            readiness['imu_calibration'] = ('BNO055 not calibrated %s -- move the airframe in a slow '
-                                            'figure-8 until mag reads 3' % (imu.calibration,))
+            # calibration() -- CALLED. Without the parentheses this rendered "<bound_method ...>" to the
+            # operator, i.e. the one line meant to say WHICH axes are still short said nothing at all.
+            # The driver's string already carries the instruction and the live per-axis counts, so it
+            # is the whole message rather than a suffix on a second, duplicated instruction.
+            readiness['imu_calibration'] = 'BNO055 not calibrated -- %s' % imu.calibration()
         return cc.build('ok', [json.dumps({'pass': not problems, 'devices': devices, 'problems': problems,
                                            'ready': not readiness, 'readiness': readiness})])
 

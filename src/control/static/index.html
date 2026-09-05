@@ -185,7 +185,10 @@ function prettyResult(result) {
 /*
  * Escape a value for an HTML ATTRIBUTE, and never splice one into JavaScript.
  *
- * The row used onclick="selectBoard('<id>')", which puts the id inside a JS string literal inside
+ * HISTORICAL -- this describes a bug ALREADY FIXED below (the row builds with addEventListener +
+ * dataset, and every field goes through escAttr). It is kept as the rationale, not as live code.
+ *
+ * The row once built an inline click handler splicing the id into a JS string inside
  * an HTML attribute -- two nested contexts. An id of a';alert(1);// closes the string and runs
  * arbitrary script in every dashboard viewing that board. The LAN is trusted, but a board id is
  * OPERATOR-SET via `set-config board {id:"..."}`, so it is not a constant and a typo with a quote in
@@ -303,11 +306,11 @@ new EventSource('/events').onmessage = (event) => {
     <tr class="click ${b.online ? 'on' : 'off'} ${notReady(b) ? 'notready' : ''}" data-board="${escAttr(b.id)}">
       <td>${notReady(b) ? `<b class="warn" title="NOT READY: ${b.degraded.join(', ')}">❗</b> ` : ''}${escAttr(b.id)}</td>
       <td><span class="dot">${b.online ? '●' : '○'}</span></td>
-      <td>${b.stage || ''}</td>
+      <td>${escAttr(b.stage || '')}</td>
       <td>${fmtFlight(b)}</td>
       <td>${fmtImu(b)}</td>
-      <td>${b.version || ''}</td>
-      <td>${b.config_id || ''}</td>
+      <td>${escAttr(b.version || '')}</td>
+      <td>${escAttr(b.config_id || '')}</td>
       <td>${fmtUptime(b.uptime)}</td>
       <td>${(b.clock || '').replace('T', ' ')}</td>
       <td><button class="synctime" data-board="${escAttr(b.id)}" title="set the board RTC to the CC clock">sync CC time</button></td>

@@ -167,10 +167,21 @@ class Server:
             A list of per-board dicts (identity + stage/config/vitals/flight fields).
         """
         rows = []
+        now = time.monotonic()
         for client in self.boards.values():
             health = client.cache.get('health') or {}
+            """
+            `health_age` is the row's own honesty check. A board that has missed a beat or two is still
+            `online` (offline takes _MISSED_BEATS), but its cached health stops advancing -- and the
+            `stage` fallback below then reaches back to `info`, the whoami handshake, which can be hours
+            old. That renders a board still shown as `setting` while its sequencer is already gliding,
+            and the operator sees green. Publishing the age lets the dashboard say "this is stale"
+            instead of quietly presenting handshake data as live.
+            """
+            health_age = round(now - client.last_seen, 1)
             rows.append({
                 'id': client.id, 'online': client.online,
+                'health_age': health_age, 'stale': health_age > self.heartbeat_s * 2,
                 'stage': health.get('stage') or client.info.get('stage'),  # health is fresher than the handshake
                 'version': client.info.get('firmware_version'),
                 'config_id': client.info.get('config_id'),
@@ -413,6 +424,15 @@ class Server:
             interval_ms = int(arg)
         except ValueError:
             return 'from %s err badargs log [ms|off]' % client.id
+        """
+        A non-positive interval must be refused, not clamped. `_stream` sleeps `interval_ms / 1000`
+        and asyncio.sleep() does NOT raise on a negative delay -- it returns immediately -- so `log -5`
+        or `log 00` (which the 'off'/'0' test above does not catch, being a string compare) turns the
+        poll loop into a busy spin that hammers the board with `log` commands and starves the hub's
+        event loop. An operator typo should cost an error line, not the link.
+        """
+        if interval_ms <= 0:
+            return 'from %s err badargs log [ms|off] -- interval must be > 0' % client.id
         self.start_stream(client, interval_ms)
         return 'from %s ok %s' % (client.id, json.dumps({'log': 'on', 'interval_ms': interval_ms}))
 

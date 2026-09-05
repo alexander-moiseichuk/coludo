@@ -29,7 +29,7 @@ compile:
 	@echo "== mpy-cross (board syntax gate) =="
 	@if [ ! -x $(MPYX) ]; then echo "  skip: $(MPYX) not present"; else \
 		fail=0; \
-		for f in src/glider/*.py src/glider/drivers/*.py src/glider/tasks/*.py src/glider/test/*.py; do \
+		for f in $$(find src/glider -name '*.py' -not -path '*/__pycache__/*' | sort); do \
 			$(MPYX) -O3 $(MARCH) "$$f" -o /tmp/coludo-gate.mpy 2>/tmp/coludo-gate.err || \
 				{ echo "  FAIL $$f"; sed 's/^/    /' /tmp/coludo-gate.err; fail=1; }; \
 		done; \

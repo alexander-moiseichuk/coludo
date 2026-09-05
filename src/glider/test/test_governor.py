@@ -12,13 +12,23 @@ import governor
 
 
 class _ValueHandle:
-    """value() stand-in for a databoard Parameter (the accel handle)."""
+    """
+    read() stand-in for a databoard Parameter (the accel handle).
+
+    Carries a `source` because the governor now gates on it. This stub used to offer value() ALONE,
+    which is why the governor integrating a stale accel could never be caught here: the double had no
+    way to express staleness, so every test handed it a value that was implicitly fresh. Setting
+    `value_now = None` still models "no reading at all"; `source = None` models the different and more
+    dangerous case -- a channel that keeps returning a plausible extrapolated number after its sensor
+    went silent.
+    """
 
     def __init__(self, value=None):
         self.value_now = value
+        self.source = 'stub_accel'
 
-    def value(self):
-        return self.value_now
+    def read(self):
+        return (self.value_now, None if self.value_now is None else self.source, 0)
 
 
 class _ReadHandle:
@@ -103,6 +113,18 @@ def test_estimator_wiring():
     before = unit.airspeed()
     unit.step(0.1, True, 0)
     assert unit.airspeed() == before  # nothing moved, nothing raised
+
+    """
+    NEGATIVE, and the one that matters: a STALE accel is not an absent one. The channel still returns a
+    plausible tuple -- an extrapolation of the last real sample -- and only `source is None` says it is
+    no longer measured. Feeding that to predict() compounds an invented acceleration into the airspeed
+    the fin cap comes off, and the crumb then carries it across a warm start. Distinguishing this from
+    the `value_now = None` case above is exactly what the old value()-only handle could not do.
+    """
+    accel.value_now, accel.source = (0.0, 0.0, 6.0), None  # 6 g of plausible-looking fiction, unsourced
+    before = unit.airspeed()
+    unit.step(0.1, True, 0)
+    assert unit.airspeed() == before, 'a stale accel must not reach predict()'
 
 
 def test_pitot_direct_source():
