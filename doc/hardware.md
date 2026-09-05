@@ -603,9 +603,8 @@ netlist error to fix on the new board, not a reason to delete the bus.
 
 ## Proposed v1.0 allocation — minimum I2C churn
 
-The split has to do two things: keep the LONG external harness off the bus carrying the flight-critical
-sensors, and leave the harness bus **cleanly switchable** (see the front-harness section). Together those
-put three devices in motion — the pitot and the laser out, the INA226 back in.
+The split has one job: keep the LONG external harness off the bus carrying the flight-critical sensors.
+Two devices move, and only the two that must.
 
 **i2c:0 — QUIET / FLIGHT-CRITICAL**, SDA **7** / SCL **8** (unchanged pins)
 
@@ -614,22 +613,22 @@ put three devices in motion — the pitot and the laser out, the INA226 back in.
 | BNO055 | `0x28` | no |
 | ICP-10111 | `0x63` | no |
 | BMP280 | `0x76` | no |
-| INA226 | `0x40` | **yes**, from i2c:1 — must not sit on a segment that gets cut |
 
-**i2c:1 — EXTERNAL / SWITCHABLE / EXPENDABLE**, SDA **31** / SCL **30** (unchanged pins)
+**i2c:1 — EXTERNAL / EXPENDABLE**, SDA **31** / SCL **30** (unchanged pins)
 
 | device | addr | moved? |
 |---|---|---|
+| INA226 | `0x40` | **no** — already here, and stays: with a constant 3V3 there is no reason to move it |
 | SDP810 | `0x25` | **yes**, from i2c:0 — nose, pitot tubing |
 | VL53L4CX | `0x29` | **yes**, from i2c:0 — downward-facing, AGL |
 
-Three moves once the switched rail is taken into account: these two out, and the **INA226 back to i2c:0**
-(see "Consequence: INA226 must leave i2c:1"). No address conflicts on either bus.
+Two moves, both of them devices that *must* move for the split to mean anything. No address conflicts on
+either bus.
 
-The partition is best read as **kept vs expendable**: i2c:0 holds everything the flight needs and never
-loses power, i2c:1 holds only what can be power-cycled or cut outright without ending the flight. That
-framing is what puts the INA226 on i2c:0 despite it being neither long-run nor flight-critical — it is
-the instrument you most want alive while cutting a suspect harness.
+The partition is best read as **kept vs expendable**: i2c:0 holds what the flight cannot do without,
+i2c:1 holds what it can lose and keep flying — `agl` falls back to `elevation` and `airspeed` to the
+accel+GNSS estimator, both on i2c:0. The INA226 sits on i2c:1 only because it is already there and
+nothing in v1.0 asks it to move; it is not expendable so much as unlucky in its address neighbours.
 
 **This move also targets the measured defect.** The 0.50 % ICP-10111 frame corruption was measured with
 the pitot and the laser sharing i2c:0 — that is, with the two longest runs on the same bus as both
@@ -642,9 +641,8 @@ failure domain with the BNO055.
 
 **UART** — `uart:1` TX **20** @921600 (recorder); `uart:2` TX **22** / RX **23** (GNSS chip, on-board).
 
-**Discretes** — `ina226_alert` **29**, **`i2c1_power` 5** (switched rail for the external segment),
-`separation_switch` **33**, servos yaw **26** / eleron_left **27** / eleron_right **32**. (`laser_int`
-is dropped — see the harness note.)
+**Discretes** — `ina226_alert` **29**, `separation_switch` **33**, servos yaw **26** / eleron_left
+**27** / eleron_right **32**. (Both laser control lines are dropped — see the harness note.)
 
 ### Rejected: moving BMP280 (or BNO055) to i2c:1 to close the altitude gap
 
@@ -679,12 +677,7 @@ board and must stay on the quiet on-PCB bus. Nothing flight-critical should ride
 | `adxl375_cs` | **49** | ADXL375 not fitted on v1.0 |
 | `adxl375_int` | **4** | ditto |
 | `laser_int` | **3** | VL53L4CX data-ready — the poll fallback is the same code path at 20 Hz |
-
-**REPURPOSED — same pin, new job**
-
-| net | GPIO | v0.1 | v1.0 |
-|---|---|---|---|
-| GPIO **5** | 5 | `laser_xshut` (laser reset only) | **`i2c1_power`** — gates the whole i2c:1 segment |
+| `laser_xshut` | **5** | reset at `setup()` only; no in-flight recovery exists, and a board power cycle clears a wedged laser between flights |
 
 **CHANGED — bus membership only, at the same physical pins**
 
@@ -692,133 +685,95 @@ board and must stay on the quiet on-PCB bus. Nothing flight-critical should ride
 |---|---|---|
 | SDP810 | i2c:0 | **i2c:1** |
 | VL53L4CX | i2c:0 | **i2c:1** |
-| INA226 | i2c:1 | **i2c:0** |
 
-Three lines in `board.config`. Nothing else in the `sensors` or `buses` blocks changes.
+Two lines in `board.config`, plus dropping `int_pin` and `xshut_pin` from the laser (both already
+optional in the driver). Nothing else in the `sensors` or `buses` blocks changes.
 
 **UNCHANGED — no re-check needed**
 
 `i2c:0` sda **7** / scl **8** · `i2c:1` sda **31** / scl **30** · `spi:1` sck **48** / mosi **47** /
 miso **46** · `lsm6dso32_cs` **50** · `lsm6dso32_int1` **28** · `uart:1` tx **20** · `uart:2` tx **22** /
 rx **23** · servos **26** / **27** / **32** · `separation_switch` **33** · `ina226_alert` **29** ·
-BNO055, ICP-10111 and BMP280 stay on i2c:0. GPIO **5** keeps its pin but changes role (see REPURPOSED
-above).
+INA226 stays on i2c:1; BNO055, ICP-10111 and BMP280 stay on i2c:0.
 
-### The front harness: 8 wires to 5, and a switched i2c:1 rail instead of XSHUT
+### The front harness: 8 wires to 5
 
 The real constraint is the CONNECTOR, not the wire count. The front lane carries **8** today:
 
 | today (8) | v1.0 (5) |
 |---|---|
-| recorder UART ×1 | recorder UART ×1 |
-| GNSS UART ×2 | — *(GNSS chip moves to the main board)* |
-| pitot + laser: INT, SDA, SCL, 3V3, GND ×5 | SDA, SCL, **switched 3V3**, GND ×4 |
+| recorder UART x1 | recorder UART x1 |
+| GNSS UART x2 | — *(GNSS chip moves to the main board)* |
+| pitot + laser: INT, XSHUT, SDA, SCL, 3V3, GND | SDA, SCL, 3V3, GND x4 |
 
-**8 → 5 frees enough edge for a USB connector on the same face**, so the recorder can be serviced or
+**8 -> 5 frees enough edge for a USB connector on the same face**, so the recorder can be serviced or
 swapped without opening the airframe. That is worth more than any single signal on the lane.
 
-**`laser_int` — dropped.** `_setup_interrupt()` returns early when no `int_pin` is declared, and the run
-loop waits on `_ready.wait(period_ms)`, which covers interrupt and timeout in ONE path with no branch.
-At `period_ms` **50** (20 Hz) against a **100 ms** `agl` window, polling carries 2x margin. The only
-loss is the `irq_runs` column, whose job is detecting a dead interrupt wire — a diagnostic that exists
-because the wire does.
+Both laser control lines go, and for different reasons.
 
-**`laser_xshut` — replaced by a GATED 3V3 on the i2c:1 segment.** Strictly better than a dedicated reset
-line, and it costs no extra pin: GPIO **5** stops being `laser_xshut` and becomes the rail enable.
+**`laser_int` (GPIO 3) — dropped, no functional loss.** `_setup_interrupt()` returns early when no
+`int_pin` is declared, and the run loop waits on `_ready.wait(period_ms)`, which covers interrupt and
+timeout in ONE path with no branch. At `period_ms` **50** (20 Hz) against a **100 ms** `agl` window,
+polling carries 2x margin. The only casualty is the `irq_runs` column, whose job is detecting a dead
+interrupt wire — a diagnostic that exists because the wire does.
 
-* **It recovers BOTH external devices.** XSHUT resets the laser only; a wedged SDP810 was never
-  recoverable at all. Cutting the segment rail power-cycles the whole cluster.
-* **It can ISOLATE, which XSHUT cannot.** A device holding SDA low through a wiring fault stays holding
-  it after an XSHUT reset. Removing power removes the device from the bus, so a failed harness can be
-  cut off entirely and the remaining flight flown without it.
-* **Losing the segment is survivable, by design already in the code.** `agl` and `airspeed` are both
-  single-provider, but both fall back onto i2c:0 — the bus that is never cut. The landing detector
-  explicitly drops to `elevation` when `agl` has no source (`sequencer.py`), and the governor's airspeed
-  backbone is the accel+GNSS estimator with the pitot as a corrector.
+**`laser_xshut` (GPIO 5) — dropped, and it costs less than it appears.** `_reset()` pulses it at
+`setup()` **and nowhere else**: there is no in-flight recovery path for this sensor, no strike counter
+and no escalation, unlike the ICP-10111. So the wire buys a forced reset at bring-up only. Two things
+survive without it:
 
-#### What this needs to be real
+* **false-present detection still works.** The XSHUT pulse is conditional on the pin existing, but the
+  FIRMWARE__SYSTEM_STATUS boot poll inside `_reset()` runs regardless — so `setup()` still refuses a
+  dead-firmware sensor that ACKs its hard-silicon model id.
+* **a wedged laser is still recoverable between flights**, by the board power cycle the operator does
+  anyway. What is lost is only the ability to do it without one, in a situation where no code would
+  attempt it.
 
-The XSHUT path was never an in-flight recovery either — `_reset()` is called from `setup()` and nowhere
-else, so a wedged laser stays wedged today whatever the wiring. Switching the rail does not change that
-by itself; the recovery has to be written, mirroring the ICP-10111's `strike()` / `_recover()`:
+Declare the laser with no `int_pin` and no `xshut_pin`; the driver already treats both as optional.
 
-* **Pull-ups belong on the SWITCHED side.** If the i2c:1 pull-ups stay on always-on 3V3 while the
-  devices lose power, their ESD diodes can clamp SDA/SCL and hold the segment low — power cut, bus still
-  stuck. The whole segment must go quiet together.
-* **Re-init is a full `setup()`, not a reset.** After a power cycle the VL53L4CX needs its configuration
-  and VHV calibration rewritten and the SDP810 its measurement command re-issued. `setup()` runs once at
-  bring-up today and is not re-entrant; making it so is the actual work.
-* **A policy that cannot oscillate.** Power-cycle once after N consecutive failures on the segment; if
-  the fault returns inside a window, cut the rail permanently and mark both devices down rather than
-  looping. A recovery that retries forever is worse than one that gives up and says so.
-* **Budget.** Detect at 3 strikes x 50 ms = **150 ms**, plus rail settle and re-init — call it
-  **~0.3-0.5 s**, roughly **1 m of altitude** at trim sink. Affordable in a ~100 s flight.
+### Deferred: a power-managed i2c:1 cluster
 
-#### The GPIO SWITCHES the rail; it does not FEED it
+Not in v1.0 — it adds a power stage to a board revision that is otherwise a netlist change, and the
+hardware delta is already large enough. Recorded because it is the right answer once the board settles,
+and because it is strictly better than the XSHUT line it would replace.
 
-GPIO 5 drives the gate of a load switch or P-FET. It never carries the sensor current.
+**The idea.** Gate the 3V3 feeding the i2c:1 segment with a high-side P-FET (an **AO3401A** is on hand
+and is over-specified for the ~30 mA load — tens of milliohms, so single-digit millivolts of drop).
+Source to always-on 3V3, drain to the segment, gate to a GPIO. No level shifter, because the switched
+rail is the same voltage as the GPIO: 3.3 V high gives Vgs = 0 (off), low gives Vgs = -3.3 V (hard on).
+That equivalence stops holding if the segment is ever fed from another rail.
 
-Rough budget: VL53L4CX ~20 mA peak while ranging, SDP810 a few mA, INA226 well under 1 mA -- call it
-**~25-30 mA steady, more on inrush**. An ESP32 GPIO is rated ~40 mA absolute maximum per pin with a much
-lower sane continuous figure, and aggregate limits across the port on top. Feeding this load from the pin
-would sit at or past that ceiling, and the pin's own on-resistance would drop volts at the far end of a
-harness -- which the SDP810, an analogue part reading a few tens of pascals, would feel first. So: gate
-current only, microamps.
+**Why it beats a per-sensor reset line.** It recovers BOTH external devices, where XSHUT reset only the
+laser and a wedged SDP810 was never recoverable at all. And it can ISOLATE: a device holding SDA low
+through a wiring fault keeps holding it after a reset, whereas removing power removes it from the bus, so
+a failed harness can be cut and the flight continued. Losing the segment is survivable by design already
+in the code — `agl` and `airspeed` are single-provider, but both fall back onto i2c:0, which is never
+cut: the landing detector drops to `elevation` when `agl` has no source, and the governor's backbone is
+the accel+GNSS estimator with the pitot as a corrector.
 
-Prefer a load switch with **soft start** over a bare FET. Two sensor boards plus harness capacitance is a
-real inrush at switch-on, and that transient lands on the same 3V3 rail as the MCU. A controlled slew
-costs nothing here and removes a brown-out mechanism from the recovery path -- a recovery that resets the
-MCU is not a recovery.
+**What it would need, none of which exists yet.**
 
-#### Implementation with an AO3401A (P-channel, high-side)
+* **Gate pull-up to SOURCE (10k-100k), not optional.** GPIOs are high-impedance through reset and early
+  boot; a floating gate leaves the rail undefined — it can come up, half come up, or oscillate. The
+  pull-up gives one defined power-up state, off, until firmware deliberately pulls the gate low.
+* **~100 R gate series** to bound the gate-charge spike, and **~100 nF gate-to-source** as the soft
+  start: with the pull-up that is an RC of about a millisecond, slewing turn-on so two sensor boards'
+  decoupling inrush does not land hard on the MCU's own rail. A recovery that brown-outs the MCU is not
+  a recovery. Linear-region dissipation during the slew stays under 100 mW at 3.3 V / 30 mA.
+* **i2c:1 pull-ups on the DRAIN (switched) side**, so bus and devices lose power together. Left on the
+  always-on rail, the unpowered devices' ESD diodes clamp SDA/SCL and the segment stays stuck with the
+  rail down.
+* **INA226 would have to leave i2c:1**, because everything on a switched segment is switchable and it is
+  the instrument you most want alive while cutting a suspect harness. With constant 3V3 that constraint
+  does not apply, which is why it stays put in the v1.0 allocation above.
+* **Firmware: a re-entrant `setup()`, not a reset.** After a power cycle the VL53L4CX needs its
+  configuration and VHV calibration rewritten and the SDP810 its measurement command re-issued.
+  `setup()` runs once at bring-up today. Plus a policy that cuts permanently instead of oscillating, and
+  a budget of roughly **0.3-0.5 s** to detect and re-init — about a metre of altitude at trim sink.
 
-Source to the always-on **3V3**, drain to the switched **i2c:1 segment rail**, gate to GPIO **5**. The
-part is a multi-amp P-FET with tens of milliohms on-resistance, so at ~30 mA the drop is single-digit
-millivolts and dissipation is negligible — it is over-specified for this job, which is the right
-direction. (Check Vgs(th) and Rds(on) at 3.3 V against the datasheet for the part actually in hand;
-AO3401A is spec'd around -4.5 V Vgs and is still comfortably on at -3.3 V.)
-
-No level shifter is needed, and that is not luck: the switched rail is the SAME voltage as the GPIO, so
-a 3.3 V high puts Vgs = 0 (off) and a low puts Vgs = -3.3 V (hard on). That only holds while both are
-3V3 — if the segment is ever fed from a different rail, this becomes a level-shift problem.
-
-Three passives do the real work:
-
-* **Gate pull-up to SOURCE (10k-100k).** Not optional. MCU GPIOs are high-impedance through reset and
-  early boot, and a floating gate leaves the rail in an undefined state — it can come up, partially come
-  up, or oscillate. The pull-up holds the FET **off** until firmware deliberately drives the gate low, so
-  the segment has one defined power-up state. Fail-safe-off is the right default here: these are the
-  devices declared expendable, and `agl`/`airspeed` both fall back to i2c:0.
-* **Gate series resistor (~100 R)** — bounds the GPIO's gate-charge current spike.
-* **Gate-to-source capacitor (~100 nF)** — with the pull-up this is the poor-man's soft start: an RC of
-  roughly a millisecond slews turn-on instead of slamming it, which is what keeps the inrush of two
-  sensor boards' decoupling off the MCU's rail. The FET passes through its linear region while that
-  happens, but at 3.3 V and 30 mA the instantaneous dissipation is well under 100 mW, so there is no
-  thermal concern.
-
-Put the **i2c:1 pull-ups on the drain (switched) side**, so bus and devices lose power together and the
-segment goes fully quiet — see above for why splitting them strands the bus.
-
-> ⚠️ **The sense INVERTS versus the pin's old job.** GPIO 5 was `laser_xshut`, active-low **shutdown**:
-> drive low to disable the sensor. As `i2c1_power` through a P-FET it is active-low **enable**: drive low
-> to power the segment ON. Same pin, same idle level at reset, opposite meaning. Name it `i2c1_power` in
-> the config rather than reusing `laser_xshut`, so nothing inherits the old polarity by assumption.
-
-#### Consequence: INA226 must leave i2c:1
-
-This is the part the gating decision forces, and it is worth stating plainly because it reverses the
-minimum-churn answer above: **everything on the switched segment is switchable.** The INA226 is on the
-main board and is the instrument you most want alive while cutting a misbehaving harness -- losing power
-telemetry exactly when the power path is in question is backwards.
-
-The pull-ups settle it independently. They must sit on the SWITCHED side (otherwise the unpowered
-devices' ESD diodes clamp SDA/SCL and the segment stays stuck with the rail down), which leaves anything
-on the always-on side with no pull-ups when the rail is off -- so an INA226 left on i2c:1 would be
-unreachable whenever the segment is cut, whichever rail feeds it.
-
-So i2c:1 becomes purely the external, switchable, expendable segment, and the INA226 moves to i2c:0 with
-the other on-board devices. That is a third device move rather than two -- justified by the design now,
-not by tidiness.
+> ⚠️ If this is ever built on the pin `laser_xshut` used to occupy, note the sense **inverts**: that pin
+> was active-low SHUTDOWN, while a P-FET enable is active-low POWER-ON. Same wire, same idle level,
+> opposite meaning — name it `i2c1_power`, never reuse the old name.
 
 ## ADXL375 — the one software delta between v0.1 and v1.0
 
