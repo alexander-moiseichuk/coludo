@@ -148,6 +148,31 @@ here rather than from scratch:
 * **Four units is a fleet**, not an experiment — enough for 7C, 7D, 7E and a spare, which is the
   unit-count argument that decided the original call in the BNO055's favour.
 
+**The comparison to run first is a PAIRED one, and v1.0 makes it free.** The SEN0697 is I²C and
+`i2c:0` now carries three devices, so it can be added **alongside** the BNO055 rather than replacing it:
+both sensors live, logging simultaneously, same airframe, same vibration, same thermal soak, same
+flight. That is a far stronger measurement than comparing one build against another -- the postaudit
+study's whole lesson is that a cross-run difference means nothing until you know the run-to-run spread,
+and a paired sensor comparison sidesteps that entirely. (Check the three addresses against `0x28`,
+`0x76` and `0x40` before wiring; no conflict is expected but a scan costs nothing.)
+
+What such a run could actually measure, with tooling that already exists:
+
+* **accel noise floor at 1 g** — 16-bit against the BNO055's 14-bit. `test/measure_noise.py` already
+  reports 1-sigma per fused channel with the airframe still and level.
+* **gyro zero-rate offset and its drift** — the `test/diag_gyro_compare.py` pattern, three ways instead
+  of two (BNO055, LSM6DSO32, BMI323).
+* **altitude** — BMP581 against the ICP-10111 primary, on both noise AND the 0.50 % frame-corruption
+  rate this board measures. This is the channel where a better part would pay the most.
+* **magnetometer** — only after calibration, and that calibration IS the cost the decision turns on, so
+  the effort spent getting there is itself the answer rather than a prerequisite to it.
+
+**One expectation to set honestly: the sample-rate advantage will not show up.** 6400 Hz against a
+fusion-capped 100 Hz is the headline spec, but this board polls at the ~10 ms asyncio floor, so the
+extra bandwidth is unreachable without draining the part's FIFO per poll -- the same constraint that
+makes the ADXL375 shock capture a separate piece of work. Expect a resolution, noise and offset delta;
+do not expect bandwidth.
+
 **What has NOT moved is the reason the decision was made:** the cost is hard- and soft-iron magnetometer
 calibration next to a carbon airframe, servo currents and a booster, and owning that is exactly what the
 BNO055's black box buys. Having the parts does not make that cheaper.
