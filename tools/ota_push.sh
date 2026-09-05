@@ -36,7 +36,7 @@
 #   tools/ota_push.sh TMS-7C src/glider/pid.py src/glider/mixer.py
 #   tools/ota_push.sh --reboot TMS-7C                            # ...then reboot once, separately
 #   tools/ota_push.sh --reboot TMS-7C src/glider/governor.py     # or push and reboot together
-#   tools/ota_push.sh TMS-7C configs/tms7c.config:board.config
+#   tools/ota_push.sh TMS-7C launches/20261003/TMS-7C/tms7c.config:board.config
 
 set -u
 
