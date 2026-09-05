@@ -661,6 +661,63 @@ applies the winner's bus assignments and speeds. An explicit `board.layout` of `
 config always wins over the scan; `auto` (the default) detects. An ambiguous or failed scan changes
 nothing and says so loudly — the config as written is the fallback, never a guess.
 
+## REQUIRED on v1.0: a Schottky on the USB 5 V feed
+
+**The problem the merge creates.** With the power island on the main board, plugging USB into the MCU
+while the battery or bench simulator is connected puts **two sources on one 5 V net**. That is not
+merely untidy: the ND3A05SD is an **isolated buck and cannot sink current**, so whichever source is
+higher drives backwards into the other -- into the converter's output, or out of the board into the
+host's USB port. Both are out of spec, and the converter's own maker warns about the first.
+
+**The fix: one Schottky in series with the USB VBUS feed.** One is enough, and it gives automatic
+changeover with the island preferred: the net sits at `max(island, USB - Vf)`, so with the island at
+5.0 V and USB at ~4.68 V no current leaves the USB side at all, and if the battery sags below that USB
+takes over by itself. A second diode on the island side buys nothing.
+
+**Part: 1N5817** (of the 1N5817/18/19 family on hand), or **SS12/SS14 (SMA)** / **PMEG2020** in surface
+mount for the PCB.
+
+| part | reverse | Vf @ 1 A (max) | Vf @ ~0.7 A (typ) |
+|---|---|---|---|
+| **1N5817** | **20 V** | **0.45 V** | **~0.32 V** |
+| 1N5818 | 30 V | 0.55 V | ~0.40 V |
+| 1N5819 | 40 V | 0.60 V | ~0.45 V |
+
+Take the LOWEST reverse rating available. Within a Schottky family a higher reverse rating costs
+forward drop, and the reverse stress here never exceeds ~5 V -- so 20 V is already 4x margin while 30 V
+and 40 V each cost ~0.1 V of headroom for nothing. That drop is the entire design constraint: it comes
+straight off what the 3V3 regulator sees. Current is undemanding (the stated budget is **0.7 A**, and
+the servos are on the island's separate rail, not through USB), so a 1 A part is adequate and the
+choice is about Vf alone.
+
+**Orientation: STRIPE (cathode) toward the board's 5 V pin.**
+
+```
+   USB VBUS --|>|-- board 5 V
+            anode  cathode = stripe
+```
+
+Dissipation is ~0.7 A x 0.32 V = **0.23 W**, comfortable in a DO-41 -- but do not crop the leads flush,
+they are the heatsink.
+
+### Check these two before soldering
+
+* **Does the board already diode VBUS?** Many dev boards do. Probe VBUS at the USB connector against
+  the board's 5 V / `VSYS` pin with USB plugged in: **~0.3 V of difference means a Schottky is already
+  there**, and adding a second leaves only ~4.35 V into the regulator. **`VSYS` is exactly the pin
+  where this is decided** -- on most dev boards it is the system rail, VBUS-after-diode OR'd with an
+  external input, and if the WaveShare follows that convention then feeding the island into `VSYS` IS
+  the designed dual-supply path and no extra part is needed. That is **not documented anywhere in this
+  repo**, so measure it rather than assume it.
+* **What is the 3V3 regulator's dropout?** With one diode, USB-only running gives the board ~4.68 V
+  instead of 5.0. Most parts are happy down to 4.5 V, but this is the number that would fail in the
+  field, on USB, with no battery -- confirm it rather than inherit it.
+
+**Lower-drop alternative if that headroom comes out tight:** a P-FET ideal diode using the **AO3401A**
+already stocked for the deferred switched rail -- source to the supply, drain to the load, gate pulled
+toward the load. It conducts through the body diode and then enhances, giving tens of millivolts
+instead of 300. More subtle at crossover, so only worth it if the dropout check demands it.
+
 ## GNSS: chip on the main board, antenna outboard with the recorder
 
 That split is the right one, and it weakens the noise caveat above rather than triggering it. An active

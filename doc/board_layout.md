@@ -14,6 +14,9 @@ the biggest available cut: three of the seven carriers stop being carriers at al
 * **Power stage + INA226.** Carrier C disappears; the battery input, the servo-rail converters, the
   shunt and the current sense become an energy island on the main board. INA226 joins `i2c:0` with
   the on-board sensors — it must not sit on the front bus, which is the one that can be lost.
+  **This merge is what makes the USB 5 V Schottky mandatory** (`hardware.md` → *REQUIRED on v1.0*):
+  once the island is on the board, plugging USB in with the battery connected puts two sources on one
+  net, and the isolated buck cannot sink the current that results.
 * **BNO055 + BMP280.** The attitude primary and the altitude backup are on-board devices on `i2c:0`,
   short traces, no cable.
 * **GNSS chip.** Only the antenna stays outboard (an active antenna carries its own LNA, so the stage
