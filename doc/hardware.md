@@ -603,9 +603,9 @@ netlist error to fix on the new board, not a reason to delete the bus.
 
 ## Proposed v1.0 allocation — minimum I2C churn
 
-The split only has to achieve one thing: keep the LONG external harness off the bus that carries the
-flight-critical sensors. The cheapest way to do that moves **two devices**, and INA226 does not move at
-all.
+The split has to do two things: keep the LONG external harness off the bus carrying the flight-critical
+sensors, and leave the harness bus **cleanly switchable** (see the front-harness section). Together those
+put three devices in motion — the pitot and the laser out, the INA226 back in.
 
 **i2c:0 — QUIET / FLIGHT-CRITICAL**, SDA **7** / SCL **8** (unchanged pins)
 
@@ -614,21 +614,22 @@ all.
 | BNO055 | `0x28` | no |
 | ICP-10111 | `0x63` | no |
 | BMP280 | `0x76` | no |
+| INA226 | `0x40` | **yes**, from i2c:1 — must not sit on a segment that gets cut |
 
-**i2c:1 — NOISY / NON-CRITICAL**, SDA **31** / SCL **30** (unchanged pins)
+**i2c:1 — EXTERNAL / SWITCHABLE / EXPENDABLE**, SDA **31** / SCL **30** (unchanged pins)
 
 | device | addr | moved? |
 |---|---|---|
-| INA226 | `0x40` | **no** — already here |
 | SDP810 | `0x25` | **yes**, from i2c:0 — nose, pitot tubing |
 | VL53L4CX | `0x29` | **yes**, from i2c:0 — downward-facing, AGL |
 
-Two moves, both of them devices that *must* move for the split to mean anything. No address conflicts on
-either bus.
+Three moves once the switched rail is taken into account: these two out, and the **INA226 back to i2c:0**
+(see "Consequence: INA226 must leave i2c:1"). No address conflicts on either bus.
 
-The partition is better read as **quiet/critical vs noisy/non-critical** than as internal/external: the
-INA226 sits on the switching power island and is explicitly *not* flight-critical (see the redundancy
-table below), so it belongs with the noisy harness rather than beside the attitude and altitude sensors.
+The partition is best read as **kept vs expendable**: i2c:0 holds everything the flight needs and never
+loses power, i2c:1 holds only what can be power-cycled or cut outright without ending the flight. That
+framing is what puts the INA226 on i2c:0 despite it being neither long-run nor flight-critical — it is
+the instrument you most want alive while cutting a suspect harness.
 
 **This move also targets the measured defect.** The 0.50 % ICP-10111 frame corruption was measured with
 the pitot and the laser sharing i2c:0 — that is, with the two longest runs on the same bus as both
@@ -691,16 +692,17 @@ board and must stay on the quiet on-PCB bus. Nothing flight-critical should ride
 |---|---|---|
 | SDP810 | i2c:0 | **i2c:1** |
 | VL53L4CX | i2c:0 | **i2c:1** |
+| INA226 | i2c:1 | **i2c:0** |
 
-Two lines in `board.config`. Nothing else in the `sensors` or `buses` blocks changes.
+Three lines in `board.config`. Nothing else in the `sensors` or `buses` blocks changes.
 
 **UNCHANGED — no re-check needed**
 
 `i2c:0` sda **7** / scl **8** · `i2c:1` sda **31** / scl **30** · `spi:1` sck **48** / mosi **47** /
 miso **46** · `lsm6dso32_cs` **50** · `lsm6dso32_int1` **28** · `uart:1` tx **20** · `uart:2` tx **22** /
 rx **23** · servos **26** / **27** / **32** · `separation_switch` **33** · `ina226_alert` **29** ·
-INA226 stays on i2c:1; BNO055, ICP-10111 and BMP280 stay on i2c:0. GPIO **5** keeps its pin but
-changes role (see REPURPOSED above).
+BNO055, ICP-10111 and BMP280 stay on i2c:0. GPIO **5** keeps its pin but changes role (see REPURPOSED
+above).
 
 ### The front harness: 8 wires to 5, and a switched i2c:1 rail instead of XSHUT
 
@@ -752,8 +754,37 @@ by itself; the recovery has to be written, mirroring the ICP-10111's `strike()` 
 * **Budget.** Detect at 3 strikes x 50 ms = **150 ms**, plus rail settle and re-init — call it
   **~0.3-0.5 s**, roughly **1 m of altitude** at trim sink. Affordable in a ~100 s flight.
 
-Sizing is undemanding: the VL53L4CX peaks around 20 mA while ranging and the SDP810 draws a few mA, so a
-small load switch or a P-FET off GPIO 5 covers it.
+#### The GPIO SWITCHES the rail; it does not FEED it
+
+GPIO 5 drives the gate of a load switch or P-FET. It never carries the sensor current.
+
+Rough budget: VL53L4CX ~20 mA peak while ranging, SDP810 a few mA, INA226 well under 1 mA -- call it
+**~25-30 mA steady, more on inrush**. An ESP32 GPIO is rated ~40 mA absolute maximum per pin with a much
+lower sane continuous figure, and aggregate limits across the port on top. Feeding this load from the pin
+would sit at or past that ceiling, and the pin's own on-resistance would drop volts at the far end of a
+harness -- which the SDP810, an analogue part reading a few tens of pascals, would feel first. So: gate
+current only, microamps.
+
+Prefer a load switch with **soft start** over a bare FET. Two sensor boards plus harness capacitance is a
+real inrush at switch-on, and that transient lands on the same 3V3 rail as the MCU. A controlled slew
+costs nothing here and removes a brown-out mechanism from the recovery path -- a recovery that resets the
+MCU is not a recovery.
+
+#### Consequence: INA226 must leave i2c:1
+
+This is the part the gating decision forces, and it is worth stating plainly because it reverses the
+minimum-churn answer above: **everything on the switched segment is switchable.** The INA226 is on the
+main board and is the instrument you most want alive while cutting a misbehaving harness -- losing power
+telemetry exactly when the power path is in question is backwards.
+
+The pull-ups settle it independently. They must sit on the SWITCHED side (otherwise the unpowered
+devices' ESD diodes clamp SDA/SCL and the segment stays stuck with the rail down), which leaves anything
+on the always-on side with no pull-ups when the rail is off -- so an INA226 left on i2c:1 would be
+unreachable whenever the segment is cut, whichever rail feeds it.
+
+So i2c:1 becomes purely the external, switchable, expendable segment, and the INA226 moves to i2c:0 with
+the other on-board devices. That is a third device move rather than two -- justified by the design now,
+not by tidiness.
 
 ## ADXL375 — the one software delta between v0.1 and v1.0
 
