@@ -35,7 +35,11 @@ because apply() has to rewrite the config blocks and the config is keyed by name
 address appearing twice in this table would be a silent bug where a name cannot be.
 """
 _MOVED: dict = {
-    'baro_icp10111': {'addr': 0x63, 'v0.1': 0, 'v1.0': 1},
+    # `only`: this address is evidence ONLY for the revision named, because it can be present on the
+    # other bus in BOTH revisions. The ICP-10111 needs it: a second one may be fitted on i2c:0 as a
+    # same-quality altitude backup, so 0x63 on i2c:0 says nothing, while 0x63 on i2c:1 still says v1.0.
+    # Without this the address would vote for both revisions at once and cancel itself out.
+    'baro_icp10111': {'addr': 0x63, 'v0.1': 0, 'v1.0': 1, 'only': 'v1.0'},
     'airspeed_sdp810': {'addr': 0x25, 'v0.1': 0, 'v1.0': 1},
     'laser_agl': {'addr': 0x29, 'v0.1': 0, 'v1.0': 1},
     'power_ina226': {'addr': 0x40, 'v0.1': 1, 'v1.0': 0},
@@ -105,6 +109,8 @@ def detect(cfg: dict) -> tuple:
     for name in _MOVED:
         entry = _MOVED[name]
         for revision in votes:
+            if entry.get('only', revision) != revision:
+                continue  # this address is not evidence for that revision -- see `only` above
             if entry['addr'] in seen[entry[revision]]:
                 votes[revision] += 1
     detail = 'i2c0=%s i2c1=%s votes %s' % (

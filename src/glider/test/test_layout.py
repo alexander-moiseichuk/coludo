@@ -68,6 +68,25 @@ def test_votes():
         assert got == 'v1.0', 'losing %s flipped the verdict to %r (%s)' % (name, got, detail)
 
 
+def test_second_icp_does_not_confuse_the_vote():
+    """
+    A SECOND ICP-10111 on i2c:0 must not break detection.
+
+    Fitting one on each bus is a planned v2 option -- same-quality altitude either side of the split --
+    and it puts 0x63 on BOTH buses. Treated symmetrically that address would vote for v0.1 and v1.0 at
+    once and cancel itself; marked `only: v1.0` it stays evidence for the revision it can still prove.
+    """
+    cfg = _cfg()
+    seen = _seen('v1.0')
+    seen[0].add(0x63)  # the second ICP, on the on-board bus
+    got, detail = _vote(cfg, seen)
+    assert got == 'v1.0', 'a second ICP broke the v1.0 verdict: %r (%s)' % (got, detail)
+
+    # and it must not make a v0.1 board look like v1.0 either: there, 0x63 is on i2c:0 only
+    got, detail = _vote(cfg, _seen('v0.1'))
+    assert got == 'v0.1', 'v0.1 misread as %r (%s)' % (got, detail)
+
+
 def test_apply():
     """apply() moves exactly the four devices, sets the i2c:1 clock, and leaves pins alone."""
     cfg = _cfg()
@@ -141,6 +160,7 @@ def test_live_scan():
 
 
 test_votes()
+test_second_icp_does_not_confuse_the_vote()
 test_apply()
 test_missing_key_means_v01()
 test_resolve_declared_wins()

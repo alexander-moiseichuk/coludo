@@ -133,6 +133,31 @@ Practical notes: the ±16 g accelerometer is the same ceiling as the BNO055's, s
 primary boost accel either — **LSM6DSO32 (±32 g) stays** the lead `accel`. Prefer the **UART** variant if
 adopted: `i2c:0` already carries five devices (BNO055, BMP280, ICP-10111, VL53L4CX, SDP810).
 
+### v2.0 sensor set (provisional): 2x ICP-10111 on different buses + SEN0697
+
+Not v1.0 -- recorded so the pieces are collected rather than re-derived. Three notes on the
+combination, because it interacts with things already built:
+
+* **Two ICP-10111, one per bus, gives same-quality altitude either side of the split.** Today the
+  primary (ICP) and the backup (BMP280) differ in quality, so a failover degrades the channel; two
+  ICPs mean it does not. The parts are on hand, and they cannot collide -- `0x63` twice is only a
+  problem on ONE bus.
+* **Keep the BMP280 anyway; it is free and it is DISSIMILAR.** It rides on the sen0253 board with the
+  BNO055 ("one board, two devices"), so it cannot be removed without removing the attitude primary.
+  That is fortunate: two identical ICPs share the documented latch-up habit, and a different part is
+  the only guard against a common-mode failure that takes both. The stack becomes ICP (i2c:1, primary)
+  · ICP (i2c:0, same quality) · BMP280 (i2c:0, dissimilar backstop) -- and BMP581 on the SEN0697 makes
+  four, which is more altitude redundancy than the airframe plausibly needs.
+* **Two ICPs means two independent sources of I2C general-call resets**, one per bus, since each fires
+  the call on its own bus during latch-up recovery. That roughly doubles the exposure of the
+  outstanding SDP810 gap (no `rearm()`, started once in `setup()`), and it puts one of those callers
+  on the SDP810's own bus in v1.0. Worth fixing before this lands rather than after.
+
+`layout.detect()` already tolerates the two-ICP case: `0x63` is marked one-sided evidence, counting
+for v1.0 when seen on `i2c:1` and for nothing on `i2c:0`, where it is true in both revisions. Treated
+symmetrically it would have voted for both at once and cancelled itself, quietly dropping the vote from
+four discriminators to three.
+
 **UPDATE (2026-09-05): four SEN0697 ordered, for v2.0.** The decision below stands for v1.0 — it was
 never blocked on owning the part — but three of its inputs have moved, so the re-evaluation starts from
 here rather than from scratch:
