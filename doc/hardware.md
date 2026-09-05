@@ -604,7 +604,8 @@ netlist error to fix on the new board, not a reason to delete the bus.
 ## Proposed v1.0 allocation — minimum I2C churn
 
 The split has one job: keep the LONG external harness off the bus carrying the flight-critical sensors.
-Two devices move, and only the two that must.
+Three devices move — the two that must, plus the INA226, which leaves i2c:1 so that bus becomes a single
+lane to one connector (see below).
 
 **i2c:0 — QUIET / FLIGHT-CRITICAL**, SDA **7** / SCL **8** (unchanged pins)
 
@@ -613,22 +614,63 @@ Two devices move, and only the two that must.
 | BNO055 | `0x28` | no |
 | ICP-10111 | `0x63` | no |
 | BMP280 | `0x76` | no |
+| INA226 | `0x40` | **yes**, from i2c:1 — leaves i2c:1 purely front-panel |
 
-**i2c:1 — EXTERNAL / EXPENDABLE**, SDA **31** / SCL **30** (unchanged pins)
+**i2c:1 — EXTERNAL / EXPENDABLE** (front-panel devices only), SDA **31** / SCL **30** (unchanged pins)
 
 | device | addr | moved? |
 |---|---|---|
-| INA226 | `0x40` | **no** — already here, and stays: with a constant 3V3 there is no reason to move it |
 | SDP810 | `0x25` | **yes**, from i2c:0 — nose, pitot tubing |
 | VL53L4CX | `0x29` | **yes**, from i2c:0 — downward-facing, AGL |
 
-Two moves, both of them devices that *must* move for the split to mean anything. No address conflicts on
-either bus.
+Three moves. No address conflicts on either bus.
 
-The partition is best read as **kept vs expendable**: i2c:0 holds what the flight cannot do without,
-i2c:1 holds what it can lose and keep flying — `agl` falls back to `elevation` and `airspeed` to the
-accel+GNSS estimator, both on i2c:0. The INA226 sits on i2c:1 only because it is already there and
-nothing in v1.0 asks it to move; it is not expendable so much as unlucky in its address neighbours.
+The partition is best read as **on-board vs front-panel**: i2c:0 is everything that lives on the PCB and
+cannot be unplugged, i2c:1 is only what reaches the airframe extremities through a connector. That also
+makes it the kept/expendable line — `agl` falls back to `elevation` and `airspeed` to the accel+GNSS
+estimator, both on i2c:0 — and it leaves i2c:1 as one lane to one connector rather than a stub plus a
+long run.
+
+#### INA226 to i2c:0 — approved, and the third problem is already handled
+
+Moving the on-board INA226 onto i2c:0 leaves i2c:1 carrying **only** the two front-panel devices, which
+makes it a single lane to one connector instead of a local stub plus a long run. That is a genuine
+layout and signal-integrity win: one segment, one pull-up pair, sized for one length.
+
+Three costs, of which two are the obvious ones:
+
+1. **More noise on the critical bus.** The INA226 must sit beside the shunt, in the switching area, so
+   its stub reaches i2c:0 into the energy island. Mitigable by layout — short stub, continuous ground
+   reference beneath it, routed away from the switching node — but it is a real coupling path onto the
+   bus that already measures 0.50 % corrupted ICP-10111 frames.
+2. **One more device that can wedge the flight-critical bus.** i2c:0 goes from three devices to four —
+   still fewer than v0.1's five, so this is an improvement on today either way, but the added part sits
+   in the electrically harshest spot on the board.
+3. **The general-call blast radius** — the one that is easy to miss. The ICP-10111's latch-up recovery
+   fires an I2C **general-call reset**, and its own driver names the collateral: "it also resets peers
+   that honour it (bmp280, ina226)". Today the INA226 is on the other bus, so it never sees that call.
+   On i2c:0 it would, and an INA226 that takes a general-call reset comes back with **CALIB = 0** —
+   current and power readings then come back *wrong*, not absent, which is the worse failure.
+
+**Cost 3 is already paid.** `ina226.rearm()` re-writes CONFIG and CALIB for exactly this reason, and
+`icp10111._rearm_peers()` already calls it by name. The code was written defensively while the part sat
+on another bus; moving it to i2c:0 simply makes that path matter. No firmware change is needed.
+
+#### Reconciling this with the older "isolate the icp10111" plan
+
+The Gerber review below recommends a different split — `i2c:0` = icp10111 **alone**, `i2c:1` =
+everything else — on the grounds that the ICP's general-call recovery resets its bus-mates. With only
+two controllers, that plan and this one are mutually exclusive, and they optimise different failures:
+
+* **isolate-the-ICP** removes the general-call collateral, but leaves the BNO055 sharing a bus with the
+  long front harness — so a connector fault takes out the attitude primary.
+* **quiet/expendable** (this plan) keeps the harness away from everything flight-critical, and accepts
+  general-call collateral on the BMP280 and INA226.
+
+The tie is broken by what happened since that review: **both affected peers gained `rearm()`**, so the
+general-call collateral is now recovered in software, automatically, within one read cycle. A harness
+fault is not recoverable in software at all. So the older recommendation is superseded rather than
+overruled — its concern was real and has since been fixed in the place it could be fixed.
 
 **This move also targets the measured defect.** The 0.50 % ICP-10111 frame corruption was measured with
 the pitot and the laser sharing i2c:0 — that is, with the two longest runs on the same bus as both
@@ -685,8 +727,9 @@ board and must stay on the quiet on-PCB bus. Nothing flight-critical should ride
 |---|---|---|
 | SDP810 | i2c:0 | **i2c:1** |
 | VL53L4CX | i2c:0 | **i2c:1** |
+| INA226 | i2c:1 | **i2c:0** |
 
-Two lines in `board.config`, plus dropping `int_pin` and `xshut_pin` from the laser (both already
+Three lines in `board.config`, plus dropping `int_pin` and `xshut_pin` from the laser (both already
 optional in the driver). Nothing else in the `sensors` or `buses` blocks changes.
 
 **UNCHANGED — no re-check needed**
@@ -694,7 +737,7 @@ optional in the driver). Nothing else in the `sensors` or `buses` blocks changes
 `i2c:0` sda **7** / scl **8** · `i2c:1` sda **31** / scl **30** · `spi:1` sck **48** / mosi **47** /
 miso **46** · `lsm6dso32_cs` **50** · `lsm6dso32_int1` **28** · `uart:1` tx **20** · `uart:2` tx **22** /
 rx **23** · servos **26** / **27** / **32** · `separation_switch` **33** · `ina226_alert` **29** ·
-INA226 stays on i2c:1; BNO055, ICP-10111 and BMP280 stay on i2c:0.
+BNO055, ICP-10111 and BMP280 stay on i2c:0.
 
 ### The front harness: 8 wires to 5
 
