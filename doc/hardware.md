@@ -641,8 +641,8 @@ failure domain with the BNO055.
 
 **UART** — `uart:1` TX **20** @921600 (recorder); `uart:2` TX **22** / RX **23** (GNSS chip, on-board).
 
-**Discretes** — `ina226_alert` **29**, `laser_xshut` **5**, `laser_int` **3**, `separation_switch`
-**33**, servos yaw **26** / eleron_left **27** / eleron_right **32**.
+**Discretes** — `ina226_alert` **29**, `laser_xshut` **5**, `separation_switch` **33**, servos yaw
+**26** / eleron_left **27** / eleron_right **32**. (`laser_int` is dropped — see the harness note.)
 
 ### Rejected: moving BMP280 (or BNO055) to i2c:1 to close the altitude gap
 
@@ -676,6 +676,7 @@ board and must stay on the quiet on-PCB bus. Nothing flight-critical should ride
 |---|---|---|
 | `adxl375_cs` | **49** | ADXL375 not fitted on v1.0 |
 | `adxl375_int` | **4** | ditto |
+| `laser_int` | **3** | VL53L4CX data-ready — the poll fallback is the same code path at 20 Hz |
 
 **CHANGED — bus membership only, at the same physical pins**
 
@@ -691,15 +692,31 @@ Two lines in `board.config`. Nothing else in the `sensors` or `buses` blocks cha
 `i2c:0` sda **7** / scl **8** · `i2c:1` sda **31** / scl **30** · `spi:1` sck **48** / mosi **47** /
 miso **46** · `lsm6dso32_cs` **50** · `lsm6dso32_int1` **28** · `uart:1` tx **20** · `uart:2` tx **22** /
 rx **23** · servos **26** / **27** / **32** · `separation_switch` **33** · `ina226_alert` **29** ·
-`laser_xshut` **5** · `laser_int` **3**. INA226 stays on i2c:1; BNO055, ICP-10111 and BMP280 stay on
-i2c:0.
+`laser_xshut` **5**. INA226 stays on i2c:1; BNO055, ICP-10111 and BMP280 stay on i2c:0.
 
-### One further reduction worth considering
+### The laser harness: drop INT, keep XSHUT
 
-The external harness needs SDA, SCL, XSHUT, INT plus power — six wires to the extremities, where
-connector count is what actually fails. `laser_int` can be dropped in favour of polling (the AGL rate
-does not need an interrupt), taking it to five; and if `laser_xshut` is strapped at the sensor rather
-than driven, four. Fewer wires on the long run is worth more than either GPIO.
+Six wires reach the belly today — SDA, SCL, XSHUT, INT, power, ground — and connector count at the
+extremities is what actually fails. The two control lines are not the same call.
+
+**`laser_int` (GPIO 3) — DROP.** `_setup_interrupt()` returns early when no `int_pin` is declared, and
+the run loop waits on `self._ready.wait(self._period_ms)`, which covers the interrupt and the timeout
+fallback in ONE path with no branch. At the configured `period_ms` **50** (20 Hz) against an `agl`
+freshness window of **100 ms**, polling carries 2x margin. The only thing lost is the `irq_runs`
+telemetry column, whose value is detecting a dead interrupt wire — a diagnostic that exists because the
+wire exists. Removing the wire removes the failure it watches for.
+
+(It would be a different answer at a much higher AGL rate, where poll jitter starts eating the freshness
+budget. It is not, at 20 Hz.)
+
+**`laser_xshut` (GPIO 5) — KEEP, and do NOT strap it.** This is not a convenience line: `_reset()`
+drives it low→high to reboot a wedged ToF **without rebooting the board**, and the driver's own note
+records that with no `xshut_pin` "the sensor is assumed always-on". Strapping it high buys one wire and
+gives up the only in-flight recovery for that sensor — on an airframe with documented I2C latch-up
+(the ICP-10111 general-call recovery exists for exactly this class of failure). A hung laser would then
+stay hung for the rest of the flight, taking `agl` and the landing trigger with it.
+
+So the harness goes **six wires to five**, not to four.
 
 ## ADXL375 — the one software delta between v0.1 and v1.0
 
