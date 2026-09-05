@@ -660,6 +660,27 @@ applies the winner's bus assignments and speeds. An explicit `board.layout` of `
 config always wins over the scan; `auto` (the default) detects. An ambiguous or failed scan changes
 nothing and says so loudly — the config as written is the fallback, never a guess.
 
+## Keep the attitude module a SOCKET, not a decision
+
+The attitude candidates all present the **same four I2C wires** -- SDA, SCL, 3V3, GND. `sen0253`
+(BNO055 + BMP280), SEN0697 (BMI323 + BMM350 + BMP581) and a BNO085 breakout differ in silicon, in
+addresses and in what the firmware must do with them, but **not in how they connect**.
+
+So v1.0 should not commit to one. Give the attitude position a plain **4-pin I2C header on `i2c:0`**
+and a mounting pattern that tolerates the different module outlines, and the sensor question stays open
+for the life of the board -- decided by a swap and a config edit rather than a re-spin. That costs
+nothing now and buys back the whole decision.
+
+**Leave bus headroom for BOTH at once.** The paired comparison this file recommends -- a candidate
+logging beside the BNO055 on the same flight, same airframe, same vibration -- requires them
+simultaneously on `i2c:0`, which in v1.0 carries only three devices. Check the candidate's addresses
+against `0x28` / `0x76` / `0x40` before assuming no clash, but there is room, and a paired measurement
+is worth far more than a sequential one: the postaudit lesson is that a cross-run difference means
+nothing until you know the run-to-run spread, and two sensors on one flight sidestep that entirely.
+
+The mechanical side is the only part that must be got right up front, because it is the only part a
+re-spin fixes.
+
 ## REQUIRED on v1.0: a Schottky on the USB 5 V feed
 
 **The problem the merge creates.** With the power island on the main board, plugging USB into the MCU
