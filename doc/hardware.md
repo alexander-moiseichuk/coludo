@@ -770,6 +770,40 @@ real inrush at switch-on, and that transient lands on the same 3V3 rail as the M
 costs nothing here and removes a brown-out mechanism from the recovery path -- a recovery that resets the
 MCU is not a recovery.
 
+#### Implementation with an AO3401A (P-channel, high-side)
+
+Source to the always-on **3V3**, drain to the switched **i2c:1 segment rail**, gate to GPIO **5**. The
+part is a multi-amp P-FET with tens of milliohms on-resistance, so at ~30 mA the drop is single-digit
+millivolts and dissipation is negligible — it is over-specified for this job, which is the right
+direction. (Check Vgs(th) and Rds(on) at 3.3 V against the datasheet for the part actually in hand;
+AO3401A is spec'd around -4.5 V Vgs and is still comfortably on at -3.3 V.)
+
+No level shifter is needed, and that is not luck: the switched rail is the SAME voltage as the GPIO, so
+a 3.3 V high puts Vgs = 0 (off) and a low puts Vgs = -3.3 V (hard on). That only holds while both are
+3V3 — if the segment is ever fed from a different rail, this becomes a level-shift problem.
+
+Three passives do the real work:
+
+* **Gate pull-up to SOURCE (10k-100k).** Not optional. MCU GPIOs are high-impedance through reset and
+  early boot, and a floating gate leaves the rail in an undefined state — it can come up, partially come
+  up, or oscillate. The pull-up holds the FET **off** until firmware deliberately drives the gate low, so
+  the segment has one defined power-up state. Fail-safe-off is the right default here: these are the
+  devices declared expendable, and `agl`/`airspeed` both fall back to i2c:0.
+* **Gate series resistor (~100 R)** — bounds the GPIO's gate-charge current spike.
+* **Gate-to-source capacitor (~100 nF)** — with the pull-up this is the poor-man's soft start: an RC of
+  roughly a millisecond slews turn-on instead of slamming it, which is what keeps the inrush of two
+  sensor boards' decoupling off the MCU's rail. The FET passes through its linear region while that
+  happens, but at 3.3 V and 30 mA the instantaneous dissipation is well under 100 mW, so there is no
+  thermal concern.
+
+Put the **i2c:1 pull-ups on the drain (switched) side**, so bus and devices lose power together and the
+segment goes fully quiet — see above for why splitting them strands the bus.
+
+> ⚠️ **The sense INVERTS versus the pin's old job.** GPIO 5 was `laser_xshut`, active-low **shutdown**:
+> drive low to disable the sensor. As `i2c1_power` through a P-FET it is active-low **enable**: drive low
+> to power the segment ON. Same pin, same idle level at reset, opposite meaning. Name it `i2c1_power` in
+> the config rather than reusing `laser_xshut`, so nothing inherits the old polarity by assumption.
+
 #### Consequence: INA226 must leave i2c:1
 
 This is the part the gating decision forces, and it is worth stating plainly because it reverses the
