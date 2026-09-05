@@ -133,6 +133,32 @@ Practical notes: the ±16 g accelerometer is the same ceiling as the BNO055's, s
 primary boost accel either — **LSM6DSO32 (±32 g) stays** the lead `accel`. Prefer the **UART** variant if
 adopted: `i2c:0` already carries five devices (BNO055, BMP280, ICP-10111, VL53L4CX, SDP810).
 
+**UPDATE (2026-09-05): four SEN0697 ordered, for v2.0.** The decision below stands for v1.0 — it was
+never blocked on owning the part — but three of its inputs have moved, so the re-evaluation starts from
+here rather than from scratch:
+
+* **The "prefer UART" note is largely obsolete.** It was written because `i2c:0` carried five devices.
+  After the v1.0 split it carries **three** (BNO055, BMP280, INA226), since the pitot, laser and
+  ICP-10111 moved to the front bus. There is room on the quiet on-board bus now, and the I²C breakout is
+  the one on hand.
+* **The BMP581 is the quiet standout**, and it lands on the one channel with a real redundancy gap:
+  1/64 Pa resolution and ±6 Pa relative against an ICP-10111 primary that this board measures dropping
+  0.50 % of its frames. An altitude source that good, on the on-board bus, is worth more here than the
+  attitude improvement that motivated the comparison.
+* **Four units is a fleet**, not an experiment — enough for 7C, 7D, 7E and a spare, which is the
+  unit-count argument that decided the original call in the BNO055's favour.
+
+**What has NOT moved is the reason the decision was made:** the cost is hard- and soft-iron magnetometer
+calibration next to a carbon airframe, servo currents and a booster, and owning that is exactly what the
+BNO055's black box buys. Having the parts does not make that cheaper.
+
+**So the first step remains the incremental one this section already recommends** — bring up the
+**BMM350 alone** as an extra input to the complementary filter in `tasks/attitude.py`, which is already
+flight-proven as the backup. That directly attacks the two weaknesses the backup has (its yaw reference
+needs ~5 m/s of motion, and a crosswind crab is not heading) without a new fusion architecture, without
+touching the BNO055 primary, and it is the honest way to find out what the magnetometer calibration
+actually costs on this airframe before betting attitude on it.
+
 **DECISION (2026-08-06): not adopted — we stay on BNO055.** With **5+ BNO055 on hand** the unit-count
 blocker is gone, and that was the only pressing reason to move. Keeping the fused part also keeps the
 magnetometer calibration problem inside Bosch's black box. Recorded here so the comparison does not have
