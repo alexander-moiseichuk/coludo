@@ -644,17 +644,27 @@ failure domain with the BNO055.
 **Discretes** — `ina226_alert` **29**, `laser_xshut` **5**, `laser_int` **3**, `separation_switch`
 **33**, servos yaw **26** / eleron_left **27** / eleron_right **32**.
 
-### An optional third move, if the altitude gap is worth closing
+### Rejected: moving BMP280 (or BNO055) to i2c:1 to close the altitude gap
 
-The redundancy table below flags exactly one gap: **altitude primary (`icp10111`) and backup
-(`bmp280`) share a bus**, so a bus-level fault takes both. Moving **BMP280 to i2c:1** closes it —
-primary and backup then sit in different failure domains, and whichever bus dies, one altitude source
-survives. Today neither does.
+The redundancy table below flags one gap — altitude primary (`icp10111`) and backup (`bmp280`) share a
+bus — and the textbook fix is to split them across bus families. **Do not do it here.** The two buses do
+not fail at comparable rates, and that asymmetry inverts the answer:
 
-The cost is that the backup lands on the more failure-prone bus (the one with the long harness). That is
-still the right side of the trade: the point of redundancy is that the two do not fail *together*, and a
-backup that dies with its primary is not one. Listed as optional because it is a third transition and
-the two-move split already delivers the isolation the harness split was for.
+* **i2c:0 is entirely on-PCB** — soldered joints, short traces, nothing that moves. Its realistic
+  failure is not the bus but a *device* wedging it (SDA stuck low), which the ICP-10111's own
+  general-call recovery already exists to clear.
+* **i2c:1 runs to the airframe extremities** — the nose for the pitot, the belly for the laser, through
+  connectors and flex that see vibration, boost loads and handling between flights. It is the bus that
+  will actually break.
+
+Putting the altitude BACKUP on the harness bus lowers the chance of losing both baros while raising the
+chance of losing the backup on its own — trading a rare correlated failure for a common single one. And
+the asymmetry matters: losing the backup alone is survivable, because the primary keeps working. So the
+gap is best left as it is, with the ICP-10111's recovery path as the mitigation for the one correlated
+mode that is real.
+
+The same argument applies with more force to the BNO055: it is the most flight-critical device on the
+board and must stay on the quiet on-PCB bus. Nothing flight-critical should ride the harness.
 
 ## Pin delta v0.1 → v1.0 — what actually changes
 
