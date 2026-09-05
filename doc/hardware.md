@@ -734,9 +734,9 @@ Answering the direct question "do we absolutely need it?": **not for function â€
 
 #### What the LSM6DSO32 is the primary of, and what backs each channel up
 
-| channel | providers today (by priority) | if the LSM6DSO32 goes |
+| channel | providers **on v1.0** (by priority) | if the LSM6DSO32 goes |
 |---|---|---|
-| `accel` | **lsm6dso32 p0**, adxl375 p1, **bno055 p2** | falls to the BNO055 automatically -- already configured, 40 ms window. **Backed up.** |
+| `accel` | **lsm6dso32 p0**, **bno055 p2** | falls to the BNO055 automatically -- already configured, 40 ms window. **Backed up**, but by a single fallback: the ADXL375 that held p1 on v0.1 is not fitted here, so this row is one deep rather than two. |
 | `rate` (gyro) | **lsm6dso32 p0 â€” sole provider** | **disappears.** No other device publishes it. |
 | `attitude` | bno055 p0 (chip fusion), `attitude` task p1 (computed) | drops to **one** provider -- the p1 backup is computed FROM `accel` + `rate`, so it dies with the gyro |
 

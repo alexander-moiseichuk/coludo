@@ -94,7 +94,10 @@ def _section(cfg: dict, title: str, note: str) -> list:
     out.append('## Device -> pins\n')
     out.append('| Device | Bus | Pin fields |')
     out.append('|---|---|---|')
-    for device in _devices(cfg):
+    # A NOT-FITTED device is listed below the table, not in it. Leaving it in contradicted this same
+    # document: the v1.0 map showed accel_adxl375 holding GPIO49 and GPIO4 while the transition section
+    # listed both as freed. A reader at the bench has to be able to trust one of those.
+    for device in [d for d in _devices(cfg) if d.get('enabled', True)]:
         bus = ('%s:%s' % (device['bus'], device['id'])) if 'bus' in device else '-'
         fields = []
         for field in _PIN_FIELDS:
@@ -107,6 +110,16 @@ def _section(cfg: dict, title: str, note: str) -> list:
         addr = ' @ 0x%02X' % device['addr'] if isinstance(device.get('addr'), int) else ''
         out.append('| `%s` | %s%s | %s |' % (device['name'], bus, addr, ', '.join(fields) or '-'))
     out.append('')
+
+    # HARDWARE only: a disabled device that names a bus or a pin is a part that is not on the board,
+    # while a disabled `flight` / `field` / `watchdog` is a software task switched off. Listing them
+    # together under "not fitted" would read as missing silicon.
+    absent = sorted(d['name'] for d in _devices(cfg)
+                    if not d.get('enabled', True)
+                    and ('bus' in d or any(d.get(f) for f in _PIN_FIELDS)))
+    if absent:
+        out.append('**Not fitted on this revision:** ' + ', '.join('`%s`' % n for n in absent)
+                   + ' -- physically absent, disabled in config, claiming no pins.\n')
 
     out.append('## Reserved (never assign)\n')
     out.append(', '.join('GPIO%d' % p for p in sorted(reserved))

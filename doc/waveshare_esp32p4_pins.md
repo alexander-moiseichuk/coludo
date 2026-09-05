@@ -40,7 +40,6 @@ The board being ordered. Derived by applying the v1.0 revision to the firmware d
 
 | Device | Bus | Pin fields |
 |---|---|---|
-| `accel_adxl375` | spi:1 @ 0x53 | cs_pin=adxl375_cs (GPIO49), int_pin=adxl375_int (GPIO4) |
 | `imu_lsm6dso32` | spi:1 @ 0x6A | cs_pin=lsm6dso32_cs (GPIO50), int_pin=lsm6dso32_int1 (GPIO28) |
 | `imu_bno055` | i2c:0 @ 0x28 | - |
 | `attitude` | - | - |
@@ -58,13 +57,12 @@ The board being ordered. Derived by applying the v1.0 revision to the firmware d
 | `sequencer` | - | - |
 | `checkpoint` | - | - |
 | `gnss_calib` | - | - |
-| `flight` | - | - |
-| `watchdog` | - | - |
 | `health` | - | - |
-| `field` | - | - |
 | `bluetooth` | - | - |
 | `wifi` | - | - |
 | `cc` | - | - |
+
+**Not fitted on this revision:** `accel_adxl375` -- physically absent, disabled in config, claiming no pins.
 
 ## Reserved (never assign)
 
@@ -164,10 +162,7 @@ TMS-7C, TMS-7D and the breadboard until the transition above is done. A config w
 | `sequencer` | - | - |
 | `checkpoint` | - | - |
 | `gnss_calib` | - | - |
-| `flight` | - | - |
-| `watchdog` | - | - |
 | `health` | - | - |
-| `field` | - | - |
 | `bluetooth` | - | - |
 | `wifi` | - | - |
 | `cc` | - | - |
