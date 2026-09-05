@@ -161,61 +161,34 @@ and being a *different* part it also guards the common-mode case that two identi
 v1.0, and for nothing on `i2c:0` where it would be true either way. That is now defensive rather than
 planned: if one is ever fitted, the detector loses no vote instead of silently cancelling one out.
 
-**UPDATE (2026-09-05): four SEN0697 ordered, for v2.0.** The decision below stands for v1.0 — it was
-never blocked on owning the part — but three of its inputs have moved, so the re-evaluation starts from
-here rather than from scratch:
+**CORRECTION (2026-09-05): the parts actually bought are four Adafruit 4754 (BNO085), NOT SEN0697.**
+An earlier note here recorded SEN0697; that was wrong and the analysis attached to it was answering a
+question about hardware nobody owns. The SEN0697 comparison below stays as the write-up of an
+alternative, and the DECISION that follows still stands for v1.0 — but the live option is now the
+BNO085, which is a *different trade*, not a cheaper version of the same one.
 
-* **The "prefer UART" note is largely obsolete.** It was written because `i2c:0` carried five devices.
-  After the v1.0 split it carries **three** (BNO055, BMP280, INA226), since the pitot, laser and
-  ICP-10111 moved to the front bus. There is room on the quiet on-board bus now, and the I²C breakout is
-  the one on hand.
-* ~~The BMP581 is the quiet standout~~ — **withdrawn (2026-09-05), it was a bad argument.** Two things
-  are wrong with it. The 0.50 % frame corruption is **bus signal integrity, not sensor quality** — this
-  file's own measurement says so, single-bit flips in the CRC byte with plausible data either side — so
-  a better barometer does not address it. And the altitude redundancy gap it invoked is **already closed
-  by v1.0**, which puts the primary on `i2c:1` and the backup on `i2c:0`, in different failure domains.
-  If v2 wants more altitude quality or a third source, **fitting another baro is the cheap way to get
-  it** — a part on a bus, against adopting a 10-DOF and taking on magnetometer calibration to reach the
-  same place.
-* **Four units is a fleet**, not an experiment — enough for 7C, 7D, 7E and a spare, which is the
-  unit-count argument that decided the original call in the BNO055's favour.
+**What changes, and it is the load-bearing part.** The reason this section rejected the SEN0697 was
+that it is **raw only**, so adopting it means owning hard- and soft-iron magnetometer calibration next
+to a carbon airframe, servo currents and a booster. **That objection does not apply to the BNO085**: it
+fuses on-chip, so the calibration stays inside the vendor's black box exactly as the BNO055's does. The
+cost moves instead to a new driver speaking **SHTP** -- packets, sequence numbers, channel
+multiplexing, feature reports -- plus re-earning the calibration latch, NVS profile restore, stall
+detector and peer re-arm the current driver carries.
 
-**The comparison to run first is a PAIRED one, and v1.0 makes it free.** The SEN0697 is I²C and
-`i2c:0` now carries three devices, so it can be added **alongside** the BNO055 rather than replacing it:
-both sensors live, logging simultaneously, same airframe, same vibration, same thermal soak, same
-flight. That is a far stronger measurement than comparing one build against another -- the postaudit
-study's whole lesson is that a cross-run difference means nothing until you know the run-to-run spread,
-and a paired sensor comparison sidesteps that entirely. (Check the three addresses against `0x28`,
-`0x76` and `0x40` before wiring; no conflict is expected but a scan costs nothing.)
+So the two candidates are opposite trades rather than better and worse:
 
-What such a run could actually measure, with tooling that already exists:
+| | BNO085 (owned) | SEN0697 / 3126 |
+|---|---|---|
+| fusion | **on-chip (SH-2)** | raw only |
+| magnetometer calibration | vendor's problem | **yours** |
+| driver cost | **SHTP protocol + re-earned behaviours** | three simple register drivers |
+| attitude path | fused output, as today | `attitude.py` promoted to primary |
 
-* **accel noise floor at 1 g** — 16-bit against the BNO055's 14-bit. `test/measure_noise.py` already
-  reports 1-sigma per fused channel with the airframe still and level.
-* **gyro zero-rate offset and its drift** — the `test/diag_gyro_compare.py` pattern, three ways instead
-  of two (BNO055, LSM6DSO32, BMI323).
-* **altitude** — BMP581 against the ICP-10111 primary on NOISE only. Not on the 0.50 % frame
-  corruption: that is bus integrity, and a second part on the same bus would inherit it rather than
-  measure against it.
-* **magnetometer** — only after calibration, and that calibration IS the cost the decision turns on, so
-  the effort spent getting there is itself the answer rather than a prerequisite to it.
-
-**One expectation to set honestly: the sample-rate advantage will not show up.** 6400 Hz against a
-fusion-capped 100 Hz is the headline spec, but this board polls at the ~10 ms asyncio floor, so the
-extra bandwidth is unreachable without draining the part's FIFO per poll -- the same constraint that
-makes the ADXL375 shock capture a separate piece of work. Expect a resolution, noise and offset delta;
-do not expect bandwidth.
-
-**What has NOT moved is the reason the decision was made:** the cost is hard- and soft-iron magnetometer
-calibration next to a carbon airframe, servo currents and a booster, and owning that is exactly what the
-BNO055's black box buys. Having the parts does not make that cheaper.
-
-**So the first step remains the incremental one this section already recommends** — bring up the
-**BMM350 alone** as an extra input to the complementary filter in `tasks/attitude.py`, which is already
-flight-proven as the backup. That directly attacks the two weaknesses the backup has (its yaw reference
-needs ~5 m/s of motion, and a crosswind crab is not heading) without a new fusion architecture, without
-touching the BNO055 primary, and it is the honest way to find out what the magnetometer calibration
-actually costs on this airframe before betting attitude on it.
+**The recommendation for the BNO085 is unchanged and is stated in its own section below** ("Recommendation
+on the BNO085 swap"): not yet, and what decides it is the FIFO-drained shock capture, because +/-8 g
+against the BNO055's +/-16 g cannot be judged from simulation numbers that contain no ignition
+transient, ejection shock or landing impact. Owning four of them removes the availability question and
+nothing else.
 
 **DECISION (2026-08-06): not adopted — we stay on BNO055.** With **5+ BNO055 on hand** the unit-count
 blocker is gone, and that was the only pressing reason to move. Keeping the fused part also keeps the
