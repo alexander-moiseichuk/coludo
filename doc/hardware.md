@@ -141,10 +141,14 @@ here rather than from scratch:
   After the v1.0 split it carries **three** (BNO055, BMP280, INA226), since the pitot, laser and
   ICP-10111 moved to the front bus. There is room on the quiet on-board bus now, and the I²C breakout is
   the one on hand.
-* **The BMP581 is the quiet standout**, and it lands on the one channel with a real redundancy gap:
-  1/64 Pa resolution and ±6 Pa relative against an ICP-10111 primary that this board measures dropping
-  0.50 % of its frames. An altitude source that good, on the on-board bus, is worth more here than the
-  attitude improvement that motivated the comparison.
+* ~~The BMP581 is the quiet standout~~ — **withdrawn (2026-09-05), it was a bad argument.** Two things
+  are wrong with it. The 0.50 % frame corruption is **bus signal integrity, not sensor quality** — this
+  file's own measurement says so, single-bit flips in the CRC byte with plausible data either side — so
+  a better barometer does not address it. And the altitude redundancy gap it invoked is **already closed
+  by v1.0**, which puts the primary on `i2c:1` and the backup on `i2c:0`, in different failure domains.
+  If v2 wants more altitude quality or a third source, **fitting another baro is the cheap way to get
+  it** — a part on a bus, against adopting a 10-DOF and taking on magnetometer calibration to reach the
+  same place.
 * **Four units is a fleet**, not an experiment — enough for 7C, 7D, 7E and a spare, which is the
   unit-count argument that decided the original call in the BNO055's favour.
 
@@ -162,8 +166,9 @@ What such a run could actually measure, with tooling that already exists:
   reports 1-sigma per fused channel with the airframe still and level.
 * **gyro zero-rate offset and its drift** — the `test/diag_gyro_compare.py` pattern, three ways instead
   of two (BNO055, LSM6DSO32, BMI323).
-* **altitude** — BMP581 against the ICP-10111 primary, on both noise AND the 0.50 % frame-corruption
-  rate this board measures. This is the channel where a better part would pay the most.
+* **altitude** — BMP581 against the ICP-10111 primary on NOISE only. Not on the 0.50 % frame
+  corruption: that is bus integrity, and a second part on the same bus would inherit it rather than
+  measure against it.
 * **magnetometer** — only after calibration, and that calibration IS the cost the decision turns on, so
   the effort spent getting there is itself the answer rather than a prerequisite to it.
 
