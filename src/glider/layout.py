@@ -35,10 +35,11 @@ because apply() has to rewrite the config blocks and the config is keyed by name
 address appearing twice in this table would be a silent bug where a name cannot be.
 """
 _MOVED: dict = {
-    # `only`: this address is evidence ONLY for the revision named, because it can be present on the
-    # other bus in BOTH revisions. The ICP-10111 needs it: a second one may be fitted on i2c:0 as a
-    # same-quality altitude backup, so 0x63 on i2c:0 says nothing, while 0x63 on i2c:1 still says v1.0.
-    # Without this the address would vote for both revisions at once and cancel itself out.
+    # `only`: this address is evidence ONLY for the revision named, because it could be present on the
+    # other bus in BOTH revisions. DEFENSIVE for the ICP-10111 rather than planned -- a second one on
+    # i2c:0 was considered and retired (its ~120 ms general-call recovery must not land on the bus
+    # carrying attitude). If one is ever fitted anyway, 0x63 still says v1.0 from i2c:1 and says
+    # nothing from i2c:0, instead of voting both ways and cancelling itself out.
     'baro_icp10111': {'addr': 0x63, 'v0.1': 0, 'v1.0': 1, 'only': 'v1.0'},
     'airspeed_sdp810': {'addr': 0x25, 'v0.1': 0, 'v1.0': 1},
     'laser_agl': {'addr': 0x29, 'v0.1': 0, 'v1.0': 1},

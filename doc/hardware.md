@@ -133,30 +133,33 @@ Practical notes: the ±16 g accelerometer is the same ceiling as the BNO055's, s
 primary boost accel either — **LSM6DSO32 (±32 g) stays** the lead `accel`. Prefer the **UART** variant if
 adopted: `i2c:0` already carries five devices (BNO055, BMP280, ICP-10111, VL53L4CX, SDP810).
 
-### v2.0 sensor set (provisional): 2x ICP-10111 on different buses + SEN0697
+### RETIRED: two ICP-10111 on different buses. One ICP, on the front bus.
 
-Not v1.0 -- recorded so the pieces are collected rather than re-derived. Three notes on the
-combination, because it interacts with things already built:
+Briefly considered for v2.0 -- same-quality altitude either side of the bus split, and the parts are on
+hand. **It does not work on a two-bus board, and the reason is the ICP's own recovery.**
 
-* **Two ICP-10111, one per bus, gives same-quality altitude either side of the split.** Today the
-  primary (ICP) and the backup (BMP280) differ in quality, so a failover degrades the channel; two
-  ICPs mean it does not. The parts are on hand, and they cannot collide -- `0x63` twice is only a
-  problem on ONE bus.
-* **Keep the BMP280 anyway; it is free and it is DISSIMILAR.** It rides on the sen0253 board with the
-  BNO055 ("one board, two devices"), so it cannot be removed without removing the attitude primary.
-  That is fortunate: two identical ICPs share the documented latch-up habit, and a different part is
-  the only guard against a common-mode failure that takes both. The stack becomes ICP (i2c:1, primary)
-  · ICP (i2c:0, same quality) · BMP280 (i2c:0, dissimilar backstop) -- and BMP581 on the SEN0697 makes
-  four, which is more altitude redundancy than the airframe plausibly needs.
-* **Two ICPs means two independent sources of I2C general-call resets**, one per bus, since each fires
-  the call on its own bus during latch-up recovery. That roughly doubles the exposure of the
-  outstanding SDP810 gap (no `rearm()`, started once in `setup()`), and it puts one of those callers
-  on the SDP810's own bus in v1.0. Worth fixing before this lands rather than after.
+The part **stalls**: an unclean reboot latches its digital core so the address still acks while every
+command NAKs, and the only thing measured to clear it is an I2C **general-call reset** on its bus. That
+recovery holds the bus for up to `_RESET_TRIES` x `_RESET_RETRY_MS` = **~120 ms**, spanning one
+max-length conversion window, and resets every peer that honours the call.
 
-`layout.detect()` already tolerates the two-ICP case: `0x63` is marked one-sided evidence, counting
-for v1.0 when seen on `i2c:1` and for nothing on `i2c:0`, where it is true in both revisions. Treated
-symmetrically it would have voted for both at once and cancelled itself, quietly dropping the vote from
-four discriminators to three.
+Now put a second one on `i2c:0`. That bus carries the **attitude primary at 100 Hz**, so a latch-up
+recovery would stall roughly a dozen attitude samples and reset the BMP280 and INA226 alongside --
+importing a disruptive, bus-wide recovery onto the one bus that must stay quiet, in exchange for an
+altitude backup that is already adequate.
+
+And it cannot go anywhere else: `_ADDR` is `const(0x63)`, **fixed**, so two of them cannot share a bus,
+and the ESP32-P4 offers exactly two usable I2C controllers (`I2C(2)` hard-crashes). Two ICPs therefore
+*require* both buses, one of which must not have it. So this is retired rather than deferred -- a third
+bus, or a part with a selectable address, would be needed to revisit it.
+
+**What stays:** one ICP-10111 on `i2c:1` as the altitude primary, with the BMP280 backup on `i2c:0`.
+The BMP280 rides on the sen0253 board with the BNO055 ("one board, two devices") so it costs nothing,
+and being a *different* part it also guards the common-mode case that two identical ICPs would share.
+
+`layout.detect()` keeps its tolerance for a second `0x63` anyway -- `0x63` counts as evidence only for
+v1.0, and for nothing on `i2c:0` where it would be true either way. That is now defensive rather than
+planned: if one is ever fitted, the detector loses no vote instead of silently cancelling one out.
 
 **UPDATE (2026-09-05): four SEN0697 ordered, for v2.0.** The decision below stands for v1.0 — it was
 never blocked on owning the part — but three of its inputs have moved, so the re-evaluation starts from
