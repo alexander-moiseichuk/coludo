@@ -501,105 +501,10 @@ estimated flight envelope (peak accel / speed / apogee / glide range) is in
 [`doc/specs/coludo.md` → Flight envelope](../doc/specs/coludo.md).
 
 
-# Main board v1.0 — restructuring review (2026-09-04)
+# Main board v1.0 — the target layout
 
-Verdicts on the proposed v1.0 changes, each checked against the current config, the measured flight
-data and the ESP32-P4's own limits. Three are approved as proposed, one is approved with a caveat, and
-one is answered with a different change that reaches the same goal without the cost.
-
-## 1. Merge main + power onto one board — APPROVE
-
-Already the v1.0 direction. It deletes the inter-board harness and, with it, the two hand-jumpers per
-board that repair the v0.1 netlist error. Fewer connectors at the extremities is the single most
-reliable simplification available on this airframe.
-
-The one thing to design for is that a switching power stage now shares a substrate with the I2C bus and
-the IMU: keep the energy island partitioned, with its own ground pour region and a single-point tie, so
-servo transients (~4 A when three fins slew) do not appear as ground bounce under the sensors.
-
-## 2. Merge GNSS onto the main board — APPROVE, with one caveat
-
-Cuts a power run and a UART run, both worth having. Two notes:
-
-* The receiver front-end is RF-sensitive and will now sit beside the switching stage and the servo
-  currents. Separating the antenna (as planned) handles radiated coupling but not **conducted** noise on
-  the receiver supply — give the GNSS its own ferrite/LC-filtered branch off the main rail rather than a
-  bare tap.
-* This retires a standing diagnostic trap. Today GNSS sits on the recorder power cluster, so it probes
-  DEAD over USB and that has already cost one real investigation. After the merge that asymmetry
-  disappears, which is a genuine debugging improvement, not just tidiness.
-
-## 3. Separate I2C cluster for SDP810 + VL53L4CX — STRONGLY APPROVE
-
-The best of the proposals, and it should be stated as a reliability change rather than a layout one.
-
-Those two are precisely the devices at the airframe **extremities** — the pitot in the nose with its
-tubing, the laser pointing down — so they carry the long harness runs, the added capacitance and the
-connector count. Every other I2C device is on-board with short traces. Splitting on that boundary means
-a fault, a stretched harness or a marginal connector on the long runs cannot take down the BNO055 and
-the baros, which are flight-critical. That is the concrete answer to the standing "single I2C bus is a
-single point of failure for every sensor" finding.
-
-It also uses the silicon budget exactly: the ESP32-P4 exposes **two** usable HW I2C controllers, and
-`I2C(2)` hard-crashes the board. Two clusters is the maximum, so the only question was where to cut, and
-internal-vs-external is the right seam.
-
-## 4. Drop the ADXL375 — APPROVE
-
-Supported by measurement, not preference. Peak acceleration across the board HITL matrix is **3.3 / 3.7 /
-3.8 / 4.3 g**, and `flight_kpi` prints a KEEP/DROP verdict per capture that reads DROP. The part's only
-edge over the LSM6DSO32 is surviving **>32 g** without clipping, and nothing in the measured envelope
-approaches a quarter of that. It costs a chip-select, an interrupt line and board area for a case that
-has not occurred.
-
-## 5. Drop the LSM6DSO32 — KEEP IT, AND KEEP IT ON SPI
-
-Answering the direct question "do we absolutely need it?": **not for function — for independence.**
-
-### What the LSM6DSO32 is the primary of, and what backs each channel up
-
-| channel | providers today (by priority) | if the LSM6DSO32 goes |
-|---|---|---|
-| `accel` | **lsm6dso32 p0**, adxl375 p1, **bno055 p2** | falls to the BNO055 automatically -- already configured, 40 ms window. **Backed up.** |
-| `rate` (gyro) | **lsm6dso32 p0 — sole provider** | **disappears.** No other device publishes it. |
-| `attitude` | bno055 p0 (chip fusion), `attitude` task p1 (computed) | drops to **one** provider -- the p1 backup is computed FROM `accel` + `rate`, so it dies with the gyro |
-
-Who actually consumes them: `rate` feeds the PID D term (`flight.py`) and the attitude backup filter
-(`attitude.py`). `accel` feeds launch detect (`sequencer`), the airspeed backbone (`governor`),
-auto-arm (`field`) and that same backup filter.
-
-So removing it costs two things, and only one is serious:
-
-* **PID D term** -- degrades gracefully. `pid.step()` takes `rate=None` and falls back to
-  derivative-on-error, a documented mode. Worse damping, not a failure.
-* **The attitude backup disappears entirely** -- and that backup exists for one specific, MEASURED
-  failure: the BNO055's fusion core stalls while its channel stays FRESH, returning a bit-identical
-  Euler triple indefinitely while raw accel and gyro keep streaming, across a power cycle, in both
-  fusion modes, on either clock. The driver detects it (using the part's own gyro, only while
-  rotating, since a still part legitimately repeats). Detection without a fallback means the glider
-  would know its attitude is dead and have nothing to fly on.
-
-**A gyro published from the BNO055 does not fix this.** The part already reads its gyro in the same
-24-byte block and could publish `rate` cheaply -- that would restore the D term -- but an attitude
-backup computed from the same chip that just froze is not redundancy. The same applies to a BNO085
-successor: a better part is still one part.
-
-### And keep it on SPI -- correcting an earlier recommendation here
-
-An earlier draft of this section proposed moving the LSM6DSO32 to the internal I2C cluster to free six
-GPIOs and retire the v0.1 SPI wiring fault. **That was wrong, and the reason is two sections below:**
-attitude is deliberately isolated ACROSS BUS FAMILIES -- primary on I2C, backup fed by the SPI gyro --
-so a bus-level I2C fault cannot take both attitude paths at once. Moving the gyro to I2C collapses that
-onto one family, and this board measures **0.50 % of ICP-10111 frames arriving corrupted on I2C**
-(single-bit flips, bench, idle). Trading a measured-noisy single bus for six pins is the wrong side of
-that trade.
-
-The v1.0 two-cluster split cannot restore the isolation either: the only other I2C controller is the
-EXTERNAL cluster, and putting the primary accel/gyro on the long harness is worse than either option.
-Two usable controllers is the hard ceiling (`I2C(2)` hard-crashes the P4).
-
-So the SPI bus stays, carrying one device instead of two. The v0.1 wiring fault it enabled is a
-netlist error to fix on the new board, not a reason to delete the bus.
+The board to be ordered. Two I2C clusters split **on-board vs front-panel**, the LSM6DSO32 alone on SPI,
+GNSS and power merged onto the main board, no ADXL375.
 
 ## v1.0 allocation — DECIDED
 
@@ -651,41 +556,6 @@ bus family so the attitude backup does not share a failure domain with the BNO05
 which today has no `rearm()` and is started once in `setup()`. The layout moves that exposure; it does
 not remove it. Tracked separately as a firmware fix, not a board one.
 
-## Pin delta v0.1 → v1.0 — what actually changes
-
-**No pin is renumbered, and no bus pin moves.** Only the rows below.
-
-**REMOVED — four GPIOs freed**
-
-| net | GPIO | why |
-|---|---|---|
-| `adxl375_cs` | **49** | ADXL375 not fitted |
-| `adxl375_int` | **4** | ditto |
-| `laser_int` | **3** | poll fallback is the same code path at 20 Hz |
-| `laser_xshut` | **5** | reset at `setup()` only; a board power cycle clears a wedged laser between flights |
-
-**CHANGED — bus membership, at the same physical pins**
-
-| device | v0.1 | v1.0 |
-|---|---|---|
-| ICP-10111 | i2c:0 | **i2c:1** |
-| SDP810 | i2c:0 | **i2c:1** |
-| VL53L4CX | i2c:0 | **i2c:1** |
-| INA226 | i2c:1 | **i2c:0** |
-
-**CHANGED — bus speed**
-
-| bus | v0.1 | v1.0 |
-|---|---|---|
-| i2c:1 | 400 kHz | **100 kHz** (front harness) |
-
-**UNCHANGED — no re-check needed**
-
-`i2c:0` sda **7** / scl **8** · `i2c:1` sda **31** / scl **30** · `spi:1` sck **48** / mosi **47** /
-miso **46** · `lsm6dso32_cs` **50** · `lsm6dso32_int1` **28** · `uart:1` tx **20** · `uart:2` tx **22** /
-rx **23** · servos **26** / **27** / **32** · `separation_switch` **33** · `ina226_alert` **29** ·
-BNO055 and BMP280 stay on i2c:0.
-
 ## Running one firmware on both boards
 
 The two layouts are distinguishable **by scan alone** — no strapping resistor, no stored flag, nothing
@@ -707,42 +577,123 @@ applies the winner's bus assignments and speeds. An explicit `board.layout` of `
 config always wins over the scan; `auto` (the default) detects. An ambiguous or failed scan changes
 nothing and says so loudly — the config as written is the fallback, never a guess.
 
-### The front harness: 8 wires to 5
+## GNSS: chip on the main board, antenna outboard with the recorder
 
-The real constraint is the CONNECTOR, not the wire count. The front lane carries **8** today:
+That split is the right one, and it weakens the noise caveat above rather than triggering it. An active
+antenna carries its own LNA, so the low-noise amplification — the stage that actually sets sensitivity —
+happens outboard, away from the switching stage and the servo currents. What remains on the main board
+is the receiver's correlator and ADC, far less sensitive to a noisy neighbour than a front-end would be.
 
-| today (8) | v1.0 (5) |
-|---|---|
-| recorder UART x1 | recorder UART x1 |
-| GNSS UART x2 | — *(GNSS chip moves to the main board)* |
-| pitot + laser: INT, XSHUT, SDA, SCL, 3V3, GND | SDA, SCL, 3V3, GND x4 |
+Two things still worth doing:
 
-**8 -> 5 frees enough edge for a USB connector on the same face**, so the recorder can be serviced or
-swapped without opening the airframe. That is worth more than any single signal on the lane.
+* give the GNSS chip's supply its own ferrite/LC-filtered branch rather than a bare tap off the main
+  rail — conducted noise reaches the chip regardless of where the antenna sits;
+* keep the RF trace from chip to antenna connector short and away from the switching node, since that
+  run is now the one unshielded RF path on a board that also carries ~4 A servo transients.
 
-Both laser control lines go, and for different reasons.
+Placing the antenna board with the recorder is also convenient for the power topology: those two are
+already the pair that sit on their own rail today.
 
-**`laser_int` (GPIO 3) — dropped, no functional loss.** `_setup_interrupt()` returns early when no
-`int_pin` is declared, and the run loop waits on `_ready.wait(period_ms)`, which covers interrupt and
-timeout in ONE path with no branch. At `period_ms` **50** (20 Hz) against a **100 ms** `agl` window,
-polling carries 2x margin. The only casualty is the `irq_runs` column, whose job is detecting a dead
-interrupt wire — a diagnostic that exists because the wire does.
+## Why it is arranged this way
 
-**`laser_xshut` (GPIO 5) — dropped, and it costs less than it appears.** `_reset()` pulses it at
-`setup()` **and nowhere else**: there is no in-flight recovery path for this sensor, no strike counter
-and no escalation, unlike the ICP-10111. So the wire buys a forced reset at bring-up only. Two things
-survive without it:
+The reasoning behind each decision, kept because the alternatives are not obviously wrong and will be
+proposed again otherwise.
 
-* **false-present detection still works.** The XSHUT pulse is conditional on the pin existing, but the
-  FIRMWARE__SYSTEM_STATUS boot poll inside `_reset()` runs regardless — so `setup()` still refuses a
-  dead-firmware sensor that ACKs its hard-silicon model id.
-* **a wedged laser is still recoverable between flights**, by the board power cycle the operator does
-  anyway. What is lost is only the ability to do it without one, in a situation where no code would
-  attempt it.
+### 1. Merge main + power onto one board — APPROVE
 
-Declare the laser with no `int_pin` and no `xshut_pin`; the driver already treats both as optional.
+Already the v1.0 direction. It deletes the inter-board harness and, with it, the two hand-jumpers per
+board that repair the v0.1 netlist error. Fewer connectors at the extremities is the single most
+reliable simplification available on this airframe.
 
-### Deferred: a power-managed i2c:1 cluster
+The one thing to design for is that a switching power stage now shares a substrate with the I2C bus and
+the IMU: keep the energy island partitioned, with its own ground pour region and a single-point tie, so
+servo transients (~4 A when three fins slew) do not appear as ground bounce under the sensors.
+
+### 2. Merge GNSS onto the main board — APPROVE, with one caveat
+
+Cuts a power run and a UART run, both worth having. Two notes:
+
+* The receiver front-end is RF-sensitive and will now sit beside the switching stage and the servo
+  currents. Separating the antenna (as planned) handles radiated coupling but not **conducted** noise on
+  the receiver supply — give the GNSS its own ferrite/LC-filtered branch off the main rail rather than a
+  bare tap.
+* This retires a standing diagnostic trap. Today GNSS sits on the recorder power cluster, so it probes
+  DEAD over USB and that has already cost one real investigation. After the merge that asymmetry
+  disappears, which is a genuine debugging improvement, not just tidiness.
+
+### 3. Separate I2C cluster for SDP810 + VL53L4CX — STRONGLY APPROVE
+
+The best of the proposals, and it should be stated as a reliability change rather than a layout one.
+
+Those two are precisely the devices at the airframe **extremities** — the pitot in the nose with its
+tubing, the laser pointing down — so they carry the long harness runs, the added capacitance and the
+connector count. Every other I2C device is on-board with short traces. Splitting on that boundary means
+a fault, a stretched harness or a marginal connector on the long runs cannot take down the BNO055 and
+the baros, which are flight-critical. That is the concrete answer to the standing "single I2C bus is a
+single point of failure for every sensor" finding.
+
+It also uses the silicon budget exactly: the ESP32-P4 exposes **two** usable HW I2C controllers, and
+`I2C(2)` hard-crashes the board. Two clusters is the maximum, so the only question was where to cut, and
+internal-vs-external is the right seam.
+
+### 4. Drop the ADXL375 — APPROVE
+
+Supported by measurement, not preference. Peak acceleration across the board HITL matrix is **3.3 / 3.7 /
+3.8 / 4.3 g**, and `flight_kpi` prints a KEEP/DROP verdict per capture that reads DROP. The part's only
+edge over the LSM6DSO32 is surviving **>32 g** without clipping, and nothing in the measured envelope
+approaches a quarter of that. It costs a chip-select, an interrupt line and board area for a case that
+has not occurred.
+
+### 5. Drop the LSM6DSO32 — KEEP IT, AND KEEP IT ON SPI
+
+Answering the direct question "do we absolutely need it?": **not for function — for independence.**
+
+#### What the LSM6DSO32 is the primary of, and what backs each channel up
+
+| channel | providers today (by priority) | if the LSM6DSO32 goes |
+|---|---|---|
+| `accel` | **lsm6dso32 p0**, adxl375 p1, **bno055 p2** | falls to the BNO055 automatically -- already configured, 40 ms window. **Backed up.** |
+| `rate` (gyro) | **lsm6dso32 p0 — sole provider** | **disappears.** No other device publishes it. |
+| `attitude` | bno055 p0 (chip fusion), `attitude` task p1 (computed) | drops to **one** provider -- the p1 backup is computed FROM `accel` + `rate`, so it dies with the gyro |
+
+Who actually consumes them: `rate` feeds the PID D term (`flight.py`) and the attitude backup filter
+(`attitude.py`). `accel` feeds launch detect (`sequencer`), the airspeed backbone (`governor`),
+auto-arm (`field`) and that same backup filter.
+
+So removing it costs two things, and only one is serious:
+
+* **PID D term** -- degrades gracefully. `pid.step()` takes `rate=None` and falls back to
+  derivative-on-error, a documented mode. Worse damping, not a failure.
+* **The attitude backup disappears entirely** -- and that backup exists for one specific, MEASURED
+  failure: the BNO055's fusion core stalls while its channel stays FRESH, returning a bit-identical
+  Euler triple indefinitely while raw accel and gyro keep streaming, across a power cycle, in both
+  fusion modes, on either clock. The driver detects it (using the part's own gyro, only while
+  rotating, since a still part legitimately repeats). Detection without a fallback means the glider
+  would know its attitude is dead and have nothing to fly on.
+
+**A gyro published from the BNO055 does not fix this.** The part already reads its gyro in the same
+24-byte block and could publish `rate` cheaply -- that would restore the D term -- but an attitude
+backup computed from the same chip that just froze is not redundancy. The same applies to a BNO085
+successor: a better part is still one part.
+
+#### And keep it on SPI -- correcting an earlier recommendation here
+
+An earlier draft of this section proposed moving the LSM6DSO32 to the internal I2C cluster to free six
+GPIOs and retire the v0.1 SPI wiring fault. **That was wrong, and the reason is two sections below:**
+attitude is deliberately isolated ACROSS BUS FAMILIES -- primary on I2C, backup fed by the SPI gyro --
+so a bus-level I2C fault cannot take both attitude paths at once. Moving the gyro to I2C collapses that
+onto one family, and this board measures **0.50 % of ICP-10111 frames arriving corrupted on I2C**
+(single-bit flips, bench, idle). Trading a measured-noisy single bus for six pins is the wrong side of
+that trade.
+
+The v1.0 two-cluster split cannot restore the isolation either: the only other I2C controller is the
+EXTERNAL cluster, and putting the primary accel/gyro on the long harness is worse than either option.
+Two usable controllers is the hard ceiling (`I2C(2)` hard-crashes the P4).
+
+So the SPI bus stays, carrying one device instead of two. The v0.1 wiring fault it enabled is a
+netlist error to fix on the new board, not a reason to delete the bus.
+
+#### Deferred: a power-managed i2c:1 cluster
 
 Not in v1.0 — it adds a power stage to a board revision that is otherwise a netlist change, and the
 hardware delta is already large enough. Recorded because it is the right answer once the board settles,
@@ -786,6 +737,81 @@ the accel+GNSS estimator with the pitot as a corrector.
 > was active-low SHUTDOWN, while a P-FET enable is active-low POWER-ON. Same wire, same idle level,
 > opposite meaning — name it `i2c1_power`, never reuse the old name.
 
+# Transition v0.1 → v1.0 — the bench worklist
+
+What to change on an existing v0.1 board to make it a v1.0 board. Nothing here needs the new PCB: the
+breadboard can be rewired to this and the firmware will detect it.
+
+## Pin delta v0.1 → v1.0 — what actually changes
+
+**No pin is renumbered, and no bus pin moves.** Only the rows below.
+
+**REMOVED — four GPIOs freed**
+
+| net | GPIO | why |
+|---|---|---|
+| `adxl375_cs` | **49** | ADXL375 not fitted |
+| `adxl375_int` | **4** | ditto |
+| `laser_int` | **3** | poll fallback is the same code path at 20 Hz |
+| `laser_xshut` | **5** | reset at `setup()` only; a board power cycle clears a wedged laser between flights |
+
+**CHANGED — bus membership, at the same physical pins**
+
+| device | v0.1 | v1.0 |
+|---|---|---|
+| ICP-10111 | i2c:0 | **i2c:1** |
+| SDP810 | i2c:0 | **i2c:1** |
+| VL53L4CX | i2c:0 | **i2c:1** |
+| INA226 | i2c:1 | **i2c:0** |
+
+**CHANGED — bus speed**
+
+| bus | v0.1 | v1.0 |
+|---|---|---|
+| i2c:1 | 400 kHz | **100 kHz** (front harness) |
+
+**UNCHANGED — no re-check needed**
+
+`i2c:0` sda **7** / scl **8** · `i2c:1` sda **31** / scl **30** · `spi:1` sck **48** / mosi **47** /
+miso **46** · `lsm6dso32_cs` **50** · `lsm6dso32_int1` **28** · `uart:1` tx **20** · `uart:2` tx **22** /
+rx **23** · servos **26** / **27** / **32** · `separation_switch` **33** · `ina226_alert` **29** ·
+BNO055 and BMP280 stay on i2c:0.
+
+#### The front harness: 8 wires to 5
+
+The real constraint is the CONNECTOR, not the wire count. The front lane carries **8** today:
+
+| today (8) | v1.0 (5) |
+|---|---|
+| recorder UART x1 | recorder UART x1 |
+| GNSS UART x2 | — *(GNSS chip moves to the main board)* |
+| pitot + laser: INT, XSHUT, SDA, SCL, 3V3, GND | SDA, SCL, 3V3, GND x4 |
+
+**8 -> 5 frees enough edge for a USB connector on the same face**, so the recorder can be serviced or
+swapped without opening the airframe. That is worth more than any single signal on the lane.
+
+Both laser control lines go, and for different reasons.
+
+**`laser_int` (GPIO 3) — dropped, no functional loss.** `_setup_interrupt()` returns early when no
+`int_pin` is declared, and the run loop waits on `_ready.wait(period_ms)`, which covers interrupt and
+timeout in ONE path with no branch. At `period_ms` **50** (20 Hz) against a **100 ms** `agl` window,
+polling carries 2x margin. The only casualty is the `irq_runs` column, whose job is detecting a dead
+interrupt wire — a diagnostic that exists because the wire does.
+
+**`laser_xshut` (GPIO 5) — dropped, and it costs less than it appears.** `_reset()` pulses it at
+`setup()` **and nowhere else**: there is no in-flight recovery path for this sensor, no strike counter
+and no escalation, unlike the ICP-10111. So the wire buys a forced reset at bring-up only. Two things
+survive without it:
+
+* **false-present detection still works.** The XSHUT pulse is conditional on the pin existing, but the
+  FIRMWARE__SYSTEM_STATUS boot poll inside `_reset()` runs regardless — so `setup()` still refuses a
+  dead-firmware sensor that ACKs its hard-silicon model id.
+* **a wedged laser is still recoverable between flights**, by the board power cycle the operator does
+  anyway. What is lost is only the ability to do it without one, in a situation where no code would
+  attempt it.
+
+Declare the laser with no `int_pin` and no `xshut_pin`; the driver already treats both as optional.
+
 ## ADXL375 — the one software delta between v0.1 and v1.0
 
 With the LSM6DSO32 staying on SPI, the ADXL375 is the only device difference between the boards, and
@@ -802,22 +828,59 @@ So: keep the firmware default `enabled` (the default config describes a fully-po
 `accel_adxl375` to the `absent` tuple of the v1.0 profiles only. TMS-7C and TMS-7D keep it active with
 no config change at all.
 
-## GNSS: chip on the main board, antenna outboard with the recorder
+# Main board v0.1 — as built
 
-That split is the right one, and it weakens the noise caveat above rather than triggering it. An active
-antenna carries its own LNA, so the low-noise amplification — the stage that actually sets sensitivity —
-happens outboard, away from the switching stage and the servo currents. What remains on the main board
-is the receiver's correlator and ADC, far less sensitive to a noisy neighbour than a front-end would be.
+The two boards flying today (TMS-7C, TMS-7D) and the breadboard, until the rewire above is done.
+Generated from `launches/20261003/TMS-7D/tms7d.config`, which is the authority — this table is a
+convenience, not a second source of truth.
 
-Two things still worth doing:
+**i2c:0 — 400 kHz**, SDA **7** / SCL **8**
 
-* give the GNSS chip's supply its own ferrite/LC-filtered branch rather than a bare tap off the main
-  rail — conducted noise reaches the chip regardless of where the antenna sits;
-* keep the RF trace from chip to antenna connector short and away from the switching node, since that
-  run is now the one unshielded RF path on a board that also carries ~4 A servo transients.
+| device | addr |
+|---|---|
+| airspeed_sdp810 | `0x25` |
+| baro_bmp280 | `0x76` |
+| baro_icp10111 | `0x63` |
+| imu_bno055 | `0x28` |
+| laser_agl | `0x29` |
 
-Placing the antenna board with the recorder is also convenient for the power topology: those two are
-already the pair that sit on their own rail today.
+**i2c:1 — 400 kHz**, SDA **31** / SCL **30**
+
+| device | addr |
+|---|---|
+| power_ina226 | `0x40` |
+
+**spi:1 — 5 MHz**, SCK **48** / MOSI **47** / MISO **46**
+
+| device | chip select |
+|---|---|
+| accel_adxl375 | `49` |
+| imu_lsm6dso32 | `50` |
+
+**pins**
+
+| net | GPIO |
+|---|---|
+| `adxl375_cs` | **49** |
+| `adxl375_int` | **4** |
+| `ina226_alert` | **29** |
+| `laser_int` | **3** |
+| `laser_xshut` | **5** |
+| `lsm6dso32_cs` | **50** |
+| `lsm6dso32_int1` | **28** |
+| `separation_switch` | **33** |
+| `servo_eleron_left` | **27** |
+| `servo_eleron_right` | **32** |
+| `servo_yaw` | **26** |
+
+Two things about this layout that the v1.0 arrangement exists to fix:
+
+* **Five devices share `i2c:0`**, including both baros and the two long harness runs. That bus measures
+  **0.50 % corrupted ICP-10111 frames**, and the altitude primary and backup are on it together, so one
+  stuck slave takes both.
+* **Both IMU-adjacent SPI parts need the two-jumper rework.** The v0.1 netlist takes the LSM6DSO32's
+  clock from the module's AUX row, which silences the part on SPI *and* I2C and reads exactly like a
+  dead chip. Every built board carries hand-jumpers for it.
 
 # Potential configurations
 
