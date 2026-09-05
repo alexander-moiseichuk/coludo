@@ -32,6 +32,22 @@ from drivers import sdp810 as sdp_driver  # its _frame_ok is the checker the fli
 
 _FRAMES: int = 10000  # per device; enough that a 0.05 % rate is ~5 events rather than 0 or 1
 
+# Minimum gap between reads, per device. A continuous-mode SDP810 NAKs when no new sample is ready --
+# read back-to-back it fails EVERY time, which looks like a dead part rather than a paced one. The
+# ICP-10111 needs nothing here because its _measure() already waits out its own conversion.
+_PACE_MS: dict = {'airspeed_sdp810': 8}
+
+"""
+The SDP810 frame length, restated here rather than imported.
+
+`sdp810._FRAME` cannot be read from outside that module: MicroPython's `const()` ELIMINATES a name
+beginning with an underscore at compile time, so it never becomes a module attribute and the import
+raises AttributeError on the board while working fine on CPython. The driver's `_frame_ok` is a `def`
+and imports normally, so the CHECKER is still shared -- only this length is duplicated, and
+`_frame_ok` rejects a wrong length anyway, so a drift here fails loudly rather than silently.
+"""
+_SDP_FRAME: int = 9  # DP[0,1],CRC · T[3,4],CRC · Scale[6,7],CRC
+
 """
 (name, register, width, expected, addrsize) for the constant-value parts. addrsize None means SPI.
 Every value here is the part's own identity register, taken from its driver -- a constant by
@@ -47,6 +63,21 @@ _CONSTANT: tuple = (
 )
 
 _CRC_DEVICES: tuple = ('baro_icp10111', 'airspeed_sdp810')
+
+
+_FIRST_ERROR: dict = {}
+
+
+def _note(name: str, error) -> None:
+    """
+    Keep the FIRST exception per device.
+
+    A count of 10 000 failures with no message says a device is unreachable without saying why -- which
+    is exactly what happened the first time this ran, and it cost a round trip to find out the reads
+    were merely unpaced rather than the part being dead.
+    """
+    if name not in _FIRST_ERROR:
+        _FIRST_ERROR[name] = repr(error)
 
 
 def _value(raw: bytes) -> int:
@@ -77,8 +108,9 @@ async def _constant(cfg: dict, name: str, reg: int, width: int, expected: int, a
                 raw = await window.read(reg, width)
                 good += 1 if _value(raw) == expected else 0
                 corrupt += 0 if _value(raw) == expected else 1
-            except Exception:
+            except Exception as error:
                 bus_error += 1
+                _note(name, error)
     else:
         bus, addr = i2cbus.bind(cfg, device, device.get('addr', 0))
         if bus is None:
@@ -89,8 +121,9 @@ async def _constant(cfg: dict, name: str, reg: int, width: int, expected: int, a
                 raw = await bus.read(addr, reg, width, addrsize=addrsize)
                 good += 1 if _value(raw) == expected else 0
                 corrupt += 0 if _value(raw) == expected else 1
-            except Exception:
+            except Exception as error:
                 bus_error += 1
+                _note(name, error)
     return good, corrupt, bus_error, where
 
 
@@ -115,14 +148,18 @@ async def _crc(flight, cfg: dict, name: str) -> tuple:
     than a second implementation that could disagree with it.
     """
     good = corrupt = bus_error = 0
+    pace = _PACE_MS.get(name, 0)
     if name == 'airspeed_sdp810':
         for _ in range(_FRAMES):
             try:
-                frame = await unit._bus.readfrom(unit._addr, sdp_driver._FRAME)
+                frame = await unit._bus.readfrom(unit._addr, _SDP_FRAME)
                 good += 1 if sdp_driver._frame_ok(frame) else 0
                 corrupt += 0 if sdp_driver._frame_ok(frame) else 1
-            except Exception:
+            except Exception as error:
                 bus_error += 1
+                _note(name, error)
+            if pace:
+                await asyncio.sleep_ms(pace)
         return good, corrupt, bus_error, where
 
     for _ in range(_FRAMES):
@@ -131,8 +168,9 @@ async def _crc(flight, cfg: dict, name: str) -> tuple:
             good += 1
         except ValueError:
             corrupt += 1      # the part's own checksum refused the frame
-        except Exception:
+        except Exception as error:
             bus_error += 1    # NAK / timeout: a different fault entirely
+            _note(name, error)
     return good, corrupt, bus_error, where
 
 
@@ -162,6 +200,8 @@ async def run():
         worst = max(worst, rate)
         flag = '' if not corrupt and not bus_error else '   <-- LOOK'
         print('%-20s %-8s %8d %9d %9d  %.3f %%%s' % (name, where, good, corrupt, bus_error, rate, flag))
+        if name in _FIRST_ERROR:
+            print('%-20s   first error: %s' % ('', _FIRST_ERROR[name]))
 
     print('')
     print('worst corruption rate: %.3f %%   (v0.1 baseline on i2c:0 @ 400 kHz was 0.50 %%)' % worst)

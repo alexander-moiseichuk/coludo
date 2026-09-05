@@ -134,6 +134,13 @@ so it must run on both.
   except ImportError:        # CPython (Control)
       def const(x): return x
   ```
+  > ⚠️ **A `const()` whose name starts with `_` is ELIMINATED at compile time and is not a module
+  > attribute.** `other_module._FRAME` raises `AttributeError` on the board while working fine on
+  > CPython, where the shim makes it an ordinary assignment — so it passes every host check and fails
+  > only on hardware. Functions and classes are unaffected (`_frame_ok` imports normally); this is
+  > specific to `const`. If another module genuinely needs the value, drop the underscore or restate
+  > it locally with a comment saying why.
+
 - **Docstring or comment per entry** — every class, method, and non-trivial constant.
 - **Docstring shape (pydoc sections, not a dense prose block)** — open on the next line after `"""`,
   a one/two-line summary, then a blank line and the design/why prose (measurements, rationale — keep
