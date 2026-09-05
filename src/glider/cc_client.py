@@ -18,6 +18,7 @@ import cc_protocol as cc
 import config as config_mod
 import databoard
 import inspector
+import layout
 import ota
 import recorder
 
@@ -220,7 +221,11 @@ def _register_identity(dispatcher, ctx) -> None:
             temp = esp32.mcu_temperature()
         except Exception:  # host (esp32 None) or a probe failure -> no temperature
             temp = None
-        info = {'temp': temp, 'mem_free': gc.mem_free(), 'uptime': time.ticks_ms(), 'stage': ctx.stage()}
+        info = {'temp': temp, 'mem_free': gc.mem_free(), 'uptime': time.ticks_ms(), 'stage': ctx.stage(),
+                # which board revision the firmware decided it is running on. On the panel because a
+                # WRONG verdict and a MISWIRED board look identical from the device list -- both just
+                # show sensors down -- and only this line tells the two apart.
+                'layout': layout.RESOLVED}
         position = databoard.Databoard.parameter('position')  # board GNSS fix -> dashboard (None until a fix)
         if position is not None:
             value, source, _age = position.read()
@@ -622,7 +627,22 @@ def _register_diagnostics(dispatcher, ctx) -> None:
         return cc.build('ok', [json.dumps({target: await run()})])
 
     dispatcher.on('calibrate', calibrate)
+    async def detect(_unused_msg) -> str:
+        """
+        Re-scan both I2C buses and report the revision they look like, WITHOUT applying anything.
+
+        Read-only on purpose: the buses were already bound at boot from whatever resolve() decided, and
+        re-busing a running board mid-flight would strand every driver on a bus object it no longer
+        shares. This answers "what is actually wired now", which is the question during a rewire -- the
+        verdict only takes effect on the next boot.
+        """
+        cfg = ctx.controller.config if ctx.controller is not None else {}
+        revision, detail = layout.detect(cfg)
+        return cc.build('ok', [json.dumps({'detected': revision, 'applied': layout.RESOLVED,
+                                           'detail': detail})])
+
     dispatcher.on('probe', probe)
+    dispatcher.on('detect', detect)
     dispatcher.on('verify', verify)
     dispatcher.on('bustune', bustune)
 

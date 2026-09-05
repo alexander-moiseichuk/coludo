@@ -183,6 +183,7 @@ class Server:
                 'id': client.id, 'online': client.online,
                 'health_age': health_age, 'stale': health_age > self.heartbeat_s * 2,
                 'stage': health.get('stage') or client.info.get('stage'),  # health is fresher than the handshake
+                'layout': health.get('layout'),   # board revision the firmware resolved at boot
                 'version': client.info.get('firmware_version'),
                 'config_id': client.info.get('config_id'),
                 'uptime': health.get('uptime'), 'clock': health.get('clock'),

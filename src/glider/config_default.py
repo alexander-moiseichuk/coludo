@@ -37,7 +37,12 @@ CONFIG_VERSION: str = '20260828'  # recorder.telemetry_ms moved into the section
 
 def default() -> dict:
     board = {'id': 'taster', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION,
-             'setup_retries': 3}  # re-attempt a flaky device setup at boot (breadboard contacts; 1 = no retry)
+             'setup_retries': 3,  # re-attempt a flaky device setup at boot (breadboard contacts; 1 = no retry)
+             # 'auto' -> layout.resolve() decides v0.1 vs v1.0 by I2C scan at boot and re-buses the four
+             # devices that move between the revisions. Pin it to 'v0.1' / 'v1.0' on a board where a
+             # moving sensor is unfitted, since an absent device abstains and enough abstentions make
+             # the vote undecided (which changes nothing, but also fixes nothing).
+             'layout': 'auto'}
 
     """
     warm start (doc/specs/coludo.md "In-flight reboot & warm start"): a mid-air reset restores GLIDING

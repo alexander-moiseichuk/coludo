@@ -13,6 +13,11 @@
   th { background: #f4f4f4; }
   tr.click { cursor: pointer; }
   tr.click:hover { background: #f0f6ff; }
+  /* The selected row and the section headings carry the SAME marker, so the board a button is about to
+     act on is identifiable from either end of the page -- the selection is now the only one there is. */
+  tr.chosen { background: #fff6d8; box-shadow: inset 3px 0 0 #d9a400; }
+  .sel { font-family: ui-monospace, monospace; background: #fff6d8; padding: 0 .3em; border-radius: 3px; }
+  .sel:empty::before { content: '—'; }
   tr.off { color: #999; }
   .dot { font-size: 1.1rem; }
   .on .dot { color: #2a9d3a; }
@@ -47,16 +52,27 @@
 <div id="absent" class="absent"></div>
 <table id="boards">
   <thead><tr>
-    <th>board</th><th>online</th><th>stage</th><th>flight</th><th>calibration</th><th>version</th><th>config</th><th>uptime</th>
-    <th>board time</th><th></th><th>position</th><th>launchpad</th><th></th>
+    <th>board</th><th>online</th><th>layout</th><th>stage</th><th>flight</th><th>calibration</th>
+    <th>version</th><th>config</th><th>uptime</th><th>board time</th><th>position</th><th>launchpad</th>
   </tr></thead>
-  <tbody><tr><td colspan="13" class="muted">waiting for boards…</td></tr></tbody>
+  <tbody><tr><td colspan="12" class="muted">waiting for boards…</td></tr></tbody>
 </table>
-<p class="muted">click a board to target it below · <span id="boardmsg"></span></p>
+<p class="muted">click a board to target it in every section below · <span id="boardmsg"></span></p>
 
-<h2>send command</h2>
+<h2>board <span class="sel" id="selA">—</span> actions</h2>
+<p class="muted">the table above is status and selection only — pick a board there and every section
+below targets it. Nothing in the table changes a board, so a glance is never a click away from
+altering one.</p>
 <p>
-  <input id="board" placeholder="board id" size="10">
+  <button id="actprobe" title="run every device self-test on the selected board">probe devices</button>
+  <button id="actdetect" title="re-scan both I2C buses and report which board revision they look like (does not apply)">detect layout</button>
+  <button id="actsynctime" title="set the board RTC to the CC clock">sync time</button>
+  <button id="actassist" title="push the CC GNSS fix to the board launch config">sync GNSS</button>
+  <span class="muted" id="actmsg"></span>
+</p>
+
+<h2>send command to <span class="sel" id="selB">—</span></h2>
+<p>
   <select id="cmd" title="board command">
     <option>ping</option>
     <option>health</option>
@@ -80,9 +96,8 @@
 </p>
 <pre id="reply"></pre>
 
-<h2>fin zero</h2>
+<h2>fin zero · <span class="sel" id="selC">—</span></h2>
 <p>
-  <input id="finboard" placeholder="board id" size="10">
   <button id="finload">load</button>
   <span class="finctl"><b>yaw</b>
     <button class="finminus" data-fin="servo_yaw">−</button>
@@ -103,9 +118,8 @@
   persists it (re-baselined on the next reboot).</p>
 <pre id="finresult"></pre>
 
-<h2>config &amp; control</h2>
+<h2>config &amp; control · <span class="sel" id="selD">—</span></h2>
 <p>
-  <input id="cfgboard" placeholder="board id" size="10">
   <select id="cfgtarget" title="which config to load/save">
     <option value="board">board config</option>
     <option value="launch">launch config</option>
@@ -118,9 +132,8 @@
 <textarea id="config" rows="14" placeholder="config draft — pick board/launch, click load to fetch it as an editable draft, then save (board config needs a reboot to take effect)"></textarea>
 <pre id="cfgresult"></pre>
 
-<h2>bus tuning</h2>
+<h2>bus tuning · <span class="sel" id="selE">—</span></h2>
 <p>
-  <input id="tuneboard" placeholder="board id" size="10">
   <select id="tunekind" title="sensor bus to calibrate">
     <option value="i2c">i2c</option>
     <option value="spi">spi</option>
@@ -131,17 +144,15 @@
 </p>
 <pre id="tuneresult"></pre>
 
-<h2>inspect</h2>
+<h2>inspect · <span class="sel" id="selF">—</span></h2>
 <p>
-  <input id="inspboard" placeholder="board id" size="10">
   <button id="inspall">inspect all</button>
   <span class="muted">read every object; edit a value and click update — a green ✓ marks applied changes</span>
 </p>
 <div id="inspresult"></div>
 
-<h2>logs &amp; telemetry</h2>
+<h2>logs &amp; telemetry · <span class="sel" id="selG">—</span></h2>
 <p>
-  <input id="logboard" placeholder="board id" size="10">
   <select id="logkind" title="the board serves one stream at a time">
     <option value="log">logs</option>
     <option value="tlm">telemetry</option>
@@ -207,27 +218,83 @@ function bindBoardRows(tbody) {
   tbody.querySelectorAll('tr[data-board]').forEach((row) => {
     row.addEventListener('click', () => selectBoard(row.dataset.board));
   });
-  // Each in-row button gets its own delegated handler. stopPropagation matters because the ROW
-  // click selects the board -- without it, pressing a button would also change the selection.
-  for (const [selector, handler] of [['button.assist', gpsAssist],
-                                     ['button.synctime', syncTime],
-                                     ['button.calib', calibrateBoard]]) {
-    tbody.querySelectorAll(selector + '[data-board]').forEach((button) => {
-      button.addEventListener('click', (event) => {
-        event.stopPropagation();
-        handler(button.dataset.board);
-      });
-    });
+  // No per-row buttons any more: the table is status + selection only, and every action moved to the
+  // "board actions" bar below it. That removes a class of mistake rather than just tidying -- a row
+  // click used to sit one pixel from a button that CHANGED the board, and the stopPropagation keeping
+  // those apart was load-bearing.
+}
+
+function fmtLayout(b) {
+  // Board revision as the firmware resolved it at boot. Flagged when it could not decide, because an
+  // undecided board is running its config as WRITTEN -- which may or may not match how it is wired,
+  // and nothing else on this table would show that.
+  const value = b.layout;
+  if (!value) { return '<span class="muted">—</span>'; }
+  if (String(value).startsWith('undecided')) {
+    return `<b class="warn" title="the I2C scan could not decide; the board is running its config as written">${escAttr(value)}</b>`;
   }
+  return escAttr(value);
+}
+
+function actionBoard() {
+  // Its own board box, like every other section, filled by selectBoard() along with the rest -- so a
+  // row click targets all of them at once and an operator can still override just this one.
+  const id = boardId();
+  if (!id) { document.getElementById('actmsg').textContent = 'select a board first'; }
+  return id;
+}
+
+async function probeBoard(id) {
+  document.getElementById('actmsg').textContent = `${id}: probing…`;
+  const r = await cmd(id, 'probe', []);
+  const body = r.args && r.args[0];
+  const results = typeof body === 'object' && body !== null ? body : {};
+  const bad = Object.keys(results).filter((k) => results[k] !== null && results[k] !== 'pass');
+  document.getElementById('actmsg').textContent = r.status === 'ok'
+    ? (bad.length ? `${id}: FAIL ${bad.join(', ')}` : `${id}: all ${Object.keys(results).length} devices pass`)
+    : `${id}: ${JSON.stringify(r)}`;
+}
+
+async function detectLayout(id) {
+  document.getElementById('actmsg').textContent = `${id}: scanning…`;
+  const r = await cmd(id, 'detect', []);
+  const body = (r.args && r.args[0]) || {};
+  document.getElementById('actmsg').textContent = r.status === 'ok'
+    ? `${id}: wired like ${body.detected || 'nothing recognised'} · running as ${body.applied || '—'}` +
+      (body.detected && body.applied && !String(body.applied).startsWith(body.detected)
+        ? ' — REBOOT to apply' : '')
+    : `${id}: ${JSON.stringify(r)}`;
+}
+
+/*
+ * THE selection. One board, chosen in the status table, used by every section below.
+ *
+ * Each section used to carry its own "board id" box, all of them written by selectBoard(). Seven copies
+ * of one fact is seven chances for them to disagree -- and they disagreed silently, because nothing
+ * showed which box a button was about to read. The heading of each section now names the target, so the
+ * board an action will hit is visible at the moment of clicking rather than a scroll away.
+ */
+let selected = '';
+
+function boardId() {
+  if (!selected) { document.getElementById('actmsg').textContent = 'click a board in the table first'; }
+  return selected;
 }
 
 function selectBoard(id) {
-  document.getElementById('board').value = id;
-  document.getElementById('finboard').value = id;
-  document.getElementById('cfgboard').value = id;
-  document.getElementById('inspboard').value = id;
-  document.getElementById('logboard').value = id;
-  document.getElementById('tuneboard').value = id;
+  selected = id;
+  for (const label of ['selA', 'selB', 'selC', 'selD', 'selE', 'selF', 'selG']) {
+    document.getElementById(label).textContent = id || '—';
+  }
+  markChosen();
+}
+
+function markChosen() {
+  // Re-applied after every heartbeat re-render too: the rows are rebuilt from scratch each time, so a
+  // class set once would vanish on the next tick and the operator would lose sight of the target.
+  document.querySelectorAll('#boards tr[data-board]').forEach((row) => {
+    row.classList.toggle('chosen', row.dataset.board === selected);
+  });
 }
 
 // uptime is milliseconds since boot (board ticks); show it as Hh MMm SSs.
@@ -296,9 +363,19 @@ const boardMsg = (text) => { document.getElementById('boardmsg').textContent = t
 new EventSource('/events').onmessage = (event) => {
   const { cc, boards } = JSON.parse(event.data);
   document.getElementById('ccstatus').textContent = `CC ${(cc.time || '').replace('T', ' ')} · GPS ${ccGps(cc.gps)}`;
-  const ccHasFix = !!(cc.gps && cc.gps.usable);  // 'sync CC GPS' is offered only when CC has a fix
+  /*
+   * 'sync GNSS' stays DISABLED until CC itself has a usable fix. The button used to live in the row and
+   * simply not be rendered without one; moving it to the actions bar would have turned that into an
+   * always-clickable button that pushes a missing fix into a board's launch config -- so the guard
+   * moves with it, as a disabled state that says why rather than a button that vanishes.
+   */
+  const ccHasFix = !!(cc.gps && cc.gps.usable);
+  const assistButton = document.getElementById('actassist');
+  assistButton.disabled = !ccHasFix;
+  assistButton.title = ccHasFix ? 'push the CC GNSS fix to the board launch config'
+                                : 'CC has no usable GNSS fix to push';
   if (!boards.length) {
-    tbody.innerHTML = '<tr><td colspan="13" class="muted">no boards connected</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="12" class="muted">no boards connected</td></tr>';
     return;
   }
   renderAbsent();
@@ -306,6 +383,7 @@ new EventSource('/events').onmessage = (event) => {
     <tr class="click ${b.online ? 'on' : 'off'} ${notReady(b) ? 'notready' : ''}" data-board="${escAttr(b.id)}">
       <td>${notReady(b) ? `<b class="warn" title="NOT READY: ${b.degraded.join(', ')}">❗</b> ` : ''}${escAttr(b.id)}</td>
       <td><span class="dot">${b.online ? '●' : '○'}</span></td>
+      <td>${fmtLayout(b)}</td>
       <td>${escAttr(b.stage || '')}</td>
       <td>${fmtFlight(b)}</td>
       <td>${fmtImu(b)}</td>
@@ -313,16 +391,13 @@ new EventSource('/events').onmessage = (event) => {
       <td>${escAttr(b.config_id || '')}</td>
       <td>${fmtUptime(b.uptime)}</td>
       <td>${(b.clock || '').replace('T', ' ')}</td>
-      <td><button class="synctime" data-board="${escAttr(b.id)}" title="set the board RTC to the CC clock">sync CC time</button></td>
       <td>${fmtPos(b.position)}</td>
       <td>${fmtPad(b)}</td>
-      <td>${ccHasFix
-        ? `<button class="assist" data-board="${escAttr(b.id)}" title="push the CC GPS fix to the board launch config">sync CC GPS</button>`
-        : '<span class="muted">—</span>'}</td>
     </tr>`).join('');
   // Bind AFTER the rows exist. The id travels in data-board and the handler is attached here, so it
   // is never parsed as JavaScript -- see escAttr above for why splicing it into onclick was unsafe.
   bindBoardRows(tbody);
+  markChosen();
 };
 
 // BNO055 calibration: NDOF fusion only converges with MOTION, and a glider sits still on the pad -- so
@@ -449,7 +524,7 @@ async function gpsAssist(id) {
 
 // --- ad-hoc command box: pick a command, type its params (space-separated) ---
 async function send() {
-  const board = document.getElementById('board').value.trim();
+  const board = boardId();
   const command = document.getElementById('cmd').value;
   const raw = document.getElementById('params').value.trim();
   const parts = raw ? raw.split(/\s+/) : [];
@@ -461,13 +536,24 @@ async function send() {
     reply.textContent = 'error: ' + err;
   }
 }
+// board actions -- each guards on a selected board so a stray click is a message, not a request
+for (const [buttonId, handler] of [['actprobe', probeBoard],
+                                   ['actdetect', detectLayout],
+                                   ['actsynctime', syncTime],
+                                   ['actassist', gpsAssist]]) {
+  document.getElementById(buttonId).addEventListener('click', () => {
+    const id = actionBoard();
+    if (id) { handler(id); }
+  });
+}
+
 document.getElementById('send').addEventListener('click', send);
 document.getElementById('params').addEventListener('keydown', (e) => { if (e.key === 'Enter') send(); });
 
 // --- config editor: pick board/launch -> load (get-config <name>) -> edit -> save (set-config <name>) ---
 const cfgOut = document.getElementById('cfgresult');
 const cfgArea = document.getElementById('config');
-const cfgBoard = () => document.getElementById('cfgboard').value.trim();
+const cfgBoard = () => boardId();
 const cfgTarget = () => document.getElementById('cfgtarget').value;
 
 document.getElementById('load').onclick = async () => {
@@ -503,7 +589,7 @@ document.getElementById('reset').onclick = async () => {
 // --- bus tuning: calibrate a sensor bus -> show the sweep -> load the TUNED board config into the
 // editor above. Applying it (Save + Reboot) stays the operator's decision -- nothing auto-reboots. ---
 const tuneOut = document.getElementById('tuneresult');
-const tuneBoard = () => document.getElementById('tuneboard').value.trim();
+const tuneBoard = () => boardId();
 const hz = (n) => (n == null ? '?' : n.toLocaleString() + ' Hz');
 
 // run one operator-console line through the hub (calibrate, ...) -> reply lines
@@ -545,7 +631,7 @@ document.getElementById('calibrate').onclick = async () => {
     }
     data.buses[kind][id][key] = out.chosen;
     cfgArea.value = JSON.stringify(data, null, 2);
-    document.getElementById('cfgboard').value = board;
+    selectBoard(board);
     document.getElementById('cfgtarget').value = 'board';
     cfgOut.textContent = `tuned ${out.bus} → ${hz(out.chosen)} loaded into the draft above — review, then Save + Reboot to apply`;
     tuneOut.textContent = text + `\n\n✓ tuned config loaded into the editor above (buses.${kind}.${id}.${key} = ${out.chosen}). Apply is yours: Save + Reboot.`;
@@ -560,7 +646,7 @@ document.getElementById('calibrate').onclick = async () => {
 // the board config. Calibrate with -/+ (the fin moves now), then the operator clicks save when happy;
 // save always re-reads the board config first, patches the three trims, and writes the whole thing back.
 const FINS = { servo_yaw: 'yaw', servo_eleron_left: 'left', servo_eleron_right: 'right' };
-const finBoard = () => document.getElementById('finboard').value.trim();
+const finBoard = () => boardId();
 const finOut = document.getElementById('finresult');
 let finTrim = {};       // live trim (deg) per fin, mirrored from the board
 let finLoaded = false;  // has this card read the board's fins yet?
@@ -645,7 +731,7 @@ document.querySelectorAll('.finplus').forEach((b) => { b.onclick = () => nudgeFi
 
 // --- inspect: list objects, then inspect each -> a per-object editor (update -> green ✓) ---
 const inspOut = document.getElementById('inspresult');
-const inspBoard = () => document.getElementById('inspboard').value.trim();
+const inspBoard = () => boardId();
 
 document.getElementById('inspall').onclick = async () => {
   const board = inspBoard();
@@ -686,7 +772,7 @@ async function updateObject(board, name) {
 
 // --- live log stream: start/stop the hub's per-board stream, then view the /logs SSE feed ---
 const logPane = document.getElementById('logs');
-const logBoard = () => document.getElementById('logboard').value.trim();
+const logBoard = () => boardId();
 
 async function setLog(on) {
   const kind = document.getElementById('logkind').value;
