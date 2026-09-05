@@ -656,6 +656,41 @@ still the right side of the trade: the point of redundancy is that the two do no
 backup that dies with its primary is not one. Listed as optional because it is a third transition and
 the two-move split already delivers the isolation the harness split was for.
 
+## Pin delta v0.1 → v1.0 — what actually changes
+
+**No pin is renumbered, and no bus pin moves.** Only the rows below need checking.
+
+**REMOVED — two GPIOs freed**
+
+| net | v0.1 GPIO | why |
+|---|---|---|
+| `adxl375_cs` | **49** | ADXL375 not fitted on v1.0 |
+| `adxl375_int` | **4** | ditto |
+
+**CHANGED — bus membership only, at the same physical pins**
+
+| device | v0.1 | v1.0 |
+|---|---|---|
+| SDP810 | i2c:0 | **i2c:1** |
+| VL53L4CX | i2c:0 | **i2c:1** |
+
+Two lines in `board.config`. Nothing else in the `sensors` or `buses` blocks changes.
+
+**UNCHANGED — no re-check needed**
+
+`i2c:0` sda **7** / scl **8** · `i2c:1` sda **31** / scl **30** · `spi:1` sck **48** / mosi **47** /
+miso **46** · `lsm6dso32_cs` **50** · `lsm6dso32_int1` **28** · `uart:1` tx **20** · `uart:2` tx **22** /
+rx **23** · servos **26** / **27** / **32** · `separation_switch` **33** · `ina226_alert` **29** ·
+`laser_xshut` **5** · `laser_int` **3**. INA226 stays on i2c:1; BNO055, ICP-10111 and BMP280 stay on
+i2c:0.
+
+### One further reduction worth considering
+
+The external harness needs SDA, SCL, XSHUT, INT plus power — six wires to the extremities, where
+connector count is what actually fails. `laser_int` can be dropped in favour of polling (the AGL rate
+does not need an interrupt), taking it to five; and if `laser_xshut` is strapped at the sensor rather
+than driven, four. Fewer wires on the long run is worth more than either GPIO.
+
 ## ADXL375 — the one software delta between v0.1 and v1.0
 
 With the LSM6DSO32 staying on SPI, the ADXL375 is the only device difference between the boards, and
@@ -819,7 +854,7 @@ I²C **general-call reset** (`0x00 0x06`), and its driver notes this "also reset
 (bmp280, ina226)" — collateral accepted because the alternative is losing the primary baro. Alone on
 `i2c:0`, the most aggressive recovery action in the codebase can no longer disturb anything else.
 
-## v0.2 PCB — design review of the v0.1 Gerbers
+## v1.0 PCB — design review of the v0.1 Gerbers
 
 Measured from the copper (`models/PCBs/*.zip`), not from the schematic. The netlist itself
 cross-checks clean against `config_default.py` — this is the separate question of whether it is a
