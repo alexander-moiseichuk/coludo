@@ -1143,6 +1143,36 @@ The same capture should re-check `launch_g` (2.5 g today, ~1 g of margin against
 > sustained boost g, L/D and sink, wind, landing impact (tens of ms, so 100 Hz catches it), and the
 > whole pipeline end to end.
 >
+### Recommendation on the BNO085 swap (asked 2026-09-05): NOT YET, and here is what decides it
+
+**Where a +/-8 g accelerometer would and would not hurt.** The BNO055's accelerometer is `accel`
+**priority 2** -- a fallback behind the LSM6DSO32's +/-32 g at p0 -- so its range does not gate the
+`accel` channel at all. Where it matters is INSIDE the part's own fusion: an accel that saturates
+during boost degrades the attitude it outputs, at the moment the pending +/-10 deg boost-phase control
+would need it. Today control engages after separation, so a boost-time fusion wobble that recovers is
+tolerable; with boost control it would not be. (Confirm the part's actual full-scale from the datasheet
+before buying -- the BNO08x family's figure is not something to take from memory.)
+
+**If it is adopted, put it on I2C, not SPI.** The breakout offers I2C, SPI and UART-RVC. Choosing SPI
+would land it beside the LSM6DSO32 and collapse the deliberate bus-family isolation described above --
+attitude primary on I2C, backup fed by the SPI gyro -- which is the property that survives a bus-level
+I2C fault. Saving a bus is not worth re-creating a common failure point for both attitude paths.
+
+**The problem it solves is already contained.** The strongest argument for the swap is escaping the
+BNO055's measured fusion stall -- a bit-identical Euler returned indefinitely while the channel stays
+FRESH. But the driver now detects that (off the part's own gyro, only while rotating) and the
+LSM6DSO32 provides an independent backup to fall to. The failure is mitigated, not open, so the swap
+buys robustness rather than rescuing a live hazard.
+
+**The cost is a driver, not a part.** The BNO055 is register reads; the BNO08x speaks SHTP -- a packet
+protocol with sequence numbers, channel multiplexing and feature reports. The existing driver also
+carries hard-won behaviour that would have to be re-earned: the calibration latch, the NVS profile
+restore, the stall detector, the peer re-arm. That is spine work landing next to a launch date.
+
+**Sequence:** fly October on what exists; take the FIFO-drained shock capture described above, which
+answers the +/-8 g question AND whether the ADXL375 can retire; only then decide. Buying the part now
+is cheap and harmless -- committing the firmware to it before the shock number exists is not.
+
 > Measuring shock needs the sensor's 32-sample FIFO drained per poll — 800 Hz gives 8 samples per
 > 10 ms poll, ~40 KB/s of the 92 KB/s recorder link, and ~400 Hz of anti-alias bandwidth. Deliberately
 > NOT done before the first flights: it rewrites a tested driver's read path, and the flight is worth
