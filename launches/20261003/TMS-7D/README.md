@@ -30,3 +30,18 @@ and 0 of 10 in the zone** — against 37–46 m and **7 of 10** for the same mot
 
 Irrelevant to 2026-10-03, since control is off. It matters for the first guided flight: at this mass the
 study says the endgame does not converge, and closing the gap means finding ~52 g.
+
+## Bench checks, 2026-09-04
+
+**Servo wiring confirmed.** Driven one fin at a time over CC (`update <fin> {"angle": N}`) with the
+operator watching: `servo_yaw`, then `servo_eleron_left`, then `servo_eleron_right` each moved in turn
+and alone. The pin map matches the physical connectors -- GPIO **26 yaw / 27 left / 32 right**, no
+duplicates.
+
+**Yaw sign, measured:** commanding **45 deg moves the yaw fin RIGHT**, so that command yields a turn to
+the **left**. Recorded here because the mixer's `servo_yaw: {yaw: 1}` gain assumes a direction, and the
+sign is a property of this airframe's horn and linkage rather than of the code.
+
+Config installed: `tms7d.config`, verified byte-identical to the file in this folder. `verify` reports
+**pass, 21 devices up, no problems**. Not yet ready, for two expected reasons: `flight` is disabled by
+design, and the **BNO055 still needs its figure-8** (last read `sys 3 gyr 3 acc 1 mag 0`).
