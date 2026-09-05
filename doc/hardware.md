@@ -641,8 +641,9 @@ failure domain with the BNO055.
 
 **UART** — `uart:1` TX **20** @921600 (recorder); `uart:2` TX **22** / RX **23** (GNSS chip, on-board).
 
-**Discretes** — `ina226_alert` **29**, `laser_xshut` **5**, `separation_switch` **33**, servos yaw
-**26** / eleron_left **27** / eleron_right **32**. (`laser_int` is dropped — see the harness note.)
+**Discretes** — `ina226_alert` **29**, **`i2c1_power` 5** (switched rail for the external segment),
+`separation_switch` **33**, servos yaw **26** / eleron_left **27** / eleron_right **32**. (`laser_int`
+is dropped — see the harness note.)
 
 ### Rejected: moving BMP280 (or BNO055) to i2c:1 to close the altitude gap
 
@@ -678,6 +679,12 @@ board and must stay on the quiet on-PCB bus. Nothing flight-critical should ride
 | `adxl375_int` | **4** | ditto |
 | `laser_int` | **3** | VL53L4CX data-ready — the poll fallback is the same code path at 20 Hz |
 
+**REPURPOSED — same pin, new job**
+
+| net | GPIO | v0.1 | v1.0 |
+|---|---|---|---|
+| GPIO **5** | 5 | `laser_xshut` (laser reset only) | **`i2c1_power`** — gates the whole i2c:1 segment |
+
 **CHANGED — bus membership only, at the same physical pins**
 
 | device | v0.1 | v1.0 |
@@ -692,31 +699,61 @@ Two lines in `board.config`. Nothing else in the `sensors` or `buses` blocks cha
 `i2c:0` sda **7** / scl **8** · `i2c:1` sda **31** / scl **30** · `spi:1` sck **48** / mosi **47** /
 miso **46** · `lsm6dso32_cs` **50** · `lsm6dso32_int1` **28** · `uart:1` tx **20** · `uart:2` tx **22** /
 rx **23** · servos **26** / **27** / **32** · `separation_switch` **33** · `ina226_alert` **29** ·
-`laser_xshut` **5**. INA226 stays on i2c:1; BNO055, ICP-10111 and BMP280 stay on i2c:0.
+INA226 stays on i2c:1; BNO055, ICP-10111 and BMP280 stay on i2c:0. GPIO **5** keeps its pin but
+changes role (see REPURPOSED above).
 
-### The laser harness: drop INT, keep XSHUT
+### The front harness: 8 wires to 5, and a switched i2c:1 rail instead of XSHUT
 
-Six wires reach the belly today — SDA, SCL, XSHUT, INT, power, ground — and connector count at the
-extremities is what actually fails. The two control lines are not the same call.
+The real constraint is the CONNECTOR, not the wire count. The front lane carries **8** today:
 
-**`laser_int` (GPIO 3) — DROP.** `_setup_interrupt()` returns early when no `int_pin` is declared, and
-the run loop waits on `self._ready.wait(self._period_ms)`, which covers the interrupt and the timeout
-fallback in ONE path with no branch. At the configured `period_ms` **50** (20 Hz) against an `agl`
-freshness window of **100 ms**, polling carries 2x margin. The only thing lost is the `irq_runs`
-telemetry column, whose value is detecting a dead interrupt wire — a diagnostic that exists because the
-wire exists. Removing the wire removes the failure it watches for.
+| today (8) | v1.0 (5) |
+|---|---|
+| recorder UART ×1 | recorder UART ×1 |
+| GNSS UART ×2 | — *(GNSS chip moves to the main board)* |
+| pitot + laser: INT, SDA, SCL, 3V3, GND ×5 | SDA, SCL, **switched 3V3**, GND ×4 |
 
-(It would be a different answer at a much higher AGL rate, where poll jitter starts eating the freshness
-budget. It is not, at 20 Hz.)
+**8 → 5 frees enough edge for a USB connector on the same face**, so the recorder can be serviced or
+swapped without opening the airframe. That is worth more than any single signal on the lane.
 
-**`laser_xshut` (GPIO 5) — KEEP, and do NOT strap it.** This is not a convenience line: `_reset()`
-drives it low→high to reboot a wedged ToF **without rebooting the board**, and the driver's own note
-records that with no `xshut_pin` "the sensor is assumed always-on". Strapping it high buys one wire and
-gives up the only in-flight recovery for that sensor — on an airframe with documented I2C latch-up
-(the ICP-10111 general-call recovery exists for exactly this class of failure). A hung laser would then
-stay hung for the rest of the flight, taking `agl` and the landing trigger with it.
+**`laser_int` — dropped.** `_setup_interrupt()` returns early when no `int_pin` is declared, and the run
+loop waits on `_ready.wait(period_ms)`, which covers interrupt and timeout in ONE path with no branch.
+At `period_ms` **50** (20 Hz) against a **100 ms** `agl` window, polling carries 2x margin. The only
+loss is the `irq_runs` column, whose job is detecting a dead interrupt wire — a diagnostic that exists
+because the wire does.
 
-So the harness goes **six wires to five**, not to four.
+**`laser_xshut` — replaced by a GATED 3V3 on the i2c:1 segment.** Strictly better than a dedicated reset
+line, and it costs no extra pin: GPIO **5** stops being `laser_xshut` and becomes the rail enable.
+
+* **It recovers BOTH external devices.** XSHUT resets the laser only; a wedged SDP810 was never
+  recoverable at all. Cutting the segment rail power-cycles the whole cluster.
+* **It can ISOLATE, which XSHUT cannot.** A device holding SDA low through a wiring fault stays holding
+  it after an XSHUT reset. Removing power removes the device from the bus, so a failed harness can be
+  cut off entirely and the remaining flight flown without it.
+* **Losing the segment is survivable, by design already in the code.** `agl` and `airspeed` are both
+  single-provider, but both fall back onto i2c:0 — the bus that is never cut. The landing detector
+  explicitly drops to `elevation` when `agl` has no source (`sequencer.py`), and the governor's airspeed
+  backbone is the accel+GNSS estimator with the pitot as a corrector.
+
+#### What this needs to be real
+
+The XSHUT path was never an in-flight recovery either — `_reset()` is called from `setup()` and nowhere
+else, so a wedged laser stays wedged today whatever the wiring. Switching the rail does not change that
+by itself; the recovery has to be written, mirroring the ICP-10111's `strike()` / `_recover()`:
+
+* **Pull-ups belong on the SWITCHED side.** If the i2c:1 pull-ups stay on always-on 3V3 while the
+  devices lose power, their ESD diodes can clamp SDA/SCL and hold the segment low — power cut, bus still
+  stuck. The whole segment must go quiet together.
+* **Re-init is a full `setup()`, not a reset.** After a power cycle the VL53L4CX needs its configuration
+  and VHV calibration rewritten and the SDP810 its measurement command re-issued. `setup()` runs once at
+  bring-up today and is not re-entrant; making it so is the actual work.
+* **A policy that cannot oscillate.** Power-cycle once after N consecutive failures on the segment; if
+  the fault returns inside a window, cut the rail permanently and mark both devices down rather than
+  looping. A recovery that retries forever is worse than one that gives up and says so.
+* **Budget.** Detect at 3 strikes x 50 ms = **150 ms**, plus rail settle and re-init — call it
+  **~0.3-0.5 s**, roughly **1 m of altitude** at trim sink. Affordable in a ~100 s flight.
+
+Sizing is undemanding: the VL53L4CX peaks around 20 mA while ranging and the SDP810 draws a few mA, so a
+small load switch or a P-FET off GPIO 5 covers it.
 
 ## ADXL375 — the one software delta between v0.1 and v1.0
 
