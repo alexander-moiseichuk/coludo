@@ -137,8 +137,33 @@ def test_dashboard_carries_the_imu_calibration_column():
     assert b"'not calibrated'" in page and b"'OK'" in page
     # the report rides the TOOLTIP on the status itself, so it stays reachable with nothing to click
     assert b'title="${report}"' in page, 'the report must stay reachable when nothing is outstanding'
-    # every colspan must match the header width, or the empty-state row misaligns the table
-    assert b'colspan="13"' in page and b'colspan="12"' not in page
+    """
+    ONE board selection for the whole page.
+
+    Every section used to carry its own "board id" box, all written by selectBoard(). Seven copies of
+    one fact is seven chances to disagree, and nothing showed which box a button was about to read --
+    so a command could go to a board the operator was no longer looking at. The table is the only
+    place a board is chosen now, and each section heading names its target.
+    """
+    assert b'placeholder="board id"' not in page, 'per-section board boxes must be gone'
+    assert page.count(b'function boardId(') == 1, 'exactly one reader for the selection'
+    assert b"row.classList.toggle('chosen'" in page, 'the chosen row must be marked in the table'
+    assert b'markChosen();' in page, 'and re-marked after each heartbeat re-render'
+
+    """
+    Every colspan must match the header width, or the empty-state row misaligns the table.
+
+    DERIVED from the header rather than hardcoded: this assertion previously pinned colspan="13", so
+    adding a column made a correct page fail a test that was only ever meant to catch a mismatch. A
+    test that has to be edited whenever the thing it guards legitimately changes teaches people to
+    edit it without reading it.
+    """
+    import re as _re
+    head = _re.search(rb'<thead>.*?</thead>', page, _re.S)
+    assert head, 'no table header found'
+    columns = len(_re.findall(rb'<th[ >]', head.group(0)))
+    spans = {int(n) for n in _re.findall(rb'colspan="(\d+)"', page)}
+    assert spans == {columns}, 'colspan %s does not match the %d-column header' % (sorted(spans), columns)
 
     # a NOT-READY board must be obvious on the ROW, not buried in a cell an operator has to read
     assert b'function notReady' in page and b'tr.notready' in page

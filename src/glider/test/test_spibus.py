@@ -17,6 +17,7 @@ first, which is exactly what repeats-instead-of-increments would break.
 import asyncio
 
 import config_default
+import layout
 import spibus
 
 _ADXL_DEVID: int = 0x00  # ADXL375 device-id register -> 0xE5
@@ -63,6 +64,19 @@ async def amain():
     assert spibus.bind(board, {'bus': 'spi', 'id': 7}) is None
     assert spibus.bind(board, {}) is bus  # defaults to spi:1, the only SPI bus declared
 
+    """
+    The ADXL375 is FITTED ON v0.1 ONLY, so this test asks the board which revision it is before
+    requiring the part. On v1.0 it is physically absent -- `layout.apply()` disables it, and the
+    hardware is gone -- and a test that fails on a board built exactly as designed is a test that
+    teaches people to ignore red.
+
+    Detected rather than configured: the point of the check is what is WIRED, and a config claiming an
+    ADXL on a board without one should still skip rather than fail. An undecided scan keeps the strict
+    behaviour, since "cannot tell" is not evidence the part is absent.
+    """
+    revision, revision_detail = layout.detect(board)
+    adxl_fitted = revision != 'v1.0'
+
     adxl = bus.device(pins['adxl375_cs'])                    # mb_bit 6 (ADXL family default)
     lsm = bus.device(pins['lsm6dso32_cs'], mb_bit=None)      # increments via CTRL3_C.IF_INC instead
 
@@ -79,9 +93,11 @@ async def amain():
     """
     await lsm.write(_LSM_CTRL3_C, bytes([_LSM_CFG_C]))
 
-    # single-register reads: both parts answer with their documented id
-    adxl_settle = await _settled(adxl, _ADXL_DEVID, _ADXL_ID)
-    assert adxl_settle >= 0, 'ADXL375 DEVID never read 0xE5'
+    # single-register reads: every fitted part answers with its documented id
+    adxl_settle = -1
+    if adxl_fitted:
+        adxl_settle = await _settled(adxl, _ADXL_DEVID, _ADXL_ID)
+        assert adxl_settle >= 0, 'ADXL375 DEVID never read 0xE5 (layout %s: %s)' % (revision, revision_detail)
     lsm_settle = await _settled(lsm, _LSM_WHOAMI, _LSM_ID)
     assert lsm_settle >= 0, 'LSM6DSO32 WHO_AM_I never read 0x6C'
 
@@ -90,15 +106,19 @@ async def amain():
     NEXT register, which is reserved/zero on both parts. If auto-increment were misconfigured the
     second byte would repeat the id -- so `!=` is the assertion that catches a wrong mb_bit.
     """
-    pair = await adxl.read(_ADXL_DEVID, 2)
-    assert pair[0] == _ADXL_ID and pair[1] != _ADXL_ID, pair
+    if adxl_fitted:
+        pair = await adxl.read(_ADXL_DEVID, 2)
+        assert pair[0] == _ADXL_ID and pair[1] != _ADXL_ID, pair
     pair = await lsm.read(_LSM_WHOAMI, 2)
     assert pair[0] == _LSM_ID and pair[1] != _LSM_ID, pair
 
     # read_into() fills a caller buffer without allocating a return value (the GC-off path drivers use)
     buf = bytearray(1)
-    await adxl.read_into(_ADXL_DEVID, buf)
-    assert buf[0] == _ADXL_ID
+    await lsm.read_into(_LSM_WHOAMI, buf)
+    assert buf[0] == _LSM_ID
+    if adxl_fitted:
+        await adxl.read_into(_ADXL_DEVID, buf)
+        assert buf[0] == _ADXL_ID
 
     """
     diagnose() -- the wire-fault classifier a failed driver's diagnose() awaits, and the one that
@@ -107,20 +127,27 @@ async def amain():
     POSITIVE: a healthy part with its true id -> 'ok'. NEGATIVE: the same healthy part against a WRONG
     expected id must be called out as the wrong device rather than passed.
     """
-    assert 'ok' in await adxl.diagnose(_ADXL_DEVID, _ADXL_ID)
     assert 'ok' in await lsm.diagnose(_LSM_WHOAMI, _LSM_ID)
-    verdict = await adxl.diagnose(_ADXL_DEVID, 0x42)
+    # the NEGATIVE runs against whichever part IS fitted -- it is the classifier being tested, not the
+    # device, so it must not be lost with the ADXL
+    verdict = await lsm.diagnose(_LSM_WHOAMI, 0x42)
     assert 'wrong device' in verdict, verdict
+    if adxl_fitted:
+        assert 'ok' in await adxl.diagnose(_ADXL_DEVID, _ADXL_ID)
+        assert 'wrong device' in await adxl.diagnose(_ADXL_DEVID, 0x42)
 
     # retune() re-inits the peripheral in place (bench frequency calibration, no reboot); the shared
     # device windows keep working because they transact through the bus, not a captured peripheral
     await bus.retune(1_000_000)
-    assert await _settled(adxl, _ADXL_DEVID, _ADXL_ID) >= 0, 'ADXL after retune'
+    assert await _settled(lsm, _LSM_WHOAMI, _LSM_ID) >= 0, 'LSM after retune'
+    if adxl_fitted:
+        assert await _settled(adxl, _ADXL_DEVID, _ADXL_ID) >= 0, 'ADXL after retune'
     await bus.retune(spec.get('baud', 5_000_000))
     assert await _settled(lsm, _LSM_WHOAMI, _LSM_ID) >= 0, 'LSM after retune restored the configured baud'
 
-    print('ok: spibus cached per id, bind +/-, framed read/read_into, mb_bit auto-increment both '
-          'conventions, diagnose +/-, retune  (settle reads: adxl %d, lsm %d)' % (adxl_settle, lsm_settle))
+    print('ok: spibus cached per id, bind +/-, framed read/read_into, mb_bit auto-increment, '
+          'diagnose +/-, retune  (layout %s, lsm settle %d, adxl %s)'
+          % (revision, lsm_settle, adxl_settle if adxl_fitted else 'NOT FITTED - skipped'))
 
 
 asyncio.run(amain())

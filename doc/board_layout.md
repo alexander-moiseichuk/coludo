@@ -1,9 +1,97 @@
-# Board layout & wiring — Phase-5 board setup
+# Board layout & wiring — v1.0 (target)
 
-Physical partitioning of the electronics into small carrier boards, the harness to the ESP32-P4
+**Designed, not built.** The physical consequence of the v1.0 decisions in
+[`hardware.md`](hardware.md): main and power merged, the GNSS chip on the main board with only its
+antenna outboard, the front-panel devices alone on `i2c:1`, and no ADXL375. Pin numbers come from the
+same `config_default` + `layout.apply()` pair that generates
+[`waveshare_esp32p4_pins.md`](waveshare_esp32p4_pins.md).
+
+The design goal is unchanged — **minimise the connection count on the main board** — and v1.0 makes
+the biggest available cut: three of the seven carriers stop being carriers at all.
+
+## What moves onto the main board
+
+* **Power stage + INA226.** Carrier C disappears; the battery input, the servo-rail converters, the
+  shunt and the current sense become an energy island on the main board. INA226 joins `i2c:0` with
+  the on-board sensors — it must not sit on the front bus, which is the one that can be lost.
+  **This merge is what makes the USB 5 V Schottky mandatory** (`hardware.md` → *REQUIRED on v1.0*):
+  once the island is on the board, plugging USB in with the battery connected puts two sources on one
+  net, and the isolated buck cannot sink the current that results.
+* **BNO055 + BMP280.** The attitude primary and the altitude backup are on-board devices on `i2c:0`,
+  short traces, no cable.
+* **GNSS chip.** Only the antenna stays outboard (an active antenna carries its own LNA, so the stage
+  that sets sensitivity is away from the switching noise). The 4-pin UART plug is gone; what remains
+  is one RF run to the antenna connector.
+
+## Carriers
+
+### A · Front-panel cluster  *(nose, `i2c:1` at 100 kHz)*
+- **Devices:** ICP-10111 (`0x63`, altitude primary) · SDP810 (`0x25`, pitot) · VL53L4CX (`0x29`,
+  down-facing AGL).
+- **Lane → main board:** `[UART1 TX 20, SDA1 31, SCL1 30, 3V3, GND]` — **5-pin**, shared with the
+  recorder because both run forward down the same side. This is the 8→5 cut that frees enough edge
+  for a USB connector on the same face.
+- **No INT, no XSHUT.** `laser_int` is dropped (the poll fallback is the same code path at 20 Hz) and
+  `laser_xshut` with it (`_reset()` runs only at `setup()`, so it was never in-flight recovery).
+- Bus runs at **100 kHz**: nothing here exceeds 50 Hz, so a quarter of the clock costs no sample rate
+  and buys edge margin on the longest run in the airframe.
+
+### B · IMU (SPI) carrier  *(mid, under the main board, reversed)*
+- **Devices:** LSM6DSO32 alone (primary accel + the only gyro, CS 50). ADXL375 not fitted.
+- **Plug → main board:** `[SCK 48, MOSI 47, MISO 46, 3V3, GND, CS 50, INT 28]` — **7-pin** (was 8).
+- Still its own bus family on purpose: the attitude backup is computed from this part, so it must not
+  share a failure domain with the BNO055 on `i2c:0`.
+
+### C · Recorder + GNSS antenna  *(forward-mid)*
+- Recorder (Luckfox) rides the shared front lane above; the camera connects to it, not to the main
+  board. The GNSS antenna sits beside it — the two are already the pair that share a rail.
+
+### D · Servos  *(3× SG90 at the fins, tail)* — `[PWM 26, 27, 32, GND]`, **4-pin**, unchanged.
+
+### E · Separation switch — `[GPIO 33, GND]`, 2-pin or copper-pad, unchanged.
+
+**Plug census: 4** (front lane 5-pin, IMU 7-pin, servos 4-pin, separation 2-pin) — down from **7**.
+Two of the three removed plugs were not simplifications of the harness but deletions of it: the power
+and GNSS cables stop existing rather than getting shorter.
+
+**That is the point, and it is measured in grams rather than tidiness.** The deleted harnesses, the
+connectors that went with them and the shorter nose (7D runs 10 cm longer than 7C) are expected to save
+**30–50 g**, taking the glider from 287.5 g to **237–257 g**. On this airframe 50 g is worth **45 m of
+median miss and seven in-zone landings** (`TMS-7-preflight`: 285 g → 88–91 m and 0/10, against 235 g →
+37–46 m and 7/10). No control change available to us moves accuracy nearly that far — so the carrier
+count above is an accuracy argument, not a housekeeping one.
+
+# Transition v0.1 → v1.0
+
+Physical work, in the order it is least annoying to do. The per-GPIO delta is generated in
+[`waveshare_esp32p4_pins.md`](waveshare_esp32p4_pins.md); this is the carrier-level view.
+
+| # | Change | Effect |
+|---|---|---|
+| 1 | Move ICP-10111 off carrier A's `i2c:0` daisy onto `i2c:1` | front cluster becomes one bus, one lane |
+| 2 | Move SDP810 and VL53L4CX to `i2c:1` with it | `i2c:0` keeps only on-board devices |
+| 3 | Move INA226 to `i2c:0` | `i2c:1` is purely front-panel and expendable |
+| 4 | Drop `laser_int` (GPIO 3) and `laser_xshut` (GPIO 5) | front lane 6 wires → 4, plus the recorder UART = 5 |
+| 5 | Remove ADXL375 from carrier B; drop CS 49 and INT 4 | IMU plug 8-pin → 7-pin |
+| 6 | Set `i2c:1` to 100 kHz | edge margin on the long run |
+| 7 | *(new PCB only)* merge power + GNSS onto the main board | carriers C and D stop existing |
+
+**Steps 1–6 need no new PCB** — they are a rewire of the existing breadboard, and the firmware detects
+the result: `layout.detect()` votes on which bus the four moving addresses answer on, so a correctly
+rewired board comes up as v1.0 with no config edit. Step 7 is the board order.
+
+**No pin is renumbered by any of this.** Four GPIOs are freed (3, 4, 5, 49) and four devices change
+bus at unchanged pins; everything else is untouched, which is why the rewire is a re-plug rather than
+a re-route.
+
+# Board layout & wiring — v0.1 (as built)
+
+**The boards that exist today**: TMS-7C, TMS-7D and the breadboard, until the transition above is
+done. Physical partitioning of the electronics into small carrier boards, the harness to the ESP32-P4
 main board, and the placement/assembly path to the proto (maket) glider. Pin numbers are the live
 values from [`../src/glider/config_default.py`](../src/glider/config_default.py) (`buses` + `pins`,
-hardware-validated by `test/test_pins.py`) — **not** the stale `waveshare_esp32p4_pins.md`.
+hardware-validated by `test/test_pins.py`); `waveshare_esp32p4_pins.md` is generated from the same
+source and carries both revisions.
 
 Design goal: **minimise the connection count on the main board.** Cable count = carrier count, not
 device count — a shared bus daisy-chains N devices onto one cable. The two levers applied here are
@@ -150,8 +238,14 @@ disabled pin never collides in `verify`.
   `config_default` by `tools/gen_pinmap.py` (`--check` gates staleness); GPIO 2 / LED removed.
 - **When you wire it:** the debug INTs (ADXL 4, VL53 3) are on by default and self-poll if silent;
   set them (and `laser_xshut`) to `null` per board once you finalise which are physically connected.
+  **v1.0 settles this by deletion** — all three pins are dropped, and `layout.apply()` nulls the laser
+  pair automatically when the revision resolves, so nothing has to be remembered per board.
 
 ## GPIO21 (UART1 RX) is not wired on the v0.1 PCB
+
+> Carried into the v1.0 review as a board question: the recorder link is write-only today, so the
+> missing return path costs nothing that is currently used. Route it or drop it deliberately on the
+> new board rather than inheriting the omission.
 
 The netlist confirms it: **20 of 22 GPIOs route to their connector pads, and GPIO21 has no copper.**
 UART1 TX (GPIO20) reaches the Recorder's RX through front pin 8, but the return path — Recorder TX

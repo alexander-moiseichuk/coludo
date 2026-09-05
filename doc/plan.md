@@ -60,8 +60,13 @@ Required hardware and the phased development roadmap. Architecture lives in
   the TMS-7 flight envelope + airframe notes in `coludo.md`. Bench re-run + numbers refreshed.
 - **Phase 5 — field testing (next).** Staged ladder: maket walk-test → telemetry launch → powered
   launch, likely on the wider **TMS-8** airframe. See below.
-- **Firmware / toolchain — PINNED at `v1.29.0-preview.414.g533a154c8a`** for Phase 5 (repo `mpy-cross`
-  gate at `preview.417`, same mpy v6.3; `deploy.sh` ships **`.mpy`**, cross-compiled on the host -- `main.py` is the one source file left on the board). This
+- **Firmware / toolchain — the board runs `v1.29.0` OFFICIAL** (moved off `preview.414.g533a154c8a`
+  on 2026-09-04; the full board suite is **57/57** on it, no delta). The repo `mpy-cross` is still
+  `preview.417` and stays there deliberately: the contract between compiler and runtime is the **mpy
+  format version**, and both sides emit/accept **v6.3**, which the passing suite demonstrates. Matching
+  the version strings would be cosmetic, and swapping the toolchain in the same step as the runtime
+  would have confounded the comparison. `deploy.sh` ships **`.mpy`**, cross-compiled on the host --
+  `main.py` is the one source file left on the board. This
   build already carries the **PSRAM speed-up** — heap memcpy 11.8 → **33.5 MB/s (2.85×)**
   (`doc/benches/WaveShare_esp32p4-micropython-findings.md`) — which cascades into every PSRAM-bound path
   (slice-assign, the Recorder rings). **Do not chase newer previews.** Reviewed 414→434 (20 commits): all

@@ -1142,6 +1142,74 @@ three for computed values.
 - `update(name: str, props: dict) -> list` _(classmethod)_
 - `stats(name: str) -> dict` _(classmethod)_
 
+## `layout.py`
+
+_Tested by `test/test_layout.py`._
+
+Which board is this -- v0.1 or v1.0 -- decided by I2C scan, before any driver is set up.
+
+The two layouts differ only in which bus each device hangs off (doc/hardware.md, "Transition"), so one
+firmware can serve both if it can tell them apart. It can: four addresses swap buses between the
+revisions, which is four independent votes rather than one hinge, so a single dead device cannot flip
+the verdict.
+
+                       i2c:0                              i2c:1
+    v0.1   0x28 0x63 0x76 0x25 0x29             0x40
+    v1.0   0x28 0x76 0x40                       0x63 0x25 0x29
+
+`0x28` (BNO055) and `0x76` (BMP280) sit on i2c:0 in BOTH, so they say nothing about the layout -- they
+are the sanity check that the scan worked at all rather than returning an empty bus.
+
+Scanning does NOT go through i2cbus.get(): that caches a Bus per id, and the cached frequency would then
+outlive detection -- a scan at 100 kHz would pin the fast bus at 100 kHz for the whole flight. Raw I2C
+objects are built here, scanned, and dropped, so the drivers create the real buses afterwards at
+whatever speed the chosen layout declares.
+
+### `detect(cfg: dict) -> tuple`
+
+Decide the layout from the buses themselves.
+
+Each moved device votes for whichever revision puts it on the bus it actually answered on. A device
+that answers on neither expected bus, or not at all, abstains -- so an unfitted or dead part costs a
+vote instead of casting a wrong one.
+
+Args:
+    cfg - the board config, read for bus pins only (nothing is mutated).
+
+Returns:
+    (name, detail) where name is 'v0.1' / 'v1.0' / None. None means undecided, and the caller must
+    then leave the config exactly as written -- a guess here mis-buses every sensor at once.
+
+### `apply(cfg: dict, revision: str) -> list`
+
+Rewrite the config in place for a revision: bus membership, the i2c:1 clock, and what is not fitted.
+
+Only the four moving devices, one bus frequency and the not-fitted list differ between revisions --
+no pin is renumbered, so `pins` is untouched. The laser's optional control pins are dropped on v1.0
+because those GPIOs are freed there; the driver already treats both as optional.
+
+Args:
+    cfg - the board config, MUTATED.
+    revision - 'v0.1' or 'v1.0'.
+
+Returns:
+    A list of human-readable change strings, for the boot log. Empty when the config already
+    matched, which is the normal case on a board whose profile was written for it.
+
+### `resolve(cfg: dict, log=print) -> str`
+
+The boot entry point: honour an explicit `board.layout`, else detect, else change nothing.
+
+An explicit 'v0.1' / 'v1.0' always wins over the scan, so a board can be pinned when a sensor is
+unfitted and would otherwise abstain its way to a wrong verdict. 'auto' (the default) scans.
+
+Args:
+    cfg - the board config, mutated when a revision is applied.
+    log - line logger.
+
+Returns:
+    The revision applied, or None when nothing was changed.
+
 ## `main.py`
 
 _Tested by `test/test_main.py`._
