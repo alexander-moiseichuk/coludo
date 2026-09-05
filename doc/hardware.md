@@ -601,70 +601,76 @@ Two usable controllers is the hard ceiling (`I2C(2)` hard-crashes the P4).
 So the SPI bus stays, carrying one device instead of two. The v0.1 wiring fault it enabled is a
 netlist error to fix on the new board, not a reason to delete the bus.
 
-## Proposed v1.0 allocation
+## Proposed v1.0 allocation — minimum I2C churn
 
-**i2c:0 — INTERNAL** (short on-board traces), SDA **7** / SCL **8**
+The split only has to achieve one thing: keep the LONG external harness off the bus that carries the
+flight-critical sensors. The cheapest way to do that moves **two devices**, and INA226 does not move at
+all.
 
-| device | addr | provides |
+**i2c:0 — QUIET / FLIGHT-CRITICAL**, SDA **7** / SCL **8** (unchanged pins)
+
+| device | addr | moved? |
 |---|---|---|
-| BNO055 | `0x28` | `attitude` p0, `accel` p2 |
-| ICP-10111 | `0x63` | `altitude` p0 |
-| BMP280 | `0x76` | `altitude` p1 |
-| INA226 | `0x40` | `power` — internal once the boards merge |
+| BNO055 | `0x28` | no |
+| ICP-10111 | `0x63` | no |
+| BMP280 | `0x76` | no |
 
-**i2c:1 — EXTERNAL** (long harness), SDA **31** / SCL **30**
+**i2c:1 — NOISY / NON-CRITICAL**, SDA **31** / SCL **30** (unchanged pins)
 
-| device | addr | why here |
+| device | addr | moved? |
 |---|---|---|
-| SDP810 | `0x25` | nose, pitot tubing |
-| VL53L4CX | `0x29` | downward-facing, AGL |
+| INA226 | `0x40` | **no** — already here |
+| SDP810 | `0x25` | **yes**, from i2c:0 — nose, pitot tubing |
+| VL53L4CX | `0x29` | **yes**, from i2c:0 — downward-facing, AGL |
+
+Two moves, both of them devices that *must* move for the split to mean anything. No address conflicts on
+either bus.
+
+The partition is better read as **quiet/critical vs noisy/non-critical** than as internal/external: the
+INA226 sits on the switching power island and is explicitly *not* flight-critical (see the redundancy
+table below), so it belongs with the noisy harness rather than beside the attitude and altitude sensors.
+
+**This move also targets the measured defect.** The 0.50 % ICP-10111 frame corruption was measured with
+the pitot and the laser sharing i2c:0 — that is, with the two longest runs on the same bus as both
+baros. Taking them off is the most direct available attack on that number, independent of pull-up or
+trace-length changes.
 
 **spi:1 — RETAINED**, SCK **48** / MOSI **47** / MISO **46** — LSM6DSO32 only (cs **50**, int1 **28**).
-One device instead of two. It stays a separate bus family so the attitude backup does not share a
+One device instead of two, kept as a separate bus family so the attitude backup does not share a
 failure domain with the BNO055.
 
-**UART** — `uart:1` TX **20** @921600 (recorder to the Luckfox); `uart:2` TX **22** / RX **23** (GNSS
-chip, now on the main board).
+**UART** — `uart:1` TX **20** @921600 (recorder); `uart:2` TX **22** / RX **23** (GNSS chip, on-board).
 
 **Discretes** — `ina226_alert` **29**, `laser_xshut` **5**, `laser_int` **3**, `separation_switch`
 **33**, servos yaw **26** / eleron_left **27** / eleron_right **32**.
 
-## Pin delta v0.1 → v1.0 — what actually changes
+### An optional third move, if the altitude gap is worth closing
 
-The headline: **no pin is renumbered.** Everything that survives keeps its v0.1 GPIO, so only the rows
-below need checking.
+The redundancy table below flags exactly one gap: **altitude primary (`icp10111`) and backup
+(`bmp280`) share a bus**, so a bus-level fault takes both. Moving **BMP280 to i2c:1** closes it —
+primary and backup then sit in different failure domains, and whichever bus dies, one altitude source
+survives. Today neither does.
 
-**REMOVED — free these two GPIOs**
+The cost is that the backup lands on the more failure-prone bus (the one with the long harness). That is
+still the right side of the trade: the point of redundancy is that the two do not fail *together*, and a
+backup that dies with its primary is not one. Listed as optional because it is a third transition and
+the two-move split already delivers the isolation the harness split was for.
 
-| net | v0.1 GPIO | why |
-|---|---|---|
-| `adxl375_cs` | **49** | ADXL375 dropped (item 4) |
-| `adxl375_int` | **4** | ditto |
+## ADXL375 — the one software delta between v0.1 and v1.0
 
-**UNCHANGED — every other pin, no re-check needed**
+With the LSM6DSO32 staying on SPI, the ADXL375 is the only device difference between the boards, and
+`accel` simply loses its priority-1 provider: `lsm6dso32` p0 stays primary, `bno055` p2 stays the
+fallback. Priorities only order the providers, so a gap in the numbering costs nothing.
 
-`i2c:0` sda **7** / scl **8** · `i2c:1` sda **31** / scl **30** · `spi:1` sck **48** / mosi **47** /
-miso **46** · `lsm6dso32_cs` **50** · `lsm6dso32_int1` **28** · `uart:1` tx **20** · `uart:2` tx **22** /
-rx **23** · servos **26** / **27** / **32** · `separation_switch` **33** · `ina226_alert` **29** ·
-`laser_xshut` **5** · `laser_int` **3**.
+Declare it per-airframe with the existing `absent` mechanism rather than letting setup fail and calling
+it detection. A device that is not fitted and a device that is broken should not look the same in
+`verify`: `absent` is silent and intentional, while a missing part left enabled burns `setup_retries`
+attempts and then reports a failure that an operator has to learn to ignore — which is how a real fault
+gets ignored too.
 
-**CHANGED — bus membership only, same physical pins**
-
-| device | v0.1 | v1.0 | note |
-|---|---|---|---|
-| SDP810 | i2c:0 | **i2c:1** | joins the external cluster |
-| VL53L4CX | i2c:0 | **i2c:1** | joins the external cluster |
-| INA226 | i2c:1 | **i2c:0** | becomes internal once power merges |
-
-These three are `board.config` edits plus routing on the new PCB — no pin numbers move, so the config
-`pins` block only loses two entries.
-
-### One further reduction worth considering
-
-The external harness needs SDA, SCL, XSHUT, INT plus power — six wires to the extremities, where
-connector count is what actually fails. `laser_int` can be dropped in favour of polling (the AGL rate
-does not need an interrupt), taking it to five; and if `laser_xshut` is strapped at the sensor rather
-than driven, four. Fewer wires on the long run is worth more than either GPIO.
+So: keep the firmware default `enabled` (the default config describes a fully-populated board), and add
+`accel_adxl375` to the `absent` tuple of the v1.0 profiles only. TMS-7C and TMS-7D keep it active with
+no config change at all.
 
 ## GNSS: chip on the main board, antenna outboard with the recorder
 
