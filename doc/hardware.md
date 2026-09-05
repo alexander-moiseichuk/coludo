@@ -501,6 +501,133 @@ estimated flight envelope (peak accel / speed / apogee / glide range) is in
 [`doc/specs/coludo.md` → Flight envelope](../doc/specs/coludo.md).
 
 
+# Main board v0.2 — restructuring review (2026-09-04)
+
+Verdicts on the proposed v0.2 changes, each checked against the current config, the measured flight
+data and the ESP32-P4's own limits. Three are approved as proposed, one is approved with a caveat, and
+one is answered with a different change that reaches the same goal without the cost.
+
+## 1. Merge main + power onto one board — APPROVE
+
+Already the v0.2 direction. It deletes the inter-board harness and, with it, the two hand-jumpers per
+board that repair the v0.1 netlist error. Fewer connectors at the extremities is the single most
+reliable simplification available on this airframe.
+
+The one thing to design for is that a switching power stage now shares a substrate with the I2C bus and
+the IMU: keep the energy island partitioned, with its own ground pour region and a single-point tie, so
+servo transients (~4 A when three fins slew) do not appear as ground bounce under the sensors.
+
+## 2. Merge GNSS onto the main board — APPROVE, with one caveat
+
+Cuts a power run and a UART run, both worth having. Two notes:
+
+* The receiver front-end is RF-sensitive and will now sit beside the switching stage and the servo
+  currents. Separating the antenna (as planned) handles radiated coupling but not **conducted** noise on
+  the receiver supply — give the GNSS its own ferrite/LC-filtered branch off the main rail rather than a
+  bare tap.
+* This retires a standing diagnostic trap. Today GNSS sits on the recorder power cluster, so it probes
+  DEAD over USB and that has already cost one real investigation. After the merge that asymmetry
+  disappears, which is a genuine debugging improvement, not just tidiness.
+
+## 3. Separate I2C cluster for SDP810 + VL53L4CX — STRONGLY APPROVE
+
+The best of the proposals, and it should be stated as a reliability change rather than a layout one.
+
+Those two are precisely the devices at the airframe **extremities** — the pitot in the nose with its
+tubing, the laser pointing down — so they carry the long harness runs, the added capacitance and the
+connector count. Every other I2C device is on-board with short traces. Splitting on that boundary means
+a fault, a stretched harness or a marginal connector on the long runs cannot take down the BNO055 and
+the baros, which are flight-critical. That is the concrete answer to the standing "single I2C bus is a
+single point of failure for every sensor" finding.
+
+It also uses the silicon budget exactly: the ESP32-P4 exposes **two** usable HW I2C controllers, and
+`I2C(2)` hard-crashes the board. Two clusters is the maximum, so the only question was where to cut, and
+internal-vs-external is the right seam.
+
+## 4. Drop the ADXL375 — APPROVE
+
+Supported by measurement, not preference. Peak acceleration across the board HITL matrix is **3.3 / 3.7 /
+3.8 / 4.3 g**, and `flight_kpi` prints a KEEP/DROP verdict per capture that reads DROP. The part's only
+edge over the LSM6DSO32 is surviving **>32 g** without clipping, and nothing in the measured envelope
+approaches a quarter of that. It costs a chip-select, an interrupt line and board area for a case that
+has not occurred.
+
+## 5. Drop the LSM6DSO32 — DISAGREE AS PROPOSED; move it to I2C instead
+
+The simplification goal is right; removing the part is the expensive way to reach it.
+
+**What removal actually costs.** The LSM6DSO32 is not a second accelerometer. It is the primary `accel`
+AND the only `rate` (gyro) source, and the attitude **backup** — the complementary filter in
+`tasks/attitude.py` — is built from exactly those two channels. Remove it and one BNO055 failure takes
+attitude, accel and gyro **simultaneously**: a single part becomes the single point of failure for the
+entire control input. The project's own next-work ranking calls attitude redundancy the biggest
+available stability win, and this would reverse it.
+
+**What removal does NOT cost, contrary to the obvious worry.** Two fears do not survive checking:
+
+* *Accel range.* The BNO055's +/-16 g is adequate on the measured data (4.3 g peak, ~4x headroom). The
+  "8-12 g boost" figure in the LSM6DSO32 rationale above is a generic solid-motor estimate, not this
+  airframe: 15 N average against a ~467 g stack is ~3.3 g plus 1 g static.
+* *Losing the gyro.* The **BNO055 already reads its own gyro** — bytes 12..17 of the same 24-byte block
+  it reads for attitude, at 16 LSB/deg/s — and uses it internally to detect a frozen Euler. It simply
+  does not publish `rate`. Publishing it is a small driver change at **zero extra bus cost**. So the PID
+  D term would survive. What would not survive is *independence*: a gyro derived from the same part is a
+  fallback, not redundancy.
+
+**The change that reaches the goal instead: keep the part, move it from SPI to the internal I2C
+cluster, and delete the SPI bus entirely.**
+
+* Frees **six GPIOs** — 46/47/48 (SCK/MOSI/MISO), 49 and 50 (the two chip-selects), and 4 (the ADXL
+  interrupt, gone with item 4). That is more pins than dropping the sensor would free while keeping the
+  sensor.
+* **Eliminates a whole bug class.** The v0.1 fault that needed two hand-jumpers per board and cost a long
+  debugging session was an SPI wiring error — clock taken from the aux row, which silences the part on
+  SPI *and* I2C and reads exactly like a dead chip. On I2C that failure mode cannot recur. It also
+  retires the SPI first-transaction-stale quirk that makes `spibus` discard its first 16 reads.
+* **No net bus-load increase.** The part was moved to SPI "for clean high-rate reads" when i2c:0 carried
+  six devices. In the new layout the internal cluster carries five, because SDP810 and VL53L4CX have
+  left for the external bus. At 104 Hz and ~12 bytes per sample, a 400 kHz bus spends ~0.3 ms per read.
+
+If the airframe budget later forces the sensor out anyway, do it as a deliberate, separate decision with
+the BNO055 `rate` publish landed first — not as a side effect of a layout change.
+
+## Proposed v0.2 allocation
+
+Addresses are conflict-free on both clusters.
+
+**i2c:0 — INTERNAL** (short on-board traces), SDA **7** / SCL **8**
+
+| device | addr | provides |
+|---|---|---|
+| BNO055 | `0x28` | `attitude` p0, `accel` p2 |
+| LSM6DSO32 | `0x6A` | `accel` p0, `rate` p0 — **moved off SPI** |
+| ICP-10111 | `0x63` | `altitude` p0 |
+| BMP280 | `0x76` | `altitude` p1 |
+| INA226 | `0x40` | `power` — internal once the boards merge |
+
+**i2c:1 — EXTERNAL** (long harness), SDA **31** / SCL **30**
+
+| device | addr | why here |
+|---|---|---|
+| SDP810 | `0x25` | nose, pitot tubing |
+| VL53L4CX | `0x29` | downward-facing, AGL |
+
+**UART** — `uart:1` TX **20** @921600 (recorder to the Luckfox); `uart:2` TX **22** / RX **23** (GNSS,
+now on-board).
+
+**Discretes** — `lsm6dso32_int1` **28**, `ina226_alert` **29**, `laser_xshut` **5**, `laser_int` **3**,
+`separation_switch` **33**, servos yaw **26** / eleron_left **27** / eleron_right **32**.
+
+**Freed by this layout: GPIO 4, 46, 47, 48, 49, 50.**
+
+### One further reduction worth considering
+
+The external harness currently needs SDA, SCL, XSHUT, INT plus power — six wires to the extremities,
+where connector count is what actually fails. `laser_int` can be dropped in favour of polling (the AGL
+rate does not need an interrupt), taking it to five; and if `laser_xshut` is strapped at the sensor
+rather than driven, four. Fewer wires on the long run is worth more than either GPIO.
+
+
 # Potential configurations
 
 There are a number of composition options possible
