@@ -601,143 +601,111 @@ Two usable controllers is the hard ceiling (`I2C(2)` hard-crashes the P4).
 So the SPI bus stays, carrying one device instead of two. The v0.1 wiring fault it enabled is a
 netlist error to fix on the new board, not a reason to delete the bus.
 
-## Proposed v1.0 allocation — minimum I2C churn
+## v1.0 allocation — DECIDED
 
-The split has one job: keep the LONG external harness off the bus carrying the flight-critical sensors.
-Three devices move — the two that must, plus the INA226, which leaves i2c:1 so that bus becomes a single
-lane to one connector (see below).
+Two clusters split **on-board vs front-panel**, which is simultaneously the fast/slow split, the
+kept/expendable split, and the short-trace/long-harness split. One line does all four jobs.
 
-**i2c:0 — QUIET / FLIGHT-CRITICAL**, SDA **7** / SCL **8** (unchanged pins)
+**i2c:0 — ON-BOARD, 400 kHz**, SDA **7** / SCL **8**
 
-| device | addr | moved? |
-|---|---|---|
-| BNO055 | `0x28` | no |
-| ICP-10111 | `0x63` | no |
-| BMP280 | `0x76` | no |
-| INA226 | `0x40` | **yes**, from i2c:1 — leaves i2c:1 purely front-panel |
+| device | addr | rate | note |
+|---|---|---|---|
+| BNO055 | `0x28` | **100 Hz** | attitude primary; the only device needing the fast bus |
+| BMP280 | `0x76` | — | altitude BACKUP — now out of the ICP's general-call blast radius |
+| INA226 | `0x40` | 10 Hz | moved from i2c:1 so that bus is purely front-panel |
 
-**i2c:1 — EXTERNAL / EXPENDABLE** (front-panel devices only), SDA **31** / SCL **30** (unchanged pins)
+**i2c:1 — FRONT PANEL, 100 kHz**, SDA **31** / SCL **30**
 
-| device | addr | moved? |
-|---|---|---|
-| SDP810 | `0x25` | **yes**, from i2c:0 — nose, pitot tubing |
-| VL53L4CX | `0x29` | **yes**, from i2c:0 — downward-facing, AGL |
+| device | addr | rate | note |
+|---|---|---|---|
+| ICP-10111 | `0x63` | 50 Hz | altitude PRIMARY; physically nearest the front |
+| SDP810 | `0x25` | 50 Hz | nose, pitot tubing |
+| VL53L4CX | `0x29` | 20 Hz | downward-facing, AGL |
 
-Three moves. No address conflicts on either bus.
+**The 100 kHz is the point, not a compromise.** Nothing on this bus exceeds 50 Hz, so a quarter of the
+clock costs nothing — three devices at 50/50/20 Hz sit under 20 % utilisation — while slower edges buy
+real margin on a long, unterminated harness. The bus that leaves the board runs at the speed the
+harness wants, not the speed the silicon allows.
 
-The partition is best read as **on-board vs front-panel**: i2c:0 is everything that lives on the PCB and
-cannot be unplugged, i2c:1 is only what reaches the airframe extremities through a connector. That also
-makes it the kept/expendable line — `agl` falls back to `elevation` and `airspeed` to the accel+GNSS
-estimator, both on i2c:0 — and it leaves i2c:1 as one lane to one connector rather than a stub plus a
-long run.
+**spi:1 — SCK 48 / MOSI 47 / MISO 46** — LSM6DSO32 alone (cs **50**, int1 **28**). Kept as a separate
+bus family so the attitude backup does not share a failure domain with the BNO055.
 
-#### INA226 to i2c:0 — approved, and the third problem is already handled
+**UART** — `uart:1` TX **20** @921600 (recorder); `uart:2` TX **22** / RX **23** (GNSS, on-board).
 
-Moving the on-board INA226 onto i2c:0 leaves i2c:1 carrying **only** the two front-panel devices, which
-makes it a single lane to one connector instead of a local stub plus a long run. That is a genuine
-layout and signal-integrity win: one segment, one pull-up pair, sized for one length.
+**Discretes** — `ina226_alert` **29**, `separation_switch` **33**, servos yaw **26** / eleron_left **27**
+/ eleron_right **32**.
 
-Three costs, of which two are the obvious ones:
+### What this arrangement buys
 
-1. **More noise on the critical bus.** The INA226 must sit beside the shunt, in the switching area, so
-   its stub reaches i2c:0 into the energy island. Mitigable by layout — short stub, continuous ground
-   reference beneath it, routed away from the switching node — but it is a real coupling path onto the
-   bus that already measures 0.50 % corrupted ICP-10111 frames.
-2. **One more device that can wedge the flight-critical bus.** i2c:0 goes from three devices to four —
-   still fewer than v0.1's five, so this is an improvement on today either way, but the added part sits
-   in the electrically harshest spot on the board.
-3. **The general-call blast radius** — the one that is easy to miss. The ICP-10111's latch-up recovery
-   fires an I2C **general-call reset**, and its own driver names the collateral: "it also resets peers
-   that honour it (bmp280, ina226)". Today the INA226 is on the other bus, so it never sees that call.
-   On i2c:0 it would, and an INA226 that takes a general-call reset comes back with **CALIB = 0** —
-   current and power readings then come back *wrong*, not absent, which is the worse failure.
+* **Altitude redundancy is finally split across failure domains.** Primary (`icp10111`, i2c:1) and
+  backup (`bmp280`, i2c:0) can no longer be lost together — the one redundancy gap this file has
+  flagged since the Gerber review. Whichever bus dies, an altitude source survives.
+* **The BMP280 leaves the general-call blast radius.** The ICP's latch-up recovery resets peers that
+  honour it; with the backup on the other bus, recovering the primary can no longer disturb it.
+* **The harness is one lane to one connector** — no local stub, one pull-up pair, sized for one length.
+* **The front bus can be slowed** without costing any device its rate.
 
-**Cost 3 is already paid.** `ina226.rearm()` re-writes CONFIG and CALIB for exactly this reason, and
-`icp10111._rearm_peers()` already calls it by name. The code was written defensively while the part sat
-on another bus; moving it to i2c:0 simply makes that path matter. No firmware change is needed.
+### What it does NOT fix
 
-#### Reconciling this with the older "isolate the icp10111" plan
-
-The Gerber review below recommends a different split — `i2c:0` = icp10111 **alone**, `i2c:1` =
-everything else — on the grounds that the ICP's general-call recovery resets its bus-mates. With only
-two controllers, that plan and this one are mutually exclusive, and they optimise different failures:
-
-* **isolate-the-ICP** removes the general-call collateral, but leaves the BNO055 sharing a bus with the
-  long front harness — so a connector fault takes out the attitude primary.
-* **quiet/expendable** (this plan) keeps the harness away from everything flight-critical, and accepts
-  general-call collateral on the BMP280 and INA226.
-
-The tie is broken by what happened since that review: **both affected peers gained `rearm()`**, so the
-general-call collateral is now recovered in software, automatically, within one read cycle. A harness
-fault is not recoverable in software at all. So the older recommendation is superseded rather than
-overruled — its concern was real and has since been fixed in the place it could be fixed.
-
-**This move also targets the measured defect.** The 0.50 % ICP-10111 frame corruption was measured with
-the pitot and the laser sharing i2c:0 — that is, with the two longest runs on the same bus as both
-baros. Taking them off is the most direct available attack on that number, independent of pull-up or
-trace-length changes.
-
-**spi:1 — RETAINED**, SCK **48** / MOSI **47** / MISO **46** — LSM6DSO32 only (cs **50**, int1 **28**).
-One device instead of two, kept as a separate bus family so the attitude backup does not share a
-failure domain with the BNO055.
-
-**UART** — `uart:1` TX **20** @921600 (recorder); `uart:2` TX **22** / RX **23** (GNSS chip, on-board).
-
-**Discretes** — `ina226_alert` **29**, `separation_switch` **33**, servos yaw **26** / eleron_left
-**27** / eleron_right **32**. (Both laser control lines are dropped — see the harness note.)
-
-### Rejected: moving BMP280 (or BNO055) to i2c:1 to close the altitude gap
-
-The redundancy table below flags one gap — altitude primary (`icp10111`) and backup (`bmp280`) share a
-bus — and the textbook fix is to split them across bus families. **Do not do it here.** The two buses do
-not fail at comparable rates, and that asymmetry inverts the answer:
-
-* **i2c:0 is entirely on-PCB** — soldered joints, short traces, nothing that moves. Its realistic
-  failure is not the bus but a *device* wedging it (SDA stuck low), which the ICP-10111's own
-  general-call recovery already exists to clear.
-* **i2c:1 runs to the airframe extremities** — the nose for the pitot, the belly for the laser, through
-  connectors and flex that see vibration, boost loads and handling between flights. It is the bus that
-  will actually break.
-
-Putting the altitude BACKUP on the harness bus lowers the chance of losing both baros while raising the
-chance of losing the backup on its own — trading a rare correlated failure for a common single one. And
-the asymmetry matters: losing the backup alone is survivable, because the primary keeps working. So the
-gap is best left as it is, with the ICP-10111's recovery path as the mitigation for the one correlated
-mode that is real.
-
-The same argument applies with more force to the BNO055: it is the most flight-critical device on the
-board and must stay on the quiet on-PCB bus. Nothing flight-critical should ride the harness.
+`icp10111` and `airspeed_sdp810` still share a bus, so the ICP's general call still reaches the pitot —
+which today has no `rearm()` and is started once in `setup()`. The layout moves that exposure; it does
+not remove it. Tracked separately as a firmware fix, not a board one.
 
 ## Pin delta v0.1 → v1.0 — what actually changes
 
-**No pin is renumbered, and no bus pin moves.** Only the rows below need checking.
+**No pin is renumbered, and no bus pin moves.** Only the rows below.
 
-**REMOVED — two GPIOs freed**
+**REMOVED — four GPIOs freed**
 
-| net | v0.1 GPIO | why |
+| net | GPIO | why |
 |---|---|---|
-| `adxl375_cs` | **49** | ADXL375 not fitted on v1.0 |
+| `adxl375_cs` | **49** | ADXL375 not fitted |
 | `adxl375_int` | **4** | ditto |
-| `laser_int` | **3** | VL53L4CX data-ready — the poll fallback is the same code path at 20 Hz |
-| `laser_xshut` | **5** | reset at `setup()` only; no in-flight recovery exists, and a board power cycle clears a wedged laser between flights |
+| `laser_int` | **3** | poll fallback is the same code path at 20 Hz |
+| `laser_xshut` | **5** | reset at `setup()` only; a board power cycle clears a wedged laser between flights |
 
-**CHANGED — bus membership only, at the same physical pins**
+**CHANGED — bus membership, at the same physical pins**
 
 | device | v0.1 | v1.0 |
 |---|---|---|
+| ICP-10111 | i2c:0 | **i2c:1** |
 | SDP810 | i2c:0 | **i2c:1** |
 | VL53L4CX | i2c:0 | **i2c:1** |
 | INA226 | i2c:1 | **i2c:0** |
 
-Three lines in `board.config`, plus dropping `int_pin` and `xshut_pin` from the laser (both already
-optional in the driver). Nothing else in the `sensors` or `buses` blocks changes.
+**CHANGED — bus speed**
+
+| bus | v0.1 | v1.0 |
+|---|---|---|
+| i2c:1 | 400 kHz | **100 kHz** (front harness) |
 
 **UNCHANGED — no re-check needed**
 
 `i2c:0` sda **7** / scl **8** · `i2c:1` sda **31** / scl **30** · `spi:1` sck **48** / mosi **47** /
 miso **46** · `lsm6dso32_cs` **50** · `lsm6dso32_int1` **28** · `uart:1` tx **20** · `uart:2` tx **22** /
 rx **23** · servos **26** / **27** / **32** · `separation_switch` **33** · `ina226_alert` **29** ·
-BNO055, ICP-10111 and BMP280 stay on i2c:0.
+BNO055 and BMP280 stay on i2c:0.
+
+## Running one firmware on both boards
+
+The two layouts are distinguishable **by scan alone** — no strapping resistor, no stored flag, nothing
+an operator has to set correctly:
+
+| bus | v0.1 answers | v1.0 answers |
+|---|---|---|
+| i2c:0 | `0x28` `0x63` `0x76` `0x25` `0x29` | `0x28` `0x76` `0x40` |
+| i2c:1 | `0x40` | `0x63` `0x25` `0x29` |
+
+Every marker address moves except `0x28` (BNO055) and `0x76` (BMP280), which stay on i2c:0 in both — so
+the discriminators are `0x63`, `0x25`, `0x29` (i2c:0 → i2c:1) and `0x40` (i2c:1 → i2c:0). Four
+independent votes, which is what makes the detection robust to a single dead device rather than hinging
+on one probe.
+
+Detection runs before device setup, scans both buses at the lower (100 kHz) rate that every part
+tolerates, scores each layout by how many of its expected addresses appear on the expected bus, and
+applies the winner's bus assignments and speeds. An explicit `board.layout` of `v0.1` or `v1.0` in the
+config always wins over the scan; `auto` (the default) detects. An ambiguous or failed scan changes
+nothing and says so loudly — the config as written is the fallback, never a guess.
 
 ### The front harness: 8 wires to 5
 
