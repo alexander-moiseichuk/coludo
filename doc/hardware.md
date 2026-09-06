@@ -1179,6 +1179,10 @@ Reviewed against `config_default` and the v0.1 netlist. **Traces, ground pour an
 are deliberately preliminary at this revision** -- what is reviewable here is CONNECTIVITY, and that is
 correct.
 
+The Gerber-derived figures below (trace width, absence of pour, board outline) were measured from the
+layers inside `main_board.zip`, which is the archive of record; the unpacked copies were removed as
+redundant. `unzip -o main_board.zip` to re-check them.
+
 ### Verified: the v0.1 fault is fixed, and the transition landed
 
 **The LSM6DSO32 clock moved off the auxiliary row.** This is the fault that made the part read as a
