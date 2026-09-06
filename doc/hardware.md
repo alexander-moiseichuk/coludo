@@ -1179,9 +1179,8 @@ Reviewed against `config_default` and the v0.1 netlist. **Traces, ground pour an
 are deliberately preliminary at this revision** -- what is reviewable here is CONNECTIVITY, and that is
 correct.
 
-The Gerber-derived figures below (trace width, absence of pour, board outline) were measured from the
-layers inside `main_board.zip`, which is the archive of record; the unpacked copies were removed as
-redundant. `unzip -o main_board.zip` to re-check them.
+Gerber-derived figures below were measured from `models/PCBs/v1.0/main_board/`, extracted from
+`main_board.zip` and byte-identical to it. Board outline **47 x 142 mm**, unchanged across re-exports.
 
 ### Verified: the v0.1 fault is fixed, and the transition landed
 
@@ -1206,29 +1205,36 @@ GPIO 22/23) · **D1 = 1N5817** · FRONT.EXT is the 5-pin lane (GND, 3V3, SDA, SC
 and `drivers/separation.py` uses `Pin.PULL_DOWN` with **HIGH = nested**, so closed pads read HIGH and an
 open circuit falls to LOW. Wiring it to GND would have read as permanently separated.
 
-### Numbers for the copper work, when it happens
+### Copper: trace widths done (re-export 2026-09-06), pour still outstanding
 
-**Power traces need ~3-4x the signal width.** At 0.254 mm on 1 oz copper, IPC-2221 gives **~0.9 A**
-(10 degC rise). The netlist puts real current on the same nets -- `BAT+` through the INA226 shunt to the
-converter input, and `CNVTR1.1` out to `ENG_PWR` -- against a **measured 0.79 A per MG90S, ~2.4 A for
-three**, with the reservoir sized for ~4 A transients. Widths for 1 oz at 10 degC rise:
+The 13:45 re-export changed routing only -- `main_board.net` is byte-identical, so the connectivity
+verified above still holds. What changed is the copper, and the trace-width finding is **resolved**:
 
-| current | width needed |
-|---|---|
-| 2.4 A (three servos, continuous) | **~1.0 mm** |
-| 4 A (transient) | **~2.0 mm**, or a poured polygon |
+| width | top | bottom | capacity (1 oz, 10 degC rise) |
+|---|---|---|---|
+| **2.0 mm** | 8 | 22 | **~4 A** |
+| 0.75 mm | 6 | 5 | ~2.1 A |
+| 0.5 mm | 42 | 117 | ~1.45 A |
 
-**The ground pour is now load-bearing, not cosmetic.** v0.1 had none and it was the top finding of that
-review; on v1.0 it matters more, because this board puts a switching converter and ~4 A servo transients
-beside I2C and the IMU. The energy-island partitioning described above needs a pour to exist at all --
-a single-point tie between a poured island and a poured signal ground is the mechanism, and there is
-nothing to tie without it.
+Previously every draw was 0.254 mm (~0.9 A), against a measured **0.79 A per MG90S and ~2.4 A for
+three** with the reservoir sized for ~4 A transients. The 2.0 mm now carries the transient with margin.
 
-**3V3 is a single rail off the MCU module.** There is no regulator part: `BMP`, `CONVU1`, `U2` (GNSS),
-`L`, `PRESSURE`, `SEP` and `FRONT.EXT` all hang off `U1.3V3`. Rough load is **70-90 mA** -- GNSS
-25-40 mA while acquiring, BNO055 ~12 mA, VL53L4CX ~20 mA peak while ranging, SDP810 ~6 mA, the rest
-under 2 mA each -- plus the MCU's own draw, and GNSS acquisition can coincide with laser ranging. Worth
-confirming the WaveShare regulator's headroom before this is final.
+**And the heavy copper is LOCALISED, which is the part worth checking rather than assuming.** On a
+142 mm board the 2.0 mm draws span only **Y 2.3-53.3 mm** -- the bottom third -- while 0.75 mm sits at
+Y 49-140 and the 0.5 mm signals run the full length. The power section is physically confined to one
+end, which is what the energy island is supposed to look like in layout, and it means the servo
+transient path does not run the length of the board beside the sensor traces.
+
+**Still outstanding: no ground pour.** `G36` region count remains **0 on both layers**. This is the
+last of the three copper items and the one that matters most now, because the island only becomes an
+island when there is a pour to partition and a single-point tie between the halves -- there is nothing
+to tie without one. Five vias on a two-layer board of this density also suggests routing that has not
+yet had to work around a pour.
+
+3V3 remains a single rail off the MCU module with no regulator part: `BMP`, `CONVU1`, `U2` (GNSS), `L`,
+`PRESSURE`, `SEP` and `FRONT.EXT` all on `U1.3V3`, roughly **70-90 mA** -- GNSS 25-40 mA while
+acquiring, BNO055 ~12 mA, VL53L4CX ~20 mA peak while ranging, SDP810 ~6 mA -- plus the MCU's own draw,
+with acquisition and ranging able to coincide. Worth confirming the WaveShare regulator's headroom.
 
 ### Actionable now, independent of the copper
 
