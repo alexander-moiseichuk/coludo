@@ -1242,14 +1242,17 @@ with acquisition and ranging able to coincide. Worth confirming the WaveShare re
   The GPIOs are right; the bus is **`i2c:1`**. Anyone configuring from that document would write
   `id: 0` and the devices would not be found -- the failure mode is a device that scans fine and never
   binds.
-* **GPIO 21 (UART1 RX) is still unrouted.** The v0.1 omission is carried forward. The recorder link is
-  write-only today so nothing breaks, but v1.0 is the moment to route it or drop it deliberately rather
-  than inherit it a second time.
-* **Verify D1's footprint pin numbering.** The netlist has `D1.1` on the converter/USB_OUT node and
-  `D1.2` on `U1.VBUS`, which is correct only if pin 1 is the ANODE. DO-41 libraries differ, and
-  reversed the battery cannot power the MCU at all.
-* **`ENG_CTL` order is 27 / 26 / 32 = left / YAW / right.** Not an obvious order; it wants a silkscreen
-  label or it will be plugged wrong once.
+* **Verify D1's footprint pin numbering** -- the one item here that is not already settled. The netlist
+  has `D1.1` on the converter/USB_OUT node and `D1.2` on `U1.VBUS`. Current flows anode->cathode and must
+  flow converter->MCU, so this is correct **only if pin 1 is the ANODE**. DO-41 libraries differ on
+  which end they number first. Reversed, two things break together: the battery cannot power the MCU at
+  all, AND USB backfeeds the isolated buck -- the exact hazard the diode exists to prevent. Check that
+  the silkscreen band (cathode) sits on the pad wired to `U1.VBUS`.
+* ~~GPIO 21 (UART1 RX) unrouted~~ -- **not a defect, confirmed deliberate.** The recorder link is
+  telemetry write-only; only GPIO 20 (TX) is used. Noted here because it looks like an omission on a
+  netlist diff and has now been queried twice.
+* ~~`ENG_CTL` order 27 / 26 / 32~~ -- **not a defect.** Yaw is GPIO 26 and the middle position follows
+  from the pin assignment, not from an arbitrary connector order.
 
 Board outline: **47 x 142 mm**.
 
