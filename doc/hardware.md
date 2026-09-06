@@ -1173,6 +1173,76 @@ I²C **general-call reset** (`0x00 0x06`), and its driver notes this "also reset
 (bmp280, ina226)" — collateral accepted because the alternative is losing the primary baro. Alone on
 `i2c:0`, the most aggressive recovery action in the codebase can no longer disturb anything else.
 
+## v1.0 PCB — netlist review (2026-09-06, `models/PCBs/v1.0`)
+
+Reviewed against `config_default` and the v0.1 netlist. **Traces, ground pour and the common 3V3 rails
+are deliberately preliminary at this revision** -- what is reviewable here is CONNECTIVITY, and that is
+correct.
+
+### Verified: the v0.1 fault is fixed, and the transition landed
+
+**The LSM6DSO32 clock moved off the auxiliary row.** This is the fault that made the part read as a
+dead chip on both built boards and needed hand-jumpers:
+
+| module pin | v0.1 | v1.0 |
+|---|---|---|
+| **L.4 `SCL`** (primary clock) | — | **GPIO 48** |
+| **L.10 `SCX`** (auxiliary clock) | **GPIO 48** | — |
+| L.3 `GND` (bottom row) | — | GND |
+| L.14 `GND` (top row) | GND | — |
+
+MOSI (`L.5`), MISO (`L.6`), CS (`L.7`) and INT1 (`L.8`) were already correct on v0.1 and are unchanged.
+
+Everything else in the transition is present: ADXL375 absent · `i2c:0` (GPIO 7/8) to the BNO055 module
+and INA226 · `i2c:1` (GPIO 31/30) to the ICP header and FRONT.EXT · GNSS merged on-board (ATGM336H on
+GPIO 22/23) · **D1 = 1N5817** · FRONT.EXT is the 5-pin lane (GND, 3V3, SDA, SCL, UART1 TX) · servos on
+26/27/32 · separation on 33.
+
+**Separation polarity is correct** and worth stating because it inverts easily: `SEP.2` goes to **3V3**,
+and `drivers/separation.py` uses `Pin.PULL_DOWN` with **HIGH = nested**, so closed pads read HIGH and an
+open circuit falls to LOW. Wiring it to GND would have read as permanently separated.
+
+### Numbers for the copper work, when it happens
+
+**Power traces need ~3-4x the signal width.** At 0.254 mm on 1 oz copper, IPC-2221 gives **~0.9 A**
+(10 degC rise). The netlist puts real current on the same nets -- `BAT+` through the INA226 shunt to the
+converter input, and `CNVTR1.1` out to `ENG_PWR` -- against a **measured 0.79 A per MG90S, ~2.4 A for
+three**, with the reservoir sized for ~4 A transients. Widths for 1 oz at 10 degC rise:
+
+| current | width needed |
+|---|---|
+| 2.4 A (three servos, continuous) | **~1.0 mm** |
+| 4 A (transient) | **~2.0 mm**, or a poured polygon |
+
+**The ground pour is now load-bearing, not cosmetic.** v0.1 had none and it was the top finding of that
+review; on v1.0 it matters more, because this board puts a switching converter and ~4 A servo transients
+beside I2C and the IMU. The energy-island partitioning described above needs a pour to exist at all --
+a single-point tie between a poured island and a poured signal ground is the mechanism, and there is
+nothing to tie without it.
+
+**3V3 is a single rail off the MCU module.** There is no regulator part: `BMP`, `CONVU1`, `U2` (GNSS),
+`L`, `PRESSURE`, `SEP` and `FRONT.EXT` all hang off `U1.3V3`. Rough load is **70-90 mA** -- GNSS
+25-40 mA while acquiring, BNO055 ~12 mA, VL53L4CX ~20 mA peak while ranging, SDP810 ~6 mA, the rest
+under 2 mA each -- plus the MCU's own draw, and GNSS acquisition can coincide with laser ranging. Worth
+confirming the WaveShare regulator's headroom before this is final.
+
+### Actionable now, independent of the copper
+
+* **`external_pinout.md` names the wrong bus.** It labels the front lane `I2C0 SDA 31` / `I2C0 SCL 30`.
+  The GPIOs are right; the bus is **`i2c:1`**. Anyone configuring from that document would write
+  `id: 0` and the devices would not be found -- the failure mode is a device that scans fine and never
+  binds.
+* **GPIO 21 (UART1 RX) is still unrouted.** The v0.1 omission is carried forward. The recorder link is
+  write-only today so nothing breaks, but v1.0 is the moment to route it or drop it deliberately rather
+  than inherit it a second time.
+* **Verify D1's footprint pin numbering.** The netlist has `D1.1` on the converter/USB_OUT node and
+  `D1.2` on `U1.VBUS`, which is correct only if pin 1 is the ANODE. DO-41 libraries differ, and
+  reversed the battery cannot power the MCU at all.
+* **`ENG_CTL` order is 27 / 26 / 32 = left / YAW / right.** Not an obvious order; it wants a silkscreen
+  label or it will be plugged wrong once.
+
+Board outline: **47 x 142 mm**.
+
 ## v1.0 PCB — design review of the v0.1 Gerbers
 
 Measured from the copper (`models/PCBs/*.zip`), not from the schematic. The netlist itself
