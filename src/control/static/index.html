@@ -64,6 +64,7 @@
 below targets it. Nothing in the table changes a board, so a glance is never a click away from
 altering one.</p>
 <p>
+  <button id="actcalib" title="guided calibration of the selected board, one device per press">calibrate</button>
   <button id="actprobe" title="run every device self-test on the selected board">probe devices</button>
   <button id="actdetect" title="re-scan both I2C buses and report which board revision they look like (does not apply)">detect layout</button>
   <button id="actsynctime" title="set the board RTC to the CC clock">sync time</button>
@@ -139,7 +140,7 @@ altering one.</p>
     <option value="spi">spi</option>
   </select>
   <input id="tuneid" value="0" size="3" title="bus id">
-  <button id="calibrate">calibrate</button>
+  <button id="calibrate">tune bus frequency</button>
   <span class="muted">sweep the bus to its max stable frequency; the tuned <b>board config</b> is loaded into the editor above for you to review, then <b>Save + Reboot</b> to apply (your call)</span>
 </p>
 <pre id="tuneresult"></pre>
@@ -161,6 +162,7 @@ altering one.</p>
   <button id="logstart">start</button>
   <button id="logstop">stop</button>
   <button id="logclear">clear</button>
+  <span class="muted" id="logmsg"></span>
 </p>
 <pre id="logs"></pre>
 
@@ -237,8 +239,8 @@ function fmtLayout(b) {
 }
 
 function actionBoard() {
-  // Its own board box, like every other section, filled by selectBoard() along with the rest -- so a
-  // row click targets all of them at once and an operator can still override just this one.
+  // The one selection, made in the status table. Guarding here (rather than in each handler) keeps a
+  // stray click on an unselected page a visible message instead of a request that goes nowhere.
   const id = boardId();
   if (!id) { document.getElementById('actmsg').textContent = 'select a board first'; }
   return id;
@@ -247,8 +249,11 @@ function actionBoard() {
 async function probeBoard(id) {
   document.getElementById('actmsg').textContent = `${id}: probing…`;
   const r = await cmd(id, 'probe', []);
-  const body = r.args && r.args[0];
-  const results = typeof body === 'object' && body !== null ? body : {};
+  // args[0] arrives as a JSON STRING (see safeParse) -- testing typeof === 'object' on it was always
+  // false, so `results` was always {} and this reported "all 0 devices pass" for EVERY board, including
+  // one with a dead sensor. A self-test that cannot fail is worse than no self-test.
+  const parsed = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : null;
+  const results = (parsed && typeof parsed === 'object') ? parsed : {};
   const bad = Object.keys(results).filter((k) => results[k] !== null && results[k] !== 'pass');
   document.getElementById('actmsg').textContent = r.status === 'ok'
     ? (bad.length ? `${id}: FAIL ${bad.join(', ')}` : `${id}: all ${Object.keys(results).length} devices pass`)
@@ -258,7 +263,8 @@ async function probeBoard(id) {
 async function detectLayout(id) {
   document.getElementById('actmsg').textContent = `${id}: scanning…`;
   const r = await cmd(id, 'detect', []);
-  const body = (r.args && r.args[0]) || {};
+  const parsed = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : null;
+  const body = (parsed && typeof parsed === 'object') ? parsed : {};  // a JSON string, like probe above
   document.getElementById('actmsg').textContent = r.status === 'ok'
     ? `${id}: wired like ${body.detected || 'nothing recognised'} · running as ${body.applied || '—'}` +
       (body.detected && body.applied && !String(body.applied).startsWith(body.detected)
@@ -283,6 +289,12 @@ function boardId() {
 
 function selectBoard(id) {
   selected = id;
+  // Drop the cached fin zeros: they belong to the board we are leaving. Without this the first +/-
+  // after switching boards computes `old board's trim + 1` and writes it to the NEW board, which moves
+  // a control surface to a number nobody chose.
+  finTrim = {};
+  finLoaded = false;
+  for (const fin of Object.keys(FINS)) { renderFin(fin); }
   for (const label of ['selA', 'selB', 'selC', 'selD', 'selE', 'selF', 'selG']) {
     document.getElementById(label).textContent = id || '—';
   }
@@ -374,11 +386,14 @@ new EventSource('/events').onmessage = (event) => {
   assistButton.disabled = !ccHasFix;
   assistButton.title = ccHasFix ? 'push the CC GNSS fix to the board launch config'
                                 : 'CC has no usable GNSS fix to push';
+  // BEFORE the empty-roster return: with no board connected, every known glider is absent, which is
+  // exactly when "N known gliders not connected" is the thing the operator needs. Returning first meant
+  // the banner never rendered in its own case, and kept stale text in every other.
+  renderAbsent();
   if (!boards.length) {
     tbody.innerHTML = '<tr><td colspan="12" class="muted">no boards connected</td></tr>';
     return;
   }
-  renderAbsent();
   tbody.innerHTML = boards.map((b) => `
     <tr class="click ${b.online ? 'on' : 'off'} ${notReady(b) ? 'notready' : ''}" data-board="${escAttr(b.id)}">
       <td>${notReady(b) ? `<b class="warn" title="NOT READY: ${b.degraded.join(', ')}">❗</b> ` : ''}${escAttr(b.id)}</td>
@@ -397,6 +412,15 @@ new EventSource('/events').onmessage = (event) => {
   // Bind AFTER the rows exist. The id travels in data-board and the handler is attached here, so it
   // is never parsed as JavaScript -- see escAttr above for why splicing it into onclick was unsafe.
   bindBoardRows(tbody);
+  /*
+   * ONE board on the roster and nothing chosen yet -> choose it.
+   *
+   * Every section targets `selected`, so an unselected page turns every button into a silent no-op --
+   * which is indistinguishable from a broken UI, and was reported as exactly that ("nothing happened").
+   * With a single board there is no ambiguity for the operator to resolve, so making them click first
+   * buys nothing. With two or more, the click still decides, because then the choice is real.
+   */
+  if (!selected && boards.length === 1) { selectBoard(boards[0].id); }
   markChosen();
 };
 
@@ -469,9 +493,11 @@ function fmtImu(b) {
   if (!pending.length) {
     return `<span style="color:#2a2" title="${report}">✓ calibrated</span>`;
   }
-  return `<b class="warn" title="${report}">⚠ ${pending.join(', ')}</b> `
-    + `<button class="calib" data-board="${escAttr(b.id)}" `
-    + `title="${report}">calibrate ${pending.length}</button>`;
+  // Status only, NO button. This cell used to render its own `calibrate N` button, which survived
+  // the move of every action into the bar below -- and bindBoardRows stopped binding per-row controls,
+  // so it rendered, looked live, and was wired to nothing. The count still shows here (that is status);
+  // the action is `calibrate` in the board actions bar.
+  return `<b class="warn" title="${report}">⚠ ${pending.join(', ')} (${pending.length})</b>`;
 }
 
 // Guided calibration, ONE DEVICE PER PRESS. The board's `calibrate` sweep says which devices are
@@ -537,7 +563,8 @@ async function send() {
   }
 }
 // board actions -- each guards on a selected board so a stray click is a message, not a request
-for (const [buttonId, handler] of [['actprobe', probeBoard],
+for (const [buttonId, handler] of [['actcalib', calibrateBoard],
+                                   ['actprobe', probeBoard],
                                    ['actdetect', detectLayout],
                                    ['actsynctime', syncTime],
                                    ['actassist', gpsAssist]]) {
@@ -604,12 +631,12 @@ document.getElementById('calibrate').onclick = async () => {
   const board = tuneBoard();
   const kind = document.getElementById('tunekind').value;
   const id = document.getElementById('tuneid').value.trim() || '0';
-  if (!board) { tuneOut.textContent = 'enter a board id'; return; }
+  if (!board) { tuneOut.textContent = 'pick a board in the table above first'; return; }
   const btn = document.getElementById('calibrate');
   btn.disabled = true;
   tuneOut.textContent = `sweeping ${kind}:${id} on ${board} … running the bus up a frequency ladder (a few seconds)`;
   try {
-    const r = await op(`calibrate ${board} ${kind} ${id}`);
+    const r = await op(`bustune ${board} ${kind} ${id}`);
     const reply = (r.lines && r.lines[0]) || JSON.stringify(r);
     const m = reply.match(/^from \S+ ok (.*)$/);
     if (!m) { tuneOut.textContent = reply; return; }  // e.g. 'from cc err ...'
@@ -662,6 +689,7 @@ async function loadFins() {
   if (!board) { finOut.textContent = 'pick a board first'; return false; }
   finOut.textContent = 'reading fins…';
   finTrim = {};
+  finLoaded = false;  // cleared up front: an early return must not leave a PARTIAL set marked loaded
   for (const fin of Object.keys(FINS)) {
     const r = await cmd(board, 'inspect', [fin]);
     const props = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : null;
@@ -775,14 +803,23 @@ const logPane = document.getElementById('logs');
 const logBoard = () => boardId();
 
 async function setLog(on) {
+  // Guard and REPORT here. This posted board:'' with nothing selected, took the 404 and discarded it,
+  // and the only explanation landed in #actmsg several screens up -- so the button looked inert.
+  const board = logBoard();
+  const logMsg = document.getElementById('logmsg');
+  if (!board) { logMsg.textContent = 'pick a board in the table above first'; return null; }
   const kind = document.getElementById('logkind').value;
   const interval_ms = on ? (parseInt(document.getElementById('logms').value, 10) || 1000) : 0;
   const res = await fetch('/api/log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ board: logBoard(), kind, interval_ms }),
+    body: JSON.stringify({ board, kind, interval_ms }),
   });
-  return res.json();
+  const out = await res.json();
+  logMsg.textContent = out && out.error
+    ? `${board}: ${out.error}`
+    : `${board}: ${kind} ${on ? 'streaming every ' + interval_ms + ' ms' : 'stopped'}`;
+  return out;
 }
 document.getElementById('logstart').onclick = () => setLog(true);
 document.getElementById('logstop').onclick = () => setLog(false);

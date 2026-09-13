@@ -535,6 +535,19 @@ def load(path: str = 'board.config', defaults=None) -> tuple:
     that mysteriously never ran (findings §27.13). So the version travels with the file and any mismatch
     is reported through `source` -- the boot log, the capture's provenance line and CC all show it.
     """
+    """
+    firmware_version is RESTAMPED from the running firmware, and is the one field a saved config does
+    not own. Everything else here is configuration -- what you saved is what flies -- but this is not
+    configuration at all: it is an observation about the binary currently executing, and it travels
+    into board.config only because it happens to live in the same tree. Left as saved it reports the
+    firmware that WROTE the file, so a freshly deployed board announces the build it replaced (its boot
+    log, CC's version column and a HITL capture's BUILD line all read it as "what is running"). Wrong
+    in the dangerous direction too: a board left on stale code would still claim whatever last saved
+    its config. Restamping also self-heals, since the next save() persists the running version.
+    """
+    if isinstance(data.get('board'), dict) and isinstance(defaults.get('board'), dict):
+        data['board']['firmware_version'] = defaults['board'].get('firmware_version', 'dev')
+
     stale = outdated(data, defaults)
     return data, 'active' if not stale else 'active(config %s, firmware %s -- re-save to adopt)' % stale, []
 

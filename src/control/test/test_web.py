@@ -128,8 +128,22 @@ def test_dashboard_carries_the_imu_calibration_column():
     # one device at a time, gated on the OPERATOR confirming -- a timed pause races them, and a tare
     # captured while the airframe is still being set down is worse than no tare
     assert b'confirm(' in page, 'each device must wait for an explicit OK'
-    # the button COUNTS DOWN off the heartbeat, so the row clears itself without an extra round trip
-    assert b'pendingCalibration' in page and b'calibrate ${pending.length}' in page
+    # the count COUNTS DOWN off the heartbeat, so the cell clears itself without an extra round trip
+    assert b'pendingCalibration' in page and b'(${pending.length})' in page
+    """
+    The calibration cell is STATUS; the ACTION is a bound button in the board actions bar.
+
+    This pinned the in-row `calibrate ${pending.length}` button, and that button outlived the refactor
+    that moved every action out of the table -- bindBoardRows stopped binding per-row controls, so the
+    button still rendered, still looked live, and was wired to NOTHING. The test passed throughout,
+    because it only ever checked that the markup was emitted. So assert the binding, not the markup,
+    and forbid the shape that failed: no button may be rendered into a row at all.
+    """
+    assert b'id="actcalib"' in page, 'the calibrate action must live in the board actions bar'
+    assert b"['actcalib', calibrateBoard]" in page, 'the calibrate button must be BOUND to a handler'
+    assert b'class="calib"' not in page, 'no per-row calibrate button: the table is status + selection'
+    row_template = page.split(b'data-board="${escAttr(b.id)}"')[1].split(b'</tr>')[0]
+    assert b'<button' not in row_template, 'no button belongs in a table row -- nothing binds them'
     assert b'names[0]' in page, 'one device per press, not a loop that holds the operator'
     # PLAIN WORDS, not "M3/3": the operator reads this in a field, without a datasheet. And the report
     # stays reachable when everything is fine -- "no button" must not mean "no information".
@@ -249,9 +263,38 @@ def test_post_with_bad_json_is_answered():
     assert response, 'a malformed POST body must still produce a response'
 
 
+def test_dashboard_script_is_valid_javascript():
+    """
+    The page's script must PARSE. A syntax error anywhere in it kills the whole dashboard.
+
+    Not hypothetical: a Python-style `#` comment was once pasted into the JS, and every control on the
+    page died at once while the server still served 200 OK and every other assertion here still passed
+    -- these tests check bytes, and bytes cannot tell valid JS from a parse error. Skipped when node is
+    unavailable, so this adds a check where one can run without inventing a hard dependency.
+    """
+    import os
+    import re as _re
+    import shutil
+    import subprocess
+    import tempfile
+    node = shutil.which('node')
+    if node is None:
+        print('   (node not found -- JS syntax check skipped)')
+        return
+    page = _request(b'GET / HTTP/1.1\r\n\r\n').decode('utf-8', 'replace')
+    blocks = _re.findall(r'<script>(.*?)</script>', page, _re.S)
+    assert blocks, 'the dashboard served no <script> block at all'
+    path = os.path.join(tempfile.mkdtemp(), 'page.js')
+    with open(path, 'w', encoding='utf-8') as handle:
+        handle.write('\n'.join(blocks))
+    done = subprocess.run([node, '--check', path], capture_output=True)
+    assert done.returncode == 0, 'dashboard JS does not parse:\n' + done.stderr.decode('utf-8', 'replace')
+
+
 test_routes()
 test_hud_is_served_and_offline_safe()
 test_dashboard_carries_the_imu_calibration_column()
+test_dashboard_script_is_valid_javascript()
 test_malformed_request_line_does_not_hang()
 test_bad_content_length_still_routes()
 test_handler_fault_answers_500()

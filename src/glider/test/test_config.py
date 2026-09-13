@@ -210,12 +210,45 @@ def main():
     stale['board']['id'] = 'stale-board'
     config.save(stale, path)
     cfg, source, errs = config.load(path, defaults=fresh)
-    assert not errs and cfg['board']['id'] == 'stale-board'  # the SAVED config ran, unmodified
+    assert not errs and cfg['board']['id'] == 'stale-board'  # the SAVED config ran (bar firmware_version)
     assert source.startswith('active(config 19700101, firmware ') and 're-save' in source, source
     config.reset(path)
 
+    """
+    firmware_version reports the RUNNING firmware, never the one that saved the file.
+
+    It is the single field load() overrides, because it is not configuration: a saved board.config
+    freezes whatever build wrote it, so a freshly deployed board would announce the build it replaced
+    -- which is exactly what TMS-7D did, reporting an old commit through CC minutes after a clean
+    deploy of a newer one. Negative half matters just as much: restamping must touch NOTHING else, or
+    "what you saved is what flies" quietly stops being true.
+    """
+    running = config_default.default()
+    running['board']['firmware_version'] = '2026.09.06.running'
+    written = config_default.default()
+    written['board']['firmware_version'] = '2026.08.31.whenSaved'
+    written['board']['id'] = 'restamp-board'
+    written['board']['setup_retries'] = 7
+    config.save(written, path)
+    cfg, source, errs = config.load(path, defaults=running)
+    assert not errs and source == 'active', source
+    assert cfg['board']['firmware_version'] == '2026.09.06.running', cfg['board']['firmware_version']
+    # ...and every other saved field survived untouched
+    assert cfg['board']['id'] == 'restamp-board' and cfg['board']['setup_retries'] == 7
+    expected = dict(written['board'], firmware_version='2026.09.06.running')
+    assert cfg['board'] == expected, cfg['board']
+    # the restamp self-heals: saving the loaded config persists the running version
+    config.save(cfg, path)
+    again, _source, _errs = config.load(path, defaults=running)
+    assert again['board']['firmware_version'] == '2026.09.06.running'
+
+    # NEGATIVE: a config whose board section is missing or not a dict must not crash the loader
+    config.reset(path)
+    assert config.load(path, defaults=running)[1] == 'default'  # no file at all
+    config.reset(path)
+
     print('ok: config validate/config_id/save/load/reset + nested buses, sensors, bus()/device(), '
-          'schema version + outdated()')
+          'schema version + outdated(), firmware_version restamp')
 
 
 main()
