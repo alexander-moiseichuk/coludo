@@ -161,11 +161,17 @@ and being a *different* part it also guards the common-mode case that two identi
 v1.0, and for nothing on `i2c:0` where it would be true either way. That is now defensive rather than
 planned: if one is ever fitted, the detector loses no vote instead of silently cancelling one out.
 
-**CORRECTION (2026-09-05): the parts actually bought are four Adafruit 4754 (BNO085), NOT SEN0697.**
-An earlier note here recorded SEN0697; that was wrong and the analysis attached to it was answering a
-question about hardware nobody owns. The SEN0697 comparison below stays as the write-up of an
-alternative, and the DECISION that follows still stands for v1.0 — but the live option is now the
-BNO085, which is a *different trade*, not a cheaper version of the same one.
+**CORRECTION (2026-09-15): FOUR SEN0697 ARE ON HAND. The Adafruit 4754 was never bought.**
+In the operator's words: *"I tried to order adafruit 4754 but ordered 4 sen0697."* A 2026-09-05 note
+here claimed the reverse — that four BNO085 had been bought and SEN0697 was a mis-record — and that
+note was itself the mis-record. It was written from a garbled exchange, then repeated back to the
+operator as established fact, which is how it survived. Whichever way round it is stated, only one of
+these parts exists on the bench, and it is the **SEN0697**.
+
+So the comparison below is no longer academic on the SEN0697 side and no longer live on the BNO085
+side: the raw-only trade is the one actually available, and the on-chip-fusion trade would require
+buying hardware. The **DECISION that follows still stands for v1.0** — it turned on staying with the
+BNO055, which is unaffected by which alternative sits unused in a drawer.
 
 **What changes, and it is the load-bearing part.** The reason this section rejected the SEN0697 was
 that it is **raw only**, so adopting it means owning hard- and soft-iron magnetometer calibration next
@@ -177,7 +183,7 @@ detector and peer re-arm the current driver carries.
 
 So the two candidates are opposite trades rather than better and worse:
 
-| | BNO085 (owned) | SEN0697 / 3126 |
+| | BNO085 (**not owned**) | SEN0697 / 3126 (**OWNED, 4 units**) |
 |---|---|---|
 | fusion | **on-chip (SH-2)** | raw only |
 | magnetometer calibration | vendor's problem | **yours** |
@@ -187,8 +193,8 @@ So the two candidates are opposite trades rather than better and worse:
 **The recommendation for the BNO085 is unchanged and is stated in its own section below** ("Recommendation
 on the BNO085 swap"): not yet, and what decides it is the FIFO-drained shock capture, because +/-8 g
 against the BNO055's +/-16 g cannot be judged from simulation numbers that contain no ignition
-transient, ejection shock or landing impact. Owning four of them removes the availability question and
-nothing else.
+transient, ejection shock or landing impact. That recommendation now also carries an availability
+cost that the 2026-09-05 note wrongly removed: none are on hand.
 
 **DECISION (2026-08-06): not adopted — we stay on BNO055.** With **5+ BNO055 on hand** the unit-count
 blocker is gone, and that was the only pressing reason to move. Keeping the fused part also keeps the
