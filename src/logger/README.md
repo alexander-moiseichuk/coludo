@@ -6,8 +6,8 @@ makes the flight yield **peak boost acceleration** and **apogee altitude** for t
 in the nose.
 
 It talks to nothing. No radio in flight, no link to the main board — a sandwich of
-**ESP32-C6 SuperMini + LiPo + SEN0697**, recording to RAM and flushing to flash after landing. USB is
-the development and read-out path, and the only liveness check.
+**ESP32-C6 SuperMini + LiPo + SEN0697**, recording from power-up to power-off and saving to flash as it
+goes. USB is the development and read-out path; the status LED is the liveness check.
 
 ## The part
 
@@ -128,24 +128,97 @@ not that something is broken.
 | BMM350 | **`0x15`** | `0x14` |
 | BMP581 | **`0x47`** | `0x46` |
 
-## Bring-up order
+## Development
 
-1. Solder the sandwich, USB in.
-2. `mpremote connect /dev/ttyACM0 run scan.py` — every expected address answers, chip IDs read back.
-3. Only then write the sampling path.
+**Connect the C6 straight to the PC, not through a hub.** On 2026-09-15 the replacement bench hub dropped
+bytes in both directions: raw-REPL tools (mpremote, ampy, rshell) could not enter raw mode, file writes
+did not commit, and the board's own echo came back with characters missing. Plugged in directly, the
+same transfer verified by SHA-256 and survived a soft reset on the first try.
 
-## Notes carried over from the earlier static-burn logger
+The C6's USB is native (USB Serial/JTAG), which changes two things you might otherwise assume:
 
-`tools/c3_burn_logger.py` (ESP32-C3, static burn + separation ground test) is **not** the base for this
-code, but three of its conclusions were paid for already and hold here:
+- **The baud setting is ignored.** Data moves at USB speed whatever the port says; "slower" means pacing
+  the writes, not a lower baud.
+- **DTR/RTS are wired to reset and the BOOT strap** — that is how esptool auto-resets. A tool that drops
+  DTR while RTS is still high resets the chip on connect. That also wipes whatever is in RAM, which is
+  why the firmware saves to flash rather than relying on a read-out over USB.
 
-- **Never write flash while sampling.** Buffer every row in RAM; write the whole file at once, at a
-  point where a multi-millisecond erase stall cannot collide with a peak.
-- **Latch a flight state.** Decimate hard while idle on the pad, switch to full rate on the launch
-  spike, and flush once the event is over — not at power-off.
-- **Rotate files.** A restart or brownout must never overwrite an earlier capture.
+Interactive: `rshell -p /dev/ttyACM0`, then `repl`. First run after soldering:
 
-Two things change for a flight rather than a static burn: the flight window must close on **landing**,
-not 10 s after the g-spikes stop (which in the air is apogee), and `time.ticks_us()` wraps at
-**17.9 minutes** of uptime — clear of a 5–10 minute power-on window, but the stamp is raw uptime, so
-it is a real edge if the pad wait ever runs long.
+```
+ampy -p /dev/ttyACM0 -d 2 run src/logger/scan.py      # -d 2: let the board settle after the port opens
+```
+
+**Recovery** if a bad `main.py` ever wedges USB at every boot: hold BOOT, tap RST — the ROM download
+mode — and reflash MicroPython with esptool. GPIO9 is left unwired precisely so this path stays open.
+
+## Firmware — `main.py`
+
+Runs at boot and records until power-off. Nothing is filtered: a flight can be a start and a drop inside
+one save window, so every sample is kept.
+
+| | |
+|---|---|
+| rate | ~100 Hz, polled: BMI323 accel + gyro, BMP581 pressure + temperature |
+| record | 24 bytes, raw: `uint32 ms · int16 ax ay az gx gy gz · int32 pressure · int32 temperature` |
+| autosave | a new file every **3000 records** (~30 s, 72 KB) |
+| BOOT | saves the current partial segment immediately — **3 blinks** |
+| LED (GPIO15) | toggles every ~0.5 s while recording; 3 blinks = a BOOT save landed |
+| files | `bBBBBB_sSSSS.bin` — boot number (monotonic, kept in NVS) + segment; they sort chronologically |
+| space | 2 MB filesystem, **1.94 MB free → ~13 minutes** at 2.4 KB/s |
+| full flash | the **oldest** logs are deleted — only as many as the new segment needs, counted from their own sizes; `main.py` and `boot.py` are never touched. A save that still fails drops that one segment; recording continues |
+
+Each file opens with a 16-byte header, `<4sHHHHI`: magic `CLG2`, record size, sample period (ms), boot,
+segment, record count.
+
+**What you can lose, and when:**
+
+- **The span of each flash write.** The C6 has one core and programming flash stalls it, so sampling
+  stops for the duration of every save — visible as a gap in `dt_ms`, every ~30 s. Its length is being
+  measured. The BOOT blinks do **not** pause sampling: they are counted in samples, not slept.
+- **Up to ~30 s at power-off** — whatever is in RAM since the last save. Press BOOT before switching off if
+  that tail matters; after a flight it is post-landing idle.
+- Nothing at start-up: the gyro reports `0x8000` for ~20 ms after it is enabled, and the firmware waits
+  for valid data before recording rather than logging the marker.
+
+If the measured save gap proves too long, the zero-loss fix is the **BMI323's own FIFO** — about 1.7 s of
+accel + gyro at 100 Hz — drained after each write. That is what `INT1 → GPIO18` is wired for.
+
+## Reading the data — `decode.py`
+
+```
+python3 src/logger/decode.py src/logger/logs/*/*.bin
+```
+
+Writes a CSV beside each file, one row per sample:
+`index, t_s, dt_ms, ax_g, ay_g, az_g, a_g, gx_dps, gy_dps, gz_dps, pressure_pa, temp_c, alt_rel_m, tick_ms`
+
+- `0x8000` — the BMI323's "no sample yet" — becomes an **empty cell**, never −2000 dps. Before that rule
+  existed, two start-up samples made a handheld shake summarise as a 2000 dps peak.
+- `alt_rel_m` is height above the file's first sample, **hypsometric with the measured temperature**. The
+  standard-atmosphere formula assumes 15 °C, and height per pascal scales with absolute temperature, so a
+  30 °C pad reads ~5% low — about 15 m on a 300 m apogee. The BMP581 die sits beside the MCU and reads a
+  few degrees warm, which is still far closer than 15 °C.
+
+## Bench results — 2026-09-15
+
+| | |
+|---|---|
+| heap free after boot | 332 KB |
+| sample rate | **99.9 Hz**, dt 10–11 ms |
+| accel scale | per-sample \|a\| median **1.000 g** at rest — ±16 g at 2048 LSB/g confirmed against gravity |
+| pressure noise | 4 Pa spread while still (~0.3 m) |
+| hand shake | peak 2.7 g, 549 dps |
+| gyro bias | **not yet measured** — every capture so far was handheld |
+
+## Carried over from the static-burn logger
+
+`tools/c3_burn_logger.py` (ESP32-C3, static burn + separation ground test) is not the base for this code.
+Of its three rules, one holds and two were **deliberately traded away**:
+
+- **Rotate files** — holds. A restart or brownout never overwrites an earlier capture.
+- **Never write flash while sampling** — traded. That logger could wait for the event to end and flush
+  once. This one records from power-up because a missed BOOT press must not cost the flight, and a flight
+  can fit inside one save window. The price is the save gap above — measured, not assumed, with the FIFO
+  as the fix.
+- **Latch a flight state** — dropped for the same reason. There is no event detection; nothing is filtered.

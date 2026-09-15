@@ -13,21 +13,21 @@ Nothing here writes to a sensor. It is safe to run repeatedly on a half-finished
 
 from machine import I2C, Pin
 
-_SDA: int = 6           # see README -- clear of USB (GPIO12/13) and of every strapping pin
-_SCL: int = 7
+_SDA: int = 19          # see README -- the five-wire harness on the left header
+_SCL: int = 20
 _FREQ: int = 100000     # slow on purpose: a marginal solder joint fails at 400 kHz and passes here,
                         # and a part that answers only at 100 kHz is something you want to know NOW
 
 """
 (name, default address, alternate address, identity register, expected id, dummy bytes).
 
-`dummy` is the BMI323's quirk and the reason a naive scan script reports garbage for it: over I2C the
+`dummy` is the Bosch BMI323 and BMM350 quirk and the reason a naive scan script reports garbage for it: over I2C the
 part prepends two dummy bytes to every register read, so the identity lands at offset 2, not 0. Reading
 it like the other two returns whatever happened to be in the pipeline and looks like a dead chip.
 """
 _CHIPS: tuple = (
     ('BMI323 accel+gyro', 0x69, 0x68, 0x00, 0x43, 2),
-    ('BMM350 mag       ', 0x15, 0x14, 0x00, 0x33, 0),
+    ('BMM350 mag       ', 0x15, 0x14, 0x00, 0x33, 2),
     ('BMP581 baro      ', 0x47, 0x46, 0x01, 0x50, 0),
 )
 
