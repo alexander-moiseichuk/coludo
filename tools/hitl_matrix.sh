@@ -33,8 +33,19 @@ SCENARIOS=${SCENARIOS:-'noise05 noise10 noise25 noise50 noise100 wind00 wind03 w
 # Deploy the runner. NOT muted: this used to be `>/dev/null 2>&1`, and under `set -e` a wedged CDC
 # killed the whole matrix here with an empty log and exit 1 -- no flights, no message, nothing to read.
 if ! mpremote connect "$PORT" cp "$ROOT/tools/hitl_run.py" : ; then
-  echo "FATAL: cannot upload hitl_run.py to $PORT -- board wedged? try tools/board_unwedge.py" >&2
-  exit 1
+  # RECOVER, do not just report. This wedge is routine when a matrix starts straight after heavy
+  # mpremote use -- a deploy, the board suite, another matrix, or a killed client leaving DTR/RTS
+  # asserted (board_unwedge.py's own docstring names that last one). It costs the WHOLE combo: ten
+  # flights that never happened, and the operator finds out later from an empty directory. The cure is
+  # scripted and takes seconds, so run it rather than printing its name.
+  echo "upload failed -- unwedging the board and retrying once" >&2
+  python3 "$ROOT/tools/board_unwedge.py" >/dev/null 2>&1 || true
+  sleep 5
+  if ! mpremote connect "$PORT" cp "$ROOT/tools/hitl_run.py" : ; then
+    echo "FATAL: cannot upload hitl_run.py to $PORT -- board wedged? try tools/board_unwedge.py" >&2
+    exit 1
+  fi
+  echo "recovered; continuing" >&2
 fi
 # The scenario list is fed on FD 3, not stdin, and the flight is given </dev/null.
 # Both halves are needed: `mpremote run` inside hitl_collect.sh reads stdin, so on plain stdin it

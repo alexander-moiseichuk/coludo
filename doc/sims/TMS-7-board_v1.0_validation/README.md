@@ -126,11 +126,72 @@ taking the glider from 287.5 g toward 237–257 g. On this airframe
 [50 g is worth 45 m of median miss and seven in-zone landings](../TMS-7-preflight/) — far more than any
 control change available. The accuracy comes from the scale.
 
+## 6. r4 — the code-polish re-fly (2026-09-16)
+
+A 22-finding code review touched the control station, the new nose logger and **one glider file**:
+`config.py`, where `config_id` stopped hashing `board.firmware_version` (load() restamps it from the
+running firmware, so a byte-identical config was reporting a different id after every deploy). Nothing
+in the flight path changed. r4 asks whether the aircraft noticed anyway.
+
+**It did not**, which is the answer that was wanted:
+
+| combo | r1–r3 medians | **r4** | r1–r3 in-zone | **r4 in-zone** |
+|---|---|---|---|---|
+| `e16_full` | 73.7 / 75.7 / 80.3 | **80.6** | 0/10 ×3 | **1/10** |
+| `f15_full` | 70.9 / 77.8 / 83.3 | **83.2** | 0, 0, 2 /10 | **0/10** |
+| `f15_half` | 42.8 / 45.1 / 49.0 | **39.6** | 7, 7, 6 /10 | **7/10** |
+
+Every median lands inside or at the edge of its band, and `f15_half` — the combo that matters, and the
+one the airframe is heading toward on mass — reproduces **7/10** exactly.
+
+**The open item from §3 did not reproduce.** `e16_full` had lost its only in-zone landing on `wind03` in
+all three previous runs; in r4 it is back (57 m, in zone). One observation against three does not settle
+it, but it argues the cause is VARIABLE rather than a fixed consequence of the rewire — the more
+reassuring of the two explanations, and the one that keeps this off the critical path for a fins-fixed
+flight.
+
+**Do not read `f15_half`'s 39.6 as an improvement.** §3 makes the argument against exactly that move: a
+median can fall because variance grew. With one run there is no across-run spread to check, so the only
+honest statement is that it is not WORSE.
+
+**Two provenance limits, recorded rather than smoothed over:**
+
+* One capture (`e16_full/wind06`) is stamped `build UNKNOWN` — the board did not answer the post-flight
+  query. Its data is complete; only its stamp is missing.
+* **The build stamp cannot see uncommitted work.** It reads the last commit, and r4 flew that commit
+  plus an uncommitted working tree. The stamp exists to answer "did these runs fly the same build", and
+  a dirty tree is precisely the case it cannot distinguish. Worth fixing before it misleads someone.
+
+`config_id` also moved once, by design: taster reports `a2bd31537ad3` where it reported `e5fa26f98e9c`.
+It is stable across deploys from here.
+
+### What r4 cost, and the guards that came out of it
+
+The first attempt produced **30 captures and zero data**, and reported `OK ... DONE` for every flight.
+The recorder's filesystem was **100 % full** — 53.5 GB of camera `.mjpeg` had filled `/userdata` — so
+each session got its files created and no rows written. Two combos were then lost to a CDC wedge, which
+`hitl_matrix.sh` reported and gave up on.
+
+Both failure modes now fail loudly instead:
+
+* `hitl_collect.sh` refuses to start below 50 MB free on the recorder, and **fails when a pulled stream
+  is 0 bytes** — `ls | wc -l` counts an empty file exactly like a full one, which is how thirty flights
+  looked successful.
+* `hitl_matrix.sh` runs `board_unwedge.py` and retries once rather than losing a ten-flight combo.
+* `tools/preflight.py` gates on **1 GB** of recorder free space.
+
+The same full-disk signature — filenames merged into data rows, stats lines cut mid-token — is what the
+[postaudit regression](../TMS-7-postaudit_regression/) recorded as UART corruption "believed to be on the
+receiving side and unresolved". That does not prove the historical case had this cause, but partial
+writes against a full disk explain the signature better than line noise on a soldered wire, and the note
+is worth revisiting rather than left standing.
+
 ## Layout
 
 ```
 r1/ r2/ r3/        per-run plotly HTML + SVG, prefixed by combo
-comparison.json    the full panel comparison across all three runs
+r4/                the code-polish re-fly (§5), same shape
+comparison.json    the full panel comparison across the first three runs
 ```
 
 ## Reproducing
@@ -139,7 +200,7 @@ comparison.json    the full panel comparison across all three runs
 tools/deploy.sh
 mpremote connect $PORT run src/glider/test/diag_bus_stability.py     # 10 000 frames per device
 export SCENARIOS='noise05 noise10 noise25 wind00 wind03 wind06 wind09 wind12 corner_spike corner_stress'
-for r in r1 r2 r3; do
+for r in r1 r2 r3 r4; do    # r4 is the code-polish re-fly; see section 5
   GLIDER_G=285 bash tools/hitl_matrix.sh E16 /tmp/v10/$r/e16_full
   GLIDER_G=285 bash tools/hitl_matrix.sh F15 /tmp/v10/$r/f15_full
   GLIDER_G=235 bash tools/hitl_matrix.sh F15 /tmp/v10/$r/f15_half

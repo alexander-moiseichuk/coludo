@@ -242,6 +242,27 @@ def main():
     again, _source, _errs = config.load(path, defaults=running)
     assert again['board']['firmware_version'] == '2026.09.06.running'
 
+    """
+    config_id identifies the CONFIGURATION, not the build.
+
+    The restamp above puts the running firmware into the loaded config, and config_id hashes that dict --
+    so unless firmware_version is excluded, a byte-identical board.config reports a different id after
+    every deploy, and the id save() returned stops matching the one the board announces in `iam`.
+    """
+    build_a = config_default.default()
+    build_a['board']['firmware_version'] = '2026.01.01.aaaaaaaaaaaa'
+    build_b = config_default.default()
+    build_b['board']['firmware_version'] = '2026.12.31.bbbbbbbbbbbb'
+    assert config.config_id(build_a) == config.config_id(build_b), 'firmware_version must not move the id'
+    # ...while a REAL configuration change still must
+    build_b['board']['setup_retries'] = 9
+    assert config.config_id(build_a) != config.config_id(build_b), 'a config change must move the id'
+    # and the whole point: the id save() hands back survives load()'s restamp
+    config.reset(path)
+    saved_id = config.save(build_a, path)
+    reloaded, _source, _errs = config.load(path, defaults=running)
+    assert config.config_id(reloaded) == saved_id, 'the saved id must survive the restamp'
+
     # NEGATIVE: a config whose board section is missing or not a dict must not crash the loader
     config.reset(path)
     assert config.load(path, defaults=running)[1] == 'default'  # no file at all

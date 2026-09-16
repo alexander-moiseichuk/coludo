@@ -263,6 +263,25 @@ def test_post_with_bad_json_is_answered():
     assert response, 'a malformed POST body must still produce a response'
 
 
+def test_every_rendered_control_is_bound():
+    """
+    Every control the page RENDERS must be referenced by its script.
+
+    The suite asserted a binding for exactly one button, which is how fifteen dead controls shipped in a
+    single refactor: in the served bytes, a <button> with no listener is indistinguishable from a live
+    one. Deriving the list from the markup instead of naming them means a control cannot be added, or
+    orphaned by a rename, without this failing.
+    """
+    import re as _re
+    page = _request(b'GET / HTTP/1.1\r\n\r\n').decode('utf-8', 'replace')
+    markup, separator, script = page.partition('<script>')
+    assert separator, 'the dashboard served no <script> block'
+    ids = _re.findall(r'<(?:button|select)[^>]*\bid="([^"]+)"', markup)
+    assert len(ids) >= 12, 'expected many controls in the markup, found %d -- has the page changed shape?' % len(ids)
+    unbound = [name for name in ids if "'%s'" % name not in script and '"%s"' % name not in script]
+    assert not unbound, 'rendered but never referenced by the script: %s' % unbound
+
+
 def test_dashboard_script_is_valid_javascript():
     """
     The page's script must PARSE. A syntax error anywhere in it kills the whole dashboard.
@@ -295,6 +314,7 @@ test_routes()
 test_hud_is_served_and_offline_safe()
 test_dashboard_carries_the_imu_calibration_column()
 test_dashboard_script_is_valid_javascript()
+test_every_rendered_control_is_bound()
 test_malformed_request_line_does_not_hang()
 test_bad_content_length_still_routes()
 test_handler_fault_answers_500()

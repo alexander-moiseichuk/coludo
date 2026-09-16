@@ -370,6 +370,42 @@ def test_calibration_refuses_a_simulated_capture():
     assert len(airspeed_calibrate._read_capture(real)[0]) == 20
 
 
+def test_recorder_space_gate_reads_a_wrapped_df():
+    """
+    The preflight recorder gate must read busybox's WRAPPED df, and must fail a full disk.
+
+    A full recorder does not fail loudly: it creates every stream of a session and writes no rows, so a
+    flight runs perfectly and the capture is 0 bytes. The first version of this check took a fixed field
+    index and read '1%' as the free space, so it passed a disk with nothing left on it.
+    """
+    import importlib.util
+    spec = importlib.util.spec_from_file_location(
+        'preflight', os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..',
+                                  'tools', 'preflight.py'))
+    preflight = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(preflight)
+
+    wrapped = ('Filesystem           1K-blocks      Used Available Use% Mounted on\n'
+               '/dev/block/by-name/userdata\r\n'
+               '                      56451596    362608  54090836   1% /userdata\n')
+    assert preflight.free_kb(wrapped) == 54090836, 'the wrapped device-name line must still parse'
+
+    full = ('Filesystem           1K-blocks      Used Available Use% Mounted on\n'
+            '/dev/block/by-name/userdata\n'
+            '                      56451596  56451596         0 100% /userdata\n')
+    assert preflight.free_kb(full) == 0, 'a full disk reads as zero free, not as the percentage'
+    assert preflight.free_kb(full) < preflight._RECORDER_FREE_KB, 'a full disk must trip the gate'
+
+    single = ('Filesystem     1K-blocks    Used Available Use% Mounted on\n'
+              '/dev/sda1       56451596  362608  54090836   1% /userdata\n')
+    assert preflight.free_kb(single) == 54090836, 'an UNwrapped line must parse too'
+
+    # NEGATIVE: output with no percentage column at all yields None (treated as "no recorder"), never 0,
+    # because a 0 would fail the gate on every host that has no recorder attached
+    assert preflight.free_kb('adb: no devices/emulators found\n') is None
+    assert preflight.free_kb('') is None
+
+
 def test_every_provided_quantity_has_a_consumer():
     """
     A quantity a device PROVIDES but nobody READS is a provider left behind by a refactor -- fused,
@@ -426,6 +462,7 @@ test_parser_edge_cases()
 test_session_tail_variants_all_key_the_same()
 test_a_spliced_capture_is_reported_not_swallowed()
 test_calibration_refuses_a_simulated_capture()
+test_recorder_space_gate_reads_a_wrapped_df()
 test_every_provided_quantity_has_a_consumer()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, svg render, '
       'airspeed calibration fit, parser edge cases, session-tag eras, '

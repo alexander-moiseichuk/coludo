@@ -482,6 +482,19 @@ def config_id(cfg) -> str:
     Returns:
         A 12-hex-char id: the SHA-256 prefix when hashlib is available, else an 8-hex FNV-1a fallback.
     """
+    """
+    `board.firmware_version` is EXCLUDED from the identity.
+
+    load() restamps it from the running firmware, so leaving it in would make the id a function of the
+    build: a byte-identical board.config would report a different id after every deploy, and the id
+    save() returns would not match the one the board then announces in `iam`. The firmware version is
+    already its own iam field, so the identity loses nothing by leaving it out -- and gains back the
+    property the protocol relies on, that the same configuration always hashes the same.
+    """
+    board = (cfg or {}).get('board') if isinstance(cfg, dict) else None
+    if isinstance(board, dict) and 'firmware_version' in board:
+        cfg = dict(cfg)
+        cfg['board'] = {key: board[key] for key in board if key != 'firmware_version'}
     canonical = _canon(cfg)
     if _HAVE_HASH:
         return binascii.hexlify(hashlib.sha256(canonical.encode()).digest()).decode()[:12]
@@ -512,7 +525,9 @@ def load(path: str = 'board.config', defaults=None) -> tuple:
     Returns:
         (cfg, source, errors). `source` is 'active' (the file was loaded), 'default' (no file), or a
         'default(fallback: ...)' reason (the file was bad JSON or failed validation); `errors` is the
-        validation error list for whatever config was chosen.
+        validation error list for whatever config was chosen. NOTE the returned cfg deliberately differs
+        from the file in one field: `board.firmware_version` is restamped from the running firmware (see
+        below), which is why config_id() excludes it.
     """
     if defaults is None:
         defaults = _builtin_default()

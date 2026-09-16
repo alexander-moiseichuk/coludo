@@ -265,10 +265,18 @@ async function detectLayout(id) {
   const r = await cmd(id, 'detect', []);
   const parsed = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : null;
   const body = (parsed && typeof parsed === 'object') ? parsed : {};  // a JSON string, like probe above
+  // A mismatch has two very different cures, and telling them apart matters: layout.py applies a
+  // DECLARED board.layout on every boot, so rebooting re-applies the same wrong answer forever. Only an
+  // 'auto' config re-scans. The ' (declared)' suffix is what layout.py actually emits, so split on it.
+  const declared = String(body.applied || '').endsWith('(declared)');
+  const disagrees = body.detected && body.applied && !String(body.applied).startsWith(body.detected);
   document.getElementById('actmsg').textContent = r.status === 'ok'
     ? `${id}: wired like ${body.detected || 'nothing recognised'} · running as ${body.applied || '—'}` +
-      (body.detected && body.applied && !String(body.applied).startsWith(body.detected)
-        ? ' — REBOOT to apply' : '')
+      (disagrees ? (declared ? ' — config DECLARES this; set board.layout to auto, then reboot'
+                             : ' — REBOOT to apply') : '') +
+      // detail carries the per-bus address lists and the reason a scan gave up ('neither anchor on
+      // i2c:0', 'ambiguous'), which is exactly what an operator needs when detected is null
+      (body.detail && !body.detected ? ` · ${body.detail}` : '')
     : `${id}: ${JSON.stringify(r)}`;
 }
 
@@ -371,6 +379,10 @@ function ccGps(gps) {
   return `${gps.latitude.toFixed(5)}, ${gps.longitude.toFixed(5)}`;
 }
 const boardMsg = (text) => { document.getElementById('boardmsg').textContent = text; };
+// Everything in the "board actions" bar reports INTO that bar. The five buttons used to split between
+// two elements, so the same click landed in different places depending on which button it was, and a
+// reply could appear above the caption the operator was looking at.
+const actMsg = (text) => { document.getElementById('actmsg').textContent = text; };
 
 new EventSource('/events').onmessage = (event) => {
   const { cc, boards } = JSON.parse(event.data);
@@ -439,7 +451,9 @@ async function renderAbsent() {
   try { missing = await (await fetch('/api/absent')).json(); } catch (err) { return; }
   box.innerHTML = missing.length
     ? `<b class="warn">\u2757 ${missing.length} known glider${missing.length > 1 ? 's' : ''} not connected:</b> `
-      + missing.map(g => `<span title="${g.hint}">${g.id} (${g.ip || 'ip unknown'})</span>`).join(', ')
+      // escAttr for the same reason the row template uses it: these are operator-set board ids and a
+      // hub-supplied hint, spliced into innerHTML
+      + missing.map(g => `<span title="${escAttr(g.hint)}">${escAttr(g.id)} (${escAttr(g.ip) || 'ip unknown'})</span>`).join(', ')
       + ' — a glider registers with the hub only at boot, so power-cycle it to re-login'
     : '';
 }
@@ -502,8 +516,9 @@ function fmtImu(b) {
 
 // Guided calibration, ONE DEVICE PER PRESS. The board's `calibrate` sweep says which devices are
 // outstanding and what the operator must do for each; this takes the first, shows it, and stops. The
-// heartbeat then re-counts, the button becomes `calibrate 2`, `calibrate 1`, and finally disappears
-// as the row goes green -- so progress is visible without this holding the operator in a loop.
+// heartbeat then re-counts, so the calibration CELL counts down and the not-ready row flag clears
+// itself -- progress is visible without this holding the operator in a loop. (It used to describe a
+// per-row button relabelling itself; the table is status + selection only, see fmtImu.)
 // OK is them saying "done": a timed pause races the work, and a tare captured while the airframe is
 // still being set down is worse than none, because it looks valid.
 async function sweepCalibration(id) {
@@ -512,23 +527,27 @@ async function sweepCalibration(id) {
 
 async function calibrateBoard(id) {
   const pending = await sweepCalibration(id);
-  if (pending === null) { boardMsg(`${id} calibrate: board did not answer`); return; }
+  if (pending === null) { actMsg(`${id} calibrate: board did not answer`); return; }
   const names = Object.keys(pending);
-  if (!names.length) { boardMsg(`${id} calibrate: nothing outstanding — all devices ready`); return; }
+  if (!names.length) { actMsg(`${id} calibrate: nothing outstanding — all devices ready`); return; }
 
   const name = names[0];   // one at a time: the instructions conflict physically
   const left = names.length;
   if (!confirm(`Calibrate ${name}   (${left} device${left > 1 ? 's' : ''} outstanding)\n\n` +
                `${pending[name]}\n\nPress OK when done.`)) {
-    boardMsg(`${id} calibrate: cancelled at ${name}`);
+    actMsg(`${id} calibrate: cancelled at ${name}`);
     return;
   }
   const ran = await cmd(id, 'calibrate', [name]);   // no-op where the act is purely physical
-  if (ran.status !== 'ok') { boardMsg(`${id} calibrate ${name}: ${JSON.stringify(ran)}`); return; }
+  if (ran.status !== 'ok') { actMsg(`${id} calibrate ${name}: ${JSON.stringify(ran)}`); return; }
 
   const now = await sweepCalibration(id);
-  const stillLeft = now ? Object.keys(now) : [];
-  if (stillLeft.includes(name)) { boardMsg(`${id} calibrate ${name}: STILL OUTSTANDING — ${now[name]}`); return; }
+  // the SAME null the first sweep guards against, and the window where it is most likely: airframe in
+  // hand, leads being tugged. An empty list here would read as "all devices calibrated" -- and this is
+  // the arm gate for an IMU whose failure mode is a frozen attitude.
+  if (now === null) { actMsg(`${id} calibrate ${name}: ran, but the re-check did not answer — status unknown`); return; }
+  const stillLeft = Object.keys(now);
+  if (stillLeft.includes(name)) { actMsg(`${id} calibrate ${name}: STILL OUTSTANDING — ${now[name]}`); return; }
   boardMsg(stillLeft.length
     ? `${id} calibrate: ${name} done — ${stillLeft.length} left (${stillLeft.join(', ')})`
     : `${id} calibrate: ${name} done — ALL DEVICES CALIBRATED`);
@@ -538,14 +557,14 @@ async function calibrateBoard(id) {
 // GPS position to the board launch config (/api/assist).
 async function syncTime(id) {
   const r = await cmd(id, 'update', ['mission', JSON.stringify({ epoch: Math.floor(Date.now() / 1000) })]);
-  boardMsg(`${id} sync time: ${r.status === 'ok' ? 'ok' : JSON.stringify(r)}`);
+  actMsg(`${id} sync time: ${r.status === 'ok' ? 'ok' : JSON.stringify(r)}`);
 }
 async function gpsAssist(id) {
   const res = await fetch('/api/assist', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ board: id }),
   });
   const r = await res.json();
-  boardMsg(`${id} gps: ${r.assisted ? 'pushed ' + JSON.stringify(r.position) : JSON.stringify(r)}`);
+  actMsg(`${id} gps: ${r.assisted ? 'pushed ' + JSON.stringify(r.position) : JSON.stringify(r)}`);
 }
 
 // --- ad-hoc command box: pick a command, type its params (space-separated) ---
@@ -827,7 +846,10 @@ document.getElementById('logclear').onclick = () => { logPane.textContent = ''; 
 
 new EventSource('/logs').onmessage = (event) => {
   const { board, line } = JSON.parse(event.data);
+  // Cap it like a tail. At the default 1 s telemetry interval a dashboard left open across a flight day
+  // accumulates tens of thousands of lines in one text node, and `+=` rebuilds the whole string each time.
   logPane.textContent += `${board}: ${line}\n`;
+  if (logPane.textContent.length > 200000) { logPane.textContent = logPane.textContent.slice(-150000); }
   logPane.scrollTop = logPane.scrollHeight;
 };
 </script>

@@ -19,6 +19,16 @@ d="$outdir/$scen"; mkdir -p "$d"; rm -f "$d"/*
 printf 'import hitl_run\nhitl_run.fly("%s", %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n' \
   "$motor" "$noise" "$wind" "$dir" "$spike" "$glider_g" "$inject_hz" "$reboot_s" "$no_cc" \
   "$attitude_drop_s" "$gnss_drop_s" > /tmp/launch.py
+# Fail in a second rather than after a five-minute flight: a full recorder disk cannot store the
+# capture, and the flight would run perfectly and record nothing.
+# Take the field BEFORE the use% column: busybox df wraps a long device name onto its own line, so the
+# numbers line has five fields and a fixed $4 lands on '1%' rather than the free space.
+free_kb=$(adb shell "df /userdata" 2>/dev/null | tr -d '\r' \
+          | awk 'NR>1 {for (i = 1; i <= NF; i++) if ($i ~ /%$/) {print $(i - 1); exit}}')
+case "$free_kb" in
+  ''|*[!0-9]*) ;;                                    # no recorder attached, or df unreadable: let it run
+  *) [ "$free_kb" -lt 51200 ] && { echo "FAIL $motor/$scen: recorder has ${free_kb}KB free -- needs >50MB"; exit 1; } ;;
+esac
 python3 "$ROOT/tools/board_reboot.py" "$PORT" >/dev/null 2>&1 || true   # clean VM -> fresh recorder session
 # 300 s, not 190: the board flight runs in REAL TIME and its own cap is 150 s, so the wall-clock
 # budget has to cover the flight plus boot, config and the GNSS-fix wait. At the measured air quality
@@ -49,6 +59,17 @@ if [ "$pulled" -ne "$want" ]; then
   exit 1
 fi
 [ "$want" -eq 0 ] && { echo "FAIL $motor/$scen: session $ses produced no streams"; exit 1; }
+# A stream can EXIST and be EMPTY, and every check above passes when it is: `ls | wc -l` counts a
+# 0-byte file exactly like a full one. That is what a full recorder disk looks like from here -- the
+# session's files get their inode and no rows -- and it cost a 30-flight matrix that reported OK for
+# every flight while capturing nothing at all. Downstream cannot tell either: an empty capture renders
+# as a flight that simply had no data.
+empty=$(find "$d" -maxdepth 1 -name "${ses}_*.csv" -size 0 | wc -l)
+if [ "$empty" -gt 0 ]; then
+  echo "FAIL $motor/$scen: $empty of $want streams are EMPTY -- the recorder wrote no rows"
+  echo "  recorder disk: $(adb shell 'df -h /userdata | tail -1' 2>/dev/null | tr -d '\r')"
+  exit 1
+fi
 python3 "$ROOT/tools/assemble_capture.py" "$ses" "$d" "$outdir/$scen.txt" >/dev/null
 # PROVENANCE. main.py logs the build+config identity at boot, but a log line carries no
 # `@session_file@` prefix, so the Luckfox never routes it to a .csv and this script -- which pulls only

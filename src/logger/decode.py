@@ -19,6 +19,10 @@ _G: float = 2048.0            # BMI323 LSB per g at +/-16 g
 _DPS: float = 16.384          # BMI323 LSB per deg/s at +/-2000 dps
 _R_AIR: float = 287.05        # J/(kg K), dry air
 _GRAVITY: float = 9.80665     # m/s^2
+_DECIMATE: int = 50           # mirrors main.py: one frame in 50 is kept while the airframe is still.
+                              # Cannot be imported -- that is firmware for another chip -- so a change
+                              # there must be mirrored here, and the continuity check below is what
+                              # would notice: idle joins would start reading as lost samples.
 _INVALID: int = -32768        # BMI323's "no sample yet" marker (0x8000) -- never a reading
 _ACCEL_DUMMY: int = 0x7F01    # BMI323 FIFO: this frame carries no new accel sample (marker in the x word)
 _GYRO_DUMMY: int = 0x7F02     # ... no new gyro sample
@@ -75,15 +79,25 @@ def _cell(value, fmt: str) -> str:
     return '' if value is None else fmt % value
 
 
-def decode(path: str) -> dict:
-    """Write PATH.csv, print a one-file summary; return the header plus first/last timestamps."""
-    with open(path, 'rb') as handle:
-        header, rows = _records(handle.read())
+def reference_of(rows: list) -> tuple:
+    """(pressure_pa, celsius) of the first sample with a real pressure, or (None, None)."""
+    for row in rows:
+        if row[7]:
+            return row[7] / 64.0, _temperature(row[8])
+    return None, None
+
+
+def decode(path: str, header: dict, rows: list, reference: float, reference_celsius) -> dict:
+    """
+    Write PATH.csv, print a one-file summary; return the header plus first/last timestamps.
+
+    The altitude `reference` is passed IN rather than taken from this file's first sample, because a
+    flight spans many files -- a new one every ~15 s -- and re-zeroing each of them would put apogee at
+    roughly zero in every segment. One reference per boot makes alt_rel_m comparable across the flight,
+    which is the only way the apogee this payload exists to measure is visible at all.
+    """
     label = 'bench' if header['boot'] is None else 'boot %d segment %d' % (header['boot'], header['segment'])
     start = rows[0][0]
-    valid = [r for r in rows if r[7]]
-    reference = valid[0][7] / 64.0 if valid else None
-    reference_celsius = _temperature(valid[0][8]) if valid else None
     out = path.rsplit('.', 1)[0] + '.csv'
     peak_a = peak_w = 0.0
     gaps, heights = [], []
@@ -92,8 +106,16 @@ def decode(path: str) -> dict:
         writer.writerow(_COLUMNS)
         previous = start
         for index, (ms, ax, ay, az, gx, gy, gz, pressure, temperature) in enumerate(rows):
-            # the chip's "no sample" markers become empty cells and stay out of every peak
-            dead_a, dead_w = ax in (_INVALID, _ACCEL_DUMMY), gx in (_INVALID, _GYRO_DUMMY)
+            """
+            The chip's "no sample" markers become empty cells and stay out of every peak -- but _INVALID
+            applies to the GYRO ONLY. On a +/-16 g accel, -32768 is the negative saturation RAIL, a real
+            reading of -16.0 g, and blanking it deletes exactly the sample a boost exists to capture: a
+            mounting sign that puts thrust on the negative axis would report a railed boost as no boost
+            at all. main.py only ever documents 0x8000 as a gyro start-up value, and the bench captures
+            agree -- gx hit it twice per file (all three gyro axes at once, accel valid in the same
+            record), ax never once.
+            """
+            dead_a, dead_w = ax == _ACCEL_DUMMY, gx in (_INVALID, _GYRO_DUMMY)
             a = [None if dead_a else v / _G for v in (ax, ay, az)]
             w = [None if dead_w else v / _DPS for v in (gx, gy, gz)]
             magnitude = None if None in a else (a[0] ** 2 + a[1] ** 2 + a[2] ** 2) ** 0.5
@@ -134,10 +156,34 @@ def _continuity(summaries: list) -> None:
              if a['boot'] is not None and a['boot'] == b['boot'] and b['segment'] == a['segment'] + 1]
     if not joins:
         return
-    gaps = [((b['first'] - a['last']) % _TICKS) - a['period'] for a, b in joins]
-    print('continuity over %d saves: extra gap at each join min %d / max %d ms  -> %s' % (
-        len(gaps), min(gaps), max(gaps), 'LOSSLESS' if max(gaps) == 0 else 'samples lost at a save'))
+    """
+    Two spacings are legal at a join, not one.
+
+    A save that lands inside a quiet stretch joins one DECIMATION interval later, because the firmware is
+    keeping one frame in _DECIMATE while the airframe is still. Treating that as loss would have this
+    print 'samples lost' for the most common case of all -- a rocket sitting on the pad.
+    """
+    period = joins[0][0]['period']
+    gaps = [(b['first'] - a['last']) % _TICKS for a, b in joins]
+    legal = [period, period * _DECIMATE]
+    lost = [gap for gap in gaps if gap not in legal]
+    print('continuity over %d saves: %s' % (
+        len(gaps),
+        'LOSSLESS (joins at %s ms)' % sorted(set(gaps)) if not lost
+        else 'SAMPLES LOST -- joins of %s ms, legal are %s' % (sorted(set(lost)), legal)))
 
 
 if __name__ == '__main__':
-    _continuity([decode(name) for name in sorted(sys.argv[1:])])
+    # One pass to read every file, so each boot's altitude reference comes from its LOWEST segment and
+    # every later segment measures against the same ground.
+    loaded = []
+    for name in sorted(sys.argv[1:]):
+        with open(name, 'rb') as handle:
+            header, rows = _records(handle.read())
+        loaded.append((name, header, rows))
+    references = {}
+    for _name, header, rows in loaded:
+        key = header['boot']
+        if key not in references:
+            references[key] = reference_of(rows)
+    _continuity([decode(name, header, rows, *references[header['boot']]) for name, header, rows in loaded])
