@@ -76,13 +76,16 @@ three things worth more than the interrupts: the BOOT-button recovery path, the 
 the WS2812. Two independent indicators means the armed / recording / saved states can be signalled in
 both blink pattern *and* colour, readable from outside the airframe without a USB cable.
 
-### Why the FIFO interrupt is the one that matters
+### The FIFO is polled, and INT1 is spare
 
-The plan runs the BMI323's own FIFO at high ODR and drains it in blocks, so the sample rate is set by
-the sensor rather than by how fast MicroPython can loop — this project measured a ~10 ms scheduling
-floor on the ESP32 asyncio port, which alone would cap a Python-rate loop near 100 Hz and miss a boost
-transient. Draining a FIFO decouples the two, and it needs exactly one line: the BMI323's
-**FIFO-watermark interrupt**, which the DFRobot wiki assigns to **INT1**.
+Both sensors' FIFOs are drained every 10 ms, so the sample rate is set by the sensor rather than by how
+fast MicroPython can loop — this project measured a ~10 ms scheduling floor on the ESP32 asyncio port,
+which alone would cap a Python-rate loop near 100 Hz and miss a boost transient.
+
+Draining needs no interrupt: the loop reads `FIFO_FILL_LEVEL` each tick and takes whatever is queued.
+**`main.py` never touches GPIO18.** The wire is still worth having — one conductor, and it leaves a
+watermark interrupt available if a later build wants to sleep between drains — but nothing today depends
+on it, and a harness without it behaves identically.
 
 > Confirm your **SuperMini's** silkscreen against the GPIO numbers above before soldering — clone
 > variants differ, and the C6 SuperMini is not a DFRobot board.
@@ -159,30 +162,44 @@ one save window, so every sample is kept.
 
 | | |
 |---|---|
-| rate | ~100 Hz, polled: BMI323 accel + gyro, BMP581 pressure + temperature |
+| rate | **50 Hz**, both sensors sampling on their own clocks into their own FIFOs |
+| drain | every 10 ms — twice per frame period, so a frame never waits |
 | record | 24 bytes, raw: `uint32 ms · int16 ax ay az gx gy gz · int32 pressure · int32 temperature` |
-| autosave | a new file every **3000 records** (~30 s, 72 KB) |
-| BOOT | saves the current partial segment immediately — **3 blinks** |
-| LED (GPIO15) | toggles every ~0.5 s while recording; 3 blinks = a BOOT save landed |
+| autosave | a new file every **750 records** (~15 s, 18 KB) |
+| still | **1 Hz** after 5 s of stillness; the first frame that moves restores 50 Hz |
+| BOOT | saves the partial segment immediately — **3 blinks**, and sampling never pauses for them |
+| LED (GPIO15) | toggles every ~0.5 s while recording |
 | files | `bBBBBB_sSSSS.bin` — boot number (monotonic, kept in NVS) + segment; they sort chronologically |
-| space | 2 MB filesystem, **1.94 MB free → ~13 minutes** at 2.4 KB/s |
+| space | 2 MB filesystem, 1.94 MB free → **~28 minutes** at full rate, far longer with idle stretches |
 | full flash | the **oldest** logs are deleted — only as many as the new segment needs, counted from their own sizes; `main.py` and `boot.py` are never touched. A save that still fails drops that one segment; recording continues |
 
-Each file opens with a 16-byte header, `<4sHHHHI`: magic `CLG2`, record size, sample period (ms), boot,
-segment, record count.
+Each file opens with a 20-byte header, `<4sHHHHII`: magic `CLG3`, record size, sample period (ms), boot,
+segment, record count, and the MCU clock at the save.
 
-**What you can lose, and when:**
+**Why the FIFOs matter.** Programming flash freezes the single core — measured at 647–1434 ms per 72 KB
+save, and 1221–2004 ms once the flash was full and each save also had to delete a file. Through that
+freeze the BMI323 keeps queueing accel + gyro (~3.4 s deep at 50 Hz) and the BMP581 keeps queueing
+pressure (32 frames, 0.64 s), and the next drain collects it all. Measured after the change: **0 ms of
+extra gap at every save join**, across 11 saves, one of them containing 23 g impacts.
 
-- **The span of each flash write.** The C6 has one core and programming flash stalls it, so sampling
-  stops for the duration of every save — visible as a gap in `dt_ms`, every ~30 s. Its length is being
-  measured. The BOOT blinks do **not** pause sampling: they are counted in samples, not slept.
-- **Up to ~30 s at power-off** — whatever is in RAM since the last save. Press BOOT before switching off if
-  that tail matters; after a flight it is post-landing idle.
-- Nothing at start-up: the gyro reports `0x8000` for ~20 ms after it is enabled, and the firmware waits
-  for valid data before recording rather than logging the marker.
+Temperature is read live rather than through the BMP581's FIFO: putting it there halves that FIFO from
+32 frames to 16, and temperature moves far too slowly to need buffering.
 
-If the measured save gap proves too long, the zero-loss fix is the **BMI323's own FIFO** — about 1.7 s of
-accel + gyro at 100 Hz — drained after each write. That is what `INT1 → GPIO18` is wired for.
+**Timestamps come from the sensor's clock** — frame N is `t0 + N × 20 ms`, evenly spaced by construction,
+with no MCU jitter. The header's MCU clock is the cross-check: a lost frame would show as the sensor
+timeline falling a further 20 ms behind, and on the bench it sat a constant ~70 ms ahead instead.
+
+**Stillness is judged frame to frame**, never against a stored resting pose — a pose keeps reading
+"moved" after the airframe is set down in a new orientation, and the logger would never settle. The
+thresholds are 0.05 g of frame-to-frame change, 5 dps on any axis, or ~2 m of climb against the mark a
+second ago; resting noise measures ~5 LSB and ~1 dps, well clear of them.
+
+**What you can still lose:**
+
+- **Up to one segment at power-off** — whatever is in RAM since the last save. Press BOOT first if that
+  tail matters; after a flight it is post-landing idle. While still, a segment takes minutes to fill.
+- Nothing at start-up: the gyro reports `0x8000` until it has started, and `_setup()` waits for valid data
+  before flushing the FIFO and beginning.
 
 ## Where the data lives
 
@@ -213,7 +230,7 @@ Writes a CSV beside each file, one row per sample:
 | | |
 |---|---|
 | heap free after boot | 332 KB |
-| sample rate | **99.9 Hz**, dt 10–11 ms |
+| sample rate | **50.0 Hz**, flat 20 ms from the sensor clock (the earlier polled build: 99.9 Hz, 10–11 ms) |
 | accel scale | per-sample \|a\| median **1.000 g** at rest — ±16 g at 2048 LSB/g confirmed against gravity |
 | pressure noise | 4 Pa spread while still (~0.3 m) |
 | hand shake | peak 2.7 g, 549 dps |
@@ -222,11 +239,13 @@ Writes a CSV beside each file, one row per sample:
 ## Carried over from the static-burn logger
 
 `tools/c3_burn_logger.py` (ESP32-C3, static burn + separation ground test) is not the base for this code.
-Of its three rules, one holds and two were **deliberately traded away**:
+Of its three rules, two hold and one was overtaken:
 
 - **Rotate files** — holds. A restart or brownout never overwrites an earlier capture.
-- **Never write flash while sampling** — traded. That logger could wait for the event to end and flush
-  once. This one records from power-up because a missed BOOT press must not cost the flight, and a flight
-  can fit inside one save window. The price is the save gap above — measured, not assumed, with the FIFO
-  as the fix.
-- **Latch a flight state** — dropped for the same reason. There is no event detection; nothing is filtered.
+- **Decimate while idle** — holds, and is why ten minutes on the ground costs ~14 KB rather than ~720 KB.
+  That logger dropped to 1 row/s while waiting for ignition; this one keys on stillness itself, so it
+  applies on the pad, under the chute and after landing without having to know which is which.
+- **Never write flash while sampling** — overtaken rather than traded away. It was the right rule for a
+  build that polled its sensors, and this one records from power-up precisely because a missed BOOT press
+  must not cost the flight. The FIFOs removed the conflict instead of splitting the difference: the save
+  still freezes the core, and no samples are lost to it.
