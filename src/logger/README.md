@@ -184,10 +184,18 @@ segment, record count.
 If the measured save gap proves too long, the zero-loss fix is the **BMI323's own FIFO** — about 1.7 s of
 accel + gyro at 100 Hz — drained after each write. That is what `INT1 → GPIO18` is wired for.
 
+## Where the data lives
+
+Logs belong to the **flight**, not to this directory: pull them into
+`launches/<date>/<airframe>/logger/` (e.g. `launches/20261003/TMS-7/logger/`) so a capture sits beside
+the airframe's mass, motor and configuration. Bench captures that prove something about the firmware go
+in the commit that changes it; routine desk recordings are not worth keeping, and CSVs never are —
+`decode.py` regenerates them from the `.bin` at any time.
+
 ## Reading the data — `decode.py`
 
 ```
-python3 src/logger/decode.py src/logger/logs/*/*.bin
+python3 src/logger/decode.py launches/20261003/TMS-7/logger/*.bin
 ```
 
 Writes a CSV beside each file, one row per sample:
@@ -209,7 +217,7 @@ Writes a CSV beside each file, one row per sample:
 | accel scale | per-sample \|a\| median **1.000 g** at rest — ±16 g at 2048 LSB/g confirmed against gravity |
 | pressure noise | 4 Pa spread while still (~0.3 m) |
 | hand shake | peak 2.7 g, 549 dps |
-| gyro bias | **not yet measured** — every capture so far was handheld |
+| gyro bias | **≤1 dps** at rest, 29 °C |
 
 ## Carried over from the static-burn logger
 

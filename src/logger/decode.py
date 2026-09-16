@@ -7,7 +7,7 @@ Writes FILE.csv beside each input and prints a summary, then checks CONTINUITY a
 segments -- each should start exactly one period after the last one ended, which is the proof that a
 flash save cost no samples.
 
-    python3 src/logger/decode.py src/logger/logs/*/*.bin
+    python3 src/logger/decode.py launches/20261003/TMS-7/logger/*.bin
 """
 
 import csv

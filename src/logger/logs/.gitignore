@@ -1,9 +1,0 @@
-# CSVs are regenerable from the .bin with decode.py -- 8 MB of them is not worth versioning
-*.csv
-
-# Long idle bench recordings from the pre-FIFO builds: 11 MB of a board sitting on a desk. Their
-# conclusions (save stall 647-1434 ms, 1221-2004 ms on a full flash) are in the README, the numbers
-# that mattered are in the commit history, and nothing here needs the raw samples again.
-20260915_boot2/
-20260915_boot3/
-20260915_boot5_idle/
