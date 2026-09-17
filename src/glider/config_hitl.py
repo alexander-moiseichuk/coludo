@@ -12,13 +12,20 @@ mutate freely. Run it instead of config_default for a simulation; the flight con
 import config_default
 
 _SIM_SENSORS = ('accel_adxl375', 'imu_lsm6dso32', 'imu_bno055', 'baro_icp10111', 'baro_bmp280',
-                'laser_agl', 'gnss', 'airspeed_sdp810')
+                'laser_agl', 'gnss', 'airspeed_sdp810',
+                'imu_bmi323', 'mag_bmm350', 'baro_bmp581')
 """
 `airspeed_sdp810` masked (7/27): the sim now publishes `airspeed`/`dynamic_pressure` itself. Leaving
 the real part enabled meant a bench SDP810 in still air was the ONLY publisher of the fused airspeed
-channel on every board HITL flight -- the findings §28 bistability. That was patched at the consumer
-(`pitot_min_ms`), which is correct for a blocked tube in flight but left board HITL never exercising
-the pitot path while the host sim did. Masking it here closes the harness side.
+channel on every board HITL flight -- the bistability that cost a run of flights. That was patched at
+the consumer (`pitot_min_ms`), which is correct for a blocked tube in flight but left board HITL never
+exercising the pitot path while the host sim did. Masking it here closes the harness side.
+
+The v1.1 attitude module (`imu_bmi323` + `mag_bmm350` + `baro_bmp581`) is masked for the same reason,
+added the moment that hardware appeared rather than after a run had to be thrown away. A bench
+magnetometer that never turns is the most convincing wrong answer available to a simulated flight,
+precisely because it stays perfectly FRESH -- the databoard has no way to know it is meaningless, and
+`tasks/hitl.py` now publishes a simulated `mag` in its place.
 """
 _OFF = ('separation', 'watchdog', 'wifi', 'cc', 'bluetooth')
 

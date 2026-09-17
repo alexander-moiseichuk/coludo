@@ -4,7 +4,7 @@
 # the Luckfox session, and assemble a capture .txt. Assumes tools/hitl_run.py is on the board (hitl_matrix
 # deploys it). The capture timeline is flight-relative downstream, so the climbing soft-reboot uptime is fine.
 #
-# Usage: hitl_collect.sh <motor> <scenario> <noise> <wind> <wind_dir> <spike> [outdir] [glider_g] [inject_hz] [reboot_s] [no_cc] [attitude_drop_s] [gnss_drop_s]
+# Usage: hitl_collect.sh <motor> <scenario> <noise> <wind> <wind_dir> <spike> [outdir] [glider_g] [inject_hz] [reboot_s] [no_cc] [attitude_drop_s] [gnss_drop_s] [no_mag]
 #   e.g. hitl_collect.sh F15 wind12 0.10 12.0 210.0 False /tmp/hitl/F15
 #        hitl_collect.sh F15 f15_full 0.05 0.0 210.0 False /tmp/hitl/mem 300 25   # weight/leak matrix
 #   glider_g (default 300) + inject_hz (default 0 = sim_hz) drive the weight + memory-leak captures.
@@ -15,10 +15,11 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 motor=$1; scen=$2; noise=$3; wind=$4; dir=$5; spike=$6; outdir=${7:-/tmp/hitl/$motor}
 glider_g=${8:-285}; inject_hz=${9:-0}; reboot_s=${10:-0}; no_cc=${11:-False}; attitude_drop_s=${12:-0}
 gnss_drop_s=${13:-0}   # seconds of GNSS blackout in the glide -> exercises the dead-reckoning tier
+no_mag=${14:-False}    # True -> fly with NO magnetometer (the control half of a mag A/B pair)
 d="$outdir/$scen"; mkdir -p "$d"; rm -f "$d"/*
-printf 'import hitl_run\nhitl_run.fly("%s", %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n' \
+printf 'import hitl_run\nhitl_run.fly("%s", %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n' \
   "$motor" "$noise" "$wind" "$dir" "$spike" "$glider_g" "$inject_hz" "$reboot_s" "$no_cc" \
-  "$attitude_drop_s" "$gnss_drop_s" > /tmp/launch.py
+  "$attitude_drop_s" "$gnss_drop_s" "$no_mag" > /tmp/launch.py
 # Fail in a second rather than after a five-minute flight: a full recorder disk cannot store the
 # capture, and the flight would run perfectly and record nothing.
 # Take the field BEFORE the use% column: busybox df wraps a long device name onto its own line, so the

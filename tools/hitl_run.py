@@ -27,7 +27,7 @@ import tasks
 
 async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: bool,
               glider_g: int, inject_hz: int, reboot_s: float, no_cc: bool,
-              attitude_drop_s: float = 0.0, gnss_drop_s: float = 0.0) -> None:
+              attitude_drop_s: float = 0.0, gnss_drop_s: float = 0.0, no_mag: bool = False) -> None:
     drivers.load()
     tasks.load()
     launch = mission.Mission(max_range_m=200)
@@ -53,6 +53,11 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
                 break
             await asyncio.sleep_ms(50)
         print('FIELD zone', launch.site, launch.zone)
+    if no_mag:
+        # the control condition: fly this scenario with NO magnetometer, so the pair says what the mag
+        # is worth. Set before arming -- this is a build variant, not a mid-flight failure.
+        flight.active('hitl').drop_mag = True
+        print('NO MAG: magnetometer channel withheld for the whole flight')
     flight.arm()  # enable actuation -- without it flight.py holds the fins neutral
     print('SESSION', recorder.Recorder.session(), motor, 'noise', noise, 'wind', wind)
     stages = controller.Stage
@@ -175,7 +180,7 @@ async def _simulated_reboot(flight, boot_s: float) -> None:
 def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0, wind_dir: float = 210.0,
         spike: bool = False, glider_g: int = 285, inject_hz: int = 0,
         reboot_s: float = 0.0, no_cc: bool = False, attitude_drop_s: float = 0.0,
-        gnss_drop_s: float = 0.0) -> None:
+        gnss_drop_s: float = 0.0, no_mag: bool = False) -> None:
     """
     Fly one HITL scenario to completion (or a 150 s cap), recording every stream to the Luckfox.
 
@@ -189,8 +194,10 @@ def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0, wind_dir: fl
     `attitude` this many seconds into GLIDING (a BNO055 death): the priority-1 complementary-filter
     backup must carry the glide to a controlled landing. `gnss_drop_s` > 0 drops position/speed/course
     for that many seconds at a random glide moment (a tunnel / antenna knock): the guidance falls to its
-    open-loop heading tiers, then recovers. All the degradations COMBINE -- pass several at once for the
-    interaction stress.
+    open-loop heading tiers, then recovers. `no_mag` withholds the magnetometer for the WHOLE flight --
+    the control condition for a GNSS-dropout pair, since the only honest way to measure what the mag is
+    worth is the same scenario flown with and without it. All the degradations COMBINE -- pass several at
+    once for the interaction stress.
     """
     asyncio.run(_go(motor, noise, wind, wind_dir, spike, glider_g, inject_hz, reboot_s, no_cc,
-                    attitude_drop_s, gnss_drop_s))
+                    attitude_drop_s, gnss_drop_s, no_mag))

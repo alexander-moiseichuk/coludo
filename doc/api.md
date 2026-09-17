@@ -177,6 +177,21 @@ selector). Bound here: clamp_int, wrap180 (@viper, ~2.1-2.8x); between, magnitud
 ~1.2-1.6x); bank_demand -> _upy for now (its @native measured 1.03x -- a thin wrapper over native
 between; switch to _opt when a bench shows a gain).
 
+### `altitude_m(pressure_pa: float) -> float`
+
+Barometric altitude (m AMSL) from pressure, the ISA approximation.
+
+One definition, because a second baro is a CROSS-CHECK: two drivers computing altitude with their own
+copy of this can differ by an edit rather than by the air, and the disagreement would read as a sensor
+fault. Called once per sensor sample (~10 Hz), so there is no optimised variant -- see the @viper /
+@native sections below for the primitives that earn one.
+
+Args:
+    pressure_pa - absolute pressure in pascals.
+
+Returns:
+    Metres above the sea-level datum; 0.0 for a non-positive pressure (a dead read, not a height).
+
 ### `clamp_int_upy(low: int, value: int, high: int) -> int`
 
 ### `clamp_int_opt(low: int, value: int, high: int) -> int`
@@ -427,7 +442,9 @@ Args:
 Returns:
     (cfg, source, errors). `source` is 'active' (the file was loaded), 'default' (no file), or a
     'default(fallback: ...)' reason (the file was bad JSON or failed validation); `errors` is the
-    validation error list for whatever config was chosen.
+    validation error list for whatever config was chosen. NOTE the returned cfg deliberately differs
+    from the file in one field: `board.firmware_version` is restamped from the running firmware (see
+    below), which is why config_id() excludes it.
 
 ### `schema_version(cfg) -> str`
 
@@ -1153,12 +1170,22 @@ firmware can serve both if it can tell them apart. It can: four addresses swap b
 revisions, which is four independent votes rather than one hinge, so a single dead device cannot flip
 the verdict.
 
-                       i2c:0                              i2c:1
-    v0.1   0x28 0x63 0x76 0x25 0x29             0x40
-    v1.0   0x28 0x76 0x40                       0x63 0x25 0x29
+                       i2c:0                                   i2c:1
+    v0.1   0x18 0x28 0x76 0x63 0x25 0x29                 0x40
+    v1.0   0x18 0x28 0x76 0x40                           0x63 0x25 0x29
+    v1.1   0x18 0x69 0x47 0x15 0x40                      0x63 0x25 0x29
 
-`0x28` (BNO055) and `0x76` (BMP280) sit on i2c:0 in BOTH, so they say nothing about the layout -- they
-are the sanity check that the scan worked at all rather than returning an empty bus.
+Three revisions, and they separate on two independent axes. The four devices that MOVE BUS separate
+v0.1 from the v1.x pair; the ATTITUDE PARTS separate v1.0 from v1.1, because the SEN0253 (BNO055 0x28 +
+BMP280 0x76, one module) gives way to the SEN0697 (BMI323 0x69 + BMP581 0x47 + BMM350 0x15). The
+ADXL375 is on SPI and invisible here, so "no ADXL375" is carried by the revision, never scanned for.
+
+`0x18` is the ANCHOR: the ES8311 audio codec soldered to the WaveShare board itself. It says nothing
+about the revision -- it is present on all of them -- which is exactly what an anchor is for: proving the
+scan reached a live bus rather than returning an empty set. It replaces the old pair of anchors (0x28 +
+0x76), and it is a better one precisely because it cannot be unplugged: those two were the SEN0253, so
+fitting a SEN0697 removed both and detection would have refused on a perfectly good board. The other
+known-present addresses stay in the list as fallbacks in case a board ever ships without the codec.
 
 Scanning does NOT go through i2cbus.get(): that caches a Bus per id, and the cached frequency would then
 outlive detection -- a scan at 100 kHz would pin the fast bus at 100 kHz for the whole flight. Raw I2C
@@ -1169,16 +1196,43 @@ whatever speed the chosen layout declares.
 
 Decide the layout from the buses themselves.
 
-Each moved device votes for whichever revision puts it on the bus it actually answered on. A device
-that answers on neither expected bus, or not at all, abstains -- so an unfitted or dead part costs a
-vote instead of casting a wrong one.
+Two independent kinds of evidence, counted into one tally per revision:
+
+  * a MOVED device votes for whichever revisions put it on the bus it actually answered on. This
+    separates v0.1 from the v1.x pair and says nothing within it.
+  * a FITTED part votes for the revisions that carry it. This is what separates v1.0 from v1.1,
+    since the SEN0253 and the SEN0697 occupy different addresses on the same bus.
+
+Absence never votes AGAINST. A dead or unfitted part costs its revision one vote rather than casting
+one for another, so no single failure can flip a verdict -- the whole reason the tally is spread over
+several addresses instead of hinging on one.
 
 Args:
     cfg - the board config, read for bus pins only (nothing is mutated).
 
 Returns:
-    (name, detail) where name is 'v0.1' / 'v1.0' / None. None means undecided, and the caller must
-    then leave the config exactly as written -- a guess here mis-buses every sensor at once.
+    (name, detail) where name is one of _REVISIONS, or None. None means undecided, and the caller
+    must then leave the config exactly as written -- a guess mis-buses every sensor at once.
+
+### `fitted(device: str, revision: str) -> bool`
+
+Whether `device` is physically present on `revision` -- the ONE place that question is answered.
+
+Every caller that instead wrote its own revision literal has eventually been wrong: resolve() gated
+on ('v0.1', 'v1.0') and so ignored v1.1 entirely, and test_spibus asked `revision != 'v1.0'` and so
+demanded an ADXL375 from a v1.1 board that has none. Both read fine until a third revision existed.
+Ask here instead, and adding a revision updates every caller at once.
+
+An UNDECIDED detection (revision not in _REVISIONS) answers False for the parts a revision removes:
+unknown is not evidence of presence, and a test that demands a part on an unidentifiable board
+reports a hardware fault when what it found was an inconclusive scan.
+
+Args:
+    device - the config device name, e.g. 'accel_adxl375'.
+    revision - the board revision, as detect() / RESOLVED gives it.
+
+Returns:
+    True when the part is fitted on that revision.
 
 ### `apply(cfg: dict, revision: str) -> list`
 
@@ -2201,6 +2255,80 @@ Apply the configured BLE radio state. Inspectable: `radio` requested, `active` a
 - `inspect() -> dict`
 - `update(props) -> list`
 
+## `bmi323.py`
+
+_Tested by `test/test_bmi323.py`._
+
+BMI323 6-axis IMU (on the SEN0697) over the shared I2C bus: accel + gyro to the databoard.
+
+Provides the SAME channels as the LSM6DSO32 -- `accel` (float g) and `rate` (centideg/s fixnum) -- so the
+two are interchangeable sources for one channel and `tasks/attitude.py` runs off whichever the databoard
+hands it. That is the point of fitting this part: with the BNO055's on-chip fusion gone, BOTH attitude
+paths become the same complementary filter over two independent 6-axis sensors, instead of a black box
+plus a backup.
+
+Two BMI323 details the register map does not make obvious:
+
+  * every I2C register read returns TWO DUMMY BYTES before the data, so a 6-word burst is a 14-byte read
+    and the payload starts at offset 2. Reading it like an LSM6DSO32 returns plausible nonsense.
+  * registers are 16-bit and written LSB first.
+
+Scaling is exact integer where it feeds the control path: +/-16 g is 1/2048 g per LSB, and +/-2000 dps in
+centideg/s is raw * 3125 // 512 (= raw * 2000 * 100 / 32768, exactly). Register values are Bosch's own
+(bmi3_defs.h). @task.driver('bmi323').
+
+MOUNTING: the axis-to-airframe mapping (gx->roll, gy->pitch, gz->yaw) is the convention attitude.py and
+the PID D term assume. It is a property of how the board is glued in, not of the part -- field
+calibration flips a sign here exactly as it does for the mixer gains.
+
+### `class Bmi323(task.Task)`
+
+Accel + gyro to the databoard: `accel` in float g, `rate` in centideg/s fixnum.
+
+- `setup() -> bool`
+- `rearm() -> None` — Re-apply the configuration after something reset the part underneath it.
+- `run() -> None`
+- `probe() -> str` — On-demand self-test: the chip id reads back, then one sample reads (each step logged).
+- `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault.
+- `inspect() -> dict`
+
+## `bmm350.py`
+
+_Tested by `test/test_bmm350.py`._
+
+BMM350 3-axis magnetometer (on the SEN0697) over the shared I2C bus: the `mag` channel.
+
+Why it is driven at all, having been dismissed once: heading. `tasks/attitude.py` integrates gyro-z for
+heading and bounds the drift with the GNSS ground TRACK -- which only works above the course gate, and
+not at all while the fix is out. Boost is exactly when a consumer GNSS module loses lock, so the one
+reference that corrects heading is missing during the phase that introduces the most drift. A
+magnetometer is the only sensor on this board that bounds heading WITHOUT a fix.
+
+RAW, deliberately. Turning counts into microtesla needs each part's OTP compensation coefficients, and
+that is worth skipping here: heading needs a DIRECTION, and the hard/soft-iron ellipsoid fit this
+airframe needs anyway -- carbon, servo currents, a booster -- also absorbs per-axis sensitivity
+differences. So this publishes counts, and the field calibration that must happen regardless does the
+rest. Absolute field strength in microtesla is the only thing given up, and nothing here wants it.
+
+Two BMM350 details worth stating: every I2C register read returns TWO DUMMY BYTES before the data (the
+same quirk as the BMI323 beside it), and each axis is 24-bit two's complement, little-endian.
+
+Register values are Bosch's own (bmm350_defs.h). @task.driver('bmm350').
+
+### `class Bmm350(task.Task)`
+
+Raw magnetic field to the databoard as `mag` -- (x, y, z) counts, for heading.
+
+- `setup() -> bool`
+- `calibrated() -> bool` — Whether a hard/soft-iron calibration is in force (restored or just captured).
+- `calibration() -> str` — The outstanding instruction, or '' once calibrated -- what CC shows in the calibration column.
+- `calibrate() -> str` — Capture hard/soft iron from the turn the operator has just done.
+- `rearm() -> None` — Re-apply the mode after something reset the part underneath it.
+- `run() -> None`
+- `probe() -> str` — On-demand self-test: the chip id reads back, then one sample reads (each step logged).
+- `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault.
+- `inspect() -> dict`
+
 ## `bmp280.py`
 
 _Tested by `test/test_bmp280.py`._
@@ -2223,6 +2351,37 @@ Elevation is metres above the startup ground zero, captured per-sensor so it is 
 
 - `setup() -> bool`
 - `rearm() -> None` — Re-apply the mode/filter this driver set at setup, after something reset the part underneath it.
+- `run() -> None`
+- `update(props: dict) -> list` — Apply an operator property change: re-zero or directly set the ground reference.
+- `probe() -> str` — On-demand self-test: the chip id reads back, then one conversion reads (each step logged).
+- `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault.
+- `inspect() -> dict`
+
+## `bmp581.py`
+
+_Tested by `test/test_bmp581.py`._
+
+BMP581 barometric pressure sensor (on the SEN0697) over the shared I2C bus: the backup altitude channel.
+
+Provides pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the per-sensor startup
+ground zero) to the databoard, exactly as the BMP280 it replaces -- so nothing downstream learns a new
+name. `update {"rezero": true}` re-captures ground zero (e.g. after warm-up, just before launch).
+
+Simpler than the BMP280 in one way that matters: the BMP581 outputs COMPENSATED values, so there is no
+factory calibration to read and no fixed-point compensation to carry. Pressure is a 24-bit unsigned count
+of 1/64 Pa; temperature a 24-bit two's-complement count of 1/65536 °C.
+
+Register values are Bosch's own (bmp5_defs.h), and the configuration is the one the TMS-7 nose logger
+flew: pressure enabled at 4x oversampling, 50 Hz, normal mode. @task.driver('bmp581').
+
+### `class Bmp581(task.Task)`
+
+Backup baro to the databoard: pressure (Pa), temperature (°C), altitude (m AMSL) and elevation.
+
+Elevation is metres above the startup ground zero, captured per-sensor so it is offset-free.
+
+- `setup() -> bool`
+- `rearm() -> None` — Re-apply the mode this driver set at setup, after something reset the part underneath it.
 - `run() -> None`
 - `update(props: dict) -> list` — Apply an operator property change: re-zero or directly set the ground reference.
 - `probe() -> str` — On-demand self-test: the chip id reads back, then one conversion reads (each step logged).

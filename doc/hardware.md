@@ -25,7 +25,8 @@ wiring is in [`waveshare_esp32p4_pins.md`](waveshare_esp32p4_pins.md).
 | --- | --- | --- | --- |
 | **6-DoF (accel + gyro)** | **LSM6DSO32** | SPI `1` (cs 50) | ±32 g + ±2000 dps; **primary** accel (airspeed/boost) and the only gyro `rate` |
 | high-G accel | **ADXL375** ([Adafruit 5374](https://www.adafruit.com/product/5374)) | SPI `1` (cs 49) | ±200 g; **>32 g backstop only** — LSM6DSO32 already covers the 8–12 g boost |
-| **attitude (9-DOF)** + baro | **sen0253** = BNO055 + BMP280 | I²C `0x28` / `0x76` | one board, two devices; **BNO055 is flight-critical** (sole heading) |
+| **attitude (9-DOF)** + baro | **sen0253** = BNO055 + BMP280 | I²C `0x28` / `0x76` | **board v0.1 / v1.0.** One board, two devices; BNO055 fuses on-chip and is the sole heading there |
+| **attitude (10-DOF)** + baro + **mag** | **sen0697** = BMI323 + BMP581 + BMM350 | I²C `0x69` / `0x47` / `0x15` | **board v1.1.** One board, THREE devices; raw — the board fuses (`tasks/attitude.py`). 4 on hand |
 | pressure | **sen0517** = ICP-10111 | I²C `0x63` | primary altimeter |
 | AGL laser | **VL53L4CX** ([Adafruit 5425](https://www.adafruit.com/product/5425)) | I²C `0x29` | ToF, low-altitude (<~6–10 m) |
 | airspeed | **SDP810-500Pa** ([Sensirion](https://sensirion.com/products/catalog/SDP810-500Pa)) | I²C `0x25` | pitot/static ±500 Pa; the **direct** airspeed → fin governor (see *Airspeed* below) |
@@ -47,7 +48,7 @@ What actually gates a launch, sorted by how badly its loss hurts. "Critical" = *
 | Device | Class | Why | On hand |
 | --- | --- | --- | --- |
 | ESP32-P4 controller | **Critical** | the flight computer | ✔ |
-| **BNO055** (attitude + heading) | **Critical — NO-FLY WITHOUT** | sole source of fused 9-DoF attitude *and* magnetometer heading; both the stabilisation PID and the bank-to-turn navigation depend on it. LSM6DSO32 is raw 6-DoF (no mag, no fusion) and **cannot** replace it. | **only 2 — must order more** |
+| **Attitude module** — sen0253 **or** sen0697 | **Critical — NO-FLY WITHOUT** | *some* source of attitude and heading is required: the stabilisation PID and the bank-to-turn navigation both depend on it. On v0.1/v1.0 that is the **BNO055**, fused on-chip. On v1.1 it is the **SEN0697**, fused by `tasks/attitude.py` from the BMI323's raw accel+gyro, with the BMM350 as the heading reference. LSM6DSO32 is raw 6-DoF (no mag) and cannot replace either. | 5+ BNO055, 4 SEN0697 |
 | LSM6DSO32 (6-DoF) | **Critical** (lean-bundle primary) | primary accel for the airspeed integrator + boost detect, and the only gyro `rate` | ✔ (best-bundle) |
 | Power (5 V controller rail + servo rail) | **Critical** | — | ✔ |
 | Servos ×≥2 (SG90) | **Critical** | the fin actuators | ✔ |
@@ -201,6 +202,39 @@ blocker is gone, and that was the only pressing reason to move. Keeping the fuse
 magnetometer calibration problem inside Bosch's black box. Recorded here so the comparison does not have
 to be redone; revisit only if a *new* need appears (a board with no BNO055, or a measured attitude
 problem the backup cannot fix).
+
+### SUPERSEDED (2026-09-16): adopted, as board revision v1.1 — and it earned it by measurement
+
+The revisit condition above was met from the other direction. The decision to stay was made on *unit
+counts and calibration convenience*; what changed is that the thing the SEN0697 brings and the BNO055
+cannot — **a magnetometer the flight code can see and correct** — turned out to be worth something
+measurable, and the fusion cost that this section feared was already paid: `tasks/attitude.py` has run a
+complementary filter as the priority-1 attitude backup since the redundancy work, so adopting raw parts
+needed **no new fusion architecture**, exactly as the incremental paragraph above predicted.
+
+The three parts are one module, so they arrive together: **BMI323 `0x69`** (accel + gyro, INT1-driven),
+**BMP581 `0x47`** (baro), **BMM350 `0x15`** (mag). `layout.py` gained a third revision and decides at
+boot which module is fitted; one firmware runs all three board revisions with no config edit.
+
+**The evidence** — [`doc/sims/TMS-7-board_v1.1_sen0697/`](sims/TMS-7-board_v1.1_sen0697/), 54 board
+flights:
+
+* **The aircraft did not change.** Against the v1.0 baseline the in-zone SET is identical in the combo
+  that lands in the zone — the same seven scenarios in, the same three out, the three misses within
+  0.3 m of their old values. That is the result a module swap is supposed to produce.
+* **The magnetometer holds the glider near the zone when the GNSS is gone.** Over a 30 s blackout with
+  the attitude backup flying, drift away from the zone is **median +3 m (range −34 … +78)** with the mag
+  against **+84 m (range −49 … +158)** without it — closer in 9 of 12 matched pairs. The landing benefit
+  follows (median 78 m vs 116 m) but is noisier at 7 of 12, and is reported as a direction, not a number.
+
+**What it costs.** The ±16 g accelerometer ceiling is unchanged from the BNO055's, so this is still not
+the boost accel — the LSM6DSO32 (±32 g) remains primary and the ADXL375 question is untouched. And the
+calibration that Bosch's black box used to hide is now ours: the BMM350 needs a **level full circle, once
+per board**, requested from CC (`calibrate mag_bmm350`) and saved to NVS. It refuses a partial turn —
+a quarter circle yields a centre that is confidently wrong while scoring a *perfect* roundness, so the
+gate is angular coverage of the circle, not the shape of the data. Uncalibrated hard iron was measured at
+**214° of heading-dependent error** on the bench fixture, which is why no single learned offset can
+absorb it and why the device stays on the not-ready list until the turn is done.
 
 ## Post-flight consolidation — measure first, then remove
 

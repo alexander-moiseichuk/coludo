@@ -75,7 +75,7 @@ async def amain():
     behaviour, since "cannot tell" is not evidence the part is absent.
     """
     revision, revision_detail = layout.detect(board)
-    adxl_fitted = revision != 'v1.0'
+    adxl_fitted = layout.fitted('accel_adxl375', revision)  # v0.1 only -- ask layout, never a literal
 
     adxl = bus.device(pins['adxl375_cs'])                    # mb_bit 6 (ADXL family default)
     lsm = bus.device(pins['lsm6dso32_cs'], mb_bit=None)      # increments via CTRL3_C.IF_INC instead

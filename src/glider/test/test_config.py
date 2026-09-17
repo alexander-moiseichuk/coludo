@@ -117,7 +117,7 @@ def main():
     off = config_default.default()
     off['pins']['laser_xshut'] = None  # placeholder kept, feature off
     off['pins']['laser_int'] = -1
-    off['pins']['adxl375_int'] = -7    # any negative, not just -1
+    off['pins']['accel_int1'] = -7    # any negative, not just -1
     assert config.validate(off) == [], config.validate(off)
     off['pins']['servo_yaw'] = off['buses']['i2c']['0']['sda']  # a genuine collide still flagged
     assert any('used by both' in e for e in config.validate(off))

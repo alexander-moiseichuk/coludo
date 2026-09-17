@@ -40,7 +40,6 @@ _RESET_RETRY_MS = const(30)
 _MEASURE_MS = const(12)  # conversion wait for normal mode (with margin)
 _ID_MASK = const(0x3F)
 _ID_VALUE = const(0x08)
-_SEA_LEVEL_PA = 101325.0
 _QUADR = 1.0 / 16777216.0  # 1 / 2**24
 _RECAL_RAW: int = 37  # raw temperature counts (~0.1 degC) before the calibration triple is recomputed
 _LUT_LOWER = 3.5 * (1 << 20)
@@ -250,7 +249,7 @@ class Icp10111(task.Task):
         t_raw = (data[6] << 8) | data[7]
         temp_c = -45.0 + 175.0 / 65536.0 * t_raw
         pressure = self._compensate(p_raw, t_raw)
-        altitude = 0.0 if pressure <= 0.0 else 44330.0 * (1.0 - (pressure / _SEA_LEVEL_PA) ** 0.190294957)
+        altitude = commons.altitude_m(pressure)
         self._sample = (altitude, temp_c, pressure)
         self._sample_ms = time.ticks_ms()
         return self._sample

@@ -90,6 +90,23 @@ first powered flight.
       - `mag` dropping back to 2 afterwards is EXPECTED and no longer means anything: the register is
         the chip's confidence in its recent data, not what it has learned. The board latches the
         convergence, so `calibrated` stays true
+- [ ] **CALIBRATE THE BMM350 — ONCE PER BOARD (v1.1 boards only).** The SEN0697 replaces the BNO055,
+      and its magnetometer is raw: nothing fuses it, so the airframe's own hard iron (servos, the motor,
+      steel) sits on top of the field as a fixed vector. Measured on the bench fixture, that shifts
+      heading by up to **214°** and — this is the point — by a DIFFERENT amount on every heading, so the
+      track offset `attitude` learns from the GNSS cannot absorb it.
+      - **A LEVEL FULL CIRCLE, not a figure-8.** Only the two horizontal axes are corrected, because
+        only a level heading is used. Stand the airframe flat and turn it slowly through 360°, twice.
+      - Away from steel and magnets, same as the BNO055 — you are measuring the airframe's iron, not
+        the bench's.
+      - The panel shows **`N of 8 sectors covered`** and counts up as you turn. It refuses a partial
+        turn: a quarter circle produces a centre that is confidently wrong while looking perfectly
+        round in the data, so sector coverage — not the shape — is what it checks. If the count resets
+        partway, keep going; the estimate moved and it restarted against the settled one.
+      - Then **`calibrate mag_bmm350`** over CC. It is saved to NVS and restored on every later boot,
+        so this is a once-per-board bench job, not a pad procedure.
+      - Uncalibrated is not fatal — the mag still helps through a GNSS dropout — but it stays on the
+        not-ready list until done, and the heading it gives is worth much less.
 - [ ] Pitch nose up / down → **pitch tracks** the right sense; roll L/R → **roll tracks**
 - [ ] Yaw / spin → **heading tracks**; no glitches or freezes on quick moves (gyro rate feeds the PID D-term)
 - [ ] Return to level → attitude returns to ~0/0 and the heading settles
