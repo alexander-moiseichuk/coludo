@@ -89,9 +89,12 @@ the harness prints `TIMEOUT 4`; r4's was equally a timeout and was not flagged.)
 
 ## r6 — what is the magnetometer actually worth? (2026-09-16)
 
-**24 flights, 12 matched pairs**: the same scenario flown twice, once with the magnetometer and once
-with it withheld (`hitl_run.fly(no_mag=True)`), repeated over two rounds so the pair can be checked
-against itself.
+**48 flights, 24 matched pairs**: the same scenario flown twice, once with the magnetometer and once
+with it withheld (`hitl_run.fly(no_mag=True)`), over FOUR rounds — r6/r6b on the v1.1 board, r6c/r6d
+after the board was rewired back to v1.0. The hardware makes no difference to this round by
+construction (HITL masks every real sensor and the sim publishes `mag` either way, verified live on the
+v1.0 board: `mag channel source=hitl value=(683, -729, 700)`), so r6c/r6d are simply two more repeats —
+which is exactly what the first two rounds turned out to need.
 
 ### The condition had to be built before it could be measured
 
@@ -105,23 +108,32 @@ backup's complementary filter really is flying the aircraft, and `gnss_drop_s=30
 track away — the only condition under which the mag steers anything at all. Everything else is identical
 between the two arms of a pair.
 
-### Result
+### Result — and the first two rounds did not survive the second two
 
-| | mag | no mag |
+| over 24 pairs | mag | no mag |
 |---|---|---|
-| **blackout drift** (change in distance-to-zone over the blind 30 s) | **median +3 m**, range −34 … +78 | median +84 m, range −49 … **+158** |
-| **landing miss** | **median 78.2 m**, best 24.8 | median 115.9 m, best 52.3 |
-| in zone | 3/12 | 2/12 |
-| mag closer, per pair | drift **9/12**, landing 7/12 | |
+| **blackout drift** (change in distance-to-zone over the blind 30 s) | **median +20 m**, range −34 … +230 | median +64 m, range −49 … +203 |
+| **landing miss** | **median 112 m**, best 24.8 | median 129 m, best 52.3 |
+| in zone | 3/24 | 3/24 |
+| mag closer, per pair | drift **14/24**, landing **13/24** | |
 
-**The mechanism is the clear half, and it is the half that was in doubt.** With the magnetometer the
-glider HOLDS STATION while blind — it ends the blackout within 78 m of where it started, and in four
-pairs it is closer to the zone than when the fix was lost. Without it the drift reaches 158 m, and the
-range is twice as wide. That is what a heading reference is for: not accuracy, but not wandering.
+**On the first two rounds this looked like a clear win — drift median +3 m against +84 m, the mag closer
+in 9 of 12 pairs — and it did not hold up.** Pooled over 24 pairs the mag is closer in 13–14, which is
+a coin toss. The medians still favour it, and by a wide margin on drift (+20 m against +64 m), but a
+median advantage that comes with a 50 % per-flight win rate is not a reliable benefit: it means the mag
+usually helps a little and occasionally hurts a lot, in a scenario whose own spread runs to hundreds of
+metres.
 
-The landing benefit follows from that but is noisier — 7 of 12, median 38 m better. Twelve pairs with a
-scenario-to-scenario spread of hundreds of metres cannot pin that number down, and this study does not
-claim one. What it does claim is the direction, and that the tail shrinks.
+Written down plainly because the two-round version of this table was already committed and read like a
+result. Twelve pairs were not enough, and the honest reading of twenty-four is **"probably helps, not
+yet demonstrated"** — keep the magnetometer (it costs nothing on a module that is fitted anyway), do
+not plan around it, and do not treat the first two rounds' numbers as the finding.
+
+One asymmetry is worth recording for whoever picks this up. Across the rewire the **no-mag arm barely
+moved** (median landing 116 m on the v1.1 board, 117 m on the v1.0 board) while the **mag arm got
+worse** (78 m → 120 m). The mag path was verified live as identical on both boards, so this is most
+likely the variance of a high-spread scenario showing its teeth — but it is the kind of pattern that
+deserves a third look rather than an explanation, and n=12 per condition cannot tell the two apart.
 
 A measurement that is NOT evidence, recorded so nobody reaches for it later: `heading_err` in
 `flight.csv` is computed from the estimator's own heading, so it reads SMALL exactly when the estimate
@@ -130,7 +142,24 @@ has drifted — it would have scored the no-mag arm as flying beautifully. The n
 (One flight's tick counter wrapped mid-blackout — window `(1058073444, 13419027)` — and silently dropped
 out of the table as "no data" until the analysis was made wrap-safe.)
 
-### What r6 does not answer
+### What r6 does not answer, and what it cost to find out
+
+**No servo-energy numbers exist for any round in this study.** `config_hitl` does not resolve the board
+layout, so `power_ina226` — the one real sensor HITL does NOT mask — is configured on its v0.1 bus while
+a v1.0/v1.1 board has it on the other one. It answers ENODEV, no `power_ina226.csv` is written, and
+`flight_kpi` simply omits the servo-energy line rather than reporting its absence. This has been true of
+every HITL round since the v1.0 rewire, r4 included.
+
+Fixed after r6d: `tools/hitl_run.py` now calls `layout.resolve()` as the real boot path does, and a
+verification flight records the stream again — **23.4 J over 100.5 s, 0.23 W average**. The rounds in
+this study were flown before that fix and have no energy data; rounds after it will, and they carry one
+extra real device on the bus, so treat energy as a new series rather than a continuation.
+
+The same flaw was found in four diagnostics (`diag_channels.py`, `diag_icp.py`,
+`diag_icp_concurrent.py`, `live_pitot.py`): each built a config without resolving the layout, so on a
+v1.0 board they hunted the ICP-10111, pitot, laser and INA226 on their v0.1 buses and reported healthy
+parts as ENODEV. `diag_devices.py` was always correct — it runs `main.bringup()`. If a diagnostic and
+the boot path disagree about whether a device is alive, suspect the diagnostic's config first.
 
 The learned offset itself is still invisible in a capture: `attitude` records no telemetry, so only
 `inspect()` (now carrying `mag_known` and `mag_offset`) can show it, live over CC. Judging the pair on
@@ -141,8 +170,11 @@ it believed.
 
 ```
 r5/                per-combo plotly HTML + SVG, prefixed by combo (48 files)
-r6/ r6b/           the mag A/B: per-arm HTML + SVG, plus compare_<scenario>.svg
-                   overlaying the two arms of each pair on one chart
+r6/ r6b/           the mag A/B on the v1.1 board: per-arm HTML + SVG, plus
+                   compare_<scenario>.svg overlaying the two arms of each pair
+r6c/ r6d/          the same A/B after the rewire to v1.0 -- pair overlays only.
+                   Same firmware and the same simulated mag, so these are repeats,
+                   and they are what stopped r6/r6b being read as a result
 ```
 
 ## Reproducing

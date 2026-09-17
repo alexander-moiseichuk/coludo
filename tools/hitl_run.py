@@ -20,6 +20,7 @@ import config_hitl
 import controller
 import databoard
 import drivers
+import layout
 import mission
 import recorder
 import tasks
@@ -32,6 +33,16 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
     tasks.load()
     launch = mission.Mission(max_range_m=200)
     cfg = config_hitl.default(motor, noise, spike, wind, wind_dir, glider_g=glider_g, inject_hz=inject_hz)
+    """
+    Resolve the layout, as main.bringup() does for a real flight.
+
+    HITL masks every SIMULATED sensor, but `power_ina226` is not one of them -- nothing simulates the
+    power rail, so it stays real. Without this it is configured on its v0.1 bus while a v1.0 or v1.1
+    board has it on the other one: it answers ENODEV, no power stream is recorded, and flight_kpi
+    silently omits the servo-energy KPI instead of reporting it missing. Every HITL round flown since
+    the v1.0 rewire lost that number this way.
+    """
+    layout.resolve(cfg)
     if no_cc:
         """
         the CC-less scenario: an UNKNOWN field -- no operator zone, no launch point, no known
