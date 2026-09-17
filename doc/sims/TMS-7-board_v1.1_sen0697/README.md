@@ -166,6 +166,70 @@ The learned offset itself is still invisible in a capture: `attitude` records no
 outcome is sound, but the mechanism is inferred from where the aircraft went rather than read from what
 it believed.
 
+## v1.0 vs v1.1 overall — control, fins, health, battery
+
+r4 and r5 are the same harness over the same 30 scenarios, so the four things an operator actually
+weighs can be put side by side. Medians per group; `free_min` is the worst single sample in the group
+and `rescues` the total emergency collects.
+
+| | | landing miss | in zone | fin moves | fin travel | deg/s | free_min B | leak KB/s | rescues |
+|---|---|---|---|---|---|---|---|---|---|
+| **all 30** | v1.0 | 70.2 m | 8 | 3256 | 11612° | 121 | 40 832 | 367 | 122 |
+| | **v1.1** | **67.7 m** | **7** | **3232** | **11584°** | **118** | **46 336** | **377** | **129** |
+| `e16_full` | v1.0 | 80.6 | 1 | 1509 | 6197 | 129 | 40 832 | 360 | 1 |
+| | v1.1 | 72.2 | 0 | 1415 | 5438 | 114 | 46 336 | 353 | 2 |
+| `f15_full` | v1.0 | 83.2 | 0 | 3190 | 11612 | 117 | 202 464 | 370 | 50 |
+| | v1.1 | 90.5 | 0 | 3220 | 11868 | 121 | 116 528 | 377 | 50 |
+| `f15_half` | v1.0 | 39.6 | 7 | 3835 | 13726 | 121 | 44 736 | 365 | 71 |
+| | v1.1 | 45.4 | 7 | 4090 | 14785 | 130 | 49 904 | 394 | 77 |
+
+**Control and landing — indistinguishable.** Aggregate median 70.2 m against 67.7 m, in zone 8 against
+7, and the per-combo differences (−8 m, +7 m, +6 m) point in BOTH directions inside a matrix whose own
+repeat spread was measured at 3.0–50.4 m.
+
+**Fins — indistinguishable.** 3256 against 3232 moves and 11612 against 11584 degrees of travel, under
+1 % apart over 30 flights. Per combo it swings ±10 % both ways (v1.1 does 12 % less work on `e16_full`,
+8 % more on `f15_half`), which is noise at this sample size. There is no servo-wear argument either way.
+
+**In-flight health — marginally worse on v1.1, trivially so.** Leak 377 against 367 KB/s (+3 %),
+rescues 129 against 122 (+6 %), and the global memory floor is actually BETTER (46 336 B against
+40 832 B). Nothing approaches a threshold.
+
+**Battery — no data, and a flight round cannot supply it.** No round since the v1.0 rewire recorded a
+power stream (see above). Even with that fixed, HITL would not answer the question: on USB the INA226
+sees the **servo rail only**, and servo work is a function of fin activity, which the table shows is
+identical. What differs between the revisions is *sensor quiescent draw*, and that is a bench
+measurement on battery, not a simulation.
+
+### Conclusion
+
+**In simulation the two revisions are the same aircraft** — which is both the result a module swap
+should give and the result HITL is STRUCTURALLY OBLIGED to give, since it masks every real sensor and
+publishes the channels itself. Neither round ever read a BNO055 or a BMI323. Any claim that one
+revision *flies* better than the other cannot come from this study, and none is made here.
+
+What actually separates them is redundancy, and it is visible in
+[`datasources.md`](../../datasources.md) rather than in any flight:
+
+| channel | v1.0 | v1.1 |
+|---|---|---|
+| `attitude` | `imu_bno055` p0 **+** the board's filter p1 | **the board's filter alone — no p0** |
+| `rate` | 1 source | 2 |
+| `mag` | 0 | 1 |
+
+**v1.1 trades its second attitude source for a magnetometer and a second gyro.** That is the decision,
+stated plainly: not better or worse flying, but a different failure surface. Two sensor sets with no
+demonstrated performance gap is a good position to fly trials from — the fleet learns more from two
+than from two of the same — provided the asymmetry is carried knowingly and not filed under "no
+regressions".
+
+**The gap this study leaves open.** Every round here flew with the sim publishing `attitude` at
+priority 0, so on BOTH revisions the board's complementary filter never actually carried a flight. The
+only rounds where it did (r6) also blacked out the GNSS, so filter-only attitude and dead-reckoning are
+confounded. On a real v1.1 board, filter-only attitude is not a degraded mode — it is the NORMAL one.
+The round that closes this is a paired A/B with `attitude_drop_s` set and the GNSS left healthy; it has
+not been flown.
+
 ## Layout
 
 ```

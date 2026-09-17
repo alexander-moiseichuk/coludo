@@ -14,8 +14,10 @@ The composion of [hardware components](doc/hardware.md) is in progress with weig
 | **v1.1** | **sen0697** (BMI323 `0x69` + BMP581 `0x47` + **BMM350 `0x15`**) | first board with a magnetometer; the board fuses attitude itself |
 
 The v1.1 change is measured in [TMS-7-board_v1.1_sen0697](doc/sims/TMS-7-board_v1.1_sen0697/):
-the aircraft flies the same, and the magnetometer keeps it near the landing zone through a GNSS
-blackout instead of letting it wander.
+across 60 board flights the two revisions fly the **same aircraft** — landing accuracy, fin activity
+and in-flight health are all within run-to-run noise. What separates them is redundancy, not
+performance: v1.1 gains a magnetometer and a second gyro source and gives up its second attitude
+source. The magnetometer's value looked clear over 12 paired flights and did not survive 24.
 
 The old glider version TMS-4 can be ![found in here](https://github.com/alexander-moiseichuk/coludo/blob/main/doc/photos/TMS-4%20with%20electronics.jpg)
 
