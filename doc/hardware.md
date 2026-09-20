@@ -356,7 +356,10 @@ has a fresh reading and falls back to barometric elevation when it does not. An 
 valid range at 5 m at all, so on an L1X board that trigger would be driven by the barometer for the
 whole approach — which is the one thing the laser is carried to avoid.
 
-So a board fitted with the VL53L1X wants **`land_agl_m` nearer 3.0**, set in its launch config. That
+So a board fitted with the VL53L1X wants **`land_agl_m` lowered** in its launch config -- and the
+bench says 3.0 is probably still too generous, since the measured indoor ceiling is ~2.0 m and outdoor
+ambient is far higher than the ~26 seen here. Treat ~1.5 m as the working assumption until the outdoor
+test says otherwise. That
 is a real behaviour change and not just a smaller number: firing the flare ~2 m lower is ~0.7 s less
 at a 3 m/s sink, so it should be flown deliberately rather than inherited.
 
@@ -385,7 +388,23 @@ So the "pinned 2.2 m" readings were the genuine NO-RETURN noise floor, not a stu
 non-zero the distance field is meaningless, and it never tracked where the board was aimed. The walls
 at 3–6 m are simply at or past a part declared to 2–4 m.
 
-**Do not read the ~1.5 m ceiling as the part's range.** The L1X has a ~27° field of view, so at 2 m the
+**Usable range, measured without any synchronisation** (60 s free sweep of the room, the operator
+aiming wherever they liked; the question is simply the furthest distance that ever returned a VALID
+sample, so no labelled windows are needed -- every earlier timed test here required the operator to act
+at a moment they could not see, and one of them was mislabelled as a result):
+
+| | |
+|---|---|
+| furthest VALID sample | **2070 mm** (signal 131, ambient 26 -- a 5:1 margin) |
+| valid samples cluster | 1500–2000 mm, tailing off by 2250 |
+| valid rate over the sweep | 102 of 611 (the rest is beam falling on nothing resolvable) |
+| aimed at floor ~2 m / ceiling ~3 m | 0 valid of 154 / 0 of 153, signal 38–52 against ambient 21–23 |
+
+**So this part reaches about 2.0 m indoors** -- the bottom of its declared 2–4 m, consistent with
+ambient light being present. That also rules out a protective film still being on the lens: a film
+would not let it reach 2 m.
+
+**Do not read this as the part's range.** The L1X has a ~27° field of view, so at 2 m the
 cone is nearly a metre across and a hand-held sheet fills only a fraction of it -- the return is
 dominated by whatever is behind. Every bench reading past ~1.5 m was actually the wall at 3.1 m. In
 flight the GROUND fills the whole field of view, which is the best case rather than the worst, so the
