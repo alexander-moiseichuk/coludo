@@ -29,7 +29,7 @@ _LSM_CTRL3_C: int = 0x12  # BDU + IF_INC (auto-increment) + SIM (4-wire SPI)
 _LSM_CFG_C: int = 0x44    # the value the driver writes at setup -- idempotent, so safe to repeat here
 
 
-async def _settled(window, reg: int, expected: int) -> int:
+async def _settled(window, reg: int, expected: int, repin=None) -> int:
     """
     Read `reg` until it returns `expected`, up to _SETTLE_READS times; returns how many reads it took.
 
@@ -39,10 +39,17 @@ async def _settled(window, reg: int, expected: int) -> int:
     handful of transactions before it locks on (measured 1..11, hence spibus._RESYNC_READS). The count
     is RETURNED so the test can report it: a device needing more than the driver-side resync covers is
     itself worth seeing.
+
+    `repin` is (register, value) to WRITE between attempts, for a part that cannot be read back into
+    step. Measured on the LSM6DSO32: out of step it returns 0x00 for 30 reads and STAYS there -- only
+    writing CTRL3_C pins the interface, and a write issued before it is listening is lost. So reading
+    alone is not a settle strategy for that part; pin, then verify.
     """
     for attempt in range(_SETTLE_READS):
         if (await window.read(reg, 1))[0] == expected:
             return attempt
+        if repin is not None:
+            await window.write(repin[0], bytes([repin[1]]))  # see the docstring: pin, then verify
     return -1
 
 
@@ -98,7 +105,7 @@ async def amain():
     if adxl_fitted:
         adxl_settle = await _settled(adxl, _ADXL_DEVID, _ADXL_ID)
         assert adxl_settle >= 0, 'ADXL375 DEVID never read 0xE5 (layout %s: %s)' % (revision, revision_detail)
-    lsm_settle = await _settled(lsm, _LSM_WHOAMI, _LSM_ID)
+    lsm_settle = await _settled(lsm, _LSM_WHOAMI, _LSM_ID, repin=(_LSM_CTRL3_C, _LSM_CFG_C))
     assert lsm_settle >= 0, 'LSM6DSO32 WHO_AM_I never read 0x6C'
 
     """

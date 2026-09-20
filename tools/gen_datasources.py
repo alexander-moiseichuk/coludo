@@ -161,12 +161,39 @@ def _grouped() -> set:
     return {channel for _title, group in _GROUPS for channel in group}
 
 
+def _alternatives(entries: list) -> list:
+    """
+    Drop providers that are ALTERNATIVES to the primary rather than backups to it.
+
+    Two drivers for one socket (the VL53L4CX and VL53L1X both sit at 0x29, and `layout._FOLLOWS`
+    records the pairing) are one physical part, declared twice so the fitted one can win. Exactly one
+    can ever be present, so listing the other as "what you fall back to" invents redundancy that does
+    not exist -- the most dangerous kind of entry in a table whose whole job is to say what survives.
+
+    Args:
+        entries - the provider chain for one channel, primary first.
+
+    Returns:
+        The chain with socket-mates of the primary removed.
+    """
+    if not entries:
+        return entries
+    primary = entries[0][1]
+    mates = set(layout._FOLLOWS.get(primary, ()))
+    for owner, followers in layout._FOLLOWS.items():
+        if primary in followers:
+            mates.add(owner)
+            mates.update(followers)
+    mates.discard(primary)
+    return [entries[0]] + [e for e in entries[1:] if e[1] not in mates]
+
+
 def _degradation(channels: dict) -> str:
     """What the primary failing actually costs, per channel -- the question the order alone cannot answer."""
     lines = ['| channel | if the primary fails | consequence |', '|---|---|---|']
     for _title, group in _GROUPS:
         for channel in group:
-            entries = channels.get(channel)
+            entries = _alternatives(channels.get(channel))
             if not entries:
                 continue
             rest = entries[1:]

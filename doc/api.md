@@ -2713,6 +2713,49 @@ the shared slew gate; probe() sweeps it on demand.
 - `diagnose() -> str` — Deeper analysis when setup() failed: is the pin PWM-capable?
 - `inspect() -> dict`
 
+## `vl53l1x.py`
+
+_Tested by `test/test_vl53l1x.py`._
+
+VL53L1X time-of-flight laser ranger over the shared I2C bus: the above-ground-level (AGL) channel for
+the last metres of the glide, where the barometer is useless. Registered as a driver named vl53l1x.
+The VL53 family uses 16-BIT register addresses (i2cbus addrsize=16).
+
+THE SAME 0x29 ADDRESS AS THE VL53L4CX, different silicon: this part is 0xEACC and takes the VL53L1X
+Ultra-Lite-Driver init; the VL53L4CD/L4CX is 0xEBAA and takes a different one. Neither config produces
+ranges on the other part, so BOTH drivers check their model id strictly and return False on a mismatch
+-- which means a board can declare both and the fitted one simply wins, exactly as an absent device is
+skipped today. An I2C scan cannot tell them apart, so `layout` cannot either; it only makes the second
+entry FOLLOW the first onto the revision's bus, without casting a second vote for the one address.
+
+RANGE IS THE REASON TO CARE WHICH IS FITTED: the L1X is declared 2-4 m against the L4CX's 4-6 m, and
+the landing trigger (`land_agl_m`, sequencer) defaults to 5.0 m -- unreachable by an L1X, so the
+transition would silently fall back to barometric elevation, which is the thing the laser exists to
+replace. A board fitted with this part wants `land_agl_m` around 3.0; see doc/hardware.md.
+
+setup(): optional XSHUT reset -> wait for boot -> check the model id -> write the default
+configuration -> one calibration ranging cycle (start/wait/clear/stop, then the VHV writes) -> start
+continuous ranging. run(): wait for data-ready (the GPIO1 interrupt if wired, else a poll), read the
+distance and write AGL (m) to the databoard. Graceful: no I2C ack -> setup False -> Controller skips
+it. Shares its bus via the locked i2cbus.
+
+NO TIMING BUDGET IS SET. The L4CX driver computes RANGE_CONFIG_A/B from the macro period; that math is
+the VL53L4CD ULD's and does not apply to this silicon, whose ULD uses a lookup table keyed on distance
+mode instead. The config block's own timing stands until that table can be checked against the part.
+
+### `class Vl53l1x(task.Task)`
+
+Laser ToF: writes above-ground-level distance (m) to the databoard 'agl' slot.
+
+For the final low-altitude metres where the barometer cannot resolve height. Interrupt-driven when
+GPIO1 is wired.
+
+- `setup() -> bool`
+- `run() -> None` — The sampling loop: write AGL (m) to the databoard, forever.
+- `probe() -> str` — On-demand self-test: the model id reads back.
+- `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault behind an absent ranger.
+- `inspect() -> dict`
+
 ## `vl53l4cx.py`
 
 _Tested by `test/test_vl53l4cx.py`._

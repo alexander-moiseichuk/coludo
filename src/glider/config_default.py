@@ -412,6 +412,34 @@ def default() -> dict:
     }
 
     """
+The SECOND laser, for boards fitted with a VL53L1X instead of the VL53L4CX.
+
+Both parts answer on 0x29 and an I2C scan cannot tell them apart, so `layout` cannot choose between
+them -- but each driver checks its own model id (0xEACC vs 0xEBAA) and returns False on a mismatch, so
+BOTH can be declared and the one that is actually soldered wins. That is the same graceful-absent
+contract every driver already follows; nothing here needs editing per board.
+
+RANGE differs and it reaches the flight logic: the L1X is declared 2-4 m against the L4CX's 4-6 m,
+while `sequencer.land_agl_m` defaults to 5.0 -- above anything an L1X can report, so the GLIDING ->
+LANDING trigger would fall back to barometric elevation for the whole approach. A board fitted with the
+L1X wants `land_agl_m` nearer 3.0; see doc/hardware.md.
+
+No `timing_budget_ms`: drivers/vl53l1x.py deliberately does not set one (the L4CD macro-period math
+does not apply to this silicon), so the config block's own timing stands.
+"""
+    laser_agl_l1x = {
+        'name': 'laser_agl_l1x',
+        'driver': 'vl53l1x',
+        'bus': 'i2c', 'id': 0,
+        'addr': 0x29,
+        'xshut_pin': 'laser_xshut',
+        'int_pin': 'laser_int',
+        'period_ms': 50,
+        'enabled': True,  # harmless when absent: the model-id check rejects an L4CX and setup returns False
+        'provides': {'agl': {'priority': 0, 'timeout_ms': 100}},
+    }
+
+    """
     INA226 power monitor -- it sits at the BATTERY, not on the 5 V servo rail.
 
     So in flight it measures the WHOLE system (MCU + servos) at the source, which is what an energy
@@ -487,6 +515,7 @@ def default() -> dict:
         baro_bmp581,
         airspeed_sdp810,
         laser_agl,
+        laser_agl_l1x,
         power_ina226,
         gnss,
     ]

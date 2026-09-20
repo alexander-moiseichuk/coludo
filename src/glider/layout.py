@@ -95,6 +95,17 @@ _ABSENT: dict = {
 
 _LASER_PINS: tuple = ('int_pin', 'xshut_pin')  # both freed on v1.0; the driver treats them as optional
 
+"""
+Devices that occupy the SAME SOCKET as another and must follow it, without voting for themselves.
+
+`laser_agl_l1x` is a VL53L1X in the same footprint and at the same 0x29 as the VL53L4CX `laser_agl`;
+only one is ever soldered, and each driver's model-id check decides which comes up. They must share
+the bus and the pin treatment -- but the address must be counted ONCE, or a socket with two candidate
+drivers would cast two votes for the same physical evidence and outweigh the parts that are really
+there. So followers are moved by apply() and ignored by detect().
+"""
+_FOLLOWS: dict = {'laser_agl': ('laser_agl_l1x',)}
+
 # What resolve() concluded this boot, for the health payload -- the operator should be able to see which
 # revision the firmware decided it is running on WITHOUT reading the boot log, since a wrong verdict and
 # a miswired board look identical from the device list.
@@ -225,10 +236,11 @@ def apply(cfg: dict, revision: str) -> list:
     changes = []
     for name in _MOVED:
         want = _MOVED[name][revision]
-        device = config.device(cfg, name=name)
-        if device is not None and device.get('id') != want:
-            changes.append('%s i2c:%s->%s' % (name, device.get('id'), want))
-            device['bus'], device['id'] = 'i2c', want
+        for device_name in (name,) + _FOLLOWS.get(name, ()):  # the socket's other candidate moves too
+            device = config.device(cfg, name=device_name)
+            if device is not None and device.get('id') != want:
+                changes.append('%s i2c:%s->%s' % (device_name, device.get('id'), want))
+                device['bus'], device['id'] = 'i2c', want
 
     spec = config.bus(cfg, 'i2c', 1)
     if spec is not None and spec.get('freq') != _BUS1_HZ[revision]:
@@ -256,11 +268,12 @@ def apply(cfg: dict, revision: str) -> list:
             device['enabled'] = fitted
 
     if revision == 'v1.0':
-        laser = config.device(cfg, name='laser_agl')
-        for key in _LASER_PINS:
-            if laser is not None and laser.get(key) is not None:
-                changes.append('laser_agl %s dropped' % key)
-                laser[key] = None
+        for laser_name in ('laser_agl',) + _FOLLOWS.get('laser_agl', ()):
+            laser = config.device(cfg, name=laser_name)
+            for key in _LASER_PINS:
+                if laser is not None and laser.get(key) is not None:
+                    changes.append('%s %s dropped' % (laser_name, key))
+                    laser[key] = None
     return changes
 
 

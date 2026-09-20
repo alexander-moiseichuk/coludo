@@ -28,7 +28,8 @@ wiring is in [`waveshare_esp32p4_pins.md`](waveshare_esp32p4_pins.md).
 | **attitude (9-DOF)** + baro | **sen0253** = BNO055 + BMP280 | I²C `0x28` / `0x76` | **board v0.1 / v1.0.** One board, two devices; BNO055 fuses on-chip and is the sole heading there |
 | **attitude (10-DOF)** + baro + **mag** | **sen0697** = BMI323 + BMP581 + BMM350 | I²C `0x69` / `0x47` / `0x15` | **board v1.1.** One board, THREE devices; raw — the board fuses (`tasks/attitude.py`). 4 on hand |
 | pressure | **sen0517** = ICP-10111 | I²C `0x63` | primary altimeter |
-| AGL laser | **VL53L4CX** ([Adafruit 5425](https://www.adafruit.com/product/5425)) | I²C `0x29` | ToF, low-altitude (<~6–10 m) |
+| AGL laser | **VL53L4CX** ([Adafruit 5425](https://www.adafruit.com/product/5425)) | I²C `0x29` | ToF, low-altitude (declared 4–6 m) |
+| AGL laser (alt.) | **VL53L1X** | I²C `0x29` | ToF, declared **2–4 m** — same socket, different silicon; see *Two lasers, one socket* below |
 | airspeed | **SDP810-500Pa** ([Sensirion](https://sensirion.com/products/catalog/SDP810-500Pa)) | I²C `0x25` | pitot/static ±500 Pa; the **direct** airspeed → fin governor (see *Airspeed* below) |
 | GNSS | **ATGM336H** | UART 9600, 10 Hz | position; may lose lock under high-g |
 
@@ -54,7 +55,7 @@ What actually gates a launch, sorted by how badly its loss hurts. "Critical" = *
 | Servos ×≥2 (SG90) | **Critical** | the fin actuators | ✔ |
 | Separation switch (copper pads) | **Critical** | the BOOSTING→GLIDING trigger | ✔ |
 | ICP-10111 baro | Important | primary altimeter (apogee / glide profile) | ✔ |
-| VL53L4CX laser | Important | low-altitude AGL (<~10 m) for the landing — baro is poor there | ✔ |
+| AGL laser (VL53L4CX **or** VL53L1X) | Important | low-altitude AGL for the landing — baro is poor there. Either part fits the socket; the L1X's shorter range needs `land_agl_m` lowered (see *Two lasers, one socket*) | ✔ |
 | SDP810 airspeed | Important | **direct** pitot airspeed → the fin-authority cap (the estimate was the weakest signal). Degrades gracefully to the accel+GNSS estimate — the pre-pitot baseline flown in all HITL to date — if absent | ✔ (5) |
 | ADXL375 (±200 g) | Optional | >32 g high-g backstop; LSM6DSO32 ±32 g already covers the 8–12 g boost. Keep for telemetry / data-quality launches (run both, compare traces) | ✔ |
 | BMP280 baro | Optional | backup baro (rides on the sen0253 board with BNO055 anyway) | ✔ |
@@ -338,6 +339,66 @@ combo is the backup baro (lower priority in fusion); an AHT20+BMP280 board is an
 ## Altimeter (laser)
 Barometer works very badly at very low altitudes, so the laser module becomes essential to cover the 10 meters and below range.
 **Chosen: [VL53L4CX](https://www.adafruit.com/product/5425)** ToF ranger (I²C `0x29`) — covers the close range well enough.
+
+### Two lasers, one socket — and the range reaches the flight logic
+
+Stock of the VL53L4CX ran out, so boards may instead carry a **VL53L1X** in the same footprint at the
+same `0x29`. They are different silicon (`0xEACC` vs `0xEBAA`) with different init blocks, and neither
+block produces ranges on the other part — so each driver checks its model id and returns False on a
+mismatch. Both are declared in `config_default`, and the one actually soldered wins, the same way an
+absent device is skipped. An I²C scan cannot tell them apart, so `layout` does not try; it only makes
+sure the second entry FOLLOWS the first onto whatever bus the revision puts the socket on, without
+casting a second vote for the one address.
+
+**The part that is not cosmetic: the L1X is declared 2–4 m where the L4CX is 4–6 m, and
+`sequencer.land_agl_m` defaults to 5.0 m.** The GLIDING → LANDING transition takes the laser when it
+has a fresh reading and falls back to barometric elevation when it does not. An L1X cannot report a
+valid range at 5 m at all, so on an L1X board that trigger would be driven by the barometer for the
+whole approach — which is the one thing the laser is carried to avoid.
+
+So a board fitted with the VL53L1X wants **`land_agl_m` nearer 3.0**, set in its launch config. That
+is a real behaviour change and not just a smaller number: firing the flare ~2 m lower is ~0.7 s less
+at a 3 m/s sink, so it should be flown deliberately rather than inherited.
+
+**Measured on the bench, 2026-09-20** (taster board, i2c:1 at 100 kHz, the config block's own ~100 ms
+long-distance-mode timing):
+
+| target | valid rate | note |
+|---|---|---|
+| pale sheet, still, 1.0–1.5 m | **68/70** | the part working properly |
+| person in a black t-shirt, <0.5 m | 7/8 | black fabric is near worst case for an IR ToF |
+| same person, 0.5–1.0 m, moving | 5/211 | absorbing target + motion during integration |
+| room background 3–6 m (white walls) | 0 of 357, sweeping the room | status 2; the reported distance never tracked where it was aimed |
+| **palm flat on the sensor** | **valid immediately** | the control that proves the part is healthy — see below |
+
+**The part is confirmed healthy.** A palm placed flat on the sensor mid-capture flips every quantity
+at once, which no amount of configuration could fake:
+
+| | aimed at the room | palm on the sensor |
+|---|---|---|
+| distance | 2279 mm (noise floor) | **8–34 mm** |
+| status | 2 (signal fail) | **0 — valid** |
+| signal (ULD raw) | ~32 | **3739, peak 8726** |
+| ambient (ULD raw) | 16 | **0** (the palm blocks the light) |
+
+So the "pinned 2.2 m" readings were the genuine NO-RETURN noise floor, not a stuck sensor: with status
+non-zero the distance field is meaningless, and it never tracked where the board was aimed. The walls
+at 3–6 m are simply at or past a part declared to 2–4 m.
+
+**Do not read the ~1.5 m ceiling as the part's range.** The L1X has a ~27° field of view, so at 2 m the
+cone is nearly a metre across and a hand-held sheet fills only a fraction of it -- the return is
+dominated by whatever is behind. Every bench reading past ~1.5 m was actually the wall at 3.1 m. In
+flight the GROUND fills the whole field of view, which is the best case rather than the worst, so the
+usable AGL ceiling has to be measured outdoors before `land_agl_m` is set from evidence.
+
+Raising the integration time does NOT help: 100, 200 and 500 ms all returned zero valid samples from
+that 3.1 m background (and 500 ms drops the rate to 3.5 Hz, against a 100 ms freshness window). That is
+why drivers/vl53l1x.py sets no timing budget -- the config block's default is as good as anything
+measurable here.
+
+Worth noting the same arithmetic is already tight for the L4CX — a 5.0 m trigger sits at the bottom of
+its 4–6 m declared band — and that `tasks/hitl.py` has modelled `laser_range_m` at **4.0 m** all along,
+so every simulated landing to date has assumed the shorter laser rather than the longer one.
 VL53L0X / VL53L1X are drop-in alternates; the [50m TOF Laser Ranging Sensor, 100Hz](https://www.dfrobot.com/product-2923.html)
 ([sen0648 spec](https://wiki.dfrobot.com/SKU_SEN0648_TOF_laser_ranging_sensor_50m)) is the long-range fallback if needed.
 

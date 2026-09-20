@@ -241,7 +241,6 @@ A channel with one provider has no fallback: that sensor failing takes the chann
 
 | channel | v0.1 | v1.0 | v1.1 |
 |---|---|---|---|
-| `agl` | **1 — laser_agl** | **1 — laser_agl** | **1 — laser_agl** |
 | `airspeed` | **1 — airspeed_sdp810** | **1 — airspeed_sdp810** | **1 — airspeed_sdp810** |
 | `attitude` | 2 | 2 | **1 — attitude** |
 | `course` | **1 — gnss** | **1 — gnss** | **1 — gnss** |
