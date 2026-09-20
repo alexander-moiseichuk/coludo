@@ -356,6 +356,26 @@ has a fresh reading and falls back to barometric elevation when it does not. An 
 valid range at 5 m at all, so on an L1X board that trigger would be driven by the barometer for the
 whole approach — which is the one thing the laser is carried to avoid.
 
+### What the measured range does to the AGL thresholds
+
+Two flight thresholds key off `agl`, and they degrade differently:
+
+| threshold | default | if the laser cannot reach it |
+|---|---|---|
+| `sequencer.land_agl_m` | 5.0 m | falls back to **barometric elevation** — the trigger still fires, just on the source the laser exists to replace |
+| `guidance.final_approach_agl` | 8 m | **no fallback** (`agl_source is not None`) — centreline tracking simply starts when the laser acquires |
+
+At a measured 2.07 m neither is reachable, and **bank makes it worse**: the laser looks straight down,
+the loiter orbit and final approach both run at `bank_limit` 45°, and banked the slant range is
+AGL/cos(bank) — so 2.07 m of sensor covers about **1.46 m of real AGL**, with the beam striking the
+ground at 45° incidence, which weakens the return again.
+
+Worth noting the 8 m threshold was never achieved even before this part: `guidance.py` assumed "the
+laser reaches ~4 m", so final approach was already engaging at half its intended height on the L4CX.
+The fix is a flight decision, not a code one — lower the thresholds to what the fitted laser delivers,
+give the final-approach gate the elevation fallback the landing trigger already has, or accept that
+centreline tracking starts late.
+
 So a board fitted with the VL53L1X wants **`land_agl_m` lowered** in its launch config -- and the
 bench says 3.0 is probably still too generous, since the measured indoor ceiling is ~2.0 m and outdoor
 ambient is far higher than the ~26 seen here. Treat ~1.5 m as the working assumption until the outdoor

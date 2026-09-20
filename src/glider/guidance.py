@@ -457,9 +457,24 @@ class Guidance:
         Returns:
             True -- the setpoint slots are always filled in GLIDING / LANDING.
         """
-        # FRESH agl only: the laser reaches ~4 m, so out of range `value()` projects stale samples
-        # without bound and a bogus low reading would hold FINAL APPROACH on for the whole glide.
-        # See sequencer._detect_landing -- the same staleness ended a flight at apogee.
+        """
+        FRESH agl only, and the range is SHORTER THAN THIS THRESHOLD ASSUMES.
+
+        Out of range, `value()` projects stale samples without bound, and a bogus low reading would
+        hold FINAL APPROACH on for the whole glide -- the same staleness ended a flight at apogee (see
+        sequencer._detect_landing). Hence the source gate.
+
+        But note what the gate then implies. This comment used to say "the laser reaches ~4 m", and a
+        VL53L1X measured on the bench reaches **2.07 m** (doc/hardware.md); the L4CX is the longer part
+        and still short of `final_approach_agl` at 8 m. There is NO baro fallback here, unlike the
+        landing trigger -- so final approach engages when the laser finally acquires, not at 8 m. The
+        loiter and final-approach banks make it worse: the laser looks straight down, so at the 45 deg
+        `bank_limit` the slant range is AGL/cos(45) and a 2.07 m sensor covers only ~1.46 m of real AGL.
+
+        Not changed here, because the right value is a flight decision rather than a code one: either
+        lower the threshold to something the fitted laser can deliver, give this gate the elevation
+        fallback the landing trigger already has, or accept that centreline tracking starts late.
+        """
         agl, agl_source, _agl_age = self._agl.read()
         config = self._config
         final = config.final_agl and agl_source is not None and agl < config.final_agl  # low on final
