@@ -50,12 +50,12 @@ What actually gates a launch, sorted by how badly its loss hurts. "Critical" = *
 | --- | --- | --- | --- |
 | ESP32-P4 controller | **Critical** | the flight computer | ✔ |
 | **Attitude module** — sen0253 **or** sen0697 | **Critical — NO-FLY WITHOUT** | *some* source of attitude and heading is required: the stabilisation PID and the bank-to-turn navigation both depend on it. On v0.1/v1.0 that is the **BNO055**, fused on-chip. On v1.1 it is the **SEN0697**, fused by `tasks/attitude.py` from the BMI323's raw accel+gyro, with the BMM350 as the heading reference. LSM6DSO32 is raw 6-DoF (no mag) and cannot replace either. | 5+ BNO055, 4 SEN0697 |
-| LSM6DSO32 (6-DoF) | **Critical** (lean-bundle primary) | primary accel for the airspeed integrator + boost detect, and the only gyro `rate` | ✔ (best-bundle) |
+| LSM6DSO32 (6-DoF) | **Critical** (lean-bundle primary) | primary accel for the airspeed integrator + boost detect, and on v0.1/v1.0 the ONLY gyro `rate` (v1.1 adds the BMI323 as a second source) | **0 spare** — the last was soldered to TMS-7F on 2026-09-20; **5 on order** |
 | Power (5 V controller rail + servo rail) | **Critical** | — | ✔ |
 | Servos ×≥2 (SG90) | **Critical** | the fin actuators | ✔ |
 | Separation switch (copper pads) | **Critical** | the BOOSTING→GLIDING trigger | ✔ |
 | ICP-10111 baro | Important | primary altimeter (apogee / glide profile) | ✔ |
-| AGL laser (VL53L4CX **or** VL53L1X) | Important | low-altitude AGL for the landing — baro is poor there. Either part fits the socket; the L1X's shorter range needs `land_agl_m` lowered (see *Two lasers, one socket*) | ✔ |
+| AGL laser (VL53L4CX **or** VL53L1X) | Important | low-altitude AGL for the landing — baro is poor there. Either part fits the socket and needs no config change; the L1X's shorter measured range needs the AGL thresholds lowered (see *Two lasers, one socket*) | VL53L4CX out of stock — **1 VL53L1X fitted**, 5 more on order |
 | SDP810 airspeed | Important | **direct** pitot airspeed → the fin-authority cap (the estimate was the weakest signal). Degrades gracefully to the accel+GNSS estimate — the pre-pitot baseline flown in all HITL to date — if absent | ✔ (5) |
 | ADXL375 (±200 g) | Optional | >32 g high-g backstop; LSM6DSO32 ±32 g already covers the 8–12 g boost. Keep for telemetry / data-quality launches (run both, compare traces) | ✔ |
 | BMP280 baro | Optional | backup baro (rides on the sen0253 board with BNO055 anyway) | ✔ |
