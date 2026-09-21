@@ -227,7 +227,10 @@ class Bmi323(task.Task):
             sensor one, and invisible unless recorded).
             """
             self._irq_runs = await self._ready.wait(self._period_ms)
-            if self.strike(self._irq_runs == 0, _INT_SILENT_LIMIT):
+            # A board with NO int_pin is polling BY DESIGN, so there is no line to have gone silent:
+            # warning about one every boot trains the operator to read past a message that does mean
+            # something on a board where the wire exists. `interrupt_silent` reports the same way.
+            if self._int is not None and self.strike(self._irq_runs == 0, _INT_SILENT_LIMIT):
                 self._int_silent = True
                 self.note('bmi323 :: INT1 silent -- sampling on the %d ms fallback', self._period_ms)
             elif self._irq_runs:
