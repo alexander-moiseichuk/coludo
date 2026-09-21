@@ -13,6 +13,7 @@ import cc_client
 import cc_protocol as cc
 import config_default
 import inspector
+import layout
 import mission
 
 
@@ -398,7 +399,44 @@ async def amain():
     assert json.loads(cc.parse(await sd_arm.handle('stage auto')).args[0])['manual'] is False  # resume
     assert 'unsupported' in await cc_client.create_dispatcher(config_default.default()).handle('arm')
 
-    print('ok: cc_client dispatch/serve/standard + inspect/update/stats + probe + verify + log + tlm + arm')
+    """
+    `attitude-backup` must mean a FALLBACK, not "this revision has one source".
+
+    v0.1/v1.0 publish fused attitude from the BNO055 at p0, so running on tasks/attitude.py means
+    something died. v1.1 has no p0 attitude provider at all, so the flat check marked every v1.1 board
+    permanently degraded -- and an always-amber panel stops being read. Both directions are asserted
+    here because the flag is worthless if it never fires and worse than worthless if it always does.
+    """
+    class _Ctx:
+        pass
+
+    for revision, expected in (('v1.0', True), ('v1.1', False)):
+        cfg = config_default.default()
+        layout.apply(cfg, revision)
+        ctx = _Ctx()
+        ctx.controller = _Ctx()
+        ctx.controller.config = cfg
+        assert cc_client._has_primary(ctx, 'attitude') is expected, (
+            '%s: expected a p0 attitude provider to be %s' % (revision, expected))
+
+    # a DISABLED primary is not a primary -- it was never going to publish
+    cfg = config_default.default()
+    layout.apply(cfg, 'v1.0')
+    for device in cfg['sensors']:
+        if device['name'] == 'imu_bno055':
+            device['enabled'] = False
+    ctx = _Ctx()
+    ctx.controller = _Ctx()
+    ctx.controller.config = cfg
+    assert cc_client._has_primary(ctx, 'attitude') is False
+
+    # an unreadable config must NOT hide a real fallback
+    blind = _Ctx()
+    blind.controller = None
+    assert cc_client._has_primary(blind, 'attitude') is True
+
+    print('ok: cc_client dispatch/serve/standard + inspect/update/stats + probe + verify + log + tlm + arm '
+          '+ attitude-backup only where a primary exists')
 
 
 asyncio.run(amain())

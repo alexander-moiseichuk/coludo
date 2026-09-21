@@ -201,6 +201,35 @@ class _Context:
         return self.controller.stage_name() if self.controller is not None else 'setting'
 
 
+def _has_primary(ctx, channel: str) -> bool:
+    """
+    Does the running config declare an ENABLED device providing `channel` at priority 0?
+
+    The question behind "is this a fallback, or just the only source there is". A device that is
+    configured but DISABLED (layout unfits it on this revision) does not count -- it was never going
+    to publish.
+
+    Args:
+        ctx - the client context, for the controller's config.
+        channel - the databoard channel name.
+
+    Returns:
+        True when some enabled device claims priority 0 on that channel; True also when the config
+        cannot be read, so an unknown never silently hides a real fallback.
+    """
+    controller = getattr(ctx, 'controller', None)
+    config = getattr(controller, 'config', None) if controller is not None else None
+    if not isinstance(config, dict):
+        return True
+    for device in list(config.get('sensors', [])) + list(config.get('components', [])):
+        if not device.get('enabled', True) or device.get('name') == channel:
+            continue  # the backup task is named for its channel; it is not its own primary
+        entry = (device.get('provides') or {}).get(channel)
+        if isinstance(entry, dict) and entry.get('priority') == 0:
+            return True
+    return False
+
+
 def _register_identity(dispatcher, ctx) -> None:
     """whoami / ping / health -- who the board is and how it is doing."""
     async def whoami(_unused_msg) -> str:
@@ -252,8 +281,21 @@ def _register_identity(dispatcher, ctx) -> None:
         fallback zone). Empty list = nominal.
         """
         degraded = []
+        """
+        "On the backup" is only DEGRADED where a primary exists to have fallen off it.
+
+        v0.1 and v1.0 carry a BNO055 publishing fused `attitude` at priority 0, so a board running on
+        tasks/attitude.py means something died. v1.1 has NO p0 attitude provider at all -- the
+        complementary filter is the only source, by design -- so the flat check marked every v1.1 board
+        permanently degraded, on the pad and in the air. A panel that is always amber stops being read,
+        which costs the annunciation the whole point of having it.
+
+        So require a CONFIGURED, ENABLED p0 provider before calling its absence a fallback: v1.1 reports
+        clean, and an actual BNO055 failure on v1.0 still raises the flag, which is the case worth
+        seeing.
+        """
         attitude = databoard.Databoard.parameter('attitude')
-        if attitude is not None and attitude.read()[1] == 'attitude':  # fused source IS the backup
+        if attitude is not None and attitude.read()[1] == 'attitude' and _has_primary(ctx, 'attitude'):
             degraded.append('attitude-backup')
         health = inspector.Inspector.get('health')
         if getattr(health, 'rescues', 0) > 0:
