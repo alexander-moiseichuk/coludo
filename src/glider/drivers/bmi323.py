@@ -304,6 +304,11 @@ class Bmi323(task.Task):
         status.update({'addr': hex(self._addr),
                        'accel_g': self._accel.value(),
                        'rate_cds': self._rate.value(),
-                       'interrupt_silent': self._int_silent,  # False = INT1 driving, True = polling
+                       # None = no int_pin declared (polled BY DESIGN); False = INT1 driving;
+                       # True = a pin IS declared and went silent, which is the case worth seeing.
+                       # Reporting True for an unwired board made "not connected" and "connected but
+                       # dead" read identically -- and the second is a fault while the first is a
+                       # configuration.
+                       'interrupt_silent': self._int_silent if self._int is not None else None,
                        'irq_runs': self._irq_runs})
         return status

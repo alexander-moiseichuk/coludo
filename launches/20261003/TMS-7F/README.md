@@ -66,6 +66,20 @@ cd src/glider/test && make test                                # expect 63/63
 mpremote connect $PORT cp launches/20261003/TMS-7F/tms7f.config :board.config && mpremote reset
 ```
 
+### The BMI323 runs POLLED, deliberately
+
+`int_pin` is **null** for `imu_bmi323` on this board. The SEN0697 is wired on the BNO055's pattern —
+power and I²C only — so GPIO4 (`accel_int1`) goes nowhere, and routing it turned out to be awkward
+enough not to be worth it. Declaring a pin that is not connected is simply untrue: the driver would
+arm the interrupt, wait out `_INT_SILENT_LIMIT` silent cycles at every boot, print `INT1 silent` and
+fall back to polling anyway.
+
+**Polling is not a degraded mode here.** The driver was written to work either way and samples at
+`period_ms` 10 (100 Hz), publishing `accel` and `rate` normally. The interrupt would buy CPU headroom
+and tighter sample timing, nothing more. If a future v1.1 board does wire GPIO4 to the BMI323's INT1,
+set `int_pin` back to `accel_int1` and the driver picks it up with no code change — confirm by the
+`INT1 silent` message disappearing and `irq_runs` climbing off zero.
+
 Then, unique to this airframe: **calibrate the BMM350** over CC (`calibrate mag_bmm350`) — a LEVEL full
 circle, twice round. The code is written and tested but has never met a real magnetic field; it refuses
 a partial turn on purpose. `fins.concurrency` starts at 1 until this board's servos have drawn current.
