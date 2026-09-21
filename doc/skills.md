@@ -126,7 +126,15 @@ so it must run on both.
   Tests (`test_*.py`) and host code (`src/control/`, `tools/`) MAY defer imports — placement laxness
   there is fine.
 - **Type annotations** on every non-local: module constants, class variables, function arguments
-  and return types (both CPython 3.12 and MicroPython 1.28 accept them).
+  and return types (both CPython 3.12 and MicroPython 1.29 accept them).
+
+  **The boards run MicroPython 1.29.0 (mpy v6.3)**, matching `tools/mpy-cross.v1.29.0`, which
+  `deploy.sh` prefers over any `mpy-cross` on PATH. Nothing in the firmware records or asserts the
+  runtime version, so the only way to know what a board is running is to ask it:
+  `mpremote connect $PORT exec "import sys; print(sys.implementation)"`. Confirm `mpy 6.3` before
+  deploying to a freshly flashed board -- a format mismatch surfaces as odd import failures rather
+  than a clear error. This line said 1.28 for a while and was simply stale, which is enough to send
+  someone chasing a fleet-version difference that does not exist.
 - **Constants** via `micropython.const`, with a portable shim at the top of shared/board modules:
   ```python
   try:
