@@ -55,7 +55,7 @@ What actually gates a launch, sorted by how badly its loss hurts. "Critical" = *
 | Servos ×≥2 (SG90) | **Critical** | the fin actuators | ✔ |
 | Separation switch (copper pads) | **Critical** | the BOOSTING→GLIDING trigger | ✔ |
 | ICP-10111 baro | Important | primary altimeter (apogee / glide profile) | ✔ |
-| AGL laser (VL53L4CX **or** VL53L1X) | Important | low-altitude AGL for the landing — baro is poor there. Either part fits the socket and needs no config change; the L1X's shorter measured range needs the AGL thresholds lowered (see *Two lasers, one socket*) | VL53L4CX out of stock — **1 VL53L1X fitted**, 5 more on order |
+| AGL laser (VL53L4CX **or** VL53L1X) | Important | low-altitude AGL for the landing — baro is poor there. Either part fits the socket; **enable exactly the one fitted** (an unfitted laser fails `verify`/`arm`); the L1X's shorter measured range needs the AGL thresholds lowered (see *Two lasers, one socket*) | VL53L4CX out of stock — **1 VL53L1X fitted**, 5 more on order |
 | SDP810 airspeed | Important | **direct** pitot airspeed → the fin-authority cap (the estimate was the weakest signal). Degrades gracefully to the accel+GNSS estimate — the pre-pitot baseline flown in all HITL to date — if absent | ✔ (5) |
 | ADXL375 (±200 g) | Optional | >32 g high-g backstop; LSM6DSO32 ±32 g already covers the 8–12 g boost. Keep for telemetry / data-quality launches (run both, compare traces) | ✔ |
 | BMP280 baro | Optional | backup baro (rides on the sen0253 board with BNO055 anyway) | ✔ |
@@ -345,8 +345,10 @@ Barometer works very badly at very low altitudes, so the laser module becomes es
 Stock of the VL53L4CX ran out, so boards may instead carry a **VL53L1X** in the same footprint at the
 same `0x29`. They are different silicon (`0xEACC` vs `0xEBAA`) with different init blocks, and neither
 block produces ranges on the other part — so each driver checks its model id and returns False on a
-mismatch. Both are declared in `config_default`, and the one actually soldered wins, the same way an
-absent device is skipped. An I²C scan cannot tell them apart, so `layout` does not try; it only makes
+mismatch. Both are declared in `config_default`, but **a flight config enables exactly the one that is
+soldered**: the other's failed setup lands in the controller's failures, which `verify` and `arm` count,
+so declaring both makes the board refuse to arm (TMS-7F disables `laser_agl`; the 7C/7D profiles
+disable `laser_agl_l1x`). An I²C scan cannot tell them apart, so `layout` does not try; it only makes
 sure the second entry FOLLOWS the first onto whatever bus the revision puts the socket on, without
 casting a second vote for the one address.
 

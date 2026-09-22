@@ -7,6 +7,9 @@ Configs live here rather than in a shared `configs/` because a profile is only m
 airframe it was written for: the masses, the motor, the fin setting and the electronics fitted all
 change from launch to launch, and a config that outlives them is a config nobody can trust. Regenerate
 into a launch with `python3 tools/make_telemetry_config.py --launch <YYYYMMDD>` (default: the newest).
+It writes the v0.1 profiles only (7C, 7D, 7D control) — keyless `layout` (declared v0.1) and the
+VL53L4CX as their one enabled laser; 7E/7F are hand-kept. **Every board enables exactly one laser
+entry**: an unfitted one fails `verify` and `arm`.
 
 | launch | status |
 |---|---|
