@@ -409,7 +409,7 @@ new EventSource('/events').onmessage = (event) => {
   tbody.innerHTML = boards.map((b) => `
     <tr class="click ${b.online ? 'on' : 'off'} ${notReady(b) ? 'notready' : ''}" data-board="${escAttr(b.id)}">
       <td>${notReady(b) ? `<b class="warn" title="NOT READY: ${b.degraded.join(', ')}">❗</b> ` : ''}${escAttr(b.id)}</td>
-      <td><span class="dot">${b.online ? '●' : '○'}</span></td>
+      <td><span class="dot" title="${b.online && b.stale ? `health ${b.health_age} s old -- armed/stage may be out of date` : ''}">${b.online ? (b.stale ? '◐' : '●') : '○'}</span></td>
       <td>${fmtLayout(b)}</td>
       <td>${escAttr(b.stage || '')}</td>
       <td>${fmtFlight(b)}</td>

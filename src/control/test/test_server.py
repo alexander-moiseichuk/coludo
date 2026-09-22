@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cc_protocol as cc  # noqa: E402
@@ -555,7 +556,45 @@ async def _large_reply():
     writer.close()
 
 
+async def _heartbeat():
+    """
+    The heartbeat polls HEALTH on health age, not on link traffic, and stops on a link given up.
+
+    It skipped the poll whenever ANY reply was recent, and a running log stream replies every second,
+    so during a stream health was never polled and armed/stage/degraded on the dashboard froze. And
+    after an exchange timeout marked the link down, it kept polling a dead socket instead of ending
+    so the board could re-dial.
+    """
+    class _Client:
+        def __init__(self, online):
+            self.id = 'hb'
+            self.online = online
+            self.last_seen = time.monotonic()  # a stream is keeping the link busy
+            self.health_seen = 0.0             # ...but no health reply has arrived
+            self.sent = []
+
+        async def command(self, verb, *args, quiet=False, timeout=None):
+            self.sent.append(verb)
+            self.last_seen = time.monotonic()
+            if verb == 'health':
+                self.health_seen = time.monotonic()
+            return object()
+
+    hub = server.Server(host='127.0.0.1', port=0, operator_port=0, web_port=0,
+                        log=lambda message: None, heartbeat_s=0.05)
+    busy = _Client(online=True)
+    poller = asyncio.create_task(hub._poll(busy))
+    await asyncio.sleep(0.4)
+    poller.cancel()
+    assert busy.sent.count('health') >= 2, 'a busy link suppressed the health poll: %r' % busy.sent
+
+    dead = _Client(online=False)
+    await asyncio.wait_for(hub._poll(dead), 1.0)  # must RETURN, not poll a link that was given up
+    assert dead.sent == [], dead.sent
+
+
 async def main():
+    await _heartbeat()
     await _loopback()
     await _operator_console()
     await _web()
@@ -565,7 +604,8 @@ async def main():
     await _large_reply()
     _gps_device_resolve()
     _glider_roster()
-    print('ok: server accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) '
+    print('ok: server heartbeat polls health on health age + stops on a dead link '
+          '+ accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) '
           '+ glider roster (persist, same-name-new-ip, absent hint) '
           '+ gps assist/compare + log streaming + gps auto-detect + oversized reply')
 

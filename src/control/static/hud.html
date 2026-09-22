@@ -182,9 +182,13 @@ function render() {
   $('uptime').textContent = board.uptime != null ? `${board.uptime} s` : '—';
 
   const age = (Date.now() - lastSeen) / 1000;
-  document.body.classList.toggle('stale', age > 5);
-  $('status').textContent = age > 5
-    ? `STALE — no update for ${age.toFixed(0)} s (board silent or link down)`
+  // the hub re-sends a row every poll, so the browser can be "updated" while the HEALTH inside it is old;
+  // board.stale is the hub's judgement of the health data itself
+  const stale = age > 5 || board.stale === true;
+  document.body.classList.toggle('stale', stale);
+  $('status').textContent = stale
+    ? (age > 5 ? `STALE — no update for ${age.toFixed(0)} s (board silent or link down)`
+               : `STALE — board health ${board.health_age} s old (link busy or board not answering)`)
     : `live — ${board.id} · firmware ${board.version || '?'} · updated ${age.toFixed(1)} s ago`;
 }
 

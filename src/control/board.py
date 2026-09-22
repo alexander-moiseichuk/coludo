@@ -13,6 +13,13 @@ import time
 import cc_protocol as cc
 
 EXCHANGE_TIMEOUT_S: float = 10.0  # bound every board exchange so a wedged board raises, never hangs
+"""
+Commands that run the board's ACTIVE self-tests get longer. probe_all sweeps every servo through its
+travel and samples the INA226 while it moves; on a three-servo airframe that was estimated at 8.5-10 s,
+against the 10 s default. A timeout mid-`arm` is the worst case there is: the arm can still land on the
+board while the hub has already declared the link dead -- and then refuses `disarm`.
+"""
+_SLOW_TIMEOUT_S: dict = {'arm': 30.0, 'verify': 30.0, 'probe': 30.0, 'calibrate': 30.0}
 
 
 class Board:
@@ -33,6 +40,11 @@ class Board:
         self.cache = {'config': None, 'inspect': {}, 'stats': {}, 'health': None}
         self.online: bool = True
         self.last_seen: float = time.monotonic()
+        # when the last HEALTH reply arrived -- distinct from last_seen, which ANY reply refreshes. A
+        # running log stream refreshes last_seen every second, and the heartbeat used to treat that as
+        # proof of health and skip the poll, so the dashboard's armed/stage/degraded froze while the
+        # stream ran. 0.0 = never.
+        self.health_seen: float = 0.0
 
     @property
     def peer(self) -> str:
@@ -85,6 +97,17 @@ class Board:
                 self.online = False       # stream position unknown -> do not reuse this connection
                 self._log('%s <- TIMEOUT after %.0fs (link marked down; a late reply would desync)'
                           % (self.id or self.peer, timeout))
+                """
+                ...and actually GIVE IT UP. This marked the link down and left the socket open, so nothing
+                ever reconnected: the board kept its end, possibly ARMED, while every command to an
+                "offline" board was refused -- `disarm` included -- until someone restarted the hub or
+                power-cycled an airframe that might be on the rail. Closing the writer lets the board see
+                EOF and re-dial, which is the recovery the paragraph above already assumed.
+                """
+                try:
+                    self._writer.close()
+                except Exception:
+                    pass
                 raise
         reply = raw.decode().strip()
         if not quiet:
@@ -160,7 +183,7 @@ class Board:
                 'config': self.cache['config'], 'inspect': self.cache['inspect'],
                 'stats': self.cache['stats'], 'health': self.cache['health']}
 
-    async def command(self, command: str, *args, timeout: float = EXCHANGE_TIMEOUT_S,
+    async def command(self, command: str, *args, timeout: float = None,
                       quiet: bool = False) -> cc._Msg:
         """
         Build `command args...` and exchange it.
@@ -168,13 +191,20 @@ class Board:
         Args:
             command - the command verb.
             args - the command arguments (base64-encoded by cc.build as needed).
-            timeout - seconds to wait for the reply (default EXCHANGE_TIMEOUT_S).
+            timeout - seconds to wait for the reply; None picks _SLOW_TIMEOUT_S for the active
+                self-tests and EXCHANGE_TIMEOUT_S for everything else, so neither the console nor the
+                web path can undercut them.
             quiet - suppress the tx/rx console log.
 
         Returns:
             The parsed reply (_Msg), or None if the board disconnected.
         """
-        return await self.exchange(cc.build(command, list(args)), timeout, quiet=quiet)
+        if timeout is None:
+            timeout = _SLOW_TIMEOUT_S.get(command, EXCHANGE_TIMEOUT_S)
+        resp = await self.exchange(cc.build(command, list(args)), timeout, quiet=quiet)
+        if command == 'health' and resp is not None and resp.command == 'ok':
+            self.health_seen = time.monotonic()
+        return resp
 
     async def identify(self) -> str:
         resp = await self.command('whoami')

@@ -130,7 +130,60 @@ async def main():
         raised = True
     assert raised
 
-    print('ok: board lockstep command / identify / disconnect / timeout / garbled reply +/-')
+    """
+    A TIMEOUT MUST GIVE THE LINK UP, not just mark it. It set online=False and left the socket open, so
+    nothing reconnected: the board kept its end (possibly armed) while the hub refused every command to
+    an "offline" board -- disarm included.
+    """
+    class _TrackingWriter(_Writer):
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    tracked = _TrackingWriter()
+    stuck = Board(_HangReader(), tracked)
+    try:
+        await stuck.command('ping', timeout=0.1)
+        raise AssertionError('a hung reply did not time out')
+    except asyncio.TimeoutError:
+        pass
+    assert stuck.online is False and tracked.closed is True, 'timed out but kept the socket open'
+
+    """
+    The active self-tests get a longer default. probe_all sweeps every servo; on three servos it was
+    estimated at 8.5-10 s against the 10 s default, so an `arm` could time out while still landing.
+    """
+    seen = {}
+
+    async def _capture(line, timeout, quiet=False):
+        seen[line.split()[0]] = timeout
+        return cc.parse('ok')
+
+    probe = Board(_Reader([]), _Writer())
+    probe.exchange = _capture
+    for verb in ('arm', 'verify', 'probe', 'calibrate'):
+        await probe.command(verb)
+        assert seen[verb] >= 30.0, '%s got %s s' % (verb, seen[verb])
+    await probe.command('ping')
+    assert seen['ping'] == 10.0, 'ordinary commands keep the 10 s default'
+    await probe.command('arm', timeout=2.0)
+    assert seen['arm'] == 2.0, 'an explicit timeout still wins'
+
+    """
+    health_seen tracks HEALTH replies only. last_seen moves on any reply, and the heartbeat used to
+    treat a running log stream as proof of health -- freezing armed/stage on the dashboard.
+    """
+    live = Board(_Reader(['ok e30=', 'ok']), _Writer())
+    assert live.health_seen == 0.0
+    await live.command('health')
+    assert live.health_seen > 0.0
+    before = live.health_seen
+    await live.command('log', 1000)  # stream traffic refreshes last_seen, NOT health_seen
+    assert live.health_seen == before
+
+    print('ok: board lockstep command / identify / disconnect / timeout / garbled reply +/- '
+          '/ timeout closes the socket / slow-command timeouts / health_seen is health-only')
 
 
 asyncio.run(main())

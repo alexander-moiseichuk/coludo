@@ -178,7 +178,9 @@ class Server:
             and the operator sees green. Publishing the age lets the dashboard say "this is stale"
             instead of quietly presenting handshake data as live.
             """
-            health_age = round(now - client.last_seen, 1)
+            # the age of the HEALTH data this row shows, not of the last byte on the link: a stream
+            # kept last_seen fresh while the armed/stage below were minutes old, and `stale` said false
+            health_age = round(now - (getattr(client, 'health_seen', 0.0) or client.last_seen), 1)
             rows.append({
                 'id': client.id, 'online': client.online,
                 'health_age': health_age, 'stale': health_age > self.heartbeat_s * 2,
@@ -469,8 +471,12 @@ class Server:
         missed = 0
         while True:
             await asyncio.sleep(self.heartbeat_s)
-            if time.monotonic() - client.last_seen < self.heartbeat_s:
-                continue  # a recent exchange already proved liveness
+            if not client.online:
+                return  # an exchange timed out and gave the link up -> let _handle clean up; it re-dials
+            # skip only when a HEALTH reply is recent. Any-traffic liveness let a running log stream
+            # suppress every poll, so armed/stage/degraded on the dashboard froze for its duration.
+            if time.monotonic() - getattr(client, 'health_seen', 0.0) < self.heartbeat_s:
+                continue
             healthy = await client.command('health', quiet=True) is not None
             if healthy:
                 if missed:
