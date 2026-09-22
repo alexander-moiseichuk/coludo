@@ -40,13 +40,25 @@ first powered flight.
 
 ## Phase 1 — Power-up & CC link (at the field)
 - [ ] Power on → board joins the AP → appears on the CC dashboard, **stage = SETTING (1)**
-- [ ] Every device online: **BNO055** (0x28), **BMP280** (0x76), **ICP-10111** (0x63), **VL53L4CX**
-      (0x29), **SDP810** (0x25), **LSM6DSO32** + **ADXL375** (SPI), **GNSS** (uart), **INA226** (i2c1 0x40)
+- [ ] Every device this airframe's config enables is online — **`verify` green on CC** is the check;
+      `detect` names the revision the board found. The rosters differ per revision (from the 10-03
+      configs; `doc/waveshare_esp32p4_pins.md` is the generated per-revision pin/bus map):
+
+      | | v0.1 — TMS-7C, 7D | v1.0 — TMS-7E | v1.1 — TMS-7F |
+      |---|---|---|---|
+      | attitude | BNO055 0x28 + BMP280 0x76 | BNO055 0x28 + BMP280 0x76 | BMI323 0x69 + BMP581 0x47 + BMM350 0x15 |
+      | i2c:0 also | ICP-10111 0x63, SDP810 0x25, VL53L4CX 0x29 | INA226 0x40 | INA226 0x40 |
+      | i2c:1 | INA226 0x40 (7D only; off on 7C) | ICP-10111 0x63, SDP810 0x25, VL53L4CX 0x29 | ICP-10111 0x63, SDP810 0x25, **VL53L1X** 0x29 |
+      | SPI | LSM6DSO32 + ADXL375 | LSM6DSO32 (no ADXL375) | LSM6DSO32 (no ADXL375) |
+      | uart | GNSS | GNSS | GNSS |
 - [ ] Telemetry streaming to CC at the expected rate; `inspect` on each component looks sane
 - [ ] `mem_free` stable while idle (no leak on the ground — it scans WiFi in SETTING)
 
 ## Phase 2 — Static baseline (glider level and still on the ground)
 - [ ] **Attitude:** roll ≈ 0, pitch ≈ 0; rotate to a known heading (e.g. north) → **heading tracks** (magnetometer)
+      > **v1.1 (TMS-7F):** heading starts at **0 at power-on, not north** — it is relative until the
+      > GNSS track (> 5 m/s) teaches the magnetometer its offset, which never happens on a walk. Check
+      > that heading CHANGES by the angle you turn, not what it reads.
 - [ ] **Baro:** altitude/elevation steady; note the pad elevation (ground zero ≈ 0 m)
 - [ ] **GNSS:** fix acquired — satellites up, HDOP low; position matches the spot
 - [ ] **Airspeed:** dynamic pressure ≈ 0; do the **pad tare** (CC `update {"zero": true}` on
@@ -113,8 +125,9 @@ first powered flight.
 - [ ] Pitch nose up / down → **pitch tracks** the right sense; roll L/R → **roll tracks**
 - [ ] Yaw / spin → **heading tracks**; no glitches or freezes on quick moves (gyro rate feeds the PID D-term)
 - [ ] Return to level → attitude returns to ~0/0 and the heading settles
-- [ ] *(optional, redundancy)* cover/disable the BNO055 mid-test → the complementary-filter **backup**
-      takes over (attitude still tracks, degraded) → re-enable
+- [ ] *(optional, redundancy — v0.1/v1.0 only)* cover/disable the BNO055 mid-test → the
+      complementary-filter **backup** takes over (attitude still tracks, degraded) → re-enable. A v1.1
+      board (TMS-7F) has no BNO055 and so no attitude fallback: skip this step
 
 ## Phase 4 — Fins track attitude (armed, GLIDING, hand-held)
 > Reach GLIDING the realistic way (Phases 7–8) **or** force it from CC for a quick fin check. Armed = fins live.
@@ -138,9 +151,13 @@ first powered flight.
 
 ## Phase 6 — Airspeed in motion (the new SDP810)
 
-`src/glider/test/live_pitot.py` prints q, airspeed and the governor's own verdict live, so this whole
-phase is one run of it: `mpremote connect $PORT run live_pitot.py` (30 s window). Bench-validated
-2026-07-26 with the values below, so treat a deviation as a real finding.
+**At the field, do this phase from CC:** repeat `inspect airspeed_sdp810` (`dynamic_pressure_pa`,
+`airspeed_ms`) with the HUD open, and judge the band against the flight config's `pitot_min_ms` (3) and
+`pitot_max_ms` (28) yourself. **Do NOT run `live_pitot.py` on a flight profile**: `mpremote run` stops
+main.py, every 10-03 config arms the 5 s hardware watchdog, and the board resets ~5 s in — no verdicts, a
+dropped CC link, and a CDC-wedge risk. `src/glider/test/live_pitot.py` (q, airspeed and the governor's own
+verdict, 30 s window) is for a bench board whose config has the watchdog off. Bench-validated 2026-07-26
+with the values below, so treat a deviation as a real finding.
 
 - [ ] **At rest** → q sits at the tare floor (**~-0.02 Pa**, ~0.2 m/s equivalent) → verdict **IGNORED
       (below floor)**. A blocked or disconnected tube looks EXACTLY like this, which is why the floor
@@ -164,7 +181,7 @@ phase is one run of it: `mpremote connect $PORT run live_pitot.py` (30 s window)
 - [ ] **Manually separate the pads** → pin **LOW = separated** → **BOOSTING → GLIDING** fires, the control loop **engages, fins go live**
 - [ ] Confirm the transition is clean and **latched** (re-nesting does not bounce it back to BOOSTING)
 - [ ] Now repeat Phase 4 in this real GLIDING state — fins track attitude + zone heading
-- [ ] Let it sit / lower it → the AGL/landing path (VL53L4CX < ~5 m for `land_ms`) → **GLIDING → LANDING → DONE**, fins return to neutral
+- [ ] Let it sit / lower it → the AGL/landing path (the laser — VL53L4CX, VL53L1X on TMS-7F — < ~5 m for `land_ms`) → **GLIDING → LANDING → DONE**, fins return to neutral
 
 ## Phase 9 — Data capture & review
 - [ ] Recorder captured the session (telemetry CSVs growing during the run)

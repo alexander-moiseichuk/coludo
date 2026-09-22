@@ -663,20 +663,23 @@ against a guaranteed lawn-dart).
   collect at a known-safe moment is legitimate. Because the GC-off leak is *garbage*, the
   vitals task defuses the OOM before it lands — re-firing every health period for as long as the
   trigger holds (a persistent leak gets a collect per second, altitude allowing). The decision is
-  physics, not a byte threshold — collect when memory dies before the flight is safely over: predicted **`oom_s` < 2 ×
-  `land_s`** (time-to-exhaustion from the memory-decay slope vs time to sink to the rescue floor
-  from the elevation-decay slope; no descent trend yet → no rescue — the glide always
-  descends, so `land_s` exists exactly where a rescue is meaningful), with **proven safe
-  altitude** (known elevation above `rescue_agl_m` = 10 m ≈
-  2× the 5 m landing gate — a 0.2 s pause costs ~2 m), in BOOSTING/GLIDING only, never LANDING.
+  physics, not a byte threshold — collect when memory dies before the flight is safely over: predicted **`oom_s` ≤
+  `land_s`** (time-to-exhaustion from the memory-decay slope vs time to sink to the ground from the
+  elevation-decay slope; no descent trend yet → no rescue — the glide always descends, so `land_s`
+  exists exactly where a rescue is meaningful). It began at 2 × `land_s` and was cut to 1 ×: `oom_s`
+  already counts down to a reserve, not to zero, and the pause is priced ~5× the collect measured in
+  flight, so the third margin only spent control slices (1–4 pauses per flight). **Proven safe
+  altitude** is a known elevation above a **dynamic floor** — 2× the descent a 200 ms pause costs at
+  the live sink rate, no fixed `rescue_agl_m` — in BOOSTING/GLIDING only, never LANDING.
   The collect is bracketed by watchdog `kick()`s (it is atomic and unfeedable, so it starts on a
   full WDT budget). Both predictions ride `health.csv` + `inspect health` — the operator's OOM
   countdown and landing countdown. All-integer bookkeeping (cm, bytes/s, whole seconds).
   **Measured pause costs:** ~65–260 ms on a mostly-free heap (the real anomaly-rescue case — the
   trigger fires early, while collects are still cheap) but **3.4 s on a ballast-full 32 MB
-  heap** — which is why `wdt_timeout_ms` stays 1000 (500 killed the rescue in HITL) and why a
-  rescue near true exhaustion may still lose to the watchdog: the reset + warm-start chain below
-  remains the layer behind it. **Validated on-board (the OOM soak re-flown, watchdog off):** the
+  heap** — which is why `wdt_timeout_ms` is **5000**, a measured floor (config_default.py): 1000
+  boot-loops the board every ~8.5 s (3000 still does, 4000 is stable) and could not cover a 3.4 s
+  collect even with a `kick()`. A rescue near true exhaustion may still lose to the watchdog: the
+  reset + warm-start chain below remains the layer behind it. **Validated on-board (the OOM soak re-flown, watchdog off):** the
   same ballasted scenario that hard-panicked the board now lands — 8 rescues, each logged with
   its decision pair (`oom 58s, land 58s` narrowing to `22s/12s`), the sawtooth visible in
   `mem_free`, rescues standing down at LANDING per the gates, flight to DONE.
