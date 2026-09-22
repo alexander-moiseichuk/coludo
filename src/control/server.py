@@ -596,7 +596,7 @@ class Server:
         """
         for client in targets:
             try:
-                resp = await client.exchange(line)
+                resp = await client.exchange(line, board.timeout_for(line))  # a console arm sweeps too
             except Exception as error:      # timeout / link lost -- report THIS board, keep going
                 out.append('from %s err %s' % (client.id, type(error).__name__.lower()))
                 continue

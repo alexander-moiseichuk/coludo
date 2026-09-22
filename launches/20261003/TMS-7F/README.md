@@ -84,4 +84,6 @@ Then, unique to this airframe: **calibrate the BMM350** over CC (`calibrate mag_
 in the clear first and keep it level from boot (the evidence is every sample since boot), then a LEVEL
 full circle, twice round. The code is written and tested but has never met a real magnetic field; it refuses
 a partial turn on purpose. `fins.concurrency` is 1, which does NOT stagger the boot centring (it gates
-`servo.move()` only): until this board's servos have drawn current on a known supply, keep them disabled.
+`servo.move()` only). `tms7f.config` enables all three servos, as the flight needs them holding the fins
+neutral -- so do not boot this config on a current-limited bench supply until the servos have drawn
+current on a known one; for bench work there, disable them in a bench copy of the config.

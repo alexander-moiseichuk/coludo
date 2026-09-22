@@ -90,9 +90,10 @@ centidegrees); the float PID boxes 176 B regardless of magnitude. On-board HITL 
 firmware, which also streams the
 simulated sensors, so it churns *more* than a bare run — measured **~15 MB consumed with GC off, low-water
 ~17 MB free of ~32 MB** on a ~47 s F15-4 flight (the shorter ~32 s E16-4 bottoms out ~23 MB), with
-`mem_free` snapping back to ~32 MB at touchdown when GC re-enables. The full sawtooth is visible in the
-committed device `board_health.csv` (`doc/sims/TMS-7-guarded_fins/`); the pre- and post-flight collect
-durations are also **logged** (`gc pre-/post-flight collect <us>`).
+`mem_free` snapping back to ~32 MB at touchdown when GC re-enables. The sawtooth is visible in a
+flight's `health.csv` (`mem_free`; the study `doc/sims/TMS-7-guarded_fins/` kept only its rendered
+reports, not the CSV); the pre- and post-flight collect durations are also **logged**
+(`gc pre-/post-flight collect <us>`).
 
 Side effect: the CPU-load probe in `tasks/board_health.py` was changed from a `sleep_ms(0)`
 busy-spin to a sleeping probe that measures wake-up lateness — the core now idles between samples,

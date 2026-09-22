@@ -22,6 +22,16 @@ board while the hub has already declared the link dead -- and then refuses `disa
 _SLOW_TIMEOUT_S: dict = {'arm': 30.0, 'verify': 30.0, 'probe': 30.0, 'calibrate': 30.0}
 
 
+def timeout_for(line: str) -> float:
+    """
+    The reply deadline for a board-facing line: the fin-sweeping self-tests get _SLOW_TIMEOUT_S.
+
+    Keyed on the command word, so the console path (a raw line) and command() (a built one) cannot
+    disagree -- a console `arm` used to get the plain 10 s, and a timeout drops the link.
+    """
+    return _SLOW_TIMEOUT_S.get(line.split(' ', 1)[0], EXCHANGE_TIMEOUT_S)
+
+
 class Board:
     """One connected board: lockstep request/response over its socket."""
 
@@ -200,7 +210,7 @@ class Board:
             The parsed reply (_Msg), or None if the board disconnected.
         """
         if timeout is None:
-            timeout = _SLOW_TIMEOUT_S.get(command, EXCHANGE_TIMEOUT_S)
+            timeout = timeout_for(command)
         resp = await self.exchange(cc.build(command, list(args)), timeout, quiet=quiet)
         if command == 'health' and resp is not None and resp.command == 'ok':
             self.health_seen = time.monotonic()

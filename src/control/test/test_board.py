@@ -11,6 +11,7 @@ import os
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import board as board_module  # noqa: E402
 import cc_protocol as cc  # noqa: E402
 from board import Board  # noqa: E402  (subject under test)
 
@@ -169,6 +170,10 @@ async def main():
     assert seen['ping'] == 10.0, 'ordinary commands keep the 10 s default'
     await probe.command('arm', timeout=2.0)
     assert seen['arm'] == 2.0, 'an explicit timeout still wins'
+    # ...and a RAW line, as the operator console forwards it, gets the same deadline: a typed `arm`
+    # used to get the plain 10 s, and a timeout drops the link
+    assert board_module.timeout_for('arm') >= 30.0 and board_module.timeout_for('probe servo_yaw') >= 30.0
+    assert board_module.timeout_for('ping') == 10.0 and board_module.timeout_for('armed') == 10.0
 
     """
     health_seen tracks HEALTH replies only. last_seen moves on any reply, and the heartbeat used to
