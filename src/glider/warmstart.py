@@ -176,6 +176,10 @@ def should_restore(crumb, separated: bool, cause_is_reset: bool, now_s) -> tuple
     return True, 'recover %s, %ds after checkpoint' % (controller.Stage.STAGES.get(stage, '?'), age_s)
 
 
+_REBASED_BAROS: tuple = ('icp10111', 'bmp280', 'bmp581')  # every baro driver honouring update({'ground'})
+_STATIC_KEYS: tuple = ('launch', 'zone', 'pad_altitude', 'pitot_zero')  # the frozen recovery identity
+
+
 def _apply_restore(flight, crumb, cfg: dict) -> None:
     """
     Apply a PASSED gate: restore the flight state from the crumb.
@@ -204,8 +208,11 @@ def _apply_restore(flight, crumb, cfg: dict) -> None:
                             'zone': [list(zone[0]), list(zone[1])]})
     pad_altitude = crumb.get('pad_altitude')
     if pad_altitude is not None:
+        # EVERY baro that re-zeroes at setup: the bmp581 (TMS-7F's backup elevation) was missing, so
+        # after a mid-air reset it read ~0 m at altitude and an ICP outage handed the landing check
+        # the ground
         baro_names = [sensor['name'] for sensor in cfg.get('sensors', [])
-                      if sensor.get('driver') in ('icp10111', 'bmp280')]
+                      if sensor.get('driver') in _REBASED_BAROS]
         for baro in flight.find(baro_names):
             if baro is not None:
                 baro.update({'ground': pad_altitude})
@@ -233,6 +240,9 @@ def _apply_restore(flight, crumb, cfg: dict) -> None:
         flight_task = flight.find(['flight'])[0]
         if flight_task is not None:
             flight_task.seed_airspeed(airspeed)
+    checkpoint = flight.find(['checkpoint'])[0]
+    if checkpoint is not None:
+        checkpoint.seed(crumb)  # else the first post-restore checkpoint saves a crumb with no identity
     flight.set_stage(crumb['stage'])  # the SAVED stage; the detectors re-evaluate from here
     if crumb.get('armed'):
         flight.arm()  # only an armed flight ever checkpoints a recovery crumb -- re-arm to match
@@ -311,6 +321,23 @@ class Checkpoint(task.Task):
         self._pad = None  # tracked while on the pad (SETTING) so BOOSTING freezes a true GROUND altitude
         self._ok = True
         return True
+
+    def seed(self, crumb: dict) -> None:
+        """
+        Carry a restored crumb's recovery identity forward (the warm start calls this).
+
+        setup() runs before the restore and starts with no identity, which only BOOSTING entry fills. So
+        the first checkpoint after a warm start saved a crumb WITHOUT launch/zone/pad/pitot, and a second
+        in-flight reset then skipped the baro rebase and the pitot tare -- and a warm start into BOOSTING
+        froze the live mid-air altitude as the pad. Seeding keeps the identity the flight launched with.
+
+        Args:
+            crumb - the restored crumb.
+
+        Returns:
+            None; fills self._static from the crumb's identity keys.
+        """
+        self._static = {key: crumb[key] for key in _STATIC_KEYS if key in crumb}
 
     def _freeze_static(self) -> None:
         """
@@ -420,9 +447,12 @@ class Checkpoint(task.Task):
                 pad, pad_source, _pad_age = self._altitude.read()
                 if pad is not None and pad_source is not None:
                     self._pad = pad
+                self._static = {}  # back on the ground: the next BOOSTING is a new flight
             changed = stage != last_stage
-            if changed and stage == controller.Stage.BOOSTING:
-                self._freeze_static()  # capture the recovery identity as we leave the ground
+            if changed and stage == controller.Stage.BOOSTING and not self._static:
+                # capture the recovery identity as we leave the ground -- never over a SEEDED one: a warm
+                # start into BOOSTING would otherwise freeze the live mid-air altitude as the pad
+                self._freeze_static()
             due = (controller.Stage.airborne(stage)  # periodic writes only aloft (never the long ground dwells)
                    and time.ticks_diff(time.ticks_us(), last_us) >= self._period_ms * 1000)
             if changed or due:

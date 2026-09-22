@@ -64,6 +64,15 @@ class Attitude(task.Task):
         # trust the accel gravity vector only near 1 g -- store the squared centi-g band (no per-cycle sqrt)
         low = fixed.from_float(cfg.get('grav_low_g', 0.7))    # g -> centi-g fixnum (the standard boundary)
         high = fixed.from_float(cfg.get('grav_high_g', 1.3))
+        """
+        RECORD the output. On v1.1 (TMS-7F) this filter is the ONLY attitude source -- no BNO055, and a
+        passive profile has no flight.csv -- yet it created no stream, so the flight meant to validate
+        it as the sole source returned none of its output. Integers only (centidegrees, 0/1 flags): a
+        float in the row is heap-boxed on a GC-off flight. Decimated to telemetry_ms (default 100 ms).
+        """
+        self._telemetry = recorder.Telemetry(
+            'attitude.csv', ('heading_cd', 'roll_cd', 'pitch_cd', 'free', 'mag_known', 'mag_offset_cd'),
+            decimate_us=cfg.get('telemetry_ms', 100) * 1000)
         self._grav_lo_sq: int = low * low  # a centi-g SQUARED magnitude (not a fixnum itself)
         self._grav_hi_sq: int = high * high
         self._roll_cd: fixnum = 0   # centidegree fixnum (matches the BNO055 attitude slot)
@@ -278,6 +287,12 @@ class Attitude(task.Task):
             self._pitch_cd = ((self._pitch_cd + 18000) % 36000) - 18000
             self._yaw_cd %= 36000                                        # heading to [0, 360) cd
             self._attitude.push((fixed.to_float(self._yaw_cd), self._roll_cd, self._pitch_cd))  # heading float; r/p cd
+            if self._telemetry.due(now):  # due() first: no row tuple built on the 50 Hz path unless it emits
+                try:
+                    self._telemetry.push((self._yaw_cd, self._roll_cd, self._pitch_cd, 1 if self._free else 0,
+                                          1 if self._mag_known else 0, self._mag_offset_cd))
+                except Exception as error:  # a full ring must never stop the only attitude source
+                    self.note('attitude :: record %r', error)
 
     async def probe(self) -> str:
         """

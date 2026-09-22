@@ -160,10 +160,53 @@ async def amain():
     assert _NAME + '.ota' not in ota.orphans()
 
     _cleanup()
+
+    """
+    A pushed board.config is VALIDATED before it replaces the good one: set-config validated, a push did
+    not, and a bad file then failed load() at the next boot -- which falls back to the BENCH default
+    (id 'taster', watchdog off). Only the refusal is exercised: a push that passed would replace this
+    board's real config. Whatever board.config exists is compared, and put back, regardless.
+    """
+    try:
+        with open('board.config', 'rb') as handle:
+            original = handle.read()
+    except OSError:
+        original = None
+    try:
+        for body in (b'{not json', b'{"board": {}, "sensors": 7}'):
+            digest = binascii.hexlify(hashlib.sha256(body).digest()).decode()
+            assert upload.begin('board.config', len(body), digest) is None
+            assert upload.chunk(0, body) is None
+            info, refused = upload.commit()
+            assert info is None and refused and 'board.config' in refused, (body, info, refused)
+            try:
+                os.stat('board.config.ota')
+                raise AssertionError('a refused board.config left its staging file')
+            except OSError:
+                pass
+        try:
+            with open('board.config', 'rb') as handle:
+                now = handle.read()
+        except OSError:
+            now = None
+        assert now == original, 'a refused push changed the board config'
+    finally:
+        try:
+            with open('board.config', 'rb') as handle:
+                now = handle.read()
+        except OSError:
+            now = None
+        if now != original:
+            if original is None:
+                os.remove('board.config')
+            else:
+                with open('board.config', 'wb') as handle:
+                    handle.write(original)
+
     print('ok: ota accepts subdirectory paths and rejects traversal, out-of-order and overrunning '
           'chunks, a wrong digest and a mis-aimed commit; discards staging on failure; installs a '
           'verified file atomically and keeps the previous version as .bak; sweeps a staging '
-          'file orphaned by a reboot')
+          'file orphaned by a reboot; refuses a board.config that would not load')
 
 
 asyncio.run(amain())

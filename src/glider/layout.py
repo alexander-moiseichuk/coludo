@@ -30,6 +30,7 @@ whatever speed the chosen layout declares.
 """
 
 import config
+import i2cbus
 
 try:
     from machine import I2C, Pin
@@ -131,7 +132,21 @@ def _scan(cfg: dict, bus_id: int) -> set:
         bus = I2C(bus_id, scl=Pin(spec['scl']), sda=Pin(spec['sda']), freq=_SCAN_HZ)
         found = set(bus.scan())
     except Exception:
-        return set()  # a shorted or unpopulated bus votes for nothing
+        found = set()  # a shorted or unpopulated bus votes for nothing
+    """
+    A RUNTIME scan (the `detect` command) must hand the bus back at its own clock. machine.I2C(id) is ONE
+    peripheral per id, so the scan above re-clocked the bus every driver on it is using -- to 100 kHz,
+    until reboot, silently: a pre-flight `detect` flew i2c:0 at a quarter speed. At boot no driver holds
+    a bus yet, so there is nothing to restore (the real Bus is built afterwards at its own speed).
+    The scan and this restore run with no await between them, so no driver transfer can land in the
+    100 kHz window.
+    """
+    live = i2cbus.live(bus_id)
+    if live is not None:
+        try:
+            live.reclock()
+        except Exception:
+            pass  # the bus-clear path re-inits on the next wedge; a scan must never raise into CC
     return found
 
 

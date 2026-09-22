@@ -8,6 +8,8 @@ the mission, rebases the baros, and sets the saved (armed GLIDING) stage (stubbe
 Run by `make test`.
 """
 
+import asyncio
+
 import controller
 import inspector
 import warmstart
@@ -92,10 +94,12 @@ class _StubFlightTask:
 
 
 class _StubFlight:
-    def __init__(self, baros, flight_task=None, pitot=None):
+    def __init__(self, baros, flight_task=None, pitot=None, checkpoint=None):
         self._baros = baros
         self._flight_task = flight_task
         self.pitot = pitot
+        self.checkpoint = checkpoint
+        self.asked = []  # every name _apply_restore looked up, so a test can check WHICH baros
         self.stage = None
         self.armed = False
         self.warm_started = False
@@ -107,6 +111,9 @@ class _StubFlight:
             return [self._flight_task]
         if list(names) == ['airspeed_sdp810']:
             return [self.pitot]
+        if list(names) == ['checkpoint']:
+            return [self.checkpoint]
+        self.asked.extend(names)
         return self._baros
 
     def set_stage(self, stage):
@@ -205,9 +212,86 @@ def test_apply_restore_torn_crumb():
 
 
 test_should_restore()
+def test_apply_restore_rebases_every_baro():
+    """
+    Every baro that re-zeroes at setup is rebased, the BMP581 included: it was left out, so on TMS-7F its
+    backup elevation read ~0 m at altitude after a mid-air reset, and an ICP outage then handed the
+    landing check the ground.
+    """
+    flight = _StubFlight([_StubBaro()])
+    cfg = {'sensors': [{'name': 'baro_icp10111', 'driver': 'icp10111'},
+                       {'name': 'baro_bmp581', 'driver': 'bmp581'},
+                       {'name': 'baro_bmp280', 'driver': 'bmp280'},
+                       {'name': 'airspeed_sdp810', 'driver': 'sdp810'}]}
+    warmstart._apply_restore(flight, _CRUMB, cfg)
+    assert sorted(flight.asked) == ['baro_bmp280', 'baro_bmp581', 'baro_icp10111'], flight.asked
+
+
+class _Sink:
+    def push(self, values):
+        pass
+
+
+class _CheckpointController:
+    """What the Checkpoint task reads: stage, armed, find() for the flight task / the pitot."""
+
+    def __init__(self, stage):
+        self.stage = stage
+        self.armed = True
+
+    def find(self, names):
+        return [None]
+
+
+async def _checkpoint_identity():
+    """
+    The FIRST checkpoint after a warm start keeps the recovery identity (launch/zone/pad/pitot).
+
+    setup() runs before the restore and starts empty, which only BOOSTING entry fills -- so that first
+    crumb went out without the identity, and a second in-flight reset then skipped the baro rebase and
+    the pitot tare. A warm start INTO BOOSTING must not freeze the live mid-air altitude as the pad
+    either. warmstart.save is replaced: this test must never write the board's real crumb to NVS.
+    """
+    saved = []
+    real_save = warmstart.save
+    warmstart.save = lambda crumb: saved.append(dict(crumb)) or True
+    try:
+        checkpoint = warmstart.Checkpoint('checkpoint', {'name': 'checkpoint', 'checkpoint_s': 1},
+                                          _CheckpointController(controller.Stage.BOOSTING))
+        assert await checkpoint.setup() is True
+        checkpoint._telemetry = _Sink()
+        crumb = dict(_CRUMB, pitot_zero=-1.75)
+        warmstart._apply_restore(_StubFlight([_StubBaro()], checkpoint=checkpoint), crumb, {'sensors': []})
+        runner = asyncio.create_task(checkpoint.run())  # first pass sees BOOSTING as a stage CHANGE
+        await asyncio.sleep_ms(700)
+        runner.cancel()
+        await asyncio.sleep_ms(0)
+        assert saved, 'no checkpoint was written'
+        for key in ('launch', 'zone', 'pad_altitude', 'pitot_zero'):
+            assert saved[0].get(key) == crumb[key], '%s lost from the post-restore crumb: %s' % (key, saved[0])
+        """
+        A normal flight still freezes its identity at BOOSTING: back in SETTING the seeded identity is
+        dropped, and the next BOOSTING entry captures afresh.
+        """
+        checkpoint.controller.stage = controller.Stage.SETTING
+        runner = asyncio.create_task(checkpoint.run())
+        await asyncio.sleep_ms(600)
+        runner.cancel()
+        await asyncio.sleep_ms(0)
+        assert checkpoint._static == {}, 'a return to the ground must drop the last flight\'s identity'
+    finally:
+        warmstart.save = real_save
+
+
+def test_checkpoint_keeps_the_identity():
+    asyncio.run(_checkpoint_identity())
+
+
 test_apply_restore()
+test_apply_restore_rebases_every_baro()
+test_checkpoint_keeps_the_identity()
 test_apply_restore_seeds_airspeed()
 test_apply_restore_pitot_tare()
 test_apply_restore_torn_crumb()
 print('ok: warmstart -- gate (5 defenses + boundaries + torn-crumb refuse), apply restores '
-      'mission/baros/armed-GLIDING')
+      'mission/baros (all three drivers)/armed-GLIDING, the checkpoint keeps the identity')

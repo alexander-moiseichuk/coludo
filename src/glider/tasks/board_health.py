@@ -191,7 +191,7 @@ class BoardHealth(task.Task):
         (~1.4 s frozen fins + ~7 s reboot + a warm-start gamble). Called every period: the rescue
         RE-FIRES for as long as the trigger holds, so a persistent leak gets a collect per second while
         the altitude allows. The decision is physics, not a byte threshold: collect when memory dies
-        BEFORE the flight is safely over -- predicted oom_s < 2x the time left to sink to the ground
+        BEFORE the flight is safely over -- predicted oom_s <= the time left to sink to the ground
         (land_s) -- and only with proven safe altitude (a known elevation above the DYNAMIC floor = 2x
         the descent a ~200 ms pause costs), in BOOSTING/GLIDING (never LANDING). No descent trend yet ->
         no rescue: the glide always descends, so land_s exists exactly where a rescue is meaningful.

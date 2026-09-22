@@ -802,7 +802,7 @@ does not apply to this silicon), so the config block's own timing stands.
     cheaper than the OOM chain (~1.4 s frozen fins + ~7 s reboot) -- and it re-fires EVERY health
     period for as long as the trigger holds (a fast leak gets a collect per second, altitude
     allowing; the HITL soak logged 8). No knob: the rest is physics. Collect when the predicted
-    time-to-OOM < 2x the time left to sink to the ground (memory-decay vs elevation-decay slopes),
+    time-to-OOM <= the time left to sink to the ground (memory-decay vs elevation-decay slopes),
     with a proven safe altitude. The safe floor is FULLY DYNAMIC (no fixed/base altitude): 2x the
     descent a ~200 ms collect pause costs, computed from the live sink rate -- so the rescue fires as
     low as physics allows and the doubled pause never sinks the glider to the ground. BOOSTING/

@@ -11,6 +11,7 @@ import math
 import config
 import config_hitl
 import fixed
+import layout
 import task
 from tasks import hitl
 
@@ -64,6 +65,22 @@ def test_wiring():
     """
     for name in ('imu_bmi323', 'mag_bmm350', 'baro_bmp581', 'airspeed_sdp810'):
         assert sensors.get(name) is False, '%s must be masked in HITL' % name
+    """
+    ...and it must stay masked AFTER the layout, on every revision. layout.apply() sets `enabled` from what
+    the revision fits, so hitl_run's resolve re-enabled the bench parts (a v1.0 board flew on its real
+    BNO055 + BMP280, a v1.1 on its BMI323 + BMM350 + BMP581) and an L1X laser was never masked at all.
+    Checked by CHANNEL, not by name: no enabled driver may publish anything the sim publishes.
+    """
+    simulated = ('accel', 'attitude', 'rate', 'agl', 'altitude', 'elevation', 'position', 'speed',
+                 'course', 'airspeed', 'dynamic_pressure', 'mag')
+    for revision in layout._REVISIONS:
+        resolved = config_hitl.default(motor='E16')
+        layout.apply(resolved, revision)
+        config_hitl.mask(resolved)
+        for sensor in resolved['sensors']:
+            if sensor.get('driver') and sensor.get('enabled', True):
+                clash = [name for name in (sensor.get('provides') or {}) if name in simulated]
+                assert not clash, '%s: real %s publishes simulated %s' % (revision, sensor['name'], clash)
     comp = {c['name']: c for c in cfg['components']}
     assert comp['hitl']['enabled'] and comp['hitl']['noise'] == 0.1 and comp['hitl']['motor'] == 'E16'
     assert comp['flight']['enabled'] and comp['watchdog']['enabled'] is False

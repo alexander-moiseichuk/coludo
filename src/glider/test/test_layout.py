@@ -9,6 +9,7 @@ revision, so the file does not go red the moment the breadboard is rewired.
 
 import config
 import config_default
+import i2cbus
 import layout
 
 
@@ -211,6 +212,38 @@ def test_live_scan():
     print('   live scan -> %s (%s)' % (revision, detail))
 
 
+def _clock(i2c) -> int:
+    """The frequency an I2C peripheral reports in its repr, e.g. I2C(0, scl=8, sda=7, freq=400000)."""
+    text = repr(i2c)
+    start = text.index('freq=') + 5
+    end = start
+    while end < len(text) and text[end].isdigit():
+        end += 1
+    return int(text[start:end])
+
+
+def test_runtime_scan_restores_the_live_clock():
+    """
+    `detect` at runtime must leave the drivers' bus at ITS clock. machine.I2C(id) is one peripheral per
+    id, so the 100 kHz scan re-clocked the bus every driver shares -- until reboot, silently, and a
+    pre-flight detect flew i2c:0 at a quarter speed.
+    """
+    cfg = _cfg()
+    revision, _detail = layout.detect(cfg)
+    layout.apply(cfg, revision or 'v1.0')
+    for bus_id in (0, 1):
+        spec = config.bus(cfg, 'i2c', bus_id)
+        configured = spec.get('freq', 400000)
+        if configured == layout._SCAN_HZ:
+            continue  # a bus that already runs at the scan clock cannot show the difference
+        bus = i2cbus.get(bus_id, spec)  # the drivers' shared Bus, as a running board has it
+        before = _clock(bus._i2c)
+        layout.detect(cfg)  # the runtime `detect` command
+        after = _clock(bus._i2c)
+        assert after == before and after > layout._SCAN_HZ, (
+            'i2c:%d left at %d Hz after a runtime scan (configured %d)' % (bus_id, after, configured))
+
+
 def test_fitted_answers_every_revision_and_the_undecided_case():
     """
     fitted() is what callers must ask INSTEAD of writing a revision literal, so it has to be right for
@@ -252,5 +285,6 @@ test_missing_key_means_v01()
 test_resolve_declared_wins()
 test_fitted_answers_every_revision_and_the_undecided_case()
 test_live_scan()
+test_runtime_scan_restores_the_live_clock()
 print('ok: layout -- three-revision vote, dead-device tolerance, attitude-module split, apply both ways, '
-      'declared override, fitted() incl. undecided, live scan')
+      'declared override, fitted() incl. undecided, live scan, runtime scan keeps the live clock')

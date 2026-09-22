@@ -43,6 +43,7 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
     the v1.0 rewire lost that number this way.
     """
     layout.resolve(cfg)
+    config_hitl.mask(cfg)  # AFTER the layout: apply() re-enables whatever the revision fits
     if no_cc:
         """
         the CC-less scenario: an UNKNOWN field -- no operator zone, no launch point, no known

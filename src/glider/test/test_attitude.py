@@ -138,6 +138,10 @@ async def amain():
     assert unit._free, 'a silent primary must hand over to the gyro'
     assert unit._yaw_cd != 1000, 'yaw pinned at the dead primary\'s last heading'
 
+    # RECORDED: on v1.1 this filter is the only attitude, and it created no stream at all
+    assert unit._telemetry.filename == 'attitude.csv' and unit._telemetry.fields[:3] == (
+        'heading_cd', 'roll_cd', 'pitch_cd'), unit._telemetry.fields
+
     # probe: healthy with a gyro rate present, fails without
     assert await unit.probe() is None
     unit._rate = _Blind()
