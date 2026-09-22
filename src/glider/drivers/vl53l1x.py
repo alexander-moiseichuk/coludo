@@ -52,6 +52,7 @@ except ImportError:  # host (CPython): board-only; the XSHUT/INT pins are wired 
 _ADDR = const(0x29)  # default I2C address
 _REG_FIRMWARE_STATUS = const(0x00E5)  # reads 0x03 once the firmware has booted
 _REG_MODEL_ID = const(0x010F)  # 2 bytes: 0xEACC for the VL53L1X silicon
+_MODEL_ID = const(0xEACC)      # ...its high byte 0xEA is what tells it from the VL53L4CX's 0xEBAA
 _REG_CONFIG_START = const(0x002D)  # the default-configuration block is written from here
 _REG_GPIO_HV_MUX = const(0x0030)  # bit4 -> interrupt polarity
 _REG_GPIO_HV_STATUS = const(0x0031)  # data-ready poll (bit0 vs the interrupt polarity)
@@ -128,7 +129,7 @@ class Vl53l1x(task.Task):
         try:
             if not await self._reset():  # pulse XSHUT (if wired) and wait for the firmware to boot
                 return False  # firmware wedged -> reject (the model id below is silicon, would false-pass)
-            if struct.unpack('>H', await self._read(_REG_MODEL_ID, 2))[0] != 0xEACC:
+            if struct.unpack('>H', await self._read(_REG_MODEL_ID, 2))[0] != _MODEL_ID:
                 return False  # not a VL53L1X -- an L4CX answers 0xEBAA here and needs the other driver
             await self._bus.write(self._addr, _REG_CONFIG_START, _DEFAULT_CONFIG, addrsize=16)
             # data-ready polarity from GPIO_HV_MUX, then a VHV calibration ranging cycle
@@ -275,14 +276,16 @@ class Vl53l1x(task.Task):
         # consumes them. Recorded per row so a capture shows sampling health, not just samples.
                     self._telemetry.push((agl, self._irq_runs))
             except Exception as error:
-                self.note('vl53l4cx :: read %r', error)  # deduped: a persistent I2C error logs once, not at poll rate
+                self.note('vl53l1x :: read %r', error)  # deduped: a persistent I2C error logs once, not at poll rate
 
     async def probe(self) -> str:
         """
-        On-demand self-test: the model id reads back.
+        On-demand self-test: the model id reads back as THIS part's, the full 16-bit 0xEACC.
 
-        A single locked op, safe alongside the run loop's multi-op range sequence. The agl reading is
-        legitimately None with no target in range, so it is not checked here.
+        It used to check one byte against 0xEB -- the VL53L4CX's id, copied from that driver -- so a
+        healthy L1X failed its own probe and `verify`/`arm` refused every board carrying one. One I2C
+        op, safe alongside the run loop's multi-op range sequence. The agl reading is legitimately
+        None with no target in range, so it is not checked here.
 
         Args:
             (none)
@@ -292,11 +295,11 @@ class Vl53l1x(task.Task):
         """
         try:
             recorder.Recorder.log(self.name, 'probe: model id ...')
-            model = (await self._read(_REG_MODEL_ID, 1))[0]
-            if model != 0xEB:
-                raise ValueError('VL53L4CX id 0x%02x != 0xEB at i2c:%s 0x%02x' % (
-                    model, self.config.get('id'), self._addr))
-            recorder.Recorder.log(self.name, 'probe: model id ok 0x%02x' % model)
+            model = struct.unpack('>H', await self._read(_REG_MODEL_ID, 2))[0]
+            if model != _MODEL_ID:
+                raise ValueError('VL53L1X id 0x%04x != 0x%04x at i2c:%s 0x%02x' % (
+                    model, _MODEL_ID, self.config.get('id'), self._addr))
+            recorder.Recorder.log(self.name, 'probe: model id ok 0x%04x' % model)
         except Exception as error:
             message = 'model id: %s' % error
             recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
@@ -307,9 +310,9 @@ class Vl53l1x(task.Task):
         """
         Deeper analysis when setup() failed: classify the wire-level fault behind an absent ranger.
 
-        Re-read the 16-bit MODEL_ID high byte (0xEB) and classify it via the i2cbus _Device helper. The
-        Controller folds this into the failure reason so verify/probe show the 'why', not just 'absent /
-        miswired?'.
+        Re-read the 16-bit MODEL_ID high byte (0xEA; 0xEB would be a VL53L4CX in the socket) and
+        classify it via the i2cbus _Device helper. The Controller folds this into the failure reason so
+        verify/probe show the 'why', not just 'absent / miswired?'.
 
         Args:
             (none)
@@ -319,7 +322,7 @@ class Vl53l1x(task.Task):
         """
         if self._bus is None:  # setup never built the transport
             return 'no transport -- i2c bus %s undefined in config' % self.config.get('id', 0)
-        return await self._bus.device(self._addr).diagnose(_REG_MODEL_ID, 0xEB, addrsize=16)
+        return await self._bus.device(self._addr).diagnose(_REG_MODEL_ID, _MODEL_ID >> 8, addrsize=16)
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)

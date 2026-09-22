@@ -55,6 +55,27 @@ async def amain():
     assert len(up) <= 1, 'both drivers claimed 0x29 -- a model-id check is too loose: %s' % up
 
     """
+    The part that claimed the socket must pass its OWN probe -- `verify` and `arm` refuse on a failed
+    probe. The L1X probe once checked the L4CX's id byte (0xEB), so a healthy, ranging L1X failed it
+    and every board carrying one refused to arm, while setup() above passed. And the other driver must
+    FAIL its probe on this silicon, naming the wrong device rather than passing on a shared byte.
+    """
+    for name, device in (('vl53l1x', l1x), ('vl53l4cx', l4cx)):
+        if not up:
+            break
+        verdict = await device.probe()
+        if name in up:
+            assert verdict is None, '%s claimed the socket but failed its own probe: %s' % (name, verdict)
+        else:
+            assert verdict and 'id' in verdict, '%s passed a probe on the other silicon: %r' % (name, verdict)
+    if 'vl53l1x' in up:
+        diagnosis = await l4cx.diagnose()
+        assert 'wrong device' in diagnosis, 'L4CX diagnose on L1X silicon: %s' % diagnosis
+    elif 'vl53l4cx' in up:
+        diagnosis = await l1x.diagnose()
+        assert 'wrong device' in diagnosis, 'L1X diagnose on L4CX silicon: %s' % diagnosis
+
+    """
     And the layout side: the L1X entry must FOLLOW the L4CX's socket onto whatever bus the revision
     puts it on, or a v1.0 board would hunt it on the v0.1 bus. It must not vote separately, either --
     two candidate drivers for one socket are one piece of evidence, not two.
@@ -66,7 +87,8 @@ async def amain():
     before = layout.detect(cfg)[1]
     assert before.count('0x29') <= 1, 'the shared address is counted more than once: %s' % before
 
-    print('ok: vl53l1x registered; graceful-absent; socket claimed by %s; both follow %s i2c:%s' % (
+    print('ok: vl53l1x registered; graceful-absent; socket claimed by %s (own probe passes, the other '
+          'fails); both follow %s i2c:%s' % (
         up[0] if up else 'neither (no laser wired)', revision, laser['id']))
 
 
