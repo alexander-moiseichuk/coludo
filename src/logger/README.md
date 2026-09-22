@@ -116,8 +116,9 @@ the LED, *then* close up.
 - This SuperMini variant **does** carry a charger: `B+` / `B−` solder pads on the underside plus a green
   charge-indicator LED driven by the charger IC (not by a GPIO) — on while charging, off with a battery
   connected, blinking with no battery. Wire the cell to `B+`/`B−`, never to the 3V3 rail.
-- Add a **bulk capacitor (100–470 µF)** across 3V3. The flight record lives in RAM until landing, so a
-  brownout is not a glitch — it is total data loss.
+- Add a **bulk capacitor (100–470 µF)** across 3V3. A brownout resets the logger: it loses what is
+  still in RAM — up to one segment, ~15 s at full rate — and comes back under a new boot number. Saved
+  segments survive; under boost, the lost seconds are the ones this payload exists to record.
 
 ## Expected I²C addresses
 
@@ -245,7 +246,10 @@ is reported `SKIPPED` and the rest still decode.
 
 - `0x8000` — the BMI323's "no sample yet" — becomes an **empty cell**, never −2000 dps. Before that rule
   existed, two start-up samples made a handheld shake summarise as a 2000 dps peak.
-- `alt_rel_m` is height above the file's first sample, **hypsometric with the measured temperature**. The
+- `alt_rel_m` is height above **the boot's reference**: the first real pressure in the lowest-numbered
+  segment of that boot among the files given. One reference per boot, not per file, so apogee reads
+  the same across the ~15 s segments — pass every segment of the boot (the `*.bin` glob), or the
+  reference moves to whichever segment comes first. Hypsometric with the **measured temperature**. The
   standard-atmosphere formula assumes 15 °C, and height per pascal scales with absolute temperature, so a
   30 °C pad reads ~5% low — about 15 m on a 300 m apogee. The BMP581 die sits beside the MCU and reads a
   few degrees warm, which is still far closer than 15 °C.
