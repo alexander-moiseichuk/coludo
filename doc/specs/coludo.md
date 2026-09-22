@@ -612,40 +612,47 @@ a phone hotspot or laptop is a convenience, never a dependency.
 
 ## In-flight reboot & warm start (design, 7/04)
 
-Today a watchdog (or any) reset mid-air boots into SETTING with neutral fins — ballistic. The
-warm start restores GLIDING within one boot (~2–4 s ≈ 20–40 m of lost altitude — expensive, but
-against a guaranteed lawn-dart).
+Without it, a watchdog (or any) reset mid-air boots into SETTING with neutral fins — ballistic. The
+warm start restores the saved stage within one boot (~2–4 s ≈ 20–40 m of lost altitude — expensive,
+but against a guaranteed lawn-dart). As built in `warmstart.py`:
 
-* **Breadcrumb in NVS, never a file.** A VFS write mid-flight locks the scheduler and wears the
-  data flash; `esp32.NVS('coludo')` commits a few small key/values in milliseconds to the
-  dedicated NVS partition. Written ONCE at BOOSTING entry (on the rod, next to the pre-flight
-  `gc.collect()` we already pay): `flight=1`, launch fix (2× i32, deg×1e7), the active zone
-  (4× i32), pad baro altitude, boost RTC stamp. Cleared (`flight=0`) at DONE and on orderly
-  finish.
-* **Warm-start gate at boot — ALL of, defense in depth:**
-  1. NVS `flight == 1` (we were airborne when the reset hit);
-  2. the **separation switch reads SEPARATED** — the physical latch no software state can fake
-     (post-separation it stays LOW for the whole glide);
-  3. baro ABSOLUTE altitude reads ≥ ~15 m above the NVS pad altitude;
-  4. `machine.reset_cause()` is **WDT/SOFT/HARD** — a battery insertion or power switch reads
-     PWRON, which is exactly what a RECOVERY CREW's hands do to a glider that crash-landed on a
-     rise above the pad (where gate 3 alone would pass). A mid-air brownout also reads PWRON and
+* **Crumb in NVS, never a file.** A VFS write mid-flight locks the scheduler and wears the data
+  flash; `esp32.NVS('coludo')` commits in milliseconds. The `checkpoint` task writes it **only while
+  ARMED** (a disarmed passive flight must never warm-start into an armed stage): once on entering
+  EVERY stage, and every `checkpoint_s` (1 s) while airborne. The `stage` i32 is the flag (0 = cold),
+  written last so a torn write never points a live stage at a half-written blob. One JSON blob
+  carries stage, armed, altitude, speed, airspeed, ticks and the RTC `stamp`, plus the recovery
+  identity frozen at BOOSTING entry: launch fix, zone, pad altitude and pitot tare. **Nothing clears
+  it at DONE** — DONE is itself a checkpointed stage; only a rejected gate zeroes the flag.
+* **Warm-start gate at boot (`should_restore()`) — ALL of:**
+  1. a crumb carrying a stage and a stamp;
+  2. `machine.reset_cause()` is **WDT/SOFT/HARD** — a battery insertion or power switch reads
+     PWRON, which is exactly what a RECOVERY CREW's hands do. A mid-air brownout also reads PWRON and
      stays cold — a browning-out battery cannot be trusted to finish the glide anyway;
-  5. the **crumb age** (RTC now − boost stamp) is positive and < ~10 min. The RTC survives
-     soft/WDT resets, so the arithmetic holds exactly when a warm start is legitimate (even an
-     unsynced RTC — continuity matters, not absolute truth); a power cycle restarts the RTC and
-     breaks it → cold.
-  The breadcrumb is CLEARED at DONE (the stationary |a|≈1 g detect / the RSO timeout — not zero
-  speed or zero elevation, which are unreliable on the ground) and by any rejected warm start, so
-  the next boot is unambiguously cold.
-* **Warm-start actions:** restore mission zone + launch point from NVS → stage := GLIDING →
-  arm → `gc.collect()` + `gc.disable()` (the sequencer's BOOSTING hook was skipped) → the flight
-  loop engages and re-captures the heading hold from the live attitude. The RSO
-  `flight_timeout_ms` keeps bounding the restored flight (its clock restarts at the warm start —
-  acceptable: the backstop stays bounded, just re-based).
-* **Any gate missing → normal cold boot** in SETTING, breadcrumb cleared, event logged.
-* **Validation:** HITL flight with a forced `machine.reset()` mid-glide (and a pulled USB on the
-  bench): the board must come back armed, in GLIDING, steering to the same zone.
+  3. the **crumb age** (RTC now − `stamp`) within 0..600 s. The RTC survives soft/WDT resets, so the
+     arithmetic holds exactly when a warm start is legitimate (even an unsynced RTC — continuity
+     matters, not absolute truth); a power cycle restarts it and breaks it → cold;
+  4. GLIDING/LANDING only: the **separation switch reads SEPARATED** — the physical latch no software
+     state can fake. BOOSTING is still nested, and SETTING/DONE are on the ground, so they need no
+     latch.
+  **There is no height gate.** The crumb is re-stamped every second aloft, so its stage is trusted;
+  the old "baro ≥ 15 m above the pad" check belonged to the retired single-breadcrumb design. The
+  `checkpoint` component's `warm_start: false` makes every boot cold.
+* **Warm-start actions:** restore the mission zone + launch point, rebase the baros to the crumb's
+  pad altitude (their setup re-zeroed mid-air), restore the pitot tare and seed the flight task's
+  airspeed, set the **SAVED stage** (the detectors re-evaluate from there), re-arm if the crumb was
+  armed, and raise `WARM-STARTED (rebooted in flight)` in `health.degraded`. Airborne stages also
+  `gc.collect()` + `gc.disable()` (the sequencer's BOOSTING hook was skipped). The RSO
+  `flight_timeout_ms` keeps bounding the restored flight (its clock re-bases at the warm start).
+* **Any gate missing → normal cold boot** in SETTING, flag cleared, event logged.
+* **⚠ Ground trap: power-cycle, not CC `reboot`, between a landing or an armed ground test and the
+  next flight.** DONE recovers too, and the restored board re-stamps the crumb on entering DONE. So a
+  board that was armed through a landing (or an armed ground run to DONE) and then gets a CC `reboot`
+  — or any soft/WDT reset — within 10 min comes back **DONE, armed and WARM-STARTED**, and every
+  further reboot restarts the 10 min. A power cycle reads PWRON and is always cold. `arm`/`verify`
+  flag the stage (`stage is done, not setting`).
+* **Validation:** HITL flight with a forced `machine.reset()` mid-glide: the board must come back
+  armed, in the saved stage, steering to the same zone.
 * **Measured — the in-flight OOM soak (7/06, `tools/oom_soak.py`):** a HITL glide ballasted to
   566 KB free hit a REAL mid-glide OOM (GC-off burn ~140 KB/s with the sim's own churn on top of
   the ~15–18 KB/s control-path leak). What actually happens at exhaustion: the asyncio runtime
@@ -653,9 +660,9 @@ against a guaranteed lawn-dart).
   stall-detect path never runs, and the crash→neutral `finally` cannot execute either: **the fins
   freeze at the last commanded deflection** (~1.4 s from the last servo write to the reset), then
   the STARVED hardware `machine.WDT` panics the chip (`rst SW_CPU_RESET`, `reset_cause 3` = WDT).
-  main.py then ran the five-signal gate against the genuine WDT cause and correctly REFUSED on
-  the bench (`separation switch reads nested`), cleared the crumb, came up cold, rejoined the
-  wifi and the CC hub. So the recovery chain is proven with one amendment to the outage model:
+  main.py then ran the gate (five signals at the time) against the genuine WDT cause and correctly
+  REFUSED on the bench (`separation switch reads nested`), cleared the crumb, came up cold, rejoined
+  the wifi and the CC hub. So the recovery chain is proven with one amendment to the outage model:
   the ~1.4 s pre-reset segment flies at the last banked deflection, not neutral — the backstop
   behind the backstop (hardware WDT outliving the watchdog task) is what carries the reset.
 * **The memory-rescue layer (7/06, `board_health`):** the in-flight GC disable buys
