@@ -436,7 +436,14 @@ class Controller(inspector.Inspectable):
         for stage_id, name in Stage.STAGES.items():
             if name == stage_name:
                 self.set_stage(stage_id)
-                self.manual = True
+                """
+                Going back to SETTING is a return to the ground, not a hold. Holding SETTING suppressed
+                every launch detector, so a board that had a fin check and then `stage setting` -- the
+                natural way back -- flew its whole flight recorded as SETTING unless someone also
+                remembered `stage auto`, which field_test.md never mentioned. Nothing showed the hold.
+                """
+                self.manual = stage_id != Stage.SETTING
+                self.log('controller :: stage %s (%s)' % (name, 'held' if self.manual else 'auto'))
                 return True
         return False
 

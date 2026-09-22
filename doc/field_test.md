@@ -115,6 +115,12 @@ first powered flight.
 
 ## Phase 4 — Fins track attitude (armed, GLIDING, hand-held)
 > Reach GLIDING the realistic way (Phases 7–8) **or** force it from CC for a quick fin check. Armed = fins live.
+>
+> **A forced stage is a HOLD — it suppresses every stage detector until you release it.** Afterwards run
+> **`stage setting`**, which returns the board to the ground *and* resumes automatic sequencing (the
+> dashboard shows `STAGE HELD` while a hold is on). `stage auto` from a forced GLIDING is **not** a way
+> back: the sequencer resumes from GLIDING and, on a still bench, runs straight through LANDING to DONE,
+> which is terminal. `arm` and `verify` both refuse a board that is not in SETTING under automatic control.
 - [ ] In GLIDING, tilt the glider → **fins deflect to counter** the attitude (stabilisation PID) — confirm the **sense is correct** (a nose-up disturbance drives the fins to push it back)
 - [ ] Rotate the glider relative to the landing zone → fins **bias for the bank-to-turn heading** toward the zone
 - [ ] At ~0 airspeed the **fin-authority cap is wide** (low q, safe); confirm the governor isn't clamping hard on the ground
@@ -147,8 +153,8 @@ phase is one run of it: `mpremote connect $PORT run live_pitot.py` (30 s window)
 
 ## Phase 7 — Minimal acceleration / boost-detect (no ignition)
 - [ ] Normal handling / walking does **NOT** false-trigger BOOSTING (stays SETTING)
-- [ ] A deliberate **hard jerk / toss-and-catch** produces an accel spike ≥ **launch_g (2.5 g)** for `launch_ms` → **SETTING → BOOSTING** (the launch detector). If a hand jerk can't reach it, note it and force BOOSTING from CC for the sequence below
-- [ ] *(alt trigger)* the **baro +10 m** backup: lifting the glider ~10 m above the pad also trips BOOSTING regardless of accel — usually impractical on flat ground, note only
+- [ ] A deliberate **hard jerk / toss-and-catch** produces an accel spike ≥ **launch_g (2.5 g)** for `launch_ms` → **SETTING → BOOSTING** (the launch detector). If a hand jerk can't reach it, note it and force BOOSTING from CC for the sequence below — and finish with **`stage setting`** (see Phase 4)
+- [ ] *(alt trigger)* the **baro +10 m** backup: lifting the glider ~10 m above the pad, and HOLDING there for `launch_ms`, also trips BOOSTING regardless of accel — usually impractical on flat ground, note only. Only a **barometer** can fire it: the GNSS elevation is ignored for launch, since it is zeroed at the first fix and wanders metres on noise
 
 ## Phase 8 — Separation (the key ground test)
 - [ ] Glider nested (pads closed) → pin **HIGH = nested**; get to **BOOSTING** first (Phase 7 jerk, or CC)
@@ -167,6 +173,8 @@ phase is one run of it: `mpremote connect $PORT run live_pitot.py` (30 s window)
 ## Cross-cutting — safety, abort, recovery
 - [ ] Fingers clear of the fins whenever armed (GLIDING/LANDING)
 - [ ] CC operator port stays open → can **disarm / force a stage** at any time
+- [ ] **Before every flight: the dashboard shows stage = SETTING and no `STAGE HELD`.** Any stage test on
+      the pad ends with `stage setting`; if in doubt, power-cycle. `arm` refuses otherwise — trust that refusal
 - [ ] If the CDC/board wedges: `pkill mpremote` + reset / power-cycle; it re-enumerates (board recovery)
 - [ ] Watchdog: a wedged loop **reboots**; confirm it comes back and re-links to CC (this is a feature to verify, not just a failure mode)
 

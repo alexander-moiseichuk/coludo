@@ -29,6 +29,7 @@ import recorder
 import task
 
 _STAGE = controller_mod.Stage
+_GNSS_SOURCE: str = 'gnss'  # the device name the GNSS publishes `elevation` under -- never a launch trigger
 
 
 def _magnitude_sq(accel):
@@ -114,6 +115,8 @@ class Sequencer(task.Task):
         self._apogee_smooth = None  # IIR-smoothed elevation feeding the peak (commons.apogee_step)
         self._launch_credit: int = 0  # leaky launch dwell: NET ms of |a| over launch_g (commons.dwell_step)
         self._launch_last = None  # previous launch-dwell tick, or None when no dwell is in progress
+        self._alt_credit: int = 0  # the same leaky dwell for the baro launch backup
+        self._alt_last = None
         self._boost_entry_ms = None  # _tick time of BOOSTING entry -> apogee arming + the flight timeout
         self._detect = {_STAGE.SETTING: self._detect_launch, _STAGE.BOOSTING: self._detect_apogee,
                         _STAGE.GLIDING: self._detect_landing, _STAGE.LANDING: self._detect_stationary}
@@ -221,6 +224,15 @@ class Sequencer(task.Task):
                 """
                 self._telemetry.push((_STAGE.STAGES.get(stage, str(stage)), 'external'))
             self._advanced_to = None
+            if stage == _STAGE.SETTING:
+                """
+                Back on the ground: forget the last flight's timers. _boost_entry_ms used to survive an
+                operator's `stage gliding` -> `stage setting`, and the backstop below then forced DONE
+                from SETTING one flight_timeout later -- on a board sitting on the pad.
+                """
+                self._boost_entry_ms = None
+                self._launch_credit, self._launch_last = 0, None
+                self._alt_credit, self._alt_last = 0, None
             if stage == _STAGE.BOOSTING:  # start apogee peak-tracking fresh for this flight
                 self._apogee_max = None
                 self._apogee_since = None
@@ -233,8 +245,9 @@ class Sequencer(task.Task):
                 flight (spec: the backstop re-bases, it never disappears).
                 """
                 self._boost_entry_ms = now
-        # the RSO backstop: any airborne stage this long after BOOSTING entry forces DONE
-        if self._boost_entry_ms is not None and stage != _STAGE.DONE \
+        # the RSO backstop: any AIRBORNE stage this long after BOOSTING entry forces DONE. It tested
+        # `!= DONE`, which let a stale timer fire it from SETTING.
+        if self._boost_entry_ms is not None and _STAGE.BOOSTING <= stage <= _STAGE.LANDING \
                 and time.ticks_diff(now, self._boost_entry_ms) >= self._flight_timeout_ms:
             self._advance(_STAGE.DONE, 'flight timeout')
             return
@@ -266,15 +279,28 @@ class Sequencer(task.Task):
         stale-agl bug that ended a flight at apogee (_detect_landing below).
         """
         elevation, elevation_source, _elevation_age = self._elevation.read()
-        if elevation_source is None:
-            elevation = None  # no fresh baro -> the accel trigger carries launch detect alone
+        if elevation_source is None or elevation_source == _GNSS_SOURCE:
+            """
+            No fresh BARO -> the accel trigger carries launch detect alone. GNSS publishes `elevation`
+            too (priority 3), and read() falls through to it when both baros are briefly stale -- the
+            ICP-10111 general-call recovery can take them both. That elevation is zeroed at the first
+            fix and wanders metres on noise, so one sample over launch_alt_m tripped BOOSTING on the
+            pad. Reproduced on the board: one 15 m GNSS sample with the baros stale -> boosting.
+            """
+            elevation = None
         # The accel needs the same gate the baro above already has. It is the trigger that STARTS the
         # flight, and with the baro path already gated an extrapolated accel would be the only input
         # left -- a false launch on the pad from a channel no sensor was feeding.
         accel, accel_source, _accel_age = self._accel.read()
         g_sq = _magnitude_sq(accel if accel_source is not None else None)
-        if elevation is not None and elevation > self._launch_alt_m:
-            self._advance(_STAGE.BOOSTING, 'launch alt=%.0fm' % elevation)
+        # the baro backup must HOLD too, through the same leaky dwell as the accel -- one sample over
+        # the line was enough before, which a single spike or glitched read could satisfy
+        self._alt_credit, self._alt_last, climbed = commons.dwell_step(
+            elevation is not None and elevation > self._launch_alt_m,
+            now, self._alt_credit, self._alt_last, self._launch_ms)
+        if climbed:
+            self._advance(_STAGE.BOOSTING, 'launch alt=%.0fm dwell=%dms' % (
+                elevation if elevation is not None else 0.0, self._alt_credit))
         else:
             """
             A LEAKY dwell (commons.dwell_step), not a contiguous one: |a| over launch_g must hold

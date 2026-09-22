@@ -137,9 +137,14 @@ async def amain():
     seq._tick(40200)
     assert ctrl.stage == Stage.SETTING, 'a stale baro declared a false launch on the pad'
 
-    # ...and a FRESH baro genuinely above the threshold still trips it
+    # ...ONE fresh sample above the threshold is NOT a launch any more -- a spike or a glitched read
+    # could satisfy that, and the stage machine is forward-only...
     elevation.push(15.0)
     seq._tick(40400)
+    assert ctrl.stage == Stage.SETTING, 'one baro sample tripped launch'
+    # ...but a fresh baro HELD above it for launch_ms still does
+    elevation.push(15.0)
+    seq._tick(40500)
     assert ctrl.stage == Stage.BOOSTING
     elevation.push(3.0)  # back below launch_alt_m so the checks below are not pre-tripped by the baro
 
@@ -160,8 +165,11 @@ async def amain():
     elevation.push(3.0)          # still on/near the pad
     seq._tick(2100)
     assert ctrl.stage == Stage.SETTING  # neither signal trips
-    elevation.push(15.0)         # climbed 15 m off the pad -> launched (no accel sustain needed)
+    elevation.push(15.0)         # climbed 15 m off the pad (no accel sustain needed)...
     seq._tick(2110)
+    assert ctrl.stage == Stage.SETTING  # ...but ONE sample is not a launch
+    elevation.push(15.0)         # still up there launch_ms later -> launched
+    seq._tick(2210)
     assert ctrl.stage == Stage.BOOSTING
 
     """
@@ -288,7 +296,47 @@ async def amain():
     await gseq.finish()
     assert gc.isenabled()               # defensive: a mid-flight stop must not leave GC disabled
 
+    """
+    RETURNING TO THE GROUND must forget the last flight's timers. After `stage gliding` + `stage auto`
+    the sequencer owns GLIDING and bases the RSO backstop there; then `stage setting` put the board
+    back on the pad -- and the backstop tested `!= DONE`, not "airborne", so one flight_timeout later it
+    forced DONE from SETTING, leaving the board unable to detect the real launch.
+    """
+    hctrl = _StubController()
+    hseq = sequencer.Sequencer('sequencer', dict(SPEC, flight_timeout_ms=1000), hctrl)
+    assert await hseq.setup() is True
+    accel.push((0.0, 0.0, 1.0))
+    elevation.push(0.5)
+    hctrl.stage = Stage.GLIDING  # auto-sequenced GLIDING: the backstop is based on this tick
+    hseq._tick(70000)
+    hctrl.stage = Stage.SETTING  # the operator returns the board to the ground
+    for moment in (70100, 71500, 72500):  # well past flight_timeout_ms after the gliding moment
+        accel.push((0.0, 0.0, 1.0))
+        elevation.push(0.5)
+        hseq._tick(moment)
+    assert hctrl.stage == Stage.SETTING, 'the RSO backstop fired from SETTING on the pad'
+    assert hseq._boost_entry_ms is None
+
+    """
+    GNSS elevation is NEVER a launch trigger. It is zeroed at the first fix and wanders metres on
+    noise, and read() falls through to it when both baros are stale -- the ICP general call can take
+    them both. On the board, one 15 m GNSS sample with the baros stale tripped BOOSTING on the pad.
+    Held well past launch_ms here, so the dwell cannot be what stops it.
+    """
+    gnss = databoard.Databoard.provide('gnss', {'elevation': {'priority': 3, 'timeout_ms': 5000}},
+                                       'elevation')
+    gctrl = _StubController()
+    gseq = sequencer.Sequencer('sequencer', SPEC, gctrl)
+    assert await gseq.setup() is True
+    await asyncio.sleep_ms(1100)  # > the baro's 1000 ms timeout: only the GNSS elevation is fresh
+    for moment in (80000, 80100, 80200, 80300, 80400):
+        gnss.push(15.0)
+        accel.push((0.0, 0.0, 1.0))  # 1 g at rest: only an elevation path could fire
+        gseq._tick(moment)
+    assert gctrl.stage == Stage.SETTING, 'a GNSS elevation tripped launch on the pad'
+
     print('ok: sequencer -- launch detect, boost-timeout, agl landing, on-ground, guard, manual hold, '
+          'baro launch needs a dwell, GNSS never launches, SETTING clears the RSO backstop, '
           'no-accel skip, apogee arming, RSO flight timeout, external-transition log, warm-start '
           'breadcrumb, GC flight policy')
 

@@ -16,6 +16,7 @@ import time
 
 import cc_protocol as cc
 import config as config_mod
+import controller as controller_mod
 import databoard
 import inspector
 import layout
@@ -230,6 +231,33 @@ def _has_primary(ctx, channel: str) -> bool:
     return False
 
 
+def _stage_problem(controller) -> str:
+    """
+    Why this board is not on the ground under automatic sequencing, or '' when it is.
+
+    A board flies its flight from SETTING with the sequencer free to detect launch. Anything else on
+    the pad -- a stage left forced after a fin check, or held -- means the stage record, the flight's
+    core output, will be wrong, and neither `health` nor `verify` nor `arm` used to say so. Every
+    10-03 profile flies passive (`flight` off), so the config readiness verdict is already false for
+    all of them and cannot be the place this shows; arm and verify are.
+
+    Args:
+        controller - the running Controller.
+
+    Returns:
+        A one-line reason, or '' when the stage is SETTING and not held.
+    """
+    stage = getattr(controller, 'stage', None)
+    if stage is None:
+        return ''  # a controller that reports no stage cannot be judged -- do not invent a problem
+    name = controller_mod.Stage.STAGES.get(stage, str(stage))
+    if getattr(controller, 'manual', False):
+        return 'stage held at %s by an operator command -- `stage setting` to return to the ground' % name
+    if stage != controller_mod.Stage.SETTING:
+        return 'stage is %s, not setting -- `stage setting`, then power-cycle before flight' % name
+    return ''
+
+
 def _register_identity(dispatcher, ctx) -> None:
     """whoami / ping / health -- who the board is and how it is doing."""
     async def whoami(_unused_msg) -> str:
@@ -297,6 +325,8 @@ def _register_identity(dispatcher, ctx) -> None:
         attitude = databoard.Databoard.parameter('attitude')
         if attitude is not None and attitude.read()[1] == 'attitude' and _has_primary(ctx, 'attitude'):
             degraded.append('attitude-backup')
+        if ctx.controller is not None and getattr(ctx.controller, 'manual', False):
+            degraded.append('STAGE HELD')  # an operator hold suppresses every stage detector
         health = inspector.Inspector.get('health')
         if getattr(health, 'rescues', 0) > 0:
             degraded.append('memory-rescued')
@@ -387,6 +417,9 @@ def _register_control(dispatcher, ctx) -> None:
         if ctx.controller is None:
             return cc.build('err', ['unsupported', 'no controller'])
         problems = dict(ctx.controller.failures)  # not-connected devices
+        stage_problem = _stage_problem(ctx.controller)
+        if stage_problem:
+            problems['stage'] = stage_problem
         for name, result in (await inspector.Inspector.probe_all()).items():  #
             if result is not None:
                 problems[name] = result
@@ -592,6 +625,9 @@ def _register_diagnostics(dispatcher, ctx) -> None:
                           else 'down: ' + ctx.controller.failures.get(name, '?'))
                    for name in ctx.controller.directory()}
         problems = dict(ctx.controller.failures)  # not-connected devices
+        stage_problem = _stage_problem(ctx.controller)
+        if stage_problem:
+            problems['stage'] = stage_problem
         for name, result in (await inspector.Inspector.probe_all()).items():  #
             if result is not None:
                 problems[name] = result

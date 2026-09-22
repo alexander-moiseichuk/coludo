@@ -12,6 +12,7 @@ import os
 import cc_client
 import cc_protocol as cc
 import config_default
+import controller
 import inspector
 import layout
 import mission
@@ -268,6 +269,8 @@ async def amain():
     # `verify`: dump every configured device (up/down) + probe self-tests + an overall PASS/fail verdict
     class _VerifyController:
         failures = {'baro_icp10111': 'setup failed (absent / miswired?)'}
+        stage = 1  # SETTING, as a real board on the pad reports
+        manual = False
 
         def directory(self):
             return ['imu_bno055', 'baro_icp10111']
@@ -374,14 +377,18 @@ async def amain():
         def stage_name(self):
             return self._stage
 
+        @property
+        def stage(self):
+            return controller.Stage.NAMES[self._stage]  # the id a real Controller exposes
+
         def resume(self):
             self.manual = False
 
-        def hold(self, name):
+        def hold(self, name):  # mirrors Controller.hold: `setting` returns to the ground, not a hold
             if name not in ('setting', 'boosting', 'gliding', 'landing', 'done'):
                 return False
             self._stage = name
-            self.manual = True
+            self.manual = name != 'setting'
             return True
 
     arm_ctrl = _ArmController()
@@ -395,8 +402,21 @@ async def amain():
 
     held = json.loads(cc.parse(await sd_arm.handle('stage gliding')).args[0])  # operator hold (ground test)
     assert held['stage'] == 'gliding' and held['manual'] is True
+    """
+    ARM MUST REFUSE A BOARD THAT IS NOT ON THE GROUND UNDER AUTOMATIC CONTROL. A held or forced stage
+    suppresses the stage detectors, so the flight's core output -- the stage record -- would be wrong,
+    and on 10-03 every profile flies passive, where arm and verify are the gates the operator sees.
+    """
+    refused = cc.parse(await sd_arm.handle('arm'))  # the problems travel base64-encoded: decode them
+    assert refused.args[0] == 'unsafe' and arm_ctrl.armed is False, refused.args
+    assert 'held at gliding' in json.loads(refused.args[1])['stage'], refused.args
     assert 'badargs' in await sd_arm.handle('stage nope')  # unknown stage name
     assert json.loads(cc.parse(await sd_arm.handle('stage auto')).args[0])['manual'] is False  # resume
+    assert 'unsafe' in await sd_arm.handle('arm'), 'auto but still GLIDING on the pad must not arm'
+    back = json.loads(cc.parse(await sd_arm.handle('stage setting')).args[0])  # back to the ground
+    assert back['stage'] == 'setting' and back['manual'] is False
+    assert json.loads(cc.parse(await sd_arm.handle('arm')).args[0])['armed'] is True
+    assert json.loads(cc.parse(await sd_arm.handle('disarm')).args[0])['armed'] is False
     assert 'unsupported' in await cc_client.create_dispatcher(config_default.default()).handle('arm')
 
     """
