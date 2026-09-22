@@ -2,8 +2,9 @@
 
 Rescheduled from **2026-09-05, cancelled for weather**.
 
-Six slots: one booster-only structural test, two glide-comparison airframes, one telemetry airframe,
-one servo-equipped airframe, and one not yet built.
+Seven slots: one booster-only structural test, two glide-comparison airframes, one telemetry airframe,
+one servo-equipped airframe, and two airframes on the new main boards: TMS-7E (v1.0) and TMS-7F
+(v1.1), both built.
 
 ## Manifest
 
@@ -17,7 +18,8 @@ Airframe masses are **as assembled, without the motor**. Motor masses are the me
 | [TMS-7B](TMS-7B/) | 184.3 g | 98.2 g | E16 | 82.5 g | **365.0 g** | 184.3 g |
 | [TMS-7C](TMS-7C/) | 216.5 g | 98.9 g | F15 | 98.8 g | **414.2 g** | 216.5 g |
 | [TMS-7D](TMS-7D/) | 287.5 g | 97.9 g | F15 | 98.8 g | **484.2 g** | 287.5 g |
-| [TMS-7E](TMS-7E/) | *to be built* | — | — | — | — | — |
+| [TMS-7E](TMS-7E/) | *not recorded* | — | — | — | — | — |
+| [TMS-7F](TMS-7F/) | *not recorded* | — | — | — | — | — |
 
 ## What each slot answers
 
@@ -30,7 +32,9 @@ Airframe masses are **as assembled, without the motor**. Motor masses are the me
 * **TMS-7C** — telemetry. Fins **fixed at whatever 7A/7B selects**, so the instrumented flight uses the
   setting the comparison just validated rather than a guess.
 * **TMS-7D** — the servo airframe: three SG90s and the full power module.
-* **TMS-7E** — simplified electronics, see its folder.
+* **TMS-7E** — the first airframe on main board v1.0, where the payoff is mass; see its folder.
+* **TMS-7F** — the first v1.1 airframe (SEN0697: the board fuses its own attitude and carries a
+  magnetometer); see its folder.
 
 ## One thing the flight data already says about 7D's mass
 

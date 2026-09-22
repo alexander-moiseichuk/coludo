@@ -1,6 +1,8 @@
 # Board layout & wiring — v1.0 (target)
 
-**Designed, not built.** The physical consequence of the v1.0 decisions in
+**Built:** TMS-7E carries main board v1.0 (bench bring-up 2026-09-20), and TMS-7F the v1.1 variant,
+with the SEN0697 in place of the SEN0253 — see `launches/20261003/`. The physical consequence of the
+v1.0 decisions in
 [`hardware.md`](hardware.md): main and power merged, the GNSS chip on the main board with only its
 antenna outboard, the front-panel devices alone on `i2c:1`, and no ADXL375. Pin numbers come from the
 same `config_default` + `layout.apply()` pair that generates
@@ -88,9 +90,9 @@ a re-route.
 
 # Board layout & wiring — v0.1 (as built)
 
-**The boards that exist today**: TMS-7C, TMS-7D and the breadboard, until the transition above is
-done. Physical partitioning of the electronics into small carrier boards, the harness to the ESP32-P4
-main board, and the placement/assembly path to the proto (maket) glider. Pin numbers are the live
+**The v0.1 airframes**: TMS-7C and TMS-7D. The breadboard (taster) has been rewired to v1.0, and
+TMS-7E/7F fly the v1.x boards. Physical partitioning of the electronics into small carrier boards,
+the harness to the ESP32-P4 main board, and the placement/assembly path to the proto (maket) glider. Pin numbers are the live
 values from [`../src/glider/config_default.py`](../src/glider/config_default.py) (`buses` + `pins`,
 hardware-validated by `test/test_pins.py`); `waveshare_esp32p4_pins.md` is generated from the same
 source and carries both revisions.
@@ -114,8 +116,8 @@ pin is reserved so you can solder the INT for debugging · **tie** = not wired, 
 | ADXL375 CS | 49 | SPI chip-select | **req** |
 | LSM6DSO32 INT1 | 28 | gyro data-ready → PID **D-term** (jitter-sensitive) | **req** |
 | INA226 ALERT | 29 | hardware over-current trip (rides the I2C1 cable) | **req** |
-| ADXL375 INT | 4 | >32 g backstop data-ready | **dbg** (poll via `fallback_ms`) |
-| VL53L4CX INT | 3 | laser data-ready | **dbg** (poll via `fallback_ms`) |
+| ADXL375 INT | 4 | >32 g backstop data-ready | **dbg** (polls at `period_ms` when silent) |
+| VL53L4CX INT | 3 | laser data-ready | **dbg** (polls at `period_ms` when silent) |
 | VL53L4CX XSHUT | 5 | laser enable/reset | **tie** high on the I2C carrier (single laser, no addr conflict) |
 | UART2 TX / RX | 22 / 23 | GNSS (ATGM336H) | **req** |
 | UART1 TX / RX | 20 / 21 | Recorder (Luckfox) | **req** — TX only on the v0.1 PCB; see below |
@@ -227,9 +229,9 @@ attitude/IMU → GNSS/guidance → airspeed → boost-detect → separation → 
 To turn an optional feature off on a board that does not wire it, set its `pins` entry to **`null`**
 (preferred — the row stays as a documented placeholder) or any **negative** number. It resolves to
 "no pin" exactly like an absent entry: the driver skips the feature (poll instead of INT, no XSHUT
-toggle, no hardware ALERT). E.g. `"laser_xshut": null` runs the laser always-on; `"adxl375_int":
-null` polls the ADXL on its `fallback_ms` timer. A non-negative GPIO is the only "wired" value, so a
-disabled pin never collides in `verify`.
+toggle, no hardware ALERT). E.g. `"laser_xshut": null` runs the laser always-on; `"accel_int1":
+null` (`adxl375_int` in the 7C/7D configs) polls the ADXL at its `period_ms`. A non-negative GPIO is
+the only "wired" value, so a disabled pin never collides in `verify`.
 
 ## Open items
 

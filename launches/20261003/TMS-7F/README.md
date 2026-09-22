@@ -11,7 +11,7 @@ and the VL53L1X laser moved across from the taster.
 | 6-DoF | LSM6DSO32 on `spi:1` — still the primary `accel`; the BMI323 is the SECOND gyro source |
 | laser | **VL53L1X** (`0x29`) — the L4CX was out of stock; Adafruit parts due in 1–2 weeks |
 | config | [`tms7f.config`](tms7f.config) — passive (`flight` off), `fins.concurrency` **1** |
-| status | **soldered, not yet brought up** |
+| status | **booted on the bench 2026-09-20** — clean boot, `degraded` shows `needs-calibration` alone; the BMM350 calibration and a servo check on a known supply are outstanding (below) |
 
 ## What v1.1 changes
 
@@ -62,7 +62,7 @@ elevation fallback the landing trigger has; that alters flight behaviour and wan
 ```
 tools/deploy.sh
 mpremote connect $PORT run src/glider/test/diag_devices.py     # 21+ devices, fin probe moves fins
-cd src/glider/test && make test                                # expect 63/63
+(cd src/glider/test && make test)                              # expect 63/63; subshell keeps the repo root
 mpremote connect $PORT cp launches/20261003/TMS-7F/tms7f.config :board.config && mpremote reset
 ```
 
