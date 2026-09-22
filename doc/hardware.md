@@ -215,7 +215,9 @@ needed **no new fusion architecture**, exactly as the incremental paragraph abov
 
 The three parts are one module, so they arrive together: **BMI323 `0x69`** (accel + gyro, INT1-driven),
 **BMP581 `0x47`** (baro), **BMM350 `0x15`** (mag). `layout.py` gained a third revision and decides at
-boot which module is fitted; one firmware runs all three board revisions with no config edit.
+boot which module is fitted; one firmware runs all three board revisions with no config edit **as
+long as the config says `"layout": "auto"`** (or names the revision). A config with no `layout` key
+is a declared v0.1 — see [`specs/board-config.md`](specs/board-config.md) → `board.layout`.
 
 **The evidence** — [`doc/sims/TMS-7-board_v1.1_sen0697/`](sims/TMS-7-board_v1.1_sen0697/), 54 board
 flights:
@@ -798,9 +800,12 @@ on one probe.
 
 Detection runs before device setup, scans both buses at the lower (100 kHz) rate that every part
 tolerates, scores each layout by how many of its expected addresses appear on the expected bus, and
-applies the winner's bus assignments and speeds. An explicit `board.layout` of `v0.1` or `v1.0` in the
-config always wins over the scan; `auto` (the default) detects. An ambiguous or failed scan changes
-nothing and says so loudly — the config as written is the fallback, never a guess.
+applies the winner's bus assignments and speeds. An explicit `board.layout` of `v0.1`, `v1.0` or
+`v1.1` in the config always wins over the scan; `auto` (the `config_default.py` value) detects. **A
+config with no `layout` key is a declared `v0.1`, not `auto`** — every 7C/7D profile relies on that,
+and a keyless profile on a v1.x board is laid out wrong. An ambiguous or failed scan changes nothing
+and says so loudly — the config as written is the fallback, never a guess. `health.layout` shows the
+verdict and the CC `detect` command re-scans on demand.
 
 ## Keep the attitude module a SOCKET, not a decision
 

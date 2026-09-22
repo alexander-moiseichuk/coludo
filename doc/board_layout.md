@@ -78,7 +78,9 @@ Physical work, in the order it is least annoying to do. The per-GPIO delta is ge
 
 **Steps 1–6 need no new PCB** — they are a rewire of the existing breadboard, and the firmware detects
 the result: `layout.detect()` votes on which bus the four moving addresses answer on, so a correctly
-rewired board comes up as v1.0 with no config edit. Step 7 is the board order.
+rewired board comes up as v1.0 with no other config edit **provided its config has `"layout":
+"auto"`**. A config with no `layout` key is a declared v0.1 and stays laid out as v0.1 (see
+[`specs/board-config.md`](specs/board-config.md) → `board.layout`). Step 7 is the board order.
 
 **No pin is renumbered by any of this.** Four GPIOs are freed (3, 4, 5, 49) and four devices change
 bus at unchanged pins; everything else is untouched, which is why the rewire is a re-plug rather than
