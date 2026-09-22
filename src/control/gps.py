@@ -16,8 +16,11 @@ itest_gps.py against a real receiver. CPython 3.12, stdlib asyncio only -- no py
 """
 
 import asyncio
+import time
 
 IDEAL_SATELLITES: int = 4  # a 3D fix with this many satellites is the ideal launch condition
+STALE_S: float = 5.0  # a fix whose last GGA is older than this is not usable (receivers talk at 1 Hz)
+_REOPEN_S: float = 5.0  # a lost receiver is retried this often -- the dongle gets knocked, then re-seated
 
 
 def _checksum_ok(sentence: str) -> bool:
@@ -63,6 +66,12 @@ class Fix:
         self.altitude = None  # metres MSL, None until known
         self.satellites: int = 0
         self.mode: int = 1  # GSA fix type: 1 none, 2 2D, 3 3D
+        self.seen: float = 0.0  # time.monotonic() of the last accepted GGA; 0.0 = never
+
+    @property
+    def age(self):
+        """Seconds since the last accepted GGA, None before the first."""
+        return time.monotonic() - self.seen if self.seen else None
 
     @property
     def fix_3d(self) -> bool:
@@ -74,8 +83,16 @@ class Fix:
 
     @property
     def usable(self) -> bool:
-        """The ideal launch condition: a 3D fix with enough satellites and an actual position."""
-        return self.fix_3d and self.satellites >= IDEAL_SATELLITES and self.has_position
+        """
+        The ideal launch condition: a FRESH 3D fix with enough satellites and an actual position.
+
+        Fresh matters because `sync GNSS` / `assist` persist this fix as the board's launch point, which
+        beats the board's own fix at arm. Without an age a receiver that went silent -- unplugged, or a
+        hung stream that never reaches EOF -- kept its last fix usable for the rest of the day.
+        """
+        age = self.age
+        return (self.fix_3d and self.satellites >= IDEAL_SATELLITES and self.has_position
+                and age is not None and age < STALE_S)
 
 
 class Gps:
@@ -110,6 +127,7 @@ class Gps:
                 self.fix.longitude = _degrees(parts[4], parts[5])
                 self.fix.satellites = int(parts[7]) if parts[7] else 0
                 self.fix.altitude = float(parts[9]) if parts[9] else None
+                self.fix.seen = time.monotonic()
             elif kind == 'GSA':
                 self.fix.mode = int(parts[2]) if parts[2] else 1
             else:
@@ -122,9 +140,10 @@ class Gps:
     def status(self) -> dict:
         """Operator-facing fix snapshot: is it a usable 3D fix, how many satellites, where."""
         fix = self.fix
+        age = fix.age
         return {'usable': fix.usable, 'fix_3d': fix.fix_3d, 'satellites': fix.satellites,
                 'latitude': fix.latitude, 'longitude': fix.longitude, 'altitude': fix.altitude,
-                'lines': self.lines}
+                'age': None if age is None else round(age, 1), 'lines': self.lines}
 
     def position(self):
         """
@@ -165,16 +184,17 @@ class Gps:
         """
         Open the serial GPS and feed it forever (the wired host-assist path).
 
-        A device that cannot be opened is REPORTED to the operator and skipped -- host GPS is an
-        optional assist, so its failure must not take down the hub (serve() is gathered with
-        hub.run(); an unhandled raise cancels both).
+        A device that cannot be opened at START is REPORTED to the operator and skipped -- host GPS is
+        an optional assist, so its failure must not take down the hub (serve() is gathered with
+        hub.run(); an unhandled raise cancels both). One that opened and was then LOST drops its fix at
+        once and is retried every _REOPEN_S: it was plugged in, so it is expected back.
 
         Args:
             device - the serial device path (e.g. /dev/ttyUSB0).
             baud - the serial baud rate (default 9600).
 
         Returns:
-            None; runs until the stream ends or the device is unavailable.
+            None when the device is unavailable at start; otherwise runs forever.
         """
         try:
             reader = await open_serial(device, baud)
@@ -182,10 +202,25 @@ class Gps:
             self.log('host gps unavailable: %s' % error)
             return
         self.log('host gps on %s @ %d' % (device, baud))
-        try:
-            await self.run(reader)
-        except OSError as error:  # mid-read serial teardown (USB unplug / driver drop): the optional
-            self.log('host gps lost: %s' % error)  # assist dies quietly -- never the gathered hub
+        while True:
+            try:
+                await self.run(reader)
+                self.log('host gps lost: stream ended')
+            except OSError as error:  # mid-read serial teardown (USB unplug / driver drop): the optional
+                self.log('host gps lost: %s' % error)  # assist dies quietly -- never the gathered hub
+            self.fix = Fix()  # a dead receiver's last fix is never handed out as the launch point
+            reader = await self._reopen(device, baud)
+
+    async def _reopen(self, device: str, baud: int) -> asyncio.StreamReader:
+        """Retry the lost device every _REOPEN_S until it opens again -- quietly, it was already reported."""
+        while True:
+            await asyncio.sleep(_REOPEN_S)
+            try:
+                reader = await open_serial(device, baud)
+            except OSError:
+                continue
+            self.log('host gps back on %s @ %d' % (device, baud))
+            return reader
 
 
 async def open_serial(device: str, baud: int = 9600) -> asyncio.StreamReader:

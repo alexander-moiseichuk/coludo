@@ -75,6 +75,18 @@ def main():
     assert no_alt.fix.usable and no_alt.position() == {'latitude': no_alt.fix.latitude,
                                                        'longitude': no_alt.fix.longitude}
 
+    # a STALE fix is not usable: `sync GNSS` would persist it as the launch point. Fresh first...
+    stale = gps.Gps(log=lambda message: None)
+    stale.feed(nmea('GPGSA,A,3,01,02,03,04,,,,,,,,,2.0,1.0,1.5'))
+    stale.feed(nmea('GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,'))
+    assert stale.fix.usable and stale.status()['age'] < 1.0, stale.status()
+    # ...then the receiver goes silent past STALE_S
+    stale.fix.seen -= gps.STALE_S + 1.0
+    assert not stale.fix.usable and stale.position() is None, stale.status()
+    assert stale.status()['age'] > gps.STALE_S and not stale.status()['usable'], stale.status()
+    # a GSA alone never makes a fix fresh: only a GGA carries the position it vouches for
+    assert gps.Gps(log=lambda message: None).status()['age'] is None
+
     # serve() on a missing device REPORTS it and returns -- it must NOT raise (it is gathered with
     # hub.run(), so an unhandled open failure would take the whole hub down).
     import asyncio
@@ -82,7 +94,40 @@ def main():
     asyncio.run(gps.Gps(log=reported.append).serve('/dev/coludo-no-such-gps', 9600))
     assert any('unavailable' in message for message in reported), reported
 
-    print('ok: gps NMEA parse (GGA/GSA), usable=3D+4sat, hemisphere signs, checksum/malformed robustness')
+    # a receiver LOST after it opened drops its fix at once and is reopened, not abandoned
+    opened = []
+
+    async def fake_open(device, baud):
+        reader = asyncio.StreamReader()
+        if not opened:  # the first stream carries a usable fix and then ends (the unplug)
+            for sentence in ('GPGSA,A,3,01,02,03,04,,,,,,,,,2.0,1.0,1.5',
+                             'GPGGA,123519,4807.038,N,01131.000,E,1,08,0.9,545.4,M,46.9,M,,'):
+                reader.feed_data((nmea(sentence) + '\r\n').encode())
+            reader.feed_eof()
+        opened.append(device)
+        return reader  # the reopened stream never ends
+
+    async def lose_and_reopen(unit):
+        task = asyncio.create_task(unit.serve('/dev/coludo-fake-gps', 9600))
+        while len(opened) < 2:
+            await asyncio.sleep(0.005)
+        task.cancel()
+
+    real_open, real_reopen = gps.open_serial, gps._REOPEN_S
+    gps.open_serial, gps._REOPEN_S = fake_open, 0.01
+    try:
+        lost_log = []
+        lost = gps.Gps(log=lost_log.append)
+        asyncio.run(asyncio.wait_for(lose_and_reopen(lost), 5.0))
+    finally:
+        gps.open_serial, gps._REOPEN_S = real_open, real_reopen
+    assert lost.lines == 2, lost.lines  # the fix WAS there before the loss
+    assert not lost.fix.usable and not lost.fix.has_position and lost.position() is None, lost.status()
+    assert any('lost' in message for message in lost_log), lost_log
+    assert any('back on' in message for message in lost_log), lost_log
+
+    print('ok: gps NMEA parse (GGA/GSA), usable=3D+4sat+fresh, hemisphere signs, checksum/malformed '
+          'robustness, a lost receiver drops its fix and is reopened')
 
 
 main()

@@ -84,9 +84,12 @@ first powered flight.
       - Slow and smooth, ~15–30 s, until `mag` reads **3** and the euler bytes change. Check the gyro
         column reads **> 5 °/s** while you do it — a still sample proves nothing, which is how a
         working module was once wrongly condemned.
-      - Then **`calibrate imu_bno055`** over CC to save the profile to NVS. It is restored on every
-        later boot, so this is a once-per-board bench job and NOT a pad procedure — which matters,
-        because nobody can figure-8 an airframe that is already on the rail.
+      - Then **`calibrate imu_bno055`** over CC to save the profile to NVS — on the dashboard, the
+        **send command** box: `calibrate`, params `imu_bno055`. NOT the `calibrate` action button: once
+        the chip converges it drops out of the guided sweep, which then says "nothing outstanding"
+        with the profile still unsaved. It is restored on every later boot, so this is a
+        once-per-board bench job and NOT a pad procedure — which matters, because nobody can figure-8
+        an airframe that is already on the rail.
       - `mag` dropping back to 2 afterwards is EXPECTED and no longer means anything: the register is
         the chip's confidence in its recent data, not what it has learned. The board latches the
         convergence, so `calibrated` stays true

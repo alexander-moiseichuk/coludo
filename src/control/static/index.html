@@ -83,6 +83,7 @@ altering one.</p>
     <option>stats</option>
     <option>verify</option>
     <option>probe</option>
+    <option>calibrate</option>
     <option>stage</option>
     <option>arm</option>
     <option>disarm</option>
@@ -91,8 +92,8 @@ altering one.</p>
     <option>whoami</option>
     <option>reboot</option>
   </select>
-  <input id="params" placeholder="params — e.g. wifi · gliding · 5000" size="28"
-         title="space-separated arguments (e.g. inspect → wifi, stage → gliding, tlm → 5000)">
+  <input id="params" placeholder="params — e.g. wifi · gliding · imu_bno055 · 5000" size="28"
+         title="space-separated arguments (e.g. inspect → wifi, stage → gliding, calibrate → imu_bno055, tlm → 5000)">
   <button id="send">send</button>
 </p>
 <pre id="reply"></pre>
@@ -601,6 +602,10 @@ const cfgOut = document.getElementById('cfgresult');
 const cfgArea = document.getElementById('config');
 const cfgBoard = () => boardId();
 const cfgTarget = () => document.getElementById('cfgtarget').value;
+// The board a draft came FROM. selectBoard() does not clear the editor, so without this a load from one
+// board, a click on another and a Save wrote the first board's whole config -- board.id included -- to the
+// second, and both then announced the same id after their reboots.
+let cfgSource = '';
 
 document.getElementById('load').onclick = async () => {
   cfgOut.textContent = '…';
@@ -609,7 +614,8 @@ document.getElementById('load').onclick = async () => {
   if (r.status === 'ok') {
     try {
       cfgArea.value = JSON.stringify(JSON.parse(r.args[0]), null, 2);
-      cfgOut.textContent = `loaded ${target} config of ${cfgBoard()}`;
+      cfgSource = cfgBoard();
+      cfgOut.textContent = `loaded ${target} config of ${cfgSource}`;
     } catch (e) { cfgOut.textContent = 'unreadable config from board: ' + e; }
   } else {
     cfgOut.textContent = prettyResult(r);
@@ -617,11 +623,22 @@ document.getElementById('load').onclick = async () => {
 };
 
 document.getElementById('save').onclick = async () => {
-  let json;
-  try { json = JSON.stringify(JSON.parse(cfgArea.value)); }
+  let draft;
+  try { draft = JSON.parse(cfgArea.value); }
   catch (e) { cfgOut.textContent = 'draft is not valid JSON: ' + e; return; }
+  const board = cfgBoard();
+  if (!board) { return; }
+  if (cfgSource && cfgSource !== board) {
+    cfgOut.textContent = `refused: this draft was loaded from ${cfgSource}, not ${board} — Load ${board}'s config first`;
+    return;
+  }
+  const draftId = cfgTarget() === 'board' && draft.board ? draft.board.id : undefined;
+  if (draftId !== undefined && draftId !== board) {
+    cfgOut.textContent = `refused: the draft's board.id is ${draftId}, not ${board} — saving it would rename this board`;
+    return;
+  }
   cfgOut.textContent = '…';
-  cfgOut.textContent = prettyResult(await cmd(cfgBoard(), 'set-config', [cfgTarget(), json]));
+  cfgOut.textContent = prettyResult(await cmd(board, 'set-config', [cfgTarget(), JSON.stringify(draft)]));
 };
 
 document.getElementById('reboot').onclick = async () => {
@@ -677,6 +694,7 @@ document.getElementById('calibrate').onclick = async () => {
     }
     data.buses[kind][id][key] = out.chosen;
     cfgArea.value = JSON.stringify(data, null, 2);
+    cfgSource = board;
     selectBoard(board);
     document.getElementById('cfgtarget').value = 'board';
     cfgOut.textContent = `tuned ${out.bus} → ${hz(out.chosen)} loaded into the draft above — review, then Save + Reboot to apply`;
