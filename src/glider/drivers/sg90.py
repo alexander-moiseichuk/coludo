@@ -147,7 +147,7 @@ class SG90(task.Task):
         self._min_deg: int = self.config.get('min_deg', 0)
         self._max_deg: int = self.config.get('max_deg', 180)
         self._neutral: int = (self._min_deg + self._max_deg) // 2  # the zero position
-        self._trim_deg: int = self.config.get('trim', 0)
+        self._trim_deg: int = int(round(self.config.get('trim', 0)))  # whole degrees: the PWM path is int-only
         """
         per-fin MECHANICAL zero offset (degrees): the fin's true centre when the loop commands
         neutral. Physical install is never exact (a horn on a ~18deg spline + linkage slop), so each
@@ -209,26 +209,36 @@ class SG90(task.Task):
         Returns:
             None on pass; a PWM-error step message, or the no-draw verdict, on failure.
         """
-        watch = databoard.Databoard.value('power') is not None  # INA present -> measure the actual draw
+        # read(), NOT value(): value() extrapolates a stale INA without bound, so a dead power monitor
+        # fed this go/no-go a number no sensor produced
+        watch = databoard.Databoard.read('power')[1] is not None  # a FRESH INA -> measure the actual draw
         self._apply(self._neutral)
         if watch:
             await asyncio.sleep_ms(300)  # settle -> resting baseline (nonzero on battery: MCU + devices)
-        baseline = databoard.Databoard.value('power') if watch else 0  # mW (integer)
+        baseline, baseline_source, _baseline_age = databoard.Databoard.read('power')
+        if baseline_source is None:
+            watch, baseline = False, 0  # the INA went stale while settling: no closed-loop verdict
         peak_rise = 0
+        sampled = 0  # fresh INA readings during the sweep -- none means no verdict, not "dead servo"
         for label, target in (('min', self._min_deg), ('max', self._max_deg), ('neutral', self._neutral)):
             try:
                 recorder.Recorder.log(self.name, 'probe: sweep to %s %d ...' % (label, target))
                 self._apply(target)  # command the travel directly (single-servo self-test -- no slew gate)
                 for _ in range(24):  # ~travel window; sample the INA draw WHILE the servo is moving
                     if watch:
-                        peak_rise = max(peak_rise, (databoard.Databoard.value('power') or baseline) - baseline)
+                        power, power_source, _power_age = databoard.Databoard.read('power')
+                        if power_source is not None:
+                            sampled += 1
+                            peak_rise = max(peak_rise, power - baseline)
                     await asyncio.sleep_ms(20)
                 recorder.Recorder.log(self.name, 'probe: at %s %d ok' % (label, target))
             except Exception as error:
                 message = 'sweep to %s %d: %s' % (label, target, error)
                 recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
                 return message
-        if watch:
+        if watch and not sampled:
+            recorder.Recorder.log(self.name, 'probe: INA went stale during the sweep -- no closed-loop verdict')
+        elif watch:
             recorder.Recorder.log(self.name, 'probe: peak draw %d mW over %d mW baseline%s' % (
                 peak_rise, baseline, '' if peak_rise <= self._engine_max_mw else ' (HIGH -- stall/binding?)'))
             if peak_rise < self._engine_min_mw:
@@ -263,7 +273,10 @@ class SG90(task.Task):
         self._pulse_us = commons.clamp_int(self._min_us, pulse, self._max_us)
         self._pwm.duty_u16(self._pulse_us * _DUTY_U16_MAX // _PERIOD_US)
         self.angle = angle
-        self._telemetry.push((angle, self._pulse_us, done))
+        try:  # the fin has MOVED; a full ring must not raise into the mixer loop that moved it
+            self._telemetry.push((angle, self._pulse_us, done))
+        except Exception as error:
+            self.note('sg90 :: record %r', error)
         return angle
 
     def _apply(self, angle, done: int = 0) -> int:
@@ -304,7 +317,10 @@ class SG90(task.Task):
             future edit reshapes the push below.
             """
             await asyncio.sleep_ms(travel_ms)
-        self._telemetry.push(completed)  # done=1: (estimated) completed
+        try:
+            self._telemetry.push(completed)  # done=1: (estimated) completed
+        except Exception as error:
+            self.note('sg90 :: record %r', error)
         return target
 
     def update(self, props: dict) -> list:
@@ -323,7 +339,7 @@ class SG90(task.Task):
         """
         applied = []
         if 'trim' in props:
-            self._trim_deg = props['trim']
+            self._trim_deg = int(round(props['trim']))  # a fractional trim raised TypeError in _write()
             applied.append('trim')
         if 'angle' in props:
             self._apply(props['angle'])  # picks up the new trim

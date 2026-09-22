@@ -280,6 +280,26 @@ async def amain():
     eseq._tick(10)
     assert eseq._telemetry.rows[-1] == ('gliding', 'test')  # ...is NOT double-logged as external
 
+    """
+    A FULL RING must not kill the stage machine. Telemetry raises on overflow by policy, and the push
+    used to come BEFORE the stage bookkeeping and the GC transition with nothing catching it -- one full
+    ring and the sequencer task was dead for the rest of the flight. The stage moves, the bookkeeping
+    is done, and the overflow is noted.
+    """
+    class _FullRing:
+        def push(self, row):
+            raise OSError('telemetry ring full')
+
+    full_ctrl = _StubController()
+    fseq = sequencer.Sequencer('sequencer', SPEC, full_ctrl)
+    assert await fseq.setup() is True
+    fseq._telemetry = _FullRing()
+    fseq._advance(Stage.BOOSTING, 'test')  # must not raise
+    assert full_ctrl.stage == Stage.BOOSTING and fseq._advanced_to == Stage.BOOSTING
+    full_ctrl.stage = Stage.GLIDING  # an EXTERNAL move logs through the same guard
+    fseq._tick(20)
+    assert fseq._stage_seen == Stage.GLIDING
+
     # GC policy -- compacted + DISABLED at BOOSTING, re-enabled at LANDING (coludo.md), and finish()
     # never leaves it off. disable_gc_flight True here (the only test that exercises the toggle).
     import gc
@@ -338,7 +358,7 @@ async def amain():
     print('ok: sequencer -- launch detect, boost-timeout, agl landing, on-ground, guard, manual hold, '
           'baro launch needs a dwell, GNSS never launches, SETTING clears the RSO backstop, '
           'no-accel skip, apogee arming, RSO flight timeout, external-transition log, warm-start '
-          'breadcrumb, GC flight policy')
+          'breadcrumb, GC flight policy, a full telemetry ring never stops the stage machine')
 
 
 asyncio.run(amain())

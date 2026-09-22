@@ -8,6 +8,7 @@ On-board (MicroPython) test for the CC client (cc_client.py). Board-first: the b
 import asyncio
 import json
 import os
+import time
 
 import cc_client
 import cc_protocol as cc
@@ -108,6 +109,25 @@ async def amain():
     await cc_client.Client(config_default.default(), sd).serve(_FakeReader(['whoami', 'ping']), writer)
     resp = [b.decode().strip() for b in writer.out]
     assert cc.parse(resp[0]).command == 'iam' and cc.parse(resp[1]).command == 'pong'
+
+    """
+    A hub that vanished without a FIN (host crash, power loss) sends nothing -- and a bare readline()
+    waited on the dead socket forever, so the board never re-dialled. serve() must give up after
+    _SILENT_MS of silence; a live hub (a line every ~2 s) never gets near it.
+    """
+    class _SilentReader:
+        async def readline(self):
+            await asyncio.sleep_ms(60000)
+            return b'ping'
+
+    real_silent = cc_client._SILENT_MS
+    cc_client._SILENT_MS = 50
+    try:
+        started = time.ticks_ms()
+        await cc_client.Client(config_default.default(), sd).serve(_SilentReader(), _FakeWriter())
+        assert time.ticks_diff(time.ticks_ms(), started) < 2000, 'serve() waited on a silent hub'
+    finally:
+        cc_client._SILENT_MS = real_silent
 
     # set-config board: invalid rejected; reset-config ok; bad args rejected
     sd2 = cc_client.create_dispatcher(config_default.default(), config_path='test_cc_board.config')

@@ -179,6 +179,20 @@ async def amain():
         spread.append((math.degrees(math.atan2(raw_y, raw_x)) - degrees + 180) % 360 - 180)
     assert max(spread) - min(spread) > 20.0, 'hard iron must show as a heading-DEPENDENT error, %r' % spread
 
+    """
+    A board with a RESTORED calibration that is re-calibrated on a partial turn must say REFUSED --
+    calibration() returns '' once a calibration exists, and that '' used to be the answer, which reads
+    as success while the old calibration silently stayed.
+    """
+    recal = bmm350.Bmm350('mag_recal_test', {}, _StubController())
+    recal._calibration = (0, 0, 100, 100)  # restored from NVS
+    recal._span = [-400, 400, -400, 400]    # a real field swing...
+    recal._sectors = 0b00000111             # ...but only 3 of 8 sectors turned through
+    recal._seen = 1000                      # plenty of samples: only the coverage is short
+    answer = await recal.calibrate()
+    assert answer and 'refused' in answer, answer
+    assert recal._calibration == (0, 0, 100, 100), 'a refused re-calibration must keep the old one'
+
     print('ok: bmm350 registered; graceful-absent; partial turn refused; centre (%d, %d) r (%d, %d); '
           'heading worst %.2f deg, uncorrected spread %.0f deg' % (
               centre_x, centre_y, radius_x, radius_y, worst, max(spread) - min(spread)))

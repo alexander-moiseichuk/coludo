@@ -272,9 +272,12 @@ class BoardHealth(task.Task):
             elevation = None
         self._track(vitals['mem_free'], elevation)
         self._rescue(vitals['mem_free'], elevation)
-        self._telemetry.push((vitals['temp'], vitals['mem_free'], vitals['load'],
-                              self.oom_s(), self.land_s(), self._leak_kbps, self.rescues,
-                              self._rescue_ms))
+        try:  # the rescue above has already run; a full ring must not kill the vitals task with it
+            self._telemetry.push((vitals['temp'], vitals['mem_free'], vitals['load'],
+                                  self.oom_s(), self.land_s(), self._leak_kbps, self.rescues,
+                                  self._rescue_ms))
+        except Exception as error:
+            self.note('health :: record %r', error)
 
     async def _probe_loop(self) -> None:
         """

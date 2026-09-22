@@ -411,12 +411,15 @@ class Checkpoint(task.Task):
             self._flight = self.controller.find(['flight'])[0]
         airspeed = None if self._flight is None else round(self._flight.airspeed(), 1)
         ticks_ms = time.ticks_ms()
-        self._telemetry.push((stage, altitude, speed, airspeed, ticks_ms))
         if self.controller.armed:  # only an armed flight is worth -- and safe -- to recover
             crumb = dict(self._static)  # launch/zone/pad from BOOSTING
             crumb.update({'stage': stage, 'armed': True, 'altitude': altitude, 'speed': speed,
                           'airspeed': airspeed, 'ticks_ms': ticks_ms, 'stamp': int(time.time())})
-            save(crumb)
+            save(crumb)  # BEFORE the row: a full telemetry ring must never cost the recovery crumb
+        try:
+            self._telemetry.push((stage, altitude, speed, airspeed, ticks_ms))
+        except Exception as error:
+            self.note('checkpoint :: record %r', error)
         recorder.Recorder.log(self.name, 'checkpoint %s alt=%s' % (controller.Stage.STAGES.get(stage), altitude))
 
     async def run(self) -> None:

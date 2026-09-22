@@ -190,7 +190,10 @@ class Bmm350(task.Task):
             return 'no field change seen (x span %d, y span %d) -- is the magnetometer alive?' % (
                 x_span, y_span)
         if self._covered() < _NEED_SECTORS:
-            return self.calibration()
+            # built here, NOT via calibration(): that returns '' once a calibration exists (restored from
+            # NVS), so a refused RE-calibration read as success and the old one silently stayed
+            return 'refused -- only %d of %d sectors covered: turn the airframe through a full LEVEL circle' % (
+                self._covered(), _SECTORS)
         calibration = ((x_min + x_max) // 2, (y_min + y_max) // 2, x_span // 2, y_span // 2)
         if _nvs is not None:
             try:

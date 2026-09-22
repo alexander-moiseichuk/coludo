@@ -94,6 +94,7 @@ _ABSENT: dict = {
     'v1.1': ('accel_adxl375', 'imu_bno055', 'baro_bmp280'),
 }
 
+_LASER_PINS_UNROUTED: tuple = ('v1.0', 'v1.1')  # the front harness carries no laser INT/XSHUT here
 _LASER_PINS: tuple = ('int_pin', 'xshut_pin')  # both freed on v1.0; the driver treats them as optional
 
 """
@@ -277,12 +278,14 @@ def apply(cfg: dict, revision: str) -> list:
         device = config.device(cfg, name=name)
         if device is None:
             continue
-        fitted = name not in _ABSENT[revision]
+        # `fitted: false` is the operator saying THIS part is dead or removed: apply() otherwise re-enables
+        # every part the revision carries, which undid an `enabled: false` and left verify/arm refusing
+        fitted = name not in _ABSENT[revision] and device.get('fitted', True) is not False
         if device.get('enabled', True) != fitted:
             changes.append('%s %s' % (name, 'fitted -> enabled' if fitted else 'not fitted -> disabled'))
             device['enabled'] = fitted
 
-    if revision == 'v1.0':
+    if revision in _LASER_PINS_UNROUTED:
         for laser_name in ('laser_agl',) + _FOLLOWS.get('laser_agl', ()):
             laser = config.device(cfg, name=laser_name)
             for key in _LASER_PINS:

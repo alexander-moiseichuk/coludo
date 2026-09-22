@@ -161,18 +161,38 @@ class Client:
     async def run(self) -> None:
         """Connect to Control and serve forever, reconnecting with backoff on drop."""
         while True:
+            writer = None
             try:
                 reader, writer = await asyncio.open_connection(self.host, self.port)
                 self.log('cc_client :: connected %s:%d' % (self.host, self.port))
                 await self.serve(reader, writer)
             except Exception as error:
                 self.log('cc_client :: %r' % error)
+            finally:
+                if writer is not None:  # release the socket before re-dialling -- one per attempt leaked
+                    try:
+                        writer.close()
+                        await writer.wait_closed()
+                    except Exception:
+                        pass
             await asyncio.sleep_ms(self.backoff_ms)
 
     async def serve(self, reader, writer) -> None:
-        """Read commands from Control, dispatch, write responses. Returns on disconnect."""
+        """
+        Read commands from Control, dispatch, write responses. Returns on disconnect -- or on SILENCE.
+
+        The hub polls every ~2 s, so _SILENT_MS without a single line means the far end is gone. A
+        hub host that crashed or lost power sends no FIN, and a bare readline() then waited on the dead
+        socket forever: the board never re-dialled and never re-appeared on a restarted hub. The
+        deadline costs one wait_for_ms per received line (~560 B), which at the heartbeat rate is
+        noise beside the flight's own allocation.
+        """
         while True:
-            line = await reader.readline()
+            try:
+                line = await asyncio.wait_for_ms(reader.readline(), _SILENT_MS)
+            except asyncio.TimeoutError:
+                self.log('cc_client :: no traffic for %d s -- dropping the link to re-dial' % (_SILENT_MS // 1000))
+                return
             if not line:
                 return
             response = await self.dispatcher.handle(line.decode().strip())
@@ -259,6 +279,7 @@ def _stage_problem(controller) -> str:
 
 
 _GROUND: tuple = ('setting', 'done')  # the stages where nothing is flying
+_SILENT_MS: int = 60000  # no line from the hub this long -> it is gone; drop and re-dial (see serve())
 
 
 def _in_flight(ctx) -> str:

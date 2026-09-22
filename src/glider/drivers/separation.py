@@ -83,7 +83,10 @@ class Separation(task.Task):
         event = 'separated' if separated else 'nested'
         if separated and self.controller.stage == controller.Stage.BOOSTING:
             self.controller.set_stage(controller.Stage.GLIDING)
-        self._telemetry.push((event, controller.Stage.STAGES[self.controller.stage]))  # telemetry first
+        try:  # the stage change above is made; a full ring must not kill the separation task
+            self._telemetry.push((event, controller.Stage.STAGES[self.controller.stage]))
+        except Exception as error:
+            self.note('separation :: record %r', error)
         recorder.Recorder.log('separation', event)
         self.emit(event)
 

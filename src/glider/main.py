@@ -19,6 +19,7 @@ import config
 import controller
 import drivers
 import layout
+import machine
 import mission
 import recorder
 import tasks
@@ -69,9 +70,16 @@ async def main() -> None:
     with recording disabled just skips it.
     """
     board = cfg.get('board', {})
-    recorder.Recorder.log('main', 'boot: board %s | firmware %s | config %s %s' % (
-        board.get('id', '?'), board.get('firmware_version', '?'), config.config_id(cfg), source))
-    await warmstart.restore(flight, cfg)  # warm start after a mid-air reset (no-op on a cold boot)
+    recorder.Recorder.log('main', 'boot: board %s | firmware %s | config %s %s | reset_cause %d' % (
+        board.get('id', '?'), board.get('firmware_version', '?'), config.config_id(cfg), source,
+        machine.reset_cause()))
+
+    def _boot_log(message: str) -> None:
+        """The warm-start verdict goes to the CAPTURE too: a mid-air reboot must be provable afterwards."""
+        print(message)
+        recorder.Recorder.log('main', message)
+
+    await warmstart.restore(flight, cfg, log=_boot_log)  # warm start after a mid-air reset (no-op on a cold boot)
     while True:  # the supervised tasks do the work; keep the event loop alive
         await asyncio.sleep_ms(10000)
 

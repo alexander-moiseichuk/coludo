@@ -31,6 +31,7 @@ from machine import UART  # board-only, like `micropython` above
 # The rest of the tree already guards these imports; this module is the single exception, and the
 # reason is recorded here so the next reader does not "fix" it with a try/except that cannot work.
 
+_SWEEP_MS: int = commons.const(1000)  # the outage sweep's own clock, for a receiver that sends nothing
 _SENTENCE_GAP_US: int = commons.const(3000000)  # a sentence quiet this long (3 s) is an OUTAGE, not jitter. The
 # module is configured at 1 Hz, so three missed intervals -- loose enough that a busy loop or a single
 # dropped line never cries wolf, tight enough to catch the loss well inside a <60 s flight.
@@ -273,6 +274,7 @@ class Gnss(task.Task):
         Returns:
             None (runs forever).
         """
+        asyncio.create_task(self._sweeping())  # a silent receiver parses nothing -- see _sweeping()
         while True:
             raw = await self._reader.readline()
             if raw:
@@ -282,6 +284,19 @@ class Gnss(task.Task):
                 except (UnicodeError, ValueError, IndexError):
                     pass  # noise byte / malformed field -> drop the line
             self._sweep(time.ticks_us())  # also on an empty read: a silent receiver must still be seen
+
+    async def _sweeping(self) -> None:
+        """
+        Sweep for outages on a CLOCK, not only per line.
+
+        readline() on the UART stream has no timeout, so a receiver that goes completely silent (power
+        lost, connector out) never returns a line -- and the per-line sweep in run() never ran, so the
+        outage events that exist for exactly this never fired. One sleep per second (48 B) instead of a
+        wait_for_ms per line (560 B, at NMEA's line rate).
+        """
+        while True:
+            await asyncio.sleep_ms(_SWEEP_MS)
+            self._sweep(time.ticks_us())
 
     async def probe(self) -> str:
         """

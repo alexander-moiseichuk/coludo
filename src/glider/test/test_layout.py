@@ -222,6 +222,31 @@ def _clock(i2c) -> int:
     return int(text[start:end])
 
 
+def test_laser_pins_and_operator_unfit():
+    """
+    The laser INT/XSHUT are freed on EVERY revision that does not route them. Only literal 'v1.0' did,
+    so on v1.1 the L1X armed an IRQ on unrouted GPIO3 and toggled GPIO5. And `fitted: false` is the
+    operator's word that a revision part is dead: apply() used to re-enable it, undoing `enabled: false`
+    and leaving verify/arm refusing on a part nobody could remove from the config.
+    """
+    for revision in ('v1.0', 'v1.1'):
+        cfg = _cfg()
+        layout.apply(cfg, revision)
+        for name in ('laser_agl', 'laser_agl_l1x'):
+            laser = config.device(cfg, name=name)
+            assert laser.get('int_pin') is None and laser.get('xshut_pin') is None, (revision, name, laser)
+    kept = _cfg()
+    layout.apply(kept, 'v0.1')  # v0.1 routes them: kept
+    assert config.device(kept, name='laser_agl').get('int_pin') is not None
+
+    cfg = _cfg()
+    config.device(cfg, name='baro_bmp280')['fitted'] = False  # the operator: this one is dead
+    config.device(cfg, name='baro_bmp280')['enabled'] = False
+    layout.apply(cfg, 'v1.0')  # v1.0 carries a BMP280, so it would be re-enabled
+    assert config.device(cfg, name='baro_bmp280')['enabled'] is False, 'fitted:false was overridden'
+    assert config.device(cfg, name='imu_bno055')['enabled'] is True  # its neighbours still fit
+
+
 def test_runtime_scan_restores_the_live_clock():
     """
     `detect` at runtime must leave the drivers' bus at ITS clock. machine.I2C(id) is one peripheral per
@@ -286,5 +311,6 @@ test_resolve_declared_wins()
 test_fitted_answers_every_revision_and_the_undecided_case()
 test_live_scan()
 test_runtime_scan_restores_the_live_clock()
+test_laser_pins_and_operator_unfit()
 print('ok: layout -- three-revision vote, dead-device tolerance, attitude-module split, apply both ways, '
       'declared override, fitted() incl. undecided, live scan, runtime scan keeps the live clock')

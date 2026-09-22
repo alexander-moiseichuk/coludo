@@ -5,6 +5,9 @@ On-board (MicroPython) test for the board config loader/validator (config.py), n
 buses (uart/i2c/spi -> id), `sensors` + `components` with 'type:id' bus refs. Run by `make test`.
 """
 
+import json
+import os
+
 import config
 import config_default
 
@@ -273,6 +276,23 @@ def main():
     ~8.5 s, and with servos enabled each boot re-centres every fin (how a servo died). The flight value
     passes, and so does a disabled watchdog whatever it says -- it never arms.
     """
+    """
+    A malformed section is an ERROR, never a raise: `fins` as a list made validate() raise
+    AttributeError, and load() -- which must never raise, it runs before the watchdog and WiFi exist --
+    raised with it. It must refuse the file and fall back.
+    """
+    broken = config_default.default()
+    broken['fins'] = [1, 2]
+    assert 'fins is not an object' in config.validate(broken), config.validate(broken)
+    with open('test_malformed.config', 'w') as handle:
+        handle.write(json.dumps(broken))
+    try:
+        loaded, source, errors = config.load('test_malformed.config')
+        assert source.startswith('default(fallback'), source
+        assert loaded['board']['id'] == config_default.default()['board']['id']
+    finally:
+        os.remove('test_malformed.config')
+
     floor_cfg = config_default.default()
     watchdog = [device for device in floor_cfg['components'] if device.get('activity') == 'watchdog'][0]
     watchdog['enabled'], watchdog['wdt_timeout_ms'] = True, 5000

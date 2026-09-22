@@ -125,12 +125,26 @@ class Sequencer(task.Task):
 
     def _advance(self, to_stage: int, reason: str) -> None:
         self.controller.set_stage(to_stage)  # logs 'controller :: stage -> X'
-        recorder.Recorder.log(self.name, 'stage -> %s (%s)' % (_STAGE.STAGES[to_stage], reason))
-        self._telemetry.push((_STAGE.STAGES[to_stage], reason))
         self._since = None
         self._advanced_to = to_stage  # our own move: _tick's change-detect must not re-log it
         if self._disable_gc_flight:  # clean heap into the flight, GC OFF for the WHOLE airborne phase
             self._gc_transition(to_stage)
+        recorder.Recorder.log(self.name, 'stage -> %s (%s)' % (_STAGE.STAGES[to_stage], reason))
+        self._record(_STAGE.STAGES[to_stage], reason)  # LAST: every state change above is already made
+
+    def _record(self, stage_name: str, reason: str) -> None:
+        """
+        One sequencer.csv row -- and a full ring is NOTED, never raised.
+
+        Telemetry raises on overflow by policy, and this used to push BEFORE the stage bookkeeping and
+        the GC transition, with nothing catching it: one full ring skipped the flight's GC switch-off
+        and killed the sequencer task for good -- no apogee, no landing, no DONE. The stage record is
+        worth a lot; the stage MACHINE is worth more.
+        """
+        try:
+            self._telemetry.push((stage_name, reason))
+        except Exception as error:
+            self.note('sequencer :: record %r', error)
 
     def _gc_transition(self, to_stage: int) -> None:
         """
@@ -222,7 +236,7 @@ class Sequencer(task.Task):
                 record it in sequencer.csv too -- post-flight tooling keeps ONE stage-event source instead
                 of cross-referencing separation.csv (which the field capture pull may not even fetch).
                 """
-                self._telemetry.push((_STAGE.STAGES.get(stage, str(stage)), 'external'))
+                self._record(_STAGE.STAGES.get(stage, str(stage)), 'external')
             self._advanced_to = None
             if stage == _STAGE.SETTING:
                 """

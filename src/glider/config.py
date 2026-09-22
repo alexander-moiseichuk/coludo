@@ -446,7 +446,11 @@ def validate(cfg) -> list:
     # `fins` is a TOP-LEVEL section, not a component field -- limit_multiplier reaches the governor
     # via flight.py's `board.get('fins', {})`, so a component-only sweep never sees it. This is the
     # exact field the finding named, and the one the 100 Hz `* self._multiplier` would TypeError on.
-    _validate_numeric(cfg.get('fins') or {}, 'fins', errs)
+    fins = cfg.get('fins')
+    if fins is not None and not isinstance(fins, dict):
+        errs.append('fins is not an object')  # _validate_numeric would raise on a list or a string
+    else:
+        _validate_numeric(fins or {}, 'fins', errs)
     _validate_devices(cfg.get('sensors'), 'sensors', errs, bus_refs, seen_names)
     _validate_devices(cfg.get('components'), 'components', errs, bus_refs, seen_names)
     _validate_watchdog(cfg.get('components'), errs)
@@ -573,7 +577,10 @@ def load(path: str = 'board.config', defaults=None) -> tuple:
         data = json.loads(text)
     except (ValueError, OSError):
         return defaults, 'default(fallback: board.config is not valid JSON)', ['board.config is not valid JSON']
-    errs = validate(data)
+    try:
+        errs = validate(data)
+    except Exception as error:  # load() NEVER raises: a malformed section must fall back, not stop the boot
+        errs = ['validation raised %r' % error]
     if errs:
         return defaults, 'default(fallback: invalid board.config)', errs
     """
