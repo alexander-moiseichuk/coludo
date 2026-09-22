@@ -207,13 +207,23 @@ The Setting phase begins at system power-on and terminates immediately upon engi
 
 Upon electronic initialization, the following sequential operations are executed:
 * **Physical Orientation:** The airframe must be kept horizontal and oriented toward true North for baseline indexing.
-* **Status Indication:** The main power LED is set to flash at a slow 2 Hz cycle (250ms ON / 250ms OFF).
+* **Status Indication:** none on the board — no profile declares an LED (GPIO 2 left the pin map). The
+  operator reads status on the CC dashboard: `health` stage, armed, `degraded[]` and outstanding
+  `calibration`.
 * **Object Instantiation:** The MicroPython environment initializes all core software components and drivers.
-* **Calibration:** The system zeroes out the altimeter, digital compass, accelerometer, and gyroscope while performing a full deflection check of the fin servos.
+* **Calibration (automatic part):** each barometer captures its ground zero at setup, the pitot
+  restores its NVS tare and the BNO055 its NVS calibration profile. The fins are **centred, never
+  swept, at boot** — a mid-flight reboot must not sweep them (`controller.setup()`); the full-travel
+  sweep is the operator's `probe`/`verify`/`arm`. What the board cannot do alone (the BNO055
+  figure-8, a still-air pitot tare, the BMM350 circle) is listed by `calibrate` and flagged
+  `needs-calibration` in `health.degraded`.
 * **Network Connectivity:** The board joins the Control Center's Wi-Fi network as a **station** (see [`board-config.md`](board-config.md)) and establishes a connection with the ground control station (PC) to facilitate remote diagnostics and real-time monitoring.
 * **Recorder Link:** If the Recorder module is present, the UART telemetry/log sink is opened (the controller has no local SD card; the Recorder owns video and storage).
 * **GNSS Lock:** The GPS module runs at its configured rate (10 Hz) from setup and acquires a multi-satellite 3D fix. The coordinates of the target landing zone must fall within a 200-meter threshold vector relative to the launch point. The board clock is NOT set from GNSS: it has no battery-backed RTC, and **CC sets the time over the link** (`update mission base64:{"epoch":...}`, see `mission.py`).
-* **Validation:** The Flight Controller polls all subsystems. If all validation gates pass, the LED status changes to a "Ready" heartbeat pattern (100ms ON / 900ms OFF).
+* **Validation (operator, over CC — nothing is automatic):** sync the board clock and launch position
+  (dashboard sync / `assist`), work through `calibrate` until it is empty, then `verify` (hardware
+  `pass` + the `ready` config gate + the stage), and `arm` where the flight is active (`arm` re-runs
+  the probes and refuses on any problem). The step-by-step list is [`field_test.md`](../field_test.md).
 * **Staging:** The vehicle is cleared to be mounted vertically on the launch rail.
 
 Potential problems:
@@ -929,7 +939,7 @@ The physical booster separation event is handled via an explicit electrical disc
 - Pressure Micro-Switch: A Gravity Digital Crash Sensor mounted to the airframe that springs open immediately as the glider leaves the booster body tube.
 - Breakaway Pin/Socket: A physical wire loop plugged into a dedicated port on the flight computer. When the motor's black powder ejection charge pops the glider out of the body tube, the tethered wire pulls free from the socket.
 
-The resulting state transition instantly alters the input pin logic to HIGH, invoking an unblock event via a hardware interrupt. This forces the master Flight Controller to transition immediately from Boosting to Gliding state. For separation detection, sensor or termination wire and IMU can be used simultaneously to ensure proper separation detection:
+The fitted part is the copper-pad pair (`drivers/separation.py`): while nested the pads route 3V3 and the pin reads **HIGH**; separation opens them and the internal **pull-down** takes the pin **LOW**. So **LOW = separated**. An edge interrupt wakes the driver, which acts only once the new level has HELD for `debounce_ms` (at least three agreeing reads), so a vibration blip cannot separate. A held LOW during Boosting moves the stage to Gliding; at any other stage it is only recorded. For separation detection, sensor or termination wire and IMU can be used simultaneously to ensure proper separation detection:
 1. Separation sensor triggered
 2. IMU detects sudden pitch/roll change
 3. Altimeter shows positive vertical deceleration
@@ -937,13 +947,13 @@ The resulting state transition instantly alters the input pin logic to HIGH, inv
 
 ## Servos
 
-Three independent micro-servos drive the vertical stabilizer and dual elevon surfaces: **two SG90 on the elevons and one metal-gear MG90S on the yaw fin** (`config_default.py` drivers `sg90` / `mg90s`). They are electrically interchangeable — same PWM interface and rail — so the figures below apply to both. These servos provide a nominal stall torque of 1.2–1.4 kg·cm and an actuation speed of 0.11 seconds per 60 degrees. Due to significant manufacturer variability among component clones, custom hardware pulse-width modulation (PWM) calibration maps must be verified during system setup.To mitigate severe voltage drops on the primary 5V power line (as individual micro-servos can draw up to 1A under stall loads), the flight software enforces strict electrical safety protocols:
+Three independent micro-servos drive the vertical stabilizer and dual elevon surfaces. **Every profile flies `sg90` on all three fins** — `config_default.py` and every 2026-10-03 launch config. An `mg90s` driver exists (a metal-gear positional part, electrically an SG90, faster slew) and a mixed fleet is supported per fin, but no profile selects it, whatever the `config_default.py` comment says. These servos provide a nominal stall torque of 1.2–1.4 kg·cm and an actuation speed of 0.11 seconds per 60 degrees. Due to significant manufacturer variability among component clones, custom hardware pulse-width modulation (PWM) calibration maps must be verified during system setup.To mitigate severe voltage drops on the primary 5V power line (as individual micro-servos can draw up to 1A under stall loads), the flight software enforces strict electrical safety protocols:
 - Position update commands are suppressed if the target angle matches the current surface deflection state.
 - Target positioning parameters are checked against baseline calibration maps loaded during system setup.
 - The Flight Controller triggers servo updates sequentially rather than simultaneously to prevent additive current spikes.
-- Angular deflections are structurally limited to an operational envelope of -45° to +45°.
+- Control deflection is limited to ±45° by the mixer's `limit_deg`. The **pre-flight probe is not**: `probe`, `verify` and `arm` sweep each fin to its `min_deg` and `max_deg` — 0° and 180° by default, and no airframe profile narrows them — so the linkage must tolerate full servo travel.
 - This small throw keeps surface travel times well under 1ms, utilizing range correction tracking profiles where applicable.
-- The integrated diagnostic task handles sequential verification by sweeping the surfaces through steps and measuring return latencies.
+- The probe sweeps one fin at a time (min → max → neutral) and, where an INA226 is fitted, checks the rail draw while it moves: no rise fails the probe (dead servo, lost PWM pin, unpowered rail); an excessive rise is logged as a possible stall or binding.
 
 ## Storage
 
