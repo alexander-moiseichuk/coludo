@@ -55,13 +55,17 @@ What actually gates a launch, sorted by how badly its loss hurts. "Critical" = *
 | Servos ×≥2 (SG90) | **Critical** | the fin actuators | ✔ |
 | Separation switch (copper pads) | **Critical** | the BOOSTING→GLIDING trigger | ✔ |
 | ICP-10111 baro | Important | primary altimeter (apogee / glide profile) | ✔ |
-| AGL laser (VL53L4CX **or** VL53L1X) | Important | low-altitude AGL for the landing — baro is poor there. Either part fits the socket; **enable exactly the one fitted** (an unfitted laser fails `verify`/`arm`); the L1X's shorter measured range needs the AGL thresholds lowered (see *Two lasers, one socket*) | VL53L4CX out of stock — **1 VL53L1X fitted**, 5 more on order |
+| AGL laser (VL53L4CX **or** VL53L1X) | Important | low-altitude AGL for the landing — baro is poor there. Either part fits the socket; **enable exactly the one fitted** (an unfitted laser fails `verify`/`arm`); the L1X's shorter measured range cannot reach `land_agl_m`, and TMS-7F keeps it at 5.0 on purpose, so the baro fallback fires the landing (see *Two lasers, one socket*) | VL53L4CX out of stock — **1 VL53L1X fitted**, 5 more on order |
 | SDP810 airspeed | Important | **direct** pitot airspeed → the fin-authority cap (the estimate was the weakest signal). Degrades gracefully to the accel+GNSS estimate — the pre-pitot baseline flown in all HITL to date — if absent | ✔ (5) |
 | ADXL375 (±200 g) | Optional | >32 g high-g backstop; LSM6DSO32 ±32 g already covers the 8–12 g boost. Keep for telemetry / data-quality launches (run both, compare traces) | ✔ |
 | BMP280 baro | Optional | backup baro (rides on the sen0253 board with BNO055 anyway) | ✔ |
 | ATGM336H GNSS | Optional | aux position; loses lock under high-g, non-priority in fusion | ✔ |
 | Camera + SD | Optional | nice-to-have, isolated module | ✔ |
 
+> **SUPERSEDED:** the count below is from the first build. By 2026-08-06 there were **5+ BNO055 on
+> hand** and the blocker was gone (see the DECISION under the SEN0697 comparison), and v1.1
+> (TMS-7F) carries no BNO055 at all — the SEN0697 replaced it.
+>
 > **⚠ BNO055 is the one hard blocker.** We have **2 units**; that is enough for a single board (and
 > the maketboard wants two BNO055 anyway, since with one IMU attitude is a single point of failure).
 > **Order more BNO055 (sen0253) before fielding multiple units** — every flight unit needs one, and
@@ -160,8 +164,9 @@ The BMP280 rides on the sen0253 board with the BNO055 ("one board, two devices")
 and being a *different* part it also guards the common-mode case that two identical ICPs would share.
 
 `layout.detect()` keeps its tolerance for a second `0x63` anyway -- `0x63` counts as evidence only for
-v1.0, and for nothing on `i2c:0` where it would be true either way. That is now defensive rather than
-planned: if one is ever fitted, the detector loses no vote instead of silently cancelling one out.
+the v1.x pair (v1.0 and v1.1, from `i2c:1`), and for nothing on `i2c:0` where it would be true either
+way. That is now defensive rather than planned: if one is ever fitted, the detector loses no vote
+instead of silently cancelling one out.
 
 **CORRECTION (2026-09-15): FOUR SEN0697 ARE ON HAND. The Adafruit 4754 was never bought.**
 In the operator's words: *"I tried to order adafruit 4754 but ordered 4 sen0697."* A 2026-09-05 note
@@ -282,7 +287,7 @@ are silk-printed by their I²C names, so the mapping is *not* one-to-one:
 | **SDA** | SPI **MOSI** (SDI) | **47** | SPI1 MOSI |
 | **SDO** | SPI **MISO** | **46** | SPI1 MISO |
 | CS | chip-select (active low) | **49** | `adxl375_cs` |
-| INT1 | DATA_READY | **4** | `adxl375_int` |
+| INT1 | DATA_READY | **4** | `accel_int1` in `config_default` (shared with the BMI323's INT1 on v1.1); `adxl375_int` in the 7C/7D configs |
 
 To revert to I²C: tie CS high, wire SDA/SCL to GPIO7/8, and set the component `bus: 'i2c', id: 0`
 (the driver keeps the I²C path; `addr 0x53`). LSM6DSO32 now shares this same SPI1 bus on its own
@@ -380,12 +385,14 @@ The fix is a flight decision, not a code one — lower the thresholds to what th
 give the final-approach gate the elevation fallback the landing trigger already has, or accept that
 centreline tracking starts late.
 
-So a board fitted with the VL53L1X wants **`land_agl_m` lowered** in its launch config -- and the
-bench says 3.0 is probably still too generous, since the measured indoor ceiling is ~2.0 m and outdoor
-ambient is far higher than the ~26 seen here. Treat ~1.5 m as the working assumption until the outdoor
-test says otherwise. That
-is a real behaviour change and not just a smaller number: firing the flare ~2 m lower is ~0.7 s less
-at a 3 m/s sink, so it should be flown deliberately rather than inherited.
+**DECIDED for TMS-7F (2026-09-20): `land_agl_m` stays at 5.0 and `final_approach_agl` is 0 (off).**
+The recommendation that stood here -- lower `land_agl_m` toward ~1.5 m on an L1X board -- was
+rejected. The threshold gates BOTH sources, laser first and barometric elevation as the fallback, so
+lowering it to a laser-reachable 2 m would drop the BARO trigger to 2 m too, and the baro is what will
+actually fire: a reliable path traded for a lucky one. So the laser drives no control decision on
+7F; it records AGL for the last metre or two. Do not lower `land_agl_m` for an L1X. The reasoning and
+the revisit condition (a VL53L4CX measured over open ground in sunlight) are in
+[`launches/20261003/TMS-7F/README.md`](../launches/20261003/TMS-7F/README.md).
 
 **Measured on the bench, 2026-09-20** (taster board, i2c:1 at 100 kHz, the config block's own ~100 ms
 long-distance-mode timing):
@@ -779,9 +786,11 @@ bus family so the attitude backup does not share a failure domain with the BNO05
 
 ### What it does NOT fix
 
-`icp10111` and `airspeed_sdp810` still share a bus, so the ICP's general call still reaches the pitot —
-which today has no `rearm()` and is started once in `setup()`. The layout moves that exposure; it does
-not remove it. Tracked separately as a firmware fix, not a board one.
+`icp10111` and `airspeed_sdp810` still share a bus, so the ICP's general call still reaches the pitot.
+The pitot is not in the ICP's peer-rearm list (that is `baro_bmp280` and `power_ina226`), but it
+**recovers itself**: after 5 consecutive failed reads its run loop re-issues stop + start-continuous
+(`sdp810._restart()`), so a general call normally costs a short gap in airspeed, not the rest of the
+flight. The layout moves that exposure; it does not remove it.
 
 ## Running one firmware on both boards
 
@@ -1221,7 +1230,7 @@ mitigations are degradations, not equivalents.
 |---|---|---|---|---|
 | 1 | **LSM6DSO32 INT1 not connected** | `INT1_CTRL` 0x01 written and read back, accel + gyro both at 104 Hz, `STATUS` continuously data-ready — yet **GPIO28 stuck low, never toggles** | Route INT1 to its GPIO and verify the net | Driver detects the silent line after 3 timeouts and polls at 10 ms instead (`rate` 2.0 → 72 Hz). Costs the interrupt's timing precision and some CPU |
 | 2 | **BNO055 attitude frozen — cause UNDETERMINED** | Bit-identical Euler triple, `sys`/`mag` calibration stuck at 0. Originally called a faulty fusion core; **that verdict does not hold** (see below) | Re-test with VERIFIED motion before condemning any part. Self-test does **not** exercise fusion (`ST_RESULT` 0x0F on a part that was not updating) | Driver withholds a frozen attitude *while rotating* so the priority-1 gyro backup takes over |
-| 3 | **Split the I²C buses** — but isolate the **icp10111**, not the BNO055 | Five devices share `i2c:0`; a wedge, or the icp10111 latch-up recovery's general-call reset, takes them down together | **`i2c:0` = icp10111 alone; `i2c:1` = everything else.** Superseded the original "move the BNO055" plan — see *Which device to isolate* below | None possible in software — the buses are physical |
+| 3 | **Split the I²C buses** — but isolate the **icp10111**, not the BNO055 | Five devices share `i2c:0`; a wedge, or the icp10111 latch-up recovery's general-call reset, takes them down together | ~~`i2c:0` = icp10111 alone; `i2c:1` = everything else.~~ **Superseded by the v1.0 allocation** (ICP-10111 on `i2c:1` with the pitot and laser, BMP280 backup on `i2c:0`) — see *v1.0 allocation — DECIDED* | None possible in software — the buses are physical |
 | 4 | **BNO055 breakout has no 32.768 kHz crystal** | Selecting `CLK_SEL` external kills fusion outright (EUL all zeros) | Prefer a crystal-equipped module: Bosch specifies the external crystal for fusion modes | Driver leaves `CLK_SEL` internal |
 
 ### The BNO055 "faulty part" call — retracted
@@ -1272,6 +1281,11 @@ pitot plus the laser at once. Moving the BNO055 to `i2c:1` leaves `i2c:0` as the
 bus and gives the attitude chain no common failure point at all: primary on `i2c:1`, backup on SPI1.
 
 ### Which device to isolate — it is the icp10111, not the BNO055
+
+> **SUPERSEDED by the v1.0 allocation ("v1.0 allocation — DECIDED" above).** The ICP-10111 did not
+> end up alone on `i2c:0`: it sits on the front bus `i2c:1` with the pitot and laser, and the BMP280
+> backup stays on `i2c:0`. That split primary and backup altitude across buses, which is the property
+> argued for below, without the ICP-alone bus. Kept for the reasoning.
 
 The original v0.2 plan was "move the BNO055 to `i2c:1`". Walking the redundancy pairs shows that buys
 little, because **attitude is already isolated across bus families**:
