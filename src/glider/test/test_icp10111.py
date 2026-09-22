@@ -7,9 +7,11 @@ not an ICP-10111 is wired. Run by `make test`.
 """
 
 import asyncio
+import time
 
 import commons
 import config_default
+import databoard
 import task
 from drivers import icp10111
 
@@ -109,7 +111,50 @@ async def amain():
     assert len(recoveries) == 2, recoveries
     task_handle.cancel()
 
-    print('ok: icp10111 driver registered; graceful-absent; conversion ~%d Pa; frame CRC +/-; run-loop recovery' % pa)
+
+    """
+    `update {"rezero": true}` re-zeroes from the driver's OWN channel, fresh within 3 periods. It called
+    read() -- the Parameter's method, which a channel does not have -- so every re-zero raised
+    AttributeError and the documented pre-launch re-zero answered `err internal`.
+    """
+    unit = icp10111.Icp10111('baro', {}, _StubController())
+    unit._period_ms = 100
+    unit._altitude = databoard._Channel('baro', 0)  # born stale: never pushed
+    unit._ground = 7.0
+    for label in ('never pushed', 'silent for 4 periods'):
+        try:
+            unit.update({'rezero': True})
+            raise AssertionError('re-zero accepted from a channel that is %s' % label)
+        except ValueError as error:
+            assert 'no fresh altitude' in str(error), error
+        assert unit._ground == 7.0, 'a refused re-zero must leave the ground untouched'
+        unit._altitude.push(123.5)
+        assert unit.update({'rezero': True}) == ['ground'] and unit._ground == 123.5
+        unit._ground = 7.0
+        unit._altitude.t1 = time.ticks_add(time.ticks_us(), -400000)  # the part goes quiet
+
+    """
+    probe() vouches only for pressure produced DURING the probe. It checked value() is not None, which
+    holds forever after the first push, so a latched-up ICP (its documented habit) passed verify and arm.
+    """
+    unit._pressure = databoard._Channel('baro', 0)
+    unit._pressure.push(101300.0)                         # a reading from long ago...
+    unit._pressure.t1 = time.ticks_add(time.ticks_us(), -2000000)
+    unit._addr, unit._period_ms = 0x63, 20
+    assert 'no fresh pressure' in await unit.probe(), 'a stopped part must fail its probe'
+
+    async def producing():
+        while True:
+            unit._pressure.push(101300.0)
+            await asyncio.sleep_ms(20)
+
+    feeder = asyncio.create_task(producing())
+    verdict = await unit.probe()
+    feeder.cancel()
+    assert verdict is None, verdict
+
+    print('ok: icp10111 driver registered; graceful-absent; conversion ~%d Pa; frame CRC +/-; run-loop recovery; '
+          're-zero fresh-only; probe needs live data' % pa)
 
 
 asyncio.run(amain())

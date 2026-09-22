@@ -449,7 +449,37 @@ def validate(cfg) -> list:
     _validate_numeric(cfg.get('fins') or {}, 'fins', errs)
     _validate_devices(cfg.get('sensors'), 'sensors', errs, bus_refs, seen_names)
     _validate_devices(cfg.get('components'), 'components', errs, bus_refs, seen_names)
+    _validate_watchdog(cfg.get('components'), errs)
     return errs
+
+
+_WDT_FLOOR_MS: int = 4000  # below this the board boot-loops (3000 still did, 4000 was stable) -- config_default
+
+
+def _validate_watchdog(components, errs: list) -> None:
+    """
+    An ENABLED hardware watchdog must not time out below the measured boot floor.
+
+    At 1000 ms the board resets every ~8.5 s forever, and with servos enabled that loop re-centres
+    every fin at every boot -- how servo_eleron_right died. The value is a measured floor, not a taste,
+    so a config asking for less is refused here rather than flown.
+
+    Args:
+        components - the config's components list (anything else is left to _validate_devices).
+        errs - the error accumulator.
+
+    Returns:
+        None; appends an error for an enabled watchdog below _WDT_FLOOR_MS.
+    """
+    if not isinstance(components, list):
+        return
+    for device in components:
+        if not isinstance(device, dict) or device.get('activity') != 'watchdog':
+            continue
+        timeout = device.get('wdt_timeout_ms', _WDT_FLOOR_MS)
+        if device.get('enabled', True) and isinstance(timeout, int) and timeout < _WDT_FLOOR_MS:
+            errs.append('%s.wdt_timeout_ms %d is below the %d ms boot floor (the board boot-loops)' % (
+                device.get('name', 'watchdog'), timeout, _WDT_FLOOR_MS))
 
 
 """Config identity -- a stable short hash of a config snapshot (for the CC iam / config_id)."""

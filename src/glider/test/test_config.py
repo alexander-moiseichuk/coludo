@@ -268,8 +268,22 @@ def main():
     assert config.load(path, defaults=running)[1] == 'default'  # no file at all
     config.reset(path)
 
+    """
+    An ENABLED watchdog below the measured boot floor is refused: 1000 ms boot-loops the board every
+    ~8.5 s, and with servos enabled each boot re-centres every fin (how a servo died). The flight value
+    passes, and so does a disabled watchdog whatever it says -- it never arms.
+    """
+    floor_cfg = config_default.default()
+    watchdog = [device for device in floor_cfg['components'] if device.get('activity') == 'watchdog'][0]
+    watchdog['enabled'], watchdog['wdt_timeout_ms'] = True, 5000
+    assert not [e for e in config.validate(floor_cfg) if 'boot floor' in e]
+    watchdog['wdt_timeout_ms'] = 1000
+    assert [e for e in config.validate(floor_cfg) if 'boot floor' in e], config.validate(floor_cfg)
+    watchdog['enabled'] = False
+    assert not [e for e in config.validate(floor_cfg) if 'boot floor' in e]
+
     print('ok: config validate/config_id/save/load/reset + nested buses, sensors, bus()/device(), '
-          'schema version + outdated(), firmware_version restamp')
+          'schema version + outdated(), firmware_version restamp, watchdog boot floor')
 
 
 main()

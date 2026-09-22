@@ -357,15 +357,16 @@ class Icp10111(task.Task):
             self._ground = float(props['ground'])
             return ['ground']
         if props.get('rezero'):
-            altitude, altitude_source, _altitude_age = self._altitude.read()
+            altitude = self._altitude.recent(3 * self._period_ms * 1000)
             """
-            read(), NOT value(). A re-zero LATCHES a number permanently -- every later `elevation` is
-            reported against it -- so accepting an extrapolated altitude here biases the channel for the
-            rest of the flight, silently and without a second chance. value() extrapolates a stale
-            channel without bound, so the old `value() is not None` test passed happily on a dead baro.
-            Refuse instead of returning [], so the operator sees why (as sdp810's tare does).
+            recent(), NOT value(). A re-zero LATCHES a number permanently -- every later `elevation` is
+            reported against it -- so accepting a stale altitude here biases the channel for the rest of
+            the flight, silently and without a second chance: value() returns the last push forever.
+            (This called read(), which the channel does not have -- that is the Parameter's -- so every
+            re-zero raised AttributeError.) Refuse instead of returning [], so the operator sees why (as
+            sdp810's tare does).
             """
-            if altitude_source is None:
+            if altitude is None:
                 raise ValueError('no fresh altitude to re-zero from')
             self._ground = altitude
             return ['ground']
@@ -387,10 +388,13 @@ class Icp10111(task.Task):
         """
         try:
             recorder.Recorder.log(self.name, 'probe: data ...')
-            await asyncio.sleep_ms(300)  # let the run loop produce a fresh reading
-            pressure = self._pressure.value()
+            wait_ms = max(300, 3 * self._period_ms)
+            await asyncio.sleep_ms(wait_ms)  # let the run loop produce a fresh reading
+            # pushed DURING the wait, not ever: value() alone passed a latched-up part on its last reading
+            pressure = self._pressure.recent(wait_ms * 1000)
             if pressure is None:
-                raise ValueError('no pressure from run loop (i2c:%s 0x%02x)' % (self.config.get('id'), self._addr))
+                raise ValueError('no fresh pressure from run loop in %d ms (i2c:%s 0x%02x)' % (
+                    wait_ms, self.config.get('id'), self._addr))
             recorder.Recorder.log(self.name, 'probe: data ok %.0f Pa' % pressure)
         except Exception as error:
             message = 'data: %s' % error

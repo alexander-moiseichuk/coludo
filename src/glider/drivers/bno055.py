@@ -81,6 +81,7 @@ class Bno055(task.Task):
         self.calibration_state = None  # (sys, gyr, acc, mag) 0..3 each; None until first poll
         self._converged: bool = False  # LATCH: mag has reached 3 at some point (see _poll_calibration)
         self._restored: bool = False   # the latch came from NVS rather than a figure-8 this session
+        self._saved: bool = False      # the learned profile is in NVS (restored, or `calibrate` wrote it)
         self._calib_due: int = 1  # countdown to the next CALIB_STAT read (see _poll_calibration)
         try:
             if await self._bus.read_chip_id(self._addr, _REG_CHIP_ID) != _CHIP_ID:
@@ -212,12 +213,21 @@ class Bno055(task.Task):
         return self._converged
 
     def calibration(self) -> str:
-        """The figure-8 instruction while NDOF is unconverged, with the live reading folded in; '' once done."""
+        """
+        What is still owed: the figure-8 while NDOF is unconverged, then the SAVE; '' once both are done.
+
+        Converged is not done. The profile survives a power cycle only once `calibrate imu_bno055` has
+        written it to NVS, and this used to go quiet at convergence -- so the guided sweep reported
+        "nothing outstanding" with the profile unsaved, and the next power cycle, on the rail, came back
+        uncalibrated where nobody can figure-8.
+        """
+        if self._converged:  # the latch, not `mag` -- see calibrated() for why the live value regresses
+            if self._saved or _nvs is None:  # no NVS partition: nothing to save, the session is all there is
+                return ''
+            return 'converged -- run `calibrate imu_bno055` NOW to save the profile across power cycles'
         if self.calibration_state is None:
             return 'move the airframe in a slow figure-8 (BNO055 calibration not read yet)'
         sys_, gyr, acc, mag = self.calibration_state
-        if self._converged:
-            return ''  # the latch, not `mag` -- see calibrated() for why the live value regresses
         return ('move the airframe in a slow FIGURE-8 until mag reads 3 '
                 '(now sys %d gyr %d acc %d mag %d)' % (sys_, gyr, acc, mag))
 
@@ -256,6 +266,7 @@ class Bno055(task.Task):
             await self._bus.write(self._addr, _REG_CALIB_DATA, bytes(buffer))
             self._converged = True
             self._restored = True
+            self._saved = True
             # print(), not Recorder.log(): setup runs before the recorder task is up (same reason
             # as the sdp810 tare restore and this driver's own setup failures).
             print('bno055 :: calibration profile restored from NVS')
@@ -294,6 +305,7 @@ class Bno055(task.Task):
             _nvs.commit()
         except Exception as error:
             return 'profile persist failed: %s' % error
+        self._saved = True
         recorder.Recorder.log(self.name, 'calibration profile saved (%d bytes) -- survives power cycles'
                                          % len(profile))
         return None

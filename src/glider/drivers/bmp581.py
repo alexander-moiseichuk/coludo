@@ -156,10 +156,10 @@ class Bmp581(task.Task):
             self._ground = float(props['ground'])
             return ['ground']
         if props.get('rezero'):
-            altitude, altitude_source, _altitude_age = self._altitude.read()
-            # read(), NOT value(): a re-zero LATCHES a number that every later `elevation` is reported
-            # against, so an extrapolated altitude here biases the channel for the rest of the flight.
-            if altitude_source is None:
+            # recent(), NOT value(): a re-zero LATCHES a number that every later `elevation` is reported
+            # against, so a stale altitude here biases the channel for the rest of the flight
+            altitude = self._altitude.recent(3 * self._period_ms * 1000)
+            if altitude is None:
                 raise ValueError('no fresh altitude to re-zero from')
             self._ground = altitude
             return ['ground']

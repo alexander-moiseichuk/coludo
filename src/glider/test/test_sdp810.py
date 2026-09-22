@@ -11,9 +11,11 @@ source + the governor's in-band/saturation gate) is tested in test_airspeed / te
 
 import asyncio
 import struct
+import time
 
 import commons
 import config_default
+import databoard
 import fixed
 import task
 from drivers import sdp810
@@ -57,6 +59,8 @@ async def amain():
     assert sdp810._signed16(0x1f, 0xa4) == 8100 and sdp810._signed16(0xfd, 0xa8) == -600
     probe = sdp810.Sdp810('airspeed', {}, _StubController())
     probe._scale, probe._zero, probe._density = 60, 0, 1.225
+    persisted = []  # STUBBED: this unit must never write the board's real tare (the -1.25 Pa NVS trap)
+    probe._persist_zero = lambda: persisted.append(probe._zero)
     assert probe._pressure(8100) == 13500 and abs(fixed.to_float(probe._pressure(8100)) - 135.0) < 0.01
     assert probe._pressure(-600) == -1000  # -10 Pa; a negative (reverse/near-zero flow) reading is kept signed
 
@@ -93,9 +97,14 @@ async def amain():
     assert probe._zero == before                   # ...and the existing tare is untouched
 
     probe._pressure(200)  # +200 raw -> _raw = 333 fixnum -> becomes the tare source
+    assert persisted == [], 'a refused tare must not be persisted'
     assert probe.update({'zero': True}) == ['zero_offset_pa'] and probe._zero == 333  # 200*100//60
+    # the pad tare PERSISTS: it was RAM-only, so a reboot before launch brought back an older NVS tare
+    assert persisted == [333], persisted
     assert probe._pressure(200) == 0  # same reading, now tared to zero
     assert probe.update({'zero_offset_pa': 1.5}) == ['zero_offset_pa'] and probe._zero == fixed.from_float(1.5)
+    # ...a direct set does not: it is the warm start restoring its crumb, mid-air, and must not write flash
+    assert persisted == [333], persisted
     assert probe.update({'air_density': 1.2}) == ['air_density'] and probe._density == 1.2
 
     """
@@ -145,7 +154,29 @@ async def amain():
                     pass  # nothing stored and nothing to erase
             sdp810._nvs.commit()
 
+    """
+    probe() vouches only for a reading produced DURING the probe: value() is not None held forever after
+    the first frame, so a pitot that stopped after a harness glitch passed verify and arm.
+    """
+    live = sdp810.Sdp810('airspeed', {}, _StubController())
+    live._pressure_ch, live._airspeed_ch = databoard._Channel('airspeed', 0), databoard._Channel('airspeed', 0)
+    live._pressure_ch.push(0)
+    live._pressure_ch.t1 = time.ticks_add(time.ticks_us(), -2000000)  # the last frame, long ago
+    live._addr, live._period_ms = 0x25, 20
+    assert 'no fresh dp' in await live.probe(), 'a stopped pitot must fail its probe'
+
+    async def producing():
+        while True:
+            live._pressure_ch.push(0)
+            await asyncio.sleep_ms(20)
+
+    feeder = asyncio.create_task(producing())
+    verdict = await live.probe()
+    feeder.cancel()
+    assert verdict is None, verdict
+
     print('ok: sdp810 driver registered; graceful-absent; @viper crc + Pa-fixnum scaling + airspeed; '
+          'pad tare persists (a set does not); probe needs live data; '
           'tare persisted to NVS')
 
 

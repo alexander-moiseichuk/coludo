@@ -243,8 +243,7 @@ class Sdp810(task.Task):
         """Capture the current still-air reading as the zero offset -- the board can do this itself."""
         if self._raw is None:
             return 'no reading yet'
-        self.update({'zero': True})
-        self._persist_zero()
+        self.update({'zero': True})  # captures AND persists the tare
         recorder.Recorder.log(self.name, 'calibrated: zero_offset %.2f Pa' % fixed.to_float(self._zero))
         return None
 
@@ -339,6 +338,11 @@ class Sdp810(task.Task):
                 # has always answered 'no reading yet'; update() now says the same thing out loud.
                 raise ValueError('no reading yet -- wait for the first frame before taring')
             self._zero = self._raw
+            # PERSIST the operator's capture. It used to live in RAM only -- calibrate() persisted, this
+            # did not -- so a battery re-seat or a config save+reboot between the pad tare and launch
+            # silently brought back an older NVS tare, and calibration() then reported nothing owed.
+            # A direct zero_offset_pa set (the warm start restoring its crumb, mid-air) stays RAM-only.
+            self._persist_zero()
             changed.append('zero_offset_pa')
         if 'zero_offset_pa' in props:
             self._zero = fixed.from_float(float(props['zero_offset_pa']))
@@ -363,10 +367,13 @@ class Sdp810(task.Task):
         """
         try:
             recorder.Recorder.log(self.name, 'probe: data ...')
-            await asyncio.sleep_ms(300)  # let the run loop produce a fresh reading
-            pressure = self._pressure_ch.value()
+            wait_ms = max(300, 3 * self._period_ms)
+            await asyncio.sleep_ms(wait_ms)  # let the run loop produce a fresh reading
+            # pushed DURING the wait, not ever: value() alone passed a stopped part on its last reading
+            pressure = self._pressure_ch.recent(wait_ms * 1000)
             if pressure is None:
-                raise ValueError('no dp from run loop (i2c:%s 0x%02x)' % (self.config.get('id'), self._addr))
+                raise ValueError('no fresh dp from run loop in %d ms (i2c:%s 0x%02x)' % (
+                    wait_ms, self.config.get('id'), self._addr))
             recorder.Recorder.log(self.name, 'probe: data ok %s Pa (%.1f m/s)' % (
                 fixed.to_str(pressure), self._airspeed_ch.value() or 0.0))
         except Exception as error:

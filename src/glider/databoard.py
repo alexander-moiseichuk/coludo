@@ -120,6 +120,23 @@ class _Channel:
         """This channel's latest reading (None until first push). The handle a source reads back."""
         return self.v1
 
+    def recent(self, window_us: int):
+        """
+        This channel's latest reading if it was pushed within `window_us`, else None.
+
+        For a source reading back its OWN channel to LATCH or VOUCH for a number -- a baro re-zero, a
+        probe's "the run loop is producing". value() cannot answer that: it returns the last push
+        forever, so a sensor that stopped an hour ago still looks present. (The Parameter's read() is
+        no substitute either: it returns the WINNING source, which for a backup is somebody else.)
+
+        Args:
+            window_us - how recent the push must be, in microseconds.
+
+        Returns:
+            The latest value, or None when nothing was pushed within the window.
+        """
+        return self.v1 if self.fresh(time.ticks_us(), window_us) else None
+
 
 def _extrapolate(chan: _Channel, now: int):
     """

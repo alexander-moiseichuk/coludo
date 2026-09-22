@@ -263,7 +263,10 @@ class Attitude(task.Task):
             if dt_ms > _MAX_DT_MS or dt_ms < 0:  # a long asyncio gap (I2C contention) -> nominal, not a huge
                 dt_ms = self._period_ms  # single gyro-integration jump the yaw would then hold permanently
             value, source, _age = self._attitude_param.read()
-            if value is not None and source != self.name:
+            # source None = nothing fresh: read() then hands back an EXTRAPOLATED old value. Mirroring
+            # that snapped a dead primary's last attitude back in after every >40 ms gap (a GC pause is
+            # enough) and dropped the gyro integration it replaced -- free-run instead.
+            if value is not None and source is not None and source != self.name:
                 self._mirror(value)  # a higher-priority source is winning -> mirror it (stay warm/fresh)
                 self._free = False
             elif self._seeded or self._accel.read()[1] is not None:

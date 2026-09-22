@@ -7,9 +7,11 @@ whether or not a BMP581 is wired (it is fitted only on v1.1 boards). Run by `mak
 """
 
 import asyncio
+import time
 
 import commons
 import config_default
+import databoard
 import task
 from drivers import bmp581
 
@@ -68,7 +70,29 @@ async def amain():
     # a dead read (zero pressure) must not produce an altitude: the shared helper refuses it
     assert commons.altitude_m(0.0) == 0.0, 'zero pressure is a dead read, not sea level'
 
-    print('ok: bmp581 registered; graceful-absent; %.0f Pa / %.1f C, sub-zero %.1f C' % (
+
+    """
+    `update {"rezero": true}` re-zeroes from the driver's OWN channel, fresh within 3 periods. It called
+    read() -- the Parameter's method, which a channel does not have -- so every re-zero raised
+    AttributeError and the documented pre-launch re-zero answered `err internal`.
+    """
+    unit = bmp581.Bmp581('baro', {}, _StubController())
+    unit._period_ms = 100
+    unit._altitude = databoard._Channel('baro', 0)  # born stale: never pushed
+    unit._ground = 7.0
+    for label in ('never pushed', 'silent for 4 periods'):
+        try:
+            unit.update({'rezero': True})
+            raise AssertionError('re-zero accepted from a channel that is %s' % label)
+        except ValueError as error:
+            assert 'no fresh altitude' in str(error), error
+        assert unit._ground == 7.0, 'a refused re-zero must leave the ground untouched'
+        unit._altitude.push(123.5)
+        assert unit.update({'rezero': True}) == ['ground'] and unit._ground == 123.5
+        unit._ground = 7.0
+        unit._altitude.t1 = time.ticks_add(time.ticks_us(), -400000)  # the part goes quiet
+
+    print('ok: bmp581 registered; graceful-absent; re-zero fresh-only; %.0f Pa / %.1f C, sub-zero %.1f C' % (
         pressure, temp_c, cold_c))
 
 

@@ -186,15 +186,16 @@ class Bmp280(task.Task):
             self._ground = float(props['ground'])
             return ['ground']
         if props.get('rezero'):
-            altitude, altitude_source, _altitude_age = self._altitude.read()
+            altitude = self._altitude.recent(3 * self._period_ms * 1000)
             """
-            read(), NOT value(). A re-zero LATCHES a number permanently -- every later `elevation` is
-            reported against it -- so accepting an extrapolated altitude here biases the channel for the
-            rest of the flight, silently and without a second chance. value() extrapolates a stale
-            channel without bound, so the old `value() is not None` test passed happily on a dead baro.
-            Refuse instead of returning [], so the operator sees why (as sdp810's tare does).
+            recent(), NOT value(). A re-zero LATCHES a number permanently -- every later `elevation` is
+            reported against it -- so accepting a stale altitude here biases the channel for the rest of
+            the flight, silently and without a second chance: value() returns the last push forever.
+            (This called read(), which the channel does not have -- that is the Parameter's -- so every
+            re-zero raised AttributeError.) Refuse instead of returning [], so the operator sees why (as
+            sdp810's tare does).
             """
-            if altitude_source is None:
+            if altitude is None:
                 raise ValueError('no fresh altitude to re-zero from')
             self._ground = altitude
             return ['ground']
