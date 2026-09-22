@@ -791,21 +791,25 @@ subscriber would stall the publisher inline. Instead the mechanism is chosen per
 
 * **Everything else goes through one Recorder.** For simplicity there is a single non-hot path.
   Every task reports logs and telemetry **directly to the Recorder** (`Recorder.log()`,
-  `Recorder.tlm()` — a global singleton), and each record is stamped with `time.time_ns()//1000`
-  (microseconds, monotonic, no wrap). The Recorder enqueues complete UART-ready text lines into
-  two PSRAM ring buffers by priority:
+  `Recorder.tlm()` — a global singleton), and each record is stamped with `time.ticks_us()`
+  (`Recorder.timestamp()`): microseconds of uptime that **wrap every 2^30 µs ≈ 17.9 min**. A long pad
+  dwell puts a wrap inside a flight, so a parser must unwrap the stamps — `tools/flight_telemetry.py`
+  (`_unwrap`) does; ad-hoc tooling that reads them raw misreads the flight. The Recorder enqueues
+  complete UART-ready text lines into two PSRAM ring buffers by priority:
   * **Telemetry — 1st priority queue.**
   * **Logs — 2nd priority queue.**
   An async drain loop empties these to the Recorder module (Luckfox) over UART, telemetry before
-  logs. The UART push happens **first** (it is the authoritative flight-data sink); any other
-  subscribers — notably the Control Center live view — receive the same records **only after**
-  they have been pushed to UART. This guarantees recorder durability first and treats CC as a
-  best-effort secondary consumer. Records are written into the rings with `struct.pack_into`
+  logs. The UART ring is written **first** (it is the authoritative flight-data sink); the Control
+  Center live view gets a copy teed into its own small ring right after, and only while a
+  `log`/`tlm` window is open. The tee never gates the primary write, so CC stays a best-effort
+  secondary consumer. Records are written into the rings with `struct.pack_into`
   rather than slice-assignment, which is O(buffer length) on this port (see the
   [benchmark findings](../doc/benches/WaveShare_esp32p4-micropython-findings.md)). Telemetry streams are
   created via a `Telemetry(file, fields)` helper that emits a CSV header first and then
-  timestamped rows; all streams in a boot share one session prefix (`YYYYMMDD_HHMMSS`, produced
-  from the RTC the first time telemetry is emitted) so each flight's files are distinct.
+  timestamped rows; all streams in a boot share one session prefix — `YYYYMMDD_HHMMSS_<6-digit
+  random>` from the RTC the first time it is needed, or `recorder.session` verbatim when CC assigns
+  one ([`board-config.md`](board-config.md)) — so each flight's files are distinct. The random tag is
+  what separates boots: the board has no battery-backed RTC, so unsynced boots share a date.
 
 This collapses what would otherwise be a separate event-bus plus ring buffers into the Recorder:
 discrete events are just log records, and the priority queues are the decoupling buffers
@@ -813,24 +817,25 @@ between fast producers and the slow UART/CC drains.
 
 ## Logging
 
-Log strings append system uptime values in milliseconds alongside a standard descriptor layout:
+Each log line is `<ticks_us> <descriptor> :: <message>` — the uptime in **microseconds**, wrapping
+as above:
 
-111 Controller :: setup started
- 2222 Controller :: boosting detected
- 5555 Controller :: landing completed
+```
+4940864 controller :: setup started
+```
 
  The centralized logging manager multiplexes data across these potential sinks depending on system state:
 - Hardwired UART serial interface (console).
-- Raw network sockets to the Control Center over TCP (active only when the Wi-Fi connection is maintained, i.e. prestart).
+- The Control Center, which polls a tee of the log over the CC link while a `log` window is open (the link can outlive ignition — [`cc-protocol.md`](cc-protocol.md)).
 - The Recorder module over the dedicated `uart_recorder` link, which persists logs to its own SD card (the controller has no local SD). See [recorder module](../src/camera).
 
 ## Telemetry
 
-Telemetry mirrors the logging architecture but outputs structured, semicolon-separated CSV profiles streamed to the Recorder, which the Luckfox demuxes into one file per stream (`<session>_<file>.csv`). For example the board-vitals stream `board_health.csv` — real rows from an on-board flight (`uptime` µs; `temp` °C; `mem_free` bytes, showing the GC-off sawtooth; `load` %, peaking at the landing work):
-uptime;temp;mem_free;load
-4940864;32;32612240;0
-11591868;31;31532800;47
-14650552;31;32537888;6
+Telemetry mirrors the logging architecture but outputs structured, semicolon-separated CSV profiles streamed to the Recorder, which the Luckfox demuxes into one file per stream (`<session>_<file>.csv`). Every stream's first column is `uptime` (the wrapping `ticks_us` above). For example the board-vitals stream is `health.csv` (`tasks/board_health.py`), eight fields after the uptime:
+```
+uptime;temp;mem_free;load;oom_s;land_s;leak_kbps;rescues;rescue_ms
+```
+The generated [`doc/telemetry.md`](../telemetry.md) lists every stream and its fields; trust it over any example here.
 
 Post-flight parsing arrays can extract these files to compile automated 3D spatial flight path models in standard GPX formatting.
 
