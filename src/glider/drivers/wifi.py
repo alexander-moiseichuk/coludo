@@ -15,7 +15,7 @@ Wi-Fi just logs once and flies standalone -- no Wi-Fi means no CC, nothing more.
 import asyncio
 import time
 
-import controller as controller_mod
+import controller as controller_module
 import recorder
 import task
 from commons import const  # micropython.const on the board, identity on CPython
@@ -195,7 +195,7 @@ class Wifi(task.Task):
                 await asyncio.sleep_ms(60000)  # keep the supervised loop alive, radio untouched
         while True:
             stage = self.controller.stage
-            if controller_mod.Stage.BOOSTING <= stage < controller_mod.Stage.DONE:
+            if controller_module.Stage.BOOSTING <= stage < controller_module.Stage.DONE:
                 await asyncio.sleep_ms(5000)  # airborne: stop initiating connections, just idle
                 continue
             if self._networks and await self._ensure_radio() and not self.isconnected():

@@ -16,13 +16,13 @@ import asyncio
 import time
 
 import commons
-import controller as controller_mod
+import controller as controller_module
 import databoard
 import inspector
 import recorder
 import task
 
-_STAGE = controller_mod.Stage
+_STAGE = controller_module.Stage
 
 
 @task.activity('field')

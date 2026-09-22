@@ -25,7 +25,7 @@ INSTANCE SLOTS rather than a returned tuple -- decomposed WITHOUT adding a per-s
 import math
 
 import commons
-import controller as controller_mod
+import controller as controller_module
 import fixed
 import navigation
 from fixed import fixnum
@@ -35,7 +35,7 @@ try:
 except ImportError:  # CPython (tooling / off-board checks)
     from commons import const
 
-_STAGE = controller_mod.Stage
+_STAGE = controller_module.Stage
 _G: float = 9.81  # gravity (m/s^2) -> the coordinated-turn radius R = v^2 / (g * tan(bank))
 # 'oo' endgame lobe: which side of the centre the current lobe sits, as a SIGN used arithmetically
 # (lobe centre = leg_dir * r along the long axis); the two flip by negation at each centre crossing.

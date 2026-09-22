@@ -21,7 +21,7 @@ import asyncio
 import math
 import time
 
-import controller as controller_mod
+import controller as controller_module
 import databoard
 import fixed
 import governor
@@ -39,7 +39,7 @@ try:
 except ImportError:  # host (CPython): board-only; the timer-scheduled path runs only on the board
     Timer = None
 
-_STAGE = controller_mod.Stage
+_STAGE = controller_module.Stage
 
 
 def _round_or_none(value):

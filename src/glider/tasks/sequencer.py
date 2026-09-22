@@ -22,13 +22,13 @@ import math
 import time
 
 import commons
-import controller as controller_mod
+import controller as controller_module
 import databoard
 import inspector
 import recorder
 import task
 
-_STAGE = controller_mod.Stage
+_STAGE = controller_module.Stage
 _GNSS_SOURCE: str = 'gnss'  # the device name the GNSS publishes `elevation` under -- never a launch trigger
 
 

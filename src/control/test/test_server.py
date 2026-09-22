@@ -298,8 +298,8 @@ async def _web():
 async def _gps_assist():
     """A host GPS with a usable 3D fix: `gps` reports it and `assist <board>` pushes the position to
     the board mission (set-config launch: merge + persist)."""
-    import gps as gps_mod
-    host_gps = gps_mod.Gps(log=lambda message: None)
+    import gps as gps_module
+    host_gps = gps_module.Gps(log=lambda message: None)
     host_gps.feed(_nmea('GPGSA,A,3,01,02,03,04,05,06,,,,,,,2.0,1.0,1.5'))  # 3D fix
     host_gps.feed(_nmea('GPGGA,123519,4807.038,N,01131.000,E,1,06,0.9,545.4,M,46.9,M,,'))  # 6 sats
     assert host_gps.position() is not None

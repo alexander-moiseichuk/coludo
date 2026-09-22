@@ -31,7 +31,7 @@ import random
 import time
 
 import commons
-import controller as controller_mod
+import controller as controller_module
 import databoard
 import inspector
 import recorder
@@ -39,7 +39,7 @@ import sim_model
 import task
 from fixed import SCALE, from_float  # sim->control boundary: centidegree/Pa fixnums
 
-_STAGE = controller_mod.Stage
+_STAGE = controller_module.Stage
 _HPRC = sim_model.HPRC      # default scenario (HPRC launch site + landing zone)
 _MOTORS = sim_model.MOTORS  # thrust/burn per motor
 Body = sim_model.Body       # the pure flight-dynamics model

@@ -11,7 +11,7 @@ fails setup is logged and skipped, and go/no-go stays with the operator via stat
 
 import asyncio
 
-import config as config_mod
+import config as config_module
 import inspector
 import task
 
@@ -305,7 +305,7 @@ class Controller(inspector.Inspectable):
         modules = {'i2c': 'i2cbus', 'spi': 'spibus'}
         if kind not in modules:
             return {'error': "bus kind '%s' is not tunable (i2c/spi only)" % kind}
-        spec = config_mod.bus(self.config, kind, ident)
+        spec = config_module.bus(self.config, kind, ident)
         if spec is None:
             return {'error': 'bus %s:%s not defined' % (kind, ident)}
         bus = __import__(modules[kind]).get(int(ident), spec)

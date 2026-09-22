@@ -19,7 +19,7 @@ import asyncio
 import gc
 import time
 
-import controller as controller_mod
+import controller as controller_module
 import databoard
 import fixed
 import recorder
@@ -218,7 +218,7 @@ class BoardHealth(task.Task):
         if fixed.from_float(elevation) <= floor:  # elevation (m) -> fixnum at the boundary, then compare
             return
         stage = self.controller.stage
-        if not (controller_mod.Stage.BOOSTING <= stage < controller_mod.Stage.LANDING):
+        if not (controller_module.Stage.BOOSTING <= stage < controller_module.Stage.LANDING):
             return
         oom = self.oom_s()
         if oom is None:

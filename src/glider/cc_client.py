@@ -15,8 +15,8 @@ import json
 import time
 
 import cc_protocol as cc
-import config as config_mod
-import controller as controller_mod
+import config as config_module
+import controller as controller_module
 import databoard
 import inspector
 import layout
@@ -250,10 +250,10 @@ def _stage_problem(controller) -> str:
     stage = getattr(controller, 'stage', None)
     if stage is None:
         return ''  # a controller that reports no stage cannot be judged -- do not invent a problem
-    name = controller_mod.Stage.STAGES.get(stage, str(stage))
+    name = controller_module.Stage.STAGES.get(stage, str(stage))
     if getattr(controller, 'manual', False):
         return 'stage held at %s by an operator command -- `stage setting` to return to the ground' % name
-    if stage != controller_mod.Stage.SETTING:
+    if stage != controller_module.Stage.SETTING:
         return 'stage is %s, not setting -- `stage setting`, then power-cycle before flight' % name
     return ''
 
@@ -264,7 +264,7 @@ def _register_identity(dispatcher, ctx) -> None:
         info = {
             'mcu': ctx.cfg['board'].get('mcu'),
             'firmware_version': ctx.cfg['board'].get('firmware_version', 'dev'),
-            'config_id': config_mod.config_id(ctx.cfg),
+            'config_id': config_module.config_id(ctx.cfg),
             'stage': ctx.stage(),
             'uptime': time.ticks_ms(),
         }
@@ -511,7 +511,7 @@ def _register_config(dispatcher, ctx) -> None:
         if name in ('board', 'running'):
             return cc.build('ok', [json.dumps(ctx.cfg)])
         if name == 'default':
-            return cc.build('ok', [json.dumps(config_mod._builtin_default())])
+            return cc.build('ok', [json.dumps(config_module._builtin_default())])
         if name == 'launch':
             mission = inspector.Inspector.get('mission')
             if mission is None:
@@ -543,7 +543,7 @@ def _register_config(dispatcher, ctx) -> None:
             return cc.build('err', ['badargs', 'bad json'])
         if name == 'board':
             try:
-                config_id = config_mod.save(payload, ctx.config_path)
+                config_id = config_module.save(payload, ctx.config_path)
             except ValueError as error:
                 return cc.build('err', ['invalid', str(error)])
             return cc.build('ok', [json.dumps({'config_id': config_id})])
@@ -557,7 +557,7 @@ def _register_config(dispatcher, ctx) -> None:
         return cc.build('err', ['badargs', 'unknown config %s' % name])
 
     async def reset_config(_unused_msg) -> str:
-        config_mod.reset(ctx.config_path)
+        config_module.reset(ctx.config_path)
         return cc.build('ok')
 
     dispatcher.on('get-config', get_config)

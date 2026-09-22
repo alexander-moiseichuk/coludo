@@ -22,7 +22,7 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src', 'glider'))
 
 import cc_client
-import config as config_mod
+import config as config_module
 import config_default
 import config_hitl
 
@@ -69,7 +69,7 @@ def main() -> int:
     args = parser.parse_args()
 
     cfg = flight_ready()
-    errors = config_mod.validate(cfg)
+    errors = config_module.validate(cfg)
     readiness = cc_client._readiness(cfg)  # the board half of the gate (zone comes from launch.config)
     if errors or readiness:
         print('launch_config: generated config is NOT ready: validate=%s readiness=%s'

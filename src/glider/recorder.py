@@ -28,7 +28,7 @@ import random
 import struct
 import time
 
-import config as config_mod
+import config as config_module
 import inspector
 
 try:
@@ -260,9 +260,9 @@ class Recorder:
         cls._last_stats_ms = time.ticks_ms()
         cls.telemetry_decimate_us = recorder.get('telemetry_ms', _DEFAULT_TELEMETRY_MS) * 1000  # global rate knob
         if uart is None:
-            entry = config_mod.device(config, driver='recorder') or {'bus': 'uart', 'id': 1}
+            entry = config_module.device(config, driver='recorder') or {'bus': 'uart', 'id': 1}
             kind, bus_id = entry.get('bus', 'uart'), entry.get('id', 1)
-            spec = config_mod.bus(config, kind, bus_id) or {'tx': 20, 'baud': 921600}
+            spec = config_module.bus(config, kind, bus_id) or {'tx': 20, 'baud': 921600}
             """
             RX is passed ONLY when the config declares one. The recorder link is write-only -- the
             board streams telemetry to the Luckfox and never reads it back -- and on the v0.1 PCB
