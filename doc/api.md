@@ -3115,7 +3115,7 @@ One connected board: lockstep request/response over its socket.
 - `peer() -> str` _(property)_
 - `exchange(line: str, timeout: float=EXCHANGE_TIMEOUT_S, quiet: bool=False) -> cc._Msg` — Send a ready board-facing line and return its parsed reply.
 - `properties() -> dict` — The Control-side snapshot of this board: identity + the cached config/inspect/stats/health.
-- `command(command: str, *args, timeout=EXCHANGE_TIMEOUT_S, quiet=False) -> cc._Msg` — Build `command args...` and exchange it.
+- `command(command: str, *args, timeout=None, quiet=False) -> cc._Msg` — Build `command args...` and exchange it.
 - `identify() -> str`
 - `inspect(name: str) -> dict`
 - `close() -> None`
@@ -3142,9 +3142,10 @@ itest_gps.py against a real receiver. CPython 3.12, stdlib asyncio only -- no py
 The latest GNSS fix, accumulated from GGA (position/altitude/satellites) and GSA (2D/3D).
 
 - `__init__()` — constructor
+- `age()` _(property)_ — Seconds since the last accepted GGA, None before the first.
 - `fix_3d() -> bool` _(property)_
 - `has_position() -> bool` _(property)_
-- `usable() -> bool` _(property)_ — The ideal launch condition: a 3D fix with enough satellites and an actual position.
+- `usable() -> bool` _(property)_ — The ideal launch condition: a FRESH 3D fix with enough satellites and an actual position.
 
 ### `class Gps`
 

@@ -35,7 +35,10 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | `power_ina226.csv` | host sim | `virtual_flight.py` | `voltage_mv`, `current_ma`, `power_mw`, `alerts` |
 | `separation.csv` | board | `separation.py` | `event`, `stage` |
 | _per-device_ (`<name>.csv`) | board | `adxl375.py` | `ax`, `ay`, `az`, `irq_runs` |
+| _per-device_ (`<name>.csv`) | board | `bmi323.py` | `ax`, `ay`, `az`, `gx`, `gy`, `gz`, `irq_runs` |
+| _per-device_ (`<name>.csv`) | board | `bmm350.py` | `mx`, `my`, `mz` |
 | _per-device_ (`<name>.csv`) | board | `bmp280.py` | `altitude`, `temperature`, `pressure`, `elevation` |
+| _per-device_ (`<name>.csv`) | board | `bmp581.py` | `altitude`, `temperature`, `pressure`, `elevation` |
 | _per-device_ (`<name>.csv`) | board | `bno055.py` | `heading`, `roll`, `pitch`, `ax`, `ay`, `az` |
 | _per-device_ (`<name>.csv`) | board | `gnss.py` | `lat`, `lon`, `speed_kn`, `course` |
 | _per-device_ (`<name>.csv`) | board | `gnss.py` | `altitude_m`, `elevation_m`, `quality`, `satellites`, `hdop_cd` |
@@ -46,6 +49,7 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | _per-device_ (`<name>.csv`) | board | `sequencer.py` | `stage`, `reason` |
 | _per-device_ (`<name>.csv`) | board | `sg90.py` | `angle`, `pulse_us`, `done` |
 | _per-device_ (`<name>.csv`) | board | `task.py` | `event` |
+| _per-device_ (`<name>.csv`) | board | `vl53l1x.py` | `agl`, `irq_runs` |
 | _per-device_ (`<name>.csv`) | board | `vl53l4cx.py` | `agl`, `irq_runs` |
 
 ## Shapes that differ between the sim and the board

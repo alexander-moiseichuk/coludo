@@ -47,6 +47,7 @@ The board being ordered. Derived by applying the v1.0 revision to the firmware d
 | `baro_bmp280` | i2c:0 @ 0x76 | - |
 | `airspeed_sdp810` | i2c:1 @ 0x25 | - |
 | `laser_agl` | i2c:1 @ 0x29 | - |
+| `laser_agl_l1x` | i2c:1 @ 0x29 | - |
 | `power_ina226` | i2c:0 @ 0x40 | alert_pin=ina226_alert (GPIO29) |
 | `gnss` | uart:2 | - |
 | `recorder` | uart:1 | - |
@@ -87,7 +88,7 @@ This breakout carries a **second, AUXILIARY** interface (the sensor-hub / OIS po
 
 > ⚠️ **v0.1 got this wrong on both built boards**, taking the clock from `SCX` and the data-out from the top-row `DO` — both auxiliary. MOSI, CS, INT1, VIN and GND were correct, which is why two jumpers repaired TMS-7C and TMS-7D.
 
-**Not fitted on this revision:** `accel_adxl375` -- physically absent, disabled in config, claiming no pins.
+**Not fitted on this revision:** `accel_adxl375`, `baro_bmp581`, `imu_bmi323`, `mag_bmm350` -- physically absent, disabled in config, claiming no pins.
 
 ## Reserved (never assign)
 
@@ -104,6 +105,7 @@ What to change on a v0.1 board. Derived by diffing the two configs, so it always
 | `baro_icp10111` | i2c:0 | **i2c:1** |
 | `airspeed_sdp810` | i2c:0 | **i2c:1** |
 | `laser_agl` | i2c:0 | **i2c:1** |
+| `laser_agl_l1x` | i2c:0 | **i2c:1** |
 | `power_ina226` | i2c:1 | **i2c:0** |
 
 ## Bus rates
@@ -116,9 +118,9 @@ What to change on a v0.1 board. Derived by diffing the two configs, so it always
 
 | GPIO | was |
 |---|---|
-| 3 | laser_agl.int_pin |
+| 3 | laser_agl.int_pin, laser_agl_l1x.int_pin |
 | 4 | accel_adxl375.int_pin |
-| 5 | laser_agl.xshut_pin |
+| 5 | laser_agl.xshut_pin, laser_agl_l1x.xshut_pin |
 | 49 | accel_adxl375.cs_pin |
 
 **Not fitted on v1.0:** `accel_adxl375`.
@@ -143,9 +145,9 @@ TMS-7C, TMS-7D and the breadboard until the transition above is done. A config w
 
 | GPIO | Claimed by |
 |---|---|
-| 3 | laser_agl.int_pin |
+| 3 | laser_agl.int_pin, laser_agl_l1x.int_pin |
 | 4 | accel_adxl375.int_pin |
-| 5 | laser_agl.xshut_pin |
+| 5 | laser_agl.xshut_pin, laser_agl_l1x.xshut_pin |
 | 7 | i2c:0 sda |
 | 8 | i2c:0 scl |
 | 20 | uart:1 tx |
@@ -169,7 +171,7 @@ TMS-7C, TMS-7D and the breadboard until the transition above is done. A config w
 
 | Device | Bus | Pin fields |
 |---|---|---|
-| `accel_adxl375` | spi:1 @ 0x53 | cs_pin=adxl375_cs (GPIO49), int_pin=adxl375_int (GPIO4) |
+| `accel_adxl375` | spi:1 @ 0x53 | cs_pin=adxl375_cs (GPIO49), int_pin=accel_int1 (GPIO4) |
 | `imu_lsm6dso32` | spi:1 @ 0x6A | cs_pin=lsm6dso32_cs (GPIO50), int_pin=lsm6dso32_int1 (GPIO28) |
 | `imu_bno055` | i2c:0 @ 0x28 | - |
 | `attitude` | - | - |
@@ -177,6 +179,7 @@ TMS-7C, TMS-7D and the breadboard until the transition above is done. A config w
 | `baro_bmp280` | i2c:0 @ 0x76 | - |
 | `airspeed_sdp810` | i2c:0 @ 0x25 | - |
 | `laser_agl` | i2c:0 @ 0x29 | int_pin=laser_int (GPIO3), xshut_pin=laser_xshut (GPIO5) |
+| `laser_agl_l1x` | i2c:0 @ 0x29 | int_pin=laser_int (GPIO3), xshut_pin=laser_xshut (GPIO5) |
 | `power_ina226` | i2c:1 @ 0x40 | alert_pin=ina226_alert (GPIO29) |
 | `gnss` | uart:2 | - |
 | `recorder` | uart:1 | - |
@@ -230,6 +233,8 @@ This breakout carries a **second, AUXILIARY** interface (the sensor-hub / OIS po
 | I1 *(bottom 8)* | INT1 data-ready | **28** |
 
 > ⚠️ **v0.1 got this wrong on both built boards**, taking the clock from `SCX` and the data-out from the top-row `DO` — both auxiliary. MOSI, CS, INT1, VIN and GND were correct, which is why two jumpers repaired TMS-7C and TMS-7D.
+
+**Not fitted on this revision:** `baro_bmp581`, `imu_bmi323`, `mag_bmm350` -- physically absent, disabled in config, claiming no pins.
 
 ## Reserved (never assign)
 
