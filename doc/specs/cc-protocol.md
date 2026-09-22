@@ -4,8 +4,11 @@ This document specifies the wire protocol between the **Control Center (CC)** an
 **Main Controller** boards, and how the browser UI is bridged onto it. It is authoritative
 for connection direction, framing, and the command set. It complements
 [`board-config.md`](board-config.md) (which owns the config schema and activation lifecycle)
-and is only relevant in **prestart mode** — from ignition onward the board is autonomous and
-no CC link is expected.
+and is mostly about **prestart mode**. From ignition onward the board flies autonomously, but the
+link is **not** dropped: whatever connection was made on the pad stays up while radio range lasts.
+Reads keep working in flight. The **active** commands (probe, verify's probe sweep, arm, calibrate
+`<device>`, detect, bustune, set-config, reset-config, reboot, and the push-* uploads) answer
+`err unsafe` outside SETTING/DONE.
 
 ## Topology & roles
 
@@ -92,9 +95,11 @@ traffic to it by id. `config_id` is a hash/version of the running `board.config`
 whether its cached view of the board's config is current. If a board reconnects with an id already registered, CC
 drops the older socket and keeps the newest (a board only re-dials after a reboot or link loss).
 
-At **ignition** the Wi-Fi link drops; the TCP connection breaks and CC marks the board
-**offline**. This is expected — the board is now autonomous. The board may keep retrying to
-connect; CC simply shows it offline until/unless it returns.
+At **ignition** the board does **not** drop the link. It stops *initiating* new connections
+while airborne, but a connection made on the pad stays up until radio range ends it, and then CC
+marks the board **offline**. While it lasts, the hub keeps heartbeating and fans `all` out to the
+board like any other. That is why the board refuses active commands in flight (`err unsafe`),
+while `stage`, `disarm` and every read stay open, since those are the operator's recovery.
 
 ## Heartbeat / liveness
 

@@ -511,6 +511,9 @@ def _builtin_default() -> dict:
     return config_default.default()
 
 
+BOOT_SOURCE: str = ''  # how THIS boot's config was chosen -- load()'s `source`, set once by main.py
+
+
 def load(path: str = 'board.config', defaults=None) -> tuple:
     """
     Layered load: the active board.config if present and valid, else the defaults.

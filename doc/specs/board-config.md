@@ -245,7 +245,9 @@ RTC's, never persisted.
 ## Lifecycle and activation
 
 All configuration changes happen in **prestart mode only**. There are **no config changes
-during flight** — from ignition onward the board is autonomous and the config is frozen.
+during flight**: from ignition onward the board is autonomous and the config is frozen. The link
+itself can outlive ignition (see cc-protocol.md), so this is enforced on the board. `set-config`,
+`reset-config`, `reboot` and the uploads answer `err unsafe` outside SETTING/DONE.
 
 **Save and reboot are two separate operator actions:**
 

@@ -939,7 +939,7 @@ High-capacity storage does **not** live on the controller. The Recorder module (
 
 ## Wi-Fi
 
-The integrated 2.4GHz Wi-Fi subsystem is optimized for extended range. During ground staging the board joins the **Control Center's** network as a **station** (SSID, credentials, CC host/port and tunable TX power come from the `wifi` section of `board.config`; Bluetooth is disabled to improve the link). Once a network socket connection to the Control Center is established, the flight controller unlocks remote parameter tuning, health monitoring, and live telemetry streaming. The link exists only in prestart; it is expected to be lost from ignition onward. See [`board-config.md`](board-config.md).
+The integrated 2.4GHz Wi-Fi subsystem is optimized for extended range. During ground staging the board joins the **Control Center's** network as a **station** (SSID, credentials, CC host/port and tunable TX power come from the `wifi` section of `board.config`; Bluetooth is disabled to improve the link). Once a network socket connection to the Control Center is established, the flight controller unlocks remote parameter tuning, health monitoring, and live telemetry streaming. The board stops initiating connections once airborne, but a pad connection stays up while range lasts, so the board itself refuses active commands (fin-sweeping probes, calibrate, config writes, reboot) outside SETTING/DONE. See [`cc-protocol.md`](cc-protocol.md) and [`board-config.md`](board-config.md).
 
 ## Camera
 

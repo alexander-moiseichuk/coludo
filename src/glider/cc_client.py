@@ -258,6 +258,45 @@ def _stage_problem(controller) -> str:
     return ''
 
 
+_GROUND: tuple = ('setting', 'done')  # the stages where nothing is flying
+
+
+def _in_flight(ctx) -> str:
+    """
+    Why an ACTIVE command must not run now, or '' when the board is on the ground.
+
+    The CC link stays up through the whole flight -- the board never drops it, and the hub keeps
+    heartbeating and fans `all` out to every online board -- so every command is reachable airborne.
+    Most are reads. These are not: a probe sweeps each fin to its limits, a baro calibrate re-zeroes
+    elevation (the sequencer then sees the ground), detect re-scans the live buses, a config write
+    competes with the recorder for flash, and a reboot is a warm-start gamble. On a five-airframe day an
+    `all verify` or a stale selection would do that to a gliding airframe. `stage`, `disarm` and the
+    reads stay open: they are how the operator recovers.
+
+    Args:
+        ctx - the dispatcher context.
+
+    Returns:
+        A one-line refusal reason, or '' when the stage is one of _GROUND.
+    """
+    stage = ctx.stage()
+    if stage in _GROUND:
+        return ''
+    return 'refused in flight -- stage is %s (ground-only: %s)' % (stage, '/'.join(_GROUND))
+
+
+def _ground_only(ctx, handler):
+    """Wrap an active command so it answers `err unsafe` outside _GROUND instead of running."""
+
+    async def gated(msg) -> str:
+        airborne = _in_flight(ctx)
+        if airborne:
+            return cc.build('err', ['unsafe', airborne])
+        return await handler(msg)
+
+    return gated
+
+
 def _register_identity(dispatcher, ctx) -> None:
     """whoami / ping / health -- who the board is and how it is doing."""
     async def whoami(_unused_msg) -> str:
@@ -265,6 +304,7 @@ def _register_identity(dispatcher, ctx) -> None:
             'mcu': ctx.cfg['board'].get('mcu'),
             'firmware_version': ctx.cfg['board'].get('firmware_version', 'dev'),
             'config_id': config_module.config_id(ctx.cfg),
+            'config_source': config_module.BOOT_SOURCE,
             'stage': ctx.stage(),
             'uptime': time.ticks_ms(),
         }
@@ -327,6 +367,10 @@ def _register_identity(dispatcher, ctx) -> None:
             degraded.append('attitude-backup')
         if ctx.controller is not None and getattr(ctx.controller, 'manual', False):
             degraded.append('STAGE HELD')  # an operator hold suppresses every stage detector
+        if config_module.BOOT_SOURCE.startswith('default(fallback'):
+            # board.config failed to load, so this airframe booted the BENCH default: id 'taster',
+            # watchdog off, layout auto -- and it used to say so only on the serial console
+            degraded.append('CONFIG FALLBACK -- %s' % config_module.BOOT_SOURCE)
         health = inspector.Inspector.get('health')
         if getattr(health, 'rescues', 0) > 0:
             degraded.append('memory-rescued')
@@ -420,9 +464,10 @@ def _register_control(dispatcher, ctx) -> None:
         stage_problem = _stage_problem(ctx.controller)
         if stage_problem:
             problems['stage'] = stage_problem
-        for name, result in (await inspector.Inspector.probe_all()).items():  #
-            if result is not None:
-                problems[name] = result
+        if not _in_flight(ctx):  # the probes sweep the fins: never on an airborne board
+            for name, result in (await inspector.Inspector.probe_all()).items():  #
+                if result is not None:
+                    problems[name] = result
         if problems:
             return cc.build('err', ['unsafe', json.dumps(problems)])  # refuse to arm
         ctx.controller.arm()
@@ -492,6 +537,7 @@ def _register_config(dispatcher, ctx) -> None:
     One command pair (get-config <name> / set-config <name> <json>) covers every config instead of a
     get-/save- pair per config:
       board   the running board config (hardware; config.py, validated + atomically saved)
+      saved   what the next boot loads (read-only; the base for any read-modify-write)
       default the built-in board default (read-only)
       launch  the per-launch mission (launch.config; mission.py, merge-applied + saved)
     """
@@ -503,13 +549,22 @@ def _register_config(dispatcher, ctx) -> None:
             msg - the request; msg.args[0], when present, is the config name (default 'board').
 
         Returns:
-            ok with the config JSON (board/running the running config, default the built-in default,
-            launch the persisted mission); err unsupported when launch is asked for with no mission;
-            err badargs on an unknown name.
+            ok with the config JSON (board/running the running config, saved what the next boot
+            loads, default the built-in default, launch the persisted mission); err unsupported when
+            launch is asked for with no mission; err badargs on an unknown name.
         """
         name = msg.args[0] if msg.args else 'board'
         if name in ('board', 'running'):
             return cc.build('ok', [json.dumps(ctx.cfg)])
+        if name == 'saved':
+            """
+            What the NEXT boot runs: the saved board.config through the same load() the boot uses (a
+            missing or invalid file -> the default it would fall back to). Read-modify-write flows
+            start here: the running config predates any save not yet rebooted, so writing it back
+            silently reverted that save -- and it carries this boot's layout resolution besides.
+            """
+            saved, _source, _errors = config_module.load(ctx.config_path)
+            return cc.build('ok', [json.dumps(saved)])
         if name == 'default':
             return cc.build('ok', [json.dumps(config_module._builtin_default())])
         if name == 'launch':
@@ -561,8 +616,8 @@ def _register_config(dispatcher, ctx) -> None:
         return cc.build('ok')
 
     dispatcher.on('get-config', get_config)
-    dispatcher.on('set-config', set_config)
-    dispatcher.on('reset-config', reset_config)
+    dispatcher.on('set-config', _ground_only(ctx, set_config))
+    dispatcher.on('reset-config', _ground_only(ctx, reset_config))
 
 
 def _register_diagnostics(dispatcher, ctx) -> None:
@@ -628,9 +683,13 @@ def _register_diagnostics(dispatcher, ctx) -> None:
         stage_problem = _stage_problem(ctx.controller)
         if stage_problem:
             problems['stage'] = stage_problem
-        for name, result in (await inspector.Inspector.probe_all()).items():  #
-            if result is not None:
-                problems[name] = result
+        airborne = _in_flight(ctx)
+        if airborne:
+            problems['probe'] = 'not run: %s (the probes sweep the fins)' % airborne
+        else:
+            for name, result in (await inspector.Inspector.probe_all()).items():  #
+                if result is not None:
+                    problems[name] = result
         readiness = _readiness(ctx.cfg)
         """
         LIVE readiness on top of the config gate: an uncalibrated BNO055 is invisible to _readiness()
@@ -698,6 +757,9 @@ def _register_diagnostics(dispatcher, ctx) -> None:
         """
         if not msg.args:
             return cc.build('ok', [json.dumps(inspector.Inspector.calibration_all())])
+        airborne = _in_flight(ctx)  # a baro calibrate mid-air re-zeroes elevation: the ground, to the sequencer
+        if airborne:
+            return cc.build('err', ['unsafe', airborne])
         target = msg.args[0]
         run = getattr(inspector.Inspector.get(target), 'calibrate', None)
         if run is None:
@@ -719,10 +781,10 @@ def _register_diagnostics(dispatcher, ctx) -> None:
         return cc.build('ok', [json.dumps({'detected': revision, 'applied': layout.RESOLVED,
                                            'detail': detail})])
 
-    dispatcher.on('probe', probe)
-    dispatcher.on('detect', detect)
-    dispatcher.on('verify', verify)
-    dispatcher.on('bustune', bustune)
+    dispatcher.on('probe', _ground_only(ctx, probe))
+    dispatcher.on('detect', _ground_only(ctx, detect))
+    dispatcher.on('verify', verify)  # gates its own probes: the device + readiness report stays useful
+    dispatcher.on('bustune', _ground_only(ctx, bustune))
 
 
 def _register_streaming(dispatcher) -> None:
@@ -781,7 +843,6 @@ def _register_ota(dispatcher, ctx) -> None:
     """push-begin / push / push-commit / push-abort -- carry a module to the board over the link."""
 
     _upload = ota.Upload()  # one per dispatcher: a board serves a single Control link
-    _GROUND = ('setting', 'done')  # the stages where nothing is flying and a module swap is harmless
 
     def _grounded() -> str:
         """
@@ -957,7 +1018,7 @@ def _register_system(dispatcher, ctx) -> None:
         asyncio.create_task(do_reset())
         return cc.build('ok')
 
-    dispatcher.on('reboot', reboot)
+    dispatcher.on('reboot', _ground_only(ctx, reboot))
 
 
 def create_dispatcher(cfg: dict, controller=None, on_reboot=None,

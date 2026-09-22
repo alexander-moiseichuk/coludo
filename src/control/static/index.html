@@ -180,6 +180,20 @@ async function cmd(board, command, params = []) {
   return res.json();
 }
 
+// The board config the NEXT boot runs: its saved board.config (`get-config saved`). Every
+// read-modify-write starts here, never from the RUNNING config (`get-config board`): that one predates
+// any save not yet rebooted, so writing it back silently reverted the earlier save -- lowering
+// fins.concurrency for the bench and then saving fin zeros put concurrency 3 back on the bench supply.
+// The running config also carries the boot's layout resolution, which is not the operator's to persist.
+// Only firmware that predates `saved` (badargs) falls back to the running config.
+async function savedBoardConfig(board) {
+  const got = await cmd(board, 'get-config', ['saved']);
+  if (got.status === 'err' && Array.isArray(got.args) && got.args[0] === 'badargs') {
+    return cmd(board, 'get-config', ['board']);
+  }
+  return got;
+}
+
 // Parse JSON, or return the original value if it is not JSON (board payloads arrive as JSON strings).
 function safeParse(value) {
   if (typeof value !== 'string') return value;
@@ -610,12 +624,15 @@ let cfgSource = '';
 document.getElementById('load').onclick = async () => {
   cfgOut.textContent = '…';
   const target = cfgTarget();
-  const r = await cmd(cfgBoard(), 'get-config', [target]);
+  const r = target === 'board' ? await savedBoardConfig(cfgBoard())
+                                : await cmd(cfgBoard(), 'get-config', [target]);
   if (r.status === 'ok') {
     try {
       cfgArea.value = JSON.stringify(JSON.parse(r.args[0]), null, 2);
       cfgSource = cfgBoard();
-      cfgOut.textContent = `loaded ${target} config of ${cfgSource}`;
+      cfgOut.textContent = target === 'board'
+        ? `loaded the SAVED board config of ${cfgSource} (what its next boot runs)`
+        : `loaded ${target} config of ${cfgSource}`;
     } catch (e) { cfgOut.textContent = 'unreadable config from board: ' + e; }
   } else {
     cfgOut.textContent = prettyResult(r);
@@ -685,7 +702,7 @@ document.getElementById('calibrate').onclick = async () => {
                  `ceiling ${hz(out.ceiling)} · ${lim}\n→ chosen ${hz(out.chosen)}${out.note ? '  (' + out.note + ')' : ''}`;
     if (out.chosen == null) { tuneOut.textContent = text + '\n\n(no stable frequency found — nothing to load)'; return; }
     // patch the chosen freq into the board config and load it into the editor above
-    const cfg = await cmd(board, 'get-config', ['board']);
+    const cfg = await savedBoardConfig(board);
     const data = (cfg.status === 'ok') ? JSON.parse(cfg.args[0]) : null;
     const key = kind === 'i2c' ? 'freq' : 'baud';
     if (!data || !data.buses || !data.buses[kind] || !data.buses[kind][id]) {
@@ -759,14 +776,14 @@ async function nudgeFin(fin, delta) {
   }
 }
 
-// persist the calibrated trims: load the board config, write the three trims into their components,
+// persist the calibrated trims: load the SAVED board config, write the three trims into their components,
 // and set-config it back (the whole snapshot -- so nothing else is lost). Reboot re-baselines the fins.
 async function saveFins() {
   const board = finBoard();
   if (!board) { finOut.textContent = 'pick a board first'; return; }
   if (!finLoaded && !(await loadFins())) return;  // never commit trims we have not read
   finOut.textContent = 'loading board config…';
-  const got = await cmd(board, 'get-config', ['board']);
+  const got = await savedBoardConfig(board);
   const cfg = (got.status === 'ok' && Array.isArray(got.args)) ? safeParse(got.args[0]) : null;
   if (!cfg || !Array.isArray(cfg.components)) {
     finOut.textContent = 'could not load board config: ' + prettyResult(got);

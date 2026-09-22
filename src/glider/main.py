@@ -58,6 +58,7 @@ async def bringup(cfg: dict, log=print) -> controller.Controller:
 
 async def main() -> None:
     cfg, source, errors = config.load()
+    config.BOOT_SOURCE = source  # CC reads it: a fallback boot must be visible, not just printed
     print('main :: config %s%s' % (source, '' if not errors else ' ERRORS=%s' % errors))
     flight = await bringup(cfg)
     """
