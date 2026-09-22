@@ -6,9 +6,10 @@ for connection direction, framing, and the command set. It complements
 [`board-config.md`](board-config.md) (which owns the config schema and activation lifecycle)
 and is mostly about **prestart mode**. From ignition onward the board flies autonomously, but the
 link is **not** dropped: whatever connection was made on the pad stays up while radio range lasts.
-Reads keep working in flight. The **active** commands (probe, verify's probe sweep, arm, calibrate
-`<device>`, detect, bustune, set-config, reset-config, reboot, and the push-* uploads) answer
-`err unsafe` outside SETTING/DONE.
+Reads keep working in flight. The **active** commands (probe, calibrate `<device>`, detect, bustune,
+set-config, reset-config, reboot, and the push-begin/push/push-commit uploads) answer `err unsafe`
+outside SETTING/DONE. `arm` and `verify` skip their fin-sweeping probes there: `verify` reports
+`problems.probe: not run`, and `arm` refuses on the stage.
 
 ## Topology & roles
 
@@ -36,10 +37,14 @@ from a board — no async push, no subscriptions, no out-of-band events. The con
   single response before sending the next to that board. No request IDs are needed to match
   responses. (Different boards are polled concurrently; only per-board is serial.) Every exchange is
   bounded by a timeout (**10 s**, `board.EXCHANGE_TIMEOUT_S`): a wedged board raises rather than
-  hanging the hub, so one stuck board never blocks the others.
-- **Data is pulled, not pushed.** The board maintains bounded ring buffers (in PSRAM) for log
-  and telemetry records. CC retrieves slices on demand (`log`, `tlm`). The same buffers feed
-  the Recorder over UART, so there is one producer and two drains.
+  hanging the hub, so one stuck board never blocks the others. `Board.command()` (the web
+  `/api/cmd` path and the hub's own calls) allows **30 s** for `arm`/`verify`/`probe`/`calibrate`,
+  whose probes sweep the fins; a line typed on the operator console is forwarded with the plain
+  10 s. **A timeout gives the link up**: the hub closes the socket (a late reply would desync the
+  lockstep), marks the board offline, and the board re-dials.
+- **Data is pulled, not pushed.** Every record goes to the Recorder's UART ring. While a `log`/`tlm`
+  window is open it is also **teed** into a separate bounded CC ring, which CC drains on demand. With
+  no window open the board collects nothing for CC, and the UART path never changes.
 - **"Events" are just log lines.** Since nothing is pushed, notable occurrences (validation
   failures, fallbacks) surface either as the `err` response to the command that caused them,
   or in the log buffer that CC polls.
@@ -87,13 +92,17 @@ routing token); the board replies with the one message that carries its own id:
 
 ```
 Control → board:   whoami
-board → Control:   iam taster base64:<{"mcu":"esp32p4","firmware_version":"a1b2c3d4e5f6","config_id":"<hash>","stage":"setting","uptime":812}>
+board → Control:   iam taster base64:<{"mcu":"esp32p4","firmware_version":"a1b2c3d4e5f6","config_id":"<hash>","config_source":"active","stage":"setting","uptime":812}>
 ```
 
 Control registers socket ⇄ `taster`, begins its ~2 s poll loop, and thereafter routes operator
 traffic to it by id. `config_id` is a hash/version of the running `board.config`, so Control can tell
-whether its cached view of the board's config is current. If a board reconnects with an id already registered, CC
-drops the older socket and keeps the newest (a board only re-dials after a reboot or link loss).
+whether its cached view of the board's config is current. `config_source` says how this boot chose
+its config: `active` (the saved `board.config`), `active(config …, firmware … -- re-save to adopt)` (a
+schema-version mismatch), `default` (no file), or `default(fallback: <reason>)`. The last one means
+the saved file was unreadable or invalid, so **the airframe is running the bench default** (id
+`taster`, watchdog off), and `health.degraded` carries it as `CONFIG FALLBACK -- …`. If a board
+reconnects with an id already registered, CC drops the older socket and keeps the newest (a board only re-dials after a reboot or link loss).
 
 At **ignition** the board does **not** drop the link. It stops *initiating* new connections
 while airborne, but a connection made on the pad stays up until radio range ends it, and then CC
@@ -103,16 +112,18 @@ while `stage`, `disarm` and every read stay open, since those are the operator's
 
 ## Heartbeat / liveness
 
-CC polls each online board roughly every **2 seconds**. The heartbeat is just a normal
-command (`ping`, or a `health` poll that also returns vitals). Because CC owns all timing:
+CC polls each online board roughly every **2 seconds**. The heartbeat is a normal `health`
+command, so it also refreshes the vitals the dashboard shows. Because CC owns all timing:
 
-- If any command/response for a board completed within the heartbeat window, CC **skips** the
-  redundant ping — a successful exchange already proves liveness.
+- If a **`health`** reply arrived within the heartbeat window, CC **skips** the beat. Other traffic
+  does not count: a running log stream would otherwise freeze the dashboard's stage/armed/degraded.
 - CC never sends a heartbeat while another request to that board is outstanding (lockstep); it
-  waits or skips.
-- After ~5 s of silence (a couple of missed beats), CC marks the board **offline** and
-  surfaces it to operators. The board is never auto-reconfigured — go/no-go stays with the
-  operator (the strict model from `board-config.md`).
+  waits.
+- CC marks the board **offline** after **3 consecutive** missed beats (an empty read from a closed
+  socket or a garbled reply, ~6 s), on a connection error, or as soon as an exchange **times out**.
+  A board that falls silent (out of radio range) therefore goes offline about 12 s after its last
+  reply: the 2 s beat plus the 10 s exchange timeout. The board is never auto-reconfigured —
+  go/no-go stays with the operator (the strict model from `board-config.md`).
 
 ## Command catalog (Control → board)
 
@@ -124,25 +135,26 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 |---------|--------|----------|---------|
 | `whoami` | — | `iam <id> {json}` | identify a new socket (the one reply carrying the id) |
 | `ping` | — | `pong` | liveness |
-| `health` | — | `ok {temp,mem_free,uptime,stage,clock,epoch,tasks[]}` | vitals; `clock`/`epoch` = the board RTC (for the dashboard); `tasks[]` carries `{name, ok}` |
+| `health` | — | `ok {temp,mem_free,uptime,stage,layout,degraded[],…}` | vitals. Always: `temp`, `mem_free`, `uptime`, `stage`, `layout` (the revision this boot applied: `v1.0` detected, `v0.1 (declared)`, or `undecided`) and `degraded[]`. When the part exists: `position` (fresh GNSS fix), `clock`/`epoch` (board RTC), `launchpad`/`launchpad_set`/`site`, `agl` (fresh laser only), `calibration` ({device: instruction} still outstanding), `imu_calibration` (BNO055 sys/gyr/acc/mag), `armed`, `flight` (live panel), `tasks[]` (`{name, ok}`). `degraded[]` is empty when nominal, else any of: `attitude-backup` (a p0 attitude provider is configured and the backup is flying), `STAGE HELD`, `CONFIG FALLBACK -- <reason>`, `memory-rescued`, `needs-calibration`, `cc-less-fallback`, `WARM-STARTED (rebooted in flight)` |
 | `stage` | `[name\|auto]` | `ok {stage,manual}` | get the stage; `<name>` holds it (pauses the sequencer — ground test); `auto` resumes |
-| `arm` | — | `ok {armed:true}` / `err unsafe {problems}` | enable actuation — only when verify is clean (every device up + probe healthy, incl. mission launch-position); arming pins the live GNSS fix as the launch point (freeze — tier-2 heading survives a mid-flight fix loss) |
+| `arm` | — | `ok {armed:true}` / `err unsafe {problems}` | enable actuation — only when verify is clean (every device up + probe healthy, incl. mission launch-position) and the stage is SETTING under automatic sequencing (`problems.stage` otherwise, so `arm` never succeeds airborne or in DONE); arming pins the live GNSS fix as the launch point (freeze — tier-2 heading survives a mid-flight fix loss). The probes run on the ground only, and they **sweep each fin over its full `min_deg`..`max_deg` travel** (0–180° by default; no airframe profile narrows it), not the ±45° control limit |
 | `disarm` | — | `ok {armed:false}` | disable actuation (the control loop holds the fins neutral) |
-| `log` | `<ms>` | `ok {lines:[...]}` | poll-model: lines buffered since the last `log`; re-arm teeing for `ms` (`0` stops) |
-| `tlm` | `<ms>` | `ok {samples:[...]}` | poll-model: telemetry rows buffered since the last `tlm`; re-arm teeing for `ms` (`0` stops) |
-| `bustune` | `<kind> <id> <freq>` | `ok {per-device health}` | retune an i2c/spi bus to `<freq>` Hz in place (no reboot) and report which devices stay healthy — the bench frequency sweep. Never persisted; CC saves the chosen freq to `board.config` |
+| `log` | `[ms]` | `ok {lines:[...], dropped}` | poll-model: lines teed since the last `log`; re-arm teeing for `ms` more (default 1000, `0` stops). `dropped` = records the tee ring discarded |
+| `tlm` | `[ms]` | `ok {samples:[...], dropped}` | poll-model: telemetry rows teed since the last `tlm`; re-arm teeing for `ms` more (default 1000, `0` stops) |
+| `bustune` | `<kind> <id> <freq>` | `ok {per-device health}` | retune an i2c/spi bus to `<freq>` Hz in place (no reboot) and report which devices stay healthy — the bench frequency sweep. Never persisted: the CC `bustune` sweep prints the `set-config board` + reboot for the operator to run |
 | `report` | — | `ok {stage, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
 | `objects` | — | `ok [name, ...]` | names of all `Inspectable` objects (for the `inspect`/`update`/`stats` targets) |
 | `inspect` | `<object>` | `ok {props}` | `Inspectable.inspect()` of a named object |
-| `update` | `<object> <json>` | `ok {changed:[...]}` | `Inspectable.update()` — names of properties actually changed |
+| `update` | `<object> <json>` | `ok {changed:[...]}` / `err refused <why>` | `Inspectable.update()` — names of properties actually changed; `refused` when the driver rejects the change (e.g. an SDP810 tare before its first frame) |
 | `stats` | `<object>` | `ok {stats}` | `Inspectable.stats()` of a named object |
-| `probe` | `[name\|all]` | `ok {name: null\|error}` | on-demand device self-tests; `all` also lists devices that never set up (not connected). Active — sweeps servos |
-| `calibrate` | `[name]` | `ok {name: state}` / `ok {name: null\|error}` | no arg: sweep every device that DECLARES a calibration requirement, each `{done, detail, action}` -- `action` is what the OPERATOR must do (the BNO055 needs the airframe moved; NDOF never converges standing still). With a name: run that device's calibration where the board can do it alone (pitot still-air tare, baro ground zero). Sibling of `probe`, which asks whether the hardware WORKS -- an uncalibrated IMU passes that and is still unfit to fly |
-| `verify` | — | `ok {pass, devices, problems, ready, readiness}` | verify board setup: every configured device up/down + probe, with an overall hardware PASS, plus the flight-readiness CONFIG gate as a separate `ready` verdict (`readiness` names each field-dangerous setting: watchdog off, flight loop off / zero gains, fin derating applied, no zone source) — the launch-pad re-check |
-| `get-config` | `[name]` | `ok {config}` | fetch a named config: `board` (running, default), `default` (built-in board default), `launch` (the mission) |
+| `probe` | `[name\|all]` | `ok {name: null\|error}` | on-demand device self-tests; `all` also lists devices that never set up (not connected). Active: each servo sweeps min → max → neutral over its full `min_deg`..`max_deg` travel (0/180° by default), one fin at a time, checking the INA226 rail draw when one is fitted |
+| `calibrate` | `[name]` | `ok {name: instruction}` / `ok {name: null\|error}` | no arg: the devices with OUTSTANDING calibration, each an instruction string for the OPERATOR (the BNO055 wants the airframe moved -- NDOF never converges standing still; the pitot wants still air); `{}` = nothing outstanding, and devices with no requirement never appear. With a name (ground-only): run that device's calibration where the board can do it alone -- pitot still-air tare, baro ground zero, saving the BNO055's converged profile to NVS -- `null` = done, else what is still owed. Sibling of `probe`, which asks whether the hardware WORKS -- an uncalibrated IMU passes that and is still unfit to fly |
+| `verify` | — | `ok {pass, devices, problems, ready, readiness}` | verify board setup: every configured device up/down + probe, with an overall hardware PASS, plus the flight-readiness CONFIG gate as a separate `ready` verdict (`readiness` names each field-dangerous setting: watchdog off, flight loop off / zero gains, fin derating applied, no zone source) — the launch-pad re-check. `problems.stage` when the stage is held or not SETTING; airborne the probes are skipped and reported as `problems.probe: not run` |
+| `detect` | — | `ok {detected, applied, detail}` | re-scan both I²C buses and report the revision they look like (`detected`: `v0.1`/`v1.0`/`v1.1`, or null when undecided) beside what this boot applied (`applied` = `health.layout`). Applies nothing: a verdict only takes effect at the next boot, and only where `board.layout` is `auto` ([`board-config.md`](board-config.md)). Ground-only |
+| `get-config` | `[name]` | `ok {config}` | fetch a named config: `board` / `running` (the running config, the default), `saved` (what the NEXT boot loads: `board.config` through the boot's own `load()`, or the default it would fall back to -- start any read-modify-write here, since the running config predates an unrebooted save), `default` (built-in board default), `launch` (the mission) |
 | `set-config` | `<name> <json>` | `ok {config_id}` / `err invalid <msg>` | save a named config: `board` validates + replaces the full snapshot (running config unchanged until reboot); `launch` merge-applies the fields into the mission + persists `launch.config` |
 | `reset-config` | — | `ok` | delete `board.config`; next boot uses `config_default.py` |
-| `reboot` | — | `ok` then disconnect | ack, then hard reset → boots from saved config |
+| `reboot` | — | `ok` then disconnect | ack, then `machine.reset()` 200 ms later → boots from saved config. Not a guaranteed cold boot: a board that entered a stage while ARMED (a flight, or an armed ground run to DONE) comes back in that stage, re-armed, for up to 10 min -- see `coludo.md` → *In-flight reboot & warm start*. Power-cycle for a cold start |
 | `push-begin` | `<path> <size> <sha256>` | `ok {staging, size}` / `err unsafe <why>` / `err badargs <why>` | open an upload. `path` is RELATIVE and may name a subdirectory (`drivers/bno055.mpy`) -- most of the firmware lives in `drivers/`, `tasks/`, `test/`. Refused if absolute, if any component is `..` or dot-led, or if the suffix is not `.mpy`/`.py`/`.config`/`.creds`: `open()` follows whatever it is given. Missing parent directories are CREATED, so a push can be the first thing to put a module in a package the running firmware predates. Ground-only -- refused while armed or in any stage but `setting`/`done` |
 | `push` | `<seq> <base64>` | `ok {received, size}` / `err badargs <why>` | append chunk `seq` (from 0), strictly in order, 256 raw bytes per chunk. Bare UNPADDED base64, not the usual `base64:` token -- a `.mpy` is binary and `decode()` finishes with a utf-8 `.decode()` that fails on it. `+` and `/` are already safe characters; only `=` is not, so the sender strips it and the board restores it (length determines it exactly) |
 | `push-commit` | `[path] [sha256]` | `ok {installed, bytes, sha, backup, reboot_required}` / `err badargs <why>` | verify the staged file's SHA-256 and install it atomically, keeping the previous version as `<path>.bak`. `path`/`sha256` are optional (so it stays typeable) but when given must match the open upload, so a commit aimed at the wrong transfer fails instead of installing whatever is staged. A short or mismatched transfer installs NOTHING and DISCARDS the staging file. **Reboot to load it** -- MicroPython holds the old module |
@@ -189,14 +201,18 @@ mission object.
 
 ### Log / telemetry retrieval
 
-`log taster 5000` means "the log records from the **last 5000 ms**." The board keeps a bounded
-ring buffer; if it overflows during the window, the reply carries how many records were **`dropped`**
--- `ok {lines:[...], dropped:n}` (and `ok {samples:[...], dropped:n}` for `tlm`). The count matters
+`log 5000` is **not** a look-back ("the last 5000 ms"). It returns the lines the board teed **since
+the previous `log`** and keeps teeing for another 5000 ms. With no window open the board collects
+nothing, and a window that lapses before the next `log` is **discarded**, not held. So the first
+`log` after a gap returns nothing, and a poller must renew the window before it expires. Each drain
+empties the tee ring, so consecutive batches never overlap and need no de-duplication. The hub's
+stream asks for a window of 2× its poll interval for exactly this reason.
+
+If the ring overflows during a window, the reply carries how many records were **`dropped`**:
+`ok {lines:[...], dropped:n}` (and `ok {samples:[...], dropped:n}` for `tlm`). The count matters
 because the tee is best-effort by policy: a full ring discards rather than raising, so a live stream
 with a hole looks exactly like a quiet sensor unless the number is reported. There is no
-`"truncated"` field -- the board has never sent one. For continuous tailing, CC polls with a window at least as wide as
-its poll interval and de-duplicates by record uptime (each record carries its uptime, per the
-`coludo.md` logging format). `tlm` behaves the same way for telemetry rows (`ok {samples:[...]}`).
+`"truncated"` field -- the board has never sent one. `tlm` behaves the same way for telemetry rows.
 
 ### Config commands map to the activation model
 
@@ -219,10 +235,18 @@ A board reply carries no id (Control re-tags per socket); only `iam` carries one
 | `iam` | `iam <id> base64:json` | reply to `whoami` (carries the id) |
 | `err` | `err <code> <msg>` | failure |
 
-Error `code`s (short, lowercase): `badcmd` (unknown command), `badargs` (malformed params),
-`invalid` (config failed validation), `busy` (a request is already in flight), `unsupported`
-(capability absent on this board), `internal` (unexpected fault). Routing failures (unknown
-target board) are Control's concern, returned to the operator as `from cc err noboard <id>`.
+Board error `code`s (short, lowercase): `badcmd` (unknown command), `badargs` (malformed params,
+or a refused upload chunk/commit), `invalid` (config failed validation), `unsafe` (an active command
+outside SETTING/DONE, an upload while armed, or an `arm` refused on its problems), `refused` (a
+driver rejected an `update`), `unsupported` (capability absent on this board), `internal`
+(unexpected fault). There is **no `busy`**: the lockstep means a board never has two requests to
+refuse between.
+
+Control's own replies are `from cc err <code> …`: `noboard <id>` (unknown or offline target),
+`offline <id>` (the board dropped mid-command), `badargs`, `badcmd`, `unsupported`, `internal`, and
+`nofix` (`assist` without a 3D host fix); a multi-step command reports the step that failed as the
+code (`push-begin`, `push`, `push-commit`, `set-config`, `bustune`). A board whose exchange raised
+during a relayed command is reported as `from <id> err <exception>`, e.g. `timeouterror`.
 
 ## Operator commands (operator ↔ Control only)
 
@@ -232,13 +256,14 @@ A first token that is a known board id (or `all`) routes to a board; otherwise i
 | Command | Meaning |
 |---------|---------|
 | `help` | `from cc ok {commands:[...]}` — all commands; `help <command>` for one |
-| `list` | `from cc ok [{id, online, stage, config_id}]` — connected boards |
+| `list` | `from cc ok [{id, online, stage, layout, config_id, …}]` — connected boards, each with its cached health and `health_age`/`stale` (how old that health is) |
 | `select <board>` | set this session's **sticky** target; afterwards a bare `<command>` is routed to it |
 | `who` | `from cc ok {selected}` — current selection |
 | `cache` | `from cc ok {...}` — a board's cached properties (config/inspect/stats/health) without touching it; defaults to the selected board |
 | `assist` | push the host GPS position into a board's mission (launch-site sync) |
 | `gps` | the host GPS fix; `gps <board>` also shows that board's on-board GNSS for comparison |
-| `bustune <board> <i2c\|spi> <id>` | sweep a sensor bus UP a frequency ladder to its max stable rate |
+| `bustune <board> <i2c\|spi> <id> [margin-steps]` | sweep a sensor bus UP a frequency ladder to its max stable rate; prints the `set-config` to apply, persists nothing |
+| `push <board> <file> [name]` | carry a local module/config to a board over the link (`push-begin` / `push` / `push-commit`, SHA-256 checked) and install it; reboot the board to load it |
 
 **Sticky select / broadcast:** after `select taster`, typing `health` is routed as `taster
 health`; an explicit `<board>`/`all` first token overrides it for that line. Control tags every
@@ -246,9 +271,9 @@ relayed reply with its source (`from taster ok …`), so the operator always see
 `all` fans out to every connected board and yields one tagged reply per board.
 
 **Log streaming** is board-first like any other command, but **intercepted by Control** rather than
-forwarded as a one-shot: `<board> log [ms]` (default 1000) starts a per-board poll task that drives
-the board-facing `log <ms>` every tick and surfaces each line to the console as `<id>: <line>` and
-the `/logs` SSE feed; `<board> log off` (or `0`) stops it and sends a final `log 0` so the board
+forwarded as a one-shot: `<board> log [ms]` (default 1000) starts a per-board poll task that sends
+the board-facing `log <2×ms>` every `ms` (the doubled window never lapses between polls) and
+surfaces each line to the console as `<id>: <line>` and the `/logs` SSE feed; `<board> log off` (or `0`) stops it and sends a final `log 0` so the board
 stops collecting. `all log <ms>` streams every online board. (The raw one-shot board-facing `log`
 remains available programmatically via `POST /api/cmd`.)
 
@@ -283,18 +308,19 @@ CC exposes the same capabilities to the browser without the browser ever speakin
 - **`POST /api/cmd`** — body `{board, command, params}`; CC runs the command against the board
   (respecting per-board lockstep) and returns the response as JSON. Used for one-off actions
   (`set-config`, `reboot`, `get-config`, …).
-- **`GET /events`** — a **Server-Sent Events** stream of the board list, pushed every heartbeat
-  (the live table). SSE is chosen over WebSocket because the live need is server→browser
+- **`GET /events`** — a **Server-Sent Events** stream, one `data: {"cc": {time, gps}, "boards":
+  [rows]}` frame every heartbeat: the hub's own clock and host-GPS status, and the same rows as
+  `list` (the live table). SSE is chosen over WebSocket because the live need is server→browser
   streaming, it is plain HTTP (no extra dependency), and browser→board actions are ordinary POSTs.
 - **`GET /hud`** — the walk-test HUD: attitude horizon, per-fin commanded angles, airspeed, fin cap,
   heading-to-zone, wind and AGL on one glanceable page. Fully offline (no CDN), because the field has
   no internet.
-- **`GET /logs`** — an SSE feed of the log lines CC is polling from the boards.
 - **`GET /api/board/<id>`**, **`POST /api/log`**, **`POST /api/op`**, **`POST /api/assist`**,
   **`GET /api/absent`** — the per-board detail, log slice, operator-command bridge, GPS assist push,
   and the roster's not-currently-connected list.
-- **`POST /api/log`** — body `{board, interval_ms}` (≤ 0 stops); starts/stops the hub's per-board
-  log stream from the dashboard, the same toggle as the operator's `<board> log <ms>`.
+- **`POST /api/log`** — body `{board, kind, interval_ms}` (`kind` `log`, the default, or `tlm`;
+  `interval_ms` ≤ 0 stops); starts/stops the hub's per-board stream from the dashboard, the same
+  toggle as the operator's `<board> log <ms>`.
 - **`GET /logs`** — a **Server-Sent Events** stream of `{board, line}` log lines, pushed as the
   hub emits them while a stream is active (enabled via `POST /api/log` or `<board> log <ms>`).
 
