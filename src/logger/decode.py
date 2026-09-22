@@ -32,6 +32,20 @@ _COLUMNS: tuple = ('index', 't_s', 'dt_ms', 'ax_g', 'ay_g', 'az_g', 'a_g', 'gx_d
                    'pressure_pa', 'temp_c', 'alt_rel_m', 'tick_ms')
 
 
+def _whole(data: bytes, offset: int, size: int, count: int) -> int:
+    """
+    How many of the header's `count` records are actually present, whole, in `data`.
+
+    A segment cut short -- power lost mid-save, or a read-out tool's Ctrl-C landing during one -- still
+    carries the header's full count. Unpacking past the end raised, and one such file took the whole
+    batch down with it, so the flight's good segments could not be decoded either.
+    """
+    present = max(0, (len(data) - offset) // size) if size else 0
+    if present < count:
+        print('  truncated: %d of %d records present -- decoding the whole ones' % (present, count))
+    return min(count, present)
+
+
 def _records(data: bytes) -> tuple:
     """
     (header, rows). header: dict of boot, segment, period, mcu (None where the format lacks it).
@@ -39,14 +53,17 @@ def _records(data: bytes) -> tuple:
     """
     if data[:4] == b'CLG1':
         size, count, period = struct.unpack_from('<HIH', data, 4)
+        count = _whole(data, 12, size, count)
         rows = [struct.unpack_from('<I6hi', data, 12 + i * size) + (None,) for i in range(count)]
         return {'boot': None, 'segment': None, 'period': period, 'mcu': None}, rows
     if data[:4] == b'CLG2':
         _, size, period, boot, segment, count = struct.unpack_from('<4sHHHHI', data, 0)
+        count = _whole(data, 16, size, count)
         rows = [struct.unpack_from('<I6hii', data, 16 + i * size) for i in range(count)]
         return {'boot': boot, 'segment': segment, 'period': period, 'mcu': None}, rows
     if data[:4] == b'CLG3':
         _, size, period, boot, segment, count, mcu = struct.unpack_from('<4sHHHHII', data, 0)
+        count = _whole(data, 20, size, count)
         rows = [struct.unpack_from('<I6hii', data, 20 + i * size) for i in range(count)]
         return {'boot': boot, 'segment': segment, 'period': period, 'mcu': mcu}, rows
     raise ValueError('not a logger file (magic %r)' % data[:4])
@@ -178,8 +195,14 @@ if __name__ == '__main__':
     # every later segment measures against the same ground.
     loaded = []
     for name in sorted(sys.argv[1:]):
-        with open(name, 'rb') as handle:
-            header, rows = _records(handle.read())
+        try:
+            with open(name, 'rb') as handle:
+                header, rows = _records(handle.read())
+        except (ValueError, struct.error) as error:
+            # one bad file (empty, foreign, a header cut short) is reported and SKIPPED -- it used to
+            # abort the batch and cost every good segment of the flight along with it
+            print('%s: SKIPPED -- %s' % (name, error))
+            continue
         loaded.append((name, header, rows))
     references = {}
     for _name, header, rows in loaded:

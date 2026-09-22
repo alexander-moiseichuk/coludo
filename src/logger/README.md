@@ -154,6 +154,8 @@ ampy -p /dev/ttyACM0 -d 2 run src/logger/scan.py      # -d 2: let the board sett
 
 **Recovery** if a bad `main.py` ever wedges USB at every boot: hold BOOT, tap RST — the ROM download
 mode — and reflash MicroPython with esptool. GPIO9 is left unwired precisely so this path stays open.
+**A reflash erases the filesystem, logs included** — pull any flight off first (below); it is the last
+resort, never the way to stop the logger.
 
 ## Firmware — `main.py`
 
@@ -200,6 +202,26 @@ second ago; resting noise measures ~5 LSB and ~1 dps, well clear of them.
   tail matters; after a flight it is post-landing idle. While still, a segment takes minutes to fill.
 - Nothing at start-up: the gyro reports `0x8000` until it has started, and `_setup()` waits for valid data
   before flushing the FIFO and beginning.
+- **The flight itself, if the logger stays on after recovery.** Carrying the airframe back is motion, so
+  it records at full rate, and a full flash deletes the **oldest** segments — ~28 minutes of handling
+  overwrites the flight. **Switch it OFF at recovery.**
+
+### Reading the logs off — the read-out procedure
+
+The hardware watchdog (8 s) is fed only by the sampling loop, so a tool that stops that loop with Ctrl-C
+used to let it fire mid-copy — and the reboot started recording, deleting the oldest segments once the
+flash was full: the flight. Recording now starts at once but the watchdog is armed only **4 s after
+boot**, and a Ctrl-C saves what is in RAM (only if it fits — it never deletes to make room) and stops:
+
+1. **Power it on, plugged straight into the PC**, and run the copy, e.g.
+   `rshell -p /dev/ttyACM0 cp '/pyboard/b*.bin' launches/<date>/<airframe>/logger/`.
+2. If the tool connected within the 4 s window (a connect that resets the chip always does), the
+   logger stops cleanly: `stopped for read-out`, **LED solid**, and the copy runs.
+3. If the watchdog was already armed, the logger saves, flags read-out mode in RTC memory and resets
+   itself — the tool loses the port once (it re-enumerates). **Run the same command again**: the board
+   comes back in read-out mode — `READ-OUT MODE`, **LED solid**, not recording, no watchdog.
+4. **A power-cycle returns it to recording** — RTC memory does not survive power-off. A software reset
+   does not, so read-out mode holds across as many tool connects as the copy takes.
 
 ## Where the data lives
 
@@ -215,7 +237,10 @@ in the commit that changes it; routine desk recordings are not worth keeping, an
 python3 src/logger/decode.py launches/20261003/TMS-7/logger/*.bin
 ```
 
-Writes a CSV beside each file, one row per sample:
+Writes a CSV beside each file, one row per sample. A file cut short (the header counts more records than
+it holds) is decoded as far as it goes and says `truncated: N of M`; one that is not a logger file at all
+is reported `SKIPPED` and the rest still decode.
+
 `index, t_s, dt_ms, ax_g, ay_g, az_g, a_g, gx_dps, gy_dps, gz_dps, pressure_pa, temp_c, alt_rel_m, tick_ms`
 
 - `0x8000` — the BMI323's "no sample yet" — becomes an **empty cell**, never −2000 dps. Before that rule

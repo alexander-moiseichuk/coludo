@@ -48,6 +48,12 @@ try:
 except ImportError:                   # host: nothing to arm, and run() is board-only anyway
     WDT = None
 
+try:
+    from machine import RTC, reset
+except ImportError:                   # host: no RTC memory and nothing to reset
+    RTC = None
+    reset = None
+
 _SDA = const(19)
 _SCL = const(20)
 _LED = const(15)              # plain status LED
@@ -70,6 +76,8 @@ _HEARTBEAT = const(50)        # LED toggle every 50 ticks (~0.5 s)
 _BLINK_TICKS = const(15)      # 150 ms per blink phase, counted in ticks so sampling never pauses
 _PRESS_TICKS = const(3)       # BOOT must read pressed on 3 consecutive ticks (~30 ms debounce)
 _WATCHDOG_MS = const(8000)    # 4x the worst save ever measured (2004 ms, on a full flash)
+_WATCHDOG_ARM_MS = const(4000)  # the READ-OUT WINDOW: recording starts at once, the watchdog this late
+_READOUT: bytes = b'readout'  # RTC-memory flag: survives a software reset, cleared by power-off
 
 # What counts as "something is happening". Raw LSB, so the test is integer comparisons in the hot loop.
 _MOVE_LSB = const(100)        # 0.05 g of frame-to-frame accel change (2048 LSB/g); rest noise is ~5
@@ -194,9 +202,48 @@ def _save(buffer, count: int, boot: int, segment: int) -> bool:
         return False
 
 
+def _readout_requested() -> bool:
+    """True when an earlier boot was stopped for read-out and the logger has not been power-cycled since."""
+    if RTC is None:
+        return False
+    try:
+        return RTC().memory() == _READOUT
+    except Exception:
+        return False
+
+
+def _request_readout() -> None:
+    """Stay in read-out mode across software resets, until power-off clears RTC memory."""
+    if RTC is None:
+        return
+    try:
+        RTC().memory(_READOUT)
+    except Exception:
+        pass
+
+
 def run() -> None:
-    """Drain both FIFOs every tick, save every _SEGMENT records and on BOOT."""
+    """
+    Drain both FIFOs every tick, save every _SEGMENT records and on BOOT.
+
+    READ-OUT SAFETY. The hardware watchdog used to be armed at every boot and fed only by this loop, so a
+    read-out tool (mpremote, rshell) that interrupts it with Ctrl-C left it unfed: the C6 reset 8 s into
+    the copy, the new boot started RECORDING, and on a nearly full flash _make_room() deletes the OLDEST
+    segments -- the flight. The only documented recovery, an esptool reflash, erases the logs too.
+
+    Now recording still starts on the first tick, but the watchdog is armed only _WATCHDOG_ARM_MS later.
+    A read-out tool interrupts the moment it connects -- and when the connect itself resets the chip
+    (DTR/RTS, see README), that Ctrl-C lands inside the window: the buffer is saved, nothing was armed,
+    and the REPL is free. If the watchdog IS already armed (a tool that connects without resetting),
+    the buffer is saved, a read-out flag goes into RTC memory and the chip resets straight away, coming
+    back in read-out mode -- not recording, nothing armed -- until it is power-cycled to fly. Nobody
+    sends Ctrl-C in flight, so the watchdog still guards every flight exactly as before.
+    """
     led = Pin(_LED, Pin.OUT)
+    if _readout_requested():
+        led.value(1)                             # solid: read-out mode
+        print('logger :: READ-OUT MODE -- not recording, no watchdog; power-cycle to fly again')
+        return
     boot_button = Pin(_BOOT, Pin.IN, Pin.PULL_UP)
     bus = I2C(0, scl=Pin(_SCL), sda=Pin(_SDA), freq=400000)
     pressure = _setup(bus)
@@ -219,104 +266,122 @@ def run() -> None:
     notice one. A reboot costs the records still in RAM and starts a new boot number, which beats a silent
     C6 for the rest of the flight.
     """
-    watchdog = WDT(timeout=_WATCHDOG_MS) if WDT is not None else None
+    booted = time.ticks_ms()
+    watchdog = None                              # armed after the read-out window -- see run()'s docstring
 
     count, segment, beat, pressed, blink, frames_total = 0, 0, 0, 0, 0, 0
     origin = None
     active, quiet, mark = True, 0, pressure          # start at full rate: prove it is still before decimating
     previous_x, previous_y, previous_z = 0, 0, 0
-    while True:
-        started = time.ticks_ms()
-        if watchdog is not None:
-            watchdog.feed()
-        """
-        An I2C fault costs a tick, never the flight.
-
-        NAK, arbitration loss or a wedged peer is the fault this loop is built to ride out -- the rule
-        src/glider/drivers/sdp810.py states for the same bus, and the one _save() already follows a level
-        up. On a fault the FIFO is flushed before carrying on, because a read that died part-way through a
-        frame leaves the read pointer inside it and every frame after would be shifted. Execution falls
-        THROUGH to the pacing sleep rather than restarting the loop, so a bus that faults instantly cannot
-        spin the core flat out with the LED frozen and the button dead.
-        """
-        try:
-            bus.readfrom_mem_into(_BMI323, 0x15, level)              # FIFO_FILL_LEVEL, in 16-bit words
+    try:
+        while True:
+            started = time.ticks_ms()
+            if watchdog is None and WDT is not None and time.ticks_diff(started, booted) >= _WATCHDOG_ARM_MS:
+                watchdog = WDT(timeout=_WATCHDOG_MS)
+            if watchdog is not None:
+                watchdog.feed()
             """
-            Clamp the frame count to the headroom the buffer actually has.
+            An I2C fault costs a tick, never the flight.
 
-            The 11-bit field admits 341 frames while `buffer` holds only _SLACK beyond a full segment, so
-            one flipped bit here -- exactly the fault this try catches -- would write past the end. The
-            FIFO itself tops out near 170 frames, so the clamp never binds in normal use.
+            NAK, arbitration loss or a wedged peer is the fault this loop is built to ride out -- the rule
+            src/glider/drivers/sdp810.py states for the same bus, and the one _save() already follows a level
+            up. On a fault the FIFO is flushed before carrying on, because a read that died part-way through a
+            frame leaves the read pointer inside it and every frame after would be shifted. Execution falls
+            THROUGH to the pacing sleep rather than restarting the loop, so a bus that faults instantly cannot
+            spin the core flat out with the LED frozen and the button dead.
             """
-            frames = min(((level[2] | (level[3] << 8)) & 0x07FF) // _FRAME_WORDS, _SLACK)
-            if frames:
-                if origin is None:
-                    origin = time.ticks_add(started, -(frames - 1) * _PERIOD_MS)
-                bus.readfrom_mem_into(_BMP581, 0x17, waiting_byte)   # FIFO_COUNT, in frames
-                waiting = min(waiting_byte[0] & 0x3F, _PRESSURE_DEPTH)
-                for index in range(waiting):
-                    bus.readfrom_mem_into(_BMP581, 0x29, sample)     # FIFO_DATA: pressure XLSB, LSB, MSB
-                    pressures[index] = sample[0] | (sample[1] << 8) | (sample[2] << 16)
-                bus.readfrom_mem_into(_BMP581, 0x1D, heat)           # live temperature
-                temperature = heat[0] | (heat[1] << 8) | (heat[2] << 16)
-                for index in range(frames):
-                    bus.readfrom_mem_into(_BMI323, 0x16, frame)      # FIFO_DATA: one frame
-                    aligned = index - (frames - waiting)             # newest pressure pairs with newest IMU
-                    if aligned >= 0:
-                        pressure = pressures[aligned]
-                    ax, ay, az, gx, gy, gz = struct.unpack_from('<6h', frame, 2)
-                    if _moved(ax, ay, az, gx, gy, gz, pressure, previous_x, previous_y, previous_z, mark):
-                        active, quiet = True, 0
-                    else:
-                        quiet += 1
-                        if quiet >= _QUIET_FRAMES:
-                            active = False
-                    previous_x, previous_y, previous_z = ax, ay, az
-                    frames_total += 1
-                    if frames_total % _DECIMATE == 0:
-                        mark = pressure                              # the climb test's one-second reference
-                    elif not active:
-                        continue                                     # still: not worth a record
-                    # ONE pack for the whole record: bytearray slice-assignment is O(len(buffer)) on this
-                    # port, which src/glider/recorder.py already learned the hard way
-                    struct.pack_into('<I6hii', buffer, count * _RECORD,
-                                     time.ticks_add(origin, frames_total * _PERIOD_MS),
-                                     ax, ay, az, gx, gy, gz, pressure, temperature)
-                    count += 1
-        except OSError:
             try:
-                _write16(bus, 0x37, 0x0001)                          # FIFO_CTRL: flush, re-align the reader
+                bus.readfrom_mem_into(_BMI323, 0x15, level)              # FIFO_FILL_LEVEL, in 16-bit words
+                """
+                Clamp the frame count to the headroom the buffer actually has.
+
+                The 11-bit field admits 341 frames while `buffer` holds only _SLACK beyond a full segment, so
+                one flipped bit here -- exactly the fault this try catches -- would write past the end. The
+                FIFO itself tops out near 170 frames, so the clamp never binds in normal use.
+                """
+                frames = min(((level[2] | (level[3] << 8)) & 0x07FF) // _FRAME_WORDS, _SLACK)
+                if frames:
+                    if origin is None:
+                        origin = time.ticks_add(started, -(frames - 1) * _PERIOD_MS)
+                    bus.readfrom_mem_into(_BMP581, 0x17, waiting_byte)   # FIFO_COUNT, in frames
+                    waiting = min(waiting_byte[0] & 0x3F, _PRESSURE_DEPTH)
+                    for index in range(waiting):
+                        bus.readfrom_mem_into(_BMP581, 0x29, sample)     # FIFO_DATA: pressure XLSB, LSB, MSB
+                        pressures[index] = sample[0] | (sample[1] << 8) | (sample[2] << 16)
+                    bus.readfrom_mem_into(_BMP581, 0x1D, heat)           # live temperature
+                    temperature = heat[0] | (heat[1] << 8) | (heat[2] << 16)
+                    for index in range(frames):
+                        bus.readfrom_mem_into(_BMI323, 0x16, frame)      # FIFO_DATA: one frame
+                        aligned = index - (frames - waiting)             # newest pressure pairs with newest IMU
+                        if aligned >= 0:
+                            pressure = pressures[aligned]
+                        ax, ay, az, gx, gy, gz = struct.unpack_from('<6h', frame, 2)
+                        if _moved(ax, ay, az, gx, gy, gz, pressure, previous_x, previous_y, previous_z, mark):
+                            active, quiet = True, 0
+                        else:
+                            quiet += 1
+                            if quiet >= _QUIET_FRAMES:
+                                active = False
+                        previous_x, previous_y, previous_z = ax, ay, az
+                        frames_total += 1
+                        if frames_total % _DECIMATE == 0:
+                            mark = pressure                              # the climb test's one-second reference
+                        elif not active:
+                            continue                                     # still: not worth a record
+                        # ONE pack for the whole record: bytearray slice-assignment is O(len(buffer)) on this
+                        # port, which src/glider/recorder.py already learned the hard way
+                        struct.pack_into('<I6hii', buffer, count * _RECORD,
+                                         time.ticks_add(origin, frames_total * _PERIOD_MS),
+                                         ax, ay, az, gx, gy, gz, pressure, temperature)
+                        count += 1
             except OSError:
-                pass
+                try:
+                    _write16(bus, 0x37, 0x0001)                          # FIFO_CTRL: flush, re-align the reader
+                except OSError:
+                    pass
 
-        forced = False
-        if boot_button.value() == 0:
-            pressed += 1
-            forced = pressed == _PRESS_TICKS         # once per press, not once per tick held
-        else:
-            pressed = 0
+            forced = False
+            if boot_button.value() == 0:
+                pressed += 1
+                forced = pressed == _PRESS_TICKS         # once per press, not once per tick held
+            else:
+                pressed = 0
 
-        if count and (count >= _SEGMENT or forced):
-            # advance the segment number only on a SAVE THAT LANDED: numbering a file that was never
-            # written breaks the join decode.py checks for continuity, turning a failed save into a
-            # silently missing one
-            if _save(buffer, count, boot, segment):
-                segment += 1
-            count = 0
-            gc.collect()                             # the core is already stalled: collect in the same gap
-            if forced:
-                blink = 6 * _BLINK_TICKS             # three on/off pairs, counted down by the loop
+            if count and (count >= _SEGMENT or forced):
+                # advance the segment number only on a SAVE THAT LANDED: numbering a file that was never
+                # written breaks the join decode.py checks for continuity, turning a failed save into a
+                # silently missing one
+                if _save(buffer, count, boot, segment):
+                    segment += 1
+                count = 0
+                gc.collect()                             # the core is already stalled: collect in the same gap
+                if forced:
+                    blink = 6 * _BLINK_TICKS             # three on/off pairs, counted down by the loop
 
-        if blink:
-            blink -= 1
-            led.value(1 if (blink // _BLINK_TICKS) % 2 else 0)
-        else:
-            beat += 1
-            if beat >= _HEARTBEAT:
-                beat = 0
-                led.value(1 - led.value())
+            if blink:
+                blink -= 1
+                led.value(1 if (blink // _BLINK_TICKS) % 2 else 0)
+            else:
+                beat += 1
+                if beat >= _HEARTBEAT:
+                    beat = 0
+                    led.value(1 - led.value())
 
-        time.sleep_ms(max(0, _TICK_MS - time.ticks_diff(time.ticks_ms(), started)))
+            time.sleep_ms(max(0, _TICK_MS - time.ticks_diff(time.ticks_ms(), started)))
+
+    except KeyboardInterrupt:                    # a read-out tool connected (Ctrl-C)
+        # keep what was still in RAM -- but only if it FITS: on a full flash _save() makes room by deleting
+        # the oldest segments, and a few seconds of post-recovery idle is not worth the flight
+        if count and _free() >= _HEADER + count * _RECORD + _RESERVE:
+            _save(buffer, count, boot, segment)
+        _request_readout()
+        led.value(1)
+        if watchdog is None:
+            print('logger :: stopped for read-out -- no watchdog armed; power-cycle to fly again')
+            return
+        print('logger :: watchdog already armed -- resetting into read-out mode; run the command again')
+        if reset is not None:
+            reset()
 
 
 if __name__ == '__main__':            # at boot; `import main` from the REPL loads it without running

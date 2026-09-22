@@ -25,3 +25,8 @@ ceiling — 1.4× of margin, with no measured ignition transient anywhere in thi
 spike. Hand punches on the bench already railed that ceiling on seven samples, so an impulsive event can
 clip; a sustained boost of this size should not. If the peak must be guaranteed rather than probable, an
 ADXL375 (±200 g, owned, driver written) goes in beside it.
+
+**At recovery: switch the logger OFF.** Carrying the airframe back is motion, so it keeps recording at
+full rate, and a full flash deletes the oldest segments — about 28 minutes of handling overwrites the
+flight. Read it off on the bench with the procedure in `src/logger/README.md` ("Reading the logs off"):
+never reflash the C6 before the logs are copied, because a reflash erases them.
