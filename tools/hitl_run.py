@@ -149,10 +149,11 @@ async def _simulated_reboot(flight, boot_s: float) -> None:
     A mid-glide reboot with the REAL warm-start code.
 
     The outage (disarm + SETTING under a manual hold) lasts `boot_s` like a real boot, then the real
-    breadcrumb is loaded and the real five-signal gate decides; a pass restores GLIDING + arm exactly as
-    main._restore_flight does. Only the physical inputs are simulated: separated=True (post-separation by
-    construction here), the sim's absolute baro altitude, cause=reset. The fins stay FROZEN at their last
-    commanded deflection through the outage -- the OOM soak measured that a dying runtime never reaches
+    breadcrumb is loaded, the real gate (warmstart.should_restore) decides, and a pass goes through the
+    real warmstart._apply_restore -- the same stage / arm / baro-rebase / pitot / airspeed restore a
+    board runs at boot, not a hand-rolled copy of it. Only the physical inputs are simulated:
+    separated=True (post-separation by construction here) and cause=reset. The fins stay FROZEN at
+    their last commanded deflection through the outage -- the OOM soak measured that a dying runtime never reaches
     the crash->neutral path, and a rebooting MCU drives no PWM (the servos hold mechanically) -- so the
     flight task's _neutral is stubbed out for the outage (disarmed -> it is the only writer).
 
@@ -161,9 +162,10 @@ async def _simulated_reboot(flight, boot_s: float) -> None:
         boot_s - how long the simulated outage lasts, in seconds.
 
     Returns:
-        None. Side effect: leaves the controller either warm-restored to GLIDING+armed, or cold-booted.
+        None. Side effect: leaves the controller either warm-restored to the crumb's stage and arm
+        state (GLIDING, armed), or cold-booted. Prints `WARM CRUMB: FAIL` when the restored flight
+        checkpoints a crumb without its pad altitude; hitl_collect.sh fails the scenario on it.
     """
-    import databoard
     import warmstart
     print('REBOOT: outage %.1fs (disarmed, FROZEN fins, stage SETTING)' % boot_s)
     flight_task = flight.active('flight')
@@ -177,16 +179,22 @@ async def _simulated_reboot(flight, boot_s: float) -> None:
     if flight_task is not None:
         flight_task._neutral = real_neutral  # boot done: the real fail-safe is back
     crumb = warmstart.load()
-    altitude = databoard.Databoard.value('altitude')
-    restore, reason = warmstart.should_restore(crumb, True, altitude, True, time.time())
+    restore, reason = warmstart.should_restore(crumb, True, True, time.time())
     print('WARM GATE:', restore, reason)
-    if restore:
-        flight.manual = False
-        flight.set_stage(controller.Stage.GLIDING)
-        flight.arm()
-        print('WARM START -> gliding, armed')
-    else:  # by design: any doubt stays a cold boot (the capture will show the uncontrolled descent)
-        flight.manual = False
+    flight.manual = False  # by design any doubt stays a cold boot (the capture shows the uncontrolled descent)
+    if not restore:
+        return
+    warmstart._apply_restore(flight, crumb, flight.config)
+    print('WARM START ->', controller.Stage.STAGES.get(flight.stage), 'armed' if flight.armed else 'DISARMED')
+    """
+    The restored flight must checkpoint a crumb that can survive a SECOND reset: one written without
+    the pad altitude skips the baro rebase next time, and the landing detect then reads the ground at
+    altitude. The restore's own stage change triggers that checkpoint within one poll, so wait it out.
+    """
+    await asyncio.sleep_ms(1500)
+    after = warmstart.load()
+    kept = after is not None and after.get('pad_altitude') is not None
+    print('WARM CRUMB:', 'pad_altitude kept' if kept else 'FAIL -- pad_altitude LOST after the restore')
 
 
 def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0, wind_dir: float = 210.0,

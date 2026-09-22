@@ -87,4 +87,10 @@ case "$build" in
   BUILD\ [0-9]*) echo "0 capture :: ${build#BUILD }" | sed 's/^0 capture :: /0 capture :: build /' >> "$outdir/$scen.txt" ;;
   *)             echo "0 capture :: build UNKNOWN (board did not answer)" >> "$outdir/$scen.txt" ;;
 esac
+# A reboot scenario flies on after a broken restore, so its capture looks fine; the check that the
+# restored flight still checkpoints a usable crumb only ever reaches the board's stdout.
+if echo "$out" | grep -q 'WARM CRUMB: FAIL'; then
+  echo "FAIL $motor/$scen session=$ses: $(echo "$out" | grep -oE 'WARM CRUMB: FAIL.*' | head -1)"
+  exit 1
+fi
 echo "OK $motor/$scen session=$ses $(echo "$out" | grep -oE 'DONE|TIMEOUT [0-9]+' | head -1)"
