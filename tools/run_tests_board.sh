@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # Run the on-board MicroPython tests via `mpremote run` (boardrun is retired). Modules must already be
 # deployed (tools/deploy.sh). Each test is preceded by board_reboot for a fresh-VM isolation; a test PASSES
-# if its output has an 'ok:' line and no Traceback/Error/FAIL.
+# if it exits 0, its output has an 'ok:' line, and it has no Traceback or FAIL (the same rule as
+# src/glider/test/run_tests.sh). A traceback printed by a caught exception, after the ok: line, is
+# still a failure: it used to pass here because only the exit code and the ok: line were checked.
 #
 # Usage:  run_tests_board.sh [test_name ...]    # names like test_flight (default: all test/test_*.py)
 # Env:    PORT (default /dev/ttyACM0)  TIMEOUT secs (default 60)
@@ -26,7 +28,7 @@ for name in "${names[@]}"; do
     python3 "$ROOT/tools/board_reboot.py" "$PORT" >/dev/null 2>&1 || true  # fresh VM per test (isolation)
     timeout "$TIMEOUT" mpremote connect "$PORT" run "$ROOT/src/glider/test/$name.py" > "$log" 2>&1
     rc=$?
-    if [ "$rc" -eq 0 ] && grep -qa 'ok:' "$log"; then
+    if [ "$rc" -eq 0 ] && grep -qa 'ok:' "$log" && ! grep -qaE 'Traceback|FAIL' "$log"; then
         echo "PASS"; pass=$((pass+1))
     else
         echo "FAIL (rc=$rc)  -> $log"; grep -aE 'Traceback|Error|FAIL|assert' "$log" | head -3 | sed 's/^/    /'

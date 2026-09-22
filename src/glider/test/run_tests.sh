@@ -4,10 +4,13 @@
 #
 # Test convention:
 #   * A test file is named  test_*.py  (so e.g. bench_asyncio.py is not picked up).
-#   * It PASSES if it compiles and runs to completion without raising (mpremote exit 0).
+#   * It PASSES if it compiles, runs to completion without raising (mpremote exit 0) AND prints an
+#     "ok:" line -- the same rule as tools/run_tests_board.sh.
 #   * It FAILS on a compile error, an uncaught exception / failed `assert` (non-zero exit),
-#     a timeout, or if its output contains "FAIL" or "Traceback".
-#   Tests should use `assert` for checks and may print "ok ...".
+#     a timeout, no "ok:" line, or if its output contains "FAIL" or "Traceback".
+#   Tests use `assert` for checks and end with a print('ok: ...') summary.
+#   A failed module deploy stops the run (exit 2): the board would still hold the OLD firmware, and
+#   every test would pass or fail against code that is not the code under test.
 #
 # Usage:  run_tests.sh [test_file ...]      # default: all test_*.py here
 # Env:    PORT (default /dev/ttyACM0)  TIMEOUT secs (default 60)
@@ -38,7 +41,10 @@ if [ ! -e "${tests[0]}" ]; then echo "${Y}no tests found in $HERE (test_*.py)${N
 
 # deploy the glider modules so on-board tests can import them (config, ...)
 echo "deploying modules to $PORT..."
-PORT="$PORT" bash "$HERE/../../../tools/deploy.sh" || echo "${Y}warning: module deploy had issues${N}"
+if ! PORT="$PORT" bash "$HERE/../../../tools/deploy.sh"; then
+    echo "${R}error: module deploy failed -- not testing the firmware already on the board${N}"
+    exit 2
+fi
 
 tmpmpy="$(mktemp "$LOGDIR/compile_XXXX.mpy")"
 trap 'rm -f "$tmpmpy"' EXIT
@@ -68,7 +74,8 @@ for t in "${tests[@]}"; do
     if [ "$rc" -eq 124 ]; then
         echo "${R}FAIL${N} (timeout ${TIMEOUT}s)  -> $log"
         fail=$((fail+1)); failed+=("$name (timeout)")
-    elif [ "$rc" -ne 0 ] || printf '%s' "$out" | grep -qE 'FAIL|Traceback'; then
+    elif [ "$rc" -ne 0 ] || printf '%s' "$out" | grep -qE 'FAIL|Traceback' \
+            || ! printf '%s' "$out" | grep -q 'ok:'; then
         echo "${R}FAIL${N} (rc=$rc)  -> $log"; printf '%s\n' "$out" | tail -6 | sed 's/^/    /'
         fail=$((fail+1)); failed+=("$name")
     else

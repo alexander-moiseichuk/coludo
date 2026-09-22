@@ -56,6 +56,10 @@ while read -r name noise wind dir spike <&3; do
   # SCENARIOS is the filter as well as the render list, so a shortened matrix does not try to render
   # the flights it never flew. The table below stays complete: a subset is a selection, not an edit.
   case " $SCENARIOS " in *" $name "*) ;; *) continue ;; esac
+  # A failed flight must leave NO capture. hitl_collect.sh writes <scen>.txt only on success and clears
+  # only its stream dir, so the PREVIOUS run's capture survived here and was rendered and counted as
+  # this run's -- two builds mixed into one comparison, with nothing to say so.
+  rm -f "$outdir/$name.txt" "$outdir/report_$name.svg" "$outdir/report_$name.html"
   bash "$ROOT/tools/hitl_collect.sh" "$motor" "$name" "$noise" "$wind" "$dir" "$spike" "$outdir" "$GLIDER_G" </dev/null \
     || echo "skip $motor/$name (flight failed)"   # one flaky flight must not abort the matrix
 done 3<<'SCN'
@@ -107,7 +111,18 @@ overlay() {   # overlay <out.svg> <label-for> <scenario>...
     --labels "$(IFS=,; echo "${labels[*]}")" --pad $PAD --zone $ZONE >/dev/null 2>&1 \
     || echo "WARNING: $(basename "$out") render failed" >&2
 }
+rm -f "$outdir/compare_noise.svg" "$outdir/compare_wind.svg"   # an overlay too short to redraw must not linger
 overlay "$outdir/compare_noise.svg" noise noise05 noise10 noise25 noise50 noise100
 overlay "$outdir/compare_wind.svg" wind wind00 wind03 wind06 wind09 wind12
-flights=$(ls "$outdir"/*.txt 2>/dev/null | wc -l)
-echo "matrix $motor ${GLIDER_G}g done -> $outdir  (flights: $flights, svg: $(ls "$outdir"/*.svg 2>/dev/null | wc -l), html: $(ls "$outdir"/*.html 2>/dev/null | wc -l))"
+# Count THIS run's scenarios, not every .txt in the directory, and fail when any is missing: "done"
+# over a partial matrix is the silent-success trap the rest of this harness exists to prevent.
+wanted=0; flights=0; missing=''
+for scen in $SCENARIOS; do
+  wanted=$((wanted + 1))
+  if [ -f "$outdir/$scen.txt" ]; then flights=$((flights + 1)); else missing="$missing $scen"; fi
+done
+echo "matrix $motor ${GLIDER_G}g done -> $outdir  (flights: $flights of $wanted, svg: $(ls "$outdir"/*.svg 2>/dev/null | wc -l), html: $(ls "$outdir"/*.html 2>/dev/null | wc -l))"
+if [ "$flights" -ne "$wanted" ]; then
+  echo "FAIL: $((wanted - flights)) of $wanted scenario(s) produced no capture:$missing" >&2
+  exit 1
+fi
