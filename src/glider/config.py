@@ -587,7 +587,7 @@ def load(path: str = 'board.config', defaults=None) -> tuple:
     The SAVED config wins as-is -- what you saved is what flies, so a flight stays reproducible and a
     board never silently starts running something you did not persist. But a config produced before a
     newer firmware's tree simply LACKS its new devices, which would otherwise show up only as a sensor
-    that mysteriously never ran (findings §27.13). So the version travels with the file and any mismatch
+    that mysteriously never ran. So the version travels with the file and any mismatch
     is reported through `source` -- the boot log, the capture's provenance line and CC all show it.
     """
     """

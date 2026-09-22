@@ -145,7 +145,7 @@ def test_apply_restore():
 
 def test_apply_restore_seeds_airspeed():
     """
-    findings §23.4: the crumb's fused airspeed is handed back BEFORE the loop runs, so the fin cap comes
+    The crumb's fused airspeed is handed back BEFORE the loop runs, so the fin cap comes
     off a real speed instead of the blunt unconfident floor (starved authority right after a mid-air
     reset). An older crumb without the field must simply not seed -- never crash the recovery boot.
     """

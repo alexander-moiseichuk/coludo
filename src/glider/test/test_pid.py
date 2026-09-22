@@ -85,7 +85,7 @@ def test_set_limit():
 
 def test_back_calculation():
     """
-    findings §23.5: while the fin is SATURATED the integral must unwind, not sit at its clamp.
+    While the fin is SATURATED the integral must unwind, not sit at its clamp.
 
     The clamps bound magnitude but never bleed, so a clamp-only loop dumps full deflection the moment
     authority returns. Deep saturation here is the warm-start case: a fin left ~90° to the airflow is an

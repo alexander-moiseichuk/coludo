@@ -21,7 +21,7 @@ import task
 from machine import UART  # board-only, like `micropython` above
 
 # WHY THIS MODULE IS NOT HOST-IMPORTABLE, and what it would cost to change.
-# findings §43.1 asks for guarded imports so drivers can be unit-tested on CPython. A guard alone is
+# The audit asked for guarded imports so drivers can be unit-tested on CPython. A guard alone is
 # not enough here: _xor_checksum is @micropython.viper and annotates `ptr8`, a viper BUILTIN TYPE that
 # exists only under the real compiler, so the annotation fails at def time on CPython however the
 # imports are written. Making this importable means restructuring that hot path (quote the

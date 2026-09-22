@@ -63,7 +63,7 @@ async def main() -> None:
     print('main :: config %s%s' % (source, '' if not errors else ' ERRORS=%s' % errors))
     flight = await bringup(cfg)
     """
-    PROVENANCE (findings §27.3): stamp the build + config identity into the CAPTURE, not just the
+    PROVENANCE: stamp the build + config identity into the CAPTURE, not just the
     console. A recording that cannot be attributed to the firmware and config that produced it is not
     comparable across a flight campaign -- which is the whole point of the passive-telemetry flights.
     Logged after bringup so the Recorder exists to carry it; log() is best-effort by policy, so a board

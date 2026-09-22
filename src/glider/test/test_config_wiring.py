@@ -1,7 +1,7 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-CROSS-REFERENCE test for the board config (findings §27.10): every device `config_default` declares
+CROSS-REFERENCE test for the board config: every device `config_default` declares
 must actually be BUILDABLE. `config.validate()` checks the file's shape -- types, pin uniqueness, bus
 refs -- and each driver's own test asserts that driver registers. Nothing checked the join between
 them, so a typo'd `driver` name, a device pointing at a bus that is not defined, or a `pin` role with

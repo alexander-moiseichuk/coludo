@@ -142,7 +142,7 @@ class Mixer:
 
         For the OPERATOR view only -- it allocates a dict, so it is called at the ~0.5 Hz vitals rate,
         never from actuate(). Reads each driver's stored command rather than re-deriving the mix, so
-        what the panel shows is literally what the servo was told (findings §27.19).
+        what the panel shows is literally what the servo was told.
 
         Args:
             (none)

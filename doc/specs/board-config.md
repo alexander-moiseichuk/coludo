@@ -181,10 +181,17 @@ identical behaviour every time.
   `health.layout` shows what this boot applied (`v1.0`, `v0.1 (declared)`, `undecided`); the CC
   `detect` command re-scans on demand and reports the verdict beside it, applying nothing until the
   next boot. See [`../hardware.md`](../hardware.md) → *Running one firmware on both boards*.
-- **`fins`** — one home for fin/servo control: `concurrency` (max servos slewing at once, caps the
-  boost-rail current transient; `== fin count` = no limit). **Defaults to `1`** — safe on the bench
-  rig's 1 A supply, which is the only board that runs without a profile; each flight profile sets its
-  own value (TMS-7C `1`, TMS-7D `3`) to match the power board actually fitted, `limit_multiplier` (the dynamic-pressure
+
+  `layout.apply()` sets `enabled` on every **revision-dependent** part (the ADXL375, the SEN0253's
+  BNO055 + BMP280, the SEN0697's BMI323 + BMM350 + BMP581) from what the revision fits, so an
+  `enabled: false` on one of those is overridden at boot. To take a dead or removed one out, give it
+  **`"fitted": false`** as well: apply() then keeps it disabled. Any other device is left alone and
+  `enabled: false` is enough.
+- **`fins`** — one home for fin/servo control: `concurrency` (max servos slewing at once through
+  `servo.move()`; `== fin count` = no limit). **It gates `move()` only**, and nothing at boot or in
+  flight calls it: boot centring, the mixer, probe sweeps and `update` write the PWM directly, so it
+  does NOT protect a weak supply -- disable the servos for that. Defaults to `1`; the profiles set
+  their own (TMS-7C `1`, TMS-7D/7E `3`, TMS-7F `1`), `limit_multiplier` (the dynamic-pressure
   governor's safety dial, `1.0` nominal), and the `mixer` (the elevon + rudder mixing matrix —
   `surfaces` gains, `neutral_deg`, `limit_deg`). Each fin's mechanical zero is the servo component's
   own per-fin `trim` (degrees), NOT here.

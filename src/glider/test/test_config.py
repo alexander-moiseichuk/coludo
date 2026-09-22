@@ -196,7 +196,7 @@ def main():
     assert source == 'default'
 
     """
-    Config SCHEMA VERSION (findings §27.13): a saved config carries the version it was produced from,
+    Config SCHEMA VERSION: a saved config carries the version it was produced from,
     forever. The saved config still WINS as-is -- what you saved is what flies -- but a mismatch against
     the firmware is reported through `source`, so a config predating a new sensor is visible instead of
     silently dropping it.

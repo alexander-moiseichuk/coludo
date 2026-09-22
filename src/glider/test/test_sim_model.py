@@ -110,7 +110,7 @@ def test_stall():
 
 def test_drag_polar():
     """
-    Sink follows the airspeed POLAR, not just the bank (findings §27.22).
+    Sink follows the airspeed POLAR, not just the bank.
 
     Normalised to 1.0 at trim; minimum sink sits BELOW trim (~0.76x) because minimum-sink speed is below
     best-glide speed on a real glider -- so flying well off trim costs energy in BOTH directions, which is

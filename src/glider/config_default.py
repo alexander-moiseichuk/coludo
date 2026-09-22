@@ -25,8 +25,7 @@ CONFIG SCHEMA VERSION -- the date THIS file's structure or defaults last changed
 
 A saved board.config carries the version it was produced from, forever; `config.load()` keeps running
 the SAVED config (what you saved is what flies -- reproducible) but reports a mismatch against this
-constant, so a config predating a new sensor/section is visible instead of silently dropping devices
-(findings §27.13).
+constant, so a config predating a new sensor/section is visible instead of silently dropping devices.
 
 **BUMP THIS on any change to the config TREE or its defaults** -- a new sensor/component, a renamed or
 moved key, a changed default value. Do NOT bump for a comment or a docstring edit. Bumping is what turns

@@ -122,7 +122,7 @@ async def amain():
     assert ctrl.fins['servo_yaw'].angle == 90  # heading hold captured at 100 -> error 0 -> rudder neutral
 
     """
-    flight.csv (findings §27.2): the control state -- what the loop BELIEVED and DEMANDED plus the cap
+    flight.csv: the control state -- what the loop BELIEVED and DEMANDED plus the cap
     that clipped it -- is the one thing no other stream holds (the per-servo streams have only the
     resulting angles). Assert the header shape, then force the sample clock (the stream is decimated to
     10 Hz, so a burst of test ticks would otherwise emit once) and check a row of the ENGAGED state.

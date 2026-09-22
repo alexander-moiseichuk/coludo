@@ -134,7 +134,7 @@ class Flight(task.Task):
         wind) and DEMANDED (setpoints, per-axis commands), plus the authority cap that clipped it. The
         per-servo streams already hold the resulting fin angles, so those are not duplicated here; the
         value of this stream is that command, cap and belief share ONE timestamp -- post-flight you can
-        see not just what the fins did but what limited them and why (findings §27.2).
+        see not just what the fins did but what limited them and why.
 
         SAMPLED at telemetry_ms, not traced at the loop rate. _record() asks Telemetry.due() BEFORE
         building the row, because push() takes an already-built tuple -- letting push() do the decimating
@@ -467,7 +467,7 @@ class Flight(task.Task):
         """
         wind_e, wind_n = self._wind.components()
         reach = self._guidance.reachability(self._glide_ratio, wind_e, wind_n, self._governor.airspeed())
-        # attitude + the commanded fins make the panel a WALK-TEST HUD (findings §27.19): carrying the
+        # attitude + the commanded fins make the panel a WALK-TEST HUD: carrying the
         # glider, the operator needs to see the fins answer the attitude, not just the derived numbers
         value, source, _age = self._attitude.read()
         attitude = None if (source is None or value is None) else {

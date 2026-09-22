@@ -109,7 +109,7 @@ class Hitl(task.Task):
         `airspeed`/`dynamic_pressure` are here for a reason worth remembering: without them the sim
         published no airspeed at all, so the ONLY publisher of the fused `airspeed` channel on a board
         HITL flight was the REAL bench SDP810 sitting in still air. That is what caused the bistability
-        (findings §28) -- fixed then with the `pitot_min_ms` consumer guard, which was right for a
+        -- fixed then with the `pitot_min_ms` consumer guard, which was right for a
         blocked tube in flight but left the harness itself lying: board HITL never exercised the pitot
         path, and the host sim (which does simulate it) flew the governor off a different source.
         config_hitl._SIM_SENSORS now masks `airspeed_sdp810` too, so the bench part cannot get in.

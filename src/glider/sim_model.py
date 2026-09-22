@@ -77,7 +77,7 @@ safe direction -- it under-promises endurance and range.
 """
 AIR_QUALITY: float = 5.5
 """
-DRAG POLAR: sink varies with AIRSPEED, not just bank (findings §27.22). `trim_sink` is the sink AT trim;
+DRAG POLAR: sink varies with AIRSPEED, not just bank. `trim_sink` is the sink AT trim;
 away from it the classic decomposition applies -- profile/parasite drag grows as v^3, induced drag as
 1/v -- so `_polar()` is normalised to exactly 1.0 at _V_TRIM. Note its MINIMUM sits at ~0.76*_V_TRIM
 (~10.6 m/s), not at trim: minimum-sink speed is below best-glide speed on any real glider, so trimming
@@ -108,7 +108,7 @@ HPRC: dict = {
 
 class Faults:
     """
-    Sensor-fault injection for robustness runs (findings §27.20).
+    Sensor-fault injection for robustness runs.
 
     The firmware is full of degradation paths -- databoard priority fallback, the unconfident airspeed
     cap floor, the GNSS jump/steep gates, pitot saturation, warm start -- and those are exactly the paths
@@ -206,7 +206,7 @@ class Body:
         self.wind_e = 0.0      # steady wind advecting the body (m/s, east +) -- a glide disturbance
         self.wind_n = 0.0      # steady wind advecting the body (m/s, north +)
         """
-        GUSTS / turbulence (findings §27.21): real air is not the steady block `wind_e/wind_n` models, and
+        GUSTS / turbulence: real air is not the steady block `wind_e/wind_n` models, and
         an endgame proven only in steady wind has an unknown robustness margin. `gust` is the 1-sigma gust
         amplitude (m/s) added to the steady wind as an Ornstein-Uhlenbeck process -- correlated over
         `gust_tau` seconds rather than white noise, because a glider integrates gusts and what matters is

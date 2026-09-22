@@ -53,6 +53,10 @@ async def amain():
         if await device.setup():
             up.append(name)
     assert len(up) <= 1, 'both drivers claimed 0x29 -- a model-id check is too loose: %s' % up
+    # ...and when a laser DOES answer at 0x29, exactly one driver must take it: two refusals is a model-id
+    # check too TIGHT, and a board with no working laser at all would otherwise pass here
+    if revision is not None and '0x29' in _detail:
+        assert len(up) == 1, 'a laser answers at 0x29 but neither driver claimed it: %s' % _detail
 
     """
     The part that claimed the socket must pass its OWN probe -- `verify` and `arm` refuse on a failed

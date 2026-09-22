@@ -217,7 +217,7 @@ def _apply_restore(flight, crumb, cfg: dict) -> None:
             if baro is not None:
                 baro.update({'ground': pad_altitude})
     """
-    AIRSPEED (findings §23.4): hand the saved airspeed back to the flight task BEFORE the loop runs, so
+    AIRSPEED: hand the saved airspeed back to the flight task BEFORE the loop runs, so
     the fin cap comes off a real speed rather than the blunt `airspeed_unconfident_ms` floor. Recovery
     order is pitot -> saved -> GNSS: this is the immediate one, the accel backbone integrates on from
     it, and the first in-band pitot read overrides it. Absent on an older crumb -> unchanged behaviour.
