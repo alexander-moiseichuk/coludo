@@ -618,10 +618,10 @@ V_F as low as possible, **I_F ≥ 8 A**, **V_RRM ≥ 20 V**, on the **+ rail onl
 the servos to ~4.2 V, near the MG90S limit). For reverse-polarity specifically an **ideal-diode P-FET**
 (≈ milliohm drop) beats a Schottky.
 
-**Firmware helps too.** The fin `concurrency` gate staggers servo motion so they do not all slam at
-once — that caps the *simultaneity* of the draw; the reservoir cap caps the *transient*. A sustained
-all-three-stall > 3 A is an average-power limit the cap cannot fix (the module current-limits), so it is
-handled by not commanding three hardovers at once, not by more capacitance.
+**Firmware does NOT stagger the draw.** `fins.concurrency` gates `servo.move()` only, which nothing in flight or at boot calls: boot centring, the mixer, probe sweeps and `update` all write the PWM directly, so every fin re-centres together at every boot whatever it says. The reservoir cap is what caps the
+*transient*. A sustained all-three-stall > 3 A is an average-power limit the cap cannot fix (the module
+current-limits), so it is handled by not commanding three hardovers at once, not by more capacitance.
+On a current-limited bench supply the protection is to **disable the servos**, not a concurrency value.
 
 **Required, weight ~5–7 g (module + reservoir cap; optional TVS).**
 
@@ -659,7 +659,7 @@ Candidates (SG90 expected primary — cheap, compact, light):
 **Power**: servos run from their **own converter rail** (5 V — see [Converter](#converter) above),
 separate from the controller. The measured ~2.4 A peak of 3× MG90S is handled by that rail's **reservoir
 capacitor**; a series diode is not used (small servos → low back-EMF, the cap absorbs it). The firmware
-fin `concurrency` gate staggers servo motion so they do not all draw at once.
+does not stagger them: `fins.concurrency` gates `servo.move()` only, which nothing in flight or at boot calls: boot centring, the mixer, probe sweeps and `update` all write the PWM directly, so every fin re-centres together at every boot whatever it says.
 
 **Required, weight 10.6g per each engine and wires, at least 2 are required**
 

@@ -110,6 +110,11 @@ first powered flight.
       steel) sits on top of the field as a fixed vector. Measured on the bench fixture, that shifts
       heading by up to **214°** and — this is the point — by a DIFFERENT amount on every heading, so the
       track offset `attitude` learns from the GNSS cannot absorb it.
+      - **POWER-CYCLE IT WHERE YOU WILL CALIBRATE, and keep it level from boot.** The calibration takes
+        the min/max of every sample since BOOT, with no level gate, so a board booted on the steel
+        bench, or carried tilted, bakes that into the saved centre (up to ~17° of heading). If the
+        sector count will not complete, or the result looks off, a power-cycle in the clear is the
+        reset; nothing else clears the evidence.
       - **A LEVEL FULL CIRCLE, not a figure-8.** Only the two horizontal axes are corrected, because
         only a level heading is used. Stand the airframe flat and turn it slowly through 360°, twice.
       - Away from steel and magnets, same as the BNO055 — you are measuring the airframe's iron, not

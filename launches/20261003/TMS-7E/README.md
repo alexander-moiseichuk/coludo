@@ -8,7 +8,7 @@ measured 0.9 m/gram.
 | | |
 |---|---|
 | board | **main board v1.0** — detected at boot, no config edit |
-| config | [`tms7e.config`](tms7e.config) — passive (`flight` off), `fins.concurrency` **1** |
+| config | [`tms7e.config`](tms7e.config) — passive (`flight` off), `fins.concurrency` **3** |
 | status | **built, bench bring-up done** — 21 devices up, 0 down; engines not yet fitted |
 
 ## What the v1.0 board changes against 7D's v0.1
@@ -44,8 +44,10 @@ its own driver. The test that separates them is to move its lead onto a proven c
 
 **`fins.concurrency` is 3**, matching 7D, set on the battery simulator after the bench bring-up. It
 started at 1: a concurrency-3 profile on a current-limited supply is the most likely cause of the servo
-failure on 2026-08-29 (measured MG90S peak 0.79 A each, so three at once is ~2.4 A), so 1 is the right
-value on an unknown supply and 3 only on one known to source the peak. 7C flies at 1.
+failure on 2026-08-29 (measured MG90S peak 0.79 A each, so three at once is ~2.4 A). But the value
+does not protect a weak supply: it gates `servo.move()` only, and boot centring moves all three fins
+together at every boot regardless. On an unknown or current-limited supply, disable the servos. 7C
+flies at 1, with its servos disabled.
 
 **RESOLVED: the `test_spibus` failure was software, and bench-only.** It failed in three consecutive
 full suite runs (*LSM6DSO32 WHO_AM_I never read 0x6C*) while passing standalone, which looked like

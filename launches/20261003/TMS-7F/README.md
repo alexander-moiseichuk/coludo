@@ -80,6 +80,8 @@ and tighter sample timing, nothing more. If a future v1.1 board does wire GPIO4 
 set `int_pin` back to `accel_int1` and the driver picks it up with no code change — confirm by the
 `INT1 silent` message disappearing and `irq_runs` climbing off zero.
 
-Then, unique to this airframe: **calibrate the BMM350** over CC (`calibrate mag_bmm350`) — a LEVEL full
-circle, twice round. The code is written and tested but has never met a real magnetic field; it refuses
-a partial turn on purpose. `fins.concurrency` starts at 1 until this board's servos have drawn current.
+Then, unique to this airframe: **calibrate the BMM350** over CC (`calibrate mag_bmm350`) — power-cycle it
+in the clear first and keep it level from boot (the evidence is every sample since boot), then a LEVEL
+full circle, twice round. The code is written and tested but has never met a real magnetic field; it refuses
+a partial turn on purpose. `fins.concurrency` is 1, which does NOT stagger the boot centring (it gates
+`servo.move()` only): until this board's servos have drawn current on a known supply, keep them disabled.

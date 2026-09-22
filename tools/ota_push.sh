@@ -154,6 +154,18 @@ for spec in "$@"; do
         fi
     fi
 
+    # A board.config names the board it belongs to. Pushing another airframe's (or the bench default's)
+    # would install a config announcing a different id, and the hub would then show two boards fighting
+    # over one name. The board validates the file itself; the id it cannot check -- it is this command's.
+    if [ "$dest" = "board.config" ]; then
+        if ! cfg_id="$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["board"]["id"])' "$src" 2>/dev/null)"; then
+            warn "skip $src: not a board config (no board.id)"; status=1; continue
+        fi
+        if [ "$cfg_id" != "$BOARD" ]; then
+            warn "skip $src: its board.id is $cfg_id, not $BOARD"; status=1; continue
+        fi
+    fi
+
     printf '%-46s -> %-28s ' "$src" "$dest"
     if [ "$DRYRUN" = 1 ]; then
         echo "${Y}(dry run)${N}"
