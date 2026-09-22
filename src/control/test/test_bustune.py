@@ -86,7 +86,47 @@ def test_guards():
     assert 'noboard' in _run(hub, ['bustune', 'taster', 'i2c', '0'])
 
 
+class _FaultyBoard(_FakeBoard):
+    """
+    An i2c _FakeBoard whose SECOND rung goes wrong.
+
+    `refuse` answers `ok` carrying an error, `garble` answers unparseable JSON, `drop` loses the link.
+    """
+
+    def __init__(self, fault):
+        super().__init__('i2c', '0', 400000)
+        self.fault = fault
+
+    async def command(self, cmd, *args):
+        if cmd == 'bustune' and len(self.calls) == 2:  # get-config, rung 1, then THIS: rung 2
+            self.calls.append((cmd, tuple(args)))
+            if self.fault == 'drop':
+                self.online = False
+                return None
+            return _Resp('ok', [json.dumps({'error': 'unknown bus'}) if self.fault == 'refuse' else '{garbled'])
+        return await super().command(cmd, *args)
+
+
+def test_an_aborted_sweep_still_restores():
+    """
+    Every early return restores the bus too: a refused or garbled rung used to leave it overclocked.
+
+    Negative: a board that went offline mid-sweep gets no restore attempt -- the link is gone, and the
+    reply must stay the plain `offline` error rather than a crash from writing to a dead link.
+    """
+    for fault in ('refuse', 'garble'):
+        board = _FaultyBoard(fault)
+        line = _run(_Hub(board), ['bustune', 'taster', 'i2c', '0'])
+        assert line.startswith('from cc err'), line
+        assert board.calls[-1] == ('bustune', ('i2c', '0', '400000')), (fault, board.calls)
+        assert len(board.calls) == 4, 'get-config, rung 1, the faulty rung 2, then the restore'
+    board = _FaultyBoard('drop')
+    assert _run(_Hub(board), ['bustune', 'taster', 'i2c', '0']) == 'from cc err bustune offline'
+    assert len(board.calls) == 3, 'no restore is attempted over a link that is gone'
+
+
 test_clean_sweep_keeps_ceiling()
 test_limited_sweep_backs_off_and_names_limiter()
 test_guards()
+test_an_aborted_sweep_still_restores()
 print('ok: bustune -- clean-sweep keeps ceiling, limited-sweep backs off + names limiter, restore, guards')

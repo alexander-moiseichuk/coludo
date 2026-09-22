@@ -47,41 +47,47 @@ async def bustune_command(hub, tokens, session) -> list:
         spec = json.loads(cfg.args[0]).get('buses', {}).get(kind, {}).get(str(ident), {})
         original = spec.get(_FREQ_KEY[kind])
 
-    rungs, ceiling, limiter = [], None, None
-    for freq in _LADDER[kind]:
-        resp = await board.command('bustune', kind, str(ident), str(freq))
-        if resp is None or resp.command != 'ok':
-            return ['from cc err bustune %s' % (' '.join(map(str, resp.args)) if resp else 'offline')]
-        try:
-            report = json.loads(resp.args[0])   # a garbled `ok` must end the sweep, not crash it
-        except ValueError:
-            return ['from cc err board sent a malformed bustune reply']
-        if 'error' in report:
-            # An `ok` carrying an error is the board REFUSING (no controller, unknown bus), not a rung
-            # that failed. Without this it fell to the else branch and was reported as "the bus failed
-            # at this frequency" with an empty failing-device list -- an invented result, and the sweep
-            # stopped there as though it had found the ceiling.
-            return ['from cc err bustune refused at %d Hz: %s' % (freq, report['error'])]
-        rungs.append({'freq': freq, 'all_ok': report.get('all_ok')})
-        if report.get('all_ok'):
-            ceiling = freq
-        else:  # first failing step -> the limiting device(s): what to rewire or split off the bus
-            failed = [name for name, result in report.get('devices', {}).items() if result != 'ok']
-            limiter = {'freq': freq, 'failed': failed}
-            break
+    """
+    The restore runs on EVERY exit, the error returns included: a board that refused or garbled a rung
+    used to be left on that rung's frequency, overclocked until someone rebooted it.
+    """
+    try:
+        rungs, ceiling, limiter = [], None, None
+        for freq in _LADDER[kind]:
+            resp = await board.command('bustune', kind, str(ident), str(freq))
+            if resp is None or resp.command != 'ok':
+                return ['from cc err bustune %s' % (' '.join(map(str, resp.args)) if resp else 'offline')]
+            try:
+                report = json.loads(resp.args[0])   # a garbled `ok` must end the sweep, not crash it
+            except ValueError:
+                return ['from cc err board sent a malformed bustune reply']
+            if 'error' in report:
+                # An `ok` carrying an error is the board REFUSING (no controller, unknown bus), not a rung
+                # that failed. Without this it fell to the else branch and was reported as "the bus failed
+                # at this frequency" with an empty failing-device list -- an invented result, and the sweep
+                # stopped there as though it had found the ceiling.
+                return ['from cc err bustune refused at %d Hz: %s' % (freq, report['error'])]
+            rungs.append({'freq': freq, 'all_ok': report.get('all_ok')})
+            if report.get('all_ok'):
+                ceiling = freq
+            else:  # first failing step -> the limiting device(s): what to rewire or split off the bus
+                failed = [name for name, result in report.get('devices', {}).items() if result != 'ok']
+                limiter = {'freq': freq, 'failed': failed}
+                break
 
-    chosen, note = None, None
-    if ceiling is not None and limiter is None:  # swept clean -> the top rung is proven; nothing to back off from
-        chosen = ceiling
-        note = 'no device limit found within the ladder (raise the ladder to probe higher)'
-    elif ceiling is not None:  # a rung failed -> keep `margin` step(s) below the known-bad point for headroom
-        idx = _LADDER[kind].index(ceiling)
-        chosen = _LADDER[kind][max(0, idx - margin)]
-        note = 'limited by %s at %d Hz; chosen is %d step(s) below the %d Hz ceiling' % (
-            ', '.join(limiter['failed']), limiter['freq'], margin, ceiling)
+        chosen, note = None, None
+        if ceiling is not None and limiter is None:  # swept clean -> the top rung is proven; nothing to back off from
+            chosen = ceiling
+            note = 'no device limit found within the ladder (raise the ladder to probe higher)'
+        elif ceiling is not None:  # a rung failed -> keep `margin` step(s) below the known-bad point for headroom
+            idx = _LADDER[kind].index(ceiling)
+            chosen = _LADDER[kind][max(0, idx - margin)]
+            note = 'limited by %s at %d Hz; chosen is %d step(s) below the %d Hz ceiling' % (
+                ', '.join(limiter['failed']), limiter['freq'], margin, ceiling)
 
-    if original is not None:  # put the bus back where it was; the chosen freq is applied via set-config
-        await board.command('bustune', kind, str(ident), str(original))
+    finally:
+        if original is not None and board.online:  # put the bus back; the chosen freq goes via set-config
+            await board.command('bustune', kind, str(ident), str(original))
 
     apply = None if chosen is None else '%s set-config board (buses.%s.%s.%s = %d) + reboot' % (
         target, kind, ident, _FREQ_KEY[kind], chosen)

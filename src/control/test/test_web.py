@@ -222,6 +222,144 @@ def test_dashboard_carries_the_imu_calibration_column():
 
 
 
+_HUD_HARNESS = r"""
+// Run the HUD's script under a stub DOM, feed it /events frames, print the cells it rendered.
+const page = require('fs').readFileSync(process.argv[2], 'utf8');
+const script = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join('\n');
+const cells = {};
+const cell = (id) => cells[id] || (cells[id] = {
+  textContent: '', innerHTML: '', value: '', dataset: {}, children: [], style: {},
+  classList: { toggle() {} }, addEventListener() {}, width: 200, height: 200,
+  getContext: () => new Proxy({}, { get: () => () => {} }) });
+let feed = null;
+new Function('document', 'EventSource', 'fetch', 'setInterval', script)(
+  { getElementById: cell, body: { classList: { toggle() {} } } },
+  class { constructor() { feed = this; } }, async () => ({ json: async () => [] }), () => 0);
+const out = [];
+for (const frame of JSON.parse(process.argv[3])) {
+  feed.onmessage({ data: JSON.stringify(frame) });
+  out.push({ status: cell('status').textContent, reach: cell('reach').textContent,
+             uptime: cell('uptime').textContent, degraded: cell('degraded').style.display === 'none'
+               ? null : cell('degraded').textContent });
+}
+console.log(JSON.stringify(out));
+"""
+
+
+def test_hud_renders_an_events_frame():
+    """
+    The HUD must RENDER the /events frame, which wraps the rows as {cc, boards}.
+
+    It took the frame for the list: every SSE message refreshed the 'live' clock and then threw, so the
+    HUD read live on data it never drew, and the 2 s poll was the only thing painting it. Its cells were
+    wrong too -- reach printed [object Object], uptime showed milliseconds as seconds, and the nominal
+    empty `degraded` list lit the amber pill. Run under node with a stub DOM (skipped without node).
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    node = shutil.which('node')
+    if node is None:
+        print('   (node not found -- HUD render check skipped)')
+        return
+    page = _request(b'GET /hud HTTP/1.1\r\n\r\n').split(b'\r\n\r\n', 1)[1]
+    directory = tempfile.mkdtemp()
+    with open(os.path.join(directory, 'hud.html'), 'wb') as handle:
+        handle.write(page)
+    with open(os.path.join(directory, 'harness.js'), 'w') as handle:
+        handle.write(_HUD_HARNESS)
+    row = {'id': 'TMS-7C', 'online': True, 'stale': False, 'health_age': 0.4, 'stage': 'setting',
+           'uptime': 125000, 'degraded': [], 'flight': {'reach': {'reachable': True, 'margin_m': 42}}}
+    troubled = dict(row, degraded=['attitude-backup'],
+                    flight={'reach': {'reachable': False, 'margin_m': -7}})
+    frames = [{'cc': {}, 'boards': [row]}, {'cc': {}, 'boards': [troubled]}, {'cc': {}, 'boards': 'junk'}]
+    done = subprocess.run([node, os.path.join(directory, 'harness.js'), os.path.join(directory, 'hud.html'),
+                           json.dumps(frames)], capture_output=True)
+    assert done.returncode == 0, done.stderr.decode('utf-8', 'replace')
+    nominal, degraded, junk = json.loads(done.stdout)
+    assert nominal['status'].startswith('live — TMS-7C'), nominal
+    assert nominal['reach'] == 'zone ✓ +42 m' and nominal['uptime'] == '125 s', nominal
+    assert nominal['degraded'] is None, 'an empty degraded list is NOMINAL -- no amber pill'
+    assert degraded['degraded'] == 'attitude-backup' and degraded['reach'] == 'zone ✗ -7 m', degraded
+    assert junk == degraded, 'a frame with no board list must leave the last good render alone'
+
+
+_DASHBOARD_HARNESS = r"""
+// Load the dashboard script under a stub DOM; drive selectBoard / updateObject / calibrateBoard and the
+// row formatters; print what landed where.
+const page = require('fs').readFileSync(process.argv[2], 'utf8');
+const script = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join('\n');
+const cells = {};
+const cell = (id) => cells[id] || (cells[id] = {
+  textContent: '', innerHTML: '', value: '', dataset: {}, children: [], style: {},
+  classList: { toggle() {}, add() {}, remove() {} }, addEventListener() {}, appendChild() {},
+  querySelectorAll: () => [] });
+const replies = [];                                     // /api/cmd bodies, consumed in order
+const reply = async () => replies.shift() || '{}';
+const api = new Function('document', 'EventSource', 'fetch', 'setInterval', 'setTimeout', 'confirm',
+  script + '\nreturn { selectBoard, calibrateBoard, updateObject, fmtFlight, fmtPad };')(
+  { getElementById: cell, querySelector: () => null, querySelectorAll: () => [], createElement: () => cell('new') },
+  class {}, async () => ({ status: 200, text: reply, json: async () => JSON.parse(await reply()) }),
+  () => 0, () => 0, () => true);
+(async () => {
+  const out = {};
+  api.selectBoard('A');
+  cell('inspresult').innerHTML = 'cards of A';
+  api.selectBoard('A');
+  out.same = cell('inspresult').innerHTML;
+  api.selectBoard('B');
+  out.switched = cell('inspresult').innerHTML;
+  cell('insp-mission').value = '{}';
+  await api.updateObject('A', 'mission');
+  out.staleCard = cell('tick-mission').textContent;
+  cell('actmsg').textContent = 'B calibrate imu: STILL OUTSTANDING';
+  replies.push(JSON.stringify({ status: 'ok', args: [JSON.stringify({ baro: 'tare', imu: 'figure 8' })] }),
+               JSON.stringify({ status: 'ok', args: ['{}'] }),
+               JSON.stringify({ status: 'ok', args: [JSON.stringify({ imu: 'figure 8' })] }));
+  await api.calibrateBoard('B');
+  out.calibrated = cell('actmsg').textContent;
+  out.flight = api.fmtFlight({ degraded: ['<i>x</i>'] });
+  out.pad = api.fmtPad({ launchpad: [1, 2], site: '<i>y</i>' });
+  console.log(JSON.stringify(out));
+})();
+"""
+
+
+def test_dashboard_actions_follow_the_selection():
+    """
+    What the dashboard shows and sends must belong to the SELECTED board.
+
+    The inspect cards outlived a selection change: the heading named the new board while each card's
+    update button still wrote to the old one. A guided calibrate reported success under the status
+    table while every other outcome went to the actions bar, so a stale STILL OUTSTANDING stayed on
+    screen. Board-reported `degraded` / `site` went into the markup raw. Run under node with a stub DOM
+    (skipped without node); the negative case is the same board re-selected, which keeps its cards.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    node = shutil.which('node')
+    if node is None:
+        print('   (node not found -- dashboard behaviour check skipped)')
+        return
+    page = _request(b'GET / HTTP/1.1\r\n\r\n').split(b'\r\n\r\n', 1)[1]
+    directory = tempfile.mkdtemp()
+    with open(os.path.join(directory, 'index.html'), 'wb') as handle:
+        handle.write(page)
+    with open(os.path.join(directory, 'harness.js'), 'w') as handle:
+        handle.write(_DASHBOARD_HARNESS)
+    done = subprocess.run([node, os.path.join(directory, 'harness.js'), os.path.join(directory, 'index.html')],
+                          capture_output=True)
+    assert done.returncode == 0, done.stderr.decode('utf-8', 'replace')
+    out = json.loads(done.stdout)
+    assert out['same'] == 'cards of A', 're-selecting the same board must keep its cards'
+    assert out['switched'] == '', 'the cards of the board being left must go'
+    assert out['staleCard'].startswith('not sent'), out['staleCard']
+    assert out['calibrated'] == 'B calibrate: baro done — 1 left (imu)', out['calibrated']
+    assert '<i>' not in out['flight'] and '&lt;i&gt;x' in out['flight'], out['flight']
+    assert '<i>' not in out['pad'] and '&lt;i&gt;y' in out['pad'], out['pad']
+
+
 def test_malformed_request_line_does_not_hang():
     """
     §26.4: `method, path, _ = line.split(' ', 2)` raised ValueError on a garbage line, which no except
@@ -253,6 +391,43 @@ def test_handler_fault_answers_500():
     asyncio.run(server._handle(_Reader(b'GET /api/boards HTTP/1.1\r\n\r\n'), writer))
     assert b'500 Internal Server Error' in writer.sent, writer.sent[:80]
     assert writer.closed
+
+
+def test_board_timeout_answers_json_504():
+    """
+    A board that does not answer in time is a JSON 504, not the generic text/plain 500.
+
+    board.exchange() raises TimeoutError after giving the link up. That fell to the catch-all, and every
+    dashboard action then threw on res.json() and left its 'probing...' on screen. Negative: a board
+    that does answer still comes back 200 with its reply.
+    """
+    class _Reply:
+        command, args = 'ok', ['{}']
+
+    class _Board:
+        id, online = 'taster', True
+
+        def __init__(self, fault):
+            self._fault = fault
+
+        async def command(self, command, *params):
+            if self._fault:
+                raise TimeoutError()
+            return _Reply()
+
+    body = json.dumps({'board': 'taster', 'command': 'probe', 'params': []}).encode()
+    raw = b'POST /api/cmd HTTP/1.1\r\nContent-Length: %d\r\n\r\n%s' % (len(body), body)
+    for fault, status, key in ((True, b'504 Gateway Timeout', 'error'), (False, b'200 OK', 'status')):
+        server = web.Web(_Hub(), log=lambda *a: None)
+        server.hub.boards['taster'] = _Board(fault)
+        writer = _Writer()
+        asyncio.run(server._handle(_Reader(raw), writer))
+        assert writer.sent.startswith(b'HTTP/1.1 ' + status), writer.sent[:80]
+        assert b'application/json' in writer.sent.split(b'\r\n\r\n', 1)[0], 'every /api reply is JSON'
+        assert key in json.loads(writer.sent.split(b'\r\n\r\n', 1)[1]), writer.sent
+    # and the page's cmd() survives a body that is NOT json (a hub fault, a proxy page) instead of throwing
+    page = _request(b'GET / HTTP/1.1\r\n\r\n')
+    assert b'await res.text()' in page.split(b'async function cmd(', 1)[1].split(b'\n}\n', 1)[0]
 
 
 def test_post_with_bad_json_is_answered():
@@ -312,12 +487,15 @@ def test_dashboard_script_is_valid_javascript():
 
 test_routes()
 test_hud_is_served_and_offline_safe()
+test_hud_renders_an_events_frame()
+test_dashboard_actions_follow_the_selection()
 test_dashboard_carries_the_imu_calibration_column()
 test_dashboard_script_is_valid_javascript()
 test_every_rendered_control_is_bound()
 test_malformed_request_line_does_not_hang()
 test_bad_content_length_still_routes()
 test_handler_fault_answers_500()
+test_board_timeout_answers_json_504()
 test_post_with_bad_json_is_answered()
 print('ok: web -- routing + 404, IMU calibration column + calibrate action, not-ready row flag, '
       'malformed request line, bad Content-Length, handler fault -> 500, bad JSON POST answered')

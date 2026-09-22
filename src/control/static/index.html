@@ -57,7 +57,7 @@
   </tr></thead>
   <tbody><tr><td colspan="12" class="muted">waiting for boards…</td></tr></tbody>
 </table>
-<p class="muted">click a board to target it in every section below · <span id="boardmsg"></span></p>
+<p class="muted">click a board to target it in every section below</p>
 
 <h2>board <span class="sel" id="selA">—</span> actions</h2>
 <p class="muted">the table above is status and selection only — pick a board there and every section
@@ -177,7 +177,10 @@ async function cmd(board, command, params = []) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ board, command, params }),
   });
-  return res.json();
+  // A body that is not JSON (a hub fault, a proxy page) becomes an {error} like the hub's own: every
+  // caller reads fields off the reply, and a throw here left their 'probing…' on screen for good.
+  const text = await res.text();
+  try { return JSON.parse(text); } catch (err) { return { error: `HTTP ${res.status}: ${text.slice(0, 200)}` }; }
 }
 
 // The board config the NEXT boot runs: its saved board.config (`get-config saved`). Every
@@ -311,6 +314,7 @@ function boardId() {
 }
 
 function selectBoard(id) {
+  const changed = id !== selected;
   selected = id;
   // Drop the cached fin zeros: they belong to the board we are leaving. Without this the first +/-
   // after switching boards computes `old board's trim + 1` and writes it to the NEW board, which moves
@@ -321,6 +325,9 @@ function selectBoard(id) {
   for (const label of ['selA', 'selB', 'selC', 'selD', 'selE', 'selF', 'selG']) {
     document.getElementById(label).textContent = id || '—';
   }
+  // The inspect cards hold the LEAVING board's objects and their update buttons still target it, under
+  // a heading that now names the new one -- so they go, rather than edit a board nobody is looking at.
+  if (changed) { document.getElementById('inspresult').innerHTML = ''; }
   markChosen();
 }
 
@@ -349,7 +356,7 @@ function fmtFlight(b) {
     : '<span class="muted">○ safe</span>';
   // degraded-mode annunciation: any non-nominal state is the loudest thing in the cell
   const degraded = (b.degraded && b.degraded.length)
-    ? ` <b style="color:#c22" title="non-nominal flight state">⚠ ${b.degraded.join(', ')}</b>` : '';
+    ? ` <b style="color:#c22" title="non-nominal flight state">⚠ ${escAttr(b.degraded.join(', '))}</b>` : '';
   const f = b.flight;
   if (!f) return armed + degraded;
   const bits = [`${f.airspeed ?? '–'} m/s`];
@@ -383,7 +390,7 @@ function fmtFlight(b) {
 }
 function fmtPad(b) {
   if (!b.launchpad) return '<b style="color:#c22">no launchpad</b>';
-  const where = fmtPos(b.launchpad) + (b.site ? ` (${b.site})` : '');
+  const where = fmtPos(b.launchpad) + (b.site ? ` (${escAttr(b.site)})` : '');
   if (b.launchpad_set) return `${where} <span class="muted">· set</span>`;
   return `${where} <span class="muted">· ${b.armed ? 'live fix?!' : 'freezes on arm'}</span>`;
 }
@@ -393,7 +400,6 @@ function ccGps(gps) {
   if (!gps.usable) return 'No FIX';
   return `${gps.latitude.toFixed(5)}, ${gps.longitude.toFixed(5)}`;
 }
-const boardMsg = (text) => { document.getElementById('boardmsg').textContent = text; };
 // Everything in the "board actions" bar reports INTO that bar. The five buttons used to split between
 // two elements, so the same click landed in different places depending on which button it was, and a
 // reply could appear above the caption the operator was looking at.
@@ -423,7 +429,7 @@ new EventSource('/events').onmessage = (event) => {
   }
   tbody.innerHTML = boards.map((b) => `
     <tr class="click ${b.online ? 'on' : 'off'} ${notReady(b) ? 'notready' : ''}" data-board="${escAttr(b.id)}">
-      <td>${notReady(b) ? `<b class="warn" title="NOT READY: ${b.degraded.join(', ')}">❗</b> ` : ''}${escAttr(b.id)}</td>
+      <td>${notReady(b) ? `<b class="warn" title="NOT READY: ${escAttr(b.degraded.join(', '))}">❗</b> ` : ''}${escAttr(b.id)}</td>
       <td><span class="dot" title="${b.online && b.stale ? `health ${b.health_age} s old -- armed/stage may be out of date` : ''}">${b.online ? (b.stale ? '◐' : '●') : '○'}</span></td>
       <td>${fmtLayout(b)}</td>
       <td>${escAttr(b.stage || '')}</td>
@@ -541,6 +547,7 @@ async function sweepCalibration(id) {
 }
 
 async function calibrateBoard(id) {
+  actMsg(`${id} calibrate: checking what is outstanding…`);   // clears the last press's verdict
   const pending = await sweepCalibration(id);
   if (pending === null) { actMsg(`${id} calibrate: board did not answer`); return; }
   const names = Object.keys(pending);
@@ -563,7 +570,7 @@ async function calibrateBoard(id) {
   if (now === null) { actMsg(`${id} calibrate ${name}: ran, but the re-check did not answer — status unknown`); return; }
   const stillLeft = Object.keys(now);
   if (stillLeft.includes(name)) { actMsg(`${id} calibrate ${name}: STILL OUTSTANDING — ${now[name]}`); return; }
-  boardMsg(stillLeft.length
+  actMsg(stillLeft.length
     ? `${id} calibrate: ${name} done — ${stillLeft.length} left (${stillLeft.join(', ')})`
     : `${id} calibrate: ${name} done — ALL DEVICES CALIBRATED`);
 }
@@ -842,6 +849,8 @@ document.getElementById('inspall').onclick = async () => {
 // send the edited props of one object via `update <name> <json>`; a green ✓ lists what actually changed.
 async function updateObject(board, name) {
   const tick = document.getElementById('tick-' + name);
+  // a card built while another board was selected (an inspect still loading when the operator switched)
+  if (board !== boardId()) { tick.className = 'tick no'; tick.textContent = `not sent: this card is ${board}'s`; return; }
   let json;
   try { json = JSON.stringify(JSON.parse(document.getElementById('insp-' + name).value)); }
   catch (e) { tick.className = 'tick no'; tick.textContent = 'invalid JSON'; return; }

@@ -449,6 +449,26 @@ def _gps_device_resolve():
     assert auto is None or auto.startswith('/dev/ttyUSB'), auto
 
 
+def _log_drops_are_reported():
+    """
+    A /logs listener that falls behind is TOLD how many lines it missed, once it has room again.
+
+    A full subscriber queue used to drop lines silently, so the browser showed a log with a hole in
+    it and no sign of one. Negative: a listener that kept up sees exactly the lines, no notice.
+    """
+    hub = server.Server(log=lambda message: None)
+    slow, fast = asyncio.Queue(maxsize=2), asyncio.Queue(maxsize=100)
+    hub.log_subscribers.update((slow, fast))
+    for number in range(5):
+        hub._emit_log('taster', 'line %d' % number)
+    assert [slow.get_nowait()['line'] for _ in range(2)] == ['line 0', 'line 1']
+    hub._emit_log('taster', 'line 5')  # room again -> the count, then the line
+    notice, line = slow.get_nowait()['line'], slow.get_nowait()['line']
+    assert notice == '[3 log line(s) DROPPED: this view fell behind]' and line == 'line 5', (notice, line)
+    assert [fast.get_nowait()['line'] for _ in range(6)] == ['line %d' % n for n in range(6)]
+    assert fast.empty(), 'a listener that kept up gets no DROPPED notice'
+
+
 async def _handler_crash():
     """A registered command handler that raises must return an error reply, NOT drop the operator
     session -- server.py _dispatch wraps the handler call, logs the crash, and replies with an err line."""
@@ -604,6 +624,7 @@ async def main():
     await _large_reply()
     _gps_device_resolve()
     _glider_roster()
+    _log_drops_are_reported()
     print('ok: server heartbeat polls health on health age + stops on a dead link '
           '+ accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) '
           '+ glider roster (persist, same-name-new-ip, absent hint) '

@@ -14,6 +14,7 @@ import json
 import os
 import time
 import traceback
+import weakref
 
 import board
 import commands
@@ -151,6 +152,8 @@ class Server:
         self.roster = self._roster_load()  # id -> {ip, last_seen}: survives a hub restart
         self.streams = {}  # board id -> the log-streaming Task while `log <board>` is active
         self.log_subscribers = set()  # asyncio.Queue per /logs SSE listener (streamed log lines)
+        # per listener: lines dropped since its queue last had room (weak, so a closed view drops out)
+        self._log_dropped: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
     def board_rows(self) -> list:
         """
@@ -282,7 +285,9 @@ class Server:
         """
         Surface one streamed board log line: to the console and every /logs SSE subscriber.
 
-        A full subscriber queue drops the line, never blocks the poll.
+        A full subscriber queue drops the line, never blocks the poll -- but not silently: the count is
+        kept per listener and delivered as one DROPPED line as soon as its queue has room, so a view
+        that fell behind says so instead of showing a log with an invisible hole in it.
 
         Args:
             board_id - the board the line came from.
@@ -294,9 +299,14 @@ class Server:
         self.log('%s: %s' % (board_id, line))
         for queue in list(self.log_subscribers):
             try:
+                dropped = self._log_dropped.get(queue, 0)
+                if dropped:  # the count is cleared only once the notice itself got in
+                    queue.put_nowait({'board': board_id,
+                                      'line': '[%d log line(s) DROPPED: this view fell behind]' % dropped})
+                    del self._log_dropped[queue]
                 queue.put_nowait({'board': board_id, 'line': line})
             except asyncio.QueueFull:
-                pass
+                self._log_dropped[queue] = self._log_dropped.get(queue, 0) + 1
 
     async def _stream(self, client, interval_ms, kind) -> None:
         """
