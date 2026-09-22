@@ -33,7 +33,6 @@ On-device modules layered leaves-first (a module depends only on lower layers, b
 
 **Layer 3**
 
-- `layout` (core) -> `config`
 - `spibus` (core) -> `commons`, `config`
 
 **Layer 4**
@@ -60,13 +59,14 @@ On-device modules layered leaves-first (a module depends only on lower layers, b
 - `i2cbus` (core) -> `commons`, `config`, `recorder`
 - `icp10111` (driver) -> `commons`, `databoard`, `i2cbus`, `inspector`, `recorder`, `task`
 - `ina226` (driver) -> `databoard`, `i2cbus`, `recorder`, `task`
+- `layout` (core) -> `config`, `i2cbus`
 - `led` (driver) -> `controller`, `recorder`, `task`
 - `lsm6dso32` (driver) -> `commons`, `databoard`, `fixed`, `i2cbus`, `recorder`, `spibus`, `task`
 - `main` (core) -> `config`, `controller`, `layout`, `mission`, `recorder`, `warmstart`
 - `mg90s` (driver) -> `task`
 - `mission` (core) -> `commons`, `databoard`, `inspector`, `navigation`, `recorder`
 - `neo6mv2` (driver) -> `gnss`, `task`
-- `ota` (core) -> `recorder`
+- `ota` (core) -> `config`, `recorder`
 - `recorder` (task) -> `task`
 - `sdp810` (driver) -> `commons`, `databoard`, `fixed`, `i2cbus`, `recorder`, `task`
 - `separation` (driver) -> `controller`, `recorder`, `task`
@@ -86,11 +86,11 @@ On-device modules layered leaves-first (a module depends only on lower layers, b
 - `commons` — imported by 28: `adxl375`, `attitude`, `bmi323`, `bmp280`, `bmp581`, `config`, `config_default`, `field`, `fixed`, `flight`, `gnss`, `governor`, `guidance`, `hitl`, `i2cbus`, `icp10111`, `lsm6dso32`, `mission`, `mixer`, `navigation`, `sdp810`, `sequencer`, `sg90`, `sim_model`, `spibus`, `vl53l1x`, `vl53l4cx`, `wifi`
 - `databoard` — imported by 24: `adxl375`, `attitude`, `bmi323`, `bmm350`, `bmp280`, `bmp581`, `bno055`, `board_health`, `cc_client`, `field`, `flight`, `gnss`, `gnss_calib`, `hitl`, `icp10111`, `ina226`, `lsm6dso32`, `mission`, `sdp810`, `sequencer`, `sg90`, `vl53l1x`, `vl53l4cx`, `warmstart`
 - `controller` — imported by 13: `board_health`, `cc_client`, `field`, `flight`, `gnss_calib`, `guidance`, `hitl`, `led`, `main`, `separation`, `sequencer`, `warmstart`, `wifi`
-- `i2cbus` — imported by 12: `adxl375`, `bmi323`, `bmm350`, `bmp280`, `bmp581`, `bno055`, `icp10111`, `ina226`, `lsm6dso32`, `sdp810`, `vl53l1x`, `vl53l4cx`
+- `i2cbus` — imported by 13: `adxl375`, `bmi323`, `bmm350`, `bmp280`, `bmp581`, `bno055`, `icp10111`, `ina226`, `layout`, `lsm6dso32`, `sdp810`, `vl53l1x`, `vl53l4cx`
 - `inspector` — imported by 12: `cc_client`, `controller`, `databoard`, `field`, `flight`, `hitl`, `icp10111`, `mission`, `sequencer`, `task`, `warmstart`, `wind`
 - `fixed` — imported by 11: `attitude`, `bmi323`, `bno055`, `board_health`, `flight`, `governor`, `guidance`, `hitl`, `lsm6dso32`, `pid`, `sdp810`
 
-**Import cycles detected** (unresolved layering): `adxl375`, `atgm336h`, `attitude`, `bluetooth`, `bmi323`, `bmm350`, `bmp280`, `bmp581`, `bno055`, `board_health`, `cc_client`, `cc_link`, `controller`, `field`, `flight`, `gnss`, `gnss_calib`, `guidance`, `hitl`, `i2cbus`, `icp10111`, `ina226`, `led`, `lsm6dso32`, `main`, `mg90s`, `mission`, `neo6mv2`, `ota`, `recorder`, `sdp810`, `separation`, `sequencer`, `sg90`, `task`, `vl53l1x`, `vl53l4cx`, `warmstart`, `watchdog`, `wifi`
+**Import cycles detected** (unresolved layering): `adxl375`, `atgm336h`, `attitude`, `bluetooth`, `bmi323`, `bmm350`, `bmp280`, `bmp581`, `bno055`, `board_health`, `cc_client`, `cc_link`, `controller`, `field`, `flight`, `gnss`, `gnss_calib`, `guidance`, `hitl`, `i2cbus`, `icp10111`, `ina226`, `layout`, `led`, `lsm6dso32`, `main`, `mg90s`, `mission`, `neo6mv2`, `ota`, `recorder`, `sdp810`, `separation`, `sequencer`, `sg90`, `task`, `vl53l1x`, `vl53l4cx`, `warmstart`, `watchdog`, `wifi`
 
 ## Class hierarchy
 

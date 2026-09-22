@@ -14,6 +14,7 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | `accel_adxl375.csv` | host sim | `virtual_flight.py` | `ax`, `ay`, `az`, `irq_runs` |
 | `airspeed_sdp810.csv` | board | `hitl.py` | `dynamic_pressure`, `airspeed_cms`, `temperature` |
 | `airspeed_sdp810.csv` | host sim | `virtual_flight.py` | `dynamic_pressure`, `airspeed_cms`, `temperature` |
+| `attitude.csv` | board | `attitude.py` | `heading_cd`, `roll_cd`, `pitch_cd`, `free`, `mag_known`, `mag_offset_cd` |
 | `baro_icp10111.csv` | board | `hitl.py` | `altitude`, `temperature`, `pressure`, `elevation` |
 | `baro_icp10111.csv` | host sim | `virtual_flight.py` | `altitude`, `temperature`, `pressure`, `elevation` |
 | `checkpoint.csv` | board | `warmstart.py` | `stage`, `altitude`, `speed`, `airspeed`, `ticks_ms` |

@@ -81,7 +81,7 @@ The thin CC networking: dial Control, read request lines, write the dispatcher's
 
 - `__init__(config: dict, dispatcher, log=None, backoff_ms: int=1000)` — constructor
 - `run() -> None` — Connect to Control and serve forever, reconnecting with backoff on drop.
-- `serve(reader, writer) -> None` — Read commands from Control, dispatch, write responses. Returns on disconnect.
+- `serve(reader, writer) -> None` — Read commands from Control, dispatch, write responses. Returns on disconnect -- or on SILENCE.
 
 ### `create_dispatcher(cfg: dict, controller=None, on_reboot=None, config_path: str='board.config') -> Dispatcher`
 
@@ -548,6 +548,20 @@ control code reads the simulation. flight is enabled with test gains, the watchd
 off (self-contained sim), and separation is off (the boost-timeout drives BOOSTING -> GLIDING).
 Servos stay on so the sim can read the commanded fin angles. `default()` returns a fresh dict --
 mutate freely. Run it instead of config_default for a simulation; the flight config is untouched.
+
+### `mask(cfg: dict) -> None`
+
+Disable every real sensor the sim publishes over. Call it AGAIN after layout.resolve()/apply().
+
+layout.apply() sets `enabled` from what the revision fits, so resolving the layout after this
+re-enabled the bench parts -- a v1.0 board flew HITL on its real BNO055 and BMP280, a v1.1 board
+on its real BMI323, BMM350 and BMP581, and an L1X board landed at apogee on its bench laser.
+
+Args:
+    cfg - the config to mask, in place.
+
+Returns:
+    None.
 
 ### `default(motor: str='F15', noise: float=0.0, spike: bool=False, wind: float=0.0, wind_dir: float=0.0, boost_axis: str='z', glider_g: int=_GLIDER_G, inject_hz: int=0, gnss_drift: float=0.0, gnss_drift_dir: float=0.0, pad_dwell_s: float=0.0) -> dict`
 
@@ -1089,6 +1103,7 @@ sequence to be atomic across awaits should say so explicitly with `async with bu
 
 - `__init__(bus_id: int, spec: dict)` — constructor
 - `transaction()` — Hold the bus across a MULTI-STEP sequence that must not interleave (the explicit escape hatch).
+- `reclock() -> None` — Re-init this peripheral at its CONFIGURED clock.
 - `retune(freq: int) -> None` — Re-init this I2C peripheral at `freq` Hz in place (bench frequency calibration; no reboot).
 - `read(addr: int, reg: int, count: int, addrsize: int=8) -> bytes`
 - `read_chip_id(addr: int, reg: int, addrsize: int=8) -> int` — Read a device's one-byte identity register (WHO_AM_I / CHIP_ID).
@@ -1098,6 +1113,10 @@ sequence to be atomic across awaits should say so explicitly with `async with bu
 - `readfrom(addr: int, count: int) -> bytes` — Raw read (no register) -- pairs with writeto(); accounted, see writeto for why.
 - `device(addr: int) -> _Device` — A register window for one address on this bus (matches spibus.Bus.device).
 - `scan() -> list`
+
+### `live(bus_id: int)`
+
+The Bus the drivers already share for `bus_id`, or None before any driver has bound it.
 
 ### `get(bus_id: int, spec: dict) -> Bus`
 
@@ -1839,7 +1858,7 @@ the launch pad; attitude is Euler degrees (roll, pitch, yaw=heading).
 
 ### `class Faults`
 
-Sensor-fault injection for robustness runs (findings §27.20).
+Sensor-fault injection for robustness runs.
 
 The firmware is full of degradation paths -- databoard priority fallback, the unconfident airspeed
 cap floor, the GNSS jump/steep gates, pitot saturation, warm start -- and those are exactly the paths
@@ -2152,6 +2171,7 @@ periodically -- nothing moves during the long pad dwell / post-landing wait, so 
 period would only wear the flash.
 
 - `setup() -> bool`
+- `seed(crumb: dict) -> None` — Carry a restored crumb's recovery identity forward (the warm start calls this).
 - `run() -> None` — Checkpoint on every stage change + every period_ms while airborne; forever.
 
 ## `wind.py`
@@ -2412,7 +2432,7 @@ accelerometer (g, including gravity) -> 'accel' as a low-g backup to the ADXL375
 - `setup() -> bool`
 - `sample() -> tuple` — Read the ACC..EUL block and return a FLAT 6-tuple (run() slices it).
 - `calibrated() -> bool` — Has the magnetometer EVER converged this session (or been restored from a saved profile)?
-- `calibration() -> str` — The figure-8 instruction while NDOF is unconverged, with the live reading folded in; '' once done.
+- `calibration() -> str` — What is still owed: the figure-8 while NDOF is unconverged, then the SAVE; '' once both are done.
 - `calibrate() -> str` — Persist the chip's learned calibration profile, once the operator's figure-8 has landed.
 - `run() -> None`
 - `probe() -> str` — On-demand self-test: the chip id reads back, then one fused sample succeeds (each step logged).
@@ -2752,7 +2772,7 @@ GPIO1 is wired.
 
 - `setup() -> bool`
 - `run() -> None` — The sampling loop: write AGL (m) to the databoard, forever.
-- `probe() -> str` — On-demand self-test: the model id reads back.
+- `probe() -> str` — On-demand self-test: the model id reads back as THIS part's, the full 16-bit 0xEACC.
 - `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault behind an absent ranger.
 - `inspect() -> dict`
 
@@ -3106,6 +3126,13 @@ _Tested by `test/test_board.py`._
 One connected Coludo board as seen by the hub: lockstep request/response over its socket
 (doc/specs/cc-protocol.md). The per-board lock makes every exchange strictly sequential, so the
 heartbeat and operator traffic to one board can never overlap. CPython 3.12, stdlib asyncio only.
+
+### `timeout_for(line: str) -> float`
+
+The reply deadline for a board-facing line: the fin-sweeping self-tests get _SLOW_TIMEOUT_S.
+
+Keyed on the command word, so the console path (a raw line) and command() (a built one) cannot
+disagree -- a console `arm` used to get the plain 10 s, and a timeout drops the link.
 
 ### `class Board`
 
