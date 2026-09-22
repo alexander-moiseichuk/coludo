@@ -8,7 +8,8 @@
 #
 # WHAT IT DOES FOR YOU: compiles .py to .mpy with the same toolchain and flags as deploy.sh (a board
 # running mismatched bytecode is a debugging cycle nobody enjoys), and derives the DEVICE path from
-# the source's place in the tree -- src/glider/drivers/bno055.py becomes drivers/bno055.mpy. Passing
+# the source's place in the tree -- src/glider/drivers/bno055.py becomes drivers/bno055.mpy, while
+# main.py goes as source and a .creds/.config keeps its name, as deploy.sh installs them. Passing
 # a bare basename is the one mistake this exists to prevent: the file lands in the root, the real
 # module in drivers/ is untouched, and the push reports success.
 #
@@ -128,13 +129,18 @@ esac
 # ---------------------------------------------------------------- per file
 
 # Derive the DEVICE path from where a source lives in the tree, so a module in a package keeps its
-# package. Anything outside src/glider keeps its basename, which is right for a config or creds file.
+# package. Only a module becomes .mpy: main.py stays source, because the board boots that literal
+# filename (see deploy.sh), and a non-Python file -- <ssid>.creds, a config -- keeps its own name, which
+# is the name the board reads. Both used to come out as <name>.mpy and report ok while the board went on
+# using the old file. Anything outside src/glider keeps its basename.
 device_path() {
     local src="$1" abs rel
     abs="$(cd "$(dirname "$src")" && pwd)/$(basename "$src")"
     case "$abs" in
-        "$GLIDER"/*) rel="${abs#"$GLIDER"/}"; echo "${rel%.py}.mpy" ;;
-        *)           echo "$(basename "$src")" ;;
+        "$GLIDER"/main.py) echo "main.py" ;;
+        "$GLIDER"/*.py)    rel="${abs#"$GLIDER"/}"; echo "${rel%.py}.mpy" ;;
+        "$GLIDER"/*)       echo "${abs#"$GLIDER"/}" ;;
+        *)                 basename "$src" ;;
     esac
 }
 
@@ -146,12 +152,22 @@ for spec in "$@"; do
     [ -f "$src" ] || { warn "skip $src: not a file"; status=1; continue; }
     [ -n "$dest" ] || dest="$(device_path "$src")"
 
+    # The DESTINATION decides what a .py source becomes: bytecode for a .mpy, the source itself for
+    # main.py (the one file the runtime will not load compiled). Anything else is refused -- bytecode
+    # under a .py name fails to import, and a module's source next to its .mpy shadows it.
     payload="$src"
-    if [ "${src%.py}" != "$src" ]; then         # a .py source is compiled, never pushed raw
-        payload="$(mktemp "${TMPDIR:-/tmp}/ota_XXXXXX.mpy")"
-        if ! "$MPYX" -march=rv32imc -O3 "$src" -o "$payload"; then
-            rm -f "$payload"; warn "skip $src: mpy-cross failed"; status=1; continue
-        fi
+    if [ "${src%.py}" != "$src" ]; then
+        case "$dest" in
+            *.mpy)
+                payload="$(mktemp "${TMPDIR:-/tmp}/ota_XXXXXX.mpy")"
+                if ! "$MPYX" -march=rv32imc -O3 "$src" -o "$payload"; then
+                    rm -f "$payload"; warn "skip $src: mpy-cross failed"; status=1; continue
+                fi
+                ;;
+            main.py) ;;
+            *) warn "skip $src: a module goes to a .mpy path (only main.py is pushed as source), not $dest"
+               status=1; continue ;;
+        esac
     fi
 
     # A board.config names the board it belongs to. Pushing another airframe's (or the bench default's)

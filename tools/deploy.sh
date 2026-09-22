@@ -28,7 +28,12 @@
 # board should contain is how modules go stale on the device, which has bitten this project
 # repeatedly. Everything needing a deploy calls THIS with params (see src/glider/test/run_tests.sh).
 #
-# Usage: tools/deploy.sh [file ...]   # default: every module + packages + *.creds + test/*.py
+# A FILE LIST IS AN OVERLAY, NOT A FIRMWARE: `tools/deploy.sh <file> ...` pushes just those files onto
+# what the board already runs and does NOT wipe. It used to wipe first and then push only the named
+# files -- no main.py, so the board booted to a bare REPL -- while the summary still claimed main.py.
+# The overlay relies on the last whole-tree deploy having left no .py behind to shadow the new .mpy.
+#
+# Usage: tools/deploy.sh [file ...]   # default: every module + packages + *.creds + test/*.py (wiped)
 # Env:   PORT (default /dev/ttyACM0)
 
 set -u
@@ -126,11 +131,11 @@ lint() {
 # Lint everything; compile everything that is firmware, into $tmp. Test files are staged as SOURCE:
 # they run from the host (`mpremote run test/x.py`), so compiling them buys nothing.
 build() {
-    compiled=0
+    compiled=0; sources=0
     local f out
     for f in "${files[@]}"; do
         case "$f" in
-            */test/*.py) lint "$f"; cp "$f" "$tmp/test/" ;;
+            */test/*.py) lint "$f"; cp "$f" "$tmp/test/"; sources=$((sources + 1)) ;;
             *.py)
                 lint "$f"
                 out="$(staged_target "$f")"
@@ -214,7 +219,7 @@ push_board() {
     for f in "$tmp"/*.mpy; do [ -e "$f" ] && add cp "$f" ":$(basename "$f")"; done
     for f in "${files[@]}"; do
         case "$f" in
-            */main.py) add cp "$f" ":main.py" ;;
+            */main.py) add cp "$f" ":main.py"; main_pushed=1 ;;
             *.creds)   add cp "$f" ":$(basename "$f")" ;;
         esac
     done
@@ -230,7 +235,15 @@ mkdir -p "$tmp/drivers" "$tmp/tasks" "$tmp/test"
 stamp_version
 collect_files "$@"
 build
-wipe_board
+[ "$#" -eq 0 ] && wipe_board      # a file list is an overlay (see the header): never wipe under it
 push_board
 
-echo " ${G}deployed${N} $compiled .mpy + main.py (+ test/ sources) -- board wiped first"
+# say what actually went: this line claimed main.py and a wipe for an overlay that had neither
+summary="$compiled .mpy"
+[ -n "${main_pushed:-}" ] && summary+=" + main.py"
+[ "$sources" -gt 0 ] && summary+=" + $sources test/ source(s)"
+if [ "$#" -eq 0 ]; then
+    echo " ${G}deployed${N} $summary -- board wiped first"
+else
+    echo " ${G}deployed${N} $summary -- overlaid onto the board's firmware, no wipe"
+fi
