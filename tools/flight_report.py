@@ -72,13 +72,19 @@ def irq_health(streams) -> str:
     than a sensor one. Both failure modes are invisible in the sample values themselves, which is why
     they are counted here rather than left to be eyeballed.
 
+    A stream that never saw ONE edge is not a run of missed interrupts: a sensor with no INT wire
+    (TMS-7F's BMI323) polls by design and records 0 on every row. It is named apart -- the same data
+    is also what a dead INT line looks like, so it is not dropped -- and it never makes the capture
+    "clean", which needs at least one stream that actually ran on interrupts.
+
     Args:
         streams - the parsed capture streams.
 
     Returns:
-        A one-line summary, or '' when no stream carries irq_runs.
+        The IRQ phrase for the report title: the problems, 'IRQ clean ...' when every interrupt-driven
+        stream consumed exactly one edge per wake, or 'no IRQ data' when nothing ran on interrupts.
     """
-    parts = []
+    parts, polled, clean = [], [], 0
     for name in sorted(streams):
         stream = streams[name]
         if 'irq_runs' not in stream.fields:
@@ -86,12 +92,23 @@ def irq_health(streams) -> str:
         _times, values = stream.column('irq_runs')
         if not values:
             continue
+        label = name.replace('.csv', '')
+        if not any(values):
+            polled.append(label)
+            continue
         missed = sum(1 for v in values if v == 0)
         over = sum(1 for v in values if v > 1)
         if missed or over:
-            parts.append('%s %d missed / %d overrun of %d'
-                         % (name.replace('.csv', ''), missed, over, len(values)))
-    return ' · '.join(parts)
+            parts.append('%s %d missed / %d overrun of %d' % (label, missed, over, len(values)))
+        else:
+            clean += 1
+    if polled:
+        parts.append('%s never saw an edge (polled by design, or a dead INT line)' % ', '.join(polled))
+    if parts:
+        return 'IRQ ' + ' · '.join(parts)
+    if clean:
+        return 'IRQ clean (every wake consumed exactly one edge)'
+    return 'no IRQ data'
 
 
 _FIXED_SCALE = fixed.SCALE  # fixed.SCALE -- gyro columns are centideg/s fixnums
@@ -391,8 +408,7 @@ def build(streams, logs, go, make_subplots, motor=None):
                               text='leak %.0f KB/s · OOM ~%s' % (leak_kbps, oom_txt),
                               showarrow=False, xanchor='left', yanchor='bottom',
                               font=dict(color='crimson', size=12))
-    irq = irq_health(streams)
-    title += ' — IRQ %s' % irq if irq else ' — IRQ clean (every wake consumed exactly one edge)'
+    title += ' — ' + irq_health(streams)
     # 'x unified' -> hovering (or clicking) any time shows every panel's value at that instant
     series.update_layout(height=2250, title=title, showlegend=True, hovermode='x unified')
     series.update_xaxes(title_text='time (s)', row=9, col=1)

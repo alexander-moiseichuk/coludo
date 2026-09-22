@@ -273,8 +273,8 @@ for complex bring-up. Start the hub once (`cd src/control && python3 main.py`); 
 `panda` and dials in. Then each command is one scriptable line with a verdict exit code:
 
 ```
-tools/cc.py taster verify                 # pre-flight pass/fail — exit 0 == clean, 1 == problems
-tools/cc.py taster probe imu_lsm6dso32    # one device self-test
+tools/cc.py taster verify                 # pre-flight — exit 0 == clean, 1 == problems, 3 == not flight-ready
+tools/cc.py taster probe imu_lsm6dso32    # one device self-test — exit 1 when it reports a problem
 tools/cc.py taster inspect mission        # an inspectable's snapshot (pretty-printed JSON)
 tools/cc.py taster tlm 2000               # telemetry rows buffered since the last tlm
 tools/cc.py taster set-config launch @launch.config   # @path -> file contents (config push)
@@ -282,7 +282,8 @@ tools/cc.py taster update mission '{"launch_id":"flight.8"}'
 ```
 
 It talks to the hub's `POST /api/cmd` (web port 8080; `--host`/`--port` to point elsewhere). Exit
-code is the board's verdict (`0` only on `ok`/`pong`/`iam`), so on-device tests chain in bash:
+code is the board's verdict (`0` only on `ok`/`pong`/`iam`, and for `verify`/`probe` only when the
+result inside the `ok` is clean), so on-device tests chain in bash:
 `until tools/cc.py taster ping; do sleep 2; done && tools/cc.py taster verify`. Note: it bypasses
 any `http_proxy` (the hub is LAN/localhost — a system proxy would otherwise hijack the request).
 

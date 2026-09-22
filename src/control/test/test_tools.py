@@ -10,6 +10,7 @@ bug, because it corrupts the answer rather than announcing itself. The §26 scan
 tools; every one of them is pinned below so it cannot come back. Run by `make test` / `make check`.
 """
 
+import json
 import os
 import re
 import sys
@@ -18,7 +19,9 @@ import tempfile
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.join(_ROOT, 'tools'))
 import airspeed_calibrate  # noqa: E402
+import cc  # noqa: E402
 import flight_kpi  # noqa: E402
+import flight_report  # noqa: E402
 import flight_svg  # noqa: E402
 import flight_synth_capture  # noqa: E402
 import flight_telemetry  # noqa: E402
@@ -91,15 +94,167 @@ def test_kpi_survives_a_partial_capture():
     empty, _logs = flight_telemetry.parse('@20260725_120000_power_ina226.csv@uptime;power_mw')
     assert flight_kpi._servo_energy(flight_telemetry.find_stream(empty, 'power_mw')) == (0.0, 0.0)
     gnss_only_header, _l = flight_telemetry.parse('@20260725_120000_gnss.csv@uptime;lat;lon')
-    assert flight_kpi._touchdown(flight_telemetry.find_stream(gnss_only_header, 'lat', 'lon'), _ZONE) \
-        == (0.0, False)
+    # no fix is None, never a 0.0 m miss -- that would print as a bullseye
+    assert flight_kpi._touchdown(flight_telemetry.find_stream(gnss_only_header, 'lat', 'lon'), _ZONE) is None
     assert flight_kpi._servo_energy(None) == (0.0, 0.0)  # stream absent entirely
-    assert flight_kpi._touchdown(None, _ZONE) == (0.0, False)
+    assert flight_kpi._touchdown(None, _ZONE) is None
     # a single power sample has no window to average over -> must not divide by zero
     one, _l = flight_telemetry.parse('@20260725_120000_power_ina226.csv@uptime;power_mw\n'
                                      '@20260725_120000_power_ina226.csv@1000000;2500')
     joules, duration = flight_kpi._servo_energy(flight_telemetry.find_stream(one, 'power_mw'))
     assert duration == 0.0 and joules == 0.0
+
+
+def _kpi_report(text: str) -> str:
+    """Run flight_kpi.report() over a capture given as text; return what it printed."""
+    import contextlib
+    import io
+    with tempfile.NamedTemporaryFile('w', suffix='.txt', delete=False) as handle:
+        handle.write(text)
+    printed = io.StringIO()
+    try:
+        with contextlib.redirect_stdout(printed):
+            flight_kpi.report('capture', handle.name, _ZONE)
+    finally:
+        os.remove(handle.name)
+    return printed.getvalue()
+
+
+def test_touchdown_is_the_last_fix_before_done():
+    """
+    The touchdown is where the glider was at DONE, not where the GNSS was last carried.
+
+    The GNSS records on after the landing, so the last row of a real flight is the recovery walk. With
+    no fins stream (TMS-7C) the touchdown used to be dropped altogether, and with no fix it printed
+    0.0 m -- a bullseye. Negative cases: no DONE falls back to the last fix, and no fix says so.
+    """
+    inside, walked = _ZONE[0][0] - 0.0001, _ZONE[0][0] + 0.01   # in the zone; ~1 km north of it
+    rows = ['@20260725_120000_gnss.csv@uptime;lat;lon;speed_kn;course']
+    for second, latitude in ((0, walked), (1, inside), (2, inside), (4, walked), (5, walked)):
+        rows.append('@20260725_120000_gnss.csv@%d;%.6f;%.6f;0.0;0.0'
+                    % (second * 1000000, latitude, _ZONE[0][1] + 0.001))
+    landed = '\n'.join(rows + ['3000000 controller :: stage -> done'])
+    streams, logs = flight_telemetry.parse(landed)
+    done_s = flight_kpi._done_time(logs)
+    assert done_s == 3.0, done_s
+    miss, in_zone = flight_kpi._touchdown(flight_telemetry.find_stream(streams, 'lat', 'lon'), _ZONE, done_s)
+    assert in_zone and miss < 100.0, (miss, in_zone)
+    printed = _kpi_report(landed)
+    assert '(no fins stream)' in printed and 'inside zone: True' in printed, printed
+    # no DONE logged: the last fix is all there is, and the report says which one it took
+    carried = _kpi_report('\n'.join(rows))
+    assert 'inside zone: False' in carried and 'no DONE logged' in carried, carried
+    # a GNSS stream with no fix at all
+    nothing = _kpi_report('\n'.join(rows[:1] + ['3000000 controller :: stage -> done']))
+    assert 'NO GNSS FIX before DONE' in nothing and ' 0.0 m' not in nothing, nothing
+    # gnss_gga.csv also has 'gnss' in its name and no position: it must never be taken for the track
+    gga_first = '@20260725_120000_gnss_gga.csv@uptime;altitude_m;elevation_m;quality;satellites;hdop_cd\n'
+    assert 'inside zone: True' in _kpi_report(gga_first + landed)
+
+
+def test_irq_summary_reads_polled_sensors():
+    """
+    A sensor with no INT wire records irq_runs 0 on every row BY DESIGN; that is not a missed interrupt.
+
+    The summary counted TMS-7F's BMI323 as N missed of N, and with nothing interrupt-driven at all it
+    still certified the capture 'IRQ clean'. Negative: a genuinely interrupt-driven stream that misses
+    edges is still reported as missed.
+    """
+    def streams(*rows_by_name):
+        lines = []
+        for name, values in rows_by_name:
+            lines.append('@20260725_120000_%s@uptime;ax;ay;az;irq_runs' % name)
+            lines += ['@20260725_120000_%s@%d;0;0;1;%d' % (name, index * 1000, value)
+                      for index, value in enumerate(values)]
+        return flight_telemetry.parse('\n'.join(lines))[0]
+
+    polled = flight_report.irq_health(streams(('imu_bmi323.csv', [0, 0, 0, 0])))
+    assert 'missed' not in polled and 'never saw an edge' in polled and 'clean' not in polled, polled
+    assert flight_report.irq_health({}) == 'no IRQ data'
+    clean = flight_report.irq_health(streams(('imu_lsm6dso32.csv', [1, 1, 1])))
+    assert clean.startswith('IRQ clean'), clean
+    lossy = flight_report.irq_health(streams(('imu_lsm6dso32.csv', [1, 0, 1, 2]),
+                                             ('imu_bmi323.csv', [0, 0, 0])))
+    assert 'lsm6dso32 1 missed / 1 overrun of 4' in lossy and 'bmi323 never saw an edge' in lossy, lossy
+
+
+def test_backstop_is_only_ever_the_adxl():
+    """
+    The +/-200 g backstop verdict is about the ADXL375; with none fitted there is no backstop to judge.
+
+    `prefer` only breaks ties, so without an ADXL it handed back the first accel it found and a TMS-7F
+    BMI323 was reported, and voted on, as the backstop. Negative: a real ADXL stream is still used.
+    """
+    import contextlib
+    import io
+
+    def envelope(text):
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            flight_kpi._accel_envelope(flight_telemetry.parse(text)[0])
+        return printed.getvalue()
+
+    imu = ['@20260725_120000_imu_bmi323.csv@uptime;ax;ay;az;gx;gy;gz',
+           '@20260725_120000_imu_bmi323.csv@0;0;0;1;0;0;0', '@20260725_120000_imu_bmi323.csv@1000;0;0;2;0;0;0']
+    accel = ['@20260725_120000_attitude.csv@uptime;ax;ay;az', '@20260725_120000_attitude.csv@0;0;0;1']
+    assert 'adxl' not in envelope('\n'.join(accel + imu)), envelope('\n'.join(accel + imu))
+    adxl = ['@20260725_120000_accel_adxl375.csv@uptime;ax;ay;az', '@20260725_120000_accel_adxl375.csv@0;0;0;3',
+            '@20260725_120000_accel_adxl375.csv@1000;0;0;3', '@20260725_120000_accel_adxl375.csv@2000;0;0;3']
+    assert 'peak |a| adxl' in envelope('\n'.join(imu + adxl))
+
+
+def test_cc_exit_code_is_the_verdict():
+    """
+    tools/cc.py's exit code is the board's verdict, including the one INSIDE an `ok` reply.
+
+    `verify` and `probe` always answer `ok` and carry the result in their JSON, so a failing pre-flight
+    exited 0. Negative cases: a clean verify/probe, and the ordinary commands, still exit 0.
+    """
+    def ok(result):
+        return {'status': 'ok', 'args': [json.dumps(result)]}
+
+    assert cc._verdict('verify', 200, ok({'pass': True, 'ready': True})) == 0
+    assert cc._verdict('verify', 200, ok({'pass': False, 'ready': True})) == 1
+    assert cc._verdict('verify', 200, ok({'pass': True, 'ready': False})) == cc._NOT_READY
+    assert cc._verdict('verify', 200, {'status': 'ok', 'args': ['{garbled']}) == 1
+    assert cc._verdict('probe', 200, ok({'imu': None, 'baro': None})) == 0
+    assert cc._verdict('probe', 200, ok({'imu': None, 'baro': 'not connected: ENODEV'})) == 1
+    assert cc._verdict('inspect', 200, ok({'anything': 'at all'})) == 0
+    assert cc._verdict('ping', 200, {'status': 'pong', 'args': []}) == 0
+    assert cc._verdict('verify', 504, {'error': 'board did not answer in time'}) == 1
+    assert cc._verdict('ping', 200, {'status': 'err', 'args': ['badcmd']}) == 1
+
+
+def test_logger_join_on_a_still_to_moving_transition_is_lossless():
+    """
+    The nose logger's continuity check accepts ANY whole number of periods up to one decimation step.
+
+    Still, the logger keeps one frame in _DECIMATE; moving, every frame. A save on the transition joins
+    after any number of periods in between, and only the two ends were accepted, so a clean flight could
+    report SAMPLES LOST. Negative: a join off the period grid, or past one decimation step, is still loss.
+    """
+    import contextlib
+    import importlib.util
+    import io
+    path = os.path.join(_ROOT, 'src', 'logger', 'decode.py')
+    spec = importlib.util.spec_from_file_location('logger_decode', path)
+    decode = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(decode)
+
+    def verdict(*gaps_ms):
+        summaries, last = [], 0
+        for segment, gap in enumerate((0,) + gaps_ms):
+            first = last + gap
+            summaries.append({'boot': 7, 'segment': segment, 'period': 20, 'first': first, 'last': first + 5000})
+            last = first + 5000
+        printed = io.StringIO()
+        with contextlib.redirect_stdout(printed):
+            decode._continuity(summaries)
+        return printed.getvalue()
+
+    assert 'LOSSLESS' in verdict(20, 1000, 340, 980), verdict(20, 1000, 340, 980)
+    assert 'SAMPLES LOST' in verdict(20, 30), 'a join off the 20 ms grid is lost samples'
+    assert 'SAMPLES LOST' in verdict(1020), 'more than one decimation step is lost samples'
 
 
 def test_svg_renders_a_track():
@@ -454,6 +609,11 @@ def test_every_provided_quantity_has_a_consumer():
 test_board_shape_is_readable()
 test_kpi_on_the_synthetic_flight()
 test_kpi_survives_a_partial_capture()
+test_touchdown_is_the_last_fix_before_done()
+test_irq_summary_reads_polled_sensors()
+test_backstop_is_only_ever_the_adxl()
+test_cc_exit_code_is_the_verdict()
+test_logger_join_on_a_still_to_moving_transition_is_lossless()
 test_svg_renders_a_track()
 test_airspeed_calibration_recovers_a_known_density()
 test_airspeed_calibration_from_an_assembled_capture()
@@ -464,6 +624,7 @@ test_a_spliced_capture_is_reported_not_swallowed()
 test_calibration_refuses_a_simulated_capture()
 test_recorder_space_gate_reads_a_wrapped_df()
 test_every_provided_quantity_has_a_consumer()
-print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, svg render, '
+print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, touchdown at DONE, '
+      'polled-IRQ summary, adxl-only backstop, cc.py verdict exit codes, logger join continuity, svg render, '
       'airspeed calibration fit, parser edge cases, session-tag eras, '
       'spliced-capture detection, sim-capture refusal, provider/consumer closure')

@@ -174,20 +174,22 @@ def _continuity(summaries: list) -> None:
     if not joins:
         return
     """
-    Two spacings are legal at a join, not one.
+    Any whole number of periods from one to _DECIMATE is legal at a join, not just the two ends.
 
-    A save that lands inside a quiet stretch joins one DECIMATION interval later, because the firmware is
-    keeping one frame in _DECIMATE while the airframe is still. Treating that as loss would have this
-    print 'samples lost' for the most common case of all -- a rocket sitting on the pad.
+    While the airframe is still the firmware keeps only every _DECIMATE-th frame, so a save inside a
+    quiet stretch joins one decimation interval later -- the most common case of all, a rocket on the
+    pad. And when it starts MOVING it records every frame from that one on, which is any frame of the
+    interval: a save on that transition joins after 2, 17 or 49 periods. Only the two ends used to be
+    accepted, so such a join read as 'samples lost' when nothing was.
     """
     period = joins[0][0]['period']
     gaps = [(b['first'] - a['last']) % _TICKS for a, b in joins]
-    legal = [period, period * _DECIMATE]
-    lost = [gap for gap in gaps if gap not in legal]
+    lost = [gap for gap in gaps if not (period <= gap <= period * _DECIMATE and gap % period == 0)]
     print('continuity over %d saves: %s' % (
         len(gaps),
         'LOSSLESS (joins at %s ms)' % sorted(set(gaps)) if not lost
-        else 'SAMPLES LOST -- joins of %s ms, legal are %s' % (sorted(set(lost)), legal)))
+        else 'SAMPLES LOST -- joins of %s ms, legal are multiples of %d ms up to %d ms'
+        % (sorted(set(lost)), period, period * _DECIMATE)))
 
 
 if __name__ == '__main__':
