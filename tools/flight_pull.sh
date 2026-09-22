@@ -29,8 +29,12 @@ if [ -z "$ses" ]; then                       # default: the newest session (by i
   # YYYYMMDD_HHMMSS_<tag> -- while stream names do NOT have a known underscore count: stripping the
   # last group turned `..._servo_eleron_left.csv` into `..._servo_eleron`. Anchoring on the prefix is
   # correct for every stream name, however many underscores it carries.
+  # Strip the ANSI colour codes and the CR the Luckfox `ls` emits BEFORE that $-anchored match (as the
+  # stream listing below does): stripped after, `.csv\r` never matched and a recorder that had just
+  # captured a flight was reported as holding no session at all.
   ses=$(adb shell "ls -t $REC/*_*.csv 2>/dev/null | head -1" \
-        | sed -nE "s|.*/||; s|^([0-9]{8}_[0-9]{6}_[A-Za-z0-9]+)_.*\.csv$|\1|p" | tr -d '\r')
+        | sed -e "s/\x1b\[[0-9;]*m//g" -e "s/\r//g" \
+        | sed -nE "s|.*/||; s|^([0-9]{8}_[0-9]{6}_[A-Za-z0-9]+)_.*\.csv$|\1|p")
   [ -z "$ses" ] && { echo "error: no recorder session found on the Luckfox"; exit 1; }
   echo "latest session: $ses"
 fi
