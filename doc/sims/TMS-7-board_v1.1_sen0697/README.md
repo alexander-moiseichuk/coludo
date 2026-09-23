@@ -142,6 +142,13 @@ has drifted — it would have scored the no-mag arm as flying beautifully. The n
 (One flight's tick counter wrapped mid-blackout — window `(1058073444, 13419027)` — and silently dropped
 out of the table as "no data" until the analysis was made wrap-safe.)
 
+> **Caveat found later (r8, [board v1.0 polishing](../TMS-7-board_v1.0_polishing/)).** r6 flew the
+> board's attitude filter with the sim publishing `accel` as a magnitude on one axis — no gravity
+> direction — so the filter's gravity correction pulled its pitch toward level (+4° to +10° of error in
+> every r8 flight, the glider then diving). Both arms of every r6 pair carried that bias, so the pairing
+> still controls for it, but part of r6's very wide spread is likely this harness artifact rather than
+> anything about the magnetometer.
+
 ### What r6 does not answer, and what it cost to find out
 
 **No servo-energy numbers exist for any round in this study.** `config_hitl` does not resolve the board

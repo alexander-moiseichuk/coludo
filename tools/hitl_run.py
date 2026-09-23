@@ -142,6 +142,10 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
         await asyncio.sleep_ms(200)
     await asyncio.sleep_ms(1200)  # let the recorder flush the tail to the Luckfox
     await flight.finish()
+    # The checkpoint runs in HITL now, so a simulated flight leaves an ARMED crumb in the board's real
+    # NVS -- and the next soft reset within its age window could warm-start a bench board into
+    # LANDING with GC off. A simulation must not leave recovery state behind for a real boot.
+    warmstart.clear()
     print('RUN_END')
 
 
