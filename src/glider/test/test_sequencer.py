@@ -300,6 +300,26 @@ async def amain():
     fseq._tick(20)
     assert fseq._stage_seen == Stage.GLIDING
 
+    """
+    LANDING TIMEOUT: stillness is the normal way out of LANDING. When it never comes -- carried off,
+    rocking, a noisy accel -- LANDING must still end, because GC is off there and the memory rescue
+    skips it: HITL ran the heap out ~54 s after such a touchdown. Not a moment early, though.
+    """
+    lt_ctrl = _StubController()
+    ltseq = sequencer.Sequencer('sequencer', dict(SPEC, land_timeout_ms=1000), lt_ctrl)
+    assert await ltseq.setup() is True
+    ltseq._telemetry = _TelemetryLog()
+    lt_ctrl.stage = Stage.LANDING            # in LANDING (the agl detector, or a warm start)
+    accel.push((0.0, 0.0, 1.6))              # never still: being carried
+    ltseq._tick(50000)                       # the entry tick starts the timer
+    accel.push((0.0, 0.0, 1.6))
+    ltseq._tick(50900)
+    assert lt_ctrl.stage == Stage.LANDING, 'the landing timeout fired early'
+    accel.push((0.0, 0.0, 1.6))
+    ltseq._tick(51000)                       # 1000 ms in LANDING, still never still
+    assert lt_ctrl.stage == Stage.DONE, 'a landing that never settles must still reach DONE'
+    assert ltseq._telemetry.rows[-1] == ('done', 'landing timeout 1 s'), ltseq._telemetry.rows
+
     # GC policy -- compacted + DISABLED at BOOSTING, re-enabled at LANDING (coludo.md), and finish()
     # never leaves it off. disable_gc_flight True here (the only test that exercises the toggle).
     import gc
@@ -358,7 +378,8 @@ async def amain():
     print('ok: sequencer -- launch detect, boost-timeout, agl landing, on-ground, guard, manual hold, '
           'baro launch needs a dwell, GNSS never launches, SETTING clears the RSO backstop, '
           'no-accel skip, apogee arming, RSO flight timeout, external-transition log, warm-start '
-          'breadcrumb, GC flight policy, a full telemetry ring never stops the stage machine')
+          'breadcrumb, GC flight policy, a full telemetry ring never stops the stage machine, '
+          'a landing that never settles times out to DONE')
 
 
 asyncio.run(amain())

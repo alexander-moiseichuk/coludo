@@ -85,6 +85,7 @@ class Sequencer(task.Task):
         self._land_ms: int = cfg.get('land_ms', 300)  # AGL must stay below land_agl_m this long (anti-spike)
         self._still_g: float = cfg.get('still_g', 0.3)
         self._ground_ms: int = cfg.get('ground_ms', 3000)
+        self._land_timeout_ms: int = cfg.get('land_timeout_ms', 10000)  # LANDING -> DONE backstop (see below)
         """
         compare |accel|^2 against squared thresholds so the detect path skips math.sqrt() (only the rare
         transition LOG takes the root). The still-band 1 +/- still_g g maps to [lo, hi] in g^2 (assumes
@@ -118,6 +119,7 @@ class Sequencer(task.Task):
         self._alt_credit: int = 0  # the same leaky dwell for the baro launch backup
         self._alt_last = None
         self._boost_entry_ms = None  # _tick time of BOOSTING entry -> apogee arming + the flight timeout
+        self._landing_entry_ms = None  # _tick time of LANDING entry -> the landing timeout
         self._detect = {_STAGE.SETTING: self._detect_launch, _STAGE.BOOSTING: self._detect_apogee,
                         _STAGE.GLIDING: self._detect_landing, _STAGE.LANDING: self._detect_stationary}
         self._ok = True
@@ -245,8 +247,11 @@ class Sequencer(task.Task):
                 from SETTING one flight_timeout later -- on a board sitting on the pad.
                 """
                 self._boost_entry_ms = None
+                self._landing_entry_ms = None
                 self._launch_credit, self._launch_last = 0, None
                 self._alt_credit, self._alt_last = 0, None
+            if stage == _STAGE.LANDING:
+                self._landing_entry_ms = now  # starts the landing timeout (a warm start into LANDING too)
             if stage == _STAGE.BOOSTING:  # start apogee peak-tracking fresh for this flight
                 self._apogee_max = None
                 self._apogee_since = None
@@ -413,7 +418,8 @@ class Sequencer(task.Task):
 
     def _detect_stationary(self, now: int) -> None:
         """
-        LANDING -> DONE: |accel| ~1 g (squared still-band) SUSTAINED ground_ms -- stopped on the ground.
+        LANDING -> DONE: |accel| ~1 g (squared still-band) SUSTAINED ground_ms -- stopped on the ground --
+        or land_timeout_ms after LANDING entry, whichever comes first.
 
         Args:
             now - the current time (ticks_ms), for the sustained-detect timer.
@@ -421,6 +427,20 @@ class Sequencer(task.Task):
         Returns:
             None; advances to DONE once the still-band holds for ground_ms, else resets the dwell.
         """
+        """
+        LANDING TIMEOUT: stillness is the normal way out, but it may never come -- the airframe picked up
+        or carried before it has lain still for ground_ms, rocking in wind, a noisy accel, hung in a
+        tree. And LANDING is where memory has no way back: GC is re-enabled only at DONE, and the memory
+        rescue skips LANDING (the flare). HITL measured the heap exhausted ~54 s after touchdown in a
+        flight that never settled, long before the 5-minute flight timeout. The descent from land_agl_m
+        is ~5 s (operator estimate) and a normal LANDING lasts 3.3-4.5 s (48 HITL flights), so the 10 s
+        default -- that estimate x2 -- only fires on a landing that could not be confirmed, and ends the
+        GC-off phase well inside the memory horizon.
+        """
+        if self._landing_entry_ms is not None and \
+                time.ticks_diff(now, self._landing_entry_ms) >= self._land_timeout_ms:
+            self._advance(_STAGE.DONE, 'landing timeout %d s' % (self._land_timeout_ms // 1000))
+            return
         # Gated for the mirror reason: an extrapolated accel settles toward a plausible ~1 g, which is
         # exactly the still-band this looks for -- so a dead accel would read as "landed" and end the
         # flight while it is still flying.

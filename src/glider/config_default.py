@@ -578,12 +578,18 @@ does not apply to this silicon), so the config block's own timing stands.
     flight_timeout_ms: the RSO backstop -- this long after BOOSTING entry the stage forces DONE (GC +
     neutral fins) even with every landing sensor dead, so a blind glider cannot circle until the
     battery dies. 5 min >> any physically possible TMS flight.
+
+    land_timeout_ms: LANDING forces DONE this long after entry when stillness (still_g for ground_ms)
+    never confirms the touchdown -- carried off, rocking, a noisy accel. The descent from land_agl_m is
+    ~5 s (x2 = 10 s) and a normal LANDING 3.3-4.5 s; LANDING is GC-off with no memory rescue, and HITL
+    ran the heap out ~54 s after an unconfirmed touchdown. Keep it > ground_ms + the descent: raising
+    ground_ms toward 5 s wants this raised too.
     """
     sequencer = {'name': 'sequencer', 'activity': 'sequencer', 'enabled': True, 'period_ms': 50,
                  'launch_g': 2.5, 'launch_ms': 100, 'launch_alt_m': 10.0,
                  'apogee_drop_m': 5.0, 'apogee_arm_ms': 4000, 'boost_timeout_ms': 12000,
                  'land_agl_m': 5.0, 'land_ms': 300, 'still_g': 0.3, 'ground_ms': 3000,
-                 'flight_timeout_ms': 300000, 'disable_gc_flight': True}
+                 'land_timeout_ms': 10000, 'flight_timeout_ms': 300000, 'disable_gc_flight': True}
 
     """
     GNSS consistent-drift calibration (gnss_calib.py): average the reported ground velocity while
