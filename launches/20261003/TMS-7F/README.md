@@ -66,19 +66,21 @@ mpremote connect $PORT run src/glider/test/diag_devices.py     # 21+ devices, fi
 mpremote connect $PORT cp launches/20261003/TMS-7F/tms7f.config :board.config && mpremote reset
 ```
 
-### The BMI323 runs POLLED, deliberately
+### The BMI323 runs on its interrupt (GPIO4, wired 2026-09-23)
 
-`int_pin` is **null** for `imu_bmi323` on this board. The SEN0697 is wired on the BNO055's pattern —
-power and I²C only — so GPIO4 (`accel_int1`) goes nowhere, and routing it turned out to be awkward
-enough not to be worth it. Declaring a pin that is not connected is simply untrue: the driver would
-arm the interrupt, wait out `_INT_SILENT_LIMIT` silent cycles at every boot, print `INT1 silent` and
-fall back to polling anyway.
+`int_pin` is `accel_int1` (GPIO4) for `imu_bmi323`. The SEN0697 was first wired on the BNO055's pattern
+-- power and I²C only -- and ran POLLED at `period_ms` 10; GPIO4 was hand-wired to the BMI323's INT1 on
+2026-09-23. Verified live over CC after the config change: `interrupt_silent: False` and `irq_runs` 1-2 on
+every sample (0 would be the timeout fallback). Polling was never a degraded mode -- the interrupt buys
+CPU headroom and tighter sample timing -- so if the wire ever fails, the driver says `INT1 silent` and
+falls back to polling by itself.
 
-**Polling is not a degraded mode here.** The driver was written to work either way and samples at
-`period_ms` 10 (100 Hz), publishing `accel` and `rate` normally. The interrupt would buy CPU headroom
-and tighter sample timing, nothing more. If a future v1.1 board does wire GPIO4 to the BMI323's INT1,
-set `int_pin` back to `accel_int1` and the driver picks it up with no code change — confirm by the
-`INT1 silent` message disappearing and `irq_runs` climbing off zero.
+### GNSS module replaced (2026-09-23)
+
+The first ATGM336H went silent: its TX (U2 pin 3, GPIO23) measured **shorted to GND** -- the line sat low
+even against the ESP32's pull-up, so no NMEA reached the driver at any baud, and a power cycle did not
+help. The module was dead; a replacement on flying wires passed `probe gnss` at once (NMEA flowing, HDOP
+reported); it is being moved to the pads -- re-run `probe gnss` after.
 
 Then, unique to this airframe: **calibrate the BMM350** over CC (`calibrate mag_bmm350`) — power-cycle it
 in the clear first and keep it level from boot (the evidence is every sample since boot), then a LEVEL
