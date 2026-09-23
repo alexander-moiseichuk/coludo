@@ -60,7 +60,7 @@ def _probe():
     return device
 
 
-async def _turn(device, degrees, centre_x=1500, centre_y=-900, radius_x=900, radius_y=900, step=5):
+async def _turn(device, degrees, centre_x=7500, centre_y=-4500, radius_x=4500, radius_y=4500, step=5):
     """Sweep the fake field through `degrees` of a circle offset by a hard iron, feeding every sample."""
     for angle in range(0, degrees, step):
         radians = math.radians(angle)
@@ -104,19 +104,34 @@ async def amain():
     The quarter turn is swept back and forth so it passes the sample-count floor: the gate under test is
     COVERAGE, and a refusal that only came from "too few samples" would leave it unexercised. This arc
     scores a perfect 1.00 span roundness (measured: x span == y span exactly) while putting the centre
-    450 counts out -- so the shape of the data cannot distinguish it, only the angles can.
+    2250 counts out -- so the shape of the data cannot distinguish it, only the angles can.
     """
     quarter = _probe()
     for _ in range(3):
         await _turn(quarter, 90, step=1)
     assert quarter._seen >= 100, 'the sample floor must not be what refuses this: %d' % quarter._seen
     x_span, y_span = quarter._span[1] - quarter._span[0], quarter._span[3] - quarter._span[2]
-    assert abs(x_span - y_span) < 30, 'the arc under test must look ROUND by span: %d vs %d' % (
+    assert abs(x_span - y_span) < 150, 'the arc under test must look ROUND by span: %d vs %d' % (
         x_span, y_span)
     refusal = await quarter.calibrate()
     assert refusal is not None and 'sectors' in refusal, refusal
     assert quarter._covered() < 7, 'a quarter turn covers at most half the octants: %d' % quarter._covered()
     assert not quarter.calibrated(), 'a quarter turn must leave the axes raw'
+
+    """
+    NEGATIVE: a board SITTING STILL. Its field only moves by sensor noise (measured ~+/-100 counts on the
+    v1.1 bench), and with a coverage test relative to the span alone that noise scattered into every
+    octant: a still 7F reported "8 of 8 sectors covered" and calibrate() would have saved noise as the
+    hard-iron calibration. It must cover nothing and be refused.
+    """
+    still = _probe()
+    for index in range(400):
+        still._bus.x = 13700 + (index * 37) % 201 - 100   # deterministic +/-100-count scatter
+        still._bus.y = 16780 + (index * 53) % 201 - 100
+        await still._read()
+    assert still._covered() == 0, 'noise on a still board set %d sectors' % still._covered()
+    refusal = await still.calibrate()
+    assert refusal is not None and not still.calibrated(), refusal
 
     """
     NEGATIVE case 2: a full turn of a DEAD part (a constant field) has samples and perfect roundness of
@@ -134,8 +149,8 @@ async def amain():
     calibration exists to correct, so a full turn of it must be ACCEPTED.
     """
     squashed = _probe()
-    await _turn(squashed, 360, radius_x=1200, radius_y=600, step=2)
-    await _turn(squashed, 360, radius_x=1200, radius_y=600, step=2)
+    await _turn(squashed, 360, radius_x=6000, radius_y=3000, step=2)
+    await _turn(squashed, 360, radius_x=6000, radius_y=3000, step=2)
     assert await squashed.calibrate() is None, 'an elliptical field is correctable, not a refusal'
 
     """
@@ -150,14 +165,14 @@ async def amain():
     assert await good.calibrate() is None, 'a full circle must calibrate'
     assert good.calibrated() and good.calibration() == '', 'calibrated -> nothing outstanding for CC'
     centre_x, centre_y, radius_x, radius_y = good._calibration
-    assert abs(centre_x - 1500) <= 20 and abs(centre_y - -900) <= 20, good._calibration
-    assert abs(radius_x - 900) <= 20 and abs(radius_y - 900) <= 20, good._calibration
+    assert abs(centre_x - 7500) <= 100 and abs(centre_y - -4500) <= 100, good._calibration
+    assert abs(radius_x - 4500) <= 100 and abs(radius_y - 4500) <= 100, good._calibration
 
     worst = 0.0
     for degrees in (0, 37, 90, 154, 180, 271, 330):
         radians = math.radians(degrees)
-        good._bus.x = int(1500 + 900 * math.cos(radians))
-        good._bus.y = int(-900 + 900 * math.sin(radians))
+        good._bus.x = int(7500 + 4500 * math.cos(radians))
+        good._bus.y = int(-4500 + 4500 * math.sin(radians))
         corrected_x, corrected_y, _z = await good._read()
         recovered = math.degrees(math.atan2(corrected_y, corrected_x)) % 360
         error = abs((recovered - degrees + 180) % 360 - 180)
@@ -173,8 +188,8 @@ async def amain():
     spread = []
     for degrees in (0, 90, 180, 270):
         radians = math.radians(degrees)
-        raw._bus.x = int(1500 + 900 * math.cos(radians))
-        raw._bus.y = int(-900 + 900 * math.sin(radians))
+        raw._bus.x = int(7500 + 4500 * math.cos(radians))
+        raw._bus.y = int(-4500 + 4500 * math.sin(radians))
         raw_x, raw_y, _z = await raw._read()
         spread.append((math.degrees(math.atan2(raw_y, raw_x)) - degrees + 180) % 360 - 180)
     assert max(spread) - min(spread) > 20.0, 'hard iron must show as a heading-DEPENDENT error, %r' % spread
@@ -186,7 +201,7 @@ async def amain():
     """
     recal = bmm350.Bmm350('mag_recal_test', {}, _StubController())
     recal._calibration = (0, 0, 100, 100)  # restored from NVS
-    recal._span = [-400, 400, -400, 400]    # a real field swing...
+    recal._span = [-4000, 4000, -4000, 4000]    # a real field swing...
     recal._sectors = 0b00000111             # ...but only 3 of 8 sectors turned through
     recal._seen = 1000                      # plenty of samples: only the coverage is short
     answer = await recal.calibrate()

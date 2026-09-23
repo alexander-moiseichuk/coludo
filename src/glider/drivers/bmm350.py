@@ -63,7 +63,8 @@ _FRAME = const(14)  # _DUMMY + 3 axes x 3 bytes + temperature x 3
 _NVS_KEY: str = 'bmm350_cal'  # 4 x int32: x centre, y centre, x radius, y radius
 _CAL_BYTES = const(16)
 _UNIT = const(1000)  # corrected axes are normalised to +/-_UNIT, so atan2 sees equal-scaled integers
-_MIN_SPAN = const(50)  # counts: below this the part is dead or the board never moved at all
+_MIN_SPAN = const(2000)  # counts: a level turn spans ~8000-10000; still-board noise ~200 (see calibrate())
+_MIN_REACH = const(1000)  # counts from the centre before a sample may set a sector (noise is ~+/-100)
 _SECTORS = const(8)  # the circle is split into octants; coverage of them is what proves a real turn
 _NEED_SECTORS = const(7)  # 7 of 8 = 315 degrees -- a lap that stops just short still counts
 _MIN_SAMPLES = const(100)
@@ -195,9 +196,10 @@ class Bmm350(task.Task):
         exactly the boards that need the correction most. Octant coverage separates the two -- a partial
         turn misses sectors however round its bounding box looks.
 
-        _MIN_SPAN stays as the dead-part floor only (a motionless or broken magnetometer), and is
-        provisional until a real field magnitude is measured on this part (diag_mag_calibration.py
-        prints it).
+        _MIN_SPAN is the floor for a motionless or broken magnetometer, now set from a MEASURED field: on
+        the v1.1 bench (2026-09-23) the part's field sphere fitted at ~10 000 counts radius, so a level turn
+        spans roughly 8 000-10 000 counts while a still board's noise spans ~200. It used to be 50 --
+        below that noise -- which let a board that never moved pass as calibrated.
         """
         if max(x_span, y_span) < _MIN_SPAN:
             return 'no field change seen (x span %d, y span %d) -- is the magnetometer alive?' % (
@@ -242,7 +244,10 @@ class Bmm350(task.Task):
                                     abs(centre[1] - self._centre[1]) > span // 8):
             self._centre, self._sectors = centre, 0
         delta_x, delta_y = x - centre[0], y - centre[1]
-        reach = span // 4  # samples hugging the centre have no meaningful angle -- noise would set bits
+        # samples hugging the centre have no meaningful angle. The floor is ABSOLUTE: relative to the span
+        # alone, a board sitting still (span = its own noise, ~200 counts) reached 8 of 8 sectors in a few
+        # hundred samples and calibrate() would have saved that noise as the hard-iron calibration
+        reach = max(span // 4, _MIN_REACH)
         if delta_x * delta_x + delta_y * delta_y < reach * reach:
             return
         octant = ((1 if delta_y >= 0 else 0) << 2 | (1 if delta_x >= 0 else 0) << 1 |

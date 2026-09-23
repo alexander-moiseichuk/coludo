@@ -80,7 +80,7 @@ falls back to polling by itself.
 The first ATGM336H went silent: its TX (U2 pin 3, GPIO23) measured **shorted to GND** -- the line sat low
 even against the ESP32's pull-up, so no NMEA reached the driver at any baud, and a power cycle did not
 help. The module was dead; a replacement on flying wires passed `probe gnss` at once (NMEA flowing, HDOP
-reported); it is being moved to the pads -- re-run `probe gnss` after.
+reported), and again once soldered to the pads (`verify`: every device up, only the unplugged servos failing).
 
 Then, unique to this airframe: **calibrate the BMM350** over CC (`calibrate mag_bmm350`) — power-cycle it
 in the clear first and keep it level from boot (the evidence is every sample since boot), then a LEVEL
