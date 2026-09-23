@@ -93,4 +93,11 @@ if echo "$out" | grep -q 'WARM CRUMB: FAIL'; then
   echo "FAIL $motor/$scen session=$ses: $(echo "$out" | grep -oE 'WARM CRUMB: FAIL.*' | head -1)"
   exit 1
 fi
+# ...and a REFUSED gate in a reboot scenario is not a pass either: the rig then flies on as a cold boot
+# (the sequencer re-launches off the altitude), the capture still ends in DONE, and this printed OK --
+# which is how a reboot round with no crumb at all (the checkpoint was never registered) looked fine.
+if [ "$reboot_s" != 0 ] && echo "$out" | grep -q 'WARM GATE: False'; then
+  echo "FAIL $motor/$scen session=$ses: $(echo "$out" | grep -oE 'WARM GATE: False.*' | head -1)"
+  exit 1
+fi
 echo "OK $motor/$scen session=$ses $(echo "$out" | grep -oE 'DONE|TIMEOUT [0-9]+' | head -1)"

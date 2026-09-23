@@ -24,6 +24,7 @@ import layout
 import mission
 import recorder
 import tasks
+import warmstart  # registers the `checkpoint` activity, as main.py's import does on a real boot
 
 
 async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: bool,
@@ -166,7 +167,6 @@ async def _simulated_reboot(flight, boot_s: float) -> None:
         state (GLIDING, armed), or cold-booted. Prints `WARM CRUMB: FAIL` when the restored flight
         checkpoints a crumb without its pad altitude; hitl_collect.sh fails the scenario on it.
     """
-    import warmstart
     print('REBOOT: outage %.1fs (disarmed, FROZEN fins, stage SETTING)' % boot_s)
     flight_task = flight.active('flight')
     real_neutral = flight_task._neutral if flight_task is not None else None
