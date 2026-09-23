@@ -49,7 +49,10 @@ _REG_CHIP_ID = const(0x00)
 _REG_PMU_CMD_AGGR_SET = const(0x04)
 _REG_PMU_CMD = const(0x06)
 _REG_MAG_X = const(0x31)  # mag x/y/z then temperature, 3 bytes each -- 12 contiguous bytes
+_REG_OTP_CMD = const(0x50)
 _REG_CMD = const(0x7E)
+_OTP_POWER_OFF = const(0x80)  # OTP_CMD_REG PWR_OFF_OTP -- until it is written, the part never measures
+_NO_DATA = const(0x7F7F7F)  # what every axis reads while the OTP is still powered: not a field, no sample
 _CHIP_ID = const(0x33)
 _CMD_SOFT_RESET = const(0xB6)
 _PMU_NORMAL = const(0x01)  # PMU_CMD_NM
@@ -110,9 +113,19 @@ class Bmm350(task.Task):
         return buf[_DUMMY]
 
     async def _configure(self) -> None:
-        """Soft reset, set the rate, then normal mode. The rate needs its own apply command."""
+        """
+        Soft reset, power the OTP off, set the rate, then normal mode. The rate needs its own apply command.
+
+        The OTP power-off is Bosch's own init step and it is NOT optional: without it every data register
+        reads 0x7F and the part never produces a sample -- while its chip id, and so the old probe, read
+        perfectly. That is how this driver shipped and passed bring-up on the SEN0697 without its
+        magnetometer ever having measured a field: `mag` published a constant, the calibration refused
+        it as a dead part, and the filter's magnetic yaw would have pulled toward a fixed vector.
+        """
         await self._bus.write(self._addr, _REG_CMD, bytes([_CMD_SOFT_RESET]))
         await asyncio.sleep_ms(25)  # the part reloads its OTP after a reset
+        await self._bus.write(self._addr, _REG_OTP_CMD, bytes([_OTP_POWER_OFF]))
+        await asyncio.sleep_ms(5)
         await self._bus.write(self._addr, _REG_PMU_CMD_AGGR_SET, bytes([_AGGR_100HZ_AVG4]))
         await self._bus.write(self._addr, _REG_PMU_CMD, bytes([_PMU_UPDATE_ODR]))  # apply the rate
         await asyncio.sleep_ms(5)
@@ -326,6 +339,10 @@ class Bmm350(task.Task):
             """
             if mx == 0 and my == 0 and mz == 0:
                 raise ValueError('all axes zero -- the part is not measuring')
+            # the RAW frame, not the corrected axes: 0x7F on every byte is the part's own "no sample" --
+            # what it reads until its OTP is powered off -- and a calibration would disguise it
+            if self._axis(_DUMMY) == _NO_DATA and self._axis(_DUMMY + 3) == _NO_DATA:
+                raise ValueError('axes read 0x7F7F7F -- the part is not measuring (OTP still powered?)')
             recorder.Recorder.log(self.name, 'probe: read ok (%d, %d, %d)' % (mx, my, mz))
         except Exception as error:
             message = 'read: %s' % error

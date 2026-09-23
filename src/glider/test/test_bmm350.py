@@ -193,6 +193,27 @@ async def amain():
     assert answer and 'refused' in answer, answer
     assert recal._calibration == (0, 0, 100, 100), 'a refused re-calibration must keep the old one'
 
+    """
+    LIVE: where a BMM350 answers, it must MEASURE. The driver once never powered the OTP off, so every
+    data register read 0x7F -- chip id and probe fine, and not one field sample ever produced. A still
+    board's field only moves by noise, so the check is the part's own "no sample" pattern, plus the
+    probe that now refuses it.
+    """
+    live = bmm350.Bmm350('mag_live', {'bus': 'i2c', 'id': 0, 'addr': 0x15,
+                                      'provides': {'mag': {'priority': 9, 'timeout_ms': 500}}}, _StubController())
+    if await live.setup():
+        frames = []
+        for _ in range(5):
+            await asyncio.sleep_ms(20)
+            await live._read()
+            # offsets past the part's 2 dummy bytes -- literals, since an underscore const() is compiled away
+            frames.append((live._axis(2), live._axis(5), live._axis(8)))
+        assert all(frame[0] != 0x7F7F7F for frame in frames), 'the BMM350 is not measuring: %r' % frames
+        assert await live.probe() is None
+        print('   live BMM350 measuring: %r' % (frames[-1],))
+    else:
+        print('   no BMM350 answering -- live check skipped (fitted on v1.1 only)')
+
     print('ok: bmm350 registered; graceful-absent; partial turn refused; centre (%d, %d) r (%d, %d); '
           'heading worst %.2f deg, uncorrected spread %.0f deg' % (
               centre_x, centre_y, radius_x, radius_y, worst, max(spread) - min(spread)))
