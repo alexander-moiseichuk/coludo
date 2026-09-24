@@ -53,6 +53,37 @@ OFF**, so no airframe here attempts a guided landing. It matters for the flight 
 under a PID, it will do so at the mass that landed 0 of 10 in the zone, and reaching the 235 g that
 landed 7 of 10 means removing ~52 g. Better to know that before the airframe is finished than after.
 
+## Firmware and calibration per airframe (2026-09-24)
+
+Two firmware generations fly on purpose: the hardened build on the two new airframes, the long-tested
+builds on the two that already proved themselves. Every capture stamps its firmware version, so the
+groups stay separable in the data.
+
+| airframe | firmware | config | still owed before flight |
+|---|---|---|---|
+| **TMS-7E** (v1.0) | `2026.09.23.55c494a0c659` | [`tms7e.config`](TMS-7E/tms7e.config) = the board's `board.config` | BNO055 figure-8, then **`calibrate imu_bno055`** (its profile has never reached NVS); pad pitot tare |
+| **TMS-7F** (v1.1) | `2026.09.23.55c494a0c659` | [`tms7f.config`](TMS-7F/tms7f.config) = the board's `board.config` | BMM350 LEVEL full circle, then **`calibrate mag_bmm350`**; pad pitot tare |
+| TMS-7C, TMS-7D | their long-tested builds (read `whoami`) | unchanged | as before |
+
+**Calibrate over WiFi, assembled and on battery** -- a tethered airframe can do neither a figure-8 nor a
+full circle. The commands go from the dashboard's send-command box (`calibrate`, params `imu_bno055` /
+`mag_bmm350` / `airspeed_sdp810`); each is saved to NVS and restored on every boot. On 7F the
+magnetometer refuses anything short of a real turn ("N of 8 sectors covered" must reach the count).
+
+**On 7E/7F (the hardened build)** active commands answer `err unsafe` once airborne -- probe, verify's
+sweep, arm, `calibrate <device>`, detect, set-config, reboot -- while `stage`, `disarm` and every read
+stay open. A LANDING that never settles ends in DONE after 10 s (`land_timeout_ms`).
+
+**On 7C/7D (the older builds) the operator is the guard:**
+- they execute active commands in flight: send nothing but reads to them once launched, and no `all`
+  commands while anything is airborne;
+- never leave a stage forced: `stage setting`, then power-cycle before flight;
+- tare the pitot with `calibrate airspeed_sdp810` (it persists) -- not `update {"zero": true}`, which
+  is RAM-only on these builds; re-zero the baro with `calibrate baro_icp10111` (`update {"rezero": true}`
+  errors there);
+- a green `verify` is weaker for the ICP-10111 and the pitot on these builds (their probes pass on
+  stale data): glance at the live values too.
+
 ## Plan — 2026-09-04
 
 - [ ] check **TMS-7D**, upload the latest firmware; after final assembly the board is worked over **OTA**
