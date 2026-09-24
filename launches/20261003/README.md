@@ -62,7 +62,7 @@ groups stay separable in the data.
 | airframe | firmware | config | still owed before flight |
 |---|---|---|---|
 | **TMS-7E** (v1.0) | `2026.09.23.55c494a0c659` | [`tms7e.config`](TMS-7E/tms7e.config) = the board's `board.config` | BNO055 figure-8, then **`calibrate imu_bno055`** (its profile has never reached NVS); pad pitot tare |
-| **TMS-7F** (v1.1) | `2026.09.23.55c494a0c659` | [`tms7f.config`](TMS-7F/tms7f.config) = the board's `board.config` | BMM350 LEVEL full circle, then **`calibrate mag_bmm350`**; pad pitot tare |
+| **TMS-7F** (v1.1) | `2026.09.23.55c494a0c659` | [`tms7f.config`](TMS-7F/tms7f.config) = the board's `board.config` | BMM350 LEVEL full circle, then **`calibrate mag_bmm350`**; pad pitot tare. **Sealed: updates over WiFi only** (`tools/ota_push.sh TMS-7F ...`), no more USB |
 | TMS-7C, TMS-7D | their long-tested builds (read `whoami`) | unchanged | as before |
 
 **Calibrate over WiFi, assembled and on battery** -- a tethered airframe can do neither a figure-8 nor a
