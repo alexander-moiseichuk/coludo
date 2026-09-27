@@ -155,6 +155,25 @@ async def amain():
             sdp810._nvs.commit()
 
     """
+    A tare of exactly 0 Pa IS a tare. calibration() used `_zero != 0` as "tared", so a still pitot reading
+    0 raw counts -- common, the noise is about one count -- captured a zero of 0 and kept prompting: on
+    TMS-7E the operator retried 3-4 times until noise gave a non-zero count. And a stored 0 restored from
+    NVS read as never tared, every boot.
+    """
+    zeroed = sdp810.Sdp810('airspeed', {}, _StubController())
+    zeroed._scale, zeroed._zero, zeroed._density, zeroed._tared = 60, 0, 1.225, False
+    zeroed._pressure_ch = databoard._Channel('airspeed', 0)
+    zeroed._persist_zero = lambda: None          # never the board's real NVS
+    assert 'STILL AIR' in zeroed.calibration()   # not tared yet: the prompt is owed
+    zeroed._pressure(0)                          # still air, exactly 0 counts
+    assert zeroed.update({'zero': True}) == ['zero_offset_pa'] and zeroed._zero == 0
+    assert zeroed.calibration() == '', 'a 0 Pa tare must count as tared'
+    restored = sdp810.Sdp810('airspeed', {}, _StubController())
+    restored._zero, restored._tared = 0, False
+    restored.update({'zero_offset_pa': 0.0})     # the warm start restoring a 0 Pa crumb
+    assert restored._tared, 'an explicit 0.0 Pa offset is a tare too'
+
+    """
     probe() vouches only for a reading produced DURING the probe: value() is not None held forever after
     the first frame, so a pitot that stopped after a harness glitch passed verify and arm.
     """

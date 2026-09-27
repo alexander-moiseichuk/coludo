@@ -112,6 +112,7 @@ class Sdp810(task.Task):
         self._period_ms: int = self.config.get('period_ms', 20)  # ~50 Hz (tau63 < 3 ms allows fast poll)
         self._density: float = self.config.get('air_density', _AIR_DENSITY)  # the single q->v knob
         self._zero: fixed.fixnum = fixed.from_float(self.config.get('zero_offset_pa', 0.0))  # pad bias
+        self._tared: bool = False  # a tare was captured or restored -- 0 Pa included (see calibration())
         """
         A tare stored by a previous session WINS over the config default: it was measured on this
         airframe with this tube run, where the config value is a guess. Restoring it means a reboot --
@@ -121,6 +122,7 @@ class Sdp810(task.Task):
         if _nvs is not None:
             try:
                 self._zero = _nvs.get_i32(_NVS_ZERO)
+                self._tared = True  # a stored tare of exactly 0 is still a tare
                 # print(), not Recorder.log(): setup runs BEFORE the recorder task is up, so a logged
                 # line here goes nowhere (logs are best-effort by policy). The same reason icp10111 and
                 # bno055 print their setup failures. Runtime messages below still use the recorder.
@@ -233,8 +235,15 @@ class Sdp810(task.Task):
             pass  # still gone -- the next read fails and we try again
 
     def calibration(self) -> str:
-        """The still-air tare instruction; '' once a zero offset has been captured."""
-        if self._zero != 0:
+        """
+        The still-air tare instruction; '' once a tare has been captured or restored.
+
+        A FLAG, not the value: this tested `_zero != 0`, and a still pitot very often reads exactly 0 raw
+        counts (the noise is about one count), so the tare captured a zero offset of 0 and the prompt
+        stayed -- the operator retried until noise gave a non-zero count. After a reboot a stored 0 read
+        as never tared, and the board sat on `needs-calibration` for good.
+        """
+        if self._tared:
             return ''
         return ('keep the pitot in STILL AIR -- do NOT blow into it, this captures the zero tare '
                 '(now %.2f Pa)' % fixed.to_float(self._pressure_ch.value() or 0))
@@ -338,6 +347,7 @@ class Sdp810(task.Task):
                 # has always answered 'no reading yet'; update() now says the same thing out loud.
                 raise ValueError('no reading yet -- wait for the first frame before taring')
             self._zero = self._raw
+            self._tared = True
             # PERSIST the operator's capture. It used to live in RAM only -- calibrate() persisted, this
             # did not -- so a battery re-seat or a config save+reboot between the pad tare and launch
             # silently brought back an older NVS tare, and calibration() then reported nothing owed.
@@ -346,6 +356,7 @@ class Sdp810(task.Task):
             changed.append('zero_offset_pa')
         if 'zero_offset_pa' in props:
             self._zero = fixed.from_float(float(props['zero_offset_pa']))
+            self._tared = True  # an explicit offset (the warm start's crumb, or the operator) is a tare
             changed.append('zero_offset_pa')
         if 'air_density' in props:
             self._density = float(props['air_density'])
@@ -417,6 +428,7 @@ class Sdp810(task.Task):
             'temperature_c': round(self._temp_raw / _TEMP_LSB, 1),
             'scale': self._scale,
             'zero_offset_pa': fixed.to_float(self._zero),
+            'tared': self._tared,  # 0.0 Pa can be a real tare -- this says whether one was taken
             'air_density': self._density,
         })
         return status
