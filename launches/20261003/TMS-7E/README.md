@@ -3,10 +3,15 @@
 Same airframe idea as [TMS-7D](../TMS-7D/), rebuilt on **main board v1.0** instead of v0.1. This is the
 first airframe to fly the consolidated board, and the reason that board exists: the payoff is **mass**,
 not accuracy — 30–50 g of deleted harness and a shorter nose, worth roughly 45 m of median miss at the
-measured 0.9 m/gram.
+measured 0.9 m/gram. As built, the glider weighs **250.0 g against 7D's 287.5 g: 37.5 g lighter**, inside
+that prediction.
 
 | | |
 |---|---|
+| glider | **250.0 g** — glider + electronics, as assembled (weighed 2026-09-27) |
+| booster | **94.8 g** (without the motor) |
+| motor | **F15** (98.8 g loaded) |
+| liftoff | **443.6 g** |
 | board | **main board v1.0** — detected at boot, no config edit |
 | config | [`tms7e.config`](tms7e.config) — passive (`flight` off), `fins.concurrency` **3** |
 | status | **built, bench bring-up done** — 21 devices up, 0 down; engines not yet fitted |
