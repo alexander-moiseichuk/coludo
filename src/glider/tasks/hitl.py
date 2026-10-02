@@ -31,7 +31,7 @@ import random
 import time
 
 import commons
-import controller as controller_mod
+import controller as controller_module
 import databoard
 import inspector
 import recorder
@@ -39,7 +39,7 @@ import sim_model
 import task
 from fixed import SCALE, from_float  # sim->control boundary: centidegree/Pa fixnums
 
-_STAGE = controller_mod.Stage
+_STAGE = controller_module.Stage
 _HPRC = sim_model.HPRC      # default scenario (HPRC launch site + landing zone)
 _MOTORS = sim_model.MOTORS  # thrust/burn per motor
 Body = sim_model.Body       # the pure flight-dynamics model
@@ -47,6 +47,9 @@ _noisy = sim_model.noisy    # the sensor-noise helper
 _KNOTS = 1.94384            # m/s -> knots (GNSS speed convention)
 _BARO_NOISE_SCALE = 0.05    # baro is ~20x more precise than the IMU/GNSS -> its noise is this x the nominal
 _PITOT_RAIL_MS = (2.0 * 546.0 / sim_model.RHO) ** 0.5  # the +/-500 Pa SDP810 rails ~29.9 m/s (matches the host sim)
+_MAG_UNIT = 1000            # the scale a CALIBRATED bmm350 normalises its horizontal axes to
+_MAG_DOWN = 700             # a plausible vertical component; unused by the flat heading, carried for parity
+_MAG_DECLINATION_DEG = 17.0  # declination + mounting as ONE constant -- exactly the lump attitude.py learns
 
 
 @task.activity('hitl')
@@ -106,14 +109,21 @@ class Hitl(task.Task):
         `airspeed`/`dynamic_pressure` are here for a reason worth remembering: without them the sim
         published no airspeed at all, so the ONLY publisher of the fused `airspeed` channel on a board
         HITL flight was the REAL bench SDP810 sitting in still air. That is what caused the bistability
-        (findings §28) -- fixed then with the `pitot_min_ms` consumer guard, which was right for a
+        -- fixed then with the `pitot_min_ms` consumer guard, which was right for a
         blocked tube in flight but left the harness itself lying: board HITL never exercised the pitot
         path, and the host sim (which does simulate it) flew the governor off a different source.
         config_hitl._SIM_SENSORS now masks `airspeed_sdp810` too, so the bench part cannot get in.
         """
+        """
+        `mag` is here for the SAME reason `airspeed` is, and the lesson was learned the expensive way.
+        Without it, the only publisher of the magnetometer channel on a v1.1 board HITL flight is the
+        REAL BMM350 sitting still on the bench: attitude.py would then learn its track offset against a
+        heading that never changes, and every conclusion drawn about magnetic yaw would be an artefact
+        of the harness. Publishing it here means the dropout path is actually flown.
+        """
         provided = {name: {'priority': 0, 'timeout_ms': 1000} for name in
                     ('accel', 'attitude', 'rate', 'agl', 'altitude', 'elevation', 'position', 'speed',
-                     'course', 'airspeed', 'dynamic_pressure')}
+                     'course', 'airspeed', 'dynamic_pressure', 'mag')}
         self._ch = databoard.Databoard.provide(self.name, provided)
         """
         attitude-redundancy validation: a runner flips this True mid-glide to simulate a BNO055 death
@@ -121,6 +131,12 @@ class Hitl(task.Task):
         (tasks/attitude.py) must take over the fused slot and keep the glider controllable.
         """
         self.drop_attitude: bool = False
+        """
+        No magnetometer at all -- the CONTROL CONDITION for asking what the mag is worth. The only honest
+        way to measure that is to fly the identical scenario with it and without it, so this exists to be
+        flown against itself rather than against a remembered number from another round.
+        """
+        self.drop_mag: bool = False
         # simulated GNSS dropout (tunnel / antenna knock): stop publishing position/speed/course so the
         # guidance falls to its open-loop heading tiers and the wind feed stalls -- baro (altitude) stays.
         self.drop_gnss: bool = False
@@ -231,6 +247,20 @@ class Hitl(task.Task):
         pitch_rate = _noisy(body.pitch_rate, noise, -2000.0, 2000.0)
         yaw_rate = _noisy(body.yaw_rate, noise, -2000.0, 2000.0)
         self._ch['rate'].push((from_float(roll_rate), from_float(pitch_rate), from_float(yaw_rate)))
+        """
+        Simulated magnetometer: the field a CALIBRATED part would report, which is what the driver hands
+        the databoard once the operator has turned the circle. Hard and soft iron are therefore NOT
+        modelled here -- they belong to the driver's calibration and are tested there; what remains is
+        the constant lump attitude.py actually has to learn, so the sim carries declination + mounting
+        as one fixed rotation and nothing else.
+
+        Axes follow the consumer's convention exactly (heading = atan2(-my, mx)), because a sim that
+        invents its own frame would grade the harness rather than the flight code.
+        """
+        if not self.drop_mag:
+            magnetic = math.radians(heading + _MAG_DECLINATION_DEG)
+            self._ch['mag'].push((int(_MAG_UNIT * math.cos(magnetic)),
+                                  int(-_MAG_UNIT * math.sin(magnetic)), _MAG_DOWN))
         in_range = agl_clean <= self._laser_range_m  # laser only sees the ground within its range
         if in_range:
             self._ch['agl'].push(_noisy(agl_clean, noise, 0.0, 1000.0))

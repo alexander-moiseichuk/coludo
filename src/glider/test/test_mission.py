@@ -90,6 +90,14 @@ def test_update_positive_and_negative():
 
 def test_time_setup():
     launch = mission.Mission(PATH)
+    before = launch.epoch()  # the board clock this test borrows -- put back below, whatever happens
+    try:
+        _time_setup(launch)
+    finally:
+        launch.set_time(before)  # (a pre-2000 value is refused by set_time itself, leaving the test's)
+
+
+def _time_setup(launch):
     # positive: a Unix epoch sets the RTC; clock + epoch round-trip back to it
     epoch = 1781000000  # some moment in 2026
     assert launch.set_time(epoch) is True

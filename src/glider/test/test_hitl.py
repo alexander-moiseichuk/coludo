@@ -6,8 +6,12 @@ On-board test for the HITL simulator (tasks/hitl.py + config_hitl.py): the pure 
 registered and config_hitl produces a valid, correctly-wired config. Run by `make test`.
 """
 
+import math
+
 import config
 import config_hitl
+import fixed
+import layout
 import task
 from tasks import hitl
 
@@ -53,10 +57,53 @@ def test_wiring():
 
     sensors = {s['name']: s['enabled'] for s in cfg['sensors']}
     assert sensors['imu_bno055'] is False and sensors['laser_agl'] is False  # real sensors off
+    """
+    EVERY sensor the sim publishes over must be masked, the v1.1 attitude module included. A real part
+    left enabled does not fail loudly -- it publishes plausible, perfectly FRESH bench data into a
+    simulated flight, which is how a still-air pitot once became the only airspeed source in the whole
+    matrix. The magnetometer is the worst of them: stationary, it reads a constant heading forever.
+    """
+    for name in ('imu_bmi323', 'mag_bmm350', 'baro_bmp581', 'airspeed_sdp810'):
+        assert sensors.get(name) is False, '%s must be masked in HITL' % name
+    """
+    ...and it must stay masked AFTER the layout, on every revision. layout.apply() sets `enabled` from what
+    the revision fits, so hitl_run's resolve re-enabled the bench parts (a v1.0 board flew on its real
+    BNO055 + BMP280, a v1.1 on its BMI323 + BMM350 + BMP581) and an L1X laser was never masked at all.
+    Checked by CHANNEL, not by name: no enabled driver may publish anything the sim publishes.
+    """
+    simulated = ('accel', 'attitude', 'rate', 'agl', 'altitude', 'elevation', 'position', 'speed',
+                 'course', 'airspeed', 'dynamic_pressure', 'mag')
+    for revision in layout._REVISIONS:
+        resolved = config_hitl.default(motor='E16')
+        layout.apply(resolved, revision)
+        config_hitl.mask(resolved)
+        for sensor in resolved['sensors']:
+            if sensor.get('driver') and sensor.get('enabled', True):
+                clash = [name for name in (sensor.get('provides') or {}) if name in simulated]
+                assert not clash, '%s: real %s publishes simulated %s' % (revision, sensor['name'], clash)
     comp = {c['name']: c for c in cfg['components']}
     assert comp['hitl']['enabled'] and comp['hitl']['noise'] == 0.1 and comp['hitl']['motor'] == 'E16'
     assert comp['flight']['enabled'] and comp['watchdog']['enabled'] is False
     assert comp['servo_yaw']['enabled']                      # servos stay on (the sim reads the fins)
+
+
+def test_simulated_mag_round_trips():
+    """
+    The sim's magnetometer must decode back to the heading it was built from, THROUGH the consumer's own
+    formula (heading = atan2(-my, mx)) rather than a copy of it -- a sim that invents its own frame grades
+    the harness instead of the flight code, which has happened here before.
+    """
+    for heading in (0.0, 45.0, 137.0, 180.0, 271.0, 359.0):
+        magnetic = math.radians(heading + hitl._MAG_DECLINATION_DEG)
+        mag = (int(hitl._MAG_UNIT * math.cos(magnetic)), int(-hitl._MAG_UNIT * math.sin(magnetic)))
+        recovered = fixed.to_float(fixed.atan2_cd(-mag[1], mag[0]) % 36000)
+        expected = (heading + hitl._MAG_DECLINATION_DEG) % 360.0
+        error = abs(((recovered - expected + 180.0) % 360.0) - 180.0)
+        assert error < 0.5, 'heading %.0f -> %.2f, wanted %.2f' % (heading, recovered, expected)
+
+    # and the declination must actually BE an offset -- a sim publishing true heading would let the
+    # learned-offset path pass while never exercising it
+    assert hitl._MAG_DECLINATION_DEG != 0.0
 
 
 def test_noise():
@@ -68,5 +115,7 @@ def test_noise():
 
 test_body()
 test_wiring()
+test_simulated_mag_round_trips()
 test_noise()
-print('ok: hitl -- 6-DoF body (boost/apogee/glide/turn), config_hitl wiring + validation, noise bounds')
+print('ok: hitl -- 6-DoF body (boost/apogee/glide/turn), config_hitl wiring + validation, '
+      'simulated mag round-trip, noise bounds')

@@ -5,12 +5,14 @@ interleaving on one device. With the guard the competing caller must now be serv
 result instead, so this should read ~0 %.
 """
 
+
 import asyncio
 import time
 
 import config_default
 import controller
 import drivers
+import layout
 import recorder
 import tasks
 
@@ -27,6 +29,11 @@ async def main():
     drivers.load()
     tasks.load()
     cfg = config_default.default()
+    # RESOLVE THE LAYOUT, as main.bringup() does. Without it this builds the v0.1 bus map and
+    # hunts the four devices that MOVE between revisions on the wrong bus -- on a v1.0 board the
+    # ICP-10111, pitot, laser and INA226 all answer ENODEV and the diagnostic reports a healthy
+    # part as dead. The bus a device lives on is a property of the BOARD, never of the caller.
+    layout.resolve(cfg)
     for component in cfg['components']:
         if component['name'] in ('flight', 'sequencer', 'hitl', 'wifi', 'cc', 'watchdog'):
             component['enabled'] = False

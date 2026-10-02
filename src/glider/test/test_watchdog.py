@@ -82,6 +82,7 @@ async def amain():
     flight._active = True
     flight.step()
     ticker = asyncio.create_task(_tick(flight))
+    wd._wdt.feeds = 0  # the direct feed() above already counted one: only run()'s own feeds may pass this
     runner = asyncio.create_task(wd.run())
     await asyncio.sleep_ms(40)
     assert wd._wdt.feeds > 0 and resets == []

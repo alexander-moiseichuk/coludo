@@ -14,6 +14,7 @@ locked bus (i2cbus) since it shares i2c:0 with the ADXL375 and BNO055.
 import asyncio
 import struct
 
+import commons
 import databoard
 import i2cbus
 import recorder
@@ -34,7 +35,6 @@ _REG_DATA = const(0xF7)  # press msb/lsb/xlsb, temp msb/lsb/xlsb -- 6 bytes
 _CHIP_ID = const(0x58)
 _CTRL_NORMAL = const(0x2F)  # osrs_t x1, osrs_p x4, mode = normal
 _CONFIG_FILTER = const(0x08)  # t_sb 0.5 ms, IIR filter x4
-_SEA_LEVEL_PA = 101325.0  # reference for the barometric-altitude formula (AMSL)
 _GROUND_SAMPLES = const(8)  # readings averaged at startup to fix the ground-zero reference
 
 
@@ -124,7 +124,7 @@ class Bmp280(task.Task):
         adc_p = (self._buf[0] << 12) | (self._buf[1] << 4) | (self._buf[2] >> 4)
         adc_t = (self._buf[3] << 12) | (self._buf[4] << 4) | (self._buf[5] >> 4)
         pressure, temp_c = self._compensate(adc_t, adc_p)
-        altitude = 0.0 if pressure <= 0.0 else 44330.0 * (1.0 - (pressure / _SEA_LEVEL_PA) ** 0.190294957)
+        altitude = commons.altitude_m(pressure)
         return altitude, temp_c, pressure
 
     async def rearm(self) -> None:
@@ -186,15 +186,16 @@ class Bmp280(task.Task):
             self._ground = float(props['ground'])
             return ['ground']
         if props.get('rezero'):
-            altitude, altitude_source, _altitude_age = self._altitude.read()
+            altitude = self._altitude.recent(3 * self._period_ms * 1000)
             """
-            read(), NOT value(). A re-zero LATCHES a number permanently -- every later `elevation` is
-            reported against it -- so accepting an extrapolated altitude here biases the channel for the
-            rest of the flight, silently and without a second chance. value() extrapolates a stale
-            channel without bound, so the old `value() is not None` test passed happily on a dead baro.
-            Refuse instead of returning [], so the operator sees why (as sdp810's tare does).
+            recent(), NOT value(). A re-zero LATCHES a number permanently -- every later `elevation` is
+            reported against it -- so accepting a stale altitude here biases the channel for the rest of
+            the flight, silently and without a second chance: value() returns the last push forever.
+            (This called read(), which the channel does not have -- that is the Parameter's -- so every
+            re-zero raised AttributeError.) Refuse instead of returning [], so the operator sees why (as
+            sdp810's tare does).
             """
-            if altitude_source is None:
+            if altitude is None:
                 raise ValueError('no fresh altitude to re-zero from')
             self._ground = altitude
             return ['ground']

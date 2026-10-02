@@ -15,7 +15,8 @@ import json
 import time
 
 import cc_protocol as cc
-import config as config_mod
+import config as config_module
+import controller as controller_module
 import databoard
 import inspector
 import layout
@@ -160,18 +161,38 @@ class Client:
     async def run(self) -> None:
         """Connect to Control and serve forever, reconnecting with backoff on drop."""
         while True:
+            writer = None
             try:
                 reader, writer = await asyncio.open_connection(self.host, self.port)
                 self.log('cc_client :: connected %s:%d' % (self.host, self.port))
                 await self.serve(reader, writer)
             except Exception as error:
                 self.log('cc_client :: %r' % error)
+            finally:
+                if writer is not None:  # release the socket before re-dialling -- one per attempt leaked
+                    try:
+                        writer.close()
+                        await writer.wait_closed()
+                    except Exception:
+                        pass
             await asyncio.sleep_ms(self.backoff_ms)
 
     async def serve(self, reader, writer) -> None:
-        """Read commands from Control, dispatch, write responses. Returns on disconnect."""
+        """
+        Read commands from Control, dispatch, write responses. Returns on disconnect -- or on SILENCE.
+
+        The hub polls every ~2 s, so _SILENT_MS without a single line means the far end is gone. A
+        hub host that crashed or lost power sends no FIN, and a bare readline() then waited on the dead
+        socket forever: the board never re-dialled and never re-appeared on a restarted hub. The
+        deadline costs one wait_for_ms per received line (~560 B), which at the heartbeat rate is
+        noise beside the flight's own allocation.
+        """
         while True:
-            line = await reader.readline()
+            try:
+                line = await asyncio.wait_for_ms(reader.readline(), _SILENT_MS)
+            except asyncio.TimeoutError:
+                self.log('cc_client :: no traffic for %d s -- dropping the link to re-dial' % (_SILENT_MS // 1000))
+                return
             if not line:
                 return
             response = await self.dispatcher.handle(line.decode().strip())
@@ -201,13 +222,110 @@ class _Context:
         return self.controller.stage_name() if self.controller is not None else 'setting'
 
 
+def _has_primary(ctx, channel: str) -> bool:
+    """
+    Does the running config declare an ENABLED device providing `channel` at priority 0?
+
+    The question behind "is this a fallback, or just the only source there is". A device that is
+    configured but DISABLED (layout unfits it on this revision) does not count -- it was never going
+    to publish.
+
+    Args:
+        ctx - the client context, for the controller's config.
+        channel - the databoard channel name.
+
+    Returns:
+        True when some enabled device claims priority 0 on that channel; True also when the config
+        cannot be read, so an unknown never silently hides a real fallback.
+    """
+    controller = getattr(ctx, 'controller', None)
+    config = getattr(controller, 'config', None) if controller is not None else None
+    if not isinstance(config, dict):
+        return True
+    for device in list(config.get('sensors', [])) + list(config.get('components', [])):
+        if not device.get('enabled', True) or device.get('name') == channel:
+            continue  # the backup task is named for its channel; it is not its own primary
+        entry = (device.get('provides') or {}).get(channel)
+        if isinstance(entry, dict) and entry.get('priority') == 0:
+            return True
+    return False
+
+
+def _stage_problem(controller) -> str:
+    """
+    Why this board is not on the ground under automatic sequencing, or '' when it is.
+
+    A board flies its flight from SETTING with the sequencer free to detect launch. Anything else on
+    the pad -- a stage left forced after a fin check, or held -- means the stage record, the flight's
+    core output, will be wrong, and neither `health` nor `verify` nor `arm` used to say so. Every
+    10-03 profile flies passive (`flight` off), so the config readiness verdict is already false for
+    all of them and cannot be the place this shows; arm and verify are.
+
+    Args:
+        controller - the running Controller.
+
+    Returns:
+        A one-line reason, or '' when the stage is SETTING and not held.
+    """
+    stage = getattr(controller, 'stage', None)
+    if stage is None:
+        return ''  # a controller that reports no stage cannot be judged -- do not invent a problem
+    name = controller_module.Stage.STAGES.get(stage, str(stage))
+    if getattr(controller, 'manual', False):
+        return 'stage held at %s by an operator command -- `stage setting` to return to the ground' % name
+    if stage != controller_module.Stage.SETTING:
+        return 'stage is %s, not setting -- `stage setting`, then power-cycle before flight' % name
+    return ''
+
+
+_GROUND: tuple = ('setting', 'done')  # the stages where nothing is flying
+_SILENT_MS: int = 60000  # no line from the hub this long -> it is gone; drop and re-dial (see serve())
+
+
+def _in_flight(ctx) -> str:
+    """
+    Why an ACTIVE command must not run now, or '' when the board is on the ground.
+
+    The CC link stays up through the whole flight -- the board never drops it, and the hub keeps
+    heartbeating and fans `all` out to every online board -- so every command is reachable airborne.
+    Most are reads. These are not: a probe sweeps each fin to its limits, a baro calibrate re-zeroes
+    elevation (the sequencer then sees the ground), detect re-scans the live buses, a config write
+    competes with the recorder for flash, and a reboot is a warm-start gamble. On a five-airframe day an
+    `all verify` or a stale selection would do that to a gliding airframe. `stage`, `disarm` and the
+    reads stay open: they are how the operator recovers.
+
+    Args:
+        ctx - the dispatcher context.
+
+    Returns:
+        A one-line refusal reason, or '' when the stage is one of _GROUND.
+    """
+    stage = ctx.stage()
+    if stage in _GROUND:
+        return ''
+    return 'refused in flight -- stage is %s (ground-only: %s)' % (stage, '/'.join(_GROUND))
+
+
+def _ground_only(ctx, handler):
+    """Wrap an active command so it answers `err unsafe` outside _GROUND instead of running."""
+
+    async def gated(msg) -> str:
+        airborne = _in_flight(ctx)
+        if airborne:
+            return cc.build('err', ['unsafe', airborne])
+        return await handler(msg)
+
+    return gated
+
+
 def _register_identity(dispatcher, ctx) -> None:
     """whoami / ping / health -- who the board is and how it is doing."""
     async def whoami(_unused_msg) -> str:
         info = {
             'mcu': ctx.cfg['board'].get('mcu'),
             'firmware_version': ctx.cfg['board'].get('firmware_version', 'dev'),
-            'config_id': config_mod.config_id(ctx.cfg),
+            'config_id': config_module.config_id(ctx.cfg),
+            'config_source': config_module.BOOT_SOURCE,
             'stage': ctx.stage(),
             'uptime': time.ticks_ms(),
         }
@@ -252,9 +370,28 @@ def _register_identity(dispatcher, ctx) -> None:
         fallback zone). Empty list = nominal.
         """
         degraded = []
+        """
+        "On the backup" is only DEGRADED where a primary exists to have fallen off it.
+
+        v0.1 and v1.0 carry a BNO055 publishing fused `attitude` at priority 0, so a board running on
+        tasks/attitude.py means something died. v1.1 has NO p0 attitude provider at all -- the
+        complementary filter is the only source, by design -- so the flat check marked every v1.1 board
+        permanently degraded, on the pad and in the air. A panel that is always amber stops being read,
+        which costs the annunciation the whole point of having it.
+
+        So require a CONFIGURED, ENABLED p0 provider before calling its absence a fallback: v1.1 reports
+        clean, and an actual BNO055 failure on v1.0 still raises the flag, which is the case worth
+        seeing.
+        """
         attitude = databoard.Databoard.parameter('attitude')
-        if attitude is not None and attitude.read()[1] == 'attitude':  # fused source IS the backup
+        if attitude is not None and attitude.read()[1] == 'attitude' and _has_primary(ctx, 'attitude'):
             degraded.append('attitude-backup')
+        if ctx.controller is not None and getattr(ctx.controller, 'manual', False):
+            degraded.append('STAGE HELD')  # an operator hold suppresses every stage detector
+        if config_module.BOOT_SOURCE.startswith('default(fallback'):
+            # board.config failed to load, so this airframe booted the BENCH default: id 'taster',
+            # watchdog off, layout auto -- and it used to say so only on the serial console
+            degraded.append('CONFIG FALLBACK -- %s' % config_module.BOOT_SOURCE)
         health = inspector.Inspector.get('health')
         if getattr(health, 'rescues', 0) > 0:
             degraded.append('memory-rescued')
@@ -345,9 +482,13 @@ def _register_control(dispatcher, ctx) -> None:
         if ctx.controller is None:
             return cc.build('err', ['unsupported', 'no controller'])
         problems = dict(ctx.controller.failures)  # not-connected devices
-        for name, result in (await inspector.Inspector.probe_all()).items():  #
-            if result is not None:
-                problems[name] = result
+        stage_problem = _stage_problem(ctx.controller)
+        if stage_problem:
+            problems['stage'] = stage_problem
+        if not _in_flight(ctx):  # the probes sweep the fins: never on an airborne board
+            for name, result in (await inspector.Inspector.probe_all()).items():  #
+                if result is not None:
+                    problems[name] = result
         if problems:
             return cc.build('err', ['unsafe', json.dumps(problems)])  # refuse to arm
         ctx.controller.arm()
@@ -417,6 +558,7 @@ def _register_config(dispatcher, ctx) -> None:
     One command pair (get-config <name> / set-config <name> <json>) covers every config instead of a
     get-/save- pair per config:
       board   the running board config (hardware; config.py, validated + atomically saved)
+      saved   what the next boot loads (read-only; the base for any read-modify-write)
       default the built-in board default (read-only)
       launch  the per-launch mission (launch.config; mission.py, merge-applied + saved)
     """
@@ -428,15 +570,24 @@ def _register_config(dispatcher, ctx) -> None:
             msg - the request; msg.args[0], when present, is the config name (default 'board').
 
         Returns:
-            ok with the config JSON (board/running the running config, default the built-in default,
-            launch the persisted mission); err unsupported when launch is asked for with no mission;
-            err badargs on an unknown name.
+            ok with the config JSON (board/running the running config, saved what the next boot
+            loads, default the built-in default, launch the persisted mission); err unsupported when
+            launch is asked for with no mission; err badargs on an unknown name.
         """
         name = msg.args[0] if msg.args else 'board'
         if name in ('board', 'running'):
             return cc.build('ok', [json.dumps(ctx.cfg)])
+        if name == 'saved':
+            """
+            What the NEXT boot runs: the saved board.config through the same load() the boot uses (a
+            missing or invalid file -> the default it would fall back to). Read-modify-write flows
+            start here: the running config predates any save not yet rebooted, so writing it back
+            silently reverted that save -- and it carries this boot's layout resolution besides.
+            """
+            saved, _source, _errors = config_module.load(ctx.config_path)
+            return cc.build('ok', [json.dumps(saved)])
         if name == 'default':
-            return cc.build('ok', [json.dumps(config_mod._builtin_default())])
+            return cc.build('ok', [json.dumps(config_module._builtin_default())])
         if name == 'launch':
             mission = inspector.Inspector.get('mission')
             if mission is None:
@@ -468,7 +619,7 @@ def _register_config(dispatcher, ctx) -> None:
             return cc.build('err', ['badargs', 'bad json'])
         if name == 'board':
             try:
-                config_id = config_mod.save(payload, ctx.config_path)
+                config_id = config_module.save(payload, ctx.config_path)
             except ValueError as error:
                 return cc.build('err', ['invalid', str(error)])
             return cc.build('ok', [json.dumps({'config_id': config_id})])
@@ -482,12 +633,12 @@ def _register_config(dispatcher, ctx) -> None:
         return cc.build('err', ['badargs', 'unknown config %s' % name])
 
     async def reset_config(_unused_msg) -> str:
-        config_mod.reset(ctx.config_path)
+        config_module.reset(ctx.config_path)
         return cc.build('ok')
 
     dispatcher.on('get-config', get_config)
-    dispatcher.on('set-config', set_config)
-    dispatcher.on('reset-config', reset_config)
+    dispatcher.on('set-config', _ground_only(ctx, set_config))
+    dispatcher.on('reset-config', _ground_only(ctx, reset_config))
 
 
 def _register_diagnostics(dispatcher, ctx) -> None:
@@ -550,9 +701,16 @@ def _register_diagnostics(dispatcher, ctx) -> None:
                           else 'down: ' + ctx.controller.failures.get(name, '?'))
                    for name in ctx.controller.directory()}
         problems = dict(ctx.controller.failures)  # not-connected devices
-        for name, result in (await inspector.Inspector.probe_all()).items():  #
-            if result is not None:
-                problems[name] = result
+        stage_problem = _stage_problem(ctx.controller)
+        if stage_problem:
+            problems['stage'] = stage_problem
+        airborne = _in_flight(ctx)
+        if airborne:
+            problems['probe'] = 'not run: %s (the probes sweep the fins)' % airborne
+        else:
+            for name, result in (await inspector.Inspector.probe_all()).items():  #
+                if result is not None:
+                    problems[name] = result
         readiness = _readiness(ctx.cfg)
         """
         LIVE readiness on top of the config gate: an uncalibrated BNO055 is invisible to _readiness()
@@ -620,6 +778,9 @@ def _register_diagnostics(dispatcher, ctx) -> None:
         """
         if not msg.args:
             return cc.build('ok', [json.dumps(inspector.Inspector.calibration_all())])
+        airborne = _in_flight(ctx)  # a baro calibrate mid-air re-zeroes elevation: the ground, to the sequencer
+        if airborne:
+            return cc.build('err', ['unsafe', airborne])
         target = msg.args[0]
         run = getattr(inspector.Inspector.get(target), 'calibrate', None)
         if run is None:
@@ -641,10 +802,10 @@ def _register_diagnostics(dispatcher, ctx) -> None:
         return cc.build('ok', [json.dumps({'detected': revision, 'applied': layout.RESOLVED,
                                            'detail': detail})])
 
-    dispatcher.on('probe', probe)
-    dispatcher.on('detect', detect)
-    dispatcher.on('verify', verify)
-    dispatcher.on('bustune', bustune)
+    dispatcher.on('probe', _ground_only(ctx, probe))
+    dispatcher.on('detect', _ground_only(ctx, detect))
+    dispatcher.on('verify', verify)  # gates its own probes: the device + readiness report stays useful
+    dispatcher.on('bustune', _ground_only(ctx, bustune))
 
 
 def _register_streaming(dispatcher) -> None:
@@ -703,7 +864,6 @@ def _register_ota(dispatcher, ctx) -> None:
     """push-begin / push / push-commit / push-abort -- carry a module to the board over the link."""
 
     _upload = ota.Upload()  # one per dispatcher: a board serves a single Control link
-    _GROUND = ('setting', 'done')  # the stages where nothing is flying and a module swap is harmless
 
     def _grounded() -> str:
         """
@@ -879,7 +1039,7 @@ def _register_system(dispatcher, ctx) -> None:
         asyncio.create_task(do_reset())
         return cc.build('ok')
 
-    dispatcher.on('reboot', reboot)
+    dispatcher.on('reboot', _ground_only(ctx, reboot))
 
 
 def create_dispatcher(cfg: dict, controller=None, on_reboot=None,

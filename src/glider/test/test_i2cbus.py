@@ -46,7 +46,14 @@ async def amain():
     to recover -- the general call, the sdp810 restart and the rest all need a working bus to be issued
     on. The bus counts CONSECUTIVE failures and, only past the limit, clocks SDA free and re-inits.
     """
-    fails_before = bus._fails
+    """
+    Start the run from a KNOWN count. The diagnose() check above deliberately reads an absent address,
+    which leaves one failure on the counter, and this test then adds LIMIT-1 more -- which is LIMIT, so
+    the clear fires and zeroes the count mid-assertion. It passed for a year only because a BNO055 sat
+    at 0x28 and the successful read of it happened to reset the counter first; on a board without one
+    (v1.1 carries no BNO055) the hidden dependency surfaced as a bus-recovery failure that was not one.
+    """
+    bus._fails = 0
     for _ in range(_BUS_FAIL_LIMIT_LOCAL - 1):   # isolated NAKs must NOT trigger a bus clear
         try:
             await bus.read(0x7E, 0x00, 1)        # nothing at this address -> OSError
@@ -67,7 +74,7 @@ async def amain():
     if devices:
         await bus.read(devices[0], 0x00, 1)
         assert bus._fails == 0, bus._fails
-    bus._fails = fails_before
+    bus._fails = 0  # leave the SHARED bus with a clean count -- this instance outlives the test
 
     print('ok: i2cbus shared/cached per id, scan/locked-read, diagnose, retune, wedge recovery, '
           'devices=%s' % [hex(a) for a in devices])

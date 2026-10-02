@@ -108,6 +108,16 @@ class Bus:
         """
         return self._lock
 
+    def reclock(self) -> None:
+        """
+        Re-init this peripheral at its CONFIGURED clock.
+
+        machine.I2C(id) is one hardware peripheral per id, so anything that constructs it -- a layout
+        scan, a bus clear -- re-clocks the bus every driver on it is using. This puts it back.
+        """
+        self._i2c = I2C(self._bus_id, scl=Pin(self._spec['scl']), sda=Pin(self._spec['sda']),
+                        freq=self._spec.get('freq', 400000))
+
     async def retune(self, freq: int) -> None:
         """
         Re-init this I2C peripheral at `freq` Hz in place (bench frequency calibration; no reboot).
@@ -168,8 +178,7 @@ class Bus:
         except Exception:
             pass  # a pin we cannot drive is not worse than the wedge we are already in
         finally:
-            self._i2c = I2C(self._bus_id, scl=Pin(self._spec['scl']), sda=Pin(self._spec['sda']),
-                            freq=self._spec.get('freq', 400000))
+            self.reclock()
         recorder.Recorder.log('i2c:%d' % self._bus_id,
                               'bus wedged after %d failures -- clocked SDA free and re-inited' % self._fails)
         self._fails = 0  # acted on it: count afresh, so a still-dead bus escalates again rather than never
@@ -249,6 +258,11 @@ class Bus:
 
     def scan(self) -> list:
         return self._i2c.scan()
+
+
+def live(bus_id: int):
+    """The Bus the drivers already share for `bus_id`, or None before any driver has bound it."""
+    return _buses.get(bus_id)
 
 
 def get(bus_id: int, spec: dict) -> Bus:

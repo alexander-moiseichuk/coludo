@@ -57,13 +57,14 @@
   </tr></thead>
   <tbody><tr><td colspan="12" class="muted">waiting for boards…</td></tr></tbody>
 </table>
-<p class="muted">click a board to target it in every section below · <span id="boardmsg"></span></p>
+<p class="muted">click a board to target it in every section below</p>
 
 <h2>board <span class="sel" id="selA">—</span> actions</h2>
 <p class="muted">the table above is status and selection only — pick a board there and every section
 below targets it. Nothing in the table changes a board, so a glance is never a click away from
 altering one.</p>
 <p>
+  <button id="actcalib" title="guided calibration of the selected board, one device per press">calibrate</button>
   <button id="actprobe" title="run every device self-test on the selected board">probe devices</button>
   <button id="actdetect" title="re-scan both I2C buses and report which board revision they look like (does not apply)">detect layout</button>
   <button id="actsynctime" title="set the board RTC to the CC clock">sync time</button>
@@ -82,6 +83,7 @@ altering one.</p>
     <option>stats</option>
     <option>verify</option>
     <option>probe</option>
+    <option>calibrate</option>
     <option>stage</option>
     <option>arm</option>
     <option>disarm</option>
@@ -90,8 +92,8 @@ altering one.</p>
     <option>whoami</option>
     <option>reboot</option>
   </select>
-  <input id="params" placeholder="params — e.g. wifi · gliding · 5000" size="28"
-         title="space-separated arguments (e.g. inspect → wifi, stage → gliding, tlm → 5000)">
+  <input id="params" placeholder="params — e.g. wifi · gliding · imu_bno055 · 5000" size="28"
+         title="space-separated arguments (e.g. inspect → wifi, stage → gliding, calibrate → imu_bno055, tlm → 5000)">
   <button id="send">send</button>
 </p>
 <pre id="reply"></pre>
@@ -139,7 +141,7 @@ altering one.</p>
     <option value="spi">spi</option>
   </select>
   <input id="tuneid" value="0" size="3" title="bus id">
-  <button id="calibrate">calibrate</button>
+  <button id="calibrate">tune bus frequency</button>
   <span class="muted">sweep the bus to its max stable frequency; the tuned <b>board config</b> is loaded into the editor above for you to review, then <b>Save + Reboot</b> to apply (your call)</span>
 </p>
 <pre id="tuneresult"></pre>
@@ -161,6 +163,7 @@ altering one.</p>
   <button id="logstart">start</button>
   <button id="logstop">stop</button>
   <button id="logclear">clear</button>
+  <span class="muted" id="logmsg"></span>
 </p>
 <pre id="logs"></pre>
 
@@ -174,7 +177,24 @@ async function cmd(board, command, params = []) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ board, command, params }),
   });
-  return res.json();
+  // A body that is not JSON (a hub fault, a proxy page) becomes an {error} like the hub's own: every
+  // caller reads fields off the reply, and a throw here left their 'probing…' on screen for good.
+  const text = await res.text();
+  try { return JSON.parse(text); } catch (err) { return { error: `HTTP ${res.status}: ${text.slice(0, 200)}` }; }
+}
+
+// The board config the NEXT boot runs: its saved board.config (`get-config saved`). Every
+// read-modify-write starts here, never from the RUNNING config (`get-config board`): that one predates
+// any save not yet rebooted, so writing it back silently reverted the earlier save -- lowering
+// fins.concurrency for the bench and then saving fin zeros put concurrency 3 back on the bench supply.
+// The running config also carries the boot's layout resolution, which is not the operator's to persist.
+// Only firmware that predates `saved` (badargs) falls back to the running config.
+async function savedBoardConfig(board) {
+  const got = await cmd(board, 'get-config', ['saved']);
+  if (got.status === 'err' && Array.isArray(got.args) && got.args[0] === 'badargs') {
+    return cmd(board, 'get-config', ['board']);
+  }
+  return got;
 }
 
 // Parse JSON, or return the original value if it is not JSON (board payloads arrive as JSON strings).
@@ -237,8 +257,8 @@ function fmtLayout(b) {
 }
 
 function actionBoard() {
-  // Its own board box, like every other section, filled by selectBoard() along with the rest -- so a
-  // row click targets all of them at once and an operator can still override just this one.
+  // The one selection, made in the status table. Guarding here (rather than in each handler) keeps a
+  // stray click on an unselected page a visible message instead of a request that goes nowhere.
   const id = boardId();
   if (!id) { document.getElementById('actmsg').textContent = 'select a board first'; }
   return id;
@@ -247,8 +267,11 @@ function actionBoard() {
 async function probeBoard(id) {
   document.getElementById('actmsg').textContent = `${id}: probing…`;
   const r = await cmd(id, 'probe', []);
-  const body = r.args && r.args[0];
-  const results = typeof body === 'object' && body !== null ? body : {};
+  // args[0] arrives as a JSON STRING (see safeParse) -- testing typeof === 'object' on it was always
+  // false, so `results` was always {} and this reported "all 0 devices pass" for EVERY board, including
+  // one with a dead sensor. A self-test that cannot fail is worse than no self-test.
+  const parsed = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : null;
+  const results = (parsed && typeof parsed === 'object') ? parsed : {};
   const bad = Object.keys(results).filter((k) => results[k] !== null && results[k] !== 'pass');
   document.getElementById('actmsg').textContent = r.status === 'ok'
     ? (bad.length ? `${id}: FAIL ${bad.join(', ')}` : `${id}: all ${Object.keys(results).length} devices pass`)
@@ -258,11 +281,20 @@ async function probeBoard(id) {
 async function detectLayout(id) {
   document.getElementById('actmsg').textContent = `${id}: scanning…`;
   const r = await cmd(id, 'detect', []);
-  const body = (r.args && r.args[0]) || {};
+  const parsed = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : null;
+  const body = (parsed && typeof parsed === 'object') ? parsed : {};  // a JSON string, like probe above
+  // A mismatch has two very different cures, and telling them apart matters: layout.py applies a
+  // DECLARED board.layout on every boot, so rebooting re-applies the same wrong answer forever. Only an
+  // 'auto' config re-scans. The ' (declared)' suffix is what layout.py actually emits, so split on it.
+  const declared = String(body.applied || '').endsWith('(declared)');
+  const disagrees = body.detected && body.applied && !String(body.applied).startsWith(body.detected);
   document.getElementById('actmsg').textContent = r.status === 'ok'
     ? `${id}: wired like ${body.detected || 'nothing recognised'} · running as ${body.applied || '—'}` +
-      (body.detected && body.applied && !String(body.applied).startsWith(body.detected)
-        ? ' — REBOOT to apply' : '')
+      (disagrees ? (declared ? ' — config DECLARES this; set board.layout to auto, then reboot'
+                             : ' — REBOOT to apply') : '') +
+      // detail carries the per-bus address lists and the reason a scan gave up ('neither anchor on
+      // i2c:0', 'ambiguous'), which is exactly what an operator needs when detected is null
+      (body.detail && !body.detected ? ` · ${body.detail}` : '')
     : `${id}: ${JSON.stringify(r)}`;
 }
 
@@ -282,10 +314,20 @@ function boardId() {
 }
 
 function selectBoard(id) {
+  const changed = id !== selected;
   selected = id;
+  // Drop the cached fin zeros: they belong to the board we are leaving. Without this the first +/-
+  // after switching boards computes `old board's trim + 1` and writes it to the NEW board, which moves
+  // a control surface to a number nobody chose.
+  finTrim = {};
+  finLoaded = false;
+  for (const fin of Object.keys(FINS)) { renderFin(fin); }
   for (const label of ['selA', 'selB', 'selC', 'selD', 'selE', 'selF', 'selG']) {
     document.getElementById(label).textContent = id || '—';
   }
+  // The inspect cards hold the LEAVING board's objects and their update buttons still target it, under
+  // a heading that now names the new one -- so they go, rather than edit a board nobody is looking at.
+  if (changed) { document.getElementById('inspresult').innerHTML = ''; }
   markChosen();
 }
 
@@ -314,7 +356,7 @@ function fmtFlight(b) {
     : '<span class="muted">○ safe</span>';
   // degraded-mode annunciation: any non-nominal state is the loudest thing in the cell
   const degraded = (b.degraded && b.degraded.length)
-    ? ` <b style="color:#c22" title="non-nominal flight state">⚠ ${b.degraded.join(', ')}</b>` : '';
+    ? ` <b style="color:#c22" title="non-nominal flight state">⚠ ${escAttr(b.degraded.join(', '))}</b>` : '';
   const f = b.flight;
   if (!f) return armed + degraded;
   const bits = [`${f.airspeed ?? '–'} m/s`];
@@ -348,7 +390,7 @@ function fmtFlight(b) {
 }
 function fmtPad(b) {
   if (!b.launchpad) return '<b style="color:#c22">no launchpad</b>';
-  const where = fmtPos(b.launchpad) + (b.site ? ` (${b.site})` : '');
+  const where = fmtPos(b.launchpad) + (b.site ? ` (${escAttr(b.site)})` : '');
   if (b.launchpad_set) return `${where} <span class="muted">· set</span>`;
   return `${where} <span class="muted">· ${b.armed ? 'live fix?!' : 'freezes on arm'}</span>`;
 }
@@ -358,7 +400,10 @@ function ccGps(gps) {
   if (!gps.usable) return 'No FIX';
   return `${gps.latitude.toFixed(5)}, ${gps.longitude.toFixed(5)}`;
 }
-const boardMsg = (text) => { document.getElementById('boardmsg').textContent = text; };
+// Everything in the "board actions" bar reports INTO that bar. The five buttons used to split between
+// two elements, so the same click landed in different places depending on which button it was, and a
+// reply could appear above the caption the operator was looking at.
+const actMsg = (text) => { document.getElementById('actmsg').textContent = text; };
 
 new EventSource('/events').onmessage = (event) => {
   const { cc, boards } = JSON.parse(event.data);
@@ -374,15 +419,18 @@ new EventSource('/events').onmessage = (event) => {
   assistButton.disabled = !ccHasFix;
   assistButton.title = ccHasFix ? 'push the CC GNSS fix to the board launch config'
                                 : 'CC has no usable GNSS fix to push';
+  // BEFORE the empty-roster return: with no board connected, every known glider is absent, which is
+  // exactly when "N known gliders not connected" is the thing the operator needs. Returning first meant
+  // the banner never rendered in its own case, and kept stale text in every other.
+  renderAbsent();
   if (!boards.length) {
     tbody.innerHTML = '<tr><td colspan="12" class="muted">no boards connected</td></tr>';
     return;
   }
-  renderAbsent();
   tbody.innerHTML = boards.map((b) => `
     <tr class="click ${b.online ? 'on' : 'off'} ${notReady(b) ? 'notready' : ''}" data-board="${escAttr(b.id)}">
-      <td>${notReady(b) ? `<b class="warn" title="NOT READY: ${b.degraded.join(', ')}">❗</b> ` : ''}${escAttr(b.id)}</td>
-      <td><span class="dot">${b.online ? '●' : '○'}</span></td>
+      <td>${notReady(b) ? `<b class="warn" title="NOT READY: ${escAttr(b.degraded.join(', '))}">❗</b> ` : ''}${escAttr(b.id)}</td>
+      <td><span class="dot" title="${b.online && b.stale ? `health ${b.health_age} s old -- armed/stage may be out of date` : ''}">${b.online ? (b.stale ? '◐' : '●') : '○'}</span></td>
       <td>${fmtLayout(b)}</td>
       <td>${escAttr(b.stage || '')}</td>
       <td>${fmtFlight(b)}</td>
@@ -397,6 +445,15 @@ new EventSource('/events').onmessage = (event) => {
   // Bind AFTER the rows exist. The id travels in data-board and the handler is attached here, so it
   // is never parsed as JavaScript -- see escAttr above for why splicing it into onclick was unsafe.
   bindBoardRows(tbody);
+  /*
+   * ONE board on the roster and nothing chosen yet -> choose it.
+   *
+   * Every section targets `selected`, so an unselected page turns every button into a silent no-op --
+   * which is indistinguishable from a broken UI, and was reported as exactly that ("nothing happened").
+   * With a single board there is no ambiguity for the operator to resolve, so making them click first
+   * buys nothing. With two or more, the click still decides, because then the choice is real.
+   */
+  if (!selected && boards.length === 1) { selectBoard(boards[0].id); }
   markChosen();
 };
 
@@ -415,7 +472,9 @@ async function renderAbsent() {
   try { missing = await (await fetch('/api/absent')).json(); } catch (err) { return; }
   box.innerHTML = missing.length
     ? `<b class="warn">\u2757 ${missing.length} known glider${missing.length > 1 ? 's' : ''} not connected:</b> `
-      + missing.map(g => `<span title="${g.hint}">${g.id} (${g.ip || 'ip unknown'})</span>`).join(', ')
+      // escAttr for the same reason the row template uses it: these are operator-set board ids and a
+      // hub-supplied hint, spliced into innerHTML
+      + missing.map(g => `<span title="${escAttr(g.hint)}">${escAttr(g.id)} (${escAttr(g.ip) || 'ip unknown'})</span>`).join(', ')
       + ' — a glider registers with the hub only at boot, so power-cycle it to re-login'
     : '';
 }
@@ -469,15 +528,18 @@ function fmtImu(b) {
   if (!pending.length) {
     return `<span style="color:#2a2" title="${report}">✓ calibrated</span>`;
   }
-  return `<b class="warn" title="${report}">⚠ ${pending.join(', ')}</b> `
-    + `<button class="calib" data-board="${escAttr(b.id)}" `
-    + `title="${report}">calibrate ${pending.length}</button>`;
+  // Status only, NO button. This cell used to render its own `calibrate N` button, which survived
+  // the move of every action into the bar below -- and bindBoardRows stopped binding per-row controls,
+  // so it rendered, looked live, and was wired to nothing. The count still shows here (that is status);
+  // the action is `calibrate` in the board actions bar.
+  return `<b class="warn" title="${report}">⚠ ${pending.join(', ')} (${pending.length})</b>`;
 }
 
 // Guided calibration, ONE DEVICE PER PRESS. The board's `calibrate` sweep says which devices are
 // outstanding and what the operator must do for each; this takes the first, shows it, and stops. The
-// heartbeat then re-counts, the button becomes `calibrate 2`, `calibrate 1`, and finally disappears
-// as the row goes green -- so progress is visible without this holding the operator in a loop.
+// heartbeat then re-counts, so the calibration CELL counts down and the not-ready row flag clears
+// itself -- progress is visible without this holding the operator in a loop. (It used to describe a
+// per-row button relabelling itself; the table is status + selection only, see fmtImu.)
 // OK is them saying "done": a timed pause races the work, and a tare captured while the airframe is
 // still being set down is worse than none, because it looks valid.
 async function sweepCalibration(id) {
@@ -485,25 +547,30 @@ async function sweepCalibration(id) {
 }
 
 async function calibrateBoard(id) {
+  actMsg(`${id} calibrate: checking what is outstanding…`);   // clears the last press's verdict
   const pending = await sweepCalibration(id);
-  if (pending === null) { boardMsg(`${id} calibrate: board did not answer`); return; }
+  if (pending === null) { actMsg(`${id} calibrate: board did not answer`); return; }
   const names = Object.keys(pending);
-  if (!names.length) { boardMsg(`${id} calibrate: nothing outstanding — all devices ready`); return; }
+  if (!names.length) { actMsg(`${id} calibrate: nothing outstanding — all devices ready`); return; }
 
   const name = names[0];   // one at a time: the instructions conflict physically
   const left = names.length;
   if (!confirm(`Calibrate ${name}   (${left} device${left > 1 ? 's' : ''} outstanding)\n\n` +
                `${pending[name]}\n\nPress OK when done.`)) {
-    boardMsg(`${id} calibrate: cancelled at ${name}`);
+    actMsg(`${id} calibrate: cancelled at ${name}`);
     return;
   }
   const ran = await cmd(id, 'calibrate', [name]);   // no-op where the act is purely physical
-  if (ran.status !== 'ok') { boardMsg(`${id} calibrate ${name}: ${JSON.stringify(ran)}`); return; }
+  if (ran.status !== 'ok') { actMsg(`${id} calibrate ${name}: ${JSON.stringify(ran)}`); return; }
 
   const now = await sweepCalibration(id);
-  const stillLeft = now ? Object.keys(now) : [];
-  if (stillLeft.includes(name)) { boardMsg(`${id} calibrate ${name}: STILL OUTSTANDING — ${now[name]}`); return; }
-  boardMsg(stillLeft.length
+  // the SAME null the first sweep guards against, and the window where it is most likely: airframe in
+  // hand, leads being tugged. An empty list here would read as "all devices calibrated" -- and this is
+  // the arm gate for an IMU whose failure mode is a frozen attitude.
+  if (now === null) { actMsg(`${id} calibrate ${name}: ran, but the re-check did not answer — status unknown`); return; }
+  const stillLeft = Object.keys(now);
+  if (stillLeft.includes(name)) { actMsg(`${id} calibrate ${name}: STILL OUTSTANDING — ${now[name]}`); return; }
+  actMsg(stillLeft.length
     ? `${id} calibrate: ${name} done — ${stillLeft.length} left (${stillLeft.join(', ')})`
     : `${id} calibrate: ${name} done — ALL DEVICES CALIBRATED`);
 }
@@ -512,14 +579,14 @@ async function calibrateBoard(id) {
 // GPS position to the board launch config (/api/assist).
 async function syncTime(id) {
   const r = await cmd(id, 'update', ['mission', JSON.stringify({ epoch: Math.floor(Date.now() / 1000) })]);
-  boardMsg(`${id} sync time: ${r.status === 'ok' ? 'ok' : JSON.stringify(r)}`);
+  actMsg(`${id} sync time: ${r.status === 'ok' ? 'ok' : JSON.stringify(r)}`);
 }
 async function gpsAssist(id) {
   const res = await fetch('/api/assist', {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ board: id }),
   });
   const r = await res.json();
-  boardMsg(`${id} gps: ${r.assisted ? 'pushed ' + JSON.stringify(r.position) : JSON.stringify(r)}`);
+  actMsg(`${id} gps: ${r.assisted ? 'pushed ' + JSON.stringify(r.position) : JSON.stringify(r)}`);
 }
 
 // --- ad-hoc command box: pick a command, type its params (space-separated) ---
@@ -537,7 +604,8 @@ async function send() {
   }
 }
 // board actions -- each guards on a selected board so a stray click is a message, not a request
-for (const [buttonId, handler] of [['actprobe', probeBoard],
+for (const [buttonId, handler] of [['actcalib', calibrateBoard],
+                                   ['actprobe', probeBoard],
                                    ['actdetect', detectLayout],
                                    ['actsynctime', syncTime],
                                    ['actassist', gpsAssist]]) {
@@ -555,15 +623,23 @@ const cfgOut = document.getElementById('cfgresult');
 const cfgArea = document.getElementById('config');
 const cfgBoard = () => boardId();
 const cfgTarget = () => document.getElementById('cfgtarget').value;
+// The board a draft came FROM. selectBoard() does not clear the editor, so without this a load from one
+// board, a click on another and a Save wrote the first board's whole config -- board.id included -- to the
+// second, and both then announced the same id after their reboots.
+let cfgSource = '';
 
 document.getElementById('load').onclick = async () => {
   cfgOut.textContent = '…';
   const target = cfgTarget();
-  const r = await cmd(cfgBoard(), 'get-config', [target]);
+  const r = target === 'board' ? await savedBoardConfig(cfgBoard())
+                                : await cmd(cfgBoard(), 'get-config', [target]);
   if (r.status === 'ok') {
     try {
       cfgArea.value = JSON.stringify(JSON.parse(r.args[0]), null, 2);
-      cfgOut.textContent = `loaded ${target} config of ${cfgBoard()}`;
+      cfgSource = cfgBoard();
+      cfgOut.textContent = target === 'board'
+        ? `loaded the SAVED board config of ${cfgSource} (what its next boot runs)`
+        : `loaded ${target} config of ${cfgSource}`;
     } catch (e) { cfgOut.textContent = 'unreadable config from board: ' + e; }
   } else {
     cfgOut.textContent = prettyResult(r);
@@ -571,11 +647,22 @@ document.getElementById('load').onclick = async () => {
 };
 
 document.getElementById('save').onclick = async () => {
-  let json;
-  try { json = JSON.stringify(JSON.parse(cfgArea.value)); }
+  let draft;
+  try { draft = JSON.parse(cfgArea.value); }
   catch (e) { cfgOut.textContent = 'draft is not valid JSON: ' + e; return; }
+  const board = cfgBoard();
+  if (!board) { return; }
+  if (cfgSource && cfgSource !== board) {
+    cfgOut.textContent = `refused: this draft was loaded from ${cfgSource}, not ${board} — Load ${board}'s config first`;
+    return;
+  }
+  const draftId = cfgTarget() === 'board' && draft.board ? draft.board.id : undefined;
+  if (draftId !== undefined && draftId !== board) {
+    cfgOut.textContent = `refused: the draft's board.id is ${draftId}, not ${board} — saving it would rename this board`;
+    return;
+  }
   cfgOut.textContent = '…';
-  cfgOut.textContent = prettyResult(await cmd(cfgBoard(), 'set-config', [cfgTarget(), json]));
+  cfgOut.textContent = prettyResult(await cmd(board, 'set-config', [cfgTarget(), JSON.stringify(draft)]));
 };
 
 document.getElementById('reboot').onclick = async () => {
@@ -604,12 +691,12 @@ document.getElementById('calibrate').onclick = async () => {
   const board = tuneBoard();
   const kind = document.getElementById('tunekind').value;
   const id = document.getElementById('tuneid').value.trim() || '0';
-  if (!board) { tuneOut.textContent = 'enter a board id'; return; }
+  if (!board) { tuneOut.textContent = 'pick a board in the table above first'; return; }
   const btn = document.getElementById('calibrate');
   btn.disabled = true;
   tuneOut.textContent = `sweeping ${kind}:${id} on ${board} … running the bus up a frequency ladder (a few seconds)`;
   try {
-    const r = await op(`calibrate ${board} ${kind} ${id}`);
+    const r = await op(`bustune ${board} ${kind} ${id}`);
     const reply = (r.lines && r.lines[0]) || JSON.stringify(r);
     const m = reply.match(/^from \S+ ok (.*)$/);
     if (!m) { tuneOut.textContent = reply; return; }  // e.g. 'from cc err ...'
@@ -622,7 +709,7 @@ document.getElementById('calibrate').onclick = async () => {
                  `ceiling ${hz(out.ceiling)} · ${lim}\n→ chosen ${hz(out.chosen)}${out.note ? '  (' + out.note + ')' : ''}`;
     if (out.chosen == null) { tuneOut.textContent = text + '\n\n(no stable frequency found — nothing to load)'; return; }
     // patch the chosen freq into the board config and load it into the editor above
-    const cfg = await cmd(board, 'get-config', ['board']);
+    const cfg = await savedBoardConfig(board);
     const data = (cfg.status === 'ok') ? JSON.parse(cfg.args[0]) : null;
     const key = kind === 'i2c' ? 'freq' : 'baud';
     if (!data || !data.buses || !data.buses[kind] || !data.buses[kind][id]) {
@@ -631,6 +718,7 @@ document.getElementById('calibrate').onclick = async () => {
     }
     data.buses[kind][id][key] = out.chosen;
     cfgArea.value = JSON.stringify(data, null, 2);
+    cfgSource = board;
     selectBoard(board);
     document.getElementById('cfgtarget').value = 'board';
     cfgOut.textContent = `tuned ${out.bus} → ${hz(out.chosen)} loaded into the draft above — review, then Save + Reboot to apply`;
@@ -662,6 +750,7 @@ async function loadFins() {
   if (!board) { finOut.textContent = 'pick a board first'; return false; }
   finOut.textContent = 'reading fins…';
   finTrim = {};
+  finLoaded = false;  // cleared up front: an early return must not leave a PARTIAL set marked loaded
   for (const fin of Object.keys(FINS)) {
     const r = await cmd(board, 'inspect', [fin]);
     const props = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : null;
@@ -694,14 +783,14 @@ async function nudgeFin(fin, delta) {
   }
 }
 
-// persist the calibrated trims: load the board config, write the three trims into their components,
+// persist the calibrated trims: load the SAVED board config, write the three trims into their components,
 // and set-config it back (the whole snapshot -- so nothing else is lost). Reboot re-baselines the fins.
 async function saveFins() {
   const board = finBoard();
   if (!board) { finOut.textContent = 'pick a board first'; return; }
   if (!finLoaded && !(await loadFins())) return;  // never commit trims we have not read
   finOut.textContent = 'loading board config…';
-  const got = await cmd(board, 'get-config', ['board']);
+  const got = await savedBoardConfig(board);
   const cfg = (got.status === 'ok' && Array.isArray(got.args)) ? safeParse(got.args[0]) : null;
   if (!cfg || !Array.isArray(cfg.components)) {
     finOut.textContent = 'could not load board config: ' + prettyResult(got);
@@ -760,6 +849,8 @@ document.getElementById('inspall').onclick = async () => {
 // send the edited props of one object via `update <name> <json>`; a green ✓ lists what actually changed.
 async function updateObject(board, name) {
   const tick = document.getElementById('tick-' + name);
+  // a card built while another board was selected (an inspect still loading when the operator switched)
+  if (board !== boardId()) { tick.className = 'tick no'; tick.textContent = `not sent: this card is ${board}'s`; return; }
   let json;
   try { json = JSON.stringify(JSON.parse(document.getElementById('insp-' + name).value)); }
   catch (e) { tick.className = 'tick no'; tick.textContent = 'invalid JSON'; return; }
@@ -775,14 +866,23 @@ const logPane = document.getElementById('logs');
 const logBoard = () => boardId();
 
 async function setLog(on) {
+  // Guard and REPORT here. This posted board:'' with nothing selected, took the 404 and discarded it,
+  // and the only explanation landed in #actmsg several screens up -- so the button looked inert.
+  const board = logBoard();
+  const logMsg = document.getElementById('logmsg');
+  if (!board) { logMsg.textContent = 'pick a board in the table above first'; return null; }
   const kind = document.getElementById('logkind').value;
   const interval_ms = on ? (parseInt(document.getElementById('logms').value, 10) || 1000) : 0;
   const res = await fetch('/api/log', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ board: logBoard(), kind, interval_ms }),
+    body: JSON.stringify({ board, kind, interval_ms }),
   });
-  return res.json();
+  const out = await res.json();
+  logMsg.textContent = out && out.error
+    ? `${board}: ${out.error}`
+    : `${board}: ${kind} ${on ? 'streaming every ' + interval_ms + ' ms' : 'stopped'}`;
+  return out;
 }
 document.getElementById('logstart').onclick = () => setLog(true);
 document.getElementById('logstop').onclick = () => setLog(false);
@@ -790,7 +890,10 @@ document.getElementById('logclear').onclick = () => { logPane.textContent = ''; 
 
 new EventSource('/logs').onmessage = (event) => {
   const { board, line } = JSON.parse(event.data);
+  // Cap it like a tail. At the default 1 s telemetry interval a dashboard left open across a flight day
+  // accumulates tens of thousands of lines in one text node, and `+=` rebuilds the whole string each time.
   logPane.textContent += `${board}: ${line}\n`;
+  if (logPane.textContent.length > 200000) { logPane.textContent = logPane.textContent.slice(-150000); }
   logPane.scrollTop = logPane.scrollHeight;
 };
 </script>

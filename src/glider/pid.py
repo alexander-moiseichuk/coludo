@@ -152,7 +152,7 @@ class Pid:
         output = (self.kp * error + self.ki * integral + self.kd * derivative) // _KU
         limited = clamp(-self.output_limit, output, self.output_limit)
         """
-        BACK-CALCULATION anti-windup (findings §23.5). The clamps above bound the integral's MAGNITUDE,
+        BACK-CALCULATION anti-windup. The clamps above bound the integral's MAGNITUDE,
         but they do not unwind it: while the fin is saturated the integral simply sits at its limit and
         keeps demanding what the airframe cannot fly, so the moment authority returns it dumps.
         Back-calculation actively bleeds it by the part of the demand that did NOT reach the fin,
@@ -176,7 +176,7 @@ class Pid:
             (30deg of error against a 5deg cap) settles the integral at the opposite sign: measured
             -1067 where the error was +3000, which commands a REVERSED fin the instant the cap reopens.
             Trading windup for counter-windup is not a fix. Bleeding only toward zero removes the
-            wind-up §23.5 is about and can never invert the command.
+            wind-up this is about and can never invert the command.
             """
             integral = max(0, unwound) if integral > 0 else min(0, unwound)
             self._integral = integral

@@ -5,6 +5,9 @@ On-board (MicroPython) test for the board config loader/validator (config.py), n
 buses (uart/i2c/spi -> id), `sensors` + `components` with 'type:id' bus refs. Run by `make test`.
 """
 
+import json
+import os
+
 import config
 import config_default
 
@@ -117,7 +120,7 @@ def main():
     off = config_default.default()
     off['pins']['laser_xshut'] = None  # placeholder kept, feature off
     off['pins']['laser_int'] = -1
-    off['pins']['adxl375_int'] = -7    # any negative, not just -1
+    off['pins']['accel_int1'] = -7    # any negative, not just -1
     assert config.validate(off) == [], config.validate(off)
     off['pins']['servo_yaw'] = off['buses']['i2c']['0']['sda']  # a genuine collide still flagged
     assert any('used by both' in e for e in config.validate(off))
@@ -193,7 +196,7 @@ def main():
     assert source == 'default'
 
     """
-    Config SCHEMA VERSION (findings §27.13): a saved config carries the version it was produced from,
+    Config SCHEMA VERSION: a saved config carries the version it was produced from,
     forever. The saved config still WINS as-is -- what you saved is what flies -- but a mismatch against
     the firmware is reported through `source`, so a config predating a new sensor is visible instead of
     silently dropping it.
@@ -210,12 +213,97 @@ def main():
     stale['board']['id'] = 'stale-board'
     config.save(stale, path)
     cfg, source, errs = config.load(path, defaults=fresh)
-    assert not errs and cfg['board']['id'] == 'stale-board'  # the SAVED config ran, unmodified
+    assert not errs and cfg['board']['id'] == 'stale-board'  # the SAVED config ran (bar firmware_version)
     assert source.startswith('active(config 19700101, firmware ') and 're-save' in source, source
     config.reset(path)
 
+    """
+    firmware_version reports the RUNNING firmware, never the one that saved the file.
+
+    It is the single field load() overrides, because it is not configuration: a saved board.config
+    freezes whatever build wrote it, so a freshly deployed board would announce the build it replaced
+    -- which is exactly what TMS-7D did, reporting an old commit through CC minutes after a clean
+    deploy of a newer one. Negative half matters just as much: restamping must touch NOTHING else, or
+    "what you saved is what flies" quietly stops being true.
+    """
+    running = config_default.default()
+    running['board']['firmware_version'] = '2026.09.06.running'
+    written = config_default.default()
+    written['board']['firmware_version'] = '2026.08.31.whenSaved'
+    written['board']['id'] = 'restamp-board'
+    written['board']['setup_retries'] = 7
+    config.save(written, path)
+    cfg, source, errs = config.load(path, defaults=running)
+    assert not errs and source == 'active', source
+    assert cfg['board']['firmware_version'] == '2026.09.06.running', cfg['board']['firmware_version']
+    # ...and every other saved field survived untouched
+    assert cfg['board']['id'] == 'restamp-board' and cfg['board']['setup_retries'] == 7
+    expected = dict(written['board'], firmware_version='2026.09.06.running')
+    assert cfg['board'] == expected, cfg['board']
+    # the restamp self-heals: saving the loaded config persists the running version
+    config.save(cfg, path)
+    again, _source, _errs = config.load(path, defaults=running)
+    assert again['board']['firmware_version'] == '2026.09.06.running'
+
+    """
+    config_id identifies the CONFIGURATION, not the build.
+
+    The restamp above puts the running firmware into the loaded config, and config_id hashes that dict --
+    so unless firmware_version is excluded, a byte-identical board.config reports a different id after
+    every deploy, and the id save() returned stops matching the one the board announces in `iam`.
+    """
+    build_a = config_default.default()
+    build_a['board']['firmware_version'] = '2026.01.01.aaaaaaaaaaaa'
+    build_b = config_default.default()
+    build_b['board']['firmware_version'] = '2026.12.31.bbbbbbbbbbbb'
+    assert config.config_id(build_a) == config.config_id(build_b), 'firmware_version must not move the id'
+    # ...while a REAL configuration change still must
+    build_b['board']['setup_retries'] = 9
+    assert config.config_id(build_a) != config.config_id(build_b), 'a config change must move the id'
+    # and the whole point: the id save() hands back survives load()'s restamp
+    config.reset(path)
+    saved_id = config.save(build_a, path)
+    reloaded, _source, _errs = config.load(path, defaults=running)
+    assert config.config_id(reloaded) == saved_id, 'the saved id must survive the restamp'
+
+    # NEGATIVE: a config whose board section is missing or not a dict must not crash the loader
+    config.reset(path)
+    assert config.load(path, defaults=running)[1] == 'default'  # no file at all
+    config.reset(path)
+
+    """
+    An ENABLED watchdog below the measured boot floor is refused: 1000 ms boot-loops the board every
+    ~8.5 s, and with servos enabled each boot re-centres every fin (how a servo died). The flight value
+    passes, and so does a disabled watchdog whatever it says -- it never arms.
+    """
+    """
+    A malformed section is an ERROR, never a raise: `fins` as a list made validate() raise
+    AttributeError, and load() -- which must never raise, it runs before the watchdog and WiFi exist --
+    raised with it. It must refuse the file and fall back.
+    """
+    broken = config_default.default()
+    broken['fins'] = [1, 2]
+    assert 'fins is not an object' in config.validate(broken), config.validate(broken)
+    with open('test_malformed.config', 'w') as handle:
+        handle.write(json.dumps(broken))
+    try:
+        loaded, source, errors = config.load('test_malformed.config')
+        assert source.startswith('default(fallback'), source
+        assert loaded['board']['id'] == config_default.default()['board']['id']
+    finally:
+        os.remove('test_malformed.config')
+
+    floor_cfg = config_default.default()
+    watchdog = [device for device in floor_cfg['components'] if device.get('activity') == 'watchdog'][0]
+    watchdog['enabled'], watchdog['wdt_timeout_ms'] = True, 5000
+    assert not [e for e in config.validate(floor_cfg) if 'boot floor' in e]
+    watchdog['wdt_timeout_ms'] = 1000
+    assert [e for e in config.validate(floor_cfg) if 'boot floor' in e], config.validate(floor_cfg)
+    watchdog['enabled'] = False
+    assert not [e for e in config.validate(floor_cfg) if 'boot floor' in e]
+
     print('ok: config validate/config_id/save/load/reset + nested buses, sensors, bus()/device(), '
-          'schema version + outdated()')
+          'schema version + outdated(), firmware_version restamp, watchdog boot floor')
 
 
 main()

@@ -101,10 +101,10 @@ async def test_memory_rescue():
     altitude (elevation above the dynamic floor = 2x the descent a ~200 ms pause costs), in
     BOOSTING..GLIDING only; no descent -> no rescue.
     """
-    import controller as controller_mod
+    import controller as controller_module
 
     class _StubController:
-        stage = controller_mod.Stage.GLIDING
+        stage = controller_module.Stage.GLIDING
 
         def active(self, name=None):
             return None  # no watchdog in the rig -> the rescue's WDT kick is skipped
@@ -160,16 +160,16 @@ async def test_memory_rescue():
     for step in range(board_health._LEAK_MIN_SAMPLES + 1):
         health._track(4_000_000 - step * 1_000_000, None)  # catastrophic burn, no descent trend
     assert health.land_s() is None and health.oom_s() is not None
-    rig.stage = controller_mod.Stage.BOOSTING
+    rig.stage = controller_module.Stage.BOOSTING
     health._rescue(health.mem_free(), 50.0)
     assert health.rescues == 1
 
     # the gates: LANDING stage / UNKNOWN elevation / `rescue: false` -> never
     health._descent = 25  # slow sink -> a ~0.1 m floor, so altitude never gates here -- isolate stage
     health._last_elevation = 10000
-    rig.stage = controller_mod.Stage.LANDING
+    rig.stage = controller_module.Stage.LANDING
     health._rescue(health.mem_free(), 100.0)  # LANDING -> never (no pause into the flare)
-    rig.stage = controller_mod.Stage.GLIDING
+    rig.stage = controller_module.Stage.GLIDING
     health._rescue(health.mem_free(), None)  # unknown elevation -> not proven safe
     assert health.rescues == 1
     health._rescue(health.mem_free(), 100.0)  # control: the same trends DO rescue past the gates

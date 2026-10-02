@@ -11,7 +11,7 @@ import argparse
 import asyncio
 import datetime
 
-import gps as gps_mod
+import gps as gps_module
 import server
 
 _DEFAULT_GPS_BAUD: int = 9600  # what the ATGM336H and most USB dongles ship at
@@ -139,7 +139,7 @@ async def _run(args, hub) -> None:
 def main() -> None:
     args = _parse_args()
     args.gps_device = _resolve_gps_device(args.gps_device, args.gps_baud)  # 'auto' -> probe /dev/ttyUSB*
-    gps = gps_mod.Gps(log=_log) if args.gps_device else None
+    gps = gps_module.Gps(log=_log) if args.gps_device else None
     hub = server.Server(host=args.host, port=args.port, operator_port=args.operator_port,
                         web_port=args.web_port, gps=gps, log=_log)
     _log('hub on %s — boards:%d operators:%d web:%d%s (Ctrl-C to stop)' % (

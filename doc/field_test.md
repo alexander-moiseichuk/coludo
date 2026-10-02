@@ -40,13 +40,25 @@ first powered flight.
 
 ## Phase 1 — Power-up & CC link (at the field)
 - [ ] Power on → board joins the AP → appears on the CC dashboard, **stage = SETTING (1)**
-- [ ] Every device online: **BNO055** (0x28), **BMP280** (0x76), **ICP-10111** (0x63), **VL53L4CX**
-      (0x29), **SDP810** (0x25), **LSM6DSO32** + **ADXL375** (SPI), **GNSS** (uart), **INA226** (i2c1 0x40)
+- [ ] Every device this airframe's config enables is online — **`verify` green on CC** is the check;
+      `detect` names the revision the board found. The rosters differ per revision (from the 10-03
+      configs; `doc/waveshare_esp32p4_pins.md` is the generated per-revision pin/bus map):
+
+      | | v0.1 — TMS-7C, 7D | v1.0 — TMS-7E | v1.1 — TMS-7F |
+      |---|---|---|---|
+      | attitude | BNO055 0x28 + BMP280 0x76 | BNO055 0x28 + BMP280 0x76 | BMI323 0x69 + BMP581 0x47 + BMM350 0x15 |
+      | i2c:0 also | ICP-10111 0x63, SDP810 0x25, VL53L4CX 0x29 | INA226 0x40 | INA226 0x40 |
+      | i2c:1 | INA226 0x40 (7D only; off on 7C) | ICP-10111 0x63, SDP810 0x25, VL53L4CX 0x29 | ICP-10111 0x63, SDP810 0x25, **VL53L1X** 0x29 |
+      | SPI | LSM6DSO32 + ADXL375 | LSM6DSO32 (no ADXL375) | LSM6DSO32 (no ADXL375) |
+      | uart | GNSS | GNSS | GNSS |
 - [ ] Telemetry streaming to CC at the expected rate; `inspect` on each component looks sane
 - [ ] `mem_free` stable while idle (no leak on the ground — it scans WiFi in SETTING)
 
 ## Phase 2 — Static baseline (glider level and still on the ground)
 - [ ] **Attitude:** roll ≈ 0, pitch ≈ 0; rotate to a known heading (e.g. north) → **heading tracks** (magnetometer)
+      > **v1.1 (TMS-7F):** heading starts at **0 at power-on, not north** — it is relative until the
+      > GNSS track (> 5 m/s) teaches the magnetometer its offset, which never happens on a walk. Check
+      > that heading CHANGES by the angle you turn, not what it reads.
 - [ ] **Baro:** altitude/elevation steady; note the pad elevation (ground zero ≈ 0 m)
 - [ ] **GNSS:** fix acquired — satellites up, HDOP low; position matches the spot
 - [ ] **Airspeed:** dynamic pressure ≈ 0; do the **pad tare** (CC `update {"zero": true}` on
@@ -84,20 +96,52 @@ first powered flight.
       - Slow and smooth, ~15–30 s, until `mag` reads **3** and the euler bytes change. Check the gyro
         column reads **> 5 °/s** while you do it — a still sample proves nothing, which is how a
         working module was once wrongly condemned.
-      - Then **`calibrate imu_bno055`** over CC to save the profile to NVS. It is restored on every
-        later boot, so this is a once-per-board bench job and NOT a pad procedure — which matters,
-        because nobody can figure-8 an airframe that is already on the rail.
+      - Then **`calibrate imu_bno055`** over CC to save the profile to NVS — on the dashboard, the
+        **send command** box: `calibrate`, params `imu_bno055`. NOT the `calibrate` action button: once
+        the chip converges it drops out of the guided sweep, which then says "nothing outstanding"
+        with the profile still unsaved. It is restored on every later boot, so this is a
+        once-per-board bench job and NOT a pad procedure — which matters, because nobody can figure-8
+        an airframe that is already on the rail.
       - `mag` dropping back to 2 afterwards is EXPECTED and no longer means anything: the register is
         the chip's confidence in its recent data, not what it has learned. The board latches the
         convergence, so `calibrated` stays true
+- [ ] **CALIBRATE THE BMM350 — ONCE PER BOARD (v1.1 boards only).** The SEN0697 replaces the BNO055,
+      and its magnetometer is raw: nothing fuses it, so the airframe's own hard iron (servos, the motor,
+      steel) sits on top of the field as a fixed vector. Measured on the bench fixture, that shifts
+      heading by up to **214°** and — this is the point — by a DIFFERENT amount on every heading, so the
+      track offset `attitude` learns from the GNSS cannot absorb it.
+      - **POWER-CYCLE IT WHERE YOU WILL CALIBRATE, and keep it level from boot.** The calibration takes
+        the min/max of every sample since BOOT, with no level gate, so a board booted on the steel
+        bench, or carried tilted, bakes that into the saved centre (up to ~17° of heading). If the
+        sector count will not complete, or the result looks off, a power-cycle in the clear is the
+        reset; nothing else clears the evidence.
+      - **A LEVEL FULL CIRCLE, not a figure-8.** Only the two horizontal axes are corrected, because
+        only a level heading is used. Stand the airframe flat and turn it slowly through 360°, twice.
+      - Away from steel and magnets, same as the BNO055 — you are measuring the airframe's iron, not
+        the bench's.
+      - The panel shows **`N of 8 sectors covered`** and counts up as you turn. It refuses a partial
+        turn: a quarter circle produces a centre that is confidently wrong while looking perfectly
+        round in the data, so sector coverage — not the shape — is what it checks. If the count resets
+        partway, keep going; the estimate moved and it restarted against the settled one.
+      - Then **`calibrate mag_bmm350`** over CC. It is saved to NVS and restored on every later boot,
+        so this is a once-per-board bench job, not a pad procedure.
+      - Uncalibrated is not fatal — the mag still helps through a GNSS dropout — but it stays on the
+        not-ready list until done, and the heading it gives is worth much less.
 - [ ] Pitch nose up / down → **pitch tracks** the right sense; roll L/R → **roll tracks**
 - [ ] Yaw / spin → **heading tracks**; no glitches or freezes on quick moves (gyro rate feeds the PID D-term)
 - [ ] Return to level → attitude returns to ~0/0 and the heading settles
-- [ ] *(optional, redundancy)* cover/disable the BNO055 mid-test → the complementary-filter **backup**
-      takes over (attitude still tracks, degraded) → re-enable
+- [ ] *(optional, redundancy — v0.1/v1.0 only)* cover/disable the BNO055 mid-test → the
+      complementary-filter **backup** takes over (attitude still tracks, degraded) → re-enable. A v1.1
+      board (TMS-7F) has no BNO055 and so no attitude fallback: skip this step
 
 ## Phase 4 — Fins track attitude (armed, GLIDING, hand-held)
 > Reach GLIDING the realistic way (Phases 7–8) **or** force it from CC for a quick fin check. Armed = fins live.
+>
+> **A forced stage is a HOLD — it suppresses every stage detector until you release it.** Afterwards run
+> **`stage setting`**, which returns the board to the ground *and* resumes automatic sequencing (the
+> dashboard shows `STAGE HELD` while a hold is on). `stage auto` from a forced GLIDING is **not** a way
+> back: the sequencer resumes from GLIDING and, on a still bench, runs straight through LANDING to DONE,
+> which is terminal. `arm` and `verify` both refuse a board that is not in SETTING under automatic control.
 - [ ] In GLIDING, tilt the glider → **fins deflect to counter** the attitude (stabilisation PID) — confirm the **sense is correct** (a nose-up disturbance drives the fins to push it back)
 - [ ] Rotate the glider relative to the landing zone → fins **bias for the bank-to-turn heading** toward the zone
 - [ ] At ~0 airspeed the **fin-authority cap is wide** (low q, safe); confirm the governor isn't clamping hard on the ground
@@ -112,9 +156,13 @@ first powered flight.
 
 ## Phase 6 — Airspeed in motion (the new SDP810)
 
-`src/glider/test/live_pitot.py` prints q, airspeed and the governor's own verdict live, so this whole
-phase is one run of it: `mpremote connect $PORT run live_pitot.py` (30 s window). Bench-validated
-2026-07-26 with the values below, so treat a deviation as a real finding.
+**At the field, do this phase from CC:** repeat `inspect airspeed_sdp810` (`dynamic_pressure_pa`,
+`airspeed_ms`) with the HUD open, and judge the band against the flight config's `pitot_min_ms` (3) and
+`pitot_max_ms` (28) yourself. **Do NOT run `live_pitot.py` on a flight profile**: `mpremote run` stops
+main.py, every 10-03 config arms the 5 s hardware watchdog, and the board resets ~5 s in — no verdicts, a
+dropped CC link, and a CDC-wedge risk. `src/glider/test/live_pitot.py` (q, airspeed and the governor's own
+verdict, 30 s window) is for a bench board whose config has the watchdog off. Bench-validated 2026-07-26
+with the values below, so treat a deviation as a real finding.
 
 - [ ] **At rest** → q sits at the tare floor (**~-0.02 Pa**, ~0.2 m/s equivalent) → verdict **IGNORED
       (below floor)**. A blocked or disconnected tube looks EXACTLY like this, which is why the floor
@@ -130,15 +178,15 @@ phase is one run of it: `mpremote connect $PORT run live_pitot.py` (30 s window)
 
 ## Phase 7 — Minimal acceleration / boost-detect (no ignition)
 - [ ] Normal handling / walking does **NOT** false-trigger BOOSTING (stays SETTING)
-- [ ] A deliberate **hard jerk / toss-and-catch** produces an accel spike ≥ **launch_g (2.5 g)** for `launch_ms` → **SETTING → BOOSTING** (the launch detector). If a hand jerk can't reach it, note it and force BOOSTING from CC for the sequence below
-- [ ] *(alt trigger)* the **baro +10 m** backup: lifting the glider ~10 m above the pad also trips BOOSTING regardless of accel — usually impractical on flat ground, note only
+- [ ] A deliberate **hard jerk / toss-and-catch** produces an accel spike ≥ **launch_g (2.5 g)** for `launch_ms` → **SETTING → BOOSTING** (the launch detector). If a hand jerk can't reach it, note it and force BOOSTING from CC for the sequence below — and finish with **`stage setting`** (see Phase 4)
+- [ ] *(alt trigger)* the **baro +10 m** backup: lifting the glider ~10 m above the pad, and HOLDING there for `launch_ms`, also trips BOOSTING regardless of accel — usually impractical on flat ground, note only. Only a **barometer** can fire it: the GNSS elevation is ignored for launch, since it is zeroed at the first fix and wanders metres on noise
 
 ## Phase 8 — Separation (the key ground test)
 - [ ] Glider nested (pads closed) → pin **HIGH = nested**; get to **BOOSTING** first (Phase 7 jerk, or CC)
 - [ ] **Manually separate the pads** → pin **LOW = separated** → **BOOSTING → GLIDING** fires, the control loop **engages, fins go live**
 - [ ] Confirm the transition is clean and **latched** (re-nesting does not bounce it back to BOOSTING)
 - [ ] Now repeat Phase 4 in this real GLIDING state — fins track attitude + zone heading
-- [ ] Let it sit / lower it → the AGL/landing path (VL53L4CX < ~5 m for `land_ms`) → **GLIDING → LANDING → DONE**, fins return to neutral
+- [ ] Let it sit / lower it → the AGL/landing path (the laser — VL53L4CX, VL53L1X on TMS-7F — < ~5 m for `land_ms`) → **GLIDING → LANDING → DONE**, fins return to neutral
 
 ## Phase 9 — Data capture & review
 - [ ] Recorder captured the session (telemetry CSVs growing during the run)
@@ -150,6 +198,8 @@ phase is one run of it: `mpremote connect $PORT run live_pitot.py` (30 s window)
 ## Cross-cutting — safety, abort, recovery
 - [ ] Fingers clear of the fins whenever armed (GLIDING/LANDING)
 - [ ] CC operator port stays open → can **disarm / force a stage** at any time
+- [ ] **Before every flight: the dashboard shows stage = SETTING and no `STAGE HELD`.** Any stage test on
+      the pad ends with `stage setting`; if in doubt, power-cycle. `arm` refuses otherwise — trust that refusal
 - [ ] If the CDC/board wedges: `pkill mpremote` + reset / power-cycle; it re-enumerates (board recovery)
 - [ ] Watchdog: a wedged loop **reboots**; confirm it comes back and re-links to CC (this is a feature to verify, not just a failure mode)
 

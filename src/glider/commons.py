@@ -73,6 +73,30 @@ SERVO_NEUTRAL_DEG: int = 90  # default fin/servo neutral angle (deg): the zero-d
                              # deflections. A board may override per surface via config `mixer.neutral_deg`.
 
 
+SEA_LEVEL_PA: float = 101325.0  # ISA sea-level reference for the barometric-altitude formula (AMSL);
+                                # shared by every baro driver so they cannot disagree about the datum.
+
+
+def altitude_m(pressure_pa: float) -> float:
+    """
+    Barometric altitude (m AMSL) from pressure, the ISA approximation.
+
+    One definition, because a second baro is a CROSS-CHECK: two drivers computing altitude with their own
+    copy of this can differ by an edit rather than by the air, and the disagreement would read as a sensor
+    fault. Called once per sensor sample (~10 Hz), so there is no optimised variant -- see the @viper /
+    @native sections below for the primitives that earn one.
+
+    Args:
+        pressure_pa - absolute pressure in pascals.
+
+    Returns:
+        Metres above the sea-level datum; 0.0 for a non-positive pressure (a dead read, not a height).
+    """
+    if pressure_pa <= 0.0:
+        return 0.0
+    return 44330.0 * (1.0 - (pressure_pa / SEA_LEVEL_PA) ** 0.190294957)
+
+
 """Integer math -- the @viper (integer-only native) primitives."""
 
 # clamp_int: integer clamp to [low, high]. Hot via sg90 fin clamping (round(angle), min/max deg).

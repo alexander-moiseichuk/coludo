@@ -14,6 +14,7 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | `accel_adxl375.csv` | host sim | `virtual_flight.py` | `ax`, `ay`, `az`, `irq_runs` |
 | `airspeed_sdp810.csv` | board | `hitl.py` | `dynamic_pressure`, `airspeed_cms`, `temperature` |
 | `airspeed_sdp810.csv` | host sim | `virtual_flight.py` | `dynamic_pressure`, `airspeed_cms`, `temperature` |
+| `attitude.csv` | board | `attitude.py` | `heading_cd`, `roll_cd`, `pitch_cd`, `free`, `mag_known`, `mag_offset_cd` |
 | `baro_icp10111.csv` | board | `hitl.py` | `altitude`, `temperature`, `pressure`, `elevation` |
 | `baro_icp10111.csv` | host sim | `virtual_flight.py` | `altitude`, `temperature`, `pressure`, `elevation` |
 | `checkpoint.csv` | board | `warmstart.py` | `stage`, `altitude`, `speed`, `airspeed`, `ticks_ms` |
@@ -35,7 +36,10 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | `power_ina226.csv` | host sim | `virtual_flight.py` | `voltage_mv`, `current_ma`, `power_mw`, `alerts` |
 | `separation.csv` | board | `separation.py` | `event`, `stage` |
 | _per-device_ (`<name>.csv`) | board | `adxl375.py` | `ax`, `ay`, `az`, `irq_runs` |
+| _per-device_ (`<name>.csv`) | board | `bmi323.py` | `ax`, `ay`, `az`, `gx`, `gy`, `gz`, `irq_runs` |
+| _per-device_ (`<name>.csv`) | board | `bmm350.py` | `mx`, `my`, `mz` |
 | _per-device_ (`<name>.csv`) | board | `bmp280.py` | `altitude`, `temperature`, `pressure`, `elevation` |
+| _per-device_ (`<name>.csv`) | board | `bmp581.py` | `altitude`, `temperature`, `pressure`, `elevation` |
 | _per-device_ (`<name>.csv`) | board | `bno055.py` | `heading`, `roll`, `pitch`, `ax`, `ay`, `az` |
 | _per-device_ (`<name>.csv`) | board | `gnss.py` | `lat`, `lon`, `speed_kn`, `course` |
 | _per-device_ (`<name>.csv`) | board | `gnss.py` | `altitude_m`, `elevation_m`, `quality`, `satellites`, `hdop_cd` |
@@ -46,6 +50,7 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | _per-device_ (`<name>.csv`) | board | `sequencer.py` | `stage`, `reason` |
 | _per-device_ (`<name>.csv`) | board | `sg90.py` | `angle`, `pulse_us`, `done` |
 | _per-device_ (`<name>.csv`) | board | `task.py` | `event` |
+| _per-device_ (`<name>.csv`) | board | `vl53l1x.py` | `agl`, `irq_runs` |
 | _per-device_ (`<name>.csv`) | board | `vl53l4cx.py` | `agl`, `irq_runs` |
 
 ## Shapes that differ between the sim and the board

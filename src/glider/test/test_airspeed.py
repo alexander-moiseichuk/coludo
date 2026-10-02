@@ -70,7 +70,7 @@ def test_confidence_and_seed():
 
 def test_warm_start_seed():
     """
-    seed() restores a persisted airspeed after a MID-AIR RESET (findings §23.4).
+    seed() restores a persisted airspeed after a MID-AIR RESET.
 
     Distinct from measure(): it accepts a BELOW-threshold value, because the warm-start gate has
     already established a flight was in progress -- a slow airspeed is then real, not an un-charged 0.

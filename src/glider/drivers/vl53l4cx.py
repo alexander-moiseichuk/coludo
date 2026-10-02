@@ -95,8 +95,8 @@ class Vl53l4cx(task.Task):
         try:
             if not await self._reset():  # pulse XSHUT (if wired) and wait for the firmware to boot
                 return False  # firmware wedged -> reject (the model id below is silicon, would false-pass)
-            if (await self._read(_REG_MODEL_ID, 1))[0] != 0xEB:
-                return False  # not a VL53L4CD/L4CX at this address
+            if struct.unpack('>H', await self._read(_REG_MODEL_ID, 2))[0] != 0xEBAA:
+                return False  # not an L4CD/L4CX -- a VL53L1X answers 0xEACC and needs drivers/vl53l1x.py
             await self._bus.write(self._addr, _REG_CONFIG_START, _DEFAULT_CONFIG, addrsize=16)
             # data-ready polarity from GPIO_HV_MUX, then a VHV calibration ranging cycle
             self._polarity = 0 if (await self._read(_REG_GPIO_HV_MUX, 1))[0] & 0x10 else 1

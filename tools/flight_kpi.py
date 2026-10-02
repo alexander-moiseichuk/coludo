@@ -81,25 +81,49 @@ def _servo_energy(power) -> tuple:
     return joules, duration
 
 
-def _touchdown(gnss, zone: tuple) -> tuple:
+def _done_time(logs: list) -> float | None:
     """
-    The last GNSS fix measured against the zone rectangle.
+    When the flight reached DONE, in capture seconds: the first `stage -> done` log line.
 
     Args:
-        gnss - the parsed GNSS stream (its final lat/lon is the touchdown point).
+        logs - the parsed capture logs, (uptime_us | None, line) pairs.
+
+    Returns:
+        The DONE stamp in seconds; None when the capture never logged one (an aborted or cut flight).
+    """
+    for microseconds, line in logs:
+        if microseconds is not None and 'stage -> done' in line:
+            return microseconds / 1e6
+    return None
+
+
+def _touchdown(gnss, zone: tuple, done_s: float | None = None) -> tuple | None:
+    """
+    The touchdown fix measured against the zone rectangle.
+
+    The touchdown is the last fix AT OR BEFORE DONE, not the stream's last row: the GNSS keeps
+    recording after the landing, so on a real flight the final row is wherever the recovery crew
+    carried the glider. With no DONE stamp (an aborted capture) the last fix is the best there is.
+    Latitude and longitude are paired by timestamp, so a blank cell in one cannot shift the other.
+
+    Args:
+        gnss - the parsed GNSS stream (lat/lon), or None.
         zone - the landing rectangle as ((lat, lon) TL, (lat, lon) BR).
+        done_s - the DONE stamp in capture seconds, or None to take the last fix.
 
     Returns:
         (miss_m, inside): metres from the zone centre and whether the fix is inside the rectangle;
-        (0.0, False) when there is no GNSS stream or it holds no fix.
+        None when there is no GNSS stream or no fix before DONE -- a 0.0 m miss would read as a bullseye.
     """
     if gnss is None:
-        return 0.0, False  # no GNSS in this capture -- nothing to measure against the zone
-    _times, latitudes = gnss.column('lat')
-    _times, longitudes = gnss.column('lon')
-    if not latitudes:  # empty GNSS stream -- no touchdown fix
-        return 0.0, False
-    latitude, longitude = latitudes[-1], longitudes[-1]
+        return None  # no GNSS in this capture -- nothing to measure against the zone
+    longitude_at = dict(zip(*gnss.column('lon')))
+    fixes = [(latitude, longitude_at[moment]) for moment, latitude in zip(*gnss.column('lat'))
+             if moment in longitude_at and (done_s is None or moment <= done_s)
+             and latitude == latitude and longitude_at[moment] == longitude_at[moment]]  # nan != nan
+    if not fixes:
+        return None
+    latitude, longitude = fixes[-1]
     (lat_t, lon_l), (lat_b, lon_r) = zone
     centre_lat, centre_lon = (lat_t + lat_b) / 2, (lon_l + lon_r) / 2
     north = (latitude - centre_lat) * _M_PER_DEG
@@ -189,7 +213,9 @@ def _accel_envelope(streams) -> None:
     find = flight_telemetry.find_stream
     primary = find(streams, 'ax', 'ay', 'az', 'gx', prefer='lsm') or find(streams, 'ax', 'ay', 'az', 'gx')
     backstop = find(streams, 'ax', 'ay', 'az', prefer='adxl')
-    if backstop is primary:
+    # `prefer` only breaks ties: with no ADXL fitted it hands back the first accel it finds, and a
+    # TMS-7F BMI323 was then reported, and voted on, as the +/-200 g backstop
+    if backstop is primary or (backstop is not None and 'adxl' not in backstop.name):
         backstop = None
     primary_peak, primary_when, primary_n = _peak_g(primary)
     backstop_peak, backstop_when, backstop_n = _peak_g(backstop)
@@ -221,7 +247,7 @@ def _accel_envelope(streams) -> None:
 def report(label: str, path: str, zone: tuple) -> None:
     """Print the KPI block for one capture."""
     with open(path) as handle:
-        streams, _logs = flight_telemetry.parse(handle.read())
+        streams, logs = flight_telemetry.parse(handle.read())
     fins = next((s for name, s in streams.items() if 'fins' in name), None)
     print(label)
     """
@@ -236,26 +262,35 @@ def report(label: str, path: str, zone: tuple) -> None:
         print('  !! SPLICED CAPTURE -- two recorder sessions share this prefix: %s' % ', '.join(damaged))
         print('  !! numbers below span BOTH boots; re-pull with distinct `recorder.session` prefixes')
     _accel_envelope(streams)  # the G envelope + the high-g KEEP/DROP verdict (device-count decision)
+    """
+    Each KPI stands on its own stream. The fin block used to return early without a fins stream, which
+    silently took the servo energy and the touchdown with it on an airframe that records none (TMS-7C).
+    """
     if fins is None:
         print('  (no fins stream)')
-        return
-    rows, span = _fin_activity(fins)
-    total_moves = sum(moves for _f, _n, moves, _t, _b in rows)
-    total_travel = sum(travel for _f, _n, _m, travel, _b in rows)
-    for fin, samples, moves, travel, biggest in rows:
-        print('  %-13s: %5d samples, %5d moves (%4.1f/s), travel %6.0f deg, max step %3.0f deg'
-              % (fin, samples, moves, moves / span, travel, biggest))
-    print('  TOTAL        : %17d moves,          travel %6.0f deg = %5.0f deg/s of flight'
-          % (total_moves, total_travel, total_travel / span))
+    else:
+        rows, span = _fin_activity(fins)
+        total_moves = sum(moves for _f, _n, moves, _t, _b in rows)
+        total_travel = sum(travel for _f, _n, _m, travel, _b in rows)
+        for fin, samples, moves, travel, biggest in rows:
+            print('  %-13s: %5d samples, %5d moves (%4.1f/s), travel %6.0f deg, max step %3.0f deg'
+                  % (fin, samples, moves, moves / span, travel, biggest))
+        print('  TOTAL        : %17d moves,          travel %6.0f deg = %5.0f deg/s of flight'
+              % (total_moves, total_travel, total_travel / span))
     power = next((s for name, s in streams.items() if 'power' in name), None)
     if power is not None:
         joules, duration = _servo_energy(power)
         watts = joules / duration if duration > 0 else 0.0  # single sample has no window to average over
         print('  servo energy : %6.1f J over %.1f s -> average %4.2f W' % (joules, duration, watts))
-    gnss = next((s for name, s in streams.items() if 'gnss' in name), None)
-    if gnss is not None:
-        miss, inside = _touchdown(gnss, zone)
-        print('  touchdown    : %6.1f m from zone centre, inside zone: %s' % (miss, inside))
+    # by ROLE, not by name: 'gnss' also matches gnss_gga.csv, which carries no position at all
+    done_s = _done_time(logs)
+    touchdown = _touchdown(flight_telemetry.find_stream(streams, 'lat', 'lon'), zone, done_s)
+    if touchdown is None:
+        print('  touchdown    : NO GNSS FIX%s' % ('' if done_s is None else ' before DONE'))
+    else:
+        miss, inside = touchdown
+        print('  touchdown    : %6.1f m from zone centre, inside zone: %s%s'
+              % (miss, inside, '' if done_s is not None else ' (no DONE logged -- the last fix)'))
 
 
 def main() -> None:

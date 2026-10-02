@@ -117,7 +117,54 @@ def check_mpy_cross() -> tuple:
     return _ok('mpy-cross (optional)', 'ABSENT -- board compile gate unavailable')
 
 
-_GATES = (check_glider_importable, check_config, check_telemetry_schema, check_plotly, check_mpy_cross)
+_RECORDER_FREE_KB: int = 1024 * 1024   # 1 GB: a flight writes single-digit MB, so this is room to spare
+
+
+def free_kb(text: str):
+    """
+    Free kilobytes from `df` output, or None when it says nothing usable.
+
+    Takes the field BEFORE the use% column rather than a fixed index: busybox wraps a long device name
+    onto its own line, so the numbers line has five fields and `$4` lands on '1%' instead of the free
+    space -- which is exactly how the first version of this check read a full disk as fine.
+    """
+    for line in text.replace('\r', '').splitlines()[1:]:
+        fields = line.split()
+        for index, field in enumerate(fields):
+            if field.endswith('%') and index and fields[index - 1].isdigit():
+                return int(fields[index - 1])
+    return None
+
+
+def check_recorder_space() -> tuple:
+    """
+    The recorder's disk has room for the capture it is about to be asked to store.
+
+    A FULL recorder does not fail loudly -- it creates every stream of the session and writes no rows,
+    so the board flies perfectly and the capture comes back 0 bytes. That cost a 30-flight matrix which
+    reported OK for every flight, and the older row corruption blamed on the UART has the same signature
+    (partial writes: filenames merged into data, stats lines cut mid-token). On a real flight it would
+    lose the flight, and nothing in the boot log, `degraded` or the CC page would have said so.
+
+    Optional, like plotly: no recorder attached is the normal case on a host that only runs sims, so
+    that is reported and never fatal. A recorder that IS attached and short of space is fatal.
+    """
+    try:
+        import subprocess
+        done = subprocess.run(['adb', 'shell', 'df /userdata'], capture_output=True, timeout=15)
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return _ok('recorder space (optional)', 'adb unavailable -- not checked')
+    free = free_kb(done.stdout.decode('utf-8', 'replace'))
+    if free is None:
+        return _ok('recorder space (optional)', 'no recorder attached -- not checked')
+    if free < _RECORDER_FREE_KB:
+        return _bad('recorder space', '%.2f GB free, need %.2f GB -- a full recorder captures 0 bytes '
+                                      'and says nothing' % (free / 1048576.0, _RECORDER_FREE_KB / 1048576.0))
+    return _ok('recorder space', '%.1f GB free' % (free / 1048576.0))
+
+
+_GATES = (check_glider_importable, check_config, check_telemetry_schema, check_plotly, check_mpy_cross,
+          check_recorder_space)
 
 
 def run(quiet: bool = False) -> int:

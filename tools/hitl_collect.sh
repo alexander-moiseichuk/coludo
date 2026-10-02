@@ -4,7 +4,7 @@
 # the Luckfox session, and assemble a capture .txt. Assumes tools/hitl_run.py is on the board (hitl_matrix
 # deploys it). The capture timeline is flight-relative downstream, so the climbing soft-reboot uptime is fine.
 #
-# Usage: hitl_collect.sh <motor> <scenario> <noise> <wind> <wind_dir> <spike> [outdir] [glider_g] [inject_hz] [reboot_s] [no_cc] [attitude_drop_s] [gnss_drop_s]
+# Usage: hitl_collect.sh <motor> <scenario> <noise> <wind> <wind_dir> <spike> [outdir] [glider_g] [inject_hz] [reboot_s] [no_cc] [attitude_drop_s] [gnss_drop_s] [no_mag]
 #   e.g. hitl_collect.sh F15 wind12 0.10 12.0 210.0 False /tmp/hitl/F15
 #        hitl_collect.sh F15 f15_full 0.05 0.0 210.0 False /tmp/hitl/mem 300 25   # weight/leak matrix
 #   glider_g (default 300) + inject_hz (default 0 = sim_hz) drive the weight + memory-leak captures.
@@ -15,10 +15,21 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 motor=$1; scen=$2; noise=$3; wind=$4; dir=$5; spike=$6; outdir=${7:-/tmp/hitl/$motor}
 glider_g=${8:-285}; inject_hz=${9:-0}; reboot_s=${10:-0}; no_cc=${11:-False}; attitude_drop_s=${12:-0}
 gnss_drop_s=${13:-0}   # seconds of GNSS blackout in the glide -> exercises the dead-reckoning tier
+no_mag=${14:-False}    # True -> fly with NO magnetometer (the control half of a mag A/B pair)
 d="$outdir/$scen"; mkdir -p "$d"; rm -f "$d"/*
-printf 'import hitl_run\nhitl_run.fly("%s", %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n' \
+printf 'import hitl_run\nhitl_run.fly("%s", %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)\n' \
   "$motor" "$noise" "$wind" "$dir" "$spike" "$glider_g" "$inject_hz" "$reboot_s" "$no_cc" \
-  "$attitude_drop_s" "$gnss_drop_s" > /tmp/launch.py
+  "$attitude_drop_s" "$gnss_drop_s" "$no_mag" > /tmp/launch.py
+# Fail in a second rather than after a five-minute flight: a full recorder disk cannot store the
+# capture, and the flight would run perfectly and record nothing.
+# Take the field BEFORE the use% column: busybox df wraps a long device name onto its own line, so the
+# numbers line has five fields and a fixed $4 lands on '1%' rather than the free space.
+free_kb=$(adb shell "df /userdata" 2>/dev/null | tr -d '\r' \
+          | awk 'NR>1 {for (i = 1; i <= NF; i++) if ($i ~ /%$/) {print $(i - 1); exit}}')
+case "$free_kb" in
+  ''|*[!0-9]*) ;;                                    # no recorder attached, or df unreadable: let it run
+  *) [ "$free_kb" -lt 51200 ] && { echo "FAIL $motor/$scen: recorder has ${free_kb}KB free -- needs >50MB"; exit 1; } ;;
+esac
 python3 "$ROOT/tools/board_reboot.py" "$PORT" >/dev/null 2>&1 || true   # clean VM -> fresh recorder session
 # 300 s, not 190: the board flight runs in REAL TIME and its own cap is 150 s, so the wall-clock
 # budget has to cover the flight plus boot, config and the GNSS-fix wait. At the measured air quality
@@ -49,6 +60,17 @@ if [ "$pulled" -ne "$want" ]; then
   exit 1
 fi
 [ "$want" -eq 0 ] && { echo "FAIL $motor/$scen: session $ses produced no streams"; exit 1; }
+# A stream can EXIST and be EMPTY, and every check above passes when it is: `ls | wc -l` counts a
+# 0-byte file exactly like a full one. That is what a full recorder disk looks like from here -- the
+# session's files get their inode and no rows -- and it cost a 30-flight matrix that reported OK for
+# every flight while capturing nothing at all. Downstream cannot tell either: an empty capture renders
+# as a flight that simply had no data.
+empty=$(find "$d" -maxdepth 1 -name "${ses}_*.csv" -size 0 | wc -l)
+if [ "$empty" -gt 0 ]; then
+  echo "FAIL $motor/$scen: $empty of $want streams are EMPTY -- the recorder wrote no rows"
+  echo "  recorder disk: $(adb shell 'df -h /userdata | tail -1' 2>/dev/null | tr -d '\r')"
+  exit 1
+fi
 python3 "$ROOT/tools/assemble_capture.py" "$ses" "$d" "$outdir/$scen.txt" >/dev/null
 # PROVENANCE. main.py logs the build+config identity at boot, but a log line carries no
 # `@session_file@` prefix, so the Luckfox never routes it to a .csv and this script -- which pulls only
@@ -65,4 +87,17 @@ case "$build" in
   BUILD\ [0-9]*) echo "0 capture :: ${build#BUILD }" | sed 's/^0 capture :: /0 capture :: build /' >> "$outdir/$scen.txt" ;;
   *)             echo "0 capture :: build UNKNOWN (board did not answer)" >> "$outdir/$scen.txt" ;;
 esac
+# A reboot scenario flies on after a broken restore, so its capture looks fine; the check that the
+# restored flight still checkpoints a usable crumb only ever reaches the board's stdout.
+if echo "$out" | grep -q 'WARM CRUMB: FAIL'; then
+  echo "FAIL $motor/$scen session=$ses: $(echo "$out" | grep -oE 'WARM CRUMB: FAIL.*' | head -1)"
+  exit 1
+fi
+# ...and a REFUSED gate in a reboot scenario is not a pass either: the rig then flies on as a cold boot
+# (the sequencer re-launches off the altitude), the capture still ends in DONE, and this printed OK --
+# which is how a reboot round with no crumb at all (the checkpoint was never registered) looked fine.
+if [ "$reboot_s" != 0 ] && echo "$out" | grep -q 'WARM GATE: False'; then
+  echo "FAIL $motor/$scen session=$ses: $(echo "$out" | grep -oE 'WARM GATE: False.*' | head -1)"
+  exit 1
+fi
 echo "OK $motor/$scen session=$ses $(echo "$out" | grep -oE 'DONE|TIMEOUT [0-9]+' | head -1)"

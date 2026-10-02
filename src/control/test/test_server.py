@@ -10,6 +10,7 @@ import asyncio
 import json
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import cc_protocol as cc  # noqa: E402
@@ -298,8 +299,8 @@ async def _web():
 async def _gps_assist():
     """A host GPS with a usable 3D fix: `gps` reports it and `assist <board>` pushes the position to
     the board mission (set-config launch: merge + persist)."""
-    import gps as gps_mod
-    host_gps = gps_mod.Gps(log=lambda message: None)
+    import gps as gps_module
+    host_gps = gps_module.Gps(log=lambda message: None)
     host_gps.feed(_nmea('GPGSA,A,3,01,02,03,04,05,06,,,,,,,2.0,1.0,1.5'))  # 3D fix
     host_gps.feed(_nmea('GPGGA,123519,4807.038,N,01131.000,E,1,06,0.9,545.4,M,46.9,M,,'))  # 6 sats
     assert host_gps.position() is not None
@@ -448,6 +449,26 @@ def _gps_device_resolve():
     assert auto is None or auto.startswith('/dev/ttyUSB'), auto
 
 
+def _log_drops_are_reported():
+    """
+    A /logs listener that falls behind is TOLD how many lines it missed, once it has room again.
+
+    A full subscriber queue used to drop lines silently, so the browser showed a log with a hole in
+    it and no sign of one. Negative: a listener that kept up sees exactly the lines, no notice.
+    """
+    hub = server.Server(log=lambda message: None)
+    slow, fast = asyncio.Queue(maxsize=2), asyncio.Queue(maxsize=100)
+    hub.log_subscribers.update((slow, fast))
+    for number in range(5):
+        hub._emit_log('taster', 'line %d' % number)
+    assert [slow.get_nowait()['line'] for _ in range(2)] == ['line 0', 'line 1']
+    hub._emit_log('taster', 'line 5')  # room again -> the count, then the line
+    notice, line = slow.get_nowait()['line'], slow.get_nowait()['line']
+    assert notice == '[3 log line(s) DROPPED: this view fell behind]' and line == 'line 5', (notice, line)
+    assert [fast.get_nowait()['line'] for _ in range(6)] == ['line %d' % n for n in range(6)]
+    assert fast.empty(), 'a listener that kept up gets no DROPPED notice'
+
+
 async def _handler_crash():
     """A registered command handler that raises must return an error reply, NOT drop the operator
     session -- server.py _dispatch wraps the handler call, logs the crash, and replies with an err line."""
@@ -555,7 +576,45 @@ async def _large_reply():
     writer.close()
 
 
+async def _heartbeat():
+    """
+    The heartbeat polls HEALTH on health age, not on link traffic, and stops on a link given up.
+
+    It skipped the poll whenever ANY reply was recent, and a running log stream replies every second,
+    so during a stream health was never polled and armed/stage/degraded on the dashboard froze. And
+    after an exchange timeout marked the link down, it kept polling a dead socket instead of ending
+    so the board could re-dial.
+    """
+    class _Client:
+        def __init__(self, online):
+            self.id = 'hb'
+            self.online = online
+            self.last_seen = time.monotonic()  # a stream is keeping the link busy
+            self.health_seen = 0.0             # ...but no health reply has arrived
+            self.sent = []
+
+        async def command(self, verb, *args, quiet=False, timeout=None):
+            self.sent.append(verb)
+            self.last_seen = time.monotonic()
+            if verb == 'health':
+                self.health_seen = time.monotonic()
+            return object()
+
+    hub = server.Server(host='127.0.0.1', port=0, operator_port=0, web_port=0,
+                        log=lambda message: None, heartbeat_s=0.05)
+    busy = _Client(online=True)
+    poller = asyncio.create_task(hub._poll(busy))
+    await asyncio.sleep(0.4)
+    poller.cancel()
+    assert busy.sent.count('health') >= 2, 'a busy link suppressed the health poll: %r' % busy.sent
+
+    dead = _Client(online=False)
+    await asyncio.wait_for(hub._poll(dead), 1.0)  # must RETURN, not poll a link that was given up
+    assert dead.sent == [], dead.sent
+
+
 async def main():
+    await _heartbeat()
     await _loopback()
     await _operator_console()
     await _web()
@@ -565,7 +624,9 @@ async def main():
     await _large_reply()
     _gps_device_resolve()
     _glider_roster()
-    print('ok: server accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) '
+    _log_drops_are_reported()
+    print('ok: server heartbeat polls health on health age + stops on a dead link '
+          '+ accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) '
           '+ glider roster (persist, same-name-new-ip, absent hint) '
           '+ gps assist/compare + log streaming + gps auto-detect + oversized reply')
 

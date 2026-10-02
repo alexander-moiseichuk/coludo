@@ -30,8 +30,9 @@ component drivers to instantiate.
    as a health signal — see [Validation vs Health](#validation-vs-health) — and a human makes
    the go/no-go decision.
 3. **Never brick, never boot-loop.** A corrupt or invalid saved config falls back to the
-   firmware defaults in a flagged, degraded state and reports it to the Control Center (CC).
-   The board is always reachable.
+   firmware defaults in a flagged, degraded state and reports it to the Control Center (CC):
+   `whoami` carries `config_source` `default(fallback: <reason>)` and `health.degraded` carries
+   `CONFIG FALLBACK -- <reason>`. The board is always reachable.
 
 ## The three layers
 
@@ -76,7 +77,7 @@ identical behaviour every time.
 {
   "version": "20260725",
 
-  "board": { "id": "glider-01", "mcu": "esp32p4", "rev": 1, "setup_retries": 3 },
+  "board": { "id": "glider-01", "mcu": "esp32p4", "layout": "auto", "setup_retries": 3 },
 
   "wifi": {
     "mode": "sta",
@@ -162,11 +163,35 @@ identical behaviour every time.
   (CC) to adopt the new tree.
 - **`board`** — identity and MCU type. `mcu` is one of `esp32p4`, `esp32c6`, `firebeetle2p4`
   and lets the firmware select MCU-specific behaviour. `setup_retries` is the boot setup-attempt
-  count per device (flaky breadboard contacts; `1` = no retry).
-- **`fins`** — one home for fin/servo control: `concurrency` (max servos slewing at once, caps the
-  boost-rail current transient; `== fin count` = no limit). **Defaults to `1`** — safe on the bench
-  rig's 1 A supply, which is the only board that runs without a profile; each flight profile sets its
-  own value (TMS-7C `1`, TMS-7D `3`) to match the power board actually fitted, `limit_multiplier` (the dynamic-pressure
+  count per device (flaky breadboard contacts; `1` = no retry). (`rev` is still in every config but
+  nothing reads it; the board revision is `layout`.)
+- **`board.layout`** — which main-board revision to lay the config out for, applied at boot by
+  `layout.resolve()` before any driver is set up. The revisions differ in which I²C bus four devices
+  sit on, the `i2c:1` clock, and which attitude parts are fitted.
+  - `v0.1` / `v1.0` / `v1.1` — **declared: always wins**, no scan. `layout.apply()` rewrites the
+    config for that revision.
+  - `auto` (the `config_default.py` value; any value other than the three revisions does the same) —
+    scan both buses and vote. An undecided scan changes nothing and says so.
+  - **Absent = a declared `v0.1`**, not `auto`: a saved config replaces the default wholesale, and
+    every profile written before the key existed is a v0.1 airframe (the 7C/7D configs carry no
+    `layout` on purpose). **So a keyless config copied onto a v1.x board comes up laid out as v0.1**
+    — ICP-10111, pitot and laser on the wrong bus, v0.1's parts enabled — and `health.layout` reads
+    `v0.1 (declared)`. Give a v1.x profile `"layout": "auto"` or its revision.
+
+  `health.layout` shows what this boot applied (`v1.0`, `v0.1 (declared)`, `undecided`); the CC
+  `detect` command re-scans on demand and reports the verdict beside it, applying nothing until the
+  next boot. See [`../hardware.md`](../hardware.md) → *Running one firmware on both boards*.
+
+  `layout.apply()` sets `enabled` on every **revision-dependent** part (the ADXL375, the SEN0253's
+  BNO055 + BMP280, the SEN0697's BMI323 + BMM350 + BMP581) from what the revision fits, so an
+  `enabled: false` on one of those is overridden at boot. To take a dead or removed one out, give it
+  **`"fitted": false`** as well: apply() then keeps it disabled. Any other device is left alone and
+  `enabled: false` is enough.
+- **`fins`** — one home for fin/servo control: `concurrency` (max servos slewing at once through
+  `servo.move()`; `== fin count` = no limit). **It gates `move()` only**, and nothing at boot or in
+  flight calls it: boot centring, the mixer, probe sweeps and `update` write the PWM directly, so it
+  does NOT protect a weak supply -- disable the servos for that. Defaults to `1`; the profiles set
+  their own (TMS-7C `1`, TMS-7D/7E `3`, TMS-7F `1`), `limit_multiplier` (the dynamic-pressure
   governor's safety dial, `1.0` nominal), and the `mixer` (the elevon + rudder mixing matrix —
   `surfaces` gains, `neutral_deg`, `limit_deg`). Each fin's mechanical zero is the servo component's
   own per-fin `trim` (degrees), NOT here.
@@ -199,10 +224,11 @@ identical behaviour every time.
   > It must sit in THIS section: `Recorder.setup()` reads `config['recorder']['telemetry_ms']` and
   > nothing merges a component's keys into a section, so the same key on the recorder *component*
   > entry is read by nobody and the 20 ms class default silently wins. That is exactly what happened
-  > between 2026-08-02 and 2026-08-28, and the key being undocumented here is how it went unnoticed — the prefix every capture file on the
-  Luckfox is named by, `<session>_<stream>.csv`. Normally absent: the board then synthesises
-  `YYYYMMDD_HHMMSS_<6-digit random>`. Set it from CC to assign the **whole** prefix verbatim, e.g.
-  `20260807_143012_catapult-run3`.
+  > between 2026-08-02 and 2026-08-28, and the key being undocumented here is how it went unnoticed.
+
+  **`session`** is the prefix every capture file on the Luckfox is named by, `<session>_<stream>.csv`.
+  Normally absent: the board then synthesises `YYYYMMDD_HHMMSS_<6-digit random>`. Set it from CC to
+  assign the **whole** prefix verbatim, e.g. `20260807_143012_catapult-run3`.
   > **Keep the `YYYYMMDD_HHMMSS_<tag>` shape.** The board has no battery-backed RTC, so left to
   > itself its date is 2000-01-01 and only the random part separates one boot from the next — CC
   > has the trustworthy clock, and a run label there makes a capture self-identifying on disk.
@@ -245,7 +271,9 @@ RTC's, never persisted.
 ## Lifecycle and activation
 
 All configuration changes happen in **prestart mode only**. There are **no config changes
-during flight** — from ignition onward the board is autonomous and the config is frozen.
+during flight**: from ignition onward the board is autonomous and the config is frozen. The link
+itself can outlive ignition (see cc-protocol.md), so this is enforced on the board. `set-config`,
+`reset-config`, `reboot` and the uploads answer `err unsafe` outside SETTING/DONE.
 
 **Save and reboot are two separate operator actions:**
 
@@ -277,7 +305,9 @@ These are two different checks and must not be confused.
   is persisted and *again* at boot:
   - every `pins`/`buses` pin number is unique (no pin used twice),
   - every component's `bus` reference names a bus that exists,
-  - required fields are present and well-typed.
+  - required fields are present and well-typed,
+  - an enabled watchdog's `wdt_timeout_ms` is at least **4000** — below that the board boot-loops
+    (measured; the default is 5000).
   An invalid config is **never written** (save is rejected) and **never booted** (boot falls
   back to `config_default.py`, flagged degraded, reported to CC). This makes it impossible for
   CC to brick a board with a bad config.

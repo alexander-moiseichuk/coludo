@@ -29,8 +29,12 @@ if [ -z "$ses" ]; then                       # default: the newest session (by i
   # YYYYMMDD_HHMMSS_<tag> -- while stream names do NOT have a known underscore count: stripping the
   # last group turned `..._servo_eleron_left.csv` into `..._servo_eleron`. Anchoring on the prefix is
   # correct for every stream name, however many underscores it carries.
+  # Strip the ANSI colour codes and the CR the Luckfox `ls` emits BEFORE that $-anchored match (as the
+  # stream listing below does): stripped after, `.csv\r` never matched and a recorder that had just
+  # captured a flight was reported as holding no session at all.
   ses=$(adb shell "ls -t $REC/*_*.csv 2>/dev/null | head -1" \
-        | sed -nE "s|.*/||; s|^([0-9]{8}_[0-9]{6}_[A-Za-z0-9]+)_.*\.csv$|\1|p" | tr -d '\r')
+        | sed -e "s/\x1b\[[0-9;]*m//g" -e "s/\r//g" \
+        | sed -nE "s|.*/||; s|^([0-9]{8}_[0-9]{6}_[A-Za-z0-9]+)_.*\.csv$|\1|p")
   [ -z "$ses" ] && { echo "error: no recorder session found on the Luckfox"; exit 1; }
   echo "latest session: $ses"
 fi
@@ -63,9 +67,24 @@ cap="$out/$ses.txt"
 python3 "$ROOT/tools/assemble_capture.py" "$ses" "$out" "$cap" >/dev/null || { echo "assemble failed"; exit 1; }
 echo "assembled $cap"
 
-python3 "$ROOT/tools/flight_svg.py" "$cap" -o "$out/$ses.svg" --title "Coludo flight $ses" \
-  --pad "$PAD" --zone "$ZONE" >/dev/null 2>&1 && echo "svg    $out/$ses.svg"
-[ -x "$PLY" ] && "$PLY" "$ROOT/tools/flight_report.py" "$cap" -o "$out/$ses.html" --cdn >/dev/null 2>&1 \
-  && echo "report $out/$ses.html"
+# Every render runs even if an earlier one failed -- the capture is already safe -- but a failure is
+# REPORTED, with its stderr kept, and the pull exits non-zero. These used to go to /dev/null behind
+# `|| true`: a missing report looked like one that had simply not been asked for, and the exit said ok.
+rendered=0
+if python3 "$ROOT/tools/flight_svg.py" "$cap" -o "$out/$ses.svg" --title "Coludo flight $ses" \
+     --pad "$PAD" --zone "$ZONE" >/dev/null 2>"$out/svg.err"; then
+  echo "svg    $out/$ses.svg"
+else
+  echo "svg    FAILED -- see $out/svg.err" >&2; rendered=1
+fi
+if [ ! -x "$PLY" ]; then
+  echo "report SKIPPED -- no plotly python at $PLY (set PLY)" >&2; rendered=1
+elif "$PLY" "$ROOT/tools/flight_report.py" "$cap" -o "$out/$ses.html" --cdn >/dev/null 2>"$out/report.err"; then
+  echo "report $out/$ses.html"
+else
+  echo "report FAILED -- see $out/report.err" >&2; rendered=1
+fi
 echo "--- KPIs ---"
-python3 "$ROOT/tools/flight_kpi.py" "$ses:$cap" 2>/dev/null || true
+python3 "$ROOT/tools/flight_kpi.py" "$ses:$cap" 2>"$out/kpi.err" \
+  || { echo "KPIs   FAILED -- see $out/kpi.err" >&2; rendered=1; }
+exit "$rendered"

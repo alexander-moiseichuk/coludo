@@ -8,11 +8,15 @@ On-board (MicroPython) test for the CC client (cc_client.py). Board-first: the b
 import asyncio
 import json
 import os
+import time
 
 import cc_client
 import cc_protocol as cc
+import config as config_module
 import config_default
+import controller
 import inspector
+import layout
 import mission
 
 
@@ -106,6 +110,25 @@ async def amain():
     resp = [b.decode().strip() for b in writer.out]
     assert cc.parse(resp[0]).command == 'iam' and cc.parse(resp[1]).command == 'pong'
 
+    """
+    A hub that vanished without a FIN (host crash, power loss) sends nothing -- and a bare readline()
+    waited on the dead socket forever, so the board never re-dialled. serve() must give up after
+    _SILENT_MS of silence; a live hub (a line every ~2 s) never gets near it.
+    """
+    class _SilentReader:
+        async def readline(self):
+            await asyncio.sleep_ms(60000)
+            return b'ping'
+
+    real_silent = cc_client._SILENT_MS
+    cc_client._SILENT_MS = 50
+    try:
+        started = time.ticks_ms()
+        await cc_client.Client(config_default.default(), sd).serve(_SilentReader(), _FakeWriter())
+        assert time.ticks_diff(time.ticks_ms(), started) < 2000, 'serve() waited on a silent hub'
+    finally:
+        cc_client._SILENT_MS = real_silent
+
     # set-config board: invalid rejected; reset-config ok; bad args rejected
     sd2 = cc_client.create_dispatcher(config_default.default(), config_path='test_cc_board.config')
     bad = config_default.default()
@@ -115,6 +138,43 @@ async def amain():
     assert reply.command == 'ok' and 'config_id' in json.loads(reply.args[0])
     assert cc.parse(await sd2.handle('reset-config')).command == 'ok'
     assert 'badargs' in await sd2.handle('set-config board')  # no json
+
+    """
+    `get-config saved` is what the NEXT boot runs, `get-config board` what this one does. A UI
+    read-modify-write that started from the running config reverted every un-rebooted save: lower
+    fins.concurrency for the bench, save the fin zeros, and concurrency 3 was back on the bench supply.
+    """
+    running_concurrency = config_default.default()['fins']['concurrency']
+    pending = 3 if running_concurrency != 3 else 2  # any valid value the running config does not have
+    changed = config_default.default()
+    changed['fins']['concurrency'] = pending
+    assert cc.parse(await sd2.handle(cc.build('set-config', ['board', json.dumps(changed)]))).command == 'ok'
+    saved = json.loads(cc.parse(await sd2.handle('get-config saved')).args[0])
+    running = json.loads(cc.parse(await sd2.handle('get-config board')).args[0])
+    assert saved['fins']['concurrency'] == pending, 'saved must return the pending save'
+    assert running['fins']['concurrency'] == running_concurrency, 'board must stay the RUNNING config'
+    # no saved file -> what the next boot would load: the default, never an error
+    assert cc.parse(await sd2.handle('reset-config')).command == 'ok'
+    fallback = json.loads(cc.parse(await sd2.handle('get-config saved')).args[0])
+    assert fallback['fins']['concurrency'] == running_concurrency
+
+    """
+    A board.config that fails to load boots the BENCH default -- id 'taster', watchdog off -- and that
+    used to reach the serial console only. health must annunciate it and whoami must carry the source;
+    a clean boot must not.
+    """
+    booted = config_module.BOOT_SOURCE
+    try:
+        config_module.BOOT_SOURCE = 'default(fallback: invalid board.config)'
+        panel = json.loads(cc.parse(await sd2.handle('health')).args[0])
+        assert any(item.startswith('CONFIG FALLBACK') for item in panel['degraded']), panel['degraded']
+        assert 'invalid board.config' in json.loads(cc.parse(await sd2.handle('whoami')).args[1])['config_source']
+        for clean in ('active', 'default'):
+            config_module.BOOT_SOURCE = clean
+            panel = json.loads(cc.parse(await sd2.handle('health')).args[0])
+            assert not any(item.startswith('CONFIG FALLBACK') for item in panel['degraded']), (clean, panel)
+    finally:
+        config_module.BOOT_SOURCE = booted
     assert 'badargs' in await sd2.handle(cc.build('set-config', ['nope', '{}']))  # unknown config name
     assert 'badargs' in await sd2.handle('get-config nope')  # unknown config name
 
@@ -259,6 +319,9 @@ async def amain():
     class _FaultyController:
         failures = {'baro_icp10111': 'setup failed (absent / miswired?)'}
 
+        def stage_name(self):
+            return 'setting'  # on the pad: the ground gate lets the probes run
+
     sd_fail = cc_client.create_dispatcher(config_default.default(), controller=_FaultyController())
     allres = json.loads(cc.parse(await sd_fail.handle('probe')).args[0])
     assert allres.get('p_good') is None  # an inspectable device still probed live
@@ -267,6 +330,11 @@ async def amain():
     # `verify`: dump every configured device (up/down) + probe self-tests + an overall PASS/fail verdict
     class _VerifyController:
         failures = {'baro_icp10111': 'setup failed (absent / miswired?)'}
+        stage = 1  # SETTING, as a real board on the pad reports
+        manual = False
+
+        def stage_name(self):
+            return 'setting'
 
         def directory(self):
             return ['imu_bno055', 'baro_icp10111']
@@ -358,6 +426,7 @@ async def amain():
     # arming: refused while a probe fails, clean board -> armed; disarm; manual stage hold + auto resume
     class _ArmController:
         failures = {}
+        config = config_default.default()  # `detect` scans with it
 
         def __init__(self):
             self.armed = False
@@ -373,14 +442,24 @@ async def amain():
         def stage_name(self):
             return self._stage
 
+        @property
+        def stage(self):
+            return controller.Stage.NAMES[self._stage]  # the id a real Controller exposes
+
         def resume(self):
             self.manual = False
 
-        def hold(self, name):
+        def directory(self):
+            return []  # `verify` lists the configured devices: none here
+
+        def active(self, name=None):
+            return None
+
+        def hold(self, name):  # mirrors Controller.hold: `setting` returns to the ground, not a hold
             if name not in ('setting', 'boosting', 'gliding', 'landing', 'done'):
                 return False
             self._stage = name
-            self.manual = True
+            self.manual = name != 'setting'
             return True
 
     arm_ctrl = _ArmController()
@@ -394,11 +473,119 @@ async def amain():
 
     held = json.loads(cc.parse(await sd_arm.handle('stage gliding')).args[0])  # operator hold (ground test)
     assert held['stage'] == 'gliding' and held['manual'] is True
+    """
+    ARM MUST REFUSE A BOARD THAT IS NOT ON THE GROUND UNDER AUTOMATIC CONTROL. A held or forced stage
+    suppresses the stage detectors, so the flight's core output -- the stage record -- would be wrong,
+    and on 10-03 every profile flies passive, where arm and verify are the gates the operator sees.
+    """
+    refused = cc.parse(await sd_arm.handle('arm'))  # the problems travel base64-encoded: decode them
+    assert refused.args[0] == 'unsafe' and arm_ctrl.armed is False, refused.args
+    assert 'held at gliding' in json.loads(refused.args[1])['stage'], refused.args
     assert 'badargs' in await sd_arm.handle('stage nope')  # unknown stage name
     assert json.loads(cc.parse(await sd_arm.handle('stage auto')).args[0])['manual'] is False  # resume
+    assert 'unsafe' in await sd_arm.handle('arm'), 'auto but still GLIDING on the pad must not arm'
+    back = json.loads(cc.parse(await sd_arm.handle('stage setting')).args[0])  # back to the ground
+    assert back['stage'] == 'setting' and back['manual'] is False
+    assert json.loads(cc.parse(await sd_arm.handle('arm')).args[0])['armed'] is True
+    assert json.loads(cc.parse(await sd_arm.handle('disarm')).args[0])['armed'] is False
     assert 'unsupported' in await cc_client.create_dispatcher(config_default.default()).handle('arm')
 
-    print('ok: cc_client dispatch/serve/standard + inspect/update/stats + probe + verify + log + tlm + arm')
+    """
+    AIRBORNE: the CC link stays up through the flight and the hub fans `all` out to every online board,
+    so an ACTIVE command must refuse rather than run -- a probe sweeps every fin to its limits, a baro
+    calibrate re-zeroes elevation, a reboot is a warm-start gamble. The reads and the recovery commands
+    (`stage`, `disarm`) must stay open, or the operator loses the airframe's only remote control.
+    """
+    class _Sweep(inspector.Inspectable):
+        """Counts probe() calls -- a servo probe is a fin sweep, so in flight the count must stay 0."""
+
+        def __init__(self):
+            self.name = 'fin_sweep'
+            self.sweeps = 0
+
+        async def probe(self):
+            self.sweeps += 1
+            return None
+
+        async def calibrate(self):
+            self.sweeps += 1
+            return None
+
+    sweep = _Sweep()
+    inspector.Inspector.register(sweep)
+    rebooted = []
+    flying = _ArmController()
+    sd_air = cc_client.create_dispatcher(config_default.default(), controller=flying,
+                                         on_reboot=lambda: rebooted.append(1))
+    for stage in ('boosting', 'gliding', 'landing'):
+        flying._stage, flying.manual = stage, False  # AUTO sequencing, genuinely airborne
+        for command in ('probe', 'probe fin_sweep', 'detect', 'bustune i2c 0 100000', 'calibrate fin_sweep',
+                        'reset-config', 'reboot'):
+            reply = cc.parse(await sd_air.handle(command))
+            assert reply.command == 'err' and reply.args[0] == 'unsafe', (stage, command, reply.args)
+            assert 'in flight' in reply.args[1], (stage, command, reply.args)
+        reply = cc.parse(await sd_air.handle(cc.build('set-config', ['launch', '{}'])))
+        assert reply.command == 'err' and reply.args[0] == 'unsafe', (stage, reply.args)
+        armed = cc.parse(await sd_air.handle('arm'))  # refused on the stage, WITHOUT sweeping first
+        assert armed.args[0] == 'unsafe' and 'stage' in json.loads(armed.args[1]) and not flying.armed
+        report = json.loads(cc.parse(await sd_air.handle('verify')).args[0])  # still reports, no sweep
+        assert 'in flight' in report['problems']['probe'] and report['pass'] is False, report['problems']
+        assert cc.parse(await sd_air.handle('calibrate')).command == 'ok'  # the sweep list is a read
+        assert json.loads(cc.parse(await sd_air.handle('stage')).args[0])['stage'] == stage  # reads open
+        assert json.loads(cc.parse(await sd_air.handle('disarm')).args[0])['armed'] is False  # recovery open
+    await asyncio.sleep_ms(260)
+    assert sweep.sweeps == 0 and rebooted == [], 'an airborne command ran: %d sweeps, %s' % (
+        sweep.sweeps, rebooted)
+    # ...and on the ground the same commands run: SETTING before a flight, DONE after it
+    for stage in ('setting', 'done'):
+        flying._stage = stage
+        assert json.loads(cc.parse(await sd_air.handle('probe fin_sweep')).args[0]) == {'fin_sweep': None}
+        assert cc.parse(await sd_air.handle('calibrate fin_sweep')).command == 'ok'
+        assert cc.parse(await sd_air.handle('detect')).command == 'ok'
+    assert sweep.sweeps == 4, sweep.sweeps
+    assert await sd_air.handle('reboot') == 'ok'
+    await asyncio.sleep_ms(260)
+    assert rebooted == [1]
+    inspector.Inspector.unregister('fin_sweep')
+
+    """
+    `attitude-backup` must mean a FALLBACK, not "this revision has one source".
+
+    v0.1/v1.0 publish fused attitude from the BNO055 at p0, so running on tasks/attitude.py means
+    something died. v1.1 has no p0 attitude provider at all, so the flat check marked every v1.1 board
+    permanently degraded -- and an always-amber panel stops being read. Both directions are asserted
+    here because the flag is worthless if it never fires and worse than worthless if it always does.
+    """
+    class _Ctx:
+        pass
+
+    for revision, expected in (('v1.0', True), ('v1.1', False)):
+        cfg = config_default.default()
+        layout.apply(cfg, revision)
+        ctx = _Ctx()
+        ctx.controller = _Ctx()
+        ctx.controller.config = cfg
+        assert cc_client._has_primary(ctx, 'attitude') is expected, (
+            '%s: expected a p0 attitude provider to be %s' % (revision, expected))
+
+    # a DISABLED primary is not a primary -- it was never going to publish
+    cfg = config_default.default()
+    layout.apply(cfg, 'v1.0')
+    for device in cfg['sensors']:
+        if device['name'] == 'imu_bno055':
+            device['enabled'] = False
+    ctx = _Ctx()
+    ctx.controller = _Ctx()
+    ctx.controller.config = cfg
+    assert cc_client._has_primary(ctx, 'attitude') is False
+
+    # an unreadable config must NOT hide a real fallback
+    blind = _Ctx()
+    blind.controller = None
+    assert cc_client._has_primary(blind, 'attitude') is True
+
+    print('ok: cc_client dispatch/serve/standard + inspect/update/stats + probe + verify + log + tlm + arm '
+          '+ active commands refused airborne + attitude-backup only where a primary exists')
 
 
 asyncio.run(amain())

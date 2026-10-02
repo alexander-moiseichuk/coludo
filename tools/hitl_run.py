@@ -20,18 +20,31 @@ import config_hitl
 import controller
 import databoard
 import drivers
+import layout
 import mission
 import recorder
 import tasks
+import warmstart  # registers the `checkpoint` activity, as main.py's import does on a real boot
 
 
 async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: bool,
               glider_g: int, inject_hz: int, reboot_s: float, no_cc: bool,
-              attitude_drop_s: float = 0.0, gnss_drop_s: float = 0.0) -> None:
+              attitude_drop_s: float = 0.0, gnss_drop_s: float = 0.0, no_mag: bool = False) -> None:
     drivers.load()
     tasks.load()
     launch = mission.Mission(max_range_m=200)
     cfg = config_hitl.default(motor, noise, spike, wind, wind_dir, glider_g=glider_g, inject_hz=inject_hz)
+    """
+    Resolve the layout, as main.bringup() does for a real flight.
+
+    HITL masks every SIMULATED sensor, but `power_ina226` is not one of them -- nothing simulates the
+    power rail, so it stays real. Without this it is configured on its v0.1 bus while a v1.0 or v1.1
+    board has it on the other one: it answers ENODEV, no power stream is recorded, and flight_kpi
+    silently omits the servo-energy KPI instead of reporting it missing. Every HITL round flown since
+    the v1.0 rewire lost that number this way.
+    """
+    layout.resolve(cfg)
+    config_hitl.mask(cfg)  # AFTER the layout: apply() re-enables whatever the revision fits
     if no_cc:
         """
         the CC-less scenario: an UNKNOWN field -- no operator zone, no launch point, no known
@@ -53,6 +66,11 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
                 break
             await asyncio.sleep_ms(50)
         print('FIELD zone', launch.site, launch.zone)
+    if no_mag:
+        # the control condition: fly this scenario with NO magnetometer, so the pair says what the mag
+        # is worth. Set before arming -- this is a build variant, not a mid-flight failure.
+        flight.active('hitl').drop_mag = True
+        print('NO MAG: magnetometer channel withheld for the whole flight')
     flight.arm()  # enable actuation -- without it flight.py holds the fins neutral
     print('SESSION', recorder.Recorder.session(), motor, 'noise', noise, 'wind', wind)
     stages = controller.Stage
@@ -124,6 +142,10 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
         await asyncio.sleep_ms(200)
     await asyncio.sleep_ms(1200)  # let the recorder flush the tail to the Luckfox
     await flight.finish()
+    # The checkpoint runs in HITL now, so a simulated flight leaves an ARMED crumb in the board's real
+    # NVS -- and the next soft reset within its age window could warm-start a bench board into
+    # LANDING with GC off. A simulation must not leave recovery state behind for a real boot.
+    warmstart.clear()
     print('RUN_END')
 
 
@@ -132,10 +154,11 @@ async def _simulated_reboot(flight, boot_s: float) -> None:
     A mid-glide reboot with the REAL warm-start code.
 
     The outage (disarm + SETTING under a manual hold) lasts `boot_s` like a real boot, then the real
-    breadcrumb is loaded and the real five-signal gate decides; a pass restores GLIDING + arm exactly as
-    main._restore_flight does. Only the physical inputs are simulated: separated=True (post-separation by
-    construction here), the sim's absolute baro altitude, cause=reset. The fins stay FROZEN at their last
-    commanded deflection through the outage -- the OOM soak measured that a dying runtime never reaches
+    breadcrumb is loaded, the real gate (warmstart.should_restore) decides, and a pass goes through the
+    real warmstart._apply_restore -- the same stage / arm / baro-rebase / pitot / airspeed restore a
+    board runs at boot, not a hand-rolled copy of it. Only the physical inputs are simulated:
+    separated=True (post-separation by construction here) and cause=reset. The fins stay FROZEN at
+    their last commanded deflection through the outage -- the OOM soak measured that a dying runtime never reaches
     the crash->neutral path, and a rebooting MCU drives no PWM (the servos hold mechanically) -- so the
     flight task's _neutral is stubbed out for the outage (disarmed -> it is the only writer).
 
@@ -144,10 +167,10 @@ async def _simulated_reboot(flight, boot_s: float) -> None:
         boot_s - how long the simulated outage lasts, in seconds.
 
     Returns:
-        None. Side effect: leaves the controller either warm-restored to GLIDING+armed, or cold-booted.
+        None. Side effect: leaves the controller either warm-restored to the crumb's stage and arm
+        state (GLIDING, armed), or cold-booted. Prints `WARM CRUMB: FAIL` when the restored flight
+        checkpoints a crumb without its pad altitude; hitl_collect.sh fails the scenario on it.
     """
-    import databoard
-    import warmstart
     print('REBOOT: outage %.1fs (disarmed, FROZEN fins, stage SETTING)' % boot_s)
     flight_task = flight.active('flight')
     real_neutral = flight_task._neutral if flight_task is not None else None
@@ -160,22 +183,28 @@ async def _simulated_reboot(flight, boot_s: float) -> None:
     if flight_task is not None:
         flight_task._neutral = real_neutral  # boot done: the real fail-safe is back
     crumb = warmstart.load()
-    altitude = databoard.Databoard.value('altitude')
-    restore, reason = warmstart.should_restore(crumb, True, altitude, True, time.time())
+    restore, reason = warmstart.should_restore(crumb, True, True, time.time())
     print('WARM GATE:', restore, reason)
-    if restore:
-        flight.manual = False
-        flight.set_stage(controller.Stage.GLIDING)
-        flight.arm()
-        print('WARM START -> gliding, armed')
-    else:  # by design: any doubt stays a cold boot (the capture will show the uncontrolled descent)
-        flight.manual = False
+    flight.manual = False  # by design any doubt stays a cold boot (the capture shows the uncontrolled descent)
+    if not restore:
+        return
+    warmstart._apply_restore(flight, crumb, flight.config)
+    print('WARM START ->', controller.Stage.STAGES.get(flight.stage), 'armed' if flight.armed else 'DISARMED')
+    """
+    The restored flight must checkpoint a crumb that can survive a SECOND reset: one written without
+    the pad altitude skips the baro rebase next time, and the landing detect then reads the ground at
+    altitude. The restore's own stage change triggers that checkpoint within one poll, so wait it out.
+    """
+    await asyncio.sleep_ms(1500)
+    after = warmstart.load()
+    kept = after is not None and after.get('pad_altitude') is not None
+    print('WARM CRUMB:', 'pad_altitude kept' if kept else 'FAIL -- pad_altitude LOST after the restore')
 
 
 def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0, wind_dir: float = 210.0,
         spike: bool = False, glider_g: int = 285, inject_hz: int = 0,
         reboot_s: float = 0.0, no_cc: bool = False, attitude_drop_s: float = 0.0,
-        gnss_drop_s: float = 0.0) -> None:
+        gnss_drop_s: float = 0.0, no_mag: bool = False) -> None:
     """
     Fly one HITL scenario to completion (or a 150 s cap), recording every stream to the Luckfox.
 
@@ -189,8 +218,10 @@ def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0, wind_dir: fl
     `attitude` this many seconds into GLIDING (a BNO055 death): the priority-1 complementary-filter
     backup must carry the glide to a controlled landing. `gnss_drop_s` > 0 drops position/speed/course
     for that many seconds at a random glide moment (a tunnel / antenna knock): the guidance falls to its
-    open-loop heading tiers, then recovers. All the degradations COMBINE -- pass several at once for the
-    interaction stress.
+    open-loop heading tiers, then recovers. `no_mag` withholds the magnetometer for the WHOLE flight --
+    the control condition for a GNSS-dropout pair, since the only honest way to measure what the mag is
+    worth is the same scenario flown with and without it. All the degradations COMBINE -- pass several at
+    once for the interaction stress.
     """
     asyncio.run(_go(motor, noise, wind, wind_dir, spike, glider_g, inject_hz, reboot_s, no_cc,
-                    attitude_drop_s, gnss_drop_s))
+                    attitude_drop_s, gnss_drop_s, no_mag))

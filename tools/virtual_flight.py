@@ -32,7 +32,7 @@ sys.path.insert(0, _GLIDER)
 
 import commons  # noqa: E402 -- the SHARED apogee detector, so host and board cannot drift
 import config_hitl  # noqa: E402 -- the SAME board config the on-board HITL uses (host-importable)
-import controller as controller_mod  # noqa: E402 -- Stage ids (host-importable)
+import controller as controller_module  # noqa: E402 -- Stage ids (host-importable)
 import fixed  # noqa: E402 -- fixed-point convention: PID error/output in centidegree fixnum (board parity)
 import governor  # noqa: E402 -- the REAL fin-authority governor (estimated airspeed + throttle)
 import guidance  # noqa: E402 -- the REAL per-stage guidance law
@@ -42,7 +42,7 @@ import pid  # noqa: E402
 import preflight  # noqa: E402 -- install + data-consistency gates, run before any flying
 import sim_model  # noqa: E402
 
-_STAGE = controller_mod.Stage
+_STAGE = controller_module.Stage
 _FINS = ('servo_eleron_left', 'servo_eleron_right', 'servo_yaw')
 _SPIKE_S = 3.0  # a transient 2x sensor glitch fires once every this many seconds (within 2-5 s)
 _GNSS_S = 0.1  # GNSS fix cadence (~10 Hz), for both the injected handles and the capture rows

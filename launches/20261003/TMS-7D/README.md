@@ -18,9 +18,12 @@ Flies with servos fitted and exercisable but **no active control**: fins move fo
 commands, never under a PID. So this launch tests the servo install and the power module in flight, not
 guidance.
 
-**`concurrency: 3` is a flight-power-board setting.** Three SG90s slewing together draw ~4 A; a 4 V / 1 A
-bench supply browns out. Installing this profile on a bench board once killed `servo_eleron_right`
-outright. On the bench, use 1 or clear `board.config` so the firmware default applies.
+**This profile belongs on the flight power board.** Three SG90s slewing together draw ~4 A; a 4 V / 1 A
+bench supply browns out. Installing it on a bench board that then boot-looped killed
+`servo_eleron_right` outright. `concurrency` is NOT the protection: it gates `servo.move()` only, and
+boot centring re-centres all three fins together at every boot whatever it says -- and the bench
+default config enables the servos too. On the bench, **disable the servos** in the config. The boot
+loop itself came from a 1000 ms watchdog; validation now refuses anything below 4000.
 
 ## The mass to be aware of
 

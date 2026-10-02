@@ -120,12 +120,34 @@ async def amain():
     heading, roll_cd, pitch_cd = databoard.Databoard.parameter('attitude').value()
     assert isinstance(heading, float) and heading == 90.0 and roll_cd == 4500 and pitch_cd == -600
 
+    """
+    MIRROR ONLY A FRESH PRIMARY. With nothing fresh, read() returns the primary's EXTRAPOLATED old value
+    with source None, and mirroring that pinned a dead part's last attitude after every >40 ms gap while
+    throwing away the gyro integration. The primary pushes once and goes silent: the backup must
+    free-run on the gyro (30 deg/s of yaw here), not hold the dead heading of 10 deg.
+    """
+    accel_ch.push((0.0, 0.0, 0.0))  # outside the 1 g band: no accel correction to muddy the yaw
+    rate_ch.push((0, 0, 3000))
+    primary.push((10.0, 500, 0))
+    runner = asyncio.create_task(unit.run())
+    await asyncio.sleep_ms(400)  # the primary is stale 40 ms in; the rest must be integrated
+    runner.cancel()
+    await asyncio.sleep_ms(0)
+    # the old code mirrored the extrapolated value every cycle: _free stayed False and yaw sat at exactly
+    # the dead part's 1000 cd. (Where yaw goes instead depends on the GNSS course pull set up above.)
+    assert unit._free, 'a silent primary must hand over to the gyro'
+    assert unit._yaw_cd != 1000, 'yaw pinned at the dead primary\'s last heading'
+
+    # RECORDED: on v1.1 this filter is the only attitude, and it created no stream at all
+    assert unit._telemetry.filename == 'attitude.csv' and unit._telemetry.fields[:3] == (
+        'heading_cd', 'roll_cd', 'pitch_cd'), unit._telemetry.fields
+
     # probe: healthy with a gyro rate present, fails without
     assert await unit.probe() is None
     unit._rate = _Blind()
     assert 'blind' in await unit.probe()
 
-    print('ok: attitude backup -- mirror, gyro integrate, accel gravity correct, high-g reject, '
+    print('ok: attitude backup -- mirror (fresh only), gyro integrate, accel gravity correct, high-g reject, '
           'publish format, probe')
 
 

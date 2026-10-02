@@ -31,7 +31,7 @@ class Watchdog(task.Task):
     """Feed a hardware WDT (wedge backstop) + supervise the control loop (stall -> full reset)."""
 
     async def setup(self) -> bool:
-        self._timeout_ms: int = self.config.get('wdt_timeout_ms', 1000)
+        self._timeout_ms: int = self.config.get('wdt_timeout_ms', 5000)  # the measured floor: config_default
         self._period_ms: int = self.config.get('period_ms', 200)
         self._stall_us: int = self.config.get('stall_ms', 500) * 1000  # no control step in this long = stalled
         self._wdt = None  # the hardware WDT (created in run(); injectable for tests)

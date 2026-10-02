@@ -12,13 +12,20 @@ mutate freely. Run it instead of config_default for a simulation; the flight con
 import config_default
 
 _SIM_SENSORS = ('accel_adxl375', 'imu_lsm6dso32', 'imu_bno055', 'baro_icp10111', 'baro_bmp280',
-                'laser_agl', 'gnss', 'airspeed_sdp810')
+                'laser_agl', 'laser_agl_l1x', 'gnss', 'airspeed_sdp810',
+                'imu_bmi323', 'mag_bmm350', 'baro_bmp581')
 """
 `airspeed_sdp810` masked (7/27): the sim now publishes `airspeed`/`dynamic_pressure` itself. Leaving
 the real part enabled meant a bench SDP810 in still air was the ONLY publisher of the fused airspeed
-channel on every board HITL flight -- the findings §28 bistability. That was patched at the consumer
-(`pitot_min_ms`), which is correct for a blocked tube in flight but left board HITL never exercising
-the pitot path while the host sim did. Masking it here closes the harness side.
+channel on every board HITL flight -- the bistability that cost a run of flights. That was patched at
+the consumer (`pitot_min_ms`), which is correct for a blocked tube in flight but left board HITL never
+exercising the pitot path while the host sim did. Masking it here closes the harness side.
+
+The v1.1 attitude module (`imu_bmi323` + `mag_bmm350` + `baro_bmp581`) is masked for the same reason,
+added the moment that hardware appeared rather than after a run had to be thrown away. A bench
+magnetometer that never turns is the most convincing wrong answer available to a simulated flight,
+precisely because it stays perfectly FRESH -- the databoard has no way to know it is meaningless, and
+`tasks/hitl.py` now publishes a simulated `mag` in its place.
 """
 _OFF = ('separation', 'watchdog', 'wifi', 'cc', 'bluetooth')
 
@@ -31,6 +38,25 @@ light (the ~100 g floor). Whole-stack liftoff: E16 455/400 g, F15 471/416 g (ful
 """
 _BOOSTER_G = {'E16': 185, 'F15': 201}
 _GLIDER_G = 270  # full glider (154.9 g electronics); pass glider_g=215 for the light build
+
+
+def mask(cfg: dict) -> None:
+    """
+    Disable every real sensor the sim publishes over. Call it AGAIN after layout.resolve()/apply().
+
+    layout.apply() sets `enabled` from what the revision fits, so resolving the layout after this
+    re-enabled the bench parts -- a v1.0 board flew HITL on its real BNO055 and BMP280, a v1.1 board
+    on its real BMI323, BMM350 and BMP581, and an L1X board landed at apogee on its bench laser.
+
+    Args:
+        cfg - the config to mask, in place.
+
+    Returns:
+        None.
+    """
+    for sensor in cfg['sensors']:
+        if sensor['name'] in _SIM_SENSORS:
+            sensor['enabled'] = False  # the sim provides these instead
 
 
 def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: float = 0.0,
@@ -66,9 +92,7 @@ def default(motor: str = 'F15', noise: float = 0.0, spike: bool = False, wind: f
         A fresh HITL config dict (the real sensors disabled, flight + the `hitl` task enabled).
     """
     cfg = config_default.default()
-    for sensor in cfg['sensors']:
-        if sensor['name'] in _SIM_SENSORS:
-            sensor['enabled'] = False  # the sim provides these instead
+    mask(cfg)
     by_name = {comp['name']: comp for comp in cfg['components']}
     for name in _OFF:
         if name in by_name:

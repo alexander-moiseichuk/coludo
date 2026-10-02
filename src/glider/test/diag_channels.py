@@ -7,6 +7,7 @@ control channel, how often each source actually pushes (by watching its stamp ad
 driver says about itself -- so the answer is measured, not inferred.
 """
 
+
 import asyncio
 import time
 
@@ -14,6 +15,7 @@ import config_default
 import controller
 import databoard
 import drivers
+import layout
 import tasks
 
 _SECONDS = 10
@@ -23,6 +25,11 @@ async def main():
     drivers.load()
     tasks.load()
     cfg = config_default.default()
+    # RESOLVE THE LAYOUT, as main.bringup() does. Without it this builds the v0.1 bus map and
+    # hunts the four devices that MOVE between revisions on the wrong bus -- on a v1.0 board the
+    # ICP-10111, pitot, laser and INA226 all answer ENODEV and the diagnostic reports a healthy
+    # part as dead. The bus a device lives on is a property of the BOARD, never of the caller.
+    layout.resolve(cfg)
     for component in cfg['components']:  # sensors only -- no control loop, no radios
         if component['name'] in ('flight', 'sequencer', 'hitl', 'wifi', 'cc', 'watchdog'):
             component['enabled'] = False

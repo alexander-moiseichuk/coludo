@@ -18,7 +18,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src', 'glider'))
 
-import config as config_mod
+import config as config_module
 import config_default
 import layout
 
@@ -138,7 +138,7 @@ def _module_tables(cfg: dict) -> list:
 def _section(cfg: dict, title: str, note: str) -> list:
     """One revision's buses / GPIO / device tables."""
     pins = cfg.get('pins', {})
-    reserved = set(config_mod.RESERVED_PINS.get(cfg['board'].get('mcu', ''), ()))
+    reserved = set(config_module.RESERVED_PINS.get(cfg['board'].get('mcu', ''), ()))
     users = _pin_users(cfg)
     out = []
     out.append('# %s\n' % title)

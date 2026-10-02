@@ -104,8 +104,8 @@ async def _chain() -> str:
     reader, writer = await asyncio.open_connection('127.0.0.1', BOARD_PORT + 50)
 
     # drive the hub's own client object over the live socket pair, exactly as an accepted board is driven
-    import board as board_mod
-    client = board_mod.Board(reader, writer)
+    import board as board_module
+    client = board_module.Board(reader, writer)
     assert await client.identify() is not None, 'the handshake must succeed over the real protocol'
     assert client.id == 'e2eboard'
     hub.boards[client.id] = client

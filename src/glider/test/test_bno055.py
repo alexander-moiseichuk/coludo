@@ -89,7 +89,7 @@ async def amain():
     bus = _CalibBus()
     imu = bno055.Bno055('imu_bno055', {}, _StubController())
     imu._bus, imu._addr, imu._period_ms = bus, 0x28, 20
-    imu.calibration_state, imu._converged, imu._restored = None, False, False
+    imu.calibration_state, imu._converged, imu._restored, imu._saved = None, False, False, False
     imu._calib_due = 1
 
     bus.raw = 0b00_11_01_00                 # sys 0 gyr 3 acc 1 mag 0 -- the state 7C booted in
@@ -112,7 +112,17 @@ async def amain():
     imu._calib_due = 1
     bus.raw = 0b11_11_01_11                 # the figure-8 lands: mag 3
     await imu._poll_calibration()
-    assert imu.calibrated() is True and imu.calibration() == ''
+    assert imu.calibrated() is True
+    """
+    CONVERGED IS NOT SAVED. calibration() went quiet here, so the guided sweep said "nothing outstanding"
+    while the profile was still unsaved -- and the next power cycle, on the rail, came back uncalibrated.
+    It must keep asking for the save. calibrate() is NOT run to clear it: on this stub bus it would write
+    a garbage profile over the board's real one in NVS. _saved is what a successful save records.
+    """
+    if bno055._nvs is not None:
+        assert 'calibrate imu_bno055' in imu.calibration(), imu.calibration()
+        imu._saved = True
+    assert imu.calibration() == ''
 
     imu._calib_due = 1
     bus.raw = 0b11_11_01_10                 # ...and mag regresses to 2 sitting still

@@ -46,6 +46,30 @@ _OUTX_L_G = const(0x22)   # gyro X..Z then accel X..Z (12 bytes, signed LE, cont
 _WHOAMI = const(0x6C)
 _DRDY_XL = const(0x01)    # INT1_CTRL: accel data-ready -> INT1
 _INT_SILENT_LIMIT = const(3)  # consecutive INT1 timeouts before declaring the line dead
+"""
+How many WRITE-then-VERIFY rounds setup() will spend before deciding the part is absent.
+
+This used to be 5 bare reads, and the shape was wrong as well as the count. MEASURED on TMS-7E: with
+the part out of step, WHO_AM_I returns 0x00 for 30 consecutive reads and stays at 0x00 -- reading does
+not recover it, however long you read. Writing CTRL3_C does, immediately. The interface has to be
+PINNED, and a write issued before the part is listening is simply lost, so the write must be retried
+rather than issued once up front.
+
+HOW FAR THE RISK ACTUALLY REACHES, measured rather than assumed -- an earlier version of this note
+claimed a warm start was the same situation, and that is WRONG. Interrupting the driver mid-traffic and
+rebooting was tried 12 times: the OLD one-shot strategy recovered on the first read every time. A bus
+retune (the CC `bustune` command) at 1, 8 and 5 MHz likewise, 4 for 4. The only reproducer found is a
+peripheral that is CREATED AND DEINITIALISED under the part -- which `test_pins.py` does and no flight
+path does.
+
+So this is not a fix for a flight failure, and should not be quoted as one. It is the right shape for
+the operation regardless: the write is what pins the interface, so retrying the write costs microseconds
+and removes a whole class of "the part is there but setup says it is not".
+
+Each round is two short transfers, once, at setup. An absent part never answers and is still reported
+absent -- a few hundred microseconds later than before.
+"""
+_ID_READS = const(64)
 _CFG_XL = const(0x44)     # 104 Hz ODR, FS_XL = 01 = +/-32 g
 _CFG_G = const(0x4C)      # 104 Hz ODR, FS_G = 11 = +/-2000 dps
 _CFG_C = const(0x44)      # BDU=1, IF_INC=1, SIM=0 (4-wire)
@@ -81,13 +105,13 @@ class Lsm6dso32(task.Task):
         self._int_silent: bool = False  # the INT line is dead -> poll at period_ms instead
         try:
             whoami = 0
-            for _ in range(5):  # the first SPI read after bus bring-up can glitch; retry the id check
+            for _ in range(_ID_READS):  # PIN, then verify -- reading alone never recovers it
+                await self._dev.write(_CTRL3_C, bytes([_CFG_C]))  # BDU + auto-increment; pins the bus
                 whoami = (await self._dev.read(_WHO_AM_I, 1))[0]
                 if whoami == _WHOAMI:
                     break
             if whoami != _WHOAMI:
                 return False  # not an LSM6DSO32 at this chip-select / address
-            await self._dev.write(_CTRL3_C, bytes([_CFG_C]))   # BDU + auto-increment first
             await self._dev.write(_CTRL1_XL, bytes([_CFG_XL]))  # accel +/-32 g @ 104 Hz
             await self._dev.write(_CTRL2_G, bytes([_CFG_G]))    # gyro +/-2000 dps @ 104 Hz
             await self._setup_interrupt()

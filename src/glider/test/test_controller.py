@@ -231,6 +231,10 @@ async def amain():
     assert c.hold('nope') is False  # unknown stage name
     c.resume()
     assert c.manual is False and c.inspect()['manual'] is False
+    # `stage setting` is a RETURN TO THE GROUND, not a hold: holding SETTING suppressed every launch
+    # detector, and a board released that way flew its whole flight recorded as SETTING
+    assert c.hold('gliding') is True and c.manual is True
+    assert c.hold('setting') is True and c.stage_name() == 'setting' and c.manual is False
 
     # close one, then finish all
     await c.close('s1')

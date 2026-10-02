@@ -88,12 +88,16 @@ def test_select():
     select = commands.REGISTRY['select'].handler
     session = {'selected': None}
 
-    assert _payload(select(_StubHub(), ['select', 'taster'], session))['selected'] == 'taster'
+    hub = _StubHub({'taster': _StubBoard()})
+    assert _payload(select(hub, ['select', 'taster'], session))['selected'] == 'taster'
     assert session['selected'] == 'taster', 'select must persist onto the session, not just reply'
     # NEGATIVE: no board named -> badargs, and the previous selection is left ALONE. Clobbering it to
     # None on a typo would silently redirect the operator's next unqualified command.
-    assert _error(select(_StubHub(), ['select'], session)) == 'badargs'
+    assert _error(select(hub, ['select'], session)) == 'badargs'
     assert session['selected'] == 'taster'
+    # NEGATIVE: a board the hub does not know (a typo) -> noboard now, not on the next command
+    assert _error(select(hub, ['select', 'tastr'], session)) == 'noboard'
+    assert session['selected'] == 'taster', 'an unknown id must not replace the selection'
 
 
 def test_help():

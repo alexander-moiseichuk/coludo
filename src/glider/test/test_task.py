@@ -6,8 +6,8 @@ health tracking, _pin_gpio resolution incl. the disabled-pin convention, find()/
 inspect()/validate() surface.
 
 Every driver and task inherits this, so a regression here surfaces as a confusing failure somewhere else
-entirely -- and it had no direct test (findings §27.9). Also asserts the CONFIG CROSS-REFERENCES that
-nothing checked (§27.10): every configured device names a driver that actually resolves in the registry,
+entirely -- and it had no direct test. Also asserts the CONFIG CROSS-REFERENCES that
+nothing checked: every configured device names a driver that actually resolves in the registry,
 every pin/bus it references exists, and every `provides` quantity has a consumer. Run by `make test`.
 """
 
@@ -118,7 +118,7 @@ def test_validate_and_inspect():
 
 def test_config_cross_references():
     """
-    CONFIG CROSS-REFERENCES (findings §27.10): config_default is the single source of truth for the
+    CONFIG CROSS-REFERENCES: config_default is the single source of truth for the
     board, but nothing asserted that its parts agree with each other.
 
     Shape is checked by test_config and pins by test_pins; what was missing is whether every device

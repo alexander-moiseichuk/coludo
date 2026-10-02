@@ -42,6 +42,7 @@ class GnssCalib(task.Task):
         self._sum_e: float = 0.0    # accumulated reported ground velocity (ENU) while stationary
         self._sum_n: float = 0.0
         self._count: int = 0
+        self._armed_seen: bool = False  # the sums restart once, at arm (see run())
         self._drift_e: float = 0.0  # frozen drift velocity (m/s ENU); (0, 0) until launch
         self._drift_n: float = 0.0
         self._frozen: bool = False
@@ -97,6 +98,12 @@ class GnssCalib(task.Task):
             if not self._frozen:
                 stage = self.controller.stage
                 if stage == _STAGE.SETTING:
+                    if self.controller.armed and not self._armed_seen:
+                        # ARM is the operator saying "on the rail, still": everything before it includes
+                        # carrying the airframe out, which is a walk, not a drift
+                        self._armed_seen = True
+                        self._sum_e = self._sum_n = 0.0
+                        self._count = 0
                     self._sample()
                 elif stage >= _STAGE.BOOSTING:  # off the pad (incl. a warm start into GLIDING) -> lock it
                     self._freeze()

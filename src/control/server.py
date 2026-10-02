@@ -14,6 +14,7 @@ import json
 import os
 import time
 import traceback
+import weakref
 
 import board
 import commands
@@ -151,6 +152,8 @@ class Server:
         self.roster = self._roster_load()  # id -> {ip, last_seen}: survives a hub restart
         self.streams = {}  # board id -> the log-streaming Task while `log <board>` is active
         self.log_subscribers = set()  # asyncio.Queue per /logs SSE listener (streamed log lines)
+        # per listener: lines dropped since its queue last had room (weak, so a closed view drops out)
+        self._log_dropped: weakref.WeakKeyDictionary = weakref.WeakKeyDictionary()
 
     def board_rows(self) -> list:
         """
@@ -178,7 +181,9 @@ class Server:
             and the operator sees green. Publishing the age lets the dashboard say "this is stale"
             instead of quietly presenting handshake data as live.
             """
-            health_age = round(now - client.last_seen, 1)
+            # the age of the HEALTH data this row shows, not of the last byte on the link: a stream
+            # kept last_seen fresh while the armed/stage below were minutes old, and `stale` said false
+            health_age = round(now - (getattr(client, 'health_seen', 0.0) or client.last_seen), 1)
             rows.append({
                 'id': client.id, 'online': client.online,
                 'health_age': health_age, 'stale': health_age > self.heartbeat_s * 2,
@@ -280,7 +285,9 @@ class Server:
         """
         Surface one streamed board log line: to the console and every /logs SSE subscriber.
 
-        A full subscriber queue drops the line, never blocks the poll.
+        A full subscriber queue drops the line, never blocks the poll -- but not silently: the count is
+        kept per listener and delivered as one DROPPED line as soon as its queue has room, so a view
+        that fell behind says so instead of showing a log with an invisible hole in it.
 
         Args:
             board_id - the board the line came from.
@@ -292,9 +299,14 @@ class Server:
         self.log('%s: %s' % (board_id, line))
         for queue in list(self.log_subscribers):
             try:
+                dropped = self._log_dropped.get(queue, 0)
+                if dropped:  # the count is cleared only once the notice itself got in
+                    queue.put_nowait({'board': board_id,
+                                      'line': '[%d log line(s) DROPPED: this view fell behind]' % dropped})
+                    del self._log_dropped[queue]
                 queue.put_nowait({'board': board_id, 'line': line})
             except asyncio.QueueFull:
-                pass
+                self._log_dropped[queue] = self._log_dropped.get(queue, 0) + 1
 
     async def _stream(self, client, interval_ms, kind) -> None:
         """
@@ -469,8 +481,12 @@ class Server:
         missed = 0
         while True:
             await asyncio.sleep(self.heartbeat_s)
-            if time.monotonic() - client.last_seen < self.heartbeat_s:
-                continue  # a recent exchange already proved liveness
+            if not client.online:
+                return  # an exchange timed out and gave the link up -> let _handle clean up; it re-dials
+            # skip only when a HEALTH reply is recent. Any-traffic liveness let a running log stream
+            # suppress every poll, so armed/stage/degraded on the dashboard froze for its duration.
+            if time.monotonic() - getattr(client, 'health_seen', 0.0) < self.heartbeat_s:
+                continue
             healthy = await client.command('health', quiet=True) is not None
             if healthy:
                 if missed:
@@ -590,7 +606,7 @@ class Server:
         """
         for client in targets:
             try:
-                resp = await client.exchange(line)
+                resp = await client.exchange(line, board.timeout_for(line))  # a console arm sweeps too
             except Exception as error:      # timeout / link lost -- report THIS board, keep going
                 out.append('from %s err %s' % (client.id, type(error).__name__.lower()))
                 continue

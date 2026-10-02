@@ -159,8 +159,9 @@ function render() {
             board.armed ? 'var(--bad)' : 'var(--dim)');
   paintPill($('active'), flight.active ? 'LOOP ENGAGED' : 'loop idle',
             flight.active ? 'var(--ok)' : 'var(--dim)');
-  const deg = $('degraded');
-  if (board.degraded) { deg.style.display = ''; paintPill(deg, String(board.degraded), 'var(--warn)'); }
+  // a LIST of non-nominal states, and [] is nominal -- truthy in JS, so test the length, not the value
+  const deg = $('degraded'), degraded = [].concat(board.degraded || []);
+  if (degraded.length) { deg.style.display = ''; paintPill(deg, degraded.join(', '), 'var(--warn)'); }
   else { deg.style.display = 'none'; }
 
   horizon(att.roll, att.pitch);
@@ -174,22 +175,33 @@ function render() {
   $('wind').textContent = wind.speed != null ? `${wind.speed} m/s from ${wind.from}°` : '—';
   $('agl').textContent = board.agl != null ? `${board.agl} m` : '—';
   $('hdgerr').textContent = flight.heading_error != null ? flight.heading_error : '—';
-  $('reach').textContent = flight.reach != null ? flight.reach : '—';
+  const reach = flight.reach;                 // {reachable, margin_m, ...}, as the dashboard shows it
+  $('reach').textContent = reach ? (reach.reachable ? `zone ✓ +${reach.margin_m} m` : `zone ✗ ${reach.margin_m} m`) : '—';
   $('rmin').textContent = flight.r_min_m != null ? `${flight.r_min_m} m` : '—';
   const cal = board.imu_calibration;
   $('imucal').textContent = cal ? (Array.isArray(cal) ? cal.join(' / ') : String(cal)) : '—';
   $('fix').textContent = board.position ? board.position.map((v) => v.toFixed(5)).join(', ') : 'no fix';
-  $('uptime').textContent = board.uptime != null ? `${board.uptime} s` : '—';
+  // board ticks in MILLISECONDS since boot
+  $('uptime').textContent = board.uptime != null ? `${Math.round(board.uptime / 1000)} s` : '—';
 
   const age = (Date.now() - lastSeen) / 1000;
-  document.body.classList.toggle('stale', age > 5);
-  $('status').textContent = age > 5
-    ? `STALE — no update for ${age.toFixed(0)} s (board silent or link down)`
+  // the hub re-sends a row every poll, so the browser can be "updated" while the HEALTH inside it is old;
+  // board.stale is the hub's judgement of the health data itself
+  const stale = age > 5 || board.stale === true;
+  document.body.classList.toggle('stale', stale);
+  $('status').textContent = stale
+    ? (age > 5 ? `STALE — no update for ${age.toFixed(0)} s (board silent or link down)`
+               : `STALE — board health ${board.health_age} s old (link busy or board not answering)`)
     : `live — ${board.id} · firmware ${board.version || '?'} · updated ${age.toFixed(1)} s ago`;
 }
 
-function boards(list) {
-  rows = list || [];
+// Takes the /api/boards list or an /events frame, which wraps it as {cc, boards}. The frame used to be
+// taken for the list: every SSE message refreshed the 'live' clock and then threw, so the HUD looked
+// live on data it had never rendered. Anything that is not a list is ignored and the clock stays put.
+function boards(data) {
+  const list = Array.isArray(data) ? data : (data && data.boards);
+  if (!Array.isArray(list)) return;
+  rows = list;
   lastSeen = Date.now();
   const picker = $('board');
   const ids = rows.map((r) => r.id).join(',');

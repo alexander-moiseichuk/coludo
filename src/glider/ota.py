@@ -24,6 +24,7 @@ not a scratchpad -- push what has been through `make test` on the bench board.
 """
 
 import binascii
+import json
 import os
 
 try:
@@ -31,6 +32,7 @@ try:
 except ImportError:  # no hashlib -> the digest gate cannot run, and begin() refuses the upload
     hashlib = None
 
+import config
 import recorder
 
 try:
@@ -225,6 +227,11 @@ class Upload:
             return None, 'sha mismatch: got %s, expected %s -- staging discarded' % (
                 actual[:16], self.sha[:16])
         name, staged, backup = self.name, self.name + _STAGE_SUFFIX, self.name + _BACKUP_SUFFIX
+        if name == 'board.config':
+            refused = _config_problem(staged)
+            if refused is not None:
+                self.discard()
+                return None, refused
         kept = _replace(name, staged, backup)
         recorder.Recorder.log('ota', 'installed %s (%d bytes, sha %s) -- reboot to load it'
                                      % (name, self.size, self.sha[:12]))
@@ -239,6 +246,34 @@ class Upload:
             return {'uploading': None}
         return {'uploading': self.name, 'received': self.received, 'size': self.size,
                 'chunks': self.next_seq}
+
+
+def _config_problem(path: str) -> str:
+    """
+    Why a staged board.config must not be installed, or None when it would load.
+
+    set-config validates; a pushed .config file did not, so a hand-edited one installed cleanly and
+    then failed load() at the next boot -- which falls back to the BENCH default: id 'taster', watchdog
+    off, layout auto. The digest proves the bytes arrived, not that they are a config.
+
+    Args:
+        path - the staged file.
+
+    Returns:
+        A one-line refusal naming the first problems, or None.
+    """
+    try:
+        with open(path) as handle:
+            data = json.loads(handle.read())
+    except (OSError, ValueError):
+        return 'staged board.config is not valid JSON -- staging discarded'
+    try:
+        errors = config.validate(data)
+    except Exception as error:  # a malformed section can trip a validator: that is a refusal too
+        errors = ['validation raised %r' % error]
+    if errors:
+        return 'staged board.config fails validation: %s -- staging discarded' % '; '.join(errors[:3])
+    return None
 
 
 def orphans() -> list:

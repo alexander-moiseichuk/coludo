@@ -90,9 +90,10 @@ centidegrees); the float PID boxes 176 B regardless of magnitude. On-board HITL 
 firmware, which also streams the
 simulated sensors, so it churns *more* than a bare run — measured **~15 MB consumed with GC off, low-water
 ~17 MB free of ~32 MB** on a ~47 s F15-4 flight (the shorter ~32 s E16-4 bottoms out ~23 MB), with
-`mem_free` snapping back to ~32 MB at touchdown when GC re-enables. The full sawtooth is visible in the
-committed device `board_health.csv` (`doc/sims/TMS-7-guarded_fins/`); the pre- and post-flight collect
-durations are also **logged** (`gc pre-/post-flight collect <us>`).
+`mem_free` snapping back to ~32 MB at touchdown when GC re-enables. The sawtooth is visible in a
+flight's `health.csv` (`mem_free`; the study `doc/sims/TMS-7-guarded_fins/` kept only its rendered
+reports, not the CSV); the pre- and post-flight collect durations are also **logged**
+(`gc pre-/post-flight collect <us>`).
 
 Side effect: the CPU-load probe in `tasks/board_health.py` was changed from a `sleep_ms(0)`
 busy-spin to a sleeping probe that measures wake-up lateness — the core now idles between samples,
@@ -207,13 +208,23 @@ The Setting phase begins at system power-on and terminates immediately upon engi
 
 Upon electronic initialization, the following sequential operations are executed:
 * **Physical Orientation:** The airframe must be kept horizontal and oriented toward true North for baseline indexing.
-* **Status Indication:** The main power LED is set to flash at a slow 2 Hz cycle (250ms ON / 250ms OFF).
+* **Status Indication:** none on the board — no profile declares an LED (GPIO 2 left the pin map). The
+  operator reads status on the CC dashboard: `health` stage, armed, `degraded[]` and outstanding
+  `calibration`.
 * **Object Instantiation:** The MicroPython environment initializes all core software components and drivers.
-* **Calibration:** The system zeroes out the altimeter, digital compass, accelerometer, and gyroscope while performing a full deflection check of the fin servos.
+* **Calibration (automatic part):** each barometer captures its ground zero at setup, the pitot
+  restores its NVS tare and the BNO055 its NVS calibration profile. The fins are **centred, never
+  swept, at boot** — a mid-flight reboot must not sweep them (`controller.setup()`); the full-travel
+  sweep is the operator's `probe`/`verify`/`arm`. What the board cannot do alone (the BNO055
+  figure-8, a still-air pitot tare, the BMM350 circle) is listed by `calibrate` and flagged
+  `needs-calibration` in `health.degraded`.
 * **Network Connectivity:** The board joins the Control Center's Wi-Fi network as a **station** (see [`board-config.md`](board-config.md)) and establishes a connection with the ground control station (PC) to facilitate remote diagnostics and real-time monitoring.
 * **Recorder Link:** If the Recorder module is present, the UART telemetry/log sink is opened (the controller has no local SD card; the Recorder owns video and storage).
 * **GNSS Lock:** The GPS module runs at its configured rate (10 Hz) from setup and acquires a multi-satellite 3D fix. The coordinates of the target landing zone must fall within a 200-meter threshold vector relative to the launch point. The board clock is NOT set from GNSS: it has no battery-backed RTC, and **CC sets the time over the link** (`update mission base64:{"epoch":...}`, see `mission.py`).
-* **Validation:** The Flight Controller polls all subsystems. If all validation gates pass, the LED status changes to a "Ready" heartbeat pattern (100ms ON / 900ms OFF).
+* **Validation (operator, over CC — nothing is automatic):** sync the board clock and launch position
+  (dashboard sync / `assist`), work through `calibrate` until it is empty, then `verify` (hardware
+  `pass` + the `ready` config gate + the stage), and `arm` where the flight is active (`arm` re-runs
+  the probes and refuses on any problem). The step-by-step list is [`field_test.md`](../field_test.md).
 * **Staging:** The vehicle is cleared to be mounted vertically on the launch rail.
 
 Potential problems:
@@ -612,40 +623,47 @@ a phone hotspot or laptop is a convenience, never a dependency.
 
 ## In-flight reboot & warm start (design, 7/04)
 
-Today a watchdog (or any) reset mid-air boots into SETTING with neutral fins — ballistic. The
-warm start restores GLIDING within one boot (~2–4 s ≈ 20–40 m of lost altitude — expensive, but
-against a guaranteed lawn-dart).
+Without it, a watchdog (or any) reset mid-air boots into SETTING with neutral fins — ballistic. The
+warm start restores the saved stage within one boot (~2–4 s ≈ 20–40 m of lost altitude — expensive,
+but against a guaranteed lawn-dart). As built in `warmstart.py`:
 
-* **Breadcrumb in NVS, never a file.** A VFS write mid-flight locks the scheduler and wears the
-  data flash; `esp32.NVS('coludo')` commits a few small key/values in milliseconds to the
-  dedicated NVS partition. Written ONCE at BOOSTING entry (on the rod, next to the pre-flight
-  `gc.collect()` we already pay): `flight=1`, launch fix (2× i32, deg×1e7), the active zone
-  (4× i32), pad baro altitude, boost RTC stamp. Cleared (`flight=0`) at DONE and on orderly
-  finish.
-* **Warm-start gate at boot — ALL of, defense in depth:**
-  1. NVS `flight == 1` (we were airborne when the reset hit);
-  2. the **separation switch reads SEPARATED** — the physical latch no software state can fake
-     (post-separation it stays LOW for the whole glide);
-  3. baro ABSOLUTE altitude reads ≥ ~15 m above the NVS pad altitude;
-  4. `machine.reset_cause()` is **WDT/SOFT/HARD** — a battery insertion or power switch reads
-     PWRON, which is exactly what a RECOVERY CREW's hands do to a glider that crash-landed on a
-     rise above the pad (where gate 3 alone would pass). A mid-air brownout also reads PWRON and
+* **Crumb in NVS, never a file.** A VFS write mid-flight locks the scheduler and wears the data
+  flash; `esp32.NVS('coludo')` commits in milliseconds. The `checkpoint` task writes it **only while
+  ARMED** (a disarmed passive flight must never warm-start into an armed stage): once on entering
+  EVERY stage, and every `checkpoint_s` (1 s) while airborne. The `stage` i32 is the flag (0 = cold),
+  written last so a torn write never points a live stage at a half-written blob. One JSON blob
+  carries stage, armed, altitude, speed, airspeed, ticks and the RTC `stamp`, plus the recovery
+  identity frozen at BOOSTING entry: launch fix, zone, pad altitude and pitot tare. **Nothing clears
+  it at DONE** — DONE is itself a checkpointed stage; only a rejected gate zeroes the flag.
+* **Warm-start gate at boot (`should_restore()`) — ALL of:**
+  1. a crumb carrying a stage and a stamp;
+  2. `machine.reset_cause()` is **WDT/SOFT/HARD** — a battery insertion or power switch reads
+     PWRON, which is exactly what a RECOVERY CREW's hands do. A mid-air brownout also reads PWRON and
      stays cold — a browning-out battery cannot be trusted to finish the glide anyway;
-  5. the **crumb age** (RTC now − boost stamp) is positive and < ~10 min. The RTC survives
-     soft/WDT resets, so the arithmetic holds exactly when a warm start is legitimate (even an
-     unsynced RTC — continuity matters, not absolute truth); a power cycle restarts the RTC and
-     breaks it → cold.
-  The breadcrumb is CLEARED at DONE (the stationary |a|≈1 g detect / the RSO timeout — not zero
-  speed or zero elevation, which are unreliable on the ground) and by any rejected warm start, so
-  the next boot is unambiguously cold.
-* **Warm-start actions:** restore mission zone + launch point from NVS → stage := GLIDING →
-  arm → `gc.collect()` + `gc.disable()` (the sequencer's BOOSTING hook was skipped) → the flight
-  loop engages and re-captures the heading hold from the live attitude. The RSO
-  `flight_timeout_ms` keeps bounding the restored flight (its clock restarts at the warm start —
-  acceptable: the backstop stays bounded, just re-based).
-* **Any gate missing → normal cold boot** in SETTING, breadcrumb cleared, event logged.
-* **Validation:** HITL flight with a forced `machine.reset()` mid-glide (and a pulled USB on the
-  bench): the board must come back armed, in GLIDING, steering to the same zone.
+  3. the **crumb age** (RTC now − `stamp`) within 0..600 s. The RTC survives soft/WDT resets, so the
+     arithmetic holds exactly when a warm start is legitimate (even an unsynced RTC — continuity
+     matters, not absolute truth); a power cycle restarts it and breaks it → cold;
+  4. GLIDING/LANDING only: the **separation switch reads SEPARATED** — the physical latch no software
+     state can fake. BOOSTING is still nested, and SETTING/DONE are on the ground, so they need no
+     latch.
+  **There is no height gate.** The crumb is re-stamped every second aloft, so its stage is trusted;
+  the old "baro ≥ 15 m above the pad" check belonged to the retired single-breadcrumb design. The
+  `checkpoint` component's `warm_start: false` makes every boot cold.
+* **Warm-start actions:** restore the mission zone + launch point, rebase the baros to the crumb's
+  pad altitude (their setup re-zeroed mid-air), restore the pitot tare and seed the flight task's
+  airspeed, set the **SAVED stage** (the detectors re-evaluate from there), re-arm if the crumb was
+  armed, and raise `WARM-STARTED (rebooted in flight)` in `health.degraded`. Airborne stages also
+  `gc.collect()` + `gc.disable()` (the sequencer's BOOSTING hook was skipped). The RSO
+  `flight_timeout_ms` keeps bounding the restored flight (its clock re-bases at the warm start).
+* **Any gate missing → normal cold boot** in SETTING, flag cleared, event logged.
+* **⚠ Ground trap: power-cycle, not CC `reboot`, between a landing or an armed ground test and the
+  next flight.** DONE recovers too, and the restored board re-stamps the crumb on entering DONE. So a
+  board that was armed through a landing (or an armed ground run to DONE) and then gets a CC `reboot`
+  — or any soft/WDT reset — within 10 min comes back **DONE, armed and WARM-STARTED**, and every
+  further reboot restarts the 10 min. A power cycle reads PWRON and is always cold. `arm`/`verify`
+  flag the stage (`stage is done, not setting`).
+* **Validation:** HITL flight with a forced `machine.reset()` mid-glide: the board must come back
+  armed, in the saved stage, steering to the same zone.
 * **Measured — the in-flight OOM soak (7/06, `tools/oom_soak.py`):** a HITL glide ballasted to
   566 KB free hit a REAL mid-glide OOM (GC-off burn ~140 KB/s with the sim's own churn on top of
   the ~15–18 KB/s control-path leak). What actually happens at exhaustion: the asyncio runtime
@@ -653,9 +671,9 @@ against a guaranteed lawn-dart).
   stall-detect path never runs, and the crash→neutral `finally` cannot execute either: **the fins
   freeze at the last commanded deflection** (~1.4 s from the last servo write to the reset), then
   the STARVED hardware `machine.WDT` panics the chip (`rst SW_CPU_RESET`, `reset_cause 3` = WDT).
-  main.py then ran the five-signal gate against the genuine WDT cause and correctly REFUSED on
-  the bench (`separation switch reads nested`), cleared the crumb, came up cold, rejoined the
-  wifi and the CC hub. So the recovery chain is proven with one amendment to the outage model:
+  main.py then ran the gate (five signals at the time) against the genuine WDT cause and correctly
+  REFUSED on the bench (`separation switch reads nested`), cleared the crumb, came up cold, rejoined
+  the wifi and the CC hub. So the recovery chain is proven with one amendment to the outage model:
   the ~1.4 s pre-reset segment flies at the last banked deflection, not neutral — the backstop
   behind the backstop (hardware WDT outliving the watchdog task) is what carries the reset.
 * **The memory-rescue layer (7/06, `board_health`):** the in-flight GC disable buys
@@ -663,20 +681,23 @@ against a guaranteed lawn-dart).
   collect at a known-safe moment is legitimate. Because the GC-off leak is *garbage*, the
   vitals task defuses the OOM before it lands — re-firing every health period for as long as the
   trigger holds (a persistent leak gets a collect per second, altitude allowing). The decision is
-  physics, not a byte threshold — collect when memory dies before the flight is safely over: predicted **`oom_s` < 2 ×
-  `land_s`** (time-to-exhaustion from the memory-decay slope vs time to sink to the rescue floor
-  from the elevation-decay slope; no descent trend yet → no rescue — the glide always
-  descends, so `land_s` exists exactly where a rescue is meaningful), with **proven safe
-  altitude** (known elevation above `rescue_agl_m` = 10 m ≈
-  2× the 5 m landing gate — a 0.2 s pause costs ~2 m), in BOOSTING/GLIDING only, never LANDING.
+  physics, not a byte threshold — collect when memory dies before the flight is safely over: predicted **`oom_s` ≤
+  `land_s`** (time-to-exhaustion from the memory-decay slope vs time to sink to the ground from the
+  elevation-decay slope; no descent trend yet → no rescue — the glide always descends, so `land_s`
+  exists exactly where a rescue is meaningful). It began at 2 × `land_s` and was cut to 1 ×: `oom_s`
+  already counts down to a reserve, not to zero, and the pause is priced ~5× the collect measured in
+  flight, so the third margin only spent control slices (1–4 pauses per flight). **Proven safe
+  altitude** is a known elevation above a **dynamic floor** — 2× the descent a 200 ms pause costs at
+  the live sink rate, no fixed `rescue_agl_m` — in BOOSTING/GLIDING only, never LANDING.
   The collect is bracketed by watchdog `kick()`s (it is atomic and unfeedable, so it starts on a
   full WDT budget). Both predictions ride `health.csv` + `inspect health` — the operator's OOM
   countdown and landing countdown. All-integer bookkeeping (cm, bytes/s, whole seconds).
   **Measured pause costs:** ~65–260 ms on a mostly-free heap (the real anomaly-rescue case — the
   trigger fires early, while collects are still cheap) but **3.4 s on a ballast-full 32 MB
-  heap** — which is why `wdt_timeout_ms` stays 1000 (500 killed the rescue in HITL) and why a
-  rescue near true exhaustion may still lose to the watchdog: the reset + warm-start chain below
-  remains the layer behind it. **Validated on-board (the OOM soak re-flown, watchdog off):** the
+  heap** — which is why `wdt_timeout_ms` is **5000**, a measured floor (config_default.py): 1000
+  boot-loops the board every ~8.5 s (3000 still does, 4000 is stable) and could not cover a 3.4 s
+  collect even with a `kick()`. A rescue near true exhaustion may still lose to the watchdog: the
+  reset + warm-start chain below remains the layer behind it. **Validated on-board (the OOM soak re-flown, watchdog off):** the
   same ballasted scenario that hard-panicked the board now lands — 8 rescues, each logged with
   its decision pair (`oom 58s, land 58s` narrowing to `22s/12s`), the sawtooth visible in
   `mem_free`, rescues standing down at LANDING per the gates, flight to DONE.
@@ -781,21 +802,25 @@ subscriber would stall the publisher inline. Instead the mechanism is chosen per
 
 * **Everything else goes through one Recorder.** For simplicity there is a single non-hot path.
   Every task reports logs and telemetry **directly to the Recorder** (`Recorder.log()`,
-  `Recorder.tlm()` — a global singleton), and each record is stamped with `time.time_ns()//1000`
-  (microseconds, monotonic, no wrap). The Recorder enqueues complete UART-ready text lines into
-  two PSRAM ring buffers by priority:
+  `Recorder.tlm()` — a global singleton), and each record is stamped with `time.ticks_us()`
+  (`Recorder.timestamp()`): microseconds of uptime that **wrap every 2^30 µs ≈ 17.9 min**. A long pad
+  dwell puts a wrap inside a flight, so a parser must unwrap the stamps — `tools/flight_telemetry.py`
+  (`_unwrap`) does; ad-hoc tooling that reads them raw misreads the flight. The Recorder enqueues
+  complete UART-ready text lines into two PSRAM ring buffers by priority:
   * **Telemetry — 1st priority queue.**
   * **Logs — 2nd priority queue.**
   An async drain loop empties these to the Recorder module (Luckfox) over UART, telemetry before
-  logs. The UART push happens **first** (it is the authoritative flight-data sink); any other
-  subscribers — notably the Control Center live view — receive the same records **only after**
-  they have been pushed to UART. This guarantees recorder durability first and treats CC as a
-  best-effort secondary consumer. Records are written into the rings with `struct.pack_into`
+  logs. The UART ring is written **first** (it is the authoritative flight-data sink); the Control
+  Center live view gets a copy teed into its own small ring right after, and only while a
+  `log`/`tlm` window is open. The tee never gates the primary write, so CC stays a best-effort
+  secondary consumer. Records are written into the rings with `struct.pack_into`
   rather than slice-assignment, which is O(buffer length) on this port (see the
   [benchmark findings](../doc/benches/WaveShare_esp32p4-micropython-findings.md)). Telemetry streams are
   created via a `Telemetry(file, fields)` helper that emits a CSV header first and then
-  timestamped rows; all streams in a boot share one session prefix (`YYYYMMDD_HHMMSS`, produced
-  from the RTC the first time telemetry is emitted) so each flight's files are distinct.
+  timestamped rows; all streams in a boot share one session prefix — `YYYYMMDD_HHMMSS_<6-digit
+  random>` from the RTC the first time it is needed, or `recorder.session` verbatim when CC assigns
+  one ([`board-config.md`](board-config.md)) — so each flight's files are distinct. The random tag is
+  what separates boots: the board has no battery-backed RTC, so unsynced boots share a date.
 
 This collapses what would otherwise be a separate event-bus plus ring buffers into the Recorder:
 discrete events are just log records, and the priority queues are the decoupling buffers
@@ -803,24 +828,25 @@ between fast producers and the slow UART/CC drains.
 
 ## Logging
 
-Log strings append system uptime values in milliseconds alongside a standard descriptor layout:
+Each log line is `<ticks_us> <descriptor> :: <message>` — the uptime in **microseconds**, wrapping
+as above:
 
-111 Controller :: setup started
- 2222 Controller :: boosting detected
- 5555 Controller :: landing completed
+```
+4940864 controller :: setup started
+```
 
  The centralized logging manager multiplexes data across these potential sinks depending on system state:
 - Hardwired UART serial interface (console).
-- Raw network sockets to the Control Center over TCP (active only when the Wi-Fi connection is maintained, i.e. prestart).
+- The Control Center, which polls a tee of the log over the CC link while a `log` window is open (the link can outlive ignition — [`cc-protocol.md`](cc-protocol.md)).
 - The Recorder module over the dedicated `uart_recorder` link, which persists logs to its own SD card (the controller has no local SD). See [recorder module](../src/camera).
 
 ## Telemetry
 
-Telemetry mirrors the logging architecture but outputs structured, semicolon-separated CSV profiles streamed to the Recorder, which the Luckfox demuxes into one file per stream (`<session>_<file>.csv`). For example the board-vitals stream `board_health.csv` — real rows from an on-board flight (`uptime` µs; `temp` °C; `mem_free` bytes, showing the GC-off sawtooth; `load` %, peaking at the landing work):
-uptime;temp;mem_free;load
-4940864;32;32612240;0
-11591868;31;31532800;47
-14650552;31;32537888;6
+Telemetry mirrors the logging architecture but outputs structured, semicolon-separated CSV profiles streamed to the Recorder, which the Luckfox demuxes into one file per stream (`<session>_<file>.csv`). Every stream's first column is `uptime` (the wrapping `ticks_us` above). For example the board-vitals stream is `health.csv` (`tasks/board_health.py`), eight fields after the uptime:
+```
+uptime;temp;mem_free;load;oom_s;land_s;leak_kbps;rescues;rescue_ms
+```
+The generated [`doc/telemetry.md`](../telemetry.md) lists every stream and its fields; trust it over any example here.
 
 Post-flight parsing arrays can extract these files to compile automated 3D spatial flight path models in standard GPX formatting.
 
@@ -914,7 +940,7 @@ The physical booster separation event is handled via an explicit electrical disc
 - Pressure Micro-Switch: A Gravity Digital Crash Sensor mounted to the airframe that springs open immediately as the glider leaves the booster body tube.
 - Breakaway Pin/Socket: A physical wire loop plugged into a dedicated port on the flight computer. When the motor's black powder ejection charge pops the glider out of the body tube, the tethered wire pulls free from the socket.
 
-The resulting state transition instantly alters the input pin logic to HIGH, invoking an unblock event via a hardware interrupt. This forces the master Flight Controller to transition immediately from Boosting to Gliding state. For separation detection, sensor or termination wire and IMU can be used simultaneously to ensure proper separation detection:
+The fitted part is the copper-pad pair (`drivers/separation.py`): while nested the pads route 3V3 and the pin reads **HIGH**; separation opens them and the internal **pull-down** takes the pin **LOW**. So **LOW = separated**. An edge interrupt wakes the driver, which acts only once the new level has HELD for `debounce_ms` (at least three agreeing reads), so a vibration blip cannot separate. A held LOW during Boosting moves the stage to Gliding; at any other stage it is only recorded. For separation detection, sensor or termination wire and IMU can be used simultaneously to ensure proper separation detection:
 1. Separation sensor triggered
 2. IMU detects sudden pitch/roll change
 3. Altimeter shows positive vertical deceleration
@@ -922,13 +948,13 @@ The resulting state transition instantly alters the input pin logic to HIGH, inv
 
 ## Servos
 
-Three independent micro-servos drive the vertical stabilizer and dual elevon surfaces: **two SG90 on the elevons and one metal-gear MG90S on the yaw fin** (`config_default.py` drivers `sg90` / `mg90s`). They are electrically interchangeable — same PWM interface and rail — so the figures below apply to both. These servos provide a nominal stall torque of 1.2–1.4 kg·cm and an actuation speed of 0.11 seconds per 60 degrees. Due to significant manufacturer variability among component clones, custom hardware pulse-width modulation (PWM) calibration maps must be verified during system setup.To mitigate severe voltage drops on the primary 5V power line (as individual micro-servos can draw up to 1A under stall loads), the flight software enforces strict electrical safety protocols:
+Three independent micro-servos drive the vertical stabilizer and dual elevon surfaces. **Every profile flies `sg90` on all three fins** — `config_default.py` and every 2026-10-03 launch config. An `mg90s` driver exists (a metal-gear positional part, electrically an SG90, faster slew) and a mixed fleet is supported per fin, but no profile selects it, whatever the `config_default.py` comment says. These servos provide a nominal stall torque of 1.2–1.4 kg·cm and an actuation speed of 0.11 seconds per 60 degrees. Due to significant manufacturer variability among component clones, custom hardware pulse-width modulation (PWM) calibration maps must be verified during system setup.To mitigate severe voltage drops on the primary 5V power line (as individual micro-servos can draw up to 1A under stall loads), the flight software enforces strict electrical safety protocols:
 - Position update commands are suppressed if the target angle matches the current surface deflection state.
 - Target positioning parameters are checked against baseline calibration maps loaded during system setup.
 - The Flight Controller triggers servo updates sequentially rather than simultaneously to prevent additive current spikes.
-- Angular deflections are structurally limited to an operational envelope of -45° to +45°.
+- Control deflection is limited to ±45° by the mixer's `limit_deg`. The **pre-flight probe is not**: `probe`, `verify` and `arm` sweep each fin to its `min_deg` and `max_deg` — 0° and 180° by default, and no airframe profile narrows them — so the linkage must tolerate full servo travel.
 - This small throw keeps surface travel times well under 1ms, utilizing range correction tracking profiles where applicable.
-- The integrated diagnostic task handles sequential verification by sweeping the surfaces through steps and measuring return latencies.
+- The probe sweeps one fin at a time (min → max → neutral) and, where an INA226 is fitted, checks the rail draw while it moves: no rise fails the probe (dead servo, lost PWM pin, unpowered rail); an excessive rise is logged as a possible stall or binding.
 
 ## Storage
 
@@ -936,7 +962,7 @@ High-capacity storage does **not** live on the controller. The Recorder module (
 
 ## Wi-Fi
 
-The integrated 2.4GHz Wi-Fi subsystem is optimized for extended range. During ground staging the board joins the **Control Center's** network as a **station** (SSID, credentials, CC host/port and tunable TX power come from the `wifi` section of `board.config`; Bluetooth is disabled to improve the link). Once a network socket connection to the Control Center is established, the flight controller unlocks remote parameter tuning, health monitoring, and live telemetry streaming. The link exists only in prestart; it is expected to be lost from ignition onward. See [`board-config.md`](board-config.md).
+The integrated 2.4GHz Wi-Fi subsystem is optimized for extended range. During ground staging the board joins the **Control Center's** network as a **station** (SSID, credentials, CC host/port and tunable TX power come from the `wifi` section of `board.config`; Bluetooth is disabled to improve the link). Once a network socket connection to the Control Center is established, the flight controller unlocks remote parameter tuning, health monitoring, and live telemetry streaming. The board stops initiating connections once airborne, but a pad connection stays up while range lasts, so the board itself refuses active commands (fin-sweeping probes, calibrate, config writes, reboot) outside SETTING/DONE. See [`cc-protocol.md`](cc-protocol.md) and [`board-config.md`](board-config.md).
 
 ## Camera
 

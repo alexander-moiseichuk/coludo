@@ -7,10 +7,13 @@ Script a board over CC from the shell, through the running Control hub.
 The hub (src/control/main.py) exposes POST /api/cmd on :8080: it relays one CC command to a named board
 and returns the board's reply as JSON. This wraps that into one line so on-board tests do not need the
 interactive console (telnet 1235 / rshell) -- every CC command becomes a scriptable call with a
-meaningful exit code (0 == the board replied `ok`/`pong`/`iam`, non-zero == `err` or no board):
+meaningful exit code (0 == the board replied `ok`/`pong`/`iam`, non-zero == `err` or no board). Two
+commands reply `ok` with their verdict INSIDE, so the exit code reads that instead: `verify` exits 1
+when `pass` is false and 3 when the hardware passes but the board is not flight-ready; `probe` exits 1
+when any device reports a problem.
 
   tools/cc.py taster verify                 # pre-flight pass/fail (exit code is the verdict)
-  tools/cc.py taster probe imu_lsm6dso32    # one device self-test
+  tools/cc.py taster probe imu_lsm6dso32    # one device self-test (exit 1 on a failing device)
   tools/cc.py taster inspect mission        # an inspectable's snapshot
   tools/cc.py taster tlm 2000               # telemetry rows buffered since the last tlm
   tools/cc.py taster get-config board       # the running board config
@@ -29,6 +32,7 @@ import urllib.error
 import urllib.request
 
 _OK_STATUSES: tuple = ('ok', 'pong', 'iam')
+_NOT_READY: int = 3  # verify: the hardware passed but the flight-readiness gate did not (2 is "no hub")
 
 
 def _resolve(param: str) -> str:
@@ -95,6 +99,40 @@ def _render(payload: dict) -> None:
     print(' '.join([status] + [str(a) for a in args]) if status else '(no reply)')
 
 
+def _verdict(command: str, http_status: int, payload: dict) -> int:
+    """
+    The exit code for one reply: the board's own verdict, not just whether it answered.
+
+    `verify` and `probe` always reply `ok` -- a board that ran its checks answered successfully -- and
+    carry the result in the JSON arg, so keying on the status alone let a failing pre-flight exit 0.
+
+    Args:
+        command - the CC command that was sent.
+        http_status - the hub's HTTP status.
+        payload - the decoded /api/cmd reply.
+
+    Returns:
+        0 on success; 1 on an `err` / hub error, a verify without `pass`, or a probe with any non-null
+        result; _NOT_READY for a verify that passed the hardware but not the readiness gate.
+    """
+    if http_status != 200 or payload.get('status') not in _OK_STATUSES:
+        return 1
+    if command not in ('verify', 'probe'):
+        return 0
+    args = payload.get('args', [])
+    try:
+        result = json.loads(args[0])
+    except (IndexError, ValueError, TypeError):
+        return 1  # an ok with no readable verdict is not a pass
+    if not isinstance(result, dict):
+        return 1
+    if command == 'probe':
+        return 1 if any(value is not None for value in result.values()) else 0
+    if not result.get('pass'):
+        return 1
+    return 0 if result.get('ready') else _NOT_READY
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description='Run one CC command on a board via the Control hub.')
     parser.add_argument('--host', default='127.0.0.1', help='hub host (default 127.0.0.1)')
@@ -107,8 +145,7 @@ def main() -> int:
     params = [_resolve(param) for param in args.params]
     http_status, payload = _post(args.host, args.port, args.board, args.command, params)
     _render(payload)
-    # exit code is the verdict: 0 only when the board itself replied ok/pong/iam, so tests can chain
-    return 0 if http_status == 200 and payload.get('status') in _OK_STATUSES else 1
+    return _verdict(args.command, http_status, payload)  # the exit code is the verdict, so tests can chain
 
 
 if __name__ == '__main__':

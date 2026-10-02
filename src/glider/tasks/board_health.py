@@ -19,7 +19,7 @@ import asyncio
 import gc
 import time
 
-import controller as controller_mod
+import controller as controller_module
 import databoard
 import fixed
 import recorder
@@ -191,7 +191,7 @@ class BoardHealth(task.Task):
         (~1.4 s frozen fins + ~7 s reboot + a warm-start gamble). Called every period: the rescue
         RE-FIRES for as long as the trigger holds, so a persistent leak gets a collect per second while
         the altitude allows. The decision is physics, not a byte threshold: collect when memory dies
-        BEFORE the flight is safely over -- predicted oom_s < 2x the time left to sink to the ground
+        BEFORE the flight is safely over -- predicted oom_s <= the time left to sink to the ground
         (land_s) -- and only with proven safe altitude (a known elevation above the DYNAMIC floor = 2x
         the descent a ~200 ms pause costs), in BOOSTING/GLIDING (never LANDING). No descent trend yet ->
         no rescue: the glide always descends, so land_s exists exactly where a rescue is meaningful.
@@ -218,7 +218,7 @@ class BoardHealth(task.Task):
         if fixed.from_float(elevation) <= floor:  # elevation (m) -> fixnum at the boundary, then compare
             return
         stage = self.controller.stage
-        if not (controller_mod.Stage.BOOSTING <= stage < controller_mod.Stage.LANDING):
+        if not (controller_module.Stage.BOOSTING <= stage < controller_module.Stage.LANDING):
             return
         oom = self.oom_s()
         if oom is None:
@@ -272,9 +272,12 @@ class BoardHealth(task.Task):
             elevation = None
         self._track(vitals['mem_free'], elevation)
         self._rescue(vitals['mem_free'], elevation)
-        self._telemetry.push((vitals['temp'], vitals['mem_free'], vitals['load'],
-                              self.oom_s(), self.land_s(), self._leak_kbps, self.rescues,
-                              self._rescue_ms))
+        try:  # the rescue above has already run; a full ring must not kill the vitals task with it
+            self._telemetry.push((vitals['temp'], vitals['mem_free'], vitals['load'],
+                                  self.oom_s(), self.land_s(), self._leak_kbps, self.rescues,
+                                  self._rescue_ms))
+        except Exception as error:
+            self.note('health :: record %r', error)
 
     async def _probe_loop(self) -> None:
         """

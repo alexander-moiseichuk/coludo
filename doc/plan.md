@@ -428,13 +428,14 @@ control change.
    cleared the crumb and rejoined wifi + CC. Full chain spec'd in coludo.md "In-flight reboot".
 3a'. ✅ **Memory rescue + OOM/landing forecast** (7/06, `board_health` — user proposal, physics
    trigger per user redesign) — collect when memory dies before the flight is safely over:
-   predicted `oom_s` < 2 × `land_s` (memory-decay vs elevation-decay slopes, all-integer EMAs;
-   no descent trend yet → no rescue), with PROVEN safe altitude
-   (elevation > `rescue_agl_m` 10 m ≈ 2× the landing gate), BOOSTING/GLIDING only. The collect
-   is bracketed by watchdog `kick()`s. Both forecasts ride health.csv + `inspect health`.
-   Measured: collects 65–260 ms on a mostly-free heap (the real anomaly case) but SECONDS on a
-   ballast-full one — so `wdt_timeout_ms` stays 1000 (500 killed the rescue in HITL; the fast
-   stall detect is `stall_ms` 500, independent). VALIDATED on-board: the soak that hard-panicked
+   predicted `oom_s` ≤ `land_s` (memory-decay vs elevation-decay slopes, all-integer EMAs;
+   no descent trend yet → no rescue; it began at 2 × and was cut to 1 ×), with PROVEN safe altitude
+   (elevation above a DYNAMIC floor: 2× the descent a 200 ms pause costs at the live sink rate),
+   BOOSTING/GLIDING only. The collect is bracketed by watchdog `kick()`s. Both forecasts ride
+   health.csv + `inspect health`. Measured: collects 65–260 ms on a mostly-free heap (the real
+   anomaly case) but SECONDS on a ballast-full one — so `wdt_timeout_ms` is 5000, a measured floor
+   (1000 boot-loops the board; see config_default.py; the fast stall detect is `stall_ms` 500,
+   independent). VALIDATED on-board: the soak that hard-panicked
    the board now lands (8 rescues, sawtooth in mem_free, stand-down at LANDING, DONE).
    Defence-in-depth stack: rescue → WDT reset → warm start → the 3b hardware supervisor below.
 3b. ❌ **HARDWARE power-cycle supervisor — DECLINED (7/09, user).** The soak proved a WDT chip reset

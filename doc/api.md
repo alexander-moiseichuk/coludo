@@ -81,7 +81,7 @@ The thin CC networking: dial Control, read request lines, write the dispatcher's
 
 - `__init__(config: dict, dispatcher, log=None, backoff_ms: int=1000)` — constructor
 - `run() -> None` — Connect to Control and serve forever, reconnecting with backoff on drop.
-- `serve(reader, writer) -> None` — Read commands from Control, dispatch, write responses. Returns on disconnect.
+- `serve(reader, writer) -> None` — Read commands from Control, dispatch, write responses. Returns on disconnect -- or on SILENCE.
 
 ### `create_dispatcher(cfg: dict, controller=None, on_reboot=None, config_path: str='board.config') -> Dispatcher`
 
@@ -176,6 +176,21 @@ if a measurement changes. Both forms stay public so benchmarks/tests call them D
 selector). Bound here: clamp_int, wrap180 (@viper, ~2.1-2.8x); between, magnitude_sq (@native,
 ~1.2-1.6x); bank_demand -> _upy for now (its @native measured 1.03x -- a thin wrapper over native
 between; switch to _opt when a bench shows a gain).
+
+### `altitude_m(pressure_pa: float) -> float`
+
+Barometric altitude (m AMSL) from pressure, the ISA approximation.
+
+One definition, because a second baro is a CROSS-CHECK: two drivers computing altitude with their own
+copy of this can differ by an edit rather than by the air, and the disagreement would read as a sensor
+fault. Called once per sensor sample (~10 Hz), so there is no optimised variant -- see the @viper /
+@native sections below for the primitives that earn one.
+
+Args:
+    pressure_pa - absolute pressure in pascals.
+
+Returns:
+    Metres above the sea-level datum; 0.0 for a non-positive pressure (a dead read, not a height).
 
 ### `clamp_int_upy(low: int, value: int, high: int) -> int`
 
@@ -427,7 +442,9 @@ Args:
 Returns:
     (cfg, source, errors). `source` is 'active' (the file was loaded), 'default' (no file), or a
     'default(fallback: ...)' reason (the file was bad JSON or failed validation); `errors` is the
-    validation error list for whatever config was chosen.
+    validation error list for whatever config was chosen. NOTE the returned cfg deliberately differs
+    from the file in one field: `board.firmware_version` is restamped from the running firmware (see
+    below), which is why config_id() excludes it.
 
 ### `schema_version(cfg) -> str`
 
@@ -531,6 +548,20 @@ control code reads the simulation. flight is enabled with test gains, the watchd
 off (self-contained sim), and separation is off (the boost-timeout drives BOOSTING -> GLIDING).
 Servos stay on so the sim can read the commanded fin angles. `default()` returns a fresh dict --
 mutate freely. Run it instead of config_default for a simulation; the flight config is untouched.
+
+### `mask(cfg: dict) -> None`
+
+Disable every real sensor the sim publishes over. Call it AGAIN after layout.resolve()/apply().
+
+layout.apply() sets `enabled` from what the revision fits, so resolving the layout after this
+re-enabled the bench parts -- a v1.0 board flew HITL on its real BNO055 and BMP280, a v1.1 board
+on its real BMI323, BMM350 and BMP581, and an L1X board landed at apogee on its bench laser.
+
+Args:
+    cfg - the config to mask, in place.
+
+Returns:
+    None.
 
 ### `default(motor: str='F15', noise: float=0.0, spike: bool=False, wind: float=0.0, wind_dir: float=0.0, boost_axis: str='z', glider_g: int=_GLIDER_G, inject_hz: int=0, gnss_drift: float=0.0, gnss_drift_dir: float=0.0, pad_dwell_s: float=0.0) -> dict`
 
@@ -1072,6 +1103,7 @@ sequence to be atomic across awaits should say so explicitly with `async with bu
 
 - `__init__(bus_id: int, spec: dict)` — constructor
 - `transaction()` — Hold the bus across a MULTI-STEP sequence that must not interleave (the explicit escape hatch).
+- `reclock() -> None` — Re-init this peripheral at its CONFIGURED clock.
 - `retune(freq: int) -> None` — Re-init this I2C peripheral at `freq` Hz in place (bench frequency calibration; no reboot).
 - `read(addr: int, reg: int, count: int, addrsize: int=8) -> bytes`
 - `read_chip_id(addr: int, reg: int, addrsize: int=8) -> int` — Read a device's one-byte identity register (WHO_AM_I / CHIP_ID).
@@ -1081,6 +1113,10 @@ sequence to be atomic across awaits should say so explicitly with `async with bu
 - `readfrom(addr: int, count: int) -> bytes` — Raw read (no register) -- pairs with writeto(); accounted, see writeto for why.
 - `device(addr: int) -> _Device` — A register window for one address on this bus (matches spibus.Bus.device).
 - `scan() -> list`
+
+### `live(bus_id: int)`
+
+The Bus the drivers already share for `bus_id`, or None before any driver has bound it.
 
 ### `get(bus_id: int, spec: dict) -> Bus`
 
@@ -1153,12 +1189,22 @@ firmware can serve both if it can tell them apart. It can: four addresses swap b
 revisions, which is four independent votes rather than one hinge, so a single dead device cannot flip
 the verdict.
 
-                       i2c:0                              i2c:1
-    v0.1   0x28 0x63 0x76 0x25 0x29             0x40
-    v1.0   0x28 0x76 0x40                       0x63 0x25 0x29
+                       i2c:0                                   i2c:1
+    v0.1   0x18 0x28 0x76 0x63 0x25 0x29                 0x40
+    v1.0   0x18 0x28 0x76 0x40                           0x63 0x25 0x29
+    v1.1   0x18 0x69 0x47 0x15 0x40                      0x63 0x25 0x29
 
-`0x28` (BNO055) and `0x76` (BMP280) sit on i2c:0 in BOTH, so they say nothing about the layout -- they
-are the sanity check that the scan worked at all rather than returning an empty bus.
+Three revisions, and they separate on two independent axes. The four devices that MOVE BUS separate
+v0.1 from the v1.x pair; the ATTITUDE PARTS separate v1.0 from v1.1, because the SEN0253 (BNO055 0x28 +
+BMP280 0x76, one module) gives way to the SEN0697 (BMI323 0x69 + BMP581 0x47 + BMM350 0x15). The
+ADXL375 is on SPI and invisible here, so "no ADXL375" is carried by the revision, never scanned for.
+
+`0x18` is the ANCHOR: the ES8311 audio codec soldered to the WaveShare board itself. It says nothing
+about the revision -- it is present on all of them -- which is exactly what an anchor is for: proving the
+scan reached a live bus rather than returning an empty set. It replaces the old pair of anchors (0x28 +
+0x76), and it is a better one precisely because it cannot be unplugged: those two were the SEN0253, so
+fitting a SEN0697 removed both and detection would have refused on a perfectly good board. The other
+known-present addresses stay in the list as fallbacks in case a board ever ships without the codec.
 
 Scanning does NOT go through i2cbus.get(): that caches a Bus per id, and the cached frequency would then
 outlive detection -- a scan at 100 kHz would pin the fast bus at 100 kHz for the whole flight. Raw I2C
@@ -1169,16 +1215,43 @@ whatever speed the chosen layout declares.
 
 Decide the layout from the buses themselves.
 
-Each moved device votes for whichever revision puts it on the bus it actually answered on. A device
-that answers on neither expected bus, or not at all, abstains -- so an unfitted or dead part costs a
-vote instead of casting a wrong one.
+Two independent kinds of evidence, counted into one tally per revision:
+
+  * a MOVED device votes for whichever revisions put it on the bus it actually answered on. This
+    separates v0.1 from the v1.x pair and says nothing within it.
+  * a FITTED part votes for the revisions that carry it. This is what separates v1.0 from v1.1,
+    since the SEN0253 and the SEN0697 occupy different addresses on the same bus.
+
+Absence never votes AGAINST. A dead or unfitted part costs its revision one vote rather than casting
+one for another, so no single failure can flip a verdict -- the whole reason the tally is spread over
+several addresses instead of hinging on one.
 
 Args:
     cfg - the board config, read for bus pins only (nothing is mutated).
 
 Returns:
-    (name, detail) where name is 'v0.1' / 'v1.0' / None. None means undecided, and the caller must
-    then leave the config exactly as written -- a guess here mis-buses every sensor at once.
+    (name, detail) where name is one of _REVISIONS, or None. None means undecided, and the caller
+    must then leave the config exactly as written -- a guess mis-buses every sensor at once.
+
+### `fitted(device: str, revision: str) -> bool`
+
+Whether `device` is physically present on `revision` -- the ONE place that question is answered.
+
+Every caller that instead wrote its own revision literal has eventually been wrong: resolve() gated
+on ('v0.1', 'v1.0') and so ignored v1.1 entirely, and test_spibus asked `revision != 'v1.0'` and so
+demanded an ADXL375 from a v1.1 board that has none. Both read fine until a third revision existed.
+Ask here instead, and adding a revision updates every caller at once.
+
+An UNDECIDED detection (revision not in _REVISIONS) answers False for the parts a revision removes:
+unknown is not evidence of presence, and a test that demands a part on an unidentifiable board
+reports a hardware fault when what it found was an inconclusive scan.
+
+Args:
+    device - the config device name, e.g. 'accel_adxl375'.
+    revision - the board revision, as detect() / RESOLVED gives it.
+
+Returns:
+    True when the part is fitted on that revision.
 
 ### `apply(cfg: dict, revision: str) -> list`
 
@@ -1785,7 +1858,7 @@ the launch pad; attitude is Euler degrees (roll, pitch, yaw=heading).
 
 ### `class Faults`
 
-Sensor-fault injection for robustness runs (findings §27.20).
+Sensor-fault injection for robustness runs.
 
 The firmware is full of degradation paths -- databoard priority fallback, the unconfident airspeed
 cap floor, the GNSS jump/steep gates, pitot saturation, warm start -- and those are exactly the paths
@@ -2098,6 +2171,7 @@ periodically -- nothing moves during the long pad dwell / post-landing wait, so 
 period would only wear the flash.
 
 - `setup() -> bool`
+- `seed(crumb: dict) -> None` — Carry a restored crumb's recovery identity forward (the warm start calls this).
 - `run() -> None` — Checkpoint on every stage change + every period_ms while airborne; forever.
 
 ## `wind.py`
@@ -2201,6 +2275,80 @@ Apply the configured BLE radio state. Inspectable: `radio` requested, `active` a
 - `inspect() -> dict`
 - `update(props) -> list`
 
+## `bmi323.py`
+
+_Tested by `test/test_bmi323.py`._
+
+BMI323 6-axis IMU (on the SEN0697) over the shared I2C bus: accel + gyro to the databoard.
+
+Provides the SAME channels as the LSM6DSO32 -- `accel` (float g) and `rate` (centideg/s fixnum) -- so the
+two are interchangeable sources for one channel and `tasks/attitude.py` runs off whichever the databoard
+hands it. That is the point of fitting this part: with the BNO055's on-chip fusion gone, BOTH attitude
+paths become the same complementary filter over two independent 6-axis sensors, instead of a black box
+plus a backup.
+
+Two BMI323 details the register map does not make obvious:
+
+  * every I2C register read returns TWO DUMMY BYTES before the data, so a 6-word burst is a 14-byte read
+    and the payload starts at offset 2. Reading it like an LSM6DSO32 returns plausible nonsense.
+  * registers are 16-bit and written LSB first.
+
+Scaling is exact integer where it feeds the control path: +/-16 g is 1/2048 g per LSB, and +/-2000 dps in
+centideg/s is raw * 3125 // 512 (= raw * 2000 * 100 / 32768, exactly). Register values are Bosch's own
+(bmi3_defs.h). @task.driver('bmi323').
+
+MOUNTING: the axis-to-airframe mapping (gx->roll, gy->pitch, gz->yaw) is the convention attitude.py and
+the PID D term assume. It is a property of how the board is glued in, not of the part -- field
+calibration flips a sign here exactly as it does for the mixer gains.
+
+### `class Bmi323(task.Task)`
+
+Accel + gyro to the databoard: `accel` in float g, `rate` in centideg/s fixnum.
+
+- `setup() -> bool`
+- `rearm() -> None` — Re-apply the configuration after something reset the part underneath it.
+- `run() -> None`
+- `probe() -> str` — On-demand self-test: the chip id reads back, then one sample reads (each step logged).
+- `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault.
+- `inspect() -> dict`
+
+## `bmm350.py`
+
+_Tested by `test/test_bmm350.py`._
+
+BMM350 3-axis magnetometer (on the SEN0697) over the shared I2C bus: the `mag` channel.
+
+Why it is driven at all, having been dismissed once: heading. `tasks/attitude.py` integrates gyro-z for
+heading and bounds the drift with the GNSS ground TRACK -- which only works above the course gate, and
+not at all while the fix is out. Boost is exactly when a consumer GNSS module loses lock, so the one
+reference that corrects heading is missing during the phase that introduces the most drift. A
+magnetometer is the only sensor on this board that bounds heading WITHOUT a fix.
+
+RAW, deliberately. Turning counts into microtesla needs each part's OTP compensation coefficients, and
+that is worth skipping here: heading needs a DIRECTION, and the hard/soft-iron ellipsoid fit this
+airframe needs anyway -- carbon, servo currents, a booster -- also absorbs per-axis sensitivity
+differences. So this publishes counts, and the field calibration that must happen regardless does the
+rest. Absolute field strength in microtesla is the only thing given up, and nothing here wants it.
+
+Two BMM350 details worth stating: every I2C register read returns TWO DUMMY BYTES before the data (the
+same quirk as the BMI323 beside it), and each axis is 24-bit two's complement, little-endian.
+
+Register values are Bosch's own (bmm350_defs.h). @task.driver('bmm350').
+
+### `class Bmm350(task.Task)`
+
+Raw magnetic field to the databoard as `mag` -- (x, y, z) counts, for heading.
+
+- `setup() -> bool`
+- `calibrated() -> bool` — Whether a hard/soft-iron calibration is in force (restored or just captured).
+- `calibration() -> str` — The outstanding instruction, or '' once calibrated -- what CC shows in the calibration column.
+- `calibrate() -> str` — Capture hard/soft iron from the turn the operator has just done.
+- `rearm() -> None` — Re-apply the mode after something reset the part underneath it.
+- `run() -> None`
+- `probe() -> str` — On-demand self-test: the chip id reads back, then one sample reads (each step logged).
+- `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault.
+- `inspect() -> dict`
+
 ## `bmp280.py`
 
 _Tested by `test/test_bmp280.py`._
@@ -2223,6 +2371,37 @@ Elevation is metres above the startup ground zero, captured per-sensor so it is 
 
 - `setup() -> bool`
 - `rearm() -> None` — Re-apply the mode/filter this driver set at setup, after something reset the part underneath it.
+- `run() -> None`
+- `update(props: dict) -> list` — Apply an operator property change: re-zero or directly set the ground reference.
+- `probe() -> str` — On-demand self-test: the chip id reads back, then one conversion reads (each step logged).
+- `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault.
+- `inspect() -> dict`
+
+## `bmp581.py`
+
+_Tested by `test/test_bmp581.py`._
+
+BMP581 barometric pressure sensor (on the SEN0697) over the shared I2C bus: the backup altitude channel.
+
+Provides pressure (Pa), temperature (°C), altitude (m AMSL) and elevation (m above the per-sensor startup
+ground zero) to the databoard, exactly as the BMP280 it replaces -- so nothing downstream learns a new
+name. `update {"rezero": true}` re-captures ground zero (e.g. after warm-up, just before launch).
+
+Simpler than the BMP280 in one way that matters: the BMP581 outputs COMPENSATED values, so there is no
+factory calibration to read and no fixed-point compensation to carry. Pressure is a 24-bit unsigned count
+of 1/64 Pa; temperature a 24-bit two's-complement count of 1/65536 °C.
+
+Register values are Bosch's own (bmp5_defs.h), and the configuration is the one the TMS-7 nose logger
+flew: pressure enabled at 4x oversampling, 50 Hz, normal mode. @task.driver('bmp581').
+
+### `class Bmp581(task.Task)`
+
+Backup baro to the databoard: pressure (Pa), temperature (°C), altitude (m AMSL) and elevation.
+
+Elevation is metres above the startup ground zero, captured per-sensor so it is offset-free.
+
+- `setup() -> bool`
+- `rearm() -> None` — Re-apply the mode this driver set at setup, after something reset the part underneath it.
 - `run() -> None`
 - `update(props: dict) -> list` — Apply an operator property change: re-zero or directly set the ground reference.
 - `probe() -> str` — On-demand self-test: the chip id reads back, then one conversion reads (each step logged).
@@ -2253,7 +2432,7 @@ accelerometer (g, including gravity) -> 'accel' as a low-g backup to the ADXL375
 - `setup() -> bool`
 - `sample() -> tuple` — Read the ACC..EUL block and return a FLAT 6-tuple (run() slices it).
 - `calibrated() -> bool` — Has the magnetometer EVER converged this session (or been restored from a saved profile)?
-- `calibration() -> str` — The figure-8 instruction while NDOF is unconverged, with the live reading folded in; '' once done.
+- `calibration() -> str` — What is still owed: the figure-8 while NDOF is unconverged, then the SAVE; '' once both are done.
 - `calibrate() -> str` — Persist the chip's learned calibration profile, once the operator's figure-8 has landed.
 - `run() -> None`
 - `probe() -> str` — On-demand self-test: the chip id reads back, then one fused sample succeeds (each step logged).
@@ -2552,6 +2731,49 @@ the shared slew gate; probe() sweeps it on demand.
 - `settle() -> None` — Apply a held reversal once the horn has arrived (call from the same loop as set_angle).
 - `finish() -> None` — Release the PWM (stop driving the pin) on shutdown.
 - `diagnose() -> str` — Deeper analysis when setup() failed: is the pin PWM-capable?
+- `inspect() -> dict`
+
+## `vl53l1x.py`
+
+_Tested by `test/test_vl53l1x.py`._
+
+VL53L1X time-of-flight laser ranger over the shared I2C bus: the above-ground-level (AGL) channel for
+the last metres of the glide, where the barometer is useless. Registered as a driver named vl53l1x.
+The VL53 family uses 16-BIT register addresses (i2cbus addrsize=16).
+
+THE SAME 0x29 ADDRESS AS THE VL53L4CX, different silicon: this part is 0xEACC and takes the VL53L1X
+Ultra-Lite-Driver init; the VL53L4CD/L4CX is 0xEBAA and takes a different one. Neither config produces
+ranges on the other part, so BOTH drivers check their model id strictly and return False on a mismatch
+-- which means a board can declare both and the fitted one simply wins, exactly as an absent device is
+skipped today. An I2C scan cannot tell them apart, so `layout` cannot either; it only makes the second
+entry FOLLOW the first onto the revision's bus, without casting a second vote for the one address.
+
+RANGE IS THE REASON TO CARE WHICH IS FITTED: the L1X is declared 2-4 m against the L4CX's 4-6 m, and
+the landing trigger (`land_agl_m`, sequencer) defaults to 5.0 m -- unreachable by an L1X, so the
+transition would silently fall back to barometric elevation, which is the thing the laser exists to
+replace. A board fitted with this part wants `land_agl_m` around 3.0; see doc/hardware.md.
+
+setup(): optional XSHUT reset -> wait for boot -> check the model id -> write the default
+configuration -> one calibration ranging cycle (start/wait/clear/stop, then the VHV writes) -> start
+continuous ranging. run(): wait for data-ready (the GPIO1 interrupt if wired, else a poll), read the
+distance and write AGL (m) to the databoard. Graceful: no I2C ack -> setup False -> Controller skips
+it. Shares its bus via the locked i2cbus.
+
+NO TIMING BUDGET IS SET. The L4CX driver computes RANGE_CONFIG_A/B from the macro period; that math is
+the VL53L4CD ULD's and does not apply to this silicon, whose ULD uses a lookup table keyed on distance
+mode instead. The config block's own timing stands until that table can be checked against the part.
+
+### `class Vl53l1x(task.Task)`
+
+Laser ToF: writes above-ground-level distance (m) to the databoard 'agl' slot.
+
+For the final low-altitude metres where the barometer cannot resolve height. Interrupt-driven when
+GPIO1 is wired.
+
+- `setup() -> bool`
+- `run() -> None` — The sampling loop: write AGL (m) to the databoard, forever.
+- `probe() -> str` — On-demand self-test: the model id reads back as THIS part's, the full 16-bit 0xEACC.
+- `diagnose() -> str` — Deeper analysis when setup() failed: classify the wire-level fault behind an absent ranger.
 - `inspect() -> dict`
 
 ## `vl53l4cx.py`
@@ -2905,6 +3127,13 @@ One connected Coludo board as seen by the hub: lockstep request/response over it
 (doc/specs/cc-protocol.md). The per-board lock makes every exchange strictly sequential, so the
 heartbeat and operator traffic to one board can never overlap. CPython 3.12, stdlib asyncio only.
 
+### `timeout_for(line: str) -> float`
+
+The reply deadline for a board-facing line: the fin-sweeping self-tests get _SLOW_TIMEOUT_S.
+
+Keyed on the command word, so the console path (a raw line) and command() (a built one) cannot
+disagree -- a console `arm` used to get the plain 10 s, and a timeout drops the link.
+
 ### `class Board`
 
 One connected board: lockstep request/response over its socket.
@@ -2913,7 +3142,7 @@ One connected board: lockstep request/response over its socket.
 - `peer() -> str` _(property)_
 - `exchange(line: str, timeout: float=EXCHANGE_TIMEOUT_S, quiet: bool=False) -> cc._Msg` — Send a ready board-facing line and return its parsed reply.
 - `properties() -> dict` — The Control-side snapshot of this board: identity + the cached config/inspect/stats/health.
-- `command(command: str, *args, timeout=EXCHANGE_TIMEOUT_S, quiet=False) -> cc._Msg` — Build `command args...` and exchange it.
+- `command(command: str, *args, timeout=None, quiet=False) -> cc._Msg` — Build `command args...` and exchange it.
 - `identify() -> str`
 - `inspect(name: str) -> dict`
 - `close() -> None`
@@ -2940,9 +3169,10 @@ itest_gps.py against a real receiver. CPython 3.12, stdlib asyncio only -- no py
 The latest GNSS fix, accumulated from GGA (position/altitude/satellites) and GSA (2D/3D).
 
 - `__init__()` — constructor
+- `age()` _(property)_ — Seconds since the last accepted GGA, None before the first.
 - `fix_3d() -> bool` _(property)_
 - `has_position() -> bool` _(property)_
-- `usable() -> bool` _(property)_ — The ideal launch condition: a 3D fix with enough satellites and an actual position.
+- `usable() -> bool` _(property)_ — The ideal launch condition: a FRESH 3D fix with enough satellites and an actual position.
 
 ### `class Gps`
 

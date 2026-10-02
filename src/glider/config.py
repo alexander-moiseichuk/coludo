@@ -446,10 +446,44 @@ def validate(cfg) -> list:
     # `fins` is a TOP-LEVEL section, not a component field -- limit_multiplier reaches the governor
     # via flight.py's `board.get('fins', {})`, so a component-only sweep never sees it. This is the
     # exact field the finding named, and the one the 100 Hz `* self._multiplier` would TypeError on.
-    _validate_numeric(cfg.get('fins') or {}, 'fins', errs)
+    fins = cfg.get('fins')
+    if fins is not None and not isinstance(fins, dict):
+        errs.append('fins is not an object')  # _validate_numeric would raise on a list or a string
+    else:
+        _validate_numeric(fins or {}, 'fins', errs)
     _validate_devices(cfg.get('sensors'), 'sensors', errs, bus_refs, seen_names)
     _validate_devices(cfg.get('components'), 'components', errs, bus_refs, seen_names)
+    _validate_watchdog(cfg.get('components'), errs)
     return errs
+
+
+_WDT_FLOOR_MS: int = 4000  # below this the board boot-loops (3000 still did, 4000 was stable) -- config_default
+
+
+def _validate_watchdog(components, errs: list) -> None:
+    """
+    An ENABLED hardware watchdog must not time out below the measured boot floor.
+
+    At 1000 ms the board resets every ~8.5 s forever, and with servos enabled that loop re-centres
+    every fin at every boot -- how servo_eleron_right died. The value is a measured floor, not a taste,
+    so a config asking for less is refused here rather than flown.
+
+    Args:
+        components - the config's components list (anything else is left to _validate_devices).
+        errs - the error accumulator.
+
+    Returns:
+        None; appends an error for an enabled watchdog below _WDT_FLOOR_MS.
+    """
+    if not isinstance(components, list):
+        return
+    for device in components:
+        if not isinstance(device, dict) or device.get('activity') != 'watchdog':
+            continue
+        timeout = device.get('wdt_timeout_ms', _WDT_FLOOR_MS)
+        if device.get('enabled', True) and isinstance(timeout, int) and timeout < _WDT_FLOOR_MS:
+            errs.append('%s.wdt_timeout_ms %d is below the %d ms boot floor (the board boot-loops)' % (
+                device.get('name', 'watchdog'), timeout, _WDT_FLOOR_MS))
 
 
 """Config identity -- a stable short hash of a config snapshot (for the CC iam / config_id)."""
@@ -482,6 +516,19 @@ def config_id(cfg) -> str:
     Returns:
         A 12-hex-char id: the SHA-256 prefix when hashlib is available, else an 8-hex FNV-1a fallback.
     """
+    """
+    `board.firmware_version` is EXCLUDED from the identity.
+
+    load() restamps it from the running firmware, so leaving it in would make the id a function of the
+    build: a byte-identical board.config would report a different id after every deploy, and the id
+    save() returns would not match the one the board then announces in `iam`. The firmware version is
+    already its own iam field, so the identity loses nothing by leaving it out -- and gains back the
+    property the protocol relies on, that the same configuration always hashes the same.
+    """
+    board = (cfg or {}).get('board') if isinstance(cfg, dict) else None
+    if isinstance(board, dict) and 'firmware_version' in board:
+        cfg = dict(cfg)
+        cfg['board'] = {key: board[key] for key in board if key != 'firmware_version'}
     canonical = _canon(cfg)
     if _HAVE_HASH:
         return binascii.hexlify(hashlib.sha256(canonical.encode()).digest()).decode()[:12]
@@ -498,6 +545,9 @@ def _builtin_default() -> dict:
     return config_default.default()
 
 
+BOOT_SOURCE: str = ''  # how THIS boot's config was chosen -- load()'s `source`, set once by main.py
+
+
 def load(path: str = 'board.config', defaults=None) -> tuple:
     """
     Layered load: the active board.config if present and valid, else the defaults.
@@ -512,7 +562,9 @@ def load(path: str = 'board.config', defaults=None) -> tuple:
     Returns:
         (cfg, source, errors). `source` is 'active' (the file was loaded), 'default' (no file), or a
         'default(fallback: ...)' reason (the file was bad JSON or failed validation); `errors` is the
-        validation error list for whatever config was chosen.
+        validation error list for whatever config was chosen. NOTE the returned cfg deliberately differs
+        from the file in one field: `board.firmware_version` is restamped from the running firmware (see
+        below), which is why config_id() excludes it.
     """
     if defaults is None:
         defaults = _builtin_default()
@@ -525,16 +577,32 @@ def load(path: str = 'board.config', defaults=None) -> tuple:
         data = json.loads(text)
     except (ValueError, OSError):
         return defaults, 'default(fallback: board.config is not valid JSON)', ['board.config is not valid JSON']
-    errs = validate(data)
+    try:
+        errs = validate(data)
+    except Exception as error:  # load() NEVER raises: a malformed section must fall back, not stop the boot
+        errs = ['validation raised %r' % error]
     if errs:
         return defaults, 'default(fallback: invalid board.config)', errs
     """
     The SAVED config wins as-is -- what you saved is what flies, so a flight stays reproducible and a
     board never silently starts running something you did not persist. But a config produced before a
     newer firmware's tree simply LACKS its new devices, which would otherwise show up only as a sensor
-    that mysteriously never ran (findings §27.13). So the version travels with the file and any mismatch
+    that mysteriously never ran. So the version travels with the file and any mismatch
     is reported through `source` -- the boot log, the capture's provenance line and CC all show it.
     """
+    """
+    firmware_version is RESTAMPED from the running firmware, and is the one field a saved config does
+    not own. Everything else here is configuration -- what you saved is what flies -- but this is not
+    configuration at all: it is an observation about the binary currently executing, and it travels
+    into board.config only because it happens to live in the same tree. Left as saved it reports the
+    firmware that WROTE the file, so a freshly deployed board announces the build it replaced (its boot
+    log, CC's version column and a HITL capture's BUILD line all read it as "what is running"). Wrong
+    in the dangerous direction too: a board left on stale code would still claim whatever last saved
+    its config. Restamping also self-heals, since the next save() persists the running version.
+    """
+    if isinstance(data.get('board'), dict) and isinstance(defaults.get('board'), dict):
+        data['board']['firmware_version'] = defaults['board'].get('firmware_version', 'dev')
+
     stale = outdated(data, defaults)
     return data, 'active' if not stale else 'active(config %s, firmware %s -- re-save to adopt)' % stale, []
 

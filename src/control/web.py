@@ -18,7 +18,8 @@ import asyncio
 import json
 import os
 
-_REASON = {200: 'OK', 400: 'Bad Request', 404: 'Not Found', 500: 'Internal Server Error', 502: 'Bad Gateway'}
+_REASON = {200: 'OK', 400: 'Bad Request', 404: 'Not Found', 500: 'Internal Server Error', 502: 'Bad Gateway',
+           504: 'Gateway Timeout'}
 _PAGE_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'index.html')
 _HUD_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'hud.html')
 
@@ -95,6 +96,16 @@ class Web:
         except (ConnectionError, asyncio.IncompleteReadError, asyncio.CancelledError,
                 ValueError, UnicodeDecodeError):
             pass  # torn-down link or a malformed request line/headers -> close quietly
+        except TimeoutError:
+            """
+            The board did not answer in time (board.exchange has already given the link up). That is an
+            answer the page can act on, so it goes out as JSON like every other /api reply: as the
+            generic text/plain 500 below, the page's res.json() threw and left `probing...` on screen.
+            """
+            try:
+                await _send_json(writer, 504, {'error': 'board did not answer in time (timeout)'})
+            except Exception:
+                pass
         except Exception:  # any handler fault -> answer 500 so the client never hangs
             try:
                 await _send(writer, 500, 'text/plain', 'internal error')

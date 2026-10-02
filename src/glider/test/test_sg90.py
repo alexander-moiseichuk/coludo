@@ -151,6 +151,15 @@ async def amain():
     await fin4.finish()
     await plain.finish()
 
+    """
+    A fractional trim passed validation and then raised TypeError in the int-only PWM path, breaking
+    that fin (and the fins after it in the mixer loop). It is whole degrees.
+    """
+    fractional = sg90.SG90('servo_yaw', {'pin': 'servo_yaw', 'trim': 2.6}, _StubController())
+    assert await fractional.setup() is True and fractional.inspect()['trim'] == 3
+    assert fractional.update({'trim': -1.4}) == ['trim'] and fractional.inspect()['trim'] == -1
+    await fractional.finish()
+
     print('ok: sg90 int degrees/clamp/trim/update/set_angle(compare-and-set)/finish + move(), feedback:None, '
           'probe(), time-combined commands')
 

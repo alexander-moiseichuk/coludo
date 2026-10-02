@@ -127,16 +127,19 @@ What TMS-7C does NOT carry, so its config must not expect them.
 
 - power_ina226: 7C flies a small battery->5 V board (~1 A) sized for telemetry alone. There is no
   current-sense shunt on it, so the part is not merely unused, it is absent.
+- laser_agl_l1x: 7C carries the VL53L4CX. An unfitted laser is NOT skipped quietly -- its setup failure
+  lands in controller.failures, which `verify` and `arm` count -- so exactly one laser entry stays
+  enabled per board.
 Its LSM6DSO32 is NOT absent: it reads 0x6c after the same two-jumper rework as 7D (SCK to the primary
 SCL, MISO to the primary DO -- see _TMS7D_ABSENT below for the netlist errors behind it), so the gyro,
 the PID D term and the complementary-filter attitude backup are all live on this airframe too.
 """
-_TMS7C_ABSENT: tuple = ('power_ina226',)
+_TMS7C_ABSENT: tuple = ('power_ina226', 'laser_agl_l1x')
 """
-What TMS-7D does not carry. It is 7C's list MINUS the INA226, because 7D HAS one and it probes
-healthy -- disabling a fitted, working current sensor would cost the energy budget and, more
-immediately, the servo probe's closed-loop draw check, which is the only thing that distinguishes a
-live servo from a lost PWM pin or an unpowered rail.
+What TMS-7D does not carry: the VL53L1X, as on 7C (it flies the VL53L4CX). It is 7C's list MINUS the
+INA226, because 7D HAS one and it probes healthy -- disabling a fitted, working current sensor would
+cost the energy budget and, more immediately, the servo probe's closed-loop draw check, which is the
+only thing that distinguishes a live servo from a lost PWM pin or an unpowered rail.
 
 Its LSM6DSO32 is now WORKING and therefore absent from this list. It read WHO_AM_I 0x00 until two
 netlist errors were patched, both the same mistake -- a signal taken from the module's AUXILIARY row
@@ -150,7 +153,7 @@ MOSI, CS, INT1, VIN and GND were correct throughout. Two jumpers to the primary 
 0x6c on the shipped mode-3/5 MHz bus, alongside the ADXL375 at 0xe5. FIX THE NETLIST FOR v0.2 -- both
 built boards need the same rework, and nothing was ever wrong with the part or the soldering.
 """
-_TMS7D_ABSENT: tuple = ()
+_TMS7D_ABSENT: tuple = ('laser_agl_l1x',)
 
 
 def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple = (),
@@ -178,6 +181,10 @@ def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple
     cfg = config_default.default()
     cfg['name'] = name
     cfg['board']['id'] = board_id
+    # Every board this writes is v0.1 (7C, 7D), and a v0.1 board flies with NO `layout` key -- a
+    # declared v0.1, the configs they were verified on. The firmware default is 'auto', which would
+    # switch a regenerated 7C/7D from declared to scanning the week of a launch.
+    cfg['board'].pop('layout', None)
     """
     Slew concurrency follows the POWER BOARD, so it is per-profile and never global.
 
@@ -308,7 +315,7 @@ def main() -> None:
         # None to inherit. It did inherit, and when the firmware default moved 3 -> 1 this profile
         # silently followed it, which is the wrong direction for the one profile that flies fins under
         # a PID. A flight profile should not change because a bench-safety default changed.
-        ('tms7d_control', 'TMS-7D', True, True, (), 3, False, 'full active control'),
+        ('tms7d_control', 'TMS-7D', True, True, _TMS7D_ABSENT, 3, False, 'full active control'),
     ):
         # KEYWORDS, not positions: adding launch_mode/watchdog as positional parameters silently
         # shifted `concurrency` into `watchdog` here, and the result still generated valid-looking

@@ -25,8 +25,7 @@ CONFIG SCHEMA VERSION -- the date THIS file's structure or defaults last changed
 
 A saved board.config carries the version it was produced from, forever; `config.load()` keeps running
 the SAVED config (what you saved is what flies -- reproducible) but reports a mismatch against this
-constant, so a config predating a new sensor/section is visible instead of silently dropping devices
-(findings §27.13).
+constant, so a config predating a new sensor/section is visible instead of silently dropping devices.
 
 **BUMP THIS on any change to the config TREE or its defaults** -- a new sensor/component, a renamed or
 moved key, a changed default value. Do NOT bump for a comment or a docstring edit. Bumping is what turns
@@ -38,8 +37,9 @@ CONFIG_VERSION: str = '20260828'  # recorder.telemetry_ms moved into the section
 def default() -> dict:
     board = {'id': 'taster', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION,
              'setup_retries': 3,  # re-attempt a flaky device setup at boot (breadboard contacts; 1 = no retry)
-             # 'auto' -> layout.resolve() decides v0.1 vs v1.0 by I2C scan at boot and re-buses the four
-             # devices that move between the revisions. Pin it to 'v0.1' / 'v1.0' on a board where a
+             # 'auto' -> layout.resolve() decides v0.1 / v1.0 / v1.1 by I2C scan at boot: it re-buses
+             # the four devices that move, and enables/disables the attitude parts each revision
+             # carries. Pin it to an explicit revision on a board where a
              # moving sensor is unfitted, since an absent device abstains and enough abstentions make
              # the vote undecided (which changes nothing, but also fixes nothing).
              'layout': 'auto'}
@@ -117,7 +117,10 @@ def default() -> dict:
 
     pins = {
         'separation_switch': 33,  # copper pads: HIGH=nested (3v3 routed), LOW=separated
-        'adxl375_int': 4,  # ADXL375 INT1 (free spare) — DATA_READY drives the accel sampling
+        'accel_int1': 4,  # accel DATA_READY, and it is SHARED by revision: the ADXL375's INT1 on
+                          # v0.1, the BMI323's on v1.1. One GPIO, one name -- the two parts are
+                          # mutually exclusive (see layout.py), and validate() rejects two names
+                          # for one pin, so naming it after either part would lie on the other.
         'adxl375_cs': 49,  # ADXL375 SPI chip-select (free spare)
         'lsm6dso32_cs': 50,  # LSM6DSO32 SPI chip-select (shares SPI1 with the ADXL375)
         'lsm6dso32_int1': 28,  # LSM6DSO32 INT1 accel data-ready (INT2/GPIO29 not wired)
@@ -219,7 +222,7 @@ def default() -> dict:
         'bus': 'spi', 'id': 1,  # moved off i2c:0 to its own SPI bus for clean high-rate reads
         'addr': 0x53,  # kept for an i2c fallback (set bus 'i2c', id 0)
         'cs_pin': 'adxl375_cs',  # SPI chip-select
-        'int_pin': 'adxl375_int',  # INT1 (data-ready / boost-detect) — drives the sampling;
+        'int_pin': 'accel_int1',  # INT1 (data-ready / boost-detect) — drives the sampling;
         # POLL rate when INT1 is silent: must beat the 20 ms `accel` freshness window below, so it is
         # the sensor's own 100 Hz ODR rather than a slow safety tick
         'period_ms': 10,
@@ -310,6 +313,65 @@ def default() -> dict:
     }
 
     """
+    SEN0697 attitude module (v1.1 boards only): BMI323 6-axis on i2c:0 @ 0x69 and BMP581 baro @ 0x47.
+
+    Fitted in place of the SEN0253 (BNO055 + BMP280), which is why both are `enabled: False` here and
+    switched on by layout.apply() when a v1.1 board is DETECTED -- the default config describes a v0.1
+    board, and a config that merely left them alone would bring up an IMU that is present, wired and
+    ignored.
+
+    The BMI323 sits at priority 1 BEHIND the LSM6DSO32 on both channels. That is the point of fitting
+    it: `rate` has been a single-source channel on every board so far ("sole gyro source"), so a dead
+    LSM6DSO32 took the PID's D term with it. Two independent 6-axis parts on different buses -- one SPI,
+    one I2C -- means the databoard hands attitude.py whichever still answers.
+
+    Note what ELSE changes on v1.1: with the BNO055 gone there is no priority-0 `attitude` provider at
+    all, so tasks/attitude.py's complementary filter stops being a backup and becomes the only path. It
+    is flight-proven in that role as a backup and has never been the sole one -- which is what TMS-7F
+    exists to retire.
+    """
+    imu_bmi323 = {
+        'name': 'imu_bmi323',
+        'driver': 'bmi323',
+        'bus': 'i2c', 'id': 0,
+        'addr': 0x69,
+        'period_ms': 10,  # 100 Hz, matching the ODR the driver configures; also the INT1 fallback
+        'int_pin': 'accel_int1',  # data-ready drives the sampling; OPTIONAL -- the driver falls back to
+                                  # the period poll on its own if the line is absent or silent, and says
+                                  # which mode it is in through `interrupt_silent` / `irq_runs`
+        'telemetry_ms': 0,  # 0 -> the Recorder global rate
+        'enabled': False,  # v1.1 only; layout.apply() fits it
+        'provides': {'accel': {'priority': 1, 'timeout_ms': 20},   # behind the LSM6DSO32 (±32 g, priority 0)
+                     'rate': {'priority': 1, 'timeout_ms': 20}},   # the gyro redundancy this fleet lacked
+    }
+
+    mag_bmm350 = {
+        'name': 'mag_bmm350',
+        'driver': 'bmm350',
+        'bus': 'i2c', 'id': 0,
+        'addr': 0x15,
+        'period_ms': 100,  # 10 Hz -- heading moves slowly and the part averages 4 samples internally
+        'telemetry_ms': 0,
+        'enabled': False,  # v1.1 only; layout.apply() fits it
+        # RECORDED, not yet consumed: nothing fuses `mag` into heading today. It is here so the flights
+        # that decide whether a magnetometer survives this airframe -- carbon, servo currents, a booster
+        # -- produce the data to judge it, before any control path depends on it.
+        'provides': {'mag': {'priority': 0, 'timeout_ms': 500}},
+    }
+
+    baro_bmp581 = {
+        'name': 'baro_bmp581',
+        'driver': 'bmp581',
+        'bus': 'i2c', 'id': 0,
+        'addr': 0x47,
+        'enabled': False,  # v1.1 only; layout.apply() fits it
+        'provides': {'altitude': {'priority': 1, 'timeout_ms': 200},
+                     'elevation': {'priority': 1, 'timeout_ms': 200},
+                     'pressure': {'priority': 1, 'timeout_ms': 200},
+                     'temperature': {'priority': 1, 'timeout_ms': 500}},  # slow quantity, capped <=1000
+    }
+
+    """
     Pitot/static airspeed (sdp810.py): SDP810-500Pa differential-pressure sensor on i2c:0 @ 0x25
     (bench-verified). P+ = pitot (total), P- = interior static; the interior reference has a position
     error, so pad-tare the zero (CC `update {"zero": true}`, glider still) and trim `air_density` (the
@@ -345,6 +407,34 @@ def default() -> dict:
         'enabled': True,
         # laser gives AGL (ground distance), not AMSL altitude, so it provides 'agl' only;
         # ~30 Hz continuous ranging -> 100 ms freshness (tune the timing budget on the bench).
+        'provides': {'agl': {'priority': 0, 'timeout_ms': 100}},
+    }
+
+    """
+The SECOND laser, for boards fitted with a VL53L1X instead of the VL53L4CX.
+
+Both parts answer on 0x29 and an I2C scan cannot tell them apart, so `layout` cannot choose between
+them -- but each driver checks its own model id (0xEACC vs 0xEBAA) and returns False on a mismatch, so
+BOTH can be declared and the one that is actually soldered wins. That is the same graceful-absent
+contract every driver already follows; nothing here needs editing per board.
+
+RANGE differs and it reaches the flight logic: the L1X is declared 2-4 m against the L4CX's 4-6 m,
+while `sequencer.land_agl_m` defaults to 5.0 -- above anything an L1X can report, so the GLIDING ->
+LANDING trigger would fall back to barometric elevation for the whole approach. A board fitted with the
+L1X wants `land_agl_m` nearer 3.0; see doc/hardware.md.
+
+No `timing_budget_ms`: drivers/vl53l1x.py deliberately does not set one (the L4CD macro-period math
+does not apply to this silicon), so the config block's own timing stands.
+"""
+    laser_agl_l1x = {
+        'name': 'laser_agl_l1x',
+        'driver': 'vl53l1x',
+        'bus': 'i2c', 'id': 0,
+        'addr': 0x29,
+        'xshut_pin': 'laser_xshut',
+        'int_pin': 'laser_int',
+        'period_ms': 50,
+        'enabled': True,  # harmless when absent: the model-id check rejects an L4CX and setup returns False
         'provides': {'agl': {'priority': 0, 'timeout_ms': 100}},
     }
 
@@ -419,8 +509,12 @@ def default() -> dict:
         attitude,
         baro_icp10111,
         baro_bmp280,
+        imu_bmi323,
+        mag_bmm350,
+        baro_bmp581,
         airspeed_sdp810,
         laser_agl,
+        laser_agl_l1x,
         power_ina226,
         gnss,
     ]
@@ -484,12 +578,18 @@ def default() -> dict:
     flight_timeout_ms: the RSO backstop -- this long after BOOSTING entry the stage forces DONE (GC +
     neutral fins) even with every landing sensor dead, so a blind glider cannot circle until the
     battery dies. 5 min >> any physically possible TMS flight.
+
+    land_timeout_ms: LANDING forces DONE this long after entry when stillness (still_g for ground_ms)
+    never confirms the touchdown -- carried off, rocking, a noisy accel. The descent from land_agl_m is
+    ~5 s (x2 = 10 s) and a normal LANDING 3.3-4.5 s; LANDING is GC-off with no memory rescue, and HITL
+    ran the heap out ~54 s after an unconfirmed touchdown. Keep it > ground_ms + the descent: raising
+    ground_ms toward 5 s wants this raised too.
     """
     sequencer = {'name': 'sequencer', 'activity': 'sequencer', 'enabled': True, 'period_ms': 50,
                  'launch_g': 2.5, 'launch_ms': 100, 'launch_alt_m': 10.0,
                  'apogee_drop_m': 5.0, 'apogee_arm_ms': 4000, 'boost_timeout_ms': 12000,
                  'land_agl_m': 5.0, 'land_ms': 300, 'still_g': 0.3, 'ground_ms': 3000,
-                 'flight_timeout_ms': 300000, 'disable_gc_flight': True}
+                 'land_timeout_ms': 10000, 'flight_timeout_ms': 300000, 'disable_gc_flight': True}
 
     """
     GNSS consistent-drift calibration (gnss_calib.py): average the reported ground velocity while
@@ -707,7 +807,7 @@ def default() -> dict:
     cheaper than the OOM chain (~1.4 s frozen fins + ~7 s reboot) -- and it re-fires EVERY health
     period for as long as the trigger holds (a fast leak gets a collect per second, altitude
     allowing; the HITL soak logged 8). No knob: the rest is physics. Collect when the predicted
-    time-to-OOM < 2x the time left to sink to the ground (memory-decay vs elevation-decay slopes),
+    time-to-OOM <= the time left to sink to the ground (memory-decay vs elevation-decay slopes),
     with a proven safe altitude. The safe floor is FULLY DYNAMIC (no fixed/base altitude): 2x the
     descent a ~200 ms collect pause costs, computed from the live sink rate -- so the rescue fires as
     low as physics allows and the doubled pause never sinks the glider to the ground. BOOSTING/

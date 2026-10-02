@@ -28,7 +28,12 @@
 # board should contain is how modules go stale on the device, which has bitten this project
 # repeatedly. Everything needing a deploy calls THIS with params (see src/glider/test/run_tests.sh).
 #
-# Usage: tools/deploy.sh [file ...]   # default: every module + packages + *.creds + test/*.py
+# A FILE LIST IS AN OVERLAY, NOT A FIRMWARE: `tools/deploy.sh <file> ...` pushes just those files onto
+# what the board already runs and does NOT wipe. It used to wipe first and then push only the named
+# files -- no main.py, so the board booted to a bare REPL -- while the summary still claimed main.py.
+# The overlay relies on the last whole-tree deploy having left no .py behind to shadow the new .mpy.
+#
+# Usage: tools/deploy.sh [file ...]   # default: every module + packages + *.creds + test/*.py (wiped)
 # Env:   PORT (default /dev/ttyACM0)
 
 set -u
@@ -64,11 +69,22 @@ check_tools() {
 }
 
 # Run one mpremote step until it wins the raw-REPL race. $1 = description, rest = mpremote args.
+# Each attempt is BOUNDED (STEP_TIMEOUT, overridable per call): on MicroPython 1.29 an `mpremote exec`
+# against a board running main.py with the radio up can hang forever -- the retry loop below never got
+# a second attempt, and the whole deploy (and every test round built on it) sat there until killed by
+# hand. A timed-out attempt now unwedges the board before retrying. The output is always left in
+# $tmp/mpremote.out for callers that need it.
 board_do() {
     local what="$1"; shift
-    local attempt
+    local attempt status
     for attempt in $(seq "$RETRIES"); do
-        mpremote connect "$PORT" "$@" >"$tmp/mpremote.out" 2>&1 && return 0
+        timeout "${STEP_TIMEOUT:-240}" mpremote connect "$PORT" "$@" >"$tmp/mpremote.out" 2>&1
+        status=$?
+        [ "$status" -eq 0 ] && return 0
+        if [ "$status" -eq 124 ]; then
+            warn "$what: attempt $attempt hung past ${STEP_TIMEOUT:-240}s -- unwedging the board"
+            python3 "$TOOLS/board_unwedge.py" >/dev/null 2>&1 || true
+        fi
         sleep "$RETRY_WAIT"
     done
     warn "$what failed after $RETRIES attempts:"; sed 's/^/  /' "$tmp/mpremote.out" | tail -15 >&2
@@ -115,11 +131,11 @@ lint() {
 # Lint everything; compile everything that is firmware, into $tmp. Test files are staged as SOURCE:
 # they run from the host (`mpremote run test/x.py`), so compiling them buys nothing.
 build() {
-    compiled=0
+    compiled=0; sources=0
     local f out
     for f in "${files[@]}"; do
         case "$f" in
-            */test/*.py) lint "$f"; cp "$f" "$tmp/test/" ;;
+            */test/*.py) lint "$f"; cp "$f" "$tmp/test/"; sources=$((sources + 1)) ;;
             *.py)
                 lint "$f"
                 out="$(staged_target "$f")"
@@ -139,7 +155,7 @@ build() {
 # what finally clears a stray host __pycache__); root is pruned by extension so operator state
 # survives. See the header.
 wipe_board() {
-    board_do "board wipe" exec "
+    STEP_TIMEOUT=45 board_do "board wipe" exec "
 import os
 def rmtree(path):
     try:
@@ -168,7 +184,10 @@ for entry in os.listdir('/'):
     # source), so the board boots stale code and the fix under test appears to have no effect -- the
     # worst possible failure, because it looks like the change was wrong rather than absent. This used
     # to be a warn-and-continue.
-    leftovers=$(board_do "wipe check" exec "
+    # board_do leaves mpremote's output in a FILE, not on stdout. This used to capture board_do's
+    # stdout -- always empty -- so `leftovers` was always empty and a failed wipe could never be caught:
+    # the guard against booting stale .py code had been silently inert.
+    STEP_TIMEOUT=45 board_do "wipe check" exec "
 import os
 stale = [e for e in os.listdir('/') if e.endswith('.py') or e.endswith('.mpy')]
 for d in ('/drivers', '/tasks', '/test'):
@@ -177,7 +196,10 @@ for d in ('/drivers', '/tasks', '/test'):
     except OSError:
         pass
 print('STALE:' + ','.join(stale))
-" 2>/dev/null | grep -oE "STALE:.*" | sed "s/^STALE://")
+" || wipe_failed=1
+    # tr -d '\r': the board answers over serial with CRLF, so a CLEAN board's line is "STALE:\r" --
+    # without this the check reads an invisible "\r" as a leftover and refuses every deploy
+    leftovers=$(grep -oE "STALE:.*" "$tmp/mpremote.out" 2>/dev/null | tr -d '\r' | sed "s/^STALE://")
     if [ -n "$leftovers" ] || [ -n "${wipe_failed:-}" ]; then
         echo "FATAL: wipe left files on the board: ${leftovers:-<wipe command failed>}" >&2
         echo "  A surviving .py shadows the new .mpy, so the board would boot STALE code and the" >&2
@@ -197,7 +219,7 @@ push_board() {
     for f in "$tmp"/*.mpy; do [ -e "$f" ] && add cp "$f" ":$(basename "$f")"; done
     for f in "${files[@]}"; do
         case "$f" in
-            */main.py) add cp "$f" ":main.py" ;;
+            */main.py) add cp "$f" ":main.py"; main_pushed=1 ;;
             *.creds)   add cp "$f" ":$(basename "$f")" ;;
         esac
     done
@@ -213,7 +235,15 @@ mkdir -p "$tmp/drivers" "$tmp/tasks" "$tmp/test"
 stamp_version
 collect_files "$@"
 build
-wipe_board
+[ "$#" -eq 0 ] && wipe_board      # a file list is an overlay (see the header): never wipe under it
 push_board
 
-echo " ${G}deployed${N} $compiled .mpy + main.py (+ test/ sources) -- board wiped first"
+# say what actually went: this line claimed main.py and a wipe for an overlay that had neither
+summary="$compiled .mpy"
+[ -n "${main_pushed:-}" ] && summary+=" + main.py"
+[ "$sources" -gt 0 ] && summary+=" + $sources test/ source(s)"
+if [ "$#" -eq 0 ]; then
+    echo " ${G}deployed${N} $summary -- board wiped first"
+else
+    echo " ${G}deployed${N} $summary -- overlaid onto the board's firmware, no wipe"
+fi

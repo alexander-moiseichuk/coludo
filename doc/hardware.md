@@ -25,9 +25,11 @@ wiring is in [`waveshare_esp32p4_pins.md`](waveshare_esp32p4_pins.md).
 | --- | --- | --- | --- |
 | **6-DoF (accel + gyro)** | **LSM6DSO32** | SPI `1` (cs 50) | ±32 g + ±2000 dps; **primary** accel (airspeed/boost) and the only gyro `rate` |
 | high-G accel | **ADXL375** ([Adafruit 5374](https://www.adafruit.com/product/5374)) | SPI `1` (cs 49) | ±200 g; **>32 g backstop only** — LSM6DSO32 already covers the 8–12 g boost |
-| **attitude (9-DOF)** + baro | **sen0253** = BNO055 + BMP280 | I²C `0x28` / `0x76` | one board, two devices; **BNO055 is flight-critical** (sole heading) |
+| **attitude (9-DOF)** + baro | **sen0253** = BNO055 + BMP280 | I²C `0x28` / `0x76` | **board v0.1 / v1.0.** One board, two devices; BNO055 fuses on-chip and is the sole heading there |
+| **attitude (10-DOF)** + baro + **mag** | **sen0697** = BMI323 + BMP581 + BMM350 | I²C `0x69` / `0x47` / `0x15` | **board v1.1.** One board, THREE devices; raw — the board fuses (`tasks/attitude.py`). 4 on hand |
 | pressure | **sen0517** = ICP-10111 | I²C `0x63` | primary altimeter |
-| AGL laser | **VL53L4CX** ([Adafruit 5425](https://www.adafruit.com/product/5425)) | I²C `0x29` | ToF, low-altitude (<~6–10 m) |
+| AGL laser | **VL53L4CX** ([Adafruit 5425](https://www.adafruit.com/product/5425)) | I²C `0x29` | ToF, low-altitude (declared 4–6 m) |
+| AGL laser (alt.) | **VL53L1X** | I²C `0x29` | ToF, declared **2–4 m** — same socket, different silicon; see *Two lasers, one socket* below |
 | airspeed | **SDP810-500Pa** ([Sensirion](https://sensirion.com/products/catalog/SDP810-500Pa)) | I²C `0x25` | pitot/static ±500 Pa; the **direct** airspeed → fin governor (see *Airspeed* below) |
 | GNSS | **ATGM336H** | UART 9600, 10 Hz | position; may lose lock under high-g |
 
@@ -47,19 +49,23 @@ What actually gates a launch, sorted by how badly its loss hurts. "Critical" = *
 | Device | Class | Why | On hand |
 | --- | --- | --- | --- |
 | ESP32-P4 controller | **Critical** | the flight computer | ✔ |
-| **BNO055** (attitude + heading) | **Critical — NO-FLY WITHOUT** | sole source of fused 9-DoF attitude *and* magnetometer heading; both the stabilisation PID and the bank-to-turn navigation depend on it. LSM6DSO32 is raw 6-DoF (no mag, no fusion) and **cannot** replace it. | **only 2 — must order more** |
-| LSM6DSO32 (6-DoF) | **Critical** (lean-bundle primary) | primary accel for the airspeed integrator + boost detect, and the only gyro `rate` | ✔ (best-bundle) |
+| **Attitude module** — sen0253 **or** sen0697 | **Critical — NO-FLY WITHOUT** | *some* source of attitude and heading is required: the stabilisation PID and the bank-to-turn navigation both depend on it. On v0.1/v1.0 that is the **BNO055**, fused on-chip. On v1.1 it is the **SEN0697**, fused by `tasks/attitude.py` from the BMI323's raw accel+gyro, with the BMM350 as the heading reference. LSM6DSO32 is raw 6-DoF (no mag) and cannot replace either. | 5+ BNO055, 4 SEN0697 |
+| LSM6DSO32 (6-DoF) | **Critical** (lean-bundle primary) | primary accel for the airspeed integrator + boost detect, and on v0.1/v1.0 the ONLY gyro `rate` (v1.1 adds the BMI323 as a second source) | **0 spare** — the last was soldered to TMS-7F on 2026-09-20; **5 on order** |
 | Power (5 V controller rail + servo rail) | **Critical** | — | ✔ |
 | Servos ×≥2 (SG90) | **Critical** | the fin actuators | ✔ |
 | Separation switch (copper pads) | **Critical** | the BOOSTING→GLIDING trigger | ✔ |
 | ICP-10111 baro | Important | primary altimeter (apogee / glide profile) | ✔ |
-| VL53L4CX laser | Important | low-altitude AGL (<~10 m) for the landing — baro is poor there | ✔ |
+| AGL laser (VL53L4CX **or** VL53L1X) | Important | low-altitude AGL for the landing — baro is poor there. Either part fits the socket; **enable exactly the one fitted** (an unfitted laser fails `verify`/`arm`); the L1X's shorter measured range cannot reach `land_agl_m`, and TMS-7F keeps it at 5.0 on purpose, so the baro fallback fires the landing (see *Two lasers, one socket*) | VL53L4CX out of stock — **1 VL53L1X fitted**, 5 more on order |
 | SDP810 airspeed | Important | **direct** pitot airspeed → the fin-authority cap (the estimate was the weakest signal). Degrades gracefully to the accel+GNSS estimate — the pre-pitot baseline flown in all HITL to date — if absent | ✔ (5) |
 | ADXL375 (±200 g) | Optional | >32 g high-g backstop; LSM6DSO32 ±32 g already covers the 8–12 g boost. Keep for telemetry / data-quality launches (run both, compare traces) | ✔ |
 | BMP280 baro | Optional | backup baro (rides on the sen0253 board with BNO055 anyway) | ✔ |
 | ATGM336H GNSS | Optional | aux position; loses lock under high-g, non-priority in fusion | ✔ |
 | Camera + SD | Optional | nice-to-have, isolated module | ✔ |
 
+> **SUPERSEDED:** the count below is from the first build. By 2026-08-06 there were **5+ BNO055 on
+> hand** and the blocker was gone (see the DECISION under the SEN0697 comparison), and v1.1
+> (TMS-7F) carries no BNO055 at all — the SEN0697 replaced it.
+>
 > **⚠ BNO055 is the one hard blocker.** We have **2 units**; that is enough for a single board (and
 > the maketboard wants two BNO055 anyway, since with one IMU attitude is a single point of failure).
 > **Order more BNO055 (sen0253) before fielding multiple units** — every flight unit needs one, and
@@ -158,14 +164,21 @@ The BMP280 rides on the sen0253 board with the BNO055 ("one board, two devices")
 and being a *different* part it also guards the common-mode case that two identical ICPs would share.
 
 `layout.detect()` keeps its tolerance for a second `0x63` anyway -- `0x63` counts as evidence only for
-v1.0, and for nothing on `i2c:0` where it would be true either way. That is now defensive rather than
-planned: if one is ever fitted, the detector loses no vote instead of silently cancelling one out.
+the v1.x pair (v1.0 and v1.1, from `i2c:1`), and for nothing on `i2c:0` where it would be true either
+way. That is now defensive rather than planned: if one is ever fitted, the detector loses no vote
+instead of silently cancelling one out.
 
-**CORRECTION (2026-09-05): the parts actually bought are four Adafruit 4754 (BNO085), NOT SEN0697.**
-An earlier note here recorded SEN0697; that was wrong and the analysis attached to it was answering a
-question about hardware nobody owns. The SEN0697 comparison below stays as the write-up of an
-alternative, and the DECISION that follows still stands for v1.0 — but the live option is now the
-BNO085, which is a *different trade*, not a cheaper version of the same one.
+**CORRECTION (2026-09-15): FOUR SEN0697 ARE ON HAND. The Adafruit 4754 was never bought.**
+In the operator's words: *"I tried to order adafruit 4754 but ordered 4 sen0697."* A 2026-09-05 note
+here claimed the reverse — that four BNO085 had been bought and SEN0697 was a mis-record — and that
+note was itself the mis-record. It was written from a garbled exchange, then repeated back to the
+operator as established fact, which is how it survived. Whichever way round it is stated, only one of
+these parts exists on the bench, and it is the **SEN0697**.
+
+So the comparison below is no longer academic on the SEN0697 side and no longer live on the BNO085
+side: the raw-only trade is the one actually available, and the on-chip-fusion trade would require
+buying hardware. The **DECISION that follows still stands for v1.0** — it turned on staying with the
+BNO055, which is unaffected by which alternative sits unused in a drawer.
 
 **What changes, and it is the load-bearing part.** The reason this section rejected the SEN0697 was
 that it is **raw only**, so adopting it means owning hard- and soft-iron magnetometer calibration next
@@ -177,7 +190,7 @@ detector and peer re-arm the current driver carries.
 
 So the two candidates are opposite trades rather than better and worse:
 
-| | BNO085 (owned) | SEN0697 / 3126 |
+| | BNO085 (**not owned**) | SEN0697 / 3126 (**OWNED, 4 units**) |
 |---|---|---|
 | fusion | **on-chip (SH-2)** | raw only |
 | magnetometer calibration | vendor's problem | **yours** |
@@ -187,14 +200,49 @@ So the two candidates are opposite trades rather than better and worse:
 **The recommendation for the BNO085 is unchanged and is stated in its own section below** ("Recommendation
 on the BNO085 swap"): not yet, and what decides it is the FIFO-drained shock capture, because +/-8 g
 against the BNO055's +/-16 g cannot be judged from simulation numbers that contain no ignition
-transient, ejection shock or landing impact. Owning four of them removes the availability question and
-nothing else.
+transient, ejection shock or landing impact. That recommendation now also carries an availability
+cost that the 2026-09-05 note wrongly removed: none are on hand.
 
 **DECISION (2026-08-06): not adopted — we stay on BNO055.** With **5+ BNO055 on hand** the unit-count
 blocker is gone, and that was the only pressing reason to move. Keeping the fused part also keeps the
 magnetometer calibration problem inside Bosch's black box. Recorded here so the comparison does not have
 to be redone; revisit only if a *new* need appears (a board with no BNO055, or a measured attitude
 problem the backup cannot fix).
+
+### SUPERSEDED (2026-09-16): adopted, as board revision v1.1 — and it earned it by measurement
+
+The revisit condition above was met from the other direction. The decision to stay was made on *unit
+counts and calibration convenience*; what changed is that the thing the SEN0697 brings and the BNO055
+cannot — **a magnetometer the flight code can see and correct** — turned out to be worth something
+measurable, and the fusion cost that this section feared was already paid: `tasks/attitude.py` has run a
+complementary filter as the priority-1 attitude backup since the redundancy work, so adopting raw parts
+needed **no new fusion architecture**, exactly as the incremental paragraph above predicted.
+
+The three parts are one module, so they arrive together: **BMI323 `0x69`** (accel + gyro, INT1-driven),
+**BMP581 `0x47`** (baro), **BMM350 `0x15`** (mag). `layout.py` gained a third revision and decides at
+boot which module is fitted; one firmware runs all three board revisions with no config edit **as
+long as the config says `"layout": "auto"`** (or names the revision). A config with no `layout` key
+is a declared v0.1 — see [`specs/board-config.md`](specs/board-config.md) → `board.layout`.
+
+**The evidence** — [`doc/sims/TMS-7-board_v1.1_sen0697/`](sims/TMS-7-board_v1.1_sen0697/), 54 board
+flights:
+
+* **The aircraft did not change.** Against the v1.0 baseline the in-zone SET is identical in the combo
+  that lands in the zone — the same seven scenarios in, the same three out, the three misses within
+  0.3 m of their old values. That is the result a module swap is supposed to produce.
+* **The magnetometer holds the glider near the zone when the GNSS is gone.** Over a 30 s blackout with
+  the attitude backup flying, drift away from the zone is **median +3 m (range −34 … +78)** with the mag
+  against **+84 m (range −49 … +158)** without it — closer in 9 of 12 matched pairs. The landing benefit
+  follows (median 78 m vs 116 m) but is noisier at 7 of 12, and is reported as a direction, not a number.
+
+**What it costs.** The ±16 g accelerometer ceiling is unchanged from the BNO055's, so this is still not
+the boost accel — the LSM6DSO32 (±32 g) remains primary and the ADXL375 question is untouched. And the
+calibration that Bosch's black box used to hide is now ours: the BMM350 needs a **level full circle, once
+per board**, requested from CC (`calibrate mag_bmm350`) and saved to NVS. It refuses a partial turn —
+a quarter circle yields a centre that is confidently wrong while scoring a *perfect* roundness, so the
+gate is angular coverage of the circle, not the shape of the data. Uncalibrated hard iron was measured at
+**214° of heading-dependent error** on the bench fixture, which is why no single learned offset can
+absorb it and why the device stays on the not-ready list until the turn is done.
 
 ## Post-flight consolidation — measure first, then remove
 
@@ -239,7 +287,7 @@ are silk-printed by their I²C names, so the mapping is *not* one-to-one:
 | **SDA** | SPI **MOSI** (SDI) | **47** | SPI1 MOSI |
 | **SDO** | SPI **MISO** | **46** | SPI1 MISO |
 | CS | chip-select (active low) | **49** | `adxl375_cs` |
-| INT1 | DATA_READY | **4** | `adxl375_int` |
+| INT1 | DATA_READY | **4** | `accel_int1` in `config_default` (shared with the BMI323's INT1 on v1.1); `adxl375_int` in the 7C/7D configs |
 
 To revert to I²C: tie CS high, wire SDA/SCL to GPIO7/8, and set the component `bus: 'i2c', id: 0`
 (the driver keeps the I²C path; `addr 0x53`). LSM6DSO32 now shares this same SPI1 bus on its own
@@ -298,6 +346,109 @@ combo is the backup baro (lower priority in fusion); an AHT20+BMP280 board is an
 ## Altimeter (laser)
 Barometer works very badly at very low altitudes, so the laser module becomes essential to cover the 10 meters and below range.
 **Chosen: [VL53L4CX](https://www.adafruit.com/product/5425)** ToF ranger (I²C `0x29`) — covers the close range well enough.
+
+### Two lasers, one socket — and the range reaches the flight logic
+
+Stock of the VL53L4CX ran out, so boards may instead carry a **VL53L1X** in the same footprint at the
+same `0x29`. They are different silicon (`0xEACC` vs `0xEBAA`) with different init blocks, and neither
+block produces ranges on the other part — so each driver checks its model id and returns False on a
+mismatch. Both are declared in `config_default`, but **a flight config enables exactly the one that is
+soldered**: the other's failed setup lands in the controller's failures, which `verify` and `arm` count,
+so declaring both makes the board refuse to arm (TMS-7F disables `laser_agl`; the 7C/7D profiles
+disable `laser_agl_l1x`). An I²C scan cannot tell them apart, so `layout` does not try; it only makes
+sure the second entry FOLLOWS the first onto whatever bus the revision puts the socket on, without
+casting a second vote for the one address.
+
+**The part that is not cosmetic: the L1X is declared 2–4 m where the L4CX is 4–6 m, and
+`sequencer.land_agl_m` defaults to 5.0 m.** The GLIDING → LANDING transition takes the laser when it
+has a fresh reading and falls back to barometric elevation when it does not. An L1X cannot report a
+valid range at 5 m at all, so on an L1X board that trigger would be driven by the barometer for the
+whole approach — which is the one thing the laser is carried to avoid.
+
+### What the measured range does to the AGL thresholds
+
+Two flight thresholds key off `agl`, and they degrade differently:
+
+| threshold | default | if the laser cannot reach it |
+|---|---|---|
+| `sequencer.land_agl_m` | 5.0 m | falls back to **barometric elevation** — the trigger still fires, just on the source the laser exists to replace |
+| `guidance.final_approach_agl` | 8 m | **no fallback** (`agl_source is not None`) — centreline tracking simply starts when the laser acquires |
+
+At a measured 2.07 m neither is reachable, and **bank makes it worse**: the laser looks straight down,
+the loiter orbit and final approach both run at `bank_limit` 45°, and banked the slant range is
+AGL/cos(bank) — so 2.07 m of sensor covers about **1.46 m of real AGL**, with the beam striking the
+ground at 45° incidence, which weakens the return again.
+
+Worth noting the 8 m threshold was never achieved even before this part: `guidance.py` assumed "the
+laser reaches ~4 m", so final approach was already engaging at half its intended height on the L4CX.
+The fix is a flight decision, not a code one — lower the thresholds to what the fitted laser delivers,
+give the final-approach gate the elevation fallback the landing trigger already has, or accept that
+centreline tracking starts late.
+
+**DECIDED for TMS-7F (2026-09-20): `land_agl_m` stays at 5.0 and `final_approach_agl` is 0 (off).**
+The recommendation that stood here -- lower `land_agl_m` toward ~1.5 m on an L1X board -- was
+rejected. The threshold gates BOTH sources, laser first and barometric elevation as the fallback, so
+lowering it to a laser-reachable 2 m would drop the BARO trigger to 2 m too, and the baro is what will
+actually fire: a reliable path traded for a lucky one. So the laser drives no control decision on
+7F; it records AGL for the last metre or two. Do not lower `land_agl_m` for an L1X. The reasoning and
+the revisit condition (a VL53L4CX measured over open ground in sunlight) are in
+[`launches/20261003/TMS-7F/README.md`](../launches/20261003/TMS-7F/README.md).
+
+**Measured on the bench, 2026-09-20** (taster board, i2c:1 at 100 kHz, the config block's own ~100 ms
+long-distance-mode timing):
+
+| target | valid rate | note |
+|---|---|---|
+| pale sheet, still, 1.0–1.5 m | **68/70** | the part working properly |
+| person in a black t-shirt, <0.5 m | 7/8 | black fabric is near worst case for an IR ToF |
+| same person, 0.5–1.0 m, moving | 5/211 | absorbing target + motion during integration |
+| room background 3–6 m (white walls) | 0 of 357, sweeping the room | status 2; the reported distance never tracked where it was aimed |
+| **palm flat on the sensor** | **valid immediately** | the control that proves the part is healthy — see below |
+
+**The part is confirmed healthy.** A palm placed flat on the sensor mid-capture flips every quantity
+at once, which no amount of configuration could fake:
+
+| | aimed at the room | palm on the sensor |
+|---|---|---|
+| distance | 2279 mm (noise floor) | **8–34 mm** |
+| status | 2 (signal fail) | **0 — valid** |
+| signal (ULD raw) | ~32 | **3739, peak 8726** |
+| ambient (ULD raw) | 16 | **0** (the palm blocks the light) |
+
+So the "pinned 2.2 m" readings were the genuine NO-RETURN noise floor, not a stuck sensor: with status
+non-zero the distance field is meaningless, and it never tracked where the board was aimed. The walls
+at 3–6 m are simply at or past a part declared to 2–4 m.
+
+**Usable range, measured without any synchronisation** (60 s free sweep of the room, the operator
+aiming wherever they liked; the question is simply the furthest distance that ever returned a VALID
+sample, so no labelled windows are needed -- every earlier timed test here required the operator to act
+at a moment they could not see, and one of them was mislabelled as a result):
+
+| | |
+|---|---|
+| furthest VALID sample | **2070 mm** (signal 131, ambient 26 -- a 5:1 margin) |
+| valid samples cluster | 1500–2000 mm, tailing off by 2250 |
+| valid rate over the sweep | 102 of 611 (the rest is beam falling on nothing resolvable) |
+| aimed at floor ~2 m / ceiling ~3 m | 0 valid of 154 / 0 of 153, signal 38–52 against ambient 21–23 |
+
+**So this part reaches about 2.0 m indoors** -- the bottom of its declared 2–4 m, consistent with
+ambient light being present. That also rules out a protective film still being on the lens: a film
+would not let it reach 2 m.
+
+**Do not read this as the part's range.** The L1X has a ~27° field of view, so at 2 m the
+cone is nearly a metre across and a hand-held sheet fills only a fraction of it -- the return is
+dominated by whatever is behind. Every bench reading past ~1.5 m was actually the wall at 3.1 m. In
+flight the GROUND fills the whole field of view, which is the best case rather than the worst, so the
+usable AGL ceiling has to be measured outdoors before `land_agl_m` is set from evidence.
+
+Raising the integration time does NOT help: 100, 200 and 500 ms all returned zero valid samples from
+that 3.1 m background (and 500 ms drops the rate to 3.5 Hz, against a 100 ms freshness window). That is
+why drivers/vl53l1x.py sets no timing budget -- the config block's default is as good as anything
+measurable here.
+
+Worth noting the same arithmetic is already tight for the L4CX — a 5.0 m trigger sits at the bottom of
+its 4–6 m declared band — and that `tasks/hitl.py` has modelled `laser_range_m` at **4.0 m** all along,
+so every simulated landing to date has assumed the shorter laser rather than the longer one.
 VL53L0X / VL53L1X are drop-in alternates; the [50m TOF Laser Ranging Sensor, 100Hz](https://www.dfrobot.com/product-2923.html)
 ([sen0648 spec](https://wiki.dfrobot.com/SKU_SEN0648_TOF_laser_ranging_sensor_50m)) is the long-range fallback if needed.
 
@@ -476,10 +627,10 @@ V_F as low as possible, **I_F ≥ 8 A**, **V_RRM ≥ 20 V**, on the **+ rail onl
 the servos to ~4.2 V, near the MG90S limit). For reverse-polarity specifically an **ideal-diode P-FET**
 (≈ milliohm drop) beats a Schottky.
 
-**Firmware helps too.** The fin `concurrency` gate staggers servo motion so they do not all slam at
-once — that caps the *simultaneity* of the draw; the reservoir cap caps the *transient*. A sustained
-all-three-stall > 3 A is an average-power limit the cap cannot fix (the module current-limits), so it is
-handled by not commanding three hardovers at once, not by more capacitance.
+**Firmware does NOT stagger the draw.** `fins.concurrency` gates `servo.move()` only, which nothing in flight or at boot calls: boot centring, the mixer, probe sweeps and `update` all write the PWM directly, so every fin re-centres together at every boot whatever it says. The reservoir cap is what caps the
+*transient*. A sustained all-three-stall > 3 A is an average-power limit the cap cannot fix (the module
+current-limits), so it is handled by not commanding three hardovers at once, not by more capacitance.
+On a current-limited bench supply the protection is to **disable the servos**, not a concurrency value.
 
 **Required, weight ~5–7 g (module + reservoir cap; optional TVS).**
 
@@ -517,7 +668,7 @@ Candidates (SG90 expected primary — cheap, compact, light):
 **Power**: servos run from their **own converter rail** (5 V — see [Converter](#converter) above),
 separate from the controller. The measured ~2.4 A peak of 3× MG90S is handled by that rail's **reservoir
 capacitor**; a series diode is not used (small servos → low back-EMF, the cap absorbs it). The firmware
-fin `concurrency` gate staggers servo motion so they do not all draw at once.
+does not stagger them: `fins.concurrency` gates `servo.move()` only, which nothing in flight or at boot calls: boot centring, the mixer, probe sweeps and `update` all write the PWM directly, so every fin re-centres together at every boot whatever it says.
 
 **Required, weight 10.6g per each engine and wires, at least 2 are required**
 
@@ -635,9 +786,11 @@ bus family so the attitude backup does not share a failure domain with the BNO05
 
 ### What it does NOT fix
 
-`icp10111` and `airspeed_sdp810` still share a bus, so the ICP's general call still reaches the pitot —
-which today has no `rearm()` and is started once in `setup()`. The layout moves that exposure; it does
-not remove it. Tracked separately as a firmware fix, not a board one.
+`icp10111` and `airspeed_sdp810` still share a bus, so the ICP's general call still reaches the pitot.
+The pitot is not in the ICP's peer-rearm list (that is `baro_bmp280` and `power_ina226`), but it
+**recovers itself**: after 5 consecutive failed reads its run loop re-issues stop + start-continuous
+(`sdp810._restart()`), so a general call normally costs a short gap in airspeed, not the rest of the
+flight. The layout moves that exposure; it does not remove it.
 
 ## Running one firmware on both boards
 
@@ -656,9 +809,12 @@ on one probe.
 
 Detection runs before device setup, scans both buses at the lower (100 kHz) rate that every part
 tolerates, scores each layout by how many of its expected addresses appear on the expected bus, and
-applies the winner's bus assignments and speeds. An explicit `board.layout` of `v0.1` or `v1.0` in the
-config always wins over the scan; `auto` (the default) detects. An ambiguous or failed scan changes
-nothing and says so loudly — the config as written is the fallback, never a guess.
+applies the winner's bus assignments and speeds. An explicit `board.layout` of `v0.1`, `v1.0` or
+`v1.1` in the config always wins over the scan; `auto` (the `config_default.py` value) detects. **A
+config with no `layout` key is a declared `v0.1`, not `auto`** — every 7C/7D profile relies on that,
+and a keyless profile on a v1.x board is laid out wrong. An ambiguous or failed scan changes nothing
+and says so loudly — the config as written is the fallback, never a guess. `health.layout` shows the
+verdict and the CC `detect` command re-scans on demand.
 
 ## Keep the attitude module a SOCKET, not a decision
 
@@ -1074,7 +1230,7 @@ mitigations are degradations, not equivalents.
 |---|---|---|---|---|
 | 1 | **LSM6DSO32 INT1 not connected** | `INT1_CTRL` 0x01 written and read back, accel + gyro both at 104 Hz, `STATUS` continuously data-ready — yet **GPIO28 stuck low, never toggles** | Route INT1 to its GPIO and verify the net | Driver detects the silent line after 3 timeouts and polls at 10 ms instead (`rate` 2.0 → 72 Hz). Costs the interrupt's timing precision and some CPU |
 | 2 | **BNO055 attitude frozen — cause UNDETERMINED** | Bit-identical Euler triple, `sys`/`mag` calibration stuck at 0. Originally called a faulty fusion core; **that verdict does not hold** (see below) | Re-test with VERIFIED motion before condemning any part. Self-test does **not** exercise fusion (`ST_RESULT` 0x0F on a part that was not updating) | Driver withholds a frozen attitude *while rotating* so the priority-1 gyro backup takes over |
-| 3 | **Split the I²C buses** — but isolate the **icp10111**, not the BNO055 | Five devices share `i2c:0`; a wedge, or the icp10111 latch-up recovery's general-call reset, takes them down together | **`i2c:0` = icp10111 alone; `i2c:1` = everything else.** Superseded the original "move the BNO055" plan — see *Which device to isolate* below | None possible in software — the buses are physical |
+| 3 | **Split the I²C buses** — but isolate the **icp10111**, not the BNO055 | Five devices share `i2c:0`; a wedge, or the icp10111 latch-up recovery's general-call reset, takes them down together | ~~`i2c:0` = icp10111 alone; `i2c:1` = everything else.~~ **Superseded by the v1.0 allocation** (ICP-10111 on `i2c:1` with the pitot and laser, BMP280 backup on `i2c:0`) — see *v1.0 allocation — DECIDED* | None possible in software — the buses are physical |
 | 4 | **BNO055 breakout has no 32.768 kHz crystal** | Selecting `CLK_SEL` external kills fusion outright (EUL all zeros) | Prefer a crystal-equipped module: Bosch specifies the external crystal for fusion modes | Driver leaves `CLK_SEL` internal |
 
 ### The BNO055 "faulty part" call — retracted
@@ -1125,6 +1281,11 @@ pitot plus the laser at once. Moving the BNO055 to `i2c:1` leaves `i2c:0` as the
 bus and gives the attitude chain no common failure point at all: primary on `i2c:1`, backup on SPI1.
 
 ### Which device to isolate — it is the icp10111, not the BNO055
+
+> **SUPERSEDED by the v1.0 allocation ("v1.0 allocation — DECIDED" above).** The ICP-10111 did not
+> end up alone on `i2c:0`: it sits on the front bus `i2c:1` with the pitot and laser, and the BMP280
+> backup stays on `i2c:0`. That split primary and backup altitude across buses, which is the property
+> argued for below, without the ICP-alone bus. Kept for the reasoning.
 
 The original v0.2 plan was "move the BNO055 to `i2c:1`". Walking the redundancy pairs shows that buys
 little, because **attitude is already isolated across bus families**:
