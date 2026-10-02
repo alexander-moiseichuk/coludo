@@ -19,7 +19,7 @@ Airframe masses are **as assembled, without the motor**. Motor masses are the me
 | [TMS-7C](TMS-7C/) | 216.5 g | 98.9 g | F15 | 98.8 g | **414.2 g** | 216.5 g |
 | [TMS-7D](TMS-7D/) | 287.5 g | 97.9 g | F15 | 98.8 g | **484.2 g** | 287.5 g |
 | [TMS-7E](TMS-7E/) | 250.0 g | 94.8 g | F15 | 98.8 g | **443.6 g** | 250.0 g |
-| [TMS-7F](TMS-7F/) | *not recorded* | — | — | — | — | — |
+| [TMS-7F](TMS-7F/) | *not assembled in time — not flying 10-03* | — | — | — | — | — |
 
 ## What each slot answers
 
