@@ -13,19 +13,21 @@ Airframe masses are **as assembled, without the motor**. Motor masses are the me
 
 | airframe | glider | booster | motor | + motor | **liftoff** | glide mass |
 |---|---|---|---|---|---|---|
-| [TMS-7](TMS-7/) | — | **129.5 g** | F15 | 98.8 g | **228.3 g** | n/a (no glider) |
-| [TMS-7A](TMS-7A/) | 183.0 g | 99.0 g | E16 | 82.5 g | **364.5 g** | 183.0 g |
-| [TMS-7B](TMS-7B/) | 184.3 g | 98.2 g | E16 | 82.5 g | **365.0 g** | 184.3 g |
-| [TMS-7C](TMS-7C/) | 216.5 g | 98.9 g | F15 | 98.8 g | **414.2 g** | 216.5 g |
-| [TMS-7D](TMS-7D/) | 287.5 g | 97.9 g | F15 | 98.8 g | **484.2 g** | 287.5 g |
-| [TMS-7E](TMS-7E/) | 250.0 g | 94.8 g | F15 | 98.8 g | **443.6 g** | 250.0 g |
-| [TMS-7F](TMS-7F/) | *not assembled in time — not flying 10-03* | — | — | — | — | — |
+| [TMS-7](TMS-7/README.md) | — | **129.5 g** | F15 | 98.8 g | **228.3 g** | n/a (no glider) |
+| [TMS-7A](TMS-7A/README.md) | 183.0 g | 99.0 g | E16 | 82.5 g | **364.5 g** | 183.0 g |
+| [TMS-7B](TMS-7B/README.md) | 184.3 g | 98.2 g | E16 | 82.5 g | **365.0 g** | 184.3 g |
+| [TMS-7C](TMS-7C/README.md) | 216.5 g | 98.9 g | F15 | 98.8 g | **414.2 g** | 216.5 g |
+| [TMS-7D](TMS-7D/README.md) | 287.5 g | 97.9 g | F15 | 98.8 g | **484.2 g** | 287.5 g |
+| [TMS-7E](TMS-7E/README.md) | 250.0 g | 94.8 g | F15 | 98.8 g | **443.6 g** | 250.0 g |
+| [TMS-7F](TMS-7F/README.md) | *not assembled in time — not flying 10-03* | — | — | — | — | — |
 
 ## What each slot answers
 
 * **TMS-7** — does the new booster construction survive the strongest motor? Structure only, no glider,
   but carrying the 10 g nose logger so it also returns peak boost acceleration and apogee altitude.
   The F15 is deliberate: test the worst case before trusting it under an instrumented airframe.
+  **Result: yes.** It flew to ~470 m (14.9 g peak, 125 m/s) and came back intact, and the logger returned
+  the whole flight. These are the boundaries for every F15 airframe; see [TMS-7](TMS-7/README.md).
 * **TMS-7A vs TMS-7B** — the wing comparison, flown as a matched pair on the same motor: **ASE wings
   with fins at 0°** against **carbon wings with fins at −5°**. Dual cameras, 1.3 g apart in mass, so the
   difference that shows up is the wing and the fin setting rather than the build.
