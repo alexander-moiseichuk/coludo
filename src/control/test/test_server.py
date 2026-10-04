@@ -10,10 +10,14 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
 import time
+from collections.abc import Callable
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+import board  # noqa: E402
 import cc_protocol as cc  # noqa: E402
+import gps  # noqa: E402
 import server  # noqa: E402
 
 PORT = 18234
@@ -31,6 +35,9 @@ GPS_WEB_PORT = 18242
 LOG_BOARD_PORT = 18243
 LOG_OPERATOR_PORT = 18244
 LOG_WEB_PORT = 18245
+COLD_EPOCH: int = 946684800 + 12  # a cold board's RTC: 2000-01-01 plus 12 s of uptime
+CC_ZONE: str = 'Asia/Kolkata'  # CC's zone in the clock-sync cases: half-hour, no DST, never UTC by accident
+CC_ZONE_OFFSET: int = 330  # its offset EAST of UTC in minutes, the sign utc_offset carries
 
 
 def _nmea(body):
@@ -492,8 +499,6 @@ def _glider_roster():
     a persisted roster an absent glider is just a row that is not there, indistinguishable from one
     never set up, and a hub restart forgets every glider it ever saw.
     """
-    import tempfile
-
     path = os.path.join(tempfile.mkdtemp(), 'gliders.json')
     hub = server.Server(roster_path=path)
     hub.log = lambda *args: None
@@ -576,6 +581,222 @@ async def _large_reply():
     writer.close()
 
 
+def _set(_payload: dict) -> str:
+    """The board's answer to a time set it applied: `epoch` changed."""
+    return cc.build('ok', [json.dumps({'changed': ['epoch']})])
+
+
+class _CcClock:
+    """Stand-in for server.py's `time` module whose wall clock reads `epoch`; the rest is the real one."""
+
+    def __init__(self, epoch: int):
+        self._epoch = epoch
+
+    def time(self) -> float:
+        """CC's wall clock, frozen at `epoch`."""
+        return float(self._epoch)
+
+    def __getattr__(self, name: str) -> object:
+        """Everything else (gmtime, localtime, strftime, monotonic) from the real time module."""
+        return getattr(time, name)
+
+
+async def _clock_case(info: dict, answer: Callable = _set, host_gps: gps.Gps = None,
+                      cc_epoch: int = None) -> tuple:
+    """
+    Register one board announcing `info` in its whoami and record what the hub sends it.
+
+    The board answers `update` with `answer(payload)` (None = never answers, so the exchange times out)
+    and anything else with a plain ok. Returns once the board reached `on_board` -- which runs after the
+    clock sync -- or the link was lost, or the handler failed, or 2 s passed. The hub listens on a port
+    the OS picks.
+
+    Args:
+        info - the whoami JSON.
+        answer - builds the reply line to `update` from its decoded payload.
+        host_gps - an optional host gps.Gps, CC's own fix.
+        cc_epoch - CC's wall clock for this case, Unix seconds; None keeps the real one.
+
+    Returns:
+        (updates, log, kept, hub): the (object, payload) of each `update` received, the hub log lines,
+        whether the handler got past the clock sync (`on_board` ran) with the board still registered
+        and online -- so a case that never reached the sync cannot pass as one that sent nothing --
+        and the hub.
+    """
+    updates, seen = [], []
+    reached = asyncio.Event()
+
+    async def on_board(_client: board.Board) -> None:
+        reached.set()
+
+    hub = server.Server(host='127.0.0.1', on_board=on_board, log=seen.append, heartbeat_s=5.0, gps=host_gps,
+                        roster_path=os.path.join(tempfile.mkdtemp(), 'gliders.json'))
+    listener = await asyncio.start_server(hub._handle, '127.0.0.1', 0)
+    reader, writer = await asyncio.open_connection('127.0.0.1', listener.sockets[0].getsockname()[1])
+
+    async def fake() -> None:
+        while True:
+            raw = await reader.readline()
+            if not raw:
+                return
+            msg = cc.parse(raw.decode().strip())
+            if msg.command == 'whoami':
+                reply = cc.build('iam', ['clock9', json.dumps(info)])
+            elif msg.command == 'update':
+                payload = json.loads(msg.args[1])
+                updates.append((msg.args[0], payload))
+                reply = answer(payload)
+                if reply is None:
+                    continue  # silence: the hub's exchange times out
+            else:
+                reply = cc.build('ok', [json.dumps({'stage': info.get('stage')})])
+            writer.write((reply + '\n').encode())
+            await writer.drain()
+
+    if cc_epoch is not None:
+        server.time = _CcClock(cc_epoch)
+    board_task = asyncio.create_task(fake())
+    try:
+        for _ in range(100):
+            if reached.is_set() or any('link lost' in line or line.startswith('error ') for line in seen):
+                break
+            await asyncio.sleep(0.02)
+        kept = reached.is_set() and 'clock9' in hub.boards and hub.boards['clock9'].online
+    finally:
+        server.time = time
+        board_task.cancel()
+        writer.close()
+        listener.close()
+    return updates, seen, kept, hub
+
+
+async def _clock_sync() -> None:
+    """
+    CC sets an UNSET board clock on connect, in SETTING only, and never costs the board the link.
+
+    A cold board's RTC reads 2000-01-01, which named every 2026-10-03 session that date. The sync is one
+    `update mission` with CC's UTC epoch, local offset, GPS fix and source; the board appends it to
+    session.csv. CC's zone is pinned to +05:30 so a sign slip in the offset, or a local-time epoch,
+    cannot pass on a UTC host. Negative: DONE and flight stages (a 26-year jump voids the warm start),
+    a set clock, no epoch (older firmware), a bool / float / string / negative / huge epoch, and CC's own
+    clock before 2020 get no command and keep the board; a refused, garbled or unapplied reply (a
+    non-ok naming epoch, an ok with no `changed`) keeps the board registered; a silent board is dropped
+    like any timed-out link.
+    """
+    host_gps = gps.Gps(log=lambda message: None)
+    host_gps.feed(_nmea('GPGSA,A,3,01,02,03,04,05,06,,,,,,,2.0,1.0,1.5'))
+    host_gps.feed(_nmea('GPGGA,123519,4807.038,N,01131.000,E,1,06,0.9,545.4,M,46.9,M,,'))
+    saved_zone = os.environ.get('TZ')
+    os.environ['TZ'] = CC_ZONE
+    time.tzset()
+    try:
+        await _clock_sync_cases(host_gps)
+    finally:
+        if saved_zone is None:
+            os.environ.pop('TZ', None)
+        else:
+            os.environ['TZ'] = saved_zone
+        time.tzset()
+
+
+async def _clock_sync_cases(host_gps: gps.Gps) -> None:
+    """
+    The cases of _clock_sync, run under the pinned CC zone.
+
+    Args:
+        host_gps - CC's host GPS holding a usable fix.
+
+    Returns:
+        None; asserts each case.
+    """
+    # an unset clock in SETTING: exactly one update mission, CC's UTC epoch + offset east + GPS fix
+    updates, seen, kept, _hub = await _clock_case({'stage': 'setting', 'epoch': COLD_EPOCH}, host_gps=host_gps)
+    assert len(updates) == 1 and updates[0][0] == 'mission', updates
+    payload = updates[0][1]
+    assert sorted(payload) == ['cc_position', 'epoch', 'source', 'utc_offset'], payload
+    assert type(payload['epoch']) is int and abs(payload['epoch'] - time.time()) < 5, payload  # UTC, not local
+    assert payload['utc_offset'] == CC_ZONE_OFFSET and payload['source'] == 'cc-auto', payload
+    position = host_gps.position()
+    assert payload['cc_position'] == [position['latitude'], position['longitude']], payload
+    assert any(line.startswith('clock9 clock set 2000-01-01T00:00:12Z -> 20') for line in seen), seen
+    assert kept, seen
+
+    # the first second of 2000 is unset too; no host GPS -> cc_position is null, never launch lat/lon
+    updates, seen, kept, _hub = await _clock_case({'stage': 'setting', 'epoch': 946684800})
+    assert len(updates) == 1 and updates[0][1]['cc_position'] is None, updates
+    assert 'latitude' not in updates[0][1] and 'longitude' not in updates[0][1], updates
+    assert kept, seen
+
+    # CC's own clock: 2020-01-01 exactly is valid and sent as is; before 2020 it is unset, logged once
+    updates, seen, kept, _hub = await _clock_case({'stage': 'setting', 'epoch': COLD_EPOCH},
+                                                  cc_epoch=1577836800)
+    assert [payload['epoch'] for _object, payload in updates] == [1577836800], updates
+    assert any(line == 'clock9 clock set 2000-01-01T00:00:12Z -> 2020-01-01T00:00:00Z' for line in seen), seen
+    updates, seen, kept, _hub = await _clock_case({'stage': 'setting', 'epoch': COLD_EPOCH},
+                                                  cc_epoch=1577836799)
+    assert updates == [] and kept, (updates, seen)
+    notes = [line for line in seen if line.startswith('clock9 clock')]
+    assert notes == ['clock9 clock unset (2000-01-01T00:00:12Z) -- NOT synced: the CC clock reads '
+                     '2019-12-31T23:59:59Z, before 2020'], notes
+
+    # DONE, flight and an unknown stage: reported, not set -- DONE's 26-year jump would void the warm start
+    for stage in ('done', 'boosting', None):
+        info = {'epoch': COLD_EPOCH} if stage is None else {'stage': stage, 'epoch': COLD_EPOCH}
+        updates, seen, kept, _hub = await _clock_case(info)
+        assert updates == [] and kept, (stage, updates, seen)
+        notes = [line for line in seen if line.startswith('clock9 clock')]
+        assert notes == ['clock9 clock unset (2000-01-01T00:00:12Z) in stage %s -- set only in setting' % stage], notes
+
+    # a set clock (2001-01-01 on), before 2000, no epoch (older firmware), bool, float, string, and epochs
+    # no RTC reads (negative, huge): no command, nothing logged, no handler error, the board kept
+    for info in ({'stage': 'setting', 'epoch': 1791000000},
+                 {'stage': 'setting', 'epoch': 978307200},
+                 {'stage': 'setting', 'epoch': 946684799},
+                 {'stage': 'setting'},
+                 {'stage': 'setting', 'epoch': True},
+                 {'stage': 'setting', 'epoch': False},
+                 {'stage': 'setting', 'epoch': 946684812.5},
+                 {'stage': 'setting', 'epoch': '946684812'},
+                 {'stage': 'setting', 'epoch': -1},
+                 {'stage': 'setting', 'epoch': -10 ** 20},
+                 {'stage': 'setting', 'epoch': 10 ** 20}):
+        updates, seen, kept, _hub = await _clock_case(info)
+        assert updates == [] and kept, (info, updates, seen)
+        assert not any('clock9 clock' in line or line.startswith('error ') for line in seen), (info, seen)
+
+    # refused (no mission object), a non-ok naming epoch, garbled (unparseable -> None), malformed, no
+    # `changed`, unapplied (no RTC) and a `changed` that is not a list: logged, no handler error, board kept
+    for answer in (lambda _payload: cc.build('err', ['badargs', 'no', 'object', 'mission']),
+                   lambda _payload: cc.build('err', [json.dumps({'changed': ['epoch']})]),
+                   lambda _payload: 'ok base64:a',
+                   lambda _payload: 'ok',
+                   lambda _payload: cc.build('ok', [json.dumps({})]),
+                   lambda _payload: cc.build('ok', [json.dumps({'changed': []})]),
+                   lambda _payload: cc.build('ok', [json.dumps({'changed': ['latitude']})]),
+                   lambda _payload: cc.build('ok', [json.dumps({'changed': 'epoch'})]),
+                   lambda _payload: cc.build('ok', [json.dumps({'changed': {'epoch': 1}})]),
+                   lambda _payload: cc.build('ok', [json.dumps(['epoch'])])):
+        updates, seen, kept, _hub = await _clock_case({'stage': 'setting', 'epoch': COLD_EPOCH}, answer=answer)
+        assert len(updates) == 1 and kept, (updates, seen)
+        assert any(line.startswith('clock9 clock sync') for line in seen), seen
+        assert not any('clock set' in line or line.startswith('error ') for line in seen), seen
+
+    # a board that never answers the set times out, and the hub drops it like any lost link
+    saved = board.EXCHANGE_TIMEOUT_S
+    board.EXCHANGE_TIMEOUT_S = 0.3
+    try:
+        updates, seen, kept, hub = await _clock_case({'stage': 'setting', 'epoch': COLD_EPOCH},
+                                                     answer=lambda _payload: None)
+    finally:
+        board.EXCHANGE_TIMEOUT_S = saved
+    assert len(updates) == 1 and any('clock9 link lost' in line for line in seen), seen
+    for _ in range(50):  # the handler's finally runs once the timeout unwinds
+        if 'clock9' not in hub.boards:
+            break
+        await asyncio.sleep(0.02)
+    assert 'clock9' not in hub.boards, seen
+
+
 async def _heartbeat():
     """
     The heartbeat polls HEALTH on health age, not on link traffic, and stops on a link given up.
@@ -622,13 +843,15 @@ async def main():
     await _log_stream()
     await _handler_crash()
     await _large_reply()
+    await _clock_sync()
     _gps_device_resolve()
     _glider_roster()
     _log_drops_are_reported()
     print('ok: server heartbeat polls health on health age + stops on a dead link '
           '+ accept (loopback) + operator console + web bridge (api/boards, api/cmd, events) '
           '+ glider roster (persist, same-name-new-ip, absent hint) '
-          '+ gps assist/compare + log streaming + gps auto-detect + oversized reply')
+          '+ gps assist/compare + log streaming + gps auto-detect + oversized reply '
+          '+ clock sync on connect (unset + SETTING + CC clock valid; refused/garbled keep the board, silent drops it)')
 
 
 asyncio.run(main())

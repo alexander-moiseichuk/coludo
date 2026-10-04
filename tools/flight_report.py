@@ -445,9 +445,8 @@ def main():
     parser.add_argument('--cdn', action='store_true', help='load plotly.js from the CDN (tiny file, needs net)')
     parser.add_argument('--motor', choices=sorted(_MOTOR_BURN_S), help='shade the motor burn inside BOOSTING')
     args = parser.parse_args()
+    streams, logs = flight_telemetry.load(args.capture)
     go, pio, make_subplots = _require_plotly()
-    with open(args.capture) as handle:
-        streams, logs = flight_telemetry.parse(handle.read())
     if not streams:
         sys.exit('no telemetry streams found in %s' % args.capture)
     damaged = flight_telemetry.spliced(streams)
@@ -455,6 +454,7 @@ def main():
         # two boots appended into one file -- the plot would draw them as one flight; see flight_kpi
         print('!! SPLICED CAPTURE -- two recorder sessions share this prefix: %s' % ', '.join(damaged))
         print('!! the report below spans BOTH boots and its timeline is not one flight')
+    print('capture lines: %s' % flight_telemetry.line_summary())  # what the integrity checks kept
     trajectory, series = build(streams, logs, go, make_subplots, args.motor)
     write_html(trajectory, series, args.out, pio, 'cdn' if args.cdn else True)
     print('wrote %s (%d streams, %d log lines)' % (args.out, len(streams), len(logs)))

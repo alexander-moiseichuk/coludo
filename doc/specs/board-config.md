@@ -227,8 +227,10 @@ identical behaviour every time.
   > between 2026-08-02 and 2026-08-28, and the key being undocumented here is how it went unnoticed.
 
   **`session`** is the prefix every capture file on the Luckfox is named by, `<session>_<stream>.csv`.
-  Normally absent: the board then synthesises `YYYYMMDD_HHMMSS_<6-digit random>`. Set it from CC to
-  assign the **whole** prefix verbatim, e.g. `20260807_143012_catapult-run3`.
+  Normally absent: the board then uses its **boot id**, a per-boot NVS counter printed `%06u`
+  (`000123`; [`recorder-wire.md`](recorder-wire.md)), and only bring-ups that bypass `main.py` fall back
+  to `YYYYMMDD_HHMMSS_<6-digit random>`. Set it from the test system to assign the **whole** prefix
+  verbatim, e.g. `20260807_143012_catapult-run3`.
   > **Keep the `YYYYMMDD_HHMMSS_<tag>` shape.** The board has no battery-backed RTC, so left to
   > itself its date is 2000-01-01 and only the random part separates one boot from the next — CC
   > has the trustworthy clock, and a run label there makes a capture self-identifying on disk.

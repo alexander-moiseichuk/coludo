@@ -327,8 +327,7 @@ def _draw_exhaust(d, bx, by, dx, dy, intensity):
 
 
 def load(label, path):
-    with open(path) as handle:
-        streams, logs = flight_telemetry.parse(handle.read())
+    streams, logs = flight_telemetry.load(path)
     stages = [(us / 1e6, parts[0]) for us, line in logs
               if us and 'stage -> ' in line and (parts := line.split('stage -> ')[1].split())]
     launch = next((t for t, s in stages if s == 'boosting'), 0.0)

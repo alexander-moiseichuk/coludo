@@ -328,7 +328,12 @@ def _register_identity(dispatcher, ctx) -> None:
             'config_source': config_module.BOOT_SOURCE,
             'stage': ctx.stage(),
             'uptime': time.ticks_ms(),
+            'boot_id': recorder.Recorder.boot_id,  # this boot's NVS count (None when nothing counted it)
+            'session': recorder.Recorder.session(),  # the prefix this boot's capture files carry
         }
+        mission = inspector.Inspector.get('mission')
+        if mission is not None:  # the RTC: CC sets it on connect while it reads before 2001 and stage is setting
+            info['epoch'] = mission.epoch()
         return cc.build('iam', [ctx.board_id, json.dumps(info)])  # the one reply carrying the id
 
     async def ping(_unused_msg) -> str:

@@ -50,8 +50,7 @@ def measure(path: str) -> dict:
     Returns:
         A dict of metrics; missing ones are None so a partial capture still lines up in the table.
     """
-    with open(path) as handle:
-        streams, _logs = flight_telemetry.parse(handle.read())
+    streams, _logs = flight_telemetry.load(path)
     find = flight_telemetry.find_stream
     baro = find(streams, 'elevation', prefer='icp') or find(streams, 'elevation') or find(streams, 'altitude')
     result = {'apogee': None, 'duration': None, 'lift_drag': None, 'sink': None,

@@ -67,7 +67,8 @@ altering one.</p>
   <button id="actcalib" title="guided calibration of the selected board, one device per press">calibrate</button>
   <button id="actprobe" title="run every device self-test on the selected board">probe devices</button>
   <button id="actdetect" title="re-scan both I2C buses and report which board revision they look like (does not apply)">detect layout</button>
-  <button id="actsynctime" title="set the board RTC to the CC clock">sync time</button>
+  <button id="actsynctime" disabled
+          title="sets the board RTC from THIS BROWSER's clock and timezone, not CC's -- only in stage setting">sync time</button>
   <button id="actassist" title="push the CC GNSS fix to the board launch config">sync GNSS</button>
   <span class="muted" id="actmsg"></span>
 </p>
@@ -329,6 +330,7 @@ function selectBoard(id) {
   // a heading that now names the new one -- so they go, rather than edit a board nobody is looking at.
   if (changed) { document.getElementById('inspresult').innerHTML = ''; }
   markChosen();
+  syncTimeGate();
 }
 
 function markChosen() {
@@ -404,6 +406,11 @@ function ccGps(gps) {
 // two elements, so the same click landed in different places depending on which button it was, and a
 // reply could appear above the caption the operator was looking at.
 const actMsg = (text) => { document.getElementById('actmsg').textContent = text; };
+// CC's own GNSS fix as [lat, lon], null without a usable one: kept from the last /events frame so the
+// 'sync time' row in the board's session.csv records where CC was, as the automatic sync on connect does.
+let ccPosition = null;
+// Each board's stage from the last /events frame: 'sync time' acts only in SETTING (see syncTimeGate).
+let boardStages = new Map();
 
 new EventSource('/events').onmessage = (event) => {
   const { cc, boards } = JSON.parse(event.data);
@@ -415,6 +422,7 @@ new EventSource('/events').onmessage = (event) => {
    * moves with it, as a disabled state that says why rather than a button that vanishes.
    */
   const ccHasFix = !!(cc.gps && cc.gps.usable);
+  ccPosition = ccHasFix ? [cc.gps.latitude, cc.gps.longitude] : null;
   const assistButton = document.getElementById('actassist');
   assistButton.disabled = !ccHasFix;
   assistButton.title = ccHasFix ? 'push the CC GNSS fix to the board launch config'
@@ -423,6 +431,8 @@ new EventSource('/events').onmessage = (event) => {
   // exactly when "N known gliders not connected" is the thing the operator needs. Returning first meant
   // the banner never rendered in its own case, and kept stale text in every other.
   renderAbsent();
+  boardStages = new Map(boards.map((b) => [b.id, b.stage]));
+  syncTimeGate();
   if (!boards.length) {
     tbody.innerHTML = '<tr><td colspan="12" class="muted">no boards connected</td></tr>';
     return;
@@ -575,11 +585,50 @@ async function calibrateBoard(id) {
     : `${id} calibrate: ${name} done — ALL DEVICES CALIBRATED`);
 }
 
-// top-table actions: set the board RTC from the PC clock (update mission epoch), and push the host
-// GPS position to the board launch config (/api/assist).
+// top-table actions: set the board RTC from this browser's clock (update mission epoch), and push the
+// host GPS position to the board launch config (/api/assist).
+/*
+ * 'sync time' acts only while the board is in SETTING, the same gate as CC's sync on connect: in DONE a
+ * ~26-year jump makes the post-landing warm-start crumb look stale, so a reset during the dwell would
+ * boot cold, and in flight the session.csv row it writes lands while the GC is off. The button is
+ * disabled otherwise, and syncTime re-checks, so a click racing a stage change is still refused.
+ */
+const SYNC_TIME_CLOCK = "sets the board RTC from THIS BROWSER's clock and timezone, not CC's";
+function syncTimeAllowed(id) { return boardStages.get(id) === 'setting'; }
+// a board's stage as the gate saw it: the last one reported, 'unknown', or 'not connected'
+const syncTimeStage = (id) => (boardStages.has(id) ? boardStages.get(id) || 'unknown' : 'not connected');
+function syncTimeGate() {
+  const button = document.getElementById('actsynctime');
+  button.disabled = !syncTimeAllowed(selected);
+  const reason = selected ? `${selected} is ${syncTimeStage(selected)}` : 'no board selected';
+  button.title = button.disabled ? `only in stage setting (${reason}) -- ${SYNC_TIME_CLOCK}` : SYNC_TIME_CLOCK;
+}
+// 2020-01-01T00:00:00Z in Unix seconds: before it this browser's clock is unset (a device with no RTC,
+// before NTP), and would stamp the board with a date as wrong as its own -- the gate CC applies to itself.
+const BROWSER_CLOCK_VALID_FROM = 1577836800;
+// The RTC runs on UTC: `epoch` is UTC seconds and `utc_offset` this browser's offset in minutes east of
+// UTC (getTimezoneOffset counts west), the same fields CC sends on connect (doc/specs/recorder-wire.md).
+// Success is an `ok` whose `changed` list names `epoch`: `ok {"changed":[]}` (no RTC) set nothing.
 async function syncTime(id) {
-  const r = await cmd(id, 'update', ['mission', JSON.stringify({ epoch: Math.floor(Date.now() / 1000) })]);
-  actMsg(`${id} sync time: ${r.status === 'ok' ? 'ok' : JSON.stringify(r)}`);
+  if (!syncTimeAllowed(id)) {
+    actMsg(`${id} sync time: NOT sent -- ${id} is ${syncTimeStage(id)}, the clock is set only in stage setting`);
+    return;
+  }
+  const epoch = Math.floor(Date.now() / 1000);
+  if (epoch < BROWSER_CLOCK_VALID_FROM) {
+    const reads = new Date(epoch * 1000).toISOString().replace('.000Z', 'Z');
+    actMsg(`${id} sync time: NOT sent -- this browser's clock reads ${reads}, before 2020`);
+    return;
+  }
+  const r = await cmd(id, 'update', ['mission', JSON.stringify({
+    epoch, utc_offset: -new Date().getTimezoneOffset(),
+    cc_position: ccPosition, source: 'dashboard' })]);
+  let applied = false;
+  try {
+    const changed = JSON.parse(r.args[0]).changed;
+    applied = r.status === 'ok' && Array.isArray(changed) && changed.includes('epoch');
+  } catch (err) { /* no or malformed {changed}: not set */ }
+  actMsg(`${id} sync time: ${applied ? 'ok' : 'NOT set ' + JSON.stringify(r)}`);
 }
 async function gpsAssist(id) {
   const res = await fetch('/api/assist', {

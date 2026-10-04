@@ -9,7 +9,8 @@ own file, `launch.config`, and is edited live through the Inspector.
 Mission is a singleton Inspectable:
   inspect mission -> launch id / site / position + the board clock
   update mission base64:{"launch_id":"t1"} -> set the launch id for this flight
-  update mission base64:{"epoch":1750170000} -> set the board RTC (time sync; Unix seconds)
+  update mission base64:{"epoch":1750170000} -> set the board RTC (time sync; Unix seconds, UTC)
+      + "utc_offset" / "cc_position" / "source" -> the session.csv row that time set writes
   get-config launch / set-config launch -> read / save (merge + persist) launch.config
 
 Position is metres / decimal degrees; it is a known origin now and seeds the GNSS driver later.
@@ -35,6 +36,11 @@ LAUNCH_PATH: str = 'launch.config'
 # MicroPython's time epoch on the esp32 port is 2000-01-01; Control speaks the Unix (1970) epoch,
 # so the wire `epoch` is converted by this many seconds when setting/reading the RTC.
 _EPOCH_OFFSET: int = 946684800
+
+# A time set's `utc_offset` (minutes) spans the zones that exist, UTC-12:00 to UTC+14:00; past them it is
+# a bad value and its session.csv cell stays empty, while the time set itself still counts.
+_UTC_OFFSET_LOW: int = -720
+_UTC_OFFSET_HIGH: int = 840
 
 _FIELDS: tuple = ('launch_id', 'site', 'latitude', 'longitude', 'altitude')
 
@@ -438,13 +444,15 @@ class Mission(inspector.Inspectable):
         Apply the editable mission fields from an update.
 
         Applies launch_id/site/latitude/longitude/altitude (stored, range-checked) and `epoch` (sets
-        the RTC -- not stored). Out-of-range coordinates are ignored (not reported changed).
+        the RTC -- not stored). Out-of-range coordinates are ignored (not reported changed). A time set
+        also appends this boot's row to session.csv (_index_time).
 
         Args:
             props - the field name -> value updates to apply.
 
         Returns:
-            The names actually changed (an out-of-range or unchanged field is not listed).
+            The names actually changed (an out-of-range or unchanged field is not listed). `epoch` is
+            listed whenever the RTC was set, even when its session.csv row is lost to a full ring.
         """
         changed = []
         for key in _FIELDS:
@@ -467,7 +475,47 @@ class Mission(inspector.Inspectable):
                 changed.append('zone')
         if 'epoch' in props and self.set_time(props['epoch']):
             changed.append('epoch')
+            self._index_time(props)
         return changed
+
+    def _index_time(self, props: dict) -> None:
+        """
+        Tie this boot to the wall clock just set: one row in the shared session.csv.
+
+        `utc_offset`, `cc_position` and `source` ride in the same update as MOMENTARY inputs: written to
+        the row, never stored. `cc_position` is CC's own position and never touches latitude/longitude,
+        which are the launch pad. An invalid value -- an offset outside the zones that exist included --
+        becomes an empty cell rather than refusing the row (the Recorder vets `source` as a text cell).
+        The board name, firmware and config id are the Recorder's (it holds the config it ran with), so
+        the Mission needs no part of the board config. The utc is the RTC as the Recorder reads it: a
+        time set into 2000 leaves the clock unset, and that row's utc and utc_offset empty.
+
+        A row that finds the telemetry ring full is logged and LOST, never raised: the RTC is already
+        set, and failing the update would have CC report a time set that happened as refused. The
+        Recorder's anchor row (a minute into the boot) still lists the boot; it is dated by this set only
+        when it goes out after it.
+
+        Args:
+            props - the `update mission` properties the epoch came with.
+
+        Returns:
+            None; queues the row (the header first when it has not gone out) -- nothing when the Recorder
+            is not running.
+        """
+        offset = props.get('utc_offset')
+        if isinstance(offset, bool) or not isinstance(offset, int) or not _UTC_OFFSET_LOW <= offset <= _UTC_OFFSET_HIGH:
+            offset = None
+        position = props.get('cc_position')
+        if isinstance(position, (list, tuple)) and len(position) == 2:
+            latitude = _number(position[0], -90.0, 90.0)
+            longitude = _number(position[1], -180.0, 180.0)
+            position = (latitude, longitude) if latitude is not None and longitude is not None else None
+        else:
+            position = None
+        try:
+            recorder.Recorder.index_session(time.time(), offset, props.get('source'), position)
+        except ValueError as error:  # the Recorder's telemetry-ring-full error (a ValueError)
+            recorder.Recorder.log('Mission', 'session.csv row lost, the clock stays set: %s' % error)
 
     def persisted(self) -> dict:
         """

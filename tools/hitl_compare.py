@@ -118,8 +118,7 @@ def _metrics(path: str) -> dict:
     Returns:
         {panel label: value or None}; None means the channel was absent, which is itself comparable.
     """
-    with open(path) as handle:
-        streams, _unused = flight_telemetry.parse(handle.read())
+    streams, _unused = flight_telemetry.load(path)
     out = {}
     total_rows = sum(len(stream.rows) for stream in streams.values())
     for label, selector, prefer, field, how in _PANELS:

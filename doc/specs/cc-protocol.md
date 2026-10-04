@@ -133,7 +133,7 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 
 | Command | Params | Response | Meaning |
 |---------|--------|----------|---------|
-| `whoami` | — | `iam <id> {json}` | identify a new socket (the one reply carrying the id) |
+| `whoami` | — | `iam <id> {json}` | identify a new socket (the one reply carrying the id). The JSON includes `stage`, `firmware_version`, `config_id`, and the board clock `epoch`, `boot_id` and `session` that CC's clock sync reads ([`recorder-wire.md`](recorder-wire.md)) |
 | `ping` | — | `pong` | liveness |
 | `health` | — | `ok {temp,mem_free,uptime,stage,layout,degraded[],…}` | vitals. Always: `temp`, `mem_free`, `uptime`, `stage`, `layout` (the revision this boot applied: `v1.0` detected, `v0.1 (declared)`, or `undecided`) and `degraded[]`. When the part exists: `position` (fresh GNSS fix), `clock`/`epoch` (board RTC), `launchpad`/`launchpad_set`/`site`, `agl` (fresh laser only), `calibration` ({device: instruction} still outstanding), `imu_calibration` (BNO055 sys/gyr/acc/mag), `armed`, `flight` (live panel), `tasks[]` (`{name, ok}`). `degraded[]` is empty when nominal, else any of: `attitude-backup` (a p0 attitude provider is configured and the backup is flying), `STAGE HELD`, `CONFIG FALLBACK -- <reason>`, `memory-rescued`, `needs-calibration`, `cc-less-fallback`, `WARM-STARTED (rebooted in flight)` |
 | `stage` | `[name\|auto]` | `ok {stage,manual}` | get the stage; `<name>` holds it (pauses the sequencer — ground test); `auto` resumes |
@@ -192,8 +192,13 @@ from taster ok {"changed":["launch_id","latitude"]}
 ```
 
 `epoch` is a momentary action (it sets the RTC, never stored); `inspect` reports the live clock as
-both an ISO string and a Unix `epoch` for CC to compare against its own. A broadcast
-`all update mission base64:{"epoch":...}` time-syncs the whole fleet. Unlike the board config
+both an ISO string and a Unix `epoch` for CC to compare against its own. **CC sets the clock itself on
+connect** when `whoami` reports an `epoch` between 2000-01-01 and 2001-01-01 and the stage is SETTING. With the
+epoch it may send `utc_offset` (minutes), `cc_position` (`[lat, lon]` or null; never `latitude`/`longitude`,
+which are the launch pad) and `source` (`cc-auto`, `dashboard`). Every successful set appends a row to the
+shared `session.csv` on the Recorder, which lists every boot whether or not its clock is set
+([`recorder-wire.md`](recorder-wire.md)). A broadcast `all update mission base64:{"epoch":...}`
+time-syncs the whole fleet. Unlike the board config
 (whose draft lives on CC), the mission is small and edited live on the board; **`set-config launch`**
 merge-applies a draft and persists it to `launch.config` — the per-launch counterpart to `board.config`
 — so the launch identity survives a pre-flight reboot. `err unsupported` means the board has no

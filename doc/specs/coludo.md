@@ -817,10 +817,12 @@ subscriber would stall the publisher inline. Instead the mechanism is chosen per
   rather than slice-assignment, which is O(buffer length) on this port (see the
   [benchmark findings](../doc/benches/WaveShare_esp32p4-micropython-findings.md)). Telemetry streams are
   created via a `Telemetry(file, fields)` helper that emits a CSV header first and then
-  timestamped rows; all streams in a boot share one session prefix — `YYYYMMDD_HHMMSS_<6-digit
-  random>` from the RTC the first time it is needed, or `recorder.session` verbatim when CC assigns
-  one ([`board-config.md`](board-config.md)) — so each flight's files are distinct. The random tag is
-  what separates boots: the board has no battery-backed RTC, so unsynced boots share a date.
+  timestamped rows; all streams in a boot share one session prefix — the **boot id**, a counter in
+  NVS printed `%06u` (`000123`), or `recorder.session` verbatim when the test system assigns one
+  ([`board-config.md`](board-config.md)) — so each flight's files are distinct. On the UART every line
+  carries an **integrity wrapper**, `{crc32};<payload>;<~crc32 ^ uptime>`, and CC sets the board clock on
+  connect. Every boot, with each clock set, is listed in a shared `session.csv`: see
+  [`recorder-wire.md`](recorder-wire.md).
 
 This collapses what would otherwise be a separate event-bus plus ring buffers into the Recorder:
 discrete events are just log records, and the priority queues are the decoupling buffers

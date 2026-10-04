@@ -136,20 +136,25 @@ def default() -> dict:
     """
     Recorder: PSRAM ring sizes + stats cadence, and the SESSION prefix every capture file is named by.
 
-    `session` is normally absent, and the board then synthesises `YYYYMMDD_HHMMSS_<6-digit random>`. It
-    has no battery-backed RTC, so without a time sync that date is 2000-01-01 and only the random part
-    separates one boot from the next -- an audit of a real Luckfox found ~150 unsynced boots sharing a
-    900-value suffix, with the expected ~12 collisions APPENDING two flights into one CSV.
+    `session` is normally absent, and the board then names its files by its BOOT ID, '%06u' of the NVS
+    counter main.py increments once per boot (doc/specs/recorder-wire.md). It needs no clock -- the RTC
+    reads 2000-01-01 until CC sets it, and the old date + 900-value random prefix let ~150 unsynced boots
+    collide ~12 times, APPENDING two flights into one CSV. CC's time set ties each boot id to wall-clock
+    time through the shared session.csv. Bring-ups that bypass main.py (tests, HITL) count nothing and
+    keep the legacy `YYYYMMDD_HHMMSS_<6-digit random>`.
 
-    Set `session` from CC -- which has both a trustworthy clock and the run's identity -- to assign the
-    WHOLE prefix verbatim, e.g. '20260807_143012_catapult-run3'. Keep the `YYYYMMDD_HHMMSS_<tag>` shape:
-    host tools strip the date/time by pattern and derive the tag from the capture, so tag-less, random
-    and labelled captures all parse alike; a run label makes a capture self-identifying on disk.
+    Set `session` to label one run: the test system assigns the WHOLE prefix verbatim, e.g.
+    'catapult-run3'. It becomes part of every file name the Luckfox writes, so it must be ASCII letters,
+    digits and '-' with at least one letter (spaces are made '-'), 32 characters at most: no '_', which
+    would make `<session>_<stream>.csv` ambiguous to split, never digits alone, which would read as a
+    boot id, and nothing longer, which would leave a telemetry row no room in its 254-byte cell.
+    A label that breaks the rule is logged and IGNORED -- the boot id names the files instead -- rather
+    than failing the config, so a stray label never costs a boot its flight profile.
 
     CAUTION: this is a PER-RUN value, and config is immutable-per-run and SAVED. A `session` left in the
     saved config is reused verbatim by every later boot, which is a *guaranteed* collision -- strictly
-    worse than the random suffix it replaces, since colliding boots append into each other's files. Set
-    it per run or leave it out.
+    worse than the boot id it replaces, since colliding boots append into each other's files. Set it per
+    run or leave it out.
     """
     recorder = {  # PSRAM ring sizes + stats cadence (Recorder)
         'tlm_capacity': 256,  # measured peak ~16 buffered records -> 256 is ~16x headroom
@@ -173,7 +178,7 @@ def default() -> dict:
         # flight profiles (tms7c/tms7d) already set 0, so the default now matches what actually flies;
         # tms7d_control keeps 40, where a control board does not need the full stream.
         'telemetry_ms': 0,
-        # 'session': '20260807_143012_taster',  # CC assigns the whole prefix; absent -> board synthesises
+        # 'session': 'catapult-run3',  # a per-run label, verbatim; absent -> the NVS boot id ('000123')
     }
 
     """

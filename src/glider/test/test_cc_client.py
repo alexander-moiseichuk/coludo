@@ -18,6 +18,7 @@ import controller
 import inspector
 import layout
 import mission
+import recorder
 
 
 class _FakeReader:
@@ -52,6 +53,39 @@ class _Knob(inspector.Inspectable):
 
     def __init__(self):
         self.level = 1
+
+
+async def _whoami_identity(sd):
+    """
+    whoami carries this boot's identity: the NVS boot id and the session prefix its files carry.
+
+    Called with NO Mission registered, so it also covers the negative half of the clock: a board with no
+    clock to report sends no `epoch`, and CC leaves such a board's time alone. Recorder.boot_id is set by
+    hand and put back -- the board's real NVS boot count is never touched.
+    """
+    booted = recorder.Recorder.boot_id
+    try:
+        recorder.Recorder.boot_id = 123
+        recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())  # settles the session afresh
+        info = json.loads(cc.parse(await sd.handle('whoami')).args[1])
+        assert info['boot_id'] == 123 and info['session'] == '000123', info
+        assert 'epoch' not in info, info
+        # nothing counted the boot (tests, HITL): no id, and the legacy date + random prefix
+        recorder.Recorder.boot_id = None
+        recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
+        info = json.loads(cc.parse(await sd.handle('whoami')).args[1])
+        assert info['boot_id'] is None and len(info['session']) == 22, info
+    finally:
+        recorder.Recorder.boot_id = booted
+
+
+async def _whoami_clock(sd):
+    """With a Mission registered, whoami carries the board clock (Unix UTC seconds): CC's set-on-connect cue."""
+    info = json.loads(cc.parse(await sd.handle('whoami')).args[1])
+    epoch = inspector.Inspector.get('mission').epoch()
+    assert isinstance(info['epoch'], int) and not isinstance(info['epoch'], bool), info  # CC's gate
+    assert abs(info['epoch'] - epoch) <= 2, info
+    assert info['epoch'] >= 946684800, info  # never before 2000-01-01: the RTC's own floor
 
 
 async def amain():
@@ -182,7 +216,9 @@ async def amain():
     inspector.Inspector.unregister('mission')
     assert 'unsupported' in await sd.handle('get-config launch')
     assert 'unsupported' in await sd.handle(cc.build('set-config', ['launch', '{}']))
+    await _whoami_identity(sd)
     mission.Mission('test_cc_launch.config').update({'launch_id': 'cc-t1'})  # registers itself
+    await _whoami_clock(sd)
 
     # health now carries the board wall-clock (RTC) for the dashboard top table, plus the
     # launchpad safety fields (the effective origin / persistent-vs-live / selected site)
@@ -395,8 +431,6 @@ async def amain():
 
     # log streaming: `log <ms>` arms collection + returns the batch buffered since the last call.
     # Poll model -- the operator re-sends `log` each tick; the batch rides back as one base64 token.
-    import recorder
-
     recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
     sd5 = cc_client.create_dispatcher(config_default.default())
     assert json.loads(cc.parse(await sd5.handle('log 1000')).args[0])['lines'] == []  # arm, empty

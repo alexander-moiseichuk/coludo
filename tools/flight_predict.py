@@ -172,8 +172,7 @@ def main() -> int:
     if args.motor is None and args.launch_speed is None:
         return parser.error('give either --motor (rocket) or --launch-speed (catapult)')
 
-    with open(args.capture) as handle:
-        streams, _logs = flight_telemetry.parse(handle.read())
+    streams, _logs = flight_telemetry.load(args.capture)
     real = measured(streams)
     if not real:
         print('cannot compare: the capture has no baro trace', file=sys.stderr)

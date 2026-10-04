@@ -20,6 +20,9 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
 import web  # noqa: E402
 
+_ZONE: str = 'Asia/Kolkata'  # the browser's zone for 'sync time': half-hour, no DST, never UTC by accident
+_ZONE_OFFSET: int = 330  # its offset EAST of UTC in minutes, the sign utc_offset carries
+
 
 class _Reader:
     """asyncio.StreamReader stand-in over a fixed request buffer."""
@@ -285,8 +288,8 @@ def test_hud_renders_an_events_frame():
 
 
 _DASHBOARD_HARNESS = r"""
-// Load the dashboard script under a stub DOM; drive selectBoard / updateObject / calibrateBoard and the
-// row formatters; print what landed where.
+// Load the dashboard script under a stub DOM; drive selectBoard / updateObject / calibrateBoard /
+// syncTime and the row formatters; print what landed where.
 const page = require('fs').readFileSync(process.argv[2], 'utf8');
 const script = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join('\n');
 const cells = {};
@@ -296,10 +299,15 @@ const cell = (id) => cells[id] || (cells[id] = {
   querySelectorAll: () => [] });
 const replies = [];                                     // /api/cmd bodies, consumed in order
 const reply = async () => replies.shift() || '{}';
+const posted = [];                                      // request bodies the page sent, in order
+const sources = {};                                     // EventSource by url, to feed the page frames
 const api = new Function('document', 'EventSource', 'fetch', 'setInterval', 'setTimeout', 'confirm',
-  script + '\nreturn { selectBoard, calibrateBoard, updateObject, fmtFlight, fmtPad };')(
-  { getElementById: cell, querySelector: () => null, querySelectorAll: () => [], createElement: () => cell('new') },
-  class {}, async () => ({ status: 200, text: reply, json: async () => JSON.parse(await reply()) }),
+  script + '\nreturn { selectBoard, calibrateBoard, updateObject, syncTime, fmtFlight, fmtPad };')(
+  { getElementById: cell, querySelector: () => cell('query'), querySelectorAll: () => [],
+    createElement: () => cell('new') },
+  class { constructor(url) { sources[url] = this; } },
+  async (url, options) => { posted.push(options && options.body);
+                            return { status: 200, text: reply, json: async () => JSON.parse(await reply()) }; },
   () => 0, () => 0, () => true);
 (async () => {
   const out = {};
@@ -320,6 +328,52 @@ const api = new Function('document', 'EventSource', 'fetch', 'setInterval', 'set
   out.calibrated = cell('actmsg').textContent;
   out.flight = api.fmtFlight({ degraded: ['<i>x</i>'] });
   out.pad = api.fmtPad({ launchpad: [1, 2], site: '<i>y</i>' });
+  // sync time acts only on a board in SETTING, and carries CC's fix from the last /events frame
+  const frame = async (gps, stage) => {
+    sources['/events'].onmessage({ data: JSON.stringify({ cc: { gps }, boards: [{ id: 'A', online: true, stage }] }) });
+    await new Promise((resolve) => setImmediate(resolve));      // let the absent-roster fetch settle
+    posted.length = 0;
+  };
+  const button = () => ({ disabled: cell('actsynctime').disabled, title: cell('actsynctime').title });
+  api.selectBoard('A');
+  out.sync = [];
+  for (const gps of [{ usable: true, latitude: 25.5144, longitude: -80.3918 }, { usable: false }]) {
+    await frame(gps, 'setting');
+    replies.push(JSON.stringify({ status: 'ok', args: [JSON.stringify({ changed: ['epoch'] })] }));
+    await api.syncTime('A');
+    out.sync.push({ sent: JSON.parse(posted[0]), shown: cell('actmsg').textContent, button: button() });
+  }
+  out.unset = [];   // an ok that changed nothing, with no `changed` or one not a list, and a non-ok naming epoch
+  for (const [status, changed] of [['ok', []], ['ok', undefined], ['ok', 'epoch'], ['ok', { epoch: 1 }],
+                                   ['err', ['epoch']]]) {
+    replies.push(JSON.stringify({ status, args: [JSON.stringify({ changed })] }));
+    await api.syncTime('A');
+    out.unset.push(cell('actmsg').textContent);
+  }
+  out.refused = [];                     // any other stage: the button disables, a direct call sends nothing
+  for (const stage of ['done', 'gliding', null]) {
+    await frame({ usable: false }, stage);
+    await api.syncTime('A');
+    out.refused.push({ stage, posted: posted.length, shown: cell('actmsg').textContent, button: button() });
+  }
+  await frame({ usable: false }, 'setting');
+  api.selectBoard('B');                 // a selected board missing from the frame
+  out.absentBoard = button();
+  api.selectBoard('');                  // nothing selected
+  out.noBoard = button();
+  // the browser's own clock: 2020-01-01 exactly is valid and sent as is, a second earlier sends nothing
+  api.selectBoard('A');
+  const realNow = Date.now;
+  out.browserClock = [];
+  for (const now of [1577836800000, 1577836799000]) {
+    Date.now = () => now;
+    posted.length = 0;
+    replies.length = 0;
+    replies.push(JSON.stringify({ status: 'ok', args: [JSON.stringify({ changed: ['epoch'] })] }));
+    await api.syncTime('A');
+    out.browserClock.push({ posted: posted.map((body) => JSON.parse(body)), shown: cell('actmsg').textContent });
+  }
+  Date.now = realNow;
   console.log(JSON.stringify(out));
 })();
 """
@@ -332,8 +386,11 @@ def test_dashboard_actions_follow_the_selection():
     The inspect cards outlived a selection change: the heading named the new board while each card's
     update button still wrote to the old one. A guided calibrate reported success under the status
     table while every other outcome went to the actions bar, so a stale STILL OUTSTANDING stayed on
-    screen. Board-reported `degraded` / `site` went into the markup raw. Run under node with a stub DOM
-    (skipped without node); the negative case is the same board re-selected, which keeps its cards.
+    screen. Board-reported `degraded` / `site` went into the markup raw. 'sync time' sets the selected
+    board's RTC only in SETTING, from the browser's clock in a pinned zone. Run under node with a stub
+    DOM (skipped without node); the negative cases are the same board re-selected, which keeps its
+    cards, a sync in any other stage, of an absent board or from a browser clock before 2020, and a
+    reply that set no clock.
     """
     import shutil
     import subprocess
@@ -348,8 +405,9 @@ def test_dashboard_actions_follow_the_selection():
         handle.write(page)
     with open(os.path.join(directory, 'harness.js'), 'w') as handle:
         handle.write(_DASHBOARD_HARNESS)
+    zone = dict(os.environ, TZ=_ZONE)  # the browser's timezone, pinned so a UTC host cannot hide a sign slip
     done = subprocess.run([node, os.path.join(directory, 'harness.js'), os.path.join(directory, 'index.html')],
-                          capture_output=True)
+                          capture_output=True, env=zone)
     assert done.returncode == 0, done.stderr.decode('utf-8', 'replace')
     out = json.loads(done.stdout)
     assert out['same'] == 'cards of A', 're-selecting the same board must keep its cards'
@@ -358,6 +416,41 @@ def test_dashboard_actions_follow_the_selection():
     assert out['calibrated'] == 'B calibrate: baro done — 1 left (imu)', out['calibrated']
     assert '<i>' not in out['flight'] and '&lt;i&gt;x' in out['flight'], out['flight']
     assert '<i>' not in out['pad'] and '&lt;i&gt;y' in out['pad'], out['pad']
+    # sync time in SETTING: UTC epoch (not local) + the browser's offset EAST of UTC + CC's fix, 'dashboard'
+    import time
+    with_fix, without_fix = out['sync']
+    for sync in (with_fix, without_fix):
+        assert sync['sent']['board'] == 'A' and sync['sent']['command'] == 'update', sync
+        object_name, payload = sync['sent']['params']
+        mission = json.loads(payload)
+        assert object_name == 'mission' and sorted(mission) == ['cc_position', 'epoch', 'source', 'utc_offset']
+        assert type(mission['epoch']) is int and abs(mission['epoch'] - time.time()) < 5, mission
+        assert mission['utc_offset'] == _ZONE_OFFSET and mission['source'] == 'dashboard', mission
+        assert sync['shown'] == 'A sync time: ok', sync
+        assert sync['button']['disabled'] is False and "THIS BROWSER's clock" in sync['button']['title'], sync
+    assert json.loads(with_fix['sent']['params'][1])['cc_position'] == [25.5144, -80.3918], with_fix
+    assert json.loads(without_fix['sent']['params'][1])['cc_position'] is None, without_fix
+    assert len(out['unset']) == 5, out['unset']
+    for shown in out['unset']:
+        assert shown.startswith('A sync time: NOT set'), 'only an ok whose `changed` LIST names epoch is a set clock'
+    # any other stage, or a board not connected: disabled, says why, and a direct call sends nothing
+    for refused in out['refused']:
+        assert refused['posted'] == 0 and refused['button']['disabled'] is True, refused
+        reason = 'A sync time: NOT sent -- A is %s, ' % (refused['stage'] or 'unknown')
+        assert refused['shown'].startswith(reason), refused
+        assert 'only in stage setting (A is ' in refused['button']['title'], refused
+        assert "THIS BROWSER's clock" in refused['button']['title'], refused
+    assert out['absentBoard']['disabled'] is True, out['absentBoard']
+    assert 'B is not connected' in out['absentBoard']['title'], out['absentBoard']
+    assert out['noBoard']['disabled'] is True, out['noBoard']
+    assert out['noBoard']['title'].startswith('only in stage setting (no board selected) -- '), out['noBoard']
+    # the browser's clock before 2020 is unset: nothing sent, and the message says why
+    valid, unset = out['browserClock']
+    assert [json.loads(sent['params'][1])['epoch'] for sent in valid['posted']] == [1577836800], valid
+    assert valid['shown'] == 'A sync time: ok', valid
+    assert unset['posted'] == [], unset
+    assert unset['shown'] == ("A sync time: NOT sent -- this browser's clock reads 2019-12-31T23:59:59Z, "
+                              'before 2020'), unset
 
 
 def test_malformed_request_line_does_not_hang():

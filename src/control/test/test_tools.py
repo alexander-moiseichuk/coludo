@@ -1,8 +1,10 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-Host (CPython) test for the ANALYSIS TOOLS (tools/flight_kpi, flight_svg, airspeed_calibrate, and the
-board-shape handling in flight_telemetry). Stdlib only -- plotly-dependent rendering is not exercised.
+Host (CPython) test for the ANALYSIS TOOLS (tools/flight_kpi, flight_svg, airspeed_calibrate, the
+board-shape handling in flight_telemetry, and the recorder-dump readers recorder_flight,
+assemble_capture and flight_pull.sh on wrapped and unwrapped dumps -- every kind of link damage, across a
+ticks_us wrap, and under a label). Stdlib only -- plotly-dependent rendering is not exercised.
 
 Why this file exists (findings §27.8): ~4 K lines of analysis tooling had almost no tests, and it is the
 layer that produces the CONCLUSIONS we draw from a flight -- a silent bug here is worse than a firmware
@@ -19,12 +21,19 @@ import tempfile
 _ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 sys.path.insert(0, os.path.join(_ROOT, 'tools'))
 import airspeed_calibrate  # noqa: E402
+import assemble_capture  # noqa: E402
 import cc  # noqa: E402
+import flight_campaign  # noqa: E402
 import flight_kpi  # noqa: E402
+import flight_metrics  # noqa: E402
 import flight_report  # noqa: E402
 import flight_svg  # noqa: E402
 import flight_synth_capture  # noqa: E402
 import flight_telemetry  # noqa: E402
+import glide_polar  # noqa: E402
+import hitl_compare  # noqa: E402
+import recorder_flight  # noqa: E402
+import recorder_wire  # noqa: E402
 
 _ZONE = ((25.514944, -80.392972), (25.514583, -80.391111))  # the HPRC strip (TL, BR)
 
@@ -463,6 +472,29 @@ def test_session_tail_variants_all_key_the_same():
     assert 'servo_yaw.csv' in streams, sorted(streams)
     assert streams['fins.csv'].fields == ['eleron_left', 'yaw'], streams['fins.csv'].fields
 
+    """
+    The current era: the board names its session by its NVS boot id ('000123'), with no date at all, or
+    by the `recorder.session` label verbatim. Both must key the same, wrapped or not -- and the shared
+    session.csv, which carries no session prefix, must not stop a label from being recognised as one.
+    """
+    def boot_keys(session, wrap):
+        rows = [('%s_health.csv' % session, 'uptime;mem_free'), ('%s_health.csv' % session, '1000000;90000'),
+                ('%s_imu_bno055.csv' % session, 'uptime;roll'), ('%s_imu_bno055.csv' % session, '1000000;3'),
+                ('session.csv', '900000;123;%s;2026-10-03T14:21:07Z;-240;taster;dev;3f2a91;cc-auto;;' % session)]
+        lines = [recorder_wire.wrap(row, routing).rstrip('\n') if wrap else '@%s@%s' % (routing, row)
+                 for routing, row in rows]
+        return set(flight_telemetry.parse('\n'.join(lines))[0]) - {'session.csv'}
+
+    assert boot_keys('000123', True) == expected, 'a boot-id session'
+    assert boot_keys('000123', False) == expected, 'a boot-id session, unwrapped'
+    assert boot_keys('1234567', True) == expected, 'a boot id past 999999 grows a digit'
+    assert boot_keys('taster', True) == expected, 'a recorder.session label next to session.csv'
+    assert boot_keys('taster', False) == expected, '... unwrapped, as the CC tee keeps it'
+    # a spliced line under a boot-id prefix is still split in an unwrapped capture
+    flight_telemetry.parse('@000123_flight.csv@uptime;stage;fin_cap\n'
+                           '@000123_flight.csv@2000;3;4@000123_airspeed_sdp810.csv@2001;13000;1500\n')
+    assert flight_telemetry.spliced_rows() == 1
+
 
 def test_a_spliced_capture_is_reported_not_swallowed():
     """
@@ -606,6 +638,692 @@ def test_every_provided_quantity_has_a_consumer():
     assert not stale, 'listed operator-only but now read by control: %s' % sorted(stale)
 
 
+def _body(payload: str, routing: str) -> str:
+    """A wrapped row as the Luckfox file named `routing` holds it: the wire line without its routing."""
+    return recorder_wire.wrap(payload, routing).rstrip('\n')[len(routing) + 2:]
+
+
+def _write_dump(directory: str, files: dict) -> None:
+    """Write a recorder dump: {file name: [line, ...]}."""
+    for name, lines in files.items():
+        with open(os.path.join(directory, name), 'w') as handle:
+            handle.write(''.join(line + '\n' for line in lines))
+
+
+def _imu_rows() -> list:
+    """An LSM6DSO32 boot at 100 Hz, 1..3 s of uptime, boosting at 5 g from 1.5 s to 2.5 s."""
+    return ['%d;0.0;0.0;%.1f;0;0;0;1' % (uptime, 5.0 if 1500000 <= uptime < 2500000 else 1.0)
+            for uptime in range(1000000, 3000001, 10000)]
+
+
+def _baro_rows() -> list:
+    """A BMP280 at 10 Hz over the same 1..3 s (21 rows); its header is lost, as on the real dumps."""
+    return ['%d;%.2f;25.0;101300;%.2f' % (uptime, uptime / 1e6, uptime / 1e6)
+            for uptime in range(1000000, 3000001, 100000)]
+
+
+def _cut(recordings: str, session: str) -> tuple:
+    """Run recorder_flight over a dump into a fresh folder; return (what it printed, the folder)."""
+    import contextlib
+    import io
+    out = tempfile.mkdtemp()
+    printed = io.StringIO()
+    saved, sys.argv = sys.argv, ['recorder_flight.py', recordings, '--session', session, '-o', out, '--before', '1']
+    try:
+        with contextlib.redirect_stdout(printed):
+            recorder_flight.main()
+    finally:
+        sys.argv = saved
+    return printed.getvalue(), out
+
+
+def _read(path: str) -> list:
+    """A file's lines, newlines stripped."""
+    with open(path) as handle:
+        return handle.read().splitlines()
+
+
+def test_recorder_flight_salvages_a_wrapped_dump():
+    """
+    A wrapped dump is read by its checks: every row the link damaged is salvaged or rejected, never guessed.
+
+    The 2026-10-03 dumps lost ~4 % of rows: corrupted values, file names mangled into thousands of junk
+    files, rows that lost their leading '@' and fell into recorder.log, and splices -- a row that lost its
+    tail and newline, with the next record running on. Each shape is planted here, and each must land
+    where its CRC says, counted per stream.
+    """
+    session = '000123'
+    imu, baro = _imu_rows(), _baro_rows()
+    imu_routing, baro_routing = '000123_imu_lsm6dso32.csv', '000123_baro_bmp280.csv'
+    stranded = {row.split(';')[0]: _body(row, baro_routing) for row in baro if row.split(';')[0] in
+                ('1500000', '1600000', '1700000', '1800000', '1900000')}
+    imu_file = [_body('uptime;ax;ay;az;gx;gy;gz;irq_runs', imu_routing)]
+    for row in imu:
+        body = _body(row, imu_routing)
+        if row.startswith('1800000;'):  # a splice: this row lost its tail, the baro row ran on
+            body = body[:30] + '@' + baro_routing + '@' + stranded['1800000']
+        imu_file.append(body)
+    imu_file.append('2990000;0.0;0.0;1.0;0;0;0;1')  # NEGATIVE: an unwrapped row in a wrapped file
+    baro_file = []
+    for row in baro:
+        if row.split(';')[0] in stranded:
+            continue
+        body = _body(row, baro_routing)
+        baro_file.append(body.replace(';1.20;', ';1.29;') if row.startswith('1200000;') else body)  # corrupted
+    status = recorder_wire.wrap("900000 recorder :: {'session': '000123', 'lines': 9}").rstrip('\n')
+    other = '000122_imu_lsm6dso32.csv'
+    clock = ['uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon',
+             '884031;123;000123;2026-10-03T14:21:07Z;-240;taster;dev;3f2a91;cc-auto;;',
+             '5000;122;000122;2026-10-02T10:00:00Z;-240;taster;dev;3f2a91;cc-auto;;']
+    recordings = tempfile.mkdtemp()
+    _write_dump(recordings, {
+        imu_routing: imu_file,
+        baro_routing: baro_file,
+        'xx7_baro.cs': [stranded['1500000']],                    # a junk name: the routing was mangled
+        '000123_baro_bmXX280.csv': [stranded['1600000']],        # ... one that keeps the session prefix
+        'recorder.log': [status,
+                         baro_routing + '@' + stranded['1700000'],   # a lost leading '@'
+                         '3_baro_bmp280.csv@' + stranded['1900000'],  # ... and part of the name with it
+                         recorder_wire.wrap('1500000 sequencer :: stage -> boosting').rstrip('\n')],
+        '000123_attitude.csv': [_body('uptime;heading_cd;roll_cd', '000123_attitude.csv'),
+                                _body('1600000;100;5', '000123_attitude.csv')],  # not a stream it knows of
+        other: [_body(row, other) for row in imu[:5]],             # another session: left alone
+        'session.csv': [_body(row, 'session.csv') for row in clock],
+    })
+    printed, out = _cut(recordings, session)
+    assert 'ignition at uptime 1.500000 s' in printed, printed
+    assert re.search(r'imu_lsm6dso32\s+201 good,\s+0 salvaged in,\s+2 rejected', printed), printed
+    assert re.search(r'baro_bmp280\s+15 good,\s+5 salvaged in,\s+1 rejected', printed), printed
+    assert 'dated by cc-auto at uptime 884031 us (raw ticks): 2026-10-03T14:21:07Z' in printed, printed
+    assert '2026-10-02' not in printed, 'another boot\'s clock set was printed'
+
+    recorded = _read(os.path.join(out, 'recorder', 'baro_bmp280.csv'))
+    assert len(recorded) == 20, len(recorded)  # 21 rows, less the corrupted one
+    assert all(recorder_wire.verify(baro_routing, line) for line in recorded), 'recorder/ must keep proven rows'
+    flown = _read(os.path.join(out, 'flight', 'baro_bmp280.csv'))
+    assert flown[0] == 't_s;altitude;temperature;pressure;elevation;uptime_us', flown[0]  # the _FIELDS fallback
+    assert [line.split(';')[-1] for line in flown[1:]] == [str(row.split(';')[0]) for row in baro
+                                                           if not row.startswith('1200000;')]
+    assert len(_read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))) == 1 + 200  # less the spliced row
+    assert _read(os.path.join(out, 'flight', 'attitude.csv'))[0] == 't_s;heading_cd;roll_cd;uptime_us'
+    assert not any('000122' in name for name in os.listdir(os.path.join(out, 'recorder')))
+    assert status in _read(os.path.join(out, 'recorder', 'board.log'))
+
+
+def test_recorder_flight_reads_an_unwrapped_dump_as_before():
+    """
+    A dump from before the wrapper is cut exactly as it always was: by its time sequence, known streams only.
+
+    The 2026-10-03 cuts in launches/ must regenerate byte for byte, so this path must not change at all.
+    """
+    session = '20000101_000006_898573'
+    imu, baro = _imu_rows(), _baro_rows()
+    baro_file = baro[:5] + ['999999999;9.99;25.0;101300;9.99'] + baro[5:]  # a corrupted uptime: out of sequence
+    recordings = tempfile.mkdtemp()
+    _write_dump(recordings, {
+        '%s_imu_lsm6dso32.csv' % session: ['uptime;ax;ay;az;gx;gy;gz;irq_runs'] + imu,
+        '%s_baro_bmp280.csv' % session: baro_file,
+        '%s_attitude.csv' % session: ['uptime;heading_cd;roll_cd', '1600000;100;5'],  # not a known stream
+        '%s_baro_bmXX280.csv' % session: [_body(baro[1], 'x')],  # a wrapper-shaped junk row decides nothing
+        'recorder.log': ["900000 recorder :: {'session': '%s'}" % session],
+    })
+    printed, out = _cut(recordings, session)
+    assert 'ignition at uptime 1.500000 s' in printed and 'rows checked' not in printed, printed
+    assert _read(os.path.join(out, 'recorder', 'baro_bmp280.csv')) == baro  # the corrupted uptime dropped
+    assert len(_read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))) == 1 + len(imu)
+    assert not os.path.exists(os.path.join(out, 'flight', 'attitude.csv')), 'only known streams on an old dump'
+
+
+def test_assemble_capture_keeps_a_wrapped_capture_strict():
+    """
+    An assembled capture of a wrapped dump stays checkable, and the lines the tools ADD are wrapped too.
+
+    assemble_capture re-tags each row with its file name, which IS the row's routing, so a wrapped row
+    becomes its original wire line again. Its own stage marks and hitl_collect's build note are host-built
+    log lines: unwrapped, flight_telemetry would reject them as damage in a wrapped capture. On an old
+    dump everything stays unwrapped, as before.
+    """
+    note = '0 capture :: build 2026.10.04 3f2a91 flash'
+    rows = {'accel.csv': ['uptime;ax;ay;az', '1000000;0.0;0.0;1.0', '1010000;0.1;0.0;1.0'],
+            'sequencer.csv': ['uptime;stage;reason', '1500000;boosting;launch', '1600000;gliding;apogee']}
+    for wrap in (True, False):
+        session = '000123' if wrap else '20000101_000006_898573'
+        directory = tempfile.mkdtemp()
+        files = {}
+        for name, lines in rows.items():
+            routing = '%s_%s' % (session, name)
+            files[routing] = [_body(line, routing) if wrap else line for line in lines]
+        if wrap:
+            files['%s_sequencer.csv' % session][2] = files['%s_sequencer.csv' % session][2].replace('apogee', 'apogeX')
+            files['%s_accel.csv' % session].pop(2)
+            files['%s_acXel.csv' % session] = [_body(rows['accel.csv'][2], '%s_accel.csv' % session)]  # junk name
+        _write_dump(directory, files)
+        capture = os.path.join(directory, 'capture.txt')
+        assemble_capture.assemble(session, directory, capture, note)
+        lines = _read(capture)
+        assert lines[-1] == (recorder_wire.wrap(note).rstrip('\n') if wrap else note), lines[-1]
+        assert airspeed_calibrate._is_capture(capture)
+        streams, logs = flight_telemetry.parse('\n'.join(lines))
+        counts = flight_telemetry.line_counts()
+        texts = [text for _stamp, text in logs]
+        assert len(streams['accel.csv'].rows) == 2 and note in texts, (sorted(streams), texts)
+        assert '1500000 controller :: stage -> boosting' in texts, texts
+        if wrap:
+            # the damaged sequencer row is rejected and makes no stage mark; the junk-named row is salvaged
+            assert counts['salvaged'] == 1 and counts['rejected'] == 1 and counts['legacy'] == 0, counts
+            assert not any('gliding' in text for text in texts), texts
+        else:
+            assert counts['legacy'] == len(lines) and '1600000 controller :: stage -> gliding' in texts
+
+    # a capture whose first line is a wrapped LOG line is still recognised as a capture
+    first_log = os.path.join(tempfile.mkdtemp(), 'capture.txt')
+    with open(first_log, 'w') as handle:
+        handle.write(recorder_wire.wrap('100 main :: boot') + recorder_wire.wrap('1;2', '000123_x.csv'))
+    assert airspeed_calibrate._is_capture(first_log)
+    # NEGATIVE: an unwrapped log line first is still not a capture (unchanged)
+    with open(first_log, 'w') as handle:
+        handle.write('100 main :: boot\n@000123_x.csv@1;2\n')
+    assert not airspeed_calibrate._is_capture(first_log)
+
+
+
+def _log(payload: str) -> str:
+    """A board log line as recorder.log holds it: wrapped, with no routing."""
+    return recorder_wire.wrap(payload).rstrip('\n')
+
+
+def test_recorder_flight_error_matrix():
+    """
+    Every kind of link damage through recorder_flight on a Luckfox dump: what is proven is kept and placed
+    by time, what is not is rejected and counted -- never guessed, and never another session's.
+
+    Damage per row: a corrupted value, uptime or CLOSE, a lost tail or head, an unwrapped row (rejected);
+    a corrupted routing (a junk file, with or without the session prefix), a lost leading '@' and a lost
+    second '@' (both land in recorder.log), two lines merged into one, and a splice (salvaged). Plus a
+    header (U = 0), several session.csv rows for one boot, a leftover name from another session, a
+    non-ASCII payload, and a byte the link damaged in recorder.log -- which must come out as it went in.
+    Every line that proves nothing is counted: under '(no stream)' when it is this session's (a junk file
+    with its prefix, its part of recorder.log), apart when it may be another session's. A stream whose
+    every row was stranded still comes out, and a 'boot' row with no utc dates nothing.
+    """
+    session, other = '000123', '000122'
+    imu_routing, baro_routing = '000123_imu_lsm6dso32.csv', '000123_baro_bmp280.csv'
+    imu, baro = _imu_rows(), _baro_rows()
+    bodies = {row.split(';')[0]: _body(row, baro_routing) for row in baro}
+    stranded = ('1500000', '1600000', '1700000', '1800000', '1900000', '2000000')
+    imu_file = [_body('uptime;ax;ay;az;gx;gy;gz;irq_runs', imu_routing)]
+    for row in imu:
+        body = _body(row, imu_routing)
+        damage = {
+            '1100000': body.replace(';0.0;0.0;1.0;', ';0.0;0.0;1.1;'),          # a corrupted value
+            '1110000': body.replace('1110000', '1110001'),                        # a corrupted uptime
+            '1120000': body[:-2] + ('0' if body[-2] != '0' else '1') + '>',     # a corrupted CLOSE
+            '1130000': body[:-6],                                                 # a lost tail
+            '1140000': body[11:],                                                 # a lost head
+            '1150000': body + '@' + baro_routing + '@' + bodies['1500000'],     # two lines merged
+            '1800000': body[:30] + '@' + baro_routing + '@' + bodies['1800000'],  # a splice
+        }
+        imu_file.append(damage.get(row.split(';')[0], body))
+    imu_file.append('2990000;0.0;0.0;1.0;0;0;0;1')  # NEGATIVE: an unwrapped row in a wrapped file
+    baro_file = [_body('uptime;altitude;temperature;pressure;elevation', baro_routing)]
+    baro_file += [body for uptime, body in bodies.items() if uptime not in stranded]
+    sequencer_routing = '000123_sequencer.csv'
+    header = 'uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon'
+    clock = [header, '100000;123;000123;;;tästér;dev;3f2a91;boot;;',
+             '884031;123;000123;2026-10-03T14:21:07Z;-240;tästér;dev;3f2a91;cc-auto;;',
+             '1400000;123;000123;2026-10-03T14:21:08Z;-240;tästér;dev;3f2a91;dashboard;;', header,
+             '5000;122;000122;2026-10-02T10:00:00Z;-240;taster;dev;3f2a91;cc-auto;;']
+    anchor = '2950000;123;000123;2026-10-03T14:21:10Z;;tästér;dev;3f2a91;anchor;;'
+    foreign = _body('1950000;9.99;25.0;101300;9.99', '000122_baro_bmp280.csv')
+    log = [_log("900000 recorder :: {'session': '000123', 'lines': 9}"),
+           _log('1000000 health :: ok'),
+           baro_routing + '@' + bodies['1700000'],                   # a lost leading '@'
+           _log('1750000 health :: ok'),
+           '@' + baro_routing + bodies['1900000'],                   # a lost second '@'
+           '%s_baro_bmp280.csv@%s' % (other, foreign),              # NEGATIVE: another session's leftover name
+           'session.csv@' + _body(anchor, 'session.csv'),           # the anchor row lost its '@' too
+           '000123_separation.csv@' + _body('1600000;deployed;gliding', '000123_separation.csv'),  # its only row
+           sequencer_routing + '@' + _body('1600000;gliding;apogee', sequencer_routing).replace('apogee', 'apogeX'),
+           'a line that lost both ends of its wrapper',               # NEGATIVE: proves nothing
+           _log('2500000 sequencer :: stage -> boosting'),
+           _log("2900000 recorder :: {'session': '000123', 'lines': 99}")]
+    recordings = tempfile.mkdtemp()
+    _write_dump(recordings, {
+        imu_routing: imu_file,
+        baro_routing: baro_file,
+        'xx7_baro.cs': [bodies['1600000']],                    # a corrupted routing: a junk file
+        '000123_baro_bmXX280.csv': [bodies['2000000']],        # ... one that keeps the session prefix
+        '000123_junk.csv': [bodies['1300000'].replace(';25.0;', ';25.5;'), 'plain junk'],  # proves nothing
+        'yy.csv': [bodies['1300000'].replace(';25.0;', ';25.7;')],  # ... nor this, perhaps another session's
+        sequencer_routing: [_body('1500000;boosting;zündung', sequencer_routing)],
+        'session.csv': [_body(row, 'session.csv') for row in clock],
+    })
+    damaged = b'\xff\xfe a byte the link damaged\n'
+    with open(os.path.join(recordings, 'recorder.log'), 'wb') as handle:
+        handle.write(('\n'.join(log[:2]) + '\n').encode('utf-8') + damaged + ('\n'.join(log[2:]) + '\n').encode())
+    printed, out = _cut(recordings, session)
+    assert 'ignition at uptime 1.500000 s' in printed, printed
+    assert re.search(r'imu_lsm6dso32\s+195 good,\s+1 salvaged in,\s+7 rejected', printed), printed
+    assert re.search(r'baro_bmp280\s+16 good,\s+6 salvaged in,\s+0 rejected', printed), printed
+    # the damaged byte, another session's leftover name, the damaged sequencer row and the line with no
+    # wrapper in recorder.log; the junk file's two lines
+    assert re.search(r'\(no stream\)\s+0 good,\s+0 salvaged in,\s+6 rejected', printed), printed
+    assert '  1 more damaged line(s) in junk files without this prefix' in printed, printed
+    assert re.search(r'separation\s+0 good,\s+1 salvaged in,\s+0 rejected', printed), printed
+    assert len(re.findall(r'dated by \S+ at uptime \d+ us \(raw ticks\): 2026-10-03', printed)) == 3, printed
+    assert 'dated by anchor' in printed and 'dated by boot' not in printed, printed
+    assert '2026-10-02' not in printed and other not in printed, printed
+    assert 'ignition at 2026-10-03T14:21:08.100Z UTC, from the dashboard row at uptime 1.400000 s' in printed
+
+    recorded = _read(os.path.join(out, 'recorder', 'baro_bmp280.csv'))
+    assert recorded == [bodies[row.split(';')[0]] for row in baro], 'every baro row, proven, in time order'
+    flown = _read(os.path.join(out, 'flight', 'baro_bmp280.csv'))
+    assert flown[0] == 't_s;altitude;temperature;pressure;elevation;uptime_us', flown[0]
+    assert [line.split(';')[-1] for line in flown[1:]] == [row.split(';')[0] for row in baro]
+    imu_kept = [line.split(';')[-1] for line in _read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))[1:]]
+    lost = {'1100000', '1110000', '1120000', '1130000', '1140000', '1800000'}
+    assert imu_kept == [row.split(';')[0] for row in imu if row.split(';')[0] not in lost], len(imu_kept)
+    assert _read(os.path.join(out, 'flight', 'separation.csv')) == [
+        't_s;event;stage;uptime_us', '0.100000;deployed;gliding;1600000']  # a stream no good row named
+    # the raw bytes survive: a non-ASCII payload in recorder/ and flight/, a damaged byte in board.log
+    with open(os.path.join(out, 'recorder', 'sequencer.csv'), 'rb') as handle:
+        assert handle.read() == (_body('1500000;boosting;zündung', sequencer_routing) + '\n').encode('utf-8')
+    assert _read(os.path.join(out, 'flight', 'sequencer.csv'))[1].startswith('0.000000;boosting;zündung;')
+    with open(os.path.join(out, 'recorder', 'board.log'), 'rb') as handle:
+        assert damaged in handle.read()
+
+
+def test_recorder_flight_places_salvage_across_a_wrap():
+    """
+    A session longer than the ticks_us wrap (2**30 us, 17.9 min): recovered rows are placed by the good
+    lines around them where they were found, at their unwrapped time, in order -- and a row nothing times
+    (a junk file) is rejected, since its time has two candidates a wrap apart.
+
+    TMS-7D sat 23.5 minutes on the pad. The first version placed rows by the stream's span alone, which in
+    a session that long holds every recorded time twice, so it rejected every salvaged row of the flight.
+    A sparse stream (the sequencer: one row at boot, the next ones in flight) never shows its own wraps, so
+    its good rows keep their recorded time while a recovered one is placed at the unwrapped time; the cut
+    takes both modulo the wrap into the flight window, where they must agree.
+    """
+    period = recorder_wire.TICKS_PERIOD
+    session, imu_routing, baro_routing = '000123', '000123_imu_lsm6dso32.csv', '000123_baro_bmp280.csv'
+    ignition_us = 1_440_000_000
+    stamps = list(range(30_000_000, 1_400_000_000, 1_000_000)) + list(range(1_400_000_000, 1_460_000_001, 10_000))
+    imu = ['%d;0.0;0.0;%.1f;0;0;0;1' % (stamp % period, 5.0 if ignition_us <= stamp < ignition_us + 1_500_000 else 1.0)
+           for stamp in stamps]
+    baro_times = range(30_500_000, 1_460_000_000, 1_000_000)
+    baro = {stamp: _body('%d;1.0;25.0;101300;1.0' % (stamp % period), baro_routing) for stamp in baro_times}
+    lost_at = (600_500_000, 1_445_500_000, 1_446_500_000)  # lost leading '@': stranded in recorder.log
+    imu_file = [_body(row, imu_routing) for row in imu]
+    imu_file[stamps.index(1_430_000_000)] += '@' + baro_routing + '@' + baro[1_430_500_000]  # merged, past the wrap
+    sequencer_routing = '000123_sequencer.csv'
+    sequencer = {stamp: _body('%d;%s' % (stamp % period, event), sequencer_routing)
+                 for stamp, event in ((5_000_000, 'setting;boot'), (1_440_000_000, 'boosting;launch'),
+                                      (1_443_000_000, 'gliding;burnout'))}
+    log = [_log("1000000 recorder :: {'session': '000123', 'lines': 1}")]
+    for tick in range(5_000_000, 1_460_000_001, 5_000_000):
+        log.append(_log('%d health :: ok' % (tick % period)))
+        log += [baro_routing + '@' + baro[stamp] for stamp in lost_at if tick < stamp < tick + 5_000_000]
+        if tick == 1_435_000_000:
+            log.append(sequencer_routing + '@' + sequencer[1_440_000_000])  # the ignition event lost its '@'
+    recordings = tempfile.mkdtemp()
+    _write_dump(recordings, {
+        sequencer_routing: [sequencer[5_000_000], sequencer[1_443_000_000]],
+        imu_routing: imu_file,
+        baro_routing: [body for stamp, body in baro.items() if stamp not in lost_at + (1_430_500_000, 1_450_500_000)],
+        '000123_baro_bmXX280.csv': [baro[1_450_500_000]],  # a junk file: nothing to time it by
+        'recorder.log': log,
+    })
+    printed, out = _cut(recordings, session)
+    assert 'ignition at uptime 1440.000000 s' in printed, printed
+    assert re.search(r'baro_bmp280\s+%d good,\s+4 salvaged in,\s+1 rejected' % (len(baro) - 5), printed), printed
+    assert re.search(r'imu_lsm6dso32\s+%d good,\s+1 salvaged in,\s+0 rejected' % (len(imu) - 1), printed), printed
+    flown = [int(line.split(';')[-1]) for line in _read(os.path.join(out, 'flight', 'baro_bmp280.csv'))[1:]]
+    window = [stamp for stamp in baro_times if stamp >= ignition_us - 1_000_000 and stamp != 1_450_500_000]
+    assert flown == window, (flown[:3], window[:3])  # unwrapped, in order, the stranded ones in their place
+    recorded = _read(os.path.join(out, 'recorder', 'baro_bmp280.csv'))
+    assert recorded == [baro[stamp] for stamp in window], 'recorder/ keeps the proven rows in time order'
+    assert re.search(r'sequencer\s+2 good,\s+1 salvaged in,\s+0 rejected', printed), printed
+    assert _read(os.path.join(out, 'flight', 'sequencer.csv')) == [
+        't_s;stage;reason;uptime_us', '0.000000;boosting;launch;1440000000', '3.000000;gliding;burnout;1443000000']
+
+
+def test_a_label_never_takes_another_sessions_files():
+    """
+    Under a label another session's files can share the prefix: an older label could hold '_', so
+    `hitl_f15_*` sits beside `hitl_*`. Neither recorder_flight nor assemble_capture may take them -- the
+    cut and the capture would carry a foreign `f15_imu_lsm6dso32` stream. And the reverse must never
+    happen: junk names that look like a session's (`tms-7d_bno055.csv`, the tail of `tms-7d_imu_bno055.csv`
+    after a lost `imu_`) must not drop a real stream.
+    """
+    session, foreign = 'hitl', 'hitl_f15'
+    files = {}
+    for prefix in (session, foreign):
+        imu_routing, baro_routing = prefix + '_imu_lsm6dso32.csv', prefix + '_baro_bmp280.csv'
+        files[imu_routing] = [_body(row, imu_routing) for row in _imu_rows()]
+        files[baro_routing] = [_body(row, baro_routing) for row in _baro_rows()]
+        files[prefix + '_health.csv'] = [_body('1000000;35;31480912;10;0;0;0;0;0', prefix + '_health.csv')]
+        files[prefix + '_sequencer.csv'] = [_body('1500000;boosting;launch', prefix + '_sequencer.csv')]
+    files['hitl_attitude.csv'] = [_body('1600000;100;5', 'hitl_attitude.csv')]  # this session's, but undeclared
+    files['recorder.log'] = [_log("900000 recorder :: {'session': 'hitl'}")]
+    recordings = tempfile.mkdtemp()
+    _write_dump(recordings, files)
+    printed, out = _cut(recordings, session)
+    assert 'f15' not in printed and 'ignition at uptime 1.500000 s' in printed, printed
+    assert sorted(os.listdir(os.path.join(out, 'flight'))) == [
+        'baro_bmp280.csv', 'health.csv', 'imu_lsm6dso32.csv', 'sequencer.csv']
+    capture = os.path.join(tempfile.mkdtemp(), 'capture.txt')
+    assemble_capture.assemble(session, recordings, capture)
+    streams, _logs = flight_telemetry.parse('\n'.join(_read(capture)))
+    assert sorted(streams) == ['attitude.csv', 'baro_bmp280.csv', 'health.csv', 'imu_lsm6dso32.csv',
+                               'sequencer.csv'], sorted(streams)
+    # NEGATIVE: the other label is still its own session, whole, and only that
+    assemble_capture.assemble(foreign, recordings, capture)
+    assert sorted({line[1:].partition('@')[0] for line in _read(capture) if line.startswith('@')}) == [
+        'hitl_f15_baro_bmp280.csv', 'hitl_f15_health.csv', 'hitl_f15_imu_lsm6dso32.csv', 'hitl_f15_sequencer.csv']
+
+    # junk tails under a label: both IMUs' tails, each holding a row its CRC files back where it belongs
+    session = 'tms-7d'
+    bno055, lsm6dso32 = session + '_imu_bno055.csv', session + '_imu_lsm6dso32.csv'
+    bno055_rows = ['%d;90.0;0.0;0.0;0.0;0.0;9.8' % uptime for uptime in range(1000000, 3000001, 100000)]
+    imu = _imu_rows()
+    files = {bno055: [_body(row, bno055) for row in bno055_rows if not row.startswith('2000000;')],
+             lsm6dso32: [_body(row, lsm6dso32) for row in imu if not row.startswith('2000000;')],
+             session + '_bno055.csv': [_body(bno055_rows[10], bno055)],    # a lost 'imu_'
+             session + '_lsm6dso32.csv': [_body(imu[100], lsm6dso32)],     # ... twice
+             session + '_health.csv': [_body('1000000;35;31480912;10;0;0;0;0;0', session + '_health.csv')],
+             'recorder.log': [_log("900000 recorder :: {'session': 'tms-7d'}")]}
+    recordings = tempfile.mkdtemp()
+    _write_dump(recordings, files)
+    assemble_capture.assemble(session, recordings, capture)
+    streams, _logs = flight_telemetry.parse('\n'.join(_read(capture)))
+    assert flight_telemetry.line_counts()['salvaged'] == 2, flight_telemetry.line_counts()
+    assert len(streams['imu_bno055.csv'].rows) == len(bno055_rows), sorted(streams)
+    assert len(streams['imu_lsm6dso32.csv'].rows) == len(imu), sorted(streams)
+    printed, out = _cut(recordings, session)
+    assert re.search(r'imu_bno055\s+20 good,\s+1 salvaged in', printed), printed
+    assert len(_read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))) == 1 + len(imu), printed
+
+
+_INDEX_HEADER = 'uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon'
+
+
+def _boot_dump(session: str, index: list) -> str:
+    """A wrapped dump of one short boot (_imu_rows(), _baro_rows()) beside the session.csv rows `index`."""
+    imu_routing, baro_routing = session + '_imu_lsm6dso32.csv', session + '_baro_bmp280.csv'
+    recordings = tempfile.mkdtemp()
+    _write_dump(recordings, {
+        imu_routing: [_body(row, imu_routing) for row in _imu_rows()],
+        baro_routing: [_body(row, baro_routing) for row in _baro_rows()],
+        'recorder.log': [_log("900000 recorder :: {'session': '%s'}" % session)],
+        'session.csv': [_body(row, 'session.csv') for row in index],
+    })
+    return recordings
+
+
+def test_recorder_flight_dates_every_boot():
+    """
+    session.csv lists every boot -- a 'boot' row, a row per time set, an 'anchor' row -- and only a row with
+    a utc dates one. A boot nothing dated is named by its boot id, board, firmware and config, and placed
+    between its board's dated neighbours, since boot ids only grow. A label may be 'session', which the
+    header's own session cell reads: the header must never print as a row of it.
+    """
+    index = [_INDEX_HEADER, '2000000;121;000121;2026-10-03T10:00:00Z;-240;taster;dev;3f2a91;cc-auto;;',
+             _INDEX_HEADER, '100000;122;000122;;;taster;dev;3f2a91;boot;;',
+             '1500000;122;000122;;;taster;dev;3f2a91;cc-auto;25.5;-80.3',  # a set that left the clock in 2000
+             _INDEX_HEADER, '61000000;122;000122;;;taster;dev;3f2a91;anchor;;',
+             _INDEX_HEADER, '100000;123;000123;;;taster;dev;3f2a91;boot;;',
+             '300000;124;000124;2026-10-03T11:00:00Z;;other;dev;3f2a91;anchor;;',  # another board: no neighbour
+             '61000000;125;000125;2026-10-03T12:00:00Z;;taster;dev;3f2a91;anchor;;']
+    printed, _out = _cut(_boot_dump('000122', index), '000122')
+    assert 'boot 122 (board taster, firmware dev, config 3f2a91): clock never set; it ran after boot 121 ' \
+           '(2026-10-03T10:00:00Z) and before boot 125 (2026-10-03T12:00:00Z)' in printed, printed
+    assert 'dated by' not in printed and 'ignition at 20' not in printed, printed  # undated rows date nothing
+    assert 'boot 123' not in printed and 'boot 121 (board' not in printed, 'another session\'s boot was listed'
+
+    # NEGATIVE: no row names the session at all
+    printed, _out = _cut(_boot_dump('000126', index), '000126')
+    assert 'session.csv names no boot of this session: nothing dates it' in printed, printed
+
+    # the label 'session': the header's third cell reads 'session' too; two boots share the label
+    index = [_INDEX_HEADER, '100000;126;session;;;taster;dev;3f2a91;boot;;',
+             '1200000;126;session;2026-10-03T13:00:00Z;-240;taster;dev;3f2a91;cc-auto;;',
+             _INDEX_HEADER, '61000000;126;session;2026-10-03T13:01:00Z;;taster;dev;3f2a91;anchor;;',
+             _INDEX_HEADER, '100000;127;session;;;taster;dev;3f2a91;boot;;']
+    printed, _out = _cut(_boot_dump('session', index), 'session')
+    assert re.findall(r'boot (\S+) \(board', printed) == ['126', '126', '127'], printed
+    assert 'dated by cc-auto at uptime 1200000 us (raw ticks): 2026-10-03T13:00:00Z, local offset -240 min' in printed
+    assert 'dated by anchor' in printed and 'boot 127 (board taster, firmware dev, config 3f2a91): clock never ' \
+           'set; it ran after boot 126 (2026-10-03T13:01:00Z)' in printed, printed
+    assert 'ignition at 20' not in printed, 'two boots share the label: which one flew is not the index\'s to say'
+    # ... and with the one boot, the ignition gets its UTC from the latest dated row before it
+    printed, _out = _cut(_boot_dump('session', index[:4]), 'session')
+    assert 'ignition at 2026-10-03T13:00:00.300Z UTC, from the cc-auto row at uptime 1.200000 s' in printed, printed
+
+
+def _long_dump(index: list) -> str:
+    """
+    A wrapped 24-minute boot past the ticks_us wrap, ignition at 1440 s, beside the session.csv rows `index`.
+
+    Args:
+        index - session.csv's rows, header included.
+
+    Returns:
+        The dump directory.
+    """
+    period = recorder_wire.TICKS_PERIOD
+    imu_routing = '000123_imu_lsm6dso32.csv'
+    stamps = list(range(30_000_000, 1_435_000_000, 5_000_000)) + list(range(1_435_000_000, 1_460_000_001, 10_000))
+    imu = ['%d;0.0;0.0;%.1f;0;0;0;1' % (stamp % period, 5.0 if 1_440_000_000 <= stamp < 1_441_500_000 else 1.0)
+           for stamp in stamps]
+    recordings = tempfile.mkdtemp()
+    _write_dump(recordings, {
+        imu_routing: [_body(row, imu_routing) for row in imu],
+        'recorder.log': [_log("1000000 recorder :: {'session': '000123'}")],
+        'session.csv': [_body(row, 'session.csv') for row in index],
+    })
+    return recordings
+
+
+def test_recorder_flight_dates_the_flight_across_a_wrap():
+    """
+    A row's uptime is raw ticks_us, so in a boot longer than a wrap a time set can sit at two places a
+    wrap apart. The anchor row has one (a minute after the boot row), and a later set takes the place its
+    utc puts at the right distance from it; the ignition then takes its UTC from the latest dated row
+    before it. With the anchor lost, two sets still place each other when only one choice of wraps lets
+    their utcs agree. A dated row nothing places is not guessed: the ignition's UTC is then unknown.
+    """
+    period = recorder_wire.TICKS_PERIOD
+    index = [_INDEX_HEADER, '30000000;123;000123;;;taster;dev;3f2a91;boot;;', _INDEX_HEADER,
+             '90000000;123;000123;2026-10-03T14:00:01Z;;taster;dev;3f2a91;anchor;;',
+             '%d;123;000123;2026-10-03T14:20:16Z;-240;taster;dev;3f2a91;dashboard;;' % (1_300_000_000 % period)]
+    printed, _out = _cut(_long_dump(index), '000123')
+    assert 'ignition at uptime 1440.000000 s' in printed, printed
+    # the dashboard re-sync corrected the anchor's clock by 5 s: 14:00:01 + 1210 s + 5 s, then + 140 s
+    assert 'ignition at 2026-10-03T14:22:36.000Z UTC, from the dashboard row at uptime 1300.000000 s' in printed
+    # the anchor alone dates the boot: it went out a minute after the boot row, so it has one place
+    printed, _out = _cut(_long_dump(index[:4]), '000123')
+    assert 'ignition at 2026-10-03T14:22:31.000Z UTC, from the anchor row at uptime 90.000000 s' in printed, printed
+    # the anchor lost: a set at 20 s (or 20 s + a wrap) and the re-sync agree only at 20 s and 1300 s
+    index = [_INDEX_HEADER, '20000000;123;000123;2026-10-03T13:59:51Z;-240;taster;dev;3f2a91;cc-auto;;',
+             index[-1]]
+    printed, _out = _cut(_long_dump(index), '000123')
+    assert 'ignition at 2026-10-03T14:22:36.000Z UTC, from the dashboard row at uptime 1300.000000 s' in printed
+    # NEGATIVE: the only dated row is a set at 200 s -- or 200 s + a wrap -- and nothing else is dated
+    index = [_INDEX_HEADER, '30000000;123;000123;;;taster;dev;3f2a91;boot;;', _INDEX_HEADER,
+             '90000000;123;000123;;;taster;dev;3f2a91;anchor;;',
+             '200000000;123;000123;2026-10-03T14:03:21Z;-240;taster;dev;3f2a91;cc-auto;;']
+    printed, _out = _cut(_long_dump(index), '000123')
+    assert 'dated by cc-auto at uptime 200000000 us' in printed, printed
+    assert 'ignition UTC unknown: no dated row has a single place on the timeline' in printed, printed
+    # ... and two sets that agree at both choices, 100 s apart: still two places each
+    index.append('300000000;123;000123;2026-10-03T14:05:01Z;-240;taster;dev;3f2a91;dashboard;;')
+    printed, _out = _cut(_long_dump(index), '000123')
+    assert 'ignition UTC unknown: no dated row has a single place on the timeline' in printed, printed
+
+
+def test_recorder_flight_times_the_log_from_this_boot_only():
+    """
+    recorder.log's part for a session starts after the previous session's last status line, so it can open
+    with that boot's last few lines. Their ticks are that boot's: read as this boot's, the fall to this
+    boot's small ticks looked like a wrap, and every row stranded in the log was filed 17.9 minutes late
+    -- out of the cut. A fall is a wrap only when it is one, and never before this session's first status
+    line: a previous boot ending 30 s short of a wrap must not pass for one either.
+    """
+    period = recorder_wire.TICKS_PERIOD
+    imu_routing, baro_routing = '000123_imu_lsm6dso32.csv', '000123_baro_bmp280.csv'
+    stamps = list(range(10_000_000, 275_000_000, 1_000_000)) + list(range(275_000_000, 300_000_001, 10_000))
+    imu = ['%d;0.0;0.0;%.1f;0;0;0;1' % (stamp, 5.0 if 280_000_000 <= stamp < 281_500_000 else 1.0) for stamp in stamps]
+    baro = {stamp: _body('%d;1.0;25.0;101300;%d' % (stamp, stamp // 1000), baro_routing)
+            for stamp in range(10_500_000, 300_000_000, 1_000_000)}
+    previous = '000122_baro_bmp280.csv'
+    for tail in (699_000_000, period - 30_000_000):
+        log = [_log("%d recorder :: {'session': '000122'}" % tail), _log('%d health :: bye' % (tail + 500_000)),
+               previous + '@' + _body('%d;1.0;25.0;101300;0' % (tail + 600_000), previous)]  # it lost its '@' too
+        for tick in range(9_000_000, 300_000_000, 1_000_000):
+            log.append(_log("%d recorder :: {'session': '000123'}" % tick))
+            if tick == 200_000_000:
+                log.append(baro_routing + '@' + baro[200_500_000])  # a lost leading '@'
+        recordings = tempfile.mkdtemp()
+        _write_dump(recordings, {imu_routing: [_body(row, imu_routing) for row in imu],
+                                 baro_routing: [body for stamp, body in baro.items() if stamp != 200_500_000],
+                                 'recorder.log': log})
+        saved, sys.argv = sys.argv, ['recorder_flight.py', recordings, '--session', '000123', '-o', recordings,
+                                     '--before', '100']
+        try:
+            import contextlib
+            import io
+            printed = io.StringIO()
+            with contextlib.redirect_stdout(printed):
+                recorder_flight.main()
+        finally:
+            sys.argv = saved
+        assert re.search(r'baro_bmp280\s+289 good,\s+1 salvaged in,\s+0 rejected', printed.getvalue()), tail
+        # the previous boot's stranded row is not this session's to count as rejected
+        assert re.search(r'\(no stream\)\s+0 good,\s+0 salvaged in,\s+0 rejected', printed.getvalue()), tail
+        assert '  1 more damaged line(s) in junk files' in printed.getvalue(), printed.getvalue()
+        flown = [line.split(';') for line in _read(os.path.join(recordings, 'flight', 'baro_bmp280.csv'))[1:]]
+        assert ['200500000', '200500'] in [cells[-1:] + cells[-2:-1] for cells in flown], (tail, flown[80:82])
+        assert all(int(cells[-1]) // 1000 == int(cells[-2]) for cells in flown), 'a row filed at another time'
+
+
+def test_every_reader_takes_a_damaged_byte():
+    """
+    A byte the link damaged is not UTF-8. Every tool reads a capture through flight_telemetry.load()
+    (surrogateescape), so it costs its own line and never the read: the six parse() callers that used a
+    plain open() raised UnicodeDecodeError on the whole capture, and assemble_capture writes such a byte
+    through unchanged, as the Luckfox holds it.
+    """
+    import contextlib
+    import io
+    import subprocess
+    directory = tempfile.mkdtemp()
+    capture = os.path.join(directory, 'damaged.txt')
+    with open(capture, 'wb') as handle:
+        handle.write(flight_synth_capture.generate().encode() + b'1 health :: \xff\xfe damaged\n')
+    _streams, logs = flight_telemetry.load(capture)
+    assert logs[-1][1] == '1 health :: \udcff\udcfe damaged', logs[-1]
+    with contextlib.redirect_stdout(io.StringIO()) as printed:
+        flight_kpi.report('damaged', capture, _ZONE)
+        glide_polar.report('damaged', capture, 0.0, 0.0)
+    assert 'damaged' in printed.getvalue()
+    assert flight_metrics.metrics(capture) is not None
+    assert flight_campaign.measure(capture)['apogee'] is not None
+    assert hitl_compare._metrics(capture)
+    svg = subprocess.run([sys.executable, os.path.join(_ROOT, 'tools', 'flight_svg.py'), capture,
+                          '-o', os.path.join(directory, 'damaged.svg')], capture_output=True, text=True)
+    assert svg.returncode == 0, svg.stderr
+    saved, sys.argv = sys.argv, ['flight_report.py', capture, '-o', os.path.join(directory, 'damaged.html')]
+    try:
+        flight_report.main()  # reads the capture first: without plotly it then stops, with plotly it renders
+    except SystemExit as stop:
+        assert 'needs plotly' in str(stop), stop
+    finally:
+        sys.argv = saved
+    # assemble_capture keeps the byte as the Luckfox file holds it
+    routing = '000123_imu_lsm6dso32.csv'
+    with open(os.path.join(directory, routing), 'wb') as handle:
+        handle.write(_body(_imu_rows()[0], routing).encode() + b'\n' + b'{0a};1010000;\xff;<0b>\n')
+    with contextlib.redirect_stdout(io.StringIO()):
+        assemble_capture.assemble('000123', directory, capture)
+    with open(capture, 'rb') as handle:
+        assert ('@%s@{0a};1010000;\xff;<0b>\n' % routing).encode('latin-1') in handle.read()
+
+
+_FAKE_ADB = '\n'.join([
+    '#!/usr/bin/env python3',
+    '"""A fake adb over a local directory, in bytes like the real one: `shell "ls [-t] ..."`, `pull <path> <dir>`."""',
+    'import os',
+    'import shutil',
+    'import sys',
+    '',
+    "recordings = os.environ['FAKE_RECORDINGS'].encode()",
+    'names = sorted(os.listdir(recordings))',
+    "if sys.argv[1] == 'shell' and sys.argv[2].startswith('ls -t'):",
+    '    names.sort(key=lambda name: -os.path.getmtime(os.path.join(recordings, name)))',
+    "    listed = [b'/userdata/recordings/' + name for name in names if b'_' in name and name.endswith(b'.csv')]",
+    "    sys.stdout.buffer.write(b'\\n'.join(listed) + b'\\n')",
+    "elif sys.argv[1] == 'shell' and sys.argv[2].startswith('ls '):",
+    "    sys.stdout.buffer.write(b'\\n'.join(names) + b'\\n')",
+    "elif sys.argv[1] == 'pull':",
+    '    shutil.copy(os.path.join(recordings, os.fsencode(os.path.basename(sys.argv[2]))), os.fsencode(sys.argv[3]))',
+    ''])
+
+
+def test_flight_pull_takes_a_session_not_a_junk_name():
+    """
+    flight_pull.sh with no session pulls the newest one: the session whose second-newest file is the newest.
+    The newest FILE is often a junk name the link made (`000124_xx.csv`, or the older shape's
+    `20000101_000005_1927_gl.csv`), and a lone junk name must not become "the session" -- nor lift an OLD
+    session whose id it happens to repeat (`000122_xx.csv`), which counting a prefix over the whole listing
+    did. Junk names whose bytes are not UTF-8 (the TMS-7D card held two) or that hold a space must not stop
+    the pull. Given a label, it pulls that session's files and not an older label's sharing the prefix.
+    Run against a fake adb.
+    """
+    import subprocess
+    import time
+    recordings, bin_dir, out, labelled = (tempfile.mkdtemp() for _ in range(4))
+    files = {'000122_imu_lsm6dso32.csv': ['1;0;0;1;0;0;0;1'], '000122_health.csv': ['1;35;1;1;0;0;0;0;0'],
+             '000123_imu_lsm6dso32.csv': [_body(row, '000123_imu_lsm6dso32.csv') for row in _imu_rows()],
+             '000123_baro_bmp280.csv': [_body(row, '000123_baro_bmp280.csv') for row in _baro_rows()],
+             '000123_imu l.csv': [_body(_imu_rows()[0], '000123_imu_lsm6dso32.csv')],  # a junk name with a space
+             'hitl_health.csv': ['1;35;1;1;0;0;0;0;0'], 'hitl_imu.csv': ['1;1'], 'hitl_baro.csv': ['1;1'],
+             'hitl_flight.csv': ['1;1'], 'hitl_f15_health.csv': ['1;35;1;1;0;0;0;0;0'], 'hitl_f15_imu.csv': ['1;1'],
+             'hitl_f15_baro.csv': ['1;1'], 'hitl_f15_flight.csv': ['1;1'],
+             '000122_xx.csv': ['junk'], '000124_xx.csv': ['junk'], '20000101_000005_1927_gl.csv': ['junk'],
+             'recorder.log': ['900000 boot']}
+    _write_dump(recordings, files)
+    now = time.time()
+    for name in (b'20000101_000\xff', b'20000101_000256_705050\xdf', b'000123_imu\xff.csv'):  # old junk
+        with open(os.path.join(os.fsencode(recordings), name), 'w') as handle:
+            handle.write(_body(_imu_rows()[1], '000123_imu_lsm6dso32.csv') + '\n')
+        os.utime(os.path.join(os.fsencode(recordings), name), (now - 200, now - 200))
+    order = ['000122_imu_lsm6dso32.csv', '000122_health.csv', 'hitl_health.csv', 'hitl_imu.csv', 'hitl_baro.csv',
+             'hitl_flight.csv', 'hitl_f15_health.csv', 'hitl_f15_imu.csv', 'hitl_f15_baro.csv',
+             'hitl_f15_flight.csv', 'recorder.log', '000123_imu_lsm6dso32.csv', '000123_baro_bmp280.csv',
+             '000123_imu l.csv', '000122_xx.csv', '000124_xx.csv', '20000101_000005_1927_gl.csv']
+    for age, name in enumerate(order):  # oldest first: the junk names are the newest files
+        os.utime(os.path.join(recordings, name), (now - 100 + age, now - 100 + age))
+    adb = os.path.join(bin_dir, 'adb')
+    with open(adb, 'w') as handle:
+        handle.write(_FAKE_ADB)
+    os.chmod(adb, 0o755)
+    environment = dict(os.environ, FAKE_RECORDINGS=recordings, PATH=bin_dir + os.pathsep + os.environ['PATH'],
+                       PLY=os.path.join(bin_dir, 'no-plotly'))
+    script = os.path.join(_ROOT, 'tools', 'flight_pull.sh')
+    pulled = subprocess.run(['bash', script, '', out], env=environment, capture_output=True)
+    printed = pulled.stdout.decode('utf-8', 'backslashreplace') + pulled.stderr.decode('utf-8', 'backslashreplace')
+    assert 'latest session: 000123' in printed, printed
+    assert 'pulled 4 streams' in printed, printed
+    assert sorted(name for name in os.listdir(os.fsencode(out)) if name.endswith(b'.csv')) == [
+        b'000123_baro_bmp280.csv', b'000123_imu l.csv', b'000123_imu_lsm6dso32.csv', b'000123_imu\xff.csv']
+    assert 'assembled %s' % os.path.join(out, '000123.txt') in printed, printed  # the junk names print, escaped
+    pulled = subprocess.run(['bash', script, 'hitl', labelled], env=environment, capture_output=True, text=True)
+    assert 'pulled 4 streams' in pulled.stdout, pulled.stdout + pulled.stderr
+    assert sorted(name for name in os.listdir(labelled) if name.endswith('.csv')) == [
+        'hitl_baro.csv', 'hitl_flight.csv', 'hitl_health.csv', 'hitl_imu.csv']
+
+
 test_board_shape_is_readable()
 test_kpi_on_the_synthetic_flight()
 test_kpi_survives_a_partial_capture()
@@ -624,7 +1342,22 @@ test_a_spliced_capture_is_reported_not_swallowed()
 test_calibration_refuses_a_simulated_capture()
 test_recorder_space_gate_reads_a_wrapped_df()
 test_every_provided_quantity_has_a_consumer()
+test_recorder_flight_salvages_a_wrapped_dump()
+test_recorder_flight_reads_an_unwrapped_dump_as_before()
+test_assemble_capture_keeps_a_wrapped_capture_strict()
+test_recorder_flight_error_matrix()
+test_recorder_flight_places_salvage_across_a_wrap()
+test_a_label_never_takes_another_sessions_files()
+test_flight_pull_takes_a_session_not_a_junk_name()
+test_recorder_flight_dates_every_boot()
+test_recorder_flight_dates_the_flight_across_a_wrap()
+test_recorder_flight_times_the_log_from_this_boot_only()
+test_every_reader_takes_a_damaged_byte()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, touchdown at DONE, '
       'polled-IRQ summary, adxl-only backstop, cc.py verdict exit codes, logger join continuity, svg render, '
-      'airspeed calibration fit, parser edge cases, session-tag eras, '
-      'spliced-capture detection, sim-capture refusal, provider/consumer closure')
+      'airspeed calibration fit, parser edge cases, session-tag eras (boot id included), '
+      'spliced-capture detection, sim-capture refusal, provider/consumer closure, '
+      'recorder_flight on wrapped + unwrapped dumps, assemble_capture strictness, the recorder_flight error '
+      'matrix (every unproven line counted), salvage across a ticks wrap (a sparse stream too), label-prefix '
+      'collisions and junk tails, flight_pull session pick (byte-safe), every boot of the session index, the '
+      'flight\'s UTC across a wrap, the log timeline of this boot only, a damaged byte through every reader')

@@ -1296,7 +1296,9 @@ the board config.
 
 Telemetry-first: the task loops (recording included) start immediately and keep running; the Wi-Fi/CC
 tasks connect in the background when they can. Time sync + live tweaks arrive from Control over the
-link (e.g. `update mission {epoch}` sets the RTC); the board itself never asks.
+link (CC sends `update mission {epoch, ...}` on connect when `whoami` shows an unset clock); the board
+itself never asks. Before anything records, the boot is counted in NVS: the count names its capture
+files (doc/specs/recorder-wire.md).
 
 ### `bringup(cfg: dict, log=print) -> controller.Controller`
 
@@ -1325,7 +1327,8 @@ own file, `launch.config`, and is edited live through the Inspector.
 Mission is a singleton Inspectable:
   inspect mission -> launch id / site / position + the board clock
   update mission base64:{"launch_id":"t1"} -> set the launch id for this flight
-  update mission base64:{"epoch":1750170000} -> set the board RTC (time sync; Unix seconds)
+  update mission base64:{"epoch":1750170000} -> set the board RTC (time sync; Unix seconds, UTC)
+      + "utc_offset" / "cc_position" / "source" -> the session.csv row that time set writes
   get-config launch / set-config launch -> read / save (merge + persist) launch.config
 
 Position is metres / decimal degrees; it is a known origin now and seeds the GNSS driver later.
@@ -1761,6 +1764,17 @@ trustworthy, so the two channels have different guarantees end to end:
     empty and the line is discarded. Use print() there -- the only channel that early (measured: an
     sdp810 setup line never reached recorder.log, while print() shows on the console at boot).
 
+ON THE WIRE every line carries an integrity wrapper, `[@<routing>@]{OPEN};<payload>;<CLOSE>\n`
+(doc/specs/recorder-wire.md; tools/recorder_wire.py is the host reference). It is added at DRAIN time
+on the UART path only: the rings and the CC tee keep the raw line. Files are named `<session>_<stream>`
+with the session from config, else this boot's NVS boot id.
+
+EVERY BOOT IS LISTED in the shared `session.csv` (index_session()), whether or not anyone sets its clock:
+a 'boot' row as run() starts, a row per successful time set (Mission, source 'cc-auto' / 'dashboard'),
+and one 'anchor' row a minute in (_anchor). The header goes out again before the boot and anchor rows,
+since the first may have reached nobody. While the RTC reads before 2001 the clock was never set, so
+utc and utc_offset are empty on every kind of row and the boot id alone places the boot.
+
 ### `class Ring`
 
 Lock-free single-producer / single-consumer byte ring.
@@ -1774,6 +1788,7 @@ await). Holds `capacity - 1` records (one cell separates full from empty).
 - `__init__(capacity: int=_DEFAULT_CAPACITY, cell_size: int=_DEFAULT_CELL_SIZE)` — constructor
 - `write(data: bytes) -> bool`
 - `read() -> bytes` — Return the oldest record as bytes (a copy) and advance, or None if empty.
+- `readinto(buffer: bytearray) -> int` — Copy the oldest record to the head of `buffer` and advance: read() without its allocations.
 - `discard() -> None` — Drop every queued record without reading it -- O(1), zero allocation.
 - `count() -> int` — Records currently queued (a stats snapshot).
 
@@ -1783,13 +1798,14 @@ The global telemetry + log singleton: enqueue synchronously, drain to the Luckfo
 
 - `setup(config: dict, uart=None) -> None` _(classmethod)_
 - `timestamp() -> int` _(classmethod)_ — Monotonic-ish record timestamp. Currently raw microseconds; the unit may change.
-- `session() -> str` _(classmethod)_ — The per-boot file prefix.
+- `session() -> str` _(classmethod)_ — The per-boot file prefix, shared by every telemetry stream of this boot.
+- `index_session(seconds: int, utc_offset: int, source: str, cc_position: tuple) -> bool` _(classmethod)_ — Append a row to the shared session index (`session.csv`): this boot, tied to the wall clock.
 - `log(descriptor: str, message: str) -> bool` _(classmethod)_ — Best-effort log line "<ts> <descriptor> :: <message>" (-> recorder.log).
 - `cc_logs(duration_ms: int) -> dict` _(classmethod)_ — Poll-model CC log streaming (the `log <ms>` command).
 - `cc_telemetry(duration_ms: int) -> dict` _(classmethod)_ — Poll-model CC telemetry streaming (the `tlm <ms>` command).
 - `tlm(filename: str, content: str) -> None` _(classmethod)_ — Queue an important telemetry line "@<session>_<filename>@<content>".
 - `tlm_raw(data: bytes) -> None` _(classmethod)_ — Queue an ALREADY-ENCODED telemetry line (the hot path Telemetry.push uses).
-- `drain() -> int` _(classmethod)_ — Drain queued records to the UART, telemetry first then logs. Returns records drained.
+- `drain() -> int` _(classmethod)_ — Drain queued records to the UART, wrapped, telemetry first then logs.
 - `run() -> None` _(classmethod)_ — Event-driven drain loop: wait for a producer signal, then drain everything queued.
 - `inspect() -> dict` _(classmethod)_
 - `update(props: dict) -> list` _(classmethod)_
@@ -2631,7 +2647,7 @@ trimmed on a GNSS-vs-q calm pass). The saturation guard lives with the consumer 
 back to the accel backbone when the pitot rails), so this driver just reports what it reads.
 
 - `setup() -> bool`
-- `calibration() -> str` — The still-air tare instruction; '' once a zero offset has been captured.
+- `calibration() -> str` — The still-air tare instruction; '' once a tare has been captured or restored.
 - `calibrate() -> str` — Capture the current still-air reading as the zero offset -- the board can do this itself.
 - `run() -> None`
 - `update(props: dict) -> list` — Apply an operator property change: pad-tare the zero, set the zero offset, or set the density.
@@ -3226,8 +3242,8 @@ cc_protocol.py is shared with the firmware (symlinked).
 
 The hub: a board listener + per-board heartbeat + an operator console.
 
-`on_board` is an optional async hook invoked once, right after a board identifies (used by
-integration tests).
+`on_board` is an optional async hook invoked once, after a board identifies and its clock sync
+(used by integration tests).
 
 - `absent() -> list` — Gliders the roster knows that are not connected right now, with what to do about it.
 - `__init__(host: str='0.0.0.0', port: int=1234, operator_port: int=1235, web_port: int=8080, on_board=None, log=print, heartbeat_s: float=HEARTBEAT_S, gps=None, roster_path: str=None)` — constructor

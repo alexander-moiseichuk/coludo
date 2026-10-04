@@ -6,6 +6,10 @@
 
 Every stream a capture can contain, and the fields in each. A recorder capture interleaves `@<session>_<file>@<row>` telemetry rows with plain log lines; `tools/flight_telemetry.py` demuxes them, and every renderer resolves streams **by role** (the fields they carry) rather than by file name — a capture's file names track the fitted hardware, so a fallback flight names them differently.
 
+On the wire to the Luckfox every line also carries the **integrity wrapper** ([`doc/specs/recorder-wire.md`](specs/recorder-wire.md)): `@<session>_<file>@{OPEN};<row>;<CLOSE>` for a row and `{OPEN};<line>;<CLOSE>` for a log line, where OPEN is the CRC-32 of the routing and the row and CLOSE chains it with the row's uptime. `<session>` is the boot id (`000123`), a `recorder.session` label, or the legacy `YYYYMMDD_HHMMSS_<random>`, and the shared `session.csv` index is routed with no session at all. The rows and fields below are the payloads: `tools/recorder_wire.py` checks each line, `flight_telemetry` and `recorder_flight` keep a row only when its checks pass or salvage proves which stream it belongs to, and a capture from before the wrapper is read as it always was.
+
+The shared `session.csv` index lists every boot, whether or not its clock is set, as `uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon`: a `boot` row, a row per time set (`source` `cc-auto` or `dashboard`) and an `anchor` row a minute in, the header again before the `boot` and the `anchor` row. `utc` and `utc_offset` are empty while the clock is unset, and only a row with a `utc` dates its boot; `recorder_flight` reports how each boot is dated.
+
 ## Streams
 
 | stream | origin | declared in | fields |

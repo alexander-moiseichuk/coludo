@@ -36,18 +36,23 @@ python3 "$ROOT/tools/board_reboot.py" "$PORT" >/dev/null 2>&1 || true   # clean 
 # (sim_model.AIR_QUALITY 5.5) a light-airframe F15 glide lasts ~118 s where the old worst-case polar
 # gave ~58 s -- 190 s would have truncated the longest cases into a false TIMEOUT.
 out=$(timeout 300 mpremote connect "$PORT" run /tmp/launch.py 2>&1) || true   # a CDC wedge must not abort (set -e)
-ses=$(echo "$out" | grep -oE 'SESSION [0-9_]+' | awk '{print $2}')
+# a boot id ('000123'), the older YYYYMMDD_HHMMSS_<random>, or a `recorder.session` label (letters,
+# digits and '-')
+ses=$(echo "$out" | grep -oE 'SESSION [A-Za-z0-9_-]+' | awk '{print $2}')
 [ -z "$ses" ] && { echo "FAIL $motor/$scen: $(echo "$out" | tail -1)"; exit 1; }
 # Pull EVERY stream this session wrote -- never a hardcoded list. The old fixed list silently dropped
 # any stream added since it was written (flight.csv, the per-servo servo_*.csv, airspeed_sdp810), so a
 # board capture was missing data the board had actually recorded and nothing said so.
 # list-then-filter: the Luckfox shell does not expand a glob here, and its `ls` emits ANSI colour
-# codes + CR, so strip both before matching or every name silently fails to match.
+# codes + CR, so strip both before matching or every name silently fails to match. A bare
+# `grep "^${ses}_"` pulled another session's files under a label: an older label could hold '_', so
+# `hitl_f15_*` shares the prefix of `hitl_*`. recorder_wire picks the session's own files, one name per
+# line, read whole: a junk name can hold a space, or bytes that are not UTF-8.
 expected=$(adb shell "ls /userdata/recordings/" 2>/dev/null \
-           | sed -e "s/\x1b\[[0-9;]*m//g" -e "s/\r//g" | grep "^${ses}_.*\.csv$")
-for name in $expected; do
-  adb pull "/userdata/recordings/$name" "$d/" >/dev/null 2>&1 || true
-done
+           | LC_ALL=C sed -e "s/\x1b\[[0-9;]*m//g" -e "s/\r//g" | python3 "$ROOT/tools/recorder_wire.py" files "$ses")
+while IFS= read -r name; do
+  if [ -n "$name" ]; then adb pull "/userdata/recordings/$name" "$d/" >/dev/null 2>&1 || true; fi
+done <<< "$expected"
 # VERIFY THE PULL. A capture missing streams still assembles into a file that looks like a whole
 # flight, and every downstream tool renders it as one -- this exact class already cost two findings
 # (§27.1's hardcoded stream list, §27.8's 5-stream fixture standing in for an 8-stream flight). The
@@ -56,7 +61,7 @@ want=$(echo "$expected" | grep -c . || true)
 pulled=$(ls "$d" | wc -l)
 if [ "$pulled" -ne "$want" ]; then
   echo "FAIL $motor/$scen: pulled $pulled of $want streams for session $ses -- capture is INCOMPLETE"
-  echo "  missing: $(for n in $expected; do [ -f "$d/$n" ] || echo -n "$n "; done)"
+  echo "  missing: $(while IFS= read -r n; do [ -f "$d/$n" ] || echo -n "$n "; done <<< "$expected")"
   exit 1
 fi
 [ "$want" -eq 0 ] && { echo "FAIL $motor/$scen: session $ses produced no streams"; exit 1; }
@@ -71,22 +76,23 @@ if [ "$empty" -gt 0 ]; then
   echo "  recorder disk: $(adb shell 'df -h /userdata | tail -1' 2>/dev/null | tr -d '\r')"
   exit 1
 fi
-python3 "$ROOT/tools/assemble_capture.py" "$ses" "$d" "$outdir/$scen.txt" >/dev/null
 # PROVENANCE. main.py logs the build+config identity at boot, but a log line carries no
 # `@session_file@` prefix, so the Luckfox never routes it to a .csv and this script -- which pulls only
 # *.csv -- cannot see it. A HITL capture therefore could not name the firmware that produced it, which
 # is precisely what a run-to-run comparison needs: four matrix runs disagreed and there was no way to
 # ask from the data whether they flew the same build. Asked directly and written as a log-shaped line,
-# which the parser already routes to logs and no downstream tool has to learn about.
+# which the parser already routes to logs and no downstream tool has to learn about. assemble_capture
+# appends it, wrapped when the board's rows are: a wrapped capture rejects any line that is not.
 build=$(timeout 30 mpremote connect "$PORT" exec \
   'import config; b,src,_=config.load(); print("BUILD", b["board"].get("firmware_version","?"), config.config_id(b), src)' \
   2>/dev/null | grep -oE "BUILD .*" | head -1)
 # VALIDATE, do not just record. A failed query returns an empty string or an mpremote artefact, and a
 # capture stamped `build b''` is worse than one stamped UNKNOWN -- it looks like an answer.
 case "$build" in
-  BUILD\ [0-9]*) echo "0 capture :: ${build#BUILD }" | sed 's/^0 capture :: /0 capture :: build /' >> "$outdir/$scen.txt" ;;
-  *)             echo "0 capture :: build UNKNOWN (board did not answer)" >> "$outdir/$scen.txt" ;;
+  BUILD\ [0-9]*) note="0 capture :: build ${build#BUILD }" ;;
+  *)             note="0 capture :: build UNKNOWN (board did not answer)" ;;
 esac
+python3 "$ROOT/tools/assemble_capture.py" "$ses" "$d" "$outdir/$scen.txt" "$note" >/dev/null
 # A reboot scenario flies on after a broken restore, so its capture looks fine; the check that the
 # restored flight still checkpoints a usable crumb only ever reaches the board's stdout.
 if echo "$out" | grep -q 'WARM CRUMB: FAIL'; then

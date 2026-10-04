@@ -27,6 +27,19 @@ HEARTBEAT_S: float = 2.0  # poll an idle board this often to prove it is alive
 # returns None instead of raising.
 _MISSED_BEATS: int = 3
 BROADCAST: str = 'all'  # the one broadcast target -- a clean token for scripting (no '*')
+"""
+CLOCK SYNC ON CONNECT (doc/specs/recorder-wire.md, "Clock and the session index"). A cold board's RTC
+reads 2000-01-01, so it reports 946684800 plus its uptime, and every file and session.csv row it wrote
+carried that date. A whoami epoch within 2000 is therefore an unset clock, which CC sets from its own,
+in SETTING only. The board re-dials after any link loss, in flight too, and in DONE a ~26-year jump makes
+the post-landing warm-start crumb look stale, so a reset during the dwell would boot cold. CC's own clock
+must read 2020 or later: a host with no RTC, before NTP, would stamp the board with a date as wrong.
+"""
+_UNSET_CLOCK_FROM: int = 946684800  # 2000-01-01T00:00:00Z: a cold board's RTC, in Unix seconds
+_UNSET_CLOCK_BEFORE: int = 978307200  # 2001-01-01T00:00:00Z: from here on the board's clock is set
+_CC_CLOCK_VALID_FROM: int = 1577836800  # 2020-01-01T00:00:00Z: before it, CC's own clock is unset
+_CLOCK_SYNC_STAGE: str = 'setting'  # the one stage a board's clock may jump in
+_UTC_FORMAT: str = '%Y-%m-%dT%H:%M:%SZ'  # how the log shows a board / CC epoch
 
 
 def _render(resp) -> str:
@@ -50,8 +63,8 @@ class Server:
     """
     The hub: a board listener + per-board heartbeat + an operator console.
 
-    `on_board` is an optional async hook invoked once, right after a board identifies (used by
-    integration tests).
+    `on_board` is an optional async hook invoked once, after a board identifies and its clock sync
+    (used by integration tests).
     """
 
     """
@@ -227,9 +240,10 @@ class Server:
 
     """Board side: identify a connected board, register it, then heartbeat it until it drops."""
 
-    async def _handle(self, reader, writer) -> None:
+    async def _handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         """
-        Identify a freshly connected board, register it, then poll it until it drops.
+        Identify a freshly connected board, register it, set its clock if unset, then poll it until it
+        drops.
 
         Args:
             reader - the board connection's StreamReader.
@@ -250,6 +264,7 @@ class Server:
             self.boards[board_id] = client
             self._roster_seen(board_id, client.peer)
             self.log('%s online %s' % (board_id, client.info))
+            await self._sync_clock(client)
             if self.on_board is not None:
                 await self.on_board(client)
             await self._poll(client)
@@ -278,6 +293,61 @@ class Server:
             client.online = False
             client.close()
             self.log('%s offline' % (client.id or client.peer))
+
+    async def _sync_clock(self, client: board.Board) -> None:
+        """
+        Set a freshly registered board's unset clock from CC's: one `update mission`, source 'cc-auto'.
+
+        Acts only when the whoami `epoch` is an int (JSON true is not) within 2000, the whoami `stage` is
+        SETTING and CC's own clock reads 2020 or later. A board reporting no epoch (older firmware), a set
+        clock or an epoch outside any RTC's range is left alone silently; an unset clock in another stage,
+        or under an unset CC clock, is logged once for this connect and not set. `epoch` is CC's UTC
+        seconds, `utc_offset` CC's local offset in minutes, and `cc_position` its GPS fix, never
+        `latitude` / `longitude`, which are the board's launch pad. The board appends the set to
+        session.csv. Only an `ok` whose `changed` is a list naming `epoch` is a set clock. A refused or
+        garbled reply is logged and the board kept: a wrong date costs the session index, not the link.
+
+        Args:
+            client - the registered Board, its `info` holding the whoami reply.
+
+        Returns:
+            None; sends at most one `update mission` and logs the outcome.
+
+        Raises:
+            TimeoutError - the board did not answer; the exchange has already given the link up, and
+                _handle reports it like any lost link.
+        """
+        epoch = client.info.get('epoch')
+        if type(epoch) is not int or not _UNSET_CLOCK_FROM <= epoch < _UNSET_CLOCK_BEFORE:
+            return  # no epoch (older firmware), JSON true, a set clock, or no RTC reading at all
+        board_time = time.strftime(_UTC_FORMAT, time.gmtime(epoch))
+        stage = client.info.get('stage')
+        if stage != _CLOCK_SYNC_STAGE:
+            self.log('%s clock unset (%s) in stage %s -- set only in %s' % (client.id, board_time, stage,
+                                                                            _CLOCK_SYNC_STAGE))
+            return
+        now = int(time.time())
+        if now < _CC_CLOCK_VALID_FROM:
+            self.log('%s clock unset (%s) -- NOT synced: the CC clock reads %s, before 2020'
+                     % (client.id, board_time, time.strftime(_UTC_FORMAT, time.gmtime(now))))
+            return
+        position = self.gps.position() if self.gps is not None else None
+        resp = await client.command('update', 'mission', json.dumps({
+            'epoch': now, 'utc_offset': time.localtime(now).tm_gmtoff // 60,
+            'cc_position': [position['latitude'], position['longitude']] if position else None,
+            'source': 'cc-auto'}))
+        if resp is None:
+            self.log('%s clock sync: no usable reply -- the clock may still read %s' % (client.id, board_time))
+            return
+        try:
+            changed = json.loads(resp.args[0])['changed']
+            applied = resp.command == 'ok' and type(changed) is list and 'epoch' in changed
+        except (IndexError, KeyError, TypeError, ValueError):  # no / malformed `{changed}`
+            applied = False
+        if applied:
+            self.log('%s clock set %s -> %s' % (client.id, board_time, time.strftime(_UTC_FORMAT, time.gmtime(now))))
+        else:
+            self.log('%s clock sync NOT applied (still %s): %s' % (client.id, board_time, _render(resp)))
 
     """Log streaming: poll a board's log/telemetry buffer and fan the lines out to console + SSE."""
 

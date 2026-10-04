@@ -246,8 +246,7 @@ def _accel_envelope(streams) -> None:
 
 def report(label: str, path: str, zone: tuple) -> None:
     """Print the KPI block for one capture."""
-    with open(path) as handle:
-        streams, logs = flight_telemetry.parse(handle.read())
+    streams, logs = flight_telemetry.load(path)
     fins = next((s for name, s in streams.items() if 'fins' in name), None)
     print(label)
     """
@@ -261,6 +260,7 @@ def report(label: str, path: str, zone: tuple) -> None:
     if damaged:
         print('  !! SPLICED CAPTURE -- two recorder sessions share this prefix: %s' % ', '.join(damaged))
         print('  !! numbers below span BOTH boots; re-pull with distinct `recorder.session` prefixes')
+    print('  lines        : %s' % flight_telemetry.line_summary())  # what the integrity checks kept
     _accel_envelope(streams)  # the G envelope + the high-g KEEP/DROP verdict (device-count decision)
     """
     Each KPI stands on its own stream. The fin block used to return early without a fins stream, which

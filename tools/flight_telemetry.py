@@ -6,18 +6,32 @@ lines, for offline analysis. The recorder interleaves two record kinds on uart:1
     @<session>_<file>@<row>               telemetry; first row per file is `uptime;<field>;...`, then
                                           each data row is `<uptime_us>;<v>;<v>;...`  (';'-separated)
     <ticks_us> <descriptor> :: <message>  best-effort log line
-parse() reads a raw capture (both kinds interleaved) and returns the streams + logs. Stdlib only, so it
-stays importable in the test suite; the plotly rendering lives in flight_report.py.
+Since doc/specs/recorder-wire.md every line also carries the integrity wrapper `{OPEN};<row>;<CLOSE>`
+(tools/recorder_wire.py). A capture holding wrapped lines is read strictly: a line counts only when its
+checks pass, or when salvage proves which routing it belongs to, and a salvaged record is placed by its
+time, never where it happened to sit. An older capture, with no wrapper at all, is read on trust as it
+always was. line_counts() says how each line of the last capture was judged.
+parse() reads a raw capture (both kinds interleaved) and returns the streams + logs; load() reads a
+capture file into it as UTF-8 with errors='surrogateescape', so the checks see the bytes the board sent
+and a byte the link damaged costs its row, never the whole read. Stdlib only, so it stays importable in
+the test suite; the plotly rendering lives in flight_report.py.
 """
 
+import bisect
 import re
 
-# The date/time every session tag opens with. What FOLLOWS it varies by firmware era and config: a
-# 6-digit random the board synthesises, an operator label CC set via `recorder.session`, or -- on the
-# oldest captures, before the disambiguator existed -- nothing at all. Those are the same SHAPE
-# ('taster_imu_bno055.csv' vs 'imu_bno055.csv'), so the extra token is DERIVED FROM THE DATA by
-# _session_tail rather than guessed by pattern.
-_SESSION = re.compile(r'^\d{8}_\d{6}_')
+import recorder_wire
+
+"""
+The session prefix every tag opens with: the boot id ('000123_', '%06u' from NVS) on current firmware,
+or the date/time of the older eras. What FOLLOWS the date/time varies by era and config: a 6-digit
+random the board synthesised, an operator label CC set via `recorder.session`, or -- on the oldest
+captures, before the disambiguator existed -- nothing at all. Those are the same SHAPE
+('taster_imu_bno055.csv' vs 'imu_bno055.csv'), so the extra token is DERIVED FROM THE DATA by
+_session_tail rather than guessed by pattern. The date/time alternative comes first, so an old tag never
+loses only its date to the boot-id branch.
+"""
+_SESSION = re.compile(r'^(?:\d{8}_\d{6}_|\d{6,}_)')
 _SERVO = re.compile(r'^servo_(.+)\.csv$')  # a board's per-servo stream -> the surface name it drives
 
 
@@ -160,7 +174,7 @@ def _synthesise_fins(streams: dict) -> None:
     streams['fins.csv'] = fused
 
 
-_TICKS_PERIOD = 1 << 30  # MicroPython ticks_us wraps here (~1073.7 s ~ 17.9 min of board uptime)
+_TICKS_PERIOD: int = recorder_wire.TICKS_PERIOD  # ticks_us wraps here (~1073.7 s ~ 17.9 min of board uptime)
 
 
 def _unwrap(streams: dict, logs: list) -> None:
@@ -280,8 +294,12 @@ def spliced(streams: dict) -> list:
     return sorted(name for name, stream in streams.items() if stream.spliced)
 
 
-_MARKER = re.compile(r'@[0-9]{8}_[0-9]{6}_[A-Za-z0-9]*_?[a-z0-9_]+\.csv@')
+_MARKER = re.compile(r'@(?:[0-9]{8}_[0-9]{6}_[A-Za-z0-9]*_?|[0-9]{6,}_)[a-z0-9_]+\.csv@')
+_BOOT_ID = re.compile(r'^\d{6,}_(?=[a-z])')  # a boot-id prefix: digits, then a stream name (never a date's digit)
+_PLACE_SLACK: int = 60_000_000  # us a recovered record may lie past the good lines around it (stamped, then
+                                # drained; logs flushed in batches) -- any window under a wrap still places uniquely
 _SPLICED: list = []      # stream names whose line was found spliced, reset per parse()
+_COUNTS: dict = dict.fromkeys(('good', 'salvaged', 'rejected', 'legacy'), 0)  # line verdicts, per parse()
 
 
 def name_hint(tag: str) -> str:
@@ -294,92 +312,365 @@ def spliced_rows() -> int:
     return len(_SPLICED)
 
 
-def parse(text: str):
+def line_counts() -> dict:
+    """
+    How the LAST parse() judged its lines, as {verdict: count}.
+
+    good -- wrapped, and both checks pass under its own routing. salvaged -- a record of a damaged line
+    that checks out under a routing the capture uses (or, by its leftover `<name>@`, a stream of its
+    boot-id session) and is placed by time. rejected -- dropped: a damaged record nothing claims, the
+    truncated piece of a spliced line, a proven record whose time cannot be placed unambiguously, or an
+    unwrapped line inside a wrapped capture. legacy -- a line of a capture with no wrapper at all, taken
+    on trust. A line holding several records is counted as those records.
+
+    Returns:
+        {'good', 'salvaged', 'rejected', 'legacy'} -> count; all 0 before the first parse().
+    """
+    return dict(_COUNTS)
+
+
+def line_summary() -> str:
+    """The LAST parse()'s line verdicts as one phrase, for the capture-health lines a tool prints."""
+    if _COUNTS['legacy']:
+        return '%d unchecked (a capture from before the integrity wrapper)' % _COUNTS['legacy']
+    return '%(good)d good, %(salvaged)d salvaged, %(rejected)d rejected' % _COUNTS
+
+
+def _entry(line: str) -> tuple:
+    """A capture line with its verdict: (line, status, routing, payload or raw body)."""
+    return (line,) + recorder_wire.split(line)
+
+
+def _stream(streams: dict, tail: str, tag: str) -> Stream:
+    """
+    The stream a record's tag names, created on first use.
+
+    Args:
+        streams - {file -> Stream}, added to.
+        tail - the capture's shared session token (_session_tail), stripped after the session prefix.
+        tag - the record's routing, '<session>_<file>'.
+
+    Returns:
+        The Stream keyed by the bare file name.
+    """
+    name = _SESSION.sub('', tag)  # 'YYYYMMDD_HHMMSS_<tail>imu.csv' -> '<tail>imu.csv'
+    if tail and name.startswith(tail):
+        name = name[len(tail):]  # ... -> 'imu.csv'
+    stream = streams.get(name)
+    if stream is None:
+        stream = streams[name] = Stream(name)
+    return stream
+
+
+def _values(cells: list) -> list | None:
+    """A data row's cells as numbers, the uptime as integer microseconds; None when the uptime does not parse."""
+    values = [_number(cell) for cell in cells]
+    try:
+        values[0] = int(float(values[0]))
+    except (ValueError, TypeError, IndexError):
+        return None  # bad uptime would crash column() downstream
+    return values
+
+
+def _row(streams: dict, tail: str, tag: str, row: str) -> list | None:
+    """
+    File one telemetry row under the stream its tag names.
+
+    Args:
+        streams - {file -> Stream}, mutated in place.
+        tail - the capture's shared session token (_session_tail), stripped after the session prefix.
+        tag - the record's routing, '<session>_<file>'.
+        row - the row as recorded: a header `uptime;<field>;...` or `<uptime_us>;<v>;...`.
+
+    Returns:
+        The row as filed; None for a header, and for a row whose uptime does not parse (dropped).
+    """
+    stream = _stream(streams, tail, tag)
+    cells = row.split(';')
+    if cells[0] == 'uptime':
+        """
+        A header row. A SECOND one in the same stream means two boots wrote the same file -- the
+        Luckfox appends, so their rows are now interleaved with uptime restarting midway, and no
+        downstream parsing can separate them. That happens when two sessions land on the same prefix:
+        the old 3-digit random collided about 12 times in 150 unsynced boots, and a stale
+        `recorder.session` in a saved config collides EVERY boot. The corruption used to be invisible
+        here -- the repeat header failed the uptime parse and was dropped silently -- so it is flagged on
+        the stream, and `spliced()` puts it in front of whoever reads the capture. Nothing is thrown
+        away: the rows still parse, they are just not one flight. The one exception is the shared
+        session.csv, whose header every boot sends, and again before its anchor row, by design.
+        """
+        if not stream.fields:
+            stream.fields = cells[1:]
+        elif stream.name != recorder_wire.SESSION_INDEX:
+            stream.spliced = True
+        return None
+    values = _values(cells)
+    if values is not None:
+        stream.rows.append(values)
+    return values
+
+
+def _log(logs: list, line: str) -> None:
+    """Keep a log line '<ticks_us> <descriptor> :: <message>' with its stamp (None when it has none)."""
+    first = line.split(' ', 1)[0]
+    logs.append((int(first) if first.isdigit() else None, line))
+
+
+def _legacy(streams: dict, logs: list, tail: str, line: str, queue: list) -> None:
+    """
+    Read one line of an UNWRAPPED capture, exactly as every capture was read before the wrapper.
+
+    Args:
+        streams - {file -> Stream}, mutated in place.
+        logs - the (uptime_us | None, line) list, appended to.
+        tail - the capture's shared session token.
+        line - the stripped capture line.
+        queue - parse()'s line queue; the second record of a spliced line is appended to it.
+
+    Returns:
+        None.
+    """
+    if not line.startswith('@'):
+        _log(logs, line)
+        return
+    tag, _, row = line[1:].partition('@')
+    if not row:
+        return
+    """
+    SPLICED LINE -- two records that ran together because the first lost its newline.
+
+    Measured on the real recorder path (board -> UART -> Luckfox -> adb): 20 lines in 1,004,804 across
+    48 flights, so about one in three flights carries one. The first record is TRUNCATED mid-field and
+    the next record's whole `@session_stream@...` text follows it on the same line.
+
+    Left alone this is silently destructive, not merely lossy: the truncated row keeps parsing, and the
+    SECOND record's fields land in the FIRST record's columns. That is where the impossible values come
+    from -- an airspeed of 1.4e12 cm/s and a heading error of 15330 deg, both of which are simply the
+    next stream's numbers read in the wrong place. A tool then treats them as flight data (this class
+    already produced a reported L/D of 64).
+
+    So the line is SPLIT at the second marker and both halves parsed where they belong. The truncated
+    half loses its tail to the short-row guard, which is correct -- that data really is gone -- but
+    nothing is misattributed, and spliced_rows() counts them so a capture can say how much it lost
+    rather than looking clean.
+    """
+    marker = _MARKER.search(row)
+    if marker is not None:
+        queue.append(_entry('@' + row[marker.start() + 1:]))   # re-queue the second record intact
+        row = row[: marker.start()]
+        _SPLICED.append(name_hint(tag))
+        if not row:
+            return
+    _row(streams, tail, tag, row)
+
+
+def _strict(streams: dict, logs: list, tail: str, entries: list, known: list) -> None:
+    """
+    Read a WRAPPED capture: only what the checks prove is kept, and a recovered record is placed by time.
+
+    A good line is filed where it stands. A damaged one is recovered (recorder_wire.recover): salvaged
+    whole when one routing makes it check out -- a known one, the log, or the `<name>@` it kept of a
+    stream of its own boot-id session -- else cut into the records that ran together in it, each judged on
+    its own. An unwrapped line here is damage, not history. A recovered record has no trustworthy place
+    in the capture: assemble_capture sorts a junk-named file anywhere among the streams, and a merged
+    piece sits in another stream's file. Filed where it was found, _unwrap read it as a ticks wrap and
+    shifted a whole stream by 17.9 minutes. So recovered records are held until the good lines are
+    unwrapped, then placed by time (_place).
+
+    Args:
+        streams - {file -> Stream}, filled.
+        logs - the (uptime_us | None, line) list, filled.
+        tail - the capture's shared session token.
+        entries - the capture's lines with their verdicts (_entry()), in capture order.
+        known - every routing the capture is known to use, for salvage.
+
+    Returns:
+        None; _COUNTS records every verdict.
+    """
+    prefixes = tuple(sorted({found.group(0) for found in map(_BOOT_ID.match, known) if found}))
+    timelines, order, held = {}, [], []  # good stamped lines per source; each log's capture index; held records
+    for index, (_line, status, routing, text) in enumerate(entries):
+        if status == recorder_wire.GOOD:
+            _COUNTS['good'] += 1
+            if routing is None:
+                _log(logs, text)
+                order.append(index)
+                if logs[-1][0] is not None:
+                    timelines.setdefault(None, []).append((index, len(logs) - 1))
+            else:
+                row = _row(streams, tail, routing, text)
+                if row is not None:
+                    timelines.setdefault(routing, []).append((index, row))
+        elif status == recorder_wire.LEGACY:
+            _COUNTS['rejected'] += 1
+        else:
+            records, lost = recorder_wire.recover(routing, text, known, prefixes)
+            _COUNTS['rejected'] += lost
+            if len(records) + lost > 1:
+                _SPLICED.append(name_hint(routing or ''))
+            held += [(index, routing, found, payload) for found, payload, _record in records]
+    _unwrap(streams, logs)
+    _place(streams, logs, tail, held, timelines, order)
+
+
+def _window(low: int | None, high: int | None, bounds: tuple | None) -> tuple | None:
+    """
+    The window a held record's time must fall in.
+
+    Args:
+        low, high - the unwrapped stamps of the good lines just before and after it; None when there is none.
+        bounds - (first, last) standing in for a missing side; None when there is nothing to stand in.
+
+    Returns:
+        (low, high) widened by _PLACE_SLACK; None when a side is missing and `bounds` too.
+    """
+    if bounds is None and (low is None or high is None):
+        return None
+    return ((bounds[0] if low is None else low) - _PLACE_SLACK, (bounds[1] if high is None else high) + _PLACE_SLACK)
+
+
+def _place(streams: dict, logs: list, tail: str, held: list, timelines: dict, order: list) -> None:
+    """
+    File the held records by time, once the good lines around them are unwrapped.
+
+    A record is timed by the good lines of the SOURCE it was found in -- the routing its line arrived
+    under, i.e. its Luckfox file, which is written in time order: it lies between the nearest good line
+    before it and the nearest one after it, give or take _PLACE_SLACK. A side with neither is bounded by
+    the capture's span; a junk file holds no good line at all, so the record's own stream's span stands
+    in. Its uptime is then the one recorded + k * 2**30 inside that window (recorder_wire.fit). None, or
+    more than one, and it is rejected rather than guessed; so is any row for a stream that holds two
+    boots, which has no single timeline. A row joins its stream in time order, a log line the logs at its
+    place in the capture.
+
+    A SPARSE stream is the one limit. _unwrap() unwraps each stream by its own rows, and a stream whose
+    rows lie half a wrap or more apart (a servo holding still through a 20-minute pad dwell, the
+    sequencer's few events), or whose first row comes after a wrap, never shows that wrap. In a capture
+    longer than half a wrap its good rows can then keep their recorded time, while a row placed by another
+    file's lines gets the true one (a junk file's row, timed by the stream's own span, keeps the stream's
+    time). Its own time cannot be had instead: that needs the stream's good rows on the common timeline,
+    and an assembled capture lays each Luckfox file out whole, so nothing orders one stream's rows against
+    another's. recorder_flight cuts such a stream modulo 2**30 into the flight window, where both agree.
+
+    Args:
+        streams - {file -> Stream}, mutated in place.
+        logs - the (uptime_us | None, line) list, unwrapped; held log lines are merged in.
+        tail - the capture's shared session token.
+        held - [(capture index, source routing, routing, payload)] of the recovered records.
+        timelines - {source routing: [(capture index, its row, or its index in `logs`)]} of good stamped lines.
+        order - the capture index of each entry of `logs`.
+
+    Returns:
+        None; _COUNTS gains a 'salvaged' or a 'rejected' per held record.
+    """
+    marks = {source: ([index for index, _mark in lines], [logs[mark][0] if source is None else mark[0]
+                                                          for _index, mark in lines])
+             for source, lines in timelines.items()}
+    stamps = [row[0] for stream in streams.values() for row in stream.rows]
+    capture = (min(stamps), max(stamps)) if stamps else None
+    spans = {name: (min(row[0] for row in stream.rows), max(row[0] for row in stream.rows))
+             for name, stream in streams.items() if stream.rows}
+    twice = {name for name, stream in streams.items()
+             if any(earlier[0] > later[0] for earlier, later in zip(stream.rows, stream.rows[1:]))}
+    placed, extra = set(), []
+    for index, source, routing, payload in held:
+        stream = None if routing is None else _stream(streams, tail, routing)
+        head = payload.split(' ', 1)[0] if stream is None else payload.split(';', 1)[0]
+        if stream is not None and head == 'uptime':
+            _row(streams, tail, routing, payload)  # a header: nothing to place in time
+            _COUNTS['salvaged'] += 1
+            continue
+        if stream is None and not head.isdigit():
+            extra.append((index, (None, payload)))  # a log line with no stamp keeps its place in the capture
+            _COUNTS['salvaged'] += 1
+            continue
+        values = [int(head)] if stream is None else _values(payload.split(';'))
+        indices, times = marks.get(source, ([], []))
+        at = bisect.bisect(indices, index)
+        low, high = (times[at - 1] if at else None), (times[at] if at < len(times) else None)
+        alone = low is None and high is None and stream is not None
+        window = _window(low, high, spans.get(stream.name, capture) if alone else capture)
+        stamp = None
+        if values is not None and window is not None and (stream is None or stream.name not in twice):
+            stamp = recorder_wire.fit(values[0], window[0], window[1])
+        if stamp is None:
+            _COUNTS['rejected'] += 1
+            continue
+        if stream is None:
+            extra.append((index, (stamp, payload)))
+        else:
+            values[0] = stamp
+            stream.rows.append(values)
+            placed.add(stream.name)
+        _COUNTS['salvaged'] += 1
+    for name in placed:
+        streams[name].rows.sort(key=lambda row: row[0])  # two sorted runs: the good rows and the placed ones
+    if extra:
+        entries = sorted(list(zip(order, logs)) + extra, key=lambda entry: entry[0])
+        logs[:] = [entry for _index, entry in entries]
+
+
+def load(path: str) -> tuple:
+    """
+    Read and parse a capture file -- the one way every tool reads one.
+
+    Args:
+        path - the capture file.
+
+    Returns:
+        parse()'s ({file -> Stream}, logs) for the file's bytes, decoded as UTF-8 with surrogateescape.
+    """
+    with open(path, encoding='utf-8', errors='surrogateescape') as handle:
+        return parse(handle.read())
+
+
+def parse(text: str) -> tuple:
     """
     Parse a raw capture into aligned streams and log lines.
 
     Args:
-        text - the raw recorder capture (both record kinds interleaved).
+        text - the raw recorder capture (both record kinds interleaved), as read with
+            errors='surrogateescape' so a CRC sees the bytes the board sent.
 
     Returns:
         ({file -> Stream}, logs), where logs is a list of (uptime_us | None, line). Every timestamp is
         normalised to a flight-relative origin (the earliest stamp seen is subtracted), so a capture
-        starts at t=0 rather than at the board's raw boot uptime.
+        starts at t=0 rather than at the board's raw boot uptime. line_counts() then says how the
+        lines were judged.
     """
     streams = {}
     logs = []
     del _SPLICED[:]          # per-parse, so spliced_rows() describes THIS capture
-    lines = text.splitlines()
-    # first pass: learn this capture's session tail before any stream is keyed by it
-    tail = _session_tail(sorted({_SESSION.sub('', line[1:].partition('@')[0])
-                                 for line in (raw.strip() for raw in lines)
-                                 if line.startswith('@') and line[1:].partition('@')[2]}))
-    for raw in lines:
-        line = raw.strip()
-        if not line:
-            continue
-        if line.startswith('@'):
-            tag, _, row = line[1:].partition('@')
-            if not row:
-                continue
-            """
-            SPLICED LINE -- two records that ran together because the first lost its newline.
-
-            Measured on the real recorder path (board -> UART -> Luckfox -> adb): 20 lines in 1,004,804
-            across 48 flights, so about one in three flights carries one. The first record is TRUNCATED
-            mid-field and the next record's whole `@session_stream@...` text follows it on the same line.
-
-            Left alone this is silently destructive, not merely lossy: the truncated row keeps parsing,
-            and the SECOND record's fields land in the FIRST record's columns. That is where the
-            impossible values come from -- an airspeed of 1.4e12 cm/s and a heading error of 15330 deg,
-            both of which are simply the next stream's numbers read in the wrong place. A tool then
-            treats them as flight data (this class already produced a reported L/D of 64).
-
-            So the line is SPLIT at the second marker and both halves parsed where they belong. The
-            truncated half loses its tail to the short-row guard, which is correct -- that data really
-            is gone -- but nothing is misattributed, and `dropped_spliced` counts them so a capture can
-            say how much it lost rather than looking clean.
-            """
-            marker = _MARKER.search(row)
-            if marker is not None:
-                lines.append('@' + row[marker.start() + 1:])   # re-queue the second record intact
-                row = row[: marker.start()]
-                _SPLICED.append(name_hint(tag))
-                if not row:
-                    continue
-            name = _SESSION.sub('', tag)  # 'YYYYMMDD_HHMMSS_<tail>imu.csv' -> '<tail>imu.csv'
-            if tail and name.startswith(tail):
-                name = name[len(tail):]  # ... -> 'imu.csv'
-            stream = streams.get(name)
-            if stream is None:
-                stream = streams[name] = Stream(name)
-            cells = row.split(';')
-            if cells[0] == 'uptime':
-                """
-                A header row. A SECOND one in the same stream means two boots wrote the same file --
-                the Luckfox appends, so their rows are now interleaved with uptime restarting midway,
-                and no downstream parsing can separate them. That happens when two sessions land on the
-                same prefix: the old 3-digit random collided about 12 times in 150 unsynced boots, and a
-                stale `recorder.session` in a saved config collides EVERY boot. The corruption used to
-                be invisible here -- the repeat header failed the uptime parse and was dropped silently
-                -- so it is flagged on the stream, and `spliced()` puts it in front of whoever reads the
-                capture. Nothing is thrown away: the rows still parse, they are just not one flight.
-                """
-                if stream.fields:
-                    stream.spliced = True
-                else:
-                    stream.fields = cells[1:]
-            else:
-                values = [_number(cell) for cell in cells]
-                try:
-                    values[0] = int(float(values[0]))  # uptime as integer microseconds
-                except (ValueError, TypeError, IndexError):
-                    continue  # skip the row -- bad uptime would crash column() downstream
-                stream.rows.append(values)
-        else:  # a log line: '<ticks_us> <descriptor> :: <message>'
-            first = line.split(' ', 1)[0]
-            logs.append((int(first) if first.isdigit() else None, line))
-    _unwrap(streams, logs)
+    _COUNTS.update(dict.fromkeys(_COUNTS, 0))
+    queue = [_entry(line) for line in (raw.strip() for raw in text.splitlines()) if line]
+    good = {routing for _line, status, routing, _text in queue if status == recorder_wire.GOOD}
+    """
+    One line that checks out makes the whole capture WRAPPED, and then nothing unproven is taken. The
+    decision rests on a passing CRC, never on a line merely LOOKING wrapped: a damaged old line that
+    happened to resemble the wrapper would otherwise turn a whole legacy capture into rejects.
+    Host-built lines in a wrapped capture (assemble_capture's stage marks, hitl_collect's build note)
+    are wrapped by the tools that add them, so they still count.
+    """
+    wrapped = bool(good)
+    if wrapped:
+        known = sorted((good - {None}) | {recorder_wire.SESSION_INDEX})
+        tags = known
+    else:
+        tags = [line[1:].partition('@')[0] for line, _status, _routing, _text in queue
+                if line.startswith('@') and line[1:].partition('@')[2]]
+    """
+    Learn this capture's session tail before any stream is keyed by it. The shared session.csv carries no
+    session prefix at all, so it says nothing about one -- and it must not, or its underscore-free name
+    would veto a label every other stream shares. (The CC tee keeps lines unwrapped, so an unwrapped
+    capture of current firmware holds it too.)
+    """
+    tail = _session_tail(sorted({_SESSION.sub('', tag) for tag in tags if tag != recorder_wire.SESSION_INDEX}))
+    if wrapped:
+        _strict(streams, logs, tail, queue, known)  # unwraps its good lines, then places the recovered ones
+    else:
+        for entry in queue:  # a spliced line appends its second record, which this loop then reaches
+            _COUNTS['legacy'] += 1
+            _legacy(streams, logs, tail, entry[0], queue)
+        _unwrap(streams, logs)
     """
     Normalise every timestamp to a flight-relative origin. The recorder stamps raw board uptime
     (ticks_us), which starts wherever the board happened to be at boot -- so an un-normalised plot reads
