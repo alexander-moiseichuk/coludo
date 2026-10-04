@@ -37,9 +37,127 @@ Airframe masses are **as assembled, without the motor**. Motor masses are the me
   up to 9.3 g sideways), looped under thrust and hit the ground; the recorder kept 1.31 s. Hardware to
   be validated for December; see [TMS-7C](TMS-7C/README.md).
 * **TMS-7D** — the servo airframe: three SG90s and the full power module.
+  **Result: no separation, dropped.** It bent over in a ~4.5 m/s crosswind to a 32° path but stayed
+  bounded. Apogee was 91–98 m at 5.4 s; the glider never separated, and the stack came down ~250 m out.
+  The recorder kept 6.4 s. See [TMS-7D](TMS-7D/README.md).
 * **TMS-7E** — the first airframe on main board v1.0, where the payoff is mass; see its folder.
+  **Result: no separation, dropped.** The PCB broke in two, and the recorder's SD card is electrically dead
+  (it heats to 60 °C+, never initialises), so there is no data.
 * **TMS-7F** — the first v1.1 airframe (SEN0697: the board fuses its own attitude and carries a
   magnetometer); see its folder.
+
+## What 10-03 measured — summary
+
+Recorded flights: **TMS-7** (nose logger, the whole flight), **TMS-7C** (recorder, the first 1.31 s),
+**TMS-7D** (recorder, the first 6.42 s). 7E's card died; 7F did not fly. Each flight was cut from its
+recorder dump by `src/logger/flight.py` or `tools/recorder_flight.py` and measured with a gyro-plus-
+accelerometer strapdown. Each was then checked by independent analyses and an adversarial judge,
+recomputing from the data; the details are in each airframe's README. Not much data in total, but
+enough to bound the dynamics and to show which sensors work in flight.
+
+### What happened
+
+| | outcome | why, as far as the data says |
+|---|---|---|
+| TMS-7 | **success**: 464–479 m, chute recovery | motor normal; the chute partly collapsed below ~150 m (descent 6.5 → 11 m/s) |
+| TMS-7C | **looped and crashed** within ~2.5 s | a boost-stability departure at rod exit (0.31 s): near-neutral margin plus a built-in roll asymmetry; 9.3 g aerodynamic side load |
+| TMS-7D | **no separation, dropped** ~250 m out | bent over in a crosswind but stayed bounded; low apogee (91–98 m); separation never happened before 6.42 s |
+| TMS-7E | **no separation, dropped**; PCB broken | no data (SD card dead) |
+
+### The corner parameters
+
+The extremes these flights reached, against each sensor's range:
+
+| quantity | measured | sensor range / note |
+|---|---|---|
+| boost peak (axial) | **14.9 g** (TMS-7, 228 g) · 8.25 g (7C, 414 g) · 6.2–6.7 g (7D, 484 g) | BMI323 ±16 g: **93 %**; peak g ≈ 32 N ÷ mass |
+| shocks | 19 g (TMS-7 landing sequence), ~9 g (ejection) | **lower bounds**: 50 Hz filtering flattens them |
+| lateral load | **9.3 g** (7C) · 3.6 g (7D) | aerodynamic normal force at an angle of attack of 20–30°+ |
+| rotation | **1595 °/s** roll (7D), 775 (7C), 2000 = rail on 0.9 % of TMS-7's chute samples | LSM6DSO32 / BMI323 ±2000 °/s |
+| speed | **125 m/s, Mach 0.36** (TMS-7) · 53.5 m/s (7D) · ~33 m/s (7C) | — |
+| dynamic pressure | ~8.8 kPa (TMS-7) · ~1.6 kPa (7D) | pitot ceiling **0.55 kPa** |
+| apogee | 464–479 m (TMS-7) · 91–98 m (7D) | — |
+| F15 motor | **~32 N spike at 0.3 s**, burnout 2.53–2.68 s, **42 N·s**, ejection 5.8 s after burnout | the simulator flies 14.4 N × 3.45 s = 49.7 N·s, with a 4 s delay |
+| descent | 6.1–6.9 m/s, then 9–12 m/s (TMS-7, chute degrading) | — |
+| battery (7D) | 3.89–3.91 V, 0.47–0.70 A in flight; 1.55 A servo sweep on the pad; 198 mAh over 23.5 min of pad wait | INA226 |
+| temperatures | MCU 40–42 °C, bay baros ~38 °C, logger die 35 °C (pad in the sun) | — |
+| wind | ~4.5 m/s crosswind at 7D's launch (fitted); 9 m/s off the rod gave a 26° angle of attack | — |
+
+### Sensor by sensor: what worked
+
+- **Gyros worked:** LSM6DSO32, BMI323. Strapdown from the pad's gravity vector reproduced the baro apogee to
+  within 3 %. Rates stayed in range (7D peaked at 80 % of ±2000 °/s). TMS-7's nose rail hits came only
+  under the chute. Possible x-gyro scale error of ~2 % on 7D: check it on a rate jig.
+- **Accelerometers were mixed.** The LSM6DSO32 (±32 g) and ADXL375 (±200 g) are fine. The ADXL375 carries a
+  pre-flight +0.78 g offset on x: calibrate it out. The **BMI323 (±16 g) is marginal** for a light airframe
+  on an F15, and anything under ~215 g at liftoff rails it.
+- **The BNO055 is not a boost sensor.** Its fusion accelerometer clips at 4 g: 41 of 45 rows on 7C, 17 of 231
+  on 7D. Its Euler roll sat near the singularity on the pad. Only its nose elevation held up, checked
+  against the gyro.
+- **The pitot reads low, then tops out.** It read **0.52–0.8 of the inertial dynamic pressure**, so its span
+  is low. Then it **topped out at 546 Pa ≈ 30 m/s** for half of 7D's flight, and it dropped out at large
+  angles of attack (7C, 0.69–0.75 s). For boost and coast, airspeed has to come from the inertial
+  solution, or from a higher-range sensor.
+- **The baros are trustworthy only when slow.**
+  - The nose baro read **+83 m high at burnout**: suction of ~0.1 × the dynamic pressure.
+  - The bay baros over-read at large angles of attack (45 m against a 34 m ceiling on 7C).
+  - The temperature scale adds ±4 % (die 35–38 °C against air).
+  - They are trustworthy for apogee, descent and ground. The filtered baro never read falling before
+    ejection.
+- **Launch detection worked.** 7D detected `|a|=5.1g dwell=100ms` at +0.18 s. The apogee detector
+  (5 m drop, 100 ms dwell) would fire ~1.4 s late on a shallow arc.
+- **GNSS** had no fix on any board. **The laser** was sporadic and only valid near the ground.
+- **The recorder** is the weak link:
+  - **14–30 % of rows were lost** on the UART, and thousands of corrupted file names were spun off.
+  - The **tail goes at power loss** (page cache): 7C kept 1.31 s, and 7D ends ~4 s before impact.
+  - `recorder.log` is buffered.
+  - The operator's reading: video plus logging overloads it.
+- **The nose logger worked:** lossless at 50 Hz through the whole TMS-7 flight. It nearly overwrote the
+  flight on the walk back, and that is fixed now: launch latching, flight protection, a self-stop once
+  landed.
+- **Board time:**
+  - The RTC is unset, so every session is named 2000-01-01; flights are found by their boost.
+  - **`ticks_us` wraps every 17.9 min**, so a long pad wait fakes a reset in the data.
+  - The OOM forecast is wrong in both builds (`leak_kbps` 1 against a measured ~340 KB/s).
+
+### What to improve before December
+
+1. **Stack stability**, the cause of 7C and of 7D's bent path.
+   - Measure the stack CG with the motor, and swing-test it in both planes.
+   - Fly only at ≥ +1 caliber of effective margin at 20° angle of attack (~2–2.5 cal on Barrowman's linear
+     formula; 7C had 0.25, 7D 0.71).
+   - Enlarge the booster fins, fair the folded wings, or add nose ballast.
+   - Jig the fins to 0 ± 0.25° and key the joint against roll.
+   - Use a 2–3 m rail, or a wind limit of about a quarter of the rod-exit speed.
+2. **Separation**, which failed on 7D and 7E; the operator is redesigning it.
+   - Release from the board on a vertical speed ≤ 0, with the motor charge only as a backstop: no fixed
+     delay covers 2.9–5.1 s after burnout.
+   - Prove ≥ 1.3 J at full glider mass after a real burn.
+   - Rate the motor retention above the ejection force.
+   - Log the pin level in every checkpoint.
+   - **Never engage control on an unseparated stack.**
+3. **The recorder**, per the operator's plan: no video, a ~2000 µF hold-up capacitor, a new file organization.
+   Accept it with a power-pull test while logging.
+4. **Firmware.**
+   - Emit a non-wrapping timestamp, and set the clock so sessions carry the date.
+   - Fix the OOM forecast.
+   - Arm the apogee detector on measured burnout.
+   - Log an "ejection kick" event separately from "separated".
+5. **Sensors.**
+   - Calibrate the pitot's span, and give it a higher range or treat it as invalid above 30 m/s.
+   - Give the bay a static port.
+   - Keep the BNO055 out of the boost.
+   - Calibrate the ADXL375 offset.
+   - Check the gyro scale on a jig.
+   - Re-validate every re-used part (checklists in the 7C and 7D READMEs).
+6. **The simulator.**
+   - Fly the measured F15: a 32 N spike, 42 N·s, burnout 2.6 s, ejection 5.8 s after.
+   - Model a 6-degree-of-freedom boost with wind, a q-proportional roll asymmetry, margin per plane, and
+     the rod.
+   - Add replay regressions: 7C must depart, 7D must reproduce its 32° path minimum and ~95 m apogee, and
+     TMS-7 must reach ~470 m.
+7. **Recovery:** inspect TMS-7's chute and lines, which degraded below 150 m. Keep flying the nose logger
+   as a black box.
 
 ## One thing the flight data already says about 7D's mass
 
