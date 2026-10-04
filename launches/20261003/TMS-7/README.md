@@ -51,7 +51,7 @@ this.
 | ejection | **8.50 s**, 0.4–0.6 s before apogee, still climbing at 4.4 m/s, 166 m downrange | accelerometer + inertial |
 | apogee | **464 m** inertial at 8.9 s / **479 m** baro at 9.1 s (471 m if the air was 30 °C) | both; the truth lies between |
 | descent | 6.1–6.9 m/s from apogee down to ~150 m, then **9–12 m/s** | baro: 10 s bands; 2 s regression for the 11.8 m/s peak |
-| landing | 19.0 g shock at 74.6 s ~12 m above the pad; touchdown **77.1 s**; at rest 77.9 s | all |
+| landing | 19.0 g shock at 74.6 s **in the air**, ~13 m (10–16) up; touchdown **77.1 s** at ≤6.6 m/s; at rest 77.9 s | all |
 | motor (estimate) | peak **32 N**, **42 N·s** over 2.68 s, 15.6 N average | mass × axial force + drag |
 
 Inertial = strapdown integration of the logger's gyro and accelerometer from the pad up to the ejection
@@ -102,16 +102,30 @@ on this data, does not fire early. With a dwell of 60 ms or less it would have f
 
 The nose tumbled for the whole descent: −474 °/s mean about the logger's x axis (~1.3 rev/s about a
 transverse axis), 540–730 °/s rms per axis, and peaks at the gyro's ±2000 °/s rail on 0.5 % of samples.
-The chute held 6.1–6.9 m/s down to ~150 m. Then, from 64 s, the rate climbed to **11–12 m/s**, so the
-canopy's effective drag area fell to about a third. The data cannot say why. **Worth inspecting the chute,
-lines and shock cord** before the next flight.
+The deployment was prompt: one cord snatch at 8.54 s, and a steady 6.2 m/s
+within ~1 s of apogee. The chute then held ~6.5 m/s (drag area CdA ≈ 0.069 m² at 168 g) down to ~130 m.
+Over **62–67 s the drag area fell to a third** (0.023 m²), and the rest fell at a steady ~11 m/s,
+still at terminal speed rather than free fall (the cord load stayed ~1 g). The nose had whirled in one
+direction the whole way down, ~100 turns, so line twist is a candidate; the data cannot see the canopy,
+so it cannot decide. **Inspect the chute, lines, shock cord and swivel before the next flight.**
 
 ![landing](plots/landing.svg)
 
-At 74.6 s, ~12 m above the pad, comes a 19 g shock, the largest of the flight. The descent then slows to
-~4 m/s, and the nose reaches ground elevation at 77.1 s with a 7.9 g impact. The impacts glitch one gyro
-sample and a few pressure samples, which the spike filter rejects. It is at rest at 77.9 s, lying on its
-side, 1.7 m below the pad reference (the nose on the rod).
+**The 19 g shock was not the landing.** At 74.6 s, ~13 m (10–16 m) above the landing spot, a 19 g
+pull along the cord direction takes ~12 m/s out of the nose and ends the fast descent. After ~1 s of slack
+(0.6 g mean), the nose hangs tip-down at 1.00 g and comes down at 6.4–7 m/s, the healthy canopy's rate
+again if the booster was still attached. It touches down at 77.1 s at ≤6.6 m/s (7.9 g), bounces once and
+comes to rest at 77.9 s on its side, 1.7 m below the pad reference (the nose on the rod). The impacts
+glitch one gyro sample and a few pressure samples, which the spike filter rejects. The data cannot say
+what the 74.6 s event was; three readings fit, and the hardware decides between them:
+
+| reading | the hardware would show |
+|---|---|
+| the canopy re-opened with a snatch | lines that were twisted or wrapped, canopy and cord intact, booster still attached |
+| a snag on a tree or structure 10–16 m up | leaves or bark on the canopy or lines, trees on the drift line |
+| the shock cord broke | nose and booster apart; then the last 13 m were the nose and chute alone, nearly closed |
+
+A 12–14 in chute was fully open until 62 s; an 18 in or larger never opened past ~55 %.
 
 **5. The logger nearly overwrote the flight.** The logger's own clock shows the airframe lay **49 min**
 before it was picked up. Wind kept it moving through ~10 min of that, and moving means 50 Hz. Then came
