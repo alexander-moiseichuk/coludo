@@ -266,18 +266,18 @@ def test_hud_renders_an_events_frame():
         print('   (node not found -- HUD render check skipped)')
         return
     page = _request(b'GET /hud HTTP/1.1\r\n\r\n').split(b'\r\n\r\n', 1)[1]
-    directory = tempfile.mkdtemp()
-    with open(os.path.join(directory, 'hud.html'), 'wb') as handle:
-        handle.write(page)
-    with open(os.path.join(directory, 'harness.js'), 'w') as handle:
-        handle.write(_HUD_HARNESS)
     row = {'id': 'TMS-7C', 'online': True, 'stale': False, 'health_age': 0.4, 'stage': 'setting',
            'uptime': 125000, 'degraded': [], 'flight': {'reach': {'reachable': True, 'margin_m': 42}}}
     troubled = dict(row, degraded=['attitude-backup'],
                     flight={'reach': {'reachable': False, 'margin_m': -7}})
     frames = [{'cc': {}, 'boards': [row]}, {'cc': {}, 'boards': [troubled]}, {'cc': {}, 'boards': 'junk'}]
-    done = subprocess.run([node, os.path.join(directory, 'harness.js'), os.path.join(directory, 'hud.html'),
-                           json.dumps(frames)], capture_output=True)
+    with tempfile.TemporaryDirectory() as directory:
+        with open(os.path.join(directory, 'hud.html'), 'wb') as handle:
+            handle.write(page)
+        with open(os.path.join(directory, 'harness.js'), 'w') as handle:
+            handle.write(_HUD_HARNESS)
+        done = subprocess.run([node, os.path.join(directory, 'harness.js'), os.path.join(directory, 'hud.html'),
+                               json.dumps(frames)], capture_output=True)
     assert done.returncode == 0, done.stderr.decode('utf-8', 'replace')
     nominal, degraded, junk = json.loads(done.stdout)
     assert nominal['status'].startswith('live — TMS-7C'), nominal
@@ -343,9 +343,9 @@ const api = new Function('document', 'EventSource', 'fetch', 'setInterval', 'set
     await api.syncTime('A');
     out.sync.push({ sent: JSON.parse(posted[0]), shown: cell('actmsg').textContent, button: button() });
   }
-  out.unset = [];   // an ok that changed nothing, with no `changed` or one not a list, and a non-ok naming epoch
+  out.unset = [];   // an ok that set nothing: no `changed`, one not a list or naming no epoch; a non-ok naming epoch
   for (const [status, changed] of [['ok', []], ['ok', undefined], ['ok', 'epoch'], ['ok', { epoch: 1 }],
-                                   ['err', ['epoch']]]) {
+                                   ['ok', ['latitude']], ['err', ['epoch']]]) {
     replies.push(JSON.stringify({ status, args: [JSON.stringify({ changed })] }));
     await api.syncTime('A');
     out.unset.push(cell('actmsg').textContent);
@@ -406,14 +406,14 @@ def test_dashboard_actions_follow_the_selection():
         print('   (node not found -- dashboard behaviour check skipped)')
         return
     page = _request(b'GET / HTTP/1.1\r\n\r\n').split(b'\r\n\r\n', 1)[1]
-    directory = tempfile.mkdtemp()
-    with open(os.path.join(directory, 'index.html'), 'wb') as handle:
-        handle.write(page)
-    with open(os.path.join(directory, 'harness.js'), 'w') as handle:
-        handle.write(_DASHBOARD_HARNESS)
     zone = dict(os.environ, TZ=_ZONE)  # the browser's timezone, pinned so a UTC host cannot hide a sign slip
-    done = subprocess.run([node, os.path.join(directory, 'harness.js'), os.path.join(directory, 'index.html')],
-                          capture_output=True, env=zone)
+    with tempfile.TemporaryDirectory() as directory:
+        with open(os.path.join(directory, 'index.html'), 'wb') as handle:
+            handle.write(page)
+        with open(os.path.join(directory, 'harness.js'), 'w') as handle:
+            handle.write(_DASHBOARD_HARNESS)
+        done = subprocess.run([node, os.path.join(directory, 'harness.js'), os.path.join(directory, 'index.html')],
+                              capture_output=True, env=zone)
     assert done.returncode == 0, done.stderr.decode('utf-8', 'replace')
     out = json.loads(done.stdout)
     assert out['same'] == 'cards of A', 're-selecting the same board must keep its cards'
@@ -436,7 +436,7 @@ def test_dashboard_actions_follow_the_selection():
         assert sync['button']['disabled'] is False and "THIS BROWSER's clock" in sync['button']['title'], sync
     assert json.loads(with_fix['sent']['params'][1])['cc_position'] == [25.5144, -80.3918], with_fix
     assert json.loads(without_fix['sent']['params'][1])['cc_position'] is None, without_fix
-    assert len(out['unset']) == 5, out['unset']
+    assert len(out['unset']) == 6, out['unset']
     for shown in out['unset']:
         assert shown.startswith('A sync time: NOT set'), 'only an ok whose `changed` LIST names epoch is a set clock'
     assert out['hubError'] == ['A sync time: NOT set {"error":"no online board \'A\'"}',
@@ -579,10 +579,11 @@ def test_dashboard_script_is_valid_javascript():
     page = _request(b'GET / HTTP/1.1\r\n\r\n').decode('utf-8', 'replace')
     blocks = _re.findall(r'<script>(.*?)</script>', page, _re.S)
     assert blocks, 'the dashboard served no <script> block at all'
-    path = os.path.join(tempfile.mkdtemp(), 'page.js')
-    with open(path, 'w', encoding='utf-8') as handle:
-        handle.write('\n'.join(blocks))
-    done = subprocess.run([node, '--check', path], capture_output=True)
+    with tempfile.TemporaryDirectory() as directory:
+        path = os.path.join(directory, 'page.js')
+        with open(path, 'w', encoding='utf-8') as handle:
+            handle.write('\n'.join(blocks))
+        done = subprocess.run([node, '--check', path], capture_output=True)
     assert done.returncode == 0, 'dashboard JS does not parse:\n' + done.stderr.decode('utf-8', 'replace')
 
 

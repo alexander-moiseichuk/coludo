@@ -326,6 +326,37 @@ def test_held_records_join_their_stream_or_are_rejected():
     assert altitudes == [float(uptime // 1_000_000) for uptime in baro_times], altitudes[98:103]  # in its place
 
 
+def test_a_sparse_stream_times_nothing_past_a_wrap_it_missed():
+    """
+    A servo still through the pad dwell is silent across the ticks_us wrap, so _unwrap never sees the wrap
+    in its rows, and its flight rows keep a time one wrap short. A record run on after one of them was
+    timed by them and filed a wrap early: the IMU row of 1410 s at 336 s, a log line among the pad's. In
+    a capture longer than a wrap such a record has two places, so it is rejected; the servo's own row on
+    the merged line keeps its stream's time, as a junk file's row does. The same log line run on in the
+    dense IMU file is placed by the rows around it, early in the capture too, where only the rows long
+    after them vouch for their time -- in a capture over two wraps, nothing nearer bounds it (NEGATIVE:
+    the fix keeps that salvage).
+    """
+    period = recorder_wire.TICKS_PERIOD
+    imu, servo = '000123_imu_lsm6dso32.csv', '000123_servo_yaw.csv'
+    imu_times = [uptime for uptime in range(30_000_000, 2_200_000_001, 5_000_000) if uptime != 1_410_000_000]
+    servo_times = list(range(5_000_000, 10_000_001, 1_000_000)) + list(range(1_408_000_000, 1_420_000_001, 1_000_000))
+    servo_block = _block(servo, ['%d;0;1500;1' % (uptime % period) for uptime in servo_times])
+    servo_block[7] += recorder_wire.wrap('%d;0.0;0.0;5.0;0;0;0;1' % (1_410_000_000 % period), imu).rstrip('\n')
+    servo_block[9] += recorder_wire.wrap('%d health :: ran on' % (1_412_000_500 % period)).rstrip('\n')
+    imu_block = _block(imu, ['%d;0.0;0.0;1.0;0;0;0;1' % (uptime % period) for uptime in imu_times])
+    dense = {uptime + 700: '%d health :: dense' % ((uptime + 700) % period) for uptime in (100_000_000, 1_450_000_000)}
+    for uptime, text in dense.items():
+        imu_block[imu_times.index(uptime - 700)] += recorder_wire.wrap(text).rstrip('\n')
+    streams, logs = flight_telemetry.parse('\n'.join(imu_block + servo_block))
+    good = len(imu_times) - 2 + len(servo_times) - 2
+    assert flight_telemetry.line_counts() == {'good': good, 'salvaged': 6, 'rejected': 2, 'legacy': 0}
+    origin = servo_times[0]  # the earliest stamp
+    assert [row[0] for row in streams['imu_lsm6dso32.csv'].rows] == [uptime - origin for uptime in imu_times]
+    assert [row[0] for row in streams['servo_yaw.csv'].rows] == [uptime % period - origin for uptime in servo_times]
+    assert logs == [(uptime - origin, text) for uptime, text in dense.items()], logs
+
+
 def test_the_session_index_reads_as_rows():
     """
     session.csv lists every boot: a 'boot' row, one per time set, an 'anchor' row -- the header again before
@@ -375,10 +406,11 @@ def test_load_reads_the_bytes_the_board_sent():
     lines = [line.encode('utf-8') for line in _wire_lines()]
     lines[2] = lines[2].replace(b';-0.2;', b';-\xff.2;')  # damaged on the wire: fails its CRC
     lines.append(recorder_wire.wrap('161400000 health :: t\u00e4st\u00e9r ok').rstrip('\n').encode('utf-8'))
-    with tempfile.NamedTemporaryFile('wb', suffix='.txt', delete=False) as handle:
-        handle.write(b'\n'.join(lines) + b'\n')
-    streams, logs = flight_telemetry.load(handle.name)
-    os.unlink(handle.name)
+    with tempfile.TemporaryDirectory() as directory:  # gone whatever load() does
+        path = os.path.join(directory, 'capture.txt')
+        with open(path, 'wb') as handle:
+            handle.write(b'\n'.join(lines) + b'\n')
+        streams, logs = flight_telemetry.load(path)
     assert flight_telemetry.line_counts() == {'good': len(_BOOT), 'salvaged': 0, 'rejected': 1, 'legacy': 0}
     assert len(streams['accel.csv'].rows) == 2 and logs[-1][1] == '161400000 health :: t\u00e4st\u00e9r ok'
 
@@ -410,11 +442,13 @@ test_damage_is_salvaged_or_rejected_never_guessed()
 test_recovered_rows_are_placed_by_time()
 test_salvage_across_a_ticks_wrap()
 test_held_records_join_their_stream_or_are_rejected()
+test_a_sparse_stream_times_nothing_past_a_wrap_it_missed()
 test_the_session_index_reads_as_rows()
 test_an_unwrapped_line_in_a_wrapped_capture_is_rejected()
 test_load_reads_the_bytes_the_board_sent()
 print('ok: flight telemetry parser — streams + logs from fixture and synthetic flight; wrapped captures: '
       'wire vectors, legacy twin, salvage/reject per damage kind, recovered rows placed by time (across a '
-      'wrap too; two boots rejected, log lines merged back, a junk row by its stream span), the session '
+      'wrap too; two boots rejected, log lines merged back, a junk row by its stream span, nothing by a '
+      'sparse stream past a wrap it missed), the session '
       'index (boot/anchor rows, a clock never set, a label "session"), unwrapped lines in a wrapped '
       'capture, load() on damaged bytes')

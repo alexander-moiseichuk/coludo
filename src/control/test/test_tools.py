@@ -5,7 +5,8 @@ Host (CPython) test for the ANALYSIS TOOLS (tools/flight_kpi, flight_svg, airspe
 board-shape handling in flight_telemetry, and the recorder-dump readers recorder_flight,
 assemble_capture and flight_pull.sh on wrapped and unwrapped dumps -- every kind of link damage, across a
 ticks_us wrap, and under a label). Stdlib only -- plotly rendering runs only where plotly is importable
-(flight_report on a damaged byte; without it, the text the report would render is checked instead).
+(flight_report on a damaged byte); everywhere, the report runs with plotly and the figure stubbed, and
+what it would draw is checked. Every folder a test writes lives in one temporary directory, gone at exit.
 
 Why this file exists (findings §27.8): ~4 K lines of analysis tooling had almost no tests, and it is the
 layer that produces the CONCLUSIONS we draw from a flight -- a silent bug here is worse than a firmware
@@ -37,6 +38,12 @@ import recorder_flight  # noqa: E402
 import recorder_wire  # noqa: E402
 
 _ZONE = ((25.514944, -80.392972), (25.514583, -80.391111))  # the HPRC strip (TL, BR)
+_SCRATCH: tempfile.TemporaryDirectory = tempfile.TemporaryDirectory()  # every folder a test writes; gone at exit
+
+
+def _folder() -> str:
+    """A fresh folder inside _SCRATCH: a run leaves nothing behind in /tmp, whatever fails."""
+    return tempfile.mkdtemp(dir=_SCRATCH.name)
 
 
 def _board_capture() -> str:
@@ -325,7 +332,7 @@ def test_airspeed_calibration_from_an_assembled_capture():
         pitot_lines.append('@s_airspeed_sdp810.csv@%d;%d;%d;21.0'
                            % (stamp, int(pressure * 100), int(speed * 100)))
         gnss_lines.append('@s_gnss.csv@%d;25.5;-80.4;%.4f;90.0' % (stamp, speed * knots))
-    capture = os.path.join(tempfile.mkdtemp(), 'calm_pass.txt')
+    capture = os.path.join(_folder(), 'calm_pass.txt')
     with open(capture, 'w') as handle:
         handle.write('\n'.join(pitot_lines + gnss_lines) + '\n')
 
@@ -369,7 +376,7 @@ def test_airspeed_calibration_from_an_assembled_capture():
     with open(capture) as handle:
         body = handle.read().rstrip('\n').split('\n')
     body.insert(3, '@s_airspeed_sdp810.csv@240000;13000')   # 2 cells where 4 are expected
-    truncated = os.path.join(tempfile.mkdtemp(), 'truncated.txt')
+    truncated = os.path.join(_folder(), 'truncated.txt')
     with open(truncated, 'w') as handle:
         handle.write('\n'.join(body) + '\n')
     short_pitot, short_gnss = airspeed_calibrate._read_capture(truncated)
@@ -538,7 +545,7 @@ def test_calibration_refuses_a_simulated_capture():
         lines.append('@s_airspeed_sdp810.csv@%d;13000;1500;21.0' % stamp)
         lines.append('@s_gnss.csv@%d;25.5;-80.4;29.2;90.0' % stamp)
         lines.append('@s_hitl_clock.csv@%d;0' % stamp)
-    capture = os.path.join(tempfile.mkdtemp(), 'hitl_run.txt')
+    capture = os.path.join(_folder(), 'hitl_run.txt')
     with open(capture, 'w') as handle:
         handle.write('\n'.join(lines) + '\n')
 
@@ -551,7 +558,7 @@ def test_calibration_refuses_a_simulated_capture():
         assert exit_code.code == 2, exit_code.code
 
     # NEGATIVE: the same data WITHOUT the sim clock is a real capture and must still calibrate
-    real = os.path.join(tempfile.mkdtemp(), 'real_pass.txt')
+    real = os.path.join(_folder(), 'real_pass.txt')
     with open(real, 'w') as handle:
         handle.write('\n'.join(row for row in lines if 'hitl_clock' not in row) + '\n')
     assert flight_telemetry.simulated(flight_telemetry.parse(open(real).read())[0]) is False
@@ -663,13 +670,23 @@ def _baro_rows() -> list:
             for uptime in range(1000000, 3000001, 100000)]
 
 
-def _cut(recordings: str, session: str) -> tuple:
-    """Run recorder_flight over a dump into a fresh folder; return (what it printed, the folder)."""
+def _cut(recordings: str, session: str, before: str = '1') -> tuple:
+    """
+    Run recorder_flight over a dump into a fresh folder.
+
+    Args:
+        recordings - the dump directory.
+        session - the session to cut.
+        before - the seconds kept ahead of ignition (--before).
+
+    Returns:
+        (what it printed, the folder).
+    """
     import contextlib
     import io
-    out = tempfile.mkdtemp()
+    out = _folder()
     printed = io.StringIO()
-    saved, sys.argv = sys.argv, ['recorder_flight.py', recordings, '--session', session, '-o', out, '--before', '1']
+    saved, sys.argv = sys.argv, ['recorder_flight.py', recordings, '--session', session, '-o', out, '--before', before]
     try:
         with contextlib.redirect_stdout(printed):
             recorder_flight.main()
@@ -716,7 +733,7 @@ def test_recorder_flight_salvages_a_wrapped_dump():
     clock = ['uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon',
              '884031;123;000123;2026-10-03T14:21:07Z;-240;taster;dev;3f2a91;cc-auto;;',
              '5000;122;000122;2026-10-02T10:00:00Z;-240;taster;dev;3f2a91;cc-auto;;']
-    recordings = tempfile.mkdtemp()
+    recordings = _folder()
     _write_dump(recordings, {
         imu_routing: imu_file,
         baro_routing: baro_file,
@@ -755,21 +772,27 @@ def test_recorder_flight_reads_an_unwrapped_dump_as_before():
     """
     A dump from before the wrapper is cut exactly as it always was: by its time sequence, known streams only.
 
-    The 2026-10-03 cuts in launches/ must regenerate byte for byte, so this path must not change at all.
+    The 2026-10-03 cuts in launches/ must regenerate byte for byte, so this path must not change at all --
+    board.log included, which reads recorder.log as those cuts did: a byte past ASCII is U+FFFD, never
+    the byte itself (a wrapped session's board.log keeps the bytes).
     """
     session = '20000101_000006_898573'
     imu, baro = _imu_rows(), _baro_rows()
     baro_file = baro[:5] + ['999999999;9.99;25.0;101300;9.99'] + baro[5:]  # a corrupted uptime: out of sequence
-    recordings = tempfile.mkdtemp()
+    recordings = _folder()
     _write_dump(recordings, {
         '%s_imu_lsm6dso32.csv' % session: ['uptime;ax;ay;az;gx;gy;gz;irq_runs'] + imu,
         '%s_baro_bmp280.csv' % session: baro_file,
         '%s_attitude.csv' % session: ['uptime;heading_cd;roll_cd', '1600000;100;5'],  # not a known stream
         '%s_baro_bmXX280.csv' % session: [_body(baro[1], 'x')],  # a wrapper-shaped junk row decides nothing
-        'recorder.log': ["900000 recorder :: {'session': '%s'}" % session],
     })
+    status = ("900000 recorder :: {'session': '%s'}\n" % session).encode()
+    with open(os.path.join(recordings, 'recorder.log'), 'wb') as handle:
+        handle.write(status + '1500000 sequencer :: zündung\n'.encode('utf-8'))
     printed, out = _cut(recordings, session)
     assert 'ignition at uptime 1.500000 s' in printed and 'rows checked' not in printed, printed
+    with open(os.path.join(out, 'recorder', 'board.log'), 'rb') as handle:
+        assert handle.read() == status + '1500000 sequencer :: z\ufffd\ufffdndung\n'.encode('utf-8')
     assert _read(os.path.join(out, 'recorder', 'baro_bmp280.csv')) == baro  # the corrupted uptime dropped
     assert len(_read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))) == 1 + len(imu)
     assert not os.path.exists(os.path.join(out, 'flight', 'attitude.csv')), 'only known streams on an old dump'
@@ -789,7 +812,7 @@ def test_assemble_capture_keeps_a_wrapped_capture_strict():
             'sequencer.csv': ['uptime;stage;reason', '1500000;boosting;launch', '1600000;gliding;apogee']}
     for wrap in (True, False):
         session = '000123' if wrap else '20000101_000006_898573'
-        directory = tempfile.mkdtemp()
+        directory = _folder()
         files = {}
         for name, lines in rows.items():
             routing = '%s_%s' % (session, name)
@@ -817,7 +840,7 @@ def test_assemble_capture_keeps_a_wrapped_capture_strict():
             assert counts['legacy'] == len(lines) and '1600000 controller :: stage -> gliding' in texts
 
     # a capture whose first line is a wrapped LOG line is still recognised as a capture
-    first_log = os.path.join(tempfile.mkdtemp(), 'capture.txt')
+    first_log = os.path.join(_folder(), 'capture.txt')
     with open(first_log, 'w') as handle:
         handle.write(recorder_wire.wrap('100 main :: boot') + recorder_wire.wrap('1;2', '000123_x.csv'))
     assert airspeed_calibrate._is_capture(first_log)
@@ -888,7 +911,7 @@ def test_recorder_flight_error_matrix():
            'a line that lost both ends of its wrapper',               # NEGATIVE: proves nothing
            _log('2500000 sequencer :: stage -> boosting'),
            _log("2900000 recorder :: {'session': '000123', 'lines': 99}")]
-    recordings = tempfile.mkdtemp()
+    recordings = _folder()
     _write_dump(recordings, {
         imu_routing: imu_file,
         baro_routing: baro_file,
@@ -967,7 +990,7 @@ def test_recorder_flight_places_salvage_across_a_wrap():
         log += [baro_routing + '@' + baro[stamp] for stamp in lost_at if tick < stamp < tick + 5_000_000]
         if tick == 1_435_000_000:
             log.append(sequencer_routing + '@' + sequencer[1_440_000_000])  # the ignition event lost its '@'
-    recordings = tempfile.mkdtemp()
+    recordings = _folder()
     _write_dump(recordings, {
         sequencer_routing: [sequencer[5_000_000], sequencer[1_443_000_000]],
         imu_routing: imu_file,
@@ -1007,13 +1030,13 @@ def test_a_label_never_takes_another_sessions_files():
         files[prefix + '_sequencer.csv'] = [_body('1500000;boosting;launch', prefix + '_sequencer.csv')]
     files['hitl_attitude.csv'] = [_body('1600000;100;5', 'hitl_attitude.csv')]  # this session's, but undeclared
     files['recorder.log'] = [_log("900000 recorder :: {'session': 'hitl'}")]
-    recordings = tempfile.mkdtemp()
+    recordings = _folder()
     _write_dump(recordings, files)
     printed, out = _cut(recordings, session)
     assert 'f15' not in printed and 'ignition at uptime 1.500000 s' in printed, printed
     assert sorted(os.listdir(os.path.join(out, 'flight'))) == [
         'baro_bmp280.csv', 'health.csv', 'imu_lsm6dso32.csv', 'sequencer.csv']
-    capture = os.path.join(tempfile.mkdtemp(), 'capture.txt')
+    capture = os.path.join(_folder(), 'capture.txt')
     assemble_capture.assemble(session, recordings, capture)
     streams, _logs = flight_telemetry.parse('\n'.join(_read(capture)))
     assert sorted(streams) == ['attitude.csv', 'baro_bmp280.csv', 'health.csv', 'imu_lsm6dso32.csv',
@@ -1034,7 +1057,7 @@ def test_a_label_never_takes_another_sessions_files():
              session + '_lsm6dso32.csv': [_body(imu[100], lsm6dso32)],     # ... twice
              session + '_health.csv': [_body('1000000;35;31480912;10;0;0;0;0;0', session + '_health.csv')],
              'recorder.log': [_log("900000 recorder :: {'session': 'tms-7d'}")]}
-    recordings = tempfile.mkdtemp()
+    recordings = _folder()
     _write_dump(recordings, files)
     assemble_capture.assemble(session, recordings, capture)
     streams, _logs = flight_telemetry.parse('\n'.join(_read(capture)))
@@ -1052,7 +1075,7 @@ _INDEX_HEADER = 'uptime;boot;session;utc;utc_offset;board;firmware;config_id;sou
 def _boot_dump(session: str, index: list) -> str:
     """A wrapped dump of one short boot (_imu_rows(), _baro_rows()) beside the session.csv rows `index`."""
     imu_routing, baro_routing = session + '_imu_lsm6dso32.csv', session + '_baro_bmp280.csv'
-    recordings = tempfile.mkdtemp()
+    recordings = _folder()
     _write_dump(recordings, {
         imu_routing: [_body(row, imu_routing) for row in _imu_rows()],
         baro_routing: [_body(row, baro_routing) for row in _baro_rows()],
@@ -1117,7 +1140,7 @@ def _long_dump(index: list) -> str:
     stamps = list(range(30_000_000, 1_435_000_000, 5_000_000)) + list(range(1_435_000_000, 1_460_000_001, 10_000))
     imu = ['%d;0.0;0.0;%.1f;0;0;0;1' % (stamp % period, 5.0 if 1_440_000_000 <= stamp < 1_441_500_000 else 1.0)
            for stamp in stamps]
-    recordings = tempfile.mkdtemp()
+    recordings = _folder()
     _write_dump(recordings, {
         imu_routing: [_body(row, imu_routing) for row in imu],
         'recorder.log': [_log("1000000 recorder :: {'session': '000123'}")],
@@ -1192,7 +1215,7 @@ def test_recorder_flight_times_the_log_from_this_boot_only():
             log.append(_log("%d recorder :: {'session': '000123'}" % tick))
             if tick == 200_000_000:
                 log.append(baro_routing + '@' + baro[200_500_000])  # a lost leading '@'
-        recordings = tempfile.mkdtemp()
+        recordings = _folder()
         _write_dump(recordings, {imu_routing: [_body(row, imu_routing) for row in imu],
                                  baro_routing: [body for stamp, body in baro.items() if stamp != 200_500_000],
                                  'recorder.log': log})
@@ -1237,7 +1260,7 @@ def test_recorder_flight_files_a_log_line_found_in_a_stream():
            _log('1600000 health :: after'), _log('2550000 health :: late'),
            _log('2560000 health :: one') + _log('2570000 health :: two'),  # merged in recorder.log: kept as is
            _log('2700000 health :: last')]
-    recordings = tempfile.mkdtemp()
+    recordings = _folder()
     _write_dump(recordings, {imu_routing: imu_file, 'recorder.log': log,
                              '000123_imu_lsmXX.csv': [imu[150] + junk],       # a junk file with the prefix
                              'zz.csv': [imu[160] + elsewhere]})               # NEGATIVE: one without it
@@ -1254,13 +1277,83 @@ def test_recorder_flight_files_a_log_line_found_in_a_stream():
             for boot in (1, 2) for uptime in range(1_000_000, 40_000_001, 10_000)]  # the ticks restart: 1..40 s twice
     imu_file = [_body(row, imu_routing) for row in rows]
     imu_file[-500] += _log('35005000 sequencer :: stage -> gliding')  # boot 2, 35 s
-    recordings = tempfile.mkdtemp()
+    recordings = _folder()
     _write_dump(recordings, {imu_routing: imu_file, 'recorder.log': [
         _log("%d recorder :: {'session': 'tms-7d'}" % tick) for tick in (900_000, 30_000_000, 900_000, 30_000_000)]})
     printed, out = _cut(recordings, session)
     assert 'session tms-7d: 2 boot(s)' in printed and 'the flight is boot 1' in printed, printed
     assert re.search(r'\(board\.log\)\s+\d+ good,\s+0 salvaged in,\s+1 rejected', printed), printed
     assert 'gliding' not in ''.join(_read(os.path.join(out, 'recorder', 'board.log')))
+
+
+def test_recorder_flight_never_times_by_a_wrap_its_file_missed():
+    """
+    A sparse stream is silent across the ticks_us wrap -- the sequencer here, a servo still through the pad
+    dwell -- so its file never shows the wrap, and its good lines past it keep a time one wrap short. A
+    record found among them, run on after a row that lost its newline, was timed by them and filed a wrap
+    (1073.7 s) early, counted as salvaged in: a log line into board.log among the lines of 366 s, a 5 g
+    boost row into flight/ at t_s -1073.7. In a session longer than a wrap such a record has two places,
+    so it is rejected and counted. The same kind of log line found in the dense IMU file IS placed, by
+    the good rows around it -- the session's span alone could not tell its two places apart -- early in
+    the session too, where the rows that vouch for those around it come much later. recorder.log is such
+    a file too, when it falls silent across the wrap.
+
+    board.log is this session's part of recorder.log only: the previous boot's last line at its head,
+    never the previous session's status nor the next session's lines. Its good and salvaged in count
+    exactly its lines that check out.
+    """
+    period = recorder_wire.TICKS_PERIOD
+    imu_routing, sequencer_routing = '000123_imu_lsm6dso32.csv', '000123_sequencer.csv'
+    stamps = list(range(30_000_000, 1_435_000_000, 5_000_000)) + list(range(1_435_000_000, 1_460_000_001, 10_000))
+    moved = 1_440_010_000  # this boost row runs on into the sequencer file: marked by irq_runs 7
+    imu = {stamp: _body('%d;0.0;0.0;%.1f;0;0;0;%d' % (stamp % period, 5.0 if 1_440_000_000 <= stamp < 1_441_500_000
+                                                      else 1.0, 7 if stamp == moved else 1), imu_routing)
+           for stamp in stamps}
+    sparse = _log('%d sequencer :: stage -> boosting' % (1_440_000_500 % period))
+    dense = {stamp: _log('%d health :: ran on' % ((stamp + 700) % period)) for stamp in (100_000_000, 1_450_000_000)}
+    sequencer = [_body('%d;%s' % (stamp % period, stage), sequencer_routing) for stamp, stage in (
+        (400_000_000, 'setting;boot'), (1_200_000_000, 'armed;pad'), (1_440_000_000, 'boosting;launch'),
+        (1_442_000_000, 'coasting;burnout'), (1_443_000_000, 'gliding;burnout'), (1_445_000_000, 'gliding;apogee'))]
+    sequencer[2] += sparse                                       # merged at a '>{' seam
+    sequencer[3] += '@' + imu_routing + '@' + imu[moved]          # ... and at a '>@' one
+    imu_file = [body + dense.get(stamp, '') for stamp, body in imu.items() if stamp != moved]
+    tail = _log('699500000 health :: bye')                      # the previous boot's last line
+    part = [tail, _log("1000000 recorder :: {'session': '000123'}")] + [
+        _log('%d health :: at %d s' % (second * 1_000_000 % period, second)) for second in range(2, 1461)]
+    log = ([_log("699000000 recorder :: {'session': '000122'}")] + part +
+           [_log("900000 recorder :: {'session': '000124'}"), _log('1900000 health :: next boot')])
+    recordings = _folder()
+    _write_dump(recordings, {imu_routing: imu_file, sequencer_routing: sequencer, 'recorder.log': log})
+    printed, out = _cut(recordings, '000123', '1200')
+    assert 'ignition at uptime 1440.000000 s' in printed, printed
+    # the IMU rows the dense run-ons followed are salvaged in; the one in the sequencer file has two places.
+    # The sequencer's own two rows on the merged lines are its, placed modulo the wrap by the window.
+    assert re.search(r'imu_lsm6dso32\s+%d good,\s+2 salvaged in,\s+1 rejected' % (len(stamps) - 3), printed), printed
+    assert re.search(r'\(board\.log\)\s+%d good,\s+2 salvaged in,\s+1 rejected' % len(part), printed), printed
+    assert re.search(r'sequencer\s+4 good,\s+2 salvaged in,\s+0 rejected', printed), printed
+    flown = [line.split(';') for line in _read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))[1:]]
+    assert flown and all(float(cells[0]) >= -1200.0 and cells[-2] == '1' for cells in flown), 'a row filed a wrap early'
+    board = _read(os.path.join(out, 'recorder', 'board.log'))
+    expected = list(part)
+    for stamp, line in sorted(dense.items(), reverse=True):  # each after the log line of its second
+        expected.insert(expected.index(_log('%d health :: at %d s' % (stamp % period, stamp // 1_000_000))) + 1, line)
+    assert board == expected, 'board.log: this session\'s part, each dense run-on in its place'
+    assert len(board) == len(part) + 2 == sum(1 for line in board if recorder_wire.verify(None, line) is not None)
+
+    # recorder.log is such a file too: silent for 200 s across the wrap, its ticks after it keep a time one
+    # wrap short, so a row stranded among them (a lost leading '@') has two places as well
+    quiet = [_log("1000000 recorder :: {'session': '000123'}")]
+    for second in list(range(5, 1001, 5)) + list(range(1200, 1461, 5)):
+        quiet.append(_log('%d health :: at %d s' % (second * 1_000_000 % period, second)))
+        if second == 1440:
+            quiet.append(imu_routing + '@' + imu[moved])
+    recordings = _folder()
+    imu_file = [body for stamp, body in imu.items() if stamp != moved]
+    _write_dump(recordings, {imu_routing: imu_file, 'recorder.log': quiet})
+    printed, out = _cut(recordings, '000123', '1200')
+    assert re.search(r'imu_lsm6dso32\s+%d good,\s+0 salvaged in,\s+1 rejected' % (len(stamps) - 1), printed), printed
+    flown = [line.split(';')[-2] for line in _read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))[1:]]
+    assert flown and '7' not in flown, 'a row filed a wrap early'
 
 
 def test_every_reader_takes_a_damaged_byte():
@@ -1273,7 +1366,7 @@ def test_every_reader_takes_a_damaged_byte():
     import contextlib
     import io
     import subprocess
-    directory = tempfile.mkdtemp()
+    directory = _folder()
     capture = os.path.join(directory, 'damaged.txt')
     with open(capture, 'wb') as handle:
         handle.write(flight_synth_capture.generate().encode() + b'1 health :: \xff\xfe damaged\n')
@@ -1311,6 +1404,37 @@ def test_every_reader_takes_a_damaged_byte():
         '5000000 controller :: stage -> glid\ufffding'
     assert flight_report._printable('\udcff\udcfe') == '\ufffd\ufffd'  # one U+FFFD per damaged byte
     assert flight_report._printable('1500000 sequencer :: zündung') == '1500000 sequencer :: zündung'  # NEGATIVE
+    """
+    The report on any host: plotly and the figure stubbed, main() hands build() what it would draw. Two
+    junk stream names that differ only in a damaged byte stay two streams -- as U+FFFD they were one key,
+    and one stream dropped out -- and neither passes for a name that holds a backslash. Nothing build()
+    is handed keeps a lone surrogate, which orjson would refuse.
+    """
+    tag = flight_synth_capture._SESSION.encode()
+    with open(staged, 'ab') as handle:
+        for name, runs in ((b'\xff', 1), (b'\xfe', 0), (b'\\xff', 2)):  # two damaged bytes, and a backslash
+            handle.write(b'@%s_irq%s.csv@uptime;irq_runs\n@%s_irq%s.csv@1000000;%d\n' % (tag, name, tag, name, runs))
+    drawn = {}
+
+    def build(streams: dict, logs: list, *_figure) -> tuple:
+        """build() without plotly: keeps what main() hands it."""
+        drawn.update(streams=streams, logs=logs)
+        return None, None
+
+    saved = sys.argv, flight_report._require_plotly, flight_report.build, flight_report.write_html
+    sys.argv = ['flight_report.py', staged, '-o', report]
+    flight_report._require_plotly = lambda: (None, None, None)
+    flight_report.build, flight_report.write_html = build, lambda *_arguments: None
+    try:
+        with contextlib.redirect_stdout(io.StringIO()):
+            flight_report.main()
+    finally:
+        sys.argv, flight_report._require_plotly, flight_report.build, flight_report.write_html = saved
+    names = sorted(name for name in drawn['streams'] if name.startswith('irq'))
+    assert names == ['irq\\\\xff.csv', 'irq\\xfe.csv', 'irq\\xff.csv'], names
+    for text in list(drawn['streams']) + [line for _stamp, line in drawn['logs']]:
+        text.encode('utf-8')  # strict: a lone surrogate raises here as it does in the figure
+    assert '5000000 controller :: stage -> glid�ing' in [line for _stamp, line in drawn['logs']]
     # assemble_capture keeps the byte as the Luckfox file holds it
     routing = '000123_imu_lsm6dso32.csv'
     with open(os.path.join(directory, routing), 'wb') as handle:
@@ -1354,7 +1478,7 @@ def test_flight_pull_takes_a_session_not_a_junk_name():
     """
     import subprocess
     import time
-    recordings, bin_dir, out, labelled = (tempfile.mkdtemp() for _ in range(4))
+    recordings, bin_dir, out, labelled = (_folder() for _ in range(4))
     files = {'000122_imu_lsm6dso32.csv': ['1;0;0;1;0;0;0;1'], '000122_health.csv': ['1;35;1;1;0;0;0;0;0'],
              '000123_imu_lsm6dso32.csv': [_body(row, '000123_imu_lsm6dso32.csv') for row in _imu_rows()],
              '000123_baro_bmp280.csv': [_body(row, '000123_baro_bmp280.csv') for row in _baro_rows()],
@@ -1430,6 +1554,7 @@ test_recorder_flight_dates_every_boot()
 test_recorder_flight_dates_the_flight_across_a_wrap()
 test_recorder_flight_times_the_log_from_this_boot_only()
 test_recorder_flight_files_a_log_line_found_in_a_stream()
+test_recorder_flight_never_times_by_a_wrap_its_file_missed()
 test_every_reader_takes_a_damaged_byte()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, touchdown at DONE, '
       'polled-IRQ summary, adxl-only backstop, cc.py verdict exit codes, logger join continuity, svg render, '
@@ -1439,4 +1564,4 @@ print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, tou
       'matrix (every unproven line counted), salvage across a ticks wrap (a sparse stream too), label-prefix '
       'collisions and junk tails, flight_pull session pick (byte-safe, never a label), every boot of the session '
       'index, the flight\'s UTC across a wrap, the log timeline of this boot only, a log line found in a stream, '
-      'a damaged byte through every reader (and the report)')
+      'nothing timed by a wrap its file missed, a damaged byte through every reader (and the report, names too)')

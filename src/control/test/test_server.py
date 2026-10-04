@@ -38,6 +38,20 @@ LOG_WEB_PORT = 18245
 COLD_EPOCH: int = 946684800 + 12  # a cold board's RTC: 2000-01-01 plus 12 s of uptime
 CC_ZONE: str = 'Asia/Kolkata'  # CC's zone in the clock-sync cases: half-hour, no DST, never UTC by accident
 CC_ZONE_OFFSET: int = 330  # its offset EAST of UTC in minutes, the sign utc_offset carries
+_ROSTERS: tempfile.TemporaryDirectory = tempfile.TemporaryDirectory()  # each hub's gliders.json; gone at exit
+
+
+def _isolated_hub(**options) -> server.Server:
+    """
+    A hub with a roster of its own inside _ROSTERS: no test may write the live hub's src/control/gliders.json.
+
+    Args:
+        options - server.Server's keyword arguments, roster_path aside.
+
+    Returns:
+        The hub, its gliders.json in a fresh folder.
+    """
+    return server.Server(roster_path=os.path.join(tempfile.mkdtemp(dir=_ROSTERS.name), 'gliders.json'), **options)
 
 
 def _nmea(body):
@@ -109,7 +123,7 @@ async def _loopback():
         finally:
             done.set()
 
-    hub = server.Server(host='127.0.0.1', port=PORT, on_board=on_board, log=lambda message: None)
+    hub = _isolated_hub(host='127.0.0.1', port=PORT, on_board=on_board, log=lambda message: None)
     server_task = asyncio.create_task(hub.serve_forever())
     await asyncio.sleep(0.1)
 
@@ -128,7 +142,7 @@ async def _loopback():
 async def _operator_console():
     """A board dials in; an operator drives it through the telnet console: list / route / select /
     broadcast / Control commands, with replies tagged by source."""
-    hub = server.Server(host='127.0.0.1', port=BOARD_PORT, operator_port=OPERATOR_PORT,
+    hub = _isolated_hub(host='127.0.0.1', port=BOARD_PORT, operator_port=OPERATOR_PORT,
                         web_port=WEB_PORT, log=lambda message: None, heartbeat_s=0.05)
     hub_task = asyncio.create_task(hub.run())
     await asyncio.sleep(0.1)
@@ -204,7 +218,7 @@ async def _http(port, method, path, body=None):
 
 async def _web():
     """The browser bridge on 8080: dashboard, /api/boards, /api/cmd routing, and /events SSE."""
-    hub = server.Server(host='127.0.0.1', port=WEB_BOARD_PORT, operator_port=WEB_OPERATOR_PORT,
+    hub = _isolated_hub(host='127.0.0.1', port=WEB_BOARD_PORT, operator_port=WEB_OPERATOR_PORT,
                         web_port=WEB_PORT, log=lambda message: None, heartbeat_s=0.05)
     hub_task = asyncio.create_task(hub.run())
     await asyncio.sleep(0.1)
@@ -312,7 +326,7 @@ async def _gps_assist():
     host_gps.feed(_nmea('GPGGA,123519,4807.038,N,01131.000,E,1,06,0.9,545.4,M,46.9,M,,'))  # 6 sats
     assert host_gps.position() is not None
 
-    hub = server.Server(host='127.0.0.1', port=GPS_BOARD_PORT, operator_port=GPS_OPERATOR_PORT,
+    hub = _isolated_hub(host='127.0.0.1', port=GPS_BOARD_PORT, operator_port=GPS_OPERATOR_PORT,
                         web_port=GPS_WEB_PORT, log=lambda message: None, heartbeat_s=0.05, gps=host_gps)
     hub_task = asyncio.create_task(hub.run())
     await asyncio.sleep(0.1)
@@ -371,7 +385,7 @@ async def _log_stream():
     feed; `<board> log off` stops it (and tells the board to stop collecting with a final `log 0`).
     """
     seen = []
-    hub = server.Server(host='127.0.0.1', port=LOG_BOARD_PORT, operator_port=LOG_OPERATOR_PORT,
+    hub = _isolated_hub(host='127.0.0.1', port=LOG_BOARD_PORT, operator_port=LOG_OPERATOR_PORT,
                         web_port=LOG_WEB_PORT, log=seen.append, heartbeat_s=5.0)
     hub_task = asyncio.create_task(hub.run())
     await asyncio.sleep(0.1)
@@ -463,7 +477,7 @@ def _log_drops_are_reported():
     A full subscriber queue used to drop lines silently, so the browser showed a log with a hole in
     it and no sign of one. Negative: a listener that kept up sees exactly the lines, no notice.
     """
-    hub = server.Server(log=lambda message: None)
+    hub = _isolated_hub(log=lambda message: None)
     slow, fast = asyncio.Queue(maxsize=2), asyncio.Queue(maxsize=100)
     hub.log_subscribers.update((slow, fast))
     for number in range(5):
@@ -480,7 +494,7 @@ async def _handler_crash():
     """A registered command handler that raises must return an error reply, NOT drop the operator
     session -- server.py _dispatch wraps the handler call, logs the crash, and replies with an err line."""
     import types
-    hub = server.Server(log=lambda message: None)
+    hub = _isolated_hub(log=lambda message: None)
 
     def boom(_hub, _tokens, _session):
         raise RuntimeError('boom')
@@ -540,7 +554,7 @@ async def _large_reply():
     ValueError, the reply is discarded and the stream task dies. The operator loses exactly the data
     they asked for, because they asked for a lot of it. This drives a reply past the old ceiling.
     """
-    hub = server.Server(host='127.0.0.1', port=BIG_BOARD_PORT, operator_port=BIG_OPERATOR_PORT,
+    hub = _isolated_hub(host='127.0.0.1', port=BIG_BOARD_PORT, operator_port=BIG_OPERATOR_PORT,
                         web_port=BIG_WEB_PORT, log=lambda message: None, heartbeat_s=5.0)
     hub_task = asyncio.create_task(hub.run())
     await asyncio.sleep(0.1)
@@ -824,7 +838,7 @@ async def _heartbeat():
                 self.health_seen = time.monotonic()
             return object()
 
-    hub = server.Server(host='127.0.0.1', port=0, operator_port=0, web_port=0,
+    hub = _isolated_hub(host='127.0.0.1', port=0, operator_port=0, web_port=0,
                         log=lambda message: None, heartbeat_s=0.05)
     busy = _Client(online=True)
     poller = asyncio.create_task(hub._poll(busy))

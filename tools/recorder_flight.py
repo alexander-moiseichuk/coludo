@@ -42,8 +42,11 @@ A row that does not is salvaged: the routing it proves among the session's own i
 covers a corrupted name (the Luckfox's junk files), a lost leading '@' (recorder.log), a lost second '@'
 (recorder.log too), and two records on one line -- merged, or a splice -- which is cut where the next
 record starts. A salvaged row is placed by its TIME among its stream's rows, read across the ticks_us
-wrap from the good lines around it where it was found; a time no single place fits is rejected, as is
-whatever proves nothing, and every stream reports good / salvaged in / rejected. Under a boot id each row
+wrap from the good lines around it where it was found -- only from lines whose time is sure: a sparse
+stream silent across a wrap never sees it, so its later lines keep a time one wrap short, and a record
+found among them is placed by the session's span instead, as a junk file's is. A time no single place
+fits is rejected, as is whatever proves nothing, and every stream reports good / salvaged in / rejected;
+board.log's good and salvaged in count exactly its lines that check out. Under a boot id each row
 is proven, so any `<session>_<stream>.csv` holding one is a stream, not only the known ones; under a label
 only the known ones are. recorder/ keeps each row as its own file holds it, wrapper included, byte for
 byte; flight/ gets the payloads. A board log line that ran on into a stream's file (a lost newline) is
@@ -108,7 +111,7 @@ _STATUS = re.compile(r"'session': '([^']*)'")
 _TEXT_FIELDS: tuple = ('stage', 'reason', 'event')  # recorded as words; every other field is a number
 _CODEC: dict = {'encoding': 'utf-8', 'errors': 'surrogateescape'}  # writes give back the bytes _lines() read
 _NO_STREAM: str = '(no stream)'  # the tally of this session's lines that prove no row at all
-_BOARD_LOG: str = '(board.log)'  # the tally of its log lines: recorder.log's, and those that ran on into a stream
+_BOARD_LOG: str = '(board.log)'  # the tally of its log lines: recorder.log's part, and those run on into a stream
 """
 The shared session.csv (doc/specs/recorder-wire.md): a row per boot, per clock set and per anchor. utc and
 utc_offset are empty while the clock is unset -- the RTC reads before 2001 -- and such a row dates nothing.
@@ -326,6 +329,34 @@ def _bracket(positions: list, stamps: list, position: int) -> tuple:
     return (stamps[at - 1] if at else None), (stamps[at] if at < len(stamps) else None)
 
 
+def _anchors(positions: list, boots: list, last: int) -> tuple:
+    """
+    The good lines of a file whose time is sure: the only ones that may time a record found among them.
+
+    A file is unwrapped by its own lines (_boots(), _log_timeline()), and a wrap shows there only across a
+    short gap. A sparse stream (a servo still through the pad dwell, the sequencer's few events) is silent
+    across it, so its lines after the wrap keep a time one wrap short, and a record bracketed by them was
+    filed a wrap early. A missed wrap is never made up later in the boot, so a line is sure when it, or a
+    line after it in the same boot, lies within one wrap less _WRAP_SLACK_US of the session's last time:
+    had a wrap been missed before it, that later line would lie past the session's end. In a session that
+    never reaches a wrap, every line is sure.
+
+    Args:
+        positions - the good lines' numbers in their file, ascending.
+        boots - their unwrapped uptimes, a list per boot, in file order.
+        last - the session's last unwrapped uptime (the span's end).
+
+    Returns:
+        (positions, uptimes) of the sure lines, for _bracket().
+    """
+    sure = []
+    for stamps in boots:
+        latest = list(itertools.accumulate(reversed(stamps), max))[::-1]  # the latest uptime from each line on
+        sure += [(stamp, later + _WRAP_US > last + _WRAP_SLACK_US) for stamp, later in zip(stamps, latest)]
+    return ([position for position, (_stamp, kept) in zip(positions, sure) if kept],
+            [stamp for stamp, kept in sure if kept])
+
+
 def _fit(recorded: int, bracket: tuple, span: tuple) -> int | None:
     """
     A recovered record's unwrapped time between the good lines around it where it was found.
@@ -348,14 +379,16 @@ def _place(boots: list, wraps: int, recorded: int, bracket: tuple, span: tuple) 
     """
     Where a recovered row joins its stream, by its time.
 
-    The row is timed by the good lines around it where it was found -- its own file's rows, or this
-    session's log lines when it was stranded in recorder.log, a file written in time order either way. It
-    must fall between them, give or take _WRAP_SLACK_US, at exactly one count of wraps (recorder_wire.fit);
-    a side with no good line is bounded by the session's span. A junk file holds no good line at all, so a
-    row from one must instead fall inside one boot's span at exactly one count of wraps; in a boot longer
-    than a wrap, a time recorded within its first (span - wrap) has two, and is rejected. The row then
-    joins the boot whose span holds that time: the only one, when the stream has one. Two boots under one
-    label restart their ticks, so their spans overlap and such a row is rejected (the module docstring).
+    The row is timed by the nearest good lines around it where it was found whose time is sure
+    (_anchors()) -- its own file's rows, or this session's log lines when it was stranded in recorder.log,
+    a file written in time order either way. It must fall between them, give or take _WRAP_SLACK_US, at
+    exactly one count of wraps (recorder_wire.fit); a side with no sure line is bounded by the session's
+    span. A junk file holds no good line at all, and a sparse stream's file past a wrap it missed none
+    that is sure, so a row from one must instead fall inside one boot's span at exactly one count of
+    wraps; in a boot longer than a wrap, a time recorded within its first (span - wrap) has two, and is
+    rejected. The row then joins the boot whose span holds that time: the only one, when the stream has
+    one. Two boots under one label restart their ticks, so their spans overlap and such a row is rejected
+    (the module docstring).
 
     A sparse stream (a sequencer event, a servo move) has rows too far apart for _boots() to see its own
     wraps, so its good rows keep their recorded time while a row placed here gets the unwrapped one. That
@@ -367,8 +400,8 @@ def _place(boots: list, wraps: int, recorded: int, bracket: tuple, span: tuple) 
         boots - the stream's boots, [(unwrapped uptime, line)] each, from _boots().
         wraps - the wraps _boots() found in the stream.
         recorded - the row's uptime as recorded (raw ticks_us).
-        bracket - (low, high), the unwrapped uptimes of the good lines before and after it (_bracket());
-            (None, None) for a row from a junk file.
+        bracket - (low, high), the unwrapped uptimes of the sure good lines before and after it
+            (_bracket() over _anchors()); (None, None) when there is neither, as for a row from a junk file.
         span - (first, last) unwrapped uptime over the session's streams.
 
     Returns:
@@ -399,9 +432,10 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
     Damaged rows come from three places: the session's own files, every junk file of the dump (a name no
     row checks out under), and recorder.log. Each is recovered (recorder_wire.recover) into the session's
     routings, then placed into its stream by time (_place), timed by the good lines around it where it
-    was found. Under a boot id, any `<session>_<stream>.csv` holding a good row is a stream. Under a label
-    only the streams the firmware declares (_FIELDS) are: an older label could hold '_', so another
-    session's files may share this prefix (`hitl_f15_imu_lsm6dso32.csv` beside `hitl_imu_lsm6dso32.csv`).
+    was found whose time is sure (_anchors()). Under a boot id, any `<session>_<stream>.csv` holding a
+    good row is a stream. Under a label only the streams the firmware declares (_FIELDS) are: an older
+    label could hold '_', so another session's files may share this prefix (`hitl_f15_imu_lsm6dso32.csv`
+    beside `hitl_imu_lsm6dso32.csv`).
 
     Every line that proves nothing is counted where it is this session's: under its stream in the
     stream's own file, and under _NO_STREAM in a junk file carrying the session's prefix or in the
@@ -409,12 +443,14 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
     may well hold another session's damage, so what it proves nothing of here is only counted, apart.
 
     A log line that ran on into one of this session's files -- merged after a row that lost its newline --
-    is proven like a row and belongs to board.log. It is timed the same way, by the good lines around it
-    where it was found, and goes into board.log among the session's good log lines by that time, counted
-    under _BOARD_LOG; a time no single place fits is rejected there. A session holding two boots has no
-    one log timeline to put it on, so it is rejected too. A log line proves no session (its CRC covers no
-    routing), so one found in a junk file without the prefix stays apart, and recorder.log already holds
-    its own damaged lines verbatim.
+    is proven like a row and belongs to board.log. It is timed the same way, by the sure good lines
+    around it where it was found or else by the session's span, and goes into board.log before the first
+    sure log line after that time, counted under _BOARD_LOG; a time no single place fits is rejected
+    there. A session holding two boots has no one log timeline to put it on, so it is rejected too. A log
+    line proves no session (its CRC covers no routing), so one found in a junk file without the prefix
+    stays apart, and recorder.log already holds its own damaged lines verbatim. The good count covers
+    every good line board.log holds -- the previous boot's last lines at the head of its part of
+    recorder.log too -- so good and salvaged in count exactly its lines that check out.
 
     Args:
         directory - the pulled /userdata/recordings directory.
@@ -468,8 +504,8 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
                 stranded.append((None, 'recorder.log' if mine else None, index, line, _NO_STREAM if mine else None))
             elif status == recorder_wire.LEGACY and mine:
                 tally[_NO_STREAM][2] += 1  # the board wraps every line: one with neither end is damage
-            elif status == recorder_wire.GOOD and mine:
-                tally[_BOARD_LOG][0] += 1
+            elif status == recorder_wire.GOOD and start <= index < end:
+                tally[_BOARD_LOG][0] += 1  # a line board.log holds
     for name in names:
         if (name.startswith(prefix) and name.endswith('.csv')) or name == 'recorder.log':
             continue
@@ -487,10 +523,12 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
             elif recorder_wire.wrapped(line):
                 stranded.append((name, None, None, line, None))
     found = {stream: _boots(kept) for stream, kept in rows.items() if kept}
-    timelines = {stream: [uptime for boot in boots for uptime, _line in boot]
-                 for stream, (boots, _wraps) in found.items()}  # each good row's unwrapped uptime, in file order
-    firsts = [timeline[0] for timeline in timelines.values()]
-    span = (min(firsts), max(timeline[-1] for timeline in timelines.values())) if firsts else (0, 0)
+    timelines = {stream: [[uptime for uptime, _line in boot] for boot in boots]
+                 for stream, (boots, _wraps) in found.items()}  # each good row's unwrapped uptime, per boot
+    firsts = [timeline[0][0] for timeline in timelines.values()]
+    span = (min(firsts), max(timeline[-1][-1] for timeline in timelines.values())) if firsts else (0, 0)
+    anchors = {stream: _anchors(places[stream], timeline, span[1]) for stream, timeline in timelines.items()}
+    logged = _anchors(logged[0], [logged[1]], span[1])  # one boot's log lines, from `valid` on
     routings = sorted({prefix + stream + '.csv' for stream in list(rows) + list(_FIELDS)})
     routings.append(recorder_wire.SESSION_INDEX)
     orphans, elsewhere = {}, 0  # stream -> [(recorded uptime, row)] of a stream no good row placed in time
@@ -500,7 +538,7 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
         if source == 'recorder.log':
             bracket = _bracket(logged[0], logged[1], position)
         elif source is not None:
-            bracket = _bracket(places[source], timelines.get(source, []), position)
+            bracket = _bracket(*anchors.get(source, ([], [])), position)
         else:
             bracket = (None, None)  # a junk file, or recorder.log outside this session's timeline
         records, lost = recorder_wire.recover(name, line, routings, (prefix,) if boot_id else ())

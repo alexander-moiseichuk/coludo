@@ -18,6 +18,7 @@ the test suite; the plotly rendering lives in flight_report.py.
 """
 
 import bisect
+import itertools
 import re
 
 import recorder_wire
@@ -539,18 +540,45 @@ def _window(low: int | None, high: int | None, bounds: tuple | None) -> tuple | 
     return ((bounds[0] if low is None else low) - _PLACE_SLACK, (bounds[1] if high is None else high) + _PLACE_SLACK)
 
 
+def _sure(marks: tuple, last: int | None) -> tuple:
+    """
+    The good lines of one source whose time is sure: the only ones that may time a record found among them.
+
+    _unwrap() unwraps each source by its own lines, and sees a wrap only across a gap under half a wrap. A
+    SPARSE stream (a servo holding still through a 20-minute pad dwell, the sequencer's few events) misses
+    it, so its lines after the wrap keep a time a wrap short, and a record found among them was filed a
+    wrap early. A missed wrap is never made up later, so a line is sure when it, or a later line of the
+    same source, lies within one wrap less _PLACE_SLACK of the capture's last stamp: had a wrap been
+    missed before it, that later line would lie past the end. In a capture that never reaches a wrap,
+    every line is sure.
+
+    Args:
+        marks - ([capture index], [unwrapped stamp]) of one source's good stamped lines, in capture order.
+        last - the capture's last stream stamp; None when it holds no stream row, and nothing is judged.
+
+    Returns:
+        The same pair, of the sure lines only.
+    """
+    indices, times = marks
+    if last is None:
+        return marks
+    latest = list(itertools.accumulate(reversed(times), max))[::-1]  # the latest stamp from each line on
+    sure = [at for at, later in enumerate(latest) if later + _TICKS_PERIOD > last + _PLACE_SLACK]
+    return [indices[at] for at in sure], [times[at] for at in sure]
+
+
 def _place(streams: dict, logs: list, tail: str, held: list, timelines: dict, order: list) -> None:
     """
     File the held records by time, once the good lines around them are unwrapped.
 
     A record is timed by the good lines of the SOURCE it was found in -- the routing its line arrived
     under, i.e. its Luckfox file, which is written in time order: it lies between the nearest good line
-    before it and the nearest one after it, give or take _PLACE_SLACK. A side with neither is bounded by
-    the capture's span; a junk file holds no good line at all, so the record's own stream's span stands
-    in. Its uptime is then the one recorded + k * 2**30 inside that window (recorder_wire.fit). None, or
-    more than one, and it is rejected rather than guessed; so is any row for a stream that holds two
-    boots, which has no single timeline. A row joins its stream in time order, a log line the logs at its
-    place in the capture.
+    before it and the nearest one after it whose time is sure (_sure()), give or take _PLACE_SLACK. A
+    side with neither is bounded by the capture's span; a junk file holds no good line at all, so the
+    record's own stream's span stands in. Its uptime is then the one recorded + k * 2**30 inside that
+    window (recorder_wire.fit). None, or more than one, and it is rejected rather than guessed; so is
+    any row for a stream that holds two boots, which has no single timeline. A row joins its stream in
+    time order, a log line the logs at its place in the capture.
 
     A SPARSE stream is the one limit. _unwrap() unwraps each stream by its own rows, and a stream whose
     rows lie half a wrap or more apart (a servo holding still through a 20-minute pad dwell, the
@@ -560,6 +588,8 @@ def _place(streams: dict, logs: list, tail: str, held: list, timelines: dict, or
     time). Its own time cannot be had instead: that needs the stream's good rows on the common timeline,
     and an assembled capture lays each Luckfox file out whole, so nothing orders one stream's rows against
     another's. recorder_flight cuts such a stream modulo 2**30 into the flight window, where both agree.
+    Nor do its lines past a wrap it missed time a record found among them, since none of them is sure:
+    such a record is bounded as a junk file's is, and rejected when that bound is a wrap or longer.
 
     Args:
         streams - {file -> Stream}, mutated in place.
@@ -572,11 +602,12 @@ def _place(streams: dict, logs: list, tail: str, held: list, timelines: dict, or
     Returns:
         None; _COUNTS gains a 'salvaged' or a 'rejected' per held record.
     """
-    marks = {source: ([index for index, _mark in lines], [logs[mark][0] if source is None else mark[0]
-                                                          for _index, mark in lines])
-             for source, lines in timelines.items()}
     stamps = [row[0] for stream in streams.values() for row in stream.rows]
     capture = (min(stamps), max(stamps)) if stamps else None
+    marks = {source: _sure(([index for index, _mark in lines],
+                            [logs[mark][0] if source is None else mark[0] for _index, mark in lines]),
+                           None if capture is None else capture[1])
+             for source, lines in timelines.items()}
     spans = {name: (min(row[0] for row in stream.rows), max(row[0] for row in stream.rows))
              for name, stream in streams.items() if stream.rows}
     twice = {name for name, stream in streams.items()
