@@ -1523,6 +1523,15 @@ Measured peak acceleration across the board HITL matrix: **3.3 g** (F15 full), 3
 (E16 light) — all far under 16 g, and consistent with the physics (F15 is 15 N average against a
 ~467 g stack ≈ 3.3 g of thrust, plus 1 g static).
 
+> **Measured 2026-10-03** ([TMS-7 nose logger](../launches/20261003/TMS-7/README.md)): the real F15 is
+> not the flat 14.4 N the simulator flies. It spikes to **~32 N at 0.3 s**, so the 228 g booster read
+> **14.9 g**, and glider airframes on an F15 will peak at **≈ 7–8 g** (TMS-7C 8.1, 7E 7.6, 7D 6.9):
+> about twice the HITL figures above. That is still under 16 g, so the idea survives, but with half the
+> margin it was planned on. `launch_g` (2.5 g) gains margin rather than losing it. Shocks were the
+> open question, and they read **~9 g at ejection and 19 g at landing**. Both are lower bounds, because
+> the logger samples at 50 Hz. In the nose of a booster they are not the glider's numbers either: the
+> full-rate ADXL375 capture asked for below is still the one that decides.
+
 If that holds on real hardware, a **BNO085** becomes interesting: it supersedes the BNO055 with SH-2
 fusion and, importantly here, without the calibration-state behaviour that cost a whole bench session
 (a part was declared faulty when it was merely uncalibrated). One part could then cover attitude +

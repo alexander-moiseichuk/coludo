@@ -160,8 +160,35 @@ resort, never the way to stop the logger.
 
 ## Firmware — `main.py`
 
-Runs at boot and records until power-off. Nothing is filtered: a flight can be a start and a drop inside
-one save window, so every sample is kept.
+Runs at boot and records from power-on; it stops itself once a flight is over. Nothing is filtered: a
+flight can be a start and a drop inside one save window, so every sample is kept.
+
+**The lifecycle** — because TMS-7 on 2026-10-03 was three minutes of carrying from losing its flight to
+the old ring buffer, which kept recording through 49 minutes on the ground and the walk back:
+
+| state | how it starts | LED |
+|---|---|---|
+| **recording** | power-on, or BOOT in read-out mode | **3 long flashes** (1 s), then toggling every 0.5 s |
+| **launched** | \|a\| over **3 g held 0.3 s**, confirmed by a **20 m climb within 5 s** — every frame is tested, decimated or not | unchanged |
+| **stopped** = read-out mode | flight complete, BOOT, flash full of flights, or a read-out tool's Ctrl-C | **3 short flashes**, then **solid** |
+
+- **Before a launch the flash is a ring**: when space runs short the oldest *unprotected* logs go, so a pad
+  wait of any length costs nothing.
+- **The launch is a flight**: it is appended to `flights.txt` as `boot segment`, and from the segment
+  before it every log of that boot is protected — never deleted, by the ring or anything else.
+- **Why the climb**: on the bench a hard hand shake held 3 g for 16 frames (24.8 g peak), one more than
+  the 15 the run needs. Unconfirmed, that latches a launch on the pad, and 60 s of stillness later the
+  logger would stop before the real flight. No hand climbs 20 m, and TMS-7 had climbed 20 m by 0.68 s.
+- **Flight complete** = **60 s of stillness** after the launch (the climb test sees a chute descent as
+  motion, so only the ground is still) or **10 min** after it, whichever first: the tail is saved and
+  it stops. Replayed on TMS-7's raw records, the 3 g starts at +0.34 s, the climb confirms it at
+  +0.68 s, and the stop comes 2.5 min after touchdown. Replayed on the bench shake, nothing latches.
+- **Flash full of flights**: when the next segment could only go over a flight it stops; at power-on it
+  does not start. Solid from the first second means *read me out*.
+- **BOOT** is the manual stop, and in read-out mode the restart. Every reset waits for BOOT to be
+  **released**: it is the GPIO9 strap, and a reset with it held lands the C6 in the ROM bootloader.
+- **After a read-out**: `mpremote connect <port> exec "import main; main.clean()"` deletes every log and
+  `flights.txt`, and nothing else.
 
 | | |
 |---|---|
@@ -170,11 +197,11 @@ one save window, so every sample is kept.
 | record | 24 bytes, raw: `uint32 ms · int16 ax ay az gx gy gz · int32 pressure · int32 temperature` |
 | autosave | a new file every **750 records** (~15 s, 18 KB) |
 | still | **1 Hz** after 5 s of stillness; the first frame that moves restores 50 Hz |
-| BOOT | saves the partial segment immediately — **3 blinks**, and sampling never pauses for them |
-| LED (GPIO15) | toggles every ~0.5 s while recording |
+| BOOT | **stops** recording: saves the partial segment, 3 short flashes, then solid. In read-out mode it starts recording again |
+| LED (GPIO15) | 3 long flashes at the start, then toggles every ~0.5 s while recording; solid = stopped |
 | files | `bBBBBB_sSSSS.bin` — boot number (monotonic, kept in NVS) + segment; they sort chronologically |
 | space | 2 MB filesystem, 1.94 MB free → **~28 minutes** at full rate, far longer with idle stretches |
-| full flash | the **oldest** logs are deleted — only as many as the new segment needs, counted from their own sizes; `main.py` and `boot.py` are never touched. A save that still fails drops that one segment; recording continues |
+| full flash | the **oldest unprotected** logs are deleted — only as many as the new segment needs, counted from their own sizes; flights, `main.py`, `boot.py` and `flights.txt` are never touched. When only flights are left it stops (solid) |
 
 Each file opens with a 20-byte header, `<4sHHHHII`: magic `CLG3`, record size, sample period (ms), boot,
 segment, record count, and the MCU clock at the save.
@@ -199,13 +226,14 @@ second ago; resting noise measures ~5 LSB and ~1 dps, well clear of them.
 
 **What you can still lose:**
 
-- **Up to one segment at power-off** — whatever is in RAM since the last save. Press BOOT first if that
-  tail matters; after a flight it is post-landing idle. While still, a segment takes minutes to fill.
+- **Up to one segment at power-off** — whatever is in RAM since the last save. Every stop (flight
+  complete, BOOT, full) saves it first; only cutting the power mid-recording loses it.
 - Nothing at start-up: the gyro reports `0x8000` until it has started, and `_setup()` waits for valid data
   before flushing the FIFO and beginning.
-- **The flight itself, if the logger stays on after recovery.** Carrying the airframe back is motion, so
-  it records at full rate, and a full flash deletes the **oldest** segments — ~28 minutes of handling
-  overwrites the flight. **Switch it OFF at recovery.**
+- **No longer the flight itself.** A protected flight is never deleted, and recording stops by itself
+  once it is over. What a long recovery costs now is nothing: the logger is already stopped, LED solid.
+- **A flight that never latched a launch** — a motor too weak to hold 3 g for 0.3 s at the logger's mass.
+  Every F15 airframe here peaks at 7–15 g; check before flying anything gentler.
 
 ### Reading the logs off — the read-out procedure
 
@@ -221,16 +249,28 @@ boot**, and a Ctrl-C saves what is in RAM (only if it fits — it never deletes 
 3. If the watchdog was already armed, the logger saves, flags read-out mode in RTC memory and resets
    itself — the tool loses the port once (it re-enumerates). **Run the same command again**: the board
    comes back in read-out mode — `READ-OUT MODE`, **LED solid**, not recording, no watchdog.
-4. **A power-cycle returns it to recording** — RTC memory does not survive power-off. A software reset
-   does not, so read-out mode holds across as many tool connects as the copy takes.
+4. **A power-cycle or a BOOT press returns it to recording** — RTC memory does not survive power-off.
+   A software reset does not, so read-out mode holds across as many tool connects as the copy takes.
+
+A logger that **stopped by itself** after a flight (LED solid on recovery) is already in read-out mode:
+step 1 copies straight away. Then `main.clean()` (above) before the next flight.
+
+**Bench-checked 2026-10-03 on the C6**: two BOOT stops (each saving its segment), the read-out-mode
+BOOT restart (RTC flag cleared and set again), and the shake above.
+
+**Tests** run on the C6 itself, in read-out mode, with `main.py` installed:
+`mpremote connect <port> run src/logger/test_main.py` — the launch test, the stillness test, the flash
+pattern, the climb, the flight record and the room-making, positive and negative, in a scratch
+directory (32 checks).
 
 ## Where the data lives
 
 Logs belong to the **flight**, not to this directory: pull them into
 `launches/<date>/<airframe>/logger/` (e.g. `launches/20261003/TMS-7/logger/`) so a capture sits beside
 the airframe's mass, motor and configuration. Bench captures that prove something about the firmware go
-in the commit that changes it; routine desk recordings are not worth keeping, and CSVs never are —
-`decode.py` regenerates them from the `.bin` at any time.
+in the commit that changes it; routine desk recordings are not worth keeping, and per-segment CSVs never are —
+`decode.py` regenerates them from the `.bin` at any time. A flight keeps only the segments that hold it,
+plus the one `flight.csv` that `flight.py` cuts from them (below), which is what the analysis reads.
 
 ## Reading the data — `decode.py`
 
@@ -253,6 +293,32 @@ is reported `SKIPPED` and the rest still decode.
   standard-atmosphere formula assumes 15 °C, and height per pascal scales with absolute temperature, so a
   30 °C pad reads ~5% low — about 15 m on a 300 m apogee. The BMP581 die sits beside the MCU and reads a
   few degrees warm, which is still far closer than 15 °C.
+
+## A flight — `flight.py` and `flight_plots.py`
+
+```
+python3 src/logger/flight.py launches/20261003/TMS-7/logger/*.bin -o launches/20261003/TMS-7/flight.csv \
+    --mass 0.2283 --propellant 0.060
+~/.local/share/pipx/venvs/plotly/bin/python src/logger/flight_plots.py launches/20261003/TMS-7/flight.csv \
+    -o launches/20261003/TMS-7/plots --mass 0.2283 --propellant 0.060
+```
+
+`flight.py` (stdlib) joins one boot's segments onto **one time axis, t = 0 at ignition** — the first
+sample of the rise to a sustained 3 g, walked back to where it left 1.1 g. It keeps 10 s of pad before
+and 10 s of rest after landing, and writes `flight.csv` with heights against the mean pad pressure. It
+then prints the flight: rod exit, peak, burnout, top speed, ejection, apogee, descent by 10 s band,
+tumble, the largest shock, touchdown and rest. With `--mass` and `--propellant` (kg) it adds the thrust
+estimate: axial force × mass plus drag fitted from the coast.
+
+**Speeds and heights up to the ejection are inertial, not baro.** On TMS-7 the nose-cone baro read
+83 m high at burnout (suction at speed, ~a tenth of the dynamic pressure). So the strapdown carries
+the boost and coast: gyro attitude levelled on the pad's gravity, the accelerometer integrated in that
+frame. It stops at the ejection, past which the nose tumbles beyond the gyro's ±2000 °/s. The baro takes
+over where the airframe is slow: apogee, descent, ground.
+
+`flight_plots.py` draws from the same `analyse()`. It writes an SVG per figure (overview, boost, thrust,
+descent, landing) for READMEs, and one interactive `flight.html`. It needs plotly plus kaleido, which
+renders through Chrome: `pipx inject plotly kaleido`, then `plotly_get_chrome -y`, once.
 
 ## Bench results — 2026-09-15
 

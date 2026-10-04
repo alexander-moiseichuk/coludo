@@ -46,7 +46,7 @@ def _whole(data: bytes, offset: int, size: int, count: int) -> int:
     return min(count, present)
 
 
-def _records(data: bytes) -> tuple:
+def records(data: bytes) -> tuple:
     """
     (header, rows). header: dict of boot, segment, period, mcu (None where the format lacks it).
     Each row is (ms, ax, ay, az, gx, gy, gz, pressure_raw, temperature_raw or None).
@@ -76,7 +76,7 @@ def _temperature(raw):
     return (raw - (1 << 24) if raw & 0x800000 else raw) / 65536.0
 
 
-def _altitude(pascal: float, reference: float, celsius, reference_celsius) -> float:
+def altitude(pascal: float, reference: float, celsius, reference_celsius) -> float:
     """
     Height above the file's first sample, in metres.
 
@@ -89,6 +89,24 @@ def _altitude(pascal: float, reference: float, celsius, reference_celsius) -> fl
         return 44330.0 * (1.0 - (pascal / reference) ** (1 / 5.255))
     kelvin = (celsius + reference_celsius) / 2.0 + 273.15
     return _R_AIR * kelvin / _GRAVITY * math.log(reference / pascal)
+
+
+def physical(row: tuple) -> tuple:
+    """
+    One raw record in physical units: (ms, accel g (x, y, z), gyro dps (x, y, z), pressure Pa, temperature C).
+
+    A triple is None where the chip had no sample, pressure and temperature where none was recorded. The
+    "no sample" markers are per sensor, and _INVALID applies to the GYRO ONLY. On a +/-16 g accel, -32768
+    is the negative saturation RAIL, a real reading of -16.0 g, and blanking it deletes exactly the sample
+    a boost exists to capture: a mounting sign that puts thrust on the negative axis would report a railed
+    boost as no boost at all. main.py only ever documents 0x8000 as a gyro start-up value, and the bench
+    captures agree -- gx hit it twice per file (all three gyro axes at once, accel valid in the same
+    record), ax never once.
+    """
+    ms, ax, ay, az, gx, gy, gz, pressure, temperature = row
+    accel = None if ax == _ACCEL_DUMMY else (ax / _G, ay / _G, az / _G)
+    gyro = None if gx in (_INVALID, _GYRO_DUMMY) else (gx / _DPS, gy / _DPS, gz / _DPS)
+    return ms, accel, gyro, pressure / 64.0 if pressure else None, _temperature(temperature)
 
 
 def _cell(value, fmt: str) -> str:
@@ -119,26 +137,15 @@ def decode(path: str, header: dict, rows: list, reference: float, reference_cels
     peak_a = peak_w = 0.0
     gaps, heights = [], []
     with open(out, 'w', newline='') as handle:
-        writer = csv.writer(handle)
+        writer = csv.writer(handle, delimiter=';')  # ';' like every device CSV in the project
         writer.writerow(_COLUMNS)
         previous = start
-        for index, (ms, ax, ay, az, gx, gy, gz, pressure, temperature) in enumerate(rows):
-            """
-            The chip's "no sample" markers become empty cells and stay out of every peak -- but _INVALID
-            applies to the GYRO ONLY. On a +/-16 g accel, -32768 is the negative saturation RAIL, a real
-            reading of -16.0 g, and blanking it deletes exactly the sample a boost exists to capture: a
-            mounting sign that puts thrust on the negative axis would report a railed boost as no boost
-            at all. main.py only ever documents 0x8000 as a gyro start-up value, and the bench captures
-            agree -- gx hit it twice per file (all three gyro axes at once, accel valid in the same
-            record), ax never once.
-            """
-            dead_a, dead_w = ax == _ACCEL_DUMMY, gx in (_INVALID, _GYRO_DUMMY)
-            a = [None if dead_a else v / _G for v in (ax, ay, az)]
-            w = [None if dead_w else v / _DPS for v in (gx, gy, gz)]
-            magnitude = None if None in a else (a[0] ** 2 + a[1] ** 2 + a[2] ** 2) ** 0.5
-            pascal = pressure / 64.0 if pressure else None
-            celsius = _temperature(temperature)
-            height = None if pascal is None else _altitude(pascal, reference, celsius, reference_celsius)
+        for index, row in enumerate(rows):
+            ms, accel, gyro, pascal, celsius = physical(row)
+            a = accel or (None, None, None)   # the chip's "no sample" markers: empty cells, out of every peak
+            w = gyro or (None, None, None)
+            magnitude = None if accel is None else (a[0] ** 2 + a[1] ** 2 + a[2] ** 2) ** 0.5
+            height = None if pascal is None else altitude(pascal, reference, celsius, reference_celsius)
             dt = (ms - previous) & 0xFFFFFFFF
             gaps.append(dt)
             if height is not None:
@@ -199,7 +206,7 @@ if __name__ == '__main__':
     for name in sorted(sys.argv[1:]):
         try:
             with open(name, 'rb') as handle:
-                header, rows = _records(handle.read())
+                header, rows = records(handle.read())
         except (ValueError, struct.error) as error:
             # one bad file (empty, foreign, a header cut short) is reported and SKIPPED -- it used to
             # abort the batch and cost every good segment of the flight along with it

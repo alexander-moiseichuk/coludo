@@ -13,7 +13,7 @@ entry**: an unfitted one fails `verify` and `arm`.
 
 | launch | status |
 |---|---|
-| [20261003](20261003/) | **planned** — five airframes + one booster-only test |
+| [20261003](20261003/README.md) | **flown** — [TMS-7](20261003/TMS-7/README.md) booster test: success, full flight logged; TMS-7F not assembled in time |
 | ~~20260905~~ | **cancelled — weather** |
 
 Motor masses used throughout, both measured (`doc/hardware.md`): **F15-4 98.8 g**, **E16 ~82.5 g**
