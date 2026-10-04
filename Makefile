@@ -28,12 +28,12 @@ lint:
 compile:
 	@echo "== mpy-cross (board syntax gate) =="
 	@# src/logger is the SECOND MicroPython tree (the TMS-7 nose payload on an ESP32-C6). It is copied
-	@# to a board that auto-runs it at boot, so it needs the same syntax gate; decode.py is excluded
-	@# because it is CPython host code that happens to live beside the firmware.
+	@# to a board that auto-runs it at boot, so it needs the same syntax gate; decode.py, flight.py and
+	@# flight_plots.py are excluded because they are CPython host code that lives beside the firmware.
 	@if [ ! -x $(MPYX) ]; then echo "  skip: $(MPYX) not present"; else \
 		fail=0; \
 		for f in $$(find src/glider src/logger -name '*.py' -not -path '*/__pycache__/*' \
-				-not -name 'decode.py' | sort); do \
+				-not -name 'decode.py' -not -name 'flight.py' -not -name 'flight_plots.py' | sort); do \
 			$(MPYX) -O3 $(MARCH) "$$f" -o /tmp/coludo-gate.mpy 2>/tmp/coludo-gate.err || \
 				{ echo "  FAIL $$f"; sed 's/^/    /' /tmp/coludo-gate.err; fail=1; }; \
 		done; \
