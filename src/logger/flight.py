@@ -161,7 +161,7 @@ def _cell(value, fmt: str) -> str:
 def write_csv(samples: list, path: str) -> None:
     """One row per sample, _COLUMNS."""
     with open(path, 'w', newline='') as handle:
-        writer = csv.writer(handle, lineterminator='\n')   # LF: the file is committed, and git stores LF
+        writer = csv.writer(handle, delimiter=';', lineterminator='\n')   # ';' like every device CSV; LF for git
         writer.writerow(_COLUMNS)
         for s in samples:
             accel = s.accel or (None, None, None)
@@ -180,7 +180,7 @@ def read_csv(path: str) -> list:
 
     samples = []
     with open(path, newline='') as handle:
-        for row in csv.DictReader(handle):
+        for row in csv.DictReader(handle, delimiter=';'):
             accel = None if not row['ax_g'] else tuple(float(row[k]) for k in ('ax_g', 'ay_g', 'az_g'))
             gyro = None if not row['gx_dps'] else tuple(float(row[k]) for k in ('gx_dps', 'gy_dps', 'gz_dps'))
             samples.append(Sample(float(row['t_s']), accel, gyro, number(row['pressure_pa']),

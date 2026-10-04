@@ -6,7 +6,8 @@ ignition. Needs plotly, plus kaleido for the SVGs (`pipx inject plotly kaleido`,
 
     ~/.local/share/pipx/venvs/plotly/bin/python tools/recorder_flight_plots.py launches/20261003/TMS-7C
 
-Writes <launch>/plots/launch.svg (forces, rates, height, airspeed), attitude.svg (the BNO055's own fusion)
+Writes <launch>/plots/launch.svg (forces, rates, height, airspeed, battery when an INA226 recorded it, the
+sequencer's stage changes marked), attitude.svg (the BNO055's own fusion)
 and flight.html with both, interactive. Every stream ends at its own last flush when a crash cuts the
 recorder's power, so each figure marks where each stream's data stops.
 
@@ -51,7 +52,7 @@ def load(folder: str, stream: str) -> list:
         return []
     with open(path, newline='') as handle:
         rows = [{key: (float(value) if value not in ('', None) else None) for key, value in row.items()}
-                for row in csv.DictReader(handle)]
+                for row in csv.DictReader(handle, delimiter=';')]
     limit = _FULL_SCALE_G.get(stream)
     if limit is None:
         return rows
@@ -87,24 +88,47 @@ def _line(go, rows: list, field: str, name: str, colour: str, scale: float = 1.0
 def _ends(fig, streams: dict, end: float) -> None:
     """A dotted line where each stream's data stops (the crash cut the recorder mid-buffer)."""
     stops = sorted((rows[-1]['t_s'], name) for name, rows in streams.items() if rows)
-    lift = 0
-    for index, (t, name) in enumerate(stops):
-        if t < 0 or t > end:
-            continue
-        lift = (lift + 1) % 4 if index and t - stops[index - 1][0] < 0.08 else 0
+    groups = []  # streams ending within 0.1 s of each other share one label: they stopped together
+    for t, name in stops:
+        if 0 <= t <= end:
+            if groups and t - groups[-1][-1][0] < 0.1:
+                groups[-1].append((t, name))
+            else:
+                groups.append([(t, name)])
+    for index, group in enumerate(groups):
+        t = group[-1][0]
+        text = group[0][1] + ' ends' if len(group) == 1 else 'data ends (%d streams)' % len(group)
         fig.add_vline(x=t, line_dash='dot', line_color='#aaaaaa', line_width=1)
-        fig.add_annotation(x=t, y=1.0, yref='paper', yanchor='bottom', yshift=2 + 14 * lift,
-                           text=name + ' ends', showarrow=False, font={'size': 10, 'color': '#666666'})
+        fig.add_annotation(x=t, y=1.0, yref='paper', yanchor='bottom', yshift=2 + 14 * (index % 2),
+                           text=text, showarrow=False, font={'size': 10, 'color': '#666666'})
 
 
-def launch(go, make_subplots, streams: dict, name: str):
-    """Axial and lateral specific force, body rates, height, airspeed."""
+def _stages(fig, folder: str, start: float, end: float) -> None:
+    """The sequencer's stage changes as labelled lines (its CSV holds text, so it is read here, not by load())."""
+    path = os.path.join(folder, 'sequencer.csv')
+    if not os.path.exists(path):
+        return
+    with open(path, newline='') as handle:
+        for row in csv.DictReader(handle, delimiter=';'):
+            t = float(row['t_s'])
+            if start <= t <= end:
+                fig.add_vline(x=t, line_dash='dash', line_color='#d62728', line_width=1)
+                fig.add_annotation(x=t, y=0.0, yref='paper', yanchor='top', yshift=-30, showarrow=False,
+                                   text='stage -> ' + row['stage'], font={'size': 11, 'color': '#d62728'})
+
+
+def launch(go, make_subplots, streams: dict, name: str, folder: str):
+    """Axial and lateral specific force, body rates, height, airspeed, and the battery when it was recorded."""
     lsm, adxl = streams['imu_lsm6dso32'], streams['accel_adxl375']
-    end = max(rows[-1]['t_s'] for rows in streams.values() if rows) + 0.05
+    power = streams.get('power_ina226') or []
+    end = max(rows[-1]['t_s'] for key, rows in streams.items() if rows and key in _FULL_SCALE_G) + 0.05
     window = {key: [r for r in rows if r['t_s'] >= -_BEFORE_S] for key, rows in streams.items()}
-    fig = _figure(make_subplots, ['axial force (g)', 'lateral force (g)', 'body rate (deg/s)', 'height (m)',
-                                  'airspeed (m/s)'],
-                  '%s launch: the recorded 1.3 s (the crash cut the recorder; data stops per stream)' % name)
+    titles = ['axial force (g)', 'lateral force (g)', 'body rate (deg/s)', 'height (m)', 'airspeed (m/s)']
+    if power:
+        titles.append('battery (V, A)')
+    fig = _figure(make_subplots, titles,
+                  '%s launch: the recorded %.1f s (power loss cut the recorder; data stops per stream)' % (
+                      name, end - 0.05))
     offsets = {axis: _pad_mean(adxl, axis) - _pad_mean(lsm, axis) for axis in ('ax', 'ay', 'az')} if adxl and lsm \
         else {'ax': 0.0, 'ay': 0.0, 'az': 0.0}
     if lsm:
@@ -131,8 +155,13 @@ def launch(go, make_subplots, streams: dict, name: str):
     if window.get('airspeed_sdp810'):
         fig.add_trace(_line(go, window['airspeed_sdp810'], 'airspeed_cms', 'pitot', _COLOURS['airspeed'],
                             scale=0.01), 5, 1)
+    if power:
+        fig.add_trace(_line(go, window['power_ina226'], 'voltage_mv', 'battery V', _COLOURS['x'], scale=0.001), 6, 1)
+        fig.add_trace(_line(go, window['power_ina226'], 'current_ma', 'battery A', _COLOURS['y'], scale=0.001), 6, 1)
     fig.update_xaxes(range=[-_BEFORE_S, end])
-    _ends(fig, streams, end)
+    _ends(fig, {key: rows for key, rows in streams.items() if key in _FULL_SCALE_G or key.startswith('baro')
+                or key in ('airspeed_sdp810', 'power_ina226')}, end)
+    _stages(fig, folder, -_BEFORE_S, end)
     return fig
 
 
@@ -161,12 +190,13 @@ def main() -> None:
     go, make_subplots = _require_plotly()
     folder = os.path.join(args.launch, 'flight')
     streams = {stream: load(folder, stream) for stream in ('imu_lsm6dso32', 'accel_adxl375', 'imu_bno055',
-                                                          'baro_bmp280', 'baro_icp10111', 'airspeed_sdp810')}
+                                                          'baro_bmp280', 'baro_icp10111', 'airspeed_sdp810',
+                                                          'power_ina226')}
     name = os.path.basename(os.path.normpath(args.launch))
     out = os.path.join(args.launch, 'plots')
     os.makedirs(out, exist_ok=True)
     parts = []
-    for title, build in (('launch', launch), ('attitude', attitude)):
+    for title, build in (('launch', lambda *a: launch(*a, folder)), ('attitude', attitude)):
         fig = build(go, make_subplots, streams, name)
         fig.write_image(os.path.join(out, title + '.svg'))
         parts.append(fig.to_html(full_html=False, include_plotlyjs='cdn' if not parts else False))

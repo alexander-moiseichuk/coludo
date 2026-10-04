@@ -137,7 +137,7 @@ def decode(path: str, header: dict, rows: list, reference: float, reference_cels
     peak_a = peak_w = 0.0
     gaps, heights = [], []
     with open(out, 'w', newline='') as handle:
-        writer = csv.writer(handle)
+        writer = csv.writer(handle, delimiter=';')  # ';' like every device CSV in the project
         writer.writerow(_COLUMNS)
         previous = start
         for index, row in enumerate(rows):
