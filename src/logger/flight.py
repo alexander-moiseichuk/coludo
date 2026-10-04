@@ -161,7 +161,7 @@ def _cell(value, fmt: str) -> str:
 def write_csv(samples: list, path: str) -> None:
     """One row per sample, _COLUMNS."""
     with open(path, 'w', newline='') as handle:
-        writer = csv.writer(handle)
+        writer = csv.writer(handle, lineterminator='\n')   # LF: the file is committed, and git stores LF
         writer.writerow(_COLUMNS)
         for s in samples:
             accel = s.accel or (None, None, None)
