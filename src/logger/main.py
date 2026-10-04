@@ -2,9 +2,19 @@
 TMS-7 nose logger: record the SEN0697 at 50 Hz from power-up to power-off, saving to flash as it goes.
 
 Nothing is filtered: a flight can be a start and a drop inside one save window, so every sample is kept.
-Records accumulate in RAM and are written as a new file every _SEGMENT records (~15 s). BOOT forces an
-immediate save and blinks three times. When flash runs short the OLDEST logs are deleted -- only as many
-as the new save needs.
+Records accumulate in RAM and are written as a new file every _SEGMENT records (~15 s).
+
+LIFECYCLE. Power-on records (three long flashes, then the 0.5 s heartbeat): a missed button press must
+never cost a flight, and the button is inside a closed nose cone anyway. Until a LAUNCH -- |a| over 3 g
+held for 0.3 s, confirmed by a 20 m climb within 5 s, because a hard hand shake holds the 3 g too -- the
+flash is a ring: when it runs short the OLDEST unprotected logs go, so a pad wait of any length costs
+nothing. The launch is written to _FLIGHTS, and from one segment before it every log of that boot is a
+FLIGHT: never deleted. The flight is COMPLETE after 60 s of stillness (the climb test sees a chute
+descent as motion, so only the ground is still) or 10 min after the launch, whichever comes first: the
+logger saves and stops -- three short flashes, then the LED solid. It also stops when the flights leave
+no room for another segment, and on BOOT, the manual stop; BOOT again starts recording. TMS-7 on
+2026-10-03 is why: the old ring kept recording on the ground and the walk back, and its flight was three
+minutes of carrying from being overwritten.
 
 Both sensors sample on their OWN clocks into their own FIFOs, and this loop drains them every 10 ms. That
 is what makes a save lossless. Programming flash freezes the single core -- measured ~730 ms for a 72 KB
@@ -72,9 +82,19 @@ _SEGMENT = const(750)         # records per file: ~15 s, 18 KB
 _SLACK = const(256)           # headroom: a full BMI323 FIFO drains ~170 frames in one go
 _HEADER = const(20)
 _RESERVE = const(32768)       # flash kept free for filesystem metadata
-_HEARTBEAT = const(50)        # LED toggle every 50 ticks (~0.5 s)
-_BLINK_TICKS = const(15)      # 150 ms per blink phase, counted in ticks so sampling never pauses
+_NEXT = const(_HEADER + _SEGMENT * _RECORD + _RESERVE)  # the room one more full segment needs
+_HEARTBEAT = const(50)        # LED toggle every 50 ticks (~0.5 s) while recording
+_START_ON = const(100)        # recording started: three 1 s flashes, 0.25 s apart -- counted in ticks so
+_START_OFF = const(25)        # sampling never pauses, and unmistakable against the heartbeat
+_STOP_MS = const(150)         # stopped: three 150 ms flashes, then solid
 _PRESS_TICKS = const(3)       # BOOT must read pressed on 3 consecutive ticks (~30 ms debounce)
+_BOOST_SQUARED = const(147456)  # 3 g = 6144 LSB; compared as (LSB >> 4) squared = 384 ** 2, small ints
+_BOOST_FRAMES = const(15)     # ... held for 0.3 s at 50 Hz -- which a hard hand shake CAN do (24.8 g, 16 frames
+                              # on the bench), so the 3 g is only a candidate until the baro sees the climb:
+_CLIMB_LSB = const(15360)     # ~240 Pa (x64 raw) = ~20 m above where the 3 g began ...
+_CLIMB_FRAMES = const(250)    # ... within 5 s of it. TMS-7 climbed 20 m by 0.73 s; no hand climbs at all
+_LANDED_FRAMES = const(3000)  # after a launch, 60 s still is a landing -- a chute descent never reads still
+_FLIGHT_FRAMES = const(30000)  # ... and 10 min after a launch the flight is over whatever the wind does
 _WATCHDOG_MS = const(8000)    # 4x the worst save ever measured (2004 ms, on a full flash)
 _WATCHDOG_ARM_MS = const(4000)  # the READ-OUT WINDOW: recording starts at once, the watchdog this late
 _READOUT: bytes = b'readout'  # RTC-memory flag: survives a software reset, cleared by power-off
@@ -87,6 +107,7 @@ _QUIET_FRAMES = const(250)    # 5 s of stillness before decimating
 _DECIMATE = const(50)         # while still, keep one frame a second
 
 _MAGIC: bytes = b'CLG3'
+_FLIGHTS: str = 'flights.txt'  # one line per launch: "boot first-protected-segment"
 
 
 def _write16(bus, register: int, value: int) -> None:
@@ -139,6 +160,22 @@ def _moved(ax: int, ay: int, az: int, gx: int, gy: int, gz: int, pressure: int,
             or abs(gz) > _SPIN_LSB or abs(pressure - mark) > _LIFT_LSB)
 
 
+def _boost(ax: int, ay: int, az: int) -> bool:
+    """|a| over 3 g, on raw LSB shifted down by 4 so the squares never leave MicroPython's small ints."""
+    x, y, z = ax >> 4, ay >> 4, az >> 4
+    return x * x + y * y + z * z > _BOOST_SQUARED
+
+
+def _climbed(ground: int, pressure: int) -> bool:
+    """~20 m above `ground` (raw BMP581 pressure, x64 Pa): what turns a 3 g candidate into a launch."""
+    return ground - pressure >= _CLIMB_LSB
+
+
+def _lit(left: int, on: int, off: int) -> int:
+    """LED level of a flash pattern with `left` ticks to go: each flash is `on` ticks lit, then `off` dark."""
+    return 1 if (left - 1) % (on + off) >= off else 0
+
+
 def _is_log(name: str) -> bool:
     """bBBBBB_sSSSS.bin -- nothing else is ever deleted."""
     return len(name) == 16 and name[0] == 'b' and name[6:8] == '_s' and name.endswith('.bin')
@@ -150,9 +187,61 @@ def _free() -> int:
     return stat[0] * stat[3]
 
 
-def _make_room(need: int) -> None:
+def _flights() -> dict:
+    """boot -> first protected segment, from _FLIGHTS. A line that does not parse is skipped, not fatal."""
+    flights = {}
+    try:
+        with open(_FLIGHTS) as handle:
+            for line in handle:
+                fields = line.split()
+                try:
+                    boot, first = int(fields[0]), int(fields[1])
+                except (IndexError, ValueError):
+                    continue
+                flights[boot] = min(first, flights.get(boot, first))
+    except OSError:
+        pass
+    return flights
+
+
+def _protected(name: str, flights: dict) -> bool:
+    """A log at or after its boot's first protected segment is part of a flight."""
+    first = flights.get(int(name[1:6]))
+    return first is not None and int(name[8:12]) >= first
+
+
+def _protect(boot: int, first: int) -> None:
+    """Record a launch: from segment `first` on, this boot's logs are a flight. A failure costs the
+    protection, never the recording."""
+    try:
+        with open(_FLIGHTS, 'a') as handle:
+            handle.write('%d %d\n' % (boot, first))
+    except OSError:
+        pass
+
+
+def _deletable() -> list:
+    """The logs room may be made from -- everything not part of a flight -- oldest first."""
+    flights = _flights()
+    return sorted(name for name in os.listdir() if _is_log(name) and not _protected(name, flights))
+
+
+def _room(need: int) -> bool:
+    """Could `need` bytes be freed without touching a flight?"""
+    free = _free()
+    if free >= need:
+        return True
+    for name in _deletable():
+        if free >= need:
+            break
+        free += os.stat(name)[6]
+    return free >= need
+
+
+def _make_room(need: int) -> bool:
     """
-    Delete the OLDEST logs, and only as many as it takes, until `need` bytes are free.
+    Delete the OLDEST unprotected logs, and only as many as it takes, until `need` bytes are free. False
+    when even all of them are not enough: the flash belongs to flights now.
 
     Reclaimed space is counted from each deleted file's own size rather than re-read from statvfs, so the
     stop condition never depends on the filesystem's accounting catching up. File size under-credits (it
@@ -160,11 +249,21 @@ def _make_room(need: int) -> None:
     previous boots go before the current one.
     """
     free = _free()
-    logs = sorted(name for name in os.listdir() if _is_log(name))
+    if free >= need:
+        return True
+    logs = _deletable()
     while free < need and logs:
         name = logs.pop(0)
         free += os.stat(name)[6]
         os.remove(name)
+    return free >= need
+
+
+def clean() -> None:
+    """Delete every log and the flight record -- AFTER they are read out. `import main; main.clean()`."""
+    for name in os.listdir():
+        if _is_log(name) or name == _FLIGHTS:
+            os.remove(name)
 
 
 def _next_boot() -> int:
@@ -192,7 +291,8 @@ def _save(buffer, count: int, boot: int, segment: int) -> bool:
     escape would end the sampling loop and lose every segment still to come.
     """
     try:
-        _make_room(_HEADER + count * _RECORD + _RESERVE)
+        if not _make_room(_HEADER + count * _RECORD + _RESERVE):
+            return False
         with open('b%05d_s%04d.bin' % (boot, segment), 'wb') as handle:
             handle.write(struct.pack('<4sHHHHII', _MAGIC, _RECORD, _PERIOD_MS, boot, segment, count,
                                      time.ticks_ms()))
@@ -212,19 +312,69 @@ def _readout_requested() -> bool:
         return False
 
 
-def _request_readout() -> None:
-    """Stay in read-out mode across software resets, until power-off clears RTC memory."""
+def _request_readout(flag: bytes = _READOUT) -> None:
+    """Stay in read-out mode across software resets, until power-off clears RTC memory (b'' clears it)."""
     if RTC is None:
         return
     try:
-        RTC().memory(_READOUT)
+        RTC().memory(flag)
     except Exception:
         pass
 
 
+def _released(button, watchdog) -> None:
+    """
+    Wait until BOOT is up. Every reset goes through here: GPIO9 is the boot strap, and a reset while it is
+    held low lands the C6 in the ROM bootloader instead of the logger.
+    """
+    while button.value() == 0:
+        if watchdog is not None:
+            watchdog.feed()
+        time.sleep_ms(20)
+
+
+def _hold(led, button) -> None:
+    """
+    READ-OUT MODE: not recording, no watchdog, LED solid. A read-out tool's Ctrl-C lands here and frees
+    the REPL; a BOOT press starts recording again -- a reset with the flag cleared.
+    """
+    led.value(1)
+    print('logger :: READ-OUT MODE -- not recording; BOOT or a power-cycle starts recording again')
+    pressed = 0
+    try:
+        while pressed < _PRESS_TICKS:
+            pressed = pressed + 1 if button.value() == 0 else 0
+            time.sleep_ms(_TICK_MS)
+    except KeyboardInterrupt:
+        return
+    _released(button, None)
+    _request_readout(b'')
+    if reset is not None:
+        reset()
+
+
+def _stop(led, button, watchdog, reason: str) -> None:
+    """
+    Stop recording: three short flashes, then read-out mode. With the watchdog armed (it cannot be
+    disarmed) that takes a reset into read-out mode; before it is armed the loop simply ends here.
+    """
+    for _ in range(3):
+        for level in (1, 0):
+            led.value(level)
+            if watchdog is not None:
+                watchdog.feed()
+            time.sleep_ms(_STOP_MS)
+    _released(button, watchdog)
+    _request_readout()
+    print('logger :: stopped (%s)' % reason)
+    if watchdog is not None and reset is not None:
+        reset()
+    _hold(led, button)
+
+
 def run() -> None:
     """
-    Drain both FIFOs every tick, save every _SEGMENT records and on BOOT.
+    Drain both FIFOs every tick, save every _SEGMENT records; protect the flight; stop on BOOT or when full.
 
     READ-OUT SAFETY. The hardware watchdog used to be armed at every boot and fed only by this loop, so a
     read-out tool (mpremote, rshell) that interrupts it with Ctrl-C left it unfed: the C6 reset 8 s into
@@ -240,11 +390,14 @@ def run() -> None:
     sends Ctrl-C in flight, so the watchdog still guards every flight exactly as before.
     """
     led = Pin(_LED, Pin.OUT)
-    if _readout_requested():
-        led.value(1)                             # solid: read-out mode
-        print('logger :: READ-OUT MODE -- not recording, no watchdog; power-cycle to fly again')
-        return
     boot_button = Pin(_BOOT, Pin.IN, Pin.PULL_UP)
+    if _readout_requested():
+        _hold(led, boot_button)
+        return
+    if not _room(_NEXT):                         # the flash is all flights: never record over one
+        print('logger :: flash full of flights -- read them out, then main.clean()')
+        _hold(led, boot_button)
+        return
     bus = I2C(0, scl=Pin(_SCL), sda=Pin(_SDA), freq=400000)
     pressure = _setup(bus)
     boot = _next_boot()
@@ -257,7 +410,7 @@ def run() -> None:
     heat = bytearray(3)
     pressures = [0] * _PRESSURE_DEPTH
     gc.collect()
-    print('logger :: boot %d, 50 Hz FIFO, 1 Hz when still, saving every %d records' % (boot, _SEGMENT))
+    print('logger :: boot %d, 50 Hz FIFO, 1 Hz when still, saving every %d records; BOOT stops' % (boot, _SEGMENT))
 
     """
     A hardware watchdog, because this loop IS the payload.
@@ -269,7 +422,11 @@ def run() -> None:
     booted = time.ticks_ms()
     watchdog = None                              # armed after the read-out window -- see run()'s docstring
 
-    count, segment, beat, pressed, blink, frames_total = 0, 0, 0, 0, 0, 0
+    count, segment, beat, pressed, frames_total = 0, 0, 0, 0, 0
+    blink = 3 * (_START_ON + _START_OFF)         # recording has started: three long flashes
+    boost, launched, launch_frame, protected = 0, False, 0, False
+    candidate, candidate_segment, ground = None, 0, 0   # a 3 g run waiting for its climb
+    stopping = None
     origin = None
     active, quiet, mark = True, 0, pressure          # start at full rate: prove it is still before decimating
     previous_x, previous_y, previous_z = 0, 0, 0
@@ -323,6 +480,20 @@ def run() -> None:
                             if quiet >= _QUIET_FRAMES:
                                 active = False
                         previous_x, previous_y, previous_z = ax, ay, az
+                        if not launched:
+                            if _boost(ax, ay, az):
+                                boost += 1
+                                if boost == 1 and candidate is None:
+                                    ground = pressure                    # where the run began
+                                if boost == _BOOST_FRAMES and candidate is None:
+                                    candidate, candidate_segment = frames_total, segment
+                            else:
+                                boost = 0
+                            if candidate is not None:
+                                if _climbed(ground, pressure):
+                                    launched, launch_frame = True, candidate
+                                elif frames_total - candidate > _CLIMB_FRAMES:
+                                    candidate = None                     # a knock, not a launch
                         frames_total += 1
                         if frames_total % _DECIMATE == 0:
                             mark = pressure                              # the climb test's one-second reference
@@ -340,14 +511,23 @@ def run() -> None:
                 except OSError:
                     pass
 
-            forced = False
+            if launched and not protected:
+                # from the segment before the one the 3 g began in: at least 15 s of pad before the launch,
+                # more if it was decimated. Written now rather than at the next save, so a brownout in the
+                # boost keeps it.
+                _protect(boot, max(0, candidate_segment - 1))
+                protected = True
+            if launched and (quiet >= _LANDED_FRAMES or frames_total - launch_frame >= _FLIGHT_FRAMES):
+                stopping = 'flight complete'
+
             if boot_button.value() == 0:
                 pressed += 1
-                forced = pressed == _PRESS_TICKS         # once per press, not once per tick held
+                if pressed == _PRESS_TICKS:              # once per press, not once per tick held
+                    stopping = 'BOOT'
             else:
                 pressed = 0
 
-            if count and (count >= _SEGMENT or forced):
+            if count and (count >= _SEGMENT or stopping):
                 # advance the segment number only on a SAVE THAT LANDED: numbering a file that was never
                 # written breaks the join decode.py checks for continuity, turning a failed save into a
                 # silently missing one
@@ -355,12 +535,15 @@ def run() -> None:
                     segment += 1
                 count = 0
                 gc.collect()                             # the core is already stalled: collect in the same gap
-                if forced:
-                    blink = 6 * _BLINK_TICKS             # three on/off pairs, counted down by the loop
+                if stopping is None and not _room(_NEXT):
+                    stopping = 'flash full of flights'   # the next segment could only go over a flight
+            if stopping:
+                _stop(led, boot_button, watchdog, stopping)
+                return
 
             if blink:
+                led.value(_lit(blink, _START_ON, _START_OFF))
                 blink -= 1
-                led.value(1 if (blink // _BLINK_TICKS) % 2 else 0)
             else:
                 beat += 1
                 if beat >= _HEARTBEAT:
