@@ -67,7 +67,7 @@ What is measured:
   before ignition on, were lost.
 - **The UART link was losing data:** thousands of corrupted file names, and three LSM6DSO32 rows from 0.53,
   0.87 and 1.07 s found mangled into other streams' files. So the controller was still sampling at 1.07 s.
-- **One common stop:** apart from the LSM6DSO32 and the sporadic laser, every stream is consistent with a
+- **One common stop:** apart from the LSM6DSO32 and the laser (which ranged only to the launch rod), every stream is consistent with a
   single stop at about 1.31 s. The sequencer's event file is 0 bytes.
 
 What it does not settle is what stopped at 1.31 s:
@@ -109,7 +109,7 @@ In order:
    crash damage.
 6. **Calibration:** a six-position accelerometer tumble, and a gyro scale check on a jig (±2 %).
 7. **BNO055:** recalibrate it and save the profile again.
-8. **Pitot:** leak-test the tubing and calibrate its span. On the boost it read only 0.6–0.7 of the
+8. **Pitot:** leak-test the tubing and calibrate its span. At low angle of attack in the boost it read only ~0.51–0.59 of the
    inertial dynamic pressure.
 9. **The rest:** the separation switch; GNSS outdoors, on battery.
 10. **Soak:** 30 min with tapping or vibration while logging.

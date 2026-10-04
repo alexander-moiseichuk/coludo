@@ -149,7 +149,7 @@ move the CG forward and restore it. 7C ran out of time and looped.
   - bench-test the INA226 ALERT path above 3 A;
   - check the LiPo's internal resistance (88–94 mΩ in flight, shunt included);
   - recalibrate the BNO055 (mag 0 before the flight);
-  - calibrate the pitot's span (0.66–0.8 of the inertial dynamic pressure in the coast);
+  - calibrate the pitot's span (~0.51–0.59 of the inertial dynamic pressure at low angle of attack; 0.66–0.8 in the coast, which depends on the wind);
   - run a recorder power-pull test.
 
 **Open questions that would sharpen the verdict:**
