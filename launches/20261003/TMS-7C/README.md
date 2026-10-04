@@ -58,17 +58,34 @@ singularity on the pad.
 
 ### Why the recording stops at 1.31 s
 
-The Luckfox recorder (`src/camera/recorded/recorderd.cpp`) writes each line through the kernel's page
-cache and **never syncs**. The crash cut its power, so every stream kept only what had already reached the
-card, and each stopped at a different time: LSM6DSO32 0.47 s, ADXL375 and BNO055 1.31 s. The sequencer's
-event file is 0 bytes, so the launch-detected row is gone. Three LSM rows from 0.53, 0.87 and 1.07 s
-survive embedded in other files: the data arrived and was lost. Before the next flight:
+What is measured:
+- **Writes reach the page cache, not the card.** The Luckfox recorder (`src/camera/recorded/recorderd.cpp`)
+  writes each line with `fopen`/`fwrite`/`fclose`. That hands the line to the kernel's page cache, not
+  to the card: nothing syncs. `/userdata` is ext4 `rw,relatime`, with writeback every 5 s and dirty
+  data held up to 30 s.
+- **`recorder.log` is buffered in the program,** flushed every 1000 lines. Its last lines, from 2.4 s
+  before ignition on, were lost.
+- **The UART link was losing data:** thousands of corrupted file names, and three LSM6DSO32 rows from 0.53,
+  0.87 and 1.07 s found mangled into other streams' files. So the controller was still sampling at 1.07 s.
+- **One common stop:** apart from the LSM6DSO32 and the sporadic laser, every stream is consistent with a
+  single stop at about 1.31 s. The sequencer's event file is 0 bytes.
 
-1. **Make the recorder durable:** keep files open and `fdatasync` every 100–250 ms; sync the IMU and
-   sequencer streams immediately; flush `recorder.log` on a timer.
-2. **Hold-up power:** add a capacitor and a power-fail `sync`. Acceptance test: pull the power while
-   logging, and lose no more than 0.25 s.
-3. **Fly the nose logger as a black box** until both pass; it survived TMS-7's 19 g.
+What it does not settle is what stopped at 1.31 s:
+- writes still in the page cache, lost when the crash cut the power;
+- a recorder that could not keep up.
+
+**The operator's reading is the second.** Off USB the Luckfox also records 2304×1296 MJPEG video, and
+video plus logging is more than it handles. On the bench, adb disables the video, so the problem never
+shows there. Before launch the video was distorted with the camera facing the sun.
+
+**The plan for the next flight:**
+1. **No video on the recorder.**
+2. **A ~2000 µF hold-up capacitor.** At ~0.5 W that rides through ~20 ms: connector bounce and brownouts
+   under the boost loads. It saves buffered data only if a power-fail signal triggers a `sync` within
+   that time.
+3. **A new file organization for the recorder.**
+
+Acceptance test: pull the power while the recorder logs, and count what is missing.
 
 ### Before December: validating the re-used hardware
 
