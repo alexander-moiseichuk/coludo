@@ -33,6 +33,9 @@ Airframe masses are **as assembled, without the motor**. Motor masses are the me
   difference that shows up is the wing and the fin setting rather than the build.
 * **TMS-7C** — telemetry. Fins **fixed at whatever 7A/7B selects**, so the instrumented flight uses the
   setting the comparison just validated rather than a guess.
+  **Result: crashed.** Fins at 0°. The stack lost boost stability just off the rod (roll torque ∝ q,
+  up to 9.3 g sideways), looped under thrust and hit the ground; the recorder kept 1.31 s. Hardware to
+  be validated for December; see [TMS-7C](TMS-7C/README.md).
 * **TMS-7D** — the servo airframe: three SG90s and the full power module.
 * **TMS-7E** — the first airframe on main board v1.0, where the payoff is mass; see its folder.
 * **TMS-7F** — the first v1.1 airframe (SEN0697: the board fuses its own attitude and carries a
