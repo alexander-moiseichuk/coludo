@@ -499,33 +499,34 @@ def _glider_roster():
     a persisted roster an absent glider is just a row that is not there, indistinguishable from one
     never set up, and a hub restart forgets every glider it ever saw.
     """
-    path = os.path.join(tempfile.mkdtemp(), 'gliders.json')
-    hub = server.Server(roster_path=path)
-    hub.log = lambda *args: None
+    with tempfile.TemporaryDirectory() as directory:
+        path = os.path.join(directory, 'gliders.json')
+        hub = server.Server(roster_path=path)
+        hub.log = lambda *args: None
 
-    hub._roster_seen('taster', '192.168.102.152:60384')
-    assert hub.roster['taster']['ip'] == '192.168.102.152'      # port stripped: the host is the identity
-    assert [g['id'] for g in hub.absent()] == ['taster']        # known, no live link -> absent
-    assert 'reboot taster' in hub.absent()[0]['hint']           # ...and says what to do about it
+        hub._roster_seen('taster', '192.168.102.152:60384')
+        assert hub.roster['taster']['ip'] == '192.168.102.152'      # port stripped: the host is the identity
+        assert [g['id'] for g in hub.absent()] == ['taster']        # known, no live link -> absent
+        assert 'reboot taster' in hub.absent()[0]['hint']           # ...and says what to do about it
 
-    # SAME NAME FROM A NEW IP replaces the old entry -- a glider that moved network, or a rebuilt board
-    # reusing the id. Two records for one glider would make the reboot hint ambiguous.
-    hub._roster_seen('taster', '10.0.0.9:5000')
-    assert hub.roster['taster']['ip'] == '10.0.0.9' and len(hub.roster) == 1
+        # SAME NAME FROM A NEW IP replaces the old entry -- a glider that moved network, or a rebuilt board
+        # reusing the id. Two records for one glider would make the reboot hint ambiguous.
+        hub._roster_seen('taster', '10.0.0.9:5000')
+        assert hub.roster['taster']['ip'] == '10.0.0.9' and len(hub.roster) == 1
 
-    class _Live:
-        online = True
+        class _Live:
+            online = True
 
-    hub.boards['taster'] = _Live()      # a LIVE board drops out: the hint is only for gliders needing action
-    assert hub.absent() == []
+        hub.boards['taster'] = _Live()      # a LIVE board drops out: the hint is only for gliders needing action
+        assert hub.absent() == []
 
-    # it SURVIVES a hub restart, which is the whole point of persisting it
-    assert server.Server(roster_path=path).roster['taster']['ip'] == '10.0.0.9'
+        # it SURVIVES a hub restart, which is the whole point of persisting it
+        assert server.Server(roster_path=path).roster['taster']['ip'] == '10.0.0.9'
 
-    # a corrupt roster must not stop the hub starting -- a lost roster is a nuisance, a dead hub is not
-    with open(path, 'w') as handle:
-        handle.write('{ this is not json')
-    assert server.Server(roster_path=path).roster == {}
+        # a corrupt roster must not stop the hub starting -- a lost roster is a nuisance, a dead hub is not
+        with open(path, 'w') as handle:
+            handle.write('{ this is not json')
+        assert server.Server(roster_path=path).roster == {}
 
 
 
@@ -629,44 +630,45 @@ async def _clock_case(info: dict, answer: Callable = _set, host_gps: gps.Gps = N
     async def on_board(_client: board.Board) -> None:
         reached.set()
 
-    hub = server.Server(host='127.0.0.1', on_board=on_board, log=seen.append, heartbeat_s=5.0, gps=host_gps,
-                        roster_path=os.path.join(tempfile.mkdtemp(), 'gliders.json'))
-    listener = await asyncio.start_server(hub._handle, '127.0.0.1', 0)
-    reader, writer = await asyncio.open_connection('127.0.0.1', listener.sockets[0].getsockname()[1])
+    with tempfile.TemporaryDirectory() as directory:  # the hub's gliders.json, gone with the case
+        hub = server.Server(host='127.0.0.1', on_board=on_board, log=seen.append, heartbeat_s=5.0, gps=host_gps,
+                            roster_path=os.path.join(directory, 'gliders.json'))
+        listener = await asyncio.start_server(hub._handle, '127.0.0.1', 0)
+        reader, writer = await asyncio.open_connection('127.0.0.1', listener.sockets[0].getsockname()[1])
 
-    async def fake() -> None:
-        while True:
-            raw = await reader.readline()
-            if not raw:
-                return
-            msg = cc.parse(raw.decode().strip())
-            if msg.command == 'whoami':
-                reply = cc.build('iam', ['clock9', json.dumps(info)])
-            elif msg.command == 'update':
-                payload = json.loads(msg.args[1])
-                updates.append((msg.args[0], payload))
-                reply = answer(payload)
-                if reply is None:
-                    continue  # silence: the hub's exchange times out
-            else:
-                reply = cc.build('ok', [json.dumps({'stage': info.get('stage')})])
-            writer.write((reply + '\n').encode())
-            await writer.drain()
+        async def fake() -> None:
+            while True:
+                raw = await reader.readline()
+                if not raw:
+                    return
+                msg = cc.parse(raw.decode().strip())
+                if msg.command == 'whoami':
+                    reply = cc.build('iam', ['clock9', json.dumps(info)])
+                elif msg.command == 'update':
+                    payload = json.loads(msg.args[1])
+                    updates.append((msg.args[0], payload))
+                    reply = answer(payload)
+                    if reply is None:
+                        continue  # silence: the hub's exchange times out
+                else:
+                    reply = cc.build('ok', [json.dumps({'stage': info.get('stage')})])
+                writer.write((reply + '\n').encode())
+                await writer.drain()
 
-    if cc_epoch is not None:
-        server.time = _CcClock(cc_epoch)
-    board_task = asyncio.create_task(fake())
-    try:
-        for _ in range(100):
-            if reached.is_set() or any('link lost' in line or line.startswith('error ') for line in seen):
-                break
-            await asyncio.sleep(0.02)
-        kept = reached.is_set() and 'clock9' in hub.boards and hub.boards['clock9'].online
-    finally:
-        server.time = time
-        board_task.cancel()
-        writer.close()
-        listener.close()
+        if cc_epoch is not None:
+            server.time = _CcClock(cc_epoch)
+        board_task = asyncio.create_task(fake())
+        try:
+            for _ in range(100):
+                if reached.is_set() or any('link lost' in line or line.startswith('error ') for line in seen):
+                    break
+                await asyncio.sleep(0.02)
+            kept = reached.is_set() and 'clock9' in hub.boards and hub.boards['clock9'].online
+        finally:
+            server.time = time
+            board_task.cancel()
+            writer.close()
+            listener.close()
     return updates, seen, kept, hub
 
 
@@ -732,6 +734,7 @@ async def _clock_sync_cases(host_gps: gps.Gps) -> None:
                                                   cc_epoch=1577836800)
     assert [payload['epoch'] for _object, payload in updates] == [1577836800], updates
     assert any(line == 'clock9 clock set 2000-01-01T00:00:12Z -> 2020-01-01T00:00:00Z' for line in seen), seen
+    assert kept, seen
     updates, seen, kept, _hub = await _clock_case({'stage': 'setting', 'epoch': COLD_EPOCH},
                                                   cc_epoch=1577836799)
     assert updates == [] and kept, (updates, seen)

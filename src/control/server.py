@@ -29,11 +29,12 @@ _MISSED_BEATS: int = 3
 BROADCAST: str = 'all'  # the one broadcast target -- a clean token for scripting (no '*')
 """
 CLOCK SYNC ON CONNECT (doc/specs/recorder-wire.md, "Clock and the session index"). A cold board's RTC
-reads 2000-01-01, so it reports 946684800 plus its uptime, and every file and session.csv row it wrote
-carried that date. A whoami epoch within 2000 is therefore an unset clock, which CC sets from its own,
-in SETTING only. The board re-dials after any link loss, in flight too, and in DONE a ~26-year jump makes
-the post-landing warm-start crumb look stale, so a reset during the dwell would boot cold. CC's own clock
-must read 2020 or later: a host with no RTC, before NTP, would stamp the board with a date as wrong.
+reads 2000-01-01, so it reports 946684800 plus its uptime. Its files are named by boot id, and the
+session.csv rows it writes carry an empty utc until the clock is set, so a sync is what ties the boot to
+UTC. A whoami epoch within 2000 is therefore an unset clock, which CC sets from its own, in SETTING only.
+The board re-dials after any link loss, in flight too, and in DONE a ~26-year jump makes the post-landing
+warm-start crumb look stale, so a reset during the dwell would boot cold. CC's own clock must read 2020
+or later: a host with no RTC, before NTP, would stamp the board with a date as wrong.
 """
 _UNSET_CLOCK_FROM: int = 946684800  # 2000-01-01T00:00:00Z: a cold board's RTC, in Unix seconds
 _UNSET_CLOCK_BEFORE: int = 978307200  # 2001-01-01T00:00:00Z: from here on the board's clock is set

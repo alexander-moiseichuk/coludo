@@ -350,6 +350,12 @@ const api = new Function('document', 'EventSource', 'fetch', 'setInterval', 'set
     await api.syncTime('A');
     out.unset.push(cell('actmsg').textContent);
   }
+  out.hubError = [];   // the hub's own failures carry no status or args: 404 no online board, 502 offline
+  for (const body of [{ error: "no online board 'A'" }, { board: 'A', error: 'offline' }]) {
+    replies.push(JSON.stringify(body));
+    await api.syncTime('A');
+    out.hubError.push(cell('actmsg').textContent);
+  }
   out.refused = [];                     // any other stage: the button disables, a direct call sends nothing
   for (const stage of ['done', 'gliding', null]) {
     await frame({ usable: false }, stage);
@@ -389,8 +395,8 @@ def test_dashboard_actions_follow_the_selection():
     screen. Board-reported `degraded` / `site` went into the markup raw. 'sync time' sets the selected
     board's RTC only in SETTING, from the browser's clock in a pinned zone. Run under node with a stub
     DOM (skipped without node); the negative cases are the same board re-selected, which keeps its
-    cards, a sync in any other stage, of an absent board or from a browser clock before 2020, and a
-    reply that set no clock.
+    cards, a sync in any other stage, of an absent board or from a browser clock before 2020, a reply
+    that set no clock, and the hub's own failure (no online board, offline), which has no args.
     """
     import shutil
     import subprocess
@@ -433,6 +439,8 @@ def test_dashboard_actions_follow_the_selection():
     assert len(out['unset']) == 5, out['unset']
     for shown in out['unset']:
         assert shown.startswith('A sync time: NOT set'), 'only an ok whose `changed` LIST names epoch is a set clock'
+    assert out['hubError'] == ['A sync time: NOT set {"error":"no online board \'A\'"}',
+                               'A sync time: NOT set {"board":"A","error":"offline"}'], out['hubError']
     # any other stage, or a board not connected: disabled, says why, and a direct call sends nothing
     for refused in out['refused']:
         assert refused['posted'] == 0 and refused['button']['disabled'] is True, refused

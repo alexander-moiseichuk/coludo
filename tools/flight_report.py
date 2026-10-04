@@ -39,6 +39,24 @@ def _require_plotly():
 find_stream = flight_telemetry.find_stream
 
 
+def _printable(text: str) -> str:
+    """
+    A capture's text as a report can show it: each byte the link damaged becomes U+FFFD.
+
+    flight_telemetry.load() keeps such a byte as a lone surrogate (surrogateescape), so a checksum sees
+    what the board sent. plotly serialises a figure with orjson, which refuses a lone surrogate, so one
+    damaged byte in a legacy capture's stage line stopped the whole report; print() to a UTF-8 console
+    refuses it too. Only the rendered text is changed, never the capture as parsed.
+
+    Args:
+        text - a log line or stream name, as load() read it.
+
+    Returns:
+        The same text, each damaged byte replaced by U+FFFD.
+    """
+    return text.encode('utf-8', 'surrogateescape').decode('utf-8', 'replace')
+
+
 def stage_events(logs):
     """(time_s, label) for each stage transition logged (e.g. separation -> gliding)."""
     events = []
@@ -449,6 +467,8 @@ def main():
     go, pio, make_subplots = _require_plotly()
     if not streams:
         sys.exit('no telemetry streams found in %s' % args.capture)
+    streams = {_printable(name): stream for name, stream in streams.items()}  # what is shown, never parsed
+    logs = [(stamp, _printable(line)) for stamp, line in logs]
     damaged = flight_telemetry.spliced(streams)
     if damaged:
         # two boots appended into one file -- the plot would draw them as one flight; see flight_kpi

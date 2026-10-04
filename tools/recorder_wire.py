@@ -295,10 +295,17 @@ def session_files(session: str, names: list) -> list:
     25-minute fuzz at 20 % damage made such tails every time) -- the real `imu_bno055` and `imu_lsm6dso32`
     look exactly like a session `imu` repeating two streams. No family of the board's streams shares a
     head word more than three times (`servo_`, `imu_`), so a tag repeating more is a session, and junk
-    tails can never pass one family's real streams off as one. Dropping a real stream is silent, while
-    another session's small run kept is a visibly foreign stream. A boot id and the legacy date prefix are
+    tails can never pass one family's real streams off as one. A boot id and the legacy date prefix are
     digits, which no label is, so their files are all their own -- junk names included, which hold rows to
     salvage.
+
+    The bar errs on the side of keeping, since a real stream dropped is lost without a word, and that
+    leaves one residual, accepted: an old '_'-label session sharing the prefix is still taken whole when it
+    has fewer than _SESSION_STREAMS files, or any stream this session lacks (an older firmware's set, say).
+    Nothing marks its files as foreign then. `<session>_<tag>_` sorts before most stream names, so a role
+    lookup (flight_telemetry.find_stream) can silently take its stream over this session's; recorder_flight
+    reads only the streams it declares and is not misled. Only a card written before 2026-10-04 can hold
+    such a session: the firmware has refused '_' in a label since.
 
     Args:
         session - the session prefix: a boot id, a legacy date prefix or a label.

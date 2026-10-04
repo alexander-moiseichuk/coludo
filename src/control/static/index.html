@@ -623,11 +623,10 @@ async function syncTime(id) {
   const r = await cmd(id, 'update', ['mission', JSON.stringify({
     epoch, utc_offset: -new Date().getTimezoneOffset(),
     cc_position: ccPosition, source: 'dashboard' })]);
-  let applied = false;
-  try {
-    const changed = JSON.parse(r.args[0]).changed;
-    applied = r.status === 'ok' && Array.isArray(changed) && changed.includes('epoch');
-  } catch (err) { /* no or malformed {changed}: not set */ }
+  // the hub's own failures ({error}: no online board, offline) carry no status or args: not set
+  const parsed = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : null;
+  const changed = parsed?.changed;
+  const applied = Array.isArray(changed) && changed.includes('epoch');
   actMsg(`${id} sync time: ${applied ? 'ok' : 'NOT set ' + JSON.stringify(r)}`);
 }
 async function gpsAssist(id) {

@@ -411,7 +411,17 @@ def _row(streams: dict, tail: str, tag: str, row: str) -> list | None:
 
 
 def _log(logs: list, line: str) -> None:
-    """Keep a log line '<ticks_us> <descriptor> :: <message>' with its stamp (None when it has none)."""
+    """
+    Keep a log line with its stamp.
+
+    Args:
+        logs - the (uptime_us | None, line) list, appended to.
+        line - the log line, '<ticks_us> <descriptor> :: <message>'; its stamp is None when it does not
+            open with digits.
+
+    Returns:
+        None.
+    """
     first = line.split(' ', 1)[0]
     logs.append((int(first) if first.isdigit() else None, line))
 

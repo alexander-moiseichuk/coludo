@@ -4,7 +4,8 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 Host (CPython) test for the ANALYSIS TOOLS (tools/flight_kpi, flight_svg, airspeed_calibrate, the
 board-shape handling in flight_telemetry, and the recorder-dump readers recorder_flight,
 assemble_capture and flight_pull.sh on wrapped and unwrapped dumps -- every kind of link damage, across a
-ticks_us wrap, and under a label). Stdlib only -- plotly-dependent rendering is not exercised.
+ticks_us wrap, and under a label). Stdlib only -- plotly rendering runs only where plotly is importable
+(flight_report on a damaged byte; without it, the text the report would render is checked instead).
 
 Why this file exists (findings §27.8): ~4 K lines of analysis tooling had almost no tests, and it is the
 layer that produces the CONCLUSIONS we draw from a flight -- a silent bug here is worse than a firmware
@@ -1131,7 +1132,9 @@ def test_recorder_flight_dates_the_flight_across_a_wrap():
     wrap apart. The anchor row has one (a minute after the boot row), and a later set takes the place its
     utc puts at the right distance from it; the ignition then takes its UTC from the latest dated row
     before it. With the anchor lost, two sets still place each other when only one choice of wraps lets
-    their utcs agree. A dated row nothing places is not guessed: the ignition's UTC is then unknown.
+    their utcs agree. A dated row nothing places is not guessed: the ignition's UTC is then unknown. And a
+    count of wraps is never negative, so a boot whose streams start within the slack keeps a set just short
+    of the first wrap at its one place.
     """
     period = recorder_wire.TICKS_PERIOD
     index = [_INDEX_HEADER, '30000000;123;000123;;;taster;dev;3f2a91;boot;;', _INDEX_HEADER,
@@ -1160,6 +1163,11 @@ def test_recorder_flight_dates_the_flight_across_a_wrap():
     index.append('300000000;123;000123;2026-10-03T14:05:01Z;-240;taster;dev;3f2a91;dashboard;;')
     printed, _out = _cut(_long_dump(index), '000123')
     assert 'ignition UTC unknown: no dated row has a single place on the timeline' in printed, printed
+    # the streams start 30 s in, inside the slack: a set in the minute before the first wrap has one place,
+    # never a second at a negative uptime (1050 s less a wrap)
+    index = [_INDEX_HEADER, '1050000000;123;000123;2026-10-03T14:20:00Z;-240;taster;dev;3f2a91;dashboard;;']
+    printed, _out = _cut(_long_dump(index), '000123')
+    assert 'ignition at 2026-10-03T14:26:30.000Z UTC, from the dashboard row at uptime 1050.000000 s' in printed
 
 
 def test_recorder_flight_times_the_log_from_this_boot_only():
@@ -1207,6 +1215,54 @@ def test_recorder_flight_times_the_log_from_this_boot_only():
         assert all(int(cells[-1]) // 1000 == int(cells[-2]) for cells in flown), 'a row filed at another time'
 
 
+def test_recorder_flight_files_a_log_line_found_in_a_stream():
+    """
+    A board log line that ran on into a stream's file -- merged after a row that lost its newline -- is
+    proven like a row and belongs to board.log, at its time among the session's log lines, counted under
+    '(board.log)'. It used to be dropped without a word (flight_telemetry already merged it back). A log
+    line proves no session, so one in a junk file without the prefix is not taken; one whose time fits no
+    place, or in a session holding two boots (one label, the ticks restarted), is rejected. A damaged line
+    of recorder.log is already in board.log, verbatim, and is never added a second time.
+    """
+    session, imu_routing = '000123', '000123_imu_lsm6dso32.csv'
+    imu = [_body(row, imu_routing) for row in _imu_rows()]
+    boosting, far = _log('1495000 sequencer :: stage -> boosting'), _log('900000000 health :: far')
+    junk, elsewhere = _log('2505000 health :: junk file'), _log('2605000 health :: elsewhere')
+    imu_file = list(imu)
+    imu_file[50] += boosting       # 1.50 s: merged at a '>{' seam
+    imu_file[120] += far           # 2.20 s: proven, but its time is nowhere near the rows around it
+    for moved in (160, 150):       # rows whose routing the link mangled, each with a log line run on
+        imu_file.pop(moved)
+    log = [_log("900000 recorder :: {'session': '000123'}"), _log('1400000 health :: before'),
+           _log('1600000 health :: after'), _log('2550000 health :: late'),
+           _log('2560000 health :: one') + _log('2570000 health :: two'),  # merged in recorder.log: kept as is
+           _log('2700000 health :: last')]
+    recordings = tempfile.mkdtemp()
+    _write_dump(recordings, {imu_routing: imu_file, 'recorder.log': log,
+                             '000123_imu_lsmXX.csv': [imu[150] + junk],       # a junk file with the prefix
+                             'zz.csv': [imu[160] + elsewhere]})               # NEGATIVE: one without it
+    printed, out = _cut(recordings, session)
+    assert re.search(r'\(board\.log\)\s+5 good,\s+2 salvaged in,\s+1 rejected', printed), printed
+    assert re.search(r'imu_lsm6dso32\s+197 good,\s+4 salvaged in,\s+0 rejected', printed), printed
+    assert 'more damaged line' not in printed, printed  # the junk file's row is this session's: claimed
+    assert _read(os.path.join(out, 'recorder', 'board.log')) == log[:2] + [boosting] + log[2:3] + [junk] + log[3:]
+    assert len(_read(os.path.join(out, 'flight', 'imu_lsm6dso32.csv'))) == 1 + len(imu)
+
+    # NEGATIVE: two boots under one label -- board.log has no one timeline to put the line on
+    session, imu_routing = 'tms-7d', 'tms-7d_imu_lsm6dso32.csv'
+    rows = ['%d;0.0;0.0;%.1f;0;0;0;1' % (uptime, 5.0 if boot == 2 and 20_000_000 <= uptime < 21_500_000 else 1.0)
+            for boot in (1, 2) for uptime in range(1_000_000, 40_000_001, 10_000)]  # the ticks restart: 1..40 s twice
+    imu_file = [_body(row, imu_routing) for row in rows]
+    imu_file[-500] += _log('35005000 sequencer :: stage -> gliding')  # boot 2, 35 s
+    recordings = tempfile.mkdtemp()
+    _write_dump(recordings, {imu_routing: imu_file, 'recorder.log': [
+        _log("%d recorder :: {'session': 'tms-7d'}" % tick) for tick in (900_000, 30_000_000, 900_000, 30_000_000)]})
+    printed, out = _cut(recordings, session)
+    assert 'session tms-7d: 2 boot(s)' in printed and 'the flight is boot 1' in printed, printed
+    assert re.search(r'\(board\.log\)\s+\d+ good,\s+0 salvaged in,\s+1 rejected', printed), printed
+    assert 'gliding' not in ''.join(_read(os.path.join(out, 'recorder', 'board.log')))
+
+
 def test_every_reader_takes_a_damaged_byte():
     """
     A byte the link damaged is not UTF-8. Every tool reads a capture through flight_telemetry.load()
@@ -1233,13 +1289,28 @@ def test_every_reader_takes_a_damaged_byte():
     svg = subprocess.run([sys.executable, os.path.join(_ROOT, 'tools', 'flight_svg.py'), capture,
                           '-o', os.path.join(directory, 'damaged.svg')], capture_output=True, text=True)
     assert svg.returncode == 0, svg.stderr
-    saved, sys.argv = sys.argv, ['flight_report.py', capture, '-o', os.path.join(directory, 'damaged.html')]
+    """
+    flight_report: the byte in a STAGE line reaches the figure, and orjson (plotly's serialiser) refuses
+    its surrogate -- the report exited 1. It renders as U+FFFD; the helper runs directly without plotly.
+    """
+    staged, report = os.path.join(directory, 'staged.txt'), os.path.join(directory, 'damaged.html')
+    with open(staged, 'wb') as handle:
+        handle.write(flight_synth_capture.generate().encode() + b'5000000 controller :: stage -> glid\xffing\n')
+    saved, sys.argv = sys.argv, ['flight_report.py', staged, '-o', report, '--cdn']
     try:
-        flight_report.main()  # reads the capture first: without plotly it then stops, with plotly it renders
+        with contextlib.redirect_stdout(io.StringIO()):
+            flight_report.main()  # reads the capture first: without plotly it then stops, with plotly it renders
+        with open(report, encoding='utf-8') as handle:
+            rendered = handle.read()
+        assert 'glid\ufffding' in rendered or 'glid\\ufffding' in rendered, 'the stage line was not rendered'
     except SystemExit as stop:
         assert 'needs plotly' in str(stop), stop
     finally:
         sys.argv = saved
+    assert flight_report._printable('5000000 controller :: stage -> glid\udcffing') == \
+        '5000000 controller :: stage -> glid\ufffding'
+    assert flight_report._printable('\udcff\udcfe') == '\ufffd\ufffd'  # one U+FFFD per damaged byte
+    assert flight_report._printable('1500000 sequencer :: zündung') == '1500000 sequencer :: zündung'  # NEGATIVE
     # assemble_capture keeps the byte as the Luckfox file holds it
     routing = '000123_imu_lsm6dso32.csv'
     with open(os.path.join(directory, routing), 'wb') as handle:
@@ -1277,8 +1348,9 @@ def test_flight_pull_takes_a_session_not_a_junk_name():
     `20000101_000005_1927_gl.csv`), and a lone junk name must not become "the session" -- nor lift an OLD
     session whose id it happens to repeat (`000122_xx.csv`), which counting a prefix over the whole listing
     did. Junk names whose bytes are not UTF-8 (the TMS-7D card held two) or that hold a space must not stop
-    the pull. Given a label, it pulls that session's files and not an older label's sharing the prefix.
-    Run against a fake adb.
+    the pull. The default never picks a label session, even a newer one, and the usage says to name it.
+    Given a label, it pulls that session's files and not an older label's sharing the prefix. Run against
+    a fake adb.
     """
     import subprocess
     import time
@@ -1290,6 +1362,7 @@ def test_flight_pull_takes_a_session_not_a_junk_name():
              'hitl_health.csv': ['1;35;1;1;0;0;0;0;0'], 'hitl_imu.csv': ['1;1'], 'hitl_baro.csv': ['1;1'],
              'hitl_flight.csv': ['1;1'], 'hitl_f15_health.csv': ['1;35;1;1;0;0;0;0;0'], 'hitl_f15_imu.csv': ['1;1'],
              'hitl_f15_baro.csv': ['1;1'], 'hitl_f15_flight.csv': ['1;1'],
+             'tms-7d_imu_lsm6dso32.csv': ['1;1'], 'tms-7d_health.csv': ['1;35;1;1;0;0;0;0;0'],  # newer, a label
              '000122_xx.csv': ['junk'], '000124_xx.csv': ['junk'], '20000101_000005_1927_gl.csv': ['junk'],
              'recorder.log': ['900000 boot']}
     _write_dump(recordings, files)
@@ -1301,7 +1374,8 @@ def test_flight_pull_takes_a_session_not_a_junk_name():
     order = ['000122_imu_lsm6dso32.csv', '000122_health.csv', 'hitl_health.csv', 'hitl_imu.csv', 'hitl_baro.csv',
              'hitl_flight.csv', 'hitl_f15_health.csv', 'hitl_f15_imu.csv', 'hitl_f15_baro.csv',
              'hitl_f15_flight.csv', 'recorder.log', '000123_imu_lsm6dso32.csv', '000123_baro_bmp280.csv',
-             '000123_imu l.csv', '000122_xx.csv', '000124_xx.csv', '20000101_000005_1927_gl.csv']
+             '000123_imu l.csv', 'tms-7d_imu_lsm6dso32.csv', 'tms-7d_health.csv', '000122_xx.csv', '000124_xx.csv',
+             '20000101_000005_1927_gl.csv']
     for age, name in enumerate(order):  # oldest first: the junk names are the newest files
         os.utime(os.path.join(recordings, name), (now - 100 + age, now - 100 + age))
     adb = os.path.join(bin_dir, 'adb')
@@ -1313,8 +1387,11 @@ def test_flight_pull_takes_a_session_not_a_junk_name():
     script = os.path.join(_ROOT, 'tools', 'flight_pull.sh')
     pulled = subprocess.run(['bash', script, '', out], env=environment, capture_output=True)
     printed = pulled.stdout.decode('utf-8', 'backslashreplace') + pulled.stderr.decode('utf-8', 'backslashreplace')
-    assert 'latest session: 000123' in printed, printed
+    assert 'latest session: 000123' in printed, printed  # not the newer label session
     assert 'pulled 4 streams' in printed, printed
+    with open(script) as handle:
+        usage = ' '.join(line.strip('#\n ') for line in handle.read().split('set -u')[0].splitlines())
+    assert 'the default never picks a label session, so a labelled run needs this argument' in usage, usage
     assert sorted(name for name in os.listdir(os.fsencode(out)) if name.endswith(b'.csv')) == [
         b'000123_baro_bmp280.csv', b'000123_imu l.csv', b'000123_imu_lsm6dso32.csv', b'000123_imu\xff.csv']
     assert 'assembled %s' % os.path.join(out, '000123.txt') in printed, printed  # the junk names print, escaped
@@ -1352,6 +1429,7 @@ test_flight_pull_takes_a_session_not_a_junk_name()
 test_recorder_flight_dates_every_boot()
 test_recorder_flight_dates_the_flight_across_a_wrap()
 test_recorder_flight_times_the_log_from_this_boot_only()
+test_recorder_flight_files_a_log_line_found_in_a_stream()
 test_every_reader_takes_a_damaged_byte()
 print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, touchdown at DONE, '
       'polled-IRQ summary, adxl-only backstop, cc.py verdict exit codes, logger join continuity, svg render, '
@@ -1359,5 +1437,6 @@ print('ok: tools -- board-shape fins rebuild, kpi golden + partial captures, tou
       'spliced-capture detection, sim-capture refusal, provider/consumer closure, '
       'recorder_flight on wrapped + unwrapped dumps, assemble_capture strictness, the recorder_flight error '
       'matrix (every unproven line counted), salvage across a ticks wrap (a sparse stream too), label-prefix '
-      'collisions and junk tails, flight_pull session pick (byte-safe), every boot of the session index, the '
-      'flight\'s UTC across a wrap, the log timeline of this boot only, a damaged byte through every reader')
+      'collisions and junk tails, flight_pull session pick (byte-safe, never a label), every boot of the session '
+      'index, the flight\'s UTC across a wrap, the log timeline of this boot only, a log line found in a stream, '
+      'a damaged byte through every reader (and the report)')

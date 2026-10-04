@@ -6,7 +6,9 @@
 # which was hand-run per stream). Needs `adb` to the Luckfox and (for the HTML) the plotly venv.
 #
 # Usage: flight_pull.sh [session] [outdir]
-#   session : recorder session id (default: the LATEST session on the Luckfox)
+#   session : recorder session -- a boot id (`000123`), a legacy date prefix, or a label
+#             (`recorder.session`). Default: the LATEST boot-id or legacy session on the Luckfox; the
+#             default never picks a label session, so a labelled run needs this argument.
 #   outdir  : output directory (default: /tmp/flights/<session>)
 # Env: PAD=lat,lon  ZONE=tl_lat,tl_lon,br_lat,br_lon  (optional -- drawn on the SVG; default HPRC)
 set -u
@@ -19,7 +21,9 @@ PLY=${PLY:-$HOME/.local/share/pipx/venvs/plotly/bin/python}
 command -v adb >/dev/null || { echo "error: adb not found (need the Luckfox recorder)"; exit 2; }
 
 ses=${1:-}
-if [ -z "$ses" ]; then                       # default: the newest session (by its health stream)
+if [ -z "$ses" ]; then                       # default: the newest boot-id or legacy session
+  # A label session is never the default: a label has no shape to match, and any junk name would pass
+  # for one. A labelled run is pulled by naming it (the usage above).
   # Any stream identifies the session, not `health` specifically: a profile with board_health
   # disabled produced NO *_health.csv, so this returned empty and reported "no recorder session"
   # on a board that had just recorded a full flight. hitl_collect.sh already keys on any *_*.csv.
@@ -57,6 +61,8 @@ mkdir -p "$out"; rm -f "$out"/*.csv
 # The Luckfox shell does not expand a glob here and its `ls` emits ANSI colour codes + CR, so strip
 # both before matching or every name silently fails to match. recorder_wire picks the session's own
 # files: under a label, an older label that held '_' can share the prefix (`hitl_f15_*` beside `hitl_*`).
+# One case it cannot tell, accepted (recorder_wire.session_files): such a session with fewer than four
+# files, or a stream this one lacks, is pulled too -- only a card from before 2026-10-04 can hold one.
 # One name per line, read whole: a junk name can hold a space, or bytes that are not UTF-8.
 expected=$(adb shell "ls $REC/" 2>/dev/null \
            | LC_ALL=C sed -e "s/\x1b\[[0-9;]*m//g" -e "s/\r//g" | python3 "$ROOT/tools/recorder_wire.py" files "$ses")
