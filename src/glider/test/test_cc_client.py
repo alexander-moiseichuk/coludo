@@ -542,10 +542,16 @@ async def amain():
         def calibrated(self):
             return self.calibration_value[3] >= 3
 
+    class _BlindAttitude:
+        """The attitude filter with no gyro: `blind` is all the heartbeat reads of it."""
+
+        blind = True
+
     class _FlightController:
         armed = True
         warm_started = True  # a degraded state -> annunciated
         failures = {}
+        attitude = _BlindAttitude()
 
         def stage_name(self):
             return 'gliding'
@@ -555,6 +561,8 @@ async def amain():
                 return [_FlightTask()]
             if name == 'flight':
                 return _FlightTask()
+            if name == 'attitude':
+                return self.attitude
             return _UncalibratedImu() if name == 'imu_bno055' else None
 
     # the sweep reads REGISTERED inspectables, so the stub has to be one for the heartbeat to see it
@@ -568,6 +576,22 @@ async def amain():
     assert 'agl' in panel  # low-altitude laser AGL rides the same heartbeat
     # degraded-mode annunciation: warm-started (from the controller flag) is surfaced
     assert 'WARM-STARTED (rebooted in flight)' in panel['degraded']
+    """
+    `attitude-blind` on EVERY board: a filter with no gyro and no backup below keeps publishing a held
+    roll/pitch as fresh, so nothing downstream notices -- the flag is the only report. NEGATIVE: a sighted
+    filter, and a board with no attitude task at all, raise nothing.
+    """
+    assert 'attitude-blind' in panel['degraded'], panel['degraded']
+    sighted = _FlightController()
+    sighted.attitude = _BlindAttitude()
+    sighted.attitude.blind = False
+    clear = json.loads(cc.parse(await cc_client.create_dispatcher(
+        config_default.default(), controller=sighted).handle('health')).args[0])
+    assert 'attitude-blind' not in clear['degraded'], clear['degraded']
+    sighted.attitude = None
+    clear = json.loads(cc.parse(await cc_client.create_dispatcher(
+        config_default.default(), controller=sighted).handle('health')).args[0])
+    assert 'attitude-blind' not in clear['degraded'], clear['degraded']
     """
     An UNCALIBRATED BNO055 must reach the operator. It is invisible to probe() (the part answers
     perfectly) and to _readiness() (it is not a config choice), yet NDOF fusion never converges without
@@ -876,46 +900,61 @@ async def amain():
     inspector.Inspector.unregister('fin_sweep')
 
     """
-    `attitude-backup` must mean a FALLBACK, not "this revision has one source".
+    `attitude-backup` must mean a FALLBACK, not "this board has one source".
 
-    v0.1/v1.0 publish fused attitude from the BNO055 at p0, so running on tasks/attitude.py means
-    something died. v1.1 has no p0 attitude provider at all, so the flat check marked every v1.1 board
-    permanently degraded -- and an always-amber panel stops being read. Both directions are asserted
-    here because the flag is worthless if it never fires and worse than worthless if it always does.
+    The filter (tasks/attitude.py, p1) is the primary on every map, so flying on it is NOMINAL -- an
+    always-amber panel stops being read. The flag goes up when an enabled provider outranks the winner:
+    the SEN0253's BNO055 (p2) carrying a filter that went quiet. The rule is generic over priorities
+    (layout ranks the BNO055 below the filter at boot, so the reverse is no longer a fleet case), and
+    both directions are asserted, because the flag is worthless if it never fires and worse than
+    worthless if it always does.
     """
     class _Ctx:
         pass
 
-    for revision, expected in (('v1.0', True), ('v1.1', False)):
-        cfg = config_default.default()
-        layout.apply(cfg, revision)
+    def _context(board: dict):
         ctx = _Ctx()
         ctx.controller = _Ctx()
-        ctx.controller.config = cfg
-        assert cc_client._has_primary(ctx, 'attitude') is expected, (
-            '%s: expected a p0 attitude provider to be %s' % (revision, expected))
+        ctx.controller.config = board
+        return ctx
 
-    # a DISABLED primary is not a primary -- it was never going to publish
-    cfg = config_default.default()
-    layout.apply(cfg, 'v1.0')
-    for device in cfg['sensors']:
-        if device['name'] == 'imu_bno055':
-            device['enabled'] = False
-    ctx = _Ctx()
-    ctx.controller = _Ctx()
-    ctx.controller.config = cfg
-    assert cc_client._has_primary(ctx, 'attitude') is False
+    for revision in ('v0.1', 'v1.1'):  # SEN0697 only: the filter flying is nominal
+        cfg = config_default.default()
+        layout.apply(cfg, revision, ())
+        assert cc_client._on_backup(_context(cfg), 'attitude', 'attitude') is False, revision
+
+    # BOTH modules (the scan found the SEN0253): the filter is nominal, the BNO055 flying is the fallback
+    both = config_default.default()
+    layout.apply(both, 'v1.1', ('baro_bmp280', 'imu_bno055'))
+    assert cc_client._on_backup(_context(both), 'attitude', 'attitude') is False
+    assert cc_client._on_backup(_context(both), 'attitude', 'imu_bno055') is True
+
+    # generic over priorities: an enabled provider ranked ABOVE the filter makes the filter the fallback
+    # (a hand-written p0 BNO055 -- layout.apply() would have demoted it, so it is set after)
+    legacy = config_default.default()
+    layout.apply(legacy, 'v1.0')
+    bno = [device for device in legacy['sensors'] if device['name'] == 'imu_bno055'][0]
+    assert bno['enabled'] and bno['provides']['attitude']['priority'] == 2, 'v1.0 fits and ranks its SEN0253'
+    bno['provides']['attitude']['priority'] = 0
+    assert cc_client._on_backup(_context(legacy), 'attitude', 'attitude') is True
+    # NEGATIVE: a DISABLED better-ranked provider is not a primary -- it was never going to publish
+    bno['enabled'] = False
+    assert cc_client._on_backup(_context(legacy), 'attitude', 'attitude') is False
+
+    # NEGATIVE: an undeclared source (the HITL sim) is no fallback, and nothing fresh is not one either
+    assert cc_client._on_backup(_context(both), 'attitude', 'hitl') is False
+    assert cc_client._on_backup(_context(both), 'attitude', None) is False
 
     # an unreadable config must NOT hide a real fallback
     blind = _Ctx()
     blind.controller = None
-    assert cc_client._has_primary(blind, 'attitude') is True
+    assert cc_client._on_backup(blind, 'attitude', 'attitude') is True
 
     await _alternatives()
     await _shared_reset()
 
     print('ok: cc_client dispatch/serve/standard + inspect/update/stats + probe + verify + log + tlm + arm '
-          '+ active commands refused airborne + attitude-backup only where a primary exists '
+          '+ active commands refused airborne + attitude-backup only when outranked + attitude-blind '
           '+ an unfitted alternative is no fault + every device verdict names its driver '
           '+ a shared XSHUT refuses arming')
 

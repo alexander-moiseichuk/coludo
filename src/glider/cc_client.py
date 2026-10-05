@@ -222,33 +222,44 @@ class _Context:
         return self.controller.stage_name() if self.controller is not None else 'setting'
 
 
-def _has_primary(ctx, channel: str) -> bool:
+def _on_backup(ctx, channel: str, source: str) -> bool:
     """
-    Does the running config declare an ENABLED device providing `channel` at priority 0?
+    Is `channel` flying on a BACKUP -- is its fused winner `source` outranked by an ENABLED provider?
 
-    The question behind "is this a fallback, or just the only source there is". A device that is
-    configured but DISABLED (layout unfits it on this revision) does not count -- it was never going
-    to publish.
+    The question behind "is this a fallback, or just the only source there is". Answered from the
+    config's priorities rather than from a name, because the answer moved: the attitude filter was the
+    BNO055's backup until 2026-10-05 and is now the primary, with the SEN0253's BNO055 as ITS backup
+    where one is fitted (layout ranks it there at boot, whatever a saved config says). A device that is
+    configured but DISABLED (layout unfits it, or the SEN0253 was not found) does not count -- it was
+    never going to publish. A source the config does not declare (the HITL sim) is no fallback, and
+    neither is nothing fresh at all (a different problem).
 
     Args:
         ctx - the client context, for the controller's config.
         channel - the databoard channel name.
+        source - the channel's fused winner, as read() reports it (None when nothing is fresh).
 
     Returns:
-        True when some enabled device claims priority 0 on that channel; True also when the config
-        cannot be read, so an unknown never silently hides a real fallback.
+        True when an enabled provider of `channel` ranks above `source`; True also when the config
+        cannot be read and something is fresh, so an unknown never silently hides a real fallback.
     """
+    if source is None:
+        return False
     controller = getattr(ctx, 'controller', None)
     config = getattr(controller, 'config', None) if controller is not None else None
     if not isinstance(config, dict):
         return True
+    best = None
+    flying = None
     for device in list(config.get('sensors', [])) + list(config.get('components', [])):
-        if not device.get('enabled', True) or device.get('name') == channel:
-            continue  # the backup task is named for its channel; it is not its own primary
         entry = (device.get('provides') or {}).get(channel)
-        if isinstance(entry, dict) and entry.get('priority') == 0:
-            return True
-    return False
+        if not device.get('enabled', True) or not isinstance(entry, dict):
+            continue
+        priority = entry.get('priority', 0)
+        best = priority if best is None else min(best, priority)
+        if device.get('name') == source:
+            flying = priority
+    return flying is not None and flying > best
 
 
 def _stage_problem(controller) -> str:
@@ -436,21 +447,25 @@ def _register_identity(dispatcher, ctx) -> None:
         """
         degraded = []
         """
-        "On the backup" is only DEGRADED where a primary exists to have fallen off it.
+        "On the backup" is only DEGRADED where a better-ranked source exists to have fallen off.
 
-        v0.1 and v1.0 carry a BNO055 publishing fused `attitude` at priority 0, so a board running on
-        tasks/attitude.py means something died. v1.1 has NO p0 attitude provider at all -- the
-        complementary filter is the only source, by design -- so the flat check marked every v1.1 board
-        permanently degraded, on the pad and in the air. A panel that is always amber stops being read,
-        which costs the annunciation the whole point of having it.
-
-        So require a CONFIGURED, ENABLED p0 provider before calling its absence a fallback: v1.1 reports
-        clean, and an actual BNO055 failure on v1.0 still raises the flag, which is the case worth
-        seeing.
+        The attitude filter (tasks/attitude.py, p1) is the primary on every board, so a board flying on
+        it is NOMINAL -- even one with no backup at all; an earlier flat check marked every such board
+        permanently degraded, and a panel that is always amber stops being read. The flag goes up when
+        the winner is outranked by an enabled provider: in the fleet, the SEN0253's BNO055 (p2) standing
+        in for a filter that went quiet.
         """
         attitude = databoard.Databoard.parameter('attitude')
-        if attitude is not None and attitude.read()[1] == 'attitude' and _has_primary(ctx, 'attitude'):
+        if attitude is not None and _on_backup(ctx, 'attitude', attitude.read()[1]):
             degraded.append('attitude-backup')
+        """
+        `attitude-blind`: the filter has had no fresh gyro for its blind window (tasks/attitude.py), on
+        EVERY board. Where a fresh backup sits below it the filter withholds and `attitude-backup` goes up
+        as well; where none does it keeps publishing a held roll/pitch as FRESH, and this flag is the
+        only thing that says so -- every staleness check downstream passes.
+        """
+        if ctx.controller is not None and getattr(ctx.controller.active('attitude'), 'blind', False):
+            degraded.append('attitude-blind')
         if ctx.controller is not None and getattr(ctx.controller, 'manual', False):
             degraded.append('STAGE HELD')  # an operator hold suppresses every stage detector
         if config_module.BOOT_SOURCE.startswith('default(fallback'):

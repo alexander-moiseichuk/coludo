@@ -33,7 +33,7 @@ async def amain():
     FUSION-STALL detector, both directions, deterministically -- no one has to wave a breadboard.
 
     The failure it exists for: a BNO055 whose fusion core latches while its raw sensors keep streaming.
-    The channel stays FRESH, so every staleness guard passes it and the priority-1 attitude backup never
+    The channel stays FRESH, so every staleness guard passes it and the attitude filter never
     engages; the PID would be handed a constant. Measured on a real faulty part, which held a
     bit-identical Euler triple through 40 s of motion with mag calibration stuck at 0.
 

@@ -1,10 +1,12 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-On-board test for the attitude-redundancy backup (tasks/attitude.py): it MIRRORS the higher-priority
-fused source while that is winning, FREE-RUNS a complementary filter (gyro integrate + accel gravity
-correction) once the primary is lost, and its integer-CORDIC roll/pitch converge to the true attitude.
-Uses the real databoard with a stand-in priority-0 source. Run by `make test`.
+On-board test for the attitude filter (tasks/attitude.py), the PRIMARY attitude: it MIRRORS a source
+that outranks it (a stand-in for the HITL sim at priority 0) while that is winning, NEVER mirrors one
+ranked below it (a stand-in for the SEN0253's BNO055 backup at priority 2), FREE-RUNS a complementary
+filter (gyro integrate + accel gravity correction) otherwise, and goes BLIND when the gyro is gone --
+WITHHOLDING its output only while a fresh backup below can take over, publishing as before where none
+can. Uses the real databoard. Run by `make test`.
 """
 
 import asyncio
@@ -28,7 +30,7 @@ def _accel_for(roll_d, pitch_d):
 async def amain():
     assert __import__('task').ACTIVITIES.get('attitude') is attitude.Attitude  # registered
 
-    # a priority-0 stand-in for the BNO055/sim attitude, plus the gyro `rate` + `accel` channels
+    # a priority-0 stand-in for the HITL sim's attitude, plus the gyro `rate` + `accel` channels
     primary = databoard.Databoard.provide('primary', {'attitude': {'priority': 0, 'timeout_ms': 40}},
                                           'attitude')
     accel_ch, rate_ch = databoard.Databoard.provide(
@@ -42,7 +44,7 @@ async def amain():
     unit = attitude.Attitude('attitude', comp, _Stub())
     assert await unit.setup() is True
 
-    # MIRROR: while the priority-0 source is fresh, the backup copies it (roll/pitch already fixnum cd,
+    # MIRROR: while the priority-0 source is fresh, the filter copies it (roll/pitch already fixnum cd,
     # heading float deg -> cd) and does NOT free-run
     primary.push((123.0, 4500, -600))  # heading 123 deg, roll 45.00, pitch -6.00 (cd)
     value, source, _age = unit._attitude_param.read()
@@ -113,7 +115,7 @@ async def amain():
     assert unit._yaw_cd > 35800 or unit._yaw_cd < 200  # moved toward 360/0, not toward 358-... backward
 
     # publish format matches the BNO055 slot: (heading FLOAT deg, roll cd, pitch cd). Let the
-    # priority-0 primary (timeout 40 ms) go stale so the backup's priority-1 push is the fused winner.
+    # priority-0 stand-in (timeout 40 ms) go stale so the filter's priority-1 push is the fused winner.
     await asyncio.sleep_ms(50)
     unit._yaw_cd, unit._roll_cd, unit._pitch_cd = 9000, 4500, -600
     unit._attitude.push((unit._yaw_cd / 100.0, unit._roll_cd, unit._pitch_cd))
@@ -123,7 +125,7 @@ async def amain():
     """
     MIRROR ONLY A FRESH PRIMARY. With nothing fresh, read() returns the primary's EXTRAPOLATED old value
     with source None, and mirroring that pinned a dead part's last attitude after every >40 ms gap while
-    throwing away the gyro integration. The primary pushes once and goes silent: the backup must
+    throwing away the gyro integration. The stand-in pushes once and goes silent: the filter must
     free-run on the gyro (30 deg/s of yaw here), not hold the dead heading of 10 deg.
     """
     accel_ch.push((0.0, 0.0, 0.0))  # outside the 1 g band: no accel correction to muddy the yaw
@@ -138,7 +140,129 @@ async def amain():
     assert unit._free, 'a silent primary must hand over to the gyro'
     assert unit._yaw_cd != 1000, 'yaw pinned at the dead primary\'s last heading'
 
-    # RECORDED: on v1.1 this filter is the only attitude, and it created no stream at all
+    """
+    BLIND WITHOUT A BACKUP: exactly the behaviour before the backup existed. Nothing ranks below the
+    filter yet, so with the gyro gone it goes on publishing its held estimate and stays the fused
+    source -- withholding would hand flight.py no attitude at all. `blind` still goes up, on this board
+    as on every other: the health flag is the only thing that says the filter lost its gyro.
+    Driven tick by tick, so the count is exact. 5 = the module's _BLIND_CYCLES (a const: not readable
+    from here on the board).
+    """
+    rate_handle = unit._rate
+    accel_ch.push(_accel_for(0, 0))
+    rate_ch.push((0, 0, 0))
+    unit._tick()
+    assert not unit.blind and unit._attitude_param.read()[1] == 'attitude'
+    unit._rate = _Blind()
+    for cycle in range(4):  # 1..4 gyro-less cycles are a GC pause or a stall, not a lost gyro
+        unit._tick()
+        assert not unit.blind, 'blind after only %d gyro-less cycles' % (cycle + 1)
+    unit._tick()
+    assert unit.blind, 'five gyro-less cycles in a row must raise blind'
+    unit._roll_cd = 1234
+    unit._tick()
+    value, source, _age = unit._attitude_param.read()
+    assert source == 'attitude' and value[1] == 1234, 'with no backup a blind filter must keep publishing'
+    unit._rate = rate_handle
+    unit._tick()
+    assert not unit.blind, 'one fresh gyro sample ends blind'
+
+    """
+    ...and through a REAL databoard channel, not the stub: a stale parameter's read() still returns a
+    value -- the last one, extrapolated -- with source None, so `blind` must be judged on the SOURCE. The
+    stub returns None for both and could not tell a value check from a source check.
+    """
+    stale_ch = databoard.Databoard.provide('stale_gyro', {'rate_blind_test': {'priority': 0, 'timeout_ms': 20}},
+                                           'rate_blind_test')
+    stale_ch.push((0, 0, 0))
+    unit._rate = databoard.Databoard.parameter('rate_blind_test')
+    unit._tick()
+    assert not unit.blind
+    await asyncio.sleep_ms(40)  # past the 20 ms window: stale
+    value, source, _age = unit._rate.read()
+    assert value is not None and source is None, 'a stale channel must read (value, None): %r' % ((value, source),)
+    for _ in range(5):
+        unit._tick()
+    assert unit.blind, 'a stale real channel (value present, source None) must make the filter blind'
+    unit._rate = rate_handle
+    unit._tick()
+    assert not unit.blind
+
+    # ...and BLIND WHILE MIRRORING: counted in either regime, so the flag is true before a handover
+    unit._rate = _Blind()
+    for _ in range(5):
+        primary.push((10.0, 500, 0))
+        unit._tick()
+    assert unit.blind and not unit._free, 'blind must be tracked while mirroring too'
+    unit._rate = rate_handle
+    unit._tick()
+    assert not unit.blind
+    await asyncio.sleep_ms(50)  # the p0 stand-in goes stale again before the backup cases
+
+    """
+    NEVER MIRROR A BACKUP. The SEN0253's BNO055 sits BELOW the filter (p2). When it wins a cycle -- the
+    filter was late, or blind -- copying it would overwrite the primary's estimate with the backup's,
+    heading frame and all. With the gyro alive the filter keeps its own state and stays the fused source.
+    A source at the filter's OWN rank does not outrank it either.
+    """
+    backup = databoard.Databoard.provide('backup', {'attitude': {'priority': 2, 'timeout_ms': 40}}, 'attitude')
+    databoard.Databoard.provide('peer', {'attitude': {'priority': 1, 'timeout_ms': 40}}, 'attitude')  # never pushed
+    assert unit._outranked('primary') and not unit._outranked('backup') and not unit._outranked('nobody')
+    assert not unit._outranked('peer'), 'an equal rank is not an outranking source'
+    feeder = asyncio.create_task(_feed(backup, (77.0, 2500, 1500)))  # the backup, kept FRESH throughout
+    rate_ch.push((0, 0, 0))
+    unit._roll_cd = unit._pitch_cd = 0
+    runner = asyncio.create_task(unit.run())
+    await asyncio.sleep_ms(200)
+    assert unit._attitude_param.read()[1] == 'attitude', 'the filter must stay the source with its gyro'
+    assert unit._roll_cd != 2500 and unit._pitch_cd != 1500, 'the filter copied the BNO055 backup'
+    assert unit._free and not unit.blind
+
+    """
+    BLIND -> WITHHOLD -> the backup takes over, end to end through run(). A filter with no gyro used to
+    publish its last attitude as FRESH forever, which masked a live backup below it. Lose the gyro:
+    within the blind limit + one freshness window the fused source is the BNO055 backup. Give it back:
+    the filter resumes and is the source again.
+    """
+    unit._rate = _Blind()
+    await asyncio.sleep_ms(300)
+    assert unit.blind, 'no gyro for 300 ms must make the filter blind'
+    assert unit._attitude_param.read()[1] == 'backup', 'a blind filter must hand the attitude to the backup'
+    unit._rate = rate_handle
+    await asyncio.sleep_ms(100)
+    assert not unit.blind and unit._attitude_param.read()[1] == 'attitude', 'the gyro is back: filter resumes'
+    runner.cancel()
+    feeder.cancel()
+    await asyncio.sleep_ms(0)
+
+    """
+    The same WITH a backup, tick by tick. NO FALSE WITHHOLD: 1..4 gyro-less cycles leave the filter
+    publishing. The fifth withholds, and once its last push ages out the backup is the source. And the
+    backup must be FRESH to count as cover -- a backup that went quiet too gets the no-backup behaviour
+    back (publish), rather than the filter falling silent with nothing under it.
+    """
+    for cycle in range(4):
+        backup.push((77.0, 2500, 1500))
+        unit._rate = _Blind()
+        unit._tick()
+        assert not unit.blind and unit._attitude_param.read()[1] == 'attitude', (
+            'withheld after only %d gyro-less cycles' % (cycle + 1))
+    backup.push((77.0, 2500, 1500))
+    unit._tick()
+    assert unit.blind
+    await asyncio.sleep_ms(50)  # the filter's last push ages past the 40 ms window; the backup's is renewed
+    backup.push((77.0, 2500, 1500))
+    unit._tick()
+    assert unit._attitude_param.read()[1] == 'backup', 'blind with a fresh backup must withhold'
+    await asyncio.sleep_ms(50)  # now the backup is stale as well
+    unit._tick()
+    assert unit.blind and unit._attitude_param.read()[1] == 'attitude', (
+        'blind with a STALE backup must publish -- going quiet would leave no attitude at all')
+    unit._rate = rate_handle
+    unit._tick()
+    assert not unit.blind and unit._attitude_param.read()[1] == 'attitude'
+
+    # RECORDED: this filter is the primary attitude, and it once created no stream at all
     assert unit._telemetry.filename == 'attitude.csv' and unit._telemetry.fields[:3] == (
         'heading_cd', 'roll_cd', 'pitch_cd'), unit._telemetry.fields
 
@@ -147,8 +271,17 @@ async def amain():
     unit._rate = _Blind()
     assert 'blind' in await unit.probe()
 
-    print('ok: attitude backup -- mirror (fresh only), gyro integrate, accel gravity correct, high-g reject, '
-          'publish format, probe')
+    print('ok: attitude filter -- mirror (fresh, outranking only), never mirrors a backup or a peer, blind '
+          'after 5 cycles not 1..4, blind with no backup keeps publishing, blind while mirroring, blind '
+          'with a fresh backup withholds (stale backup: publishes), resumes, gyro integrate, accel gravity '
+          'correct, high-g reject, publish format, probe')
+
+
+async def _feed(channel, value: tuple) -> None:
+    """Keep a stand-in source FRESH: push `value` every 10 ms, well inside its 40 ms window."""
+    while True:
+        channel.push(value)
+        await asyncio.sleep_ms(10)
 
 
 class _Blind:

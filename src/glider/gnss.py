@@ -246,7 +246,7 @@ class Gnss(task.Task):
                 speed = float(fields[7]) if fields[7] else 0.0  # knots (RMC field 7)
                 course = float(fields[8]) if fields[8] else 0.0
                 self._speed.push(speed * _KNOTS_TO_MS)  # m/s -> airspeed governor corrector (fix-gated)
-                if fields[8]:  # ground-track bearing (deg) -> the attitude backup's absolute yaw ref
+                if fields[8]:  # ground-track bearing (deg) -> the attitude filter's absolute yaw ref
                     self._course.push(course)
                 self._telemetry.push((latitude, longitude, speed, course))
         elif kind == 'GGA' and len(fields) > 9:

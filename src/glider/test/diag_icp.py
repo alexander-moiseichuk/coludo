@@ -1,14 +1,19 @@
 """
-Are the icp10111 read timeouts contention, or the part? Count them alone vs with its i2c:0 peers.
+Are the icp10111 read timeouts contention, or the part? Count them alone vs with its bus peers.
 
 OSError(116) = ETIMEDOUT appeared in bench runs. A healthy part on a quiet bus should never time out,
-so this isolates the variable: the SAME driver, same rate, with the other four i2c:0 devices (bno055,
-bmp280, sdp810, laser) enabled and then disabled. `errors` is per 30 s of run loop.
+so this isolates the variable: the SAME driver, same rate, with the other devices on ITS bus enabled
+and then disabled. Which devices those are depends on the board: on the v0.1 map the ICP shares i2c:0
+with the SEN0697, the pitot and the laser (and a SEN0253 backup where one is found); on the v1.x map it
+sits on i2c:1 with the pitot and the laser. So the peers are read from the RESOLVED config, never listed
+by hand -- the list that was here still named the retired SEN0253 as the attitude module. `errors` is
+per 30 s of run loop.
 """
 
 
 import asyncio
 
+import config
 import config_default
 import controller
 import drivers
@@ -16,7 +21,13 @@ import layout
 import recorder
 import tasks
 
-_PEERS = ('imu_bno055', 'baro_bmp280', 'airspeed_sdp810', 'laser_agl')
+
+def _peers(cfg: dict) -> tuple:
+    """The enabled sensors on the ICP-10111's bus in the resolved config (the ICP itself excluded)."""
+    icp = config.device(cfg, name='baro_icp10111')
+    return tuple(sensor['name'] for sensor in cfg['sensors']
+                 if sensor is not icp and sensor.get('enabled', True)
+                 and sensor.get('bus') == icp.get('bus') and sensor.get('id') == icp.get('id'))
 
 
 class FakeUart:
@@ -42,8 +53,11 @@ async def measure(with_peers: bool) -> tuple:
         if component['name'] in ('flight', 'sequencer', 'hitl', 'wifi', 'cc', 'watchdog'):
             component['enabled'] = False
     recorder.Recorder.setup(cfg, FakeUart())
+    peers = _peers(cfg)
+    print('  ICP-10111 on %s:%s, peers %s' % (config.device(cfg, name='baro_icp10111').get('bus'),
+                                             config.device(cfg, name='baro_icp10111').get('id'), peers))
     for sensor in cfg['sensors']:
-        if sensor['name'] in _PEERS and not with_peers:
+        if sensor['name'] in peers and not with_peers:
             sensor['enabled'] = False
     board = controller.Controller(cfg, log=lambda *a: None)
     await board.setup()

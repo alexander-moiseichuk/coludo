@@ -722,8 +722,16 @@ Example: for altitude the queue of selection could be the following
 
 Proper cross-analysis for initial fusion (backing) should be performed by documentation and can be tweaked later after trials. Sensor disagreements will be handled during timeouts and limits per each individually and switching to backup sensor. For example, the controller expects GPS data every 100 ms and if there is no data or repetative data for at least 200 ms then it will switch to the IMU.
 
-**Attitude backup (implemented 7/07, `tasks/attitude.py`).** `attitude` is the one quantity with a
-single hardware source — the BNO055 (fused 9-DoF, priority 0). Losing it mid-flight would hand the
+**Attitude filter (implemented 7/07, `tasks/attitude.py`; primary since 10/05).** Since the SEN0697
+replaced the SEN0253 on every board, the filter is the **primary** attitude source at priority 1 (p0 is
+the HITL sim's slot): the BMI323/LSM6DSO32 gyro `rate` and accel gravity vector, with the BMM350 as its
+heading reference. A SEN0253 found on the board (the taster, experimental units) is a lower-ranked
+**backup**; layout ranks it there in code, whatever an old config says, and a filter blind for 5 cycles
+hands over to it -- only when such a backup is fresh (doc/specs/board-config.md). **Known limits of
+that backup path, for the HITL round** (no flight board carries a backup): when the gyro returns, the
+filter resumes from the roll/pitch it froze at instead of seeding them from the fresh backup; and a
+BNO055 gap over 40 ms lets the frozen filter win for that moment. The 7/07 text below
+describes the original arrangement, when the BNO055 was the single hardware source (priority 0). Losing it mid-flight would hand the
 control loop stale/absent attitude → neutral fins → ballistic, so a **complementary-filter backup**
 derives (heading, roll, pitch) from the LSM6DSO32 gyro `rate` + accel gravity vector and provides it
 at **priority 1**; the databoard's timeout handoff (40 ms) then swaps to it automatically the moment

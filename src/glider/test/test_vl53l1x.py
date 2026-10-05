@@ -38,9 +38,16 @@ async def amain():
     Run against whatever is actually soldered, so this asserts on the PAIR rather than on one part:
     at most one may claim the socket, and on a board with a laser fitted exactly one must.
     """
+    """
+    Lay the socket out where THIS board has it. TMS-7C is why this matters: the old single tally read its
+    v0.1 map + SEN0697 as v1.1 and hunted the laser on an empty i2c:1, so neither driver could claim a
+    socket that was answering on i2c:0. An undecided scan leaves the default (v0.1) map as written --
+    apply() has no revision to lay out, and the scan detail below then carries the evidence.
+    """
     cfg = config_default.default()
     revision, _detail = layout.detect(cfg)
-    layout.apply(cfg, revision)
+    if revision is not None:
+        layout.apply(cfg, revision)
     laser = [device for device in cfg['sensors'] if device['name'] == 'laser_agl'][0]
     # carry `provides` too: a driver that reaches provide() is a driver that PASSED its id check and
     # its init, so omitting it turns a successful bring-up into a KeyError and hides the real result
@@ -81,7 +88,7 @@ async def amain():
 
     """
     And the layout side: the L1X entry must FOLLOW the L4CX's socket onto whatever bus the revision
-    puts it on, or a v1.0 board would hunt it on the v0.1 bus. It must not vote separately, either --
+    puts it on, or a v1.x board would hunt it on the v0.1 bus. It must not vote separately, either --
     two candidate drivers for one socket are one piece of evidence, not two.
     """
     for candidate in ('laser_agl', 'laser_agl_l1x'):

@@ -31,6 +31,20 @@ def main():
     Databoard.write('altitude', 201.0, 'bmp')  # bmp fresh, icp now stale
     assert Databoard.value('altitude') == 201.0 and Databoard.read('altitude')[1] == 'bmp'
 
+    # rank(): each source's registered priority -- how a provider tells a source that outranks it from
+    # one it outranks (the attitude filter mirrors the first, never the second); unknown -> None
+    altitude = Databoard.parameter('altitude')
+    assert altitude.rank('icp') == 0 and altitude.rank('bmp') == 1
+    assert altitude.rank('gnss') is None and altitude.rank(None) is None
+
+    # fresh_below(): is something UNDER a rank fresh -- whether a provider can fall silent and leave the
+    # parameter covered (the blind attitude filter withholds only then). bmp is fresh below icp; nothing
+    # sits below bmp; and a stale bmp covers nobody (NEGATIVE both ways)
+    assert altitude.fresh_below(0) is True and altitude.fresh_below(1) is False
+    time.sleep_ms(70)
+    assert altitude.fresh_below(0) is False, 'a stale source below must not count as cover'
+    Databoard.write('altitude', 201.0, 'bmp')  # fresh again, as the inspect() snapshot below expects
+
     # single-provider passthrough, vector value
     Databoard.provide('adxl', {'accel': {'priority': 0, 'timeout_ms': 100}})
     Databoard.write('accel', (1.0, 2.0, 3.0), 'adxl')
@@ -148,8 +162,9 @@ def main():
     channel.t1 = 20
     assert channel.fresh(0, window) is False
 
-    print('ok: databoard provide/parameter ergonomics, rank-preference, shared-window handover, '
-          'primary extrapolation, offset reconciliation, freshness across the ticks_us wrap')
+    print('ok: databoard provide/parameter ergonomics, rank-preference, rank() per source, fresh_below(), '
+          'shared-window handover, primary extrapolation, offset reconciliation, freshness across the '
+          'ticks_us wrap')
 
 
 main()

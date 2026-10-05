@@ -3,7 +3,7 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 On-board test for the BMP581 driver (drivers/bmp581.py): @task.driver('bmp581') registration, graceful
 setup when absent, and that the raw-to-engineering conversion is right in BOTH signs. Deterministic
-whether or not a BMP581 is wired (it is fitted only on v1.1 boards). Run by `make test`.
+whether or not a BMP581 is wired (the SEN0697: every revision but v1.0). Run by `make test`.
 """
 
 import asyncio

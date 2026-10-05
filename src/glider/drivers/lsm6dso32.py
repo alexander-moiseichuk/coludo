@@ -1,7 +1,7 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-LSM6DSO32 6-DoF IMU: the primary raw accel + the sole gyro 'rate'. A +/-32 g accel range (covers the
+LSM6DSO32 6-DoF IMU: the primary raw accel + the primary gyro 'rate'. A +/-32 g accel range (covers the
 8-12 g boost without clipping, fine 1 g resolution for the airspeed integrator) plus a +/-2000 dps
 gyro. @task.driver('lsm6dso32'). setup() checks WHO_AM_I, configures accel/gyro, and provides both the
 'accel' (x,y,z in g) and 'rate' (x,y,z in deg/s) databoard slots; run() writes the latest reading. If

@@ -105,7 +105,7 @@ first powered flight.
       - `mag` dropping back to 2 afterwards is EXPECTED and no longer means anything: the register is
         the chip's confidence in its recent data, not what it has learned. The board latches the
         convergence, so `calibrated` stays true
-- [ ] **CALIBRATE THE BMM350 — ONCE PER BOARD (v1.1 boards only).** The SEN0697 replaces the BNO055,
+- [ ] **CALIBRATE THE BMM350 — ONCE PER BOARD (every SEN0697 board: v1.1, and 7C on v0.1).** The SEN0697 replaces the BNO055,
       and its magnetometer is raw: nothing fuses it, so the airframe's own hard iron (servos, the motor,
       steel) sits on top of the field as a fixed vector. Measured on the bench fixture, that shifts
       heading by up to **214°** and — this is the point — by a DIFFERENT amount on every heading, so the

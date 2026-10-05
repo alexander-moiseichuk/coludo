@@ -417,7 +417,7 @@ class Body:
         Ground-track bearing (deg) -- the direction the glider MOVES over the ground.
 
         Air velocity along the heading PLUS the wind. In no wind it equals the heading; a crosswind adds
-        a crab angle. This is what a GNSS receiver reports as course (the attitude backup's absolute yaw
+        a crab angle. This is what a GNSS receiver reports as course (the attitude filter's absolute yaw
         ref).
 
         Returns:

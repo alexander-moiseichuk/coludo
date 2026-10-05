@@ -73,14 +73,17 @@ def test_wiring():
     """
     simulated = ('accel', 'attitude', 'rate', 'agl', 'altitude', 'elevation', 'position', 'speed',
                  'course', 'airspeed', 'dynamic_pressure', 'mag')
-    for revision in layout._REVISIONS:
-        resolved = config_hitl.default(motor='E16')
-        layout.apply(resolved, revision)
-        config_hitl.mask(resolved)
-        for sensor in resolved['sensors']:
-            if sensor.get('driver') and sensor.get('enabled', True):
-                clash = [name for name in (sensor.get('provides') or {}) if name in simulated]
-                assert not clash, '%s: real %s publishes simulated %s' % (revision, sensor['name'], clash)
+    # ...including a bench carrying BOTH attitude modules, where the scan ENABLES the SEN0253 backup
+    for found in (None, (), ('baro_bmp280', 'imu_bno055')):
+        for revision in layout._REVISIONS:
+            resolved = config_hitl.default(motor='E16')
+            layout.apply(resolved, revision, found)
+            config_hitl.mask(resolved)
+            for sensor in resolved['sensors']:
+                if sensor.get('driver') and sensor.get('enabled', True):
+                    clash = [name for name in (sensor.get('provides') or {}) if name in simulated]
+                    assert not clash, '%s %s: real %s publishes simulated %s' % (
+                        revision, found, sensor['name'], clash)
     comp = {c['name']: c for c in cfg['components']}
     assert comp['hitl']['enabled'] and comp['hitl']['noise'] == 0.1 and comp['hitl']['motor'] == 'E16'
     assert comp['flight']['enabled'] and comp['watchdog']['enabled'] is False

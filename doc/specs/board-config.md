@@ -166,27 +166,65 @@ identical behaviour every time.
   count per device (flaky breadboard contacts; `1` = no retry). (`rev` is still in every config but
   nothing reads it; the board revision is `layout`.)
 - **`board.layout`** — which main-board revision to lay the config out for, applied at boot by
-  `layout.resolve()` before any driver is set up. The revisions differ in which I²C bus four devices
-  sit on, the `i2c:1` clock, and which attitude parts are fitted.
+  `layout.resolve()` before any driver is set up. Two things are decided, and they are separate:
+  - **the bus MAP** — `v0.1` or `v1.x`: which I²C bus four devices sit on (ICP-10111 `0x63`, SDP810
+    `0x25`, laser `0x29`, INA226 `0x40`), the `i2c:1` clock (400 / 100 kHz), whether the ADXL375 (SPI)
+    is fitted, and which optional control pins are routed (the laser INT/XSHUT on v0.1 only; GPIO4
+    `accel_int1` belongs to the ADXL375 on v0.1 and to the BMI323 on v1.x). **Placement alone decides
+    the map**: the attitude module sits on `i2c:0` on every board, so it never votes for one.
+  - **the attitude MODULE** — the **SEN0697** (BMI323 `0x69` + BMP581 `0x47` + BMM350 `0x15`) is the
+    PRIMARY on every board and is expected (enabled) on every revision except the declared legacy
+    `v1.0`. The **SEN0253** (BNO055 `0x28` + BMP280 `0x76`) is `v1.0`'s module and otherwise belongs to
+    no revision: it is an optional **backup**, enabled only when a boot scan finds it. A taster or an
+    experimental board may carry both; flight boards normally carry the SEN0697 alone.
+  - **the RANKING** — wherever the SEN0253 is enabled, `layout.apply()` demotes each of its quantities
+    to strictly below every enabled SEN0697 / attitude-filter provider of it (`attitude` p2 behind the
+    filter's p1, BMP280 p2 behind the BMP581's p1, BNO055 `accel` below the BMI323 and the ADXL375), and
+    the ADXL375 to one below the BMI323 on `accel` wherever both are enabled (v0.1). **In code, whatever
+    the config says**: every config saved before 2026-10-05 carries the BNO055 at `attitude` p0 and the
+    BMP280 tied with the BMP581. It only ever demotes; each move is in the boot log
+    (`imu_bno055 attitude p0->p2`).
+
+  The three revision names:
+
+  | revision | bus map | attitude module | board |
+  |---|---|---|---|
+  | `v0.1` | v0.1 (+ ADXL375) | SEN0697 | TMS-7C, the one v0.1 board left |
+  | `v1.1` | v1.x | SEN0697 | the taster, TMS-7F |
+  | `v1.0` | v1.x | SEN0253 alone, no SEN0697 — **legacy, declared only** | TMS-7E as built, configs saved for it |
+
   - `v0.1` / `v1.0` / `v1.1` — **declared: always wins**, no scan. `layout.apply()` rewrites the
-    config for that revision.
+    config for that revision. With no scan there is nothing to say whether a SEN0253 is fitted, so on
+    `v0.1` / `v1.1` its parts keep the config's own `enabled` — off in the default, on only where the
+    config says so. A declared `v1.0` enables them: that build IS the SEN0253.
   - `auto` (the `config_default.py` value; any value other than the three revisions does the same) —
-    scan both buses and vote. An undecided scan changes nothing and says so.
+    scan both buses. The map is the placement majority, and **a scan never names `v1.0`**: the v1.x map
+    is always `v1.1`, whichever module answered, because the SEN0697 is the one expected and a missing
+    primary must fail its setup and refuse `arm`, not be switched off. The SEN0253 parts the scan found
+    on `i2c:0` are enabled and the rest disabled. **An empty, anchorless or tied scan is undecided**: the
+    bus map and the fitted parts stay as written and the boot log says so — the config as written runs,
+    and the default as written expects the SEN0697 on the v0.1 map. Only the ranking still applies.
   - **Absent = a declared `v0.1`**, not `auto`: a saved config replaces the default wholesale, and
-    every profile written before the key existed is a v0.1 airframe (the 7C/7D configs carry no
-    `layout` on purpose). **So a keyless config copied onto a v1.x board comes up laid out as v0.1**
+    every profile written before the key existed is a v0.1 airframe (the 7C configs carry no `layout`
+    on purpose). **So a keyless config copied onto a v1.x board comes up laid out as v0.1**
     — ICP-10111, pitot and laser on the wrong bus, v0.1's parts enabled — and `health.layout` reads
     `v0.1 (declared)`. Give a v1.x profile `"layout": "auto"` or its revision.
+  - A config saved before 2026-10-05 (schema `20260828`) still carries the old module meaning: BNO055
+    at `attitude` p0 and enabled, SEN0697 disabled or missing. Revision `v0.1` now enables the SEN0697
+    (where the entries exist) but leaves a declared SEN0253 enabled, so such a profile on a SEN0697
+    board fails the BNO055's setup and refuses `arm` — regenerate it (`tools/make_telemetry_config.py`).
+    Its priorities need no regeneration: the ranking above corrects them at boot.
 
-  `health.layout` shows what this boot applied (`v1.0`, `v0.1 (declared)`, `undecided`); the CC
-  `detect` command re-scans on demand and reports the verdict beside it, applying nothing until the
-  next boot. See [`../hardware.md`](../hardware.md) → *Running one firmware on both boards*.
+  `health.layout` shows what this boot applied (`v1.1`, `v0.1 (declared)`, `undecided`); the CC
+  `detect` command re-scans on demand and reports the verdict beside it, with the evidence
+  (`placement v0.1:N v1.x:M`, `SEN0697 n/3`, `SEN0253 n/2`), applying nothing until the next boot. See
+  [`../hardware.md`](../hardware.md) → *Running one firmware on both boards*.
 
-  `layout.apply()` sets `enabled` on every **revision-dependent** part (the ADXL375, the SEN0253's
-  BNO055 + BMP280, the SEN0697's BMI323 + BMM350 + BMP581) from what the revision fits, so an
-  `enabled: false` on one of those is overridden at boot. To take a dead or removed one out, give it
-  **`"fitted": false`** as well: apply() then keeps it disabled. Any other device is left alone and
-  `enabled: false` is enough.
+  `layout.apply()` sets `enabled` on every **revision-dependent** part (the ADXL375 and the SEN0697's
+  BMI323 + BMM350 + BMP581) from what the revision fits, and — after a scan, or on a declared `v1.0` —
+  on the SEN0253's BNO055 + BMP280, so an `enabled: false` on one of those is overridden at boot. To take a
+  dead or removed one out, give it **`"fitted": false`** as well: apply() then keeps it disabled. Any
+  other device is left alone and `enabled: false` is enough.
 - **`fins`** — one home for fin/servo control: `concurrency` (max servos slewing at once through
   `servo.move()`; `== fin count` = no limit). **It gates `move()` only**, and nothing at boot or in
   flight calls it: boot centring, the mixer, probe sweeps and `update` write the PWM directly, so it

@@ -126,9 +126,10 @@ class Hitl(task.Task):
                      'course', 'airspeed', 'dynamic_pressure', 'mag')}
         self._ch = databoard.Databoard.provide(self.name, provided)
         """
-        attitude-redundancy validation: a runner flips this True mid-glide to simulate a BNO055 death
-        (stop publishing the sim `attitude`); accel + rate keep flowing, so the priority-1 attitude backup
-        (tasks/attitude.py) must take over the fused slot and keep the glider controllable.
+        attitude-filter validation: a runner flips this True mid-glide to stop publishing the sim's p0
+        `attitude` (the truth slot the filter mirrors here); accel + rate keep flowing, so the priority-1
+        filter (tasks/attitude.py) -- what a real board flies on -- must take over the fused slot on its
+        own estimate and keep the glider controllable.
         """
         self.drop_attitude: bool = False
         """
@@ -236,7 +237,7 @@ class Hitl(task.Task):
         # databoard -> the control loop. roll/pitch are centidegree fixnum for the fixed-point PID (heading
         # stays float for the nav trig); the sim's float physics wraps to fixnum once, here at the boundary.
         self._ch['accel'].push((accel[0], accel[1], accel[2]))
-        if not self.drop_attitude:  # simulated BNO055 death -> the priority-1 backup must carry attitude
+        if not self.drop_attitude:  # dropped -> the priority-1 filter must carry the attitude alone
             self._ch['attitude'].push((heading, from_float(roll), from_float(pitch)))
         """
         gyro rate -> the PID D term (rate damping). Noised deg/s (like the other IMU channels so the D term

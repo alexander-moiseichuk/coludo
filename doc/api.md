@@ -709,6 +709,8 @@ Holds a rank-ordered channel per source; value() fuses by rank and freshness, fa
 extrapolation of the primary when none is fresh.
 
 - `__init__(name: str)` — constructor
+- `rank(source: str) -> int` — The priority `source` registered at here, or None when it never registered.
+- `fresh_below(rank: int) -> bool` — Whether a source ranked BELOW `rank` (a higher priority number) is fresh right now.
 - `add_source(source: str, rank: int, expire_us: int, reconcile: bool=False) -> _Channel` — Register (or re-register) a source at `rank`; return its channel to push() to directly.
 - `write(value, source: str) -> None` — Report a source's latest reading by name (a convenience; sensors push() their channel).
 - `value()` — The fused estimate (offset-reconciled when enabled); None if nothing was ever written.
@@ -829,7 +831,7 @@ atan2(y, x) as a CENTIDEGREE fixnum, four-quadrant, via integer CORDIC -- NO flo
 y and x are a RATIO-FREE integer direction vector: only their ratio sets the angle, and their
 MAGNITUDE only trades precision (the CORDIC's right-shifts discard low bits, so bigger inputs keep
 more). Fed the control's centi-fixnum scale (accel g via from_float, ~x100) the error is ~0.5 deg
-typical / 1.8 deg worst over the glide envelope -- fine for the attitude backup; x1000 would tighten
+typical / 1.8 deg worst over the glide envelope -- fine for the attitude filter; x1000 would tighten
 to ~0.16 deg if a caller ever needs it. CORDIC needs x >= 0, so x < 0 reflects into the right
 half-plane and the 180 deg is added back per quadrant.
 
@@ -855,7 +857,7 @@ Returns:
 One complementary-filter step in centidegrees (viper).
 
 `state + delta` (gyro integration), then optionally a `1/2^shift` pull toward `target` (the accel
-angle). Pure integer -> zero float boxed; the attitude backup runs it per axis each control step
+angle). Pure integer -> zero float boxed; the attitude filter runs it per axis each control step
 (tasks/attitude.py).
 
 Args:
@@ -1191,29 +1193,54 @@ three for computed values.
 
 _Tested by `test/test_layout.py`._
 
-Which board is this -- v0.1 or v1.0 -- decided by I2C scan, before any driver is set up.
+Which board is this, decided by I2C scan before any driver is set up: the BUS MAP from where the moving
+devices answer; the attitude parts then follow from the revision and from what the scan found.
 
-The two layouts differ only in which bus each device hangs off (doc/hardware.md, "Transition"), so one
-firmware can serve both if it can tell them apart. It can: four addresses swap buses between the
-revisions, which is four independent votes rather than one hinge, so a single dead device cannot flip
-the verdict.
+There are two bus maps, and they differ only in which bus four devices hang off (doc/hardware.md,
+"Transition"), so one firmware can serve both if it can tell them apart. It can: four addresses swap
+buses between the maps, which is four independent votes rather than one hinge, so a single dead device
+cannot flip the verdict.
 
-                       i2c:0                                   i2c:1
-    v0.1   0x18 0x28 0x76 0x63 0x25 0x29                 0x40
-    v1.0   0x18 0x28 0x76 0x40                           0x63 0x25 0x29
-    v1.1   0x18 0x69 0x47 0x15 0x40                      0x63 0x25 0x29
+                   i2c:0                          i2c:1
+    v0.1 map   0x18 0x63 0x25 0x29  + module      0x40
+    v1.x map   0x18 0x40            + module      0x63 0x25 0x29
 
-Three revisions, and they separate on two independent axes. The four devices that MOVE BUS separate
-v0.1 from the v1.x pair; the ATTITUDE PARTS separate v1.0 from v1.1, because the SEN0253 (BNO055 0x28 +
-BMP280 0x76, one module) gives way to the SEN0697 (BMI323 0x69 + BMP581 0x47 + BMM350 0x15). The
-ADXL375 is on SPI and invisible here, so "no ADXL375" is carried by the revision, never scanned for.
+    SEN0697  BMI323 0x69  BMP581 0x47  BMM350 0x15   i2c:0   PRIMARY: expected on every scanned board
+    SEN0253  BNO055 0x28  BMP280 0x76                i2c:0   BACKUP: enabled only when the scan finds it
+
+THE MAP IS DECIDED BY PLACEMENT ALONE. The attitude module sits on i2c:0 on every board, so where it
+answers says nothing about where the front devices are. It used to vote anyway, counted into one tally
+with the placement votes, and that put a v0.1 board on the wrong map: TMS-7C, the one v0.1 board left
+and now carrying a SEN0697, read v1.1 on three module votes against two placement votes, and its laser,
+pitot and ICP-10111 were moved to an i2c:1 with nothing on it (scan 2026-10-05: i2c:0 0x15 0x18 0x25
+0x29 0x47 0x63 0x69, i2c:1 empty).
+
+The three revision names stay, because configs and captures carry them:
+
+    v0.1   the v0.1 map + the SEN0697 + the ADXL375 on SPI    TMS-7C
+    v1.1   the v1.x map + the SEN0697                         the taster, TMS-7F
+    v1.0   the v1.x map + the SEN0253 alone                   legacy: TMS-7E as built -- DECLARED only
+
+A SCAN NEVER ANSWERS v1.0. The v1.x map always scans as v1.1, because the SEN0697 is the module every
+board is expected to carry: when it is missing, its setup fails and `arm` refuses. A scanned v1.0 used to
+switch it off instead -- a two-module board whose SEN0697 connector had worked loose read v1.0 and would
+have flown on the backup with nothing refusing. v1.0 survives as a DECLARED revision for the legacy build
+and the configs saved for it, and there the SEN0253 IS the module: apply() enables it.
+
+Everywhere else THE SEN0253 IS A BACKUP: a taster or an experimental board may carry both modules
+(different addresses on the same bus), while a flight board normally carries the SEN0697 alone. After a
+scan, apply() enables the SEN0253 parts that answered and disables the rest; a declared v0.1 / v1.1 runs
+no scan, so the config's own `enabled` stands. Wherever it ends up enabled, apply() RANKS it below the
+SEN0697 and the attitude filter on every quantity they share -- in code, whatever the config says,
+because every config saved before 2026-10-05 carries the BNO055 at attitude priority 0 (see _BELOW).
+
+The ADXL375 is on SPI and invisible here, so "no ADXL375" is carried by the map, never scanned for.
 
 `0x18` is the ANCHOR: the ES8311 audio codec soldered to the WaveShare board itself. It says nothing
-about the revision -- it is present on all of them -- which is exactly what an anchor is for: proving the
-scan reached a live bus rather than returning an empty set. It replaces the old pair of anchors (0x28 +
-0x76), and it is a better one precisely because it cannot be unplugged: those two were the SEN0253, so
-fitting a SEN0697 removed both and detection would have refused on a perfectly good board. The other
-known-present addresses stay in the list as fallbacks in case a board ever ships without the codec.
+about the revision (every board has it), and that is exactly what an anchor is for: proving the scan
+reached a live bus rather than returning an empty set. Because it is soldered down, no sensor swap can
+remove it. The other known-present addresses stay in the list as fallbacks, in case a board ever ships
+without the codec.
 
 Scanning does NOT go through i2cbus.get(): that caches a Bus per id, and the cached frequency would then
 outlive detection -- a scan at 100 kHz would pin the fast bus at 100 kHz for the whole flight. Raw I2C
@@ -1222,25 +1249,15 @@ whatever speed the chosen layout declares.
 
 ### `detect(cfg: dict) -> tuple`
 
-Decide the layout from the buses themselves.
-
-Two independent kinds of evidence, counted into one tally per revision:
-
-  * a MOVED device votes for whichever revisions put it on the bus it actually answered on. This
-    separates v0.1 from the v1.x pair and says nothing within it.
-  * a FITTED part votes for the revisions that carry it. This is what separates v1.0 from v1.1,
-    since the SEN0253 and the SEN0697 occupy different addresses on the same bus.
-
-Absence never votes AGAINST. A dead or unfitted part costs its revision one vote rather than casting
-one for another, so no single failure can flip a verdict -- the whole reason the tally is spread over
-several addresses instead of hinging on one.
+Decide the layout from the buses themselves (see _verdict for the rules).
 
 Args:
     cfg - the board config, read for bus pins only (nothing is mutated).
 
 Returns:
-    (name, detail) where name is one of _REVISIONS, or None. None means undecided, and the caller
-    must then leave the config exactly as written -- a guess mis-buses every sensor at once.
+    (name, detail) where name is 'v0.1' or 'v1.1' (a scan never names v1.0), or None. None means
+    undecided, and the caller must then leave the bus map as written -- a guess mis-buses every
+    sensor at once.
 
 ### `fitted(device: str, revision: str) -> bool`
 
@@ -1255,6 +1272,10 @@ An UNDECIDED detection (revision not in _REVISIONS) answers False for the parts 
 unknown is not evidence of presence, and a test that demands a part on an unidentifiable board
 reports a hardware fault when what it found was an inconclusive scan.
 
+The SEN0253 (BNO055 + BMP280) answers True on _BACKUP_REVISIONS only, where it is the module. No
+other revision guarantees it: only a scan finds it there, and the resolved config's `enabled` is
+what records the result.
+
 Args:
     device - the config device name, e.g. 'accel_adxl375'.
     revision - the board revision, as detect() / RESOLVED gives it.
@@ -1262,17 +1283,20 @@ Args:
 Returns:
     True when the part is fitted on that revision.
 
-### `apply(cfg: dict, revision: str) -> list`
+### `apply(cfg: dict, revision: str, found: tuple=None) -> list`
 
-Rewrite the config in place for a revision: bus membership, the i2c:1 clock, and what is not fitted.
+Rewrite the config in place for a revision: bus membership, the i2c:1 clock, what is fitted, ranks.
 
-Only the four moving devices, one bus frequency and the not-fitted list differ between revisions --
-no pin is renumbered, so `pins` is untouched. The laser's optional control pins are dropped on v1.0
-because those GPIOs are freed there; the driver already treats both as optional.
+Only the four moving devices, one bus frequency, the revision-dependent parts, the backup module,
+a few optional control pins and the backup ranking (_BELOW) differ -- no pin is renumbered, so
+`pins` is untouched.
 
 Args:
     cfg - the board config, MUTATED.
-    revision - 'v0.1' or 'v1.0'.
+    revision - one of _REVISIONS.
+    found - the _BACKUP (SEN0253) parts a scan found: those are enabled and the rest disabled. None
+        means there was no scan (a declared revision), and the config's own `enabled` stands --
+        except on _BACKUP_REVISIONS, which fit the whole SEN0253 either way.
 
 Returns:
     A list of human-readable change strings, for the boot log. Empty when the config already
@@ -1280,17 +1304,20 @@ Returns:
 
 ### `resolve(cfg: dict, log=print) -> str`
 
-The boot entry point: honour an explicit `board.layout`, else detect, else change nothing.
+The boot entry point: honour an explicit `board.layout`, else detect, else change the bus map not.
 
-An explicit 'v0.1' / 'v1.0' always wins over the scan, so a board can be pinned when a sensor is
-unfitted and would otherwise abstain its way to a wrong verdict. 'auto' (the default) scans.
+An explicit 'v0.1' / 'v1.0' / 'v1.1' always wins over the scan, so a board can be pinned when a
+sensor is unfitted and would otherwise abstain its way to a wrong verdict. 'auto' (the default)
+scans. A declared v0.1 / v1.1 never touches the SEN0253's `enabled`: with no scan there is nothing to
+say whether it is fitted, so the config's own value stands (a declared v1.0 fits it -- it IS v1.0).
+Whatever the path, an enabled SEN0253 is ranked below the SEN0697 (_BELOW).
 
 Args:
-    cfg - the board config, mutated when a revision is applied.
+    cfg - the board config, mutated when a revision is applied (and by the ranking on any path).
     log - line logger.
 
 Returns:
-    The revision applied, or None when nothing was changed.
+    The revision applied, or None when the scan was undecided.
 
 ## `main.py`
 
@@ -2439,10 +2466,12 @@ Elevation is metres above the startup ground zero, captured per-sensor so it is 
 
 _Tested by `test/test_bno055.py`._
 
-BNO055 9-DOF IMU (on the SEN0253) over the shared I2C bus: the attitude channel.
-@task.driver('bno055'). In NDOF fusion mode the chip computes absolute orientation on-chip; run() reads
-the Euler angles (heading, roll, pitch in degrees) to the databoard 'attitude' slot. Graceful: a
-wrong/absent chip id -> setup False -> the Controller skips it.
+BNO055 9-DOF IMU (on the SEN0253) over the shared I2C bus: the BACKUP attitude source, at priority 2
+below the SEN0697's complementary filter. The SEN0253 is fitted only as a backup now (or as the module
+of a declared legacy v1.0); layout enables it only when a scan finds it, and ranks it below the filter
+whatever priority a saved config gives it. @task.driver('bno055'). In NDOF fusion mode the chip computes
+absolute orientation on-chip; run() reads the Euler angles (heading, roll, pitch in degrees) to the
+databoard 'attitude' slot. Graceful: a wrong/absent chip id -> setup False -> the Controller skips it.
 
 BNO055's INT pin signals motion/threshold events, not a fusion data-ready, so this driver polls at
 period_ms (the fusion engine runs at 100 Hz internally); the wired int_pin is reserved for future event
@@ -2454,7 +2483,8 @@ BMP280.
 9-DOF IMU to the databoard: fused attitude and a calibrated low-g accelerometer.
 
 NDOF fusion attitude (heading, roll, pitch in degrees) -> 'attitude', plus the calibrated
-accelerometer (g, including gravity) -> 'accel' as a low-g backup to the ADXL375 (priority 1).
+accelerometer (g, including gravity) -> 'accel' as a low-g backup (priority 3, behind the BMI323 and
+the ADXL375).
 
 - `setup() -> bool`
 - `sample() -> tuple` — Read the ACC..EUL block and return a FLAT 6-tuple (run() slices it).
@@ -2549,7 +2579,7 @@ Blink a status pattern on one GPIO derived from the controller's state + health.
 
 _Tested by `test/test_lsm6dso32.py`._
 
-LSM6DSO32 6-DoF IMU: the primary raw accel + the sole gyro 'rate'. A +/-32 g accel range (covers the
+LSM6DSO32 6-DoF IMU: the primary raw accel + the primary gyro 'rate'. A +/-32 g accel range (covers the
 8-12 g boost without clipping, fine 1 g resolution for the airspeed integrator) plus a +/-2000 dps
 gyro. @task.driver('lsm6dso32'). setup() checks WHO_AM_I, configures accel/gyro, and provides both the
 'accel' (x,y,z in g) and 'rate' (x,y,z in deg/s) databoard slots; run() writes the latest reading. If
@@ -2872,33 +2902,51 @@ Join + maintain the STA link; Inspectable as 'wifi'.
 
 _Tested by `test/test_attitude.py`._
 
-Attitude REDUNDANCY: a complementary-filter backup for the BNO055 (coludo.md "Sensors Fusion/Backup").
-The BNO055 is the sole fused-attitude source; losing it mid-flight would leave the flight loop with
-stale/absent attitude -> neutral fins -> ballistic. This task derives (heading, roll, pitch) from the
-LSM6DSO32 gyro `rate` + accel gravity vector and PROVIDES it on the databoard at PRIORITY 1, so the
-existing timeout-handoff fusion swaps to it automatically the moment the BNO055 (priority 0) stops -- no
-change to flight.py.
+The PRIMARY attitude: a complementary filter over the SEN0697 + LSM6DSO32 (coludo.md "Sensors
+Fusion/Backup"). It derives (heading, roll, pitch) from the gyro `rate` (LSM6DSO32, backed up by the
+BMI323) + the accel gravity vector, with the BMM350 and the GNSS ground track as heading references,
+and PROVIDES it on the databoard at PRIORITY 1. It began as the backup to the BNO055; since 2026-10-05
+the SEN0697 is the primary module on every board and the SEN0253's BNO055, where one is still fitted,
+is the BACKUP below this filter, at priority 2.
+
+Priority 0 is left to the HITL sim, which publishes the true attitude there. Losing attitude mid-flight
+leaves the flight loop stale -> neutral fins, and the databoard's timeout handoff picks whichever
+source is still fresh, with no change to flight.py.
 
 @task.activity('attitude'). Two regimes, checked each cycle by the fused-attitude SOURCE:
-  * BNO055 alive (it is the fused source): MIRROR it -- copy roll/pitch (already fixnum cd) + heading,
-    staying warm and FRESH so the handoff is seamless, no atan2/accel math (the BNO055 is trusted).
-  * BNO055 lost (source is us / extrapolated): FREE-RUN -- integrate the gyro rate (integer) and, when
-    |accel| ~ 1 g (a trustworthy gravity vector), pull roll/pitch toward the accel angle via the integer
-    CORDIC fixed.atan2_cd (throttled -- drift correction is slow). Heading is gyro-z only (it drifts: the
-    LSM6DSO32 has no magnetometer) -- roll/pitch stay solid (gravity-referenced), so the glider holds
-    wings-level + pitch; nav heading degrades gracefully. Integer/fixnum throughout; the only boxed float
-    is the heading value the channel format requires (nav consumes heading as float degrees).
+  * a source that OUTRANKS this filter is winning (the HITL sim): MIRROR it -- copy roll/pitch (already
+    fixnum cd) + heading, staying warm and FRESH so the handoff is seamless. A source ranked BELOW the
+    filter (the BNO055 backup) is NEVER mirrored, even when it wins a cycle because this task was late:
+    copying it would overwrite the primary's estimate with the backup's -- and its heading is in another
+    frame (magnetic, not the learned track).
+  * otherwise FREE-RUN -- integrate the gyro rate (integer) and, when |accel| ~ 1 g (a trustworthy
+    gravity vector), pull roll/pitch toward the accel angle via the integer CORDIC fixed.atan2_cd
+    (throttled -- drift correction is slow). Heading is gyro-z, pulled toward the GNSS track and the
+    magnetometer -- roll/pitch stay solid (gravity-referenced), so the glider holds wings-level + pitch.
+    Integer/fixnum throughout; the only boxed float is the heading value the channel format requires
+    (nav consumes heading as float degrees).
+
+BLIND: with no fresh gyro for _BLIND_CYCLES cycles in a row the filter is BLIND, on every board, in
+either regime. `blind` goes up and cc_client reports it as the health flag `attitude-blind` -- before it,
+nothing said the filter had lost its gyro. What the filter then publishes depends on what is below it:
+  * a FRESH source ranked below it (the SEN0253's BNO055): WITHHOLD the output, so the channel goes stale
+    and the databoard hands the attitude to that backup, instead of masking it with an estimate frozen
+    at its last value (roll/pitch held -- the accel pull is gated off without a yaw rate).
+  * nothing fresh below (every board without a SEN0253): publish exactly as before the backup existed.
+    Withholding there would hand flight.py no attitude at all -- neutral fins -- which no flight or HITL
+    run has validated, so it is not done on the strength of a backup that is not there.
+Both end on the first fresh gyro sample.
 
 Mounting (the gyro-D-term convention, HITL-validated): gx->roll, gy->pitch, gz->yaw; accel roll =
 atan2(ay, az), pitch = atan2(-ax, |ay,az|). Field calibration flips a sign like the mixer gains.
 
 ### `class Attitude(task.Task)`
 
-Complementary-filter attitude backup (heading, roll, pitch) at priority 1 behind the BNO055.
+Complementary-filter attitude (heading, roll, pitch): the primary, at priority 1 (p0 is HITL's).
 
 - `setup() -> bool`
-- `run() -> None` — Mirror the primary while it is the fused source; free-run the filter when it is lost.
-- `probe() -> str` — On-demand self-test: the gyro `rate` is present (the backup's core input).
+- `run() -> None` — Tick the filter every period_ms.
+- `probe() -> str` — On-demand self-test: the gyro `rate` is present (the filter's core input).
 - `inspect() -> dict`
 - `stats() -> dict`
 

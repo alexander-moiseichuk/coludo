@@ -274,7 +274,7 @@ def render(cfg: dict) -> str:
     v01 = config_default.default()
     layout.apply(v01, 'v0.1')
     v10 = config_default.default()
-    layout.apply(v10, 'v1.0')
+    layout.apply(v10, 'v1.0')  # v1.0 IS the SEN0253 build: apply() fits the module, no scan needed
 
     banner = ('> **GENERATED from `src/glider/config_default.py` + `src/glider/layout.py` by '
               '`tools/gen_pinmap.py` -- do not hand-edit.** Regenerate after any bus/pin change '
@@ -283,11 +283,14 @@ def render(cfg: dict) -> str:
     out = [banner + '\n']
     out += _section(v10, 'ESP32-P4 pin map -- v1.0 (target layout)',
                     'The board being ordered. Derived by applying the v1.0 revision to the firmware '
-                    'defaults, so it matches what `layout.apply()` installs when detection picks v1.0.')
+                    'defaults, so it matches what `layout.apply()` installs for a DECLARED v1.0 (a scan '
+                    'never names v1.0: the v1.x map scans as v1.1, the same buses and pins with the '
+                    'SEN0697 in place of the SEN0253).')
     out += _transition(v01, v10)
     out += _section(v01, 'ESP32-P4 pin map -- v0.1 (as built)',
-                    'TMS-7C, TMS-7D and the breadboard until the transition above is done. A config '
-                    'with no `layout` key resolves here.')
+                    'TMS-7C, the one v0.1 board left, now carrying a SEN0697 (the SEN0253 is retired from '
+                    'every board; layout enables it only as a backup a scan finds). A config with no '
+                    '`layout` key resolves here.')
     return '\n'.join(out)
 
 

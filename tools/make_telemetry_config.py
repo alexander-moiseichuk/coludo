@@ -134,7 +134,11 @@ What TMS-7C does NOT carry, so its config must not expect them.
   then reads "not fitted" (doc/specs/cc-protocol.md "Device verdicts").
 Its LSM6DSO32 is NOT absent: it reads 0x6c after the same two-jumper rework as 7D (SCK to the primary
 SCL, MISO to the primary DO -- see _TMS7D_ABSENT below for the netlist errors behind it), so the gyro,
-the PID D term and the complementary-filter attitude backup are all live on this airframe too.
+the PID D term and the complementary-filter attitude are all live on this airframe too.
+
+Its attitude module is a SEN0697 (since 2026-10-05; the SEN0253 is retired from the fleet). Nothing
+needs listing for that: config_default expects the SEN0697 and leaves the SEN0253 backup off, and a
+declared v0.1 never switches the backup on (layout.py).
 """
 _TMS7C_ABSENT: tuple = ('power_ina226', 'laser_agl_l1x')
 """
@@ -183,9 +187,10 @@ def _profile(name: str, board_id: str, servos: bool, flight: bool, absent: tuple
     cfg = config_default.default()
     cfg['name'] = name
     cfg['board']['id'] = board_id
-    # Every board this writes is v0.1 (7C, 7D), and a v0.1 board flies with NO `layout` key -- a
-    # declared v0.1, the configs they were verified on. The firmware default is 'auto', which would
-    # switch a regenerated 7C/7D from declared to scanning the week of a launch.
+    # Every board this writes is on the v0.1 map, and a v0.1 board flies with NO `layout` key -- a
+    # declared v0.1, the configs they were verified on. v0.1 now means the v0.1 bus map + the SEN0697
+    # (layout.py); 7C is the one v0.1 board left. The firmware default is 'auto', which would switch a
+    # regenerated profile from declared to scanning the week of a launch.
     cfg['board'].pop('layout', None)
     """
     Slew concurrency follows the POWER BOARD, so it is per-profile and never global.

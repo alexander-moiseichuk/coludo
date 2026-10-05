@@ -88,10 +88,11 @@ async def bringup(cfg: dict, log=print) -> controller.Controller:
     drivers.load()  # HAL drivers (LED, sensors, ...) -> task.ACTIVITIES
     tasks.load()  # subsystem tasks (Recorder, BoardHealth, Wi-Fi, CC link, ...) -> task.ACTIVITIES
     """
-    Decide v0.1 vs v1.0 BEFORE the Controller reads the config: the two revisions differ only in which
-    bus four devices hang off, and a driver binds its bus in setup(), so the config has to be right by
-    then. Scanning first also means the raw scan buses are gone before i2cbus caches the real ones --
-    otherwise the 100 kHz scan clock would outlive detection on whichever bus it touched.
+    Decide the layout BEFORE the Controller reads the config: the bus map (which bus four devices hang
+    off) and the attitude parts (the SEN0697 expected, the SEN0253 backup only if found), and a driver
+    binds its bus in setup(), so the config has to be right by then. Scanning first also means the raw
+    scan buses are gone before i2cbus caches the real ones -- otherwise the 100 kHz scan clock would
+    outlive detection on whichever bus it touched.
     """
     layout.resolve(cfg, log=log)
     # max_range_m lives on the field component (its site-select uses it too); Mission reads it from there
