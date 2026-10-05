@@ -927,7 +927,10 @@ $PCAS03,...     # the same mask + GSA, GSV and the antenna text every 10*hz-th f
 ```
 
 The NEO-6M (`drivers/neo6mv2.py`) does the same in u-blox terms: `$PUBX,40` selects RMC + the
-decimated GGA and silences the rest, UBX-CFG-RATE sets the period, then `$PUBX,40` turns GSA and GSV
+decimated GGA and silences the rest, UBX-CFG-RATE sets the period, UBX-CFG-NAV5 sets the **airborne
+<4g dynamic model** (the default 'portable' model's platform limits -- vertical speed among them -- would
+drop the fix in boost and coast; airborne <4g is the most permissive model the NEO-6M and NEO-M8 share, and
+the boost may still overrun it for a few seconds), then `$PUBX,40` turns GSA and GSV
 back on every 10*hz-th fix (50 at 5 Hz).
 
 **Not sent, despite older revisions of this document:** `$PCAS01` (baud escalation to 115200) and

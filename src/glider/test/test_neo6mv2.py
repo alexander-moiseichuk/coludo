@@ -67,7 +67,12 @@ async def amain():
     (src/gnss_bench): GSA and GSV every 50th fix, ~10 s, the RMC/GGA rates untouched. The diagnostics
     come every ~10 s at any rate -- 10 x hz fixes.
     """
-    def _expected(hz, period_ms, diagnostics_every):
+    # UBX-CFG-NAV5, mask = dynModel only, dynModel 8 (airborne < 4 g): 36 bytes of payload, checksum 57 f8
+    _NAV5_AIRBORNE = b'\xb5\x62\x06\x24\x24\x00\x01\x00\x08' + bytes(33) + b'\x57\xf8'
+    assert len(_NAV5_AIRBORNE) == 44 and neo6mv2._commands(5)[7] == _NAV5_AIRBORNE, neo6mv2._commands(5)[7]
+
+    def _expected(hz: int, period_ms: int, diagnostics_every: int) -> tuple:
+        """The frames _commands(hz) must send, in order, built by hand."""
         return (
             gnss.nmea('PUBX,40,RMC,0,1,0,0,0,0'),
             gnss.nmea('PUBX,40,GGA,0,%d,0,0,0,0' % hz),
@@ -76,18 +81,19 @@ async def amain():
             gnss.nmea('PUBX,40,GSV,0,0,0,0,0,0'),
             gnss.nmea('PUBX,40,VTG,0,0,0,0,0,0'),
             neo6mv2._ubx(0x06, 0x08, struct.pack('<HHH', period_ms, 1, 1)),
+            _NAV5_AIRBORNE,
             gnss.nmea('PUBX,40,GSA,0,%d,0,0,0,0' % diagnostics_every),
             gnss.nmea('PUBX,40,GSV,0,%d,0,0,0,0' % diagnostics_every),
         )
 
     assert neo6mv2._commands(5) == _expected(5, 200, 50), neo6mv2._commands(5)
-    assert neo6mv2._commands(5)[7:] == (b'$PUBX,40,GSA,0,50,0,0,0,0*7B\r\n',  # the bench's bytes
+    assert neo6mv2._commands(5)[8:] == (b'$PUBX,40,GSA,0,50,0,0,0,0*7B\r\n',  # the bench's bytes
                                         b'$PUBX,40,GSV,0,50,0,0,0,0*6C\r\n')
     assert neo6mv2._commands(1) == _expected(1, 1000, 10), neo6mv2._commands(1)
     assert neo6mv2._commands(10) == _expected(10, 100, 100), neo6mv2._commands(10)
     assert neo6mv2._commands(0) == neo6mv2._commands(1)  # no rate counts as 1 Hz, never a divide by zero
     # a port's rate is one byte: 25 Hz still fits (250), 30 Hz caps at 255 instead of an out-of-range 300
-    assert neo6mv2._commands(25)[7:] == (gnss.nmea('PUBX,40,GSA,0,250,0,0,0,0'),
+    assert neo6mv2._commands(25)[8:] == (gnss.nmea('PUBX,40,GSA,0,250,0,0,0,0'),
                                          gnss.nmea('PUBX,40,GSV,0,250,0,0,0,0'))
     assert neo6mv2._commands(30) == _expected(30, 33, 255), neo6mv2._commands(30)
 
@@ -121,8 +127,9 @@ async def amain():
     assert await unit._configure(5) == (off, b'$PUBX,40,GSA,0,50,0,0,0,0*7B\r\n$PUBX,40,GSV,0,50,0,0,0,0*6C\r\n')
     assert writer.frames == list(neo6mv2._commands(5)), writer.frames
 
-    print('ok: neo6mv2 registered; subclasses gnss.Gnss; UBX framing; u-blox commands + sky '
-          'diagnostics in order for hz 5/1/10/0/25/30; setup + graceful; the sky switch frames for hz 10/5')
+    print('ok: neo6mv2 registered; subclasses gnss.Gnss; UBX framing; u-blox commands (airborne NAV5 '
+          'included) + sky diagnostics in order for hz 5/1/10/0/25/30; setup + graceful; the sky switch '
+          'frames for hz 10/5')
 
 
 asyncio.run(amain())

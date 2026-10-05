@@ -68,6 +68,7 @@ _NEO_FLIGHT: tuple = (
     ('PUBX,40,GSV,0,0,0,0,0,0', 40),
     ('PUBX,40,VTG,0,0,0,0,0,0', 40),
     (b'\x06\x08' + struct.pack('<HHH', 200, 1, 1), 40),
+    (b'\x06\x24' + struct.pack('<HB', 0x0001, 8) + bytes(33), 40),  # UBX-CFG-NAV5: airborne < 4 g (since 10-05)
 )
 """
 The diagnostics, sent after the flight init: GSV, GSA and (ATGM) the antenna text, every ~10 s -- the flight's

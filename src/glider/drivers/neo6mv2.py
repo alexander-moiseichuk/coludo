@@ -5,11 +5,11 @@ GY-NEO6MV2 (u-blox NEO-6M) GNSS on a dedicated UART: a drop-in alternative to th
 UART -- swap the component `driver` to 'neo6mv2' in config (and lower `hz`; the NEO-6M tops out near
 5 Hz). @task.driver('neo6mv2'). NMEA read/parse is the shared gnss.Gnss base; this driver only adds the
 u-blox reconfiguration: $PUBX,40 selects RMC (position) + GGA at ~1 Hz (altitude/elevation) on the UART
-and silences the rest, UBX-CFG-RATE sets the measurement period, then $PUBX,40 turns GSA + GSV back on
-every ~10 s -- the sky diagnostics the base records as `<name>_sky.csv` (no antenna status: the NEO-6M
-reports none over NMEA) and keeps to the pad by re-sending the init's GSA + GSV off in flight
-(gnss.Gnss._sky_window()). Default link is 9600 8N1, like the ATGM. Graceful: an undefined bus -> setup
-False.
+and silences the rest, UBX-CFG-RATE sets the measurement period, UBX-CFG-NAV5 the airborne dynamic
+model, then $PUBX,40 turns GSA + GSV back on every ~10 s -- the sky diagnostics the base records as
+`<name>_sky.csv` (no antenna status: the NEO-6M reports none over NMEA) and keeps to the pad by re-sending
+the init's GSA + GSV off in flight (gnss.Gnss._sky_window()). Default link is 9600 8N1, like the ATGM.
+Graceful: an undefined bus -> setup False.
 """
 
 import asyncio
@@ -17,6 +17,22 @@ import struct
 
 import gnss
 import task
+
+try:
+    from micropython import const
+except ImportError:
+    from commons import const
+
+"""
+UBX-CFG-NAV5's dynamic platform model. A u-blox receiver starts on 'portable', whose platform limits (the
+Receiver Description's "Dynamic platform" table) are a walker's or a car's -- vertical speed among them --
+and a solution outside its model's limits is discarded. A rocket's boost and coast leave those far behind
+(TMS-7: ~125 m/s, ~15 g), so the receiver would drop the fix exactly when it matters. Airborne <4g is the
+most permissive model the NEO-6M and NEO-M8 share: the boost may still overrun it for a few seconds, and
+the fix returns in the glide. The mask applies the model alone; every other NAV5 field is left as it was.
+"""
+_NAV5_DYNAMIC_MODEL_ONLY = const(0x0001)  # NAV5 mask bit 0: apply dynModel, ignore the other fields
+_NAV5_AIRBORNE_4G = const(8)  # dynModel 8: airborne, < 4 g
 
 
 def _ubx(class_id: int, msg_id: int, payload: bytes) -> bytes:
@@ -46,9 +62,10 @@ def _commands(hz: int) -> tuple:
     """
     The setup frames for `hz` fixes per second, in the order they are sent.
 
-    The flight init first -- the $PUBX,40 selection, then UBX-CFG-RATE -- then the diagnostics: GSA and
-    GSV every Nth fix. That is the sequence the 2026-10-04 bench (src/gnss_bench) flew and measured NOT
-    to disturb the flight rates: at hz 5, 125 RMC + 25 GGA in 25 s, GSA + GSV every ~10 s.
+    The flight init first -- the $PUBX,40 selection, UBX-CFG-RATE, then UBX-CFG-NAV5's airborne dynamic
+    model -- then the diagnostics: GSA and GSV every Nth fix. The 2026-10-04 bench (src/gnss_bench) flew this
+    sequence without the NAV5 frame and measured the diagnostics NOT to disturb the flight rates: at hz 5,
+    125 RMC + 25 GGA in 25 s, GSA + GSV every ~10 s.
 
     Args:
         hz - the fix rate (Hz); below 1 counts as 1.
@@ -77,12 +94,15 @@ def _commands(hz: int) -> tuple:
     )
     # UBX-CFG-RATE (0x06,0x08): measRate ms (u16), navRate cycles (u16=1), timeRef (u16=1 -> GPS)
     rate = _ubx(0x06, 0x08, struct.pack('<HHH', period_ms, 1, 1))
-    return tuple(gnss.nmea(body) for body in selection) + (rate,) + tuple(gnss.nmea(body) for body in diagnostics)
+    # UBX-CFG-NAV5 (0x06,0x24): 36 bytes -- mask (u16), dynModel (u8), the rest unapplied under the mask
+    navigation = _ubx(0x06, 0x24, struct.pack('<HB', _NAV5_DYNAMIC_MODEL_ONLY, _NAV5_AIRBORNE_4G) + bytes(33))
+    return (tuple(gnss.nmea(body) for body in selection) + (rate, navigation) +
+            tuple(gnss.nmea(body) for body in diagnostics))
 
 
 @task.driver('neo6mv2')
 class Neo6mv2(gnss.Gnss):
-    """u-blox NEO-6M: $PUBX,40 selects RMC + ~1 Hz GGA, UBX-CFG-RATE sets the period, then the sky every ~10 s."""
+    """u-blox NEO-6M: $PUBX,40 picks RMC + ~1 Hz GGA, CFG-RATE the period, CFG-NAV5 airborne, the sky ~10 s."""
 
     async def _configure(self, hz: int) -> tuple:
         """
@@ -104,4 +124,4 @@ class Neo6mv2(gnss.Gnss):
             self._writer.write(frame)
             await self._writer.drain()
             await asyncio.sleep_ms(40)
-        return commands[3] + commands[4], commands[7] + commands[8]
+        return commands[3] + commands[4], commands[8] + commands[9]

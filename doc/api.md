@@ -2611,15 +2611,15 @@ GY-NEO6MV2 (u-blox NEO-6M) GNSS on a dedicated UART: a drop-in alternative to th
 UART -- swap the component `driver` to 'neo6mv2' in config (and lower `hz`; the NEO-6M tops out near
 5 Hz). @task.driver('neo6mv2'). NMEA read/parse is the shared gnss.Gnss base; this driver only adds the
 u-blox reconfiguration: $PUBX,40 selects RMC (position) + GGA at ~1 Hz (altitude/elevation) on the UART
-and silences the rest, UBX-CFG-RATE sets the measurement period, then $PUBX,40 turns GSA + GSV back on
-every ~10 s -- the sky diagnostics the base records as `<name>_sky.csv` (no antenna status: the NEO-6M
-reports none over NMEA) and keeps to the pad by re-sending the init's GSA + GSV off in flight
-(gnss.Gnss._sky_window()). Default link is 9600 8N1, like the ATGM. Graceful: an undefined bus -> setup
-False.
+and silences the rest, UBX-CFG-RATE sets the measurement period, UBX-CFG-NAV5 the airborne dynamic
+model, then $PUBX,40 turns GSA + GSV back on every ~10 s -- the sky diagnostics the base records as
+`<name>_sky.csv` (no antenna status: the NEO-6M reports none over NMEA) and keeps to the pad by re-sending
+the init's GSA + GSV off in flight (gnss.Gnss._sky_window()). Default link is 9600 8N1, like the ATGM.
+Graceful: an undefined bus -> setup False.
 
 ### `class Neo6mv2(gnss.Gnss)`
 
-u-blox NEO-6M: $PUBX,40 selects RMC + ~1 Hz GGA, UBX-CFG-RATE sets the period, then the sky every ~10 s.
+u-blox NEO-6M: $PUBX,40 picks RMC + ~1 Hz GGA, CFG-RATE the period, CFG-NAV5 airborne, the sky ~10 s.
 
 
 ## `sdp810.py`
