@@ -24,8 +24,11 @@
   .off .dot { color: #bbb; }
   input, button, textarea { font: inherit; padding: .3rem .5rem; }
   textarea { font-family: ui-monospace, monospace; font-size: .85rem; width: 100%; max-width: 60rem; box-sizing: border-box; }
-  pre { white-space: pre-wrap; background: #f4f4f4; padding: .6rem; min-height: 1.2rem; border-radius: 4px; max-width: 60rem; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f4f4f4; padding: .6rem; min-height: 1.2rem; border-radius: 4px; max-width: 60rem; }
   .muted { color: #888; font-size: .85rem; }
+  /* the board-actions verdict: its own block UNDER the buttons, one device per line, wrapping on a phone */
+  .actmsg { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .9rem; max-width: 60rem; margin: 0 0 1rem; }
+  .actmsg:empty { display: none; }
   .obj { margin: .4rem 0; }
   .obj > label { font-weight: 600; margin-right: .5rem; }
   .obj textarea { max-width: 40rem; }
@@ -70,8 +73,8 @@ altering one.</p>
   <button id="actsynctime" disabled
           title="sets the board RTC from THIS BROWSER's clock and timezone, not CC's -- only in stage setting">sync time</button>
   <button id="actassist" title="push the CC GNSS fix to the board launch config">sync GNSS</button>
-  <span class="muted" id="actmsg"></span>
 </p>
+<div id="actmsg" class="actmsg"></div>
 
 <h2>send command to <span class="sel" id="selB">—</span></h2>
 <p>
@@ -268,15 +271,87 @@ function actionBoard() {
 async function probeBoard(id) {
   document.getElementById('actmsg').textContent = `${id}: probing…`;
   const r = await cmd(id, 'probe', []);
-  // args[0] arrives as a JSON STRING (see safeParse) -- testing typeof === 'object' on it was always
-  // false, so `results` was always {} and this reported "all 0 devices pass" for EVERY board, including
-  // one with a dead sensor. A self-test that cannot fail is worse than no self-test.
-  const parsed = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : null;
-  const results = (parsed && typeof parsed === 'object') ? parsed : {};
-  const bad = Object.keys(results).filter((k) => results[k] !== null && results[k] !== 'pass');
-  document.getElementById('actmsg').textContent = r.status === 'ok'
-    ? (bad.length ? `${id}: FAIL ${bad.join(', ')}` : `${id}: all ${Object.keys(results).length} devices pass`)
+  document.getElementById('actmsg').textContent = (r.status === 'ok' && Array.isArray(r.args))
+    ? probeVerdict(id, r)
     : `${id}: ${JSON.stringify(r)}`;
+}
+
+/*
+ * Device verdicts, ONE LINE PER DEVICE. The operator's asks, verbatim: "it need to show driver name to
+ * understand what is fail? like laser_agl: vl53l1x", "also you can add diagnostic line why fail" and
+ * "you can occupy space under action button and report each device failure in own line without ;".
+ * The board answers JSON maps whose values already read '<driver> -- <why>' ('<driver> not fitted --
+ * ...' for an unfitted alternative), so the page only lays them out: a header naming the board and the
+ * verdict, then '<name>: <value>' per failing device, then each unfitted alternative on its own line.
+ */
+const plural = (count, noun) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+// A JSON-object arg as a plain map; absent, a string or a list reads as empty. The args arrive as JSON
+// STRINGS (see safeParse): testing typeof === 'object' on the raw arg was always false, so probe once
+// reported "all 0 devices pass" for EVERY board, including one with a dead sensor.
+function jsonMap(value) {
+  const parsed = safeParse(value);
+  return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+}
+const verdictText = (value) => (typeof value === 'string' ? value : JSON.stringify(value));
+function verdictBlock(header, ...maps) {
+  const lines = [header];
+  for (const map of maps) {
+    for (const [name, value] of Object.entries(map)) { lines.push(`${name}: ${verdictText(value)}`); }
+  }
+  return lines.join('\n');
+}
+// probe: args[0] {name: null | verdict} (null = healthy), args[1] the unfitted alternatives (absent on
+// boards that predate them, which simply have none to show). `probe <alternative>` answers null for it in
+// args[0] and its line in args[1]: it is counted as not fitted, never as a device that passed.
+function probeVerdict(id, r) {
+  const results = jsonMap(r.args[0]);
+  const alternatives = jsonMap(r.args[1]);
+  const failing = Object.fromEntries(Object.entries(results).filter(([, value]) => value !== null && value !== 'pass'));
+  const count = Object.keys(failing).length;
+  const fitted = Object.keys(results).filter((name) => !(name in alternatives)).length;
+  let header = `${id}: all ${plural(fitted, 'device')} pass`;
+  if (count) {
+    header = `${id}: ${plural(count, 'device')} FAIL`;
+  } else if (!fitted && Object.keys(alternatives).length) {
+    header = `${id}: ${plural(Object.keys(alternatives).length, 'device')} not fitted`;
+  }
+  return verdictBlock(header, failing, alternatives);
+}
+// verify: {pass, devices, problems, alternatives, ready, readiness}; the config readiness gate follows
+// the hardware verdict as its own lines, because a passing board can still be unfit to fly
+function verifyVerdict(id, r) {
+  const report = jsonMap(r.args[0]);
+  const problems = jsonMap(report.problems);
+  const alternatives = jsonMap(report.alternatives);
+  const fitted = Object.keys(jsonMap(report.devices)).length - Object.keys(alternatives).length;
+  const header = report.pass ? `${id} verify: all ${plural(fitted, 'device')} pass`
+                             : `${id} verify: ${plural(Object.keys(problems).length, 'problem')} FAIL`;
+  const lines = [verdictBlock(header, problems, alternatives)];
+  if (report.ready === false) {
+    const readiness = jsonMap(report.readiness);
+    lines.push(verdictBlock(`${id} verify: not flight-ready -- ${plural(Object.keys(readiness).length, 'item')}`,
+                            readiness));
+  }
+  return lines.join('\n');
+}
+// arm: ok {armed} or `err unsafe {problems}` -- a refusal lists each problem on its own line
+function armVerdict(id, r) {
+  if (r.status === 'ok') { return `${id} arm: armed`; }
+  if (r.status !== 'err' || r.args[0] !== 'unsafe') { return null; }
+  const problems = jsonMap(r.args[1]);
+  const count = Object.keys(problems).length;
+  return count ? verdictBlock(`${id} arm: REFUSED -- ${plural(count, 'problem')}`, problems)
+               : `${id} arm: REFUSED -- ${verdictText(r.args[1])}`;
+}
+// The verdict block for a probe / verify / arm reply; null for any other command, or a reply carrying no
+// verdict (the hub's own failures have no args), which then shows as the raw reply alone.
+function verdictFor(id, command, r) {
+  if (!r || !Array.isArray(r.args)) { return null; }
+  if (command === 'arm') { return armVerdict(id, r); }
+  if (r.status !== 'ok') { return null; }
+  if (command === 'probe') { return probeVerdict(id, r); }
+  if (command === 'verify') { return verifyVerdict(id, r); }
+  return null;
 }
 
 async function detectLayout(id) {
@@ -646,7 +721,10 @@ async function send() {
   const reply = document.getElementById('reply');
   reply.textContent = '…';
   try {
-    reply.textContent = prettyResult(await cmd(board, command, parts));
+    // probe / verify / arm lead with the per-device verdict lines; the full reply stays below them
+    const result = await cmd(board, command, parts);
+    const verdict = verdictFor(board, command, result);
+    reply.textContent = verdict ? `${verdict}\n\n${prettyResult(result)}` : prettyResult(result);
   } catch (err) {
     reply.textContent = 'error: ' + err;
   }

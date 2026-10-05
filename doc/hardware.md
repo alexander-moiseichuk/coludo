@@ -55,7 +55,7 @@ What actually gates a launch, sorted by how badly its loss hurts. "Critical" = *
 | Servos ×≥2 (SG90) | **Critical** | the fin actuators | ✔ |
 | Separation switch (copper pads) | **Critical** | the BOOSTING→GLIDING trigger | ✔ |
 | ICP-10111 baro | Important | primary altimeter (apogee / glide profile) | ✔ |
-| AGL laser (VL53L4CX **or** VL53L1X) | Important | low-altitude AGL for the landing — baro is poor there. Either part fits the socket; **enable exactly the one fitted** (an unfitted laser fails `verify`/`arm`); the L1X's shorter measured range cannot reach `land_agl_m`, and TMS-7F keeps it at 5.0 on purpose, so the baro fallback fires the landing (see *Two lasers, one socket*) | VL53L4CX out of stock — **1 VL53L1X fitted**, 5 more on order |
+| AGL laser (VL53L4CX **or** VL53L1X) | Important | low-altitude AGL for the landing — baro is poor there. Either part fits the socket. On v1.0/v1.1 both entries may stay enabled (the layout drops the shared XSHUT/INT pins; the one not soldered reads *not fitted*, only no answer at all fails `verify`/`arm`); **on v0.1 the two share XSHUT (GPIO5), so enable exactly one** — declaring both refuses arming, by design; the L1X's shorter measured range cannot reach `land_agl_m`, and TMS-7F keeps it at 5.0 on purpose, so the baro fallback fires the landing (see *Two lasers, one socket*) | VL53L4CX out of stock — **1 VL53L1X fitted**, 5 more on order |
 | SDP810 airspeed | Important | **direct** pitot airspeed → the fin-authority cap (the estimate was the weakest signal). Degrades gracefully to the accel+GNSS estimate — the pre-pitot baseline flown in all HITL to date — if absent | ✔ (5) |
 | ADXL375 (±200 g) | Optional | >32 g high-g backstop; LSM6DSO32 ±32 g already covers the 8–12 g boost. Keep for telemetry / data-quality launches (run both, compare traces) | ✔ |
 | BMP280 baro | Optional | backup baro (rides on the sen0253 board with BNO055 anyway) | ✔ |
@@ -352,12 +352,28 @@ Barometer works very badly at very low altitudes, so the laser module becomes es
 Stock of the VL53L4CX ran out, so boards may instead carry a **VL53L1X** in the same footprint at the
 same `0x29`. They are different silicon (`0xEACC` vs `0xEBAA`) with different init blocks, and neither
 block produces ranges on the other part — so each driver checks its model id and returns False on a
-mismatch. Both are declared in `config_default`, but **a flight config enables exactly the one that is
-soldered**: the other's failed setup lands in the controller's failures, which `verify` and `arm` count,
-so declaring both makes the board refuse to arm (TMS-7F disables `laser_agl`; the 7C/7D profiles
-disable `laser_agl_l1x`). An I²C scan cannot tell them apart, so `layout` does not try; it only makes
-sure the second entry FOLLOWS the first onto whatever bus the revision puts the socket on, without
-casting a second vote for the one address.
+mismatch. Both are declared in `config_default`. Whether both may stay enabled depends on the board
+revision:
+
+- **v1.0 / v1.1: both may stay enabled.** The front harness carries no laser XSHUT/INT, so `layout`
+  drops both pins from both entries. When one entry fails setup while the other answers the same I²C
+  socket (`i2c:<id> 0x29`) and feeds the same data (`agl`), the failed one is an unfitted
+  *alternative*, not a fault — `probe`, `verify` and `arm` report it as `vl53l4cx not fitted --
+  vl53l1x (laser_agl_l1x) answers i2c:1 0x29` and the board arms.
+- **v0.1 (or an undecided layout): enable exactly one.** Both entries route XSHUT to GPIO5, and each
+  driver's setup pulses it low before its model-id check — so the unfitted entry's setup reboots the
+  fitted laser, which still answers its model id (its probe passes) and never ranges again. That
+  entry is therefore never an alternative: it stays a failure and **declaring both refuses arming, by
+  design**, with the fix in the reason (`vl53l1x -- not connected: …; shares XSHUT GPIO5 with
+  laser_agl (vl53l4cx): its setup resets the fitted laser -- enable exactly one of laser_agl,
+  laser_agl_l1x on this board`). The 7C/7D profiles leave out `laser_agl_l1x` for this reason.
+
+On every revision, when NEITHER part answers both entries are failures and `arm` is refused, so a
+missing laser still blocks the flight ([`specs/cc-protocol.md`](specs/cc-protocol.md) → *Device
+verdicts*). TMS-7F (v1.1) disables `laser_agl`, which keeps its verdicts to the one laser it carries.
+An I²C scan cannot tell the parts apart, so `layout` does not try; it only makes sure the second entry
+FOLLOWS the first onto whatever bus the revision puts the socket on, without casting a second vote for
+the one address.
 
 **The part that is not cosmetic: the L1X is declared 2–4 m where the L4CX is 4–6 m, and
 `sequencer.land_agl_m` defaults to 5.0 m.** The GLIDING → LANDING transition takes the laser when it

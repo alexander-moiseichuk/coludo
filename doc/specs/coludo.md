@@ -224,7 +224,10 @@ Upon electronic initialization, the following sequential operations are executed
 * **Validation (operator, over CC — nothing is automatic):** sync the board clock and launch position
   (dashboard sync / `assist`), work through `calibrate` until it is empty, then `verify` (hardware
   `pass` + the `ready` config gate + the stage), and `arm` where the flight is active (`arm` re-runs
-  the probes and refuses on any problem). The step-by-step list is [`field_test.md`](../field_test.md).
+  the probes and refuses on any problem). Each device verdict names the device's driver
+  (`laser_agl: vl53l4cx -- <why>`), and a part declared beside the one actually soldered on its socket
+  reads *not fitted* rather than failed ([`cc-protocol.md`](cc-protocol.md) → *Device verdicts*).
+  The step-by-step list is [`field_test.md`](../field_test.md).
 * **Staging:** The vehicle is cleared to be mounted vertically on the launch rail.
 
 Potential problems:

@@ -320,6 +320,14 @@ These are two different checks and must not be confused.
   operator enabled. If a sensor the operator declared is disconnected, that is a **go/no-go
   decision for the operator** — typically "cancel launch on pad XYZ" — not an automatic
   reconfiguration. This is the strict / operator-authority principle in action.
+  The one exception is an **unfitted alternative**: entries declared for the same I²C socket
+  (`i2c`, same `id` and `addr`) that provide the same data (the VL53L4CX and VL53L1X both on i2c:0
+  `0x29`, both `agl`) where another one answers — the soldered part wins and the loser is reported *not
+  fitted*, naming the winner, not as a fault, so `verify`/`arm` pass. An SPI entry (its chip-select is
+  the socket), one that provides other data (a baro declared at `0x29`) or one whose setup pulses a
+  routed `xshut_pin` (both lasers on v0.1, GPIO5: it resets the fitted part -- enable exactly one) is
+  never an alternative, and when nothing answers on that socket every entry is a failure and `arm` is
+  refused ([`cc-protocol.md`](cc-protocol.md) → *Device verdicts*).
 
 ## Storage note
 

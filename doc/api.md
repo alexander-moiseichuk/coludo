@@ -629,6 +629,8 @@ the cross-file churn; revisit only if importing controller solely for Stage ever
 
 - `__init__(config: dict, registry: dict=None, log=None)` — constructor
 - `directory() -> list` — Names of enabled devices, in creation order (config order).
+- `driver(name: str) -> str` — The driver (or activity) a configured device runs, for the operator-facing verdicts.
+- `unfitted(name: str) -> str` — The operator's line for an unfitted alternative: which part is absent and which one took its socket.
 - `create(name: str) -> task.Task` — Create a task by component name via the registry.
 - `active(name: str=None)` — The active task by name, or all active tasks.
 - `find(names: list[str]) -> list` — The active tasks for `names`, without blocking.

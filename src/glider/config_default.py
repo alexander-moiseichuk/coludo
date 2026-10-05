@@ -420,8 +420,10 @@ The SECOND laser, for boards fitted with a VL53L1X instead of the VL53L4CX.
 
 Both parts answer on 0x29 and an I2C scan cannot tell them apart, so `layout` cannot choose between
 them -- but each driver checks its own model id (0xEACC vs 0xEBAA) and returns False on a mismatch, so
-BOTH can be declared and the one that is actually soldered wins. That is the same graceful-absent
-contract every driver already follows; nothing here needs editing per board.
+on v1.0/v1.1 BOTH can stay declared and the one that is actually soldered wins (the other reads "not
+fitted"). NOT on v0.1: there both entries route XSHUT to GPIO5 and each setup pulses it, so the unfitted
+entry's setup resets the fitted laser -- that entry stays a failure and arming is refused until exactly
+one laser is enabled (Controller._sort_alternatives; layout drops the pins on v1.0/v1.1).
 
 RANGE differs and it reaches the flight logic: the L1X is declared 2-4 m against the L4CX's 4-6 m,
 while `sequencer.land_agl_m` defaults to 5.0 -- above anything an L1X can report, so the GLIDING ->
@@ -439,7 +441,7 @@ does not apply to this silicon), so the config block's own timing stands.
         'xshut_pin': 'laser_xshut',
         'int_pin': 'laser_int',
         'period_ms': 50,
-        'enabled': True,  # harmless when absent: the model-id check rejects an L4CX and setup returns False
+        'enabled': True,  # v1.0/v1.1: harmless when absent; v0.1 (shared XSHUT): enable exactly one laser
         'provides': {'agl': {'priority': 0, 'timeout_ms': 100}},
     }
 

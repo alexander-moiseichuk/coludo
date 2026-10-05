@@ -127,9 +127,11 @@ What TMS-7C does NOT carry, so its config must not expect them.
 
 - power_ina226: 7C flies a small battery->5 V board (~1 A) sized for telemetry alone. There is no
   current-sense shunt on it, so the part is not merely unused, it is absent.
-- laser_agl_l1x: 7C carries the VL53L4CX. An unfitted laser is NOT skipped quietly -- its setup failure
-  lands in controller.failures, which `verify` and `arm` count -- so exactly one laser entry stays
-  enabled per board.
+- laser_agl_l1x: 7C carries the VL53L4CX, and on v0.1 enabling exactly one laser is REQUIRED. Both
+  entries route XSHUT to GPIO5 there and each setup pulses it, so the unfitted entry's setup resets the
+  fitted laser: that entry stays a failure and declaring both refuses arming, by design. Only on
+  v1.0/v1.1, where layout drops the shared pins, may both stay enabled -- the one that does not answer
+  then reads "not fitted" (doc/specs/cc-protocol.md "Device verdicts").
 Its LSM6DSO32 is NOT absent: it reads 0x6c after the same two-jumper rework as 7D (SCK to the primary
 SCL, MISO to the primary DO -- see _TMS7D_ABSENT below for the netlist errors behind it), so the gyro,
 the PID D term and the complementary-filter attitude backup are all live on this airframe too.

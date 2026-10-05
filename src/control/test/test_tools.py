@@ -237,6 +237,11 @@ def test_cc_exit_code_is_the_verdict():
     assert cc._verdict('verify', 200, {'status': 'ok', 'args': ['{garbled']}) == 1
     assert cc._verdict('probe', 200, ok({'imu': None, 'baro': None})) == 0
     assert cc._verdict('probe', 200, ok({'imu': None, 'baro': 'not connected: ENODEV'})) == 1
+    # an unfitted alternative rides in the SECOND map: `probe laser_agl` on an L1X board is no failure
+    unfitted = json.dumps({'laser_agl': 'vl53l4cx not fitted -- vl53l1x (laser_agl_l1x) answers i2c:0 0x29'})
+    assert cc._verdict('probe', 200, {'status': 'ok', 'args': [json.dumps({'laser_agl': None}), unfitted]}) == 0
+    down = json.dumps({'laser_agl': 'vl53l4cx -- not connected: setup failed (absent / miswired?)'})
+    assert cc._verdict('probe', 200, {'status': 'ok', 'args': [down]}) == 1  # nothing answers the socket
     assert cc._verdict('inspect', 200, ok({'anything': 'at all'})) == 0
     assert cc._verdict('ping', 200, {'status': 'pong', 'args': []}) == 0
     assert cc._verdict('verify', 504, {'error': 'board did not answer in time'}) == 1

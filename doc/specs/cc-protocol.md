@@ -137,19 +137,19 @@ here decoded). `whoami` is the connection-level exception that returns the id.
 | `ping` | — | `pong` | liveness |
 | `health` | — | `ok {temp,mem_free,uptime,stage,layout,degraded[],…}` | vitals. Always: `temp`, `mem_free`, `uptime`, `stage`, `layout` (the revision this boot applied: `v1.0` detected, `v0.1 (declared)`, or `undecided`) and `degraded[]`. When the part exists: `position` (fresh GNSS fix), `clock`/`epoch` (board RTC), `launchpad`/`launchpad_set`/`site`, `agl` (fresh laser only), `calibration` ({device: instruction} still outstanding), `imu_calibration` (BNO055 sys/gyr/acc/mag), `armed`, `flight` (live panel), `tasks[]` (`{name, ok}`). `degraded[]` is empty when nominal, else any of: `attitude-backup` (a p0 attitude provider is configured and the backup is flying), `STAGE HELD`, `CONFIG FALLBACK -- <reason>`, `memory-rescued`, `needs-calibration`, `cc-less-fallback`, `WARM-STARTED (rebooted in flight)` |
 | `stage` | `[name\|auto]` | `ok {stage,manual}` | get the stage; `<name>` holds it (pauses the sequencer — ground test); `auto` resumes |
-| `arm` | — | `ok {armed:true}` / `err unsafe {problems}` | enable actuation — only when verify is clean (every device up + probe healthy, incl. mission launch-position) and the stage is SETTING under automatic sequencing (`problems.stage` otherwise, so `arm` never succeeds airborne or in DONE); arming pins the live GNSS fix as the launch point (freeze — tier-2 heading survives a mid-flight fix loss). The probes run on the ground only, and they **sweep each fin over its full `min_deg`..`max_deg` travel** (0–180° by default; no airframe profile narrows it), not the ±45° control limit |
+| `arm` | — | `ok {armed:true}` / `err unsafe {problems}` | enable actuation — only when verify is clean (every device up + probe healthy, incl. mission launch-position; `problems` = `{name: '<driver> -- <why>'}`, see *Device verdicts* below — an unfitted alternative is not a problem) and the stage is SETTING under automatic sequencing (`problems.stage` otherwise, so `arm` never succeeds airborne or in DONE); arming pins the live GNSS fix as the launch point (freeze — tier-2 heading survives a mid-flight fix loss). The probes run on the ground only, and they **sweep each fin over its full `min_deg`..`max_deg` travel** (0–180° by default; no airframe profile narrows it), not the ±45° control limit |
 | `disarm` | — | `ok {armed:false}` | disable actuation (the control loop holds the fins neutral) |
 | `log` | `[ms]` | `ok {lines:[...], dropped}` | poll-model: lines teed since the last `log`; re-arm teeing for `ms` more (default 1000, `0` stops). `dropped` = records the tee ring discarded |
 | `tlm` | `[ms]` | `ok {samples:[...], dropped}` | poll-model: telemetry rows teed since the last `tlm`; re-arm teeing for `ms` more (default 1000, `0` stops) |
-| `bustune` | `<kind> <id> <freq>` | `ok {per-device health}` | retune an i2c/spi bus to `<freq>` Hz in place (no reboot) and report which devices stay healthy — the bench frequency sweep. Never persisted: the CC `bustune` sweep prints the `set-config board` + reboot for the operator to run |
+| `bustune` | `<kind> <id> <freq>` | `ok {kind, id, freq, devices: {name: 'ok'\|'<driver> -- <why>'}, all_ok}` | retune an i2c/spi bus to `<freq>` Hz in place (no reboot) and report which devices stay healthy — the bench frequency sweep. Never persisted: the CC `bustune` sweep prints the `set-config board` + reboot for the operator to run |
 | `report` | — | `ok {stage, tasks:{...}}` | the Controller's aggregated task status (`controller.stats()`) |
 | `objects` | — | `ok [name, ...]` | names of all `Inspectable` objects (for the `inspect`/`update`/`stats` targets) |
 | `inspect` | `<object>` | `ok {props}` | `Inspectable.inspect()` of a named object |
 | `update` | `<object> <json>` | `ok {changed:[...]}` / `err refused <why>` | `Inspectable.update()` — names of properties actually changed; `refused` when the driver rejects the change (e.g. an SDP810 tare before its first frame) |
 | `stats` | `<object>` | `ok {stats}` | `Inspectable.stats()` of a named object |
-| `probe` | `[name\|all]` | `ok {name: null\|error}` | on-demand device self-tests; `all` also lists devices that never set up (not connected). Active: each servo sweeps min → max → neutral over its full `min_deg`..`max_deg` travel (0/180° by default), one fin at a time, checking the INA226 rail draw when one is fitted |
+| `probe` | `[name\|all]` | `ok {name: null\|'<driver> -- <why>'} [{name: '<driver> not fitted -- …'}]` | on-demand device self-tests; `all` also lists devices that never set up (`<driver> -- not connected: <reason>`) and a crashed run loop, and carries the unfitted alternatives, when there are any, in a SECOND map (*Device verdicts* below); `probe <alternative>` answers `{name: null}` then `{name: '<driver> not fitted -- …'}`, the same two maps. Active: each servo sweeps min → max → neutral over its full `min_deg`..`max_deg` travel (0/180° by default), one fin at a time, checking the INA226 rail draw when one is fitted |
 | `calibrate` | `[name]` | `ok {name: instruction}` / `ok {name: null\|error}` | no arg: the devices with OUTSTANDING calibration, each an instruction string for the OPERATOR (the BNO055 wants the airframe moved -- NDOF never converges standing still; the pitot wants still air); `{}` = nothing outstanding, and devices with no requirement never appear. With a name (ground-only): run that device's calibration where the board can do it alone -- pitot still-air tare, baro ground zero, saving the BNO055's converged profile to NVS -- `null` = done, else what is still owed. Sibling of `probe`, which asks whether the hardware WORKS -- an uncalibrated IMU passes that and is still unfit to fly |
-| `verify` | — | `ok {pass, devices, problems, ready, readiness}` | verify board setup: every configured device up/down + probe, with an overall hardware PASS, plus the flight-readiness CONFIG gate as a separate `ready` verdict (`readiness` names each field-dangerous setting: watchdog off, flight loop off / zero gains, fin derating applied, no zone source) — the launch-pad re-check. `problems.stage` when the stage is held or not SETTING; airborne the probes are skipped and reported as `problems.probe: not run` |
+| `verify` | — | `ok {pass, devices, problems, alternatives, ready, readiness}` | verify board setup: every configured device (`<driver> -- up` / `<driver> -- down: <reason>` / not fitted) + probe, with an overall hardware PASS, plus the flight-readiness CONFIG gate as a separate `ready` verdict (`readiness` names each field-dangerous setting: watchdog off, flight loop off / zero gains, fin derating applied, no zone source) — the launch-pad re-check. `problems.stage` when the stage is held or not SETTING; airborne the probes are skipped and reported as `problems.probe: not run` |
 | `detect` | — | `ok {detected, applied, detail}` | re-scan both I²C buses and report the revision they look like (`detected`: `v0.1`/`v1.0`/`v1.1`, or null when undecided) beside what this boot applied (`applied` = `health.layout`). Applies nothing: a verdict only takes effect at the next boot, and only where `board.layout` is `auto` ([`board-config.md`](board-config.md)). Ground-only |
 | `get-config` | `[name]` | `ok {config}` | fetch a named config: `board` / `running` (the running config, the default), `saved` (what the NEXT boot loads: `board.config` through the boot's own `load()`, or the default it would fall back to -- start any read-modify-write here, since the running config predates an unrebooted save), `default` (built-in board default), `launch` (the mission) |
 | `set-config` | `<name> <json>` | `ok {config_id}` / `err invalid <msg>` | save a named config: `board` validates + replaces the full snapshot (running config unchanged until reboot); `launch` merge-applies the fields into the mission + persists `launch.config` |
@@ -174,6 +174,52 @@ recovery. Push what has been through `make test` on the bench board.
 `inspect`/`update`/`stats` address an object by name (`inspect wifi`, `update servo_yaw <json>`);
 the board resolves it from the registry of `Inspectable`s. `update` applies only supported,
 changed properties and returns their names — saving/rebooting stays an explicit operator step.
+
+### Device verdicts
+
+Every device verdict names the device's DRIVER (its config entry's `driver`, else `activity`), because
+a name alone cannot say which of two parts declared for one socket failed: `probe`, `verify` and `arm`
+read `'<driver> -- <why>'` (e.g. `vl53l4cx -- not connected: setup failed (absent / miswired?) -- id
+reads 0xEA, expected 0xEB -- wrong device on this bus/select (crosswired)`). A non-device inspectable
+(`mission`) keeps its bare reason.
+
+An **unfitted alternative** is an entry that failed setup while ANOTHER up device stands in for it --
+the VL53L4CX and VL53L1X both declared on i2c:0 `0x29`, where the soldered part wins. All three
+conditions must hold, or the entry stays a failure and still refuses `arm`:
+
+- **the same I²C socket** -- `bus` is `i2c` and `(id, addr)` match (the id compares as text, `0` = `'0'`).
+  Only an I²C address is a socket: a UART or PWM device has none, and an SPI entry's `addr` is its
+  fallback for an I²C wiring -- on SPI the chip-select is the socket, so two SPI parts sharing a
+  fallback address are two parts;
+- **the same data** -- the same non-empty set of `provides` keys (both `{agl}`). A device declared at an
+  answering address by mistake (a baro at `0x29` beside a working VL53L1X) feeds something else, so it
+  is a failure, not "not fitted"; an entry that provides nothing has nothing to stand in for;
+- **no shared reset** -- the failed entry routes no `xshut_pin` (a board `pins` name that resolves to a
+  GPIO; `null` or `-1` is not routed), whatever the winner's own entry says: both entries describe one
+  socket, so the failed entry's pulse lands on the part the winner is. Both laser drivers pulse XSHUT
+  low in setup, BEFORE the model-id check, and that reboots whichever part is soldered: it still
+  answers its model id (its probe passes) and never ranges again.
+  `xshut_pin` is the only pin that counts -- `int_pin` is an input wired only after the id matched,
+  which the unfitted entry never reaches. On v0.1 (or an undecided layout) both laser entries route
+  XSHUT to GPIO5, so **declaring both refuses arming, by design**, in either setup order, and the
+  reason says what to do: `vl53l1x -- not connected: <diagnosis>; shares XSHUT GPIO5 with laser_agl
+  (vl53l4cx): its setup resets the fitted laser -- enable exactly one of laser_agl, laser_agl_l1x on
+  this board`. On v1.0/v1.1 `layout` drops the laser pins, so both entries may stay enabled.
+
+An alternative is not a fault: it is kept out of `problems`, out of the first `probe all` map (so its
+contract stays `null` = healthy and a client that reads only that map -- an older dashboard,
+`tools/cc.py`'s exit code -- no longer fails a healthy board), and is reported as `'<driver> not fitted
+-- <winner driver> (<winner>) answers i2c:<id> <addr>'` -- in `probe all`'s second map (sent only when
+there are alternatives), in `verify`'s `devices` and `alternatives`, and in the second map of `probe
+<alternative>`, whose first map reads `{name: null}`. When the winner's run loop later crashes, the
+winner is down everywhere (`probe`, `verify`'s `devices`, `arm`) and the line reads `... answered
+i2c:<id> <addr> at setup, now down`. When NOTHING answers on the socket every entry stays a failure, so a
+missing part still refuses `arm`. `bustune` leaves an alternative out of its per-device health (it is not
+on the bus) and keeps `'ok'` for a healthy device, naming the driver on every other verdict.
+The board sends maps; the dashboard lays them out one device per line under the action buttons (a
+header naming the board and the verdict -- `N devices FAIL`, `all N devices pass`, or `N device(s) not
+fitted` for a probe that covered alternatives alone -- then `<name>: <driver> -- <why>` per failing
+device, then each alternative as not fitted) -- never `;`-joined.
 
 ### The mission object (launch identity + clock)
 
