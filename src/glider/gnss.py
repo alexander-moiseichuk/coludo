@@ -7,6 +7,13 @@ NMEA over a dedicated UART, parse RMC -> 'position' (lat, lon) and GGA -> 'altit
 rate is the subclass's _configure(); ATGM336H (CASIC/PCAS) and NEO-6M (u-blox) differ only there.
 Talker-agnostic (GP/GN/BD). Best-effort -- lock drops under boost, so the channels go stale and
 consumers fall back.
+
+The sky diagnostics -- GSV (satellites in view, C/N0), GSA (fix mode, satellites used) and the ATGM's
+antenna text -- come every ~DIAGNOSTICS_S as one burst and go to `<name>_sky.csv`, one row per burst,
+plus inspect() for the pad. They are what tells a weak antenna from a dead receiver: the 10-03 flights
+never fixed, and with these sentences switched off their logs could not say why. They run on the pad
+only -- before BOOSTING and again from DONE -- and are off in flight, where a burst would stall the
+position (_sky_window()).
 """
 
 import asyncio
@@ -14,6 +21,7 @@ import time
 
 import commons
 import config
+import controller
 import databoard
 import micropython
 import recorder
@@ -37,6 +45,22 @@ _SENTENCE_GAP_US: int = commons.const(3000000)  # a sentence quiet this long (3 
 # dropped line never cries wolf, tight enough to catch the loss well inside a <60 s flight.
 
 _KNOTS_TO_MS: float = 0.514444  # NMEA RMC speed is in knots; the airspeed governor wants m/s
+
+DIAGNOSTICS_S: int = commons.const(10)  # the sky diagnostics come this often (s) at any rate: the drivers' dividers
+"""
+A burst's sentences come back to back, at most one RMC/GGA between two of them (~75 ms at 9600 baud; on
+the bench a whole ATGM burst took 0.43-0.54 s, no two of its sentences more than ~0.17 s apart), and
+bursts are ~DIAGNOSTICS_S apart. So half a second with none of them ends a burst, with margin both ways.
+"""
+_BURST_QUIET_US: int = commons.const(500000)
+"""
+The ATGM's antenna supervisor ('$GPTXT,01,01,01,ANTENNA OPEN') as the sky row's code. OPEN means the feed
+draws no current: a PASSIVE antenna reads OPEN too, and on the 2026-10-04 bench the passive 12x12 patch the
+airframes flew cost the ATGM ~8-10 dB against the active ones (OK). The NEO-6M reports no antenna status
+over NMEA, so its rows carry 0.
+"""
+_ANTENNA_CODES: dict = {'ANTENNA OK': 1, 'ANTENNA OPEN': 2, 'ANTENNA SHORT': 3}
+_ANTENNA_NAMES: tuple = ('unknown', 'OK', 'OPEN', 'SHORT')  # the code as a word, for inspect() and the events
 
 
 @micropython.viper
@@ -123,8 +147,8 @@ class Gnss(task.Task):
     Base GNSS driver over a dedicated UART.
 
     RMC -> 'position' (lat, lon); GGA -> 'altitude' (m MSL) + 'elevation' (m above the GNSS ground
-    zero, a baro backup). Subclasses set the module-specific sentence selection + rate in
-    _configure().
+    zero, a baro backup); GSV/GSA/antenna text -> the sky row. Subclasses set the module-specific
+    sentence selection + rate in _configure().
     """
 
     _uart = None  # class default: no transport until setup() opens it (diagnose reads directly)
@@ -136,7 +160,11 @@ class Gnss(task.Task):
             return False
         self._uart = UART(bus_id, baudrate=spec['baud'], tx=spec['tx'], rx=spec['rx'])
         self._reader = asyncio.StreamReader(self._uart)
-        await self._configure(self.config.get('hz', 1))
+        self._writer = asyncio.StreamWriter(self._uart, {})  # the init, then the sky switch (_sky_window())
+        frames = await self._configure(self.config.get('hz', 1))
+        self._sky_off: bytes = frames[0]  # the flight init's own selection: no diagnostics (BOOSTING to DONE)
+        self._sky_on: bytes = frames[1]  # the diagnostics' (the pad: before BOOSTING, and from DONE)
+        self._diagnosing: bool = True  # the init ends with the diagnostics on: the pad
         (self._position, self._altitude, self._elevation, self._speed,
          self._course) = databoard.Databoard.provide(
             self.name, self.config.get('provides', {}),
@@ -158,6 +186,24 @@ class Gnss(task.Task):
         self._gga_telemetry = recorder.Telemetry(
             '%s_gga.csv' % self.name, ('altitude_m', 'elevation_m', 'quality', 'satellites', 'hdop_cd'),
             decimate_us=telemetry_us)
+        """
+        The sky gets a third stream, one row per diagnostics burst: satellites in view (GSV, all systems),
+        used (GSA, all systems), the fix mode (GSA: 1 none, 2 2D, 3 3D), the four strongest C/N0 (dB-Hz, 0
+        where fewer were heard) and the antenna code (0 none reported, 1 OK, 2 OPEN, 3 SHORT). All ints,
+        like hdop_cd: no boxed float in a row. _settle() pushes it, once per burst -- see there.
+        """
+        self._sky_telemetry = recorder.Telemetry(
+            '%s_sky.csv' % self.name, ('in_view', 'used', 'mode', 'cn0_1', 'cn0_2', 'cn0_3', 'cn0_4', 'antenna'),
+            decimate_us=telemetry_us)
+        self._views: dict = {}  # GSV talker -> (in view, its four strongest C/N0) from its last WHOLE group
+        self._systems: dict = {}  # GSA system -> (fix mode, satellites used) from its last sentence
+        self._group_talker: str = None  # the GSV group being received: its talker ...
+        self._group_next: int = 0  # ... the part it needs next (0: no group in progress) ...
+        self._group_cn0: list = []  # ... and the C/N0 values collected so far
+        self._antenna: int = 0  # the last antenna text, as a code (_ANTENNA_CODES)
+        self._pending: bool = False  # a diagnostics sentence arrived that no sky row carries yet ...
+        self._pending_us: int = 0  # ... the latest one (ticks_us)
+        self._sky_seen: bool = False  # a sky row went out: only the first burst is evented
         self._seen_us: dict = {'RMC': 0, 'GGA': 0}  # last arrival per sentence -> the outage events
         self._absent: dict = {'RMC': False, 'GGA': False}  # currently-out flag, so each edge fires once
         self._fix: bool = False
@@ -169,12 +215,22 @@ class Gnss(task.Task):
         self._ok = True
         return True
 
-    async def _configure(self, _unused_hz: int) -> None:
-        """Module-specific sentence selection + rate. Default: accept the module's own stream as-is."""
-        pass
+    async def _configure(self, _unused_hz: int) -> tuple:
+        """
+        Module-specific sentence selection + rate, sent once at setup, and the sky switch's frames.
+
+        Default: accept the module's own stream as-is -- nothing is sent, so there is nothing to switch.
+
+        Args:
+            _unused_hz - the fix rate (Hz).
+
+        Returns:
+            (off, on): the bytes _sky_window() writes to switch the diagnostics; b'' and b'' here.
+        """
+        return b'', b''
 
     def _parse(self, line: str) -> None:
-        """Parse one NMEA sentence: RMC -> position (+ telemetry), GGA -> altitude + elevation."""
+        """Parse one NMEA sentence: RMC -> position (+ telemetry), GGA -> altitude + elevation, else the sky."""
         if not line.startswith('$') or not checksum_ok(line):
             return
         fields = line.split('*')[0].split(',')
@@ -211,6 +267,181 @@ class Gnss(task.Task):
             # hdop as centi-units (int), matching the fixnum convention: no boxed float in the row
             self._gga_telemetry.push((altitude, elevation, self._fix_quality, self._satellites,
                                       int(self._hdop * 100)))
+        elif kind in ('GSV', 'GSA', 'TXT'):  # after RMC/GGA: the 10 Hz path tests nothing more than before
+            self._sky(kind, fields)
+
+    def _sky(self, kind: str, fields: list) -> None:
+        """
+        Fold one diagnostics sentence into the sky view and mark the burst it belongs to.
+
+        GSA comes once per system: the ATGM sends one for GPS and one for BDS (the NMEA 4.1 system id
+        closes each), the NEO-6M a single one. The PRN numbers repeat across systems -- GPS 22 and BDS 22
+        were both in use on the bench -- so `used` is the SUM of the systems' counts, never a set of PRNs,
+        and the mode is the best of them. Keyed per system, a second burst replaces rather than adds.
+
+        Every GSV/GSA, and an antenna text, restarts the burst's quiet clock (_settle()). Any other text
+        -- the NEO's boot banner, the ATGM's firmware id -- is not the sky and is not a burst.
+
+        Args:
+            kind - 'GSV', 'GSA' or 'TXT'.
+            fields - the sentence split on ',' (checksum dropped).
+
+        Returns:
+            None; an antenna change pushes an event.
+        """
+        if kind == 'GSV' and len(fields) > 3:
+            self._gsv(fields)
+        elif kind == 'GSA' and len(fields) > 14:
+            used = 0
+            for index in range(3, 15):  # the twelve PRN slots
+                if fields[index]:
+                    used += 1
+            system = fields[18] if len(fields) > 18 else fields[0][1:3]  # NMEA 4.1 id (1 GPS, 4 BDS), else talker
+            self._systems[system] = (int(fields[2]) if fields[2] else 0, used)
+        elif kind == 'TXT' and len(fields) > 4 and fields[4] in _ANTENNA_CODES:
+            code = _ANTENNA_CODES[fields[4]]
+            if code != self._antenna:  # on a change only: the ATGM repeats its status every burst
+                self.event('antenna %s (was %s)' % (_ANTENNA_NAMES[code], _ANTENNA_NAMES[self._antenna]))
+                self._antenna = code
+        else:
+            return
+        self._pending = True
+        self._pending_us = time.ticks_us()
+
+    def _gsv(self, fields: list) -> None:
+        """
+        One GSV sentence: collect its C/N0; the group's last part replaces that talker's view.
+
+        A talker (GP GPS, BD BeiDou, GL GLONASS, GN combined) reports its satellites in view as a group
+        of sentences `<parts>,<part>,<in view>`, then four satellites each as PRN, elevation, azimuth,
+        C/N0 -- and NMEA 4.1 (the ATGM) appends a signal id after the last. The C/N0 sits at fields 7,
+        11, 15, 19 whatever the count, and the signal id at a multiple of 4, so it is never read as one.
+        A satellite in view but not tracked has an EMPTY C/N0: in view, no signal to rank (not a 0).
+
+        A group replaces the talker's view only when it arrived WHOLE and in order: a part lost to a bad
+        checksum would otherwise blank that system's half of the sky until the next burst.
+
+        Args:
+            fields - the sentence split on ',' (checksum dropped).
+
+        Returns:
+            None; on a group's last part, self._views[talker] = (in view, its four strongest C/N0).
+        """
+        talker = fields[0][1:3]
+        part = int(fields[2])
+        if part == 1:
+            self._group_talker = talker
+            self._group_cn0 = []
+        elif part != self._group_next or talker != self._group_talker:
+            self._group_next = 0  # a part out of order, or of another talker: this group cannot be whole
+            return
+        self._group_next = part + 1
+        for index in range(7, len(fields), 4):
+            if fields[index]:
+                self._group_cn0.append(int(fields[index]))
+        if part == int(fields[1]):
+            self._views[talker] = (int(fields[3]) if fields[3] else 0, sorted(self._group_cn0, reverse=True)[:4])
+            self._group_next = 0
+
+    def _sky_row(self) -> tuple:
+        """
+        The sky as the `<name>_sky.csv` row, summed over the systems.
+
+        Each GSV talker's last whole group and each GSA system's last sentence count; a system that was
+        never heard counts nothing.
+
+        Args:
+            (none)
+
+        Returns:
+            (in_view, used, mode, cn0_1, cn0_2, cn0_3, cn0_4, antenna), all ints: the four strongest C/N0
+            of all systems, 0 where fewer were heard; all zeros before the first diagnostics.
+        """
+        in_view = 0
+        strongest = []
+        for satellites, values in self._views.values():
+            in_view += satellites
+            strongest += values
+        strongest.sort(reverse=True)
+        strongest += [0, 0, 0, 0]
+        used = mode = 0
+        for system_mode, system_used in self._systems.values():
+            used += system_used
+            mode = max(mode, system_mode)
+        return (in_view, used, mode, strongest[0], strongest[1], strongest[2], strongest[3], self._antenna)
+
+    def _settle(self, now_us: int) -> None:
+        """
+        Push the sky row once a diagnostics burst is over: exactly one row per burst.
+
+        A row goes out on the first _sweeping() tick (1 s) that finds diagnostics no row carries yet AND
+        none of them in the last _BURST_QUIET_US. A burst's sentences are under that apart and bursts are
+        ~DIAGNOSTICS_S apart, so every tick inside a burst waits and the first one after it pushes the
+        whole burst -- the ATGM's antenna text, which comes AFTER the epoch's RMC, included. Ending the
+        burst on a sentence instead could not work for both modules (the ATGM's last is the TXT, the
+        NEO's a GSV), and closing it on the next RMC would add work to the 10 Hz path and still cut the
+        ATGM's TXT off. Nothing arrives in HITL (the sim publishes no GSV), so the stream stays empty there.
+
+        Two limits, neither seen on the bench. A reader stalled _BURST_QUIET_US or more inside a burst can
+        split it into a partial row and a whole one -- when a tick falls due during the stall, which is
+        certain only for a stall of a whole _SWEEP_MS (the widest gap measured inside a burst was ~0.17 s).
+        And an ATGM whose init never took stays at its default 1 Hz output, diagnostics every second with
+        only ~0.3 s between them by line time (not observed): no row then ever goes out, inspect() still
+        shows the sky.
+
+        Args:
+            now_us - the current time (ticks_us).
+
+        Returns:
+            None; pushes one sky row -- and for the first burst one event -- when a burst has just ended.
+
+        Raises:
+            ValueError - the Recorder's (_RecorderError) when the row does not fit; the burst is spent.
+        """
+        if not self._pending or commons.ticks_diff(now_us, self._pending_us) < _BURST_QUIET_US:
+            return
+        self._pending = False
+        row = self._sky_row()
+        if not self._sky_seen:
+            self._sky_seen = True
+            self.event('first sky view: %d in view, %d used, mode %d, C/N0 %d/%d/%d/%d dB-Hz, antenna %s' % (
+                row[:7] + (_ANTENNA_NAMES[row[7]],)))
+        self._sky_telemetry.push(row)
+
+    def _sky_window(self, stage: int) -> bool:
+        """
+        Keep the sky diagnostics to the pad: switch them when the stage crosses the flight window.
+
+        On before BOOSTING and again from DONE (the post-landing search), off from BOOSTING to DONE -- the
+        window drivers/wifi.py stops its radio work in. In flight a burst costs the position: on the
+        2026-10-04 bench each one delayed the epoch's RMC by up to ~0.6 s, so the 200 ms 'position'
+        channel went stale for ~0.1-0.4 s once per burst and guidance dead-reckoned through it. Off is the
+        flight init's own selection, so the flight output is exactly what it was before the diagnostics
+        existed; a receiver that missed it keeps bursting, which costs that staleness and nothing else.
+
+        Only a change writes -- one write per edge, none while the window holds -- and a switch formats
+        nothing: the frames are bytes the driver made at setup (the GC is off from BOOSTING), and the
+        write hands them to the UART's buffer, idle since setup. Its event row and the caller's drain are
+        all it allocates. A reset into a flight stage (a warm start) re-ran the init with the diagnostics
+        on, so the first tick switches them off.
+
+        Args:
+            stage - the controller's flight stage.
+
+        Returns:
+            True when it wrote (the caller drains); False while the window holds.
+        """
+        diagnosing = not (controller.Stage.BOOSTING <= stage < controller.Stage.DONE)
+        if diagnosing == self._diagnosing:
+            return False
+        if diagnosing:
+            self._writer.write(self._sky_on)
+            self.event('sky diagnostics on')
+        else:
+            self._writer.write(self._sky_off)
+            self.event('sky diagnostics off for flight')
+        self._diagnosing = diagnosing
+        return True
 
     def _mark(self, kind: str, now_us: int) -> None:
         """
@@ -293,10 +524,20 @@ class Gnss(task.Task):
         lost, connector out) never returns a line -- and the per-line sweep in run() never ran, so the
         outage events that exist for exactly this never fired. One sleep per second (48 B) instead of a
         wait_for_ms per line (560 B, at NMEA's line rate).
+
+        The same clock ends the diagnostics bursts (_settle()), which keeps that off the per-line path, and
+        keeps the diagnostics to the pad (_sky_window(): an int compare a tick, a write per flight edge).
         """
         while True:
             await asyncio.sleep_ms(_SWEEP_MS)
-            self._sweep(time.ticks_us())
+            now_us = time.ticks_us()
+            self._sweep(now_us)
+            if self._sky_window(self.controller.stage):
+                await self._writer.drain()
+            try:
+                self._settle(now_us)
+            except ValueError:
+                pass  # a full telemetry ring drops the row, as run() drops a fix; the outage sweep lives on
 
     async def probe(self) -> str:
         """
@@ -385,4 +626,19 @@ class Gnss(task.Task):
         status['altitude_m'] = self._altitude.value()
         status['elevation_m'] = self._elevation.value()
         status['speed_ms'] = self._speed.value()  # GNSS ground speed (m/s) or None until a fix
+        """
+        The sky, for "is it good enough to launch" on the pad: the top-4 C/N0 mean is the yardstick. On
+        the 2026-10-04 bench (both modules, the flight init, open sky): >= ~40 dB-Hz gave a usable
+        (RMC-valid) fix by ~42 s on the ATGM, in 1-38 s on the NEO; ~35 is marginal (the passive 12x12
+        patch the airframes flew -- it fixed, but with nothing around it); <= ~30 never fixed cold (26 with
+        no antenna, 17 min). All zeros until the first burst, ~DIAGNOSTICS_S after setup; in flight the
+        last pad burst (the diagnostics are off from BOOSTING to DONE).
+        """
+        row = self._sky_row()
+        status['in_view'] = row[0]  # satellites in view, all systems (GSV)
+        status['used'] = row[1]  # satellites used, all systems (GSA)
+        status['mode'] = row[2]  # GSA fix mode: 0 not reported yet / 1 none / 2 2D / 3 3D
+        status['cn0'] = row[3:7]  # the four strongest C/N0 (dB-Hz), 0 where fewer were heard
+        status['cn0_mean'] = sum(row[3:7]) / 4  # their mean: the yardstick above
+        status['antenna'] = _ANTENNA_NAMES[row[7]]  # the ATGM's antenna text; 'unknown' on the NEO-6M
         return status

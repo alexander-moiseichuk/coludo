@@ -75,8 +75,11 @@ import sys
 
 import recorder_wire
 
-# The firmware's Telemetry declarations (src/glider), used when a stream's own header row was lost to
-# UART corruption -- which is the usual case: the header goes out once, at the start of a session.
+"""
+The firmware's Telemetry declarations (src/glider), used when a stream's own header row was lost to UART
+corruption -- which is the usual case: the header goes out once, at the start of a session. A hand-kept
+copy: src/control/test/test_tools.py checks the GNSS pair against gnss.py's own declarations.
+"""
 _FIELDS: dict = {
     'imu_lsm6dso32': ('ax', 'ay', 'az', 'gx', 'gy', 'gz', 'irq_runs'),
     'accel_adxl375': ('ax', 'ay', 'az', 'irq_runs'),
@@ -87,6 +90,7 @@ _FIELDS: dict = {
     'laser_agl': ('agl', 'irq_runs'),
     'health': ('temp', 'mem_free', 'load', 'oom_s', 'land_s', 'leak_kbps', 'rescues', 'rescue_ms'),
     'gnss_gga': ('altitude_m', 'elevation_m', 'quality', 'satellites', 'hdop_cd'),
+    'gnss_sky': ('in_view', 'used', 'mode', 'cn0_1', 'cn0_2', 'cn0_3', 'cn0_4', 'antenna'),
     'power_ina226': ('voltage_mv', 'current_ma', 'power_mw', 'alerts'),
     'servo_eleron_left': ('angle', 'pulse_us', 'done'),
     'servo_eleron_right': ('angle', 'pulse_us', 'done'),

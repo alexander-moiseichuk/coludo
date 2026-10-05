@@ -46,13 +46,34 @@ def _literal(node):
         return None
 
 
+def _runtime_name(node: ast.expr) -> str:
+    """
+    A stream name built at runtime, as the pattern it follows: `'%s_sky.csv' % self.name` -> `<name>_sky.csv`.
+
+    One driver can declare several per-device streams (gnss.py: the fix, the GGA quality, the sky), and
+    without the pattern they all read `<name>.csv` here, indistinguishable.
+
+    Args:
+        node - the name argument's expression.
+
+    Returns:
+        The pattern with `<name>` for the config's name; `<name>.csv` when the expression is not a
+        `'<literal>' % ...` format.
+    """
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod) and isinstance(node.left, ast.Constant) \
+            and isinstance(node.left.value, str):
+        return node.left.value.replace('%s', '<name>')
+    return '<name>.csv'
+
+
 def _streams_in(path: str) -> list:
     """
     Every `Telemetry(name, fields)` construction in one file.
 
     Returns:
-        [(stream_name, [field, ...] | None)]; the name is None when it is built at runtime
-        (e.g. '%s.csv' % self.name -- a per-device stream whose name comes from the config).
+        [(stream_name, [field, ...] | None, pattern)]; the name is None when it is built at runtime
+        (e.g. '%s.csv' % self.name -- a per-device stream whose name comes from the config), and the
+        pattern is then its _runtime_name().
     """
     try:
         tree = sources.parse(path)
@@ -72,17 +93,17 @@ def _streams_in(path: str) -> list:
             fields = [str(field) for field in fields]
         elif fields is not None:
             fields = None
-        found.append((stream, fields))
+        found.append((stream, fields, None if stream else _runtime_name(node.args[0])))
     return found
 
 
 def collect() -> list:
-    """(origin, module, stream, fields) for every declared telemetry stream, sorted for a stable doc."""
+    """(origin, module, stream, fields, pattern) for every declared telemetry stream, sorted for a stable doc."""
     rows = []
     for origin, directories in _SOURCES:
         for _relative, entry, path in sources.modules(directories):
-            for stream, fields in _streams_in(path):
-                rows.append((origin, entry[:-3], stream, fields))
+            for stream, fields, pattern in _streams_in(path):
+                rows.append((origin, entry[:-3], stream, fields, pattern))
     return sorted(rows, key=lambda row: (row[2] or '~runtime', row[1]))
 
 
@@ -126,8 +147,8 @@ def render(rows: list) -> str:
            '',
            '| stream | origin | declared in | fields |',
            '|---|---|---|---|']
-    for origin, module, stream, fields in rows:
-        name = '`%s`' % stream if stream else '_per-device_ (`<name>.csv`)'
+    for origin, module, stream, fields, pattern in rows:
+        name = '`%s`' % stream if stream else '_per-device_ (`%s`)' % pattern
         columns = ', '.join('`%s`' % field for field in fields) if fields else '_runtime_'
         out.append('| %s | %s | `%s.py` | %s |' % (name, origin, module, columns))
     out += [

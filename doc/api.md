@@ -889,6 +889,13 @@ rate is the subclass's _configure(); ATGM336H (CASIC/PCAS) and NEO-6M (u-blox) d
 Talker-agnostic (GP/GN/BD). Best-effort -- lock drops under boost, so the channels go stale and
 consumers fall back.
 
+The sky diagnostics -- GSV (satellites in view, C/N0), GSA (fix mode, satellites used) and the ATGM's
+antenna text -- come every ~DIAGNOSTICS_S as one burst and go to `<name>_sky.csv`, one row per burst,
+plus inspect() for the pad. They are what tells a weak antenna from a dead receiver: the 10-03 flights
+never fixed, and with these sentences switched off their logs could not say why. They run on the pad
+only -- before BOOSTING and again from DONE -- and are off in flight, where a burst would stall the
+position (_sky_window()).
+
 ### `checksum_ok(sentence: str) -> bool`
 
 Verify the NMEA `*hh` XOR checksum (over the chars between '$' and '*').
@@ -930,8 +937,8 @@ Returns:
 Base GNSS driver over a dedicated UART.
 
 RMC -> 'position' (lat, lon); GGA -> 'altitude' (m MSL) + 'elevation' (m above the GNSS ground
-zero, a baro backup). Subclasses set the module-specific sentence selection + rate in
-_configure().
+zero, a baro backup); GSV/GSA/antenna text -> the sky row. Subclasses set the module-specific
+sentence selection + rate in _configure().
 
 - `setup() -> bool`
 - `run() -> None` — Read NMEA lines forever and parse them.
@@ -2262,13 +2269,15 @@ _Tested by `test/test_atgm336h.py`._
 ATGM336H GNSS (GPS + BDS, CASIC chip) on a dedicated UART. @task.driver('atgm336h'). All NMEA
 reading/parsing lives in the shared gnss.Gnss base; this driver only adds the CASIC reconfiguration:
 RMC at `hz` (position) plus GGA at ~1 Hz (altitude/elevation, a baro backup) -- both fit 9600 baud
-(~10 Hz RMC ~700 B/s + ~1 Hz GGA ~70 B/s < 960). PCAS is the CASIC command set; the PMTK pair is sent
-too as a fallback for MTK-variant modules (each side ignores the other's sentences). Graceful: an
-undefined bus -> setup False (the Controller skips it).
+(~10 Hz RMC ~700 B/s + ~1 Hz GGA ~70 B/s < 960) -- and the sky diagnostics every ~10 s: GSA, GSV and
+the antenna text, ~0.5 kB a burst (~50 B/s), which the base records as `<name>_sky.csv` and keeps to the
+pad by re-sending the init's own mask in flight (gnss.Gnss._sky_window()). PCAS is the CASIC command
+set; the PMTK pair is sent too as a fallback for MTK-variant modules (each side ignores the other's
+sentences). Graceful: an undefined bus -> setup False (the Controller skips it).
 
 ### `class Atgm336h(gnss.Gnss)`
 
-ATGM336H (CASIC): RMC at `hz` for position + GGA at ~1 Hz for altitude/elevation.
+ATGM336H (CASIC): RMC at `hz` for position + GGA at ~1 Hz for altitude/elevation + the sky.
 
 
 ## `bluetooth.py`
@@ -2602,12 +2611,15 @@ GY-NEO6MV2 (u-blox NEO-6M) GNSS on a dedicated UART: a drop-in alternative to th
 UART -- swap the component `driver` to 'neo6mv2' in config (and lower `hz`; the NEO-6M tops out near
 5 Hz). @task.driver('neo6mv2'). NMEA read/parse is the shared gnss.Gnss base; this driver only adds the
 u-blox reconfiguration: $PUBX,40 selects RMC (position) + GGA at ~1 Hz (altitude/elevation) on the UART
-and silences the rest, then UBX-CFG-RATE sets the measurement period. Default link is 9600 8N1, like the
-ATGM. Graceful: an undefined bus -> setup False.
+and silences the rest, UBX-CFG-RATE sets the measurement period, then $PUBX,40 turns GSA + GSV back on
+every ~10 s -- the sky diagnostics the base records as `<name>_sky.csv` (no antenna status: the NEO-6M
+reports none over NMEA) and keeps to the pad by re-sending the init's GSA + GSV off in flight
+(gnss.Gnss._sky_window()). Default link is 9600 8N1, like the ATGM. Graceful: an undefined bus -> setup
+False.
 
 ### `class Neo6mv2(gnss.Gnss)`
 
-u-blox NEO-6M: $PUBX,40 selects RMC + ~1 Hz GGA, UBX-CFG-RATE sets the measurement period.
+u-blox NEO-6M: $PUBX,40 selects RMC + ~1 Hz GGA, UBX-CFG-RATE sets the period, then the sky every ~10 s.
 
 
 ## `sdp810.py`

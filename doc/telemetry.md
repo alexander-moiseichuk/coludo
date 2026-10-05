@@ -46,14 +46,15 @@ The shared `session.csv` index lists every boot, whether or not its clock is set
 | _per-device_ (`<name>.csv`) | board | `bmp581.py` | `altitude`, `temperature`, `pressure`, `elevation` |
 | _per-device_ (`<name>.csv`) | board | `bno055.py` | `heading`, `roll`, `pitch`, `ax`, `ay`, `az` |
 | _per-device_ (`<name>.csv`) | board | `gnss.py` | `lat`, `lon`, `speed_kn`, `course` |
-| _per-device_ (`<name>.csv`) | board | `gnss.py` | `altitude_m`, `elevation_m`, `quality`, `satellites`, `hdop_cd` |
+| _per-device_ (`<name>_gga.csv`) | board | `gnss.py` | `altitude_m`, `elevation_m`, `quality`, `satellites`, `hdop_cd` |
+| _per-device_ (`<name>_sky.csv`) | board | `gnss.py` | `in_view`, `used`, `mode`, `cn0_1`, `cn0_2`, `cn0_3`, `cn0_4`, `antenna` |
 | _per-device_ (`<name>.csv`) | board | `icp10111.py` | `altitude`, `temperature`, `pressure`, `elevation` |
 | _per-device_ (`<name>.csv`) | board | `ina226.py` | `voltage_mv`, `current_ma`, `power_mw`, `alerts` |
 | _per-device_ (`<name>.csv`) | board | `lsm6dso32.py` | `ax`, `ay`, `az`, `gx`, `gy`, `gz`, `irq_runs` |
 | _per-device_ (`<name>.csv`) | board | `sdp810.py` | `dynamic_pressure`, `airspeed_cms`, `temperature` |
 | _per-device_ (`<name>.csv`) | board | `sequencer.py` | `stage`, `reason` |
 | _per-device_ (`<name>.csv`) | board | `sg90.py` | `angle`, `pulse_us`, `done` |
-| _per-device_ (`<name>.csv`) | board | `task.py` | `event` |
+| _per-device_ (`<name>_events.csv`) | board | `task.py` | `event` |
 | _per-device_ (`<name>.csv`) | board | `vl53l1x.py` | `agl`, `irq_runs` |
 | _per-device_ (`<name>.csv`) | board | `vl53l4cx.py` | `agl`, `irq_runs` |
 

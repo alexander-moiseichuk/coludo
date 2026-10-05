@@ -898,7 +898,7 @@ The bno055 geomagnetic sensor extracts absolute magnetic heading vectors. It ser
 
 ## Navigation
 
-Horizontal position tracking uses an ATGM336H-5N-31 high-sensitivity GNSS array. It is configured **once, at setup**, to the rate in the config (`gnss.hz`, **10 Hz**) and stays there for the whole flight. There is no low-power ground mode and no launch-triggered escalation: the driver's `_configure()` is called from `Gnss.setup()` and from nowhere else, so there is no command to get wrong at the one moment the glider is leaving the rail.
+Horizontal position tracking uses an ATGM336H-5N-31 high-sensitivity GNSS array. It is configured **once, at setup**, to the rate in the config (`gnss.hz`, **10 Hz**), and the rate stays there for the whole flight. There is no low-power ground mode and no launch-triggered escalation: the driver's `_configure()` is called from `Gnss.setup()` and from nowhere else. The one write after setup is the sky diagnostics switch (below), and at launch it re-sends a sentence mask the receiver already took at setup, so there is no new command to get wrong at the one moment the glider is leaving the rail.
 
 The driver POLLS the UART from its async loop; it does not use an ISR. At 10 Hz RMC the link carries
 ~700 B/s against 960 available, so there is no rate pressure to justify interrupt handling -- and an
@@ -911,8 +911,9 @@ consulted:
 
 **The link stays at 9600 baud.** It is not escalated, and it does not need to be: the driver asks for
 RMC at `hz` (position) plus GGA at only ~1 Hz (altitude, a baro backup), which is ~700 B/s + ~70 B/s
-against 960 B/s available. Trading a working link for headroom nothing uses would be a bad bargain --
-a baud change is the kind of thing that half-works and leaves the receiver mute.
+against 960 B/s available, and the sky diagnostics (below, pad only) add ~0.5 kB every ~10 s, ~50 B/s. Trading a
+working link for headroom nothing uses would be a bad bargain -- a baud change is the kind of thing that
+half-works and leaves the receiver mute.
 
 What the driver actually sends at setup (`src/glider/drivers/atgm336h.py`), PCAS being the CASIC
 command set with a PMTK pair as the fallback for modules that speak MTK:
@@ -920,7 +921,14 @@ command set with a PMTK pair as the fallback for modules that speak MTK:
 ```
 $PCAS03,...     # sentence mask: RMC + a decimated GGA, everything else off
 $PCAS02,<ms>    # update period, from `hz` (10 Hz -> 100 ms)
+$PMTK314,...    # MTK fallback: RMC + GGA
+$PMTK220,<ms>   # MTK fallback: update period
+$PCAS03,...     # the same mask + GSA, GSV and the antenna text every 10*hz-th fix (99 at 10 Hz: ~10 s)
 ```
+
+The NEO-6M (`drivers/neo6mv2.py`) does the same in u-blox terms: `$PUBX,40` selects RMC + the
+decimated GGA and silences the rest, UBX-CFG-RATE sets the period, then `$PUBX,40` turns GSA and GSV
+back on every 10*hz-th fix (50 at 5 Hz).
 
 **Not sent, despite older revisions of this document:** `$PCAS01` (baud escalation to 115200) and
 `$PCAS10` (factory cold restart). A cold restart in particular would throw away the almanac and make
@@ -930,6 +938,53 @@ the next fix slower, which is the opposite of what a launch wants.
 A verified MicroPython initialization snippet handles this handshake sequence.
 
 The Flight Controller continually correlates accelerometer vectors alongside GNSS strings to maintain dead-reckoning positioning if the satellite signal drops out mid-flight.
+
+### Sky diagnostics — implemented (10/04), pad only
+
+**Why.** On 10-03 neither airframe ever fixed (0 GGA rows with a fix), and the flight logs could not
+say why: the flight init switched GSV, GSA and the antenna text off, so all a capture held was "no
+fix". The 2026-10-04 bench (`src/gnss_bench`, both modules on this exact init, open sky; write-up in
+[`doc/benches/gnss-20261004`](../benches/gnss-20261004/README.md)) answered it: a SIGNAL problem, not
+the configuration. On every real antenna a usable (RMC-valid) fix came by ~42 s on the ATGM and in
+1-38 s on the NEO; the passive 12x12 patch the airframes flew gave the ATGM a top-4 C/N0 of only
+~35 dB-Hz with `ANTENNA OPEN` (~8-10 dB under the active antennas, which read `OK`), and with no antenna
+at all it sat at 26 dB-Hz and never fixed in 17 minutes.
+
+**Pad only, and why.** The diagnostics run before BOOSTING and again from DONE (the post-landing
+search), and are off from BOOSTING to DONE -- the window the Wi-Fi driver stops its radio work in. They
+are slow enough to leave the flight RATES alone (the bench: ATGM at 10 Hz, 250 RMC + 25 GGA in 25 s with
+the diagnostics at ~9.5 s and ~19.4 s; NEO at 5 Hz, 125 RMC + 25 GGA, GSA/GSV every ~10 s), but not the
+timing: each ~10 s burst delays the epoch's RMC by up to ~0.6 s, so the 200 ms `position` channel goes
+stale for ~0.1-0.4 s once per burst and guidance dead-reckons through it. On the pad that costs nothing;
+in flight it is a hole in the position every ten seconds.
+
+The GNSS task's 1 s sweep tick compares the stage (an int) and, when it crosses the window, writes a
+frame the driver made at setup -- bytes, so a switch builds nothing with the GC off. Off is the flight
+init's own selection (the ATGM's first `$PCAS03`; the NEO's `$PUBX,40` GSA and GSV at 0), so the flight
+output is exactly what it was before the diagnostics existed; on is the diagnostics' command. One write
+per edge, each with an event (`sky diagnostics off for flight`, `sky diagnostics on`). Setup is
+unchanged and ends with the diagnostics on, so a reset into a flight stage (a warm start) switches them
+off at its first tick. The switch lands within ~1 s of launch: a burst due in that second still comes,
+and a receiver that missed the command keeps bursting, which costs the staleness above and nothing else.
+
+**What is logged.** One `<name>_sky.csv` row per diagnostics burst (`gnss_sky.csv` on every board):
+`in_view` (GSV, all systems), `used` (GSA, the sum over systems -- the ATGM sends a GSA per system and
+the PRN numbers repeat between GPS and BDS), `mode` (GSA: 1 no fix, 2 2D, 3 3D, the best system's),
+`cn0_1..cn0_4` (the four strongest C/N0 in dB-Hz, 0 where fewer were heard) and `antenna` (0 none
+reported -- always on the NEO-6M, 1 OK, 2 OPEN, 3 SHORT). All integers. The row goes out on the first
+1 s sweep tick that finds the burst quiet for 0.5 s -- one row per burst, the ATGM's antenna text
+(which follows the epoch's RMC) included, and nothing added to the 10 Hz RMC path. A GSV group
+replaces its system's view only when it arrived whole and in order. Events (the durable
+`gnss_events.csv`): the first burst's whole sky, every change of the antenna status, and the switch. A
+flight capture holds the pad's rows, at most a burst due in launch's first second, and the search's from
+DONE. HITL publishes no GSV
+and masks the real receiver, so the stream simply stays empty there.
+
+**The pad check.** `inspect gnss` shows `in_view`, `used`, `mode`, `cn0` (the top four), `cn0_mean` and
+`antenna`, ~10 s after setup. The bench's yardstick for the top-4 mean: **>= ~40 dB-Hz** fixed every
+time; **~35** is marginal (the passive patch -- it fixed on the bench with nothing around it, the
+airframe puts the Luckfox, the camera and Wi-Fi next to it); **<= ~30** never fixed cold. `antenna
+OPEN` on the ATGM means a passive antenna or none.
 
 ## Altimeter
 
