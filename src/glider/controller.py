@@ -83,6 +83,8 @@ class Controller(inspector.Inspectable):
         self.log = log if log is not None else (lambda msg: None)
         self.tasks: dict = {}  # name -> Task
         self.failures: dict = {}  # name -> reason, for enabled devices that did not come up (setup)
+        # name -> the up device on its I2C socket feeding the same data: an unfitted ALTERNATIVE, not a fault
+        self.alternatives: dict = {}
         self._runners: dict = {}  # name -> asyncio.Task
         self.stage: int = Stage.SETTING
         self.armed: bool = False  # actuation gate -- the control loop holds fins neutral until armed
@@ -105,6 +107,160 @@ class Controller(inspector.Inspectable):
             if device.get('name') == name:
                 return device
         return None
+
+    def driver(self, name: str) -> str:
+        """
+        The driver (or activity) a configured device runs, for the operator-facing verdicts.
+
+        "FAIL laser_agl" did not say WHICH part had failed, and on a socket declared for two parts
+        that is the whole question -- so every device verdict names the implementation its config
+        entry declares.
+
+        Args:
+            name - the device name.
+
+        Returns:
+            The entry's `driver`, else its `activity`; None when no configured device has that name.
+        """
+        comp = self._component(name)
+        if comp is None:
+            return None
+        return comp.get('driver') or comp.get('activity')
+
+    def _socket(self, name: str) -> tuple:
+        """
+        Where an I2C device answers, as (bus kind, bus id, address); None for any other device.
+
+        Only an I2C ADDRESS identifies a socket. Two UART or PWM devices on one bus are two devices,
+        never two candidates for one place. An SPI entry may carry an `addr` too, but that is its
+        fallback for an I2C wiring: on SPI the chip-select is the socket, so two SPI parts that share a
+        fallback address are two parts, and the dead one must stay a failure. The id compares as text
+        because a JSON config may carry it either way, as bustune() already allows.
+
+        Args:
+            name - the device name.
+
+        Returns:
+            ('i2c', id as text, addr); None for an unknown device, a non-I2C one or one without `addr`.
+        """
+        comp = self._component(name)
+        if comp is None or comp.get('bus') != 'i2c' or comp.get('addr') is None:
+            return None
+        return ('i2c', str(comp.get('id')), comp.get('addr'))
+
+    def _quantities(self, name: str) -> list:
+        """
+        The data a device feeds the databoard: its `provides` keys, sorted.
+
+        Args:
+            name - the device name.
+
+        Returns:
+            E.g. ['agl'] for either laser; [] for an unknown device or one that declares no `provides`.
+        """
+        comp = self._component(name)
+        return sorted((comp or {}).get('provides') or {})
+
+    def _reset_gpio(self, name: str) -> int:
+        """
+        The GPIO a device's setup pulses to reset its part BEFORE it has identified that part.
+
+        Which pins count, from both laser drivers: `xshut_pin` alone. vl53l4cx/vl53l1x setup() pulse it
+        low->high in _reset(), ahead of the model-id check, once per `setup_retries` attempt -- and XSHUT
+        low reboots whatever part is soldered on the socket. Their `int_pin` is an input, wired only
+        after the model id matched, so an entry whose part is absent never reaches it. No other I2C
+        driver drives a pin in setup (the INA226 `alert_pin` is an input; `cs_pin` is SPI, never a
+        socket -- see _socket). Resolved as task._pin_gpio does: a pin named in the board `pins` map.
+
+        Args:
+            name - the device name.
+
+        Returns:
+            The GPIO number; None when the entry routes no XSHUT (layout drops it on v1.0/v1.1, or the
+            pins map nulls it).
+        """
+        gpio = self.config.get('pins', {}).get((self._component(name) or {}).get('xshut_pin'))
+        return gpio if isinstance(gpio, int) and gpio >= 0 else None
+
+    def _sort_alternatives(self) -> None:
+        """
+        Move each failed device that an up device can stand in for from failures to alternatives.
+
+        config_default declares the VL53L4CX and the VL53L1X on one socket, 0x29 (i2c:1 once layout places
+        it on v1.0/v1.1): an I2C scan cannot tell them apart, so the board carries both entries and the
+        part that is soldered wins. The
+        other entry's setup then fails BY DESIGN (its model id check reads the other part), and while
+        that sat in failures every consumer called it a fault -- `probe all` printed FAIL and `arm`
+        refused every board with the L1X fitted. Two parts cannot share one address on one bus, so the
+        loser is simply not fitted.
+
+        The winner must answer the SAME I2C socket (see _socket), provide the SAME data -- the same
+        non-empty set of `provides` keys, both {'agl'} -- and run a DIFFERENT driver: two entries of one
+        driver on one socket are a config mistake, and the duplicate's setup re-initialises the winner's
+        own part, so an error mid-way would leave it stopped while the board armed. Without the data rule
+        a config mistake read as a missing part: a baro declared at 0x29 beside a working VL53L1X was
+        hidden as "not fitted" and the board armed with no baro, where it had refused before. An entry
+        that provides nothing has nothing to stand in for, so it stays a failure too.
+
+        And the loser's setup must not RESET the winner. On v0.1 (or an undecided layout) both laser
+        entries route XSHUT to GPIO5 -- layout drops it only on v1.0/v1.1 -- and each setup pulses it
+        before its model-id check, so the loser's setup reboots the fitted laser to its defaults: it
+        still answers its model id (probe passes) and never ranges again. The loser stays a failure
+        whenever its own setup pulses an XSHUT (_reset_gpio), in EITHER order: a loser set up first
+        resets nothing this boot, but the declaration order is no contract -- the rule must not hang on
+        it. Its reason then tells the operator the fix -- enable exactly one of the two.
+
+        Decided after the WHOLE setup pass, because the loser may be set up before its winner. When no
+        such device answers every entry stays a failure: a missing laser must still block arming.
+
+        Args:
+            (none)
+
+        Returns:
+            None; updates self.failures and self.alternatives (a loser that pulses XSHUT keeps its
+            failure, with the shared reset appended to the reason).
+        """
+        for name in list(self.failures):
+            socket = self._socket(name)
+            quantities = self._quantities(name)
+            if socket is None or not quantities:
+                continue
+            for winner in self.tasks:
+                if (self._socket(winner) != socket or self._quantities(winner) != quantities or
+                        self.driver(winner) == self.driver(name)):
+                    continue
+                gpio = self._reset_gpio(name)
+                if gpio is None:
+                    self.alternatives[name] = winner
+                    del self.failures[name]
+                else:
+                    self.failures[name] += (
+                        '; shares XSHUT GPIO%d with %s (%s): its setup resets the fitted laser -- enable '
+                        'exactly one of %s on this board' % (gpio, winner, self.driver(winner),
+                                                             ', '.join(sorted((name, winner)))))
+                break
+
+    def unfitted(self, name: str) -> str:
+        """
+        The operator's line for an unfitted alternative: which part is absent and which one took its socket.
+
+        The winner identified itself at setup, so the loser stays not fitted even when the winner's run
+        loop crashes later -- but the line must not then say the winner "answers": `probe` and `arm`
+        call it failed, and the line follows them.
+
+        Args:
+            name - a device in self.alternatives.
+
+        Returns:
+            'vl53l4cx not fitted -- vl53l1x (laser_agl_l1x) answers i2c:1 0x29' while the winner runs;
+            '... answered i2c:1 0x29 at setup, now down' once the winner's run loop has crashed.
+        """
+        winner = self.alternatives[name]
+        where = '%s:%s 0x%02x' % self._socket(winner)
+        if winner in self.failures:
+            return '%s not fitted -- %s (%s) answered %s at setup, now down' % (
+                self.driver(name), self.driver(winner), winner, where)
+        return '%s not fitted -- %s (%s) answers %s' % (self.driver(name), self.driver(winner), winner, where)
 
     def create(self, name: str) -> task.Task:
         """
@@ -203,9 +359,12 @@ class Controller(inspector.Inspectable):
         boot -- a mid-flight reboot must not sweep the fins.
 
         Returns:
-            True once bring-up has run; failures are recorded in self.failures, not raised.
+            True once bring-up has run; failures are recorded in self.failures, not raised, and a
+            failed entry that an up device stands in for (same I2C socket, same data, no XSHUT pulse
+            of its own -- see _sort_alternatives) lands in self.alternatives instead.
         """
         self.failures = {}  # recomputed each bring-up
+        self.alternatives = {}
         attempts = max(1, self.config.get('board', {}).get('setup_retries', 1))  # retry flaky contacts (breadboard)
         for name in self.directory():
             if name in self.tasks:
@@ -215,6 +374,9 @@ class Controller(inspector.Inspectable):
                 self.tasks[name] = new_task
                 inspector.Inspector.register(new_task)  # operator can `inspect <task>`
                 self.log("controller :: task '%s' up" % name)
+        self._sort_alternatives()
+        for name in self.alternatives:
+            self.log('controller :: %s: %s' % (name, self.unfitted(name)))
         if self.failures:
             self.log('controller :: %d device(s) not up: %s' % (
                 len(self.failures), ', '.join(sorted(self.failures))))
@@ -299,8 +461,9 @@ class Controller(inspector.Inspectable):
             freq - the target frequency in Hz.
 
         Returns:
-            A dict of the per-device verdicts + all_ok; or {'error': ...} for a non-tunable kind or an
-            undefined bus.
+            {kind, id, freq, devices, all_ok}: devices {name: 'ok' | '<driver> -- <why>'}, leaving out
+            an unfitted alternative (it is not on the bus); or {'error': ...} for a non-tunable kind or
+            an undefined bus.
         """
         modules = {'i2c': 'i2cbus', 'spi': 'spibus'}
         if kind not in modules:
@@ -315,13 +478,17 @@ class Controller(inspector.Inspectable):
             if item.get('bus') != kind or str(item.get('id')) != str(ident):
                 continue
             name = item.get('name')
+            if name in self.alternatives:
+                continue  # not on this bus at all: counting it 'down' failed every rung of the sweep
             running = self.active(name)
             if running is None:
-                devices[name] = 'down: ' + self.failures.get(name, 'not up')
+                verdict = 'down: ' + self.failures.get(name, 'not up')
             elif hasattr(running, 'probe'):
-                devices[name] = await running.probe() or 'ok'  # probe() -> None when healthy
+                verdict = await running.probe() or 'ok'  # probe() -> None when healthy
             else:
-                devices[name] = 'no probe'
+                verdict = 'no probe'
+            # 'ok' is the contract the CC sweep reads; anything else names the part, as probe/verify do
+            devices[name] = verdict if verdict == 'ok' else '%s -- %s' % (self.driver(name), verdict)
         return {'kind': kind, 'id': ident, 'freq': freq, 'devices': devices,
                 'all_ok': bool(devices) and all(verdict == 'ok' for verdict in devices.values())}
 
@@ -462,7 +629,7 @@ class Controller(inspector.Inspectable):
     """Inspectable: the operator-facing state snapshot (inspect) and per-task stats."""
     def inspect(self) -> dict:
         return {'stage': self.stage_name(), 'armed': self.armed, 'manual': self.manual,
-                'tasks': list(self.tasks.keys()), 'failures': self.failures}
+                'tasks': list(self.tasks.keys()), 'failures': self.failures, 'alternatives': self.alternatives}
 
     def stats(self) -> dict:
         return {'stage': self.stage_name(),

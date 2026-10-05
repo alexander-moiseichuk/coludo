@@ -1,17 +1,20 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-On-board test for mission.py: launch.config load, live update (launch id / position / RTC time setup),
-persistence, and Inspector integration. Positive + negative.
+On-board test for mission.py: launch.config load, live update (launch id / position / RTC time setup
++ its session.csv row), persistence, and Inspector integration. Positive + negative.
 """
 
 import asyncio
 import json
 import os
+import time
 
+import config_default
 import databoard
 import inspector
 import mission
+import recorder
 
 PATH = 'test_launch.config'
 
@@ -113,6 +116,123 @@ def _time_setup(launch):
     # negative: an epoch before 2000-01-01 is rejected (would set a pre-2000 RTC)
     assert launch.set_time(100) is False
     assert launch.set_time(mission._EPOCH_OFFSET - 1) is False
+    """
+    The RTC's own epoch is 2000-01-01, which three things assume: _EPOCH_OFFSET here, CC's "never set"
+    window for whoami's epoch (Unix 946684800..978307200) and the Recorder's set-clock threshold that
+    dates session.csv rows. On a 1970-epoch port a cold board would report ~2030, and CC would never sync it.
+    """
+    assert time.gmtime(0)[:6] == (2000, 1, 1, 0, 0, 0), time.gmtime(0)
+
+
+class _FakeWriter:
+    """Stands in for the recorder UART's StreamWriter: this test reads the ring, never the wire."""
+
+    def write(self, data):
+        pass
+
+    async def drain(self):
+        pass
+
+
+def test_time_index():
+    launch = mission.Mission(PATH)
+    before = launch.epoch()  # the board clock this test borrows -- put back below, whatever happens
+    booted = recorder.Recorder.boot_id  # set by hand, never through NVS: the real boot count stays put
+    try:
+        recorder.Recorder.boot_id = 123
+        recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
+        _time_index(launch)
+        _time_index_ring_full(launch)
+    finally:
+        launch.set_time(before)
+        recorder.Recorder.boot_id = booted
+
+
+def _row(ring) -> list:
+    """The cells of the next session.csv row queued in the telemetry ring."""
+    record = ring.read()
+    assert record.startswith(b'@session.csv@') and record.endswith(b'\n'), record
+    return record[len(b'@session.csv@'):-1].decode().split(';')
+
+
+def _time_index(launch):
+    """
+    A successful time set appends the boot's session.csv row; the update's extras are momentary.
+
+    `utc_offset`, `cc_position` and `source` ride in the same `update mission` as the epoch. They go to
+    the row and nowhere else -- above all, CC's position must never become the launch pad.
+    """
+    ring = recorder.Recorder._tlm
+    pad = (launch.latitude, launch.longitude)
+    changed = launch.update({'epoch': 1781000000, 'utc_offset': -240, 'cc_position': [25.5, -80.25],
+                             'source': 'cc-auto'})
+    assert changed == ['epoch'], changed  # the extras are not fields: never reported changed
+    assert (launch.latitude, launch.longitude) == pad  # CC's position is not the launch pad
+    for name in ('utc_offset', 'cc_position', 'source'):
+        assert not hasattr(launch, name), name  # ...and not stored at all
+    assert 'cc_position' not in launch.persisted()
+    assert _row(ring) == ['uptime', 'boot', 'session', 'utc', 'utc_offset', 'board', 'firmware', 'config_id',
+                          'source', 'cc_lat', 'cc_lon']  # the header, once per boot
+    cells = _row(ring)
+    assert cells[1:3] == ['123', '000123'], cells
+    assert len(cells[3]) == 20 and cells[3].startswith('2026-') and cells[3].endswith('Z'), cells  # RTC, UTC
+    assert cells[4] == '-240' and cells[8:] == ['cc-auto', '25.5', '-80.25'], cells
+
+    # a re-sync adds a row, no second header
+    assert launch.update({'epoch': 1781000060, 'source': 'dashboard'}) == ['epoch']
+    cells = _row(ring)
+    assert cells[1] == '123' and cells[4] == '' and cells[8:] == ['dashboard', '', ''], cells
+
+    # NEGATIVE: bad extras become empty cells -- the row is still written, the clock still set
+    assert launch.update({'epoch': 1781000120, 'utc_offset': '-240', 'cc_position': [200.0, 0.0],
+                          'source': 'a;b'}) == ['epoch']
+    cells = _row(ring)
+    assert cells[4] == '' and cells[8:] == ['', '', ''], cells
+    assert launch.update({'epoch': 1781000180, 'utc_offset': True, 'cc_position': [25.5],
+                          'source': 7}) == ['epoch']
+    cells = _row(ring)
+    assert cells[4] == '' and cells[8:] == ['', '', ''], cells
+    assert launch.update({'epoch': 1781000190, 'source': 'cc\tauto'}) == ['epoch']  # a TAB breaks the CRC
+    assert _row(ring)[8] == ''
+
+    # utc_offset spans the zones that exist, UTC-12:00..UTC+14:00; past them the cell is empty, the clock set
+    for offset, cell in ((-720, '-720'), (840, '840'), (-721, ''), (841, ''), (100000, '')):
+        assert launch.update({'epoch': 1781000200, 'utc_offset': offset}) == ['epoch'], offset
+        cells = _row(ring)
+        assert cells[3].startswith('2026-') and cells[4] == cell, (offset, cells)
+
+    """
+    NEGATIVE: a time set into 2000 -- a setter's own bad clock; set_time takes anything from 2000-01-01 --
+    leaves the clock unset, so its row is undated: utc and utc_offset empty, whatever came with it. The
+    time set itself still counts.
+    """
+    for epoch in (mission._EPOCH_OFFSET + 3600, 978307200 - 3600):  # 2000-01-01T01:00, 2000-12-31T23:00
+        assert launch.update({'epoch': epoch, 'utc_offset': -240, 'source': 'dashboard'}) == ['epoch'], epoch
+        cells = _row(ring)
+        assert cells[1:5] == ['123', '000123', '', ''] and cells[8] == 'dashboard', (epoch, cells)
+
+    # NEGATIVE: a refused time set writes no row, whatever rides with it; extras alone write nothing
+    assert launch.update({'epoch': 'now', 'source': 'cc-auto'}) == []
+    assert launch.update({'utc_offset': -240, 'cc_position': [25.5, -80.25], 'source': 'cc-auto'}) == []
+    assert ring.read() is None
+
+
+def _time_index_ring_full(launch):
+    """
+    NEGATIVE: a session.csv row that finds the telemetry ring full is logged and LOST -- never an error.
+
+    The RTC is set before the row is queued, so failing the update would have CC report a time set that
+    happened as refused (and never retry it). The time set still counts: `epoch` is reported changed.
+    """
+    cfg = config_default.default()
+    cfg['recorder']['tlm_capacity'] = 2  # holds ONE record...
+    recorder.Recorder.setup(cfg, uart=_FakeWriter())
+    assert recorder.Recorder._tlm.write(b'@a.csv@1\n')  # ...and it is taken
+    assert launch.update({'epoch': 1781000240, 'source': 'cc-auto'}) == ['epoch']
+    assert abs(launch.epoch() - 1781000240) <= 3  # the clock was set all the same
+    logged = recorder.Recorder._log.read()
+    assert logged is not None and b'session.csv row lost' in logged, logged
+    assert recorder.Recorder._tlm.count() == 1  # only the record that filled it: no row, no header
 
 
 def test_save_roundtrip():
@@ -269,6 +389,7 @@ def main():
         test_update_launch_id()
         test_update_positive_and_negative()
         test_time_setup()
+        test_time_index()
         test_save_roundtrip()
         test_landing_zone()
         test_zone_geometry_and_range()
@@ -276,8 +397,8 @@ def main():
         test_sites_and_fallback()
     finally:
         _cleanup()
-    print('ok: mission load/update/time/save + landing-zone geometry/range + GNSS launch-point + '
-          'site-by-GPS + fallback zone + Inspector')
+    print('ok: mission load/update/time (+ session.csv row, momentary extras +/-)/save + landing-zone '
+          'geometry/range + GNSS launch-point + site-by-GPS + fallback zone + Inspector')
 
 
 main()

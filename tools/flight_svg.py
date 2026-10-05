@@ -171,8 +171,7 @@ def main():
         parser.error('--zone needs exactly TL_LAT,TL_LON,BR_LAT,BR_LON')
     streams_list = []
     for c in args.captures:
-        with open(c) as handle:
-            streams_list.append(flight_telemetry.parse(handle.read())[0])
+        streams_list.append(flight_telemetry.load(c)[0])
 
     if args.overlay or len(streams_list) > 1:
         labels = args.labels.split(',') if args.labels else [os.path.basename(c) for c in args.captures]

@@ -21,9 +21,12 @@ function loggy() {
 }
 
 function start() {
+    local mountpoint="$(dirname $RECORDER_FOLDER)"
+
     loggy "validating status to start $EXECUTABLE"
+    mount -o remount,commit=1 "$mountpoint"
+    fstrim --verbose "$mountpoint"
     [ -d "$RECORDER_FOLDER" ] || mkdir -p "$RECORDER_FOLDER"
-    fstrim --verbose "$RECORDER_FOLDER"
 
     # basically, SERIAL_DEVICE needs to be checked
     if [ -n "$SERIAL_DEVICE" ]; then

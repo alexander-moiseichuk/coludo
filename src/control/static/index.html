@@ -24,8 +24,11 @@
   .off .dot { color: #bbb; }
   input, button, textarea { font: inherit; padding: .3rem .5rem; }
   textarea { font-family: ui-monospace, monospace; font-size: .85rem; width: 100%; max-width: 60rem; box-sizing: border-box; }
-  pre { white-space: pre-wrap; background: #f4f4f4; padding: .6rem; min-height: 1.2rem; border-radius: 4px; max-width: 60rem; }
+  pre { white-space: pre-wrap; overflow-wrap: anywhere; background: #f4f4f4; padding: .6rem; min-height: 1.2rem; border-radius: 4px; max-width: 60rem; }
   .muted { color: #888; font-size: .85rem; }
+  /* the board-actions verdict: its own block UNDER the buttons, one device per line, wrapping on a phone */
+  .actmsg { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .9rem; max-width: 60rem; margin: 0 0 1rem; }
+  .actmsg:empty { display: none; }
   .obj { margin: .4rem 0; }
   .obj > label { font-weight: 600; margin-right: .5rem; }
   .obj textarea { max-width: 40rem; }
@@ -67,10 +70,11 @@ altering one.</p>
   <button id="actcalib" title="guided calibration of the selected board, one device per press">calibrate</button>
   <button id="actprobe" title="run every device self-test on the selected board">probe devices</button>
   <button id="actdetect" title="re-scan both I2C buses and report which board revision they look like (does not apply)">detect layout</button>
-  <button id="actsynctime" title="set the board RTC to the CC clock">sync time</button>
+  <button id="actsynctime" disabled
+          title="sets the board RTC from THIS BROWSER's clock and timezone, not CC's -- only in stage setting">sync time</button>
   <button id="actassist" title="push the CC GNSS fix to the board launch config">sync GNSS</button>
-  <span class="muted" id="actmsg"></span>
 </p>
+<div id="actmsg" class="actmsg"></div>
 
 <h2>send command to <span class="sel" id="selB">—</span></h2>
 <p>
@@ -267,15 +271,87 @@ function actionBoard() {
 async function probeBoard(id) {
   document.getElementById('actmsg').textContent = `${id}: probing…`;
   const r = await cmd(id, 'probe', []);
-  // args[0] arrives as a JSON STRING (see safeParse) -- testing typeof === 'object' on it was always
-  // false, so `results` was always {} and this reported "all 0 devices pass" for EVERY board, including
-  // one with a dead sensor. A self-test that cannot fail is worse than no self-test.
-  const parsed = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : null;
-  const results = (parsed && typeof parsed === 'object') ? parsed : {};
-  const bad = Object.keys(results).filter((k) => results[k] !== null && results[k] !== 'pass');
-  document.getElementById('actmsg').textContent = r.status === 'ok'
-    ? (bad.length ? `${id}: FAIL ${bad.join(', ')}` : `${id}: all ${Object.keys(results).length} devices pass`)
+  document.getElementById('actmsg').textContent = (r.status === 'ok' && Array.isArray(r.args))
+    ? probeVerdict(id, r)
     : `${id}: ${JSON.stringify(r)}`;
+}
+
+/*
+ * Device verdicts, ONE LINE PER DEVICE. The operator's asks, verbatim: "it need to show driver name to
+ * understand what is fail? like laser_agl: vl53l1x", "also you can add diagnostic line why fail" and
+ * "you can occupy space under action button and report each device failure in own line without ;".
+ * The board answers JSON maps whose values already read '<driver> -- <why>' ('<driver> not fitted --
+ * ...' for an unfitted alternative), so the page only lays them out: a header naming the board and the
+ * verdict, then '<name>: <value>' per failing device, then each unfitted alternative on its own line.
+ */
+const plural = (count, noun) => `${count} ${noun}${count === 1 ? '' : 's'}`;
+// A JSON-object arg as a plain map; absent, a string or a list reads as empty. The args arrive as JSON
+// STRINGS (see safeParse): testing typeof === 'object' on the raw arg was always false, so probe once
+// reported "all 0 devices pass" for EVERY board, including one with a dead sensor.
+function jsonMap(value) {
+  const parsed = safeParse(value);
+  return (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) ? parsed : {};
+}
+const verdictText = (value) => (typeof value === 'string' ? value : JSON.stringify(value));
+function verdictBlock(header, ...maps) {
+  const lines = [header];
+  for (const map of maps) {
+    for (const [name, value] of Object.entries(map)) { lines.push(`${name}: ${verdictText(value)}`); }
+  }
+  return lines.join('\n');
+}
+// probe: args[0] {name: null | verdict} (null = healthy), args[1] the unfitted alternatives (absent on
+// boards that predate them, which simply have none to show). `probe <alternative>` answers null for it in
+// args[0] and its line in args[1]: it is counted as not fitted, never as a device that passed.
+function probeVerdict(id, r) {
+  const results = jsonMap(r.args[0]);
+  const alternatives = jsonMap(r.args[1]);
+  const failing = Object.fromEntries(Object.entries(results).filter(([, value]) => value !== null && value !== 'pass'));
+  const count = Object.keys(failing).length;
+  const fitted = Object.keys(results).filter((name) => !(name in alternatives)).length;
+  let header = `${id}: all ${plural(fitted, 'device')} pass`;
+  if (count) {
+    header = `${id}: ${plural(count, 'device')} FAIL`;
+  } else if (!fitted && Object.keys(alternatives).length) {
+    header = `${id}: ${plural(Object.keys(alternatives).length, 'device')} not fitted`;
+  }
+  return verdictBlock(header, failing, alternatives);
+}
+// verify: {pass, devices, problems, alternatives, ready, readiness}; the config readiness gate follows
+// the hardware verdict as its own lines, because a passing board can still be unfit to fly
+function verifyVerdict(id, r) {
+  const report = jsonMap(r.args[0]);
+  const problems = jsonMap(report.problems);
+  const alternatives = jsonMap(report.alternatives);
+  const fitted = Object.keys(jsonMap(report.devices)).length - Object.keys(alternatives).length;
+  const header = report.pass ? `${id} verify: all ${plural(fitted, 'device')} pass`
+                             : `${id} verify: ${plural(Object.keys(problems).length, 'problem')} FAIL`;
+  const lines = [verdictBlock(header, problems, alternatives)];
+  if (report.ready === false) {
+    const readiness = jsonMap(report.readiness);
+    lines.push(verdictBlock(`${id} verify: not flight-ready -- ${plural(Object.keys(readiness).length, 'item')}`,
+                            readiness));
+  }
+  return lines.join('\n');
+}
+// arm: ok {armed} or `err unsafe {problems}` -- a refusal lists each problem on its own line
+function armVerdict(id, r) {
+  if (r.status === 'ok') { return `${id} arm: armed`; }
+  if (r.status !== 'err' || r.args[0] !== 'unsafe') { return null; }
+  const problems = jsonMap(r.args[1]);
+  const count = Object.keys(problems).length;
+  return count ? verdictBlock(`${id} arm: REFUSED -- ${plural(count, 'problem')}`, problems)
+               : `${id} arm: REFUSED -- ${verdictText(r.args[1])}`;
+}
+// The verdict block for a probe / verify / arm reply; null for any other command, or a reply carrying no
+// verdict (the hub's own failures have no args), which then shows as the raw reply alone.
+function verdictFor(id, command, r) {
+  if (!r || !Array.isArray(r.args)) { return null; }
+  if (command === 'arm') { return armVerdict(id, r); }
+  if (r.status !== 'ok') { return null; }
+  if (command === 'probe') { return probeVerdict(id, r); }
+  if (command === 'verify') { return verifyVerdict(id, r); }
+  return null;
 }
 
 async function detectLayout(id) {
@@ -329,6 +405,7 @@ function selectBoard(id) {
   // a heading that now names the new one -- so they go, rather than edit a board nobody is looking at.
   if (changed) { document.getElementById('inspresult').innerHTML = ''; }
   markChosen();
+  syncTimeGate();
 }
 
 function markChosen() {
@@ -404,6 +481,11 @@ function ccGps(gps) {
 // two elements, so the same click landed in different places depending on which button it was, and a
 // reply could appear above the caption the operator was looking at.
 const actMsg = (text) => { document.getElementById('actmsg').textContent = text; };
+// CC's own GNSS fix as [lat, lon], null without a usable one: kept from the last /events frame so the
+// 'sync time' row in the board's session.csv records where CC was, as the automatic sync on connect does.
+let ccPosition = null;
+// Each board's stage from the last /events frame: 'sync time' acts only in SETTING (see syncTimeGate).
+let boardStages = new Map();
 
 new EventSource('/events').onmessage = (event) => {
   const { cc, boards } = JSON.parse(event.data);
@@ -415,6 +497,7 @@ new EventSource('/events').onmessage = (event) => {
    * moves with it, as a disabled state that says why rather than a button that vanishes.
    */
   const ccHasFix = !!(cc.gps && cc.gps.usable);
+  ccPosition = ccHasFix ? [cc.gps.latitude, cc.gps.longitude] : null;
   const assistButton = document.getElementById('actassist');
   assistButton.disabled = !ccHasFix;
   assistButton.title = ccHasFix ? 'push the CC GNSS fix to the board launch config'
@@ -423,6 +506,8 @@ new EventSource('/events').onmessage = (event) => {
   // exactly when "N known gliders not connected" is the thing the operator needs. Returning first meant
   // the banner never rendered in its own case, and kept stale text in every other.
   renderAbsent();
+  boardStages = new Map(boards.map((b) => [b.id, b.stage]));
+  syncTimeGate();
   if (!boards.length) {
     tbody.innerHTML = '<tr><td colspan="12" class="muted">no boards connected</td></tr>';
     return;
@@ -575,11 +660,49 @@ async function calibrateBoard(id) {
     : `${id} calibrate: ${name} done — ALL DEVICES CALIBRATED`);
 }
 
-// top-table actions: set the board RTC from the PC clock (update mission epoch), and push the host
-// GPS position to the board launch config (/api/assist).
+// top-table actions: set the board RTC from this browser's clock (update mission epoch), and push the
+// host GPS position to the board launch config (/api/assist).
+/*
+ * 'sync time' acts only while the board is in SETTING, the same gate as CC's sync on connect: in DONE a
+ * ~26-year jump makes the post-landing warm-start crumb look stale, so a reset during the dwell would
+ * boot cold, and in flight the session.csv row it writes lands while the GC is off. The button is
+ * disabled otherwise, and syncTime re-checks, so a click racing a stage change is still refused.
+ */
+const SYNC_TIME_CLOCK = "sets the board RTC from THIS BROWSER's clock and timezone, not CC's";
+function syncTimeAllowed(id) { return boardStages.get(id) === 'setting'; }
+// a board's stage as the gate saw it: the last one reported, 'unknown', or 'not connected'
+const syncTimeStage = (id) => (boardStages.has(id) ? boardStages.get(id) || 'unknown' : 'not connected');
+function syncTimeGate() {
+  const button = document.getElementById('actsynctime');
+  button.disabled = !syncTimeAllowed(selected);
+  const reason = selected ? `${selected} is ${syncTimeStage(selected)}` : 'no board selected';
+  button.title = button.disabled ? `only in stage setting (${reason}) -- ${SYNC_TIME_CLOCK}` : SYNC_TIME_CLOCK;
+}
+// 2020-01-01T00:00:00Z in Unix seconds: before it this browser's clock is unset (a device with no RTC,
+// before NTP), and would stamp the board with a date as wrong as its own -- the gate CC applies to itself.
+const BROWSER_CLOCK_VALID_FROM = 1577836800;
+// The RTC runs on UTC: `epoch` is UTC seconds and `utc_offset` this browser's offset in minutes east of
+// UTC (getTimezoneOffset counts west), the same fields CC sends on connect (doc/specs/recorder-wire.md).
+// Success is an `ok` whose `changed` list names `epoch`: `ok {"changed":[]}` (no RTC) set nothing.
 async function syncTime(id) {
-  const r = await cmd(id, 'update', ['mission', JSON.stringify({ epoch: Math.floor(Date.now() / 1000) })]);
-  actMsg(`${id} sync time: ${r.status === 'ok' ? 'ok' : JSON.stringify(r)}`);
+  if (!syncTimeAllowed(id)) {
+    actMsg(`${id} sync time: NOT sent -- ${id} is ${syncTimeStage(id)}, the clock is set only in stage setting`);
+    return;
+  }
+  const epoch = Math.floor(Date.now() / 1000);
+  if (epoch < BROWSER_CLOCK_VALID_FROM) {
+    const reads = new Date(epoch * 1000).toISOString().replace('.000Z', 'Z');
+    actMsg(`${id} sync time: NOT sent -- this browser's clock reads ${reads}, before 2020`);
+    return;
+  }
+  const r = await cmd(id, 'update', ['mission', JSON.stringify({
+    epoch, utc_offset: -new Date().getTimezoneOffset(),
+    cc_position: ccPosition, source: 'dashboard' })]);
+  // the hub's own failures ({error}: no online board, offline) carry no status or args: not set
+  const parsed = (r.status === 'ok' && Array.isArray(r.args)) ? safeParse(r.args[0]) : null;
+  const changed = parsed?.changed;
+  const applied = Array.isArray(changed) && changed.includes('epoch');
+  actMsg(`${id} sync time: ${applied ? 'ok' : 'NOT set ' + JSON.stringify(r)}`);
 }
 async function gpsAssist(id) {
   const res = await fetch('/api/assist', {
@@ -598,7 +721,10 @@ async function send() {
   const reply = document.getElementById('reply');
   reply.textContent = '…';
   try {
-    reply.textContent = prettyResult(await cmd(board, command, parts));
+    // probe / verify / arm lead with the per-device verdict lines; the full reply stays below them
+    const result = await cmd(board, command, parts);
+    const verdict = verdictFor(board, command, result);
+    reply.textContent = verdict ? `${verdict}\n\n${prettyResult(result)}` : prettyResult(result);
   } catch (err) {
     reply.textContent = 'error: ' + err;
   }

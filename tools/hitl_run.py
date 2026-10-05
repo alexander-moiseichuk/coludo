@@ -108,8 +108,8 @@ async def _go(motor: str, noise: float, wind: float, wind_dir: float, spike: boo
         if drop_at_ms is not None and not dropped \
                 and time.ticks_diff(time.ticks_ms(), drop_at_ms) >= 0 and stage == stages.GLIDING:
             dropped = True
-            flight.active('hitl').drop_attitude = True  # simulated BNO055 death -> priority-1 backup flies
-            print('ATTITUDE DROP: BNO055 off, attitude backup carries the glide')
+            flight.active('hitl').drop_attitude = True  # the sim's p0 attitude off -> the p1 filter flies
+            print('ATTITUDE DROP: sim attitude off, the attitude filter (the flight primary) carries the glide')
         if gnss_drop_at_ms is not None and gnss_recover_at_ms is None \
                 and time.ticks_diff(time.ticks_ms(), gnss_drop_at_ms) >= 0:
             gnss_recover_at_ms = time.ticks_add(time.ticks_ms(), int(gnss_drop_s * 1000))
@@ -215,8 +215,9 @@ def fly(motor: str = 'F15', noise: float = 0.10, wind: float = 0.0, wind_dir: fl
     simulates a mid-glide reboot: a boot-long outage (neutral fins) at a RANDOM early-glide moment, then
     the real warm-start gate + restore. `no_cc` flies the CC-less scenario: no zone/sites -- the field
     agent synthesizes the spiral-landing fallback from the GNSS fix. `attitude_drop_s` > 0 kills the sim
-    `attitude` this many seconds into GLIDING (a BNO055 death): the priority-1 complementary-filter
-    backup must carry the glide to a controlled landing. `gnss_drop_s` > 0 drops position/speed/course
+    `attitude` this many seconds into GLIDING -- the p0 slot the filter mirrors in HITL: the priority-1
+    complementary filter, which is the attitude a real board flies on, must carry the glide to a
+    controlled landing on its own estimate. `gnss_drop_s` > 0 drops position/speed/course
     for that many seconds at a random glide moment (a tunnel / antenna knock): the guidance falls to its
     open-loop heading tiers, then recovers. `no_mag` withholds the magnetometer for the WHOLE flight --
     the control condition for a GNSS-dropout pair, since the only honest way to measure what the mag is

@@ -39,6 +39,41 @@ def _require_plotly():
 find_stream = flight_telemetry.find_stream
 
 
+def _printable(text: str) -> str:
+    """
+    A capture's text as a report can show it: each byte the link damaged becomes U+FFFD.
+
+    flight_telemetry.load() keeps such a byte as a lone surrogate (surrogateescape), so a checksum sees
+    what the board sent. plotly serialises a figure with orjson, which refuses a lone surrogate, so one
+    damaged byte in a legacy capture's stage line stopped the whole report; print() to a UTF-8 console
+    refuses it too. Only the rendered text is changed, never the capture as parsed.
+
+    Args:
+        text - a log line, as load() read it.
+
+    Returns:
+        The same text, each damaged byte replaced by U+FFFD.
+    """
+    return text.encode('utf-8', 'surrogateescape').decode('utf-8', 'replace')
+
+
+def _stream_name(name: str) -> str:
+    """
+    A stream's name as the report keys and shows it: each byte the link damaged as \\xNN.
+
+    Not _printable()'s U+FFFD: two junk names that differ only in their damaged bytes would become one
+    key, and one of the streams would drop out of the report. Escaped, each damaged byte stays itself, as
+    assemble_capture prints the names; a backslash is doubled too, so no name can pass for another.
+
+    Args:
+        name - a stream name, as load() read it.
+
+    Returns:
+        The name, printable and distinct: a backslash doubled, each damaged byte as \\xNN.
+    """
+    return name.replace('\\', '\\\\').encode('utf-8', 'surrogateescape').decode('utf-8', 'backslashreplace')
+
+
 def stage_events(logs):
     """(time_s, label) for each stage transition logged (e.g. separation -> gliding)."""
     events = []
@@ -445,16 +480,18 @@ def main():
     parser.add_argument('--cdn', action='store_true', help='load plotly.js from the CDN (tiny file, needs net)')
     parser.add_argument('--motor', choices=sorted(_MOTOR_BURN_S), help='shade the motor burn inside BOOSTING')
     args = parser.parse_args()
+    streams, logs = flight_telemetry.load(args.capture)
     go, pio, make_subplots = _require_plotly()
-    with open(args.capture) as handle:
-        streams, logs = flight_telemetry.parse(handle.read())
     if not streams:
         sys.exit('no telemetry streams found in %s' % args.capture)
+    streams = {_stream_name(name): stream for name, stream in streams.items()}  # what is shown, never parsed
+    logs = [(stamp, _printable(line)) for stamp, line in logs]
     damaged = flight_telemetry.spliced(streams)
     if damaged:
         # two boots appended into one file -- the plot would draw them as one flight; see flight_kpi
         print('!! SPLICED CAPTURE -- two recorder sessions share this prefix: %s' % ', '.join(damaged))
         print('!! the report below spans BOTH boots and its timeline is not one flight')
+    print('capture lines: %s' % flight_telemetry.line_summary())  # what the integrity checks kept
     trajectory, series = build(streams, logs, go, make_subplots, args.motor)
     write_html(trajectory, series, args.out, pio, 'cdn' if args.cdn else True)
     print('wrote %s (%d streams, %d log lines)' % (args.out, len(streams), len(logs)))

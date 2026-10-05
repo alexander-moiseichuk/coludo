@@ -2,7 +2,7 @@
 
 # ESP32-P4 pin map -- v1.0 (target layout)
 
-The board being ordered. Derived by applying the v1.0 revision to the firmware defaults, so it matches what `layout.apply()` installs when detection picks v1.0.
+The board being ordered. Derived by applying the v1.0 revision to the firmware defaults, so it matches what `layout.apply()` installs for a DECLARED v1.0 (a scan never names v1.0: the v1.x map scans as v1.1, the same buses and pins with the SEN0697 in place of the SEN0253).
 
 ## Buses
 
@@ -123,13 +123,13 @@ What to change on a v0.1 board. Derived by diffing the two configs, so it always
 | 5 | laser_agl.xshut_pin, laser_agl_l1x.xshut_pin |
 | 49 | accel_adxl375.cs_pin |
 
-**Not fitted on v1.0:** `accel_adxl375`.
+**Not fitted on v1.0:** `accel_adxl375`, `imu_bmi323`, `mag_bmm350`, `baro_bmp581`.
 
 **Unchanged, no re-check needed:** GPIO7, GPIO8, GPIO20, GPIO22, GPIO23, GPIO26, GPIO27, GPIO28, GPIO29, GPIO30, GPIO31, GPIO32, GPIO33, GPIO46, GPIO47, GPIO48, GPIO50.
 
 # ESP32-P4 pin map -- v0.1 (as built)
 
-TMS-7C, TMS-7D and the breadboard until the transition above is done. A config with no `layout` key resolves here.
+TMS-7C, the one v0.1 board left, now carrying a SEN0697 (the SEN0253 is retired from every board; layout enables it only as a backup a scan finds). A config with no `layout` key resolves here.
 
 ## Buses
 
@@ -173,10 +173,11 @@ TMS-7C, TMS-7D and the breadboard until the transition above is done. A config w
 |---|---|---|
 | `accel_adxl375` | spi:1 @ 0x53 | cs_pin=adxl375_cs (GPIO49), int_pin=accel_int1 (GPIO4) |
 | `imu_lsm6dso32` | spi:1 @ 0x6A | cs_pin=lsm6dso32_cs (GPIO50), int_pin=lsm6dso32_int1 (GPIO28) |
-| `imu_bno055` | i2c:0 @ 0x28 | - |
 | `attitude` | - | - |
 | `baro_icp10111` | i2c:0 @ 0x63 | - |
-| `baro_bmp280` | i2c:0 @ 0x76 | - |
+| `imu_bmi323` | i2c:0 @ 0x69 | - |
+| `mag_bmm350` | i2c:0 @ 0x15 | - |
+| `baro_bmp581` | i2c:0 @ 0x47 | - |
 | `airspeed_sdp810` | i2c:0 @ 0x25 | - |
 | `laser_agl` | i2c:0 @ 0x29 | int_pin=laser_int (GPIO3), xshut_pin=laser_xshut (GPIO5) |
 | `laser_agl_l1x` | i2c:0 @ 0x29 | int_pin=laser_int (GPIO3), xshut_pin=laser_xshut (GPIO5) |
@@ -234,7 +235,7 @@ This breakout carries a **second, AUXILIARY** interface (the sensor-hub / OIS po
 
 > ⚠️ **v0.1 got this wrong on both built boards**, taking the clock from `SCX` and the data-out from the top-row `DO` — both auxiliary. MOSI, CS, INT1, VIN and GND were correct, which is why two jumpers repaired TMS-7C and TMS-7D.
 
-**Not fitted on this revision:** `baro_bmp581`, `imu_bmi323`, `mag_bmm350` -- physically absent, disabled in config, claiming no pins.
+**Not fitted on this revision:** `baro_bmp280`, `imu_bno055` -- physically absent, disabled in config, claiming no pins.
 
 ## Reserved (never assign)
 

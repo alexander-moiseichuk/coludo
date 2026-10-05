@@ -23,10 +23,10 @@ wiring is in [`waveshare_esp32p4_pins.md`](waveshare_esp32p4_pins.md).
 
 | Role | Part | Bus / addr | Notes |
 | --- | --- | --- | --- |
-| **6-DoF (accel + gyro)** | **LSM6DSO32** | SPI `1` (cs 50) | ±32 g + ±2000 dps; **primary** accel (airspeed/boost) and the only gyro `rate` |
-| high-G accel | **ADXL375** ([Adafruit 5374](https://www.adafruit.com/product/5374)) | SPI `1` (cs 49) | ±200 g; **>32 g backstop only** — LSM6DSO32 already covers the 8–12 g boost |
-| **attitude (9-DOF)** + baro | **sen0253** = BNO055 + BMP280 | I²C `0x28` / `0x76` | **board v0.1 / v1.0.** One board, two devices; BNO055 fuses on-chip and is the sole heading there |
-| **attitude (10-DOF)** + baro + **mag** | **sen0697** = BMI323 + BMP581 + BMM350 | I²C `0x69` / `0x47` / `0x15` | **board v1.1.** One board, THREE devices; raw — the board fuses (`tasks/attitude.py`). 4 on hand |
+| **6-DoF (accel + gyro)** | **LSM6DSO32** | SPI `1` (cs 50) | ±32 g + ±2000 dps; **primary** accel (airspeed/boost) and the **primary** gyro `rate` — the SEN0697's BMI323 is the second source on every board but legacy v1.0 |
+| high-G accel | **ADXL375** ([Adafruit 5374](https://www.adafruit.com/product/5374)) | SPI `1` (cs 49) | ±200 g; **>32 g backstop only** — LSM6DSO32 already covers the 8–12 g boost. `accel` p2, behind the LSM6DSO32 (p0) and the BMI323 (p1) |
+| **attitude (9-DOF)** + baro | **sen0253** = BNO055 + BMP280 | I²C `0x28` / `0x76` | **retired as a primary (2026-10-05)** — an optional BACKUP only, enabled when a boot scan finds it and ranked below the SEN0697 by `layout` at boot, whatever the config says (taster / experimental boards). Legacy revision `v1.0` = this module alone, declarable only. One board, two devices; BNO055 fuses on-chip |
+| **attitude (10-DOF)** + baro + **mag** | **sen0697** = BMI323 + BMP581 + BMM350 | I²C `0x69` / `0x47` / `0x15` | **the PRIMARY on every board** — `v0.1` (TMS-7C) and `v1.1`. One board, THREE devices; raw — the board fuses (`tasks/attitude.py`). 4 on hand |
 | pressure | **sen0517** = ICP-10111 | I²C `0x63` | primary altimeter |
 | AGL laser | **VL53L4CX** ([Adafruit 5425](https://www.adafruit.com/product/5425)) | I²C `0x29` | ToF, low-altitude (declared 4–6 m) |
 | AGL laser (alt.) | **VL53L1X** | I²C `0x29` | ToF, declared **2–4 m** — same socket, different silicon; see *Two lasers, one socket* below |
@@ -49,16 +49,16 @@ What actually gates a launch, sorted by how badly its loss hurts. "Critical" = *
 | Device | Class | Why | On hand |
 | --- | --- | --- | --- |
 | ESP32-P4 controller | **Critical** | the flight computer | ✔ |
-| **Attitude module** — sen0253 **or** sen0697 | **Critical — NO-FLY WITHOUT** | *some* source of attitude and heading is required: the stabilisation PID and the bank-to-turn navigation both depend on it. On v0.1/v1.0 that is the **BNO055**, fused on-chip. On v1.1 it is the **SEN0697**, fused by `tasks/attitude.py` from the BMI323's raw accel+gyro, with the BMM350 as the heading reference. LSM6DSO32 is raw 6-DoF (no mag) and cannot replace either. | 5+ BNO055, 4 SEN0697 |
-| LSM6DSO32 (6-DoF) | **Critical** (lean-bundle primary) | primary accel for the airspeed integrator + boost detect, and on v0.1/v1.0 the ONLY gyro `rate` (v1.1 adds the BMI323 as a second source) | **0 spare** — the last was soldered to TMS-7F on 2026-09-20; **5 on order** |
+| **Attitude module** — **sen0697** (sen0253 as an optional backup) | **Critical — NO-FLY WITHOUT** | *some* source of attitude and heading is required: the stabilisation PID and the bank-to-turn navigation both depend on it. On every board it is the **SEN0697**, fused by `tasks/attitude.py` (priority 1) from the LSM6DSO32's and the BMI323's raw accel+gyro, with the BMM350 and the GNSS track as heading references. A **SEN0253** fitted beside it is the backup: its BNO055 (on-chip fusion, priority 2) carries the attitude if the filter goes quiet. With no gyro for 100 ms the filter is **blind** — health `attitude-blind` on every board — and it withholds its output only where that backup is fresh to take over; on a board without one it keeps publishing (held roll/pitch), as it always has. Legacy v1.0 boards carry the SEN0253 alone. | 5+ BNO055, 4 SEN0697 |
+| LSM6DSO32 (6-DoF) | **Critical** (lean-bundle primary) | primary accel for the airspeed integrator + boost detect, and the primary gyro `rate`; the SEN0697's BMI323 is the second source on every board but legacy v1.0, where the LSM6DSO32 is the ONLY gyro | **0 spare** — the last was soldered to TMS-7F on 2026-09-20; **5 on order** |
 | Power (5 V controller rail + servo rail) | **Critical** | — | ✔ |
 | Servos ×≥2 (SG90) | **Critical** | the fin actuators | ✔ |
 | Separation switch (copper pads) | **Critical** | the BOOSTING→GLIDING trigger | ✔ |
 | ICP-10111 baro | Important | primary altimeter (apogee / glide profile) | ✔ |
-| AGL laser (VL53L4CX **or** VL53L1X) | Important | low-altitude AGL for the landing — baro is poor there. Either part fits the socket; **enable exactly the one fitted** (an unfitted laser fails `verify`/`arm`); the L1X's shorter measured range cannot reach `land_agl_m`, and TMS-7F keeps it at 5.0 on purpose, so the baro fallback fires the landing (see *Two lasers, one socket*) | VL53L4CX out of stock — **1 VL53L1X fitted**, 5 more on order |
+| AGL laser (VL53L4CX **or** VL53L1X) | Important | low-altitude AGL for the landing — baro is poor there. Either part fits the socket. On v1.0/v1.1 both entries may stay enabled (the layout drops the shared XSHUT/INT pins; the one not soldered reads *not fitted*, only no answer at all fails `verify`/`arm`); **on v0.1 the two share XSHUT (GPIO5), so enable exactly one** — declaring both refuses arming, by design; the L1X's shorter measured range cannot reach `land_agl_m`, and TMS-7F keeps it at 5.0 on purpose, so the baro fallback fires the landing (see *Two lasers, one socket*) | VL53L4CX out of stock — **1 VL53L1X fitted**, 5 more on order |
 | SDP810 airspeed | Important | **direct** pitot airspeed → the fin-authority cap (the estimate was the weakest signal). Degrades gracefully to the accel+GNSS estimate — the pre-pitot baseline flown in all HITL to date — if absent | ✔ (5) |
 | ADXL375 (±200 g) | Optional | >32 g high-g backstop; LSM6DSO32 ±32 g already covers the 8–12 g boost. Keep for telemetry / data-quality launches (run both, compare traces) | ✔ |
-| BMP280 baro | Optional | backup baro (rides on the sen0253 board with BNO055 anyway) | ✔ |
+| BMP280 baro | Optional | backup baro behind the BMP581 (p2 vs p1); rides on the sen0253, so it is fitted only where that backup module is | ✔ |
 | ATGM336H GNSS | Optional | aux position; loses lock under high-g, non-priority in fusion | ✔ |
 | Camera + SD | Optional | nice-to-have, isolated module | ✔ |
 
@@ -287,7 +287,7 @@ are silk-printed by their I²C names, so the mapping is *not* one-to-one:
 | **SDA** | SPI **MOSI** (SDI) | **47** | SPI1 MOSI |
 | **SDO** | SPI **MISO** | **46** | SPI1 MISO |
 | CS | chip-select (active low) | **49** | `adxl375_cs` |
-| INT1 | DATA_READY | **4** | `accel_int1` in `config_default` (shared with the BMI323's INT1 on v1.1); `adxl375_int` in the 7C/7D configs |
+| INT1 | DATA_READY | **4** | `accel_int1` in `config_default` — the ADXL375's on the v0.1 map, the BMI323's on v1.x (on v0.1 the SEN0697 sits in the 4-wire socket with no INT, and `layout` keeps the BMI323 off GPIO4); `adxl375_int` in the pre-2026-10-05 7C/7D configs |
 
 To revert to I²C: tie CS high, wire SDA/SCL to GPIO7/8, and set the component `bus: 'i2c', id: 0`
 (the driver keeps the I²C path; `addr 0x53`). LSM6DSO32 now shares this same SPI1 bus on its own
@@ -352,12 +352,28 @@ Barometer works very badly at very low altitudes, so the laser module becomes es
 Stock of the VL53L4CX ran out, so boards may instead carry a **VL53L1X** in the same footprint at the
 same `0x29`. They are different silicon (`0xEACC` vs `0xEBAA`) with different init blocks, and neither
 block produces ranges on the other part — so each driver checks its model id and returns False on a
-mismatch. Both are declared in `config_default`, but **a flight config enables exactly the one that is
-soldered**: the other's failed setup lands in the controller's failures, which `verify` and `arm` count,
-so declaring both makes the board refuse to arm (TMS-7F disables `laser_agl`; the 7C/7D profiles
-disable `laser_agl_l1x`). An I²C scan cannot tell them apart, so `layout` does not try; it only makes
-sure the second entry FOLLOWS the first onto whatever bus the revision puts the socket on, without
-casting a second vote for the one address.
+mismatch. Both are declared in `config_default`. Whether both may stay enabled depends on the board
+revision:
+
+- **v1.0 / v1.1: both may stay enabled.** The front harness carries no laser XSHUT/INT, so `layout`
+  drops both pins from both entries. When one entry fails setup while the other answers the same I²C
+  socket (`i2c:<id> 0x29`) and feeds the same data (`agl`), the failed one is an unfitted
+  *alternative*, not a fault — `probe`, `verify` and `arm` report it as `vl53l4cx not fitted --
+  vl53l1x (laser_agl_l1x) answers i2c:1 0x29` and the board arms.
+- **v0.1 (or an undecided layout): enable exactly one.** Both entries route XSHUT to GPIO5, and each
+  driver's setup pulses it low before its model-id check — so the unfitted entry's setup reboots the
+  fitted laser, which still answers its model id (its probe passes) and never ranges again. That
+  entry is therefore never an alternative: it stays a failure and **declaring both refuses arming, by
+  design**, with the fix in the reason (`vl53l1x -- not connected: …; shares XSHUT GPIO5 with
+  laser_agl (vl53l4cx): its setup resets the fitted laser -- enable exactly one of laser_agl,
+  laser_agl_l1x on this board`). The 7C/7D profiles leave out `laser_agl_l1x` for this reason.
+
+On every revision, when NEITHER part answers both entries are failures and `arm` is refused, so a
+missing laser still blocks the flight ([`specs/cc-protocol.md`](specs/cc-protocol.md) → *Device
+verdicts*). TMS-7F (v1.1) disables `laser_agl`, which keeps its verdicts to the one laser it carries.
+An I²C scan cannot tell the parts apart, so `layout` does not try; it only makes sure the second entry
+FOLLOWS the first onto whatever bus the revision puts the socket on, without casting a second vote for
+the one address.
 
 **The part that is not cosmetic: the L1X is declared 2–4 m where the L4CX is 4–6 m, and
 `sequencer.land_agl_m` defaults to 5.0 m.** The GLIDING → LANDING transition takes the laser when it
@@ -794,27 +810,60 @@ flight. The layout moves that exposure; it does not remove it.
 
 ## Running one firmware on both boards
 
-The two layouts are distinguishable **by scan alone** — no strapping resistor, no stored flag, nothing
-an operator has to set correctly:
+The two **bus maps** are distinguishable **by scan alone** — no strapping resistor, no stored flag,
+nothing an operator has to set correctly:
 
-| bus | v0.1 answers | v1.0 answers |
+| bus | v0.1 map answers | v1.x map answers |
 |---|---|---|
-| i2c:0 | `0x28` `0x63` `0x76` `0x25` `0x29` | `0x28` `0x76` `0x40` |
+| i2c:0 | `0x18` `0x63` `0x25` `0x29` + module | `0x18` `0x40` + module |
 | i2c:1 | `0x40` | `0x63` `0x25` `0x29` |
 
-Every marker address moves except `0x28` (BNO055) and `0x76` (BMP280), which stay on i2c:0 in both — so
-the discriminators are `0x63`, `0x25`, `0x29` (i2c:0 → i2c:1) and `0x40` (i2c:1 → i2c:0). Four
-independent votes, which is what makes the detection robust to a single dead device rather than hinging
-on one probe.
+The discriminators are `0x63`, `0x25`, `0x29` (i2c:0 → i2c:1) and `0x40` (i2c:1 → i2c:0): four
+independent PLACEMENT votes, which is what makes the detection robust to a single dead device rather
+than hinging on one probe. Every one votes from whichever bus it answers on — `0x63` included: it used to
+count from i2c:1 only, against a second ICP on i2c:0 that was retired, and that cost 7C a vote. `0x18`
+is the ES8311 codec soldered to the WaveShare module — the anchor that proves the scan reached a live
+bus, on every board.
+
+**Placement alone decides the map.** The attitude module — SEN0697 (`0x69` `0x47` `0x15`) or SEN0253
+(`0x28` `0x76`) — sits on `i2c:0` on every board, so it says nothing about where the front devices are.
+It used to vote anyway, in one tally with the placement votes, and on 2026-10-05 that put TMS-7C on the
+wrong map: 7C is the one v0.1 board left, now carrying a SEN0697, and its scan (`i2c:0` `0x15 0x18 0x25
+0x29 0x47 0x63 0x69`, `i2c:1` empty — INA226 absent, ICP then not counted from i2c:0) gave two placement
+votes for v0.1 against three module votes for v1.1. The laser, pitot and ICP-10111 were moved to an
+empty `i2c:1`. The same scan now casts three placement votes for v0.1 and none for v1.x, and the module
+votes for nothing:
+
+| revision | map | module | board |
+|---|---|---|---|
+| `v0.1` | v0.1 (+ ADXL375 on SPI) | SEN0697 | TMS-7C |
+| `v1.1` | v1.x | SEN0697 | the taster, TMS-7F |
+| `v1.0` | v1.x | SEN0253 alone — legacy, **declared only** | TMS-7E as built |
+
+**A scan never names `v1.0`**: the v1.x map always scans as `v1.1`, because the SEN0697 is the module
+every board is expected to carry — when it is missing, its setup fails and `arm` refuses. (A scanned
+`v1.0` used to switch it off instead, so a two-module board with a loose SEN0697 connector would have
+armed on the backup.) A **declared** `v1.0` fits the SEN0253, since that is what the legacy build is.
+Elsewhere the **SEN0253 is no revision's part**: it is an optional backup, enabled only when the scan
+finds it (a taster or an experimental board may carry both modules). Wherever it is enabled, `layout`
+ranks it **below the SEN0697 and the attitude filter** on every shared quantity at boot — in code,
+whatever the config says, because every config saved before 2026-10-05 carries the BNO055 at
+`attitude` p0. The same rule keeps the ADXL375 one step below the BMI323 on `accel` (v0.1, where both
+are fitted): `accel` there runs LSM6DSO32 p0 → BMI323 p1 → ADXL375 p2 (→ BNO055 p3 where found); on the
+v1.x map LSM6DSO32 → BMI323 (→ BNO055). Flight boards normally carry the SEN0697 alone. The cost of
+running both, if the CPU budget allows: the BNO055 at 50 Hz and the BMP280 at 10 Hz on `i2c:0`, about
+60 more transactions a second next to the SEN0697's ~120.
 
 Detection runs before device setup, scans both buses at the lower (100 kHz) rate that every part
-tolerates, scores each layout by how many of its expected addresses appear on the expected bus, and
-applies the winner's bus assignments and speeds. An explicit `board.layout` of `v0.1`, `v1.0` or
-`v1.1` in the config always wins over the scan; `auto` (the `config_default.py` value) detects. **A
-config with no `layout` key is a declared `v0.1`, not `auto`** — every 7C/7D profile relies on that,
-and a keyless profile on a v1.x board is laid out wrong. An ambiguous or failed scan changes nothing
-and says so loudly — the config as written is the fallback, never a guess. `health.layout` shows the
-verdict and the CC `detect` command re-scans on demand.
+tolerates, and applies the verdict's bus assignments, speeds, fitted parts and found backup. An
+explicit `board.layout` of `v0.1`, `v1.0` or `v1.1` in the config always wins over the scan; a declared
+`v0.1` / `v1.1` then leaves the SEN0253's `enabled` as the config says (off by default) and a declared
+`v1.0` fits it. `auto` (the `config_default.py` value) detects. **A config with no `layout` key is a
+declared `v0.1`, not `auto`** — every 7C profile relies on that, and a keyless profile on a v1.x board is
+laid out wrong. An empty, anchorless or **tied** scan leaves the bus map and the fitted parts as written
+and says so loudly — the config as written is the fallback, never a guess; only the backup ranking still
+applies, since it depends on no bus. `health.layout` shows the verdict and the CC `detect` command
+re-scans on demand.
 
 ## Keep the attitude module a SOCKET, not a decision
 
@@ -1147,9 +1196,15 @@ no config change at all.
 
 # Main board v0.1 — as built
 
-The two boards flying today (TMS-7C, TMS-7D) and the breadboard, until the rewire above is done.
-Generated from `launches/20261003/TMS-7D/tms7d.config`, which is the authority — this table is a
-convenience, not a second source of truth.
+> **2026-10-05:** every v0.1 PCB except **TMS-7C** is destroyed, and 7C's SEN0253 (`0x28` BNO055 +
+> `0x76` BMP280) is replaced by a **SEN0697** (`0x69` BMI323, `0x47` BMP581, `0x15` BMM350) in the same
+> four-wire `i2c:0` socket — no INT line, so GPIO4 stays the ADXL375's. The bus topology below is
+> unchanged; only the attitude module rows are history. `layout` revision `v0.1` now means exactly this:
+> the v0.1 map + the SEN0697.
+
+The two boards that flew on 2026-10-03 (TMS-7C, TMS-7D) and the breadboard, until the rewire above.
+Generated from `launches/20261003/TMS-7D/tms7d.config`, which is the authority for that build — this
+table is a convenience, not a second source of truth.
 
 **i2c:0 — 400 kHz**, SDA **7** / SCL **8**
 

@@ -18,6 +18,8 @@ import controller
 import inspector
 import layout
 import mission
+import recorder
+import task
 
 
 class _FakeReader:
@@ -52,6 +54,308 @@ class _Knob(inspector.Inspectable):
 
     def __init__(self):
         self.level = 1
+
+
+_DRIVERS: dict = {'imu_bno055': 'bno055', 'baro_icp10111': 'icp10111'}  # the stub controllers' config entries
+_CROSSWIRED: str = 'id reads 0xEA, expected 0xEB -- wrong device on this bus/select (crosswired)'
+_NOT_CONNECTED: str = 'not connected: setup failed (absent / miswired?) -- ' + _CROSSWIRED
+_UNFITTED: str = 'vl53l4cx not fitted -- vl53l1x (laser_agl_l1x) answers i2c:0 0x29'
+_AGL: dict = {'agl': {'priority': 0, 'timeout_ms': 100}}  # what both laser entries feed
+
+
+class _Answers(task.Task):
+    """A part that is soldered: setup succeeds and the probe passes."""
+
+    async def setup(self) -> bool:
+        self._ok = True
+        return True
+
+
+class _Absent(task.Task):
+    """A part that is not there: its model-id check reads the other part, as the VL53L4CX did on the taster."""
+
+    async def setup(self) -> bool:
+        return False
+
+    async def diagnose(self) -> str:
+        return _CROSSWIRED
+
+
+class _Silent(_Answers):
+    """A part that set up and then fails its self-test."""
+
+    async def probe(self) -> str:
+        return 'range read timed out'
+
+
+class _Crashes(_Answers):
+    """A part that set up and whose run loop then dies."""
+
+    async def run(self) -> None:
+        raise RuntimeError('loop died')
+
+
+def _laser_rig(l4cx: type, l1x: type, l1x_addr: int = 0x29, l1x_first: bool = False):
+    """
+    A REAL Controller over the two laser entries config_default declares for one socket.
+
+    Args:
+        l4cx - the task class standing in for the VL53L4CX entry (_Answers fitted, _Absent not).
+        l1x - the same for the VL53L1X entry.
+        l1x_addr - the VL53L1X entry's address; 0x29 is the shared socket.
+        l1x_first - declare (and so set up) the VL53L1X entry BEFORE the VL53L4CX one.
+
+    Returns:
+        The Controller, not yet set up.
+    """
+    entries = [{'name': 'laser_agl', 'driver': 'vl53l4cx', 'bus': 'i2c', 'id': 0, 'addr': 0x29, 'enabled': True,
+                'provides': _AGL},
+               {'name': 'laser_agl_l1x', 'driver': 'vl53l1x', 'bus': 'i2c', 'id': 0, 'addr': l1x_addr,
+                'enabled': True, 'provides': _AGL}]
+    if l1x_first:
+        entries.reverse()
+    return controller.Controller({'board': {'id': 'taster', 'mcu': 'esp32p4'}, 'sensors': entries},
+                                 registry={'vl53l4cx': l4cx, 'vl53l1x': l1x})
+
+
+async def _answer(rig, command: str) -> list:
+    """Run one command through a dispatcher over `rig`; returns [status, *args] with the JSON args decoded."""
+    reply = cc.parse(await cc_client.create_dispatcher(config_default.default(), controller=rig).handle(command))
+    decoded = []
+    for arg in reply.args:
+        try:
+            decoded.append(json.loads(arg))
+        except ValueError:
+            decoded.append(arg)
+    return [reply.command] + decoded
+
+
+async def _alternatives() -> None:
+    """
+    Two parts declared for ONE socket: the one that answers wins, the other is NOT FITTED, not a fault.
+
+    config_default declares laser_agl (vl53l4cx) and laser_agl_l1x (vl53l1x) both on i2c:0 0x29, so the
+    part that is soldered wins. On the taster the VL53L4CX entry's failure landed in controller.failures
+    and every consumer called it a fault: `probe all` printed FAIL, verify failed, and `arm` refused
+    every board with an L1X fitted. A socket NOBODY answers on must still block arming.
+    """
+    inspector.Inspector.unregister('p_good')  # the earlier probe fixture: the maps below hold the rig alone
+    for l1x_first in (False, True):  # the loser set up before its winner, and after it
+        rig = _laser_rig(_Absent, _Answers, l1x_first=l1x_first)
+        await rig.setup()
+        assert rig.failures == {}, rig.failures
+        assert rig.alternatives == {'laser_agl': 'laser_agl_l1x'}, rig.alternatives
+        assert rig.unfitted('laser_agl') == _UNFITTED and rig.inspect()['alternatives'] == rig.alternatives
+        status, results, alternatives = await _answer(rig, 'probe')
+        assert status == 'ok' and results['laser_agl_l1x'] is None and 'laser_agl' not in results, results
+        assert alternatives == {'laser_agl': _UNFITTED}, alternatives
+        # a single probe keeps probe's contract: null in the first map (tools/cc.py exits 0, the
+        # dashboard prints no FAIL), the not-fitted line in the second -- exactly as `probe all` carries it
+        assert await _answer(rig, 'probe laser_agl') == ['ok', {'laser_agl': None}, {'laser_agl': _UNFITTED}]
+        status, report = await _answer(rig, 'verify')
+        assert report['pass'] is True and report['problems'] == {}, report['problems']
+        assert report['devices'] == {'laser_agl': _UNFITTED, 'laser_agl_l1x': 'vl53l1x -- up'}, report['devices']
+        assert report['alternatives'] == {'laser_agl': _UNFITTED}, report
+        assert await _answer(rig, 'arm') == ['ok', {'armed': True}] and rig.armed is True
+        rig.disarm()
+        await rig.finish()
+
+    # NEGATIVE: neither part answers -> both are failures, each naming its driver, and arm is refused
+    rig = _laser_rig(_Absent, _Absent)
+    await rig.setup()
+    assert sorted(rig.failures) == ['laser_agl', 'laser_agl_l1x'] and rig.alternatives == {}, rig.alternatives
+    both = {'laser_agl': 'vl53l4cx -- ' + _NOT_CONNECTED, 'laser_agl_l1x': 'vl53l1x -- ' + _NOT_CONNECTED}
+    reply = await _answer(rig, 'probe')
+    assert reply == ['ok', both], 'no second map when there are no alternatives: %s' % reply
+    assert await _answer(rig, 'probe laser_agl') == ['ok', {'laser_agl': both['laser_agl']}]
+    assert await _answer(rig, 'arm') == ['err', 'unsafe', both] and rig.armed is False
+    status, report = await _answer(rig, 'verify')
+    assert report['pass'] is False and report['problems'] == both and report['alternatives'] == {}, report
+    assert report['devices']['laser_agl'] == ('vl53l4cx -- down: setup failed (absent / miswired?) -- '
+                                              + _CROSSWIRED), report['devices']
+    await rig.finish()
+
+    # NEGATIVE: the part that answers sits on ANOTHER address -> the dead one is still a fault
+    rig = _laser_rig(_Absent, _Answers, l1x_addr=0x30)
+    await rig.setup()
+    assert list(rig.failures) == ['laser_agl'] and rig.alternatives == {}, (rig.failures, rig.alternatives)
+    assert await _answer(rig, 'arm') == ['err', 'unsafe', {'laser_agl': both['laser_agl']}]
+    await rig.finish()
+
+    # NEGATIVE: a UART device has no address, so it is never anyone's alternative
+    gnss = controller.Controller(
+        {'board': {'id': 'taster', 'mcu': 'esp32p4'},
+         'sensors': [{'name': 'gnss', 'driver': 'atgm336h', 'bus': 'uart', 'id': 2, 'addr': None, 'enabled': True},
+                     {'name': 'gnss_spare', 'driver': 'neo6mv2', 'bus': 'uart', 'id': 2, 'enabled': True}]},
+        registry={'atgm336h': _Answers, 'neo6mv2': _Absent})
+    await gnss.setup()
+    assert list(gnss.failures) == ['gnss_spare'] and gnss.alternatives == {}, (gnss.failures, gnss.alternatives)
+    assert await _answer(gnss, 'arm') == ['err', 'unsafe', {'gnss_spare': 'neo6mv2 -- ' + _NOT_CONNECTED}]
+    await gnss.finish()
+
+    # a winner that fails its PROBE is named by its driver in probe, single probe and arm alike
+    rig = _laser_rig(_Absent, _Silent)
+    await rig.setup()
+    silent = 'vl53l1x -- range read timed out'
+    status, results, alternatives = await _answer(rig, 'probe')
+    assert results['laser_agl_l1x'] == silent and alternatives == {'laser_agl': _UNFITTED}, results
+    assert await _answer(rig, 'probe laser_agl_l1x') == ['ok', {'laser_agl_l1x': silent}]
+    assert await _answer(rig, 'arm') == ['err', 'unsafe', {'laser_agl_l1x': silent}]
+    await rig.finish()
+
+    # a winner whose run loop CRASHES becomes a failure (connected, so not 'not connected') -- probe no
+    # longer calls it healthy because its probe() still answers, verify no longer calls it up because it
+    # is still registered -- and the loser stays an alternative whose line no longer says it "answers"
+    rig = _laser_rig(_Absent, _Crashes)
+    await rig.setup()
+    await rig.start()
+    await asyncio.sleep_ms(50)  # let the loop run and die
+    assert list(rig.failures) == ['laser_agl_l1x'] and rig.alternatives == {'laser_agl': 'laser_agl_l1x'}
+    assert rig.failures['laser_agl_l1x'].startswith('run loop crashed: RuntimeError('), rig.failures
+    crashed = 'vl53l1x -- ' + rig.failures['laser_agl_l1x']  # the repr differs between MicroPython and CPython
+    went_down = 'vl53l4cx not fitted -- vl53l1x (laser_agl_l1x) answered i2c:0 0x29 at setup, now down'
+    assert await _answer(rig, 'probe') == ['ok', {'laser_agl_l1x': crashed}, {'laser_agl': went_down}]
+    status, report = await _answer(rig, 'verify')
+    assert report['devices'] == {'laser_agl': went_down,
+                                 'laser_agl_l1x': 'vl53l1x -- down: ' + rig.failures['laser_agl_l1x']}, report
+    assert report['pass'] is False and report['problems'] == {'laser_agl_l1x': crashed}, report['problems']
+    assert report['alternatives'] == {'laser_agl': went_down}, report['alternatives']
+    assert await _answer(rig, 'arm') == ['err', 'unsafe', {'laser_agl_l1x': crashed}] and rig.armed is False
+    await rig.finish()
+
+    # NEGATIVE: a baro declared at the laser's 0x29 by mistake feeds OTHER data than the L1X that answers
+    # there -> it is a failure, not "not fitted", and arm is refused as it was before alternatives existed
+    baro = controller.Controller(
+        {'board': {'id': 'taster', 'mcu': 'esp32p4'},
+         'sensors': [{'name': 'laser_agl_l1x', 'driver': 'vl53l1x', 'bus': 'i2c', 'id': 0, 'addr': 0x29,
+                      'enabled': True, 'provides': _AGL},
+                     {'name': 'baro_icp10111', 'driver': 'icp10111', 'bus': 'i2c', 'id': 0, 'addr': 0x29,
+                      'enabled': True, 'provides': {'altitude': {'priority': 0, 'timeout_ms': 200}}}]},
+        registry={'vl53l1x': _Answers, 'icp10111': _Absent})
+    await baro.setup()
+    assert list(baro.failures) == ['baro_icp10111'] and baro.alternatives == {}, baro.alternatives
+    refused = {'baro_icp10111': 'icp10111 -- ' + _NOT_CONNECTED}
+    assert await _answer(baro, 'probe') == ['ok', dict(refused, laser_agl_l1x=None)]
+    assert await _answer(baro, 'arm') == ['err', 'unsafe', refused] and baro.armed is False
+    await baro.finish()
+
+    # NEGATIVE: two SPI accels on spi:1 share the i2c-fallback addr 0x53 but not a chip-select -- the
+    # chip-select is the socket on SPI, so the dead one is a failure, never an alternative, and arm refuses
+    accel = {'accel': {'priority': 0, 'timeout_ms': 20}}
+    spi = controller.Controller(
+        {'board': {'id': 'taster', 'mcu': 'esp32p4'},
+         'sensors': [{'name': 'accel_adxl375', 'driver': 'adxl375', 'bus': 'spi', 'id': 1, 'addr': 0x53,
+                      'cs_pin': 'adxl_cs', 'enabled': True, 'provides': accel},
+                     {'name': 'accel_spare', 'driver': 'adxl375_spare', 'bus': 'spi', 'id': 1, 'addr': 0x53,
+                      'cs_pin': 'spare_cs', 'enabled': True, 'provides': accel}]},
+        registry={'adxl375': _Answers, 'adxl375_spare': _Absent})
+    await spi.setup()
+    assert list(spi.failures) == ['accel_spare'] and spi.alternatives == {}, spi.alternatives
+    status, report = await _answer(spi, 'verify')
+    assert report['devices'] == {'accel_adxl375': 'adxl375 -- up', 'accel_spare': 'adxl375_spare -- down: '
+                                 'setup failed (absent / miswired?) -- ' + _CROSSWIRED}, report['devices']
+    assert report['pass'] is False and report['alternatives'] == {}, report
+    assert await _answer(spi, 'arm') == ['err', 'unsafe', {'accel_spare': 'adxl375_spare -- ' + _NOT_CONNECTED}]
+    await spi.finish()
+
+
+_SOCKET: dict = {'fitted': 'vl53l1x', 'ranging': False}  # the one part soldered at the laser socket
+
+
+class _Laser(task.Task):
+    """
+    A laser entry on the socket _SOCKET holds -- STATEFUL, as the real part is.
+
+    setup() pulses XSHUT when its entry routes one, as both real drivers do before their model-id check,
+    and XSHUT low reboots whichever part is soldered: it stops ranging. Only the entry whose driver
+    matches the soldered part comes up, and that one starts ranging. probe() is the base one, healthy:
+    both real probes read the model id alone, which a reset part still answers.
+    """
+
+    async def setup(self) -> bool:
+        if self._pin_gpio('xshut_pin') is not None:
+            _SOCKET['ranging'] = False  # XSHUT low: the soldered part reboots to its defaults
+        if self.config.get('driver') != _SOCKET['fitted']:
+            return False
+        _SOCKET['ranging'] = True
+        self._ok = True
+        return True
+
+
+async def _shared_reset() -> None:
+    """
+    Two laser entries that share a routed XSHUT are NEVER alternatives: the loser's setup resets the winner.
+
+    On v0.1 (or an undecided layout) both entries keep `xshut_pin: laser_xshut` (GPIO5) and each setup
+    pulses it before its model-id check. Set up after the winner, the loser rebooted the fitted laser,
+    which still answered its model id and never ranged again -- and with the loser paired as "not
+    fitted", `arm` passed. Refused in either order (a later setup() retries the loser and pulses it
+    again), with the fix in the reason. On v1.1 the layout drops the pins: paired, and the board arms.
+    """
+    for revision in ('v0.1', 'v1.1'):
+        board_config = config_default.default()
+        layout.apply(board_config, revision)
+        for fitted, winner, loser in (('vl53l4cx', 'laser_agl', 'laser_agl_l1x'),
+                                      ('vl53l1x', 'laser_agl_l1x', 'laser_agl')):
+            for l1x_first in (False, True):
+                lasers = [dict(config_module.device(board_config, name=name))
+                          for name in ('laser_agl', 'laser_agl_l1x')]
+                if l1x_first:
+                    lasers.reverse()
+                rig = controller.Controller({'board': {'id': 'taster', 'mcu': 'esp32p4'},
+                                             'pins': board_config['pins'], 'sensors': lasers},
+                                            registry={'vl53l4cx': _Laser, 'vl53l1x': _Laser})
+                _SOCKET.update(fitted=fitted, ranging=False)
+                await rig.setup()
+                case = (revision, fitted, l1x_first)
+                if revision == 'v0.1':
+                    # the hazard itself: a loser set up AFTER the winner left the fitted laser not ranging
+                    assert _SOCKET['ranging'] is (lasers[0]['name'] == loser), case
+                    reason = ('%s -- not connected: setup failed (absent / miswired?); shares XSHUT GPIO5 with '
+                              '%s (%s): its setup resets the fitted laser -- enable exactly one of laser_agl, '
+                              'laser_agl_l1x on this board' % (rig.driver(loser), winner, fitted))
+                    assert rig.alternatives == {} and list(rig.failures) == [loser], (case, rig.alternatives)
+                    assert await _answer(rig, 'arm') == ['err', 'unsafe', {loser: reason}], case
+                    assert rig.armed is False, case
+                else:
+                    assert _SOCKET['ranging'] is True, case
+                    assert rig.alternatives == {loser: winner} and rig.failures == {}, (case, rig.failures)
+                    assert await _answer(rig, 'arm') == ['ok', {'armed': True}] and rig.armed is True, case
+                    rig.disarm()
+                await rig.finish()
+
+
+async def _whoami_identity(sd):
+    """
+    whoami carries this boot's identity: the NVS boot id and the session prefix its files carry.
+
+    Called with NO Mission registered, so it also covers the negative half of the clock: a board with no
+    clock to report sends no `epoch`, and CC leaves such a board's time alone. Recorder.boot_id is set by
+    hand and put back -- the board's real NVS boot count is never touched.
+    """
+    booted = recorder.Recorder.boot_id
+    try:
+        recorder.Recorder.boot_id = 123
+        recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())  # settles the session afresh
+        info = json.loads(cc.parse(await sd.handle('whoami')).args[1])
+        assert info['boot_id'] == 123 and info['session'] == '000123', info
+        assert 'epoch' not in info, info
+        # nothing counted the boot (tests, HITL): no id, and the legacy date + random prefix
+        recorder.Recorder.boot_id = None
+        recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
+        info = json.loads(cc.parse(await sd.handle('whoami')).args[1])
+        assert info['boot_id'] is None and len(info['session']) == 22, info
+    finally:
+        recorder.Recorder.boot_id = booted
+
+
+async def _whoami_clock(sd):
+    """With a Mission registered, whoami carries the board clock (Unix UTC seconds): CC's set-on-connect cue."""
+    info = json.loads(cc.parse(await sd.handle('whoami')).args[1])
+    epoch = inspector.Inspector.get('mission').epoch()
+    assert isinstance(info['epoch'], int) and not isinstance(info['epoch'], bool), info  # CC's gate
+    assert abs(info['epoch'] - epoch) <= 2, info
+    assert info['epoch'] >= 946684800, info  # never before 2000-01-01: the RTC's own floor
 
 
 async def amain():
@@ -182,7 +486,9 @@ async def amain():
     inspector.Inspector.unregister('mission')
     assert 'unsupported' in await sd.handle('get-config launch')
     assert 'unsupported' in await sd.handle(cc.build('set-config', ['launch', '{}']))
+    await _whoami_identity(sd)
     mission.Mission('test_cc_launch.config').update({'launch_id': 'cc-t1'})  # registers itself
+    await _whoami_clock(sd)
 
     # health now carries the board wall-clock (RTC) for the dashboard top table, plus the
     # launchpad safety fields (the effective origin / persistent-vs-live / selected site)
@@ -236,10 +542,16 @@ async def amain():
         def calibrated(self):
             return self.calibration_value[3] >= 3
 
+    class _BlindAttitude:
+        """The attitude filter with no gyro: `blind` is all the heartbeat reads of it."""
+
+        blind = True
+
     class _FlightController:
         armed = True
         warm_started = True  # a degraded state -> annunciated
         failures = {}
+        attitude = _BlindAttitude()
 
         def stage_name(self):
             return 'gliding'
@@ -249,6 +561,8 @@ async def amain():
                 return [_FlightTask()]
             if name == 'flight':
                 return _FlightTask()
+            if name == 'attitude':
+                return self.attitude
             return _UncalibratedImu() if name == 'imu_bno055' else None
 
     # the sweep reads REGISTERED inspectables, so the stub has to be one for the heartbeat to see it
@@ -262,6 +576,22 @@ async def amain():
     assert 'agl' in panel  # low-altitude laser AGL rides the same heartbeat
     # degraded-mode annunciation: warm-started (from the controller flag) is surfaced
     assert 'WARM-STARTED (rebooted in flight)' in panel['degraded']
+    """
+    `attitude-blind` on EVERY board: a filter with no gyro and no backup below keeps publishing a held
+    roll/pitch as fresh, so nothing downstream notices -- the flag is the only report. NEGATIVE: a sighted
+    filter, and a board with no attitude task at all, raise nothing.
+    """
+    assert 'attitude-blind' in panel['degraded'], panel['degraded']
+    sighted = _FlightController()
+    sighted.attitude = _BlindAttitude()
+    sighted.attitude.blind = False
+    clear = json.loads(cc.parse(await cc_client.create_dispatcher(
+        config_default.default(), controller=sighted).handle('health')).args[0])
+    assert 'attitude-blind' not in clear['degraded'], clear['degraded']
+    sighted.attitude = None
+    clear = json.loads(cc.parse(await cc_client.create_dispatcher(
+        config_default.default(), controller=sighted).handle('health')).args[0])
+    assert 'attitude-blind' not in clear['degraded'], clear['degraded']
     """
     An UNCALIBRATED BNO055 must reach the operator. It is invisible to probe() (the part answers
     perfectly) and to _readiness() (it is not a config choice), yet NDOF fusion never converges without
@@ -318,18 +648,29 @@ async def amain():
     # so one command shows the whole connected/not picture (probe checks wiring + setup)
     class _FaultyController:
         failures = {'baro_icp10111': 'setup failed (absent / miswired?)'}
+        alternatives = {}
 
         def stage_name(self):
             return 'setting'  # on the pad: the ground gate lets the probes run
 
+        def active(self, name=None):
+            return None  # nothing is up: the baro never set up
+
+        def driver(self, name):
+            return _DRIVERS.get(name)
+
     sd_fail = cc_client.create_dispatcher(config_default.default(), controller=_FaultyController())
-    allres = json.loads(cc.parse(await sd_fail.handle('probe')).args[0])
+    reply = cc.parse(await sd_fail.handle('probe'))
+    allres = json.loads(reply.args[0])
     assert allres.get('p_good') is None  # an inspectable device still probed live
-    assert allres.get('baro_icp10111', '').startswith('not connected: ')  # never set up -> reported
+    # never set up -> reported, naming the DRIVER: "FAIL baro_icp10111" alone did not say which part
+    assert allres['baro_icp10111'] == 'icp10111 -- not connected: setup failed (absent / miswired?)', allres
+    assert len(reply.args) == 1, 'no alternatives -> no second map: %s' % reply.args
 
     # `verify`: dump every configured device (up/down) + probe self-tests + an overall PASS/fail verdict
     class _VerifyController:
         failures = {'baro_icp10111': 'setup failed (absent / miswired?)'}
+        alternatives = {}
         stage = 1  # SETTING, as a real board on the pad reports
         manual = False
 
@@ -342,11 +683,16 @@ async def amain():
         def active(self, name):
             return object() if name == 'imu_bno055' else None  # imu up, baro never set up
 
+        def driver(self, name):
+            return _DRIVERS.get(name)
+
     sd_verify = cc_client.create_dispatcher(config_default.default(), controller=_VerifyController())
     report = json.loads(cc.parse(await sd_verify.handle('verify')).args[0])
-    assert report['devices']['imu_bno055'] == 'up'
-    assert report['devices']['baro_icp10111'].startswith('down: ')  # configured but not connected
-    assert 'baro_icp10111' in report['problems'] and report['pass'] is False  # a problem -> not PASS
+    assert report['devices']['imu_bno055'] == 'bno055 -- up', report['devices']
+    # configured but not connected, naming the driver
+    assert report['devices']['baro_icp10111'] == 'icp10111 -- down: setup failed (absent / miswired?)'
+    assert report['problems']['baro_icp10111'] == 'icp10111 -- not connected: setup failed (absent / miswired?)'
+    assert report['pass'] is False and report['alternatives'] == {}  # a problem -> not PASS
     # the flight-readiness config gate rides along: the DEFAULT config is a bench config -- watchdog
     # and flight both disabled -> not ready, each named (hardware `pass` is judged separately)
     assert report['ready'] is False
@@ -395,8 +741,6 @@ async def amain():
 
     # log streaming: `log <ms>` arms collection + returns the batch buffered since the last call.
     # Poll model -- the operator re-sends `log` each tick; the batch rides back as one base64 token.
-    import recorder
-
     recorder.Recorder.setup(config_default.default(), uart=_FakeWriter())
     sd5 = cc_client.create_dispatcher(config_default.default())
     assert json.loads(cc.parse(await sd5.handle('log 1000')).args[0])['lines'] == []  # arm, empty
@@ -426,7 +770,11 @@ async def amain():
     # arming: refused while a probe fails, clean board -> armed; disarm; manual stage hold + auto resume
     class _ArmController:
         failures = {}
+        alternatives = {}
         config = config_default.default()  # `detect` scans with it
+
+        def driver(self, name):
+            return _DRIVERS.get(name)
 
         def __init__(self):
             self.armed = False
@@ -464,7 +812,10 @@ async def amain():
 
     arm_ctrl = _ArmController()
     sd_arm = cc_client.create_dispatcher(config_default.default(), controller=arm_ctrl)
-    assert 'unsafe' in await sd_arm.handle('arm') and arm_ctrl.armed is False  # p_bad probe fails -> refused
+    refused = cc.parse(await sd_arm.handle('arm'))
+    assert refused.args[0] == 'unsafe' and arm_ctrl.armed is False  # p_bad probe fails -> refused
+    # p_bad is no configured device, so its verdict has no driver to name and stays as probed
+    assert json.loads(refused.args[1])['p_bad'] == 'X not found on i2c:0', refused.args
 
     inspector.Inspector.unregister('p_bad')  # clear the failing probes -> a clean board
     inspector.Inspector.unregister('mission')
@@ -549,43 +900,63 @@ async def amain():
     inspector.Inspector.unregister('fin_sweep')
 
     """
-    `attitude-backup` must mean a FALLBACK, not "this revision has one source".
+    `attitude-backup` must mean a FALLBACK, not "this board has one source".
 
-    v0.1/v1.0 publish fused attitude from the BNO055 at p0, so running on tasks/attitude.py means
-    something died. v1.1 has no p0 attitude provider at all, so the flat check marked every v1.1 board
-    permanently degraded -- and an always-amber panel stops being read. Both directions are asserted
-    here because the flag is worthless if it never fires and worse than worthless if it always does.
+    The filter (tasks/attitude.py, p1) is the primary on every map, so flying on it is NOMINAL -- an
+    always-amber panel stops being read. The flag goes up when an enabled provider outranks the winner:
+    the SEN0253's BNO055 (p2) carrying a filter that went quiet. The rule is generic over priorities
+    (layout ranks the BNO055 below the filter at boot, so the reverse is no longer a fleet case), and
+    both directions are asserted, because the flag is worthless if it never fires and worse than
+    worthless if it always does.
     """
     class _Ctx:
         pass
 
-    for revision, expected in (('v1.0', True), ('v1.1', False)):
-        cfg = config_default.default()
-        layout.apply(cfg, revision)
+    def _context(board: dict):
         ctx = _Ctx()
         ctx.controller = _Ctx()
-        ctx.controller.config = cfg
-        assert cc_client._has_primary(ctx, 'attitude') is expected, (
-            '%s: expected a p0 attitude provider to be %s' % (revision, expected))
+        ctx.controller.config = board
+        return ctx
 
-    # a DISABLED primary is not a primary -- it was never going to publish
-    cfg = config_default.default()
-    layout.apply(cfg, 'v1.0')
-    for device in cfg['sensors']:
-        if device['name'] == 'imu_bno055':
-            device['enabled'] = False
-    ctx = _Ctx()
-    ctx.controller = _Ctx()
-    ctx.controller.config = cfg
-    assert cc_client._has_primary(ctx, 'attitude') is False
+    for revision in ('v0.1', 'v1.1'):  # SEN0697 only: the filter flying is nominal
+        cfg = config_default.default()
+        layout.apply(cfg, revision, ())
+        assert cc_client._on_backup(_context(cfg), 'attitude', 'attitude') is False, revision
+
+    # BOTH modules (the scan found the SEN0253): the filter is nominal, the BNO055 flying is the fallback
+    both = config_default.default()
+    layout.apply(both, 'v1.1', ('baro_bmp280', 'imu_bno055'))
+    assert cc_client._on_backup(_context(both), 'attitude', 'attitude') is False
+    assert cc_client._on_backup(_context(both), 'attitude', 'imu_bno055') is True
+
+    # generic over priorities: an enabled provider ranked ABOVE the filter makes the filter the fallback
+    # (a hand-written p0 BNO055 -- layout.apply() would have demoted it, so it is set after)
+    legacy = config_default.default()
+    layout.apply(legacy, 'v1.0')
+    bno = [device for device in legacy['sensors'] if device['name'] == 'imu_bno055'][0]
+    assert bno['enabled'] and bno['provides']['attitude']['priority'] == 2, 'v1.0 fits and ranks its SEN0253'
+    bno['provides']['attitude']['priority'] = 0
+    assert cc_client._on_backup(_context(legacy), 'attitude', 'attitude') is True
+    # NEGATIVE: a DISABLED better-ranked provider is not a primary -- it was never going to publish
+    bno['enabled'] = False
+    assert cc_client._on_backup(_context(legacy), 'attitude', 'attitude') is False
+
+    # NEGATIVE: an undeclared source (the HITL sim) is no fallback, and nothing fresh is not one either
+    assert cc_client._on_backup(_context(both), 'attitude', 'hitl') is False
+    assert cc_client._on_backup(_context(both), 'attitude', None) is False
 
     # an unreadable config must NOT hide a real fallback
     blind = _Ctx()
     blind.controller = None
-    assert cc_client._has_primary(blind, 'attitude') is True
+    assert cc_client._on_backup(blind, 'attitude', 'attitude') is True
+
+    await _alternatives()
+    await _shared_reset()
 
     print('ok: cc_client dispatch/serve/standard + inspect/update/stats + probe + verify + log + tlm + arm '
-          '+ active commands refused airborne + attitude-backup only where a primary exists')
+          '+ active commands refused airborne + attitude-backup only when outranked + attitude-blind '
+          '+ an unfitted alternative is no fault + every device verdict names its driver '
+          '+ a shared XSHUT refuses arming')
 
 
 asyncio.run(amain())

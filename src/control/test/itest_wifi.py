@@ -15,6 +15,7 @@ import asyncio
 import os
 import subprocess
 import sys
+import tempfile
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))  # src/control (control.py + cc_protocol symlink)
@@ -76,7 +77,8 @@ async def main():
         finally:
             done.set()
 
-    hub = server.Server(port=1234, on_board=on_board)
+    roster = tempfile.TemporaryDirectory()  # the hub's gliders.json, never the live one
+    hub = server.Server(port=1234, on_board=on_board, roster_path=os.path.join(roster.name, 'gliders.json'))
     server_task = asyncio.create_task(hub.serve_forever())
     await asyncio.sleep(0.3)
 
@@ -100,6 +102,7 @@ async def main():
         except Exception:
             pass
         server_task.cancel()
+        roster.cleanup()
 
     print('--- board output ---\n%s' % board_out)
     print('--- exchange result ---\n%s' % RESULT)

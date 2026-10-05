@@ -49,8 +49,7 @@ def metrics(path: str):
     Returns:
         A dict of metrics, or None when the capture carries no GNSS track to measure.
     """
-    with open(path) as handle:
-        streams, _logs = flight_telemetry.parse(handle.read())
+    streams, _logs = flight_telemetry.load(path)
     gnss = flight_telemetry.find_stream(streams, 'lat', 'lon')
     if gnss is None:
         return None

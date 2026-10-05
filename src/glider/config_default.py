@@ -31,17 +31,19 @@ constant, so a config predating a new sensor/section is visible instead of silen
 moved key, a changed default value. Do NOT bump for a comment or a docstring edit. Bumping is what turns
 'my new sensor never ran' into a reported mismatch.
 """
-CONFIG_VERSION: str = '20260828'  # recorder.telemetry_ms moved into the section that is read
+CONFIG_VERSION: str = '20261005'  # SEN0697 primary on every map (enabled); SEN0253 an off-by-default
+                                 # backup; ADXL375 behind the BMI323 on `accel`
 
 
 def default() -> dict:
     board = {'id': 'taster', 'mcu': 'esp32p4', 'rev': 1, 'firmware_version': _FIRMWARE_VERSION,
              'setup_retries': 3,  # re-attempt a flaky device setup at boot (breadboard contacts; 1 = no retry)
-             # 'auto' -> layout.resolve() decides v0.1 / v1.0 / v1.1 by I2C scan at boot: it re-buses
-             # the four devices that move, and enables/disables the attitude parts each revision
-             # carries. Pin it to an explicit revision on a board where a
-             # moving sensor is unfitted, since an absent device abstains and enough abstentions make
-             # the vote undecided (which changes nothing, but also fixes nothing).
+             # 'auto' -> layout.resolve() decides by I2C scan at boot: the bus MAP from where the four
+             # moving devices answer -- v0.1, or the v1.x map, which a scan always names v1.1 (legacy
+             # v1.0, the SEN0253 alone, is declarable only). It re-buses the movers, fits/unfits the
+             # revision's parts, and enables the SEN0253 backup only if the scan found it. Pin it to an
+             # explicit revision on a board where a moving sensor is unfitted, since an absent device
+             # abstains and a placement tie is undecided (which changes nothing, but also fixes nothing).
              'layout': 'auto'}
 
     """
@@ -117,10 +119,11 @@ def default() -> dict:
 
     pins = {
         'separation_switch': 33,  # copper pads: HIGH=nested (3v3 routed), LOW=separated
-        'accel_int1': 4,  # accel DATA_READY, and it is SHARED by revision: the ADXL375's INT1 on
-                          # v0.1, the BMI323's on v1.1. One GPIO, one name -- the two parts are
-                          # mutually exclusive (see layout.py), and validate() rejects two names
-                          # for one pin, so naming it after either part would lie on the other.
+        'accel_int1': 4,  # accel DATA_READY, and it is SHARED by map: the ADXL375's INT1 on v0.1,
+                          # the BMI323's on v1.x. Both parts are fitted on v0.1, but only the ADXL's
+                          # INT1 is routed there (the attitude socket is four wires), so layout.apply()
+                          # gives the pin to the BMI323 on v1.x only. One GPIO, one name: validate()
+                          # rejects two names for one pin, so naming it after either part would lie.
         'adxl375_cs': 49,  # ADXL375 SPI chip-select (free spare)
         'lsm6dso32_cs': 50,  # LSM6DSO32 SPI chip-select (shares SPI1 with the ADXL375)
         'lsm6dso32_int1': 28,  # LSM6DSO32 INT1 accel data-ready (INT2/GPIO29 not wired)
@@ -136,20 +139,25 @@ def default() -> dict:
     """
     Recorder: PSRAM ring sizes + stats cadence, and the SESSION prefix every capture file is named by.
 
-    `session` is normally absent, and the board then synthesises `YYYYMMDD_HHMMSS_<6-digit random>`. It
-    has no battery-backed RTC, so without a time sync that date is 2000-01-01 and only the random part
-    separates one boot from the next -- an audit of a real Luckfox found ~150 unsynced boots sharing a
-    900-value suffix, with the expected ~12 collisions APPENDING two flights into one CSV.
+    `session` is normally absent, and the board then names its files by its BOOT ID, '%06u' of the NVS
+    counter main.py increments once per boot (doc/specs/recorder-wire.md). It needs no clock -- the RTC
+    reads 2000-01-01 until CC sets it, and the old date + 900-value random prefix let ~150 unsynced boots
+    collide ~12 times, APPENDING two flights into one CSV. CC's time set ties each boot id to wall-clock
+    time through the shared session.csv. Bring-ups that bypass main.py (tests, HITL) count nothing and
+    keep the legacy `YYYYMMDD_HHMMSS_<6-digit random>`.
 
-    Set `session` from CC -- which has both a trustworthy clock and the run's identity -- to assign the
-    WHOLE prefix verbatim, e.g. '20260807_143012_catapult-run3'. Keep the `YYYYMMDD_HHMMSS_<tag>` shape:
-    host tools strip the date/time by pattern and derive the tag from the capture, so tag-less, random
-    and labelled captures all parse alike; a run label makes a capture self-identifying on disk.
+    Set `session` to label one run: the test system assigns the WHOLE prefix verbatim, e.g.
+    'catapult-run3'. It becomes part of every file name the Luckfox writes, so it must be ASCII letters,
+    digits and '-' with at least one letter (spaces are made '-'), 32 characters at most: no '_', which
+    would make `<session>_<stream>.csv` ambiguous to split, never digits alone, which would read as a
+    boot id, and nothing longer, which would leave a telemetry row no room in its 254-byte cell.
+    A label that breaks the rule is logged and IGNORED -- the boot id names the files instead -- rather
+    than failing the config, so a stray label never costs a boot its flight profile.
 
     CAUTION: this is a PER-RUN value, and config is immutable-per-run and SAVED. A `session` left in the
     saved config is reused verbatim by every later boot, which is a *guaranteed* collision -- strictly
-    worse than the random suffix it replaces, since colliding boots append into each other's files. Set
-    it per run or leave it out.
+    worse than the boot id it replaces, since colliding boots append into each other's files. Set it per
+    run or leave it out.
     """
     recorder = {  # PSRAM ring sizes + stats cadence (Recorder)
         'tlm_capacity': 256,  # measured peak ~16 buffered records -> 256 is ~16x headroom
@@ -173,7 +181,7 @@ def default() -> dict:
         # flight profiles (tms7c/tms7d) already set 0, so the default now matches what actually flies;
         # tms7d_control keeps 40, where a control board does not need the full stream.
         'telemetry_ms': 0,
-        # 'session': '20260807_143012_taster',  # CC assigns the whole prefix; absent -> board synthesises
+        # 'session': 'catapult-run3',  # a per-run label, verbatim; absent -> the NVS boot id ('000123')
     }
 
     """
@@ -228,13 +236,20 @@ def default() -> dict:
         'period_ms': 10,
         'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, itself 0 = uncapped)
         'enabled': True,
-        'provides': {'accel': {'priority': 1, 'timeout_ms': 20}},  # >32 g backstop behind lsm6dso32
+        # the +/-200 g backstop: behind the LSM6DSO32 (p0) AND the BMI323 (p1) -- both are fitted beside it
+        # on v0.1, and at 49 mg a count it is the coarsest accel there (layout._BELOW enforces the order)
+        'provides': {'accel': {'priority': 2, 'timeout_ms': 20}},
     }
 
     """
-    IMU (LSM6DSO32). `rate` has NO backup source: on LSM6DSO32 loss the PID D term degrades to
-    d(error)/dt (noisier, no setpoint-kick immunity) -- flies, but less crisply. A BNO055 raw-gyro
-    backup provider is planned with the IMU-redundancy work.
+    IMU (LSM6DSO32), the PRIMARY accel and gyro `rate`. The SEN0697's BMI323 backs both up at priority
+    1 on every board revision except legacy v1.0 (see imu_bmi323 below). Without a fresh `rate` the PID
+    D term degrades to d(error)/dt (noisier, no setpoint-kick immunity -- flies, but less crisply), and
+    the attitude filter goes BLIND (health `attitude-blind`; tasks/attitude.py).
+
+    `accel` order where all are fitted (v0.1): LSM6DSO32 p0 -> BMI323 p1 -> ADXL375 p2 -> BNO055 p3. On
+    the v1.x map: LSM6DSO32 -> BMI323 (-> BNO055 where a SEN0253 is found). Legacy v1.0: LSM6DSO32 ->
+    BNO055.
     """
     imu_lsm6dso32 = {
         'name': 'imu_lsm6dso32',
@@ -250,28 +265,48 @@ def default() -> dict:
         'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, itself 0 = uncapped)
         'enabled': True,
         'provides': {'accel': {'priority': 0, 'timeout_ms': 20},   # PRIMARY accel (±32 g)
-                     'rate': {'priority': 0, 'timeout_ms': 20}},    # sole gyro `rate` source
+                     'rate': {'priority': 0, 'timeout_ms': 20}},    # PRIMARY gyro `rate`
     }
 
+    """
+    SEN0253 attitude module (BNO055 + BMP280): a BACKUP only, OFF by default.
+
+    No board carries it as its attitude module any more but the legacy v1.0 build, which is declarable
+    only: the SEN0697 is the primary on every scanned board. A taster or an experimental board may carry
+    BOTH modules (different addresses, same i2c:0), and then `layout.resolve()` enables the SEN0253 parts
+    its scan found. A declared v0.1 / v1.1 has no scan, so the config's own `enabled` stands; a declared
+    v1.0 enables it. Every quantity it shares with the SEN0697 sources is ranked BELOW them: `attitude`
+    p2 behind the filter (p1), `accel` p3 behind the BMI323 (p1) and the ADXL375 (p2), and the BMP280
+    behind the BMP581 (see baro_bmp280). layout._BELOW ENFORCES that order at boot whatever a loaded
+    config says -- every config saved before 2026-10-05 has the BNO055 at attitude p0.
+
+    COST of running both, should the CPU budget allow it: the BNO055 polls at its 50 Hz driver default
+    (a 24-byte block read) and the BMP280 at 10 Hz, both on i2c:0. Next to the SEN0697's 100 + 10 + 10 Hz
+    that is about 60 more transactions a second on the attitude bus, plus their heap churn on a GC-off
+    flight.
+    """
     imu_bno055 = {
         'name': 'imu_bno055',
         'driver': 'bno055',
         'bus': 'i2c', 'id': 0,
         'addr': 0x28,
         'telemetry_ms': 0,  # 0 -> the Recorder global rate (recorder.telemetry_ms, itself 0 = uncapped)
-        'enabled': True,
-        'provides': {'attitude': {'priority': 0, 'timeout_ms': 40},
-                     'accel': {'priority': 2, 'timeout_ms': 40}},  # fused fallback behind lsm/adxl
+        'enabled': False,  # backup only; layout.resolve() enables it when the scan finds 0x28
+        'provides': {'attitude': {'priority': 2, 'timeout_ms': 40},  # BACKUP behind the filter (p1)
+                     'accel': {'priority': 3, 'timeout_ms': 40}},  # fused fallback behind lsm/bmi323/adxl
     }
 
     """
-    Attitude REDUNDANCY (tasks/attitude.py): a complementary-filter backup that derives (heading,
-    roll, pitch) from the LSM6DSO32 gyro `rate` + accel gravity vector and provides it at PRIORITY
-    1, so the databoard swaps to it if the BNO055 (priority 0) stops -- losing the sole attitude
-    source would otherwise go ballistic. Mirrors the BNO055 while it is fresh (warm handoff, no
-    math); free-runs the filter only once it is lost. corr_shift = the accel pull strength
-    (err >> shift); grav band = the |accel| window (g) where the gravity vector is trusted (reject
-    thrust/manoeuvre). Cheap while the BNO055 is alive; enable by default.
+    The PRIMARY attitude (tasks/attitude.py): a complementary filter that derives (heading, roll,
+    pitch) from the gyro `rate` + accel gravity vector -- the LSM6DSO32, backed up by the SEN0697's
+    BMI323 -- with the BMM350 and the GNSS track as its heading references. Priority 1, not 0: p0 is the
+    HITL sim's slot, which the filter MIRRORS while it is fresh (it never mirrors a source ranked below
+    it). The SEN0253's BNO055, when fitted, is the p2 backup the databoard falls to if this filter goes
+    quiet. With no fresh gyro for 100 ms the filter is BLIND (health `attitude-blind`, on every board):
+    where a backup below it is fresh it withholds its frozen output so the backup takes over; where none
+    is, it keeps publishing as it always has.
+    corr_shift = the accel pull strength (err >> shift); grav band = the |accel| window (g) where the
+    gravity vector is trusted (reject thrust/manoeuvre).
 
     turn_gate: suppress the accel gravity-vector correction above this yaw rate (deg/s) -- in a
     coordinated turn the accel points down the body axis (looks level at any bank), so past the gate
@@ -292,43 +327,50 @@ def default() -> dict:
         'bus': 'i2c', 'id': 0,
         'addr': 0x63,
         'enabled': True,
-        # reconcile altitude/pressure: ICP-10111 is the rank-0 primary, so BMP280 (and any
-        # GNSS/laser) is bias-corrected against it on a fallback handover (additive scalars).
+        # reconcile altitude/pressure: ICP-10111 is the rank-0 primary, so the BMP581 / BMP280 (and
+        # any GNSS) is bias-corrected against it on a fallback handover (additive scalars).
         'provides': {'altitude': {'priority': 0, 'timeout_ms': 200, 'reconcile': True},
                      'elevation': {'priority': 0, 'timeout_ms': 200},
                      'pressure': {'priority': 0, 'timeout_ms': 200, 'reconcile': True},
                      'temperature': {'priority': 0, 'timeout_ms': 500}},  # slow quantity, capped ≤1000
     }
 
-    baro_bmp280 = {
+    baro_bmp280 = {  # the SEN0253's baro: a BACKUP, off by default (see imu_bno055)
         'name': 'baro_bmp280',
         'driver': 'bmp280',
         'bus': 'i2c', 'id': 0,
         'addr': 0x76,
-        'enabled': True,
-        'provides': {'altitude': {'priority': 1, 'timeout_ms': 200},
-                     'elevation': {'priority': 1, 'timeout_ms': 200},
-                     'pressure': {'priority': 1, 'timeout_ms': 200},
-                     'temperature': {'priority': 1, 'timeout_ms': 500}},  # slow quantity, capped ≤1000
+        'enabled': False,  # backup only; layout.resolve() enables it when the scan finds 0x76
+        'provides': {'altitude': {'priority': 2, 'timeout_ms': 200},  # behind the BMP581 (p1)
+                     'elevation': {'priority': 2, 'timeout_ms': 200},
+                     'pressure': {'priority': 2, 'timeout_ms': 200},
+                     'temperature': {'priority': 2, 'timeout_ms': 500}},  # slow quantity, capped ≤1000
     }
 
     """
-    SEN0697 attitude module (v1.1 boards only): BMI323 6-axis on i2c:0 @ 0x69 and BMP581 baro @ 0x47.
+    SEN0697 attitude module, the PRIMARY on every board: BMI323 6-axis on i2c:0 @ 0x69, BMM350 mag @ 0x15
+    and BMP581 baro @ 0x47.
 
-    Fitted in place of the SEN0253 (BNO055 + BMP280), which is why both are `enabled: False` here and
-    switched on by layout.apply() when a v1.1 board is DETECTED -- the default config describes a v0.1
-    board, and a config that merely left them alone would bring up an IMU that is present, wired and
-    ignored.
+    ENABLED here, so a board whose layout is undecided (config left as written) still expects it. The
+    only revision that removes it is legacy v1.0 (the SEN0253 alone), declarable only, where
+    layout.apply() disables it -- a scan never names v1.0, so a missing SEN0697 is never switched off.
+    Its parts must stay enabled even when a scan misses them: a missing primary must fail setup and
+    refuse `arm`, not be quietly switched off. The SEN0253 is the opposite case, an optional backup that
+    is enabled only when found (see imu_bno055).
 
     The BMI323 sits at priority 1 BEHIND the LSM6DSO32 on both channels. That is the point of fitting
-    it: `rate` has been a single-source channel on every board so far ("sole gyro source"), so a dead
-    LSM6DSO32 took the PID's D term with it. Two independent 6-axis parts on different buses -- one SPI,
-    one I2C -- means the databoard hands attitude.py whichever still answers.
+    it: `rate` was a single-source channel on every board before it, so a dead LSM6DSO32 took the PID's
+    D term with it. Two independent 6-axis parts on different buses -- one SPI, one I2C -- means the
+    databoard hands attitude.py whichever still answers.
 
-    Note what ELSE changes on v1.1: with the BNO055 gone there is no priority-0 `attitude` provider at
-    all, so tasks/attitude.py's complementary filter stops being a backup and becomes the only path. It
-    is flight-proven in that role as a backup and has never been the sole one -- which is what TMS-7F
-    exists to retire.
+    No device provides `attitude` at priority 0: tasks/attitude.py's complementary filter (p1) IS the
+    attitude, fed by these parts and the LSM6DSO32, and the SEN0253's BNO055 (p2) is its backup where
+    one is fitted. The filter has flown as a backup and has never been the sole source -- which is what
+    TMS-7F exists to retire.
+
+    int_pin is None here because the default describes the v0.1 map, where GPIO4 is the ADXL375's INT1
+    and the attitude socket has no INT wire. layout.apply() routes `accel_int1` to the BMI323 on the v1.x
+    map. Either way the line is OPTIONAL: the driver polls at period_ms without it.
     """
     imu_bmi323 = {
         'name': 'imu_bmi323',
@@ -336,11 +378,11 @@ def default() -> dict:
         'bus': 'i2c', 'id': 0,
         'addr': 0x69,
         'period_ms': 10,  # 100 Hz, matching the ODR the driver configures; also the INT1 fallback
-        'int_pin': 'accel_int1',  # data-ready drives the sampling; OPTIONAL -- the driver falls back to
-                                  # the period poll on its own if the line is absent or silent, and says
-                                  # which mode it is in through `interrupt_silent` / `irq_runs`
+        'int_pin': None,  # data-ready drives the sampling where routed (layout: accel_int1 on v1.x);
+                          # OPTIONAL -- the driver polls without it, or if the line is silent, and says
+                          # which mode it is in through `interrupt_silent` / `irq_runs`
         'telemetry_ms': 0,  # 0 -> the Recorder global rate
-        'enabled': False,  # v1.1 only; layout.apply() fits it
+        'enabled': True,  # the primary module; layout.apply() unfits it on a declared legacy v1.0 only
         'provides': {'accel': {'priority': 1, 'timeout_ms': 20},   # behind the LSM6DSO32 (±32 g, priority 0)
                      'rate': {'priority': 1, 'timeout_ms': 20}},   # the gyro redundancy this fleet lacked
     }
@@ -352,10 +394,11 @@ def default() -> dict:
         'addr': 0x15,
         'period_ms': 100,  # 10 Hz -- heading moves slowly and the part averages 4 samples internally
         'telemetry_ms': 0,
-        'enabled': False,  # v1.1 only; layout.apply() fits it
-        # RECORDED, not yet consumed: nothing fuses `mag` into heading today. It is here so the flights
-        # that decide whether a magnetometer survives this airframe -- carbon, servo currents, a booster
-        # -- produce the data to judge it, before any control path depends on it.
+        'enabled': True,  # SEN0697, the primary module; layout.apply() unfits it on a declared v1.0 only
+        # the attitude filter's GNSS-free heading reference (tasks/attitude.py): learned against the
+        # ground track while the fix is good, steering yaw only when the track is gone, and only near
+        # level. Weak by design until flights show the mag survives this airframe (carbon, servo
+        # currents, a booster) -- its telemetry is the data to judge that by.
         'provides': {'mag': {'priority': 0, 'timeout_ms': 500}},
     }
 
@@ -364,7 +407,7 @@ def default() -> dict:
         'driver': 'bmp581',
         'bus': 'i2c', 'id': 0,
         'addr': 0x47,
-        'enabled': False,  # v1.1 only; layout.apply() fits it
+        'enabled': True,  # SEN0697, the primary module; layout.apply() unfits it on a declared v1.0 only
         'provides': {'altitude': {'priority': 1, 'timeout_ms': 200},
                      'elevation': {'priority': 1, 'timeout_ms': 200},
                      'pressure': {'priority': 1, 'timeout_ms': 200},
@@ -415,8 +458,10 @@ The SECOND laser, for boards fitted with a VL53L1X instead of the VL53L4CX.
 
 Both parts answer on 0x29 and an I2C scan cannot tell them apart, so `layout` cannot choose between
 them -- but each driver checks its own model id (0xEACC vs 0xEBAA) and returns False on a mismatch, so
-BOTH can be declared and the one that is actually soldered wins. That is the same graceful-absent
-contract every driver already follows; nothing here needs editing per board.
+on v1.0/v1.1 BOTH can stay declared and the one that is actually soldered wins (the other reads "not
+fitted"). NOT on v0.1: there both entries route XSHUT to GPIO5 and each setup pulses it, so the unfitted
+entry's setup resets the fitted laser -- that entry stays a failure and arming is refused until exactly
+one laser is enabled (Controller._sort_alternatives; layout drops the pins on v1.0/v1.1).
 
 RANGE differs and it reaches the flight logic: the L1X is declared 2-4 m against the L4CX's 4-6 m,
 while `sequencer.land_agl_m` defaults to 5.0 -- above anything an L1X can report, so the GLIDING ->
@@ -434,7 +479,7 @@ does not apply to this silicon), so the config block's own timing stands.
         'xshut_pin': 'laser_xshut',
         'int_pin': 'laser_int',
         'period_ms': 50,
-        'enabled': True,  # harmless when absent: the model-id check rejects an L4CX and setup returns False
+        'enabled': True,  # v1.0/v1.1: harmless when absent; v0.1 (shared XSHUT): enable exactly one laser
         'provides': {'agl': {'priority': 0, 'timeout_ms': 100}},
     }
 
@@ -481,7 +526,10 @@ does not apply to this silicon), so the config block's own timing stands.
     both share gnss.py. To run the NEO-6M instead:
     1. power the board off, swap the module onto uart:2 (keep board-TX -> module-RX wired: without
        it the NEO ignores config and free-runs all sentences at 1 Hz),
-    2. set 'driver' to 'neo6mv2' and 'hz' to 5 (the NEO-6M tops out near 5 Hz).
+    2. set 'driver' to 'neo6mv2' and 'hz' to 5 (the NEO-6M tops out near 5 Hz),
+    3. set provides.position.timeout_ms to 400. The position window must be 2x the FIX PERIOD: 200 ms at
+       10 Hz, 400 ms at 5 Hz -- left at 200 a 5 Hz fix is stale for half of every period (TMS-7F's
+       launch config carries 400).
     Live-verified on the NEO: RMC 5 Hz (position) + GGA ~1 Hz (altitude/elevation).
     """
     gnss = {
@@ -489,12 +537,12 @@ does not apply to this silicon), so the config block's own timing stands.
         'driver': 'atgm336h',  # ATGM336H (CASIC), 10 Hz -- or 'neo6mv2' (see note above)
         'bus': 'uart', 'id': 2,
         'addr': None,
-        'hz': 10,  # set 5 for 'neo6mv2' (NEO-6M caps ~5 Hz)
+        'hz': 10,  # set 5 for 'neo6mv2' (NEO-6M caps ~5 Hz) -- and position timeout_ms 400 with it
         'enabled': True,
         'provides': {
-            'position': {'priority': 0, 'timeout_ms': 200},  # 10 Hz -> 2x period
+            'position': {'priority': 0, 'timeout_ms': 200},  # 2x the fix period: 200 at 10 Hz, 400 at 5 Hz
             'speed': {'priority': 0, 'timeout_ms': 500},  # GNSS ground speed (m/s) -> airspeed governor
-            'course': {'priority': 0, 'timeout_ms': 500},  # ground-track bearing -> attitude-backup yaw
+            'course': {'priority': 0, 'timeout_ms': 500},  # ground-track bearing -> the attitude filter's yaw
             # altitude/elevation are a deep baro backup: high priority number (low rank), and a
             # generous window since GGA runs at ~1 Hz to stay within 9600 baud.
             'altitude': {'priority': 3, 'timeout_ms': 2000},

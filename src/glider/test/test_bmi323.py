@@ -3,7 +3,7 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 On-board test for the BMI323 driver (drivers/bmi323.py): @task.driver('bmi323') registration, graceful
 setup when absent, the TWO DUMMY BYTES every I2C read prepends, exact gyro scaling in both signs, and the
-0x8000 start-up marker. Deterministic whether or not a BMI323 is wired (it is fitted only on v1.1).
+0x8000 start-up marker. Deterministic whether or not a BMI323 is wired (the SEN0697: every revision but v1.0).
 Run by `make test`.
 """
 

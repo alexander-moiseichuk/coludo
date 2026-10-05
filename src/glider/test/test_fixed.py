@@ -17,7 +17,7 @@ def test_atan2_cd():
     Integer CORDIC atan2 (centidegrees) tracks math.atan2 to <= ~0.2 deg over all four quadrants.
 
     The accel-gravity-vector -> roll/pitch composition (with isqrt) reproduces banked/pitched
-    attitudes -- the attitude-backup filter's core, zero float boxed.
+    attitudes -- the attitude filter's core, zero float boxed.
     """
     # cardinal + quadrant sanity
     assert fixed.atan2_cd(0, 0) == 0

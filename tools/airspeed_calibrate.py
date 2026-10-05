@@ -34,6 +34,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), '..'
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import fixed  # noqa: E402 -- the firmware's fixed-point scale, so this cannot drift from the board
 import flight_telemetry  # noqa: E402
+import recorder_wire  # noqa: E402
 
 _KNOTS_TO_MS = 0.514444  # NMEA RMC knots -> m/s (matches gnss._KNOTS_TO_MS)
 _SCALE = fixed.SCALE  # the dynamic_pressure fixnum is Pa x SCALE -- read it, never restate it
@@ -42,7 +43,7 @@ _MAX_PAIR_US = 200_000  # reject a GNSS sample with no pitot row within 200 ms (
 
 def _read_csv(path: str) -> list:
     """Parse a ';'-separated telemetry CSV into a list of {column: value} dicts (header row first)."""
-    with open(path) as handle:
+    with open(path, encoding='utf-8', errors='surrogateescape') as handle:
         header = handle.readline().strip().split(';')
         rows = []
         for line in handle:
@@ -57,19 +58,20 @@ def _is_capture(path: str) -> bool:
     Is this an assembled capture? Decided by the WIRE MARKER, not the file extension.
 
     `.txt` matched any stray log or config copy in the directory and produced a cryptic parse error
-    instead of a clear one. Every capture line carries the `@<session>_<stream>.csv@` prefix, so one
-    line is enough to tell.
+    instead of a clear one. Every telemetry line carries the `@<session>_<stream>.csv@` prefix, and on
+    current firmware every line -- a log line too -- carries the integrity wrapper
+    (doc/specs/recorder-wire.md), so one line is enough to tell.
 
     Args:
         path - the file to test.
 
     Returns:
-        True when the first readable line carries a capture marker.
+        True when the first readable line carries a capture marker or the wrapper.
     """
     try:
-        with open(path) as handle:
+        with open(path, encoding='utf-8', errors='surrogateescape') as handle:
             for line in handle:
-                if line.startswith('@') and '.csv@' in line:
+                if (line.startswith('@') and '.csv@' in line) or recorder_wire.wrapped(line.strip()):
                     return True
                 if line.strip():
                     return False  # a real first line that is not a capture row -> not a capture
@@ -93,7 +95,7 @@ def _read_capture(path: str) -> tuple:
     Returns:
         (pitot_rows, gnss_rows) -- each a list of {column: value} dicts, empty when the stream is absent.
     """
-    with open(path) as handle:
+    with open(path, encoding='utf-8', errors='surrogateescape') as handle:  # the bytes the board sent
         streams, _logs = flight_telemetry.parse(handle.read())
     if flight_telemetry.simulated(streams):
         """
@@ -135,7 +137,7 @@ def _read_capture(path: str) -> tuple:
 def _find(directory: str, column: str) -> str:
     """The first *.csv in `directory` whose header carries `column` (auto-detect a stream by its field)."""
     for path in sorted(glob.glob(os.path.join(directory, '*.csv'))):
-        with open(path) as handle:
+        with open(path, encoding='utf-8', errors='surrogateescape') as handle:
             if column in handle.readline().strip().split(';'):
                 return path
     return None

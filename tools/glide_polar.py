@@ -214,8 +214,7 @@ def analyse(streams, start: float, end: float) -> dict:
 
 def report(label: str, path: str, start: float, end: float) -> None:
     """Print the glide-quality block for one capture."""
-    with open(path) as handle:
-        streams, _logs = flight_telemetry.parse(handle.read())
+    streams, _logs = flight_telemetry.load(path)
     print(label)
     result = analyse(streams, start, end)
     if 'error' in result:

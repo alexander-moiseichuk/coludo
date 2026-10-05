@@ -31,11 +31,14 @@ _SETTLE_MS: int = 2000  # let the periodic tasks publish before the channels are
 
 def _report_setup(board: dict, flight) -> None:
     """
-    Print which configured devices came up, and why each one did not.
+    Print which configured devices came up (naming each one's driver), and why each one did not.
+
+    A part declared beside the one soldered on its socket (the VL53L4CX / VL53L1X pair) reads not fitted,
+    with the part that answers -- it is absent by design, so counting it DOWN called a healthy board broken.
 
     Args:
         board - the loaded board config (its `sensors` + `components` are the expected roster).
-        flight - the Controller returned by bringup, carrying `failures`.
+        flight - the Controller returned by bringup, carrying `failures` and `alternatives`.
 
     Returns:
         None.
@@ -47,12 +50,14 @@ def _report_setup(board: dict, flight) -> None:
         name = device['name']
         if not device.get('enabled', True):
             print('  %-20s -- disabled in config' % name)
+        elif name in flight.alternatives:  # the other part answers its socket: absent by design, not a fault
+            print('  %-20s %s' % (name, flight.unfitted(name)))
         elif flight.active(name) is not None:
-            print('  %-20s UP' % name)
+            print('  %-20s UP (%s)' % (name, flight.driver(name)))
             up += 1
         else:
-            print('  %-20s *** DOWN: %s ***' % (name, flight.failures.get(name, 'unknown')))
-    print('  -> %d up, %d down' % (up, len(flight.failures)))
+            print('  %-20s *** DOWN: %s -- %s ***' % (name, flight.driver(name), flight.failures.get(name, 'unknown')))
+    print('  -> %d up, %d down, %d not fitted' % (up, len(flight.failures), len(flight.alternatives)))
 
 
 async def _report_probe() -> None:

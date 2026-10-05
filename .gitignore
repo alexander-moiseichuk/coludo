@@ -14,3 +14,6 @@ captures/
 models/PCBs/main_board/
 models/PCBs/power_board/
 models/PCBs/*.net
+doc/benches/gnss-20261004/raw/
+# a bench's provenance key (tools/gnss_bench_report.py --provenance): a secret, ignored wherever it lies
+.pepper

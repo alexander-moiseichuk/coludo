@@ -7,7 +7,13 @@ is stale.
 
 The databoard hands a consumer the **highest-priority provider that is still fresh** (`p0` first,
 then `p1`, ...), where fresh means it pushed within the channel's freshness window. A rate marked
-`*` comes from the driver default rather than the config.
+`*` comes from the driver default rather than the config. `attitude` has no `p0` provider on a
+board: that slot is the HITL sim's, and the complementary filter (`attitude`, p1) is the primary.
+
+Each board is laid out as `layout` leaves it at boot. The SEN0697 is the primary attitude module on
+every revision but legacy v1.0 (declared only -- a scan never names it); elsewhere the SEN0253
+(BNO055 + BMP280) is enabled only when the scan finds it, and `layout` ranks it below the SEN0697
+and the filter whatever the config says -- the last section shows that backup chain.
 
 * `accel` — specific force, float g
 * `agl` — height above ground from the ranging sensor
@@ -20,32 +26,32 @@ then `p1`, ...), where fresh means it pushed within the channel's freshness wind
 
 **Attitude and motion**
 
-| channel | primary (p0) | backups, in order | freshness | availability |
+| channel | primary | backups, in order | freshness | availability |
 |---|---|---|---|---|
-| **attitude** | `imu_bno055` p0 @ 50.0 Hz* on i2c:0 | `attitude` p1 @ 50.0 Hz on task | 40 ms | continuous |
-| **rate** | `imu_lsm6dso32` p0 @ 100.0 Hz on spi:1 | **none** | 20 ms | continuous |
-| **accel** | `imu_lsm6dso32` p0 @ 100.0 Hz on spi:1 | `accel_adxl375` p1 @ 100.0 Hz on spi:1 -> `imu_bno055` p2 @ 50.0 Hz* on i2c:0 | 20 ms | continuous |
+| **attitude** | `attitude` p1 @ 50.0 Hz on task | **none** | 40 ms | continuous |
+| **rate** | `imu_lsm6dso32` p0 @ 100.0 Hz on spi:1 | `imu_bmi323` p1 @ 100.0 Hz on i2c:0 | 20 ms | continuous |
+| **accel** | `imu_lsm6dso32` p0 @ 100.0 Hz on spi:1 | `imu_bmi323` p1 @ 100.0 Hz on i2c:0 -> `accel_adxl375` p2 @ 100.0 Hz on spi:1 | 20 ms | continuous |
 
 **Height**
 
-| channel | primary (p0) | backups, in order | freshness | availability |
+| channel | primary | backups, in order | freshness | availability |
 |---|---|---|---|---|
-| **altitude** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:0 | `baro_bmp280` p1 @ 10.0 Hz* on i2c:0 -> `gnss` p3 @ event on uart:2 | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
-| **elevation** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:0 | `baro_bmp280` p1 @ 10.0 Hz* on i2c:0 -> `gnss` p3 @ event on uart:2 | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+| **altitude** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:0 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 -> `gnss` p3 @ event on uart:2 | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+| **elevation** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:0 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 -> `gnss` p3 @ event on uart:2 | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
 | **agl** | `laser_agl` p0 @ 20.0 Hz on i2c:0 | **none** | 100 ms | `laser_agl`: LAST METRES ONLY -- a ranging sensor, valid inside its range; absent for most of a flight |
 
 **Air data**
 
-| channel | primary (p0) | backups, in order | freshness | availability |
+| channel | primary | backups, in order | freshness | availability |
 |---|---|---|---|---|
 | **airspeed** | `airspeed_sdp810` p0 @ 50.0 Hz on i2c:0 | **none** | 100 ms | `airspeed_sdp810`: needs its pad tare; the reading is a differential pressure, so it is meaningless at rest |
 | **dynamic_pressure** | `airspeed_sdp810` p0 @ 50.0 Hz on i2c:0 | **none** | 100 ms | `airspeed_sdp810`: needs its pad tare; the reading is a differential pressure, so it is meaningless at rest |
-| **pressure** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:0 | `baro_bmp280` p1 @ 10.0 Hz* on i2c:0 | 200 ms | continuous |
-| **temperature** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:0 | `baro_bmp280` p1 @ 10.0 Hz* on i2c:0 | 500 ms | continuous |
+| **pressure** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:0 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 | 200 ms | continuous |
+| **temperature** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:0 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 | 500 ms | continuous |
 
 **Position**
 
-| channel | primary (p0) | backups, in order | freshness | availability |
+| channel | primary | backups, in order | freshness | availability |
 |---|---|---|---|---|
 | **position** | `gnss` p0 @ event on uart:2 | **none** | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
 | **speed** | `gnss` p0 @ event on uart:2 | **none** | 500 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
@@ -53,143 +59,15 @@ then `p1`, ...), where fresh means it pushed within the channel's freshness wind
 
 **Power**
 
-| channel | primary (p0) | backups, in order | freshness | availability |
+| channel | primary | backups, in order | freshness | availability |
 |---|---|---|---|---|
 | **voltage** | `power_ina226` p0 @ 10.0 Hz on i2c:1 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
 | **current** | `power_ina226` p0 @ 10.0 Hz on i2c:1 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
 | **power** | `power_ina226` p0 @ 10.0 Hz on i2c:1 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
 
-_Degradation on primary failure:_
-
-| channel | if the primary fails | consequence |
-|---|---|---|
-| `attitude` | `attitude` (p1) | complementary filter; heading is gyro-integrated, bounded by the GNSS track only above the course gate |
-| `rate` | **nothing** | the channel is LOST -- `imu_lsm6dso32` is its only source |
-| `accel` | `accel_adxl375` (p1) | +/-200 g -- the shock backstop, not a general accel |
-| `altitude` | `baro_bmp280` (p1) | coarser than the primary |
-| `elevation` | `baro_bmp280` (p1) | coarser than the primary |
-| `agl` | **nothing** | the channel is LOST -- `laser_agl` is its only source |
-| `airspeed` | **nothing** | the channel is LOST -- `airspeed_sdp810` is its only source |
-| `dynamic_pressure` | **nothing** | the channel is LOST -- `airspeed_sdp810` is its only source |
-| `pressure` | `baro_bmp280` (p1) | coarser than the primary |
-| `temperature` | `baro_bmp280` (p1) | coarser than the primary |
-| `position` | **nothing** | the channel is LOST -- `gnss` is its only source |
-| `speed` | **nothing** | the channel is LOST -- `gnss` is its only source |
-| `course` | **nothing** | the channel is LOST -- `gnss` is its only source |
-| `voltage` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
-| `current` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
-| `power` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
-
-## v1.0
-
-**Attitude and motion**
-
-| channel | primary (p0) | backups, in order | freshness | availability |
-|---|---|---|---|---|
-| **attitude** | `imu_bno055` p0 @ 50.0 Hz* on i2c:0 | `attitude` p1 @ 50.0 Hz on task | 40 ms | continuous |
-| **rate** | `imu_lsm6dso32` p0 @ 100.0 Hz on spi:1 | **none** | 20 ms | continuous |
-| **accel** | `imu_lsm6dso32` p0 @ 100.0 Hz on spi:1 | `imu_bno055` p2 @ 50.0 Hz* on i2c:0 | 20 ms | continuous |
-
-**Height**
-
-| channel | primary (p0) | backups, in order | freshness | availability |
-|---|---|---|---|---|
-| **altitude** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp280` p1 @ 10.0 Hz* on i2c:0 -> `gnss` p3 @ event on uart:2 | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
-| **elevation** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp280` p1 @ 10.0 Hz* on i2c:0 -> `gnss` p3 @ event on uart:2 | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
-| **agl** | `laser_agl` p0 @ 20.0 Hz on i2c:1 | **none** | 100 ms | `laser_agl`: LAST METRES ONLY -- a ranging sensor, valid inside its range; absent for most of a flight |
-
-**Air data**
-
-| channel | primary (p0) | backups, in order | freshness | availability |
-|---|---|---|---|---|
-| **airspeed** | `airspeed_sdp810` p0 @ 50.0 Hz on i2c:1 | **none** | 100 ms | `airspeed_sdp810`: needs its pad tare; the reading is a differential pressure, so it is meaningless at rest |
-| **dynamic_pressure** | `airspeed_sdp810` p0 @ 50.0 Hz on i2c:1 | **none** | 100 ms | `airspeed_sdp810`: needs its pad tare; the reading is a differential pressure, so it is meaningless at rest |
-| **pressure** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp280` p1 @ 10.0 Hz* on i2c:0 | 200 ms | continuous |
-| **temperature** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp280` p1 @ 10.0 Hz* on i2c:0 | 500 ms | continuous |
-
-**Position**
-
-| channel | primary (p0) | backups, in order | freshness | availability |
-|---|---|---|---|---|
-| **position** | `gnss` p0 @ event on uart:2 | **none** | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
-| **speed** | `gnss` p0 @ event on uart:2 | **none** | 500 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
-| **course** | `gnss` p0 @ event on uart:2 | **none** | 500 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
-
-**Power**
-
-| channel | primary (p0) | backups, in order | freshness | availability |
-|---|---|---|---|---|
-| **voltage** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
-| **current** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
-| **power** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
-
-_Degradation on primary failure:_
-
-| channel | if the primary fails | consequence |
-|---|---|---|
-| `attitude` | `attitude` (p1) | complementary filter; heading is gyro-integrated, bounded by the GNSS track only above the course gate |
-| `rate` | **nothing** | the channel is LOST -- `imu_lsm6dso32` is its only source |
-| `accel` | `imu_bno055` (p2) | +/-16 g; on-chip NDOF fusion |
-| `altitude` | `baro_bmp280` (p1) | coarser than the primary |
-| `elevation` | `baro_bmp280` (p1) | coarser than the primary |
-| `agl` | **nothing** | the channel is LOST -- `laser_agl` is its only source |
-| `airspeed` | **nothing** | the channel is LOST -- `airspeed_sdp810` is its only source |
-| `dynamic_pressure` | **nothing** | the channel is LOST -- `airspeed_sdp810` is its only source |
-| `pressure` | `baro_bmp280` (p1) | coarser than the primary |
-| `temperature` | `baro_bmp280` (p1) | coarser than the primary |
-| `position` | **nothing** | the channel is LOST -- `gnss` is its only source |
-| `speed` | **nothing** | the channel is LOST -- `gnss` is its only source |
-| `course` | **nothing** | the channel is LOST -- `gnss` is its only source |
-| `voltage` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
-| `current` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
-| `power` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
-
-## v1.1
-
-**Attitude and motion**
-
-| channel | primary (p0) | backups, in order | freshness | availability |
-|---|---|---|---|---|
-| **attitude** | **none — no p0 provider** | `attitude` p1 @ 50.0 Hz on task | 40 ms | continuous |
-| **rate** | `imu_lsm6dso32` p0 @ 100.0 Hz on spi:1 | `imu_bmi323` p1 @ 100.0 Hz on i2c:0 | 20 ms | continuous |
-| **accel** | `imu_lsm6dso32` p0 @ 100.0 Hz on spi:1 | `imu_bmi323` p1 @ 100.0 Hz on i2c:0 | 20 ms | continuous |
-
-**Height**
-
-| channel | primary (p0) | backups, in order | freshness | availability |
-|---|---|---|---|---|
-| **altitude** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 -> `gnss` p3 @ event on uart:2 | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
-| **elevation** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 -> `gnss` p3 @ event on uart:2 | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
-| **agl** | `laser_agl` p0 @ 20.0 Hz on i2c:1 | **none** | 100 ms | `laser_agl`: LAST METRES ONLY -- a ranging sensor, valid inside its range; absent for most of a flight |
-
-**Air data**
-
-| channel | primary (p0) | backups, in order | freshness | availability |
-|---|---|---|---|---|
-| **airspeed** | `airspeed_sdp810` p0 @ 50.0 Hz on i2c:1 | **none** | 100 ms | `airspeed_sdp810`: needs its pad tare; the reading is a differential pressure, so it is meaningless at rest |
-| **dynamic_pressure** | `airspeed_sdp810` p0 @ 50.0 Hz on i2c:1 | **none** | 100 ms | `airspeed_sdp810`: needs its pad tare; the reading is a differential pressure, so it is meaningless at rest |
-| **pressure** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 | 200 ms | continuous |
-| **temperature** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 | 500 ms | continuous |
-
-**Position**
-
-| channel | primary (p0) | backups, in order | freshness | availability |
-|---|---|---|---|---|
-| **position** | `gnss` p0 @ event on uart:2 | **none** | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
-| **speed** | `gnss` p0 @ event on uart:2 | **none** | 500 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
-| **course** | `gnss` p0 @ event on uart:2 | **none** | 500 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
-
-**Power**
-
-| channel | primary (p0) | backups, in order | freshness | availability |
-|---|---|---|---|---|
-| **voltage** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
-| **current** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
-| **power** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
-
 **Other**
 
-| channel | primary (p0) | backups, in order | freshness | availability |
+| channel | primary | backups, in order | freshness | availability |
 |---|---|---|---|---|
 | **mag** | `mag_bmm350` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | continuous |
 
@@ -214,13 +92,224 @@ _Degradation on primary failure:_
 | `current` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
 | `power` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
 
+## v1.0
+
+**Attitude and motion**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **attitude** | `attitude` p1 @ 50.0 Hz on task | `imu_bno055` p2 @ 50.0 Hz* on i2c:0 | 40 ms | continuous |
+| **rate** | `imu_lsm6dso32` p0 @ 100.0 Hz on spi:1 | **none** | 20 ms | continuous |
+| **accel** | `imu_lsm6dso32` p0 @ 100.0 Hz on spi:1 | `imu_bno055` p3 @ 50.0 Hz* on i2c:0 | 20 ms | continuous |
+
+**Height**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **altitude** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp280` p2 @ 10.0 Hz* on i2c:0 -> `gnss` p3 @ event on uart:2 | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+| **elevation** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp280` p2 @ 10.0 Hz* on i2c:0 -> `gnss` p3 @ event on uart:2 | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+| **agl** | `laser_agl` p0 @ 20.0 Hz on i2c:1 | **none** | 100 ms | `laser_agl`: LAST METRES ONLY -- a ranging sensor, valid inside its range; absent for most of a flight |
+
+**Air data**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **airspeed** | `airspeed_sdp810` p0 @ 50.0 Hz on i2c:1 | **none** | 100 ms | `airspeed_sdp810`: needs its pad tare; the reading is a differential pressure, so it is meaningless at rest |
+| **dynamic_pressure** | `airspeed_sdp810` p0 @ 50.0 Hz on i2c:1 | **none** | 100 ms | `airspeed_sdp810`: needs its pad tare; the reading is a differential pressure, so it is meaningless at rest |
+| **pressure** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp280` p2 @ 10.0 Hz* on i2c:0 | 200 ms | continuous |
+| **temperature** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp280` p2 @ 10.0 Hz* on i2c:0 | 500 ms | continuous |
+
+**Position**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **position** | `gnss` p0 @ event on uart:2 | **none** | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+| **speed** | `gnss` p0 @ event on uart:2 | **none** | 500 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+| **course** | `gnss` p0 @ event on uart:2 | **none** | 500 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+
+**Power**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **voltage** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
+| **current** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
+| **power** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
+
+_Degradation on primary failure:_
+
+| channel | if the primary fails | consequence |
+|---|---|---|
+| `attitude` | `imu_bno055` (p2) | +/-16 g; on-chip NDOF fusion |
+| `rate` | **nothing** | the channel is LOST -- `imu_lsm6dso32` is its only source |
+| `accel` | `imu_bno055` (p3) | +/-16 g; on-chip NDOF fusion |
+| `altitude` | `baro_bmp280` (p2) | coarser than the primary |
+| `elevation` | `baro_bmp280` (p2) | coarser than the primary |
+| `agl` | **nothing** | the channel is LOST -- `laser_agl` is its only source |
+| `airspeed` | **nothing** | the channel is LOST -- `airspeed_sdp810` is its only source |
+| `dynamic_pressure` | **nothing** | the channel is LOST -- `airspeed_sdp810` is its only source |
+| `pressure` | `baro_bmp280` (p2) | coarser than the primary |
+| `temperature` | `baro_bmp280` (p2) | coarser than the primary |
+| `position` | **nothing** | the channel is LOST -- `gnss` is its only source |
+| `speed` | **nothing** | the channel is LOST -- `gnss` is its only source |
+| `course` | **nothing** | the channel is LOST -- `gnss` is its only source |
+| `voltage` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
+| `current` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
+| `power` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
+
+## v1.1
+
+**Attitude and motion**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **attitude** | `attitude` p1 @ 50.0 Hz on task | **none** | 40 ms | continuous |
+| **rate** | `imu_lsm6dso32` p0 @ 100.0 Hz on spi:1 | `imu_bmi323` p1 @ 100.0 Hz on i2c:0 | 20 ms | continuous |
+| **accel** | `imu_lsm6dso32` p0 @ 100.0 Hz on spi:1 | `imu_bmi323` p1 @ 100.0 Hz on i2c:0 | 20 ms | continuous |
+
+**Height**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **altitude** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 -> `gnss` p3 @ event on uart:2 | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+| **elevation** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 -> `gnss` p3 @ event on uart:2 | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+| **agl** | `laser_agl` p0 @ 20.0 Hz on i2c:1 | **none** | 100 ms | `laser_agl`: LAST METRES ONLY -- a ranging sensor, valid inside its range; absent for most of a flight |
+
+**Air data**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **airspeed** | `airspeed_sdp810` p0 @ 50.0 Hz on i2c:1 | **none** | 100 ms | `airspeed_sdp810`: needs its pad tare; the reading is a differential pressure, so it is meaningless at rest |
+| **dynamic_pressure** | `airspeed_sdp810` p0 @ 50.0 Hz on i2c:1 | **none** | 100 ms | `airspeed_sdp810`: needs its pad tare; the reading is a differential pressure, so it is meaningless at rest |
+| **pressure** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 | 200 ms | continuous |
+| **temperature** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 | 500 ms | continuous |
+
+**Position**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **position** | `gnss` p0 @ event on uart:2 | **none** | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+| **speed** | `gnss` p0 @ event on uart:2 | **none** | 500 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+| **course** | `gnss` p0 @ event on uart:2 | **none** | 500 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+
+**Power**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **voltage** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
+| **current** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
+| **power** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
+
+**Other**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **mag** | `mag_bmm350` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | continuous |
+
+_Degradation on primary failure:_
+
+| channel | if the primary fails | consequence |
+|---|---|---|
+| `attitude` | **nothing** | the channel is LOST -- `attitude` is its only source |
+| `rate` | `imu_bmi323` (p1) | +/-16 g (HALF the primary range), +/-2000 dps (equal) |
+| `accel` | `imu_bmi323` (p1) | +/-16 g (HALF the primary range), +/-2000 dps (equal) |
+| `altitude` | `baro_bmp581` (p1) | high grade -- EQUAL to the primary |
+| `elevation` | `baro_bmp581` (p1) | high grade -- EQUAL to the primary |
+| `agl` | **nothing** | the channel is LOST -- `laser_agl` is its only source |
+| `airspeed` | **nothing** | the channel is LOST -- `airspeed_sdp810` is its only source |
+| `dynamic_pressure` | **nothing** | the channel is LOST -- `airspeed_sdp810` is its only source |
+| `pressure` | `baro_bmp581` (p1) | high grade -- EQUAL to the primary |
+| `temperature` | `baro_bmp581` (p1) | high grade -- EQUAL to the primary |
+| `position` | **nothing** | the channel is LOST -- `gnss` is its only source |
+| `speed` | **nothing** | the channel is LOST -- `gnss` is its only source |
+| `course` | **nothing** | the channel is LOST -- `gnss` is its only source |
+| `voltage` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
+| `current` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
+| `power` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
+
+## v1.1 + SEN0253 backup
+
+**Attitude and motion**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **attitude** | `attitude` p1 @ 50.0 Hz on task | `imu_bno055` p2 @ 50.0 Hz* on i2c:0 | 40 ms | continuous |
+| **rate** | `imu_lsm6dso32` p0 @ 100.0 Hz on spi:1 | `imu_bmi323` p1 @ 100.0 Hz on i2c:0 | 20 ms | continuous |
+| **accel** | `imu_lsm6dso32` p0 @ 100.0 Hz on spi:1 | `imu_bmi323` p1 @ 100.0 Hz on i2c:0 -> `imu_bno055` p3 @ 50.0 Hz* on i2c:0 | 20 ms | continuous |
+
+**Height**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **altitude** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 -> `baro_bmp280` p2 @ 10.0 Hz* on i2c:0 -> `gnss` p3 @ event on uart:2 | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+| **elevation** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 -> `baro_bmp280` p2 @ 10.0 Hz* on i2c:0 -> `gnss` p3 @ event on uart:2 | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+| **agl** | `laser_agl` p0 @ 20.0 Hz on i2c:1 | **none** | 100 ms | `laser_agl`: LAST METRES ONLY -- a ranging sensor, valid inside its range; absent for most of a flight |
+
+**Air data**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **airspeed** | `airspeed_sdp810` p0 @ 50.0 Hz on i2c:1 | **none** | 100 ms | `airspeed_sdp810`: needs its pad tare; the reading is a differential pressure, so it is meaningless at rest |
+| **dynamic_pressure** | `airspeed_sdp810` p0 @ 50.0 Hz on i2c:1 | **none** | 100 ms | `airspeed_sdp810`: needs its pad tare; the reading is a differential pressure, so it is meaningless at rest |
+| **pressure** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 -> `baro_bmp280` p2 @ 10.0 Hz* on i2c:0 | 200 ms | continuous |
+| **temperature** | `baro_icp10111` p0 @ 10.0 Hz* on i2c:1 | `baro_bmp581` p1 @ 10.0 Hz* on i2c:0 -> `baro_bmp280` p2 @ 10.0 Hz* on i2c:0 | 500 ms | continuous |
+
+**Position**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **position** | `gnss` p0 @ event on uart:2 | **none** | 200 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+| **speed** | `gnss` p0 @ event on uart:2 | **none** | 500 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+| **course** | `gnss` p0 @ event on uart:2 | **none** | 500 ms | `gnss`: after a fix, and speed/course only above the course gate; nothing on the pad before lock |
+
+**Power**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **voltage** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
+| **current** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
+| **power** | `power_ina226` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | `power_ina226`: absent on airframes built without the shunt (TMS-7C) |
+
+**Other**
+
+| channel | primary | backups, in order | freshness | availability |
+|---|---|---|---|---|
+| **mag** | `mag_bmm350` p0 @ 10.0 Hz on i2c:0 | **none** | 500 ms | continuous |
+
+_Degradation on primary failure:_
+
+| channel | if the primary fails | consequence |
+|---|---|---|
+| `attitude` | `imu_bno055` (p2) | +/-16 g; on-chip NDOF fusion |
+| `rate` | `imu_bmi323` (p1) | +/-16 g (HALF the primary range), +/-2000 dps (equal) |
+| `accel` | `imu_bmi323` (p1) | +/-16 g (HALF the primary range), +/-2000 dps (equal) |
+| `altitude` | `baro_bmp581` (p1) | high grade -- EQUAL to the primary |
+| `elevation` | `baro_bmp581` (p1) | high grade -- EQUAL to the primary |
+| `agl` | **nothing** | the channel is LOST -- `laser_agl` is its only source |
+| `airspeed` | **nothing** | the channel is LOST -- `airspeed_sdp810` is its only source |
+| `dynamic_pressure` | **nothing** | the channel is LOST -- `airspeed_sdp810` is its only source |
+| `pressure` | `baro_bmp581` (p1) | high grade -- EQUAL to the primary |
+| `temperature` | `baro_bmp581` (p1) | high grade -- EQUAL to the primary |
+| `position` | **nothing** | the channel is LOST -- `gnss` is its only source |
+| `speed` | **nothing** | the channel is LOST -- `gnss` is its only source |
+| `course` | **nothing** | the channel is LOST -- `gnss` is its only source |
+| `voltage` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
+| `current` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
+| `power` | **nothing** | the channel is LOST -- `power_ina226` is its only source |
+
 ## What changes between revisions
 
 ### v0.1 → v1.0
 
 | channel | lost | gained | sources |
 |---|---|---|---|
-| `accel` | `accel_adxl375` | — | 3 → 2 |
+| `accel` | `accel_adxl375`, `imu_bmi323` | `imu_bno055` | 3 → 2 |
+| `altitude` | `baro_bmp581` | `baro_bmp280` | 3 → 3 |
+| `attitude` | — | `imu_bno055` | 1 → 2 |
+| `elevation` | `baro_bmp581` | `baro_bmp280` | 3 → 3 |
+| `mag` | `mag_bmm350` | — | 1 → 0 |
+| `pressure` | `baro_bmp581` | `baro_bmp280` | 2 → 2 |
+| `rate` | `imu_bmi323` | — | 2 → 1 |
+| `temperature` | `baro_bmp581` | `baro_bmp280` | 2 → 2 |
 
 ### v1.0 → v1.1
 
@@ -235,21 +324,32 @@ _Degradation on primary failure:_
 | `rate` | — | `imu_bmi323` | 1 → 2 |
 | `temperature` | `baro_bmp280` | `baro_bmp581` | 2 → 2 |
 
+### v1.1 → v1.1 + SEN0253 backup
+
+| channel | lost | gained | sources |
+|---|---|---|---|
+| `accel` | — | `imu_bno055` | 2 → 3 |
+| `altitude` | — | `baro_bmp280` | 3 → 4 |
+| `attitude` | — | `imu_bno055` | 1 → 2 |
+| `elevation` | — | `baro_bmp280` | 3 → 4 |
+| `pressure` | — | `baro_bmp280` | 2 → 3 |
+| `temperature` | — | `baro_bmp280` | 2 → 3 |
+
 ## Single-source channels
 
 A channel with one provider has no fallback: that sensor failing takes the channel with it.
 
-| channel | v0.1 | v1.0 | v1.1 |
-|---|---|---|---|
-| `airspeed` | **1 — airspeed_sdp810** | **1 — airspeed_sdp810** | **1 — airspeed_sdp810** |
-| `attitude` | 2 | 2 | **1 — attitude** |
-| `course` | **1 — gnss** | **1 — gnss** | **1 — gnss** |
-| `current` | **1 — power_ina226** | **1 — power_ina226** | **1 — power_ina226** |
-| `dynamic_pressure` | **1 — airspeed_sdp810** | **1 — airspeed_sdp810** | **1 — airspeed_sdp810** |
-| `mag` | 0 | 0 | **1 — mag_bmm350** |
-| `position` | **1 — gnss** | **1 — gnss** | **1 — gnss** |
-| `power` | **1 — power_ina226** | **1 — power_ina226** | **1 — power_ina226** |
-| `rate` | **1 — imu_lsm6dso32** | **1 — imu_lsm6dso32** | 2 |
-| `speed` | **1 — gnss** | **1 — gnss** | **1 — gnss** |
-| `voltage` | **1 — power_ina226** | **1 — power_ina226** | **1 — power_ina226** |
+| channel | v0.1 | v1.0 | v1.1 | v1.1 + SEN0253 backup |
+|---|---|---|---|---|
+| `airspeed` | **1 — airspeed_sdp810** | **1 — airspeed_sdp810** | **1 — airspeed_sdp810** | **1 — airspeed_sdp810** |
+| `attitude` | **1 — attitude** | 2 | **1 — attitude** | 2 |
+| `course` | **1 — gnss** | **1 — gnss** | **1 — gnss** | **1 — gnss** |
+| `current` | **1 — power_ina226** | **1 — power_ina226** | **1 — power_ina226** | **1 — power_ina226** |
+| `dynamic_pressure` | **1 — airspeed_sdp810** | **1 — airspeed_sdp810** | **1 — airspeed_sdp810** | **1 — airspeed_sdp810** |
+| `mag` | **1 — mag_bmm350** | 0 | **1 — mag_bmm350** | **1 — mag_bmm350** |
+| `position` | **1 — gnss** | **1 — gnss** | **1 — gnss** | **1 — gnss** |
+| `power` | **1 — power_ina226** | **1 — power_ina226** | **1 — power_ina226** | **1 — power_ina226** |
+| `rate` | 2 | **1 — imu_lsm6dso32** | 2 | 2 |
+| `speed` | **1 — gnss** | **1 — gnss** | **1 — gnss** | **1 — gnss** |
+| `voltage` | **1 — power_ina226** | **1 — power_ina226** | **1 — power_ina226** | **1 — power_ina226** |
 

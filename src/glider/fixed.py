@@ -216,7 +216,7 @@ def atan2_cd(y: int, x: int) -> fixnum:
     y and x are a RATIO-FREE integer direction vector: only their ratio sets the angle, and their
     MAGNITUDE only trades precision (the CORDIC's right-shifts discard low bits, so bigger inputs keep
     more). Fed the control's centi-fixnum scale (accel g via from_float, ~x100) the error is ~0.5 deg
-    typical / 1.8 deg worst over the glide envelope -- fine for the attitude backup; x1000 would tighten
+    typical / 1.8 deg worst over the glide envelope -- fine for the attitude filter; x1000 would tighten
     to ~0.16 deg if a caller ever needs it. CORDIC needs x >= 0, so x < 0 reflects into the right
     half-plane and the 180 deg is added back per quadrant.
 
@@ -280,7 +280,7 @@ def blend_cd(state: fixnum, delta: fixnum, target: fixnum, shift: int, correct: 
     One complementary-filter step in centidegrees (viper).
 
     `state + delta` (gyro integration), then optionally a `1/2^shift` pull toward `target` (the accel
-    angle). Pure integer -> zero float boxed; the attitude backup runs it per axis each control step
+    angle). Pure integer -> zero float boxed; the attitude filter runs it per axis each control step
     (tasks/attitude.py).
 
     Args:

@@ -46,13 +46,34 @@ def _literal(node):
         return None
 
 
+def _runtime_name(node: ast.expr) -> str:
+    """
+    A stream name built at runtime, as the pattern it follows: `'%s_sky.csv' % self.name` -> `<name>_sky.csv`.
+
+    One driver can declare several per-device streams (gnss.py: the fix, the GGA quality, the sky), and
+    without the pattern they all read `<name>.csv` here, indistinguishable.
+
+    Args:
+        node - the name argument's expression.
+
+    Returns:
+        The pattern with `<name>` for the config's name; `<name>.csv` when the expression is not a
+        `'<literal>' % ...` format.
+    """
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Mod) and isinstance(node.left, ast.Constant) \
+            and isinstance(node.left.value, str):
+        return node.left.value.replace('%s', '<name>')
+    return '<name>.csv'
+
+
 def _streams_in(path: str) -> list:
     """
     Every `Telemetry(name, fields)` construction in one file.
 
     Returns:
-        [(stream_name, [field, ...] | None)]; the name is None when it is built at runtime
-        (e.g. '%s.csv' % self.name -- a per-device stream whose name comes from the config).
+        [(stream_name, [field, ...] | None, pattern)]; the name is None when it is built at runtime
+        (e.g. '%s.csv' % self.name -- a per-device stream whose name comes from the config), and the
+        pattern is then its _runtime_name().
     """
     try:
         tree = sources.parse(path)
@@ -72,17 +93,17 @@ def _streams_in(path: str) -> list:
             fields = [str(field) for field in fields]
         elif fields is not None:
             fields = None
-        found.append((stream, fields))
+        found.append((stream, fields, None if stream else _runtime_name(node.args[0])))
     return found
 
 
 def collect() -> list:
-    """(origin, module, stream, fields) for every declared telemetry stream, sorted for a stable doc."""
+    """(origin, module, stream, fields, pattern) for every declared telemetry stream, sorted for a stable doc."""
     rows = []
     for origin, directories in _SOURCES:
         for _relative, entry, path in sources.modules(directories):
-            for stream, fields in _streams_in(path):
-                rows.append((origin, entry[:-3], stream, fields))
+            for stream, fields, pattern in _streams_in(path):
+                rows.append((origin, entry[:-3], stream, fields, pattern))
     return sorted(rows, key=lambda row: (row[2] or '~runtime', row[1]))
 
 
@@ -105,12 +126,29 @@ def render(rows: list) -> str:
            'than by file name — a capture\'s file names track the fitted hardware, so a fallback flight '
            'names them differently.',
            '',
+           'On the wire to the Luckfox every line also carries the **integrity wrapper** '
+           '([`doc/specs/recorder-wire.md`](specs/recorder-wire.md)): `@<session>_<file>@{OPEN};<row>;<CLOSE>` '
+           'for a row and `{OPEN};<line>;<CLOSE>` for a log line, where OPEN is the CRC-32 of the routing '
+           'and the row and CLOSE chains it with the row\'s uptime. `<session>` is the boot id (`000123`), '
+           'a `recorder.session` label, or the legacy `YYYYMMDD_HHMMSS_<random>`, and the shared '
+           '`session.csv` index is routed with no session at all. The rows and fields below are the '
+           'payloads: `tools/recorder_wire.py` checks each line, `flight_telemetry` and '
+           '`recorder_flight` keep a row only when its checks pass or salvage proves which stream it '
+           'belongs to, and a capture from before the wrapper is read as it always was.',
+           '',
+           'The shared `session.csv` index lists every boot, whether or not its clock is set, as '
+           '`uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon`: a `boot` '
+           'row, a row per time set (`source` `cc-auto` or `dashboard`) and an `anchor` row a minute in, '
+           'the header again before the `boot` and the `anchor` row. `utc` and `utc_offset` are empty while '
+           'the clock is unset, and only a '
+           'row with a `utc` dates its boot; `recorder_flight` reports how each boot is dated.',
+           '',
            '## Streams',
            '',
            '| stream | origin | declared in | fields |',
            '|---|---|---|---|']
-    for origin, module, stream, fields in rows:
-        name = '`%s`' % stream if stream else '_per-device_ (`<name>.csv`)'
+    for origin, module, stream, fields, pattern in rows:
+        name = '`%s`' % stream if stream else '_per-device_ (`%s`)' % pattern
         columns = ', '.join('`%s`' % field for field in fields) if fields else '_runtime_'
         out.append('| %s | %s | `%s.py` | %s |' % (name, origin, module, columns))
     out += [

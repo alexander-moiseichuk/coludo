@@ -62,4 +62,13 @@ or
 In first case all unknown lines will be added into predefined in config file (`/userdata/recordings/recorder.log`), in second case line will be added into
 `/userdata/recordings/target_file`. So, practically any logging and CSV telemetry can be stored this way.
 
+The daemon stays exactly this simple. The board wraps every payload in an integrity check,
+`{crc32};<payload>;<~crc32 ^ uptime>`, which the daemon stores verbatim and the host tools verify. It
+names each boot's files by an NVS boot id, `000123_<stream>.csv`, and lists every boot and each clock
+set in a shared `session.csv`. See [`doc/specs/recorder-wire.md`](../../doc/specs/recorder-wire.md).
+
+Run the camera **off** while recording telemetry. In a closed airframe the module overheats within
+~10 min (the video distorts), and video plus logging is more than it handles. `/userdata` is remounted
+`commit=1` by `opt/recorder/recorderd.sh`.
+
 

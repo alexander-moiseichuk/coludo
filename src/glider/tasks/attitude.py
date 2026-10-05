@@ -1,22 +1,40 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-Attitude REDUNDANCY: a complementary-filter backup for the BNO055 (coludo.md "Sensors Fusion/Backup").
-The BNO055 is the sole fused-attitude source; losing it mid-flight would leave the flight loop with
-stale/absent attitude -> neutral fins -> ballistic. This task derives (heading, roll, pitch) from the
-LSM6DSO32 gyro `rate` + accel gravity vector and PROVIDES it on the databoard at PRIORITY 1, so the
-existing timeout-handoff fusion swaps to it automatically the moment the BNO055 (priority 0) stops -- no
-change to flight.py.
+The PRIMARY attitude: a complementary filter over the SEN0697 + LSM6DSO32 (coludo.md "Sensors
+Fusion/Backup"). It derives (heading, roll, pitch) from the gyro `rate` (LSM6DSO32, backed up by the
+BMI323) + the accel gravity vector, with the BMM350 and the GNSS ground track as heading references,
+and PROVIDES it on the databoard at PRIORITY 1. It began as the backup to the BNO055; since 2026-10-05
+the SEN0697 is the primary module on every board and the SEN0253's BNO055, where one is still fitted,
+is the BACKUP below this filter, at priority 2.
+
+Priority 0 is left to the HITL sim, which publishes the true attitude there. Losing attitude mid-flight
+leaves the flight loop stale -> neutral fins, and the databoard's timeout handoff picks whichever
+source is still fresh, with no change to flight.py.
 
 @task.activity('attitude'). Two regimes, checked each cycle by the fused-attitude SOURCE:
-  * BNO055 alive (it is the fused source): MIRROR it -- copy roll/pitch (already fixnum cd) + heading,
-    staying warm and FRESH so the handoff is seamless, no atan2/accel math (the BNO055 is trusted).
-  * BNO055 lost (source is us / extrapolated): FREE-RUN -- integrate the gyro rate (integer) and, when
-    |accel| ~ 1 g (a trustworthy gravity vector), pull roll/pitch toward the accel angle via the integer
-    CORDIC fixed.atan2_cd (throttled -- drift correction is slow). Heading is gyro-z only (it drifts: the
-    LSM6DSO32 has no magnetometer) -- roll/pitch stay solid (gravity-referenced), so the glider holds
-    wings-level + pitch; nav heading degrades gracefully. Integer/fixnum throughout; the only boxed float
-    is the heading value the channel format requires (nav consumes heading as float degrees).
+  * a source that OUTRANKS this filter is winning (the HITL sim): MIRROR it -- copy roll/pitch (already
+    fixnum cd) + heading, staying warm and FRESH so the handoff is seamless. A source ranked BELOW the
+    filter (the BNO055 backup) is NEVER mirrored, even when it wins a cycle because this task was late:
+    copying it would overwrite the primary's estimate with the backup's -- and its heading is in another
+    frame (magnetic, not the learned track).
+  * otherwise FREE-RUN -- integrate the gyro rate (integer) and, when |accel| ~ 1 g (a trustworthy
+    gravity vector), pull roll/pitch toward the accel angle via the integer CORDIC fixed.atan2_cd
+    (throttled -- drift correction is slow). Heading is gyro-z, pulled toward the GNSS track and the
+    magnetometer -- roll/pitch stay solid (gravity-referenced), so the glider holds wings-level + pitch.
+    Integer/fixnum throughout; the only boxed float is the heading value the channel format requires
+    (nav consumes heading as float degrees).
+
+BLIND: with no fresh gyro for _BLIND_CYCLES cycles in a row the filter is BLIND, on every board, in
+either regime. `blind` goes up and cc_client reports it as the health flag `attitude-blind` -- before it,
+nothing said the filter had lost its gyro. What the filter then publishes depends on what is below it:
+  * a FRESH source ranked below it (the SEN0253's BNO055): WITHHOLD the output, so the channel goes stale
+    and the databoard hands the attitude to that backup, instead of masking it with an estimate frozen
+    at its last value (roll/pitch held -- the accel pull is gated off without a yaw rate).
+  * nothing fresh below (every board without a SEN0253): publish exactly as before the backup existed.
+    Withholding there would hand flight.py no attitude at all -- neutral fins -- which no flight or HITL
+    run has validated, so it is not done on the strength of a backup that is not there.
+Both end on the first fresh gyro sample.
 
 Mounting (the gyro-D-term convention, HITL-validated): gx->roll, gy->pitch, gz->yaw; accel roll =
 atan2(ay, az), pitch = atan2(-ax, |ay,az|). Field calibration flips a sign like the mixer gains.
@@ -33,11 +51,19 @@ from commons import const
 from fixed import fixnum  # centidegree fixed-point -- the one control scale (roll/pitch/yaw AND accel)
 
 _MAX_DT_MS = const(500)  # a gyro-integration gap longer than this (asyncio stall) -> clamp dt to nominal
+"""
+Consecutive cycles with no fresh gyro before the filter is BLIND: 100 ms at the 20 ms period. One or two
+gyro-less cycles follow every GC pause or asyncio stall, and holding the last attitude through those is
+right; five in a row means the gyro is gone.
+"""
+_BLIND_CYCLES = const(5)
 
 
 @task.activity('attitude')
 class Attitude(task.Task):
-    """Complementary-filter attitude backup (heading, roll, pitch) at priority 1 behind the BNO055."""
+    """Complementary-filter attitude (heading, roll, pitch): the primary, at priority 1 (p0 is HITL's)."""
+
+    blind: bool = False  # no fresh gyro for _BLIND_CYCLES (module doc); read by cc_client's health flag
 
     async def setup(self) -> bool:
         cfg = self.config
@@ -65,10 +91,11 @@ class Attitude(task.Task):
         low = fixed.from_float(cfg.get('grav_low_g', 0.7))    # g -> centi-g fixnum (the standard boundary)
         high = fixed.from_float(cfg.get('grav_high_g', 1.3))
         """
-        RECORD the output. On v1.1 (TMS-7F) this filter is the ONLY attitude source -- no BNO055, and a
-        passive profile has no flight.csv -- yet it created no stream, so the flight meant to validate
-        it as the sole source returned none of its output. Integers only (centidegrees, 0/1 flags): a
-        float in the row is heap-boxed on a GC-off flight. Decimated to telemetry_ms (default 100 ms).
+        RECORD the output. This filter is the primary attitude on every board (the only one where no
+        BNO055 backup is fitted), and a passive profile has no flight.csv -- yet it once created no
+        stream, so the flight meant to validate it as the sole source returned none of its output.
+        Integers only (centidegrees, 0/1 flags): a float in the row is heap-boxed on a GC-off flight.
+        Decimated to telemetry_ms (default 100 ms).
         """
         self._telemetry = recorder.Telemetry(
             'attitude.csv', ('heading_cd', 'roll_cd', 'pitch_cd', 'free', 'mag_known', 'mag_offset_cd'),
@@ -81,7 +108,8 @@ class Attitude(task.Task):
         self._mag_offset_cd: fixnum = 0  # magnetic heading -> ground track, LEARNED while the GNSS is good
         self._mag_known: bool = False    # ...and only usable once learned; see _magnetic_yaw()
         self._seeded: bool = False  # has the primary ever seeded us? (else free-run from 0)
-        self._free: bool = False    # currently free-running (primary lost) -> inspect/telemetry
+        self._free: bool = False    # currently free-running (not mirroring) -> inspect/telemetry
+        self.blind = False          # no gyro for _BLIND_CYCLES (see the module doc)
         self._last_us: int = time.ticks_us()
         self._accel_us: int = self._last_us
         self._attitude_param = databoard.Databoard.parameter('attitude')  # the FUSED attitude (source check)
@@ -96,10 +124,11 @@ class Attitude(task.Task):
 
     def _mirror(self, value: tuple) -> None:
         """
-        Track the higher-priority source while it is the fused winner, so the handoff is seamless.
+        Track a source that OUTRANKS this filter while it is the fused winner, so the handoff is seamless.
 
-        The winner is the BNO055 in flight, the sim's attitude in HITL. Copy its (already-fixnum)
-        roll/pitch and heading, so we stay fresh and hand over the moment it dies next cycle.
+        In practice that is the sim's attitude in HITL (priority 0). Copy its (already-fixnum) roll/pitch
+        and heading, so we stay fresh and hand over the moment it stops. Never called for a source ranked
+        below the filter -- see _outranked().
 
         Args:
             value - the winning source's (heading FLOAT deg, roll cd, pitch cd).
@@ -197,15 +226,17 @@ class Attitude(task.Task):
             dt_ms - the step interval in integer milliseconds, for the gyro integration.
 
         Returns:
-            None; advances the free-run roll/pitch/yaw state as a side effect.
+            None; advances the free-run roll/pitch/yaw state as a side effect. With no fresh gyro the step
+            integrates nothing and the turn gate stays closed (roll/pitch held) -- _watch_gyro() counts it.
         """
         """
-        read(), not value(), for every input to the BACKUP attitude.
+        read(), not value(), for every input to the filter.
 
-        This task exists to keep an attitude when the BNO055 has failed -- the case where its inputs
-        are most likely to be stale too. value() extrapolates without bound, so the backup would blend
-        an invented gyro rate or gravity vector and report an attitude with the same confidence as a
-        real one. A backup that cannot tell fresh from invented is not redundancy.
+        This task was written to keep an attitude when the BNO055 had failed -- the case where its
+        inputs are most likely to be stale too -- and it is now the primary, where the same holds.
+        value() extrapolates without bound, so the filter would blend an invented gyro rate or gravity
+        vector and report an attitude with the same confidence as a real one. A source that cannot tell
+        fresh from invented is not redundancy.
 
         gnss_calib and the wind feed were migrated for the same reason; this task was missed.
         """
@@ -255,50 +286,104 @@ class Attitude(task.Task):
         self._roll_cd = fixed.blend_cd(self._roll_cd, roll_d, roll_accel, self._corr_shift, correct)
         self._pitch_cd = fixed.blend_cd(self._pitch_cd, pitch_d, pitch_accel, self._corr_shift, correct)
 
-    async def run(self) -> None:
+    def _outranked(self, source: str) -> bool:
         """
-        Mirror the primary while it is the fused source; free-run the filter when it is lost.
+        Whether `source`, the fused winner, is ranked ABOVE this filter -- the only kind it may mirror.
 
-        Publish (heading, roll, pitch) at priority 1 every cycle to stay fresh for the handoff.
+        Args:
+            source - the winning source name, as read() reports it.
 
         Returns:
-            None; loops forever, publishing the backup attitude once per cycle.
+            True for a source registered at a lower priority number than the filter's own channel.
+        """
+        rank = self._attitude_param.rank(source)
+        return rank is not None and rank < self._attitude.rank
+
+    def _watch_gyro(self) -> None:
+        """
+        Track BLIND: no fresh gyro `rate` for _BLIND_CYCLES cycles in a row.
+
+        Counted every cycle and in both regimes, so `blind` (and the health flag built on it) tells the
+        truth while mirroring as well: the filter that would take over then has nothing to integrate.
+        Logged once per transition, allocation-free while it lasts.
+
+        Args:
+            (none)
+
+        Returns:
+            None; sets `blind` as a side effect.
+        """
+        sighted = self._rate.read()[1] is not None
+        if self.strike(not sighted, _BLIND_CYCLES):
+            self.blind = True
+            recorder.Recorder.log(self.name, 'gyro lost -- attitude filter blind')
+        elif sighted and self.blind:
+            self.blind = False
+            recorder.Recorder.log(self.name, 'gyro back -- attitude filter sighted')
+
+    async def run(self) -> None:
+        """
+        Tick the filter every period_ms.
+
+        Returns:
+            None; loops forever.
         """
         while True:
             await asyncio.sleep_ms(self._period_ms)
-            now = time.ticks_us()
-            dt_ms = time.ticks_diff(now, self._last_us) // 1000
-            self._last_us = now
-            if dt_ms > _MAX_DT_MS or dt_ms < 0:  # a long asyncio gap (I2C contention) -> nominal, not a huge
-                dt_ms = self._period_ms  # single gyro-integration jump the yaw would then hold permanently
-            value, source, _age = self._attitude_param.read()
-            # source None = nothing fresh: read() then hands back an EXTRAPOLATED old value. Mirroring
-            # that snapped a dead primary's last attitude back in after every >40 ms gap (a GC pause is
-            # enough) and dropped the gyro integration it replaced -- free-run instead.
-            if value is not None and source is not None and source != self.name:
-                self._mirror(value)  # a higher-priority source is winning -> mirror it (stay warm/fresh)
-                self._free = False
-            elif self._seeded or self._accel.read()[1] is not None:
-                self._integrate(dt_ms)  # the primary is gone (source is us / stale) -> free-run
-                self._free = True
-            else:
-                continue  # never seeded and no accel yet -> nothing trustworthy to publish
-            self._roll_cd = ((self._roll_cd + 18000) % 36000) - 18000   # wrap to (-180, 180] cd
-            self._pitch_cd = ((self._pitch_cd + 18000) % 36000) - 18000
-            self._yaw_cd %= 36000                                        # heading to [0, 360) cd
-            self._attitude.push((fixed.to_float(self._yaw_cd), self._roll_cd, self._pitch_cd))  # heading float; r/p cd
-            if self._telemetry.due(now):  # due() first: no row tuple built on the 50 Hz path unless it emits
-                try:
-                    self._telemetry.push((self._yaw_cd, self._roll_cd, self._pitch_cd, 1 if self._free else 0,
-                                          1 if self._mag_known else 0, self._mag_offset_cd))
-                except Exception as error:  # a full ring must never stop the only attitude source
-                    self.note('attitude :: record %r', error)
+            self._tick()
+
+    def _tick(self) -> None:
+        """
+        One cycle: watch the gyro, then mirror a source that outranks the filter or free-run the filter.
+
+        Publishes (heading, roll, pitch) at priority 1 every cycle, except before anything has seeded
+        it and while BLIND with a fresh source below it to take over (see the module doc).
+
+        Args:
+            (none -- the step is timed off ticks_us)
+
+        Returns:
+            None; advances the filter, publishes and records as side effects.
+        """
+        now = time.ticks_us()
+        dt_ms = time.ticks_diff(now, self._last_us) // 1000
+        self._last_us = now
+        if dt_ms > _MAX_DT_MS or dt_ms < 0:  # a long asyncio gap (I2C contention) -> nominal, not a huge
+            dt_ms = self._period_ms  # single gyro-integration jump the yaw would then hold permanently
+        self._watch_gyro()
+        value, source, _age = self._attitude_param.read()
+        """
+        source None = nothing fresh: read() then hands back an EXTRAPOLATED old value. Mirroring that
+        snapped a dead primary's last attitude back in after every >40 ms gap (a GC pause is enough) and
+        dropped the gyro integration it replaced -- free-run instead.
+        """
+        if value is not None and source is not None and source != self.name and self._outranked(source):
+            self._mirror(value)  # a higher-priority source is winning -> mirror it (stay warm/fresh)
+            self._free = False
+        elif self._seeded or self._accel.read()[1] is not None:
+            self._integrate(dt_ms)  # we are the attitude (or only a backup won a cycle)
+            self._free = True
+            if self.blind and self._attitude_param.fresh_below(self._attitude.rank):
+                return  # withhold: a frozen attitude published as fresh would mask the live backup
+        else:
+            return  # never seeded and no accel yet -> nothing trustworthy to publish
+        self._roll_cd = ((self._roll_cd + 18000) % 36000) - 18000   # wrap to (-180, 180] cd
+        self._pitch_cd = ((self._pitch_cd + 18000) % 36000) - 18000
+        self._yaw_cd %= 36000                                        # heading to [0, 360) cd
+        self._attitude.push((fixed.to_float(self._yaw_cd), self._roll_cd, self._pitch_cd))  # heading float; r/p cd
+        if self._telemetry.due(now):  # due() first: no row tuple built on the 50 Hz path unless it emits
+            try:
+                self._telemetry.push((self._yaw_cd, self._roll_cd, self._pitch_cd, 1 if self._free else 0,
+                                      1 if self._mag_known else 0, self._mag_offset_cd))
+            except Exception as error:  # a full ring must never stop the primary attitude
+                self.note('attitude :: record %r', error)
 
     async def probe(self) -> str:
         """
-        On-demand self-test: the gyro `rate` is present (the backup's core input).
+        On-demand self-test: the gyro `rate` is present (the filter's core input).
 
-        A dead gyro means no attitude backup -- surfaced pre-flight.
+        A dead gyro leaves the filter BLIND -- the board would fly on the BNO055 backup if one is
+        fitted, and on a frozen roll/pitch if not -- so it is surfaced pre-flight.
 
         Returns:
             None when the gyro rate is present; an error message string when it is missing.
@@ -306,18 +391,18 @@ class Attitude(task.Task):
         try:
             recorder.Recorder.log(self.name, 'probe: gyro rate ...')
             if self._rate.read()[1] is None:
-                raise ValueError('no gyro rate -- attitude backup blind')
+                raise ValueError('no gyro rate -- attitude filter blind')
         except Exception as error:
-            message = 'attitude backup: %s' % error
+            message = 'attitude: %s' % error
             recorder.Recorder.log(self.name, 'probe FAILED: ' + message)
             return message
         return None
 
-    """Inspectable: the operator-facing backup-attitude snapshot (inspect/stats)."""
+    """Inspectable: the operator-facing attitude-filter snapshot (inspect/stats)."""
 
     def inspect(self) -> dict:
         status = task.Task.inspect(self)
-        status.update({'free_running': self._free, 'seeded': self._seeded,
+        status.update({'free_running': self._free, 'seeded': self._seeded, 'blind': self.blind,
                        'roll': fixed.to_str(self._roll_cd), 'pitch': fixed.to_str(self._pitch_cd),
                        'heading': fixed.to_str(self._yaw_cd),
                        # the magnetic reference, which is otherwise invisible: whether the track offset

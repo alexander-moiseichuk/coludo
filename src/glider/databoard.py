@@ -187,6 +187,43 @@ class Parameter:
                 return channel
         return None
 
+    def rank(self, source: str) -> int:
+        """
+        The priority `source` registered at here, or None when it never registered.
+
+        For a provider that must tell a source that OUTRANKS it from one it outranks: the attitude filter
+        mirrors the first (the HITL sim) and must never copy the second (the SEN0253's BNO055, standing
+        by below it). Allocation-free -- a scan of a few channels, safe on the 50 Hz path.
+
+        Args:
+            source - the source name, as read() reports it.
+
+        Returns:
+            The source's rank (lower = preferred), or None for a source this parameter does not know.
+        """
+        channel = self._channel(source)
+        return None if channel is None else channel.rank
+
+    def fresh_below(self, rank: int) -> bool:
+        """
+        Whether a source ranked BELOW `rank` (a higher priority number) is fresh right now.
+
+        For a provider deciding whether it may fall silent: the attitude filter withholds a blind,
+        frozen estimate only while something under it can carry the parameter -- with nothing fresh
+        below, going quiet would hand the consumer no attitude at all. Allocation-free, like rank().
+
+        Args:
+            rank - the asking provider's own rank.
+
+        Returns:
+            True when some channel with a larger rank pushed within the shared freshness window.
+        """
+        now = time.ticks_us()
+        for channel in self.channels:
+            if channel.rank > rank and channel.fresh(now, self.window_us):
+                return True
+        return False
+
     def add_source(self, source: str, rank: int, expire_us: int, reconcile: bool = False) -> _Channel:
         """
         Register (or re-register) a source at `rank`; return its channel to push() to directly.

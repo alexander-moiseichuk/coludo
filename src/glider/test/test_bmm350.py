@@ -3,7 +3,7 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 On-board test for the BMM350 driver (drivers/bmm350.py): registration, graceful setup when absent, the
 24-bit axis decode, and the OPERATOR CALIBRATION that CC drives -- in particular that a partial turn is
-REFUSED. Deterministic whether or not a BMM350 is wired (it is fitted only on v1.1 boards). Run by
+REFUSED. Deterministic whether or not a BMM350 is wired (the SEN0697: every revision but v1.0). Run by
 `make test`.
 """
 
@@ -227,7 +227,7 @@ async def amain():
         assert await live.probe() is None
         print('   live BMM350 measuring: %r' % (frames[-1],))
     else:
-        print('   no BMM350 answering -- live check skipped (fitted on v1.1 only)')
+        print('   no BMM350 answering -- live check skipped (fitted with the SEN0697 only)')
 
     print('ok: bmm350 registered; graceful-absent; partial turn refused; centre (%d, %d) r (%d, %d); '
           'heading worst %.2f deg, uncorrected spread %.0f deg' % (

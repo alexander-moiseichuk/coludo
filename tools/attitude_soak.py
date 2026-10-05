@@ -1,14 +1,15 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-Attitude-REDUNDANCY validation (MicroPython, runs ON the board). Flies a HITL glide, then mid-glide
-flips the sim's `drop_attitude` to simulate a BNO055 death: the sim stops publishing `attitude` while
-accel + rate keep flowing, so the priority-1 complementary-filter backup (tasks/attitude.py) must take
-over the fused attitude slot and keep the glider controllable to DONE.
+Attitude-FILTER validation (MicroPython, runs ON the board). Flies a HITL glide, then mid-glide flips
+the sim's `drop_attitude`: the sim stops publishing its priority-0 `attitude` (the truth slot the filter
+mirrors in HITL) while accel + rate keep flowing, so the priority-1 complementary filter
+(tasks/attitude.py) -- the attitude every real board flies on since the SEN0697 became the primary --
+must take over the fused slot on its own estimate and keep the glider controllable to DONE.
 
-It reports: the backup-vs-truth attitude error just before the drop (was it mirroring / warm?), the
-fused-source handover (imu/sim -> attitude backup), the backup-vs-truth error through the backup-flown
-descent, and whether the flight still reaches DONE (control stayed stable on the backup attitude).
+It reports: the filter-vs-truth attitude error just before the drop (was it mirroring / warm?), the
+fused-source handover (sim -> attitude), the filter-vs-truth error through the filter-flown descent, and
+whether the flight still reaches DONE (control stayed stable on the filter's attitude).
 
 Deploy first (tools/deploy.sh), then:
   printf 'import attitude_soak\nattitude_soak.soak("F15", 6.0)\n' > /tmp/launch.py
@@ -26,11 +27,11 @@ import mission
 import tasks
 
 
-def _err(backup, roll_true, pitch_true) -> str:
-    """|backup - truth| for roll/pitch (backup roll/pitch are centidegrees, truth is float deg)."""
-    if backup is None:
+def _err(estimate, roll_true, pitch_true) -> str:
+    """|estimate - truth| for roll/pitch (estimate roll/pitch are centidegrees, truth is float deg)."""
+    if estimate is None:
         return 'no attitude'
-    _heading, roll_cd, pitch_cd = backup
+    _heading, roll_cd, pitch_cd = estimate
     return 'roll %+.1f/%.1f pitch %+.1f/%.1f (err %.1f/%.1f)' % (
         roll_cd / 100.0, roll_true, pitch_cd / 100.0, pitch_true,
         abs(roll_cd / 100.0 - roll_true), abs(pitch_cd / 100.0 - pitch_true))
@@ -69,7 +70,7 @@ async def _go(motor: str, drop_after_s: float) -> None:
             dropped = True
             print('PRE-DROP  source=%s | %s' % (source, _err(value, body.roll, body.pitch)))
             hitl.drop_attitude = True
-            print('>>> BNO055 DROPPED (sim attitude off; accel+rate still live)')
+            print('>>> SIM ATTITUDE DROPPED (accel+rate still live; the filter flies)')
         if dropped and stage == stages.GLIDING and sampled < 6 and time.ticks_diff(now, drop_at_ms) > 400:
             print('POST-DROP source=%s | %s' % (source, _err(value, body.roll, body.pitch)))
             sampled += 1

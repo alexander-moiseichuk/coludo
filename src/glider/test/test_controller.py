@@ -8,6 +8,7 @@ On-board (MicroPython) test for the Task base + Controller skeleton. Run by `mak
 import asyncio
 
 import controller
+import i2cbus
 import inspector
 import task
 
@@ -80,6 +81,274 @@ class DiagnosingSensor(task.Task):
 
     async def diagnose(self):
         return 'id reads 0x00 -- chip-select not asserting'
+
+
+class LaserL1xOnly(task.Task):
+    """One driver declared twice on one socket: only the entry named laser_agl_l1x finds its part."""
+
+    async def setup(self) -> bool:
+        return self.name == 'laser_agl_l1x'
+
+
+class WrongPart(task.Task):
+    """A laser entry whose part is not soldered: its model-id check reads the other part."""
+
+    async def setup(self) -> bool:
+        return False
+
+    async def diagnose(self) -> str:
+        return 'id reads 0xEA, expected 0xEB -- wrong device on this bus/select (crosswired)'
+
+
+_AGL: dict = {'agl': {'priority': 0, 'timeout_ms': 100}}  # what both laser entries feed
+_UNFITTED: str = 'vl53l4cx not fitted -- vl53l1x (laser_agl_l1x) answers i2c:0 0x29'
+
+
+class RetunedBus:
+    """Stands in for i2cbus.get()'s shared Bus: bustune() only retunes it, so no part is touched."""
+
+    def __init__(self):
+        self.freqs: list = []  # every frequency bustune() asked for, in call order
+
+    async def retune(self, freq: int) -> None:
+        self.freqs.append(freq)
+
+
+def laser_config(l1x_addr: int = 0x29, l1x_first: bool = False, extra: tuple = ()) -> dict:
+    """
+    The two laser entries config_default declares for ONE socket (i2c:0 0x29), plus a UART pair.
+
+    Args:
+        l1x_addr - the VL53L1X entry's address; 0x29 is the shared socket.
+        l1x_first - declare (and so set up) the VL53L1X entry BEFORE the VL53L4CX one.
+        extra - further sensor entries, declared after the lasers.
+
+    Returns:
+        A board config for a Controller with the test registry.
+    """
+    lasers = [{'name': 'laser_agl', 'driver': 'vl53l4cx', 'bus': 'i2c', 'id': 0, 'addr': 0x29, 'enabled': True,
+               'provides': _AGL},
+              {'name': 'laser_agl_l1x', 'driver': 'vl53l1x', 'bus': 'i2c', 'id': 0, 'addr': l1x_addr,
+               'enabled': True, 'provides': _AGL}]
+    if l1x_first:
+        lasers.reverse()
+    position = {'position': {'priority': 0, 'timeout_ms': 1500}}
+    return {'board': {'id': 'l', 'mcu': 'esp32p4'}, 'sensors': lasers + list(extra),
+            'buses': {'i2c': {'0': {'scl': 8, 'sda': 7, 'freq': 400000}}},
+            'components': [{'name': 'gnss', 'driver': 'atgm336h', 'bus': 'uart', 'id': 2, 'addr': None,
+                            'enabled': True, 'provides': position},
+                           {'name': 'gnss_spare', 'driver': 'neo6mv2', 'bus': 'uart', 'id': 2, 'enabled': True,
+                            'provides': position},
+                           {'name': 'flight', 'activity': 'flight', 'enabled': True}]}
+
+
+async def alternatives() -> None:
+    """
+    A failed entry that an UP device stands in for is an unfitted ALTERNATIVE, not a failure.
+
+    config_default declares laser_agl (vl53l4cx) and laser_agl_l1x (vl53l1x) both on i2c:0 0x29 so the
+    part that is soldered wins. The loser's failure used to land in failures, where `arm` refused every
+    board with an L1X fitted. Decided after the whole setup pass, so the loser may come first. Only an
+    I2C socket counts (an SPI entry's addr is an i2c fallback, its chip-select is the socket), and only
+    a winner providing the SAME data: anything else stays a failure, so it still blocks arming.
+    """
+    fitted = {'vl53l4cx': WrongPart, 'vl53l1x': FakeSensor, 'atgm336h': FakeSensor, 'neo6mv2': FailSensor,
+              'flight': FakeSensor}
+    for l1x_first in (False, True):  # the loser set up before its winner, and after it
+        logs = []
+        board = controller.Controller(laser_config(l1x_first=l1x_first), registry=fitted, log=logs.append)
+        assert await board.setup() is True
+        assert board.alternatives == {'laser_agl': 'laser_agl_l1x'}, board.alternatives
+        # NEGATIVE: the UART pair has no address, so the dead one stays a failure beside the winner
+        assert list(board.failures) == ['gnss_spare'], board.failures
+        assert board.unfitted('laser_agl') == _UNFITTED
+        assert board.inspect()['alternatives'] == {'laser_agl': 'laser_agl_l1x'}
+        assert 'controller :: laser_agl: ' + _UNFITTED in logs, logs
+        assert any('1 device(s) not up: gnss_spare' in line for line in logs), logs
+        # the driver a verdict names: `driver`, else `activity`; None for a name no entry declares
+        assert board.driver('laser_agl') == 'vl53l4cx' and board.driver('flight') == 'flight'
+        assert board.driver('mission') is None
+        await board.finish()
+
+    # the bus id compares as TEXT: a hand-edited JSON config may carry '0' where config_default has 0
+    text_id = laser_config()
+    text_id['sensors'][1]['id'] = '0'
+    text_board = controller.Controller(text_id, registry=fitted, log=lambda m: None)
+    await text_board.setup()
+    assert text_board.alternatives == {'laser_agl': 'laser_agl_l1x'}, text_board.alternatives
+    assert list(text_board.failures) == ['gnss_spare'], text_board.failures
+    await text_board.finish()
+
+    # NEGATIVE: the part that answers sits on ANOTHER bus -> the dead entry is still a failure
+    other_bus = laser_config()
+    other_bus['sensors'][1]['id'] = 1
+    two_buses = controller.Controller(other_bus, registry=fitted, log=lambda m: None)
+    await two_buses.setup()
+    assert sorted(two_buses.failures) == ['gnss_spare', 'laser_agl'], two_buses.failures
+    assert two_buses.alternatives == {}, two_buses.alternatives
+    await two_buses.finish()
+
+    # NEGATIVE: neither part answers -> both stay failures, nothing is an alternative
+    dead = dict(fitted, vl53l1x=WrongPart)
+    dead_board = controller.Controller(laser_config(), registry=dead, log=lambda m: None)
+    await dead_board.setup()
+    assert sorted(dead_board.failures) == ['gnss_spare', 'laser_agl', 'laser_agl_l1x'], dead_board.failures
+    assert dead_board.alternatives == {}, dead_board.alternatives
+    assert 'expected 0xEB' in dead_board.failures['laser_agl'], dead_board.failures
+    await dead_board.finish()
+
+    # NEGATIVE: the part that answers sits on ANOTHER address -> the dead entry is still a failure
+    two_addresses = controller.Controller(laser_config(l1x_addr=0x30), registry=fitted, log=lambda m: None)
+    await two_addresses.setup()
+    assert sorted(two_addresses.failures) == ['gnss_spare', 'laser_agl'], two_addresses.failures
+    assert two_addresses.alternatives == {}, two_addresses.alternatives
+    await two_addresses.finish()
+
+    # NEGATIVE: a baro declared at the laser's 0x29 by mistake feeds OTHER data -> a failure, not "not
+    # fitted"; and two entries that provide NOTHING (two displays on 0x3c) have no data to stand in for
+    # each other -> the dead one is a failure as well, even beside an up twin with the same (empty) set
+    baro = {'name': 'baro_icp10111', 'driver': 'icp10111', 'bus': 'i2c', 'id': 0, 'addr': 0x29, 'enabled': True,
+            'provides': {'altitude': {'priority': 0, 'timeout_ms': 200}}}
+    display = {'name': 'display', 'driver': 'ssd1306', 'bus': 'i2c', 'id': 0, 'addr': 0x3C, 'enabled': True}
+    spare = {'name': 'display_spare', 'driver': 'sh1106', 'bus': 'i2c', 'id': 0, 'addr': 0x3C, 'enabled': True}
+    mixed = controller.Controller(laser_config(extra=(baro, display, spare)), log=lambda m: None,
+                                  registry=dict(fitted, icp10111=FailSensor, ssd1306=FakeSensor, sh1106=FailSensor))
+    await mixed.setup()
+    assert mixed.alternatives == {'laser_agl': 'laser_agl_l1x'}, mixed.alternatives
+    assert sorted(mixed.failures) == ['baro_icp10111', 'display_spare', 'gnss_spare'], mixed.failures
+    await mixed.finish()
+
+    # NEGATIVE: two SPI parts on spi:1 share the fallback addr 0x53 but not a chip-select -> two parts,
+    # so the dead one stays a failure even though both feed `accel`
+    accel = {'accel': {'priority': 0, 'timeout_ms': 20}}
+    spi = {'board': {'id': 'l', 'mcu': 'esp32p4'}, 'sensors': [
+        {'name': 'accel_adxl375', 'driver': 'adxl375', 'bus': 'spi', 'id': 1, 'addr': 0x53, 'cs_pin': 'adxl_cs',
+         'enabled': True, 'provides': accel},
+        {'name': 'accel_spare', 'driver': 'adxl375_spare', 'bus': 'spi', 'id': 1, 'addr': 0x53,
+         'cs_pin': 'spare_cs', 'enabled': True, 'provides': accel}]}
+    spi_board = controller.Controller(spi, registry={'adxl375': FakeSensor, 'adxl375_spare': FailSensor},
+                                      log=lambda m: None)
+    await spi_board.setup()
+    assert list(spi_board.failures) == ['accel_spare'], spi_board.failures
+    assert spi_board.alternatives == {}, spi_board.alternatives
+    await spi_board.finish()
+
+    # NEGATIVE: the SAME set of data, not an overlap and not a subset -- a dead {agl} entry beside an up
+    # {agl, altitude} one, and the reverse, are two different parts, so the dead one stays a failure
+    for loser_feeds, winner_feeds in (({'agl'}, {'agl', 'altitude'}), ({'agl', 'altitude'}, {'agl'})):
+        uneven = laser_config()
+        for entry, feeds in zip(uneven['sensors'], (loser_feeds, winner_feeds)):
+            entry['provides'] = {quantity: {'priority': 0, 'timeout_ms': 100} for quantity in feeds}
+        uneven_board = controller.Controller(uneven, registry=fitted, log=lambda m: None)
+        await uneven_board.setup()
+        assert sorted(uneven_board.failures) == ['gnss_spare', 'laser_agl'], (loser_feeds, uneven_board.failures)
+        assert uneven_board.alternatives == {}, (loser_feeds, uneven_board.alternatives)
+        await uneven_board.finish()
+
+    # NEGATIVE: a loser whose setup pulses XSHUT is NEVER an alternative. On v0.1 both lasers route XSHUT
+    # to GPIO5 and each setup pulses it, so the loser's setup reboots the fitted laser, which then never
+    # ranges -- the board armed on it. Its reason names the shared pin, the winner and the fix.
+    crosswired = ('setup failed (absent / miswired?) -- id reads 0xEA, expected 0xEB -- wrong device on this '
+                  'bus/select (crosswired)')
+    shared_reset = ('; shares XSHUT GPIO5 with laser_agl_l1x (vl53l1x): its setup resets the fitted laser -- '
+                    'enable exactly one of laser_agl, laser_agl_l1x on this board')
+    for l1x_first in (False, True):
+        shared = laser_config(l1x_first=l1x_first)
+        shared['pins'] = {'laser_xshut': 5}
+        for entry in shared['sensors']:
+            entry['xshut_pin'] = 'laser_xshut'
+        shared_board = controller.Controller(shared, registry=fitted, log=lambda m: None)
+        await shared_board.setup()
+        assert shared_board.alternatives == {}, shared_board.alternatives
+        assert shared_board.failures['laser_agl'] == crosswired + shared_reset, shared_board.failures
+        assert sorted(shared_board.failures) == ['gnss_spare', 'laser_agl'], shared_board.failures
+        await shared_board.finish()
+    # ... GPIO 0 is a routed pin like any other (only None / -1 mean "not routed") ...
+    zero = laser_config()
+    zero['pins'] = {'laser_xshut': 0}
+    zero['sensors'][0]['xshut_pin'] = 'laser_xshut'
+    zero_board = controller.Controller(zero, registry=fitted, log=lambda m: None)
+    await zero_board.setup()
+    assert zero_board.alternatives == {} and 'shares XSHUT GPIO0' in zero_board.failures['laser_agl']
+    await zero_board.finish()
+    # NEGATIVE: one DRIVER twice on one socket is a config mistake, never an alternative -- the duplicate's
+    # setup re-initialises the winner's own part, so a failure mid-way would leave it stopped
+    duplicate = laser_config()
+    duplicate['sensors'][0]['driver'] = 'vl53l1x'
+    duplicate_board = controller.Controller(duplicate, registry=dict(fitted, vl53l1x=LaserL1xOnly),
+                                            log=lambda m: None)
+    await duplicate_board.setup()
+    assert duplicate_board.alternatives == {}, duplicate_board.alternatives
+    assert sorted(duplicate_board.failures) == ['gnss_spare', 'laser_agl'], duplicate_board.failures
+    await duplicate_board.finish()
+    # ... and that holds when only the LOSER routes it: its pulse lands on the socket the winner sits in
+    for entry in shared['sensors']:
+        if entry['name'] == 'laser_agl_l1x':
+            entry['xshut_pin'] = None  # the winner routes none
+    loser_pulses = controller.Controller(shared, registry=fitted, log=lambda m: None)
+    await loser_pulses.setup()
+    assert loser_pulses.alternatives == {} and loser_pulses.failures['laser_agl'] == crosswired + shared_reset
+    await loser_pulses.finish()
+    # POSITIVE: no pulse from the loser -> paired: XSHUT nulled in the pins map, dropped from both entries
+    # (layout on v1.0/v1.1), or routed on the winner alone (only the winner's own setup pulses it). A
+    # shared INT never counts: it is an input, wired only after the model id matched, which the loser
+    # never reaches -- so every case below routes both entries' int_pin to one GPIO.
+    for xshut_gpio, loser_pin, winner_pin in ((None, 'laser_xshut', 'laser_xshut'), (-1, 'laser_xshut', None),
+                                              (5, None, None), (5, None, 'laser_xshut')):
+        unrouted = laser_config()
+        unrouted['pins'] = {'laser_xshut': xshut_gpio, 'laser_int': 3}
+        unrouted['sensors'][0]['xshut_pin'], unrouted['sensors'][1]['xshut_pin'] = loser_pin, winner_pin
+        for entry in unrouted['sensors'][:2]:
+            entry['int_pin'] = 'laser_int'
+        unrouted_board = controller.Controller(unrouted, registry=fitted, log=lambda m: None)
+        await unrouted_board.setup()
+        assert unrouted_board.alternatives == {'laser_agl': 'laser_agl_l1x'}, (xshut_gpio, loser_pin, winner_pin)
+        assert list(unrouted_board.failures) == ['gnss_spare'], unrouted_board.failures
+        await unrouted_board.finish()
+
+    # a setup re-run RECOMPUTES the alternatives: with the winner still up the loser stays one; after
+    # the L1X is gone and the L4CX answers, the roles swap -- a stale entry would leave laser_agl both
+    # up and "not fitted"; and with neither answering both are failures again
+    rerun = controller.Controller(laser_config(), registry=dict(fitted), log=lambda m: None)
+    await rerun.setup()
+    await rerun.setup()
+    assert rerun.alternatives == {'laser_agl': 'laser_agl_l1x'} and list(rerun.failures) == ['gnss_spare']
+    await rerun.close('laser_agl_l1x')
+    rerun.registry['vl53l4cx'], rerun.registry['vl53l1x'] = FakeSensor, WrongPart
+    await rerun.setup()
+    assert rerun.alternatives == {'laser_agl_l1x': 'laser_agl'}, rerun.alternatives
+    assert list(rerun.failures) == ['gnss_spare'], rerun.failures
+    await rerun.close('laser_agl')
+    rerun.registry['vl53l4cx'] = WrongPart
+    await rerun.setup()
+    assert rerun.alternatives == {} and sorted(rerun.failures) == ['gnss_spare', 'laser_agl', 'laser_agl_l1x']
+    await rerun.finish()
+
+    # bustune leaves an alternative OUT (it is not on the bus: counting it 'down' failed every rung of
+    # the frequency sweep) and names the driver of any device that is not 'ok'
+    original = i2cbus.get
+    bus = RetunedBus()
+    i2cbus.get = lambda bus_id, spec: bus
+    try:
+        board = controller.Controller(laser_config(), registry=fitted, log=lambda m: None)
+        await board.setup()
+        report = await board.bustune('i2c', '0', 1000000)
+        assert report == {'kind': 'i2c', 'id': '0', 'freq': 1000000, 'devices': {'laser_agl_l1x': 'ok'},
+                          'all_ok': True}, report
+        await board.finish()
+        # NEGATIVE: with neither laser answering both are down on the bus, each naming its driver
+        dead_board = controller.Controller(laser_config(), registry=dead, log=lambda m: None)
+        await dead_board.setup()
+        report = await dead_board.bustune('i2c', 0, 400000)
+        reason = ('setup failed (absent / miswired?) -- id reads 0xEA, expected 0xEB -- wrong device on this '
+                  'bus/select (crosswired)')
+        assert report['devices'] == {'laser_agl': 'vl53l4cx -- down: ' + reason,
+                                     'laser_agl_l1x': 'vl53l1x -- down: ' + reason}, report
+        assert report['all_ok'] is False
+        await dead_board.finish()
+    finally:
+        i2cbus.get = original
+    assert bus.freqs == [1000000, 400000], bus.freqs
 
 
 def make_config():
@@ -271,8 +540,10 @@ async def amain():
     assert 'boom' in cc_ctl.failures, cc_ctl.failures
     await cc_ctl.finish()
 
+    await alternatives()
+
     print('ok: controller directory/create/setup/run/active/inspect/stats/validate/close/finish + pin_gpio '
-          '+ crashed run loop reported down')
+          '+ crashed run loop reported down + unfitted alternatives on a shared socket')
 
 
 asyncio.run(amain())

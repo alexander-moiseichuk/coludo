@@ -6,6 +6,10 @@
 
 Every stream a capture can contain, and the fields in each. A recorder capture interleaves `@<session>_<file>@<row>` telemetry rows with plain log lines; `tools/flight_telemetry.py` demuxes them, and every renderer resolves streams **by role** (the fields they carry) rather than by file name — a capture's file names track the fitted hardware, so a fallback flight names them differently.
 
+On the wire to the Luckfox every line also carries the **integrity wrapper** ([`doc/specs/recorder-wire.md`](specs/recorder-wire.md)): `@<session>_<file>@{OPEN};<row>;<CLOSE>` for a row and `{OPEN};<line>;<CLOSE>` for a log line, where OPEN is the CRC-32 of the routing and the row and CLOSE chains it with the row's uptime. `<session>` is the boot id (`000123`), a `recorder.session` label, or the legacy `YYYYMMDD_HHMMSS_<random>`, and the shared `session.csv` index is routed with no session at all. The rows and fields below are the payloads: `tools/recorder_wire.py` checks each line, `flight_telemetry` and `recorder_flight` keep a row only when its checks pass or salvage proves which stream it belongs to, and a capture from before the wrapper is read as it always was.
+
+The shared `session.csv` index lists every boot, whether or not its clock is set, as `uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon`: a `boot` row, a row per time set (`source` `cc-auto` or `dashboard`) and an `anchor` row a minute in, the header again before the `boot` and the `anchor` row. `utc` and `utc_offset` are empty while the clock is unset, and only a row with a `utc` dates its boot; `recorder_flight` reports how each boot is dated.
+
 ## Streams
 
 | stream | origin | declared in | fields |
@@ -42,14 +46,15 @@ Every stream a capture can contain, and the fields in each. A recorder capture i
 | _per-device_ (`<name>.csv`) | board | `bmp581.py` | `altitude`, `temperature`, `pressure`, `elevation` |
 | _per-device_ (`<name>.csv`) | board | `bno055.py` | `heading`, `roll`, `pitch`, `ax`, `ay`, `az` |
 | _per-device_ (`<name>.csv`) | board | `gnss.py` | `lat`, `lon`, `speed_kn`, `course` |
-| _per-device_ (`<name>.csv`) | board | `gnss.py` | `altitude_m`, `elevation_m`, `quality`, `satellites`, `hdop_cd` |
+| _per-device_ (`<name>_gga.csv`) | board | `gnss.py` | `altitude_m`, `elevation_m`, `quality`, `satellites`, `hdop_cd` |
+| _per-device_ (`<name>_sky.csv`) | board | `gnss.py` | `in_view`, `used`, `mode`, `cn0_1`, `cn0_2`, `cn0_3`, `cn0_4`, `antenna` |
 | _per-device_ (`<name>.csv`) | board | `icp10111.py` | `altitude`, `temperature`, `pressure`, `elevation` |
 | _per-device_ (`<name>.csv`) | board | `ina226.py` | `voltage_mv`, `current_ma`, `power_mw`, `alerts` |
 | _per-device_ (`<name>.csv`) | board | `lsm6dso32.py` | `ax`, `ay`, `az`, `gx`, `gy`, `gz`, `irq_runs` |
 | _per-device_ (`<name>.csv`) | board | `sdp810.py` | `dynamic_pressure`, `airspeed_cms`, `temperature` |
 | _per-device_ (`<name>.csv`) | board | `sequencer.py` | `stage`, `reason` |
 | _per-device_ (`<name>.csv`) | board | `sg90.py` | `angle`, `pulse_us`, `done` |
-| _per-device_ (`<name>.csv`) | board | `task.py` | `event` |
+| _per-device_ (`<name>_events.csv`) | board | `task.py` | `event` |
 | _per-device_ (`<name>.csv`) | board | `vl53l1x.py` | `agl`, `irq_runs` |
 | _per-device_ (`<name>.csv`) | board | `vl53l4cx.py` | `agl`, `irq_runs` |
 

@@ -20,6 +20,9 @@ _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
 import web  # noqa: E402
 
+_ZONE: str = 'Asia/Kolkata'  # the browser's zone for 'sync time': half-hour, no DST, never UTC by accident
+_ZONE_OFFSET: int = 330  # its offset EAST of UTC in minutes, the sign utc_offset carries
+
 
 class _Reader:
     """asyncio.StreamReader stand-in over a fixed request buffer."""
@@ -263,18 +266,18 @@ def test_hud_renders_an_events_frame():
         print('   (node not found -- HUD render check skipped)')
         return
     page = _request(b'GET /hud HTTP/1.1\r\n\r\n').split(b'\r\n\r\n', 1)[1]
-    directory = tempfile.mkdtemp()
-    with open(os.path.join(directory, 'hud.html'), 'wb') as handle:
-        handle.write(page)
-    with open(os.path.join(directory, 'harness.js'), 'w') as handle:
-        handle.write(_HUD_HARNESS)
     row = {'id': 'TMS-7C', 'online': True, 'stale': False, 'health_age': 0.4, 'stage': 'setting',
            'uptime': 125000, 'degraded': [], 'flight': {'reach': {'reachable': True, 'margin_m': 42}}}
     troubled = dict(row, degraded=['attitude-backup'],
                     flight={'reach': {'reachable': False, 'margin_m': -7}})
     frames = [{'cc': {}, 'boards': [row]}, {'cc': {}, 'boards': [troubled]}, {'cc': {}, 'boards': 'junk'}]
-    done = subprocess.run([node, os.path.join(directory, 'harness.js'), os.path.join(directory, 'hud.html'),
-                           json.dumps(frames)], capture_output=True)
+    with tempfile.TemporaryDirectory() as directory:
+        with open(os.path.join(directory, 'hud.html'), 'wb') as handle:
+            handle.write(page)
+        with open(os.path.join(directory, 'harness.js'), 'w') as handle:
+            handle.write(_HUD_HARNESS)
+        done = subprocess.run([node, os.path.join(directory, 'harness.js'), os.path.join(directory, 'hud.html'),
+                               json.dumps(frames)], capture_output=True)
     assert done.returncode == 0, done.stderr.decode('utf-8', 'replace')
     nominal, degraded, junk = json.loads(done.stdout)
     assert nominal['status'].startswith('live — TMS-7C'), nominal
@@ -285,8 +288,8 @@ def test_hud_renders_an_events_frame():
 
 
 _DASHBOARD_HARNESS = r"""
-// Load the dashboard script under a stub DOM; drive selectBoard / updateObject / calibrateBoard and the
-// row formatters; print what landed where.
+// Load the dashboard script under a stub DOM; drive selectBoard / updateObject / calibrateBoard /
+// syncTime and the row formatters; print what landed where.
 const page = require('fs').readFileSync(process.argv[2], 'utf8');
 const script = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join('\n');
 const cells = {};
@@ -296,10 +299,15 @@ const cell = (id) => cells[id] || (cells[id] = {
   querySelectorAll: () => [] });
 const replies = [];                                     // /api/cmd bodies, consumed in order
 const reply = async () => replies.shift() || '{}';
+const posted = [];                                      // request bodies the page sent, in order
+const sources = {};                                     // EventSource by url, to feed the page frames
 const api = new Function('document', 'EventSource', 'fetch', 'setInterval', 'setTimeout', 'confirm',
-  script + '\nreturn { selectBoard, calibrateBoard, updateObject, fmtFlight, fmtPad };')(
-  { getElementById: cell, querySelector: () => null, querySelectorAll: () => [], createElement: () => cell('new') },
-  class {}, async () => ({ status: 200, text: reply, json: async () => JSON.parse(await reply()) }),
+  script + '\nreturn { selectBoard, calibrateBoard, updateObject, syncTime, fmtFlight, fmtPad };')(
+  { getElementById: cell, querySelector: () => cell('query'), querySelectorAll: () => [],
+    createElement: () => cell('new') },
+  class { constructor(url) { sources[url] = this; } },
+  async (url, options) => { posted.push(options && options.body);
+                            return { status: 200, text: reply, json: async () => JSON.parse(await reply()) }; },
   () => 0, () => 0, () => true);
 (async () => {
   const out = {};
@@ -320,6 +328,58 @@ const api = new Function('document', 'EventSource', 'fetch', 'setInterval', 'set
   out.calibrated = cell('actmsg').textContent;
   out.flight = api.fmtFlight({ degraded: ['<i>x</i>'] });
   out.pad = api.fmtPad({ launchpad: [1, 2], site: '<i>y</i>' });
+  // sync time acts only on a board in SETTING, and carries CC's fix from the last /events frame
+  const frame = async (gps, stage) => {
+    sources['/events'].onmessage({ data: JSON.stringify({ cc: { gps }, boards: [{ id: 'A', online: true, stage }] }) });
+    await new Promise((resolve) => setImmediate(resolve));      // let the absent-roster fetch settle
+    posted.length = 0;
+  };
+  const button = () => ({ disabled: cell('actsynctime').disabled, title: cell('actsynctime').title });
+  api.selectBoard('A');
+  out.sync = [];
+  for (const gps of [{ usable: true, latitude: 25.5144, longitude: -80.3918 }, { usable: false }]) {
+    await frame(gps, 'setting');
+    replies.push(JSON.stringify({ status: 'ok', args: [JSON.stringify({ changed: ['epoch'] })] }));
+    await api.syncTime('A');
+    out.sync.push({ sent: JSON.parse(posted[0]), shown: cell('actmsg').textContent, button: button() });
+  }
+  out.unset = [];   // an ok that set nothing: no `changed`, one not a list or naming no epoch; a non-ok naming epoch
+  for (const [status, changed] of [['ok', []], ['ok', undefined], ['ok', 'epoch'], ['ok', { epoch: 1 }],
+                                   ['ok', ['latitude']], ['err', ['epoch']]]) {
+    replies.push(JSON.stringify({ status, args: [JSON.stringify({ changed })] }));
+    await api.syncTime('A');
+    out.unset.push(cell('actmsg').textContent);
+  }
+  out.hubError = [];   // the hub's own failures carry no status or args: 404 no online board, 502 offline
+  for (const body of [{ error: "no online board 'A'" }, { board: 'A', error: 'offline' }]) {
+    replies.push(JSON.stringify(body));
+    await api.syncTime('A');
+    out.hubError.push(cell('actmsg').textContent);
+  }
+  out.refused = [];                     // any other stage: the button disables, a direct call sends nothing
+  for (const stage of ['done', 'gliding', null]) {
+    await frame({ usable: false }, stage);
+    await api.syncTime('A');
+    out.refused.push({ stage, posted: posted.length, shown: cell('actmsg').textContent, button: button() });
+  }
+  await frame({ usable: false }, 'setting');
+  api.selectBoard('B');                 // a selected board missing from the frame
+  out.absentBoard = button();
+  api.selectBoard('');                  // nothing selected
+  out.noBoard = button();
+  // the browser's own clock: 2020-01-01 exactly is valid and sent as is, a second earlier sends nothing
+  api.selectBoard('A');
+  const realNow = Date.now;
+  out.browserClock = [];
+  for (const now of [1577836800000, 1577836799000]) {
+    Date.now = () => now;
+    posted.length = 0;
+    replies.length = 0;
+    replies.push(JSON.stringify({ status: 'ok', args: [JSON.stringify({ changed: ['epoch'] })] }));
+    await api.syncTime('A');
+    out.browserClock.push({ posted: posted.map((body) => JSON.parse(body)), shown: cell('actmsg').textContent });
+  }
+  Date.now = realNow;
   console.log(JSON.stringify(out));
 })();
 """
@@ -332,8 +392,11 @@ def test_dashboard_actions_follow_the_selection():
     The inspect cards outlived a selection change: the heading named the new board while each card's
     update button still wrote to the old one. A guided calibrate reported success under the status
     table while every other outcome went to the actions bar, so a stale STILL OUTSTANDING stayed on
-    screen. Board-reported `degraded` / `site` went into the markup raw. Run under node with a stub DOM
-    (skipped without node); the negative case is the same board re-selected, which keeps its cards.
+    screen. Board-reported `degraded` / `site` went into the markup raw. 'sync time' sets the selected
+    board's RTC only in SETTING, from the browser's clock in a pinned zone. Run under node with a stub
+    DOM (skipped without node); the negative cases are the same board re-selected, which keeps its
+    cards, a sync in any other stage, of an absent board or from a browser clock before 2020, a reply
+    that set no clock, and the hub's own failure (no online board, offline), which has no args.
     """
     import shutil
     import subprocess
@@ -343,13 +406,14 @@ def test_dashboard_actions_follow_the_selection():
         print('   (node not found -- dashboard behaviour check skipped)')
         return
     page = _request(b'GET / HTTP/1.1\r\n\r\n').split(b'\r\n\r\n', 1)[1]
-    directory = tempfile.mkdtemp()
-    with open(os.path.join(directory, 'index.html'), 'wb') as handle:
-        handle.write(page)
-    with open(os.path.join(directory, 'harness.js'), 'w') as handle:
-        handle.write(_DASHBOARD_HARNESS)
-    done = subprocess.run([node, os.path.join(directory, 'harness.js'), os.path.join(directory, 'index.html')],
-                          capture_output=True)
+    zone = dict(os.environ, TZ=_ZONE)  # the browser's timezone, pinned so a UTC host cannot hide a sign slip
+    with tempfile.TemporaryDirectory() as directory:
+        with open(os.path.join(directory, 'index.html'), 'wb') as handle:
+            handle.write(page)
+        with open(os.path.join(directory, 'harness.js'), 'w') as handle:
+            handle.write(_DASHBOARD_HARNESS)
+        done = subprocess.run([node, os.path.join(directory, 'harness.js'), os.path.join(directory, 'index.html')],
+                              capture_output=True, env=zone)
     assert done.returncode == 0, done.stderr.decode('utf-8', 'replace')
     out = json.loads(done.stdout)
     assert out['same'] == 'cards of A', 're-selecting the same board must keep its cards'
@@ -358,6 +422,43 @@ def test_dashboard_actions_follow_the_selection():
     assert out['calibrated'] == 'B calibrate: baro done — 1 left (imu)', out['calibrated']
     assert '<i>' not in out['flight'] and '&lt;i&gt;x' in out['flight'], out['flight']
     assert '<i>' not in out['pad'] and '&lt;i&gt;y' in out['pad'], out['pad']
+    # sync time in SETTING: UTC epoch (not local) + the browser's offset EAST of UTC + CC's fix, 'dashboard'
+    import time
+    with_fix, without_fix = out['sync']
+    for sync in (with_fix, without_fix):
+        assert sync['sent']['board'] == 'A' and sync['sent']['command'] == 'update', sync
+        object_name, payload = sync['sent']['params']
+        mission = json.loads(payload)
+        assert object_name == 'mission' and sorted(mission) == ['cc_position', 'epoch', 'source', 'utc_offset']
+        assert type(mission['epoch']) is int and abs(mission['epoch'] - time.time()) < 5, mission
+        assert mission['utc_offset'] == _ZONE_OFFSET and mission['source'] == 'dashboard', mission
+        assert sync['shown'] == 'A sync time: ok', sync
+        assert sync['button']['disabled'] is False and "THIS BROWSER's clock" in sync['button']['title'], sync
+    assert json.loads(with_fix['sent']['params'][1])['cc_position'] == [25.5144, -80.3918], with_fix
+    assert json.loads(without_fix['sent']['params'][1])['cc_position'] is None, without_fix
+    assert len(out['unset']) == 6, out['unset']
+    for shown in out['unset']:
+        assert shown.startswith('A sync time: NOT set'), 'only an ok whose `changed` LIST names epoch is a set clock'
+    assert out['hubError'] == ['A sync time: NOT set {"error":"no online board \'A\'"}',
+                               'A sync time: NOT set {"board":"A","error":"offline"}'], out['hubError']
+    # any other stage, or a board not connected: disabled, says why, and a direct call sends nothing
+    for refused in out['refused']:
+        assert refused['posted'] == 0 and refused['button']['disabled'] is True, refused
+        reason = 'A sync time: NOT sent -- A is %s, ' % (refused['stage'] or 'unknown')
+        assert refused['shown'].startswith(reason), refused
+        assert 'only in stage setting (A is ' in refused['button']['title'], refused
+        assert "THIS BROWSER's clock" in refused['button']['title'], refused
+    assert out['absentBoard']['disabled'] is True, out['absentBoard']
+    assert 'B is not connected' in out['absentBoard']['title'], out['absentBoard']
+    assert out['noBoard']['disabled'] is True, out['noBoard']
+    assert out['noBoard']['title'].startswith('only in stage setting (no board selected) -- '), out['noBoard']
+    # the browser's clock before 2020 is unset: nothing sent, and the message says why
+    valid, unset = out['browserClock']
+    assert [json.loads(sent['params'][1])['epoch'] for sent in valid['posted']] == [1577836800], valid
+    assert valid['shown'] == 'A sync time: ok', valid
+    assert unset['posted'] == [], unset
+    assert unset['shown'] == ("A sync time: NOT sent -- this browser's clock reads 2019-12-31T23:59:59Z, "
+                              'before 2020'), unset
 
 
 def test_malformed_request_line_does_not_hang():
@@ -438,6 +539,157 @@ def test_post_with_bad_json_is_answered():
     assert response, 'a malformed POST body must still produce a response'
 
 
+_VERDICT_HARNESS = r"""
+// Load the dashboard script under a stub DOM; drive probeBoard and the send box with canned board
+// replies (argv[3], a JSON list); print what landed under the actions bar and in the reply pane.
+const page = require('fs').readFileSync(process.argv[2], 'utf8');
+const script = [...page.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join('\n');
+const cells = {};
+const cell = (id) => cells[id] || (cells[id] = {
+  textContent: '', innerHTML: '', value: '', dataset: {}, children: [], style: {},
+  classList: { toggle() {}, add() {}, remove() {} }, addEventListener() {}, appendChild() {},
+  querySelectorAll: () => [] });
+const replies = JSON.parse(process.argv[3]).map((body) => JSON.stringify(body));
+const reply = async () => replies.shift() || '{}';
+const api = new Function('document', 'EventSource', 'fetch', 'setInterval', 'setTimeout', 'confirm',
+  script + '\nreturn { selectBoard, probeBoard, send };')(
+  { getElementById: cell, querySelector: () => cell('query'), querySelectorAll: () => [],
+    createElement: () => cell('new') },
+  class {}, async () => ({ status: 200, text: reply, json: async () => JSON.parse(await reply()) }),
+  () => 0, () => 0, () => true);
+(async () => {
+  const out = { probe: [], sent: [] };
+  api.selectBoard('taster');
+  for (let index = 0; index < 4; index++) {
+    await api.probeBoard('taster');
+    out.probe.push(cell('actmsg').textContent);
+  }
+  for (const [command, params] of [['verify', ''], ['verify', ''], ['arm', ''], ['arm', ''], ['ping', ''],
+                                   ['arm', ''], ['probe', 'laser_agl'], ['probe', 'laser_agl']]) {
+    cell('cmd').value = command;
+    cell('params').value = params;
+    await api.send();
+    out.sent.push(cell('reply').textContent);
+  }
+  console.log(JSON.stringify(out));
+})();
+"""
+
+
+def test_dashboard_reports_each_device_on_its_own_line():
+    """
+    probe / verify / arm show ONE LINE PER DEVICE under a header, each naming the device's driver.
+
+    The operator's asks, verbatim: "it need to show driver name to understand what is fail? like
+    laser_agl: vl53l1x", "also you can add diagnostic line why fail", and "you can occupy space under
+    action button and report each device failure in own line without ;". The board sends maps whose
+    values read '<driver> -- <why>'; the page lays them out. An unfitted ALTERNATIVE (two parts declared
+    for one socket, the other answering) gets its own line as not fitted and never makes the board
+    FAIL -- that is what refused to arm the taster; `probe <alternative>` (null in the first map, its
+    line in the second) reads as not fitted, not as a pass or a FAIL. Negative: an older board's
+    driverless verdicts still render, a single probe that fails still reads FAIL, a hub error and a
+    non-verdict command stay the raw reply, and no ';' joins anything.
+    Run under node with a stub DOM (skipped without node).
+    """
+    import shutil
+    import subprocess
+    import tempfile
+    node = shutil.which('node')
+    if node is None:
+        print('   (node not found -- dashboard verdict check skipped)')
+        return
+    page = _request(b'GET / HTTP/1.1\r\n\r\n').split(b'\r\n\r\n', 1)[1]
+    markup = page.decode('utf-8').partition('<script>')[0]
+    # the verdict is its own block UNDER the action buttons, preformatted so each line stays a line
+    block_at = markup.index('<div id="actmsg" class="actmsg"></div>')
+    assert markup.index('id="actassist"') < block_at < markup.index('send command to'), (
+        'the actions verdict must be a block right under the action buttons')
+    assert '.actmsg { white-space: pre-wrap;' in markup and '.actmsg:empty { display: none; }' in markup
+    unfitted = 'vl53l4cx not fitted -- vl53l1x (laser_agl_l1x) answers i2c:0 0x29'
+    crosswired = 'id reads 0xEA, expected 0xEB -- wrong device on this bus/select (crosswired)'
+    baro = 'icp10111 -- not connected: setup failed (absent / miswired?) -- id reads 0x00, expected 0x08'
+    laser = 'vl53l4cx -- not connected: setup failed (absent / miswired?) -- ' + crosswired
+    held = 'stage held at gliding by an operator command -- `stage setting` to return to the ground'
+    verify_fail = {'pass': False,
+                   'devices': {'laser_agl': 'vl53l4cx -- down: setup failed', 'imu_bno055': 'bno055 -- up'},
+                   'problems': {'laser_agl': laser, 'stage': held}, 'alternatives': {}, 'ready': True,
+                   'readiness': {}}
+    verify_pass = {'pass': True,
+                   'devices': {'laser_agl': unfitted, 'laser_agl_l1x': 'vl53l1x -- up', 'imu_bno055': 'bno055 -- up'},
+                   'problems': {}, 'alternatives': {'laser_agl': unfitted}, 'ready': False,
+                   'readiness': {'watchdog': 'disabled: a wedged flight loop never reboots'}}
+    replies = [
+        # probe: one failure + one alternative; only the alternative down; an OLDER board; a hub error
+        {'status': 'ok', 'args': [json.dumps({'laser_agl_l1x': None, 'baro_icp10111': baro}),
+                                  json.dumps({'laser_agl': unfitted})]},
+        {'status': 'ok', 'args': [json.dumps({'laser_agl_l1x': None, 'imu_bno055': None}),
+                                  json.dumps({'laser_agl': unfitted})]},
+        {'status': 'ok', 'args': [json.dumps({'laser_agl': 'not connected: x', 'baro': 'not connected: y',
+                                              'imu': None})]},
+        {'board': 'taster', 'error': 'offline'},
+        # send box: verify FAIL, verify pass with an alternative, arm refused, arm ok, ping, a hub error
+        {'status': 'ok', 'args': [json.dumps(verify_fail)]},
+        {'status': 'ok', 'args': [json.dumps(verify_pass)]},
+        {'status': 'err', 'args': ['unsafe', json.dumps({'laser_agl': laser, 'baro_icp10111': baro})]},
+        {'status': 'ok', 'args': [json.dumps({'armed': True})]},
+        {'status': 'pong', 'args': []},
+        {'board': 'taster', 'error': 'offline'},
+        # `probe laser_agl` on a board with the L1X fitted, then on one where neither laser answers
+        {'status': 'ok', 'args': [json.dumps({'laser_agl': None}), json.dumps({'laser_agl': unfitted})]},
+        {'status': 'ok', 'args': [json.dumps({'laser_agl': laser})]},
+    ]
+    with tempfile.TemporaryDirectory() as directory:
+        with open(os.path.join(directory, 'index.html'), 'wb') as handle:
+            handle.write(page)
+        with open(os.path.join(directory, 'harness.js'), 'w') as handle:
+            handle.write(_VERDICT_HARNESS)
+        done = subprocess.run([node, os.path.join(directory, 'harness.js'), os.path.join(directory, 'index.html'),
+                               json.dumps(replies)], capture_output=True)
+    assert done.returncode == 0, done.stderr.decode('utf-8', 'replace')
+    out = json.loads(done.stdout)
+    one_fail, only_alternative, older, hub = out['probe']
+    assert one_fail == ('taster: 1 device FAIL\n'
+                        'baro_icp10111: ' + baro + '\n'
+                        'laser_agl: ' + unfitted), one_fail
+    assert only_alternative == 'taster: all 2 devices pass\nlaser_agl: ' + unfitted, only_alternative
+    assert older == 'taster: 2 devices FAIL\nlaser_agl: not connected: x\nbaro: not connected: y', older
+    assert hub == 'taster: {"board":"taster","error":"offline"}', hub
+    verify_failed, verify_passed, arm_refused, armed, ping, arm_hub, probe_unfitted, probe_down = out['sent']
+
+    def split(shown: str) -> tuple:
+        """The verdict block above the first blank line, and the raw reply below it (decoded)."""
+        block, _blank, raw = shown.partition('\n\n')
+        return block, json.loads(raw)
+
+    block, raw = split(verify_failed)
+    assert block == ('taster verify: 2 problems FAIL\n'
+                     'laser_agl: ' + laser + '\n'
+                     'stage: ' + held), block
+    assert raw['args'] == [verify_fail], 'the full reply stays below the verdict lines'
+    block, raw = split(verify_passed)
+    assert block == ('taster verify: all 2 devices pass\n'
+                     'laser_agl: ' + unfitted + '\n'
+                     'taster verify: not flight-ready -- 1 item\n'
+                     'watchdog: disabled: a wedged flight loop never reboots'), block
+    block, raw = split(arm_refused)
+    assert block == ('taster arm: REFUSED -- 2 problems\n'
+                     'laser_agl: ' + laser + '\n'
+                     'baro_icp10111: ' + baro), block
+    assert raw['args'] == ['unsafe', {'laser_agl': laser, 'baro_icp10111': baro}], raw
+    block, raw = split(armed)
+    assert block == 'taster arm: armed' and raw['args'] == [{'armed': True}], armed
+    # NEGATIVE: no verdict to lay out -> the raw reply alone, as before
+    assert json.loads(ping) == {'status': 'pong', 'args': []}, ping
+    assert json.loads(arm_hub) == {'board': 'taster', 'error': 'offline'}, arm_hub
+    block, raw = split(probe_unfitted)
+    assert block == 'taster: 1 device not fitted\nlaser_agl: ' + unfitted, block
+    assert raw['args'] == [{'laser_agl': None}, {'laser_agl': unfitted}], raw
+    block, raw = split(probe_down)  # NEGATIVE: a socket nobody answers on still FAILs
+    assert block == 'taster: 1 device FAIL\nlaser_agl: ' + laser, block
+    for shown in out['probe'] + [verify_failed, verify_passed, arm_refused, armed, probe_unfitted, probe_down]:
+        assert ';' not in shown.partition('\n\n')[0], 'a verdict joined with ";": %r' % shown
+
+
 def test_every_rendered_control_is_bound():
     """
     Every control the page RENDERS must be referenced by its script.
@@ -478,10 +730,11 @@ def test_dashboard_script_is_valid_javascript():
     page = _request(b'GET / HTTP/1.1\r\n\r\n').decode('utf-8', 'replace')
     blocks = _re.findall(r'<script>(.*?)</script>', page, _re.S)
     assert blocks, 'the dashboard served no <script> block at all'
-    path = os.path.join(tempfile.mkdtemp(), 'page.js')
-    with open(path, 'w', encoding='utf-8') as handle:
-        handle.write('\n'.join(blocks))
-    done = subprocess.run([node, '--check', path], capture_output=True)
+    with tempfile.TemporaryDirectory() as directory:
+        path = os.path.join(directory, 'page.js')
+        with open(path, 'w', encoding='utf-8') as handle:
+            handle.write('\n'.join(blocks))
+        done = subprocess.run([node, '--check', path], capture_output=True)
     assert done.returncode == 0, 'dashboard JS does not parse:\n' + done.stderr.decode('utf-8', 'replace')
 
 
@@ -489,6 +742,7 @@ test_routes()
 test_hud_is_served_and_offline_safe()
 test_hud_renders_an_events_frame()
 test_dashboard_actions_follow_the_selection()
+test_dashboard_reports_each_device_on_its_own_line()
 test_dashboard_carries_the_imu_calibration_column()
 test_dashboard_script_is_valid_javascript()
 test_every_rendered_control_is_bound()
@@ -498,4 +752,5 @@ test_handler_fault_answers_500()
 test_board_timeout_answers_json_504()
 test_post_with_bad_json_is_answered()
 print('ok: web -- routing + 404, IMU calibration column + calibrate action, not-ready row flag, '
+      'per-device verdict lines for probe/verify/arm, '
       'malformed request line, bad Content-Length, handler fault -> 500, bad JSON POST answered')

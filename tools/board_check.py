@@ -28,11 +28,13 @@ async def check():
 
     configured = flight.directory()
     print('\n=== devices (%d configured) ===' % len(configured))
-    for name in configured:
-        if name in flight.tasks:
-            print('  up    %s' % name)
+    for name in configured:  # each line names the driver: a socket declared for two parts asks WHICH one
+        if name in flight.alternatives:  # the other part answers its socket: absent by design, not a fault
+            print('  --    %s  <- %s' % (name, flight.unfitted(name)))
+        elif name in flight.tasks:
+            print('  up    %s  (%s)' % (name, flight.driver(name)))
         else:
-            print('  DOWN  %s  <- %s' % (name, flight.failures.get(name, '?')))
+            print('  DOWN  %s  <- %s -- %s' % (name, flight.driver(name), flight.failures.get(name, '?')))
 
     print('\n=== probe (active self-tests; sweeps servos) ===')
     probe_failures = {}
@@ -50,6 +52,8 @@ async def check():
         'PASS' if ok else 'FAILURE', len(flight.failures), len(probe_failures)))
     if flight.failures:
         print('  not connected:', ', '.join('%s (%s)' % (n, r) for n, r in sorted(flight.failures.items())))
+    if flight.alternatives:
+        print('  not fitted:   ', ', '.join(sorted(flight.alternatives)))
     if probe_failures:
         print('  probe failed: ', ', '.join('%s (%s)' % (n, r) for n, r in sorted(probe_failures.items())))
     await flight.finish()

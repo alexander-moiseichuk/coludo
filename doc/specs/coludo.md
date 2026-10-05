@@ -224,7 +224,10 @@ Upon electronic initialization, the following sequential operations are executed
 * **Validation (operator, over CC — nothing is automatic):** sync the board clock and launch position
   (dashboard sync / `assist`), work through `calibrate` until it is empty, then `verify` (hardware
   `pass` + the `ready` config gate + the stage), and `arm` where the flight is active (`arm` re-runs
-  the probes and refuses on any problem). The step-by-step list is [`field_test.md`](../field_test.md).
+  the probes and refuses on any problem). Each device verdict names the device's driver
+  (`laser_agl: vl53l4cx -- <why>`), and a part declared beside the one actually soldered on its socket
+  reads *not fitted* rather than failed ([`cc-protocol.md`](cc-protocol.md) → *Device verdicts*).
+  The step-by-step list is [`field_test.md`](../field_test.md).
 * **Staging:** The vehicle is cleared to be mounted vertically on the launch rail.
 
 Potential problems:
@@ -719,8 +722,16 @@ Example: for altitude the queue of selection could be the following
 
 Proper cross-analysis for initial fusion (backing) should be performed by documentation and can be tweaked later after trials. Sensor disagreements will be handled during timeouts and limits per each individually and switching to backup sensor. For example, the controller expects GPS data every 100 ms and if there is no data or repetative data for at least 200 ms then it will switch to the IMU.
 
-**Attitude backup (implemented 7/07, `tasks/attitude.py`).** `attitude` is the one quantity with a
-single hardware source — the BNO055 (fused 9-DoF, priority 0). Losing it mid-flight would hand the
+**Attitude filter (implemented 7/07, `tasks/attitude.py`; primary since 10/05).** Since the SEN0697
+replaced the SEN0253 on every board, the filter is the **primary** attitude source at priority 1 (p0 is
+the HITL sim's slot): the BMI323/LSM6DSO32 gyro `rate` and accel gravity vector, with the BMM350 as its
+heading reference. A SEN0253 found on the board (the taster, experimental units) is a lower-ranked
+**backup**; layout ranks it there in code, whatever an old config says, and a filter blind for 5 cycles
+hands over to it -- only when such a backup is fresh (doc/specs/board-config.md). **Known limits of
+that backup path, for the HITL round** (no flight board carries a backup): when the gyro returns, the
+filter resumes from the roll/pitch it froze at instead of seeding them from the fresh backup; and a
+BNO055 gap over 40 ms lets the frozen filter win for that moment. The 7/07 text below
+describes the original arrangement, when the BNO055 was the single hardware source (priority 0). Losing it mid-flight would hand the
 control loop stale/absent attitude → neutral fins → ballistic, so a **complementary-filter backup**
 derives (heading, roll, pitch) from the LSM6DSO32 gyro `rate` + accel gravity vector and provides it
 at **priority 1**; the databoard's timeout handoff (40 ms) then swaps to it automatically the moment
@@ -817,10 +828,12 @@ subscriber would stall the publisher inline. Instead the mechanism is chosen per
   rather than slice-assignment, which is O(buffer length) on this port (see the
   [benchmark findings](../doc/benches/WaveShare_esp32p4-micropython-findings.md)). Telemetry streams are
   created via a `Telemetry(file, fields)` helper that emits a CSV header first and then
-  timestamped rows; all streams in a boot share one session prefix — `YYYYMMDD_HHMMSS_<6-digit
-  random>` from the RTC the first time it is needed, or `recorder.session` verbatim when CC assigns
-  one ([`board-config.md`](board-config.md)) — so each flight's files are distinct. The random tag is
-  what separates boots: the board has no battery-backed RTC, so unsynced boots share a date.
+  timestamped rows; all streams in a boot share one session prefix — the **boot id**, a counter in
+  NVS printed `%06u` (`000123`), or `recorder.session` verbatim when the test system assigns one
+  ([`board-config.md`](board-config.md)) — so each flight's files are distinct. On the UART every line
+  carries an **integrity wrapper**, `{crc32};<payload>;<~crc32 ^ uptime>`, and CC sets the board clock on
+  connect. Every boot, with each clock set, is listed in a shared `session.csv`: see
+  [`recorder-wire.md`](recorder-wire.md).
 
 This collapses what would otherwise be a separate event-bus plus ring buffers into the Recorder:
 discrete events are just log records, and the priority queues are the decoupling buffers
@@ -896,7 +909,7 @@ The bno055 geomagnetic sensor extracts absolute magnetic heading vectors. It ser
 
 ## Navigation
 
-Horizontal position tracking uses an ATGM336H-5N-31 high-sensitivity GNSS array. It is configured **once, at setup**, to the rate in the config (`gnss.hz`, **10 Hz**) and stays there for the whole flight. There is no low-power ground mode and no launch-triggered escalation: the driver's `_configure()` is called from `Gnss.setup()` and from nowhere else, so there is no command to get wrong at the one moment the glider is leaving the rail.
+Horizontal position tracking uses an ATGM336H-5N-31 high-sensitivity GNSS array. It is configured **once, at setup**, to the rate in the config (`gnss.hz`, **10 Hz**), and the rate stays there for the whole flight. There is no low-power ground mode and no launch-triggered escalation: the driver's `_configure()` is called from `Gnss.setup()` and from nowhere else. The one write after setup is the sky diagnostics switch (below), and at launch it re-sends a sentence mask the receiver already took at setup, so there is no new command to get wrong at the one moment the glider is leaving the rail.
 
 The driver POLLS the UART from its async loop; it does not use an ISR. At 10 Hz RMC the link carries
 ~700 B/s against 960 available, so there is no rate pressure to justify interrupt handling -- and an
@@ -909,8 +922,9 @@ consulted:
 
 **The link stays at 9600 baud.** It is not escalated, and it does not need to be: the driver asks for
 RMC at `hz` (position) plus GGA at only ~1 Hz (altitude, a baro backup), which is ~700 B/s + ~70 B/s
-against 960 B/s available. Trading a working link for headroom nothing uses would be a bad bargain --
-a baud change is the kind of thing that half-works and leaves the receiver mute.
+against 960 B/s available, and the sky diagnostics (below, pad only) add ~0.5 kB every ~10 s, ~50 B/s. Trading a
+working link for headroom nothing uses would be a bad bargain -- a baud change is the kind of thing that
+half-works and leaves the receiver mute.
 
 What the driver actually sends at setup (`src/glider/drivers/atgm336h.py`), PCAS being the CASIC
 command set with a PMTK pair as the fallback for modules that speak MTK:
@@ -918,7 +932,17 @@ command set with a PMTK pair as the fallback for modules that speak MTK:
 ```
 $PCAS03,...     # sentence mask: RMC + a decimated GGA, everything else off
 $PCAS02,<ms>    # update period, from `hz` (10 Hz -> 100 ms)
+$PMTK314,...    # MTK fallback: RMC + GGA
+$PMTK220,<ms>   # MTK fallback: update period
+$PCAS03,...     # the same mask + GSA, GSV and the antenna text every 10*hz-th fix (99 at 10 Hz: ~10 s)
 ```
+
+The NEO-6M (`drivers/neo6mv2.py`) does the same in u-blox terms: `$PUBX,40` selects RMC + the
+decimated GGA and silences the rest, UBX-CFG-RATE sets the period, UBX-CFG-NAV5 sets the **airborne
+<4g dynamic model** (the default 'portable' model's platform limits -- vertical speed among them -- would
+drop the fix in boost and coast; airborne <4g is the most permissive model the NEO-6M and NEO-M8 share, and
+the boost may still overrun it for a few seconds), then `$PUBX,40` turns GSA and GSV
+back on every 10*hz-th fix (50 at 5 Hz).
 
 **Not sent, despite older revisions of this document:** `$PCAS01` (baud escalation to 115200) and
 `$PCAS10` (factory cold restart). A cold restart in particular would throw away the almanac and make
@@ -928,6 +952,53 @@ the next fix slower, which is the opposite of what a launch wants.
 A verified MicroPython initialization snippet handles this handshake sequence.
 
 The Flight Controller continually correlates accelerometer vectors alongside GNSS strings to maintain dead-reckoning positioning if the satellite signal drops out mid-flight.
+
+### Sky diagnostics — implemented (10/04), pad only
+
+**Why.** On 10-03 neither airframe ever fixed (0 GGA rows with a fix), and the flight logs could not
+say why: the flight init switched GSV, GSA and the antenna text off, so all a capture held was "no
+fix". The 2026-10-04 bench (`src/gnss_bench`, both modules on this exact init, open sky; write-up in
+[`doc/benches/gnss-20261004`](../benches/gnss-20261004/README.md)) answered it: a SIGNAL problem, not
+the configuration. On every real antenna a usable (RMC-valid) fix came by ~42 s on the ATGM and in
+1-38 s on the NEO; the passive 12x12 patch the airframes flew gave the ATGM a top-4 C/N0 of only
+~35 dB-Hz with `ANTENNA OPEN` (~8-10 dB under the active antennas, which read `OK`), and with no antenna
+at all it sat at 26 dB-Hz and never fixed in 17 minutes.
+
+**Pad only, and why.** The diagnostics run before BOOSTING and again from DONE (the post-landing
+search), and are off from BOOSTING to DONE -- the window the Wi-Fi driver stops its radio work in. They
+are slow enough to leave the flight RATES alone (the bench: ATGM at 10 Hz, 250 RMC + 25 GGA in 25 s with
+the diagnostics at ~9.5 s and ~19.4 s; NEO at 5 Hz, 125 RMC + 25 GGA, GSA/GSV every ~10 s), but not the
+timing: each ~10 s burst delays the epoch's RMC by up to ~0.6 s, so the 200 ms `position` channel goes
+stale for ~0.1-0.4 s once per burst and guidance dead-reckons through it. On the pad that costs nothing;
+in flight it is a hole in the position every ten seconds.
+
+The GNSS task's 1 s sweep tick compares the stage (an int) and, when it crosses the window, writes a
+frame the driver made at setup -- bytes, so a switch builds nothing with the GC off. Off is the flight
+init's own selection (the ATGM's first `$PCAS03`; the NEO's `$PUBX,40` GSA and GSV at 0), so the flight
+output is exactly what it was before the diagnostics existed; on is the diagnostics' command. One write
+per edge, each with an event (`sky diagnostics off for flight`, `sky diagnostics on`). Setup is
+unchanged and ends with the diagnostics on, so a reset into a flight stage (a warm start) switches them
+off at its first tick. The switch lands within ~1 s of launch: a burst due in that second still comes,
+and a receiver that missed the command keeps bursting, which costs the staleness above and nothing else.
+
+**What is logged.** One `<name>_sky.csv` row per diagnostics burst (`gnss_sky.csv` on every board):
+`in_view` (GSV, all systems), `used` (GSA, the sum over systems -- the ATGM sends a GSA per system and
+the PRN numbers repeat between GPS and BDS), `mode` (GSA: 1 no fix, 2 2D, 3 3D, the best system's),
+`cn0_1..cn0_4` (the four strongest C/N0 in dB-Hz, 0 where fewer were heard) and `antenna` (0 none
+reported -- always on the NEO-6M, 1 OK, 2 OPEN, 3 SHORT). All integers. The row goes out on the first
+1 s sweep tick that finds the burst quiet for 0.5 s -- one row per burst, the ATGM's antenna text
+(which follows the epoch's RMC) included, and nothing added to the 10 Hz RMC path. A GSV group
+replaces its system's view only when it arrived whole and in order. Events (the durable
+`gnss_events.csv`): the first burst's whole sky, every change of the antenna status, and the switch. A
+flight capture holds the pad's rows, at most a burst due in launch's first second, and the search's from
+DONE. HITL publishes no GSV
+and masks the real receiver, so the stream simply stays empty there.
+
+**The pad check.** `inspect gnss` shows `in_view`, `used`, `mode`, `cn0` (the top four), `cn0_mean` and
+`antenna`, ~10 s after setup. The bench's yardstick for the top-4 mean: **>= ~40 dB-Hz** fixed every
+time; **~35** is marginal (the passive patch -- it fixed on the bench with nothing around it, the
+airframe puts the Luckfox, the camera and Wi-Fi next to it); **<= ~30** never fixed cold. `antenna
+OPEN` on the ATGM means a passive antenna or none.
 
 ## Altimeter
 

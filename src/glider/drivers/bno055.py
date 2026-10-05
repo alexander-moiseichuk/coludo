@@ -1,10 +1,12 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-BNO055 9-DOF IMU (on the SEN0253) over the shared I2C bus: the attitude channel.
-@task.driver('bno055'). In NDOF fusion mode the chip computes absolute orientation on-chip; run() reads
-the Euler angles (heading, roll, pitch in degrees) to the databoard 'attitude' slot. Graceful: a
-wrong/absent chip id -> setup False -> the Controller skips it.
+BNO055 9-DOF IMU (on the SEN0253) over the shared I2C bus: the BACKUP attitude source, at priority 2
+below the SEN0697's complementary filter. The SEN0253 is fitted only as a backup now (or as the module
+of a declared legacy v1.0); layout enables it only when a scan finds it, and ranks it below the filter
+whatever priority a saved config gives it. @task.driver('bno055'). In NDOF fusion mode the chip computes
+absolute orientation on-chip; run() reads the Euler angles (heading, roll, pitch in degrees) to the
+databoard 'attitude' slot. Graceful: a wrong/absent chip id -> setup False -> the Controller skips it.
 
 BNO055's INT pin signals motion/threshold events, not a fusion data-ready, so this driver polls at
 period_ms (the fusion engine runs at 100 Hz internally); the wired int_pin is reserved for future event
@@ -65,7 +67,8 @@ class Bno055(task.Task):
     9-DOF IMU to the databoard: fused attitude and a calibrated low-g accelerometer.
 
     NDOF fusion attitude (heading, roll, pitch in degrees) -> 'attitude', plus the calibrated
-    accelerometer (g, including gravity) -> 'accel' as a low-g backup to the ADXL375 (priority 1).
+    accelerometer (g, including gravity) -> 'accel' as a low-g backup (priority 3, behind the BMI323 and
+    the ADXL375).
     """
 
     _bus = None  # class default: no transport until setup() builds it (diagnose reads directly)
@@ -130,9 +133,10 @@ class Bno055(task.Task):
         Is the fusion engine still COMPUTING, or has it latched a constant?
 
         A stalled BNO055 fusion core is the worst failure this driver can have, because the channel
-        stays FRESH: every staleness guard downstream passes, and the priority-1 attitude backup
-        (tasks/attitude.py) -- built for exactly this -- only takes over when the primary goes stale, so
-        it would never engage. The PID would be handed a constant attitude and nothing would notice.
+        stays FRESH: every staleness guard downstream passes, and the databoard only hands over when a
+        source goes stale. When this part was the primary, the priority-1 filter (tasks/attitude.py)
+        would never have engaged; as the backup it would carry a frozen attitude the moment the filter
+        went quiet. The PID would be handed a constant attitude and nothing would notice.
 
         Measured on this bench: the part returns a bit-identical Euler triple indefinitely while its RAW
         accel and gyro keep streaming normally in the same 24-byte block read -- across a power cycle,
@@ -347,11 +351,11 @@ class Bno055(task.Task):
                 if self._fusion_alive(sample):
                     self._attitude.push(sample[:3])  # push our channels directly (roll/pitch fixnum)
                 elif not was_stalled:
-                    # STOP publishing attitude so the channel goes stale and the databoard hands over to
-                    # the priority-1 backup. Accel keeps flowing -- that half of the part still works.
+                    # STOP publishing attitude so the channel goes stale and the databoard skips it for
+                    # any other fresh source. Accel keeps flowing -- that half of the part still works.
                     # (This tested the latch AFTER _fusion_alive() had already set it, so it never fired.)
                     recorder.Recorder.log(self.name, 'fusion STALLED (frozen euler while accel moves)'
-                                                     ' -- attitude withheld, backup takes over')
+                                                     ' -- attitude withheld')
                 self._accel.push(sample[3:])  # low-g backup to the ADXL375
                 # roll/pitch columns are the RAW centidegree fixnum, not formatted decimals. to_str()
                 # built two strings per sample and MEASURED 170 B -- the single largest piece of this

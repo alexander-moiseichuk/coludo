@@ -17,6 +17,7 @@ import asyncio
 import json
 import os
 import sys
+import tempfile
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(_HERE))
@@ -27,6 +28,7 @@ import flight_telemetry  # noqa: E402
 import server  # noqa: E402
 
 BOARD_PORT, OPERATOR_PORT, WEB_PORT = 18301, 18302, 18303
+_ROSTER: tempfile.TemporaryDirectory = tempfile.TemporaryDirectory()  # the hub's gliders.json, never the live one
 _SESSION = '20260726_090000_1'
 
 # What the board would record for a short flight -- in the BOARD's shapes, including the per-servo
@@ -94,8 +96,8 @@ async def _fake_board(reader, writer):
 
 async def _chain() -> str:
     """Run the hub with a board attached, collect the streamed telemetry, return it as a capture."""
-    hub = server.Server(host='127.0.0.1', port=BOARD_PORT, operator_port=OPERATOR_PORT,
-                        web_port=WEB_PORT, log=lambda *a: None)
+    hub = server.Server(host='127.0.0.1', port=BOARD_PORT, operator_port=OPERATOR_PORT, web_port=WEB_PORT,
+                        log=lambda *a: None, roster_path=os.path.join(_ROSTER.name, 'gliders.json'))
     listener = await asyncio.start_server(hub._handle, '127.0.0.1', BOARD_PORT)
     board = await asyncio.start_server(_fake_board, '127.0.0.1', BOARD_PORT + 50)
 

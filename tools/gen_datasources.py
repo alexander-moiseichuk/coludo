@@ -27,7 +27,20 @@ sys.path.insert(0, _GLIDER)
 import config_default  # noqa: E402  -- after sys.path
 import layout  # noqa: E402
 
-_REVISIONS: tuple = ('v0.1', 'v1.0', 'v1.1')
+"""
+The boards to render, as (label, revision, SEN0253 parts the scan found) -- each laid out exactly as
+layout leaves it at boot: the SEN0253 is v1.0's own module (declared only), and on any other revision it
+is enabled only when a scan finds it. The last row is the both-modules case (a taster or an experimental
+board), the only place the BACKUP chain below the SEN0697 shows up -- ranked by layout, not by hand.
+"""
+_SEN0253: tuple = tuple(sorted(layout._BACKUP))
+_LAYOUTS: tuple = (
+    ('v0.1', 'v0.1', ()),                              # the v0.1 map + SEN0697 (TMS-7C)
+    ('v1.0', 'v1.0', ()),                              # legacy, declared: the SEN0253 alone, v1.x map
+    ('v1.1', 'v1.1', ()),                              # the v1.x map + SEN0697: the flight-board norm
+    ('v1.1 + SEN0253 backup', 'v1.1', _SEN0253),       # both modules: SEN0697 primary, SEN0253 backup
+)
+_LABELS: tuple = tuple(label for label, _revision, _found in _LAYOUTS)
 
 """
 When a source is NOT available for the whole flight. The config cannot express this -- a channel with a
@@ -94,10 +107,10 @@ def _driver_defaults() -> dict:
     return defaults
 
 
-def _providers(revision: str, defaults: dict) -> dict:
-    """{channel: [(priority, provider, rate_hz, timeout_ms, rate_is_default), ...]} for one revision."""
+def _providers(revision: str, found: tuple, defaults: dict) -> dict:
+    """{channel: [(priority, provider, rate_hz, timeout_ms, rate_is_default), ...]} for one scanned board."""
     cfg = config_default.default()
-    layout.apply(cfg, revision)
+    layout.apply(cfg, revision, found)
     channels = {}
     for group in ('sensors', 'components'):
         for device in cfg.get(group, []):
@@ -136,17 +149,19 @@ def _table(channels: dict) -> str:
         if not rows:
             continue
         lines += ['**%s**' % title, '',
-                  '| channel | primary (p0) | backups, in order | freshness | availability |',
+                  '| channel | primary | backups, in order | freshness | availability |',
                   '|---|---|---|---|---|']
         for channel in rows:
             seen.add(channel)
             entries = channels[channel]
-            primary = [e for e in entries if e[0] == 0]
-            backups = [e for e in entries if e[0] != 0]
+            # the PRIMARY is the best-ranked provider, as the databoard has it (channels[0]) -- not
+            # whoever holds p0: the attitude filter is the primary at p1, p0 being the HITL sim's slot.
+            # A socket-mate of the primary (the other laser driver) is an alternative, not a backup.
+            chain = _alternatives(entries)
             lines.append('| **%s** | %s | %s | %s | %s |' % (
                 channel,
-                _describe(primary[0]) if primary else '**none — no p0 provider**',
-                ' -> '.join(_describe(e) for e in backups) or '**none**',
+                _describe(chain[0]),
+                ' -> '.join(_describe(e) for e in chain[1:]) or '**none**',
                 '%s ms' % entries[0][3],
                 # attribute each caveat to the provider it belongs to: an unqualified note reads as if
                 # the whole channel is limited, when it is usually one fallback deep in the chain
@@ -209,7 +224,7 @@ def _degradation(channels: dict) -> str:
 def _deltas(per_revision: dict) -> str:
     """What changes between consecutive revisions, per channel."""
     lines = []
-    for older, newer in zip(_REVISIONS, _REVISIONS[1:]):
+    for older, newer in zip(_LABELS, _LABELS[1:]):
         lines.append('### %s → %s\n' % (older, newer))
         before, after = per_revision[older], per_revision[newer]
         rows = []
@@ -234,12 +249,12 @@ def _deltas(per_revision: dict) -> str:
 
 def _single_points(per_revision: dict) -> str:
     """Channels fed by exactly one provider -- where a single failure takes the channel with it."""
-    lines = ['| channel | ' + ' | '.join(_REVISIONS) + ' |', '|---|' + '---|' * len(_REVISIONS)]
+    lines = ['| channel | ' + ' | '.join(_LABELS) + ' |', '|---|' + '---|' * len(_LABELS)]
     every = sorted({c for channels in per_revision.values() for c in channels})
     for channel in every:
         cells = []
-        for revision in _REVISIONS:
-            entries = per_revision[revision].get(channel, [])
+        for label in _LABELS:
+            entries = per_revision[label].get(channel, [])
             cells.append('**1 — %s**' % entries[0][1] if len(entries) == 1 else '%d' % len(entries))
         if any('**' in cell for cell in cells):
             lines.append('| `%s` | %s |' % (channel, ' | '.join(cells)))
@@ -249,7 +264,7 @@ def _single_points(per_revision: dict) -> str:
 def render() -> str:
     """The whole document."""
     defaults = _driver_defaults()
-    per_revision = {revision: _providers(revision, defaults) for revision in _REVISIONS}
+    per_revision = {label: _providers(revision, found, defaults) for label, revision, found in _LAYOUTS}
     parts = ['# Data sources — which sensor feeds which channel', '',
              'GENERATED by `tools/gen_datasources.py` from `config_default.py` + `layout.py`. Do not edit by',
              'hand: a priority changed in the config and not here would leave this describing a fallback order',
@@ -257,13 +272,18 @@ def render() -> str:
              'is stale.', '',
              'The databoard hands a consumer the **highest-priority provider that is still fresh** (`p0` first,',
              'then `p1`, ...), where fresh means it pushed within the channel\'s freshness window. A rate marked',
-             '`*` comes from the driver default rather than the config.', '']
+             '`*` comes from the driver default rather than the config. `attitude` has no `p0` provider on a',
+             'board: that slot is the HITL sim\'s, and the complementary filter (`attitude`, p1) is the primary.', '',
+             'Each board is laid out as `layout` leaves it at boot. The SEN0697 is the primary attitude module on',
+             'every revision but legacy v1.0 (declared only -- a scan never names it); elsewhere the SEN0253',
+             '(BNO055 + BMP280) is enabled only when the scan finds it, and `layout` ranks it below the SEN0697',
+             'and the filter whatever the config says -- the last section shows that backup chain.', '']
     for channel, note in sorted(_CHANNEL_NOTES.items()):
         parts.append('* `%s` — %s' % (channel, note))
     parts.append('')
-    for revision in _REVISIONS:
-        parts += ['## %s' % revision, '', _table(per_revision[revision]),
-                  '_Degradation on primary failure:_', '', _degradation(per_revision[revision]), '']
+    for label in _LABELS:
+        parts += ['## %s' % label, '', _table(per_revision[label]),
+                  '_Degradation on primary failure:_', '', _degradation(per_revision[label]), '']
     parts += ['## What changes between revisions', '', _deltas(per_revision),
               '## Single-source channels', '',
               'A channel with one provider has no fallback: that sensor failing takes the channel with it.', '',
