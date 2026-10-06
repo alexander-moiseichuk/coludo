@@ -9,8 +9,8 @@
 //!    the flash idle, as the reference;
 //!  * the time to erase the whole partition (the pad's pre-erase).
 //!
-//! The build's sdkconfig decides which variant is measured (code in flash by default; XIP from PSRAM with
-//! sdkconfig.xip): the `meta;xip_from_psram` line says which.
+//! The build's sdkconfig decides which variant is measured (XIP from PSRAM, the default since B4; code in flash
+//! with CONFIG_SPIRAM_XIP_FROM_PSRAM=n): the `meta;xip_from_psram` line says which.
 
 use std::hint::black_box;
 use std::sync::Arc;

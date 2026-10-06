@@ -18,6 +18,11 @@ CONFIG_SPIRAM_SPEED_200M=y
 CONFIG_SPIRAM_USE_MALLOC=y
 # the boot-time PSRAM test costs 0.9 s of every boot (and of every warm start)
 CONFIG_SPIRAM_MEMTEST=n
+# Execute from PSRAM (the image is copied there at boot): flash erase/program then no longer freezes the caches,
+# because the P4's flash and PSRAM sit on separate buses -- the telemetry ring in flash depends on it (B4: a 1 kHz
+# loop kept max 19 us lateness, 0 missed, while the other core erased and programmed). Also a little faster than
+# flash XIP (control step -5%, pacing max 41 -> 19 us). Costs ~0.75 MB of PSRAM and ~10 KB internal RAM.
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y
 
 # FreeRTOS: a 1 ms tick so sleeps and timeouts resolve at 1 ms, not 10
 CONFIG_FREERTOS_HZ=1000
