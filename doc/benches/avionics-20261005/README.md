@@ -129,6 +129,7 @@ cargo build --release                                   # all binaries; nightly 
 | `src/bin/peak.rs` | CoreMark and peak throughput (FLOPS, OPS, MAC/s, stream bandwidth) on one core and both |
 | `src/bin/cases.rs` | our own flight functions, ported (twin of `src/glider/test/bench_cases.py`) |
 | `src/bin/soak.rs` | thermal soak: 10 min full load on both cores, then 3 min idle |
+| `src/bin/dma.rs` | PSRAM/internal bandwidth through AXI-GDMA, by burst size and number of engines |
 | `src/main.rs` | X1: console, panic → reboot, Wi-Fi through the C6, `whoami`/`health` to the CC hub |
 
 ## Results
@@ -226,6 +227,28 @@ needs 4-byte addressing, which `CONFIG_ESPTOOLPY_FLASHSIZE_32MB` turns on in the
 | pre-erase all 24 MB | 31 s (a pad-time, one-off cost) |
 | capacity | at 80 KB/s (400 Hz × 200 B rows) the ring holds 5 min before the GC must have freed blocks |
 
+### PSRAM bandwidth as DMA sees it (B3b, `src/bin/dma.rs`)
+
+The camera, ISP and H.264 encoder move frames by DMA, so CPU copies (latency-bound, 57 MB/s) say little about
+video. AXI-GDMA async memcpy, MB/s of copy (each byte read once and written once):
+
+| route | burst 16 (IDF default) | 32 | 64 | 128 |
+|---|---:|---:|---:|---:|
+| PSRAM → PSRAM | 71 | 103 | 137 | **178** |
+| PSRAM → internal | 106 | 132 | 175 | 175 |
+| internal → PSRAM | 176 | 176 | 176 | 176 |
+| internal → internal | 176 | 176 | 176 | 176 |
+| PSRAM → PSRAM, 2 / 3 engines at once (burst 64) | | | 162 / 163 | |
+
+* **The burst size is the big lever** (2.5× from 16 to 128): every video DMA should use the largest burst.
+* One engine tops out at ~176 MB/s; with PSRAM on both sides, several engines together still total ~162–178 MB/s,
+  so **the PSRAM at 200 MHz delivers ~330–355 MB/s of combined read + write traffic**.
+* **1080p30 is bandwidth-bound on v1.x**: CSI RAW in, ISP YUV420 out (93 MB/s), the encoder reading the frame and
+  its reference and writing the reconstruction is roughly 370+ MB/s -- above the measured ceiling, which matches
+  others' reports of ~27–29 fps. 25 fps is borderline, **20 fps fits** (the operator's accepted fallback). The
+  250 MHz PSRAM option (+25%) exists only for rev v3.x silicon (`SPIRAM_SPEED_250M` depends on
+  `!ESP32P4_SELECTS_REV_LESS_V3`; the v1.3 datasheet specifies 200 MHz).
+
 ### MicroPython 1.29.0 on the same board, the same day
 
 Flashed with `tools/flash_micropython.sh` (NVS kept), the existing benches run unchanged; raw logs in
@@ -282,7 +305,7 @@ test logged "Unrecoverable host sdio state, reset host mcu" and rebooted. Wi-Fi 
 
 * **B4 soak:** 10 minutes rather than 10 s. Then a **10 min stall test with video DMA on PSRAM**: code fetch now
   shares that bus.
-* **B3b:** L2 cache 256/512 KB and 128 B lines, plus GDMA `async_memcpy` for bulk PSRAM moves.
+* **B3b (rest):** L2 cache 256/512 KB and 128 B lines for the CPU side (DMA is measured).
 * **The recorder row:** 53 µs with floats, 20 µs with integers (`core::fmt`); a digit writer would cut it ~10×.
 * **esp_hosted 2.7.0, still open:** its streaming-mode RX trusts the length word -- an all-ones read becomes a
   ~1 MB allocation and an assert. Fixing that needs a patched copy of the component. Also: never call
