@@ -1114,7 +1114,8 @@ large (M4). Nothing on the link or health path touches FatFs.
 ### 3.10 SD and flash file layout
 
 **Session first, on two partitions (operator, 2026-10-06; built after M4).** Each session keeps its own
-directory, on both partitions: FAT does not like many files in one directory.
+directory, on both partitions: FAT does not like many files in one directory, and a damaged directory then costs
+one session, not the whole collection.
 
 ```
 Partition 1, the recordings (mounted at /sdcard):
@@ -1149,7 +1150,8 @@ Partition 2, the videos (mounted at /sdcard/videos):
   `VolToPart` maps logical drive 0 to partition 1 and drive 1 to partition 2 (`FF_MULTI_PARTITION` is on;
   `FATFS_VOLUME_COUNT` is 2). IDF's VFS takes the longest matching prefix, so `/sdcard/videos` (14 characters,
   within `ESP_VFS_PATH_MAX`) shadows partition 1. A card with one partition still works, with `videos/` as a plain
-  directory on it.
+  directory on it beside the session directories. That is worse: one volume lock and one FAT for both. But it
+  works.
 - **Over HTTP.** `files.rs` lists `videos` in `/sd/` itself, because it is a mount point, not a directory on
   partition 1.
 - **Pulling a flight.** `tools/board_pull.sh` reassembles a flight on the host as `<session>/recordings/` and
