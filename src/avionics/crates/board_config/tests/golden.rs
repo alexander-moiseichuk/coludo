@@ -142,7 +142,10 @@ fn wifi_answer(view: &Wifi) -> Value {
     let networks: Vec<Value> = view
         .networks
         .iter()
-        .map(|network| json!({"ssid": network.ssid, "retry_ms": network.retry_ms, "password": network.password}))
+        .map(|network| {
+            json!({"ssid": network.ssid, "retry_ms": network.retry_ms, "password": network.password,
+                   "tx_power_dbm": network.tx_power_dbm})
+        })
         .collect();
     json!({"policy_enabled": view.policy_enabled, "networks": networks, "hub": hub, "hub_port": view.hub_port})
 }

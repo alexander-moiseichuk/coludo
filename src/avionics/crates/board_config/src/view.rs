@@ -29,7 +29,7 @@ const REDACTED: &str = "<redacted>";
 const NO_PASSWORD: &str = "<empty>";
 
 /// The board's Wi-Fi as plan B's wifi driver and CC link set it up.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Wifi {
     /// Whether the radio is used at all: false when `wifi.policy` is 'disabled', which leaves the radio
     /// untouched for the session (drivers/wifi.py run()).
@@ -47,7 +47,7 @@ pub struct Wifi {
 ///
 /// Its Debug never prints the password, only whether there is one: a Wi-Fi view ends up in log lines, panic
 /// and assert messages, which reach the console, the recorder and CC's log stream.
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq)]
 pub struct Network {
     /// The SSID, never empty.
     pub ssid: String,
@@ -56,6 +56,10 @@ pub struct Network {
     /// The config's password for it: the entry's, else the section's, else empty. It is the FALLBACK: plan
     /// B prefers a non-empty first line of `<ssid>.creds`, the firmware the credential store's entry.
     pub password: String,
+    /// The transmit power cap for this network in dBm: the entry's `tx_power_dbm`, else the section's; None
+    /// leaves the radio's own (drivers/wifi.py applies it as `txpower` when it joins the network). A value that
+    /// is not a number reads as None.
+    pub tx_power_dbm: Option<f32>,
 }
 
 impl fmt::Debug for Network {
@@ -71,6 +75,7 @@ impl fmt::Debug for Network {
             .field("ssid", &self.ssid)
             .field("retry_ms", &self.retry_ms)
             .field("password", &format_args!("{password}"))
+            .field("tx_power_dbm", &self.tx_power_dbm)
             .finish()
     }
 }
@@ -155,6 +160,7 @@ pub fn wifi(document: &Value) -> Wifi {
 fn networks(section: &Map<String, Value>) -> Vec<Network> {
     let default_retry = section.get("retry_ms");
     let default_password = section.get("password");
+    let default_power = section.get("tx_power_dbm");
     let fallback_ssid: Vec<Value> = section
         .get("ssid")
         .filter(|ssid| truthy(ssid))
@@ -188,9 +194,20 @@ fn networks(section: &Map<String, Value>) -> Vec<Network> {
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_string(),
+                // a present entry key wins even when null, as plan B's dict.update does
+                tx_power_dbm: match entry.get("tx_power_dbm") {
+                    Some(value) => power(value),
+                    None => default_power.and_then(power),
+                },
             })
         })
         .collect()
+}
+
+/// A transmit power in dBm, None for anything but a number (a JSON bool is not one here).
+fn power(value: &Value) -> Option<f32> {
+    // f64 at the JSON boundary, f32 for the radio
+    value.as_f64().map(|dbm| dbm as f32)
 }
 
 /// A network's `retry_ms` (see [`wifi`]): absent is [`DEFAULT_RETRY_MS`].
@@ -258,7 +275,30 @@ mod tests {
             ssid: ssid.to_string(),
             retry_ms,
             password: password.to_string(),
+            tx_power_dbm: None,
         }
+    }
+
+    #[test]
+    fn transmit_power_inherits_and_an_entry_null_wins() {
+        let powers = |section: Value| -> Vec<Option<f32>> {
+            networks_of(section)
+                .iter()
+                .map(|network| network.tx_power_dbm)
+                .collect()
+        };
+        assert_eq!(powers(json!({"tx_power_dbm": 11, "networks": ["a"]})), [Some(11.0)]);
+        assert_eq!(
+            powers(json!({"tx_power_dbm": 11, "networks": [{"ssid": "a", "tx_power_dbm": 8.5}]})),
+            [Some(8.5)]
+        );
+        assert_eq!(
+            powers(json!({"tx_power_dbm": 11, "networks": [{"ssid": "a", "tx_power_dbm": null}]})),
+            [None]
+        );
+        assert_eq!(powers(json!({"networks": ["a"]})), [None]);
+        assert_eq!(powers(json!({"tx_power_dbm": "high", "networks": ["a"]})), [None]);
+        assert_eq!(powers(json!({"tx_power_dbm": true, "networks": ["a"]})), [None]);
     }
 
     /// The networks of a document holding just this wifi section.

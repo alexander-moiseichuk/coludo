@@ -7,6 +7,7 @@
 
 use std::sync::OnceLock;
 
+use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::nvs::{EspCustomNvsPartition, EspNvs, NvsCustom};
 use esp_idf_svc::sys;
 use serde_json::Value;
@@ -21,6 +22,10 @@ const CREDENTIALS: &str = "creds";
 const BOARD_KEY: &str = "board";
 /// The key of launch.config (src/glider mission.LAUNCH_PATH).
 const LAUNCH_KEY: &str = "launch";
+/// The longest SSID 802.11 allows, bytes.
+const SSID_LIMIT: usize = 32;
+/// The longest password the radio takes, bytes: a 64-hex-digit raw key (a passphrase stops at 63).
+const PASSWORD_LIMIT: usize = 64;
 
 /// Plan B's built-in board config (src/glider config_default.default(), generated into
 /// src/avionics/golden/config_default.json), stamped with this build's version: the fixture pins
@@ -62,10 +67,9 @@ impl Store {
         self.text(BOARD_KEY)
     }
 
-    /// Save board.config. NVS writes the new value before it drops the old one, so a cut keeps one of them.
+    /// Save board.config, replacing the old one only once the new one is written (plan B: atomic_write_json).
     pub fn save_board(&self, text: &str) -> anyhow::Result<()> {
-        self.nvs.set_blob(BOARD_KEY, text.as_bytes())?;
-        Ok(())
+        replace_blob(&self.nvs, BOARD_KEY, text.as_bytes())
     }
 
     /// Forget board.config, so the next boot runs the default; whether there was one.
@@ -78,10 +82,9 @@ impl Store {
         self.text(LAUNCH_KEY)
     }
 
-    /// Save launch.config.
+    /// Save launch.config, replacing the old one only once the new one is written.
     pub fn save_launch(&self, text: &str) -> anyhow::Result<()> {
-        self.nvs.set_blob(LAUNCH_KEY, text.as_bytes())?;
-        Ok(())
+        replace_blob(&self.nvs, LAUNCH_KEY, text.as_bytes())
     }
 
     /// The blob under `key` as UTF-8 text; None when absent, unreadable or not text.
@@ -108,19 +111,46 @@ impl Credentials {
         Self { partition }
     }
 
-    /// The stored password for `ssid`; None when none was stored.
+    /// The stored password for `ssid`; None when none (or an empty one) was stored -- plan B falls back to the
+    /// config's password on an empty `<ssid>.creds` line too.
     pub fn password(&self, ssid: &str) -> Option<String> {
         let nvs = EspNvs::new(self.partition.clone(), CREDENTIALS, false).ok()?;
-        let mut buffer = [0u8; 65]; // a WPA2 passphrase is at most 63 characters
-        nvs.get_str(&key(ssid), &mut buffer).ok()?.map(str::to_string)
+        let mut buffer = [0u8; PASSWORD_LIMIT + 1];
+        let password = nvs.get_str(&key(ssid), &mut buffer).ok()??;
+        (!password.is_empty()).then(|| password.to_string())
     }
 
-    /// Store the password for `ssid`; the link uses it on its next attempt at that network.
+    /// Store the password for `ssid`; the link uses it on its next attempt at that network. Refuses what the
+    /// radio could never use: an SSID outside 1..=32 bytes, a password over 64 (tools/provision.sh's limits).
     pub fn set_password(&self, ssid: &str, password: &str) -> anyhow::Result<()> {
+        anyhow::ensure!(
+            (1..=SSID_LIMIT).contains(&ssid.len()),
+            "an SSID is 1 to {SSID_LIMIT} bytes"
+        );
+        anyhow::ensure!(
+            password.len() <= PASSWORD_LIMIT,
+            "a password is at most {PASSWORD_LIMIT} bytes"
+        );
         let nvs = EspNvs::new(self.partition.clone(), CREDENTIALS, true)?;
-        nvs.set_str(&key(ssid), password)?;
+        let key = std::ffi::CString::new(key(ssid))?;
+        let value = std::ffi::CString::new(password)?;
+        // SAFETY: valid C strings on an open handle. IDF's set writes the new entry before it erases the old one
+        // (esp-idf-svc's set_str erases first, so a cut would lose the password).
+        sys::esp!(unsafe { sys::nvs_set_str(nvs.handle(), key.as_ptr(), value.as_ptr()) })?;
+        sys::esp!(unsafe { sys::nvs_commit(nvs.handle()) })?;
         Ok(())
     }
+}
+
+/// Write `bytes` under `key` with IDF's own update, which writes the new entry before it erases the old one, so a
+/// cut keeps one of the two. (esp-idf-svc's set_blob erases the key first: a cut there loses the document, and
+/// the next boot would run the default without saying so.)
+fn replace_blob(nvs: &EspNvs<NvsCustom>, key: &str, bytes: &[u8]) -> anyhow::Result<()> {
+    let key = std::ffi::CString::new(key)?;
+    // SAFETY: a valid C string and a byte slice of the given length on an open handle.
+    sys::esp!(unsafe { sys::nvs_set_blob(nvs.handle(), key.as_ptr(), bytes.as_ptr().cast(), bytes.len()) })?;
+    sys::esp!(unsafe { sys::nvs_commit(nvs.handle()) })?;
+    Ok(())
 }
 
 /// The NVS key of a network's password: `w` and the zlib CRC-32 of the SSID in 8 hex digits. NVS keys stop at 15

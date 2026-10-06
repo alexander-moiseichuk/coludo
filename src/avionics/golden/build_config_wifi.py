@@ -83,11 +83,15 @@ def _network(entry: dict) -> dict:
         ValueError - a member the view converts instead of carrying (it belongs in the Rust unit tests).
     """
     ssid, retry_ms, password = entry['ssid'], entry['retry_ms'], entry['password']
+    power = entry.get('tx_power_dbm')
     exact = (isinstance(ssid, str) and ssid and isinstance(password, str) and isinstance(retry_ms, int)
-             and not isinstance(retry_ms, bool) and 0 <= retry_ms < _U32_END)
+             and not isinstance(retry_ms, bool) and 0 <= retry_ms < _U32_END
+             and (power is None or (isinstance(power, (int, float)) and not isinstance(power, bool))))
     if not exact:
         raise ValueError('not comparable exactly: %r' % entry)
-    return {'ssid': ssid, 'retry_ms': retry_ms, 'password': password}
+    # the view carries the power as an f32, so the fixture writes it as a float
+    return {'ssid': ssid, 'retry_ms': retry_ms, 'password': password,
+            'tx_power_dbm': None if power is None else float(power)}
 
 
 def _hub(document: object) -> tuple:

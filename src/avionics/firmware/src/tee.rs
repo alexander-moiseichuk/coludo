@@ -134,5 +134,9 @@ static LOGGER: Logger = Logger;
 pub fn install() {
     if log::set_logger(&LOGGER).is_ok() {
         CONSOLE.filter().initialize();
+        // esp-idf-svc logs every NVS handle it drops at INFO; the credential store opens one per join attempt
+        let _ = CONSOLE
+            .filter()
+            .set_target_level("esp_idf_svc::nvs", log::LevelFilter::Warn);
     }
 }

@@ -1190,12 +1190,14 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "coludo"
+      "ssid": "coludo",
+      "tx_power_dbm": 11.0
      },
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "panda"
+      "ssid": "panda",
+      "tx_power_dbm": 11.0
      }
     ],
     "policy_enabled": true
@@ -1213,12 +1215,14 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "coludo"
+      "ssid": "coludo",
+      "tx_power_dbm": 11.0
      },
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "panda"
+      "ssid": "panda",
+      "tx_power_dbm": 11.0
      }
     ],
     "policy_enabled": true
@@ -1236,12 +1240,14 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "coludo"
+      "ssid": "coludo",
+      "tx_power_dbm": 11.0
      },
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "panda"
+      "ssid": "panda",
+      "tx_power_dbm": 11.0
      }
     ],
     "policy_enabled": true
@@ -1259,12 +1265,14 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "coludo"
+      "ssid": "coludo",
+      "tx_power_dbm": 11.0
      },
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "panda"
+      "ssid": "panda",
+      "tx_power_dbm": 11.0
      }
     ],
     "policy_enabled": true
@@ -1282,12 +1290,14 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "coludo"
+      "ssid": "coludo",
+      "tx_power_dbm": 11.0
      },
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "panda"
+      "ssid": "panda",
+      "tx_power_dbm": 11.0
      }
     ],
     "policy_enabled": true
@@ -1305,12 +1315,14 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "coludo"
+      "ssid": "coludo",
+      "tx_power_dbm": 11.0
      },
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "panda"
+      "ssid": "panda",
+      "tx_power_dbm": 11.0
      }
     ],
     "policy_enabled": true
@@ -1328,12 +1340,14 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "coludo"
+      "ssid": "coludo",
+      "tx_power_dbm": 11.0
      },
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "panda"
+      "ssid": "panda",
+      "tx_power_dbm": 11.0
      }
     ],
     "policy_enabled": true
@@ -1396,7 +1410,8 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "field"
+      "ssid": "field",
+      "tx_power_dbm": null
      }
     ],
     "policy_enabled": true
@@ -1420,7 +1435,8 @@
      {
       "password": "made-up-shared",
       "retry_ms": 2500,
-      "ssid": "field"
+      "ssid": "field",
+      "tx_power_dbm": null
      }
     ],
     "policy_enabled": true
@@ -1443,7 +1459,8 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "field"
+      "ssid": "field",
+      "tx_power_dbm": null
      }
     ],
     "policy_enabled": true
@@ -1466,7 +1483,8 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "field"
+      "ssid": "field",
+      "tx_power_dbm": null
      }
     ],
     "policy_enabled": true
@@ -1507,7 +1525,8 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "lab"
+      "ssid": "lab",
+      "tx_power_dbm": null
      }
     ],
     "policy_enabled": true
@@ -1545,22 +1564,26 @@
      {
       "password": "made-up-shared",
       "retry_ms": 2500,
-      "ssid": "lab"
+      "ssid": "lab",
+      "tx_power_dbm": null
      },
      {
       "password": "made-up-field",
       "retry_ms": 500,
-      "ssid": "field"
+      "ssid": "field",
+      "tx_power_dbm": null
      },
      {
       "password": "made-up-shared",
       "retry_ms": 2500,
-      "ssid": "car"
+      "ssid": "car",
+      "tx_power_dbm": null
      },
      {
       "password": "",
       "retry_ms": 2500,
-      "ssid": "phone"
+      "ssid": "phone",
+      "tx_power_dbm": null
      }
     ],
     "policy_enabled": true
@@ -1625,22 +1648,26 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "yes"
+      "ssid": "yes",
+      "tx_power_dbm": null
      },
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "auto"
+      "ssid": "auto",
+      "tx_power_dbm": null
      },
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "other"
+      "ssid": "other",
+      "tx_power_dbm": null
      },
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "on"
+      "ssid": "on",
+      "tx_power_dbm": 8.0
      }
     ],
     "policy_enabled": true
@@ -1671,12 +1698,14 @@
      {
       "password": "",
       "retry_ms": 0,
-      "ssid": "a"
+      "ssid": "a",
+      "tx_power_dbm": null
      },
      {
       "password": "",
       "retry_ms": 4294967295,
-      "ssid": "b"
+      "ssid": "b",
+      "tx_power_dbm": null
      }
     ],
     "policy_enabled": true
@@ -1701,7 +1730,8 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "lab"
+      "ssid": "lab",
+      "tx_power_dbm": null
      }
     ],
     "policy_enabled": false
@@ -1726,7 +1756,8 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "lab"
+      "ssid": "lab",
+      "tx_power_dbm": null
      }
     ],
     "policy_enabled": true
@@ -1751,7 +1782,8 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "lab"
+      "ssid": "lab",
+      "tx_power_dbm": null
      }
     ],
     "policy_enabled": true
@@ -1777,7 +1809,8 @@
      {
       "password": "",
       "retry_ms": 10000,
-      "ssid": "lab"
+      "ssid": "lab",
+      "tx_power_dbm": null
      }
     ],
     "policy_enabled": false
@@ -1908,7 +1941,7 @@
   "kind": "exact"
  },
  "meta": {
-  "commit": "07ab6f2d58a286c4bf7263ba7e4ebc5ac31b5b32",
+  "commit": "127bc0d4407e3ba667fea0ea1e7d18c37f0a3c5f",
   "generator": "config_wifi",
   "glider_tree": "01e3ab4641222777b06a6a149e28010d84975fd3",
   "python": "3.12",

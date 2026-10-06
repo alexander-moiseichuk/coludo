@@ -10,11 +10,11 @@ use std::io::{BufRead, BufReader, Write};
 use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
-use board_config::{Hub, Wifi};
+use board_config::{Hub, Network, Wifi};
 use esp_idf_svc::eventloop::EspSystemEventLoop;
 use esp_idf_svc::hal::modem::Modem;
 use esp_idf_svc::nvs::EspDefaultNvsPartition;
-use esp_idf_svc::wifi::{BlockingWifi, ClientConfiguration, Configuration, EspWifi};
+use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configuration, EspWifi};
 
 use crate::commands::Executor;
 use crate::config::Credentials;
@@ -40,6 +40,17 @@ pub fn run(
         event_loop,
     )
     .expect("the Wi-Fi event loop");
+    // the C6 must not keep the networks: wipe what earlier boots stored in its own NVS (SSID and password in
+    // clear) and hold the configuration in RAM from now on, as MicroPython does (network_wlan.c)
+    // SAFETY: plain driver calls on the initialised (not started) Wi-Fi, remoted to the C6.
+    unsafe {
+        let _ = esp_idf_svc::sys::esp!(esp_idf_svc::sys::esp_wifi_restore())
+            .inspect_err(|error| log::warn!("link :: wifi restore: {error}"));
+        let _ = esp_idf_svc::sys::esp!(esp_idf_svc::sys::esp_wifi_set_storage(
+            esp_idf_svc::sys::wifi_storage_t_WIFI_STORAGE_RAM
+        ))
+        .inspect_err(|error| log::warn!("link :: wifi storage: {error}"));
+    }
     // the microSD over HTTP (recordings, logs) -- only now: the Wi-Fi driver brought up the TCP/IP stack it needs
     let _files = crate::files::serve()
         .inspect_err(|error| log::warn!("files :: {error}"))
@@ -64,7 +75,9 @@ pub fn run(
             }
             continue;
         }
-        if !driver.is_connected().unwrap_or(false) {
+        // joined = associated AND holding an address (plan B's isconnected() follows the lease): an AP that
+        // associates but never leases must not pin the board -- join() disconnects it and the rotation moves on
+        if !driver.is_up().unwrap_or(false) {
             let Some(index) = rotation.next(&wifi, Instant::now()) else {
                 continue; // every network is inside its own retry window
             };
@@ -72,14 +85,15 @@ pub fn run(
             let password = credentials
                 .password(&network.ssid)
                 .unwrap_or_else(|| network.password.clone());
-            if let Err(error) = join(&mut driver, &network.ssid, &password) {
+            if let Err(error) = join(&mut driver, network, &password) {
                 log::warn!("link :: join {} failed: {error}", network.ssid);
                 continue;
             }
             log::info!("link :: joined {}", network.ssid);
         }
         let address = match driver.wifi().sta_netif().get_ip_info() {
-            Ok(info) => info.ip,
+            Ok(info) if !info.ip.is_unspecified() => info.ip,
+            Ok(_) => continue, // no lease (plan B _network_host: no hub for 0.0.0.0)
             Err(error) => {
                 log::warn!("link :: no address: {error}");
                 continue;
@@ -135,14 +149,23 @@ impl Rotation {
 }
 
 /// Join one network: configure, start, associate, and wait for an address.
-fn join(wifi: &mut BlockingWifi<EspWifi<'static>>, ssid: &str, password: &str) -> anyhow::Result<()> {
+fn join(wifi: &mut BlockingWifi<EspWifi<'static>>, network: &Network, password: &str) -> anyhow::Result<()> {
     let configuration = ClientConfiguration {
-        ssid: ssid
+        ssid: network
+            .ssid
+            .as_str()
             .try_into()
             .map_err(|_| anyhow::anyhow!("ssid longer than 32 bytes"))?,
         password: password
             .try_into()
             .map_err(|_| anyhow::anyhow!("password longer than 64 bytes"))?,
+        // no password = an open network; the default threshold (WPA2) would never join one, MicroPython's
+        // zeroed config (threshold OPEN) does
+        auth_method: if password.is_empty() {
+            AuthMethod::None
+        } else {
+            AuthMethod::WPA2Personal
+        },
         ..Default::default()
     };
     if wifi.is_started()? {
@@ -161,6 +184,11 @@ fn join(wifi: &mut BlockingWifi<EspWifi<'static>>, ssid: &str, password: &str) -
         esp_idf_svc::sys::esp!(unsafe {
             esp_idf_svc::sys::esp_wifi_set_ps(esp_idf_svc::sys::wifi_ps_type_t_WIFI_PS_NONE)
         })?;
+    }
+    if let Some(dbm) = network.tx_power_dbm {
+        // the radio's cap in quarter-dBm (MicroPython's txpower): the operator's signal-level knob
+        // SAFETY: a plain driver call on the started Wi-Fi.
+        esp_idf_svc::sys::esp!(unsafe { esp_idf_svc::sys::esp_wifi_set_max_tx_power((dbm * 4.0) as i8) })?;
     }
     // the C6 keeps the last network in its own NVS and may already be connecting to it; it then answers
     // ESP_ERR_WIFI_CONN, which here means "in progress", so wait for the address all the same
