@@ -1,11 +1,20 @@
-# Name,   Type, SubType, Offset,  Size
+# Coludo project, copyright under MIT license, Alexander Moiseichuk
+#
+# The 32 MB flash: the operator's layout (doc/specs/avionics-port.md §3.10). Below 8 MB the app and the settings,
+# from 8 MB to the end the telemetry ring.
+#
+# Name,   Type, SubType, Offset,   Size
 # nvs sits where MicroPython keeps it, so the boot counter and the calibrations survive a reflash either way
-nvs,      data, nvs,     0x9000,  0x6000
-phy_init, data, phy,     0xf000,  0x1000
-factory,  app,  factory, 0x10000, 0x400000
-# the board's own settings (launch.config now, the board config next): an NVS of its own, so a 10 KB config never
-# crowds the shared nvs above; 0x410000..0x7e0000 stays free for a second app slot (OTA)
-cfg,      data, nvs,     0x7e0000, 0x20000
+nvs,      data, nvs,     0x9000,   0x6000
+phy_init, data, phy,     0xf000,   0x1000
+# which of the two app slots boots; erased (flash.sh writes it so) boots ota_0. OTA itself comes later, over CC
+otadata,  data, ota,     0x10000,  0x2000
+# two app slots of 3 MB: today's image is 1.6 MB (the camera stack included)
+ota_0,    app,  ota_0,   0x20000,  0x300000
+ota_1,    app,  ota_1,   0x320000, 0x300000
+# the board's own settings, an NVS of its own (1 MB): board.config, launch.config, the Wi-Fi passwords, the
+# session-start record and the ring positions -- never crowding the shared nvs above. 0x720000..0x800000 is free.
+cfg,      data, nvs,     0x620000, 0x100000
 # the telemetry ring (the storage tier's top-priority store), found by label: 24 MB, to the end of the 32 MB part
 # (the code runs from PSRAM, so the flash only holds the app); above 16 MB it is reached with 4-byte addressing
 log,      data, undefined, 0x800000, 0x1800000

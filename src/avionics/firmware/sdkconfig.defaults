@@ -129,3 +129,8 @@ CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
 # lwIP's TCP/IP task on core 0: unpinned at priority 18 it can run on core 1, the flight core, beside the bus
 # owners (port plan §4.2). esp_hosted's own tasks are unpinned too; they need the OS-table hook (hosted_no_reboot).
 CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
+
+# No OTA app rollback, ever: with it, a build that has not yet confirmed itself is reverted at the next reset -- a
+# reboot in flight would come back on the OLD build. A reset always boots the slot otadata selects; the slot changes
+# only by an explicit OTA in SETTING (doc/specs/avionics-port.md M15), and flash.sh erases otadata + ota_1.
+CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n
