@@ -698,6 +698,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "flash_ring"
+version = "0.1.0"
+dependencies = [
+ "recorder_wire",
+]
+
+[[package]]
 name = "fnv"
 version = "1.0.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1141,6 +1148,24 @@ name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f8dcc9c7d52a811697d2151c701e0d08956f92b0e24136cf4cf27b57a6a0d9bf"
+
+[[package]]
+name = "recorder"
+version = "0.1.0"
+dependencies = [
+ "flash_ring",
+ "golden",
+ "recorder_wire",
+ "serde_json",
+]
+
+[[package]]
+name = "recorder_wire"
+version = "0.1.0"
+dependencies = [
+ "golden",
+ "serde_json",
+]
 
 [[package]]
 name = "regex"

@@ -1,0 +1,1443 @@
+{
+ "cases": [
+  {
+   "input": {
+    "decimate_us": 50000,
+    "pushes_us": [
+     10000000,
+     10010000,
+     10020000,
+     10030000,
+     10040000,
+     10050000,
+     10060000,
+     10070000,
+     10080000,
+     10090000,
+     10100000,
+     10110000,
+     10120000,
+     10130000,
+     10140000,
+     10150000,
+     10160000,
+     10170000,
+     10180000,
+     10190000,
+     10200000
+    ],
+    "telemetry_ms": 20
+   },
+   "name": "own_window_every_10_ms",
+   "output": [
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    }
+   ]
+  },
+  {
+   "input": {
+    "decimate_us": 0,
+    "pushes_us": [
+     10200000,
+     10207000,
+     10214000,
+     10221000,
+     10228000,
+     10235000,
+     10242000,
+     10249000,
+     10256000,
+     10263000,
+     10270000,
+     10277000,
+     10284000,
+     10291000,
+     10298000,
+     10305000,
+     10312000,
+     10319000,
+     10326000,
+     10333000,
+     10340000
+    ],
+    "telemetry_ms": 20
+   },
+   "name": "global_window_every_7_ms",
+   "output": [
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    }
+   ]
+  },
+  {
+   "input": {
+    "decimate_us": 0,
+    "pushes_us": [
+     10340000,
+     10340000,
+     10341000,
+     10341000,
+     10341000,
+     10345000,
+     10349000
+    ],
+    "telemetry_ms": 0
+   },
+   "name": "no_global_window_every_push_emits",
+   "output": [
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    }
+   ]
+  },
+  {
+   "input": {
+    "decimate_us": -1,
+    "pushes_us": [
+     10349000,
+     10349000,
+     10350000,
+     10351000,
+     10352000,
+     10379000,
+     10380000
+    ],
+    "telemetry_ms": 20
+   },
+   "name": "never_decimated_beside_a_global_window",
+   "output": [
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    }
+   ]
+  },
+  {
+   "input": {
+    "decimate_us": 30000,
+    "pushes_us": [
+     10380000,
+     10390000,
+     10400000,
+     10410000,
+     10420000,
+     10430000,
+     10440000,
+     10450000,
+     10460000,
+     10470000,
+     10480000,
+     10490000,
+     10500000,
+     10510000,
+     10520000,
+     10530000
+    ],
+    "telemetry_ms": 100
+   },
+   "name": "own_window_wins_over_a_longer_global",
+   "output": [
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    }
+   ]
+  },
+  {
+   "input": {
+    "decimate_us": 30000,
+    "pushes_us": [
+     10530000,
+     10540000,
+     10550000,
+     10560000,
+     10570000,
+     10580000,
+     10590000,
+     10600000,
+     10610000,
+     10620000,
+     10630000,
+     10640000,
+     10650000,
+     10660000,
+     10670000,
+     10680000
+    ],
+    "telemetry_ms": 5
+   },
+   "name": "own_window_wins_over_a_shorter_global",
+   "output": [
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    }
+   ]
+  },
+  {
+   "input": {
+    "decimate_us": 25000,
+    "pushes_us": [
+     15680000,
+     15681000,
+     15705000,
+     15729000,
+     15730000
+    ],
+    "telemetry_ms": 0
+   },
+   "name": "first_push_long_after_construction",
+   "output": [
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    }
+   ]
+  },
+  {
+   "input": {
+    "decimate_us": 25000,
+    "pushes_us": [
+     15730000,
+     15754000,
+     15755000,
+     15756000,
+     15780000
+    ],
+    "telemetry_ms": 0
+   },
+   "name": "first_push_at_construction",
+   "output": [
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    }
+   ]
+  },
+  {
+   "input": {
+    "decimate_us": 1000,
+    "pushes_us": [
+     15780000,
+     15781000,
+     15782000,
+     15783000,
+     15784000
+    ],
+    "telemetry_ms": 0
+   },
+   "name": "exactly_one_window_apart",
+   "output": [
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    }
+   ]
+  },
+  {
+   "input": {
+    "decimate_us": 1,
+    "pushes_us": [
+     15784000,
+     15784000,
+     15785000,
+     15785000
+    ],
+    "telemetry_ms": 0
+   },
+   "name": "a_microsecond_window",
+   "output": [
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    }
+   ]
+  },
+  {
+   "input": {
+    "decimate_us": 25000,
+    "pushes_us": [
+     15785000,
+     15792000,
+     15818000,
+     15844000,
+     15855000,
+     15857000,
+     15866000,
+     15885000,
+     15904000,
+     15926000,
+     15952000,
+     15970000,
+     15993000,
+     15996000,
+     16004000,
+     16031000,
+     16057000,
+     16061000,
+     16077000,
+     16094000,
+     16120000,
+     16144000,
+     16147000,
+     16173000,
+     16176000,
+     16191000,
+     16219000,
+     16219000,
+     16239000,
+     16245000,
+     16274000,
+     16297000,
+     16300000,
+     16330000,
+     16347000,
+     16352000,
+     16357000,
+     16360000,
+     16370000,
+     16392000,
+     16398000,
+     16409000,
+     16428000,
+     16443000,
+     16471000,
+     16478000,
+     16478000,
+     16496000,
+     16506000,
+     16514000,
+     16537000,
+     16554000,
+     16575000,
+     16576000,
+     16582000,
+     16599000,
+     16600000,
+     16601000,
+     16624000,
+     16626000
+    ],
+    "telemetry_ms": 0
+   },
+   "name": "jitter_25_ms_window",
+   "output": [
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    }
+   ]
+  },
+  {
+   "input": {
+    "decimate_us": 0,
+    "pushes_us": [
+     16626000,
+     16630000,
+     16630000,
+     16637000,
+     16640000,
+     16642000,
+     16646000,
+     16647000,
+     16658000,
+     16661000,
+     16665000,
+     16677000,
+     16687000,
+     16698000,
+     16701000,
+     16707000,
+     16708000,
+     16717000,
+     16728000,
+     16735000,
+     16735000,
+     16741000,
+     16746000,
+     16749000,
+     16752000,
+     16756000,
+     16763000,
+     16763000,
+     16766000,
+     16767000,
+     16775000,
+     16779000,
+     16789000,
+     16795000,
+     16802000,
+     16809000,
+     16816000,
+     16816000,
+     16816000,
+     16828000,
+     16833000,
+     16834000,
+     16846000,
+     16853000,
+     16854000,
+     16859000,
+     16871000,
+     16880000,
+     16888000,
+     16897000,
+     16898000,
+     16903000,
+     16905000,
+     16910000,
+     16910000,
+     16911000,
+     16922000,
+     16923000,
+     16933000,
+     16945000
+    ],
+    "telemetry_ms": 10
+   },
+   "name": "jitter_global_10_ms",
+   "output": [
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": false,
+     "emitted": false
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    }
+   ]
+  },
+  {
+   "input": {
+    "decimate_us": -1000,
+    "pushes_us": [
+     16945000,
+     16951000,
+     16965000,
+     16969000,
+     16979000,
+     16981000,
+     16987000,
+     17007000,
+     17024000,
+     17038000,
+     17045000,
+     17048000,
+     17062000,
+     17070000,
+     17078000,
+     17088000,
+     17097000,
+     17114000,
+     17126000,
+     17138000,
+     17153000,
+     17173000,
+     17174000,
+     17190000,
+     17204000,
+     17216000,
+     17222000,
+     17236000,
+     17249000,
+     17255000
+    ],
+    "telemetry_ms": 50
+   },
+   "name": "jitter_never_decimated",
+   "output": [
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    },
+    {
+     "due": true,
+     "emitted": true
+    }
+   ]
+  }
+ ],
+ "compare": {
+  "kind": "exact"
+ },
+ "meta": {
+  "commit": "c06bf0ae8780bebf2018c86a6b3fd92dd646086c",
+  "generator": "recorder",
+  "glider_tree": "01e3ab4641222777b06a6a149e28010d84975fd3",
+  "python": "3.12",
+  "source": "src/glider/recorder.py",
+  "tag": "micropython_plan_B"
+ }
+}

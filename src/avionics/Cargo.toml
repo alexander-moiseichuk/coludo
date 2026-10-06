@@ -24,6 +24,9 @@ golden = { path = "crates/golden" }
 control = { path = "crates/control" }
 mission = { path = "crates/mission" }
 board_config = { path = "crates/board_config" }
+recorder_wire = { path = "crates/recorder_wire" }
+flash_ring = { path = "crates/flash_ring" }
+recorder = { path = "crates/recorder" }
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: a JSON number parses to the exact f64 Python's json reads (config_id hashes the repr)
 serde_json = { version = "1", features = ["float_roundtrip"] }

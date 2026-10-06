@@ -1,0 +1,10 @@
+[package]
+name = "flash_ring"
+description = "The flash ring of the log partition: frame codec, geometry, boot scan, append with spill, reverse-order sector GC (doc/specs/avionics-port.md, Storage design)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+recorder_wire.workspace = true
