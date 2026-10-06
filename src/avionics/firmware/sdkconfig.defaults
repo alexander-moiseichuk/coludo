@@ -7,10 +7,12 @@ CONFIG_ESP32P4_REV_MIN_100=y
 # 360 MHz is the ceiling for rev < 3 (400 MHz only on chips Espressif qualified)
 CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_360=y
 
-# Flash: the part is a 32 MB GigaDevice (0xc8 0x4019). Declared 16 MB until >16 MB addressing is benched.
+# Flash: the part is a 32 MB GigaDevice (0xc8 0x4019, GD25Q256-class): declared in full. Above 16 MB IDF uses
+# 4-byte addressing through esp_flash (data only -- cache-mapping that range is experimental and never needed:
+# the code runs from PSRAM and the telemetry ring is read with esp_flash_read, never mmap).
 CONFIG_ESPTOOLPY_FLASHMODE_QIO=y
 CONFIG_ESPTOOLPY_FLASHFREQ_80M=y
-CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE_32MB=y
 
 # PSRAM (32 MB hex, on its own bus from the flash): on, in the heap for large allocations
 CONFIG_SPIRAM=y

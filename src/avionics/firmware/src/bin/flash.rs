@@ -49,6 +49,7 @@ fn main() {
     let size = unsafe { (*partition.0).size } as usize;
     report("meta", "partition_size", size as f32 / 1024.0, "KB");
     latencies(partition);
+    above_16_megabytes(partition);
     stall(partition, false);
     stall(partition, true);
     let start = micros();
@@ -171,6 +172,35 @@ fn latencies(partition: Partition) {
     }
 }
 
+/// Above 16 MB the flash needs 4-byte addressing; with 3-byte commands a write there would wrap 16 MB lower --
+/// onto the app. Write different 4 KB patterns exactly 16 MB apart and read both back.
+fn above_16_megabytes(partition: Partition) {
+    // SAFETY: a found partition descriptor lives for the program.
+    let (base, size) = unsafe { ((*partition.0).address as usize, (*partition.0).size as usize) };
+    let low = 0x10_0000; // partition offset 1 MB
+    let high = low + 0x100_0000; // 16 MB further on
+    if high + 4096 > size {
+        report("boundary", "skipped_partition_too_small", size as f32 / 1048576.0, "MB");
+        return;
+    }
+    let (pattern_low, pattern_high) = (vec![0x3cu8; 4096], vec![0xc3u8; 4096]);
+    let mut back = vec![0u8; 4096];
+    // SAFETY: inside the bench partition, live buffers.
+    let identical = unsafe {
+        sys::esp!(sys::esp_partition_erase_range(partition.0, low, 4096)).expect("erase");
+        sys::esp!(sys::esp_partition_erase_range(partition.0, high, 4096)).expect("erase");
+        sys::esp!(sys::esp_partition_write_raw(partition.0, low, pattern_low.as_ptr().cast(), 4096)).expect("write");
+        sys::esp!(sys::esp_partition_write_raw(partition.0, high, pattern_high.as_ptr().cast(), 4096)).expect("write");
+        sys::esp!(sys::esp_partition_read(partition.0, low, back.as_mut_ptr().cast(), 4096)).expect("read");
+        let low_intact = back == pattern_low;
+        sys::esp!(sys::esp_partition_read(partition.0, high, back.as_mut_ptr().cast(), 4096)).expect("read");
+        (low_intact, back == pattern_high)
+    };
+    report("boundary", "high_absolute_address", (base + high) as f32 / 1048576.0, "MB");
+    report("boundary", "low_kept_its_pattern", identical.0 as u8 as f32, "bool");
+    report("boundary", "high_kept_its_pattern", identical.1 as u8 as f32, "bool");
+}
+
 /// Sort `values` and report min / p50 / max.
 fn report_spread(group: &str, name: &str, values: &mut [f32], unit: &str) {
     values.sort_by(f32::total_cmp);
@@ -213,9 +243,15 @@ fn stall(partition: Partition, writing: bool) {
         .unwrap();
         std::thread::spawn(move || {
             let page = vec![0xa5u8; 4096];
-            let mut block = 16usize; // past the region latencies() used
+            // above 16 MB absolute when the partition reaches there (4-byte addressing under load), else past
+            // the region latencies() used
+            // SAFETY: a found partition descriptor lives for the program.
+            let (base, size) = unsafe { ((*partition.raw()).address as usize, (*partition.raw()).size as usize) };
+            let first = if base + size > 0x100_0000 + 128 * 65536 { (0x100_0000 - base.min(0x100_0000)) / 65536 } else { 16 };
+            let last = first + 111;
+            let mut block = first;
             while running.load(Ordering::Relaxed) {
-                // SAFETY: inside the bench partition (blocks 16..127 of 64 KB), with a live buffer.
+                // SAFETY: inside the bench partition (blocks first..=last of 64 KB), with a live buffer.
                 unsafe {
                     sys::esp!(sys::esp_partition_erase_range(partition.raw(), block * 65536, 65536)).expect("erase");
                     for index in 0..16 {
@@ -229,7 +265,7 @@ fn stall(partition: Partition, writing: bool) {
                     }
                 }
                 operations.fetch_add(1, Ordering::Relaxed);
-                block = if block >= 127 { 16 } else { block + 1 };
+                block = if block >= last { first } else { block + 1 };
             }
         })
     });

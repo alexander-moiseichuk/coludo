@@ -18,7 +18,7 @@ idf_path=$(grep -m1 '^IDF_PATH:' "$idf_build/CMakeCache.txt" 2>/dev/null | cut -
 idf_path=${idf_path:-$HOME/.espressif/esp-idf/v5.5.5}
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-esptool --chip esp32p4 elf2image --flash-mode qio --flash-freq 80m --flash-size 16MB \
+esptool --chip esp32p4 elf2image --flash-mode qio --flash-freq 80m --flash-size 32MB \
     --min-rev-full 100 --max-rev-full 199 --elf-sha256-offset 0xb0 -o "$work/app.bin" "$elf" >/dev/null
 python3 "$idf_path/components/partition_table/gen_esp32part.py" -q "$here/partitions.csv" "$work/partitions.bin"
 esptool --chip esp32p4 --port "${PORT:-/dev/ttyACM0}" --baud "${BAUD:-921600}" write-flash \

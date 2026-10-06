@@ -3,6 +3,6 @@
 nvs,      data, nvs,     0x9000,  0x6000
 phy_init, data, phy,     0xf000,  0x1000
 factory,  app,  factory, 0x10000, 0x400000
-# the telemetry ring (the storage tier's top-priority store), found by label: espflash rejects custom subtypes. Provisional: B4 sizes it and decides whether it
-# moves to the upper 16 MB (4-byte addressing) of the 32 MB part
-log,      data, undefined, 0x800000, 0x800000
+# the telemetry ring (the storage tier's top-priority store), found by label: 24 MB, to the end of the 32 MB part
+# (the code runs from PSRAM, so the flash only holds the app); above 16 MB it is reached with 4-byte addressing
+log,      data, undefined, 0x800000, 0x1800000

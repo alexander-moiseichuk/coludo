@@ -107,7 +107,7 @@ Flag sets, each a full build of the same sources (`CARGO_PROFILE_RELEASE_*`; `os
 | concurrency | one owner per resource; atomics + task notify; **no mutex in the hot path** | std Mutex 4.25 µs, FreeRTOS mutex 3.98 µs, atomics 59 ns |
 | floats | **f32 only -- no f64 anywhere** (JSON via typed structs; lat/lon in a local metric frame); never in an ISR | no double-precision unit: f64 is 10–15× slower; a float in an ISR aborts; `json!` widens f32 to f64 |
 | temperature | on-die sensor (20..100 °C band, ±2 °C) on health and every bench | CPU load alone: +4 °C (see the soak) |
-| storage | 8 MB `log` partition (provisional) for the telemetry ring | pre-erase 8 MB in 8.6 s |
+| storage | flash declared 32 MB; **24 MB `log` partition** (0x800000 to the end) for the telemetry ring | 4-byte addressing verified across 16 MB; 0 missed ticks while writing above it; pre-erase 31 s |
 | Wi-Fi | power save off; one write per reply line; `TCP_NODELAY` | hub round trip 154 ms → 3 ms |
 | console | UART0 (CH343P) speaks the CC protocol; DTR+RTS held asserted on open | releasing them resets the board |
 | flashing | esptool `elf2image` + IDF `gen_esp32part.py` (`firmware/flash.sh`) | espflash rejects custom subtypes and cannot package XIP images |
@@ -212,6 +212,20 @@ The same bench on the XIP build costs nothing that matters, and is slightly fast
 * 64 KB PSRAM copies −2%;
 * about 0.75 MB of PSRAM for the copied image.
 
+### The whole flash for the ring: 32 MB declared, `log` = 24 MB (0x800000–0x2000000)
+
+With the code in PSRAM the flash only holds the ~1 MB app, so the telemetry ring takes everything from 8 MB to
+the end of the 32 MB part; a background GC erases blocks once the SD copy is confirmed. Above 16 MB the flash
+needs 4-byte addressing, which `CONFIG_ESPTOOLPY_FLASHSIZE_32MB` turns on in the bootloader and `esp_flash`
+(data access only -- the ring is never cache-mapped):
+
+| measure | result |
+|---|---|
+| boundary check: 4 KB patterns at absolute 9 MB and 25 MB (16 MB apart) | **both intact** -- no wrap onto the low half (the app) |
+| stall test with the writer entirely above 16 MB (16–23 MB) | 1 kHz loop: max **17 µs**, **0 missed** (47 blocks of 64 KB written in 10 s) |
+| pre-erase all 24 MB | 31 s (a pad-time, one-off cost) |
+| capacity | at 80 KB/s (400 Hz × 200 B rows) the ring holds 5 min before the GC must have freed blocks |
+
 ### MicroPython 1.29.0 on the same board, the same day
 
 Flashed with `tools/flash_micropython.sh` (NVS kept), the existing benches run unchanged; raw logs in
@@ -274,7 +288,5 @@ test logged "Unrecoverable host sdio state, reset host mcu" and rebooted. Wi-Fi 
   ~1 MB allocation and an assert. Fixing that needs a patched copy of the component. Also: never call
   `esp_hosted_deinit` with the SD card mounted (2.7.0 deinits the whole SDMMC host), and decide whether a parked
   link may reboot the board on the ground (never in flight; the post-landing beacon needs Wi-Fi).
-* **The 32 MB part's upper 16 MB:** IDF marks `0x19`-class GD chips 32 MB-capable (4-byte addressing). The ring
-  could live there.
 * **S1/S2:** SD on SDMMC slot 0 next to the C6 on slot 1. V1: the camera.
 * **Pin the nightly** (`rust-toolchain.toml` says `nightly`; it was 1.101.0-nightly 2026-10-04 here).
