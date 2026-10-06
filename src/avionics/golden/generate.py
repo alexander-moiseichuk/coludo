@@ -47,7 +47,7 @@ import sys
 import shims
 
 _HERE: str = os.path.dirname(os.path.abspath(__file__))
-_TAG: str = 'micropython_plan_B'  # the git tag plan B is frozen at
+_TAG: str = 'micropython_plan_B_2'  # the git tag plan B is frozen at: the original plus the bus re-arm fix (76c138c)
 _PYTHON: str = '3.12'  # the oracle's CPython major.minor (meta.python)
 _GLIDER: str = ':(top)src/glider'  # plan B, as a git pathspec from the repository root
 _GLIDER_TESTS: str = ':(top,exclude)src/glider/test'  # its tests and benches, which the tag does not pin

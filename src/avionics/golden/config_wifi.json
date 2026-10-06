@@ -1941,11 +1941,11 @@
   "kind": "exact"
  },
  "meta": {
-  "commit": "127bc0d4407e3ba667fea0ea1e7d18c37f0a3c5f",
+  "commit": "76c138c418f780a41bf433756207931211199bf7",
   "generator": "config_wifi",
-  "glider_tree": "01e3ab4641222777b06a6a149e28010d84975fd3",
+  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
   "python": "3.12",
   "source": "src/glider/drivers/wifi.py (setup), src/glider/tasks/cc_link.py, src/glider/cc_client.py (Client); src/glider/config.py, src/glider/config_default.py, src/glider/config_hitl.py, tools/launch_config.py, launches/20261003/*/*.config",
-  "tag": "micropython_plan_B"
+  "tag": "micropython_plan_B_2"
  }
 }

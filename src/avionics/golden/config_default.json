@@ -589,12 +589,12 @@
  },
  "mcu": "esp32p4",
  "meta": {
-  "commit": "2299726dbfd443c9e5c83d7e1278c75e8812912a",
+  "commit": "76c138c418f780a41bf433756207931211199bf7",
   "generator": "config_default",
-  "glider_tree": "01e3ab4641222777b06a6a149e28010d84975fd3",
+  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
   "python": "3.12",
   "source": "src/glider/config_default.py, src/glider/config.py",
-  "tag": "micropython_plan_B"
+  "tag": "micropython_plan_B_2"
  },
  "note": "document.board.firmware_version is the frozen dev: restamp it with the running build before serving the document, as plan B does (config_id leaves it out, so the id stands)"
 }

@@ -811,12 +811,12 @@
   }
  ],
  "meta": {
-  "commit": "c06bf0ae8780bebf2018c86a6b3fd92dd646086c",
+  "commit": "76c138c418f780a41bf433756207931211199bf7",
   "generator": "recorder_wire",
-  "glider_tree": "01e3ab4641222777b06a6a149e28010d84975fd3",
+  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
   "python": "3.12",
   "source": "src/glider/recorder.py, src/glider/test/test_recorder.py, tools/recorder_wire.py",
-  "tag": "micropython_plan_B"
+  "tag": "micropython_plan_B_2"
  },
  "prefixes": [
   {
