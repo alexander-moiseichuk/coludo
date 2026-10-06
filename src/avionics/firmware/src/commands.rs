@@ -64,6 +64,21 @@ fn whoami(board: &Board) -> String {
     )
 }
 
+/// The non-nominal states, one operator signal (src/glider cc_client health `degraded`).
+fn degraded() -> Vec<&'static str> {
+    let mut degraded = Vec::new();
+    // SAFETY: plain reads of flags hosted_no_reboot keeps.
+    unsafe {
+        if !sys::hosted_no_reboot_installed() {
+            degraded.push("c6-reboot-guard-missing"); // a C6 glitch would reboot this board
+        }
+        if sys::hosted_link_down() {
+            degraded.push("c6-link-parked"); // the Wi-Fi link failed; it is gone until the next boot
+        }
+    }
+    degraded
+}
+
 /// `ok <json>`: the heartbeat vitals.
 fn health(board: &Board) -> String {
     let info = Health {
@@ -73,7 +88,7 @@ fn health(board: &Board) -> String {
         uptime: board::uptime_ms(),
         stage: "setting",
         layout: None,
-        degraded: Vec::new(),
+        degraded: degraded(),
     };
     cc_protocol::build("ok", &[&serde_json::to_string(&info).unwrap_or_default()], &[])
 }

@@ -2,7 +2,8 @@
 //! an operator at the cable may run.
 //!
 //! `wifi <ssid> <password>` stores the network to join (values follow the CC encoding, so a password with
-//! spaces travels as `base64:`); `reboot` restarts; `panic` panics on purpose, to prove a panic reboots.
+//! spaces travels as `base64:`); `reboot` restarts; `panic` panics on purpose, to prove a panic reboots;
+//! `c6reset` browns the Wi-Fi co-processor out on purpose, to prove a failing C6 link does not reboot the P4.
 
 use std::io::{BufRead, Write};
 use std::sync::Arc;
@@ -13,6 +14,9 @@ use esp_idf_svc::io::vfs::BlockingStdIo;
 
 use crate::board::Board;
 use crate::commands;
+
+/// The P4 pin that drives the C6's EN (the Function-EV pinout; esp_hosted's slave reset).
+const C6_ENABLE_PIN: i32 = 54;
 
 /// The console thread's stack: the commands build JSON, nothing deeper.
 const STACK_SIZE: usize = 8192;
@@ -62,6 +66,16 @@ fn operator(line: &str, board: &Board) -> Option<String> {
             println!("ok rebooting");
             let _ = std::io::stdout().flush();
             esp_idf_svc::hal::reset::restart();
+        }
+        "c6reset" => {
+            // the C6's EN is P4 GPIO54 (esp_hosted drives it as an output): 100 ms low = a C6 brown-out
+            // SAFETY: level writes on the pin esp_hosted already configured as an output.
+            unsafe {
+                esp_idf_svc::sys::gpio_set_level(C6_ENABLE_PIN, 0);
+                std::thread::sleep(std::time::Duration::from_millis(100));
+                esp_idf_svc::sys::gpio_set_level(C6_ENABLE_PIN, 1);
+            }
+            Some(cc_protocol::build("ok", &["c6reset"], &[]))
         }
         "wifi" => Some(match message.args.as_slice() {
             [ssid, password] => match board.set_credentials(ssid, password) {

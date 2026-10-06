@@ -33,8 +33,19 @@ pub fn run(
     )
     .expect("the Wi-Fi event loop");
     let mut told = false;
+    let mut parked = false;
     loop {
         std::thread::sleep(BACKOFF);
+        // SAFETY: reads the flag hosted_no_reboot sets when it parks the failed C6 transport.
+        if unsafe { esp_idf_svc::sys::hosted_link_down() } {
+            // every Wi-Fi call would now wait out a 5 s RPC timeout, for nothing: the link is gone until the next
+            // boot (a reboot restores it; on the ground the operator runs `reboot` on the console)
+            if !parked {
+                log::error!("link :: the C6 link is parked -- Wi-Fi is off until the next boot");
+                parked = true;
+            }
+            continue;
+        }
         if !wifi.is_connected().unwrap_or(false) {
             let Some((ssid, password)) = board.credentials() else {
                 if !told {
