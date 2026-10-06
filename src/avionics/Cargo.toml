@@ -23,9 +23,12 @@ sequencer = { path = "crates/sequencer" }
 golden = { path = "crates/golden" }
 control = { path = "crates/control" }
 mission = { path = "crates/mission" }
+board_config = { path = "crates/board_config" }
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: a JSON number parses to the exact f64 Python's json reads (config_id hashes the repr)
 serde_json = { version = "1", features = ["float_roundtrip"] }
+# config_id is sha256 over the canon text; no std or asm features are needed for a few kilobytes at boot
+sha2 = { version = "0.10", default-features = false }
 
 [profile.release]
 debug = true  # symbols stay on the host (the .elf); the flashed image is unaffected

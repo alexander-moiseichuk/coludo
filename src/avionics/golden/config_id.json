@@ -1,0 +1,5601 @@
+{
+ "bases": {
+  "default": {
+   "board": {
+    "firmware_version": "dev",
+    "id": "taster",
+    "layout": "auto",
+    "mcu": "esp32p4",
+    "rev": 1,
+    "setup_retries": 3
+   },
+   "buses": {
+    "i2c": {
+     "0": {
+      "freq": 400000,
+      "scl": 8,
+      "sda": 7
+     },
+     "1": {
+      "freq": 400000,
+      "scl": 30,
+      "sda": 31
+     }
+    },
+    "spi": {
+     "1": {
+      "baud": 5000000,
+      "miso": 46,
+      "mode": 3,
+      "mosi": 47,
+      "sck": 48
+     }
+    },
+    "uart": {
+     "1": {
+      "baud": 921600,
+      "tx": 20
+     },
+     "2": {
+      "baud": 9600,
+      "rx": 23,
+      "tx": 22
+     }
+    }
+   },
+   "components": [
+    {
+     "activity": "recorder",
+     "bus": "uart",
+     "enabled": true,
+     "id": 1,
+     "name": "recorder"
+    },
+    {
+     "debounce_ms": 20,
+     "driver": "separation",
+     "enabled": true,
+     "name": "separation",
+     "pin": "separation_switch"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_yaw",
+     "pin": "servo_yaw"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_left",
+     "pin": "servo_eleron_left"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_right",
+     "pin": "servo_eleron_right"
+    },
+    {
+     "activity": "sequencer",
+     "apogee_arm_ms": 4000,
+     "apogee_drop_m": 5.0,
+     "boost_timeout_ms": 12000,
+     "disable_gc_flight": true,
+     "enabled": true,
+     "flight_timeout_ms": 300000,
+     "ground_ms": 3000,
+     "land_agl_m": 5.0,
+     "land_ms": 300,
+     "land_timeout_ms": 10000,
+     "launch_alt_m": 10.0,
+     "launch_g": 2.5,
+     "launch_ms": 100,
+     "name": "sequencer",
+     "period_ms": 50,
+     "still_g": 0.3
+    },
+    {
+     "activity": "checkpoint",
+     "checkpoint_s": 1,
+     "enabled": true,
+     "name": "checkpoint",
+     "warm_start": true
+    },
+    {
+     "activity": "gnss_calib",
+     "enabled": true,
+     "min_samples": 5,
+     "name": "gnss_calib",
+     "period_ms": 1000
+    },
+    {
+     "activity": "flight",
+     "airspeed_ceiling_hz": 50,
+     "airspeed_dive_pitch": -45.0,
+     "airspeed_floor_hz": 5,
+     "airspeed_unconfident_ms": 30.0,
+     "bank_limit": 45,
+     "boost_engage_speed": 15.0,
+     "enabled": false,
+     "endgame_alt_m": 50,
+     "endgame_max_bank": 60,
+     "endgame_pattern": "auto",
+     "final_approach_agl": 8,
+     "final_cross_gain": 3.0,
+     "final_intercept_deg": 45,
+     "gains": {
+      "pitch": {},
+      "roll": {},
+      "yaw": {}
+     },
+     "glide_ratio": 5.5,
+     "gnss_steep_pitch": 45.0,
+     "land_bank_gain": 3.0,
+     "land_bank_limit": 45,
+     "loiter_capture_m": 120,
+     "loiter_gain": 3.0,
+     "loiter_radius_m": 30,
+     "name": "flight",
+     "nav_bank_gain": 1.5,
+     "nav_period_ms": 100,
+     "period_ms": 20,
+     "pitot_gain": 0.5,
+     "pitot_max_ms": 28.0,
+     "pitot_min_ms": 3.0,
+     "schedule_hz": 100,
+     "stages": {
+      "boosting": {},
+      "gliding": {
+       "pitch": -6,
+       "roll": 0
+      },
+      "landing": {
+       "pitch": -6,
+       "roll": 0
+      }
+     },
+     "stall_margin": 1.2,
+     "stall_speed_1g": 9.0,
+     "steer_filter_shift": 3,
+     "timer_id": 0,
+     "wind": {
+      "calm_speed": 0.5,
+      "max_speed": 15.0,
+      "min_speed": 3.0,
+      "triangle_alpha": 0.05
+     }
+    },
+    {
+     "activity": "watchdog",
+     "enabled": false,
+     "name": "watchdog",
+     "period_ms": 200,
+     "stall_ms": 500,
+     "wdt_timeout_ms": 5000
+    },
+    {
+     "activity": "health",
+     "enabled": true,
+     "name": "health",
+     "period_ms": 1000,
+     "probe_ms": 10
+    },
+    {
+     "activity": "field",
+     "auto_arm": false,
+     "auto_arm_dwell_s": 60,
+     "enabled": false,
+     "fallback_bearing_deg": 0.0,
+     "fallback_depth_m": 90.0,
+     "fallback_near_m": 50.0,
+     "fallback_width_m": 100.0,
+     "max_range_m": 200,
+     "name": "field",
+     "period_ms": 1000,
+     "site_select": true,
+     "still_g": 0.3
+    },
+    {
+     "driver": "bluetooth",
+     "enabled": true,
+     "name": "bluetooth",
+     "radio": false
+    },
+    {
+     "driver": "wifi",
+     "enabled": true,
+     "name": "wifi"
+    },
+    {
+     "activity": "cc",
+     "enabled": true,
+     "name": "cc"
+    }
+   ],
+   "fins": {
+    "concurrency": 1,
+    "limit_multiplier": 1.0,
+    "mixer": {
+     "limit_deg": 45,
+     "neutral_deg": 90,
+     "surfaces": {
+      "servo_eleron_left": {
+       "pitch": 1,
+       "roll": 1
+      },
+      "servo_eleron_right": {
+       "pitch": 1,
+       "roll": -1
+      },
+      "servo_yaw": {
+       "yaw": 1
+      }
+     }
+    }
+   },
+   "pins": {
+    "accel_int1": 4,
+    "adxl375_cs": 49,
+    "ina226_alert": 29,
+    "laser_int": 3,
+    "laser_xshut": 5,
+    "lsm6dso32_cs": 50,
+    "lsm6dso32_int1": 28,
+    "separation_switch": 33,
+    "servo_eleron_left": 27,
+    "servo_eleron_right": 32,
+    "servo_yaw": 26
+   },
+   "recorder": {
+    "cell_size": 256,
+    "log_capacity": 256,
+    "stats_ms": 1000,
+    "telemetry_ms": 0,
+    "tlm_capacity": 256
+   },
+   "sensors": [
+    {
+     "addr": 83,
+     "bus": "spi",
+     "cs_pin": "adxl375_cs",
+     "driver": "adxl375",
+     "enabled": true,
+     "id": 1,
+     "int_pin": "accel_int1",
+     "name": "accel_adxl375",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 2,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 106,
+     "bus": "spi",
+     "cs_pin": "lsm6dso32_cs",
+     "driver": "lsm6dso32",
+     "enabled": true,
+     "id": 1,
+     "int_pin": "lsm6dso32_int1",
+     "name": "imu_lsm6dso32",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 0,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 0,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 40,
+     "bus": "i2c",
+     "driver": "bno055",
+     "enabled": false,
+     "id": 0,
+     "name": "imu_bno055",
+     "provides": {
+      "accel": {
+       "priority": 3,
+       "timeout_ms": 40
+      },
+      "attitude": {
+       "priority": 2,
+       "timeout_ms": 40
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "accel_period_ms": 50,
+     "activity": "attitude",
+     "corr_shift": 4,
+     "enabled": true,
+     "grav_high_g": 1.3,
+     "grav_low_g": 0.7,
+     "name": "attitude",
+     "period_ms": 20,
+     "provides": {
+      "attitude": {
+       "priority": 1,
+       "timeout_ms": 40
+      }
+     },
+     "turn_gate_deg_s": 4
+    },
+    {
+     "addr": 99,
+     "bus": "i2c",
+     "driver": "icp10111",
+     "enabled": true,
+     "id": 0,
+     "name": "baro_icp10111",
+     "provides": {
+      "altitude": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 118,
+     "bus": "i2c",
+     "driver": "bmp280",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_bmp280",
+     "provides": {
+      "altitude": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 2,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 105,
+     "bus": "i2c",
+     "driver": "bmi323",
+     "enabled": true,
+     "id": 0,
+     "int_pin": null,
+     "name": "imu_bmi323",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 1,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 1,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 21,
+     "bus": "i2c",
+     "driver": "bmm350",
+     "enabled": true,
+     "id": 0,
+     "name": "mag_bmm350",
+     "period_ms": 100,
+     "provides": {
+      "mag": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 71,
+     "bus": "i2c",
+     "driver": "bmp581",
+     "enabled": true,
+     "id": 0,
+     "name": "baro_bmp581",
+     "provides": {
+      "altitude": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 1,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 37,
+     "air_density": 1.18,
+     "bus": "i2c",
+     "driver": "sdp810",
+     "enabled": true,
+     "id": 0,
+     "name": "airspeed_sdp810",
+     "period_ms": 20,
+     "provides": {
+      "airspeed": {
+       "priority": 0,
+       "timeout_ms": 100
+      },
+      "dynamic_pressure": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "zero_offset_pa": 0.0
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l4cx",
+     "enabled": true,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "timing_budget_ms": 100,
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l1x",
+     "enabled": true,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl_l1x",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 64,
+     "alert_ma": 3000,
+     "alert_pin": "ina226_alert",
+     "bus": "i2c",
+     "driver": "ina226",
+     "enabled": true,
+     "id": 1,
+     "max_current_ma": 5000,
+     "name": "power_ina226",
+     "period_ms": 100,
+     "provides": {
+      "current": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "power": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "voltage": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "shunt_mohms": 10
+    },
+    {
+     "addr": null,
+     "bus": "uart",
+     "driver": "atgm336h",
+     "enabled": true,
+     "hz": 10,
+     "id": 2,
+     "name": "gnss",
+     "provides": {
+      "altitude": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "course": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "elevation": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "position": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "speed": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    }
+   ],
+   "version": "20261005",
+   "wifi": {
+    "cc_port": 1234,
+    "networks": [
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "coludo"
+     },
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "panda"
+     }
+    ],
+    "password": "",
+    "policy": "auto",
+    "ssid": "coludo",
+    "tx_power_dbm": 11
+   }
+  },
+  "flight_ready_new": {
+   "board": {
+    "firmware_version": "dev",
+    "id": "TMS-7G",
+    "layout": "auto",
+    "mcu": "esp32p4",
+    "rev": 1,
+    "setup_retries": 3
+   },
+   "buses": {
+    "i2c": {
+     "0": {
+      "freq": 400000,
+      "scl": 8,
+      "sda": 7
+     },
+     "1": {
+      "freq": 400000,
+      "scl": 30,
+      "sda": 31
+     }
+    },
+    "spi": {
+     "1": {
+      "baud": 5000000,
+      "miso": 46,
+      "mode": 3,
+      "mosi": 47,
+      "sck": 48
+     }
+    },
+    "uart": {
+     "1": {
+      "baud": 921600,
+      "tx": 20
+     },
+     "2": {
+      "baud": 9600,
+      "rx": 23,
+      "tx": 22
+     }
+    }
+   },
+   "components": [
+    {
+     "activity": "recorder",
+     "bus": "uart",
+     "enabled": true,
+     "id": 1,
+     "name": "recorder"
+    },
+    {
+     "debounce_ms": 20,
+     "driver": "separation",
+     "enabled": true,
+     "name": "separation",
+     "pin": "separation_switch"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_yaw",
+     "pin": "servo_yaw"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_left",
+     "pin": "servo_eleron_left"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_right",
+     "pin": "servo_eleron_right"
+    },
+    {
+     "activity": "sequencer",
+     "apogee_arm_ms": 4000,
+     "apogee_drop_m": 5.0,
+     "boost_timeout_ms": 12000,
+     "disable_gc_flight": true,
+     "enabled": true,
+     "flight_timeout_ms": 300000,
+     "ground_ms": 3000,
+     "land_agl_m": 5.0,
+     "land_ms": 300,
+     "land_timeout_ms": 10000,
+     "launch_alt_m": 10.0,
+     "launch_g": 2.5,
+     "launch_ms": 100,
+     "name": "sequencer",
+     "period_ms": 50,
+     "still_g": 0.3
+    },
+    {
+     "activity": "checkpoint",
+     "checkpoint_s": 1,
+     "enabled": true,
+     "name": "checkpoint",
+     "warm_start": true
+    },
+    {
+     "activity": "gnss_calib",
+     "enabled": true,
+     "min_samples": 5,
+     "name": "gnss_calib",
+     "period_ms": 1000
+    },
+    {
+     "activity": "flight",
+     "airspeed_ceiling_hz": 50,
+     "airspeed_dive_pitch": -45.0,
+     "airspeed_floor_hz": 5,
+     "airspeed_unconfident_ms": 30.0,
+     "bank_limit": 45,
+     "boost_engage_speed": 15.0,
+     "enabled": true,
+     "endgame_alt_m": 50,
+     "endgame_max_bank": 60,
+     "endgame_pattern": "auto",
+     "final_approach_agl": 8,
+     "final_cross_gain": 3.0,
+     "final_intercept_deg": 45,
+     "gains": {
+      "pitch": {
+       "kp": 1.5
+      },
+      "roll": {
+       "kd": 0.2,
+       "kp": 2.0
+      },
+      "yaw": {
+       "kd": 0.1,
+       "kp": 1.5
+      }
+     },
+     "glide_ratio": 5.5,
+     "gnss_steep_pitch": 45.0,
+     "land_bank_gain": 3.0,
+     "land_bank_limit": 45,
+     "loiter_capture_m": 120,
+     "loiter_gain": 3.0,
+     "loiter_radius_m": 30,
+     "name": "flight",
+     "nav_bank_gain": 1.5,
+     "nav_period_ms": 100,
+     "period_ms": 20,
+     "pitot_gain": 0.5,
+     "pitot_max_ms": 28.0,
+     "pitot_min_ms": 3.0,
+     "schedule_hz": 100,
+     "stages": {
+      "boosting": {},
+      "gliding": {
+       "pitch": -6,
+       "roll": 0
+      },
+      "landing": {
+       "pitch": -6,
+       "roll": 0
+      }
+     },
+     "stall_margin": 1.2,
+     "stall_speed_1g": 9.0,
+     "steer_filter_shift": 3,
+     "timer_id": 0,
+     "wind": {
+      "calm_speed": 0.5,
+      "max_speed": 15.0,
+      "min_speed": 3.0,
+      "triangle_alpha": 0.05
+     }
+    },
+    {
+     "activity": "watchdog",
+     "enabled": true,
+     "name": "watchdog",
+     "period_ms": 200,
+     "stall_ms": 500,
+     "wdt_timeout_ms": 5000
+    },
+    {
+     "activity": "health",
+     "enabled": true,
+     "name": "health",
+     "period_ms": 1000,
+     "probe_ms": 10
+    },
+    {
+     "activity": "field",
+     "auto_arm": false,
+     "auto_arm_dwell_s": 60,
+     "enabled": false,
+     "fallback_bearing_deg": 0.0,
+     "fallback_depth_m": 90.0,
+     "fallback_near_m": 50.0,
+     "fallback_width_m": 100.0,
+     "max_range_m": 200,
+     "name": "field",
+     "period_ms": 1000,
+     "site_select": true,
+     "still_g": 0.3
+    },
+    {
+     "driver": "bluetooth",
+     "enabled": true,
+     "name": "bluetooth",
+     "radio": false
+    },
+    {
+     "driver": "wifi",
+     "enabled": true,
+     "name": "wifi"
+    },
+    {
+     "activity": "cc",
+     "enabled": true,
+     "name": "cc"
+    }
+   ],
+   "fins": {
+    "concurrency": 1,
+    "limit_multiplier": 1.0,
+    "mixer": {
+     "limit_deg": 45,
+     "neutral_deg": 90,
+     "surfaces": {
+      "servo_eleron_left": {
+       "pitch": 1,
+       "roll": 1
+      },
+      "servo_eleron_right": {
+       "pitch": 1,
+       "roll": -1
+      },
+      "servo_yaw": {
+       "yaw": 1
+      }
+     }
+    }
+   },
+   "pins": {
+    "accel_int1": 4,
+    "adxl375_cs": 49,
+    "ina226_alert": 29,
+    "laser_int": 3,
+    "laser_xshut": 5,
+    "lsm6dso32_cs": 50,
+    "lsm6dso32_int1": 28,
+    "separation_switch": 33,
+    "servo_eleron_left": 27,
+    "servo_eleron_right": 32,
+    "servo_yaw": 26
+   },
+   "recorder": {
+    "cell_size": 256,
+    "log_capacity": 256,
+    "stats_ms": 1000,
+    "telemetry_ms": 0,
+    "tlm_capacity": 256
+   },
+   "sensors": [
+    {
+     "addr": 83,
+     "bus": "spi",
+     "cs_pin": "adxl375_cs",
+     "driver": "adxl375",
+     "enabled": true,
+     "id": 1,
+     "int_pin": "accel_int1",
+     "name": "accel_adxl375",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 2,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 106,
+     "bus": "spi",
+     "cs_pin": "lsm6dso32_cs",
+     "driver": "lsm6dso32",
+     "enabled": true,
+     "id": 1,
+     "int_pin": "lsm6dso32_int1",
+     "name": "imu_lsm6dso32",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 0,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 0,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 40,
+     "bus": "i2c",
+     "driver": "bno055",
+     "enabled": false,
+     "id": 0,
+     "name": "imu_bno055",
+     "provides": {
+      "accel": {
+       "priority": 3,
+       "timeout_ms": 40
+      },
+      "attitude": {
+       "priority": 2,
+       "timeout_ms": 40
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "accel_period_ms": 50,
+     "activity": "attitude",
+     "corr_shift": 4,
+     "enabled": true,
+     "grav_high_g": 1.3,
+     "grav_low_g": 0.7,
+     "name": "attitude",
+     "period_ms": 20,
+     "provides": {
+      "attitude": {
+       "priority": 1,
+       "timeout_ms": 40
+      }
+     },
+     "turn_gate_deg_s": 4
+    },
+    {
+     "addr": 99,
+     "bus": "i2c",
+     "driver": "icp10111",
+     "enabled": true,
+     "id": 0,
+     "name": "baro_icp10111",
+     "provides": {
+      "altitude": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 118,
+     "bus": "i2c",
+     "driver": "bmp280",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_bmp280",
+     "provides": {
+      "altitude": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 2,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 105,
+     "bus": "i2c",
+     "driver": "bmi323",
+     "enabled": true,
+     "id": 0,
+     "int_pin": null,
+     "name": "imu_bmi323",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 1,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 1,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 21,
+     "bus": "i2c",
+     "driver": "bmm350",
+     "enabled": true,
+     "id": 0,
+     "name": "mag_bmm350",
+     "period_ms": 100,
+     "provides": {
+      "mag": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 71,
+     "bus": "i2c",
+     "driver": "bmp581",
+     "enabled": true,
+     "id": 0,
+     "name": "baro_bmp581",
+     "provides": {
+      "altitude": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 1,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 37,
+     "air_density": 1.18,
+     "bus": "i2c",
+     "driver": "sdp810",
+     "enabled": true,
+     "id": 0,
+     "name": "airspeed_sdp810",
+     "period_ms": 20,
+     "provides": {
+      "airspeed": {
+       "priority": 0,
+       "timeout_ms": 100
+      },
+      "dynamic_pressure": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "zero_offset_pa": 0.0
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l4cx",
+     "enabled": true,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "timing_budget_ms": 100,
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l1x",
+     "enabled": true,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl_l1x",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 64,
+     "alert_ma": 3000,
+     "alert_pin": "ina226_alert",
+     "bus": "i2c",
+     "driver": "ina226",
+     "enabled": true,
+     "id": 1,
+     "max_current_ma": 5000,
+     "name": "power_ina226",
+     "period_ms": 100,
+     "provides": {
+      "current": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "power": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "voltage": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "shunt_mohms": 10
+    },
+    {
+     "addr": null,
+     "bus": "uart",
+     "driver": "atgm336h",
+     "enabled": true,
+     "hz": 10,
+     "id": 2,
+     "name": "gnss",
+     "provides": {
+      "altitude": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "course": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "elevation": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "position": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "speed": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    }
+   ],
+   "version": "20261005",
+   "wifi": {
+    "cc_port": 1234,
+    "networks": [
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "coludo"
+     },
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "panda"
+     }
+    ],
+    "password": "",
+    "policy": "auto",
+    "ssid": "coludo",
+    "tx_power_dbm": 11
+   }
+  },
+  "flight_ready_tms7f": {
+   "board": {
+    "id": "TMS-7F",
+    "layout": "auto",
+    "mcu": "esp32p4",
+    "rev": 1,
+    "setup_retries": 3
+   },
+   "buses": {
+    "i2c": {
+     "0": {
+      "freq": 400000,
+      "scl": 8,
+      "sda": 7
+     },
+     "1": {
+      "freq": 100000,
+      "scl": 30,
+      "sda": 31
+     }
+    },
+    "spi": {
+     "1": {
+      "baud": 5000000,
+      "miso": 46,
+      "mode": 3,
+      "mosi": 47,
+      "sck": 48
+     }
+    },
+    "uart": {
+     "1": {
+      "baud": 921600,
+      "tx": 20
+     },
+     "2": {
+      "baud": 9600,
+      "rx": 23,
+      "tx": 22
+     }
+    }
+   },
+   "components": [
+    {
+     "activity": "recorder",
+     "bus": "uart",
+     "enabled": true,
+     "id": 1,
+     "name": "recorder"
+    },
+    {
+     "debounce_ms": 20,
+     "driver": "separation",
+     "enabled": true,
+     "name": "separation",
+     "pin": "separation_switch"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_yaw",
+     "pin": "servo_yaw"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_left",
+     "pin": "servo_eleron_left"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_right",
+     "pin": "servo_eleron_right"
+    },
+    {
+     "activity": "sequencer",
+     "apogee_arm_ms": 4000,
+     "apogee_drop_m": 5.0,
+     "boost_timeout_ms": 12000,
+     "disable_gc_flight": true,
+     "enabled": true,
+     "flight_timeout_ms": 300000,
+     "ground_ms": 3000,
+     "land_agl_m": 5.0,
+     "land_ms": 300,
+     "launch_alt_m": 10.0,
+     "launch_g": 2.5,
+     "launch_ms": 100,
+     "name": "sequencer",
+     "period_ms": 50,
+     "still_g": 0.3
+    },
+    {
+     "activity": "checkpoint",
+     "checkpoint_s": 1,
+     "enabled": true,
+     "name": "checkpoint",
+     "warm_start": true
+    },
+    {
+     "activity": "gnss_calib",
+     "enabled": true,
+     "min_samples": 5,
+     "name": "gnss_calib",
+     "period_ms": 1000
+    },
+    {
+     "activity": "flight",
+     "airspeed_ceiling_hz": 50,
+     "airspeed_dive_pitch": -45.0,
+     "airspeed_floor_hz": 5,
+     "airspeed_unconfident_ms": 30.0,
+     "bank_limit": 45,
+     "boost_engage_speed": 15.0,
+     "enabled": true,
+     "endgame_alt_m": 50,
+     "endgame_max_bank": 60,
+     "endgame_pattern": "auto",
+     "final_approach_agl": 0,
+     "final_cross_gain": 3.0,
+     "final_intercept_deg": 45,
+     "gains": {
+      "pitch": {
+       "kp": 1.5
+      },
+      "roll": {
+       "kd": 0.2,
+       "kp": 2.0
+      },
+      "yaw": {
+       "kd": 0.1,
+       "kp": 1.5
+      }
+     },
+     "glide_ratio": 5.5,
+     "gnss_steep_pitch": 45.0,
+     "land_bank_gain": 3.0,
+     "land_bank_limit": 45,
+     "loiter_capture_m": 120,
+     "loiter_gain": 3.0,
+     "loiter_radius_m": 30,
+     "name": "flight",
+     "nav_bank_gain": 1.5,
+     "nav_period_ms": 100,
+     "period_ms": 20,
+     "pitot_gain": 0.5,
+     "pitot_max_ms": 28.0,
+     "pitot_min_ms": 3.0,
+     "schedule_hz": 100,
+     "stages": {
+      "boosting": {},
+      "gliding": {
+       "pitch": -6,
+       "roll": 0
+      },
+      "landing": {
+       "pitch": -6,
+       "roll": 0
+      }
+     },
+     "stall_margin": 1.2,
+     "stall_speed_1g": 9.0,
+     "steer_filter_shift": 3,
+     "timer_id": 0,
+     "wind": {
+      "calm_speed": 0.5,
+      "max_speed": 15.0,
+      "min_speed": 3.0,
+      "triangle_alpha": 0.05
+     }
+    },
+    {
+     "activity": "watchdog",
+     "enabled": true,
+     "name": "watchdog",
+     "period_ms": 200,
+     "stall_ms": 500,
+     "wdt_timeout_ms": 5000
+    },
+    {
+     "activity": "health",
+     "enabled": true,
+     "name": "health",
+     "period_ms": 1000,
+     "probe_ms": 10
+    },
+    {
+     "activity": "field",
+     "auto_arm": false,
+     "auto_arm_dwell_s": 60,
+     "enabled": false,
+     "fallback_bearing_deg": 0.0,
+     "fallback_depth_m": 90.0,
+     "fallback_near_m": 50.0,
+     "fallback_width_m": 100.0,
+     "max_range_m": 200,
+     "name": "field",
+     "period_ms": 1000,
+     "site_select": true,
+     "still_g": 0.3
+    },
+    {
+     "driver": "bluetooth",
+     "enabled": true,
+     "name": "bluetooth",
+     "radio": false
+    },
+    {
+     "driver": "wifi",
+     "enabled": true,
+     "name": "wifi"
+    },
+    {
+     "activity": "cc",
+     "enabled": true,
+     "name": "cc"
+    }
+   ],
+   "fins": {
+    "concurrency": 1,
+    "limit_multiplier": 1.0,
+    "mixer": {
+     "limit_deg": 45,
+     "neutral_deg": 90,
+     "surfaces": {
+      "servo_eleron_left": {
+       "pitch": 1,
+       "roll": 1
+      },
+      "servo_eleron_right": {
+       "pitch": 1,
+       "roll": -1
+      },
+      "servo_yaw": {
+       "yaw": 1
+      }
+     }
+    }
+   },
+   "name": "tms7f",
+   "pins": {
+    "accel_int1": 4,
+    "adxl375_cs": 49,
+    "ina226_alert": 29,
+    "laser_int": 3,
+    "laser_xshut": 5,
+    "lsm6dso32_cs": 50,
+    "lsm6dso32_int1": 28,
+    "separation_switch": 33,
+    "servo_eleron_left": 27,
+    "servo_eleron_right": 32,
+    "servo_yaw": 26
+   },
+   "recorder": {
+    "cell_size": 256,
+    "log_capacity": 256,
+    "stats_ms": 1000,
+    "telemetry_ms": 0,
+    "tlm_capacity": 256
+   },
+   "sensors": [
+    {
+     "addr": 83,
+     "bus": "spi",
+     "cs_pin": "adxl375_cs",
+     "driver": "adxl375",
+     "enabled": false,
+     "id": 1,
+     "int_pin": "accel_int1",
+     "name": "accel_adxl375",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 1,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 106,
+     "bus": "spi",
+     "cs_pin": "lsm6dso32_cs",
+     "driver": "lsm6dso32",
+     "enabled": true,
+     "id": 1,
+     "int_pin": "lsm6dso32_int1",
+     "name": "imu_lsm6dso32",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 0,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 0,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 40,
+     "bus": "i2c",
+     "driver": "bno055",
+     "enabled": false,
+     "id": 0,
+     "name": "imu_bno055",
+     "provides": {
+      "accel": {
+       "priority": 2,
+       "timeout_ms": 40
+      },
+      "attitude": {
+       "priority": 0,
+       "timeout_ms": 40
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "accel_period_ms": 50,
+     "activity": "attitude",
+     "corr_shift": 4,
+     "enabled": true,
+     "grav_high_g": 1.3,
+     "grav_low_g": 0.7,
+     "name": "attitude",
+     "period_ms": 20,
+     "provides": {
+      "attitude": {
+       "priority": 1,
+       "timeout_ms": 40
+      }
+     },
+     "turn_gate_deg_s": 4
+    },
+    {
+     "addr": 99,
+     "bus": "i2c",
+     "driver": "icp10111",
+     "enabled": true,
+     "id": 1,
+     "name": "baro_icp10111",
+     "provides": {
+      "altitude": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 118,
+     "bus": "i2c",
+     "driver": "bmp280",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_bmp280",
+     "provides": {
+      "altitude": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 1,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 105,
+     "bus": "i2c",
+     "driver": "bmi323",
+     "enabled": true,
+     "id": 0,
+     "int_pin": "accel_int1",
+     "name": "imu_bmi323",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 1,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 1,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 21,
+     "bus": "i2c",
+     "driver": "bmm350",
+     "enabled": true,
+     "id": 0,
+     "name": "mag_bmm350",
+     "period_ms": 100,
+     "provides": {
+      "mag": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 71,
+     "bus": "i2c",
+     "driver": "bmp581",
+     "enabled": true,
+     "id": 0,
+     "name": "baro_bmp581",
+     "provides": {
+      "altitude": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 1,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 37,
+     "air_density": 1.18,
+     "bus": "i2c",
+     "driver": "sdp810",
+     "enabled": true,
+     "id": 1,
+     "name": "airspeed_sdp810",
+     "period_ms": 20,
+     "provides": {
+      "airspeed": {
+       "priority": 0,
+       "timeout_ms": 100
+      },
+      "dynamic_pressure": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "zero_offset_pa": 0.0
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l4cx",
+     "enabled": false,
+     "id": 1,
+     "int_pin": "laser_int",
+     "name": "laser_agl",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "timing_budget_ms": 100,
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l1x",
+     "enabled": true,
+     "id": 1,
+     "int_pin": "laser_int",
+     "name": "laser_agl_l1x",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 64,
+     "alert_ma": 3000,
+     "alert_pin": "ina226_alert",
+     "bus": "i2c",
+     "driver": "ina226",
+     "enabled": true,
+     "id": 0,
+     "max_current_ma": 5000,
+     "name": "power_ina226",
+     "period_ms": 100,
+     "provides": {
+      "current": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "power": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "voltage": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "shunt_mohms": 10
+    },
+    {
+     "addr": null,
+     "bus": "uart",
+     "driver": "neo6mv2",
+     "enabled": true,
+     "hz": 5,
+     "id": 2,
+     "name": "gnss",
+     "provides": {
+      "altitude": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "course": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "elevation": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "position": {
+       "priority": 0,
+       "timeout_ms": 400
+      },
+      "speed": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    }
+   ],
+   "version": "20260828",
+   "wifi": {
+    "cc_port": 1234,
+    "networks": [
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "coludo"
+     },
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "panda"
+     }
+    ],
+    "password": "",
+    "policy": "auto",
+    "ssid": "coludo",
+    "tx_power_dbm": 11
+   }
+  },
+  "hitl": {
+   "board": {
+    "firmware_version": "dev",
+    "id": "taster",
+    "layout": "auto",
+    "mcu": "esp32p4",
+    "rev": 1,
+    "setup_retries": 3
+   },
+   "buses": {
+    "i2c": {
+     "0": {
+      "freq": 400000,
+      "scl": 8,
+      "sda": 7
+     },
+     "1": {
+      "freq": 400000,
+      "scl": 30,
+      "sda": 31
+     }
+    },
+    "spi": {
+     "1": {
+      "baud": 5000000,
+      "miso": 46,
+      "mode": 3,
+      "mosi": 47,
+      "sck": 48
+     }
+    },
+    "uart": {
+     "1": {
+      "baud": 921600,
+      "tx": 20
+     },
+     "2": {
+      "baud": 9600,
+      "rx": 23,
+      "tx": 22
+     }
+    }
+   },
+   "components": [
+    {
+     "activity": "recorder",
+     "bus": "uart",
+     "enabled": true,
+     "id": 1,
+     "name": "recorder"
+    },
+    {
+     "debounce_ms": 20,
+     "driver": "separation",
+     "enabled": false,
+     "name": "separation",
+     "pin": "separation_switch"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_yaw",
+     "pin": "servo_yaw"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_left",
+     "pin": "servo_eleron_left"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_right",
+     "pin": "servo_eleron_right"
+    },
+    {
+     "activity": "sequencer",
+     "apogee_arm_ms": 4000,
+     "apogee_drop_m": 5.0,
+     "boost_timeout_ms": 12000,
+     "disable_gc_flight": true,
+     "enabled": true,
+     "flight_timeout_ms": 300000,
+     "ground_ms": 3000,
+     "land_agl_m": 5.0,
+     "land_ms": 300,
+     "land_timeout_ms": 10000,
+     "launch_alt_m": 10.0,
+     "launch_g": 2.5,
+     "launch_ms": 100,
+     "name": "sequencer",
+     "period_ms": 50,
+     "still_g": 0.3
+    },
+    {
+     "activity": "checkpoint",
+     "checkpoint_s": 1,
+     "enabled": true,
+     "name": "checkpoint",
+     "warm_start": true
+    },
+    {
+     "activity": "gnss_calib",
+     "enabled": true,
+     "min_samples": 5,
+     "name": "gnss_calib",
+     "period_ms": 1000
+    },
+    {
+     "activity": "flight",
+     "airspeed_ceiling_hz": 50,
+     "airspeed_dive_pitch": -45.0,
+     "airspeed_floor_hz": 5,
+     "airspeed_unconfident_ms": 30.0,
+     "bank_limit": 45,
+     "boost_engage_speed": 15.0,
+     "enabled": true,
+     "endgame_alt_m": 50,
+     "endgame_max_bank": 60,
+     "endgame_pattern": "auto",
+     "final_approach_agl": 8,
+     "final_cross_gain": 3.0,
+     "final_intercept_deg": 45,
+     "gains": {
+      "pitch": {
+       "kp": 1.5
+      },
+      "roll": {
+       "kd": 0.2,
+       "kp": 2.0
+      },
+      "yaw": {
+       "kd": 0.1,
+       "kp": 1.5
+      }
+     },
+     "glide_ratio": 5.5,
+     "gnss_steep_pitch": 45.0,
+     "land_bank_gain": 3.0,
+     "land_bank_limit": 45,
+     "loiter_capture_m": 120,
+     "loiter_gain": 3.0,
+     "loiter_radius_m": 30,
+     "name": "flight",
+     "nav_bank_gain": 1.5,
+     "nav_period_ms": 100,
+     "period_ms": 20,
+     "pitot_gain": 0.5,
+     "pitot_max_ms": 28.0,
+     "pitot_min_ms": 3.0,
+     "schedule_hz": 100,
+     "stages": {
+      "boosting": {},
+      "gliding": {
+       "pitch": -6,
+       "roll": 0
+      },
+      "landing": {
+       "pitch": -6,
+       "roll": 0
+      }
+     },
+     "stall_margin": 1.2,
+     "stall_speed_1g": 9.0,
+     "steer_filter_shift": 3,
+     "timer_id": 0,
+     "wind": {
+      "calm_speed": 0.5,
+      "max_speed": 15.0,
+      "min_speed": 3.0,
+      "triangle_alpha": 0.05
+     }
+    },
+    {
+     "activity": "watchdog",
+     "enabled": false,
+     "name": "watchdog",
+     "period_ms": 200,
+     "stall_ms": 500,
+     "wdt_timeout_ms": 5000
+    },
+    {
+     "activity": "health",
+     "enabled": true,
+     "name": "health",
+     "period_ms": 1000,
+     "probe_ms": 10
+    },
+    {
+     "activity": "field",
+     "auto_arm": false,
+     "auto_arm_dwell_s": 60,
+     "enabled": false,
+     "fallback_bearing_deg": 0.0,
+     "fallback_depth_m": 90.0,
+     "fallback_near_m": 50.0,
+     "fallback_width_m": 100.0,
+     "max_range_m": 200,
+     "name": "field",
+     "period_ms": 1000,
+     "site_select": true,
+     "still_g": 0.3
+    },
+    {
+     "driver": "bluetooth",
+     "enabled": false,
+     "name": "bluetooth",
+     "radio": false
+    },
+    {
+     "driver": "wifi",
+     "enabled": false,
+     "name": "wifi"
+    },
+    {
+     "activity": "cc",
+     "enabled": false,
+     "name": "cc"
+    },
+    {
+     "activity": "hitl",
+     "boost_axis": "z",
+     "enabled": true,
+     "glider_g": 270,
+     "gnss_drift": 0.0,
+     "gnss_drift_dir": 0.0,
+     "liftoff_g": 471,
+     "motor": "F15",
+     "name": "hitl",
+     "noise": 0.0,
+     "pad_dwell_s": 0.0,
+     "sim_hz": 50,
+     "spike": false,
+     "wind": 0.0,
+     "wind_dir": 0.0
+    }
+   ],
+   "fins": {
+    "concurrency": 1,
+    "limit_multiplier": 1.0,
+    "mixer": {
+     "limit_deg": 45,
+     "neutral_deg": 90,
+     "surfaces": {
+      "servo_eleron_left": {
+       "pitch": 1,
+       "roll": 1
+      },
+      "servo_eleron_right": {
+       "pitch": 1,
+       "roll": -1
+      },
+      "servo_yaw": {
+       "yaw": 1
+      }
+     }
+    }
+   },
+   "pins": {
+    "accel_int1": 4,
+    "adxl375_cs": 49,
+    "ina226_alert": 29,
+    "laser_int": 3,
+    "laser_xshut": 5,
+    "lsm6dso32_cs": 50,
+    "lsm6dso32_int1": 28,
+    "separation_switch": 33,
+    "servo_eleron_left": 27,
+    "servo_eleron_right": 32,
+    "servo_yaw": 26
+   },
+   "recorder": {
+    "cell_size": 256,
+    "log_capacity": 256,
+    "stats_ms": 1000,
+    "telemetry_ms": 0,
+    "tlm_capacity": 256
+   },
+   "sensors": [
+    {
+     "addr": 83,
+     "bus": "spi",
+     "cs_pin": "adxl375_cs",
+     "driver": "adxl375",
+     "enabled": false,
+     "id": 1,
+     "int_pin": "accel_int1",
+     "name": "accel_adxl375",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 2,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 106,
+     "bus": "spi",
+     "cs_pin": "lsm6dso32_cs",
+     "driver": "lsm6dso32",
+     "enabled": false,
+     "id": 1,
+     "int_pin": "lsm6dso32_int1",
+     "name": "imu_lsm6dso32",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 0,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 0,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 40,
+     "bus": "i2c",
+     "driver": "bno055",
+     "enabled": false,
+     "id": 0,
+     "name": "imu_bno055",
+     "provides": {
+      "accel": {
+       "priority": 3,
+       "timeout_ms": 40
+      },
+      "attitude": {
+       "priority": 2,
+       "timeout_ms": 40
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "accel_period_ms": 50,
+     "activity": "attitude",
+     "corr_shift": 4,
+     "enabled": true,
+     "grav_high_g": 1.3,
+     "grav_low_g": 0.7,
+     "name": "attitude",
+     "period_ms": 20,
+     "provides": {
+      "attitude": {
+       "priority": 1,
+       "timeout_ms": 40
+      }
+     },
+     "turn_gate_deg_s": 4
+    },
+    {
+     "addr": 99,
+     "bus": "i2c",
+     "driver": "icp10111",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_icp10111",
+     "provides": {
+      "altitude": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 118,
+     "bus": "i2c",
+     "driver": "bmp280",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_bmp280",
+     "provides": {
+      "altitude": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 2,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 105,
+     "bus": "i2c",
+     "driver": "bmi323",
+     "enabled": false,
+     "id": 0,
+     "int_pin": null,
+     "name": "imu_bmi323",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 1,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 1,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 21,
+     "bus": "i2c",
+     "driver": "bmm350",
+     "enabled": false,
+     "id": 0,
+     "name": "mag_bmm350",
+     "period_ms": 100,
+     "provides": {
+      "mag": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 71,
+     "bus": "i2c",
+     "driver": "bmp581",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_bmp581",
+     "provides": {
+      "altitude": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 1,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 37,
+     "air_density": 1.18,
+     "bus": "i2c",
+     "driver": "sdp810",
+     "enabled": false,
+     "id": 0,
+     "name": "airspeed_sdp810",
+     "period_ms": 20,
+     "provides": {
+      "airspeed": {
+       "priority": 0,
+       "timeout_ms": 100
+      },
+      "dynamic_pressure": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "zero_offset_pa": 0.0
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l4cx",
+     "enabled": false,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "timing_budget_ms": 100,
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l1x",
+     "enabled": false,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl_l1x",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 64,
+     "alert_ma": 3000,
+     "alert_pin": "ina226_alert",
+     "bus": "i2c",
+     "driver": "ina226",
+     "enabled": true,
+     "id": 1,
+     "max_current_ma": 5000,
+     "name": "power_ina226",
+     "period_ms": 100,
+     "provides": {
+      "current": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "power": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "voltage": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "shunt_mohms": 10
+    },
+    {
+     "addr": null,
+     "bus": "uart",
+     "driver": "atgm336h",
+     "enabled": false,
+     "hz": 10,
+     "id": 2,
+     "name": "gnss",
+     "provides": {
+      "altitude": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "course": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "elevation": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "position": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "speed": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    }
+   ],
+   "version": "20261005",
+   "wifi": {
+    "cc_port": 1234,
+    "networks": [
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "coludo"
+     },
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "panda"
+     }
+    ],
+    "password": "",
+    "policy": "auto",
+    "ssid": "coludo",
+    "tx_power_dbm": 11
+   }
+  },
+  "hitl_e16_noisy": {
+   "board": {
+    "firmware_version": "dev",
+    "id": "taster",
+    "layout": "auto",
+    "mcu": "esp32p4",
+    "rev": 1,
+    "setup_retries": 3
+   },
+   "buses": {
+    "i2c": {
+     "0": {
+      "freq": 400000,
+      "scl": 8,
+      "sda": 7
+     },
+     "1": {
+      "freq": 400000,
+      "scl": 30,
+      "sda": 31
+     }
+    },
+    "spi": {
+     "1": {
+      "baud": 5000000,
+      "miso": 46,
+      "mode": 3,
+      "mosi": 47,
+      "sck": 48
+     }
+    },
+    "uart": {
+     "1": {
+      "baud": 921600,
+      "tx": 20
+     },
+     "2": {
+      "baud": 9600,
+      "rx": 23,
+      "tx": 22
+     }
+    }
+   },
+   "components": [
+    {
+     "activity": "recorder",
+     "bus": "uart",
+     "enabled": true,
+     "id": 1,
+     "name": "recorder"
+    },
+    {
+     "debounce_ms": 20,
+     "driver": "separation",
+     "enabled": false,
+     "name": "separation",
+     "pin": "separation_switch"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_yaw",
+     "pin": "servo_yaw"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_left",
+     "pin": "servo_eleron_left"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_right",
+     "pin": "servo_eleron_right"
+    },
+    {
+     "activity": "sequencer",
+     "apogee_arm_ms": 4000,
+     "apogee_drop_m": 5.0,
+     "boost_timeout_ms": 12000,
+     "disable_gc_flight": true,
+     "enabled": true,
+     "flight_timeout_ms": 300000,
+     "ground_ms": 3000,
+     "land_agl_m": 5.0,
+     "land_ms": 300,
+     "land_timeout_ms": 10000,
+     "launch_alt_m": 10.0,
+     "launch_g": 2.5,
+     "launch_ms": 100,
+     "name": "sequencer",
+     "period_ms": 50,
+     "still_g": 0.3
+    },
+    {
+     "activity": "checkpoint",
+     "checkpoint_s": 1,
+     "enabled": true,
+     "name": "checkpoint",
+     "warm_start": true
+    },
+    {
+     "activity": "gnss_calib",
+     "enabled": true,
+     "min_samples": 5,
+     "name": "gnss_calib",
+     "period_ms": 1000
+    },
+    {
+     "activity": "flight",
+     "airspeed_ceiling_hz": 50,
+     "airspeed_dive_pitch": -45.0,
+     "airspeed_floor_hz": 5,
+     "airspeed_unconfident_ms": 30.0,
+     "bank_limit": 45,
+     "boost_engage_speed": 15.0,
+     "enabled": true,
+     "endgame_alt_m": 50,
+     "endgame_max_bank": 60,
+     "endgame_pattern": "auto",
+     "final_approach_agl": 8,
+     "final_cross_gain": 3.0,
+     "final_intercept_deg": 45,
+     "gains": {
+      "pitch": {
+       "kp": 1.5
+      },
+      "roll": {
+       "kd": 0.2,
+       "kp": 2.0
+      },
+      "yaw": {
+       "kd": 0.1,
+       "kp": 1.5
+      }
+     },
+     "glide_ratio": 5.5,
+     "gnss_steep_pitch": 45.0,
+     "land_bank_gain": 3.0,
+     "land_bank_limit": 45,
+     "loiter_capture_m": 120,
+     "loiter_gain": 3.0,
+     "loiter_radius_m": 30,
+     "name": "flight",
+     "nav_bank_gain": 1.5,
+     "nav_period_ms": 100,
+     "period_ms": 20,
+     "pitot_gain": 0.5,
+     "pitot_max_ms": 28.0,
+     "pitot_min_ms": 3.0,
+     "schedule_hz": 100,
+     "stages": {
+      "boosting": {},
+      "gliding": {
+       "pitch": -6,
+       "roll": 0
+      },
+      "landing": {
+       "pitch": -6,
+       "roll": 0
+      }
+     },
+     "stall_margin": 1.2,
+     "stall_speed_1g": 9.0,
+     "steer_filter_shift": 3,
+     "timer_id": 0,
+     "wind": {
+      "calm_speed": 0.5,
+      "max_speed": 15.0,
+      "min_speed": 3.0,
+      "triangle_alpha": 0.05
+     }
+    },
+    {
+     "activity": "watchdog",
+     "enabled": false,
+     "name": "watchdog",
+     "period_ms": 200,
+     "stall_ms": 500,
+     "wdt_timeout_ms": 5000
+    },
+    {
+     "activity": "health",
+     "enabled": true,
+     "name": "health",
+     "period_ms": 1000,
+     "probe_ms": 10
+    },
+    {
+     "activity": "field",
+     "auto_arm": false,
+     "auto_arm_dwell_s": 60,
+     "enabled": false,
+     "fallback_bearing_deg": 0.0,
+     "fallback_depth_m": 90.0,
+     "fallback_near_m": 50.0,
+     "fallback_width_m": 100.0,
+     "max_range_m": 200,
+     "name": "field",
+     "period_ms": 1000,
+     "site_select": true,
+     "still_g": 0.3
+    },
+    {
+     "driver": "bluetooth",
+     "enabled": false,
+     "name": "bluetooth",
+     "radio": false
+    },
+    {
+     "driver": "wifi",
+     "enabled": false,
+     "name": "wifi"
+    },
+    {
+     "activity": "cc",
+     "enabled": false,
+     "name": "cc"
+    },
+    {
+     "activity": "hitl",
+     "boost_axis": "z",
+     "enabled": true,
+     "glider_g": 270,
+     "gnss_drift": 0.3,
+     "gnss_drift_dir": 45.0,
+     "inject_hz": 10,
+     "liftoff_g": 455,
+     "motor": "E16",
+     "name": "hitl",
+     "noise": 0.5,
+     "pad_dwell_s": 30.0,
+     "sim_hz": 50,
+     "spike": true,
+     "wind": 3.5,
+     "wind_dir": 270.0
+    }
+   ],
+   "fins": {
+    "concurrency": 1,
+    "limit_multiplier": 1.0,
+    "mixer": {
+     "limit_deg": 45,
+     "neutral_deg": 90,
+     "surfaces": {
+      "servo_eleron_left": {
+       "pitch": 1,
+       "roll": 1
+      },
+      "servo_eleron_right": {
+       "pitch": 1,
+       "roll": -1
+      },
+      "servo_yaw": {
+       "yaw": 1
+      }
+     }
+    }
+   },
+   "pins": {
+    "accel_int1": 4,
+    "adxl375_cs": 49,
+    "ina226_alert": 29,
+    "laser_int": 3,
+    "laser_xshut": 5,
+    "lsm6dso32_cs": 50,
+    "lsm6dso32_int1": 28,
+    "separation_switch": 33,
+    "servo_eleron_left": 27,
+    "servo_eleron_right": 32,
+    "servo_yaw": 26
+   },
+   "recorder": {
+    "cell_size": 256,
+    "log_capacity": 256,
+    "stats_ms": 1000,
+    "telemetry_ms": 0,
+    "tlm_capacity": 256
+   },
+   "sensors": [
+    {
+     "addr": 83,
+     "bus": "spi",
+     "cs_pin": "adxl375_cs",
+     "driver": "adxl375",
+     "enabled": false,
+     "id": 1,
+     "int_pin": "accel_int1",
+     "name": "accel_adxl375",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 2,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 106,
+     "bus": "spi",
+     "cs_pin": "lsm6dso32_cs",
+     "driver": "lsm6dso32",
+     "enabled": false,
+     "id": 1,
+     "int_pin": "lsm6dso32_int1",
+     "name": "imu_lsm6dso32",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 0,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 0,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 40,
+     "bus": "i2c",
+     "driver": "bno055",
+     "enabled": false,
+     "id": 0,
+     "name": "imu_bno055",
+     "provides": {
+      "accel": {
+       "priority": 3,
+       "timeout_ms": 40
+      },
+      "attitude": {
+       "priority": 2,
+       "timeout_ms": 40
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "accel_period_ms": 50,
+     "activity": "attitude",
+     "corr_shift": 4,
+     "enabled": true,
+     "grav_high_g": 1.3,
+     "grav_low_g": 0.7,
+     "name": "attitude",
+     "period_ms": 20,
+     "provides": {
+      "attitude": {
+       "priority": 1,
+       "timeout_ms": 40
+      }
+     },
+     "turn_gate_deg_s": 4
+    },
+    {
+     "addr": 99,
+     "bus": "i2c",
+     "driver": "icp10111",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_icp10111",
+     "provides": {
+      "altitude": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 118,
+     "bus": "i2c",
+     "driver": "bmp280",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_bmp280",
+     "provides": {
+      "altitude": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 2,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 105,
+     "bus": "i2c",
+     "driver": "bmi323",
+     "enabled": false,
+     "id": 0,
+     "int_pin": null,
+     "name": "imu_bmi323",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 1,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 1,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 21,
+     "bus": "i2c",
+     "driver": "bmm350",
+     "enabled": false,
+     "id": 0,
+     "name": "mag_bmm350",
+     "period_ms": 100,
+     "provides": {
+      "mag": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 71,
+     "bus": "i2c",
+     "driver": "bmp581",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_bmp581",
+     "provides": {
+      "altitude": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 1,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 37,
+     "air_density": 1.18,
+     "bus": "i2c",
+     "driver": "sdp810",
+     "enabled": false,
+     "id": 0,
+     "name": "airspeed_sdp810",
+     "period_ms": 20,
+     "provides": {
+      "airspeed": {
+       "priority": 0,
+       "timeout_ms": 100
+      },
+      "dynamic_pressure": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "zero_offset_pa": 0.0
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l4cx",
+     "enabled": false,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "timing_budget_ms": 100,
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l1x",
+     "enabled": false,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl_l1x",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 64,
+     "alert_ma": 3000,
+     "alert_pin": "ina226_alert",
+     "bus": "i2c",
+     "driver": "ina226",
+     "enabled": true,
+     "id": 1,
+     "max_current_ma": 5000,
+     "name": "power_ina226",
+     "period_ms": 100,
+     "provides": {
+      "current": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "power": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "voltage": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "shunt_mohms": 10
+    },
+    {
+     "addr": null,
+     "bus": "uart",
+     "driver": "atgm336h",
+     "enabled": false,
+     "hz": 10,
+     "id": 2,
+     "name": "gnss",
+     "provides": {
+      "altitude": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "course": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "elevation": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "position": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "speed": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    }
+   ],
+   "version": "20261005",
+   "wifi": {
+    "cc_port": 1234,
+    "networks": [
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "coludo"
+     },
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "panda"
+     }
+    ],
+    "password": "",
+    "policy": "auto",
+    "ssid": "coludo",
+    "tx_power_dbm": 11
+   }
+  }
+ },
+ "canon": [
+  {
+   "input": [
+    0.0,
+    -0.0,
+    5.0,
+    0.1,
+    0.2,
+    0.30000000000000004,
+    1.5,
+    -1.5e-07,
+    0.001,
+    0.0001
+   ],
+   "name": "float_edges_000",
+   "output": "[0.0,-0.0,5.0,0.1,0.2,0.30000000000000004,1.5,-1.5e-07,0.001,0.0001]"
+  },
+  {
+   "input": [
+    0.00011,
+    9.999999999999999e-05,
+    1e-05,
+    1000000000000000.0,
+    1e+16,
+    9999999999999998.0,
+    1234567890123456.0,
+    1.2345678901234568e+16,
+    123456789.123,
+    1e+22
+   ],
+   "name": "float_edges_001",
+   "output": "[0.00011,9.999999999999999e-05,1e-05,1000000000000000.0,1e+16,9999999999999998.0,1234567890123456.0,1.2345678901234568e+16,123456789.123,1e+22]"
+  },
+  {
+   "input": [
+    1e+23,
+    5e-324,
+    2.2250738585072014e-308,
+    1.7976931348623157e+308,
+    -1.7976931348623157e+308,
+    4.35,
+    0.5,
+    2.675,
+    100.0,
+    1e+100
+   ],
+   "name": "float_edges_002",
+   "output": "[1e+23,5e-324,2.2250738585072014e-308,1.7976931348623157e+308,-1.7976931348623157e+308,4.35,0.5,2.675,100.0,1e+100]"
+  },
+  {
+   "input": [
+    1.18,
+    28.0,
+    1371010358211522.2,
+    259189143840433.12,
+    23219187932159.812,
+    2.9802322387695312e-08,
+    5.960464477539063e-08,
+    5.282945311356653e+269,
+    1e-30,
+    1.5000000000000001e-30
+   ],
+   "name": "float_edges_003",
+   "output": "[1.18,28.0,1371010358211522.2,259189143840433.12,23219187932159.812,2.9802322387695312e-08,5.960464477539063e-08,5.282945311356653e+269,1e-30,1.5000000000000001e-30]"
+  },
+  {
+   "input": [
+    -9.87654321e-30,
+    1e-29,
+    1.4999999999999998e-29,
+    -9.876543209999999e-29,
+    1e-28,
+    1.5e-28,
+    -9.87654321e-28,
+    1e-27,
+    1.5e-27,
+    -9.87654321e-27
+   ],
+   "name": "float_edges_004",
+   "output": "[-9.87654321e-30,1e-29,1.4999999999999998e-29,-9.876543209999999e-29,1e-28,1.5e-28,-9.87654321e-28,1e-27,1.5e-27,-9.87654321e-27]"
+  },
+  {
+   "input": [
+    1e-26,
+    1.5e-26,
+    -9.87654321e-26,
+    1e-25,
+    1.5000000000000001e-25,
+    -9.87654321e-25,
+    1e-24,
+    1.4999999999999998e-24,
+    -9.876543209999999e-24,
+    1e-23
+   ],
+   "name": "float_edges_005",
+   "output": "[1e-26,1.5e-26,-9.87654321e-26,1e-25,1.5000000000000001e-25,-9.87654321e-25,1e-24,1.4999999999999998e-24,-9.876543209999999e-24,1e-23]"
+  },
+  {
+   "input": [
+    1.5e-23,
+    -9.87654321e-23,
+    1e-22,
+    1.5e-22,
+    -9.87654321e-22,
+    1e-21,
+    1.4999999999999998e-21,
+    -9.876543209999999e-21,
+    1e-20,
+    1.4999999999999998e-20
+   ],
+   "name": "float_edges_006",
+   "output": "[1.5e-23,-9.87654321e-23,1e-22,1.5e-22,-9.87654321e-22,1e-21,1.4999999999999998e-21,-9.876543209999999e-21,1e-20,1.4999999999999998e-20]"
+  },
+  {
+   "input": [
+    -9.876543209999999e-20,
+    1e-19,
+    1.5e-19,
+    -9.87654321e-19,
+    1e-18,
+    1.5000000000000001e-18,
+    -9.87654321e-18,
+    1e-17,
+    1.5e-17,
+    -9.87654321e-17
+   ],
+   "name": "float_edges_007",
+   "output": "[-9.876543209999999e-20,1e-19,1.5e-19,-9.87654321e-19,1e-18,1.5000000000000001e-18,-9.87654321e-18,1e-17,1.5e-17,-9.87654321e-17]"
+  },
+  {
+   "input": [
+    1e-16,
+    1.5e-16,
+    -9.87654321e-16,
+    1e-15,
+    1.5000000000000001e-15,
+    -9.87654321e-15,
+    1e-14,
+    1.5e-14,
+    -9.876543209999999e-14,
+    1e-13
+   ],
+   "name": "float_edges_008",
+   "output": "[1e-16,1.5e-16,-9.87654321e-16,1e-15,1.5000000000000001e-15,-9.87654321e-15,1e-14,1.5e-14,-9.876543209999999e-14,1e-13]"
+  },
+  {
+   "input": [
+    1.5000000000000002e-13,
+    -9.87654321e-13,
+    1e-12,
+    1.5e-12,
+    -9.876543209999999e-12,
+    1e-11,
+    1.5e-11,
+    -9.87654321e-11,
+    1e-10,
+    1.5e-10
+   ],
+   "name": "float_edges_009",
+   "output": "[1.5000000000000002e-13,-9.87654321e-13,1e-12,1.5e-12,-9.876543209999999e-12,1e-11,1.5e-11,-9.87654321e-11,1e-10,1.5e-10]"
+  },
+  {
+   "input": [
+    -9.87654321e-10,
+    1e-09,
+    1.5000000000000002e-09,
+    -9.87654321e-09,
+    1e-08,
+    1.5000000000000002e-08,
+    -9.87654321e-08,
+    1e-07,
+    1.5e-07,
+    -9.876543209999999e-07
+   ],
+   "name": "float_edges_010",
+   "output": "[-9.87654321e-10,1e-09,1.5000000000000002e-09,-9.87654321e-09,1e-08,1.5000000000000002e-08,-9.87654321e-08,1e-07,1.5e-07,-9.876543209999999e-07]"
+  },
+  {
+   "input": [
+    1e-06,
+    1.5e-06,
+    -9.876543209999998e-06,
+    1e-05,
+    1.5000000000000002e-05,
+    -9.876543210000001e-05,
+    0.0001,
+    0.00015000000000000001,
+    -0.000987654321,
+    0.001
+   ],
+   "name": "float_edges_011",
+   "output": "[1e-06,1.5e-06,-9.876543209999998e-06,1e-05,1.5000000000000002e-05,-9.876543210000001e-05,0.0001,0.00015000000000000001,-0.000987654321,0.001]"
+  },
+  {
+   "input": [
+    0.0015,
+    -0.00987654321,
+    0.01,
+    0.015,
+    -0.0987654321,
+    0.1,
+    0.15000000000000002,
+    -0.987654321,
+    1.0,
+    1.5
+   ],
+   "name": "float_edges_012",
+   "output": "[0.0015,-0.00987654321,0.01,0.015,-0.0987654321,0.1,0.15000000000000002,-0.987654321,1.0,1.5]"
+  },
+  {
+   "input": [
+    -9.87654321,
+    10.0,
+    15.0,
+    -98.7654321,
+    100.0,
+    150.0,
+    -987.654321,
+    1000.0,
+    1500.0,
+    -9876.54321
+   ],
+   "name": "float_edges_013",
+   "output": "[-9.87654321,10.0,15.0,-98.7654321,100.0,150.0,-987.654321,1000.0,1500.0,-9876.54321]"
+  },
+  {
+   "input": [
+    10000.0,
+    15000.0,
+    -98765.43209999999,
+    100000.0,
+    150000.0,
+    -987654.321,
+    1000000.0,
+    1500000.0,
+    -9876543.209999999,
+    10000000.0
+   ],
+   "name": "float_edges_014",
+   "output": "[10000.0,15000.0,-98765.43209999999,100000.0,150000.0,-987654.321,1000000.0,1500000.0,-9876543.209999999,10000000.0]"
+  },
+  {
+   "input": [
+    15000000.0,
+    -98765432.1,
+    100000000.0,
+    150000000.0,
+    -987654321.0,
+    1000000000.0,
+    1500000000.0,
+    -9876543210.0,
+    10000000000.0,
+    15000000000.0
+   ],
+   "name": "float_edges_015",
+   "output": "[15000000.0,-98765432.1,100000000.0,150000000.0,-987654321.0,1000000000.0,1500000000.0,-9876543210.0,10000000000.0,15000000000.0]"
+  },
+  {
+   "input": [
+    -98765432100.0,
+    100000000000.0,
+    150000000000.0,
+    -987654321000.0,
+    1000000000000.0,
+    1500000000000.0,
+    -9876543210000.0,
+    10000000000000.0,
+    15000000000000.0,
+    -98765432100000.0
+   ],
+   "name": "float_edges_016",
+   "output": "[-98765432100.0,100000000000.0,150000000000.0,-987654321000.0,1000000000000.0,1500000000000.0,-9876543210000.0,10000000000000.0,15000000000000.0,-98765432100000.0]"
+  },
+  {
+   "input": [
+    100000000000000.0,
+    150000000000000.0,
+    -987654321000000.0,
+    1000000000000000.0,
+    1500000000000000.0,
+    -9876543210000000.0,
+    1e+16,
+    1.5e+16,
+    -9.87654321e+16,
+    1e+17
+   ],
+   "name": "float_edges_017",
+   "output": "[100000000000000.0,150000000000000.0,-987654321000000.0,1000000000000000.0,1500000000000000.0,-9876543210000000.0,1e+16,1.5e+16,-9.87654321e+16,1e+17]"
+  },
+  {
+   "input": [
+    1.5e+17,
+    -9.87654321e+17,
+    1e+18,
+    1.5e+18,
+    -9.87654321e+18,
+    1e+19,
+    1.5e+19,
+    -9.876543209999999e+19,
+    1e+20,
+    1.5e+20
+   ],
+   "name": "float_edges_018",
+   "output": "[1.5e+17,-9.87654321e+17,1e+18,1.5e+18,-9.87654321e+18,1e+19,1.5e+19,-9.876543209999999e+19,1e+20,1.5e+20]"
+  },
+  {
+   "input": [
+    -9.87654321e+20,
+    1e+21,
+    1.5e+21,
+    -9.87654321e+21,
+    1e+22,
+    1.5e+22,
+    -9.876543209999999e+22,
+    1.0000000000000001e+23,
+    1.5e+23,
+    -9.87654321e+23
+   ],
+   "name": "float_edges_019",
+   "output": "[-9.87654321e+20,1e+21,1.5e+21,-9.87654321e+21,1e+22,1.5e+22,-9.876543209999999e+22,1.0000000000000001e+23,1.5e+23,-9.87654321e+23]"
+  },
+  {
+   "input": [
+    1e+24,
+    1.5e+24,
+    -9.87654321e+24,
+    1e+25,
+    1.5000000000000002e+25,
+    -9.87654321e+25,
+    1e+26,
+    1.5000000000000002e+26,
+    -9.87654321e+26,
+    1e+27
+   ],
+   "name": "float_edges_020",
+   "output": "[1e+24,1.5e+24,-9.87654321e+24,1e+25,1.5000000000000002e+25,-9.87654321e+25,1e+26,1.5000000000000002e+26,-9.87654321e+26,1e+27]"
+  },
+  {
+   "input": [
+    1.5000000000000002e+27,
+    -9.87654321e+27,
+    1e+28,
+    1.5e+28,
+    -9.87654321e+28,
+    1e+29,
+    1.5e+29,
+    -9.876543209999999e+29,
+    1e+30,
+    1.5000000000000002e+30
+   ],
+   "name": "float_edges_021",
+   "output": "[1.5000000000000002e+27,-9.87654321e+27,1e+28,1.5e+28,-9.87654321e+28,1e+29,1.5e+29,-9.876543209999999e+29,1e+30,1.5000000000000002e+30]"
+  },
+  {
+   "input": [
+    -9.87654321e+30
+   ],
+   "name": "float_edges_022",
+   "output": "[-9.87654321e+30]"
+  },
+  {
+   "input": [
+    2.1231860219150596e-208,
+    2.648259327037411e+45,
+    1.0902826781324547e+48,
+    1.415872185877717e-65,
+    -7.159585518984557e-236,
+    -1.186250997843449e-279,
+    -3.679760781652541e-278,
+    -2.715916932717402e-253,
+    -20411709.750929598,
+    4.881429749399999e-269
+   ],
+   "name": "float_bits_000",
+   "output": "[2.1231860219150596e-208,2.648259327037411e+45,1.0902826781324547e+48,1.415872185877717e-65,-7.159585518984557e-236,-1.186250997843449e-279,-3.679760781652541e-278,-2.715916932717402e-253,-20411709.750929598,4.881429749399999e-269]"
+  },
+  {
+   "input": [
+    1.5980834506474102e-294,
+    5.05871340330075e-165,
+    -7.278331273472206e-12,
+    2.1048923607071722e+261,
+    2.3040701032964064e+218,
+    -5.05104212275428e+154,
+    8.662716366745868e-302,
+    4.568075927387493e-107,
+    3.716705962928786e-143,
+    9.429272600619189e-151
+   ],
+   "name": "float_bits_001",
+   "output": "[1.5980834506474102e-294,5.05871340330075e-165,-7.278331273472206e-12,2.1048923607071722e+261,2.3040701032964064e+218,-5.05104212275428e+154,8.662716366745868e-302,4.568075927387493e-107,3.716705962928786e-143,9.429272600619189e-151]"
+  },
+  {
+   "input": [
+    -2.5304456045976394e+241,
+    -9.370530676463495e-126,
+    9.63823023467803e-235,
+    -6.977540204148031e-103,
+    -2.6132005532149014e-48,
+    5.133666226069686e-231,
+    -2.1446573719023375e+249,
+    8.70547505789117e-157,
+    2.2688465081101776e+289,
+    1.1166668756568415e-112
+   ],
+   "name": "float_bits_002",
+   "output": "[-2.5304456045976394e+241,-9.370530676463495e-126,9.63823023467803e-235,-6.977540204148031e-103,-2.6132005532149014e-48,5.133666226069686e-231,-2.1446573719023375e+249,8.70547505789117e-157,2.2688465081101776e+289,1.1166668756568415e-112]"
+  },
+  {
+   "input": [
+    1.2318484890950058e+132,
+    3.3633528866977833e-261,
+    -1.3186707440111134e+165,
+    3.845745935671756e-309,
+    -7.985911084513759e-78,
+    -1.1680956812290597e-117,
+    -1.7800420133686015e+125,
+    7.406999547957424e-157,
+    5.295715613458636e-259,
+    3.828749837872699e+198
+   ],
+   "name": "float_bits_003",
+   "output": "[1.2318484890950058e+132,3.3633528866977833e-261,-1.3186707440111134e+165,3.845745935671756e-309,-7.985911084513759e-78,-1.1680956812290597e-117,-1.7800420133686015e+125,7.406999547957424e-157,5.295715613458636e-259,3.828749837872699e+198]"
+  },
+  {
+   "input": [
+    -6.229046718792608e+85,
+    -2.2232570388076713e+197,
+    1.5597418916697165e-99,
+    1.7762040447267545e+218,
+    -3.590621063852699e+50,
+    -3.0912682273966666e+45,
+    -2.2275255510682363e-88,
+    -7.094184263339501e-271,
+    -3.8697544017291597e+77,
+    -5.2776215585407025e-210
+   ],
+   "name": "float_bits_004",
+   "output": "[-6.229046718792608e+85,-2.2232570388076713e+197,1.5597418916697165e-99,1.7762040447267545e+218,-3.590621063852699e+50,-3.0912682273966666e+45,-2.2275255510682363e-88,-7.094184263339501e-271,-3.8697544017291597e+77,-5.2776215585407025e-210]"
+  },
+  {
+   "input": [
+    2.984676784570538e+72,
+    1.6937998146333395e+287,
+    -7.543591219937811e-226,
+    -6.7685087560667374e+289,
+    -1.0486248507127199e-242,
+    2.8175092804195587e-252,
+    -6.9054967327914105e+274,
+    7.672663516692469e+263,
+    -2.2852610886922025e-274,
+    1.4628829733905978e+301
+   ],
+   "name": "float_bits_005",
+   "output": "[2.984676784570538e+72,1.6937998146333395e+287,-7.543591219937811e-226,-6.7685087560667374e+289,-1.0486248507127199e-242,2.8175092804195587e-252,-6.9054967327914105e+274,7.672663516692469e+263,-2.2852610886922025e-274,1.4628829733905978e+301]"
+  },
+  {
+   "input": [
+    1.020214897746147e-25,
+    1.9817398394112252e+63,
+    -6.876932773898173e+127,
+    -2.9283411168596024e+174,
+    3.564447043926765e-219,
+    9.393645090973128e-228,
+    1.4236663428888793e+240,
+    -2.106763351123649e-200,
+    -2.2086411456323927e+60,
+    1.0502302317347883e-168
+   ],
+   "name": "float_bits_006",
+   "output": "[1.020214897746147e-25,1.9817398394112252e+63,-6.876932773898173e+127,-2.9283411168596024e+174,3.564447043926765e-219,9.393645090973128e-228,1.4236663428888793e+240,-2.106763351123649e-200,-2.2086411456323927e+60,1.0502302317347883e-168]"
+  },
+  {
+   "input": [
+    3.7547633625037444e-90,
+    -5.544600150748621e+117,
+    2.863975456837325e-40,
+    588504.8047289777,
+    -3.7859835297236647e-159,
+    -1.811642429826412e-297,
+    -2.0099473495338433e+216,
+    1.8784964121446715e+203,
+    3.5661652153582193e-84,
+    -8.675577989929048e+46
+   ],
+   "name": "float_bits_007",
+   "output": "[3.7547633625037444e-90,-5.544600150748621e+117,2.863975456837325e-40,588504.8047289777,-3.7859835297236647e-159,-1.811642429826412e-297,-2.0099473495338433e+216,1.8784964121446715e+203,3.5661652153582193e-84,-8.675577989929048e+46]"
+  },
+  {
+   "input": [
+    9.088125686411129e-299,
+    7.929422341768204e-176,
+    3.790474166604344e-167,
+    -1.8521103907081928e-161,
+    -8.466800975381392e+227,
+    1.3214498106107387e+225,
+    1.5281353423305783e+91,
+    7.056651800975377e+297,
+    -7.899944366248044e-248,
+    2.4901069607540294e-216
+   ],
+   "name": "float_bits_008",
+   "output": "[9.088125686411129e-299,7.929422341768204e-176,3.790474166604344e-167,-1.8521103907081928e-161,-8.466800975381392e+227,1.3214498106107387e+225,1.5281353423305783e+91,7.056651800975377e+297,-7.899944366248044e-248,2.4901069607540294e-216]"
+  },
+  {
+   "input": [
+    3.563751724292114e+292,
+    -3.558098964095479e-306,
+    1.3774191783203197e+252,
+    -2.2395969789623144e-132,
+    1.0567243186546476e-241,
+    -4.1380507443752105e+25,
+    -486493976279158.0,
+    1.5767970051374034e-229,
+    4.989189901328248e+240,
+    -1.1495309774669066e-200
+   ],
+   "name": "float_bits_009",
+   "output": "[3.563751724292114e+292,-3.558098964095479e-306,1.3774191783203197e+252,-2.2395969789623144e-132,1.0567243186546476e-241,-4.1380507443752105e+25,-486493976279158.0,1.5767970051374034e-229,4.989189901328248e+240,-1.1495309774669066e-200]"
+  },
+  {
+   "input": [
+    -1.1288961294249707e-299,
+    -8.363751352820272e-156,
+    -1.0896077455441648e+184,
+    1.3505077725485984e+191,
+    -1.8847202845275757e+190,
+    -9.004550181067232e-183,
+    1.3406449560757156e+279,
+    3.782267405409207e-168,
+    -1.55595608527773e+290,
+    3.5555972275740224e+287
+   ],
+   "name": "float_bits_010",
+   "output": "[-1.1288961294249707e-299,-8.363751352820272e-156,-1.0896077455441648e+184,1.3505077725485984e+191,-1.8847202845275757e+190,-9.004550181067232e-183,1.3406449560757156e+279,3.782267405409207e-168,-1.55595608527773e+290,3.5555972275740224e+287]"
+  },
+  {
+   "input": [
+    -4.5847167732555236e+197,
+    1.3886806956282425e-300,
+    6.927304212585233e-119,
+    9.11066568903426e+232,
+    1.2725929667713406e+131,
+    -8.277554229900844e-150,
+    -1.7484085222628535e-68,
+    5.913716549697742e-114,
+    5.817960345465756e-294,
+    -3.886944677737819e+192
+   ],
+   "name": "float_bits_011",
+   "output": "[-4.5847167732555236e+197,1.3886806956282425e-300,6.927304212585233e-119,9.11066568903426e+232,1.2725929667713406e+131,-8.277554229900844e-150,-1.7484085222628535e-68,5.913716549697742e-114,5.817960345465756e-294,-3.886944677737819e+192]"
+  },
+  {
+   "input": [
+    -1.2483539639171986e-243,
+    1.1038036395951542e-270,
+    8.304879357611557e+38,
+    -1.3052763975382256e-11,
+    8.914120304447855e+257,
+    -2.6835372686702787e-276,
+    -3.272659463410898e-143,
+    -1.495459311179406e+108,
+    1.4994757136154638e-170,
+    -4.1078930598901633e+195
+   ],
+   "name": "float_bits_012",
+   "output": "[-1.2483539639171986e-243,1.1038036395951542e-270,8.304879357611557e+38,-1.3052763975382256e-11,8.914120304447855e+257,-2.6835372686702787e-276,-3.272659463410898e-143,-1.495459311179406e+108,1.4994757136154638e-170,-4.1078930598901633e+195]"
+  },
+  {
+   "input": [
+    2.4800826492948164e+185,
+    -1.668345903342939e-78,
+    3.7485263445860045e-225,
+    -4.925135517156551e+204,
+    -3.0567895693056428e-33,
+    -1.9810537918974268e+195,
+    8.529530026997407e+142,
+    -9.432682809144741e-181,
+    3.3926314373027323e+289,
+    7.279019104641327e+198
+   ],
+   "name": "float_bits_013",
+   "output": "[2.4800826492948164e+185,-1.668345903342939e-78,3.7485263445860045e-225,-4.925135517156551e+204,-3.0567895693056428e-33,-1.9810537918974268e+195,8.529530026997407e+142,-9.432682809144741e-181,3.3926314373027323e+289,7.279019104641327e+198]"
+  },
+  {
+   "input": [
+    -2.3985768934100514e+135,
+    -1.8562680207160915e-125,
+    -4.4598594190916285e-123,
+    -2.829073642471486e+154,
+    3.106346245324035e-230,
+    -5.518266958652927e+276,
+    4.981143760023541e+116,
+    7.735175567214442e+215,
+    2.305787544595885e-43,
+    -5.263337375139824e-268
+   ],
+   "name": "float_bits_014",
+   "output": "[-2.3985768934100514e+135,-1.8562680207160915e-125,-4.4598594190916285e-123,-2.829073642471486e+154,3.106346245324035e-230,-5.518266958652927e+276,4.981143760023541e+116,7.735175567214442e+215,2.305787544595885e-43,-5.263337375139824e-268]"
+  },
+  {
+   "input": [
+    -3.905036420730363e-218,
+    5.1630810090510204e+274,
+    1.2363070646916108e-144,
+    9.622900529968179e+39,
+    3.595291844569484e-190,
+    -5.1246281211176825e-61,
+    -1.6345048300955715e+212,
+    9.705418774927347e+212,
+    -1.905371938382434e+140,
+    8.996793545516595e+206
+   ],
+   "name": "float_bits_015",
+   "output": "[-3.905036420730363e-218,5.1630810090510204e+274,1.2363070646916108e-144,9.622900529968179e+39,3.595291844569484e-190,-5.1246281211176825e-61,-1.6345048300955715e+212,9.705418774927347e+212,-1.905371938382434e+140,8.996793545516595e+206]"
+  },
+  {
+   "input": [
+    8.43436853296657e+173,
+    -1.4164234805652062e-287,
+    -2.5851813970988124e+250,
+    7.606386535686119e+24,
+    -6.60818974947488e-309,
+    -1.121759544606372e-301,
+    7.804912011665209e-134,
+    1.1328002064222897e-22,
+    -1.5479446875948626e-214,
+    9.48603605314241e-101
+   ],
+   "name": "float_bits_016",
+   "output": "[8.43436853296657e+173,-1.4164234805652062e-287,-2.5851813970988124e+250,7.606386535686119e+24,-6.60818974947488e-309,-1.121759544606372e-301,7.804912011665209e-134,1.1328002064222897e-22,-1.5479446875948626e-214,9.48603605314241e-101]"
+  },
+  {
+   "input": [
+    4.311313704143042e+267,
+    -2.669943273701117e+242,
+    1.6933583418774797e+274,
+    -4.749237624544097e+193,
+    -1.5466779919562757e-210,
+    6.123635626824072e+219,
+    6.8165355753550964e-158,
+    2.3537674882009395e+263,
+    -3.798000580858437e-124,
+    -1.9910563427344384e+132
+   ],
+   "name": "float_bits_017",
+   "output": "[4.311313704143042e+267,-2.669943273701117e+242,1.6933583418774797e+274,-4.749237624544097e+193,-1.5466779919562757e-210,6.123635626824072e+219,6.8165355753550964e-158,2.3537674882009395e+263,-3.798000580858437e-124,-1.9910563427344384e+132]"
+  },
+  {
+   "input": [
+    -2.5735396130325913e-50,
+    3.951810368332229e-206,
+    -4.7293896186415244e-34,
+    -4.069326763109207e+187,
+    -5.402777502354069e-269,
+    5.971139487344181e-255,
+    -2.3804772246225505e-75,
+    -5.652986899064332e-209,
+    9.03256073345533e-64,
+    1.9458674251367264e-124
+   ],
+   "name": "float_bits_018",
+   "output": "[-2.5735396130325913e-50,3.951810368332229e-206,-4.7293896186415244e-34,-4.069326763109207e+187,-5.402777502354069e-269,5.971139487344181e-255,-2.3804772246225505e-75,-5.652986899064332e-209,9.03256073345533e-64,1.9458674251367264e-124]"
+  },
+  {
+   "input": [
+    1.058186280046013e+142,
+    -2.1401223789616037e-16,
+    2.7455609189100366e-138,
+    2.3501140966395523e+184,
+    7.085084026258857e-299,
+    5.017953949373686e-59,
+    -1.742572519455789e+180,
+    1.0303442650882492e-165,
+    1.590223577286787e-235,
+    2.3928990189043392e+213
+   ],
+   "name": "float_bits_019",
+   "output": "[1.058186280046013e+142,-2.1401223789616037e-16,2.7455609189100366e-138,2.3501140966395523e+184,7.085084026258857e-299,5.017953949373686e-59,-1.742572519455789e+180,1.0303442650882492e-165,1.590223577286787e-235,2.3928990189043392e+213]"
+  },
+  {
+   "input": [
+    6.997006133920106e-34,
+    4.194691317950709e-172,
+    1.5473926468739048e+234,
+    4.309658058015607e+52,
+    -1.1528415950606144e-118,
+    -2.5667552104196164e+220,
+    3.0370748419150705e+143,
+    -5.3382627417695956e+259,
+    3.061328246716785e-72,
+    -2.462832871510718e+150
+   ],
+   "name": "float_bits_020",
+   "output": "[6.997006133920106e-34,4.194691317950709e-172,1.5473926468739048e+234,4.309658058015607e+52,-1.1528415950606144e-118,-2.5667552104196164e+220,3.0370748419150705e+143,-5.3382627417695956e+259,3.061328246716785e-72,-2.462832871510718e+150]"
+  },
+  {
+   "input": [
+    7.340208674892226e+226,
+    4.706764161614863e-127,
+    -9.377437586887495e-15,
+    0.010509817297514362,
+    -1.1042767211173767e-17,
+    1.0465206451625117e+113,
+    1.2474254771328655e-20,
+    1.2902584164682011e-42,
+    -2.8388900421171466e-260,
+    6.271917083625653e-277
+   ],
+   "name": "float_bits_021",
+   "output": "[7.340208674892226e+226,4.706764161614863e-127,-9.377437586887495e-15,0.010509817297514362,-1.1042767211173767e-17,1.0465206451625117e+113,1.2474254771328655e-20,1.2902584164682011e-42,-2.8388900421171466e-260,6.271917083625653e-277]"
+  },
+  {
+   "input": [
+    -6.03700557240812e-178,
+    -3.1927082610137986e+181,
+    4.331799905596325e-298,
+    -9.26132097553651e-40,
+    3.6464541464383384e-57,
+    3.1331120617474585e+202,
+    7.132471474522515e-35,
+    9.414489351127836e-26,
+    -1.5863273598097843e-59,
+    3.223542099700616e-158
+   ],
+   "name": "float_bits_022",
+   "output": "[-6.03700557240812e-178,-3.1927082610137986e+181,4.331799905596325e-298,-9.26132097553651e-40,3.6464541464383384e-57,3.1331120617474585e+202,7.132471474522515e-35,9.414489351127836e-26,-1.5863273598097843e-59,3.223542099700616e-158]"
+  },
+  {
+   "input": [
+    3.9635495395634447e-143,
+    2.5987448928494245e-270,
+    -1.0900449471643465e-274,
+    -8.240120327374867e-114,
+    -6.166316021437919e-152,
+    -3.2835258187687064e+56,
+    4.643053869224868e-229,
+    -1.0610107079882956e+133,
+    -4.312451367665032e-49,
+    -2.4310524086286434e+189
+   ],
+   "name": "float_bits_023",
+   "output": "[3.9635495395634447e-143,2.5987448928494245e-270,-1.0900449471643465e-274,-8.240120327374867e-114,-6.166316021437919e-152,-3.2835258187687064e+56,4.643053869224868e-229,-1.0610107079882956e+133,-4.312451367665032e-49,-2.4310524086286434e+189]"
+  },
+  {
+   "input": [
+    -1.2530999359609073e-88,
+    -5.573222031543057e+102,
+    -612728.2474701545,
+    -5.226484361465626e-91,
+    -7.100911872224294e-298,
+    2.907730326118078e-167,
+    1.1520019105455711e+137,
+    4.53091046184841e-224,
+    6.149570298312413e-306,
+    -1.5360468930211415e+153
+   ],
+   "name": "float_bits_024",
+   "output": "[-1.2530999359609073e-88,-5.573222031543057e+102,-612728.2474701545,-5.226484361465626e-91,-7.100911872224294e-298,2.907730326118078e-167,1.1520019105455711e+137,4.53091046184841e-224,6.149570298312413e-306,-1.5360468930211415e+153]"
+  },
+  {
+   "input": [
+    -2.8356995572977272e+45,
+    -3.091307849028428e+220,
+    -4.861721233747159e+23,
+    -4.645220923194028e+159,
+    1.576338220411786e+70,
+    9.636966560828579e-121,
+    2.621740771676096e-214,
+    -3.9661930751791e-75,
+    -8.522188731338512e-207,
+    1.6366556972691548e-210
+   ],
+   "name": "float_bits_025",
+   "output": "[-2.8356995572977272e+45,-3.091307849028428e+220,-4.861721233747159e+23,-4.645220923194028e+159,1.576338220411786e+70,9.636966560828579e-121,2.621740771676096e-214,-3.9661930751791e-75,-8.522188731338512e-207,1.6366556972691548e-210]"
+  },
+  {
+   "input": [
+    -5.18758141610035e+142,
+    -3.750783070425189e-82,
+    0.0004300365424351973,
+    -1.028629125184348e-45,
+    7.375834255326832e-215,
+    -2.4833106410786442e+35,
+    -4.854150465052818e-150,
+    5.541404171540487e-115,
+    1.737269672962492e+182,
+    -5.792272375397383e-96
+   ],
+   "name": "float_bits_026",
+   "output": "[-5.18758141610035e+142,-3.750783070425189e-82,0.0004300365424351973,-1.028629125184348e-45,7.375834255326832e-215,-2.4833106410786442e+35,-4.854150465052818e-150,5.541404171540487e-115,1.737269672962492e+182,-5.792272375397383e-96]"
+  },
+  {
+   "input": [
+    2.8555340611778577e+54,
+    -7.305456929058557e+36,
+    3.4506308416947897e-140,
+    1.973928101858568e+43,
+    -1.002350985556425e-75,
+    -5.401929557944283e-175,
+    -2.3567809729505818e+86,
+    -1.5999680567041835e-172,
+    -5.721296798690901e+177,
+    -6.042537812545482e+255
+   ],
+   "name": "float_bits_027",
+   "output": "[2.8555340611778577e+54,-7.305456929058557e+36,3.4506308416947897e-140,1.973928101858568e+43,-1.002350985556425e-75,-5.401929557944283e-175,-2.3567809729505818e+86,-1.5999680567041835e-172,-5.721296798690901e+177,-6.042537812545482e+255]"
+  },
+  {
+   "input": [
+    1.3335149121719373e-76,
+    -9.32763437261732e-277,
+    2.1229256896190537e-209,
+    2.7531231452970444e-152,
+    4.245097274182589e-268,
+    1.6864094892951476e+90,
+    -3.637359186000218e+271,
+    1.3542843352111268e-213,
+    2.0220673480118878e+218,
+    9.511652646699093e+130
+   ],
+   "name": "float_bits_028",
+   "output": "[1.3335149121719373e-76,-9.32763437261732e-277,2.1229256896190537e-209,2.7531231452970444e-152,4.245097274182589e-268,1.6864094892951476e+90,-3.637359186000218e+271,1.3542843352111268e-213,2.0220673480118878e+218,9.511652646699093e+130]"
+  },
+  {
+   "input": [
+    -3.4233384851086514e+218,
+    4.692891767635284e-38,
+    -2.022577952777081e-104,
+    -1.6219186785172414e+93,
+    -5.055100126867307e+148,
+    -3.2388331632339444e-40,
+    3.7695763886989065e-120,
+    -1.9483555237079533e+55,
+    -2.685752065030793e+46,
+    -8.975215714371967e+241
+   ],
+   "name": "float_bits_029",
+   "output": "[-3.4233384851086514e+218,4.692891767635284e-38,-2.022577952777081e-104,-1.6219186785172414e+93,-5.055100126867307e+148,-3.2388331632339444e-40,3.7695763886989065e-120,-1.9483555237079533e+55,-2.685752065030793e+46,-8.975215714371967e+241]"
+  },
+  {
+   "input": [
+    90000.0,
+    0.1408546188834,
+    3.3546950268621e+23,
+    -0.2315069906440896,
+    2.48385342e+16,
+    2.7505529268e-18,
+    8.07643771e-27,
+    4.879698073e-10,
+    1.4351e-30,
+    -4142520.5542413825
+   ],
+   "name": "float_decimals_000",
+   "output": "[90000.0,0.1408546188834,3.3546950268621e+23,-0.2315069906440896,2.48385342e+16,2.7505529268e-18,8.07643771e-27,4.879698073e-10,1.4351e-30,-4142520.5542413825]"
+  },
+  {
+   "input": [
+    -5.237045e-27,
+    -5.9812e-23,
+    -2.73021073e-17,
+    7.308e+29,
+    4.956343e-18,
+    -5.9e-24,
+    -2.740778191933942e-09,
+    9.98958381477e+30,
+    -11.86572171513,
+    -3.63376e-16
+   ],
+   "name": "float_decimals_001",
+   "output": "[-5.237045e-27,-5.9812e-23,-2.73021073e-17,7.308e+29,4.956343e-18,-5.9e-24,-2.740778191933942e-09,9.98958381477e+30,-11.86572171513,-3.63376e-16]"
+  },
+  {
+   "input": [
+    -2.045e+22,
+    -6.328686533101301e-06,
+    6e-20,
+    -9.30380862276182e-09,
+    8e-28,
+    -8853.7,
+    -7.61416e+27,
+    7.465472839207074e+23,
+    6.178e-13,
+    6799685.0
+   ],
+   "name": "float_decimals_002",
+   "output": "[-2.045e+22,-6.328686533101301e-06,6e-20,-9.30380862276182e-09,8e-28,-8853.7,-7.61416e+27,7.465472839207074e+23,6.178e-13,6799685.0]"
+  },
+  {
+   "input": [
+    4.90627506041843e+29,
+    3.7643135791e+20,
+    738908000000.0,
+    0.0630200931,
+    0.0003759557,
+    -2.7911e-25,
+    -5.7515508e+18,
+    6.5679e+28,
+    7160600000000000.0,
+    8.38435896386077e-21
+   ],
+   "name": "float_decimals_003",
+   "output": "[4.90627506041843e+29,3.7643135791e+20,738908000000.0,0.0630200931,0.0003759557,-2.7911e-25,-5.7515508e+18,6.5679e+28,7160600000000000.0,8.38435896386077e-21]"
+  },
+  {
+   "input": [
+    7.561e-07,
+    719.4971681967538,
+    1.305110892e-30,
+    9714015246000000.0,
+    -9.0413e-15,
+    53653862991135.42,
+    2.65427e+24,
+    5.9958e-06,
+    -0.63591,
+    6.2e-15
+   ],
+   "name": "float_decimals_004",
+   "output": "[7.561e-07,719.4971681967538,1.305110892e-30,9714015246000000.0,-9.0413e-15,53653862991135.42,2.65427e+24,5.9958e-06,-0.63591,6.2e-15]"
+  },
+  {
+   "input": [
+    0.0007759849,
+    8483000000.0,
+    -7.03e+22,
+    -45307750.0,
+    1.10221277672e-24,
+    9.94726224e-09,
+    1.651e+16,
+    1.451586045525e-14,
+    9.0128588e-21,
+    5.43e-23
+   ],
+   "name": "float_decimals_005",
+   "output": "[0.0007759849,8483000000.0,-7.03e+22,-45307750.0,1.10221277672e-24,9.94726224e-09,1.651e+16,1.451586045525e-14,9.0128588e-21,5.43e-23]"
+  },
+  {
+   "input": [
+    3.0433789972643287e+18,
+    0.000235233831200255,
+    2.4938114382179e-27,
+    8.1262e+19,
+    3214670000000.0,
+    7.9233889017e-28,
+    8e+21,
+    77.5,
+    4061922762188.9995,
+    899160000.0
+   ],
+   "name": "float_decimals_006",
+   "output": "[3.0433789972643287e+18,0.000235233831200255,2.4938114382179e-27,8.1262e+19,3214670000000.0,7.9233889017e-28,8e+21,77.5,4061922762188.9995,899160000.0]"
+  },
+  {
+   "input": [
+    -9.17813462e+24,
+    35187.527,
+    21000000000.0,
+    -4.367761813008226e+23,
+    9.62557284e+16,
+    7.894824401028188e+30,
+    7865565.4,
+    90428654982446.1,
+    314.74,
+    5.3e+20
+   ],
+   "name": "float_decimals_007",
+   "output": "[-9.17813462e+24,35187.527,21000000000.0,-4.367761813008226e+23,9.62557284e+16,7.894824401028188e+30,7865565.4,90428654982446.1,314.74,5.3e+20]"
+  },
+  {
+   "input": [
+    7094355.0,
+    -2.7356e-13,
+    37000.0,
+    6.8440554786e-19,
+    -3.7326719e+25,
+    9272383.661047,
+    0.000467501,
+    -2.58359544986e-28,
+    -7e+25,
+    2741151208.9123
+   ],
+   "name": "float_decimals_008",
+   "output": "[7094355.0,-2.7356e-13,37000.0,6.8440554786e-19,-3.7326719e+25,9272383.661047,0.000467501,-2.58359544986e-28,-7e+25,2741151208.9123]"
+  },
+  {
+   "input": [
+    -185.0463,
+    -4.57686006519e-18,
+    -0.00061869364,
+    5.48018,
+    5.847041218e-19,
+    6751568244900.0,
+    2.7845739420509562e-08,
+    7e+26,
+    5032.576377616,
+    54456170000.0
+   ],
+   "name": "float_decimals_009",
+   "output": "[-185.0463,-4.57686006519e-18,-0.00061869364,5.48018,5.847041218e-19,6751568244900.0,2.7845739420509562e-08,7e+26,5032.576377616,54456170000.0]"
+  },
+  {
+   "input": [
+    -9.4393836179329e+22,
+    -8.9867952247187e-20,
+    -9.595177076820343e-23,
+    9.55125e+30,
+    -4.0193249306e-05,
+    0.048386012314516,
+    10000000000000.0,
+    -9199233846.2235,
+    8.803e-24,
+    7.627397545681899e-29
+   ],
+   "name": "float_decimals_010",
+   "output": "[-9.4393836179329e+22,-8.9867952247187e-20,-9.595177076820343e-23,9.55125e+30,-4.0193249306e-05,0.048386012314516,10000000000000.0,-9199233846.2235,8.803e-24,7.627397545681899e-29]"
+  },
+  {
+   "input": [
+    2.65721e-19,
+    8.1e-23,
+    8045516.9,
+    7.20589912e-24,
+    8.854e+21,
+    -1.9e-17,
+    4.489013e-24,
+    2.954e-08,
+    -1260.0,
+    -6.487660326e-06
+   ],
+   "name": "float_decimals_011",
+   "output": "[2.65721e-19,8.1e-23,8045516.9,7.20589912e-24,8.854e+21,-1.9e-17,4.489013e-24,2.954e-08,-1260.0,-6.487660326e-06]"
+  },
+  {
+   "input": [
+    7.529169431970089e-10,
+    -5622904000000.0,
+    7.426965904359e-06,
+    8.9e+21,
+    8.7801e+24,
+    -1.67022602e-10,
+    632570000000.0,
+    97135687.657841,
+    -3.71e-07,
+    77107.6
+   ],
+   "name": "float_decimals_012",
+   "output": "[7.529169431970089e-10,-5622904000000.0,7.426965904359e-06,8.9e+21,8.7801e+24,-1.67022602e-10,632570000000.0,97135687.657841,-3.71e-07,77107.6]"
+  },
+  {
+   "input": [
+    -19031940000.0,
+    9.674705550607907e-11,
+    5.0774322082101e+27,
+    3e-24,
+    -2109267.0,
+    -7200000.0,
+    42.848583067811,
+    645779058000.0,
+    -4.9706676451e-20,
+    -9.05912e+22
+   ],
+   "name": "float_decimals_013",
+   "output": "[-19031940000.0,9.674705550607907e-11,5.0774322082101e+27,3e-24,-2109267.0,-7200000.0,42.848583067811,645779058000.0,-4.9706676451e-20,-9.05912e+22]"
+  },
+  {
+   "input": [
+    2.7918265e-24,
+    -9.3809216e+30,
+    -9.003479408857e-06,
+    5e-12,
+    800.0,
+    -73.17296867,
+    77.1911370904,
+    -0.4821388,
+    6.2895423e-14,
+    7.789914445449e-25
+   ],
+   "name": "float_decimals_014",
+   "output": "[2.7918265e-24,-9.3809216e+30,-9.003479408857e-06,5e-12,800.0,-73.17296867,77.1911370904,-0.4821388,6.2895423e-14,7.789914445449e-25]"
+  },
+  {
+   "input": [
+    -7.817194586182e-30,
+    1.79706117104195e+29,
+    8.969738676601163e-14,
+    2.8267356257e+24,
+    -0.009431061777,
+    5367188.851708513,
+    -5.96e+16,
+    6.32820641246e+30,
+    7.88223e-18,
+    -7e+24
+   ],
+   "name": "float_decimals_015",
+   "output": "[-7.817194586182e-30,1.79706117104195e+29,8.969738676601163e-14,2.8267356257e+24,-0.009431061777,5367188.851708513,-5.96e+16,6.32820641246e+30,7.88223e-18,-7e+24]"
+  },
+  {
+   "input": [
+    3.439627111e-21,
+    1.06437e-19,
+    9.08e+30,
+    4e-30,
+    0.000480858115,
+    106.5728185522099,
+    -9.0403067e-09,
+    -3.2606e+30,
+    6.43461650427e-11,
+    2.9576e-20
+   ],
+   "name": "float_decimals_016",
+   "output": "[3.439627111e-21,1.06437e-19,9.08e+30,4e-30,0.000480858115,106.5728185522099,-9.0403067e-09,-3.2606e+30,6.43461650427e-11,2.9576e-20]"
+  },
+  {
+   "input": [
+    -37.47498791391974,
+    1672701400.0,
+    2.024061505277e-18,
+    21300000000.0,
+    412154163.82529,
+    7.32447581e-20,
+    93689561.4328,
+    7.585379263e+29,
+    -1.55965137315506e+19,
+    67100000.0
+   ],
+   "name": "float_decimals_017",
+   "output": "[-37.47498791391974,1672701400.0,2.024061505277e-18,21300000000.0,412154163.82529,7.32447581e-20,93689561.4328,7.585379263e+29,-1.55965137315506e+19,67100000.0]"
+  },
+  {
+   "input": [
+    3470.56,
+    5e-26,
+    8647000000000.0,
+    -6.683e+28,
+    -8.31434e-30,
+    2.4385e-14,
+    3.5255e-09,
+    8.31800104654175e-26,
+    7.8299707e+20,
+    515008500.0
+   ],
+   "name": "float_decimals_018",
+   "output": "[3470.56,5e-26,8647000000000.0,-6.683e+28,-8.31434e-30,2.4385e-14,3.5255e-09,8.31800104654175e-26,7.8299707e+20,515008500.0]"
+  },
+  {
+   "input": [
+    -4.215535e-07,
+    991623309.40735,
+    3.62214006307351e-27,
+    4.9621105487738e+25,
+    8.25748145e-17,
+    3.5554022044095e-30,
+    -0.6,
+    152787630000000.0,
+    8459.5475871,
+    0.00080816677975
+   ],
+   "name": "float_decimals_019",
+   "output": "[-4.215535e-07,991623309.40735,3.62214006307351e-27,4.9621105487738e+25,8.25748145e-17,3.5554022044095e-30,-0.6,152787630000000.0,8459.5475871,0.00080816677975]"
+  },
+  {
+   "input": [
+    5.2521,
+    5.856485938453026e-25,
+    -9.4466108e-20,
+    3.5325e-17,
+    -2804753644.0,
+    4421.825983100552,
+    -8.9206986267618e-17,
+    864900.0,
+    -6.7253347e-05,
+    -6.320943752926e-28
+   ],
+   "name": "float_decimals_020",
+   "output": "[5.2521,5.856485938453026e-25,-9.4466108e-20,3.5325e-17,-2804753644.0,4421.825983100552,-8.9206986267618e-17,864900.0,-6.7253347e-05,-6.320943752926e-28]"
+  },
+  {
+   "input": [
+    7.924503159171e-14,
+    1750.3,
+    4744.906238726315,
+    6577455.0,
+    60294424200370.0,
+    -5.9539309738443e+25,
+    6.497498194622e+24,
+    9.4882e+25,
+    4.966073405327921e+17,
+    -0.0832103729684775
+   ],
+   "name": "float_decimals_021",
+   "output": "[7.924503159171e-14,1750.3,4744.906238726315,6577455.0,60294424200370.0,-5.9539309738443e+25,6.497498194622e+24,9.4882e+25,4.966073405327921e+17,-0.0832103729684775]"
+  },
+  {
+   "input": [
+    -319457907.691747,
+    973.33,
+    7.9247213e+24,
+    9.062011e-23,
+    3.1972045345125e-14,
+    7.61e+26,
+    8.991570827465e-22,
+    -2.787669e-26,
+    70.0,
+    5.7481e-20
+   ],
+   "name": "float_decimals_022",
+   "output": "[-319457907.691747,973.33,7.9247213e+24,9.062011e-23,3.1972045345125e-14,7.61e+26,8.991570827465e-22,-2.787669e-26,70.0,5.7481e-20]"
+  },
+  {
+   "input": [
+    6.6e-08,
+    87600000.0,
+    -0.5504169993,
+    2.2003417e-27,
+    3.834461204e-09,
+    -712741000000.0,
+    43070000000.0,
+    73.4777541,
+    400000000000.0,
+    2.452027e-29
+   ],
+   "name": "float_decimals_023",
+   "output": "[6.6e-08,87600000.0,-0.5504169993,2.2003417e-27,3.834461204e-09,-712741000000.0,43070000000.0,73.4777541,400000000000.0,2.452027e-29]"
+  },
+  {
+   "input": [
+    48636984710000.0,
+    5.1177530471282e-22,
+    7.03322e-23,
+    -6.207e-09,
+    6e+17,
+    -6.1898214e-22,
+    12900000000000.0,
+    9.0464756e-30,
+    -22102170000.0,
+    -9520000.0
+   ],
+   "name": "float_decimals_024",
+   "output": "[48636984710000.0,5.1177530471282e-22,7.03322e-23,-6.207e-09,6e+17,-6.1898214e-22,12900000000000.0,9.0464756e-30,-22102170000.0,-9520000.0]"
+  },
+  {
+   "input": [
+    2993072810000.0,
+    512919691.0,
+    7.4057749654147e-22,
+    1.741,
+    3.16650472e-30,
+    7.76721492e-29,
+    -8.7059248447877e-13,
+    50000.0,
+    1.97225655e-11,
+    900000.0
+   ],
+   "name": "float_decimals_025",
+   "output": "[2993072810000.0,512919691.0,7.4057749654147e-22,1.741,3.16650472e-30,7.76721492e-29,-8.7059248447877e-13,50000.0,1.97225655e-11,900000.0]"
+  },
+  {
+   "input": [
+    3.6163e-09,
+    5.8179e+22,
+    9e+20,
+    2e+23,
+    7.724996856340636e-14,
+    677294331.0,
+    7.89e-08,
+    5.2e+29,
+    5.9623779e-27,
+    -9.4729482368e+24
+   ],
+   "name": "float_decimals_026",
+   "output": "[3.6163e-09,5.8179e+22,9e+20,2e+23,7.724996856340636e-14,677294331.0,7.89e-08,5.2e+29,5.9623779e-27,-9.4729482368e+24]"
+  },
+  {
+   "input": [
+    -9.6130826e-13,
+    -8.663532948130029e-21,
+    2.790215610487e-11,
+    8.464058065798227e-13,
+    7.16837301e+28,
+    5.0111243436004e-07,
+    -2.1969854e-09,
+    3.786e-23,
+    6.117e+20,
+    96852248300000.0
+   ],
+   "name": "float_decimals_027",
+   "output": "[-9.6130826e-13,-8.663532948130029e-21,2.790215610487e-11,8.464058065798227e-13,7.16837301e+28,5.0111243436004e-07,-2.1969854e-09,3.786e-23,6.117e+20,96852248300000.0]"
+  },
+  {
+   "input": [
+    4.2975907784e-09,
+    7.114953613484305e-18,
+    -2.0185e-16,
+    6.373105e+23,
+    952200000.0,
+    -4.783485335e+23,
+    -3380000000.0,
+    848273219.51,
+    6264781068400000.0,
+    -3.9716e-28
+   ],
+   "name": "float_decimals_028",
+   "output": "[4.2975907784e-09,7.114953613484305e-18,-2.0185e-16,6.373105e+23,952200000.0,-4.783485335e+23,-3380000000.0,848273219.51,6264781068400000.0,-3.9716e-28]"
+  },
+  {
+   "input": [
+    7.54910972052738e+19,
+    6.87e-19,
+    18800000.0,
+    4.18270941e-21,
+    4.1e+25,
+    -3.414e-12,
+    1.9043993114007e+25,
+    8858576529600000.0,
+    3.627834612276662e+27,
+    -18.52774649659
+   ],
+   "name": "float_decimals_029",
+   "output": "[7.54910972052738e+19,6.87e-19,18800000.0,4.18270941e-21,4.1e+25,-3.414e-12,1.9043993114007e+25,8858576529600000.0,3.627834612276662e+27,-18.52774649659]"
+  },
+  {
+   "input": [
+    0,
+    1,
+    -1,
+    2147483648,
+    -2147483648,
+    9007199254740993,
+    9223372036854775807,
+    -9223372036854775808,
+    18446744073709551615,
+    12744204042200809265,
+    1051955216701848038,
+    14071169367891014021,
+    11081642820511243671,
+    8394067298934795836,
+    2266708013624825489,
+    3335255888725709070,
+    16161528783471154548,
+    10216541439894738045,
+    6312865811738952728,
+    -2253144745694899686,
+    2441406835015117183,
+    10914157762757011321,
+    10989144117324891875,
+    2793456945230876350,
+    -2648573584570009929,
+    -2547875435956316724,
+    11490779134211997954,
+    6866643755634033966,
+    14610391103965489211
+   ],
+   "name": "integers",
+   "output": "[0,1,-1,2147483648,-2147483648,9007199254740993,9223372036854775807,-9223372036854775808,18446744073709551615,12744204042200809265,1051955216701848038,14071169367891014021,11081642820511243671,8394067298934795836,2266708013624825489,3335255888725709070,16161528783471154548,10216541439894738045,6312865811738952728,-2253144745694899686,2441406835015117183,10914157762757011321,10989144117324891875,2793456945230876350,-2648573584570009929,-2547875435956316724,11490779134211997954,6866643755634033966,14610391103965489211]"
+  },
+  {
+   "input": [
+    true,
+    false,
+    null
+   ],
+   "name": "bools_and_none",
+   "output": "[True,False,None]"
+  },
+  {
+   "input": 1371010358211522.2,
+   "name": "float_tie_00",
+   "output": "1371010358211522.2"
+  },
+  {
+   "input": 259189143840433.12,
+   "name": "float_tie_01",
+   "output": "259189143840433.12"
+  },
+  {
+   "input": 23219187932159.812,
+   "name": "float_tie_02",
+   "output": "23219187932159.812"
+  },
+  {
+   "input": 2.9802322387695312e-08,
+   "name": "float_tie_03",
+   "output": "2.9802322387695312e-08"
+  },
+  {
+   "input": 5.960464477539063e-08,
+   "name": "float_narrow_00",
+   "output": "5.960464477539063e-08"
+  },
+  {
+   "input": 5.282945311356653e+269,
+   "name": "float_narrow_01",
+   "output": "5.282945311356653e+269"
+  },
+  {
+   "input": "",
+   "name": "text_00",
+   "output": "''"
+  },
+  {
+   "input": "taster",
+   "name": "text_01",
+   "output": "'taster'"
+  },
+  {
+   "input": "it's",
+   "name": "text_02",
+   "output": "\"it's\""
+  },
+  {
+   "input": "say \"hi\"",
+   "name": "text_03",
+   "output": "'say \"hi\"'"
+  },
+  {
+   "input": "it's \"both\"",
+   "name": "text_04",
+   "output": "'it\\'s \"both\"'"
+  },
+  {
+   "input": "'",
+   "name": "text_05",
+   "output": "\"'\""
+  },
+  {
+   "input": "\"",
+   "name": "text_06",
+   "output": "'\"'"
+  },
+  {
+   "input": "\\",
+   "name": "text_07",
+   "output": "'\\\\'"
+  },
+  {
+   "input": "a\\b\\",
+   "name": "text_08",
+   "output": "'a\\\\b\\\\'"
+  },
+  {
+   "input": "tab\tnew\nreturn\r",
+   "name": "text_09",
+   "output": "'tab\\tnew\\nreturn\\r'"
+  },
+  {
+   "input": "\u0000\u0001\u0002\u0003\u0004\u0005\u0006\u0007\b\t\n\u000b\f\r\u000e\u000f\u0010\u0011\u0012\u0013\u0014\u0015\u0016\u0017\u0018\u0019\u001a\u001b\u001c\u001d\u001e\u001f\u007f",
+   "name": "text_10",
+   "output": "'\\x00\\x01\\x02\\x03\\x04\\x05\\x06\\x07\\x08\\t\\n\\x0b\\x0c\\r\\x0e\\x0f\\x10\\x11\\x12\\x13\\x14\\x15\\x16\\x17\\x18\\x19\\x1a\\x1b\\x1c\\x1d\\x1e\\x1f\\x7f'"
+  },
+  {
+   "input": "Pr\u00e9s",
+   "name": "text_11",
+   "output": "'Pr\u00e9s'"
+  },
+  {
+   "input": "\u00a0nbsp",
+   "name": "text_12",
+   "output": "'\\xa0nbsp'"
+  },
+  {
+   "input": "\ud83d\ude00 \udb40\udc01",
+   "name": "text_13",
+   "output": "'\ud83d\ude00 \\U000e0001'"
+  },
+  {
+   "input": "GPIO7 used by both i2c:0.sda and pins.servo_yaw",
+   "name": "text_14",
+   "output": "'GPIO7 used by both i2c:0.sda and pins.servo_yaw'"
+  },
+  {
+   "input": "-\u0012|\u001b\ud83d\ude00\r$\udbe8\udf86~\uda48\uddc6",
+   "name": "text_random_00",
+   "output": "'-\\x12|\\x1b\ud83d\ude00\\r$\\U0010a386~\\U000a21c6'"
+  },
+  {
+   "input": "o\u0393\ufffd\u3a46EA\u098f\uda42\udee0~'\u6c27x\\L2n!\u0002",
+   "name": "text_random_01",
+   "output": "\"o\u0393\ufffd\u3a46EA\u098f\\U000a0ae0~'\u6c27x\\\\L2n!\\x02\""
+  },
+  {
+   "input": "",
+   "name": "text_random_02",
+   "output": "''"
+  },
+  {
+   "input": "EB~H\udac0\udecf",
+   "name": "text_random_03",
+   "output": "'EB~H\\U000c02cf'"
+  },
+  {
+   "input": "q~!",
+   "name": "text_random_04",
+   "output": "'q~!'"
+  },
+  {
+   "input": "h\u0638\uf98a\u413bP\u0416\u3042\ud83d\ude00\u0015",
+   "name": "text_random_05",
+   "output": "'h\u0638\uf98a\u413bP\u0416\u3042\ud83d\ude00\\x15'"
+  },
+  {
+   "input": "\n\udb6c\udf3f\uda5a\udf72lL\u8e0dp\"\u0012\u0001",
+   "name": "text_random_06",
+   "output": "'\\n\\U000eb33f\\U000a6b72lL\u8e0dp\"\\x12\\x01'"
+  },
+  {
+   "input": "\u00bf:\u0006\u00e9'\u0001XX\u010b4\u00a0=I",
+   "name": "text_random_07",
+   "output": "\"\u00bf:\\x06\u00e9'\\x01XX\u010b4\\xa0=I\""
+  },
+  {
+   "input": "\"\ud919\udd2a$Q'\b\u000fid@)\udb33\udd9b1\"\u0016\u0006O",
+   "name": "text_random_08",
+   "output": "'\"\\U0005652a$Q\\'\\x08\\x0fid@)\\U000dcd9b1\"\\x16\\x06O'"
+  },
+  {
+   "input": "\u001aU\u0000\u007f'\u0005$\u0012\u0016I\u6e41\"<\\,\udbff\udfff",
+   "name": "text_random_09",
+   "output": "'\\x1aU\\x00\\x7f\\'\\x05$\\x12\\x16I\u6e41\"<\\\\,\\U0010ffff'"
+  },
+  {
+   "input": "nm\b@K_\u0015",
+   "name": "text_random_10",
+   "output": "'nm\\x08@K_\\x15'"
+  },
+  {
+   "input": "r&",
+   "name": "text_random_11",
+   "output": "'r&'"
+  },
+  {
+   "input": "p\r",
+   "name": "text_random_12",
+   "output": "'p\\r'"
+  },
+  {
+   "input": "\u63f4U",
+   "name": "text_random_13",
+   "output": "'\u63f4U'"
+  },
+  {
+   "input": "`\u0378c#e\u5d15!",
+   "name": "text_random_14",
+   "output": "'`\\u0378c#e\u5d15!'"
+  },
+  {
+   "input": "\u871e",
+   "name": "text_random_15",
+   "output": "'\u871e'"
+  },
+  {
+   "input": "\u200b'\u00adjw\ufe0f\t\\1\u001b\u0012O\u000b\u7205",
+   "name": "text_random_16",
+   "output": "\"\\u200b'\\xadjw\ufe0f\\t\\\\1\\x1b\\x12O\\x0b\u7205\""
+  },
+  {
+   "input": "!\ud9fd\udf48e\u5e76O\ud981\udf63mb\u035dEx\u014e\ud9a9\udd4d\u001a\u0416m",
+   "name": "text_random_17",
+   "output": "'!\\U0008f748e\u5e76O\\U00070763mb\u035dEx\u014e\\U0007a54d\\x1a\u0416m'"
+  },
+  {
+   "input": "\u00a0\ub88eUgwJ\\\udac8\udc54f:Z(\\\\i\u000bFb",
+   "name": "text_random_18",
+   "output": "'\\xa0\ub88eUgwJ\\\\\\U000c2054f:Z(\\\\\\\\i\\x0bFb'"
+  },
+  {
+   "input": "S\u05c5{K\u0012pe\u0301",
+   "name": "text_random_19",
+   "output": "'S\u05c5{K\\x12pe\u0301'"
+  },
+  {
+   "input": "QFJ'@\u0013\u2028iy0",
+   "name": "text_random_20",
+   "output": "\"QFJ'@\\x13\\u2028iy0\""
+  },
+  {
+   "input": "O\u200bG\u058d\u0005\udb40\udc01",
+   "name": "text_random_21",
+   "output": "'O\\u200bG\u058d\\x05\\U000e0001'"
+  },
+  {
+   "input": "\u13e4\r\"",
+   "name": "text_random_22",
+   "output": "'\u13e4\\r\"'"
+  },
+  {
+   "input": "3j9XJ\u0490u",
+   "name": "text_random_23",
+   "output": "'3j9XJ\u0490u'"
+  },
+  {
+   "input": "",
+   "name": "text_random_24",
+   "output": "''"
+  },
+  {
+   "input": "\ud8e4\uddd8w\u0010\u000b\u0007\u0006\uda05\udfe6\u8f63\u001b[\u0004\u0416\u0013'\u04ce",
+   "name": "text_random_25",
+   "output": "\"\\U000491d8w\\x10\\x0b\\x07\\x06\\U000917e6\u8f63\\x1b[\\x04\u0416\\x13'\u04ce\""
+  },
+  {
+   "input": "\u0018s\u0085\u0011\udb0b\udceeq~\">\nm",
+   "name": "text_random_26",
+   "output": "'\\x18s\\x85\\x11\\U000d2ceeq~\">\\nm'"
+  },
+  {
+   "input": "\u0001\njI\u04a9\u0301\b1 \uead5\u200b/2\"G+",
+   "name": "text_random_27",
+   "output": "'\\x01\\njI\u04a9\u0301\\x081 \\uead5\\u200b/2\"G+'"
+  },
+  {
+   "input": "{\u0015B-",
+   "name": "text_random_28",
+   "output": "'{\\x15B-'"
+  },
+  {
+   "input": "?\u00180\ua7c2@\"\u00adl\u0518",
+   "name": "text_random_29",
+   "output": "'?\\x180\ua7c2@\"\\xadl\u0518'"
+  },
+  {
+   "input": "\u00e9S\u001dA\u9c676P_u\ud92e\uddb2\u0301'\u00a0\udb3f\udda6",
+   "name": "text_random_30",
+   "output": "\"\u00e9S\\x1dA\u9c676P_u\\U0005b9b2\u0301'\\xa0\\U000dfda6\""
+  },
+  {
+   "input": "\\",
+   "name": "text_random_31",
+   "output": "'\\\\'"
+  },
+  {
+   "input": "'V?\udaaf\udc40\u00a0Z\u0001\u0017A\t\"\u4e2d\"\"",
+   "name": "text_random_32",
+   "output": "'\\'V?\\U000bbc40\\xa0Z\\x01\\x17A\\t\"\u4e2d\"\"'"
+  },
+  {
+   "input": "m*+\u0719",
+   "name": "text_random_33",
+   "output": "'m*+\u0719'"
+  },
+  {
+   "input": "\udb40\udc01(",
+   "name": "text_random_34",
+   "output": "'\\U000e0001('"
+  },
+  {
+   "input": "E#r\u0246O\u0013V\u0012",
+   "name": "text_random_35",
+   "output": "'E#r\u0246O\\x13V\\x12'"
+  },
+  {
+   "input": "'\u0000V\u00e9C\\\"z",
+   "name": "text_random_36",
+   "output": "'\\'\\x00V\u00e9C\\\\\"z'"
+  },
+  {
+   "input": "=e>\f\"\u00ad\tVih",
+   "name": "text_random_37",
+   "output": "'=e>\\x0c\"\\xad\\tVih'"
+  },
+  {
+   "input": ",\u3ee3\"",
+   "name": "text_random_38",
+   "output": "',\u3ee3\"'"
+  },
+  {
+   "input": " =\u0301@",
+   "name": "text_random_39",
+   "output": "' =\u0301@'"
+  },
+  {
+   "input": "\uc877k1N\udb52\udfd8\u05e7x\u00029\u001f6h\u04ac\udaaf\ude84\ud92f\ude61\u0696g\u0012x",
+   "name": "text_random_40",
+   "output": "'\uc877k1N\\U000e4bd8\u05e7x\\x029\\x1f6h\u04ac\\U000bbe84\\U0005be61\u0696g\\x12x'"
+  },
+  {
+   "input": "\ud83d\ude00\u7506\\Ut\\\b\"t\u0416\u031e\uc531\u007fE",
+   "name": "text_random_41",
+   "output": "'\ud83d\ude00\u7506\\\\Ut\\\\\\x08\"t\u0416\u031e\uc531\\x7fE'"
+  },
+  {
+   "input": "\f\u64b7\u0012\u0012N&\\\"2,\uba9dU]\ud001",
+   "name": "text_random_42",
+   "output": "'\\x0c\u64b7\\x12\\x12N&\\\\\"2,\uba9dU]\ud001'"
+  },
+  {
+   "input": "\u03ebS",
+   "name": "text_random_43",
+   "output": "'\u03ebS'"
+  },
+  {
+   "input": "@uyx'r\u056dno1\u0301\u059f\u001f6",
+   "name": "text_random_44",
+   "output": "\"@uyx'r\u056dno1\u0301\u059f\\x1f6\""
+  },
+  {
+   "input": "\u00f3'\n\u6f5c\\][\ud9fc\udcc0tV\u03ccZ\\\uc840\ucc33\u054f.Ch",
+   "name": "text_random_45",
+   "output": "\"\u00f3'\\n\u6f5c\\\\][\\U0008f0c0tV\u03ccZ\\\\\uc840\ucc33\u054f.Ch\""
+  },
+  {
+   "input": ">q67M\ud87a\udff0\ud90e\udf6f\ufffd\u0010\u0301\b\u001b\u0293l\"\u0085",
+   "name": "text_random_46",
+   "output": "'>q67M\\U0002ebf0\\U00053b6f\ufffd\\x10\u0301\\x08\\x1b\u0293l\"\\x85'"
+  },
+  {
+   "input": "\u000ft\ue000\u0014's\f'M\ud87a\udff0~'p\u4fad\ud83d\ude00'o9",
+   "name": "text_random_47",
+   "output": "\"\\x0ft\\ue000\\x14's\\x0c'M\\U0002ebf0~'p\u4fad\ud83d\ude00'o9\""
+  },
+  {
+   "input": "\ufe0f\u4a3b|]\u47b2\u04d9\u001f\u000b\ud87a\udff0\"\ueaecA!(\u017d\\\"\u0416\"",
+   "name": "text_random_48",
+   "output": "'\ufe0f\u4a3b|]\u47b2\u04d9\\x1f\\x0b\\U0002ebf0\"\\ueaecA!(\u017d\\\\\"\u0416\"'"
+  },
+  {
+   "input": "QF\u0414\u001a\ud87a\udff0\udbff\udfff\u0012b\\\u0002\\\u0007h",
+   "name": "text_random_49",
+   "output": "'QF\u0414\\x1a\\U0002ebf0\\U0010ffff\\x12b\\\\\\x02\\\\\\x07h'"
+  },
+  {
+   "input": "\u001e`\u0010(\u0301T\u0692x^X,~3\ud9f9\udff7\u0012",
+   "name": "text_random_50",
+   "output": "'\\x1e`\\x10(\u0301T\u0692x^X,~3\\U0008e7f7\\x12'"
+  },
+  {
+   "input": "\ub907M#\u0654\"n\"\u2028Y8&",
+   "name": "text_random_51",
+   "output": "'\ub907M#\u0654\"n\"\\u2028Y8&'"
+  },
+  {
+   "input": "4\u00bb*\u0012\f\u0001&\u0717O\u007f>\u0004Yv\ud8a1\udc46\udbff\udfff\u0005'",
+   "name": "text_random_52",
+   "output": "\"4\u00bb*\\x12\\x0c\\x01&\u0717O\\x7f>\\x04Yv\\U00038446\\U0010ffff\\x05'\""
+  },
+  {
+   "input": "|'I\ufe0f^\u034a",
+   "name": "text_random_53",
+   "output": "\"|'I\ufe0f^\u034a\""
+  },
+  {
+   "input": ",\"\\",
+   "name": "text_random_54",
+   "output": "',\"\\\\'"
+  },
+  {
+   "input": "\ud86d\udc2a\\L\u0001\u159b\ue000\ud89b\udc41*-\udbc4\ude04X\nq;A\udaba\ude53m",
+   "name": "text_random_55",
+   "output": "'\ud86d\udc2a\\\\L\\x01\u159b\\ue000\\U00036c41*-\\U00101204X\\nq;A\\U000bea53m'"
+  },
+  {
+   "input": "%\n\u0018\u0301\"\"b}\u001d\u0018\u0005|M",
+   "name": "text_random_56",
+   "output": "'%\\n\\x18\u0301\"\"b}\\x1d\\x18\\x05|M'"
+  },
+  {
+   "input": "w\u000eG\u0017\u0001\u05a9\\\u241b\u0013\u0012\uda17\ude2f\u000fI\u00a0' |\u040d",
+   "name": "text_random_57",
+   "output": "\"w\\x0eG\\x17\\x01\u05a9\\\\\u241b\\x13\\x12\\U00095e2f\\x0fI\\xa0' |\u040d\""
+  },
+  {
+   "input": "=Fu\u06ef]\"T\u0007i\u702e\u00054FA\"\u0019\ud97f\udc6f\u05ce",
+   "name": "text_random_58",
+   "output": "'=Fu\u06ef]\"T\\x07i\u702e\\x054FA\"\\x19\\U0006fc6f\\u05ce'"
+  },
+  {
+   "input": "\u00e9e\\\"\\\ud9b8\ude2e\u0013\uc59f'\u0019",
+   "name": "text_random_59",
+   "output": "'\u00e9e\\\\\"\\\\\\U0007e22e\\x13\uc59f\\'\\x19'"
+  },
+  {
+   "input": "b!\"C\u0416\u05e0:\\",
+   "name": "text_random_60",
+   "output": "'b!\"C\u0416\u05e0:\\\\'"
+  },
+  {
+   "input": "\u079a\"\u0301n\ud987\udd92t\f\u0010\u00df\u2028~\u0017Ei])&r",
+   "name": "text_random_61",
+   "output": "'\u079a\"\u0301n\\U00071d92t\\x0c\\x10\u00df\\u2028~\\x17Ei])&r'"
+  },
+  {
+   "input": "\"",
+   "name": "text_random_62",
+   "output": "'\"'"
+  },
+  {
+   "input": "{\u0002\uda02\udf8fd",
+   "name": "text_random_63",
+   "output": "'{\\x02\\U00090b8fd'"
+  },
+  {
+   "input": "\u8cff\ud85f\udd53r6J\u6c70W\"R8\u001a\uda74\udd8a\uda65\udc93\u0005\ud850\udf5e",
+   "name": "text_random_64",
+   "output": "'\u8cff\ud85f\udd53r6J\u6c70W\"R8\\x1a\\U000ad18a\\U000a9493\\x05\ud850\udf5e'"
+  },
+  {
+   "input": "j\"?\u0011",
+   "name": "text_random_65",
+   "output": "'j\"?\\x11'"
+  },
+  {
+   "input": "\uf399\u4e2d\ud8a9\udcf4\"M','0q",
+   "name": "text_random_66",
+   "output": "'\\uf399\u4e2d\\U0003a4f4\"M\\',\\'0q'"
+  },
+  {
+   "input": "\u50fd\uf57c'",
+   "name": "text_random_67",
+   "output": "\"\u50fd\\uf57c'\""
+  },
+  {
+   "input": "qC\\\u0011\"\u4e2d\\\u0016h%\u0015\u000f\ue000\u0085\t",
+   "name": "text_random_68",
+   "output": "'qC\\\\\\x11\"\u4e2d\\\\\\x16h%\\x15\\x0f\\ue000\\x85\\t'"
+  },
+  {
+   "input": "\ufe0f\fx\u0006\u0015\u027f\u007f\u9f2fo\\\f<\u001ac\"*",
+   "name": "text_random_69",
+   "output": "'\ufe0f\\x0cx\\x06\\x15\u027f\\x7f\u9f2fo\\\\\\x0c<\\x1ac\"*'"
+  },
+  {
+   "input": "/(<xW\b\u06ce\u200b\u00ad",
+   "name": "text_random_70",
+   "output": "'/(<xW\\x08\u06ce\\u200b\\xad'"
+  },
+  {
+   "input": "\ud80f\udfb3?s\u0003*A#\uc5dd'\u0000'\\\\|\u0018\u0017Q_M\ufe0f",
+   "name": "text_random_71",
+   "output": "\"\\U00013fb3?s\\x03*A#\uc5dd'\\x00'\\\\\\\\|\\x18\\x17Q_M\ufe0f\""
+  },
+  {
+   "input": ">7\u0013]\ud99b\udea9\u03c7",
+   "name": "text_random_72",
+   "output": "'>7\\x13]\\U00076ea9\u03c7'"
+  },
+  {
+   "input": "U:X|\uda99\udd3c&x\u0001Q\ufe0f\u04f7",
+   "name": "text_random_73",
+   "output": "'U:X|\\U000b653c&x\\x01Q\ufe0f\u04f7'"
+  },
+  {
+   "input": "\u07e3\u011bM,\ud8ee\ude28;p\u0005\u0399\\",
+   "name": "text_random_74",
+   "output": "'\u07e3\u011bM,\\U0004ba28;p\\x05\u0399\\\\'"
+  },
+  {
+   "input": "S\\EY'\ud96f\udd70z",
+   "name": "text_random_75",
+   "output": "\"S\\\\EY'\\U0006bd70z\""
+  },
+  {
+   "input": "",
+   "name": "text_random_76",
+   "output": "''"
+  },
+  {
+   "input": "\"\ud87a\udff0\u00df3g:)\u0010[%",
+   "name": "text_random_77",
+   "output": "'\"\\U0002ebf0\u00df3g:)\\x10[%'"
+  },
+  {
+   "input": "L\u26c6- V\u0688g-\u0010O\ue000\u10c822\"'~\u001a",
+   "name": "text_random_78",
+   "output": "'L\u26c6- V\u0688g-\\x10O\\ue000\\u10c822\"\\'~\\x1a'"
+  },
+  {
+   "input": "\ud83d\ude00\u0002\udbdc\udeb8\u0006\uba06\u0480'\u04b63|$",
+   "name": "text_random_79",
+   "output": "\"\ud83d\ude00\\x02\\U001072b8\\x06\uba06\u0480'\u04b63|$\""
+  },
+  {
+   "input": [
+    [],
+    {},
+    [
+     []
+    ],
+    {
+     "a": {}
+    }
+   ],
+   "name": "empty_containers",
+   "output": "[[],{},[[]],{'a':{}}]"
+  },
+  {
+   "input": {
+    "": 7,
+    "10": 5,
+    "9": 6,
+    "B": 3,
+    "a": 2,
+    "a b": 8,
+    "b": 1,
+    "z": 9,
+    "\u00e9": 4,
+    "\ufffd": 11,
+    "\ud83d\ude00": 10
+   },
+   "name": "keys_sort_by_code_point",
+   "output": "{'':7,'10':5,'9':6,'B':3,'a':2,'a b':8,'b':1,'z':9,'\u00e9':4,'\ufffd':11,'\ud83d\ude00':10}"
+  },
+  {
+   "input": {
+    "back\\slash": 4,
+    "both'\"": 3,
+    "it's": 1,
+    "say \"x\"": 2
+   },
+   "name": "keys_with_quotes",
+   "output": "{'back\\\\slash':4,'both\\'\"':3,\"it's\":1,'say \"x\"':2}"
+  },
+  {
+   "input": {
+    "list": [
+     1,
+     [
+      2.5,
+      [
+       null,
+       [
+        true,
+        {
+         "deep": -0.0
+        }
+       ]
+      ]
+     ]
+    ],
+    "mixed": [
+     {
+      "a": "x",
+      "b": []
+     },
+     "y",
+     0
+    ]
+   },
+   "name": "nested",
+   "output": "{'list':[1,[2.5,[None,[True,{'deep':-0.0}]]]],'mixed':[{'a':'x','b':[]},'y',0]}"
+  },
+  {
+   "input": -0.0,
+   "name": "negative_zero",
+   "output": "-0.0"
+  },
+  {
+   "input": {
+    "board": {
+     "id": "TMS-7F",
+     "mcu": "esp32p4",
+     "rev": 1
+    },
+    "pins": {
+     "laser_int": null,
+     "servo_yaw": 26
+    }
+   },
+   "name": "board_like",
+   "output": "{'board':{'id':'TMS-7F','mcu':'esp32p4','rev':1},'pins':{'laser_int':None,'servo_yaw':26}}"
+  }
+ ],
+ "cases": [
+  {
+   "input": {
+    "file": "launches/20261003/TMS-7C/tms7c.config"
+   },
+   "name": "tms7c",
+   "output": "e95f341166d4"
+  },
+  {
+   "input": {
+    "file": "launches/20261003/TMS-7D/tms7d.config"
+   },
+   "name": "tms7d",
+   "output": "7f06b2f496a9"
+  },
+  {
+   "input": {
+    "file": "launches/20261003/TMS-7D/tms7d_control.config"
+   },
+   "name": "tms7d_control",
+   "output": "04b9c8644717"
+  },
+  {
+   "input": {
+    "file": "launches/20261003/TMS-7E/tms7e.config"
+   },
+   "name": "tms7e",
+   "output": "2492734e035f"
+  },
+  {
+   "input": {
+    "file": "launches/20261003/TMS-7F/tms7f.config"
+   },
+   "name": "tms7f",
+   "output": "f80fcbb3231e"
+  },
+  {
+   "input": {
+    "base": "default"
+   },
+   "name": "default",
+   "output": "95e1af1d7b1d"
+  },
+  {
+   "input": {
+    "document": {}
+   },
+   "name": "empty",
+   "output": "44136fa355b3"
+  },
+  {
+   "input": {
+    "edits": [
+     {
+      "path": [
+       "board",
+       "id"
+      ],
+      "value": "taster"
+     }
+    ],
+    "file": "launches/20261003/TMS-7F/tms7f.config"
+   },
+   "name": "taster_copy_of_tms7f",
+   "output": "38052780281d"
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "board",
+       "firmware_version"
+      ],
+      "value": "2026.10.05.0123456789ab"
+     }
+    ]
+   },
+   "name": "default_restamped",
+   "output": "95e1af1d7b1d"
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "board",
+       "firmware_version"
+      ]
+     }
+    ]
+   },
+   "name": "default_unstamped",
+   "output": "95e1af1d7b1d"
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "board",
+       "rev"
+      ],
+      "value": 99
+     }
+    ]
+   },
+   "name": "default_rev_99",
+   "output": "3b52984ba2f2"
+  },
+  {
+   "input": {
+    "edits": [
+     {
+      "path": [
+       "board",
+       "firmware_version"
+      ],
+      "value": "dev"
+     }
+    ],
+    "file": "launches/20261003/TMS-7C/tms7c.config"
+   },
+   "name": "tms7c_restamped",
+   "output": "e95f341166d4"
+  },
+  {
+   "input": {
+    "base": "hitl"
+   },
+   "name": "hitl",
+   "output": "7d9130b62a7d"
+  },
+  {
+   "input": {
+    "base": "hitl_e16_noisy"
+   },
+   "name": "hitl_e16_noisy",
+   "output": "d1e99164833d"
+  },
+  {
+   "input": {
+    "base": "flight_ready_tms7f"
+   },
+   "name": "flight_ready_tms7f",
+   "output": "b8f41d486b76"
+  },
+  {
+   "input": {
+    "base": "flight_ready_new"
+   },
+   "name": "flight_ready_new",
+   "output": "348cb2b68ec2"
+  },
+  {
+   "input": {
+    "document": {
+     "board": "TMS-7F",
+     "version": "20261005"
+    }
+   },
+   "name": "board_not_an_object",
+   "output": "a62b65403d91"
+  },
+  {
+   "input": {
+    "document": {
+     "board": {
+      "id": "a"
+     },
+     "firmware_version": "x"
+    }
+   },
+   "name": "firmware_version_outside_board",
+   "output": "21c0c0a4400a"
+  },
+  {
+   "input": {
+    "document": {
+     "board": {
+      "firmware_version": "x"
+     }
+    }
+   },
+   "name": "only_a_firmware_version",
+   "output": "a21528456b28"
+  },
+  {
+   "input": {
+    "document": null
+   },
+   "name": "null",
+   "output": "dc937b598926"
+  },
+  {
+   "input": {
+    "document": [
+     1,
+     2
+    ]
+   },
+   "name": "list",
+   "output": "49a64717d5d4"
+  },
+  {
+   "input": {
+    "document": "board"
+   },
+   "name": "text",
+   "output": "38007164fef7"
+  },
+  {
+   "input": {
+    "document": 5
+   },
+   "name": "integer",
+   "output": "ef2d127de37b"
+  },
+  {
+   "input": {
+    "document": 2.5
+   },
+   "name": "float",
+   "output": "b8736b999909"
+  },
+  {
+   "input": {
+    "document": true
+   },
+   "name": "true",
+   "output": "3cbc87c7681f"
+  }
+ ],
+ "compare": {
+  "kind": "exact"
+ },
+ "meta": {
+  "commit": "07ab6f2d58a286c4bf7263ba7e4ebc5ac31b5b32",
+  "generator": "config_id",
+  "glider_tree": "01e3ab4641222777b06a6a149e28010d84975fd3",
+  "python": "3.12",
+  "source": "src/glider/config.py (config_id, _canon); src/glider/config.py, src/glider/config_default.py, src/glider/config_hitl.py, tools/launch_config.py, launches/20261003/*/*.config",
+  "tag": "micropython_plan_B"
+ },
+ "unicode": [
+  {
+   "input": "\u007f\u0080\u00a0\u00a1\u00ac\u00ad\u00ae\u0377\u0378\u0379\u037a\u037f\u0380\u0383\u0384\u038a\u038b\u038c\u038d\u038e\u03a1\u03a2\u03a3\u052f\u0530\u0531\u0556\u0557\u0558\u0559\u058a\u058b",
+   "name": "unicode_000",
+   "output": "'\\x7f\\x80\\xa0\u00a1\u00ac\\xad\u00ae\u0377\\u0378\\u0379\u037a\u037f\\u0380\\u0383\u0384\u038a\\u038b\u038c\\u038d\u038e\u03a1\\u03a2\u03a3\u052f\\u0530\u0531\u0556\\u0557\\u0558\u0559\u058a\\u058b'"
+  },
+  {
+   "input": "\u058c\u058d\u058f\u0590\u0591\u05c7\u05c8\u05cf\u05d0\u05ea\u05eb\u05ee\u05ef\u05f4\u05f5\u0605\u0606\u061b\u061c\u061d\u06dc\u06dd\u06de\u070d\u070e\u070f\u0710\u074a\u074b\u074c\u074d\u07b1",
+   "name": "unicode_001",
+   "output": "'\\u058c\u058d\u058f\\u0590\u0591\u05c7\\u05c8\\u05cf\u05d0\u05ea\\u05eb\\u05ee\u05ef\u05f4\\u05f5\\u0605\u0606\u061b\\u061c\u061d\u06dc\\u06dd\u06de\u070d\\u070e\\u070f\u0710\u074a\\u074b\\u074c\u074d\u07b1'"
+  },
+  {
+   "input": "\u07b2\u07bf\u07c0\u07fa\u07fb\u07fc\u07fd\u082d\u082e\u082f\u0830\u083e\u083f\u0840\u085b\u085c\u085d\u085e\u085f\u0860\u086a\u086b\u086f\u0870\u088e\u088f\u0897\u0898\u08e1\u08e2\u08e3\u0983",
+   "name": "unicode_002",
+   "output": "'\\u07b2\\u07bf\u07c0\u07fa\\u07fb\\u07fc\u07fd\u082d\\u082e\\u082f\u0830\u083e\\u083f\u0840\u085b\\u085c\\u085d\u085e\\u085f\u0860\u086a\\u086b\\u086f\u0870\u088e\\u088f\\u0897\u0898\u08e1\\u08e2\u08e3\u0983'"
+  },
+  {
+   "input": "\u0984\u0985\u098c\u098d\u098e\u098f\u0990\u0991\u0992\u0993\u09a8\u09a9\u09aa\u09b0\u09b1\u09b2\u09b3\u09b5\u09b6\u09b9\u09ba\u09bb\u09bc\u09c4\u09c5\u09c6\u09c7\u09c8\u09c9\u09ca\u09cb\u09ce",
+   "name": "unicode_003",
+   "output": "'\\u0984\u0985\u098c\\u098d\\u098e\u098f\u0990\\u0991\\u0992\u0993\u09a8\\u09a9\u09aa\u09b0\\u09b1\u09b2\\u09b3\\u09b5\u09b6\u09b9\\u09ba\\u09bb\u09bc\u09c4\\u09c5\\u09c6\u09c7\u09c8\\u09c9\\u09ca\u09cb\u09ce'"
+  },
+  {
+   "input": "\u09cf\u09d6\u09d7\u09d8\u09db\u09dc\u09dd\u09de\u09df\u09e3\u09e4\u09e5\u09e6\u09fe\u09ff\u0a00\u0a01\u0a03\u0a04\u0a05\u0a0a\u0a0b\u0a0e\u0a0f\u0a10\u0a11\u0a12\u0a13\u0a28\u0a29\u0a2a\u0a30",
+   "name": "unicode_004",
+   "output": "'\\u09cf\\u09d6\u09d7\\u09d8\\u09db\u09dc\u09dd\\u09de\u09df\u09e3\\u09e4\\u09e5\u09e6\u09fe\\u09ff\\u0a00\u0a01\u0a03\\u0a04\u0a05\u0a0a\\u0a0b\\u0a0e\u0a0f\u0a10\\u0a11\\u0a12\u0a13\u0a28\\u0a29\u0a2a\u0a30'"
+  },
+  {
+   "input": "\u0a31\u0a32\u0a33\u0a34\u0a35\u0a36\u0a37\u0a38\u0a39\u0a3a\u0a3b\u0a3c\u0a3d\u0a3e\u0a42\u0a43\u0a46\u0a47\u0a48\u0a49\u0a4a\u0a4b\u0a4d\u0a4e\u0a50\u0a51\u0a52\u0a58\u0a59\u0a5c\u0a5d\u0a5e",
+   "name": "unicode_005",
+   "output": "'\\u0a31\u0a32\u0a33\\u0a34\u0a35\u0a36\\u0a37\u0a38\u0a39\\u0a3a\\u0a3b\u0a3c\\u0a3d\u0a3e\u0a42\\u0a43\\u0a46\u0a47\u0a48\\u0a49\\u0a4a\u0a4b\u0a4d\\u0a4e\\u0a50\u0a51\\u0a52\\u0a58\u0a59\u0a5c\\u0a5d\u0a5e'"
+  },
+  {
+   "input": "\u0a5f\u0a65\u0a66\u0a76\u0a77\u0a80\u0a81\u0a83\u0a84\u0a85\u0a8d\u0a8e\u0a8f\u0a91\u0a92\u0a93\u0aa8\u0aa9\u0aaa\u0ab0\u0ab1\u0ab2\u0ab3\u0ab4\u0ab5\u0ab9\u0aba\u0abb\u0abc\u0ac5\u0ac6\u0ac7",
+   "name": "unicode_006",
+   "output": "'\\u0a5f\\u0a65\u0a66\u0a76\\u0a77\\u0a80\u0a81\u0a83\\u0a84\u0a85\u0a8d\\u0a8e\u0a8f\u0a91\\u0a92\u0a93\u0aa8\\u0aa9\u0aaa\u0ab0\\u0ab1\u0ab2\u0ab3\\u0ab4\u0ab5\u0ab9\\u0aba\\u0abb\u0abc\u0ac5\\u0ac6\u0ac7'"
+  },
+  {
+   "input": "\u0ac9\u0aca\u0acb\u0acd\u0ace\u0acf\u0ad0\u0ad1\u0adf\u0ae0\u0ae3\u0ae4\u0ae5\u0ae6\u0af1\u0af2\u0af8\u0af9\u0aff\u0b00\u0b01\u0b03\u0b04\u0b05\u0b0c\u0b0d\u0b0e\u0b0f\u0b10\u0b11\u0b12\u0b13",
+   "name": "unicode_007",
+   "output": "'\u0ac9\\u0aca\u0acb\u0acd\\u0ace\\u0acf\u0ad0\\u0ad1\\u0adf\u0ae0\u0ae3\\u0ae4\\u0ae5\u0ae6\u0af1\\u0af2\\u0af8\u0af9\u0aff\\u0b00\u0b01\u0b03\\u0b04\u0b05\u0b0c\\u0b0d\\u0b0e\u0b0f\u0b10\\u0b11\\u0b12\u0b13'"
+  },
+  {
+   "input": "\u0b28\u0b29\u0b2a\u0b30\u0b31\u0b32\u0b33\u0b34\u0b35\u0b39\u0b3a\u0b3b\u0b3c\u0b44\u0b45\u0b46\u0b47\u0b48\u0b49\u0b4a\u0b4b\u0b4d\u0b4e\u0b54\u0b55\u0b57\u0b58\u0b5b\u0b5c\u0b5d\u0b5e\u0b5f",
+   "name": "unicode_008",
+   "output": "'\u0b28\\u0b29\u0b2a\u0b30\\u0b31\u0b32\u0b33\\u0b34\u0b35\u0b39\\u0b3a\\u0b3b\u0b3c\u0b44\\u0b45\\u0b46\u0b47\u0b48\\u0b49\\u0b4a\u0b4b\u0b4d\\u0b4e\\u0b54\u0b55\u0b57\\u0b58\\u0b5b\u0b5c\u0b5d\\u0b5e\u0b5f'"
+  },
+  {
+   "input": "\u0b63\u0b64\u0b65\u0b66\u0b77\u0b78\u0b81\u0b82\u0b83\u0b84\u0b85\u0b8a\u0b8b\u0b8d\u0b8e\u0b90\u0b91\u0b92\u0b95\u0b96\u0b98\u0b99\u0b9a\u0b9b\u0b9c\u0b9d\u0b9e\u0b9f\u0ba0\u0ba2\u0ba3\u0ba4",
+   "name": "unicode_009",
+   "output": "'\u0b63\\u0b64\\u0b65\u0b66\u0b77\\u0b78\\u0b81\u0b82\u0b83\\u0b84\u0b85\u0b8a\\u0b8b\\u0b8d\u0b8e\u0b90\\u0b91\u0b92\u0b95\\u0b96\\u0b98\u0b99\u0b9a\\u0b9b\u0b9c\\u0b9d\u0b9e\u0b9f\\u0ba0\\u0ba2\u0ba3\u0ba4'"
+  },
+  {
+   "input": "\u0ba5\u0ba7\u0ba8\u0baa\u0bab\u0bad\u0bae\u0bb9\u0bba\u0bbd\u0bbe\u0bc2\u0bc3\u0bc5\u0bc6\u0bc8\u0bc9\u0bca\u0bcd\u0bce\u0bcf\u0bd0\u0bd1\u0bd6\u0bd7\u0bd8\u0be5\u0be6\u0bfa\u0bfb\u0bff\u0c00",
+   "name": "unicode_010",
+   "output": "'\\u0ba5\\u0ba7\u0ba8\u0baa\\u0bab\\u0bad\u0bae\u0bb9\\u0bba\\u0bbd\u0bbe\u0bc2\\u0bc3\\u0bc5\u0bc6\u0bc8\\u0bc9\u0bca\u0bcd\\u0bce\\u0bcf\u0bd0\\u0bd1\\u0bd6\u0bd7\\u0bd8\\u0be5\u0be6\u0bfa\\u0bfb\\u0bff\u0c00'"
+  },
+  {
+   "input": "\u0c0c\u0c0d\u0c0e\u0c10\u0c11\u0c12\u0c28\u0c29\u0c2a\u0c39\u0c3a\u0c3b\u0c3c\u0c44\u0c45\u0c46\u0c48\u0c49\u0c4a\u0c4d\u0c4e\u0c54\u0c55\u0c56\u0c57\u0c58\u0c5a\u0c5b\u0c5c\u0c5d\u0c5e\u0c5f",
+   "name": "unicode_011",
+   "output": "'\u0c0c\\u0c0d\u0c0e\u0c10\\u0c11\u0c12\u0c28\\u0c29\u0c2a\u0c39\\u0c3a\\u0c3b\u0c3c\u0c44\\u0c45\u0c46\u0c48\\u0c49\u0c4a\u0c4d\\u0c4e\\u0c54\u0c55\u0c56\\u0c57\u0c58\u0c5a\\u0c5b\\u0c5c\u0c5d\\u0c5e\\u0c5f'"
+  },
+  {
+   "input": "\u0c60\u0c63\u0c64\u0c65\u0c66\u0c6f\u0c70\u0c76\u0c77\u0c8c\u0c8d\u0c8e\u0c90\u0c91\u0c92\u0ca8\u0ca9\u0caa\u0cb3\u0cb4\u0cb5\u0cb9\u0cba\u0cbb\u0cbc\u0cc4\u0cc5\u0cc6\u0cc8\u0cc9\u0cca\u0ccd",
+   "name": "unicode_012",
+   "output": "'\u0c60\u0c63\\u0c64\\u0c65\u0c66\u0c6f\\u0c70\\u0c76\u0c77\u0c8c\\u0c8d\u0c8e\u0c90\\u0c91\u0c92\u0ca8\\u0ca9\u0caa\u0cb3\\u0cb4\u0cb5\u0cb9\\u0cba\\u0cbb\u0cbc\u0cc4\\u0cc5\u0cc6\u0cc8\\u0cc9\u0cca\u0ccd'"
+  },
+  {
+   "input": "\u0cce\u0cd4\u0cd5\u0cd6\u0cd7\u0cdc\u0cdd\u0cde\u0cdf\u0ce0\u0ce3\u0ce4\u0ce5\u0ce6\u0cef\u0cf0\u0cf1\u0cf3\u0cf4\u0cff\u0d00\u0d0c\u0d0d\u0d0e\u0d10\u0d11\u0d12\u0d44\u0d45\u0d46\u0d48\u0d49",
+   "name": "unicode_013",
+   "output": "'\\u0cce\\u0cd4\u0cd5\u0cd6\\u0cd7\\u0cdc\u0cdd\u0cde\\u0cdf\u0ce0\u0ce3\\u0ce4\\u0ce5\u0ce6\u0cef\\u0cf0\u0cf1\u0cf3\\u0cf4\\u0cff\u0d00\u0d0c\\u0d0d\u0d0e\u0d10\\u0d11\u0d12\u0d44\\u0d45\u0d46\u0d48\\u0d49'"
+  },
+  {
+   "input": "\u0d4a\u0d4f\u0d50\u0d53\u0d54\u0d63\u0d64\u0d65\u0d66\u0d7f\u0d80\u0d81\u0d83\u0d84\u0d85\u0d96\u0d97\u0d99\u0d9a\u0db1\u0db2\u0db3\u0dbb\u0dbc\u0dbd\u0dbe\u0dbf\u0dc0\u0dc6\u0dc7\u0dc9\u0dca",
+   "name": "unicode_014",
+   "output": "'\u0d4a\u0d4f\\u0d50\\u0d53\u0d54\u0d63\\u0d64\\u0d65\u0d66\u0d7f\\u0d80\u0d81\u0d83\\u0d84\u0d85\u0d96\\u0d97\\u0d99\u0d9a\u0db1\\u0db2\u0db3\u0dbb\\u0dbc\u0dbd\\u0dbe\\u0dbf\u0dc0\u0dc6\\u0dc7\\u0dc9\u0dca'"
+  },
+  {
+   "input": "\u0dcb\u0dce\u0dcf\u0dd4\u0dd5\u0dd6\u0dd7\u0dd8\u0ddf\u0de0\u0de5\u0de6\u0def\u0df0\u0df1\u0df2\u0df4\u0df5\u0e00\u0e01\u0e3a\u0e3b\u0e3e\u0e3f\u0e5b\u0e5c\u0e80\u0e81\u0e82\u0e83\u0e84\u0e85",
+   "name": "unicode_015",
+   "output": "'\\u0dcb\\u0dce\u0dcf\u0dd4\\u0dd5\u0dd6\\u0dd7\u0dd8\u0ddf\\u0de0\\u0de5\u0de6\u0def\\u0df0\\u0df1\u0df2\u0df4\\u0df5\\u0e00\u0e01\u0e3a\\u0e3b\\u0e3e\u0e3f\u0e5b\\u0e5c\\u0e80\u0e81\u0e82\\u0e83\u0e84\\u0e85'"
+  },
+  {
+   "input": "\u0e86\u0e8a\u0e8b\u0e8c\u0ea3\u0ea4\u0ea5\u0ea6\u0ea7\u0ebd\u0ebe\u0ebf\u0ec0\u0ec4\u0ec5\u0ec6\u0ec7\u0ec8\u0ece\u0ecf\u0ed0\u0ed9\u0eda\u0edb\u0edc\u0edf\u0ee0\u0eff\u0f00\u0f47\u0f48\u0f49",
+   "name": "unicode_016",
+   "output": "'\u0e86\u0e8a\\u0e8b\u0e8c\u0ea3\\u0ea4\u0ea5\\u0ea6\u0ea7\u0ebd\\u0ebe\\u0ebf\u0ec0\u0ec4\\u0ec5\u0ec6\\u0ec7\u0ec8\u0ece\\u0ecf\u0ed0\u0ed9\\u0eda\\u0edb\u0edc\u0edf\\u0ee0\\u0eff\u0f00\u0f47\\u0f48\u0f49'"
+  },
+  {
+   "input": "\u0f6c\u0f6d\u0f70\u0f71\u0f97\u0f98\u0f99\u0fbc\u0fbd\u0fbe\u0fcc\u0fcd\u0fce\u0fda\u0fdb\u0fff\u1000\u10c5\u10c6\u10c7\u10c8\u10cc\u10cd\u10ce\u10cf\u10d0\u1248\u1249\u124a\u124d\u124e\u124f",
+   "name": "unicode_017",
+   "output": "'\u0f6c\\u0f6d\\u0f70\u0f71\u0f97\\u0f98\u0f99\u0fbc\\u0fbd\u0fbe\u0fcc\\u0fcd\u0fce\u0fda\\u0fdb\\u0fff\u1000\u10c5\\u10c6\u10c7\\u10c8\\u10cc\u10cd\\u10ce\\u10cf\u10d0\u1248\\u1249\u124a\u124d\\u124e\\u124f'"
+  },
+  {
+   "input": "\u1250\u1256\u1257\u1258\u1259\u125a\u125d\u125e\u125f\u1260\u1288\u1289\u128a\u128d\u128e\u128f\u1290\u12b0\u12b1\u12b2\u12b5\u12b6\u12b7\u12b8\u12be\u12bf\u12c0\u12c1\u12c2\u12c5\u12c6\u12c7",
+   "name": "unicode_018",
+   "output": "'\u1250\u1256\\u1257\u1258\\u1259\u125a\u125d\\u125e\\u125f\u1260\u1288\\u1289\u128a\u128d\\u128e\\u128f\u1290\u12b0\\u12b1\u12b2\u12b5\\u12b6\\u12b7\u12b8\u12be\\u12bf\u12c0\\u12c1\u12c2\u12c5\\u12c6\\u12c7'"
+  },
+  {
+   "input": "\u12c8\u12d6\u12d7\u12d8\u1310\u1311\u1312\u1315\u1316\u1317\u1318\u135a\u135b\u135c\u135d\u137c\u137d\u137f\u1380\u1399\u139a\u139f\u13a0\u13f5\u13f6\u13f7\u13f8\u13fd\u13fe\u13ff\u1400\u167f",
+   "name": "unicode_019",
+   "output": "'\u12c8\u12d6\\u12d7\u12d8\u1310\\u1311\u1312\u1315\\u1316\\u1317\u1318\u135a\\u135b\\u135c\u135d\u137c\\u137d\\u137f\u1380\u1399\\u139a\\u139f\u13a0\u13f5\\u13f6\\u13f7\u13f8\u13fd\\u13fe\\u13ff\u1400\u167f'"
+  },
+  {
+   "input": "\u1680\u1681\u169c\u169d\u169f\u16a0\u16f8\u16f9\u16ff\u1700\u1715\u1716\u171e\u171f\u1736\u1737\u173f\u1740\u1753\u1754\u175f\u1760\u176c\u176d\u176e\u1770\u1771\u1772\u1773\u1774\u177f\u1780",
+   "name": "unicode_020",
+   "output": "'\\u1680\u1681\u169c\\u169d\\u169f\u16a0\u16f8\\u16f9\\u16ff\u1700\u1715\\u1716\\u171e\u171f\u1736\\u1737\\u173f\u1740\u1753\\u1754\\u175f\u1760\u176c\\u176d\u176e\u1770\\u1771\u1772\u1773\\u1774\\u177f\u1780'"
+  },
+  {
+   "input": "\u17dd\u17de\u17df\u17e0\u17e9\u17ea\u17ef\u17f0\u17f9\u17fa\u17ff\u1800\u180d\u180e\u180f\u1819\u181a\u181f\u1820\u1878\u1879\u187f\u1880\u18aa\u18ab\u18af\u18b0\u18f5\u18f6\u18ff\u1900\u191e",
+   "name": "unicode_021",
+   "output": "'\u17dd\\u17de\\u17df\u17e0\u17e9\\u17ea\\u17ef\u17f0\u17f9\\u17fa\\u17ff\u1800\u180d\\u180e\u180f\u1819\\u181a\\u181f\u1820\u1878\\u1879\\u187f\u1880\u18aa\\u18ab\\u18af\u18b0\u18f5\\u18f6\\u18ff\u1900\u191e'"
+  },
+  {
+   "input": "\u191f\u1920\u192b\u192c\u192f\u1930\u193b\u193c\u193f\u1940\u1941\u1943\u1944\u196d\u196e\u196f\u1970\u1974\u1975\u197f\u1980\u19ab\u19ac\u19af\u19b0\u19c9\u19ca\u19cf\u19d0\u19da\u19db\u19dd",
+   "name": "unicode_022",
+   "output": "'\\u191f\u1920\u192b\\u192c\\u192f\u1930\u193b\\u193c\\u193f\u1940\\u1941\\u1943\u1944\u196d\\u196e\\u196f\u1970\u1974\\u1975\\u197f\u1980\u19ab\\u19ac\\u19af\u19b0\u19c9\\u19ca\\u19cf\u19d0\u19da\\u19db\\u19dd'"
+  },
+  {
+   "input": "\u19de\u1a1b\u1a1c\u1a1d\u1a1e\u1a5e\u1a5f\u1a60\u1a7c\u1a7d\u1a7e\u1a7f\u1a89\u1a8a\u1a8f\u1a90\u1a99\u1a9a\u1a9f\u1aa0\u1aad\u1aae\u1aaf\u1ab0\u1ace\u1acf\u1aff\u1b00\u1b4c\u1b4d\u1b4f\u1b50",
+   "name": "unicode_023",
+   "output": "'\u19de\u1a1b\\u1a1c\\u1a1d\u1a1e\u1a5e\\u1a5f\u1a60\u1a7c\\u1a7d\\u1a7e\u1a7f\u1a89\\u1a8a\\u1a8f\u1a90\u1a99\\u1a9a\\u1a9f\u1aa0\u1aad\\u1aae\\u1aaf\u1ab0\u1ace\\u1acf\\u1aff\u1b00\u1b4c\\u1b4d\\u1b4f\u1b50'"
+  },
+  {
+   "input": "\u1b7e\u1b7f\u1b80\u1bf3\u1bf4\u1bfb\u1bfc\u1c37\u1c38\u1c3a\u1c3b\u1c49\u1c4a\u1c4c\u1c4d\u1c88\u1c89\u1c8f\u1c90\u1cba\u1cbb\u1cbc\u1cbd\u1cc7\u1cc8\u1ccf\u1cd0\u1cfa\u1cfb\u1cff\u1d00\u1f15",
+   "name": "unicode_024",
+   "output": "'\u1b7e\\u1b7f\u1b80\u1bf3\\u1bf4\\u1bfb\u1bfc\u1c37\\u1c38\\u1c3a\u1c3b\u1c49\\u1c4a\\u1c4c\u1c4d\u1c88\\u1c89\\u1c8f\u1c90\u1cba\\u1cbb\\u1cbc\u1cbd\u1cc7\\u1cc8\\u1ccf\u1cd0\u1cfa\\u1cfb\\u1cff\u1d00\u1f15'"
+  },
+  {
+   "input": "\u1f16\u1f17\u1f18\u1f1d\u1f1e\u1f1f\u1f20\u1f45\u1f46\u1f47\u1f48\u1f4d\u1f4e\u1f4f\u1f50\u1f57\u1f58\u1f59\u1f5a\u1f5b\u1f5c\u1f5d\u1f5e\u1f5f\u1f7d\u1f7e\u1f7f\u1f80\u1fb4\u1fb5\u1fb6\u1fc4",
+   "name": "unicode_025",
+   "output": "'\\u1f16\\u1f17\u1f18\u1f1d\\u1f1e\\u1f1f\u1f20\u1f45\\u1f46\\u1f47\u1f48\u1f4d\\u1f4e\\u1f4f\u1f50\u1f57\\u1f58\u1f59\\u1f5a\u1f5b\\u1f5c\u1f5d\\u1f5e\u1f5f\u1f7d\\u1f7e\\u1f7f\u1f80\u1fb4\\u1fb5\u1fb6\u1fc4'"
+  },
+  {
+   "input": "\u1fc5\u1fc6\u1fd3\u1fd4\u1fd5\u1fd6\u1fdb\u1fdc\u1fdd\u1fef\u1ff0\u1ff1\u1ff2\u1ff4\u1ff5\u1ff6\u1ffe\u1fff\u200f\u2010\u2027\u2028\u202f\u2030\u205e\u205f\u206f\u2070\u2071\u2072\u2073\u2074",
+   "name": "unicode_026",
+   "output": "'\\u1fc5\u1fc6\u1fd3\\u1fd4\\u1fd5\u1fd6\u1fdb\\u1fdc\u1fdd\u1fef\\u1ff0\\u1ff1\u1ff2\u1ff4\\u1ff5\u1ff6\u1ffe\\u1fff\\u200f\u2010\u2027\\u2028\\u202f\u2030\u205e\\u205f\\u206f\u2070\u2071\\u2072\\u2073\u2074'"
+  },
+  {
+   "input": "\u208e\u208f\u2090\u209c\u209d\u209f\u20a0\u20c0\u20c1\u20cf\u20d0\u20f0\u20f1\u20ff\u2100\u218b\u218c\u218f\u2190\u2426\u2427\u243f\u2440\u244a\u244b\u245f\u2460\u2b73\u2b74\u2b75\u2b76\u2b95",
+   "name": "unicode_027",
+   "output": "'\u208e\\u208f\u2090\u209c\\u209d\\u209f\u20a0\u20c0\\u20c1\\u20cf\u20d0\u20f0\\u20f1\\u20ff\u2100\u218b\\u218c\\u218f\u2190\u2426\\u2427\\u243f\u2440\u244a\\u244b\\u245f\u2460\u2b73\\u2b74\\u2b75\u2b76\u2b95'"
+  },
+  {
+   "input": "\u2b96\u2b97\u2cf3\u2cf4\u2cf8\u2cf9\u2d25\u2d26\u2d27\u2d28\u2d2c\u2d2d\u2d2e\u2d2f\u2d30\u2d67\u2d68\u2d6e\u2d6f\u2d70\u2d71\u2d7e\u2d7f\u2d96\u2d97\u2d9f\u2da0\u2da6\u2da7\u2da8\u2dae\u2daf",
+   "name": "unicode_028",
+   "output": "'\\u2b96\u2b97\u2cf3\\u2cf4\\u2cf8\u2cf9\u2d25\\u2d26\u2d27\\u2d28\\u2d2c\u2d2d\\u2d2e\\u2d2f\u2d30\u2d67\\u2d68\\u2d6e\u2d6f\u2d70\\u2d71\\u2d7e\u2d7f\u2d96\\u2d97\\u2d9f\u2da0\u2da6\\u2da7\u2da8\u2dae\\u2daf'"
+  },
+  {
+   "input": "\u2db0\u2db6\u2db7\u2db8\u2dbe\u2dbf\u2dc0\u2dc6\u2dc7\u2dc8\u2dce\u2dcf\u2dd0\u2dd6\u2dd7\u2dd8\u2dde\u2ddf\u2de0\u2e5d\u2e5e\u2e7f\u2e80\u2e99\u2e9a\u2e9b\u2ef3\u2ef4\u2eff\u2f00\u2fd5\u2fd6",
+   "name": "unicode_029",
+   "output": "'\u2db0\u2db6\\u2db7\u2db8\u2dbe\\u2dbf\u2dc0\u2dc6\\u2dc7\u2dc8\u2dce\\u2dcf\u2dd0\u2dd6\\u2dd7\u2dd8\u2dde\\u2ddf\u2de0\u2e5d\\u2e5e\\u2e7f\u2e80\u2e99\\u2e9a\u2e9b\u2ef3\\u2ef4\\u2eff\u2f00\u2fd5\\u2fd6'"
+  },
+  {
+   "input": "\u2fef\u2ff0\u2ffb\u2ffc\u3000\u3001\u303f\u3040\u3041\u3096\u3097\u3098\u3099\u30ff\u3100\u3104\u3105\u312f\u3130\u3131\u318e\u318f\u3190\u31e3\u31e4\u31ef\u31f0\u321e\u321f\u3220\ua48c\ua48d",
+   "name": "unicode_030",
+   "output": "'\\u2fef\u2ff0\u2ffb\\u2ffc\\u3000\u3001\u303f\\u3040\u3041\u3096\\u3097\\u3098\u3099\u30ff\\u3100\\u3104\u3105\u312f\\u3130\u3131\u318e\\u318f\u3190\u31e3\\u31e4\\u31ef\u31f0\u321e\\u321f\u3220\ua48c\\ua48d'"
+  },
+  {
+   "input": "\ua48f\ua490\ua4c6\ua4c7\ua4cf\ua4d0\ua62b\ua62c\ua63f\ua640\ua6f7\ua6f8\ua6ff\ua700\ua7ca\ua7cb\ua7cf\ua7d0\ua7d1\ua7d2\ua7d3\ua7d4\ua7d5\ua7d9\ua7da\ua7f1\ua7f2\ua82c\ua82d\ua82f\ua830\ua839",
+   "name": "unicode_031",
+   "output": "'\\ua48f\ua490\ua4c6\\ua4c7\\ua4cf\ua4d0\ua62b\\ua62c\\ua63f\ua640\ua6f7\\ua6f8\\ua6ff\ua700\ua7ca\\ua7cb\\ua7cf\ua7d0\ua7d1\\ua7d2\ua7d3\\ua7d4\ua7d5\ua7d9\\ua7da\\ua7f1\ua7f2\ua82c\\ua82d\\ua82f\ua830\ua839'"
+  },
+  {
+   "input": "\ua83a\ua83f\ua840\ua877\ua878\ua87f\ua880\ua8c5\ua8c6\ua8cd\ua8ce\ua8d9\ua8da\ua8df\ua8e0\ua953\ua954\ua95e\ua95f\ua97c\ua97d\ua97f\ua980\ua9cd\ua9ce\ua9cf\ua9d9\ua9da\ua9dd\ua9de\ua9fe\ua9ff",
+   "name": "unicode_032",
+   "output": "'\\ua83a\\ua83f\ua840\ua877\\ua878\\ua87f\ua880\ua8c5\\ua8c6\\ua8cd\ua8ce\ua8d9\\ua8da\\ua8df\ua8e0\ua953\\ua954\\ua95e\ua95f\ua97c\\ua97d\\ua97f\ua980\ua9cd\\ua9ce\ua9cf\ua9d9\\ua9da\\ua9dd\ua9de\ua9fe\\ua9ff'"
+  },
+  {
+   "input": "\uaa00\uaa36\uaa37\uaa3f\uaa40\uaa4d\uaa4e\uaa4f\uaa50\uaa59\uaa5a\uaa5b\uaa5c\uaac2\uaac3\uaada\uaadb\uaaf6\uaaf7\uab00\uab01\uab06\uab07\uab08\uab09\uab0e\uab0f\uab10\uab11\uab16\uab17\uab1f",
+   "name": "unicode_033",
+   "output": "'\uaa00\uaa36\\uaa37\\uaa3f\uaa40\uaa4d\\uaa4e\\uaa4f\uaa50\uaa59\\uaa5a\\uaa5b\uaa5c\uaac2\\uaac3\\uaada\uaadb\uaaf6\\uaaf7\\uab00\uab01\uab06\\uab07\\uab08\uab09\uab0e\\uab0f\\uab10\uab11\uab16\\uab17\\uab1f'"
+  },
+  {
+   "input": "\uab20\uab26\uab27\uab28\uab2e\uab2f\uab30\uab6b\uab6c\uab6f\uab70\uabed\uabee\uabef\uabf0\uabf9\uabfa\uabff\uac00\ud7a3\ud7a4\ud7af\ud7b0\ud7c6\ud7c7\ud7ca\ud7cb\ud7fb\ud7fc\uf8ff\uf900\ufa6d",
+   "name": "unicode_034",
+   "output": "'\uab20\uab26\\uab27\uab28\uab2e\\uab2f\uab30\uab6b\\uab6c\\uab6f\uab70\uabed\\uabee\\uabef\uabf0\uabf9\\uabfa\\uabff\uac00\ud7a3\\ud7a4\\ud7af\ud7b0\ud7c6\\ud7c7\\ud7ca\ud7cb\ud7fb\\ud7fc\\uf8ff\uf900\ufa6d'"
+  },
+  {
+   "input": "\ufa6e\ufa6f\ufa70\ufad9\ufada\ufaff\ufb00\ufb06\ufb07\ufb12\ufb13\ufb17\ufb18\ufb1c\ufb1d\ufb36\ufb37\ufb38\ufb3c\ufb3d\ufb3e\ufb3f\ufb40\ufb41\ufb42\ufb43\ufb44\ufb45\ufb46\ufbc2\ufbc3\ufbd2",
+   "name": "unicode_035",
+   "output": "'\\ufa6e\\ufa6f\ufa70\ufad9\\ufada\\ufaff\ufb00\ufb06\\ufb07\\ufb12\ufb13\ufb17\\ufb18\\ufb1c\ufb1d\ufb36\\ufb37\ufb38\ufb3c\\ufb3d\ufb3e\\ufb3f\ufb40\ufb41\\ufb42\ufb43\ufb44\\ufb45\ufb46\ufbc2\\ufbc3\\ufbd2'"
+  },
+  {
+   "input": "\ufbd3\ufd8f\ufd90\ufd91\ufd92\ufdc7\ufdc8\ufdce\ufdcf\ufdd0\ufdef\ufdf0\ufe19\ufe1a\ufe1f\ufe20\ufe52\ufe53\ufe54\ufe66\ufe67\ufe68\ufe6b\ufe6c\ufe6f\ufe70\ufe74\ufe75\ufe76\ufefc\ufefd\uff00",
+   "name": "unicode_036",
+   "output": "'\ufbd3\ufd8f\\ufd90\\ufd91\ufd92\ufdc7\\ufdc8\\ufdce\ufdcf\\ufdd0\\ufdef\ufdf0\ufe19\\ufe1a\\ufe1f\ufe20\ufe52\\ufe53\ufe54\ufe66\\ufe67\ufe68\ufe6b\\ufe6c\\ufe6f\ufe70\ufe74\\ufe75\ufe76\ufefc\\ufefd\\uff00'"
+  },
+  {
+   "input": "\uff01\uffbe\uffbf\uffc1\uffc2\uffc7\uffc8\uffc9\uffca\uffcf\uffd0\uffd1\uffd2\uffd7\uffd8\uffd9\uffda\uffdc\uffdd\uffdf\uffe0\uffe6\uffe7\uffe8\uffee\uffef\ufffb\ufffc\ufffd\ufffe\uffff\ud800\udc00",
+   "name": "unicode_037",
+   "output": "'\uff01\uffbe\\uffbf\\uffc1\uffc2\uffc7\\uffc8\\uffc9\uffca\uffcf\\uffd0\\uffd1\uffd2\uffd7\\uffd8\\uffd9\uffda\uffdc\\uffdd\\uffdf\uffe0\uffe6\\uffe7\uffe8\uffee\\uffef\\ufffb\ufffc\ufffd\\ufffe\\uffff\ud800\udc00'"
+  },
+  {
+   "input": "\ud800\udc0b\ud800\udc0c\ud800\udc0d\ud800\udc26\ud800\udc27\ud800\udc28\ud800\udc3a\ud800\udc3b\ud800\udc3c\ud800\udc3d\ud800\udc3e\ud800\udc3f\ud800\udc4d\ud800\udc4e\ud800\udc4f\ud800\udc50\ud800\udc5d\ud800\udc5e\ud800\udc7f\ud800\udc80\ud800\udcfa\ud800\udcfb\ud800\udcff\ud800\udd00\ud800\udd02\ud800\udd03\ud800\udd06\ud800\udd07\ud800\udd33\ud800\udd34\ud800\udd36\ud800\udd37",
+   "name": "unicode_038",
+   "output": "'\ud800\udc0b\\U0001000c\ud800\udc0d\ud800\udc26\\U00010027\ud800\udc28\ud800\udc3a\\U0001003b\ud800\udc3c\ud800\udc3d\\U0001003e\ud800\udc3f\ud800\udc4d\\U0001004e\\U0001004f\ud800\udc50\ud800\udc5d\\U0001005e\\U0001007f\ud800\udc80\ud800\udcfa\\U000100fb\\U000100ff\ud800\udd00\ud800\udd02\\U00010103\\U00010106\ud800\udd07\ud800\udd33\\U00010134\\U00010136\ud800\udd37'"
+  },
+  {
+   "input": "\ud800\udd8e\ud800\udd8f\ud800\udd90\ud800\udd9c\ud800\udd9d\ud800\udd9f\ud800\udda0\ud800\udda1\ud800\uddcf\ud800\uddd0\ud800\uddfd\ud800\uddfe\ud800\ude7f\ud800\ude80\ud800\ude9c\ud800\ude9d\ud800\ude9f\ud800\udea0\ud800\uded0\ud800\uded1\ud800\udedf\ud800\udee0\ud800\udefb\ud800\udefc\ud800\udeff\ud800\udf00\ud800\udf23\ud800\udf24\ud800\udf2c\ud800\udf2d\ud800\udf4a\ud800\udf4b",
+   "name": "unicode_039",
+   "output": "'\ud800\udd8e\\U0001018f\ud800\udd90\ud800\udd9c\\U0001019d\\U0001019f\ud800\udda0\\U000101a1\\U000101cf\ud800\uddd0\ud800\uddfd\\U000101fe\\U0001027f\ud800\ude80\ud800\ude9c\\U0001029d\\U0001029f\ud800\udea0\ud800\uded0\\U000102d1\\U000102df\ud800\udee0\ud800\udefb\\U000102fc\\U000102ff\ud800\udf00\ud800\udf23\\U00010324\\U0001032c\ud800\udf2d\ud800\udf4a\\U0001034b'"
+  },
+  {
+   "input": "\ud800\udf4f\ud800\udf50\ud800\udf7a\ud800\udf7b\ud800\udf7f\ud800\udf80\ud800\udf9d\ud800\udf9e\ud800\udf9f\ud800\udfc3\ud800\udfc4\ud800\udfc7\ud800\udfc8\ud800\udfd5\ud800\udfd6\ud800\udfff\ud801\udc00\ud801\udc9d\ud801\udc9e\ud801\udc9f\ud801\udca0\ud801\udca9\ud801\udcaa\ud801\udcaf\ud801\udcb0\ud801\udcd3\ud801\udcd4\ud801\udcd7\ud801\udcd8\ud801\udcfb\ud801\udcfc\ud801\udcff",
+   "name": "unicode_040",
+   "output": "'\\U0001034f\ud800\udf50\ud800\udf7a\\U0001037b\\U0001037f\ud800\udf80\ud800\udf9d\\U0001039e\ud800\udf9f\ud800\udfc3\\U000103c4\\U000103c7\ud800\udfc8\ud800\udfd5\\U000103d6\\U000103ff\ud801\udc00\ud801\udc9d\\U0001049e\\U0001049f\ud801\udca0\ud801\udca9\\U000104aa\\U000104af\ud801\udcb0\ud801\udcd3\\U000104d4\\U000104d7\ud801\udcd8\ud801\udcfb\\U000104fc\\U000104ff'"
+  },
+  {
+   "input": "\ud801\udd00\ud801\udd27\ud801\udd28\ud801\udd2f\ud801\udd30\ud801\udd63\ud801\udd64\ud801\udd6e\ud801\udd6f\ud801\udd7a\ud801\udd7b\ud801\udd7c\ud801\udd8a\ud801\udd8b\ud801\udd8c\ud801\udd92\ud801\udd93\ud801\udd94\ud801\udd95\ud801\udd96\ud801\udd97\ud801\udda1\ud801\udda2\ud801\udda3\ud801\uddb1\ud801\uddb2\ud801\uddb3\ud801\uddb9\ud801\uddba\ud801\uddbb\ud801\uddbc\ud801\uddbd",
+   "name": "unicode_041",
+   "output": "'\ud801\udd00\ud801\udd27\\U00010528\\U0001052f\ud801\udd30\ud801\udd63\\U00010564\\U0001056e\ud801\udd6f\ud801\udd7a\\U0001057b\ud801\udd7c\ud801\udd8a\\U0001058b\ud801\udd8c\ud801\udd92\\U00010593\ud801\udd94\ud801\udd95\\U00010596\ud801\udd97\ud801\udda1\\U000105a2\ud801\udda3\ud801\uddb1\\U000105b2\ud801\uddb3\ud801\uddb9\\U000105ba\ud801\uddbb\ud801\uddbc\\U000105bd'"
+  },
+  {
+   "input": "\ud801\uddff\ud801\ude00\ud801\udf36\ud801\udf37\ud801\udf3f\ud801\udf40\ud801\udf55\ud801\udf56\ud801\udf5f\ud801\udf60\ud801\udf67\ud801\udf68\ud801\udf7f\ud801\udf80\ud801\udf85\ud801\udf86\ud801\udf87\ud801\udfb0\ud801\udfb1\ud801\udfb2\ud801\udfba\ud801\udfbb\ud801\udfff\ud802\udc00\ud802\udc05\ud802\udc06\ud802\udc07\ud802\udc08\ud802\udc09\ud802\udc0a\ud802\udc35\ud802\udc36",
+   "name": "unicode_042",
+   "output": "'\\U000105ff\ud801\ude00\ud801\udf36\\U00010737\\U0001073f\ud801\udf40\ud801\udf55\\U00010756\\U0001075f\ud801\udf60\ud801\udf67\\U00010768\\U0001077f\ud801\udf80\ud801\udf85\\U00010786\ud801\udf87\ud801\udfb0\\U000107b1\ud801\udfb2\ud801\udfba\\U000107bb\\U000107ff\ud802\udc00\ud802\udc05\\U00010806\\U00010807\ud802\udc08\\U00010809\ud802\udc0a\ud802\udc35\\U00010836'"
+  },
+  {
+   "input": "\ud802\udc37\ud802\udc38\ud802\udc39\ud802\udc3b\ud802\udc3c\ud802\udc3d\ud802\udc3e\ud802\udc3f\ud802\udc55\ud802\udc56\ud802\udc57\ud802\udc9e\ud802\udc9f\ud802\udca6\ud802\udca7\ud802\udcaf\ud802\udcb0\ud802\udcdf\ud802\udce0\ud802\udcf2\ud802\udcf3\ud802\udcf4\ud802\udcf5\ud802\udcf6\ud802\udcfa\ud802\udcfb\ud802\udd1b\ud802\udd1c\ud802\udd1e\ud802\udd1f\ud802\udd39\ud802\udd3a",
+   "name": "unicode_043",
+   "output": "'\ud802\udc37\ud802\udc38\\U00010839\\U0001083b\ud802\udc3c\\U0001083d\\U0001083e\ud802\udc3f\ud802\udc55\\U00010856\ud802\udc57\ud802\udc9e\\U0001089f\\U000108a6\ud802\udca7\ud802\udcaf\\U000108b0\\U000108df\ud802\udce0\ud802\udcf2\\U000108f3\ud802\udcf4\ud802\udcf5\\U000108f6\\U000108fa\ud802\udcfb\ud802\udd1b\\U0001091c\\U0001091e\ud802\udd1f\ud802\udd39\\U0001093a'"
+  },
+  {
+   "input": "\ud802\udd3e\ud802\udd3f\ud802\udd40\ud802\udd7f\ud802\udd80\ud802\uddb7\ud802\uddb8\ud802\uddbb\ud802\uddbc\ud802\uddcf\ud802\uddd0\ud802\uddd1\ud802\uddd2\ud802\ude03\ud802\ude04\ud802\ude05\ud802\ude06\ud802\ude07\ud802\ude0b\ud802\ude0c\ud802\ude13\ud802\ude14\ud802\ude15\ud802\ude17\ud802\ude18\ud802\ude19\ud802\ude35\ud802\ude36\ud802\ude37\ud802\ude38\ud802\ude3a\ud802\ude3b",
+   "name": "unicode_044",
+   "output": "'\\U0001093e\ud802\udd3f\\U00010940\\U0001097f\ud802\udd80\ud802\uddb7\\U000109b8\\U000109bb\ud802\uddbc\ud802\uddcf\\U000109d0\\U000109d1\ud802\uddd2\ud802\ude03\\U00010a04\ud802\ude05\ud802\ude06\\U00010a07\\U00010a0b\ud802\ude0c\ud802\ude13\\U00010a14\ud802\ude15\ud802\ude17\\U00010a18\ud802\ude19\ud802\ude35\\U00010a36\\U00010a37\ud802\ude38\ud802\ude3a\\U00010a3b'"
+  },
+  {
+   "input": "\ud802\ude3e\ud802\ude3f\ud802\ude48\ud802\ude49\ud802\ude4f\ud802\ude50\ud802\ude58\ud802\ude59\ud802\ude5f\ud802\ude60\ud802\ude9f\ud802\udea0\ud802\udebf\ud802\udec0\ud802\udee6\ud802\udee7\ud802\udeea\ud802\udeeb\ud802\udef6\ud802\udef7\ud802\udeff\ud802\udf00\ud802\udf35\ud802\udf36\ud802\udf38\ud802\udf39\ud802\udf55\ud802\udf56\ud802\udf57\ud802\udf58\ud802\udf72\ud802\udf73",
+   "name": "unicode_045",
+   "output": "'\\U00010a3e\ud802\ude3f\ud802\ude48\\U00010a49\\U00010a4f\ud802\ude50\ud802\ude58\\U00010a59\\U00010a5f\ud802\ude60\ud802\ude9f\\U00010aa0\\U00010abf\ud802\udec0\ud802\udee6\\U00010ae7\\U00010aea\ud802\udeeb\ud802\udef6\\U00010af7\\U00010aff\ud802\udf00\ud802\udf35\\U00010b36\\U00010b38\ud802\udf39\ud802\udf55\\U00010b56\\U00010b57\ud802\udf58\ud802\udf72\\U00010b73'"
+  },
+  {
+   "input": "\ud802\udf77\ud802\udf78\ud802\udf91\ud802\udf92\ud802\udf98\ud802\udf99\ud802\udf9c\ud802\udf9d\ud802\udfa8\ud802\udfa9\ud802\udfaf\ud802\udfb0\ud802\udfff\ud803\udc00\ud803\udc48\ud803\udc49\ud803\udc7f\ud803\udc80\ud803\udcb2\ud803\udcb3\ud803\udcbf\ud803\udcc0\ud803\udcf2\ud803\udcf3\ud803\udcf9\ud803\udcfa\ud803\udd27\ud803\udd28\ud803\udd2f\ud803\udd30\ud803\udd39\ud803\udd3a",
+   "name": "unicode_046",
+   "output": "'\\U00010b77\ud802\udf78\ud802\udf91\\U00010b92\\U00010b98\ud802\udf99\ud802\udf9c\\U00010b9d\\U00010ba8\ud802\udfa9\ud802\udfaf\\U00010bb0\\U00010bff\ud803\udc00\ud803\udc48\\U00010c49\\U00010c7f\ud803\udc80\ud803\udcb2\\U00010cb3\\U00010cbf\ud803\udcc0\ud803\udcf2\\U00010cf3\\U00010cf9\ud803\udcfa\ud803\udd27\\U00010d28\\U00010d2f\ud803\udd30\ud803\udd39\\U00010d3a'"
+  },
+  {
+   "input": "\ud803\ude5f\ud803\ude60\ud803\ude7e\ud803\ude7f\ud803\ude80\ud803\udea9\ud803\udeaa\ud803\udeab\ud803\udead\ud803\udeae\ud803\udeaf\ud803\udeb0\ud803\udeb1\ud803\udeb2\ud803\udefc\ud803\udefd\ud803\udf27\ud803\udf28\ud803\udf2f\ud803\udf30\ud803\udf59\ud803\udf5a\ud803\udf6f\ud803\udf70\ud803\udf89\ud803\udf8a\ud803\udfaf\ud803\udfb0\ud803\udfcb\ud803\udfcc\ud803\udfdf\ud803\udfe0",
+   "name": "unicode_047",
+   "output": "'\\U00010e5f\ud803\ude60\ud803\ude7e\\U00010e7f\ud803\ude80\ud803\udea9\\U00010eaa\ud803\udeab\ud803\udead\\U00010eae\\U00010eaf\ud803\udeb0\ud803\udeb1\\U00010eb2\\U00010efc\ud803\udefd\ud803\udf27\\U00010f28\\U00010f2f\ud803\udf30\ud803\udf59\\U00010f5a\\U00010f6f\ud803\udf70\ud803\udf89\\U00010f8a\\U00010faf\ud803\udfb0\ud803\udfcb\\U00010fcc\\U00010fdf\ud803\udfe0'"
+  },
+  {
+   "input": "\ud803\udff6\ud803\udff7\ud803\udfff\ud804\udc00\ud804\udc4d\ud804\udc4e\ud804\udc51\ud804\udc52\ud804\udc75\ud804\udc76\ud804\udc7e\ud804\udc7f\ud804\udcbc\ud804\udcbd\ud804\udcbe\ud804\udcc2\ud804\udcc3\ud804\udccf\ud804\udcd0\ud804\udce8\ud804\udce9\ud804\udcef\ud804\udcf0\ud804\udcf9\ud804\udcfa\ud804\udcff\ud804\udd00\ud804\udd34\ud804\udd35\ud804\udd36\ud804\udd47\ud804\udd48",
+   "name": "unicode_048",
+   "output": "'\ud803\udff6\\U00010ff7\\U00010fff\ud804\udc00\ud804\udc4d\\U0001104e\\U00011051\ud804\udc52\ud804\udc75\\U00011076\\U0001107e\ud804\udc7f\ud804\udcbc\\U000110bd\ud804\udcbe\ud804\udcc2\\U000110c3\\U000110cf\ud804\udcd0\ud804\udce8\\U000110e9\\U000110ef\ud804\udcf0\ud804\udcf9\\U000110fa\\U000110ff\ud804\udd00\ud804\udd34\\U00011135\ud804\udd36\ud804\udd47\\U00011148'"
+  },
+  {
+   "input": "\ud804\udd4f\ud804\udd50\ud804\udd76\ud804\udd77\ud804\udd7f\ud804\udd80\ud804\udddf\ud804\udde0\ud804\udde1\ud804\uddf4\ud804\uddf5\ud804\uddff\ud804\ude00\ud804\ude11\ud804\ude12\ud804\ude13\ud804\ude41\ud804\ude42\ud804\ude7f\ud804\ude80\ud804\ude86\ud804\ude87\ud804\ude88\ud804\ude89\ud804\ude8a\ud804\ude8d\ud804\ude8e\ud804\ude8f\ud804\ude9d\ud804\ude9e\ud804\ude9f\ud804\udea9",
+   "name": "unicode_049",
+   "output": "'\\U0001114f\ud804\udd50\ud804\udd76\\U00011177\\U0001117f\ud804\udd80\ud804\udddf\\U000111e0\ud804\udde1\ud804\uddf4\\U000111f5\\U000111ff\ud804\ude00\ud804\ude11\\U00011212\ud804\ude13\ud804\ude41\\U00011242\\U0001127f\ud804\ude80\ud804\ude86\\U00011287\ud804\ude88\\U00011289\ud804\ude8a\ud804\ude8d\\U0001128e\ud804\ude8f\ud804\ude9d\\U0001129e\ud804\ude9f\ud804\udea9'"
+  },
+  {
+   "input": "\ud804\udeaa\ud804\udeaf\ud804\udeb0\ud804\udeea\ud804\udeeb\ud804\udeef\ud804\udef0\ud804\udef9\ud804\udefa\ud804\udeff\ud804\udf00\ud804\udf03\ud804\udf04\ud804\udf05\ud804\udf0c\ud804\udf0d\ud804\udf0e\ud804\udf0f\ud804\udf10\ud804\udf11\ud804\udf12\ud804\udf13\ud804\udf28\ud804\udf29\ud804\udf2a\ud804\udf30\ud804\udf31\ud804\udf32\ud804\udf33\ud804\udf34\ud804\udf35\ud804\udf39",
+   "name": "unicode_050",
+   "output": "'\\U000112aa\\U000112af\ud804\udeb0\ud804\udeea\\U000112eb\\U000112ef\ud804\udef0\ud804\udef9\\U000112fa\\U000112ff\ud804\udf00\ud804\udf03\\U00011304\ud804\udf05\ud804\udf0c\\U0001130d\\U0001130e\ud804\udf0f\ud804\udf10\\U00011311\\U00011312\ud804\udf13\ud804\udf28\\U00011329\ud804\udf2a\ud804\udf30\\U00011331\ud804\udf32\ud804\udf33\\U00011334\ud804\udf35\ud804\udf39'"
+  },
+  {
+   "input": "\ud804\udf3a\ud804\udf3b\ud804\udf44\ud804\udf45\ud804\udf46\ud804\udf47\ud804\udf48\ud804\udf49\ud804\udf4a\ud804\udf4b\ud804\udf4d\ud804\udf4e\ud804\udf4f\ud804\udf50\ud804\udf51\ud804\udf56\ud804\udf57\ud804\udf58\ud804\udf5c\ud804\udf5d\ud804\udf63\ud804\udf64\ud804\udf65\ud804\udf66\ud804\udf6c\ud804\udf6d\ud804\udf6f\ud804\udf70\ud804\udf74\ud804\udf75\ud804\udfff\ud805\udc00",
+   "name": "unicode_051",
+   "output": "'\\U0001133a\ud804\udf3b\ud804\udf44\\U00011345\\U00011346\ud804\udf47\ud804\udf48\\U00011349\\U0001134a\ud804\udf4b\ud804\udf4d\\U0001134e\\U0001134f\ud804\udf50\\U00011351\\U00011356\ud804\udf57\\U00011358\\U0001135c\ud804\udf5d\ud804\udf63\\U00011364\\U00011365\ud804\udf66\ud804\udf6c\\U0001136d\\U0001136f\ud804\udf70\ud804\udf74\\U00011375\\U000113ff\ud805\udc00'"
+  },
+  {
+   "input": "\ud805\udc5b\ud805\udc5c\ud805\udc5d\ud805\udc61\ud805\udc62\ud805\udc7f\ud805\udc80\ud805\udcc7\ud805\udcc8\ud805\udccf\ud805\udcd0\ud805\udcd9\ud805\udcda\ud805\udd7f\ud805\udd80\ud805\uddb5\ud805\uddb6\ud805\uddb7\ud805\uddb8\ud805\udddd\ud805\uddde\ud805\uddff\ud805\ude00\ud805\ude44\ud805\ude45\ud805\ude4f\ud805\ude50\ud805\ude59\ud805\ude5a\ud805\ude5f\ud805\ude60\ud805\ude6c",
+   "name": "unicode_052",
+   "output": "'\ud805\udc5b\\U0001145c\ud805\udc5d\ud805\udc61\\U00011462\\U0001147f\ud805\udc80\ud805\udcc7\\U000114c8\\U000114cf\ud805\udcd0\ud805\udcd9\\U000114da\\U0001157f\ud805\udd80\ud805\uddb5\\U000115b6\\U000115b7\ud805\uddb8\ud805\udddd\\U000115de\\U000115ff\ud805\ude00\ud805\ude44\\U00011645\\U0001164f\ud805\ude50\ud805\ude59\\U0001165a\\U0001165f\ud805\ude60\ud805\ude6c'"
+  },
+  {
+   "input": "\ud805\ude6d\ud805\ude7f\ud805\ude80\ud805\udeb9\ud805\udeba\ud805\udebf\ud805\udec0\ud805\udec9\ud805\udeca\ud805\udeff\ud805\udf00\ud805\udf1a\ud805\udf1b\ud805\udf1c\ud805\udf1d\ud805\udf2b\ud805\udf2c\ud805\udf2f\ud805\udf30\ud805\udf46\ud805\udf47\ud805\udfff\ud806\udc00\ud806\udc3b\ud806\udc3c\ud806\udc9f\ud806\udca0\ud806\udcf2\ud806\udcf3\ud806\udcfe\ud806\udcff\ud806\udd06",
+   "name": "unicode_053",
+   "output": "'\\U0001166d\\U0001167f\ud805\ude80\ud805\udeb9\\U000116ba\\U000116bf\ud805\udec0\ud805\udec9\\U000116ca\\U000116ff\ud805\udf00\ud805\udf1a\\U0001171b\\U0001171c\ud805\udf1d\ud805\udf2b\\U0001172c\\U0001172f\ud805\udf30\ud805\udf46\\U00011747\\U000117ff\ud806\udc00\ud806\udc3b\\U0001183c\\U0001189f\ud806\udca0\ud806\udcf2\\U000118f3\\U000118fe\ud806\udcff\ud806\udd06'"
+  },
+  {
+   "input": "\ud806\udd07\ud806\udd08\ud806\udd09\ud806\udd0a\ud806\udd0b\ud806\udd0c\ud806\udd13\ud806\udd14\ud806\udd15\ud806\udd16\ud806\udd17\ud806\udd18\ud806\udd35\ud806\udd36\ud806\udd37\ud806\udd38\ud806\udd39\ud806\udd3a\ud806\udd3b\ud806\udd46\ud806\udd47\ud806\udd4f\ud806\udd50\ud806\udd59\ud806\udd5a\ud806\udd9f\ud806\udda0\ud806\udda7\ud806\udda8\ud806\udda9\ud806\uddaa\ud806\uddd7",
+   "name": "unicode_054",
+   "output": "'\\U00011907\\U00011908\ud806\udd09\\U0001190a\\U0001190b\ud806\udd0c\ud806\udd13\\U00011914\ud806\udd15\ud806\udd16\\U00011917\ud806\udd18\ud806\udd35\\U00011936\ud806\udd37\ud806\udd38\\U00011939\\U0001193a\ud806\udd3b\ud806\udd46\\U00011947\\U0001194f\ud806\udd50\ud806\udd59\\U0001195a\\U0001199f\ud806\udda0\ud806\udda7\\U000119a8\\U000119a9\ud806\uddaa\ud806\uddd7'"
+  },
+  {
+   "input": "\ud806\uddd8\ud806\uddd9\ud806\uddda\ud806\udde4\ud806\udde5\ud806\uddff\ud806\ude00\ud806\ude47\ud806\ude48\ud806\ude4f\ud806\ude50\ud806\udea2\ud806\udea3\ud806\udeaf\ud806\udeb0\ud806\udef8\ud806\udef9\ud806\udeff\ud806\udf00\ud806\udf09\ud806\udf0a\ud806\udfff\ud807\udc00\ud807\udc08\ud807\udc09\ud807\udc0a\ud807\udc36\ud807\udc37\ud807\udc38\ud807\udc45\ud807\udc46\ud807\udc4f",
+   "name": "unicode_055",
+   "output": "'\\U000119d8\\U000119d9\ud806\uddda\ud806\udde4\\U000119e5\\U000119ff\ud806\ude00\ud806\ude47\\U00011a48\\U00011a4f\ud806\ude50\ud806\udea2\\U00011aa3\\U00011aaf\ud806\udeb0\ud806\udef8\\U00011af9\\U00011aff\ud806\udf00\ud806\udf09\\U00011b0a\\U00011bff\ud807\udc00\ud807\udc08\\U00011c09\ud807\udc0a\ud807\udc36\\U00011c37\ud807\udc38\ud807\udc45\\U00011c46\\U00011c4f'"
+  },
+  {
+   "input": "\ud807\udc50\ud807\udc6c\ud807\udc6d\ud807\udc6f\ud807\udc70\ud807\udc8f\ud807\udc90\ud807\udc91\ud807\udc92\ud807\udca7\ud807\udca8\ud807\udca9\ud807\udcb6\ud807\udcb7\ud807\udcff\ud807\udd00\ud807\udd06\ud807\udd07\ud807\udd08\ud807\udd09\ud807\udd0a\ud807\udd0b\ud807\udd36\ud807\udd37\ud807\udd39\ud807\udd3a\ud807\udd3b\ud807\udd3c\ud807\udd3d\ud807\udd3e\ud807\udd3f\ud807\udd47",
+   "name": "unicode_056",
+   "output": "'\ud807\udc50\ud807\udc6c\\U00011c6d\\U00011c6f\ud807\udc70\ud807\udc8f\\U00011c90\\U00011c91\ud807\udc92\ud807\udca7\\U00011ca8\ud807\udca9\ud807\udcb6\\U00011cb7\\U00011cff\ud807\udd00\ud807\udd06\\U00011d07\ud807\udd08\ud807\udd09\\U00011d0a\ud807\udd0b\ud807\udd36\\U00011d37\\U00011d39\ud807\udd3a\\U00011d3b\ud807\udd3c\ud807\udd3d\\U00011d3e\ud807\udd3f\ud807\udd47'"
+  },
+  {
+   "input": "\ud807\udd48\ud807\udd4f\ud807\udd50\ud807\udd59\ud807\udd5a\ud807\udd5f\ud807\udd60\ud807\udd65\ud807\udd66\ud807\udd67\ud807\udd68\ud807\udd69\ud807\udd6a\ud807\udd8e\ud807\udd8f\ud807\udd90\ud807\udd91\ud807\udd92\ud807\udd93\ud807\udd98\ud807\udd99\ud807\udd9f\ud807\udda0\ud807\udda9\ud807\uddaa\ud807\udedf\ud807\udee0\ud807\udef8\ud807\udef9\ud807\udeff\ud807\udf00\ud807\udf10",
+   "name": "unicode_057",
+   "output": "'\\U00011d48\\U00011d4f\ud807\udd50\ud807\udd59\\U00011d5a\\U00011d5f\ud807\udd60\ud807\udd65\\U00011d66\ud807\udd67\ud807\udd68\\U00011d69\ud807\udd6a\ud807\udd8e\\U00011d8f\ud807\udd90\ud807\udd91\\U00011d92\ud807\udd93\ud807\udd98\\U00011d99\\U00011d9f\ud807\udda0\ud807\udda9\\U00011daa\\U00011edf\ud807\udee0\ud807\udef8\\U00011ef9\\U00011eff\ud807\udf00\ud807\udf10'"
+  },
+  {
+   "input": "\ud807\udf11\ud807\udf12\ud807\udf3a\ud807\udf3b\ud807\udf3d\ud807\udf3e\ud807\udf59\ud807\udf5a\ud807\udfaf\ud807\udfb0\ud807\udfb1\ud807\udfbf\ud807\udfc0\ud807\udff1\ud807\udff2\ud807\udffe\ud807\udfff\ud808\udf99\ud808\udf9a\ud808\udfff\ud809\udc00\ud809\udc6e\ud809\udc6f\ud809\udc70\ud809\udc74\ud809\udc75\ud809\udc7f\ud809\udc80\ud809\udd43\ud809\udd44\ud80b\udf8f\ud80b\udf90",
+   "name": "unicode_058",
+   "output": "'\\U00011f11\ud807\udf12\ud807\udf3a\\U00011f3b\\U00011f3d\ud807\udf3e\ud807\udf59\\U00011f5a\\U00011faf\ud807\udfb0\\U00011fb1\\U00011fbf\ud807\udfc0\ud807\udff1\\U00011ff2\\U00011ffe\ud807\udfff\ud808\udf99\\U0001239a\\U000123ff\ud809\udc00\ud809\udc6e\\U0001246f\ud809\udc70\ud809\udc74\\U00012475\\U0001247f\ud809\udc80\ud809\udd43\\U00012544\\U00012f8f\ud80b\udf90'"
+  },
+  {
+   "input": "\ud80b\udff2\ud80b\udff3\ud80b\udfff\ud80c\udc00\ud80d\udc2f\ud80d\udc30\ud80d\udc3f\ud80d\udc40\ud80d\udc55\ud80d\udc56\ud810\udfff\ud811\udc00\ud811\ude46\ud811\ude47\ud819\udfff\ud81a\udc00\ud81a\ude38\ud81a\ude39\ud81a\ude3f\ud81a\ude40\ud81a\ude5e\ud81a\ude5f\ud81a\ude60\ud81a\ude69\ud81a\ude6a\ud81a\ude6d\ud81a\ude6e\ud81a\udebe\ud81a\udebf\ud81a\udec0\ud81a\udec9\ud81a\udeca",
+   "name": "unicode_059",
+   "output": "'\ud80b\udff2\\U00012ff3\\U00012fff\ud80c\udc00\ud80d\udc2f\\U00013430\\U0001343f\ud80d\udc40\ud80d\udc55\\U00013456\\U000143ff\ud811\udc00\ud811\ude46\\U00014647\\U000167ff\ud81a\udc00\ud81a\ude38\\U00016a39\\U00016a3f\ud81a\ude40\ud81a\ude5e\\U00016a5f\ud81a\ude60\ud81a\ude69\\U00016a6a\\U00016a6d\ud81a\ude6e\ud81a\udebe\\U00016abf\ud81a\udec0\ud81a\udec9\\U00016aca'"
+  },
+  {
+   "input": "\ud81a\udecf\ud81a\uded0\ud81a\udeed\ud81a\udeee\ud81a\udeef\ud81a\udef0\ud81a\udef5\ud81a\udef6\ud81a\udeff\ud81a\udf00\ud81a\udf45\ud81a\udf46\ud81a\udf4f\ud81a\udf50\ud81a\udf59\ud81a\udf5a\ud81a\udf5b\ud81a\udf61\ud81a\udf62\ud81a\udf63\ud81a\udf77\ud81a\udf78\ud81a\udf7c\ud81a\udf7d\ud81a\udf8f\ud81a\udf90\ud81b\ude3f\ud81b\ude40\ud81b\ude9a\ud81b\ude9b\ud81b\udeff\ud81b\udf00",
+   "name": "unicode_060",
+   "output": "'\\U00016acf\ud81a\uded0\ud81a\udeed\\U00016aee\\U00016aef\ud81a\udef0\ud81a\udef5\\U00016af6\\U00016aff\ud81a\udf00\ud81a\udf45\\U00016b46\\U00016b4f\ud81a\udf50\ud81a\udf59\\U00016b5a\ud81a\udf5b\ud81a\udf61\\U00016b62\ud81a\udf63\ud81a\udf77\\U00016b78\\U00016b7c\ud81a\udf7d\ud81a\udf8f\\U00016b90\\U00016e3f\ud81b\ude40\ud81b\ude9a\\U00016e9b\\U00016eff\ud81b\udf00'"
+  },
+  {
+   "input": "\ud81b\udf4a\ud81b\udf4b\ud81b\udf4e\ud81b\udf4f\ud81b\udf87\ud81b\udf88\ud81b\udf8e\ud81b\udf8f\ud81b\udf9f\ud81b\udfa0\ud81b\udfdf\ud81b\udfe0\ud81b\udfe4\ud81b\udfe5\ud81b\udfef\ud81b\udff0\ud81b\udff1\ud81b\udff2\ud81b\udfff\ud81c\udc00\ud821\udff7\ud821\udff8\ud821\udfff\ud822\udc00\ud823\udcd5\ud823\udcd6\ud823\udcff\ud823\udd00\ud823\udd08\ud823\udd09\ud82b\udfef\ud82b\udff0",
+   "name": "unicode_061",
+   "output": "'\ud81b\udf4a\\U00016f4b\\U00016f4e\ud81b\udf4f\ud81b\udf87\\U00016f88\\U00016f8e\ud81b\udf8f\ud81b\udf9f\\U00016fa0\\U00016fdf\ud81b\udfe0\ud81b\udfe4\\U00016fe5\\U00016fef\ud81b\udff0\ud81b\udff1\\U00016ff2\\U00016fff\ud81c\udc00\ud821\udff7\\U000187f8\\U000187ff\ud822\udc00\ud823\udcd5\\U00018cd6\\U00018cff\ud823\udd00\ud823\udd08\\U00018d09\\U0001afef\ud82b\udff0'"
+  },
+  {
+   "input": "\ud82b\udff3\ud82b\udff4\ud82b\udff5\ud82b\udffb\ud82b\udffc\ud82b\udffd\ud82b\udffe\ud82b\udfff\ud82c\udc00\ud82c\udd22\ud82c\udd23\ud82c\udd31\ud82c\udd32\ud82c\udd33\ud82c\udd4f\ud82c\udd50\ud82c\udd52\ud82c\udd53\ud82c\udd54\ud82c\udd55\ud82c\udd56\ud82c\udd63\ud82c\udd64\ud82c\udd67\ud82c\udd68\ud82c\udd6f\ud82c\udd70\ud82c\udefb\ud82c\udefc\ud82e\udfff\ud82f\udc00\ud82f\udc6a",
+   "name": "unicode_062",
+   "output": "'\ud82b\udff3\\U0001aff4\ud82b\udff5\ud82b\udffb\\U0001affc\ud82b\udffd\ud82b\udffe\\U0001afff\ud82c\udc00\ud82c\udd22\\U0001b123\\U0001b131\ud82c\udd32\\U0001b133\\U0001b14f\ud82c\udd50\ud82c\udd52\\U0001b153\\U0001b154\ud82c\udd55\\U0001b156\\U0001b163\ud82c\udd64\ud82c\udd67\\U0001b168\\U0001b16f\ud82c\udd70\ud82c\udefb\\U0001b2fc\\U0001bbff\ud82f\udc00\ud82f\udc6a'"
+  },
+  {
+   "input": "\ud82f\udc6b\ud82f\udc6f\ud82f\udc70\ud82f\udc7c\ud82f\udc7d\ud82f\udc7f\ud82f\udc80\ud82f\udc88\ud82f\udc89\ud82f\udc8f\ud82f\udc90\ud82f\udc99\ud82f\udc9a\ud82f\udc9b\ud82f\udc9c\ud82f\udc9f\ud82f\udca0\ud833\udeff\ud833\udf00\ud833\udf2d\ud833\udf2e\ud833\udf2f\ud833\udf30\ud833\udf46\ud833\udf47\ud833\udf4f\ud833\udf50\ud833\udfc3\ud833\udfc4\ud833\udfff\ud834\udc00\ud834\udcf5",
+   "name": "unicode_063",
+   "output": "'\\U0001bc6b\\U0001bc6f\ud82f\udc70\ud82f\udc7c\\U0001bc7d\\U0001bc7f\ud82f\udc80\ud82f\udc88\\U0001bc89\\U0001bc8f\ud82f\udc90\ud82f\udc99\\U0001bc9a\\U0001bc9b\ud82f\udc9c\ud82f\udc9f\\U0001bca0\\U0001ceff\ud833\udf00\ud833\udf2d\\U0001cf2e\\U0001cf2f\ud833\udf30\ud833\udf46\\U0001cf47\\U0001cf4f\ud833\udf50\ud833\udfc3\\U0001cfc4\\U0001cfff\ud834\udc00\ud834\udcf5'"
+  },
+  {
+   "input": "\ud834\udcf6\ud834\udcff\ud834\udd00\ud834\udd26\ud834\udd27\ud834\udd28\ud834\udd29\ud834\udd72\ud834\udd73\ud834\udd7a\ud834\udd7b\ud834\uddea\ud834\uddeb\ud834\uddff\ud834\ude00\ud834\ude45\ud834\ude46\ud834\udebf\ud834\udec0\ud834\uded3\ud834\uded4\ud834\udedf\ud834\udee0\ud834\udef3\ud834\udef4\ud834\udeff\ud834\udf00\ud834\udf56\ud834\udf57\ud834\udf5f\ud834\udf60\ud834\udf78",
+   "name": "unicode_064",
+   "output": "'\\U0001d0f6\\U0001d0ff\ud834\udd00\ud834\udd26\\U0001d127\\U0001d128\ud834\udd29\ud834\udd72\\U0001d173\\U0001d17a\ud834\udd7b\ud834\uddea\\U0001d1eb\\U0001d1ff\ud834\ude00\ud834\ude45\\U0001d246\\U0001d2bf\ud834\udec0\ud834\uded3\\U0001d2d4\\U0001d2df\ud834\udee0\ud834\udef3\\U0001d2f4\\U0001d2ff\ud834\udf00\ud834\udf56\\U0001d357\\U0001d35f\ud834\udf60\ud834\udf78'"
+  },
+  {
+   "input": "\ud834\udf79\ud834\udfff\ud835\udc00\ud835\udc54\ud835\udc55\ud835\udc56\ud835\udc9c\ud835\udc9d\ud835\udc9e\ud835\udc9f\ud835\udca0\ud835\udca1\ud835\udca2\ud835\udca3\ud835\udca4\ud835\udca5\ud835\udca6\ud835\udca7\ud835\udca8\ud835\udca9\ud835\udcac\ud835\udcad\ud835\udcae\ud835\udcb9\ud835\udcba\ud835\udcbb\ud835\udcbc\ud835\udcbd\ud835\udcc3\ud835\udcc4\ud835\udcc5\ud835\udd05",
+   "name": "unicode_065",
+   "output": "'\\U0001d379\\U0001d3ff\ud835\udc00\ud835\udc54\\U0001d455\ud835\udc56\ud835\udc9c\\U0001d49d\ud835\udc9e\ud835\udc9f\\U0001d4a0\\U0001d4a1\ud835\udca2\\U0001d4a3\\U0001d4a4\ud835\udca5\ud835\udca6\\U0001d4a7\\U0001d4a8\ud835\udca9\ud835\udcac\\U0001d4ad\ud835\udcae\ud835\udcb9\\U0001d4ba\ud835\udcbb\\U0001d4bc\ud835\udcbd\ud835\udcc3\\U0001d4c4\ud835\udcc5\ud835\udd05'"
+  },
+  {
+   "input": "\ud835\udd06\ud835\udd07\ud835\udd0a\ud835\udd0b\ud835\udd0c\ud835\udd0d\ud835\udd14\ud835\udd15\ud835\udd16\ud835\udd1c\ud835\udd1d\ud835\udd1e\ud835\udd39\ud835\udd3a\ud835\udd3b\ud835\udd3e\ud835\udd3f\ud835\udd40\ud835\udd44\ud835\udd45\ud835\udd46\ud835\udd47\ud835\udd49\ud835\udd4a\ud835\udd50\ud835\udd51\ud835\udd52\ud835\udea5\ud835\udea6\ud835\udea7\ud835\udea8\ud835\udfcb",
+   "name": "unicode_066",
+   "output": "'\\U0001d506\ud835\udd07\ud835\udd0a\\U0001d50b\\U0001d50c\ud835\udd0d\ud835\udd14\\U0001d515\ud835\udd16\ud835\udd1c\\U0001d51d\ud835\udd1e\ud835\udd39\\U0001d53a\ud835\udd3b\ud835\udd3e\\U0001d53f\ud835\udd40\ud835\udd44\\U0001d545\ud835\udd46\\U0001d547\\U0001d549\ud835\udd4a\ud835\udd50\\U0001d551\ud835\udd52\ud835\udea5\\U0001d6a6\\U0001d6a7\ud835\udea8\ud835\udfcb'"
+  },
+  {
+   "input": "\ud835\udfcc\ud835\udfcd\ud835\udfce\ud836\ude8b\ud836\ude8c\ud836\ude9a\ud836\ude9b\ud836\ude9f\ud836\udea0\ud836\udea1\ud836\udeaf\ud836\udeb0\ud837\udeff\ud837\udf00\ud837\udf1e\ud837\udf1f\ud837\udf24\ud837\udf25\ud837\udf2a\ud837\udf2b\ud837\udfff\ud838\udc00\ud838\udc06\ud838\udc07\ud838\udc08\ud838\udc18\ud838\udc19\ud838\udc1a\ud838\udc1b\ud838\udc21\ud838\udc22\ud838\udc23",
+   "name": "unicode_067",
+   "output": "'\\U0001d7cc\\U0001d7cd\ud835\udfce\ud836\ude8b\\U0001da8c\\U0001da9a\ud836\ude9b\ud836\ude9f\\U0001daa0\ud836\udea1\ud836\udeaf\\U0001dab0\\U0001deff\ud837\udf00\ud837\udf1e\\U0001df1f\\U0001df24\ud837\udf25\ud837\udf2a\\U0001df2b\\U0001dfff\ud838\udc00\ud838\udc06\\U0001e007\ud838\udc08\ud838\udc18\\U0001e019\\U0001e01a\ud838\udc1b\ud838\udc21\\U0001e022\ud838\udc23'"
+  },
+  {
+   "input": "\ud838\udc24\ud838\udc25\ud838\udc26\ud838\udc2a\ud838\udc2b\ud838\udc2f\ud838\udc30\ud838\udc6d\ud838\udc6e\ud838\udc8e\ud838\udc8f\ud838\udc90\ud838\udcff\ud838\udd00\ud838\udd2c\ud838\udd2d\ud838\udd2f\ud838\udd30\ud838\udd3d\ud838\udd3e\ud838\udd3f\ud838\udd40\ud838\udd49\ud838\udd4a\ud838\udd4d\ud838\udd4e\ud838\udd4f\ud838\udd50\ud838\ude8f\ud838\ude90\ud838\udeae\ud838\udeaf",
+   "name": "unicode_068",
+   "output": "'\ud838\udc24\\U0001e025\ud838\udc26\ud838\udc2a\\U0001e02b\\U0001e02f\ud838\udc30\ud838\udc6d\\U0001e06e\\U0001e08e\ud838\udc8f\\U0001e090\\U0001e0ff\ud838\udd00\ud838\udd2c\\U0001e12d\\U0001e12f\ud838\udd30\ud838\udd3d\\U0001e13e\\U0001e13f\ud838\udd40\ud838\udd49\\U0001e14a\\U0001e14d\ud838\udd4e\ud838\udd4f\\U0001e150\\U0001e28f\ud838\ude90\ud838\udeae\\U0001e2af'"
+  },
+  {
+   "input": "\ud838\udebf\ud838\udec0\ud838\udef9\ud838\udefa\ud838\udefe\ud838\udeff\ud838\udf00\ud839\udccf\ud839\udcd0\ud839\udcf9\ud839\udcfa\ud839\udfdf\ud839\udfe0\ud839\udfe6\ud839\udfe7\ud839\udfe8\ud839\udfeb\ud839\udfec\ud839\udfed\ud839\udfee\ud839\udfef\ud839\udff0\ud839\udffe\ud839\udfff\ud83a\udc00\ud83a\udcc4\ud83a\udcc5\ud83a\udcc6\ud83a\udcc7\ud83a\udcd6\ud83a\udcd7\ud83a\udcff",
+   "name": "unicode_069",
+   "output": "'\\U0001e2bf\ud838\udec0\ud838\udef9\\U0001e2fa\\U0001e2fe\ud838\udeff\\U0001e300\\U0001e4cf\ud839\udcd0\ud839\udcf9\\U0001e4fa\\U0001e7df\ud839\udfe0\ud839\udfe6\\U0001e7e7\ud839\udfe8\ud839\udfeb\\U0001e7ec\ud839\udfed\ud839\udfee\\U0001e7ef\ud839\udff0\ud839\udffe\\U0001e7ff\ud83a\udc00\ud83a\udcc4\\U0001e8c5\\U0001e8c6\ud83a\udcc7\ud83a\udcd6\\U0001e8d7\\U0001e8ff'"
+  },
+  {
+   "input": "\ud83a\udd00\ud83a\udd4b\ud83a\udd4c\ud83a\udd4f\ud83a\udd50\ud83a\udd59\ud83a\udd5a\ud83a\udd5d\ud83a\udd5e\ud83a\udd5f\ud83a\udd60\ud83b\udc70\ud83b\udc71\ud83b\udcb4\ud83b\udcb5\ud83b\udd00\ud83b\udd01\ud83b\udd3d\ud83b\udd3e\ud83b\uddff\ud83b\ude00\ud83b\ude03\ud83b\ude04\ud83b\ude05\ud83b\ude1f\ud83b\ude20\ud83b\ude21\ud83b\ude22\ud83b\ude23\ud83b\ude24\ud83b\ude25\ud83b\ude26",
+   "name": "unicode_070",
+   "output": "'\ud83a\udd00\ud83a\udd4b\\U0001e94c\\U0001e94f\ud83a\udd50\ud83a\udd59\\U0001e95a\\U0001e95d\ud83a\udd5e\ud83a\udd5f\\U0001e960\\U0001ec70\ud83b\udc71\ud83b\udcb4\\U0001ecb5\\U0001ed00\ud83b\udd01\ud83b\udd3d\\U0001ed3e\\U0001edff\ud83b\ude00\ud83b\ude03\\U0001ee04\ud83b\ude05\ud83b\ude1f\\U0001ee20\ud83b\ude21\ud83b\ude22\\U0001ee23\ud83b\ude24\\U0001ee25\\U0001ee26'"
+  },
+  {
+   "input": "\ud83b\ude27\ud83b\ude28\ud83b\ude29\ud83b\ude32\ud83b\ude33\ud83b\ude34\ud83b\ude37\ud83b\ude38\ud83b\ude39\ud83b\ude3a\ud83b\ude3b\ud83b\ude3c\ud83b\ude41\ud83b\ude42\ud83b\ude43\ud83b\ude46\ud83b\ude47\ud83b\ude48\ud83b\ude49\ud83b\ude4a\ud83b\ude4b\ud83b\ude4c\ud83b\ude4d\ud83b\ude4f\ud83b\ude50\ud83b\ude51\ud83b\ude52\ud83b\ude53\ud83b\ude54\ud83b\ude55\ud83b\ude56\ud83b\ude57",
+   "name": "unicode_071",
+   "output": "'\ud83b\ude27\\U0001ee28\ud83b\ude29\ud83b\ude32\\U0001ee33\ud83b\ude34\ud83b\ude37\\U0001ee38\ud83b\ude39\\U0001ee3a\ud83b\ude3b\\U0001ee3c\\U0001ee41\ud83b\ude42\\U0001ee43\\U0001ee46\ud83b\ude47\\U0001ee48\ud83b\ude49\\U0001ee4a\ud83b\ude4b\\U0001ee4c\ud83b\ude4d\ud83b\ude4f\\U0001ee50\ud83b\ude51\ud83b\ude52\\U0001ee53\ud83b\ude54\\U0001ee55\\U0001ee56\ud83b\ude57'"
+  },
+  {
+   "input": "\ud83b\ude58\ud83b\ude59\ud83b\ude5a\ud83b\ude5b\ud83b\ude5c\ud83b\ude5d\ud83b\ude5e\ud83b\ude5f\ud83b\ude60\ud83b\ude61\ud83b\ude62\ud83b\ude63\ud83b\ude64\ud83b\ude65\ud83b\ude66\ud83b\ude67\ud83b\ude6a\ud83b\ude6b\ud83b\ude6c\ud83b\ude72\ud83b\ude73\ud83b\ude74\ud83b\ude77\ud83b\ude78\ud83b\ude79\ud83b\ude7c\ud83b\ude7d\ud83b\ude7e\ud83b\ude7f\ud83b\ude80\ud83b\ude89\ud83b\ude8a",
+   "name": "unicode_072",
+   "output": "'\\U0001ee58\ud83b\ude59\\U0001ee5a\ud83b\ude5b\\U0001ee5c\ud83b\ude5d\\U0001ee5e\ud83b\ude5f\\U0001ee60\ud83b\ude61\ud83b\ude62\\U0001ee63\ud83b\ude64\\U0001ee65\\U0001ee66\ud83b\ude67\ud83b\ude6a\\U0001ee6b\ud83b\ude6c\ud83b\ude72\\U0001ee73\ud83b\ude74\ud83b\ude77\\U0001ee78\ud83b\ude79\ud83b\ude7c\\U0001ee7d\ud83b\ude7e\\U0001ee7f\ud83b\ude80\ud83b\ude89\\U0001ee8a'"
+  },
+  {
+   "input": "\ud83b\ude8b\ud83b\ude9b\ud83b\ude9c\ud83b\udea0\ud83b\udea1\ud83b\udea3\ud83b\udea4\ud83b\udea5\ud83b\udea9\ud83b\udeaa\ud83b\udeab\ud83b\udebb\ud83b\udebc\ud83b\udeef\ud83b\udef0\ud83b\udef1\ud83b\udef2\ud83b\udfff\ud83c\udc00\ud83c\udc2b\ud83c\udc2c\ud83c\udc2f\ud83c\udc30\ud83c\udc93\ud83c\udc94\ud83c\udc9f\ud83c\udca0\ud83c\udcae\ud83c\udcaf\ud83c\udcb0\ud83c\udcb1\ud83c\udcbf",
+   "name": "unicode_073",
+   "output": "'\ud83b\ude8b\ud83b\ude9b\\U0001ee9c\\U0001eea0\ud83b\udea1\ud83b\udea3\\U0001eea4\ud83b\udea5\ud83b\udea9\\U0001eeaa\ud83b\udeab\ud83b\udebb\\U0001eebc\\U0001eeef\ud83b\udef0\ud83b\udef1\\U0001eef2\\U0001efff\ud83c\udc00\ud83c\udc2b\\U0001f02c\\U0001f02f\ud83c\udc30\ud83c\udc93\\U0001f094\\U0001f09f\ud83c\udca0\ud83c\udcae\\U0001f0af\\U0001f0b0\ud83c\udcb1\ud83c\udcbf'"
+  },
+  {
+   "input": "\ud83c\udcc0\ud83c\udcc1\ud83c\udccf\ud83c\udcd0\ud83c\udcd1\ud83c\udcf5\ud83c\udcf6\ud83c\udcff\ud83c\udd00\ud83c\uddad\ud83c\uddae\ud83c\udde5\ud83c\udde6\ud83c\ude02\ud83c\ude03\ud83c\ude0f\ud83c\ude10\ud83c\ude3b\ud83c\ude3c\ud83c\ude3f\ud83c\ude40\ud83c\ude48\ud83c\ude49\ud83c\ude4f\ud83c\ude50\ud83c\ude51\ud83c\ude52\ud83c\ude5f\ud83c\ude60\ud83c\ude65\ud83c\ude66\ud83c\udeff",
+   "name": "unicode_074",
+   "output": "'\\U0001f0c0\ud83c\udcc1\ud83c\udccf\\U0001f0d0\ud83c\udcd1\ud83c\udcf5\\U0001f0f6\\U0001f0ff\ud83c\udd00\ud83c\uddad\\U0001f1ae\\U0001f1e5\ud83c\udde6\ud83c\ude02\\U0001f203\\U0001f20f\ud83c\ude10\ud83c\ude3b\\U0001f23c\\U0001f23f\ud83c\ude40\ud83c\ude48\\U0001f249\\U0001f24f\ud83c\ude50\ud83c\ude51\\U0001f252\\U0001f25f\ud83c\ude60\ud83c\ude65\\U0001f266\\U0001f2ff'"
+  },
+  {
+   "input": "\ud83c\udf00\ud83d\uded7\ud83d\uded8\ud83d\udedb\ud83d\udedc\ud83d\udeec\ud83d\udeed\ud83d\udeef\ud83d\udef0\ud83d\udefc\ud83d\udefd\ud83d\udeff\ud83d\udf00\ud83d\udf76\ud83d\udf77\ud83d\udf7a\ud83d\udf7b\ud83d\udfd9\ud83d\udfda\ud83d\udfdf\ud83d\udfe0\ud83d\udfeb\ud83d\udfec\ud83d\udfef\ud83d\udff0\ud83d\udff1\ud83d\udfff\ud83e\udc00\ud83e\udc0b\ud83e\udc0c\ud83e\udc0f\ud83e\udc10",
+   "name": "unicode_075",
+   "output": "'\ud83c\udf00\ud83d\uded7\\U0001f6d8\\U0001f6db\ud83d\udedc\ud83d\udeec\\U0001f6ed\\U0001f6ef\ud83d\udef0\ud83d\udefc\\U0001f6fd\\U0001f6ff\ud83d\udf00\ud83d\udf76\\U0001f777\\U0001f77a\ud83d\udf7b\ud83d\udfd9\\U0001f7da\\U0001f7df\ud83d\udfe0\ud83d\udfeb\\U0001f7ec\\U0001f7ef\ud83d\udff0\\U0001f7f1\\U0001f7ff\ud83e\udc00\ud83e\udc0b\\U0001f80c\\U0001f80f\ud83e\udc10'"
+  },
+  {
+   "input": "\ud83e\udc47\ud83e\udc48\ud83e\udc4f\ud83e\udc50\ud83e\udc59\ud83e\udc5a\ud83e\udc5f\ud83e\udc60\ud83e\udc87\ud83e\udc88\ud83e\udc8f\ud83e\udc90\ud83e\udcad\ud83e\udcae\ud83e\udcaf\ud83e\udcb0\ud83e\udcb1\ud83e\udcb2\ud83e\udcff\ud83e\udd00\ud83e\ude53\ud83e\ude54\ud83e\ude5f\ud83e\ude60\ud83e\ude6d\ud83e\ude6e\ud83e\ude6f\ud83e\ude70\ud83e\ude7c\ud83e\ude7d\ud83e\ude7f\ud83e\ude80",
+   "name": "unicode_076",
+   "output": "'\ud83e\udc47\\U0001f848\\U0001f84f\ud83e\udc50\ud83e\udc59\\U0001f85a\\U0001f85f\ud83e\udc60\ud83e\udc87\\U0001f888\\U0001f88f\ud83e\udc90\ud83e\udcad\\U0001f8ae\\U0001f8af\ud83e\udcb0\ud83e\udcb1\\U0001f8b2\\U0001f8ff\ud83e\udd00\ud83e\ude53\\U0001fa54\\U0001fa5f\ud83e\ude60\ud83e\ude6d\\U0001fa6e\\U0001fa6f\ud83e\ude70\ud83e\ude7c\\U0001fa7d\\U0001fa7f\ud83e\ude80'"
+  },
+  {
+   "input": "\ud83e\ude88\ud83e\ude89\ud83e\ude8f\ud83e\ude90\ud83e\udebd\ud83e\udebe\ud83e\udebf\ud83e\udec5\ud83e\udec6\ud83e\udecd\ud83e\udece\ud83e\udedb\ud83e\udedc\ud83e\udedf\ud83e\udee0\ud83e\udee8\ud83e\udee9\ud83e\udeef\ud83e\udef0\ud83e\udef8\ud83e\udef9\ud83e\udeff\ud83e\udf00\ud83e\udf92\ud83e\udf93\ud83e\udf94\ud83e\udfca\ud83e\udfcb\ud83e\udfef\ud83e\udff0\ud83e\udff9\ud83e\udffa",
+   "name": "unicode_077",
+   "output": "'\ud83e\ude88\\U0001fa89\\U0001fa8f\ud83e\ude90\ud83e\udebd\\U0001fabe\ud83e\udebf\ud83e\udec5\\U0001fac6\\U0001facd\ud83e\udece\ud83e\udedb\\U0001fadc\\U0001fadf\ud83e\udee0\ud83e\udee8\\U0001fae9\\U0001faef\ud83e\udef0\ud83e\udef8\\U0001faf9\\U0001faff\ud83e\udf00\ud83e\udf92\\U0001fb93\ud83e\udf94\ud83e\udfca\\U0001fbcb\\U0001fbef\ud83e\udff0\ud83e\udff9\\U0001fbfa'"
+  },
+  {
+   "input": "\ud83f\udfff\ud840\udc00\ud869\udedf\ud869\udee0\ud869\udeff\ud869\udf00\ud86d\udf39\ud86d\udf3a\ud86d\udf3f\ud86d\udf40\ud86e\udc1d\ud86e\udc1e\ud86e\udc1f\ud86e\udc20\ud873\udea1\ud873\udea2\ud873\udeaf\ud873\udeb0\ud87a\udfe0\ud87a\udfe1\ud87d\udfff\ud87e\udc00\ud87e\ude1d\ud87e\ude1e\ud87f\udfff\ud880\udc00\ud884\udf4a\ud884\udf4b\ud884\udf4f\ud884\udf50\ud888\udfaf\ud888\udfb0",
+   "name": "unicode_078",
+   "output": "'\\U0001ffff\ud840\udc00\ud869\udedf\\U0002a6e0\\U0002a6ff\ud869\udf00\ud86d\udf39\\U0002b73a\\U0002b73f\ud86d\udf40\ud86e\udc1d\\U0002b81e\\U0002b81f\ud86e\udc20\ud873\udea1\\U0002cea2\\U0002ceaf\ud873\udeb0\ud87a\udfe0\\U0002ebe1\\U0002f7ff\ud87e\udc00\ud87e\ude1d\\U0002fa1e\\U0002ffff\ud880\udc00\ud884\udf4a\\U0003134b\\U0003134f\ud884\udf50\ud888\udfaf\\U000323b0'"
+  },
+  {
+   "input": "\udb40\udcff\udb40\udd00\udb40\uddef\udb40\uddf0\udbff\udfff",
+   "name": "unicode_079",
+   "output": "'\\U000e00ff\udb40\udd00\udb40\uddef\\U000e01f0\\U0010ffff'"
+  }
+ ],
+ "unicode_version": "15.0.0"
+}

@@ -1,0 +1,14 @@
+[package]
+name = "board_config"
+description = "The board config document and its rules: canon, config_id, validate, load, the canonical writer and a typed view (src/glider config.py)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+serde_json.workspace = true
+sha2.workspace = true
+
+[dev-dependencies]
+golden.workspace = true

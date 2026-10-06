@@ -82,7 +82,7 @@ The workspace rule (`src/avionics/Cargo.toml:3-7`) is unchanged:
 | `src/control/contract/{cases,transports,normalize}.py`, `tools/cc_contract.py`, `src/control/test/test_contract.py` | The contract runner (`BOARD=fake|taster|<id>`). |
 | `tools/board_pull.sh`, `tools/ring_split.py` | Pull a session over HTTP; demux a raw ring dump. |
 | `tools/hitl_host.py`, `doc/specs/sim-link.md` | HITL with the physics on the host (`sim_model.py` stays the one implementation). |
-| `tools/provision.sh` | Builds a `cfg` NVS image (board config, launch config, Wi-Fi creds) for `flash.sh`, in a temporary directory; the image is never committed (§7, Q12). |
+| `tools/provision.sh` | Writes a board's `cfg` NVS partition (board config, launch config, Wi-Fi creds) over USB with esptool, after `flash.sh`, once the board's partition table proves the `cfg` row; the image lives only in a temporary directory and is never committed (§7, Q12). |
 
 ---
 
@@ -225,9 +225,14 @@ TCP/IP task on core 0.
 - **`board.id` and `wifi`** come from the config: networks, `cc_host` (absent = dial `.1`, `''` = CC off) and
   `cc_port`. Passwords come from `cfg`/`creds` keyed `w<crc32(ssid) hex>`, because NVS keys are at most 15
   characters. The console `wifi` command stays as the fallback.
-- **`tools/provision.sh <board-config> [launch.config] [ssid creds]`** builds a `cfg` NVS image with IDF
-  `nvs_partition_gen.py`, so `flash.sh` can flash it (§7, Q12). The image is built in a temporary directory
-  and never committed: it carries Wi-Fi credentials.
+- **`tools/provision.sh [--port P] [--launch launch.config] [--ssid NAME]... [--dry-run] <board.config>`**
+  builds a `cfg` NVS image with IDF `nvs_partition_gen.py` and writes it itself with esptool, after `flash.sh`
+  (§7, Q12): the board config and launch.config as blobs, and per `--ssid` the password from `NAME.creds` in
+  `CREDS_DIR` (default `src/glider`), read as plan B's MicroPython wifi driver reads it. It refuses what plan
+  B's `config.validate` or the board's serde_json would refuse, reads the image back with IDF's NVS parser, and
+  reads the board's partition table first: no NVS `cfg` at `partitions.csv`'s offset and size (a MicroPython
+  board's filesystem lies there) means no write. The image is built in a temporary directory and never
+  committed: it carries Wi-Fi credentials. `--dry-run` builds and verifies it and lists its keys only.
 
 **Proof**
 - Golden `config_id.json`. Test vectors: tms7c `e95f341166d4`, tms7d `7f06b2f496a9`, tms7d_control
@@ -1275,7 +1280,7 @@ the keys `boot`, `crumb`, `stage`, `sdp810_zero` (i32), `bno055_calib` (22 B), `
 | R1 | Partial-page NOR programming (several program operations per 256 B page) on the GD `C84019` is assumed, not measured. | Bench gate G1 in M3. Fallback: pad frames to 256 B pages (≈ 2× flash at a 50 ms cut). |
 | R2 | The loss bound (§3.3: ~70 ms typical, ≤ ~115 ms worst for rows) needs short flash-lock holds. NVS writes (checkpoint, calibrations), mover reads and the writer share the esp_flash lock. The writer at priority 7 can briefly delay the video writer. B4 was 10 s without video. | R3: a 10 min soak at the real flight rate with FHD@25, the 1 kHz `pace`, and commit-to-commit maximum ≤ 115 ms. Q11 below. |
 | R3 | FatFs is not journaled. A power cut during FAT updates (mover or video) can damage the FAT itself, not just a file tail. | The ring keeps everything unconfirmed. `GET /ring` + `ring_split.py` recovery. Host fsck on bad cards. |
-| R4 | The first Rust boot carries nothing from MicroPython's VFS (board.config, launch.config, `*.creds`). TMS-7F is sealed and Wi-Fi only. | `tools/provision.sh` writes a `cfg` image (config, launch, creds) with `flash.sh` over USB **before** the seal. Never flash a sealed board without it. |
+| R4 | The first Rust boot carries nothing from MicroPython's VFS (board.config, launch.config, `*.creds`). TMS-7F is sealed and Wi-Fi only. | `tools/provision.sh` writes the `cfg` partition (config, launch, creds) over USB with esptool, after `flash.sh` and **before** the seal. Never flash a sealed board without it. |
 | R5 | esp_hosted 2.7.0 tasks run at priority 23, unpinned (plain `xTaskCreate`); the streaming-mode length assert is still open. | lwIP's TCP/IP task is pinned to core 0 already (M1). M1b pins esp_hosted by wrapping `g_hosted_osi_funcs._h_thread_create`, the hook `components/hosted_no_reboot` uses for `_h_restart_host`. From M7 the radio is actually off from BOOSTING through LANDING in Rust (a deliberate divergence, §6; plan B keeps the pad link up). |
 | R6 | On 7C (v0.1 + SEN0697) a plan B ICP general call resets the BMI323, BMM350 and BMP581 without re-arming them. | Fixed by design in Rust. Q9 asks about plan B. |
 | R7 | `gettimeofday` surviving SW, panic and TWDT resets on the P4 is unverified, and gate 3 depends on it. | Measured in M8. Otherwise the crumb carries an RTC-memory stamp. |

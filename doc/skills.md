@@ -246,6 +246,25 @@ so it must run on both.
   `esptool write-flash 0x2000 <image>` erases it on every reflash: the boot counter restarts (session ids
   repeat, capture files collide on the logger) and NVS calibrations (the pitot zero) are lost. The tool
   writes bootloader, partition table and app only; `tools/deploy.sh` follows as usual.
+- **`tools/provision.sh [--port P] [--launch launch.config] [--ssid NAME]... [--dry-run] <board.config>`**
+  writes a **Rust** board's `cfg` NVS partition (0x7e0000, 0x20000): the board config and launch.config as blobs
+  `board` and `launch` in namespace `config`, and per `--ssid` the password from `src/glider/<NAME>.creds` in
+  namespace `creds`, read as plan B's wifi driver reads it on MicroPython (the first line up to a `\n`, stripped of
+  ASCII whitespace only: a lone `\r` or a no-break space stays), keyed `w` + the 8 hex digits of
+  `zlib.crc32(NAME)` because NVS keys stop at 15 characters. Run it after `src/avionics/firmware/flash.sh` and
+  **before the airframe is sealed**: the first Rust boot carries nothing over from MicroPython's VFS, so a sealed
+  Wi-Fi-only board without it has no network to join. It refuses a board config plan B's `config.validate`
+  rejects, a board or launch file the board's serde_json cannot read (NaN, a number past the f64 range, a lone
+  surrogate escape: the board would boot its default config), a launch file that is not a JSON object, a missing,
+  empty or over-64-byte password and two SSIDs whose keys collide, and it reads the board's partition table
+  first: a board with no NVS `cfg` there (still on MicroPython, whose filesystem fills the flash past its app) is
+  never written. The write REPLACES everything on `cfg` (a config or launch.config saved over CC since, a password
+  left out) and touches nothing else; if esptool fails during it, run the script again before sealing. Its notes
+  name a network the board tries (plan B's rule: a non-empty `wifi.networks` wins over `wifi.ssid`, disabled
+  entries are dropped) with no password in the image, and a stored password it never uses. The image carries the
+  passwords, so it exists only in a temporary directory removed on every exit; `--dry-run` builds and verifies it
+  and lists its keys, never the values. `CREDS_DIR` points it at another creds directory (the test's made-up
+  ones). Exit 1 is a refusal or a failure (esptool's included), 2 a usage error.
 - The Wi-Fi password is **not** committed: a `src/glider/<ssid>.creds` file (e.g. `panda.creds`,
   one line — the plain password) is gitignored (`*.creds`) and pushed by `tools/deploy.sh`; `wifi.py`
   reads it for the password.

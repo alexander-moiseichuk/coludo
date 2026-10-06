@@ -1,0 +1,6873 @@
+{
+ "bases": {
+  "default": {
+   "board": {
+    "firmware_version": "dev",
+    "id": "taster",
+    "layout": "auto",
+    "mcu": "esp32p4",
+    "rev": 1,
+    "setup_retries": 3
+   },
+   "buses": {
+    "i2c": {
+     "0": {
+      "freq": 400000,
+      "scl": 8,
+      "sda": 7
+     },
+     "1": {
+      "freq": 400000,
+      "scl": 30,
+      "sda": 31
+     }
+    },
+    "spi": {
+     "1": {
+      "baud": 5000000,
+      "miso": 46,
+      "mode": 3,
+      "mosi": 47,
+      "sck": 48
+     }
+    },
+    "uart": {
+     "1": {
+      "baud": 921600,
+      "tx": 20
+     },
+     "2": {
+      "baud": 9600,
+      "rx": 23,
+      "tx": 22
+     }
+    }
+   },
+   "components": [
+    {
+     "activity": "recorder",
+     "bus": "uart",
+     "enabled": true,
+     "id": 1,
+     "name": "recorder"
+    },
+    {
+     "debounce_ms": 20,
+     "driver": "separation",
+     "enabled": true,
+     "name": "separation",
+     "pin": "separation_switch"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_yaw",
+     "pin": "servo_yaw"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_left",
+     "pin": "servo_eleron_left"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_right",
+     "pin": "servo_eleron_right"
+    },
+    {
+     "activity": "sequencer",
+     "apogee_arm_ms": 4000,
+     "apogee_drop_m": 5.0,
+     "boost_timeout_ms": 12000,
+     "disable_gc_flight": true,
+     "enabled": true,
+     "flight_timeout_ms": 300000,
+     "ground_ms": 3000,
+     "land_agl_m": 5.0,
+     "land_ms": 300,
+     "land_timeout_ms": 10000,
+     "launch_alt_m": 10.0,
+     "launch_g": 2.5,
+     "launch_ms": 100,
+     "name": "sequencer",
+     "period_ms": 50,
+     "still_g": 0.3
+    },
+    {
+     "activity": "checkpoint",
+     "checkpoint_s": 1,
+     "enabled": true,
+     "name": "checkpoint",
+     "warm_start": true
+    },
+    {
+     "activity": "gnss_calib",
+     "enabled": true,
+     "min_samples": 5,
+     "name": "gnss_calib",
+     "period_ms": 1000
+    },
+    {
+     "activity": "flight",
+     "airspeed_ceiling_hz": 50,
+     "airspeed_dive_pitch": -45.0,
+     "airspeed_floor_hz": 5,
+     "airspeed_unconfident_ms": 30.0,
+     "bank_limit": 45,
+     "boost_engage_speed": 15.0,
+     "enabled": false,
+     "endgame_alt_m": 50,
+     "endgame_max_bank": 60,
+     "endgame_pattern": "auto",
+     "final_approach_agl": 8,
+     "final_cross_gain": 3.0,
+     "final_intercept_deg": 45,
+     "gains": {
+      "pitch": {},
+      "roll": {},
+      "yaw": {}
+     },
+     "glide_ratio": 5.5,
+     "gnss_steep_pitch": 45.0,
+     "land_bank_gain": 3.0,
+     "land_bank_limit": 45,
+     "loiter_capture_m": 120,
+     "loiter_gain": 3.0,
+     "loiter_radius_m": 30,
+     "name": "flight",
+     "nav_bank_gain": 1.5,
+     "nav_period_ms": 100,
+     "period_ms": 20,
+     "pitot_gain": 0.5,
+     "pitot_max_ms": 28.0,
+     "pitot_min_ms": 3.0,
+     "schedule_hz": 100,
+     "stages": {
+      "boosting": {},
+      "gliding": {
+       "pitch": -6,
+       "roll": 0
+      },
+      "landing": {
+       "pitch": -6,
+       "roll": 0
+      }
+     },
+     "stall_margin": 1.2,
+     "stall_speed_1g": 9.0,
+     "steer_filter_shift": 3,
+     "timer_id": 0,
+     "wind": {
+      "calm_speed": 0.5,
+      "max_speed": 15.0,
+      "min_speed": 3.0,
+      "triangle_alpha": 0.05
+     }
+    },
+    {
+     "activity": "watchdog",
+     "enabled": false,
+     "name": "watchdog",
+     "period_ms": 200,
+     "stall_ms": 500,
+     "wdt_timeout_ms": 5000
+    },
+    {
+     "activity": "health",
+     "enabled": true,
+     "name": "health",
+     "period_ms": 1000,
+     "probe_ms": 10
+    },
+    {
+     "activity": "field",
+     "auto_arm": false,
+     "auto_arm_dwell_s": 60,
+     "enabled": false,
+     "fallback_bearing_deg": 0.0,
+     "fallback_depth_m": 90.0,
+     "fallback_near_m": 50.0,
+     "fallback_width_m": 100.0,
+     "max_range_m": 200,
+     "name": "field",
+     "period_ms": 1000,
+     "site_select": true,
+     "still_g": 0.3
+    },
+    {
+     "driver": "bluetooth",
+     "enabled": true,
+     "name": "bluetooth",
+     "radio": false
+    },
+    {
+     "driver": "wifi",
+     "enabled": true,
+     "name": "wifi"
+    },
+    {
+     "activity": "cc",
+     "enabled": true,
+     "name": "cc"
+    }
+   ],
+   "fins": {
+    "concurrency": 1,
+    "limit_multiplier": 1.0,
+    "mixer": {
+     "limit_deg": 45,
+     "neutral_deg": 90,
+     "surfaces": {
+      "servo_eleron_left": {
+       "pitch": 1,
+       "roll": 1
+      },
+      "servo_eleron_right": {
+       "pitch": 1,
+       "roll": -1
+      },
+      "servo_yaw": {
+       "yaw": 1
+      }
+     }
+    }
+   },
+   "pins": {
+    "accel_int1": 4,
+    "adxl375_cs": 49,
+    "ina226_alert": 29,
+    "laser_int": 3,
+    "laser_xshut": 5,
+    "lsm6dso32_cs": 50,
+    "lsm6dso32_int1": 28,
+    "separation_switch": 33,
+    "servo_eleron_left": 27,
+    "servo_eleron_right": 32,
+    "servo_yaw": 26
+   },
+   "recorder": {
+    "cell_size": 256,
+    "log_capacity": 256,
+    "stats_ms": 1000,
+    "telemetry_ms": 0,
+    "tlm_capacity": 256
+   },
+   "sensors": [
+    {
+     "addr": 83,
+     "bus": "spi",
+     "cs_pin": "adxl375_cs",
+     "driver": "adxl375",
+     "enabled": true,
+     "id": 1,
+     "int_pin": "accel_int1",
+     "name": "accel_adxl375",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 2,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 106,
+     "bus": "spi",
+     "cs_pin": "lsm6dso32_cs",
+     "driver": "lsm6dso32",
+     "enabled": true,
+     "id": 1,
+     "int_pin": "lsm6dso32_int1",
+     "name": "imu_lsm6dso32",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 0,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 0,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 40,
+     "bus": "i2c",
+     "driver": "bno055",
+     "enabled": false,
+     "id": 0,
+     "name": "imu_bno055",
+     "provides": {
+      "accel": {
+       "priority": 3,
+       "timeout_ms": 40
+      },
+      "attitude": {
+       "priority": 2,
+       "timeout_ms": 40
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "accel_period_ms": 50,
+     "activity": "attitude",
+     "corr_shift": 4,
+     "enabled": true,
+     "grav_high_g": 1.3,
+     "grav_low_g": 0.7,
+     "name": "attitude",
+     "period_ms": 20,
+     "provides": {
+      "attitude": {
+       "priority": 1,
+       "timeout_ms": 40
+      }
+     },
+     "turn_gate_deg_s": 4
+    },
+    {
+     "addr": 99,
+     "bus": "i2c",
+     "driver": "icp10111",
+     "enabled": true,
+     "id": 0,
+     "name": "baro_icp10111",
+     "provides": {
+      "altitude": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 118,
+     "bus": "i2c",
+     "driver": "bmp280",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_bmp280",
+     "provides": {
+      "altitude": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 2,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 105,
+     "bus": "i2c",
+     "driver": "bmi323",
+     "enabled": true,
+     "id": 0,
+     "int_pin": null,
+     "name": "imu_bmi323",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 1,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 1,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 21,
+     "bus": "i2c",
+     "driver": "bmm350",
+     "enabled": true,
+     "id": 0,
+     "name": "mag_bmm350",
+     "period_ms": 100,
+     "provides": {
+      "mag": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 71,
+     "bus": "i2c",
+     "driver": "bmp581",
+     "enabled": true,
+     "id": 0,
+     "name": "baro_bmp581",
+     "provides": {
+      "altitude": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 1,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 37,
+     "air_density": 1.18,
+     "bus": "i2c",
+     "driver": "sdp810",
+     "enabled": true,
+     "id": 0,
+     "name": "airspeed_sdp810",
+     "period_ms": 20,
+     "provides": {
+      "airspeed": {
+       "priority": 0,
+       "timeout_ms": 100
+      },
+      "dynamic_pressure": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "zero_offset_pa": 0.0
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l4cx",
+     "enabled": true,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "timing_budget_ms": 100,
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l1x",
+     "enabled": true,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl_l1x",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 64,
+     "alert_ma": 3000,
+     "alert_pin": "ina226_alert",
+     "bus": "i2c",
+     "driver": "ina226",
+     "enabled": true,
+     "id": 1,
+     "max_current_ma": 5000,
+     "name": "power_ina226",
+     "period_ms": 100,
+     "provides": {
+      "current": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "power": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "voltage": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "shunt_mohms": 10
+    },
+    {
+     "addr": null,
+     "bus": "uart",
+     "driver": "atgm336h",
+     "enabled": true,
+     "hz": 10,
+     "id": 2,
+     "name": "gnss",
+     "provides": {
+      "altitude": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "course": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "elevation": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "position": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "speed": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    }
+   ],
+   "version": "20261005",
+   "wifi": {
+    "cc_port": 1234,
+    "networks": [
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "coludo"
+     },
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "panda"
+     }
+    ],
+    "password": "",
+    "policy": "auto",
+    "ssid": "coludo",
+    "tx_power_dbm": 11
+   }
+  },
+  "flight_ready_new": {
+   "board": {
+    "firmware_version": "dev",
+    "id": "TMS-7G",
+    "layout": "auto",
+    "mcu": "esp32p4",
+    "rev": 1,
+    "setup_retries": 3
+   },
+   "buses": {
+    "i2c": {
+     "0": {
+      "freq": 400000,
+      "scl": 8,
+      "sda": 7
+     },
+     "1": {
+      "freq": 400000,
+      "scl": 30,
+      "sda": 31
+     }
+    },
+    "spi": {
+     "1": {
+      "baud": 5000000,
+      "miso": 46,
+      "mode": 3,
+      "mosi": 47,
+      "sck": 48
+     }
+    },
+    "uart": {
+     "1": {
+      "baud": 921600,
+      "tx": 20
+     },
+     "2": {
+      "baud": 9600,
+      "rx": 23,
+      "tx": 22
+     }
+    }
+   },
+   "components": [
+    {
+     "activity": "recorder",
+     "bus": "uart",
+     "enabled": true,
+     "id": 1,
+     "name": "recorder"
+    },
+    {
+     "debounce_ms": 20,
+     "driver": "separation",
+     "enabled": true,
+     "name": "separation",
+     "pin": "separation_switch"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_yaw",
+     "pin": "servo_yaw"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_left",
+     "pin": "servo_eleron_left"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_right",
+     "pin": "servo_eleron_right"
+    },
+    {
+     "activity": "sequencer",
+     "apogee_arm_ms": 4000,
+     "apogee_drop_m": 5.0,
+     "boost_timeout_ms": 12000,
+     "disable_gc_flight": true,
+     "enabled": true,
+     "flight_timeout_ms": 300000,
+     "ground_ms": 3000,
+     "land_agl_m": 5.0,
+     "land_ms": 300,
+     "land_timeout_ms": 10000,
+     "launch_alt_m": 10.0,
+     "launch_g": 2.5,
+     "launch_ms": 100,
+     "name": "sequencer",
+     "period_ms": 50,
+     "still_g": 0.3
+    },
+    {
+     "activity": "checkpoint",
+     "checkpoint_s": 1,
+     "enabled": true,
+     "name": "checkpoint",
+     "warm_start": true
+    },
+    {
+     "activity": "gnss_calib",
+     "enabled": true,
+     "min_samples": 5,
+     "name": "gnss_calib",
+     "period_ms": 1000
+    },
+    {
+     "activity": "flight",
+     "airspeed_ceiling_hz": 50,
+     "airspeed_dive_pitch": -45.0,
+     "airspeed_floor_hz": 5,
+     "airspeed_unconfident_ms": 30.0,
+     "bank_limit": 45,
+     "boost_engage_speed": 15.0,
+     "enabled": true,
+     "endgame_alt_m": 50,
+     "endgame_max_bank": 60,
+     "endgame_pattern": "auto",
+     "final_approach_agl": 8,
+     "final_cross_gain": 3.0,
+     "final_intercept_deg": 45,
+     "gains": {
+      "pitch": {
+       "kp": 1.5
+      },
+      "roll": {
+       "kd": 0.2,
+       "kp": 2.0
+      },
+      "yaw": {
+       "kd": 0.1,
+       "kp": 1.5
+      }
+     },
+     "glide_ratio": 5.5,
+     "gnss_steep_pitch": 45.0,
+     "land_bank_gain": 3.0,
+     "land_bank_limit": 45,
+     "loiter_capture_m": 120,
+     "loiter_gain": 3.0,
+     "loiter_radius_m": 30,
+     "name": "flight",
+     "nav_bank_gain": 1.5,
+     "nav_period_ms": 100,
+     "period_ms": 20,
+     "pitot_gain": 0.5,
+     "pitot_max_ms": 28.0,
+     "pitot_min_ms": 3.0,
+     "schedule_hz": 100,
+     "stages": {
+      "boosting": {},
+      "gliding": {
+       "pitch": -6,
+       "roll": 0
+      },
+      "landing": {
+       "pitch": -6,
+       "roll": 0
+      }
+     },
+     "stall_margin": 1.2,
+     "stall_speed_1g": 9.0,
+     "steer_filter_shift": 3,
+     "timer_id": 0,
+     "wind": {
+      "calm_speed": 0.5,
+      "max_speed": 15.0,
+      "min_speed": 3.0,
+      "triangle_alpha": 0.05
+     }
+    },
+    {
+     "activity": "watchdog",
+     "enabled": true,
+     "name": "watchdog",
+     "period_ms": 200,
+     "stall_ms": 500,
+     "wdt_timeout_ms": 5000
+    },
+    {
+     "activity": "health",
+     "enabled": true,
+     "name": "health",
+     "period_ms": 1000,
+     "probe_ms": 10
+    },
+    {
+     "activity": "field",
+     "auto_arm": false,
+     "auto_arm_dwell_s": 60,
+     "enabled": false,
+     "fallback_bearing_deg": 0.0,
+     "fallback_depth_m": 90.0,
+     "fallback_near_m": 50.0,
+     "fallback_width_m": 100.0,
+     "max_range_m": 200,
+     "name": "field",
+     "period_ms": 1000,
+     "site_select": true,
+     "still_g": 0.3
+    },
+    {
+     "driver": "bluetooth",
+     "enabled": true,
+     "name": "bluetooth",
+     "radio": false
+    },
+    {
+     "driver": "wifi",
+     "enabled": true,
+     "name": "wifi"
+    },
+    {
+     "activity": "cc",
+     "enabled": true,
+     "name": "cc"
+    }
+   ],
+   "fins": {
+    "concurrency": 1,
+    "limit_multiplier": 1.0,
+    "mixer": {
+     "limit_deg": 45,
+     "neutral_deg": 90,
+     "surfaces": {
+      "servo_eleron_left": {
+       "pitch": 1,
+       "roll": 1
+      },
+      "servo_eleron_right": {
+       "pitch": 1,
+       "roll": -1
+      },
+      "servo_yaw": {
+       "yaw": 1
+      }
+     }
+    }
+   },
+   "pins": {
+    "accel_int1": 4,
+    "adxl375_cs": 49,
+    "ina226_alert": 29,
+    "laser_int": 3,
+    "laser_xshut": 5,
+    "lsm6dso32_cs": 50,
+    "lsm6dso32_int1": 28,
+    "separation_switch": 33,
+    "servo_eleron_left": 27,
+    "servo_eleron_right": 32,
+    "servo_yaw": 26
+   },
+   "recorder": {
+    "cell_size": 256,
+    "log_capacity": 256,
+    "stats_ms": 1000,
+    "telemetry_ms": 0,
+    "tlm_capacity": 256
+   },
+   "sensors": [
+    {
+     "addr": 83,
+     "bus": "spi",
+     "cs_pin": "adxl375_cs",
+     "driver": "adxl375",
+     "enabled": true,
+     "id": 1,
+     "int_pin": "accel_int1",
+     "name": "accel_adxl375",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 2,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 106,
+     "bus": "spi",
+     "cs_pin": "lsm6dso32_cs",
+     "driver": "lsm6dso32",
+     "enabled": true,
+     "id": 1,
+     "int_pin": "lsm6dso32_int1",
+     "name": "imu_lsm6dso32",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 0,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 0,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 40,
+     "bus": "i2c",
+     "driver": "bno055",
+     "enabled": false,
+     "id": 0,
+     "name": "imu_bno055",
+     "provides": {
+      "accel": {
+       "priority": 3,
+       "timeout_ms": 40
+      },
+      "attitude": {
+       "priority": 2,
+       "timeout_ms": 40
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "accel_period_ms": 50,
+     "activity": "attitude",
+     "corr_shift": 4,
+     "enabled": true,
+     "grav_high_g": 1.3,
+     "grav_low_g": 0.7,
+     "name": "attitude",
+     "period_ms": 20,
+     "provides": {
+      "attitude": {
+       "priority": 1,
+       "timeout_ms": 40
+      }
+     },
+     "turn_gate_deg_s": 4
+    },
+    {
+     "addr": 99,
+     "bus": "i2c",
+     "driver": "icp10111",
+     "enabled": true,
+     "id": 0,
+     "name": "baro_icp10111",
+     "provides": {
+      "altitude": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 118,
+     "bus": "i2c",
+     "driver": "bmp280",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_bmp280",
+     "provides": {
+      "altitude": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 2,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 105,
+     "bus": "i2c",
+     "driver": "bmi323",
+     "enabled": true,
+     "id": 0,
+     "int_pin": null,
+     "name": "imu_bmi323",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 1,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 1,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 21,
+     "bus": "i2c",
+     "driver": "bmm350",
+     "enabled": true,
+     "id": 0,
+     "name": "mag_bmm350",
+     "period_ms": 100,
+     "provides": {
+      "mag": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 71,
+     "bus": "i2c",
+     "driver": "bmp581",
+     "enabled": true,
+     "id": 0,
+     "name": "baro_bmp581",
+     "provides": {
+      "altitude": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 1,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 37,
+     "air_density": 1.18,
+     "bus": "i2c",
+     "driver": "sdp810",
+     "enabled": true,
+     "id": 0,
+     "name": "airspeed_sdp810",
+     "period_ms": 20,
+     "provides": {
+      "airspeed": {
+       "priority": 0,
+       "timeout_ms": 100
+      },
+      "dynamic_pressure": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "zero_offset_pa": 0.0
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l4cx",
+     "enabled": true,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "timing_budget_ms": 100,
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l1x",
+     "enabled": true,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl_l1x",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 64,
+     "alert_ma": 3000,
+     "alert_pin": "ina226_alert",
+     "bus": "i2c",
+     "driver": "ina226",
+     "enabled": true,
+     "id": 1,
+     "max_current_ma": 5000,
+     "name": "power_ina226",
+     "period_ms": 100,
+     "provides": {
+      "current": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "power": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "voltage": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "shunt_mohms": 10
+    },
+    {
+     "addr": null,
+     "bus": "uart",
+     "driver": "atgm336h",
+     "enabled": true,
+     "hz": 10,
+     "id": 2,
+     "name": "gnss",
+     "provides": {
+      "altitude": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "course": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "elevation": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "position": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "speed": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    }
+   ],
+   "version": "20261005",
+   "wifi": {
+    "cc_port": 1234,
+    "networks": [
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "coludo"
+     },
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "panda"
+     }
+    ],
+    "password": "",
+    "policy": "auto",
+    "ssid": "coludo",
+    "tx_power_dbm": 11
+   }
+  },
+  "flight_ready_tms7f": {
+   "board": {
+    "id": "TMS-7F",
+    "layout": "auto",
+    "mcu": "esp32p4",
+    "rev": 1,
+    "setup_retries": 3
+   },
+   "buses": {
+    "i2c": {
+     "0": {
+      "freq": 400000,
+      "scl": 8,
+      "sda": 7
+     },
+     "1": {
+      "freq": 100000,
+      "scl": 30,
+      "sda": 31
+     }
+    },
+    "spi": {
+     "1": {
+      "baud": 5000000,
+      "miso": 46,
+      "mode": 3,
+      "mosi": 47,
+      "sck": 48
+     }
+    },
+    "uart": {
+     "1": {
+      "baud": 921600,
+      "tx": 20
+     },
+     "2": {
+      "baud": 9600,
+      "rx": 23,
+      "tx": 22
+     }
+    }
+   },
+   "components": [
+    {
+     "activity": "recorder",
+     "bus": "uart",
+     "enabled": true,
+     "id": 1,
+     "name": "recorder"
+    },
+    {
+     "debounce_ms": 20,
+     "driver": "separation",
+     "enabled": true,
+     "name": "separation",
+     "pin": "separation_switch"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_yaw",
+     "pin": "servo_yaw"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_left",
+     "pin": "servo_eleron_left"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_right",
+     "pin": "servo_eleron_right"
+    },
+    {
+     "activity": "sequencer",
+     "apogee_arm_ms": 4000,
+     "apogee_drop_m": 5.0,
+     "boost_timeout_ms": 12000,
+     "disable_gc_flight": true,
+     "enabled": true,
+     "flight_timeout_ms": 300000,
+     "ground_ms": 3000,
+     "land_agl_m": 5.0,
+     "land_ms": 300,
+     "launch_alt_m": 10.0,
+     "launch_g": 2.5,
+     "launch_ms": 100,
+     "name": "sequencer",
+     "period_ms": 50,
+     "still_g": 0.3
+    },
+    {
+     "activity": "checkpoint",
+     "checkpoint_s": 1,
+     "enabled": true,
+     "name": "checkpoint",
+     "warm_start": true
+    },
+    {
+     "activity": "gnss_calib",
+     "enabled": true,
+     "min_samples": 5,
+     "name": "gnss_calib",
+     "period_ms": 1000
+    },
+    {
+     "activity": "flight",
+     "airspeed_ceiling_hz": 50,
+     "airspeed_dive_pitch": -45.0,
+     "airspeed_floor_hz": 5,
+     "airspeed_unconfident_ms": 30.0,
+     "bank_limit": 45,
+     "boost_engage_speed": 15.0,
+     "enabled": true,
+     "endgame_alt_m": 50,
+     "endgame_max_bank": 60,
+     "endgame_pattern": "auto",
+     "final_approach_agl": 0,
+     "final_cross_gain": 3.0,
+     "final_intercept_deg": 45,
+     "gains": {
+      "pitch": {
+       "kp": 1.5
+      },
+      "roll": {
+       "kd": 0.2,
+       "kp": 2.0
+      },
+      "yaw": {
+       "kd": 0.1,
+       "kp": 1.5
+      }
+     },
+     "glide_ratio": 5.5,
+     "gnss_steep_pitch": 45.0,
+     "land_bank_gain": 3.0,
+     "land_bank_limit": 45,
+     "loiter_capture_m": 120,
+     "loiter_gain": 3.0,
+     "loiter_radius_m": 30,
+     "name": "flight",
+     "nav_bank_gain": 1.5,
+     "nav_period_ms": 100,
+     "period_ms": 20,
+     "pitot_gain": 0.5,
+     "pitot_max_ms": 28.0,
+     "pitot_min_ms": 3.0,
+     "schedule_hz": 100,
+     "stages": {
+      "boosting": {},
+      "gliding": {
+       "pitch": -6,
+       "roll": 0
+      },
+      "landing": {
+       "pitch": -6,
+       "roll": 0
+      }
+     },
+     "stall_margin": 1.2,
+     "stall_speed_1g": 9.0,
+     "steer_filter_shift": 3,
+     "timer_id": 0,
+     "wind": {
+      "calm_speed": 0.5,
+      "max_speed": 15.0,
+      "min_speed": 3.0,
+      "triangle_alpha": 0.05
+     }
+    },
+    {
+     "activity": "watchdog",
+     "enabled": true,
+     "name": "watchdog",
+     "period_ms": 200,
+     "stall_ms": 500,
+     "wdt_timeout_ms": 5000
+    },
+    {
+     "activity": "health",
+     "enabled": true,
+     "name": "health",
+     "period_ms": 1000,
+     "probe_ms": 10
+    },
+    {
+     "activity": "field",
+     "auto_arm": false,
+     "auto_arm_dwell_s": 60,
+     "enabled": false,
+     "fallback_bearing_deg": 0.0,
+     "fallback_depth_m": 90.0,
+     "fallback_near_m": 50.0,
+     "fallback_width_m": 100.0,
+     "max_range_m": 200,
+     "name": "field",
+     "period_ms": 1000,
+     "site_select": true,
+     "still_g": 0.3
+    },
+    {
+     "driver": "bluetooth",
+     "enabled": true,
+     "name": "bluetooth",
+     "radio": false
+    },
+    {
+     "driver": "wifi",
+     "enabled": true,
+     "name": "wifi"
+    },
+    {
+     "activity": "cc",
+     "enabled": true,
+     "name": "cc"
+    }
+   ],
+   "fins": {
+    "concurrency": 1,
+    "limit_multiplier": 1.0,
+    "mixer": {
+     "limit_deg": 45,
+     "neutral_deg": 90,
+     "surfaces": {
+      "servo_eleron_left": {
+       "pitch": 1,
+       "roll": 1
+      },
+      "servo_eleron_right": {
+       "pitch": 1,
+       "roll": -1
+      },
+      "servo_yaw": {
+       "yaw": 1
+      }
+     }
+    }
+   },
+   "name": "tms7f",
+   "pins": {
+    "accel_int1": 4,
+    "adxl375_cs": 49,
+    "ina226_alert": 29,
+    "laser_int": 3,
+    "laser_xshut": 5,
+    "lsm6dso32_cs": 50,
+    "lsm6dso32_int1": 28,
+    "separation_switch": 33,
+    "servo_eleron_left": 27,
+    "servo_eleron_right": 32,
+    "servo_yaw": 26
+   },
+   "recorder": {
+    "cell_size": 256,
+    "log_capacity": 256,
+    "stats_ms": 1000,
+    "telemetry_ms": 0,
+    "tlm_capacity": 256
+   },
+   "sensors": [
+    {
+     "addr": 83,
+     "bus": "spi",
+     "cs_pin": "adxl375_cs",
+     "driver": "adxl375",
+     "enabled": false,
+     "id": 1,
+     "int_pin": "accel_int1",
+     "name": "accel_adxl375",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 1,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 106,
+     "bus": "spi",
+     "cs_pin": "lsm6dso32_cs",
+     "driver": "lsm6dso32",
+     "enabled": true,
+     "id": 1,
+     "int_pin": "lsm6dso32_int1",
+     "name": "imu_lsm6dso32",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 0,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 0,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 40,
+     "bus": "i2c",
+     "driver": "bno055",
+     "enabled": false,
+     "id": 0,
+     "name": "imu_bno055",
+     "provides": {
+      "accel": {
+       "priority": 2,
+       "timeout_ms": 40
+      },
+      "attitude": {
+       "priority": 0,
+       "timeout_ms": 40
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "accel_period_ms": 50,
+     "activity": "attitude",
+     "corr_shift": 4,
+     "enabled": true,
+     "grav_high_g": 1.3,
+     "grav_low_g": 0.7,
+     "name": "attitude",
+     "period_ms": 20,
+     "provides": {
+      "attitude": {
+       "priority": 1,
+       "timeout_ms": 40
+      }
+     },
+     "turn_gate_deg_s": 4
+    },
+    {
+     "addr": 99,
+     "bus": "i2c",
+     "driver": "icp10111",
+     "enabled": true,
+     "id": 1,
+     "name": "baro_icp10111",
+     "provides": {
+      "altitude": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 118,
+     "bus": "i2c",
+     "driver": "bmp280",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_bmp280",
+     "provides": {
+      "altitude": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 1,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 105,
+     "bus": "i2c",
+     "driver": "bmi323",
+     "enabled": true,
+     "id": 0,
+     "int_pin": "accel_int1",
+     "name": "imu_bmi323",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 1,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 1,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 21,
+     "bus": "i2c",
+     "driver": "bmm350",
+     "enabled": true,
+     "id": 0,
+     "name": "mag_bmm350",
+     "period_ms": 100,
+     "provides": {
+      "mag": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 71,
+     "bus": "i2c",
+     "driver": "bmp581",
+     "enabled": true,
+     "id": 0,
+     "name": "baro_bmp581",
+     "provides": {
+      "altitude": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 1,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 37,
+     "air_density": 1.18,
+     "bus": "i2c",
+     "driver": "sdp810",
+     "enabled": true,
+     "id": 1,
+     "name": "airspeed_sdp810",
+     "period_ms": 20,
+     "provides": {
+      "airspeed": {
+       "priority": 0,
+       "timeout_ms": 100
+      },
+      "dynamic_pressure": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "zero_offset_pa": 0.0
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l4cx",
+     "enabled": false,
+     "id": 1,
+     "int_pin": "laser_int",
+     "name": "laser_agl",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "timing_budget_ms": 100,
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l1x",
+     "enabled": true,
+     "id": 1,
+     "int_pin": "laser_int",
+     "name": "laser_agl_l1x",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 64,
+     "alert_ma": 3000,
+     "alert_pin": "ina226_alert",
+     "bus": "i2c",
+     "driver": "ina226",
+     "enabled": true,
+     "id": 0,
+     "max_current_ma": 5000,
+     "name": "power_ina226",
+     "period_ms": 100,
+     "provides": {
+      "current": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "power": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "voltage": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "shunt_mohms": 10
+    },
+    {
+     "addr": null,
+     "bus": "uart",
+     "driver": "neo6mv2",
+     "enabled": true,
+     "hz": 5,
+     "id": 2,
+     "name": "gnss",
+     "provides": {
+      "altitude": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "course": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "elevation": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "position": {
+       "priority": 0,
+       "timeout_ms": 400
+      },
+      "speed": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    }
+   ],
+   "version": "20260828",
+   "wifi": {
+    "cc_port": 1234,
+    "networks": [
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "coludo"
+     },
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "panda"
+     }
+    ],
+    "password": "",
+    "policy": "auto",
+    "ssid": "coludo",
+    "tx_power_dbm": 11
+   }
+  },
+  "hitl": {
+   "board": {
+    "firmware_version": "dev",
+    "id": "taster",
+    "layout": "auto",
+    "mcu": "esp32p4",
+    "rev": 1,
+    "setup_retries": 3
+   },
+   "buses": {
+    "i2c": {
+     "0": {
+      "freq": 400000,
+      "scl": 8,
+      "sda": 7
+     },
+     "1": {
+      "freq": 400000,
+      "scl": 30,
+      "sda": 31
+     }
+    },
+    "spi": {
+     "1": {
+      "baud": 5000000,
+      "miso": 46,
+      "mode": 3,
+      "mosi": 47,
+      "sck": 48
+     }
+    },
+    "uart": {
+     "1": {
+      "baud": 921600,
+      "tx": 20
+     },
+     "2": {
+      "baud": 9600,
+      "rx": 23,
+      "tx": 22
+     }
+    }
+   },
+   "components": [
+    {
+     "activity": "recorder",
+     "bus": "uart",
+     "enabled": true,
+     "id": 1,
+     "name": "recorder"
+    },
+    {
+     "debounce_ms": 20,
+     "driver": "separation",
+     "enabled": false,
+     "name": "separation",
+     "pin": "separation_switch"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_yaw",
+     "pin": "servo_yaw"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_left",
+     "pin": "servo_eleron_left"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_right",
+     "pin": "servo_eleron_right"
+    },
+    {
+     "activity": "sequencer",
+     "apogee_arm_ms": 4000,
+     "apogee_drop_m": 5.0,
+     "boost_timeout_ms": 12000,
+     "disable_gc_flight": true,
+     "enabled": true,
+     "flight_timeout_ms": 300000,
+     "ground_ms": 3000,
+     "land_agl_m": 5.0,
+     "land_ms": 300,
+     "land_timeout_ms": 10000,
+     "launch_alt_m": 10.0,
+     "launch_g": 2.5,
+     "launch_ms": 100,
+     "name": "sequencer",
+     "period_ms": 50,
+     "still_g": 0.3
+    },
+    {
+     "activity": "checkpoint",
+     "checkpoint_s": 1,
+     "enabled": true,
+     "name": "checkpoint",
+     "warm_start": true
+    },
+    {
+     "activity": "gnss_calib",
+     "enabled": true,
+     "min_samples": 5,
+     "name": "gnss_calib",
+     "period_ms": 1000
+    },
+    {
+     "activity": "flight",
+     "airspeed_ceiling_hz": 50,
+     "airspeed_dive_pitch": -45.0,
+     "airspeed_floor_hz": 5,
+     "airspeed_unconfident_ms": 30.0,
+     "bank_limit": 45,
+     "boost_engage_speed": 15.0,
+     "enabled": true,
+     "endgame_alt_m": 50,
+     "endgame_max_bank": 60,
+     "endgame_pattern": "auto",
+     "final_approach_agl": 8,
+     "final_cross_gain": 3.0,
+     "final_intercept_deg": 45,
+     "gains": {
+      "pitch": {
+       "kp": 1.5
+      },
+      "roll": {
+       "kd": 0.2,
+       "kp": 2.0
+      },
+      "yaw": {
+       "kd": 0.1,
+       "kp": 1.5
+      }
+     },
+     "glide_ratio": 5.5,
+     "gnss_steep_pitch": 45.0,
+     "land_bank_gain": 3.0,
+     "land_bank_limit": 45,
+     "loiter_capture_m": 120,
+     "loiter_gain": 3.0,
+     "loiter_radius_m": 30,
+     "name": "flight",
+     "nav_bank_gain": 1.5,
+     "nav_period_ms": 100,
+     "period_ms": 20,
+     "pitot_gain": 0.5,
+     "pitot_max_ms": 28.0,
+     "pitot_min_ms": 3.0,
+     "schedule_hz": 100,
+     "stages": {
+      "boosting": {},
+      "gliding": {
+       "pitch": -6,
+       "roll": 0
+      },
+      "landing": {
+       "pitch": -6,
+       "roll": 0
+      }
+     },
+     "stall_margin": 1.2,
+     "stall_speed_1g": 9.0,
+     "steer_filter_shift": 3,
+     "timer_id": 0,
+     "wind": {
+      "calm_speed": 0.5,
+      "max_speed": 15.0,
+      "min_speed": 3.0,
+      "triangle_alpha": 0.05
+     }
+    },
+    {
+     "activity": "watchdog",
+     "enabled": false,
+     "name": "watchdog",
+     "period_ms": 200,
+     "stall_ms": 500,
+     "wdt_timeout_ms": 5000
+    },
+    {
+     "activity": "health",
+     "enabled": true,
+     "name": "health",
+     "period_ms": 1000,
+     "probe_ms": 10
+    },
+    {
+     "activity": "field",
+     "auto_arm": false,
+     "auto_arm_dwell_s": 60,
+     "enabled": false,
+     "fallback_bearing_deg": 0.0,
+     "fallback_depth_m": 90.0,
+     "fallback_near_m": 50.0,
+     "fallback_width_m": 100.0,
+     "max_range_m": 200,
+     "name": "field",
+     "period_ms": 1000,
+     "site_select": true,
+     "still_g": 0.3
+    },
+    {
+     "driver": "bluetooth",
+     "enabled": false,
+     "name": "bluetooth",
+     "radio": false
+    },
+    {
+     "driver": "wifi",
+     "enabled": false,
+     "name": "wifi"
+    },
+    {
+     "activity": "cc",
+     "enabled": false,
+     "name": "cc"
+    },
+    {
+     "activity": "hitl",
+     "boost_axis": "z",
+     "enabled": true,
+     "glider_g": 270,
+     "gnss_drift": 0.0,
+     "gnss_drift_dir": 0.0,
+     "liftoff_g": 471,
+     "motor": "F15",
+     "name": "hitl",
+     "noise": 0.0,
+     "pad_dwell_s": 0.0,
+     "sim_hz": 50,
+     "spike": false,
+     "wind": 0.0,
+     "wind_dir": 0.0
+    }
+   ],
+   "fins": {
+    "concurrency": 1,
+    "limit_multiplier": 1.0,
+    "mixer": {
+     "limit_deg": 45,
+     "neutral_deg": 90,
+     "surfaces": {
+      "servo_eleron_left": {
+       "pitch": 1,
+       "roll": 1
+      },
+      "servo_eleron_right": {
+       "pitch": 1,
+       "roll": -1
+      },
+      "servo_yaw": {
+       "yaw": 1
+      }
+     }
+    }
+   },
+   "pins": {
+    "accel_int1": 4,
+    "adxl375_cs": 49,
+    "ina226_alert": 29,
+    "laser_int": 3,
+    "laser_xshut": 5,
+    "lsm6dso32_cs": 50,
+    "lsm6dso32_int1": 28,
+    "separation_switch": 33,
+    "servo_eleron_left": 27,
+    "servo_eleron_right": 32,
+    "servo_yaw": 26
+   },
+   "recorder": {
+    "cell_size": 256,
+    "log_capacity": 256,
+    "stats_ms": 1000,
+    "telemetry_ms": 0,
+    "tlm_capacity": 256
+   },
+   "sensors": [
+    {
+     "addr": 83,
+     "bus": "spi",
+     "cs_pin": "adxl375_cs",
+     "driver": "adxl375",
+     "enabled": false,
+     "id": 1,
+     "int_pin": "accel_int1",
+     "name": "accel_adxl375",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 2,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 106,
+     "bus": "spi",
+     "cs_pin": "lsm6dso32_cs",
+     "driver": "lsm6dso32",
+     "enabled": false,
+     "id": 1,
+     "int_pin": "lsm6dso32_int1",
+     "name": "imu_lsm6dso32",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 0,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 0,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 40,
+     "bus": "i2c",
+     "driver": "bno055",
+     "enabled": false,
+     "id": 0,
+     "name": "imu_bno055",
+     "provides": {
+      "accel": {
+       "priority": 3,
+       "timeout_ms": 40
+      },
+      "attitude": {
+       "priority": 2,
+       "timeout_ms": 40
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "accel_period_ms": 50,
+     "activity": "attitude",
+     "corr_shift": 4,
+     "enabled": true,
+     "grav_high_g": 1.3,
+     "grav_low_g": 0.7,
+     "name": "attitude",
+     "period_ms": 20,
+     "provides": {
+      "attitude": {
+       "priority": 1,
+       "timeout_ms": 40
+      }
+     },
+     "turn_gate_deg_s": 4
+    },
+    {
+     "addr": 99,
+     "bus": "i2c",
+     "driver": "icp10111",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_icp10111",
+     "provides": {
+      "altitude": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 118,
+     "bus": "i2c",
+     "driver": "bmp280",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_bmp280",
+     "provides": {
+      "altitude": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 2,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 105,
+     "bus": "i2c",
+     "driver": "bmi323",
+     "enabled": false,
+     "id": 0,
+     "int_pin": null,
+     "name": "imu_bmi323",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 1,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 1,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 21,
+     "bus": "i2c",
+     "driver": "bmm350",
+     "enabled": false,
+     "id": 0,
+     "name": "mag_bmm350",
+     "period_ms": 100,
+     "provides": {
+      "mag": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 71,
+     "bus": "i2c",
+     "driver": "bmp581",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_bmp581",
+     "provides": {
+      "altitude": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 1,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 37,
+     "air_density": 1.18,
+     "bus": "i2c",
+     "driver": "sdp810",
+     "enabled": false,
+     "id": 0,
+     "name": "airspeed_sdp810",
+     "period_ms": 20,
+     "provides": {
+      "airspeed": {
+       "priority": 0,
+       "timeout_ms": 100
+      },
+      "dynamic_pressure": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "zero_offset_pa": 0.0
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l4cx",
+     "enabled": false,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "timing_budget_ms": 100,
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l1x",
+     "enabled": false,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl_l1x",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 64,
+     "alert_ma": 3000,
+     "alert_pin": "ina226_alert",
+     "bus": "i2c",
+     "driver": "ina226",
+     "enabled": true,
+     "id": 1,
+     "max_current_ma": 5000,
+     "name": "power_ina226",
+     "period_ms": 100,
+     "provides": {
+      "current": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "power": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "voltage": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "shunt_mohms": 10
+    },
+    {
+     "addr": null,
+     "bus": "uart",
+     "driver": "atgm336h",
+     "enabled": false,
+     "hz": 10,
+     "id": 2,
+     "name": "gnss",
+     "provides": {
+      "altitude": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "course": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "elevation": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "position": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "speed": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    }
+   ],
+   "version": "20261005",
+   "wifi": {
+    "cc_port": 1234,
+    "networks": [
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "coludo"
+     },
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "panda"
+     }
+    ],
+    "password": "",
+    "policy": "auto",
+    "ssid": "coludo",
+    "tx_power_dbm": 11
+   }
+  },
+  "hitl_e16_noisy": {
+   "board": {
+    "firmware_version": "dev",
+    "id": "taster",
+    "layout": "auto",
+    "mcu": "esp32p4",
+    "rev": 1,
+    "setup_retries": 3
+   },
+   "buses": {
+    "i2c": {
+     "0": {
+      "freq": 400000,
+      "scl": 8,
+      "sda": 7
+     },
+     "1": {
+      "freq": 400000,
+      "scl": 30,
+      "sda": 31
+     }
+    },
+    "spi": {
+     "1": {
+      "baud": 5000000,
+      "miso": 46,
+      "mode": 3,
+      "mosi": 47,
+      "sck": 48
+     }
+    },
+    "uart": {
+     "1": {
+      "baud": 921600,
+      "tx": 20
+     },
+     "2": {
+      "baud": 9600,
+      "rx": 23,
+      "tx": 22
+     }
+    }
+   },
+   "components": [
+    {
+     "activity": "recorder",
+     "bus": "uart",
+     "enabled": true,
+     "id": 1,
+     "name": "recorder"
+    },
+    {
+     "debounce_ms": 20,
+     "driver": "separation",
+     "enabled": false,
+     "name": "separation",
+     "pin": "separation_switch"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_yaw",
+     "pin": "servo_yaw"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_left",
+     "pin": "servo_eleron_left"
+    },
+    {
+     "driver": "sg90",
+     "enabled": true,
+     "name": "servo_eleron_right",
+     "pin": "servo_eleron_right"
+    },
+    {
+     "activity": "sequencer",
+     "apogee_arm_ms": 4000,
+     "apogee_drop_m": 5.0,
+     "boost_timeout_ms": 12000,
+     "disable_gc_flight": true,
+     "enabled": true,
+     "flight_timeout_ms": 300000,
+     "ground_ms": 3000,
+     "land_agl_m": 5.0,
+     "land_ms": 300,
+     "land_timeout_ms": 10000,
+     "launch_alt_m": 10.0,
+     "launch_g": 2.5,
+     "launch_ms": 100,
+     "name": "sequencer",
+     "period_ms": 50,
+     "still_g": 0.3
+    },
+    {
+     "activity": "checkpoint",
+     "checkpoint_s": 1,
+     "enabled": true,
+     "name": "checkpoint",
+     "warm_start": true
+    },
+    {
+     "activity": "gnss_calib",
+     "enabled": true,
+     "min_samples": 5,
+     "name": "gnss_calib",
+     "period_ms": 1000
+    },
+    {
+     "activity": "flight",
+     "airspeed_ceiling_hz": 50,
+     "airspeed_dive_pitch": -45.0,
+     "airspeed_floor_hz": 5,
+     "airspeed_unconfident_ms": 30.0,
+     "bank_limit": 45,
+     "boost_engage_speed": 15.0,
+     "enabled": true,
+     "endgame_alt_m": 50,
+     "endgame_max_bank": 60,
+     "endgame_pattern": "auto",
+     "final_approach_agl": 8,
+     "final_cross_gain": 3.0,
+     "final_intercept_deg": 45,
+     "gains": {
+      "pitch": {
+       "kp": 1.5
+      },
+      "roll": {
+       "kd": 0.2,
+       "kp": 2.0
+      },
+      "yaw": {
+       "kd": 0.1,
+       "kp": 1.5
+      }
+     },
+     "glide_ratio": 5.5,
+     "gnss_steep_pitch": 45.0,
+     "land_bank_gain": 3.0,
+     "land_bank_limit": 45,
+     "loiter_capture_m": 120,
+     "loiter_gain": 3.0,
+     "loiter_radius_m": 30,
+     "name": "flight",
+     "nav_bank_gain": 1.5,
+     "nav_period_ms": 100,
+     "period_ms": 20,
+     "pitot_gain": 0.5,
+     "pitot_max_ms": 28.0,
+     "pitot_min_ms": 3.0,
+     "schedule_hz": 100,
+     "stages": {
+      "boosting": {},
+      "gliding": {
+       "pitch": -6,
+       "roll": 0
+      },
+      "landing": {
+       "pitch": -6,
+       "roll": 0
+      }
+     },
+     "stall_margin": 1.2,
+     "stall_speed_1g": 9.0,
+     "steer_filter_shift": 3,
+     "timer_id": 0,
+     "wind": {
+      "calm_speed": 0.5,
+      "max_speed": 15.0,
+      "min_speed": 3.0,
+      "triangle_alpha": 0.05
+     }
+    },
+    {
+     "activity": "watchdog",
+     "enabled": false,
+     "name": "watchdog",
+     "period_ms": 200,
+     "stall_ms": 500,
+     "wdt_timeout_ms": 5000
+    },
+    {
+     "activity": "health",
+     "enabled": true,
+     "name": "health",
+     "period_ms": 1000,
+     "probe_ms": 10
+    },
+    {
+     "activity": "field",
+     "auto_arm": false,
+     "auto_arm_dwell_s": 60,
+     "enabled": false,
+     "fallback_bearing_deg": 0.0,
+     "fallback_depth_m": 90.0,
+     "fallback_near_m": 50.0,
+     "fallback_width_m": 100.0,
+     "max_range_m": 200,
+     "name": "field",
+     "period_ms": 1000,
+     "site_select": true,
+     "still_g": 0.3
+    },
+    {
+     "driver": "bluetooth",
+     "enabled": false,
+     "name": "bluetooth",
+     "radio": false
+    },
+    {
+     "driver": "wifi",
+     "enabled": false,
+     "name": "wifi"
+    },
+    {
+     "activity": "cc",
+     "enabled": false,
+     "name": "cc"
+    },
+    {
+     "activity": "hitl",
+     "boost_axis": "z",
+     "enabled": true,
+     "glider_g": 270,
+     "gnss_drift": 0.3,
+     "gnss_drift_dir": 45.0,
+     "inject_hz": 10,
+     "liftoff_g": 455,
+     "motor": "E16",
+     "name": "hitl",
+     "noise": 0.5,
+     "pad_dwell_s": 30.0,
+     "sim_hz": 50,
+     "spike": true,
+     "wind": 3.5,
+     "wind_dir": 270.0
+    }
+   ],
+   "fins": {
+    "concurrency": 1,
+    "limit_multiplier": 1.0,
+    "mixer": {
+     "limit_deg": 45,
+     "neutral_deg": 90,
+     "surfaces": {
+      "servo_eleron_left": {
+       "pitch": 1,
+       "roll": 1
+      },
+      "servo_eleron_right": {
+       "pitch": 1,
+       "roll": -1
+      },
+      "servo_yaw": {
+       "yaw": 1
+      }
+     }
+    }
+   },
+   "pins": {
+    "accel_int1": 4,
+    "adxl375_cs": 49,
+    "ina226_alert": 29,
+    "laser_int": 3,
+    "laser_xshut": 5,
+    "lsm6dso32_cs": 50,
+    "lsm6dso32_int1": 28,
+    "separation_switch": 33,
+    "servo_eleron_left": 27,
+    "servo_eleron_right": 32,
+    "servo_yaw": 26
+   },
+   "recorder": {
+    "cell_size": 256,
+    "log_capacity": 256,
+    "stats_ms": 1000,
+    "telemetry_ms": 0,
+    "tlm_capacity": 256
+   },
+   "sensors": [
+    {
+     "addr": 83,
+     "bus": "spi",
+     "cs_pin": "adxl375_cs",
+     "driver": "adxl375",
+     "enabled": false,
+     "id": 1,
+     "int_pin": "accel_int1",
+     "name": "accel_adxl375",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 2,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 106,
+     "bus": "spi",
+     "cs_pin": "lsm6dso32_cs",
+     "driver": "lsm6dso32",
+     "enabled": false,
+     "id": 1,
+     "int_pin": "lsm6dso32_int1",
+     "name": "imu_lsm6dso32",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 0,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 0,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 40,
+     "bus": "i2c",
+     "driver": "bno055",
+     "enabled": false,
+     "id": 0,
+     "name": "imu_bno055",
+     "provides": {
+      "accel": {
+       "priority": 3,
+       "timeout_ms": 40
+      },
+      "attitude": {
+       "priority": 2,
+       "timeout_ms": 40
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "accel_period_ms": 50,
+     "activity": "attitude",
+     "corr_shift": 4,
+     "enabled": true,
+     "grav_high_g": 1.3,
+     "grav_low_g": 0.7,
+     "name": "attitude",
+     "period_ms": 20,
+     "provides": {
+      "attitude": {
+       "priority": 1,
+       "timeout_ms": 40
+      }
+     },
+     "turn_gate_deg_s": 4
+    },
+    {
+     "addr": 99,
+     "bus": "i2c",
+     "driver": "icp10111",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_icp10111",
+     "provides": {
+      "altitude": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 0,
+       "reconcile": true,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 118,
+     "bus": "i2c",
+     "driver": "bmp280",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_bmp280",
+     "provides": {
+      "altitude": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 2,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 2,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 105,
+     "bus": "i2c",
+     "driver": "bmi323",
+     "enabled": false,
+     "id": 0,
+     "int_pin": null,
+     "name": "imu_bmi323",
+     "period_ms": 10,
+     "provides": {
+      "accel": {
+       "priority": 1,
+       "timeout_ms": 20
+      },
+      "rate": {
+       "priority": 1,
+       "timeout_ms": 20
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 21,
+     "bus": "i2c",
+     "driver": "bmm350",
+     "enabled": false,
+     "id": 0,
+     "name": "mag_bmm350",
+     "period_ms": 100,
+     "provides": {
+      "mag": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "telemetry_ms": 0
+    },
+    {
+     "addr": 71,
+     "bus": "i2c",
+     "driver": "bmp581",
+     "enabled": false,
+     "id": 0,
+     "name": "baro_bmp581",
+     "provides": {
+      "altitude": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "elevation": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "pressure": {
+       "priority": 1,
+       "timeout_ms": 200
+      },
+      "temperature": {
+       "priority": 1,
+       "timeout_ms": 500
+      }
+     }
+    },
+    {
+     "addr": 37,
+     "air_density": 1.18,
+     "bus": "i2c",
+     "driver": "sdp810",
+     "enabled": false,
+     "id": 0,
+     "name": "airspeed_sdp810",
+     "period_ms": 20,
+     "provides": {
+      "airspeed": {
+       "priority": 0,
+       "timeout_ms": 100
+      },
+      "dynamic_pressure": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "zero_offset_pa": 0.0
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l4cx",
+     "enabled": false,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "timing_budget_ms": 100,
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 41,
+     "bus": "i2c",
+     "driver": "vl53l1x",
+     "enabled": false,
+     "id": 0,
+     "int_pin": "laser_int",
+     "name": "laser_agl_l1x",
+     "period_ms": 50,
+     "provides": {
+      "agl": {
+       "priority": 0,
+       "timeout_ms": 100
+      }
+     },
+     "xshut_pin": "laser_xshut"
+    },
+    {
+     "addr": 64,
+     "alert_ma": 3000,
+     "alert_pin": "ina226_alert",
+     "bus": "i2c",
+     "driver": "ina226",
+     "enabled": true,
+     "id": 1,
+     "max_current_ma": 5000,
+     "name": "power_ina226",
+     "period_ms": 100,
+     "provides": {
+      "current": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "power": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "voltage": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     },
+     "shunt_mohms": 10
+    },
+    {
+     "addr": null,
+     "bus": "uart",
+     "driver": "atgm336h",
+     "enabled": false,
+     "hz": 10,
+     "id": 2,
+     "name": "gnss",
+     "provides": {
+      "altitude": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "course": {
+       "priority": 0,
+       "timeout_ms": 500
+      },
+      "elevation": {
+       "priority": 3,
+       "timeout_ms": 2000
+      },
+      "position": {
+       "priority": 0,
+       "timeout_ms": 200
+      },
+      "speed": {
+       "priority": 0,
+       "timeout_ms": 500
+      }
+     }
+    }
+   ],
+   "version": "20261005",
+   "wifi": {
+    "cc_port": 1234,
+    "networks": [
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "coludo"
+     },
+     {
+      "enabled": true,
+      "retry_ms": 10000,
+      "ssid": "panda"
+     }
+    ],
+    "password": "",
+    "policy": "auto",
+    "ssid": "coludo",
+    "tx_power_dbm": 11
+   }
+  },
+  "small": {
+   "board": {
+    "id": "bench",
+    "mcu": "esp32p4"
+   },
+   "buses": {
+    "i2c": {
+     "0": {
+      "scl": 8,
+      "sda": 7
+     }
+    },
+    "spi": {
+     "1": {
+      "miso": 46,
+      "mode": 3,
+      "mosi": 47,
+      "sck": 48
+     }
+    },
+    "uart": {
+     "1": {
+      "tx": 20
+     }
+    }
+   },
+   "components": [
+    {
+     "activity": "watchdog",
+     "enabled": true,
+     "name": "watchdog",
+     "wdt_timeout_ms": 5000
+    }
+   ],
+   "fins": {
+    "limit_multiplier": 1.0
+   },
+   "pins": {
+    "laser_int": null,
+    "servo_yaw": 26
+   },
+   "recorder": {
+    "telemetry_ms": 0
+   },
+   "sensors": [
+    {
+     "addr": 99,
+     "bus": "i2c",
+     "driver": "icp10111",
+     "id": 0,
+     "name": "baro",
+     "provides": {
+      "altitude": {
+       "priority": 0,
+       "timeout_ms": 200
+      }
+     }
+    }
+   ],
+   "version": "20261005",
+   "wifi": {
+    "ssid": "lab"
+   }
+  }
+ },
+ "cases": [
+  {
+   "input": {
+    "file": "launches/20261003/TMS-7C/tms7c.config"
+   },
+   "name": "tms7c",
+   "output": []
+  },
+  {
+   "input": {
+    "file": "launches/20261003/TMS-7D/tms7d.config"
+   },
+   "name": "tms7d",
+   "output": []
+  },
+  {
+   "input": {
+    "file": "launches/20261003/TMS-7D/tms7d_control.config"
+   },
+   "name": "tms7d_control",
+   "output": []
+  },
+  {
+   "input": {
+    "file": "launches/20261003/TMS-7E/tms7e.config"
+   },
+   "name": "tms7e",
+   "output": []
+  },
+  {
+   "input": {
+    "file": "launches/20261003/TMS-7F/tms7f.config"
+   },
+   "name": "tms7f",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default"
+   },
+   "name": "default",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "hitl"
+   },
+   "name": "hitl",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "hitl_e16_noisy"
+   },
+   "name": "hitl_e16_noisy",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "flight_ready_tms7f"
+   },
+   "name": "flight_ready_tms7f",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "flight_ready_new"
+   },
+   "name": "flight_ready_new",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "small"
+   },
+   "name": "small",
+   "output": []
+  },
+  {
+   "input": {
+    "edits": [
+     {
+      "path": [
+       "board",
+       "id"
+      ],
+      "value": "taster"
+     }
+    ],
+    "file": "launches/20261003/TMS-7F/tms7f.config"
+   },
+   "name": "taster_copy_of_tms7f",
+   "output": []
+  },
+  {
+   "input": {
+    "document": {}
+   },
+   "name": "empty",
+   "output": [
+    "missing or invalid 'board' section",
+    "missing or invalid 'buses' section",
+    "missing or invalid 'pins' section"
+   ]
+  },
+  {
+   "input": {
+    "document": null
+   },
+   "name": "null",
+   "output": [
+    "config is not an object"
+   ]
+  },
+  {
+   "input": {
+    "document": []
+   },
+   "name": "list",
+   "output": [
+    "config is not an object"
+   ]
+  },
+  {
+   "input": {
+    "document": "board"
+   },
+   "name": "text",
+   "output": [
+    "config is not an object"
+   ]
+  },
+  {
+   "input": {
+    "document": 5
+   },
+   "name": "integer",
+   "output": [
+    "config is not an object"
+   ]
+  },
+  {
+   "input": {
+    "document": 2.5
+   },
+   "name": "float",
+   "output": [
+    "config is not an object"
+   ]
+  },
+  {
+   "input": {
+    "document": true
+   },
+   "name": "true",
+   "output": [
+    "config is not an object"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "i2c",
+       "9"
+      ],
+      "value": {
+       "baud": 9600,
+       "freq": 400000
+      }
+     }
+    ]
+   },
+   "name": "test_config_i2c_without_pins",
+   "output": [
+    "bus i2c:9 is missing 'scl' -- it would KeyError at bring-up",
+    "bus i2c:9 is missing 'sda' -- it would KeyError at bring-up"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "spi",
+       "9"
+      ],
+      "value": {
+       "baud": 9600,
+       "freq": 400000
+      }
+     }
+    ]
+   },
+   "name": "test_config_spi_without_pins",
+   "output": [
+    "bus spi:9 is missing 'sck' -- it would KeyError at bring-up",
+    "bus spi:9 is missing 'mosi' -- it would KeyError at bring-up",
+    "bus spi:9 is missing 'miso' -- it would KeyError at bring-up"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "uart",
+       "9"
+      ],
+      "value": {
+       "baud": 9600,
+       "freq": 400000
+      }
+     }
+    ]
+   },
+   "name": "test_config_uart_without_pins",
+   "output": [
+    "bus uart:9 is missing 'tx' -- it would KeyError at bring-up"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "uart",
+       "9"
+      ],
+      "value": {
+       "baud": 9600,
+       "tx": 44
+      }
+     }
+    ]
+   },
+   "name": "test_config_uart_tx_only",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       8,
+       "bank_limit"
+      ],
+      "value": "45"
+     }
+    ]
+   },
+   "name": "test_config_bank_limit_text",
+   "output": [
+    "components 'flight'.bank_limit must be a number (got '45')"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       2,
+       "trim"
+      ],
+      "value": "2.5"
+     }
+    ]
+   },
+   "name": "test_config_trim_text",
+   "output": [
+    "components 'servo_yaw'.trim must be a number (got '2.5')"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       8,
+       "gains",
+       "roll",
+       "kp"
+      ],
+      "value": "0.8"
+     }
+    ]
+   },
+   "name": "test_config_gain_text",
+   "output": [
+    "components 'flight'.gains.roll.kp must be a number (got '0.8')"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "fins",
+       "limit_multiplier"
+      ],
+      "value": "1.0"
+     }
+    ]
+   },
+   "name": "test_config_fins_multiplier_text",
+   "output": [
+    "fins.limit_multiplier must be a number (got '1.0')"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       4,
+       "period_ms"
+      ],
+      "value": "100"
+     }
+    ]
+   },
+   "name": "test_config_period_text",
+   "output": [
+    "sensors 'baro_icp10111'.period_ms must be a number (got '100')"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       0,
+       "telemetry_ms"
+      ],
+      "value": "20"
+     }
+    ]
+   },
+   "name": "test_config_telemetry_text",
+   "output": [
+    "sensors 'accel_adxl375'.telemetry_ms must be a number (got '20')"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "recorder",
+       "telemetry_ms"
+      ],
+      "value": "500"
+     }
+    ]
+   },
+   "name": "test_config_recorder_telemetry_text",
+   "output": [
+    "recorder.telemetry_ms must be a non-negative int (0 = no decimation)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "recorder",
+       "telemetry_ms"
+      ],
+      "value": -1
+     }
+    ]
+   },
+   "name": "test_config_recorder_telemetry_negative",
+   "output": [
+    "recorder.telemetry_ms must be a non-negative int (0 = no decimation)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "recorder",
+       "telemetry_ms"
+      ],
+      "value": true
+     }
+    ]
+   },
+   "name": "test_config_recorder_telemetry_true",
+   "output": [
+    "recorder.telemetry_ms must be a non-negative int (0 = no decimation)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "recorder",
+       "telemetry_ms"
+      ],
+      "value": 0
+     }
+    ]
+   },
+   "name": "test_config_recorder_telemetry_zero",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "fins",
+       "limit_multiplier"
+      ],
+      "value": true
+     }
+    ]
+   },
+   "name": "test_config_fins_multiplier_true",
+   "output": [
+    "fins.limit_multiplier must be a number (got True)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "fins",
+       "limit_multiplier"
+      ],
+      "value": 0.5
+     }
+    ]
+   },
+   "name": "test_config_fins_multiplier_half",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": 7
+     }
+    ]
+   },
+   "name": "test_config_pin_collision",
+   "output": [
+    "GPIO7 used by both i2c:0.sda and pins.servo_yaw"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": 18
+     }
+    ]
+   },
+   "name": "test_config_reserved_pin",
+   "output": [
+    "pins.servo_yaw uses reserved GPIO18 (breaks Wi-Fi/USB/console on esp32p4)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "pins",
+       "laser_xshut"
+      ],
+      "value": null
+     },
+     {
+      "path": [
+       "pins",
+       "laser_int"
+      ],
+      "value": -1
+     },
+     {
+      "path": [
+       "pins",
+       "accel_int1"
+      ],
+      "value": -7
+     }
+    ]
+   },
+   "name": "test_config_disabled_pins",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "pins",
+       "laser_xshut"
+      ],
+      "value": null
+     },
+     {
+      "path": [
+       "pins",
+       "laser_int"
+      ],
+      "value": -1
+     },
+     {
+      "path": [
+       "pins",
+       "accel_int1"
+      ],
+      "value": -7
+     },
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": 7
+     }
+    ]
+   },
+   "name": "test_config_disabled_pins_and_collision",
+   "output": [
+    "GPIO7 used by both i2c:0.sda and pins.servo_yaw"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       0,
+       "id"
+      ],
+      "value": 9
+     }
+    ]
+   },
+   "name": "test_config_undefined_bus",
+   "output": [
+    "sensors 'accel_adxl375' addresses bus spi:9 which is not defined"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       0,
+       "id"
+      ],
+      "value": "x"
+     }
+    ]
+   },
+   "name": "test_config_text_bus_id",
+   "output": [
+    "sensors 'accel_adxl375'.id must be the int bus id (with bus \"spi\")"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "oops"
+      ],
+      "value": {
+       "0": {
+        "rx": 98,
+        "tx": 99
+       }
+      }
+     }
+    ]
+   },
+   "name": "test_config_bad_bus_type",
+   "output": [
+    "bus type 'oops' is not one of uart/i2c/spi"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "spi",
+       "1",
+       "mode"
+      ],
+      "value": 4
+     }
+    ]
+   },
+   "name": "test_config_spi_mode_4",
+   "output": [
+    "bus spi:1.mode must be 0..3 (got 4)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "board",
+       "id"
+      ],
+      "value": "glider 1"
+     }
+    ]
+   },
+   "name": "test_config_board_id_space",
+   "output": [
+    "board.id must not contain whitespace (it is a bare wire token)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "components",
+       0,
+       "activity"
+      ]
+     }
+    ]
+   },
+   "name": "test_config_no_implementation",
+   "output": [
+    "components 'recorder' must name an implementation: `driver` (drivers/) or `activity` (tasks/)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": 8
+     }
+    ]
+   },
+   "name": "test_config_save_refused",
+   "output": [
+    "GPIO8 used by both i2c:0.scl and pins.servo_yaw"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "fins"
+      ],
+      "value": [
+       1,
+       2
+      ]
+     }
+    ]
+   },
+   "name": "test_config_fins_list",
+   "output": [
+    "fins is not an object"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       9,
+       "enabled"
+      ],
+      "value": true
+     },
+     {
+      "path": [
+       "components",
+       9,
+       "wdt_timeout_ms"
+      ],
+      "value": 5000
+     }
+    ]
+   },
+   "name": "test_config_watchdog_flight_value",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       9,
+       "enabled"
+      ],
+      "value": true
+     },
+     {
+      "path": [
+       "components",
+       9,
+       "wdt_timeout_ms"
+      ],
+      "value": 1000
+     }
+    ]
+   },
+   "name": "test_config_watchdog_below_floor",
+   "output": [
+    "watchdog.wdt_timeout_ms 1000 is below the 4000 ms boot floor (the board boot-loops)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       9,
+       "enabled"
+      ],
+      "value": false
+     },
+     {
+      "path": [
+       "components",
+       9,
+       "wdt_timeout_ms"
+      ],
+      "value": 1000
+     }
+    ]
+   },
+   "name": "test_config_watchdog_disabled_below_floor",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "board"
+      ]
+     }
+    ]
+   },
+   "name": "board_missing",
+   "output": [
+    "missing or invalid 'board' section"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "board"
+      ],
+      "value": []
+     }
+    ]
+   },
+   "name": "board_list",
+   "output": [
+    "missing or invalid 'board' section"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "board",
+       "id"
+      ]
+     }
+    ]
+   },
+   "name": "board_id_missing",
+   "output": [
+    "board.id must be a non-empty string"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "board",
+       "id"
+      ],
+      "value": ""
+     }
+    ]
+   },
+   "name": "board_id_empty",
+   "output": [
+    "board.id must be a non-empty string"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "board",
+       "id"
+      ],
+      "value": 5
+     }
+    ]
+   },
+   "name": "board_id_number",
+   "output": [
+    "board.id must be a non-empty string"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "board",
+       "id"
+      ],
+      "value": "a\tb"
+     }
+    ]
+   },
+   "name": "board_id_tab",
+   "output": [
+    "board.id must not contain whitespace (it is a bare wire token)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "board",
+       "id"
+      ],
+      "value": "a\nb"
+     }
+    ]
+   },
+   "name": "board_id_newline",
+   "output": [
+    "board.id must not contain whitespace (it is a bare wire token)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "board",
+       "id"
+      ],
+      "value": "a\rb"
+     }
+    ]
+   },
+   "name": "board_id_return",
+   "output": [
+    "board.id must not contain whitespace (it is a bare wire token)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "board",
+       "id"
+      ],
+      "value": "a\u00a0b\u000bc"
+     }
+    ]
+   },
+   "name": "board_id_other_whitespace_passes",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "board",
+       "mcu"
+      ]
+     }
+    ]
+   },
+   "name": "board_mcu_missing",
+   "output": [
+    "board.mcu must be a string"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "board",
+       "mcu"
+      ]
+     },
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": 18
+     }
+    ]
+   },
+   "name": "board_mcu_missing_skips_reserved",
+   "output": [
+    "board.mcu must be a string"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "board",
+       "mcu"
+      ],
+      "value": 5
+     }
+    ]
+   },
+   "name": "board_mcu_number",
+   "output": [
+    "board.mcu must be a string"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "board",
+       "mcu"
+      ],
+      "value": "esp32s3"
+     },
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": 18
+     }
+    ]
+   },
+   "name": "board_mcu_unknown_skips_reserved",
+   "output": [
+    "board.mcu 'esp32s3' is not one of esp32p4, esp32c6, firebeetle2p4"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "board",
+       "mcu"
+      ],
+      "value": "esp32c6"
+     },
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": 18
+     }
+    ]
+   },
+   "name": "board_mcu_c6_reserves_nothing",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "board",
+       "mcu"
+      ],
+      "value": "firebeetle2p4"
+     }
+    ]
+   },
+   "name": "board_mcu_firebeetle",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "wifi"
+      ],
+      "value": null
+     }
+    ]
+   },
+   "name": "wifi_null",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "wifi"
+      ]
+     }
+    ]
+   },
+   "name": "wifi_missing",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "wifi"
+      ],
+      "value": []
+     }
+    ]
+   },
+   "name": "wifi_list",
+   "output": [
+    "'wifi' must be an object"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "wifi",
+       "mode"
+      ],
+      "value": "ap"
+     }
+    ]
+   },
+   "name": "wifi_mode_ap",
+   "output": [
+    "wifi.mode must be 'sta'"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "wifi",
+       "mode"
+      ],
+      "value": "sta"
+     }
+    ]
+   },
+   "name": "wifi_mode_sta",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "wifi",
+       "mode"
+      ],
+      "value": null
+     }
+    ]
+   },
+   "name": "wifi_mode_null",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "wifi",
+       "ssid"
+      ],
+      "value": 5
+     }
+    ]
+   },
+   "name": "wifi_ssid_number",
+   "output": [
+    "wifi.ssid must be a string"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "wifi",
+       "ssid"
+      ],
+      "value": null
+     }
+    ]
+   },
+   "name": "wifi_ssid_null",
+   "output": [
+    "wifi.ssid must be a string"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "wifi",
+       "networks"
+      ],
+      "value": "coludo"
+     }
+    ]
+   },
+   "name": "wifi_networks_text",
+   "output": [
+    "wifi.networks must be a list"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "wifi",
+       "networks"
+      ],
+      "value": null
+     }
+    ]
+   },
+   "name": "wifi_networks_null",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "wifi",
+       "networks"
+      ],
+      "value": []
+     }
+    ]
+   },
+   "name": "wifi_networks_empty",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "wifi",
+       "networks"
+      ],
+      "value": [
+       "coludo",
+       "",
+       {
+        "ssid": ""
+       },
+       {
+        "ssid": 5
+       },
+       5,
+       null,
+       {
+        "mode": "ap",
+        "ssid": "x"
+       },
+       {
+        "mode": "sta",
+        "ssid": "x"
+       },
+       {
+        "mode": "sta"
+       },
+       [],
+       {
+        "mode": null,
+        "ssid": "y"
+       }
+      ]
+     }
+    ]
+   },
+   "name": "wifi_network_entries",
+   "output": [
+    "wifi.networks[2] needs a string ssid",
+    "wifi.networks[3] needs a string ssid",
+    "wifi.networks[4] needs a string ssid",
+    "wifi.networks[5] needs a string ssid",
+    "wifi.networks[6].mode must be 'sta'",
+    "wifi.networks[8] needs a string ssid",
+    "wifi.networks[9] needs a string ssid"
+   ]
+  },
+  {
+   "input": {
+    "base": "small",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "buses"
+      ]
+     }
+    ]
+   },
+   "name": "buses_missing",
+   "output": [
+    "missing or invalid 'buses' section",
+    "sensors 'baro' addresses bus i2c:0 which is not defined"
+   ]
+  },
+  {
+   "input": {
+    "base": "small",
+    "edits": [
+     {
+      "path": [
+       "buses"
+      ],
+      "value": []
+     }
+    ]
+   },
+   "name": "buses_list",
+   "output": [
+    "missing or invalid 'buses' section",
+    "sensors 'baro' addresses bus i2c:0 which is not defined"
+   ]
+  },
+  {
+   "input": {
+    "base": "small",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "i2c"
+      ],
+      "value": []
+     }
+    ]
+   },
+   "name": "buses_group_list",
+   "output": [
+    "buses.i2c must be an object",
+    "sensors 'baro' addresses bus i2c:0 which is not defined"
+   ]
+  },
+  {
+   "input": {
+    "base": "small",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "i2c",
+       "0"
+      ],
+      "value": 5
+     }
+    ]
+   },
+   "name": "bus_not_an_object",
+   "output": [
+    "bus i2c:0 must be an object"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "can"
+      ],
+      "value": {
+       "0": {
+        "tx": 98
+       }
+      }
+     },
+     {
+      "path": [
+       "sensors",
+       0,
+       "bus"
+      ],
+      "value": "can"
+     },
+     {
+      "path": [
+       "sensors",
+       0,
+       "id"
+      ],
+      "value": 0
+     }
+    ]
+   },
+   "name": "bus_kind_unknown_and_addressed",
+   "output": [
+    "bus type 'can' is not one of uart/i2c/spi",
+    "sensors 'accel_adxl375' addresses bus can:0 which is not defined"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "i2c",
+       "1",
+       "sda"
+      ],
+      "value": 7
+     }
+    ]
+   },
+   "name": "bus_pin_collision",
+   "output": [
+    "GPIO7 used by both i2c:0.sda and i2c:1.sda"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "uart",
+       "1",
+       "tx"
+      ],
+      "value": 37
+     }
+    ]
+   },
+   "name": "bus_pin_reserved",
+   "output": [
+    "uart:1.tx uses reserved GPIO37 (breaks Wi-Fi/USB/console on esp32p4)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "buses",
+       "uart",
+       "2",
+       "tx"
+      ]
+     }
+    ]
+   },
+   "name": "bus_uart_without_tx",
+   "output": [
+    "bus uart:2 is missing 'tx' -- it would KeyError at bring-up"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "spi",
+       "1"
+      ],
+      "value": {}
+     }
+    ]
+   },
+   "name": "bus_spi_without_anything",
+   "output": [
+    "bus spi:1 is missing 'sck' -- it would KeyError at bring-up",
+    "bus spi:1 is missing 'mosi' -- it would KeyError at bring-up",
+    "bus spi:1 is missing 'miso' -- it would KeyError at bring-up"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "i2c",
+       "0",
+       "mode"
+      ],
+      "value": 9
+     }
+    ]
+   },
+   "name": "bus_mode_on_i2c_is_not_checked",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "small",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "pins"
+      ]
+     }
+    ]
+   },
+   "name": "pins_missing",
+   "output": [
+    "missing or invalid 'pins' section"
+   ]
+  },
+  {
+   "input": {
+    "base": "small",
+    "edits": [
+     {
+      "path": [
+       "pins"
+      ],
+      "value": []
+     }
+    ]
+   },
+   "name": "pins_list",
+   "output": [
+    "missing or invalid 'pins' section"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": 54
+     },
+     {
+      "path": [
+       "pins",
+       "servo_eleron_left"
+      ],
+      "value": 6
+     },
+     {
+      "path": [
+       "pins",
+       "laser_int"
+      ],
+      "value": 18
+     }
+    ]
+   },
+   "name": "pins_reserved_in_gpio_order",
+   "output": [
+    "pins.servo_eleron_left uses reserved GPIO6 (breaks Wi-Fi/USB/console on esp32p4)",
+    "pins.laser_int uses reserved GPIO18 (breaks Wi-Fi/USB/console on esp32p4)",
+    "pins.servo_yaw uses reserved GPIO54 (breaks Wi-Fi/USB/console on esp32p4)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": 18
+     },
+     {
+      "path": [
+       "pins",
+       "servo_eleron_left"
+      ],
+      "value": 18
+     }
+    ]
+   },
+   "name": "pins_collision_on_a_reserved_gpio",
+   "output": [
+    "GPIO18 used by both pins.servo_eleron_left and pins.servo_yaw",
+    "pins.servo_eleron_left uses reserved GPIO18 (breaks Wi-Fi/USB/console on esp32p4)"
+   ]
+  },
+  {
+   "input": {
+    "base": "small",
+    "edits": [
+     {
+      "path": [
+       "pins",
+       "boot"
+      ],
+      "value": 0
+     }
+    ]
+   },
+   "name": "pins_zero_is_a_gpio",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "i2c",
+       "0",
+       "sda"
+      ],
+      "value": "7"
+     }
+    ]
+   },
+   "name": "bus_pin_text",
+   "output": [
+    "i2c:0.sda pin must be a non-negative int (got '7')"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "i2c",
+       "0",
+       "sda"
+      ],
+      "value": 7.0
+     }
+    ]
+   },
+   "name": "bus_pin_float",
+   "output": [
+    "i2c:0.sda pin must be a non-negative int (got 7.0)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "i2c",
+       "0",
+       "sda"
+      ],
+      "value": -1
+     }
+    ]
+   },
+   "name": "bus_pin_negative",
+   "output": [
+    "i2c:0.sda pin must be a non-negative int (got -1)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "i2c",
+       "0",
+       "sda"
+      ],
+      "value": true
+     }
+    ]
+   },
+   "name": "bus_pin_true",
+   "output": [
+    "i2c:0.sda pin must be a non-negative int (got True)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "i2c",
+       "0",
+       "sda"
+      ],
+      "value": null
+     }
+    ]
+   },
+   "name": "bus_pin_null",
+   "output": [
+    "i2c:0.sda pin must be a non-negative int (got None)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "i2c",
+       "0",
+       "sda"
+      ],
+      "value": [
+       7
+      ]
+     }
+    ]
+   },
+   "name": "bus_pin_list",
+   "output": [
+    "i2c:0.sda pin must be a non-negative int (got [7])"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "i2c",
+       "0",
+       "sda"
+      ],
+      "value": {
+       "gpio": 7
+      }
+     }
+    ]
+   },
+   "name": "bus_pin_object",
+   "output": [
+    "i2c:0.sda pin must be a non-negative int (got {'gpio': 7})"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "i2c",
+       "0",
+       "sda"
+      ],
+      "value": 18446744073709551615
+     }
+    ]
+   },
+   "name": "bus_pin_huge",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": "26"
+     }
+    ]
+   },
+   "name": "pin_text",
+   "output": [
+    "pins.servo_yaw pin must be a non-negative int (got '26')"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": 26.0
+     }
+    ]
+   },
+   "name": "pin_float",
+   "output": [
+    "pins.servo_yaw pin must be a non-negative int (got 26.0)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": true
+     }
+    ]
+   },
+   "name": "pin_true",
+   "output": [
+    "pins.servo_yaw pin must be a non-negative int (got True)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": false
+     }
+    ]
+   },
+   "name": "pin_false",
+   "output": [
+    "pins.servo_yaw pin must be a non-negative int (got False)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": [
+       26
+      ]
+     }
+    ]
+   },
+   "name": "pin_list",
+   "output": [
+    "pins.servo_yaw pin must be a non-negative int (got [26])"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": -1.0
+     }
+    ]
+   },
+   "name": "pin_negative_float",
+   "output": [
+    "pins.servo_yaw pin must be a non-negative int (got -1.0)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "spi",
+       "1",
+       "mode"
+      ],
+      "value": 2.0
+     }
+    ]
+   },
+   "name": "spi_mode_float_two",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "spi",
+       "1",
+       "mode"
+      ],
+      "value": true
+     }
+    ]
+   },
+   "name": "spi_mode_true",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "spi",
+       "1",
+       "mode"
+      ],
+      "value": false
+     }
+    ]
+   },
+   "name": "spi_mode_false",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "spi",
+       "1",
+       "mode"
+      ],
+      "value": -0.0
+     }
+    ]
+   },
+   "name": "spi_mode_negative_zero",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "spi",
+       "1",
+       "mode"
+      ],
+      "value": null
+     }
+    ]
+   },
+   "name": "spi_mode_null",
+   "output": [
+    "bus spi:1.mode must be 0..3 (got None)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "spi",
+       "1",
+       "mode"
+      ],
+      "value": "3"
+     }
+    ]
+   },
+   "name": "spi_mode_text",
+   "output": [
+    "bus spi:1.mode must be 0..3 (got '3')"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "spi",
+       "1",
+       "mode"
+      ],
+      "value": 3.5
+     }
+    ]
+   },
+   "name": "spi_mode_three_and_a_half",
+   "output": [
+    "bus spi:1.mode must be 0..3 (got 3.5)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "spi",
+       "1",
+       "mode"
+      ],
+      "value": -1
+     }
+    ]
+   },
+   "name": "spi_mode_negative",
+   "output": [
+    "bus spi:1.mode must be 0..3 (got -1)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "buses",
+       "spi",
+       "1",
+       "mode"
+      ],
+      "value": [
+       3
+      ]
+     }
+    ]
+   },
+   "name": "spi_mode_list",
+   "output": [
+    "bus spi:1.mode must be 0..3 (got [3])"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "recorder"
+      ],
+      "value": null
+     }
+    ]
+   },
+   "name": "recorder_null",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "recorder"
+      ]
+     }
+    ]
+   },
+   "name": "recorder_missing",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "recorder"
+      ],
+      "value": []
+     }
+    ]
+   },
+   "name": "recorder_list",
+   "output": [
+    "'recorder' must be an object"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "recorder",
+       "tlm_capacity"
+      ],
+      "value": 0
+     }
+    ]
+   },
+   "name": "recorder_capacity_zero",
+   "output": [
+    "recorder.tlm_capacity must be a positive int"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "recorder",
+       "tlm_capacity"
+      ],
+      "value": true
+     },
+     {
+      "path": [
+       "recorder",
+       "log_capacity"
+      ],
+      "value": -1
+     },
+     {
+      "path": [
+       "recorder",
+       "cell_size"
+      ],
+      "value": "256"
+     },
+     {
+      "path": [
+       "recorder",
+       "stats_ms"
+      ],
+      "value": 1000.0
+     },
+     {
+      "path": [
+       "recorder",
+       "telemetry_ms"
+      ],
+      "value": 0.0
+     }
+    ]
+   },
+   "name": "recorder_sizes_all_wrong",
+   "output": [
+    "recorder.tlm_capacity must be a positive int",
+    "recorder.log_capacity must be a positive int",
+    "recorder.cell_size must be a positive int",
+    "recorder.stats_ms must be a positive int",
+    "recorder.telemetry_ms must be a non-negative int (0 = no decimation)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "fins"
+      ],
+      "value": null
+     }
+    ]
+   },
+   "name": "fins_null",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "fins"
+      ]
+     }
+    ]
+   },
+   "name": "fins_missing",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "fins"
+      ],
+      "value": "x"
+     }
+    ]
+   },
+   "name": "fins_text",
+   "output": [
+    "fins is not an object"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "fins"
+      ],
+      "value": {}
+     }
+    ]
+   },
+   "name": "fins_empty",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "fins",
+       "trim"
+      ],
+      "value": "x"
+     },
+     {
+      "path": [
+       "fins",
+       "period_ms"
+      ],
+      "value": null
+     },
+     {
+      "path": [
+       "fins",
+       "fins"
+      ],
+      "value": {
+       "limit_multiplier": "x"
+      }
+     },
+     {
+      "path": [
+       "fins",
+       "gains"
+      ],
+      "value": {
+       "pitch": {
+        "kd": 0.5,
+        "kp": "1"
+       },
+       "roll": 5
+      }
+     }
+    ]
+   },
+   "name": "fins_numeric_fields",
+   "output": [
+    "fins.trim must be a number (got 'x')",
+    "fins.period_ms must be a number (got None)",
+    "fins.fins.limit_multiplier must be a number (got 'x')",
+    "fins.gains.pitch.kp must be a number (got '1')",
+    "fins.gains.roll must be an object"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors"
+      ],
+      "value": {}
+     }
+    ]
+   },
+   "name": "sensors_object",
+   "output": [
+    "'sensors' must be a list"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors"
+      ],
+      "value": null
+     }
+    ]
+   },
+   "name": "sensors_null",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components"
+      ],
+      "value": "x"
+     }
+    ]
+   },
+   "name": "components_text",
+   "output": [
+    "'components' must be a list"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       0
+      ],
+      "value": 5
+     }
+    ]
+   },
+   "name": "sensor_not_an_object",
+   "output": [
+    "sensors[0] must be an object"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "sensors",
+       13,
+       "name"
+      ]
+     },
+     {
+      "path": [
+       "sensors",
+       13,
+       "id"
+      ],
+      "value": 9
+     }
+    ]
+   },
+   "name": "device_name_missing",
+   "output": [
+    "sensors[13].name must be a non-empty string",
+    "sensors[13] addresses bus uart:9 which is not defined"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "name"
+      ],
+      "value": ""
+     }
+    ]
+   },
+   "name": "device_name_empty",
+   "output": [
+    "sensors[13].name must be a non-empty string"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "name"
+      ],
+      "value": 5
+     }
+    ]
+   },
+   "name": "device_name_number",
+   "output": [
+    "sensors[13].name must be a non-empty string"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       9,
+       "name"
+      ],
+      "value": "gnss"
+     }
+    ]
+   },
+   "name": "device_name_duplicate_across_lists",
+   "output": [
+    "duplicate device name 'gnss'"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       11,
+       "name"
+      ],
+      "value": "laser_agl"
+     }
+    ]
+   },
+   "name": "device_name_duplicate_within_a_list",
+   "output": [
+    "duplicate device name 'laser_agl'"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "driver"
+      ],
+      "value": ""
+     }
+    ]
+   },
+   "name": "implementation_empty_driver",
+   "output": [
+    "sensors 'gnss' must name an implementation: `driver` (drivers/) or `activity` (tasks/)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "driver"
+      ],
+      "value": 0
+     }
+    ]
+   },
+   "name": "implementation_zero_driver",
+   "output": [
+    "sensors 'gnss' must name an implementation: `driver` (drivers/) or `activity` (tasks/)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "driver"
+      ],
+      "value": 5
+     }
+    ]
+   },
+   "name": "implementation_number_driver",
+   "output": [
+    "sensors 'gnss' must name an implementation: `driver` (drivers/) or `activity` (tasks/)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "driver"
+      ],
+      "value": ""
+     },
+     {
+      "path": [
+       "sensors",
+       13,
+       "activity"
+      ],
+      "value": "gnss"
+     }
+    ]
+   },
+   "name": "implementation_empty_driver_then_activity",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "driver"
+      ],
+      "value": null
+     },
+     {
+      "path": [
+       "sensors",
+       13,
+       "activity"
+      ],
+      "value": 7
+     }
+    ]
+   },
+   "name": "implementation_null_driver_text_activity_number",
+   "output": [
+    "sensors 'gnss' must name an implementation: `driver` (drivers/) or `activity` (tasks/)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "enabled"
+      ],
+      "value": "yes"
+     }
+    ]
+   },
+   "name": "enabled_text",
+   "output": [
+    "sensors 'gnss'.enabled must be a bool"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "enabled"
+      ],
+      "value": 1
+     }
+    ]
+   },
+   "name": "enabled_one",
+   "output": [
+    "sensors 'gnss'.enabled must be a bool"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "enabled"
+      ],
+      "value": null
+     }
+    ]
+   },
+   "name": "enabled_null",
+   "output": [
+    "sensors 'gnss'.enabled must be a bool"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       8,
+       "airspeed_floor_hz"
+      ],
+      "value": 0
+     }
+    ]
+   },
+   "name": "rate_band_floor_zero",
+   "output": [
+    "components 'flight'.airspeed_floor_hz must be a positive int (got 0)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       8,
+       "airspeed_floor_hz"
+      ],
+      "value": "5"
+     }
+    ]
+   },
+   "name": "rate_band_floor_text",
+   "output": [
+    "components 'flight'.airspeed_floor_hz must be a positive int (got '5')"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       8,
+       "airspeed_floor_hz"
+      ],
+      "value": 5.0
+     }
+    ]
+   },
+   "name": "rate_band_floor_float",
+   "output": [
+    "components 'flight'.airspeed_floor_hz must be a positive int (got 5.0)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       8,
+       "airspeed_floor_hz"
+      ],
+      "value": true
+     }
+    ]
+   },
+   "name": "rate_band_floor_true",
+   "output": [
+    "components 'flight'.airspeed_floor_hz must be a positive int (got True)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       8,
+       "airspeed_floor_hz"
+      ],
+      "value": null
+     }
+    ]
+   },
+   "name": "rate_band_floor_null",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       8,
+       "airspeed_floor_hz"
+      ],
+      "value": 60
+     }
+    ]
+   },
+   "name": "rate_band_inverted",
+   "output": [
+    "components 'flight'.airspeed_floor_hz 60 exceeds airspeed_ceiling_hz 50"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       8,
+       "airspeed_floor_hz"
+      ],
+      "value": -1
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "airspeed_ceiling_hz"
+      ],
+      "value": "x"
+     }
+    ]
+   },
+   "name": "rate_band_both_wrong",
+   "output": [
+    "components 'flight'.airspeed_floor_hz must be a positive int (got -1)",
+    "components 'flight'.airspeed_ceiling_hz must be a positive int (got 'x')"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       8,
+       "limit_multiplier"
+      ],
+      "value": "1"
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "trim"
+      ],
+      "value": true
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "still_g"
+      ],
+      "value": null
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "stall_speed_1g"
+      ],
+      "value": []
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "stall_margin"
+      ],
+      "value": {}
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "nav_bank_gain"
+      ],
+      "value": "1.5"
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "land_bank_gain"
+      ],
+      "value": false
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "loiter_gain"
+      ],
+      "value": "x"
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "final_cross_gain"
+      ],
+      "value": [
+       1
+      ]
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "pitot_gain"
+      ],
+      "value": {
+       "a": 1
+      }
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "glide_ratio"
+      ],
+      "value": "5.5"
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "bank_limit"
+      ],
+      "value": "45"
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "land_bank_limit"
+      ],
+      "value": null
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "period_ms"
+      ],
+      "value": "20"
+     },
+     {
+      "path": [
+       "components",
+       8,
+       "telemetry_ms"
+      ],
+      "value": true
+     }
+    ]
+   },
+   "name": "every_numeric_field",
+   "output": [
+    "components 'flight'.limit_multiplier must be a number (got '1')",
+    "components 'flight'.trim must be a number (got True)",
+    "components 'flight'.still_g must be a number (got None)",
+    "components 'flight'.stall_speed_1g must be a number (got [])",
+    "components 'flight'.stall_margin must be a number (got {})",
+    "components 'flight'.nav_bank_gain must be a number (got '1.5')",
+    "components 'flight'.land_bank_gain must be a number (got False)",
+    "components 'flight'.loiter_gain must be a number (got 'x')",
+    "components 'flight'.final_cross_gain must be a number (got [1])",
+    "components 'flight'.pitot_gain must be a number (got {'a': 1})",
+    "components 'flight'.glide_ratio must be a number (got '5.5')",
+    "components 'flight'.bank_limit must be a number (got '45')",
+    "components 'flight'.land_bank_limit must be a number (got None)",
+    "components 'flight'.period_ms must be a number (got '20')",
+    "components 'flight'.telemetry_ms must be a number (got True)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       8,
+       "fins"
+      ],
+      "value": {
+       "limit_multiplier": "x"
+      }
+     }
+    ]
+   },
+   "name": "component_fins_multiplier",
+   "output": [
+    "components 'flight'.fins.limit_multiplier must be a number (got 'x')"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       8,
+       "fins"
+      ],
+      "value": "x"
+     }
+    ]
+   },
+   "name": "component_fins_not_an_object",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       8,
+       "gains"
+      ],
+      "value": {
+       "pitch": {
+        "ki": null,
+        "kp": true
+       },
+       "roll": [],
+       "yaw": {
+        "kd": 0.1
+       }
+      }
+     }
+    ]
+   },
+   "name": "gains_in_key_order",
+   "output": [
+    "components 'flight'.gains.pitch.ki must be a number (got None)",
+    "components 'flight'.gains.pitch.kp must be a number (got True)",
+    "components 'flight'.gains.roll must be an object"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       8,
+       "gains"
+      ],
+      "value": "x"
+     }
+    ]
+   },
+   "name": "gains_not_an_object",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "id"
+      ],
+      "value": 9
+     }
+    ]
+   },
+   "name": "bus_id_undefined",
+   "output": [
+    "sensors 'gnss' addresses bus uart:9 which is not defined"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "id"
+      ],
+      "value": "x"
+     }
+    ]
+   },
+   "name": "bus_id_text",
+   "output": [
+    "sensors 'gnss'.id must be the int bus id (with bus \"uart\")"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "id"
+      ],
+      "value": 2.0
+     }
+    ]
+   },
+   "name": "bus_id_float",
+   "output": [
+    "sensors 'gnss'.id must be the int bus id (with bus \"uart\")"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "id"
+      ],
+      "value": true
+     }
+    ]
+   },
+   "name": "bus_id_true",
+   "output": [
+    "sensors 'gnss'.id must be the int bus id (with bus \"uart\")"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "sensors",
+       10,
+       "id"
+      ]
+     }
+    ]
+   },
+   "name": "bus_id_missing",
+   "output": [
+    "sensors 'laser_agl'.id must be the int bus id (with bus \"i2c\")"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "bus"
+      ],
+      "value": 5
+     }
+    ]
+   },
+   "name": "bus_kind_number",
+   "output": [
+    "sensors 'gnss'.bus must be a string (the bus kind, e.g. \"i2c\")"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       13,
+       "bus"
+      ],
+      "value": null
+     }
+    ]
+   },
+   "name": "bus_null",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       0,
+       "id"
+      ],
+      "value": 3
+     }
+    ]
+   },
+   "name": "component_bus_undefined",
+   "output": [
+    "components 'recorder' addresses bus uart:3 which is not defined"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       10,
+       "addr"
+      ],
+      "value": "0x29"
+     }
+    ]
+   },
+   "name": "addr_text",
+   "output": [
+    "sensors 'laser_agl'.addr must be an int or null"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       10,
+       "addr"
+      ],
+      "value": 41.0
+     }
+    ]
+   },
+   "name": "addr_float",
+   "output": [
+    "sensors 'laser_agl'.addr must be an int or null"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       10,
+       "addr"
+      ],
+      "value": true
+     }
+    ]
+   },
+   "name": "addr_true",
+   "output": [
+    "sensors 'laser_agl'.addr must be an int or null"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       10,
+       "provides"
+      ],
+      "value": []
+     }
+    ]
+   },
+   "name": "provides_list",
+   "output": [
+    "sensors 'laser_agl'.provides must be an object"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       10,
+       "provides"
+      ],
+      "value": {
+       "agl": 5
+      }
+     }
+    ]
+   },
+   "name": "provides_quantity_number",
+   "output": [
+    "sensors 'laser_agl'.provides.agl must be an object"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       10,
+       "provides"
+      ],
+      "value": {
+       "agl": {}
+      }
+     }
+    ]
+   },
+   "name": "provides_quantity_empty",
+   "output": [
+    "sensors 'laser_agl'.provides.agl.priority must be an int",
+    "sensors 'laser_agl'.provides.agl.timeout_ms must be an int"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       10,
+       "provides"
+      ],
+      "value": {
+       "agl": {
+        "priority": true,
+        "timeout_ms": 100.0
+       }
+      }
+     }
+    ]
+   },
+   "name": "provides_wrong_types",
+   "output": [
+    "sensors 'laser_agl'.provides.agl.priority must be an int",
+    "sensors 'laser_agl'.provides.agl.timeout_ms must be an int"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       10,
+       "provides"
+      ],
+      "value": null
+     }
+    ]
+   },
+   "name": "provides_null",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "delete": true,
+      "path": [
+       "components",
+       9,
+       "enabled"
+      ]
+     },
+     {
+      "path": [
+       "components",
+       9,
+       "wdt_timeout_ms"
+      ],
+      "value": 1000
+     }
+    ]
+   },
+   "name": "watchdog_enabled_by_absence",
+   "output": [
+    "watchdog.wdt_timeout_ms 1000 is below the 4000 ms boot floor (the board boot-loops)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       9,
+       "enabled"
+      ],
+      "value": 0
+     },
+     {
+      "path": [
+       "components",
+       9,
+       "wdt_timeout_ms"
+      ],
+      "value": 1000
+     }
+    ]
+   },
+   "name": "watchdog_enabled_zero",
+   "output": [
+    "components 'watchdog'.enabled must be a bool"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       9,
+       "enabled"
+      ],
+      "value": true
+     },
+     {
+      "path": [
+       "components",
+       9,
+       "wdt_timeout_ms"
+      ],
+      "value": 3999
+     }
+    ]
+   },
+   "name": "watchdog_3999",
+   "output": [
+    "watchdog.wdt_timeout_ms 3999 is below the 4000 ms boot floor (the board boot-loops)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       9,
+       "enabled"
+      ],
+      "value": true
+     },
+     {
+      "path": [
+       "components",
+       9,
+       "wdt_timeout_ms"
+      ],
+      "value": 4000
+     }
+    ]
+   },
+   "name": "watchdog_4000",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       9,
+       "enabled"
+      ],
+      "value": true
+     },
+     {
+      "path": [
+       "components",
+       9,
+       "wdt_timeout_ms"
+      ],
+      "value": true
+     }
+    ]
+   },
+   "name": "watchdog_true",
+   "output": [
+    "watchdog.wdt_timeout_ms 1 is below the 4000 ms boot floor (the board boot-loops)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       9,
+       "enabled"
+      ],
+      "value": true
+     },
+     {
+      "path": [
+       "components",
+       9,
+       "wdt_timeout_ms"
+      ],
+      "value": 1000.0
+     }
+    ]
+   },
+   "name": "watchdog_float",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       9,
+       "enabled"
+      ],
+      "value": true
+     },
+     {
+      "path": [
+       "components",
+       9,
+       "wdt_timeout_ms"
+      ],
+      "value": "1000"
+     }
+    ]
+   },
+   "name": "watchdog_text",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       9,
+       "enabled"
+      ],
+      "value": true
+     },
+     {
+      "path": [
+       "components",
+       9,
+       "wdt_timeout_ms"
+      ],
+      "value": -5
+     }
+    ]
+   },
+   "name": "watchdog_negative",
+   "output": [
+    "watchdog.wdt_timeout_ms -5 is below the 4000 ms boot floor (the board boot-loops)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       9,
+       "enabled"
+      ],
+      "value": true
+     },
+     {
+      "delete": true,
+      "path": [
+       "components",
+       9,
+       "wdt_timeout_ms"
+      ]
+     }
+    ]
+   },
+   "name": "watchdog_timeout_missing",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       9,
+       "enabled"
+      ],
+      "value": true
+     },
+     {
+      "path": [
+       "components",
+       9,
+       "wdt_timeout_ms"
+      ],
+      "value": 1000
+     },
+     {
+      "delete": true,
+      "path": [
+       "components",
+       9,
+       "name"
+      ]
+     }
+    ]
+   },
+   "name": "watchdog_unnamed",
+   "output": [
+    "components[9].name must be a non-empty string",
+    "watchdog.wdt_timeout_ms 1000 is below the 4000 ms boot floor (the board boot-loops)"
+   ]
+  },
+  {
+   "input": {
+    "base": "default",
+    "edits": [
+     {
+      "path": [
+       "components",
+       9,
+       "enabled"
+      ],
+      "value": true
+     },
+     {
+      "path": [
+       "components",
+       9,
+       "wdt_timeout_ms"
+      ],
+      "value": 1000
+     },
+     {
+      "path": [
+       "components",
+       9,
+       "name"
+      ],
+      "value": 5
+     }
+    ]
+   },
+   "name": "watchdog_named_by_a_number",
+   "output": [
+    "components[9].name must be a non-empty string",
+    "5.wdt_timeout_ms 1000 is below the 4000 ms boot floor (the board boot-loops)"
+   ]
+  },
+  {
+   "input": {
+    "base": "small",
+    "edits": [
+     {
+      "path": [
+       "components",
+       0,
+       "wdt_timeout_ms"
+      ],
+      "value": 100
+     },
+     {
+      "path": [
+       "components",
+       1
+      ],
+      "value": {
+       "activity": "watchdog",
+       "name": "second",
+       "wdt_timeout_ms": 200
+      }
+     }
+    ]
+   },
+   "name": "watchdog_twice",
+   "output": [
+    "watchdog.wdt_timeout_ms 100 is below the 4000 ms boot floor (the board boot-loops)",
+    "second.wdt_timeout_ms 200 is below the 4000 ms boot floor (the board boot-loops)"
+   ]
+  },
+  {
+   "input": {
+    "base": "small",
+    "edits": [
+     {
+      "path": [
+       "sensors",
+       1
+      ],
+      "value": {
+       "activity": "watchdog",
+       "name": "dog",
+       "wdt_timeout_ms": 100
+      }
+     }
+    ]
+   },
+   "name": "watchdog_as_a_sensor_is_not_checked",
+   "output": []
+  },
+  {
+   "input": {
+    "base": "small",
+    "edits": [
+     {
+      "path": [
+       "board",
+       "id"
+      ],
+      "value": "two words"
+     },
+     {
+      "path": [
+       "board",
+       "mcu"
+      ],
+      "value": "esp32s3"
+     },
+     {
+      "path": [
+       "wifi",
+       "mode"
+      ],
+      "value": "ap"
+     },
+     {
+      "path": [
+       "buses",
+       "i2c",
+       "0",
+       "scl"
+      ],
+      "value": 7
+     },
+     {
+      "path": [
+       "buses",
+       "spi",
+       "1",
+       "mode"
+      ],
+      "value": 7
+     },
+     {
+      "path": [
+       "pins",
+       "servo_yaw"
+      ],
+      "value": 20
+     },
+     {
+      "path": [
+       "recorder",
+       "cell_size"
+      ],
+      "value": 0
+     },
+     {
+      "path": [
+       "fins",
+       "limit_multiplier"
+      ],
+      "value": "1"
+     },
+     {
+      "path": [
+       "sensors",
+       0,
+       "id"
+      ],
+      "value": 4
+     },
+     {
+      "path": [
+       "sensors",
+       1
+      ],
+      "value": {
+       "driver": "bmp280",
+       "enabled": "no",
+       "name": "baro"
+      }
+     },
+     {
+      "path": [
+       "components",
+       0,
+       "wdt_timeout_ms"
+      ],
+      "value": 10
+     }
+    ]
+   },
+   "name": "every_section_at_once",
+   "output": [
+    "board.id must not contain whitespace (it is a bare wire token)",
+    "board.mcu 'esp32s3' is not one of esp32p4, esp32c6, firebeetle2p4",
+    "wifi.mode must be 'sta'",
+    "GPIO7 used by both i2c:0.sda and i2c:0.scl",
+    "bus spi:1.mode must be 0..3 (got 7)",
+    "GPIO20 used by both uart:1.tx and pins.servo_yaw",
+    "recorder.cell_size must be a positive int",
+    "fins.limit_multiplier must be a number (got '1')",
+    "sensors 'baro' addresses bus i2c:4 which is not defined",
+    "duplicate device name 'baro'",
+    "sensors 'baro'.enabled must be a bool",
+    "watchdog.wdt_timeout_ms 10 is below the 4000 ms boot floor (the board boot-loops)"
+   ]
+  }
+ ],
+ "compare": {
+  "kind": "exact"
+ },
+ "meta": {
+  "commit": "07ab6f2d58a286c4bf7263ba7e4ebc5ac31b5b32",
+  "generator": "config_validate",
+  "glider_tree": "01e3ab4641222777b06a6a149e28010d84975fd3",
+  "python": "3.12",
+  "source": "src/glider/config.py (validate), src/glider/test/test_config.py; src/glider/config.py, src/glider/config_default.py, src/glider/config_hitl.py, tools/launch_config.py, launches/20261003/*/*.config",
+  "tag": "micropython_plan_B"
+ }
+}
