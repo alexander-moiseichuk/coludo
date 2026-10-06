@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! The microSD card (components/sd_card): mount once at boot, report free space, and a write test an operator
 //! can run from the console.
 

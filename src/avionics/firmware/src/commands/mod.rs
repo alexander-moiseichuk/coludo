@@ -1,11 +1,18 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! The CC commands (doc/specs/cc-protocol.md; src/glider cc_client.py): one request line in, at most one reply line
 //! out, through one table.
 //!
 //! Every line -- from the hub (link.rs) and from the console -- runs on one executor thread, one at a time, so a
 //! handler owns the state it touches (the mission) without a lock, and two operators can never interleave half a
 //! command. The envelope is plan B's: an unparsable line answers `err badargs`, an unknown command `err badcmd`,
-//! a handler failure `err internal`, an empty line nothing; an active command outside the ground stages answers
-//! `err unsafe` with plan B's refusal text.
+//! a handler failure `err internal`, an empty line nothing.
+//!
+//! Changes run only in SETTING (the operator's rule, 2026-10-06): every command that changes the board --
+//! `update`, `set-config`, `reset-config`, `probe`, `detect`, `bustune`, `reboot`, `calibrate <device>` -- answers
+//! `err unsafe` in any other stage, DONE included (no reboot there: the beacon and the flash-to-SD copy run on).
+//! Reads, `stage` and `disarm` stay open: they are how the operator recovers. Plan B left `update` open in flight
+//! and allowed the rest at DONE (doc/specs/avionics-port.md §6).
 
 mod config;
 mod control;
@@ -105,8 +112,8 @@ type Handler = fn(&Message, &mut Context) -> Reply;
 enum Gate {
     /// Anywhere: the reads, and the commands the operator recovers with (`stage`, `disarm`).
     Open,
-    /// Only in a ground stage (setting, done): it moves fins, rewrites state the flight reads, or reboots.
-    Ground,
+    /// Only in SETTING: it changes the board -- moves fins, rewrites state the flight reads, or reboots.
+    Setting,
 }
 
 /// The command table: name, gate, handler (src/glider cc_client `_register_*`). `push-*` is plan B's `.mpy`
@@ -121,19 +128,19 @@ const TABLE: &[(&str, Gate, Handler)] = &[
     ("report", Gate::Open, control::report),
     ("objects", Gate::Open, inspection::objects),
     ("inspect", Gate::Open, inspection::inspect),
-    ("update", Gate::Open, inspection::update),
+    ("update", Gate::Setting, inspection::update),
     ("stats", Gate::Open, inspection::stats),
     ("get-config", Gate::Open, config::get_config),
-    ("set-config", Gate::Ground, config::set_config),
-    ("reset-config", Gate::Ground, config::reset_config),
-    ("probe", Gate::Ground, diagnostics::probe),
+    ("set-config", Gate::Setting, config::set_config),
+    ("reset-config", Gate::Setting, config::reset_config),
+    ("probe", Gate::Setting, diagnostics::probe),
     ("verify", Gate::Open, diagnostics::verify),
     ("calibrate", Gate::Open, diagnostics::calibrate),
-    ("detect", Gate::Ground, diagnostics::detect),
-    ("bustune", Gate::Ground, diagnostics::bustune),
+    ("detect", Gate::Setting, diagnostics::detect),
+    ("bustune", Gate::Setting, diagnostics::bustune),
     ("log", Gate::Open, streaming::log),
     ("tlm", Gate::Open, streaming::telemetry),
-    ("reboot", Gate::Ground, system::reboot),
+    ("reboot", Gate::Setting, system::reboot),
 ];
 
 /// Answer one request line; None for an empty line.
@@ -146,22 +153,16 @@ pub fn handle(line: &str, context: &mut Context) -> Option<String> {
     let Some((_, gate, handler)) = TABLE.iter().find(|(name, _, _)| *name == command) else {
         return Some(failure(&Fault::new(Code::BadCommand, command)));
     };
-    if let (Gate::Ground, Some(refusal)) = (gate, in_flight()) {
+    if let (Gate::Setting, Some(refusal)) = (gate, outside_setting()) {
         return Some(failure(&Fault::new(Code::Unsafe, refusal)));
     }
     Some(handler(&message, context).unwrap_or_else(|fault| failure(&fault)))
 }
 
-/// Why an active command must not run now, or None on the ground (src/glider cc_client `_in_flight`).
-pub fn in_flight() -> Option<String> {
+/// Why a command that changes the board must not run now, or None in SETTING (plan B's `_in_flight`, narrowed).
+pub fn outside_setting() -> Option<String> {
     let stage = STATUS.stage();
-    (!stage.ground()).then(|| {
-        format!(
-            "refused in flight -- stage is {} (ground-only: {})",
-            stage.name(),
-            sequencer::GROUND_NAMES
-        )
-    })
+    (stage != Stage::Setting).then(|| format!("refused -- stage is {} (changes only in setting)", stage.name()))
 }
 
 /// The `err <code> <detail>` line.

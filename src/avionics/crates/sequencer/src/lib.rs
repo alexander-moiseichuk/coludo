@@ -59,9 +59,6 @@ impl Stage {
     }
 }
 
-/// The ground stages by name, as the refusal text lists them: `setting/done`.
-pub const GROUND_NAMES: &str = "setting/done";
-
 #[cfg(test)]
 mod tests {
     use super::Stage;

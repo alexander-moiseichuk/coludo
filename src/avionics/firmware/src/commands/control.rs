@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! stage / arm / disarm / report -- the stage hold and the actuation gate (src/glider cc_client
 //! `_register_control`, controller.hold/resume/arm/disarm).
 
@@ -44,8 +46,8 @@ pub fn arm(_message: &Message, context: &mut Context) -> Reply {
     if let Some(problem) = super::stage_problem() {
         problems.insert("stage", problem);
     }
-    if super::in_flight().is_none() {
-        // the probes sweep the fins: never on an airborne board
+    if super::outside_setting().is_none() {
+        // the probes sweep the fins: only in SETTING
         if let Some(problem) = super::diagnostics::probe_mission(context) {
             problems.insert("mission", problem);
         }

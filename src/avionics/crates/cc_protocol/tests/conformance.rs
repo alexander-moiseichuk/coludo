@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! Wire conformance: the Rust port and src/glider/cc_protocol.py must produce the same bytes.
 //!
 //! Runs the Python module under CPython 3 (the host side of the shared protocol) over a set of awkward

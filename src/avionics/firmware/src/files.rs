@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! Read-only HTTP access to the microSD: `GET /sd/<path>` returns a file, or a directory's listing (one
 //! `<name>;<bytes>` line per entry). How recordings and logs come off the board over Wi-Fi -- on the pad, and
 //! after landing. Paths are confined to the card; nothing is ever written.

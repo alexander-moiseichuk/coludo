@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! Unit tests of the mission rules, positive and negative. The plan B comparison itself is tests/golden.rs.
 
 use super::{DEFAULT_MAX_RANGE_M, Mission, Position, TimeSet, Zone, clock_text, epoch_request};

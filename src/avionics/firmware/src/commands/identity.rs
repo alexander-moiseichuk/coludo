@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! whoami / ping / health -- who the board is and how it is doing (src/glider cc_client `_register_identity`).
 
 use cc_protocol::Message;

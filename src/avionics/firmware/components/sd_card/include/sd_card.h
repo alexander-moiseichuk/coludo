@@ -1,3 +1,4 @@
+/* Coludo project, copyright under MIT license, Alexander Moiseichuk */
 /* The microSD card on the WaveShare ESP32-P4-WIFI6 (SDMMC slot 0), shared host with the C6 (slot 1). */
 #pragma once
 

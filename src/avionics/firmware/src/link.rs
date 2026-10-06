@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! The CC link: join Wi-Fi through the on-board ESP32-C6 (esp_hosted over SDIO), dial the hub, serve its lines,
 //! and re-dial forever (src/glider drivers/wifi.py + tasks/cc_link.py + cc_client.Client).
 //!

@@ -1,3 +1,4 @@
+/* Coludo project, copyright under MIT license, Alexander Moiseichuk */
 /* esp_hosted (the C6 Wi-Fi link) bent to the flight computer's needs (see CMakeLists.txt): a failing link never
  * reboots the P4, and its tasks stay off the flight core. Both hooks install from a constructor, before
  * esp_hosted starts; nothing to call. */

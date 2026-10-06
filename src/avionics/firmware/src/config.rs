@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! The board's settings: the built-in default config, and the `cfg` NVS partition (partitions.csv) that holds what
 //! src/glider kept as files on its VFS -- board.config and launch.config in namespace `config`, the Wi-Fi passwords
 //! (plan B's `<ssid>.creds`) in namespace `creds`. tools/provision.sh writes the whole partition before an airframe

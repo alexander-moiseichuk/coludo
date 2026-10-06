@@ -1,3 +1,5 @@
+/* Coludo project, copyright under MIT license, Alexander Moiseichuk */
+
 #include "hosted_no_reboot.h"
 
 #include <stddef.h>

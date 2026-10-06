@@ -1,3 +1,5 @@
+/* Coludo project, copyright under MIT license, Alexander Moiseichuk */
+
 #include "sd_card.h"
 
 #include <stdio.h>

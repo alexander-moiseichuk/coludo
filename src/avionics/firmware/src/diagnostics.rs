@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! Operator diagnostics on the console: `load [seconds]` -- per-core CPU load and the busiest tasks over a window;
 //! `pace [seconds] [gptimer]` -- a 1 kHz loop on core 1 (priority 20, the flight thread's place) woken by an
 //! esp_timer (its task lives on core 0) or by a gptimer interrupt allocated on core 1, and how late each tick

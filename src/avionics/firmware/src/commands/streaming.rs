@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! log / tlm -- poll-model streaming (src/glider cc_client `_register_streaming`): each call returns what was
 //! buffered since the last one and keeps the window open `ms` more (default 1000; 0 or less stops).
 
@@ -5,7 +7,7 @@ use cc_protocol::Message;
 use serde_json::json;
 
 use super::{Code, Context, Fault, Reply};
-use crate::tee;
+use crate::logging;
 
 /// The window a bare `log`/`tlm` asks for.
 const DEFAULT_WINDOW_MS: i64 = 1000;
@@ -13,7 +15,7 @@ const DEFAULT_WINDOW_MS: i64 = 1000;
 /// `log [ms]`: {lines, dropped}.
 pub fn log(message: &Message, _context: &mut Context) -> Reply {
     let window = window(message, "log <duration_ms>")?;
-    let (lines, dropped) = tee::LOG.drain(window);
+    let (lines, dropped) = logging::LOG.drain(window);
     super::ok_json(&json!({"lines": lines, "dropped": dropped}))
 }
 

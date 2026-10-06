@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! The device console on UART0 (the board's CH343P USB-serial port): the CC commands, plus a few that only
 //! an operator at the cable may run.
 //!

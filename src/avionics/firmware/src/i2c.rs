@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! The I2C buses, on IDF's new `i2c_master` driver. Port 0 (SDA GPIO7 / SCL GPIO8, 2.2 k pull-ups on the board)
 //! carries the camera's SCCB and the flight sensors: one bus, owned here, handed to everyone. The legacy driver
 //! (esp-idf-hal's I2cDriver) must never touch a port this module owns.

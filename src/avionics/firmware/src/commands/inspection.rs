@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! objects / inspect / update / stats -- the operator-facing objects (src/glider cc_client `_register_inspection`,
 //! inspector.Inspector). The registry is fixed: the controller (the flight state) and the mission; device tasks
 //! join as their drivers are ported.

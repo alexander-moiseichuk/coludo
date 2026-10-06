@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! The navigation geometry answers as plan B does: src/avionics/golden/navigation_zone.json, which
 //! golden/build_navigation_zone.py builds from src/glider/navigation.py on CPython. Each of its three sections
 //! is a golden fixture of its own, with the tolerance its unit needs (stated and justified in the builder).

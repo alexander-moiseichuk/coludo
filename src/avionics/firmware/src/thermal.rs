@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! The ESP32-P4's on-die temperature sensor.
 //!
 //! Native code at full load, profiling and the camera pipeline heat the die; the readings go on the health

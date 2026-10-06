@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! The flight camera (components/coludo_video): OV5647 -> ISP -> H.264 hardware encoder -> raw Annex-B on the
 //! microSD, every frame stamped with the boot id and its uptime in an SEI NAL. Files go to
 //! `/sdcard/video/<session>/<start uptime ms>.h264`.

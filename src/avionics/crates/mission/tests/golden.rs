@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! The mission answers as plan B does: src/avionics/golden/mission.json, which golden/build_mission.py builds
 //! from src/glider/mission.py on CPython. One tolerance covers the whole fixture (its `tolerance` member says
 //! why), and the deliberate divergences (`sites`, and integers written as floats) are applied where the

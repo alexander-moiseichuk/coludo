@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! reboot -- restart the board (src/glider cc_client `_register_system`).
 
 use std::time::Duration;

@@ -70,6 +70,9 @@ _CONFIG_ID: re.Pattern = re.compile(r'[0-9a-f]{12}|[0-9a-f]{8}')  # SHA-256 pref
 _LAYOUT: re.Pattern = re.compile(r'v\d+\.\d+( \(declared\))?|undecided')  # health.layout, as layout.RESOLVED
 _HOLD_STAGE: str = 'gliding'  # the stage the gating checks hold: airborne, and quiet on a disarmed bench board
 _REFUSED_IN_FLIGHT: str = 'refused in flight -- stage is %s (ground-only: setting/done)' % _HOLD_STAGE
+# The Rust board's gate (doc/specs/avionics-port.md §6): every change runs only in SETTING, DONE included, and the
+# text says so. Each board answers its own true text, so the gating cases accept either.
+_REFUSED_OUTSIDE_SETTING: str = 'refused -- stage is %s (changes only in setting)' % _HOLD_STAGE
 _PROBE_LAUNCH_ID: str = 'contract-probe'  # the launch id the launch round trip writes, then puts back
 _SHOWN: int = 100  # characters of one reply argument a report line shows
 
@@ -939,10 +942,14 @@ _CONTROL: tuple = (
     Case('control', 'health_while_held', _while_held('health'), (('ok', _HEALTH),), (_health_shows_hold,),
          allow=('stage',)),
     Case('control', 'ground_only_refused_in_flight', _while_held(cc.build('set-config', ['board', '{}'])),
-         (('err', 'unsafe', _REFUSED_IN_FLIGHT),), allow=('stage',),
-         note='an active command outside setting/done answers err unsafe with this exact text. An empty board '
-              'config fails validation before any write (config.save), so a broken gate answers err invalid '
-              '(err unsupported before M2) and writes nothing'),
+         (('err', 'unsafe', _REFUSED_IN_FLIGHT), ('err', 'unsafe', _REFUSED_OUTSIDE_SETTING)), allow=('stage',),
+         note='an active command outside the ground answers err unsafe with this exact text: plan B\'s (outside '
+              'setting/done) or the Rust board\'s (outside setting). An empty board config fails validation before '
+              'any write (config.save), so a broken gate answers err invalid and writes nothing'),
+    Case('control', 'update_while_held', _while_held(cc.build('update', ['mission', '{}'])),
+         (('ok', {'changed': 'list'}), ('err', 'unsafe', _REFUSED_OUTSIDE_SETTING)), allow=('stage',),
+         note='plan B leaves update open in flight (an empty update changes nothing); the Rust board refuses every '
+              'change outside SETTING, the operator\'s rule'),
     Case('control', 'stage_return_to_ground', _return_to_ground, (('ok', _STAGE),), (_stage_is('setting', False),),
          allow=('stage',),
          note='stage setting is a return to the ground, not a hold: manual goes false (Controller.hold)'),

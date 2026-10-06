@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! Landing-zone navigation geometry (src/glider navigation.py). For now the part the Mission reads: [`distance`],
 //! [`zone`] (the target and the two short-side gates) and [`zone_aspect`].
 //!

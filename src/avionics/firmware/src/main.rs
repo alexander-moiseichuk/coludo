@@ -12,8 +12,8 @@ mod console;
 mod diagnostics;
 mod files;
 mod link;
+mod logging;
 mod status;
-mod tee;
 
 use std::sync::Arc;
 
@@ -24,7 +24,7 @@ use firmware::thermal::Thermometer;
 
 fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
-    tee::install();
+    logging::install();
     clock::start();
 
     let peripherals = Peripherals::take()?;

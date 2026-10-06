@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! get-config / set-config / reset-config -- the named configs (src/glider cc_client `_register_config`).
 //!
 //! - `board`/`running`: the config this boot runs (immutable for the run: a change is save + reboot).

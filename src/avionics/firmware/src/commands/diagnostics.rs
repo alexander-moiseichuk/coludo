@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! probe / verify / calibrate / detect / bustune -- the self-tests and the pre-flight check (src/glider cc_client
 //! `_register_diagnostics`). Only the mission has a probe so far; the device self-tests, the bus scan and the bus
 //! tuning arrive with their drivers (port plan M5-M7), and until then the answers say so instead of passing.
@@ -28,7 +30,7 @@ pub fn verify(_message: &Message, context: &mut Context) -> Reply {
     if let Some(problem) = super::stage_problem() {
         problems.insert("stage", problem);
     }
-    match super::in_flight() {
+    match super::outside_setting() {
         Some(airborne) => {
             problems.insert("probe", format!("not run: {airborne} (the probes sweep the fins)"));
         }
@@ -70,7 +72,7 @@ pub fn calibrate(message: &Message, _context: &mut Context) -> Reply {
     let Some(target) = message.args.first() else {
         return super::ok_json(&json!({}));
     };
-    if let Some(airborne) = super::in_flight() {
+    if let Some(airborne) = super::outside_setting() {
         // a baro calibrate mid-air re-zeroes elevation: the ground, to the stage machine
         return Err(Fault::new(Code::Unsafe, airborne));
     }

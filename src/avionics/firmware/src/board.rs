@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! Who this board is and what it runs on: the id, this boot's count, the persistent store, the vitals.
 
 use std::sync::Mutex;

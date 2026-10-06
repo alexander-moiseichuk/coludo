@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! The log stream's copy for the CC `log <ms>` command (src/glider recorder `_TeeSink` + `cc_logs`), and the logger
 //! that feeds it: every `log` record still goes to the console as before, and while an operator window is open a
 //! copy goes into a bounded buffer the next `log` call collects.

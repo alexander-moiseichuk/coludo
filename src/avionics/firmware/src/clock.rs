@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! The board's wall clock: Unix seconds (UTC) from the system time, which survives a software reset (IDF keeps it
 //! in RTC memory) but not a power cycle.
 //!

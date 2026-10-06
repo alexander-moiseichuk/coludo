@@ -506,8 +506,36 @@
    ],
    "name": "ground_only_refused_in_flight",
    "note": "the gate text is verbatim: it starts with the word refused, but its code is unsafe",
+   "owed": {
+    "arguments_kind": "exact",
+    "expected": [
+     "unsafe",
+     "refused -- stage is gliding (changes only in setting)"
+    ],
+    "status": "err"
+   },
    "request": "reset-config",
    "status": "err"
+  },
+  {
+   "arguments_kind": "json",
+   "expected": [
+    {
+     "changed": []
+    }
+   ],
+   "name": "update_while_held",
+   "note": "plan B leaves update open in every stage; the Rust board refuses every change outside SETTING (the operator's rule, doc/specs/avionics-port.md \u00a76)",
+   "owed": {
+    "arguments_kind": "exact",
+    "expected": [
+     "unsafe",
+     "refused -- stage is gliding (changes only in setting)"
+    ],
+    "status": "err"
+   },
+   "request": "update mission base64:e30=",
+   "status": "ok"
   },
   {
    "arguments_kind": "json",
@@ -697,7 +725,7 @@
   }
  ],
  "meta": {
-  "commit": "2299726dbfd443c9e5c83d7e1278c75e8812912a",
+  "commit": "7aa92a7f1325d23fb80f767a5be748ab62e00072",
   "generator": "cc_dispatch",
   "glider_tree": "01e3ab4641222777b06a6a149e28010d84975fd3",
   "python": "3.12",

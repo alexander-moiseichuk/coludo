@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! The flight state every thread reads: the stage, the operator hold, the arming. Plain atomics, no lock: each
 //! field has one writer (the CC executor until the control thread takes the stage machine over), and a reader
 //! anywhere sees a whole value.

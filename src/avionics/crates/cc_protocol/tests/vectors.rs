@@ -1,3 +1,5 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
 //! The vectors of src/glider/test/test_cc_protocol.py, positive and negative, against the Rust port.
 
 use std::collections::BTreeMap;
