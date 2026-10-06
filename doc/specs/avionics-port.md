@@ -1122,8 +1122,26 @@ large (M4). Nothing on the link or health path touches FatFs.
       000123_health.csv  000123_sequencer.csv  000123_flight.csv  …  000123_<task>_events.csv
       recorder.log                   this session's unrouted lines (status line carries 'session': '000123')
       session.csv                    this session's index rows
-  video/<session>/<start uptime ms>.h264   (exists; raw Annex-B, SEI per frame)
+  videos/<session>/<start uptime ms>.h264  raw Annex-B, SEI per frame (`videos/`, as on the Luckfox; today `video/`)
 ```
+
+**Recordings and videos on separate partitions (operator, 2026-10-06; built after M4):**
+- Partition 1 holds `recordings/` and mounts at `/sdcard`. Partition 2 holds `videos/` at its root and mounts at
+  `/sdcard/videos`. IDF's VFS takes the longest matching prefix, and 14 characters fit `ESP_VFS_PATH_MAX`, so the
+  board paths stay the Luckfox's.
+- The card is initialised once and registered as one FatFs physical drive. `VolToPart` maps logical drive 0 to
+  partition 1 and drive 1 to partition 2 (`FF_MULTI_PARTITION` is on; `FATFS_VOLUME_COUNT` is 2).
+- What it buys:
+  - each volume has its own VFS lock and FatFs sync object, so the video writer and the ring_saver no longer
+    serialise on one volume lock across a whole `write`/`fsync` (a 64 KB video write held it 25-140 ms);
+  - each has its own FAT, so a power cut mid-video cannot touch the recordings' FAT;
+  - video's large allocations no longer fragment the recordings.
+- What it does not change: the SDMMC host mutex serialises single SD transactions on both volumes, and the card's
+  controller and its stalls are shared. The two streams still meet, but only per transaction.
+- A card with one partition works as today: `videos/` is a folder on partition 1.
+- `files.rs` lists `videos` in `/sd/` itself: it is a mount point, not a directory on partition 1.
+- `tools/sd_prepare.sh` writes both: partition 1 for recordings (a few GB, since ~26 KB/s of text is ~94 MB per
+  hour), partition 2 for videos up to the 25-50 % in use, and the rest left untouched as spare.
 
 A pulled session directory, with the global `session.csv` copied over the per-session one, is a drop-in
 replacement for a Luckfox `/userdata/recordings` dump. `recorder_flight.py <dir> --session <s> -o <out>` and
