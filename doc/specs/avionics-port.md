@@ -582,7 +582,9 @@ for these parts.
 - `degraded` gains `WARM-STARTED (rebooted in flight)`.
 
 **Proof**
-- Golden `warmstart.json`: `should_restore` over every crumb, cause and age boundary, plus a torn crumb. Q19 drops the age and power-on refusals: the crate's gate changes in M8. Plan B's verdicts for those cases become listed divergences (the stage rules and the separation latch stay exact).
+- Golden `warmstart.json`: `should_restore` over every crumb, cause and age boundary, plus a torn crumb, exact
+  (step 1 of Q19). Q19's step 2 comes after M8's HITL comparison. When it drops the age and power-on refusals,
+  plan B's verdicts for those cases become listed divergences; the stage rules and the separation latch stay exact.
 - On the taster: arm, pass through BOOSTING (M7's hand-shaken launch), then hold `stage gliding` with the
   separation latch reading separated; console `panic` then returns warm into GLIDING with the same pad, and
   `gettimeofday` has survived. (Plan B writes the crumb only while armed and freezes the pad only on entry to
@@ -1340,18 +1342,27 @@ Bus owners run their tables on the same notify:
   - a crumb at DONE: a new session in SETTING, never a warm start;
   - a crumb in BOOSTING..LANDING: recover into that stage, and the normal detectors (separation, apogee, landing,
     the timeouts) walk it on from there.
-- **Gate** (diverges from `warmstart.py:132-176`, Q19): only physical evidence can refuse.
-  - The crumb must carry a stage.
-  - GLIDING and LANDING also need the separation latch read at setup (the latch no software can fake, so a
-    nested glider never recovers into a glide).
-  - Plan B's two time and cause checks are dropped:
+- **Gate, in two steps (operator, 2026-10-06):** first exactly plan B's, because it is well tested; then the
+  drift to the ideal Rust fit (Q19), measured against the first.
+  - **Step 1, M8: plan B as it is** (`warmstart.py:132-176`):
+    - the crumb has a stage and a stamp;
+    - the reset is a reset class (below);
+    - `0 ≤ now − stamp ≤ 600 s` via `gettimeofday`;
+    - GLIDING and LANDING also need the separation latch read at setup.
+    - The warmstart crate already matches it on golden vectors. M8 proves it in HITL against the plan B
+      baselines and measures R7.
+  - **Step 2, after M8's HITL comparison (Q19): the simple state machine.** Only physical evidence can refuse:
+    - the crumb must carry a stage;
+    - GLIDING and LANDING still need the separation latch (it is the latch no software can fake, so a nested glider
+      never recovers into a glide).
+  - Step 2 drops plan B's two time and cause checks:
     - the crumb age `0 ≤ now − stamp ≤ 600 s`: with no battery-backed RTC, a power cycle loses the time, so the boot
       cannot know whether a crumb is fresh, and makes no assumption;
     - the reset cause: a power-on is no longer "human hands, cold", because a battery bounce in flight is a
       power-on too.
   - A stale crumb from an interrupted flight therefore recovers. The state machine then walks it to DONE (a lying
     glider reaches DONE by stillness), and the next power-up after DONE is a new session.
-- **Reset classes** (logged and kept in the session-start record; they no longer gate the warm start): `SW`, `PANIC`, `INT_WDT`, `TASK_WDT`, `WDT` and the P4-only `CPU_LOCKUP` (an in-flight
+- **Reset classes** (logged and kept in the session-start record; they gate the warm start in step 1 only): `SW`, `PANIC`, `INT_WDT`, `TASK_WDT`, `WDT` and the P4-only `CPU_LOCKUP` (an in-flight
   crash) count as resets. `POWERON`, `BROWNOUT`, `DEEPSLEEP`, the P4-only `USB`, `JTAG`, `PWR_GLITCH` and
   `EFUSE`, and unknown are cold.
   - The P4 never reports `EXT`. An EN/CHIP_PU pulse from DTR/RTS or esptool reads as `POWERON` (or `USB` on the
@@ -1568,7 +1579,7 @@ the keys `boot`, `crumb`, `stage`, `sdp810_zero` (i32), `bno055_calib` (22 B), `
 | R4 | The first Rust boot carries nothing from MicroPython's VFS (board.config, launch.config, `*.creds`). TMS-7F is sealed and Wi-Fi only. | `tools/provision.sh` writes the `cfg` partition (config, launch, creds) over USB with esptool, after `flash.sh` and **before** the seal. Never flash a sealed board without it. |
 | R5 | esp_hosted 2.7.0 tasks run at priority 23, unpinned (plain `xTaskCreate`); the streaming-mode length assert is still open. | lwIP's TCP/IP task is pinned to core 0 already (M1). M1b pins esp_hosted by wrapping `g_hosted_osi_funcs._h_thread_create`, the hook `components/hosted_no_reboot` uses for `_h_restart_host`. From M7 the radio is actually off from BOOSTING through LANDING in Rust (a deliberate divergence, §6; plan B keeps the pad link up). |
 | R6 | On 7C (v0.1 + SEN0697) a plan B ICP general call resets the BMI323, BMM350 and BMP581 without re-arming them. | Rust re-initializes every device registered on the bus after a general call (M5). Plan B gets the same patch (M5, §7.2 Q9). |
-| R7 | Closed by Q19: the warm-start gate no longer reads the time (no RTC, no freshness assumption). The crumb's stamp is only recorded. | — |
+| R7 | `gettimeofday` surviving SW, panic and TWDT resets on the P4 is unverified, and step 1's age check (plan B's gate) depends on it. | Measured in M8. Q19's step 2 drops the age check, which closes it. |
 | R8 | base64 strictness differs: CPython is lenient, Rust is strict. A bad token could answer differently from the fake. | Rust answers `err badargs` (strict). The contract runner records the fake's deviation as known. |
 | R9 | Detector drift vs the host sim: `virtual_flight.py` grades the Python detectors once the board runs Rust. | `commons.json`, `sequencer_trace.json`, `control_trace_*.json` are the only guards. `generate.py --check` in CI. |
 | R10 | HITL masking: a fresh bench sensor silently becomes the only source (pitot 7/27, mag 9/16). | `sim_link.rs` masks the `_SIM_SENSORS` sensors by config name (they are sensor names, not drivers), as plan B does, and re-applies the mask after layout. It then refuses to start if one is still enabled, which is new (plan B only masks). |
@@ -1629,9 +1640,12 @@ The operator's decisions on the earlier questions, one line each:
   - once out of SETTING the flight must go on, so the firmware adds no guard that could stop one.
   - The golden test `a_hold_hides_the_return_to_setting` pins the behaviour.
 
-- **Q19. Warm-start gate (operator, 2026-10-06):** follow plan B's warm start as closely as possible, but as a simple
-  state machine on the crumb's stage (§4.6). Boot makes no freshness assumption, because there is no RTC: plan B's
-  crumb-age and power-on checks are dropped, and only the separation latch can refuse a glide stage.
+- **Q19. Warm-start gate (operator, 2026-10-06), in two steps (§4.6):**
+  - first plan B's gate exactly, because it is well tested: M8, golden-exact, proved in HITL against the plan B
+    baselines;
+  - then the drift to the ideal Rust fit, a simple state machine on the crumb's stage. Boot makes no freshness
+    assumption, because there is no RTC: plan B's crumb-age and power-on checks go, and only the separation latch
+    can refuse a glide stage. It is measured against step 1.
 - **Q20. Files and the console instead of scripts (operator, 2026-10-06):** MicroPython's flexibility (any script
   run on the board) is replaced by files on the filesystem and the console API (the Glider Command Language). An
   **entry file** carries GCL lines that run once the board is up, to drive the image outside the usual cycle (a
