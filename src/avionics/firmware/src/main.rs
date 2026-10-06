@@ -26,8 +26,6 @@ fn main() -> anyhow::Result<()> {
     esp_idf_svc::sys::link_patches();
     tee::install();
     clock::start();
-    // SAFETY: rewrites one function pointer in esp_hosted's OS table; nothing has failed over yet.
-    unsafe { esp_idf_svc::sys::hosted_no_reboot_install() };
 
     let peripherals = Peripherals::take()?;
     let event_loop = EspSystemEventLoop::take()?;

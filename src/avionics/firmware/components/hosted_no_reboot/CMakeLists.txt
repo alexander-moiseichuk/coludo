@@ -2,6 +2,7 @@
 # (sdio_drv.c: an unresponsive slave, a TX write failing twice, a register/interrupt read failing). In flight a
 # C6 glitch must not reboot the flight computer, so this replaces that restart hook -- without patching the
 # downloaded component (2.9.4+ has ESP_HOSTED_TRANSPORT_RESTART_ON_FAILURE; 2.7.0 is pinned for the C6).
+# It also pins esp_hosted's tasks (plain xTaskCreate, priority 23) to core 0, off the flight core.
 idf_component_register(SRCS "hosted_no_reboot.c"
                        INCLUDE_DIRS "include"
                        REQUIRES espressif__esp_hosted freertos log)

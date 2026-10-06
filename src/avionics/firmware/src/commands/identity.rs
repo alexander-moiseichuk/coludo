@@ -121,6 +121,9 @@ fn degraded(board: &Board, mission: &mission::Mission) -> Vec<String> {
         if !sys::hosted_no_reboot_installed() {
             degraded.push("c6-reboot-guard-missing".into()); // a C6 glitch would reboot this board
         }
+        if !sys::hosted_tasks_pinned() {
+            degraded.push("c6-tasks-unpinned".into()); // the radio's tasks may run on the flight core
+        }
         if sys::hosted_link_down() {
             degraded.push("c6-link-parked".into()); // the Wi-Fi link failed; it is gone until the next boot
         }
