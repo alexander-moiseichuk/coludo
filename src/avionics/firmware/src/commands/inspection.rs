@@ -69,15 +69,30 @@ fn apply_mission(context: &mut Context, properties: &serde_json::Map<String, Val
     changed
 }
 
-/// Set the wall clock when the properties carry an acceptable `epoch` (plan B Mission.set_time); whether it was.
+/// Set the wall clock when the properties carry an acceptable `epoch` (plan B Mission.set_time), and tie this boot
+/// to it with a session.csv row (plan B Mission._index_time); whether the clock was set.
+///
+/// `utc_offset`, `cc_position` and `source` ride in the same properties as momentary inputs: written to the row,
+/// never stored, an invalid one an empty cell (mission::TimeSet). A row the full ring refuses is logged and lost,
+/// never the time set: failing the update would have CC report a time set that happened as refused.
 pub fn set_clock(properties: &serde_json::Map<String, Value>) -> bool {
     let Some(epoch) = mission::epoch_request(properties) else {
         return false;
     };
     let before = clock::text();
     clock::set(epoch);
-    // the session.csv row this time set writes comes with the recorder (port plan M3)
     log::info!("mission :: clock set {before} -> {}", clock::text());
+    if let Some(recorder) = crate::recorder::get() {
+        let time_set = mission::TimeSet::from_properties(properties);
+        let cc_position = time_set
+            .cc_position
+            .map(|position| (position.latitude_e7, position.longitude_e7));
+        let source = time_set.source.as_deref().unwrap_or_default();
+        // the clock as it reads now, as plan B's time.time(): a time set into 2000 dates nothing
+        if let Err(overflow) = recorder.index_session(clock::epoch(), time_set.utc_offset, source, cc_position) {
+            log::warn!("Mission :: session.csv row lost, the clock stays set: {overflow}");
+        }
+    }
     true
 }
 

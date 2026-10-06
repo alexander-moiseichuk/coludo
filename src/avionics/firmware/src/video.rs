@@ -35,15 +35,36 @@ pub struct Settings {
     pub exposure_target: u8,
 }
 
-/// Start recording; returns the file's path.
-pub fn start(session: &str, boot_id: u32, settings: &Settings) -> anyhow::Result<String> {
-    let uptime = unsafe { sys::esp_timer_get_time() } / 1000;
-    let directory = format!("{}/video/{session}", sd::MOUNT);
-    std::fs::create_dir_all(&directory)?;
-    let path = format!("{directory}/{uptime}.h264");
-    let c_path = std::ffi::CString::new(path.clone())?;
-    let config = sys::coludo_video_config_t {
-        i2c_bus: i2c::port0()?,
+/// The flight setting, FHD@25 at 8 Mbit/s: what boot reserves the encoder for, and `video start`'s defaults
+/// (START_PARAMETERS mirrors it).
+pub const FLIGHT: Settings = Settings {
+    width: 1920,
+    height: 1080,
+    fps: 25,
+    kilobits: 8000,
+    test_pattern: false,
+    bayer: OV5647_BAYER,
+    exposure_target: 48,
+};
+
+/// Reserves the encoder for the flight setting at boot, while the internal heap is still whole (coludo_video.h,
+/// coludo_video_reserve): call it on the main task (core 0, where the encode task runs) before the ring threads start.
+pub fn reserve() -> anyhow::Result<()> {
+    let config = configure(&FLIGHT, 0, std::ptr::null_mut(), std::ptr::null());
+    // SAFETY: the config outlives the call; only its encoder fields are read.
+    sys::esp!(unsafe { sys::coludo_video_reserve(&config) })?;
+    Ok(())
+}
+
+/// The recorder's configuration for these settings (the C side copies what it keeps).
+fn configure(
+    settings: &Settings,
+    boot_id: u32,
+    i2c_bus: sys::i2c_master_bus_handle_t,
+    path: *const std::ffi::c_char,
+) -> sys::coludo_video_config_t {
+    sys::coludo_video_config_t {
+        i2c_bus,
         width: settings.width,
         height: settings.height,
         fps: settings.fps,
@@ -57,12 +78,22 @@ pub fn start(session: &str, boot_id: u32, settings: &Settings) -> anyhow::Result
         encode_core: 0, // the flight loop owns core 1
         encode_priority: 10,
         write_priority: 6,
-        path: c_path.as_ptr(),
+        path,
         test_pattern: settings.test_pattern as u8,
         bayer: settings.bayer,
         sensor_clock_hz: OV5647_CLOCK_HZ,
         exposure_target: settings.exposure_target,
-    };
+    }
+}
+
+/// Start recording; returns the file's path.
+pub fn start(session: &str, boot_id: u32, settings: &Settings) -> anyhow::Result<String> {
+    let uptime = unsafe { sys::esp_timer_get_time() } / 1000;
+    let directory = format!("{}/video/{session}", sd::MOUNT);
+    std::fs::create_dir_all(&directory)?;
+    let path = format!("{directory}/{uptime}.h264");
+    let c_path = std::ffi::CString::new(path.clone())?;
+    let config = configure(settings, boot_id, i2c::port0()?, c_path.as_ptr());
     // SAFETY: the config and the path outlive the call (the recorder copies what it keeps).
     sys::esp!(unsafe { sys::coludo_video_start(&config) })?;
     Ok(path)

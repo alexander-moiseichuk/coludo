@@ -22,7 +22,8 @@ struct Identity<'a> {
     stage: &'static str,
     uptime: i64,
     boot_id: Option<i32>,
-    session: Option<String>,
+    /// The prefix this boot's capture files carry (plan B `Recorder.session()`).
+    session: &'a str,
     /// The wall clock: a value inside 2000 tells the hub to set it.
     epoch: i64,
 }
@@ -37,7 +38,7 @@ pub fn whoami(_message: &Message, context: &mut Context) -> Reply {
         stage: STATUS.stage().name(),
         uptime: board::uptime_ms(),
         boot_id: context.board.boot_id,
-        session: context.board.session(),
+        session: &context.board.session,
         epoch: clock::epoch(),
     };
     let json =

@@ -818,6 +818,22 @@ fail:
     return ret;
 }
 
+esp_err_t coludo_video_reserve(const coludo_video_config_t *config)
+{
+    ESP_RETURN_ON_FALSE(_recorder == NULL && _pipeline.encoder == NULL, ESP_ERR_INVALID_STATE, TAG, "already open");
+    ESP_RETURN_ON_FALSE(config->fps > 0 && config->gop > 0 && config->qp_min <= config->qp_max && config->qp_max <= 51,
+                        ESP_ERR_INVALID_ARG, TAG, "config");
+    esp_err_t result = _open_encoder(config);
+    if (result != ESP_OK) {
+        _close_encoder();
+        return result;
+    }
+    ESP_LOGI(TAG, "encoder reserved for %ux%u (internal RAM left: %u free, largest block %u)", config->width,
+             config->height, heap_caps_get_free_size(MALLOC_CAP_INTERNAL),
+             heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    return ESP_OK;
+}
+
 esp_err_t coludo_video_force_idr(void)
 {
     ESP_RETURN_ON_FALSE(_recorder != NULL, ESP_ERR_INVALID_STATE, TAG, "not started");

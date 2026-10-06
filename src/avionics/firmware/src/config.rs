@@ -147,8 +147,9 @@ impl Credentials {
 
 /// Write `bytes` under `key` with IDF's own update, which writes the new entry before it erases the old one, so a
 /// cut keeps one of the two. (esp-idf-svc's set_blob erases the key first: a cut there loses the document, and
-/// the next boot would run the default without saying so.)
-fn replace_blob(nvs: &EspNvs<NvsCustom>, key: &str, bytes: &[u8]) -> anyhow::Result<()> {
+/// the next boot would run the default without saying so.) The recorder's session-start record goes through it
+/// too (crate::recorder).
+pub fn replace_blob(nvs: &EspNvs<NvsCustom>, key: &str, bytes: &[u8]) -> anyhow::Result<()> {
     let key = std::ffi::CString::new(key)?;
     // SAFETY: a valid C string and a byte slice of the given length on an open handle.
     sys::esp!(unsafe { sys::nvs_set_blob(nvs.handle(), key.as_ptr(), bytes.as_ptr().cast(), bytes.len()) })?;

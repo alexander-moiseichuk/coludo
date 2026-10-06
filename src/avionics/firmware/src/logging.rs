@@ -1,107 +1,35 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! The log stream's copy for the CC `log <ms>` command (src/glider recorder `_TeeSink` + `cc_logs`), and the logger
-//! that feeds it: every `log` record still goes to the console as before, and while an operator window is open a
-//! copy goes into a bounded buffer the next `log` call collects.
+//! Every log line into recorder.log (doc/specs/avionics-port.md "Producer side": `Recorder::log`), next to the
+//! console as before: the `log` crate's records from Rust, and IDF's own ESP_LOGx lines from C through a vprintf
+//! hook (components/log_hook). From recorder.log a line reaches the flash ring and, while an operator window is
+//! open, the CC `log` tee (commands/streaming.rs).
 //!
-//! Poll model: `log 1000` returns the lines buffered since the last call and keeps the window open 1000 ms more;
-//! `log 0` stops. A window nobody renews lapses, and the next record then discards the buffer, so a lost link
-//! cannot grow memory. Best effort: a full buffer drops and counts, it never blocks a logging thread.
+//! A recorder.log line reads `<uptime_us> <descriptor> :: <message>`. Our own messages carry their `descriptor :: `
+//! already (`ring :: scanned ...`); any other gets the last segment of its module path, and an IDF line its tag.
 //!
-//! Temporary home: the flash-ring writer takes the tees over with the recorder (port plan M3).
+//! The logging path never blocks and allocates at most one bounded string (error policy: logs are best effort). A
+//! message with arguments is formatted into a string cut at [`LINE_BYTES`] (the recorder cuts a message at 1 KiB
+//! anyway); a plain one is taken as it is. The text is on the heap, not the stack, because a `log` call can run on
+//! a task with a tight stack (IDF's system event task has 2.3 KiB). `Recorder::log` then copies it into the thread's
+//! own PSRAM ring, or `try_lock`s the shared `misc` one: a full or busy ring drops the line and counts it. Lines
+//! logged before the recorder opens reach the console only; main opens it right after the board config, so that is
+//! the boot count and the config load.
 
-use std::collections::VecDeque;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicU32, Ordering};
+use core::fmt::Write;
 
 use esp_idf_svc::log::{EspIdfLogFilter, EspIdfLogger};
 use esp_idf_svc::sys;
 
-/// Lines one window may hold: 1000 ms at a busy 1 kHz of log lines; past it the tee drops and counts.
-const CAPACITY: usize = 1024;
+/// The longest log text kept for recorder.log, descriptor and message together, bytes: the recorder's own message
+/// limit (1 KiB). The console prints the whole line regardless.
+const LINE_BYTES: usize = 1024;
 
-/// One poll-model copy of a stream.
-pub struct Tee {
-    /// End of the open window, in uptime milliseconds (wrapping u32: rv32 has no 64-bit atomics); 0 = closed.
-    deadline_ms: AtomicU32,
-    /// The lines buffered since the last drain.
-    lines: Mutex<VecDeque<String>>,
-    /// Lines the full buffer (or a busy lock) discarded since the last drain.
-    dropped: AtomicU32,
-}
-
-/// The log stream's tee.
-pub static LOG: Tee = Tee {
-    deadline_ms: AtomicU32::new(0),
-    lines: Mutex::new(VecDeque::new()),
-    dropped: AtomicU32::new(0),
-};
-
-impl Tee {
-    /// Copy one line in while the window is open; `line` is only built then.
-    pub fn push(&self, line: impl FnOnce() -> String) {
-        let deadline = self.deadline_ms.load(Ordering::Acquire);
-        if deadline == 0 {
-            return;
-        }
-        if (uptime_ms().wrapping_sub(deadline) as i32) > 0 {
-            // nobody renewed the window: close it and let the buffer go -- only the window read above, so a drain
-            // that renewed it meanwhile keeps its new window
-            let closed = self
-                .deadline_ms
-                .compare_exchange(deadline, 0, Ordering::AcqRel, Ordering::Acquire)
-                .is_ok();
-            if let (true, Ok(mut lines)) = (closed, self.lines.try_lock()) {
-                lines.clear();
-            }
-            return;
-        }
-        match self.lines.try_lock() {
-            Ok(mut lines) if lines.len() < CAPACITY => lines.push_back(line()),
-            _ => {
-                self.dropped.fetch_add(1, Ordering::Relaxed);
-            }
-        }
-    }
-
-    /// The lines buffered since the last call and how many were dropped; keeps the window open `duration_ms` more
-    /// (0 or less closes it).
-    pub fn drain(&self, duration_ms: i64) -> (Vec<String>, u32) {
-        let deadline = if duration_ms > 0 {
-            // a window longer than the wrap would read as lapsed: cap it at a day; 0 is the closed mark
-            uptime_ms().wrapping_add(duration_ms.min(86_400_000) as u32).max(1)
-        } else {
-            0
-        };
-        // renewed under the lines lock, so a lapse closing the old window cannot clear lines of the new one
-        let lines: Vec<String> = self
-            .lines
-            .lock()
-            .map(|mut lines| {
-                self.deadline_ms.store(deadline, Ordering::Release);
-                lines.drain(..).collect()
-            })
-            .unwrap_or_default();
-        let dropped = self.dropped.swap(0, Ordering::Relaxed);
-        (lines, dropped)
-    }
-}
-
-/// Milliseconds since boot, wrapping at 2^32 (49 days).
-fn uptime_ms() -> u32 {
-    (uptime_microseconds() / 1000) as u32
-}
-
-/// Microseconds since boot.
-fn uptime_microseconds() -> i64 {
-    // SAFETY: a plain read of the monotonic system timer.
-    unsafe { sys::esp_timer_get_time() }
-}
-
-/// The console logger IDF's own settings filter (esp-idf-svc's default).
+/// The console logger with IDF's own settings filter (esp-idf-svc's default). It prints straight to stdout, never
+/// through IDF's vprintf, so a Rust line does not come back through the hook a second time.
 static CONSOLE: EspIdfLogger<EspIdfLogFilter> = EspIdfLogger::new(EspIdfLogFilter::new());
 
-/// The `log` crate's logger: the console as before, plus the tee.
+/// The `log` crate's logger: the console as before, plus recorder.log.
 struct Logger;
 
 impl log::Log for Logger {
@@ -111,19 +39,24 @@ impl log::Log for Logger {
 
     fn log(&self, record: &log::Record) {
         log::Log::log(&CONSOLE, record);
-        if log::Log::enabled(&CONSOLE, record.metadata()) {
-            // the recorder.log line shape, `<uptime_us> <source> :: <message>`; our messages carry their
-            // `source :: ` already, the rest get the module's last path segment
-            LOG.push(|| {
-                let message = record.args().to_string();
-                if message.contains(" :: ") {
-                    format!("{} {message}", uptime_microseconds())
-                } else {
-                    let source = record.target().rsplit("::").next().unwrap_or("firmware");
-                    format!("{} {source} :: {message}", uptime_microseconds())
-                }
-            });
+        if !log::Log::enabled(&CONSOLE, record.metadata()) {
+            return;
         }
+        let Some(recorder) = crate::recorder::get() else {
+            return;
+        };
+        let mut line = Line::default();
+        let text = match record.args().as_str() {
+            Some(text) => text,
+            None => {
+                let _ = write!(line, "{}", record.args()); // a full line cuts the text: Line never fails
+                line.0.as_str()
+            }
+        };
+        match text.split_once(" :: ") {
+            Some((descriptor, message)) => recorder.log(descriptor, message),
+            None => recorder.log(record.target().rsplit("::").next().unwrap_or("firmware"), text),
+        };
     }
 
     fn flush(&self) {}
@@ -132,7 +65,8 @@ impl log::Log for Logger {
 /// The logger, once.
 static LOGGER: Logger = Logger;
 
-/// Route the `log` crate through the console and the tee (instead of `EspLogger::initialize_default`).
+/// Route the `log` crate through the console and recorder.log, and IDF's C log lines into recorder.log too (instead
+/// of `EspLogger::initialize_default`). Call first thing in main: lines before the recorder opens reach the console.
 pub fn install() {
     if log::set_logger(&LOGGER).is_ok() {
         CONSOLE.filter().initialize();
@@ -141,4 +75,71 @@ pub fn install() {
             .filter()
             .set_target_level("esp_idf_svc::nvs", log::LevelFilter::Warn);
     }
+    // SAFETY: installs a plain C callback once; it records the line and never logs, blocks or allocates.
+    unsafe { sys::log_hook_install(Some(idf_line)) };
+}
+
+/// A formatted log text, cut to [`LINE_BYTES`] so a runaway message cannot grow the heap.
+#[derive(Default)]
+struct Line(String);
+
+impl Write for Line {
+    /// Appends what fits, cut at a character boundary; never an error, so the formatting runs to its end.
+    fn write_str(&mut self, text: &str) -> core::fmt::Result {
+        let mut taken = text.len().min(LINE_BYTES - self.0.len());
+        while !text.is_char_boundary(taken) {
+            taken -= 1;
+        }
+        self.0.push_str(&text[..taken]);
+        Ok(())
+    }
+}
+
+/// One IDF log line from components/log_hook, `I (1234) wifi: connected\n` (LOG_VERSION 1, maybe in ANSI colour):
+/// recorded as `wifi :: connected`. A line of another shape (a bare printf through the hook) is kept whole under
+/// `idf`.
+///
+/// Runs on whichever task logged, IDF's own with tight stacks among them, so it stays shallow: no allocation, no
+/// copy, no logging (a log here would re-enter the hook, which then skips the line).
+unsafe extern "C" fn idf_line(text: *const core::ffi::c_char, length: usize) {
+    let Some(recorder) = crate::recorder::get() else {
+        return;
+    };
+    // SAFETY: the hook hands over `length` bytes of its line buffer, valid for this call.
+    let bytes = unsafe { core::slice::from_raw_parts(text.cast::<u8>(), length) };
+    let line = plain(bytes);
+    // a cut line may end inside a character: keep the whole ones
+    let line = match core::str::from_utf8(line) {
+        Ok(line) => line,
+        Err(error) => core::str::from_utf8(&line[..error.valid_up_to()]).unwrap_or_default(),
+    };
+    if line.is_empty() {
+        return;
+    }
+    let parsed = line
+        .strip_prefix(['E', 'W', 'I', 'D', 'V'])
+        .and_then(|rest| rest.strip_prefix(" ("))
+        .and_then(|rest| rest.split_once(") "))
+        .and_then(|(_, rest)| rest.split_once(": "));
+    match parsed {
+        Some((tag, message)) => recorder.log(tag, message),
+        None => recorder.log("idf", line),
+    };
+}
+
+/// The line without its end and its colour: IDF wraps a coloured line in `ESC [ 0 ; 3x m` ... `ESC [ 0 m` (only with
+/// CONFIG_LOG_COLORS, off in sdkconfig.defaults) and ends it with `\n`.
+fn plain(line: &[u8]) -> &[u8] {
+    const ESCAPE: u8 = 0x1b;
+    let mut line = line.trim_ascii_end();
+    if let Some(rest) = line.strip_prefix(&[ESCAPE]) {
+        line = rest
+            .iter()
+            .position(|&byte| byte == b'm')
+            .map_or(rest, |end| &rest[end + 1..]);
+    }
+    if let Some(start) = line.iter().rposition(|&byte| byte == ESCAPE) {
+        line = &line[..start];
+    }
+    line.trim_ascii_end()
 }

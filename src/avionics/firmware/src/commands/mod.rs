@@ -295,8 +295,15 @@ impl Executor {
     }
 }
 
-/// The executor thread: one line at a time, forever.
+/// The executor thread: one line at a time, forever. It records through its own recorder ring: the session.csv row
+/// of a clock set, and every command's log lines.
 fn serve(requests: Receiver<Request>, mut context: Context) {
+    let _attachment = crate::recorder::get().and_then(|recorder| {
+        recorder
+            .attach(crate::recorder::Producer::Executor as usize)
+            .inspect_err(|error| log::warn!("cc :: the executor shares the misc ring: {error:?}"))
+            .ok()
+    });
     for request in requests {
         let reply = handle(&request.line, &mut context, request.origin);
         let _ = request.reply.send(reply); // the caller may have gone (a dropped link); nothing to do

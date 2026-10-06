@@ -5,3 +5,4 @@
 #include "esp_async_memcpy.h"
 #include "sd_card.h"
 #include "coludo_video.h"
+#include "log_hook.h"

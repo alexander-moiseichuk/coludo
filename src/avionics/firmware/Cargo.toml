@@ -19,7 +19,10 @@ harness = false  # no libtest on the board; on-board tests are their own binarie
 [dependencies]
 board_config.workspace = true
 cc_protocol.workspace = true
+flash_ring.workspace = true
 mission.workspace = true
+recorder.workspace = true
+recorder_wire.workspace = true
 sequencer.workspace = true
 esp-idf-svc = "0.53"
 anyhow = "1"
@@ -58,6 +61,7 @@ component_dirs = [
     "components/hosted_no_reboot",
     "components/sd_card",
     "components/coludo_video",
+    "components/log_hook",
 ]
 
 [[package.metadata.esp-idf-sys.extra_components]]

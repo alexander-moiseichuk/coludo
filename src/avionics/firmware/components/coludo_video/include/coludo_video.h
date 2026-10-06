@@ -82,6 +82,15 @@ typedef struct {
  */
 esp_err_t coludo_video_start(const coludo_video_config_t *config);
 
+/**
+ * Opens the encoder half for config (its size, QP range, and the rate control a start then resets) and keeps it,
+ * so the first coludo_video_start finds it. Call it at boot, before anything fragments the internal heap: the
+ * encoder's reference buffer is one ~138 KB block of INTERNAL RAM at 1080p, and the M3 ring threads' stacks and
+ * buffers left the largest block at 128 KB. Its interrupt lands on the calling task's core (that of the encode task).
+ * Only the encoder fields of config are read. ESP_ERR_INVALID_STATE when the encoder is open already.
+ */
+esp_err_t coludo_video_reserve(const coludo_video_config_t *config);
+
 /** Makes the next encoded frame an IDR (non-blocking, any task). */
 esp_err_t coludo_video_force_idr(void);
 

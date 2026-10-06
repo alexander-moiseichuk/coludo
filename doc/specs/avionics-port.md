@@ -269,7 +269,7 @@ TCP/IP task on core 0.
 **Operator gains.** Config is edited from the dashboard and cc.py exactly as on MicroPython. The board id and
 network come from the board file. A bad file boots the default and says so.
 
-### M3. Recorder core, the ring_writer and the bring-up scan (2 days; in rework)
+### M3. Recorder core, the ring_writer and the bring-up scan (2 days; DONE 2026-10-06 on the taster)
 
 The host crates were built first (`97f785f`) to the earlier design: text in flash, 64 KiB blocks, never
 overwrite. They are reworked to the operator's ring (§3) before M4. `tools/ring_split.py` (`7aa92a7`) is
@@ -322,6 +322,33 @@ re-pointed at the binary blocks.
     (about 45 ms of rows, 65 ms of log lines), and the scan after each is clean;
   - the 1 kHz core-1 `pace` stays at 0 missed;
   - the image boots from `ota_0` and stays under 3 MB.
+
+**Results (2026-10-06, the taster):**
+- Contract: `--milestone M3` gave 0 violations; the stream tier (log, tlm through the recorder's tees) passed
+  11 of 11.
+- `/ring` parses strictly: boots 267 and 268 decode as 425 and 139 lines, all 'good' in `flight_telemetry`, with 0
+  unproven, 0 lost and 0 duplicates. `/ring/image` (24 MiB in 5.9 s) decodes to the same lines.
+- First boot after MicroPython: the scan took 148 ms and found 3570 foreign slots. The eraser formatted them in
+  about 5 minutes while the writer logged from block 0, and a reboot mid-format resumed it.
+- Load, video and pace together:
+  - `ring load lines_per_s=200` (≈ 23 KB/s, above the flight's 16 KB/s) with FHD@25 recording and `pace` on
+    core 1;
+  - pace: 20 000 ticks, max 38 µs late, 0 missed;
+  - video: 954 frames, 0 dropped, 1 missed (around the Wi-Fi join);
+  - ring: 229 blocks, 0 drops, 0 flash errors.
+- 5 EN resets under that load (an EN reset, not a power pull):
+  - each scan was clean (155-159 ms, 0 foreign, 0 other version), and each boot opened the next block;
+  - 0 lost, 0 torn, no hole in the load lines;
+  - each boot's last line lies within the method's ±70 ms of the reset moment.
+  - Open: true power pulls, by the operator.
+- Internal RAM: the encoder's reference buffer is one ~138 KB internal block at 1080p (`3 × 16 × 24 × 120`
+  macroblock columns). After the ring threads' stacks and buffers (~40 KB) split the heap, the largest block was
+  128 KB and `video start` failed. Boot now reserves the encoder right after the SD mount, before the ring threads
+  (`video::reserve`):
+  - 215 KB free after the reservation;
+  - 110 KB free with Wi-Fi up and the camera open;
+  - 4 × 9.65 MB downloads under `ring load` and video, with no esp_hosted assert.
+- Image: 1.81 MB, inside the 3 MB `ota_0`.
 
 **Operator gains.** Live telemetry on the dashboard. From boot, every log line and row is on flash with about
 11 ms typical and at most about 45 ms at risk (65 ms for log lines, §3.3). No Luckfox and no SD card are needed
@@ -970,7 +997,9 @@ append, so the rest of boot goes on and the producers queue in PSRAM meanwhile:
    cause, card (VSN or none), and the ring positions this boot started from. It is what a fast start needs.
 
 **Positions:** `writer_position` and `saver_position` (each `(block_sequence, offset)`) live in the `cfg` NVS as
-hints, written about once a second. The scan wins over the writer's hint; the saver's hint is its only record of
+hints, written about once a second. The ring_eraser writes the writer's hint between erase steps, never the
+ring_writer itself: IDF holds one global NVS lock for every call, and a config save holds it for a whole blob write,
+which would stall the writer. The scan wins over the writer's hint; the saver's hint is its only record of
 progress, and without one it starts at the oldest valid block. A hint more than 2³¹ blocks ahead of the newest
 block in flash is ignored: it is corrupt, or another build's encoding. `block_sequence = u32::MAX` is never given,
 so a ring numbered up to it (only a corrupt hint or another build gets there; 2³² blocks are 16 TiB) refuses to

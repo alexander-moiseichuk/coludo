@@ -1,22 +1,43 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! Read-only HTTP access to the microSD: `GET /sd/<path>` returns a file, or a directory's listing (one
-//! `<name>;<bytes>` line per entry). How recordings and logs come off the board over Wi-Fi -- on the pad, and
-//! after landing. Paths are confined to the card; nothing is ever written.
+//! Read-only HTTP access to the microSD and to the flash ring: how recordings and logs come off the board over Wi-Fi
+//! -- on the pad, and after landing. Nothing is ever written.
+//! * `GET /sd/<path>` returns a file, or a directory's listing (one `<name>;<bytes>` line per entry). Paths are
+//!   confined to the card.
+//! * `GET /ring[?boot=N]` streams every valid block of the `log` partition decoded to wire lines,
+//!   `[@<routing>@]{OPEN};<payload>;<CLOSE>\n`, in block_sequence order: a byte-exact wire capture, the lines the
+//!   ring_saver would file (doc/specs/avionics-port.md "CC tees and the HTTP exits"). `boot=N` keeps only that
+//!   boot's blocks.
+//! * `GET /ring/image` streams the raw 24 MiB partition, as `esptool read_flash 0x800000 0x1800000` reads it.
+//!
+//! tools/ring_split.py turns either into session directories: the recovery path when the card failed in flight. The
+//! ring keeps changing while it streams (the writer appends, the eraser erases), so either is a snapshot taken over
+//! some seconds; a block erased meanwhile is left out, and the tools drop the duplicates a pull may share with the SD.
+//! A block that stays unreadable is left out too (`/ring/image` sends it as zeros, so the image keeps its size), and
+//! recorder.log says so.
 
 use std::fs::File;
 use std::io::Read;
 
+use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::http::Method;
 use esp_idf_svc::http::server::{Configuration, EspHttpServer};
 use esp_idf_svc::io::Write;
+use esp_idf_svc::sys::EspError;
+use flash_ring::header::{BlockHeader, HEADER_BYTES, Session};
+use flash_ring::{BLOCK_BYTES, Flash, Slot};
+use recorder::{Decoder, Recorder};
 
+use crate::recorder::{Partition, RingView};
 use firmware::sd;
 
 /// The port the file server listens on (the hub owns 1234/1235, its dashboard 8080).
 const PORT: u16 = 8000;
 /// Bytes per read/send.
 const CHUNK: usize = 32 << 10;
+/// How many times a ring block read is tried before the block is given up: a flash call failing, which a second try
+/// usually passes (as the bring-up scan tries again).
+const READ_ATTEMPTS: u32 = 3;
 
 /// Start the server; it serves for as long as the returned handle lives.
 pub fn serve() -> anyhow::Result<EspHttpServer<'static>> {
@@ -24,6 +45,9 @@ pub fn serve() -> anyhow::Result<EspHttpServer<'static>> {
         http_port: PORT,
         uri_match_wildcard: true,
         stack_size: 8192,
+        // core 0 with the rest of the link (spec "Threads, cores, priorities"): unpinned, httpd could decode a whole
+        // `/ring` on core 1, the flight core
+        core: Some(Core::Core0),
         ..Default::default()
     })?;
     server.fn_handler::<anyhow::Error, _>("/sd/*", Method::Get, |request| {
@@ -72,5 +96,189 @@ pub fn serve() -> anyhow::Result<EspHttpServer<'static>> {
         }
         Ok(())
     })?;
+    server.fn_handler::<anyhow::Error, _>("/ring", Method::Get, |request| {
+        let (Some(view), Some(recorder)) = (crate::recorder::ring(), crate::recorder::get()) else {
+            request
+                .into_status_response(503)?
+                .write_all(b"the ring is not up: the bring-up scan has not finished, or found no log partition\n")?;
+            return Ok(());
+        };
+        let Ok(boot) = boot_filter(request.uri()) else {
+            request
+                .into_status_response(400)?
+                .write_all(b"/ring takes only boot=<id>\n")?;
+            return Ok(());
+        };
+        let mut response = request.into_response(200, None, &[("Content-Type", "text/plain")])?;
+        decode_ring(view, recorder, boot, &mut |text| Ok(response.write_all(text)?))
+    })?;
+    server.fn_handler::<anyhow::Error, _>("/ring/image", Method::Get, |request| {
+        let Some(view) = crate::recorder::ring() else {
+            request
+                .into_status_response(503)?
+                .write_all(b"the ring is not up: the bring-up scan has not finished, or found no log partition\n")?;
+            return Ok(());
+        };
+        let size = view.partition.size();
+        let length = size.to_string();
+        // esp-idf-svc 0.53 drops the Content-Length (its httpd_resp_set_len is commented out) and sends the body
+        // chunked, and on a handler's error it still sends the closing chunk: a body cut short would arrive as a
+        // whole, well-formed reply, which no client can tell from a smaller partition. So the image always goes
+        // out whole, every slot at its offset (below)
+        let mut response = request.into_response(
+            200,
+            None,
+            &[
+                ("Content-Type", "application/octet-stream"),
+                ("Content-Length", &length),
+            ],
+        )?;
+        // read a block at a time into internal RAM, which esp_flash fills directly, and send in PSRAM chunks: a read
+        // into PSRAM would go through up to 16 KiB of internal DMA memory per call, the kind esp_hosted needs
+        let mut block = vec![0u8; BLOCK_BYTES as usize];
+        let mut image = Vec::with_capacity(CHUNK);
+        for offset in (0..size).step_by(BLOCK_BYTES as usize) {
+            if let Err(error) = read_retrying(&view.partition, offset, &mut block) {
+                // zeros carry no block magic, so every reader (the scan, tools/ring_split.py) counts the slot
+                // foreign, as the writer counts a slot it cannot read: the block is lost to this pull, said so in
+                // recorder.log, and the slots behind it keep their offsets
+                log::warn!("files :: /ring/image: the block at {offset:#x} is unreadable ({error}), sent as zeros");
+                block.fill(0);
+            }
+            image.extend_from_slice(&block);
+            if image.len() >= CHUNK {
+                response.write_all(&image)?;
+                image.clear();
+            }
+        }
+        response.write_all(&image)?;
+        Ok(())
+    })?;
     Ok(server)
+}
+
+/// The `boot=N` of a `/ring` URI: None when there is no query. Errors: the query names anything else, or N is not
+/// a boot id.
+fn boot_filter(uri: &str) -> Result<Option<u32>, ()> {
+    let Some((_, query)) = uri.split_once('?') else {
+        return Ok(None);
+    };
+    if query.is_empty() {
+        return Ok(None);
+    }
+    let boot = query.strip_prefix("boot=").ok_or(())?;
+    boot.parse().map(Some).map_err(|_| ())
+}
+
+/// Decode the ring's blocks into wire lines, oldest first, handing the text to `send` about [`CHUNK`] at a time.
+///
+/// The blocks come from the block table (closed ones and the writer's open one) in block_sequence order. Each is read
+/// whole into internal RAM, but a block the table showed open only as far as [`open_length`] allows; and each is
+/// checked against the table by its header's sequence, since the eraser may have erased it and the writer opened
+/// another there since the table was read. A torn chunk is a loss only when no later block of its boot follows it
+/// (the decoder's rule): the next block in sequence order tells, since a boot's blocks are numbered one after
+/// another and a later boot always numbers past them.
+///
+/// Args:
+/// * `view` - the flash ring.
+/// * `recorder` - for the writer position.
+/// * `boot` - keep only this boot's blocks; None keeps every one.
+/// * `send` - takes the text.
+///
+/// Errors: `send` failed (the client went away).
+fn decode_ring(
+    view: &RingView,
+    recorder: &Recorder,
+    boot: Option<u32>,
+    send: &mut dyn FnMut(&[u8]) -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let geometry = view.table.geometry();
+    // sized for every slot at once (72 KiB, so the heap puts it in PSRAM), rather than grown through internal RAM
+    let mut blocks: Vec<(u32, u32, bool)> = Vec::with_capacity(geometry.blocks() as usize);
+    blocks.extend((0..geometry.blocks()).filter_map(|slot| match view.table.slot(slot) {
+        Slot::Valid { block_sequence, .. } => Some((block_sequence, slot, false)),
+        Slot::Open { block_sequence, .. } => Some((block_sequence, slot, true)),
+        _ => None,
+    }));
+    blocks.sort_unstable_by_key(|&(block_sequence, _, _)| block_sequence);
+    let mut decoder = Decoder::new();
+    // the boot (session, boot id) the decoder holds: it remembers each file's column list and the newest uptime per
+    // boot, for as long as it lives, in nodes too small for PSRAM (the heap puts anything under 16 KiB in internal
+    // RAM first, the RAM esp_hosted needs to send this very reply). A boot's blocks come one after another in
+    // sequence order, so once the next boot starts the last one's memory is never asked for again: a fresh decoder
+    // per boot prints the same lines and holds one boot's files at a time, however many boots the ring keeps
+    let mut decoding: Option<(Session, u32)> = None;
+    let mut block = vec![0u8; BLOCK_BYTES as usize];
+    let mut text = Vec::with_capacity(2 * CHUNK);
+    for (index, &(block_sequence, slot, open)) in blocks.iter().enumerate() {
+        let length = if open {
+            open_length(recorder, block_sequence)
+        } else {
+            BLOCK_BYTES as usize
+        };
+        let block = &mut block[..length];
+        let offset = geometry.slot_offset(slot);
+        if let Err(error) = read_retrying(&view.partition, offset, block) {
+            // left out, as an erased block would be; recorder.log says so, since the pull cannot
+            log::warn!("files :: /ring: block {block_sequence} at {offset:#x} is unreadable ({error}), left out");
+            continue;
+        }
+        let Ok(header) = BlockHeader::decode(block) else {
+            continue;
+        };
+        if header.block_sequence != block_sequence || boot.is_some_and(|boot| boot != header.boot_id) {
+            continue;
+        }
+        if decoding != Some((header.session, header.boot_id)) {
+            decoder = Decoder::new();
+            decoding = Some((header.session, header.boot_id));
+        }
+        let boot_goes_on = open
+            || blocks.get(index + 1).is_some_and(|&(_, next_slot, _)| {
+                let mut next = [0u8; HEADER_BYTES];
+                read_retrying(&view.partition, geometry.slot_offset(next_slot), &mut next).is_ok()
+                    && BlockHeader::decode(&next)
+                        .is_ok_and(|next| next.boot_id == header.boot_id && next.session == header.session)
+            });
+        // a block of another layout version, or one a cut damaged since, prints nothing
+        let _ = decoder.block(block, boot_goes_on, |line| text.extend_from_slice(line.wire));
+        if text.len() >= CHUNK {
+            send(&text)?;
+            text.clear();
+        }
+    }
+    send(&text)
+}
+
+/// How many bytes of a block the table showed open (the writer's, this boot) are safe to read now.
+///
+/// The writer keeps going while the table is walked, sorted and the blocks before this one are read, so its position
+/// is read only now, and compared: the writer moves forward only, and publishes a position in a block only after it
+/// closed every earlier one.
+/// * the writer is past this block: it closed the block since the walk, so the block is whole, every chunk it will
+///   ever hold programmed, and is read whole. Reading the header alone would leave out a closed block's records with
+///   no loss line, while later blocks of the boot went out;
+/// * the writer is in this block: up to its published offset, past which it may be programming;
+/// * the writer has published nothing in this block yet (it opened it since its last publish): the header alone.
+fn open_length(recorder: &Recorder, block_sequence: u32) -> usize {
+    match recorder.writer_position() {
+        Some(writer) if writer.block_sequence > block_sequence => BLOCK_BYTES as usize,
+        Some(writer) if writer.block_sequence == block_sequence => {
+            (writer.offset as usize).clamp(HEADER_BYTES, BLOCK_BYTES as usize)
+        }
+        _ => HEADER_BYTES,
+    }
+}
+
+/// Reads `buffer.len()` bytes of the ring at `offset`, trying up to [`READ_ATTEMPTS`] times.
+///
+/// Errors: the last attempt's.
+fn read_retrying(partition: &Partition, offset: u32, buffer: &mut [u8]) -> Result<(), EspError> {
+    let mut attempt = 1;
+    loop {
+        match partition.read(offset, buffer) {
+            Err(_) if attempt < READ_ATTEMPTS => attempt += 1,
+            result => return result,
+        }
+    }
 }
