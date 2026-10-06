@@ -230,6 +230,23 @@ needs 4-byte addressing, which `CONFIG_ESPTOOLPY_FLASHSIZE_32MB` turns on in the
 | pre-erase all 24 MB | 31 s (a pad-time, one-off cost) |
 | capacity | at 80 KB/s (400 Hz × 200 B rows) the ring holds 5 min before the GC must have freed blocks |
 
+### G1: small appends into one NOR page (`src/bin/ring.rs`, 2026-10-06)
+
+The ring's frame format (doc/specs/avionics-port.md §3.4) appends 40–200 B frames at 8-byte-aligned offsets, one
+`esp_partition_write_raw` each, so most pages are programmed several times over (1 → 0 bits into erased bytes
+only). Risk R1 asked whether this GD `0xC84019` takes it; the fallback was padding every frame to a 256 B page
+(about twice the flash per second). Run above 16 MB (the 4-byte-addressed half):
+
+| measure | result |
+|---|---|
+| 10 000 frames of 40–200 B, 1.24 MB spanned | **9 722 programs into an already-programmed page; 0 frames corrupt, 0 gap bytes not 0xFF** |
+| worst case: 32 programs of 8 B into each of 64 pages | **0 bytes differing** |
+| one frame program (header + payload, one call) | p50 **358 µs**, p99 1.13 ms, max 1.50 ms |
+| erased check before using a block: read + scan 64 KB | **5.75 ms** (p99 5.76) |
+| erase 2 MB (32 × 64 KB) | 3.44 s |
+
+Partial-page programming holds, so frames stay unpadded (gate passed).
+
 ### The microSD (S1/S2, `src/bin/sd.rs`)
 
 Taster's card: SDHC, 29.8 GB, 4-bit at 40 MHz (high speed; UHS is excluded -- it drops LDO VO4 to 1.8 V, and VO4
