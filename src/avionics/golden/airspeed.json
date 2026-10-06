@@ -1,0 +1,6612 @@
+{
+ "compare": {
+  "kind": "abs",
+  "tol": 0.001
+ },
+ "meta": {
+  "commit": "1f204b57fdfa4590bde43fde9954fbafafd7925d",
+  "generator": "airspeed",
+  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "python": "3.12",
+  "source": "src/glider/airspeed.py",
+  "tag": "micropython_plan_B_2"
+ },
+ "note": "m/s on the value, f32 against f64 rounding; confident is a flag and exact; no latch within 1e-3 of 5",
+ "scenarios": [
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "the_accelerometer_integrates_and_floors_at_zero",
+   "steps": [
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 0.49
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 0.98
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 1.47
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 1.96
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 2.45
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 2.9400000000000004
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 3.4300000000000006
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 3.920000000000001
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 4.410000000000001
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 4.900000000000001
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 5.3900000000000015
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 5.880000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 6.370000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 6.860000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 7.350000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 7.8400000000000025
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 8.330000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 8.820000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 9.310000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 9.800000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 10.290000000000003
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 10.780000000000003
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 11.270000000000003
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 11.760000000000003
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 12.250000000000004
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 12.740000000000004
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 13.230000000000004
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 13.720000000000004
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 14.210000000000004
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 14.700000000000005
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 15.190000000000005
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 15.680000000000005
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 16.170000000000005
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 16.660000000000004
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 17.150000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 17.64
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 18.13
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 18.619999999999997
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 19.109999999999996
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 19.599999999999994
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 20.089999999999993
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 20.57999999999999
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 21.06999999999999
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 21.559999999999988
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 22.049999999999986
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 22.539999999999985
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 23.029999999999983
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 23.519999999999982
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 24.00999999999998
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 24.49999999999998
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -3000.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 0.0
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "the_integral_clamps_at_the_ceiling",
+   "steps": [
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 10.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 20.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 30.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 40.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 50.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 100.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "gnss_is_gated_then_blended",
+   "steps": [
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 0.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 1.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 1.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 2.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 2.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 3.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 3.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 4.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 4.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 5.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 5.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 6.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 6.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 7.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 7.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 8.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 8.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 9.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 9.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 10.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 10.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 11.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 11.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 12.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 12.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 13.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 13.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 14.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 14.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 15.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 15.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 16.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 16.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 17.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 17.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 18.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 18.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 19.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 19.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 20.0
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 14.0,
+      "has_fix": false
+     },
+     "out": {
+      "confident": true,
+      "value": 20.0
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 120.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 20.0
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 18.0
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 16.4
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 15.12
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 14.096
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 13.2768
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 12.62144
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 12.097152
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 11.6777216
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 11.34217728
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 11.073741823999999
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.858993459199999
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.68719476736
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.549755813888
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.4398046511104
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.35184372088832
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.281474976710657
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.225179981368525
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.18014398509482
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.144115188075855
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.115292150460684
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.092233720368547
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.073786976294837
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.059029581035869
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.047223664828696
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.037778931862956
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.030223145490364
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.024178516392292
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.019342813113834
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.015474250491067
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.012379400392854
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.009903520314284
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.007922816251426
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.006338253001141
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.005070602400913
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.004056481920731
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.003245185536585
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.002596148429268
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.002076918743414
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.001661534994732
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.001329227995786
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.001063382396628
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000850705917303
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000680564733843
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000544451787075
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.00043556142966
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000348449143727
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000278759314982
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000223007451986
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000178405961588
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.00014272476927
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000114179815416
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000091343852333
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000073075081866
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000058460065492
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000046768052394
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000037414441916
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000029931553533
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000023945242827
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000019156194261
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.00001532495541
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 10.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 10.000012259964327
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "confidence_latches_and_the_first_fix_seeds",
+   "steps": [
+    {
+     "in": {
+      "acceleration_along": 1.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": false,
+      "value": 0.1
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 24.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 24.0
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 20.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 23.2
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "the_accelerometer_alone_earns_trust",
+   "steps": [
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 0.49
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 0.98
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 1.47
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 1.96
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 2.45
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 2.9400000000000004
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 3.4300000000000006
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 3.920000000000001
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 4.410000000000001
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": false,
+      "value": 4.900000000000001
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 5.3900000000000015
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 5.880000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 6.370000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 6.860000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 7.350000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 7.8400000000000025
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 8.330000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 8.820000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 9.310000000000002
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.0,
+      "action": "predict",
+      "elapsed": 0.01
+     },
+     "out": {
+      "confident": true,
+      "value": 9.800000000000002
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "a_seed_restores_and_the_pitot_overrides_it",
+   "steps": [
+    {
+     "in": {
+      "action": "seed",
+      "airspeed": 16.5
+     },
+     "out": {
+      "confident": true,
+      "value": 16.5
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 25.0,
+      "gain": 1.0
+     },
+     "out": {
+      "confident": true,
+      "value": 25.0
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "a_slow_seed_is_trusted_and_integrated_on",
+   "steps": [
+    {
+     "in": {
+      "action": "seed",
+      "airspeed": 3.0
+     },
+     "out": {
+      "confident": true,
+      "value": 3.0
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 9.81,
+      "action": "predict",
+      "elapsed": 1.0
+     },
+     "out": {
+      "confident": true,
+      "value": 12.81
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "a_garbage_seed_is_refused_-1.0",
+   "steps": [
+    {
+     "in": {
+      "action": "seed",
+      "airspeed": -1.0
+     },
+     "out": {
+      "confident": false,
+      "value": 0.0
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "a_garbage_seed_is_refused_1000000.0",
+   "steps": [
+    {
+     "in": {
+      "action": "seed",
+      "airspeed": 1000000.0
+     },
+     "out": {
+      "confident": false,
+      "value": 0.0
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "the_pitot_seeds_then_blends_and_a_pad_zero_earns_no_trust",
+   "steps": [
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 0.0,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": false,
+      "value": 0.0
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 15.0,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 15.0
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 17.0,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 16.0
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "an_unconfident_pitot_reading_below_five_seeds_without_trust",
+   "steps": [
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 4.0,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": false,
+      "value": 4.0
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 3.5,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": false,
+      "value": 3.5
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 20.0,
+      "action": "predict",
+      "elapsed": 0.1
+     },
+     "out": {
+      "confident": true,
+      "value": 5.5
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "a_pitot_reading_of_exactly_five_latches",
+   "steps": [
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 5.0,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 5.0
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "a_fix_at_exactly_the_ceiling_is_accepted",
+   "steps": [
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 60.5,
+      "has_fix": true
+     },
+     "out": {
+      "confident": false,
+      "value": 0.0
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 60.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "a_seed_at_exactly_the_ceiling_is_accepted",
+   "steps": [
+    {
+     "in": {
+      "action": "seed",
+      "airspeed": 60.5
+     },
+     "out": {
+      "confident": false,
+      "value": 0.0
+     }
+    },
+    {
+     "in": {
+      "action": "seed",
+      "airspeed": 60.0
+     },
+     "out": {
+      "confident": true,
+      "value": 60.0
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.2
+   },
+   "name": "sweep_00",
+   "steps": [
+    {
+     "in": {
+      "acceleration_along": 0.4144145965042171,
+      "action": "predict",
+      "elapsed": 0.011131844269008588
+     },
+     "out": {
+      "confident": false,
+      "value": 0.0046131987510889755
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 1.2507353801240408,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": false,
+      "value": 1.2507353801240408
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.23752472091940968,
+      "action": "predict",
+      "elapsed": 0.010835153536347142
+     },
+     "out": {
+      "confident": false,
+      "value": 1.248161763304201
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.011308809125116753,
+      "action": "predict",
+      "elapsed": 0.008941311511888964
+     },
+     "out": {
+      "confident": false,
+      "value": 1.2482628788894172
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 0.5147045770538881,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": false,
+      "value": 0.5147045770538881
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.19065251026496827,
+      "action": "predict",
+      "elapsed": 0.010301912022436629
+     },
+     "out": {
+      "confident": false,
+      "value": 0.5127404916662817
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.03415024302474342,
+      "action": "predict",
+      "elapsed": 0.009994601670927753
+     },
+     "out": {
+      "confident": false,
+      "value": 0.5130818097422793
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 0.33217446424859154,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": false,
+      "value": 0.33217446424859154
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.16605991522825206,
+      "action": "predict",
+      "elapsed": 0.010924661715279112
+     },
+     "out": {
+      "confident": false,
+      "value": 0.33398861264692814
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.1782252236557829,
+      "action": "predict",
+      "elapsed": 0.009744389774292303
+     },
+     "out": {
+      "confident": false,
+      "value": 0.3357253086938405
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 0.5460798609728736,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": false,
+      "value": 0.5460798609728736
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 27.94768330515419,
+      "action": "predict",
+      "elapsed": 0.009427476055230997
+     },
+     "out": {
+      "confident": false,
+      "value": 0.8095559761313939
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 21.924497079170358,
+      "action": "predict",
+      "elapsed": 0.011534600779293129
+     },
+     "out": {
+      "confident": false,
+      "value": 1.0624462972264022
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 20.002109866587702,
+      "action": "predict",
+      "elapsed": 0.010748876370322381
+     },
+     "out": {
+      "confident": false,
+      "value": 1.277446503327959
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 52.74502948278566,
+      "action": "predict",
+      "elapsed": 0.011405324044755078
+     },
+     "out": {
+      "confident": false,
+      "value": 1.8790206563292897
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 26.155654392148325,
+      "action": "predict",
+      "elapsed": 0.008161150215206527
+     },
+     "out": {
+      "confident": false,
+      "value": 2.0924808808006388
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 40.53955849115337,
+      "action": "predict",
+      "elapsed": 0.011277345710400653
+     },
+     "out": {
+      "confident": false,
+      "value": 2.5496594968523834
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 65.48934472163137,
+      "action": "predict",
+      "elapsed": 0.00867842358471313
+     },
+     "out": {
+      "confident": false,
+      "value": 3.118003770631997
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 41.33796800415949,
+      "action": "predict",
+      "elapsed": 0.01116300721781497
+     },
+     "out": {
+      "confident": false,
+      "value": 3.5794598058322338
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 59.3320673522633,
+      "action": "predict",
+      "elapsed": 0.01071462154737415
+     },
+     "out": {
+      "confident": false,
+      "value": 4.215180453135049
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 46.53197187885523,
+      "action": "predict",
+      "elapsed": 0.011250655273521619
+     },
+     "out": {
+      "confident": false,
+      "value": 4.738695627941251
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.000671967097695,
+      "action": "predict",
+      "elapsed": 0.009234071531693382
+     },
+     "out": {
+      "confident": true,
+      "value": 5.191171337986473
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 44.134672129522045,
+      "action": "predict",
+      "elapsed": 0.010268668845210813
+     },
+     "out": {
+      "confident": true,
+      "value": 5.6443756706764905
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 69.23994546910524,
+      "action": "predict",
+      "elapsed": 0.010213983174968841
+     },
+     "out": {
+      "confident": true,
+      "value": 6.351591308733691
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 22.286267328862795,
+      "action": "predict",
+      "elapsed": 0.01189061963891213
+     },
+     "out": {
+      "confident": true,
+      "value": 6.616588836712313
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 43.18753526869196,
+      "action": "predict",
+      "elapsed": 0.010111306640693006
+     },
+     "out": {
+      "confident": true,
+      "value": 7.053271248869802
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 44.69928288608174,
+      "action": "predict",
+      "elapsed": 0.008917942746974647
+     },
+     "out": {
+      "confident": true,
+      "value": 7.451896894478702
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 35.05376366570499,
+      "action": "predict",
+      "elapsed": 0.011413659529069267
+     },
+     "out": {
+      "confident": true,
+      "value": 7.851988618171518
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 64.56152285285455,
+      "action": "predict",
+      "elapsed": 0.008290291276765394
+     },
+     "out": {
+      "confident": true,
+      "value": 8.387222447893228
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 23.28100910358011,
+      "action": "predict",
+      "elapsed": 0.009778035219802913
+     },
+     "out": {
+      "confident": true,
+      "value": 8.614864974860586
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.38980258762093,
+      "action": "predict",
+      "elapsed": 0.01119470160957674
+     },
+     "out": {
+      "confident": true,
+      "value": 9.167769077384904
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 25.67604693260591,
+      "action": "predict",
+      "elapsed": 0.008708898598285728
+     },
+     "out": {
+      "confident": true,
+      "value": 9.391379166525795
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 62.26195512156748,
+      "action": "predict",
+      "elapsed": 0.008870663392825662
+     },
+     "out": {
+      "confident": true,
+      "value": 9.943684012588438
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 32.72122156070374,
+      "action": "predict",
+      "elapsed": 0.010485022839674051
+     },
+     "out": {
+      "confident": true,
+      "value": 10.286766767994452
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 45.45391603632213,
+      "action": "predict",
+      "elapsed": 0.011700642200548986
+     },
+     "out": {
+      "confident": true,
+      "value": 10.818606776149252
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 40.72995964821776,
+      "action": "predict",
+      "elapsed": 0.008728253871885127
+     },
+     "out": {
+      "confident": true,
+      "value": 11.174108204150533
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 59.39086362821522,
+      "action": "predict",
+      "elapsed": 0.008032130821298838
+     },
+     "out": {
+      "confident": true,
+      "value": 11.651143390402277
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 25.38641563495606,
+      "action": "predict",
+      "elapsed": 0.008459099217416506
+     },
+     "out": {
+      "confident": true,
+      "value": 11.865889599032943
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.96974531743527,
+      "action": "predict",
+      "elapsed": 0.011738395413446871
+     },
+     "out": {
+      "confident": true,
+      "value": 12.46419262369168
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 41.61602793998533,
+      "action": "predict",
+      "elapsed": 0.009294800246557936
+     },
+     "out": {
+      "confident": true,
+      "value": 12.851005290449018
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 44.56480384917979,
+      "action": "predict",
+      "elapsed": 0.01019736790015866
+     },
+     "out": {
+      "confident": true,
+      "value": 13.305448990697512
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 23.744101678278327,
+      "action": "predict",
+      "elapsed": 0.009948032814042908
+     },
+     "out": {
+      "confident": true,
+      "value": 13.541656093332996
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 45.10069926734266,
+      "action": "predict",
+      "elapsed": 0.009816897470670709
+     },
+     "out": {
+      "confident": true,
+      "value": 13.984405033896053
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -16.745306430392862,
+      "action": "predict",
+      "elapsed": 0.011606906884030248
+     },
+     "out": {
+      "confident": true,
+      "value": 13.79004382141393
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -15.442265998748576,
+      "action": "predict",
+      "elapsed": 0.008842622442392869
+     },
+     "out": {
+      "confident": true,
+      "value": 13.653493693531995
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 47.494913400659335,
+      "has_fix": false
+     },
+     "out": {
+      "confident": true,
+      "value": 13.653493693531995
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -23.072776796841048,
+      "action": "predict",
+      "elapsed": 0.010645118934057934
+     },
+     "out": {
+      "confident": true,
+      "value": 13.407881240390651
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -18.45157090687553,
+      "action": "predict",
+      "elapsed": 0.011456746353987413
+     },
+     "out": {
+      "confident": true,
+      "value": 13.196486272677964
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -14.809755819607924,
+      "action": "predict",
+      "elapsed": 0.008539289250461789
+     },
+     "out": {
+      "confident": true,
+      "value": 13.070021484005622
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 41.983935725860086,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 18.852804332376515
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -12.10721633516518,
+      "action": "predict",
+      "elapsed": 0.009709488283278438
+     },
+     "out": {
+      "confident": true,
+      "value": 18.735249457227113
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -22.746461592761325,
+      "action": "predict",
+      "elapsed": 0.010919748758015487
+     },
+     "out": {
+      "confident": true,
+      "value": 18.48686381150031
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -15.418320567634167,
+      "action": "predict",
+      "elapsed": 0.008153608994267892
+     },
+     "out": {
+      "confident": true,
+      "value": 18.36114885424354
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -18.85560051001618,
+      "action": "predict",
+      "elapsed": 0.010140887878564491
+     },
+     "out": {
+      "confident": true,
+      "value": 18.169936323588463
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -13.382816850367472,
+      "action": "predict",
+      "elapsed": 0.00896898229820069
+     },
+     "out": {
+      "confident": true,
+      "value": 18.049906076157455
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -12.05403291749708,
+      "action": "predict",
+      "elapsed": 0.010124252376210341
+     },
+     "out": {
+      "confident": true,
+      "value": 17.927868004749566
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 75.17508659684938,
+      "has_fix": false
+     },
+     "out": {
+      "confident": true,
+      "value": 17.927868004749566
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -5.4058279911984535,
+      "action": "predict",
+      "elapsed": 0.008718580476146482
+     },
+     "out": {
+      "confident": true,
+      "value": 17.880736858368095
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -15.080823619587647,
+      "action": "predict",
+      "elapsed": 0.008101224649064221
+     },
+     "out": {
+      "confident": true,
+      "value": 17.7585637183329
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -20.112123649914803,
+      "action": "predict",
+      "elapsed": 0.011865615631924084
+     },
+     "out": {
+      "confident": true,
+      "value": 17.51992098956128
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -10.477355450677527,
+      "action": "predict",
+      "elapsed": 0.01165204706415574
+     },
+     "out": {
+      "confident": true,
+      "value": 17.3978383507421
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -12.169283364667283,
+      "action": "predict",
+      "elapsed": 0.011902339826356767
+     },
+     "out": {
+      "confident": true,
+      "value": 17.252995404692598
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -4.099770486737604,
+      "action": "predict",
+      "elapsed": 0.01050756435194552
+     },
+     "out": {
+      "confident": true,
+      "value": 17.209916802474996
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -8.108128936080362,
+      "action": "predict",
+      "elapsed": 0.011868074331672175
+     },
+     "out": {
+      "confident": true,
+      "value": 17.113688925570813
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -13.78307836346204,
+      "action": "predict",
+      "elapsed": 0.009041715672637271
+     },
+     "out": {
+      "confident": true,
+      "value": 16.98906624991471
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -4.511404762291651,
+      "action": "predict",
+      "elapsed": 0.009242812629447143
+     },
+     "out": {
+      "confident": true,
+      "value": 16.947368181001252
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 19.903082118375064,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 17.538510968476015
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -9.001395978665599,
+      "action": "predict",
+      "elapsed": 0.008645404287276127
+     },
+     "out": {
+      "confident": true,
+      "value": 17.46069026109059
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -21.660613450182346,
+      "action": "predict",
+      "elapsed": 0.011596484277897782
+     },
+     "out": {
+      "confident": true,
+      "value": 17.20950329776593
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -2.8732995967887227,
+      "action": "predict",
+      "elapsed": 0.011378916477221791
+     },
+     "out": {
+      "confident": true,
+      "value": 17.176808261640037
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -18.92099265183464,
+      "action": "predict",
+      "elapsed": 0.008956966503624837
+     },
+     "out": {
+      "confident": true,
+      "value": 17.007333564242224
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -19.34595686695977,
+      "action": "predict",
+      "elapsed": 0.008892663998246165
+     },
+     "out": {
+      "confident": true,
+      "value": 16.835296470099788
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.12421412871526438,
+      "action": "predict",
+      "elapsed": 0.13693866492215948
+     },
+     "out": {
+      "confident": true,
+      "value": 16.852306187050527
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 22.44758148459134,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 17.97136124655869
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.4385374980246116,
+      "action": "predict",
+      "elapsed": 0.18234141328485817
+     },
+     "out": {
+      "confident": true,
+      "value": 17.891397699390478
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 19.102099567493703,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 18.133538073011124
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.0898797981453123,
+      "action": "predict",
+      "elapsed": 0.08568662076368415
+     },
+     "out": {
+      "confident": true,
+      "value": 18.12583657683313
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 21.266771982173815,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 19.696304279503472
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.9970105719650315,
+      "action": "predict",
+      "elapsed": 0.02004236684313017
+     },
+     "out": {
+      "confident": true,
+      "value": 19.67632182787367
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 8.666532576732015,
+      "gain": 0.3
+     },
+     "out": {
+      "confident": true,
+      "value": 16.373385052531177
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.5059489795064891,
+      "action": "predict",
+      "elapsed": 0.0961034807893629
+     },
+     "out": {
+      "confident": true,
+      "value": 16.324761594498778
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 12.011400695969318,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 14.168081145234048
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.8922347138763316,
+      "action": "predict",
+      "elapsed": 0.043538506125194464
+     },
+     "out": {
+      "confident": true,
+      "value": 14.085696072553638
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 20.347749791815904,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 15.338106816406091
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.09489854048615431,
+      "action": "predict",
+      "elapsed": 0.19858425556176165
+     },
+     "out": {
+      "confident": true,
+      "value": 15.31926146038975
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 75.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 15.31926146038975
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.28603910777795266,
+      "action": "predict",
+      "elapsed": 0.16403559068200857
+     },
+     "out": {
+      "confident": true,
+      "value": 15.272340866387239
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 4.728266194614468,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 13.163525932032684
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.5650461518034895,
+      "action": "predict",
+      "elapsed": 0.16018346668371347
+     },
+     "out": {
+      "confident": true,
+      "value": 12.912831413916795
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 18.550961078363613,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 15.731896246140204
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.1892754089100846,
+      "action": "predict",
+      "elapsed": 0.09451362350970453
+     },
+     "out": {
+      "confident": true,
+      "value": 15.749785350877577
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 20.636884191611678,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 18.19333477124463
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 1.0663462528156815,
+      "action": "predict",
+      "elapsed": 0.17065618280766487
+     },
+     "out": {
+      "confident": true,
+      "value": 18.37531335230141
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.4598709146136626,
+      "action": "predict",
+      "elapsed": 0.03924633382591908
+     },
+     "out": {
+      "confident": true,
+      "value": 18.318018771043732
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 16.419501313283654,
+      "gain": 0.3
+     },
+     "out": {
+      "confident": true,
+      "value": 17.748463533715707
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.26118527483274473,
+      "action": "predict",
+      "elapsed": 0.18260166726090624
+     },
+     "out": {
+      "confident": true,
+      "value": 17.796156400364165
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 25.659752941641568,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 19.368875708619644
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 1.066591085367592,
+      "action": "predict",
+      "elapsed": 0.11157577268049447
+     },
+     "out": {
+      "confident": true,
+      "value": 19.48788143310366
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 4.057634202139823,
+      "has_fix": false
+     },
+     "out": {
+      "confident": true,
+      "value": 19.48788143310366
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.936479559762214,
+      "action": "predict",
+      "elapsed": 0.18714020841182843
+     },
+     "out": {
+      "confident": true,
+      "value": 19.663134413090976
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 26.859951740751214,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 21.102497878623023
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.7368578081026926,
+      "action": "predict",
+      "elapsed": 0.03377299509016315
+     },
+     "out": {
+      "confident": true,
+      "value": 21.077611983487824
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 9.432951784497028,
+      "gain": 0.3
+     },
+     "out": {
+      "confident": true,
+      "value": 17.584213923790585
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.840879689424285,
+      "action": "predict",
+      "elapsed": 0.06446217201300142
+     },
+     "out": {
+      "confident": true,
+      "value": 17.465546820595677
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 5.97786083034827,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 15.168009622546196
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.7925914985982891,
+      "action": "predict",
+      "elapsed": 0.04827286016552615
+     },
+     "out": {
+      "confident": true,
+      "value": 15.08147610380045
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 24.270440441395216,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 16.919268971319404
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 1.3452780530472377,
+      "action": "predict",
+      "elapsed": 0.14400547576862718
+     },
+     "out": {
+      "confident": true,
+      "value": 17.112996377389564
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 18.9514744445457,
+      "gain": 0.3
+     },
+     "out": {
+      "confident": true,
+      "value": 17.664539797536406
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.6064482234721513,
+      "action": "predict",
+      "elapsed": 0.05387876493685907
+     },
+     "out": {
+      "confident": true,
+      "value": 17.631865116257575
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.0995199530278233,
+      "action": "predict",
+      "elapsed": 0.025921723386351743
+     },
+     "out": {
+      "confident": true,
+      "value": 17.629285387563765
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 13.812451986912752,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 15.720868687238259
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 2.211148480762514,
+      "action": "predict",
+      "elapsed": 0.08020761597212725
+     },
+     "out": {
+      "confident": true,
+      "value": 15.898219635440611
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 14.186680674414843,
+      "gain": 0.3
+     },
+     "out": {
+      "confident": true,
+      "value": 15.384757947132881
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.33858854730892163,
+      "action": "predict",
+      "elapsed": 0.17666401561698716
+     },
+     "out": {
+      "confident": true,
+      "value": 15.324941534723365
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.7296914103537478,
+      "action": "predict",
+      "elapsed": 0.04751929106608954
+     },
+     "out": {
+      "confident": true,
+      "value": 15.35961595324039
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 75.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 15.35961595324039
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -2.5367339678932663,
+      "action": "predict",
+      "elapsed": 0.11757296728279765
+     },
+     "out": {
+      "confident": true,
+      "value": 15.061364613428113
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 14.94098671796484,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 15.001175665696476
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.8003939228826416,
+      "action": "predict",
+      "elapsed": 0.16026921095361532
+     },
+     "out": {
+      "confident": true,
+      "value": 14.872897163224005
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 22.503306947984647,
+      "gain": 0.3
+     },
+     "out": {
+      "confident": true,
+      "value": 17.1620200986522
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.428234360268382,
+      "action": "predict",
+      "elapsed": 0.041853149502760076
+     },
+     "out": {
+      "confident": true,
+      "value": 17.17994305535473
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 26.025636133499887,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 18.949081670983762
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.5123948998232153,
+      "action": "predict",
+      "elapsed": 0.14261877261793732
+     },
+     "out": {
+      "confident": true,
+      "value": 19.02215880269224
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 9.196480326294388,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 17.057023107412668
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.3037879216833596,
+      "action": "predict",
+      "elapsed": 0.08042659778865187
+     },
+     "out": {
+      "confident": true,
+      "value": 17.081455736402948
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 4.7845124928778375,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 14.622067087697925
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.10074701234247477,
+      "action": "predict",
+      "elapsed": 0.022117101008464434
+     },
+     "out": {
+      "confident": true,
+      "value": 14.624295319546205
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.14524852489636947,
+      "action": "predict",
+      "elapsed": 0.0213853692657964
+     },
+     "out": {
+      "confident": true,
+      "value": 14.621189126205984
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.009357577062470469,
+      "action": "predict",
+      "elapsed": 0.11744120848934239
+     },
+     "out": {
+      "confident": true,
+      "value": 14.620090161047235
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.5845412411768419,
+      "action": "predict",
+      "elapsed": 0.04593514985148914
+     },
+     "out": {
+      "confident": true,
+      "value": 14.646941150555069
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 10.344050876691437,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 12.495496013623253
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.1493566910862332,
+      "action": "predict",
+      "elapsed": 0.04900491759906242
+     },
+     "out": {
+      "confident": true,
+      "value": 12.439171883684642
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 1.927979664560274,
+      "action": "predict",
+      "elapsed": 0.10496358921143172
+     },
+     "out": {
+      "confident": true,
+      "value": 12.641539549203541
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 22.536933448761552,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 17.589236498982547
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.0058000966906230755,
+      "action": "predict",
+      "elapsed": 0.05482923514261971
+     },
+     "out": {
+      "confident": true,
+      "value": 17.589554513847848
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.07652300823090499,
+      "action": "predict",
+      "elapsed": 0.1275137836731856
+     },
+     "out": {
+      "confident": true,
+      "value": 17.57979677553027
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 25.34241139845757,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 21.46110408699392
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.7089301257252572,
+      "action": "predict",
+      "elapsed": 0.08335469872574496
+     },
+     "out": {
+      "confident": true,
+      "value": 21.520196744041353
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 24.811908785008573,
+      "gain": 0.3
+     },
+     "out": {
+      "confident": true,
+      "value": 22.50771035633152
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.065407364770787,
+      "action": "predict",
+      "elapsed": 0.061295373349398594
+     },
+     "out": {
+      "confident": true,
+      "value": 22.442405814138695
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 8.085779566545572,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 19.57108056462007
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.3979042512336846,
+      "action": "predict",
+      "elapsed": 0.03148295827680331
+     },
+     "out": {
+      "confident": true,
+      "value": 19.527070403403513
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 18.6488540963931,
+      "gain": 0.3
+     },
+     "out": {
+      "confident": true,
+      "value": 19.26360551130039
+     }
+    }
+   ]
+  },
+  {
+   "init": {
+    "ceiling": 60.0,
+    "gnss_gain": 0.1
+   },
+   "name": "sweep_01",
+   "steps": [
+    {
+     "in": {
+      "acceleration_along": 0.27058375478557595,
+      "action": "predict",
+      "elapsed": 0.011259568862646946
+     },
+     "out": {
+      "confident": false,
+      "value": 0.0030466564201217677
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.011963975433156549,
+      "action": "predict",
+      "elapsed": 0.008032799778561346
+     },
+     "out": {
+      "confident": false,
+      "value": 0.002950552200911594
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.15236212864984414,
+      "action": "predict",
+      "elapsed": 0.00806860810626685
+     },
+     "out": {
+      "confident": false,
+      "value": 0.0017212018945993893
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 0.12287480425669406,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": false,
+      "value": 0.12287480425669406
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.4891645041155219,
+      "action": "predict",
+      "elapsed": 0.010523103720678419
+     },
+     "out": {
+      "confident": false,
+      "value": 0.1177272754434122
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.06978490993619353,
+      "action": "predict",
+      "elapsed": 0.011747686829989595
+     },
+     "out": {
+      "confident": false,
+      "value": 0.11690746417602277
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 39.75276762552684,
+      "action": "predict",
+      "elapsed": 0.011915583142001052
+     },
+     "out": {
+      "confident": false,
+      "value": 0.5905848719426356
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 31.31494412810855,
+      "action": "predict",
+      "elapsed": 0.009728440849638434
+     },
+     "out": {
+      "confident": false,
+      "value": 0.8952304536026721
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 39.635661905712055,
+      "action": "predict",
+      "elapsed": 0.009809247518275497
+     },
+     "out": {
+      "confident": false,
+      "value": 1.2840264717864847
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 63.862394635997944,
+      "action": "predict",
+      "elapsed": 0.009387788098653796
+     },
+     "out": {
+      "confident": false,
+      "value": 1.8835531001018382
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 56.4186256846294,
+      "action": "predict",
+      "elapsed": 0.009251652879600796
+     },
+     "out": {
+      "confident": false,
+      "value": 2.4055186408801594
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 30.09998297522548,
+      "action": "predict",
+      "elapsed": 0.01106809755527368
+     },
+     "out": {
+      "confident": false,
+      "value": 2.738668188862032
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 29.050477150570742,
+      "action": "predict",
+      "elapsed": 0.009599056329996325
+     },
+     "out": {
+      "confident": false,
+      "value": 3.0175253554436314
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 52.51195647496479,
+      "action": "predict",
+      "elapsed": 0.0090782115010556
+     },
+     "out": {
+      "confident": false,
+      "value": 3.494240002657588
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 50.8264428615734,
+      "action": "predict",
+      "elapsed": 0.009785875485960145
+     },
+     "out": {
+      "confident": false,
+      "value": 3.9916212438952132
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 29.402366666533226,
+      "action": "predict",
+      "elapsed": 0.008657929730550693
+     },
+     "out": {
+      "confident": false,
+      "value": 4.246184868405944
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 49.610112836873164,
+      "action": "predict",
+      "elapsed": 0.01153307545624499
+     },
+     "out": {
+      "confident": false,
+      "value": 4.818342043146431
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 26.832527028228597,
+      "action": "predict",
+      "elapsed": 0.008390984984909497
+     },
+     "out": {
+      "confident": true,
+      "value": 5.0434933745474755
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 64.84941930781514,
+      "action": "predict",
+      "elapsed": 0.009416072492267407
+     },
+     "out": {
+      "confident": true,
+      "value": 5.654120207831308
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 37.249249205173754,
+      "action": "predict",
+      "elapsed": 0.010685469005320336
+     },
+     "out": {
+      "confident": true,
+      "value": 6.052145905684646
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 61.35880241479921,
+      "action": "predict",
+      "elapsed": 0.010821232838177599
+     },
+     "out": {
+      "confident": true,
+      "value": 6.716123793286922
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 38.330080017269424,
+      "action": "predict",
+      "elapsed": 0.011666562621078607
+     },
+     "out": {
+      "confident": true,
+      "value": 7.16330407207935
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 43.50104279819441,
+      "action": "predict",
+      "elapsed": 0.009543670884041237
+     },
+     "out": {
+      "confident": true,
+      "value": 7.578463707657909
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 42.904965588460996,
+      "action": "predict",
+      "elapsed": 0.011250470355303665
+     },
+     "out": {
+      "confident": true,
+      "value": 8.061164751106213
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 52.793189879917755,
+      "action": "predict",
+      "elapsed": 0.008689655725659714
+     },
+     "out": {
+      "confident": true,
+      "value": 8.51991939582208
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 24.73344787972898,
+      "action": "predict",
+      "elapsed": 0.011837009525366302
+     },
+     "out": {
+      "confident": true,
+      "value": 8.812689453969584
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 38.65819972106115,
+      "action": "predict",
+      "elapsed": 0.00976519988268204
+     },
+     "out": {
+      "confident": true,
+      "value": 9.19019450135039
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 53.18152024367734,
+      "action": "predict",
+      "elapsed": 0.010011757638359204
+     },
+     "out": {
+      "confident": true,
+      "value": 9.722634992869581
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 52.12797104992558,
+      "action": "predict",
+      "elapsed": 0.011084045419085342
+     },
+     "out": {
+      "confident": true,
+      "value": 10.300423791591722
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 23.55195818121914,
+      "action": "predict",
+      "elapsed": 0.011990197483446402
+     },
+     "out": {
+      "confident": true,
+      "value": 10.582816421306411
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 20.11418521266738,
+      "action": "predict",
+      "elapsed": 0.00924123459446075
+     },
+     "out": {
+      "confident": true,
+      "value": 10.768696325533105
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 66.54346108830585,
+      "action": "predict",
+      "elapsed": 0.01139999326950633
+     },
+     "out": {
+      "confident": true,
+      "value": 11.527291334069448
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 68.21574172259974,
+      "action": "predict",
+      "elapsed": 0.011256115049984746
+     },
+     "out": {
+      "confident": true,
+      "value": 12.295135571119076
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 51.63157081506178,
+      "action": "predict",
+      "elapsed": 0.01111371978271904
+     },
+     "out": {
+      "confident": true,
+      "value": 12.868954381099286
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 66.17448008571309,
+      "action": "predict",
+      "elapsed": 0.011067515735210242
+     },
+     "out": {
+      "confident": true,
+      "value": 13.601341480717272
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -19.49470352869315,
+      "action": "predict",
+      "elapsed": 0.010807281568189123
+     },
+     "out": {
+      "confident": true,
+      "value": 13.390656730594316
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -9.517086022920752,
+      "action": "predict",
+      "elapsed": 0.008631057107600627
+     },
+     "out": {
+      "confident": true,
+      "value": 13.308514217632538
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -9.123151151734415,
+      "action": "predict",
+      "elapsed": 0.009524611633808218
+     },
+     "out": {
+      "confident": true,
+      "value": 13.221619746035739
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 9.44198734195988,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 12.843656505628152
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -14.398204097743049,
+      "action": "predict",
+      "elapsed": 0.009649342103855636
+     },
+     "out": {
+      "confident": true,
+      "value": 12.704723308607893
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -20.531784621871083,
+      "action": "predict",
+      "elapsed": 0.011914719845532027
+     },
+     "out": {
+      "confident": true,
+      "value": 12.460092846909497
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -22.83384254943566,
+      "action": "predict",
+      "elapsed": 0.01123590123262182
+     },
+     "out": {
+      "confident": true,
+      "value": 12.2035340472628
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -10.769374332717078,
+      "action": "predict",
+      "elapsed": 0.011312489921228434
+     },
+     "out": {
+      "confident": true,
+      "value": 12.081705608666
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -2.564103812419578,
+      "action": "predict",
+      "elapsed": 0.010355950778623712
+     },
+     "out": {
+      "confident": true,
+      "value": 12.055151875793301
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -7.343713390455662,
+      "action": "predict",
+      "elapsed": 0.01170532265932711
+     },
+     "out": {
+      "confident": true,
+      "value": 11.969191341040396
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -11.58778574890625,
+      "action": "predict",
+      "elapsed": 0.009519306630181162
+     },
+     "out": {
+      "confident": true,
+      "value": 11.858883655331715
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -22.763599460733907,
+      "action": "predict",
+      "elapsed": 0.010181625534699656
+     },
+     "out": {
+      "confident": true,
+      "value": 11.627113209800632
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -5.905496083844252,
+      "action": "predict",
+      "elapsed": 0.010071007037917147
+     },
+     "out": {
+      "confident": true,
+      "value": 11.567638917177844
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -22.126776174347423,
+      "action": "predict",
+      "elapsed": 0.01080961247395003
+     },
+     "out": {
+      "confident": true,
+      "value": 11.328457041435318
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -10.858607940562097,
+      "action": "predict",
+      "elapsed": 0.008572278559976287
+     },
+     "out": {
+      "confident": true,
+      "value": 11.235374029395249
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -19.0429289991155,
+      "action": "predict",
+      "elapsed": 0.010919124968153657
+     },
+     "out": {
+      "confident": true,
+      "value": 11.02744190789423
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -17.210380567665464,
+      "action": "predict",
+      "elapsed": 0.008576592910728311
+     },
+     "out": {
+      "confident": true,
+      "value": 10.879835479926655
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.3042476646440748,
+      "action": "predict",
+      "elapsed": 0.04086993292586693
+     },
+     "out": {
+      "confident": true,
+      "value": 10.826530965353934
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 7.686485510011995,
+      "has_fix": false
+     },
+     "out": {
+      "confident": true,
+      "value": 10.826530965353934
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.5622852700128709,
+      "action": "predict",
+      "elapsed": 0.11850302429518583
+     },
+     "out": {
+      "confident": true,
+      "value": 10.641395436045588
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 27.88259298606002,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 12.365515191047031
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.4898997320417804,
+      "action": "predict",
+      "elapsed": 0.02914158403210719
+     },
+     "out": {
+      "confident": true,
+      "value": 12.379791645255633
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 17.78647985683146,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 15.083135751043546
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.06135636529306346,
+      "action": "predict",
+      "elapsed": 0.12667381956392987
+     },
+     "out": {
+      "confident": true,
+      "value": 15.075363505897315
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 1.0537446786420543,
+      "action": "predict",
+      "elapsed": 0.19882736365888137
+     },
+     "out": {
+      "confident": true,
+      "value": 15.28487678232129
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 4.264703133764558,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 14.182859417465616
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.986682021075647,
+      "action": "predict",
+      "elapsed": 0.16534541406128037
+     },
+     "out": {
+      "confident": true,
+      "value": 14.34600276478719
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 21.16258827043695,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 15.027661315352166
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.519504625416331,
+      "action": "predict",
+      "elapsed": 0.05824344216754607
+     },
+     "out": {
+      "confident": true,
+      "value": 14.997403577745956
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 19.852593859726312,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 15.482922605943992
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.8018158823357795,
+      "action": "predict",
+      "elapsed": 0.07040314478499192
+     },
+     "out": {
+      "confident": true,
+      "value": 15.356069101504009
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.31870743588781825,
+      "action": "predict",
+      "elapsed": 0.17229864250402038
+     },
+     "out": {
+      "confident": true,
+      "value": 15.410981960063417
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 17.731000535556596,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 16.570991247810007
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 2.403529104456729,
+      "action": "predict",
+      "elapsed": 0.1325635895490871
+     },
+     "out": {
+      "confident": true,
+      "value": 16.889611693482493
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 75.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 16.889611693482493
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.17405207288378896,
+      "action": "predict",
+      "elapsed": 0.17103236512477185
+     },
+     "out": {
+      "confident": true,
+      "value": 16.85984315580231
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 21.20392188788864,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 19.031882521845475
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 1.2601958310344898,
+      "action": "predict",
+      "elapsed": 0.07935152538406891
+     },
+     "out": {
+      "confident": true,
+      "value": 19.131880983320706
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 17.299636659249302,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 18.948656550913565
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.4242592487936,
+      "action": "predict",
+      "elapsed": 0.1008767135434896
+     },
+     "out": {
+      "confident": true,
+      "value": 18.905858672204836
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 7.771825688033288,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 17.792455373787682
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.8622555388726496,
+      "action": "predict",
+      "elapsed": 0.14207740537359664
+     },
+     "out": {
+      "confident": true,
+      "value": 17.527870938682046
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 20.761590873459227,
+      "has_fix": false
+     },
+     "out": {
+      "confident": true,
+      "value": 17.527870938682046
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -2.7357834599847903,
+      "action": "predict",
+      "elapsed": 0.15209300203177703
+     },
+     "out": {
+      "confident": true,
+      "value": 17.111777419344076
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 18.64120646370729,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 17.2647203237804
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.2445383169529303,
+      "action": "predict",
+      "elapsed": 0.05512333948013977
+     },
+     "out": {
+      "confident": true,
+      "value": 17.19611721563896
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 12.987570156780908,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 15.091843686209934
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.317900568275228,
+      "action": "predict",
+      "elapsed": 0.11110474775742381
+     },
+     "out": {
+      "confident": true,
+      "value": 14.94541867600235
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.36937231103373114,
+      "action": "predict",
+      "elapsed": 0.08084936105602605
+     },
+     "out": {
+      "confident": true,
+      "value": 14.915555160663484
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 8.1691982868164,
+      "has_fix": false
+     },
+     "out": {
+      "confident": true,
+      "value": 14.915555160663484
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.936024137918535,
+      "action": "predict",
+      "elapsed": 0.10464554970760971
+     },
+     "out": {
+      "confident": true,
+      "value": 14.817604400211406
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 14.717976833811623,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 14.807641643571428
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.03908941692645338,
+      "action": "predict",
+      "elapsed": 0.09339982990642486
+     },
+     "out": {
+      "confident": true,
+      "value": 14.803990698679355
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 8.368158858084293,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 11.586074778381825
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.2523243805027404,
+      "action": "predict",
+      "elapsed": 0.09379717624218767
+     },
+     "out": {
+      "confident": true,
+      "value": 11.609742092770041
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 18.49324170875217,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 15.051491900761105
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.2482275979884098,
+      "action": "predict",
+      "elapsed": 0.11232815828967313
+     },
+     "out": {
+      "confident": true,
+      "value": 15.079374849679812
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 20.493475904589452,
+      "gain": 0.3
+     },
+     "out": {
+      "confident": true,
+      "value": 16.703605166152705
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.005605129980842477,
+      "action": "predict",
+      "elapsed": 0.11825011844895303
+     },
+     "out": {
+      "confident": true,
+      "value": 16.704267973436863
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 13.253106946748947,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 14.978687460092905
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 1.4826462390426711,
+      "action": "predict",
+      "elapsed": 0.09327818561242197
+     },
+     "out": {
+      "confident": true,
+      "value": 15.116986011175886
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 12.93761678295322,
+      "has_fix": false
+     },
+     "out": {
+      "confident": true,
+      "value": 15.116986011175886
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.9897448872934591,
+      "action": "predict",
+      "elapsed": 0.13989042709528068
+     },
+     "out": {
+      "confident": true,
+      "value": 15.255441846174739
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 24.84035868917729,
+      "gain": 0.3
+     },
+     "out": {
+      "confident": true,
+      "value": 18.130916899075505
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.1784617197762335,
+      "action": "predict",
+      "elapsed": 0.15545011490014318
+     },
+     "out": {
+      "confident": true,
+      "value": 17.947724889330868
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 19.874342329853597,
+      "has_fix": false
+     },
+     "out": {
+      "confident": true,
+      "value": 17.947724889330868
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 1.0592947201911427,
+      "action": "predict",
+      "elapsed": 0.11972845680226117
+     },
+     "out": {
+      "confident": true,
+      "value": 18.074552611478136
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 75.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 18.074552611478136
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.8950716408016928,
+      "action": "predict",
+      "elapsed": 0.054751653484567245
+     },
+     "out": {
+      "confident": true,
+      "value": 18.0255459591571
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.3996368301304387,
+      "action": "predict",
+      "elapsed": 0.05246842662402855
+     },
+     "out": {
+      "confident": true,
+      "value": 17.95210921683511
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 15.737259913098551,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 16.844684564966833
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -2.4226065768056273,
+      "action": "predict",
+      "elapsed": 0.167497678757872
+     },
+     "out": {
+      "confident": true,
+      "value": 16.438903586808337
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.5622884560144996,
+      "action": "predict",
+      "elapsed": 0.19277123039373179
+     },
+     "out": {
+      "confident": true,
+      "value": 16.137739318912498
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 75.0,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 16.137739318912498
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.7053612342116503,
+      "action": "predict",
+      "elapsed": 0.026204633869686658
+     },
+     "out": {
+      "confident": true,
+      "value": 16.11925558602411
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 23.865534801823433,
+      "has_fix": false
+     },
+     "out": {
+      "confident": true,
+      "value": 16.11925558602411
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.18363940084328065,
+      "action": "predict",
+      "elapsed": 0.08117358226615534
+     },
+     "out": {
+      "confident": true,
+      "value": 16.13416225403577
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 15.438816779046341,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 16.064627706536825
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 3.2711337729718193,
+      "action": "predict",
+      "elapsed": 0.12476403971358367
+     },
+     "out": {
+      "confident": true,
+      "value": 16.472747570496328
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 28.84087935623037,
+      "has_fix": false
+     },
+     "out": {
+      "confident": true,
+      "value": 16.472747570496328
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.4671756138086288,
+      "action": "predict",
+      "elapsed": 0.14194960395748618
+     },
+     "out": {
+      "confident": true,
+      "value": 16.406432177137596
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 6.787058252543025,
+      "has_fix": false
+     },
+     "out": {
+      "confident": true,
+      "value": 16.406432177137596
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.8633753663239319,
+      "action": "predict",
+      "elapsed": 0.038313823442162345
+     },
+     "out": {
+      "confident": true,
+      "value": 16.439511388487244
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 28.919971203151288,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 17.687557369953648
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.8725214634117158,
+      "action": "predict",
+      "elapsed": 0.17479041272512957
+     },
+     "out": {
+      "confident": true,
+      "value": 17.840065756654916
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 8.817772075644754,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 13.328918916149835
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 1.849965810469684,
+      "action": "predict",
+      "elapsed": 0.189764240492044
+     },
+     "out": {
+      "confident": true,
+      "value": 13.679976273109864
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 18.936294303885614,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 14.205608076187438
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -3.3850632373531706,
+      "action": "predict",
+      "elapsed": 0.03754945903277075
+     },
+     "out": {
+      "confident": true,
+      "value": 14.078500782833107
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 8.765593255801562,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 11.422047019317334
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.44116712866950597,
+      "action": "predict",
+      "elapsed": 0.12554794030938501
+     },
+     "out": {
+      "confident": true,
+      "value": 11.477434643653996
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 9.40699718323727,
+      "has_fix": false
+     },
+     "out": {
+      "confident": true,
+      "value": 11.477434643653996
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.249735066706501,
+      "action": "predict",
+      "elapsed": 0.1370966724756653
+     },
+     "out": {
+      "confident": true,
+      "value": 11.306100124532382
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 8.461236694883944,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 9.883668409708163
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 1.6991075449748663,
+      "action": "predict",
+      "elapsed": 0.07379033558059622
+     },
+     "out": {
+      "confident": true,
+      "value": 10.009046125639381
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 11.633007704737736,
+      "has_fix": false
+     },
+     "out": {
+      "confident": true,
+      "value": 10.009046125639381
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.6881879886219636,
+      "action": "predict",
+      "elapsed": 0.13179483071465392
+     },
+     "out": {
+      "confident": true,
+      "value": 10.099745745099671
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 2.965459620994878,
+      "action": "predict",
+      "elapsed": 0.14734274290202842
+     },
+     "out": {
+      "confident": true,
+      "value": 10.536684699622267
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 8.690065664239658,
+      "gain": 0.3
+     },
+     "out": {
+      "confident": true,
+      "value": 9.982698989007485
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.36266859926205,
+      "action": "predict",
+      "elapsed": 0.17269825841447603
+     },
+     "out": {
+      "confident": true,
+      "value": 9.92006675353331
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 19.241444896916775,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 14.580755825225044
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.3276108306145847,
+      "action": "predict",
+      "elapsed": 0.17904891209714413
+     },
+     "out": {
+      "confident": true,
+      "value": 14.639414188037827
+     }
+    },
+    {
+     "in": {
+      "action": "correct",
+      "gnss_speed": 8.057278028485648,
+      "has_fix": true
+     },
+     "out": {
+      "confident": true,
+      "value": 13.98120057208261
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -1.2498349276347516,
+      "action": "predict",
+      "elapsed": 0.043039468371910514
+     },
+     "out": {
+      "confident": true,
+      "value": 13.927408341244565
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 15.390762646597373,
+      "gain": 0.3
+     },
+     "out": {
+      "confident": true,
+      "value": 14.366414632850407
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.8342493225998082,
+      "action": "predict",
+      "elapsed": 0.0338984054904556
+     },
+     "out": {
+      "confident": true,
+      "value": 14.394694354668033
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 9.671876407623554,
+      "gain": 0.3
+     },
+     "out": {
+      "confident": true,
+      "value": 12.977848970554689
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 0.9926042438342932,
+      "action": "predict",
+      "elapsed": 0.10646714483320242
+     },
+     "out": {
+      "confident": true,
+      "value": 13.083528710345046
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 11.779116336867489,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 12.431322523606267
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.13711279589047284,
+      "action": "predict",
+      "elapsed": 0.1283471488024524
+     },
+     "out": {
+      "confident": true,
+      "value": 12.413724487189393
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.4318434257426875,
+      "action": "predict",
+      "elapsed": 0.09542387777639841
+     },
+     "out": {
+      "confident": true,
+      "value": 12.372516312912781
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": 1.694601466784493,
+      "action": "predict",
+      "elapsed": 0.04397299808847434
+     },
+     "out": {
+      "confident": true,
+      "value": 12.447033019972421
+     }
+    },
+    {
+     "in": {
+      "acceleration_along": -0.19276400484676776,
+      "action": "predict",
+      "elapsed": 0.05808917416680376
+     },
+     "out": {
+      "confident": true,
+      "value": 12.435835518121786
+     }
+    },
+    {
+     "in": {
+      "action": "measure",
+      "airspeed": 18.70718775946287,
+      "gain": 0.5
+     },
+     "out": {
+      "confident": true,
+      "value": 15.571511638792327
+     }
+    }
+   ]
+  }
+ ]
+}

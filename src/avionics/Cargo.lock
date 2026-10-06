@@ -280,6 +280,7 @@ name = "control"
 version = "0.1.0"
 dependencies = [
  "golden",
+ "sequencer",
  "serde_json",
 ]
 
@@ -812,6 +813,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "gnss"
+version = "0.1.0"
+dependencies = [
+ "control",
+ "golden",
+ "sequencer",
+ "serde_json",
+]
+
+[[package]]
 name = "golden"
 version = "0.1.0"
 dependencies = [
@@ -1270,6 +1281,10 @@ dependencies = [
 [[package]]
 name = "sequencer"
 version = "0.1.0"
+dependencies = [
+ "golden",
+ "serde_json",
+]
 
 [[package]]
 name = "serde"
@@ -1605,6 +1620,17 @@ checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
 dependencies = [
  "same-file",
  "winapi-util",
+]
+
+[[package]]
+name = "warmstart"
+version = "0.1.0"
+dependencies = [
+ "control",
+ "golden",
+ "sequencer",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

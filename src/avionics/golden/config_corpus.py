@@ -22,7 +22,7 @@ both read alike. Every file plan B and the tools write is sorted already.
 
 The corpus reads two inputs outside src/glider, which generate.py's provenance guard does not cover:
 tools/launch_config.py (the flight_ready_* bases) and the launches/20261003 board files. A fixture stamps them with
-tag micropython_plan_B and commit HEAD all the same, so importing this module refuses (RuntimeError) while either
+tag _TAG and commit HEAD all the same, so importing this module refuses (RuntimeError) while either
 has an uncommitted or untracked change, or differs from what the tag holds: the fixture would name inputs nobody
 can check out at the tag, and --check would then blame the committed fixture.
 
@@ -42,7 +42,7 @@ import config_hitl
 
 _ROOT: str = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', '..', '..'))
 
-_TAG: str = 'micropython_plan_B'  # the tag a fixture names (generate.py's _TAG): the inputs must be as it holds them
+_TAG: str = 'micropython_plan_B_2'  # the tag a fixture names (generate.py's _TAG): the inputs must be as it holds them
 
 """The corpus inputs outside src/glider, as repository paths (see the module docstring)."""
 _INPUTS: tuple = ('tools/launch_config.py', 'launches/20261003')

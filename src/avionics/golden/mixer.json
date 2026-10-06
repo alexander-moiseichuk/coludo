@@ -1,0 +1,4430 @@
+{
+ "actuate": {
+  "cases": [
+   {
+    "input": {
+     "bound": [
+      "servo_yaw",
+      "servo_eleron_left",
+      "servo_eleron_right"
+     ],
+     "commands": [
+      [
+       10,
+       0,
+       0
+      ],
+      [
+       0,
+       0,
+       15
+      ],
+      [
+       0,
+       100,
+       0
+      ]
+     ],
+     "config": null
+    },
+    "name": "all_bound",
+    "output": {
+     "angles": {
+      "servo_eleron_left": 135,
+      "servo_eleron_right": 135,
+      "servo_yaw": 90
+     },
+     "missing": []
+    }
+   },
+   {
+    "input": {
+     "bound": [
+      "servo_eleron_left"
+     ],
+     "commands": [
+      [
+       0,
+       10,
+       0
+      ]
+     ],
+     "config": null
+    },
+    "name": "a_fin_missing_is_skipped",
+    "output": {
+     "angles": {
+      "servo_eleron_left": 100
+     },
+     "missing": [
+      "servo_eleron_right",
+      "servo_yaw"
+     ]
+    }
+   },
+   {
+    "input": {
+     "bound": [],
+     "commands": [
+      [
+       5,
+       5,
+       5
+      ]
+     ],
+     "config": null
+    },
+    "name": "nothing_bound",
+    "output": {
+     "angles": {},
+     "missing": [
+      "servo_eleron_left",
+      "servo_eleron_right",
+      "servo_yaw"
+     ]
+    }
+   },
+   {
+    "input": {
+     "bound": [
+      "servo_yaw",
+      "servo_eleron_right"
+     ],
+     "commands": [
+      [
+       1.5,
+       -2.5,
+       3.5
+      ],
+      [
+       -7,
+       4,
+       0.5
+      ]
+     ],
+     "config": null
+    },
+    "name": "the_last_command_stands",
+    "output": {
+     "angles": {
+      "servo_eleron_right": 101,
+      "servo_yaw": 90
+     },
+     "missing": [
+      "servo_eleron_left"
+     ]
+    }
+   },
+   {
+    "input": {
+     "bound": [
+      "servo_canard",
+      "servo_yaw"
+     ],
+     "commands": [
+      [
+       3,
+       4,
+       -5
+      ],
+      [
+       2.5,
+       0,
+       0
+      ]
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "custom_partial",
+    "output": {
+     "angles": {
+      "servo_canard": 88,
+      "servo_yaw": 86
+     },
+     "missing": [
+      "servo_eleron_left",
+      "servo_eleron_right"
+     ]
+    }
+   },
+   {
+    "input": {
+     "bound": [
+      "servo_yaw",
+      "servo_eleron_left"
+     ],
+     "commands": [],
+     "config": null
+    },
+    "name": "bound_but_never_commanded",
+    "output": {
+     "angles": {
+      "servo_eleron_left": null,
+      "servo_yaw": null
+     },
+     "missing": [
+      "servo_eleron_right"
+     ]
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "bind() then actuate(): the surfaces with no fin (sorted) and angles(), each bound fin's angle"
+ },
+ "meta": {
+  "commit": "1f204b57fdfa4590bde43fde9954fbafafd7925d",
+  "generator": "mixer",
+  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "python": "3.12",
+  "source": "src/glider/mixer.py, src/glider/drivers/sg90.py (_clamp), src/glider/commons.py",
+  "tag": "micropython_plan_B_2"
+ },
+ "mix": {
+  "cases": [
+   {
+    "input": {
+     "command": [
+      0,
+      0,
+      0
+     ],
+     "config": null
+    },
+    "name": "neutral",
+    "output": {
+     "servo_eleron_left": 90,
+     "servo_eleron_right": 90,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      10,
+      0
+     ],
+     "config": null
+    },
+    "name": "pitch_moves_both_elevons",
+    "output": {
+     "servo_eleron_left": 100,
+     "servo_eleron_right": 100,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      10,
+      0,
+      0
+     ],
+     "config": null
+    },
+    "name": "roll_moves_the_elevons_differentially",
+    "output": {
+     "servo_eleron_left": 100,
+     "servo_eleron_right": 80,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      0,
+      15
+     ],
+     "config": null
+    },
+    "name": "yaw_moves_the_rudder_only",
+    "output": {
+     "servo_eleron_left": 90,
+     "servo_eleron_right": 90,
+     "servo_yaw": 105
+    }
+   },
+   {
+    "input": {
+     "command": [
+      5,
+      10,
+      0
+     ],
+     "config": null
+    },
+    "name": "roll_and_pitch_combine",
+    "output": {
+     "servo_eleron_left": 105,
+     "servo_eleron_right": 95,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      3,
+      7,
+      2
+     ],
+     "config": null
+    },
+    "name": "integer_angles_out",
+    "output": {
+     "servo_eleron_left": 100,
+     "servo_eleron_right": 94,
+     "servo_yaw": 92
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      100,
+      0
+     ],
+     "config": null
+    },
+    "name": "pitch_past_the_limit",
+    "output": {
+     "servo_eleron_left": 135,
+     "servo_eleron_right": 135,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      0,
+      -100
+     ],
+     "config": null
+    },
+    "name": "yaw_past_the_limit",
+    "output": {
+     "servo_eleron_left": 90,
+     "servo_eleron_right": 90,
+     "servo_yaw": 45
+    }
+   },
+   {
+    "input": {
+     "command": [
+      40,
+      40,
+      0
+     ],
+     "config": null
+    },
+    "name": "a_combined_demand_clamps_as_a_whole",
+    "output": {
+     "servo_eleron_left": 135,
+     "servo_eleron_right": 90,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      0,
+      0
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "tight_neutral",
+    "output": {
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      0,
+      100
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "tight_yaw_up",
+    "output": {
+     "servo_yaw": 120
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      0,
+      -100
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "tight_yaw_down",
+    "output": {
+     "servo_yaw": 60
+    }
+   },
+   {
+    "input": {
+     "command": [
+      50,
+      -30,
+      10
+     ],
+     "config": null
+    },
+    "name": "bench_cases_mixer_angles",
+    "output": {
+     "servo_eleron_left": 110,
+     "servo_eleron_right": 45,
+     "servo_yaw": 100
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      0.5,
+      0
+     ],
+     "config": null
+    },
+    "name": "a_half_rounds_to_the_even_angle_below",
+    "output": {
+     "servo_eleron_left": 90,
+     "servo_eleron_right": 90,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      1.5,
+      0
+     ],
+     "config": null
+    },
+    "name": "a_half_rounds_to_the_even_angle_above",
+    "output": {
+     "servo_eleron_left": 92,
+     "servo_eleron_right": 92,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      -0.5,
+      0
+     ],
+     "config": null
+    },
+    "name": "a_negative_half",
+    "output": {
+     "servo_eleron_left": 90,
+     "servo_eleron_right": 90,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      -1.5,
+      0
+     ],
+     "config": null
+    },
+    "name": "a_negative_half_and_a_half",
+    "output": {
+     "servo_eleron_left": 88,
+     "servo_eleron_right": 88,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0.25,
+      0.25,
+      0
+     ],
+     "config": null
+    },
+    "name": "quarters_cancel_on_one_fin",
+    "output": {
+     "servo_eleron_left": 90,
+     "servo_eleron_right": 90,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      0.5,
+      0
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "an_odd_neutral_flips_the_half",
+    "output": {
+     "servo_eleron_left": 92,
+     "servo_eleron_right": 92,
+     "servo_yaw": 91
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      1.5,
+      0
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "an_odd_neutral_flips_the_half_and_a_half",
+    "output": {
+     "servo_eleron_left": 92,
+     "servo_eleron_right": 92,
+     "servo_yaw": 91
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      3,
+      0
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "a_fractional_neutral_truncates",
+    "output": {
+     "servo_eleron_left": 93,
+     "servo_eleron_right": 93,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      -40,
+      0
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "a_fractional_neutral_clamped",
+    "output": {
+     "servo_eleron_left": 80,
+     "servo_eleron_right": 80,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      0,
+      0
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "custom_gains_neutral",
+    "output": {
+     "servo_canard": 85,
+     "servo_eleron_left": 85,
+     "servo_eleron_right": 85,
+     "servo_yaw": 85
+    }
+   },
+   {
+    "input": {
+     "command": [
+      6,
+      0,
+      0
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "custom_gains_roll",
+    "output": {
+     "servo_canard": 91,
+     "servo_eleron_left": 88,
+     "servo_eleron_right": 82,
+     "servo_yaw": 86
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -3.5,
+      7.25,
+      2.125
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "custom_gains_mixed",
+    "output": {
+     "servo_canard": 77,
+     "servo_eleron_left": 92,
+     "servo_eleron_right": 96,
+     "servo_yaw": 80
+    }
+   },
+   {
+    "input": {
+     "command": [
+      30,
+      -30,
+      30
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "custom_gains_clamped",
+    "output": {
+     "servo_canard": 105,
+     "servo_eleron_left": 65,
+     "servo_eleron_right": 65,
+     "servo_yaw": 65
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      45,
+      0
+     ],
+     "config": null
+    },
+    "name": "the_limit_exactly",
+    "output": {
+     "servo_eleron_left": 135,
+     "servo_eleron_right": 135,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0,
+      -45.125,
+      0
+     ],
+     "config": null
+    },
+    "name": "just_past_the_limit_by_an_eighth",
+    "output": {
+     "servo_eleron_left": 45,
+     "servo_eleron_right": 45,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      26.25,
+      -23.125,
+      -0.375
+     ],
+     "config": null
+    },
+    "name": "sweep_000",
+    "output": {
+     "servo_eleron_left": 93,
+     "servo_eleron_right": 45,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -3.5,
+      -30.0,
+      34.75
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_001",
+    "output": {
+     "servo_yaw": 120
+    }
+   },
+   {
+    "input": {
+     "command": [
+      13.625,
+      52.0,
+      -49.125
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_002",
+    "output": {
+     "servo_canard": 65,
+     "servo_eleron_left": 105,
+     "servo_eleron_right": 105,
+     "servo_yaw": 105
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -42.875,
+      -38.75,
+      3.25
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_003",
+    "output": {
+     "servo_eleron_left": 46,
+     "servo_eleron_right": 95,
+     "servo_yaw": 94
+    }
+   },
+   {
+    "input": {
+     "command": [
+      25.25,
+      -4.25,
+      -25.125
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_004",
+    "output": {
+     "servo_eleron_left": 100,
+     "servo_eleron_right": 80,
+     "servo_yaw": 80
+    }
+   },
+   {
+    "input": {
+     "command": [
+      2.0,
+      57.875,
+      -55.125
+     ],
+     "config": null
+    },
+    "name": "sweep_005",
+    "output": {
+     "servo_eleron_left": 135,
+     "servo_eleron_right": 135,
+     "servo_yaw": 45
+    }
+   },
+   {
+    "input": {
+     "command": [
+      3.875,
+      27.875,
+      -33.25
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_006",
+    "output": {
+     "servo_yaw": 60
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -2.125,
+      2.5,
+      39.75
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_007",
+    "output": {
+     "servo_canard": 101,
+     "servo_eleron_left": 87,
+     "servo_eleron_right": 89,
+     "servo_yaw": 65
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -1.375,
+      31.25,
+      1.5
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_008",
+    "output": {
+     "servo_eleron_left": 121,
+     "servo_eleron_right": 124,
+     "servo_yaw": 92
+    }
+   },
+   {
+    "input": {
+     "command": [
+      1.25,
+      0.875,
+      -36.375
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_009",
+    "output": {
+     "servo_eleron_left": 92,
+     "servo_eleron_right": 90,
+     "servo_yaw": 80
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -1.625,
+      -3.375,
+      -45.75
+     ],
+     "config": null
+    },
+    "name": "sweep_010",
+    "output": {
+     "servo_eleron_left": 85,
+     "servo_eleron_right": 88,
+     "servo_yaw": 45
+    }
+   },
+   {
+    "input": {
+     "command": [
+      7.5,
+      22.375,
+      -21.5
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_011",
+    "output": {
+     "servo_yaw": 68
+    }
+   },
+   {
+    "input": {
+     "command": [
+      9.0,
+      -2.875,
+      3.0
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_012",
+    "output": {
+     "servo_canard": 98,
+     "servo_eleron_left": 86,
+     "servo_eleron_right": 77,
+     "servo_yaw": 81
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -2.25,
+      43.75,
+      -0.625
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_013",
+    "output": {
+     "servo_eleron_left": 132,
+     "servo_eleron_right": 136,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -2.375,
+      -2.875,
+      -36.75
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_014",
+    "output": {
+     "servo_eleron_left": 85,
+     "servo_eleron_right": 90,
+     "servo_yaw": 80
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -8.5,
+      -46.25,
+      0.375
+     ],
+     "config": null
+    },
+    "name": "sweep_015",
+    "output": {
+     "servo_eleron_left": 45,
+     "servo_eleron_right": 52,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      2.875,
+      45.75,
+      10.25
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_016",
+    "output": {
+     "servo_yaw": 100
+    }
+   },
+   {
+    "input": {
+     "command": [
+      2.5,
+      4.25,
+      1.625
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_017",
+    "output": {
+     "servo_canard": 85,
+     "servo_eleron_left": 92,
+     "servo_eleron_right": 89,
+     "servo_yaw": 82
+    }
+   },
+   {
+    "input": {
+     "command": [
+      38.625,
+      -6.875,
+      -3.125
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_018",
+    "output": {
+     "servo_eleron_left": 123,
+     "servo_eleron_right": 46,
+     "servo_yaw": 88
+    }
+   },
+   {
+    "input": {
+     "command": [
+      10.625,
+      -2.75,
+      2.375
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_019",
+    "output": {
+     "servo_eleron_left": 98,
+     "servo_eleron_right": 80,
+     "servo_yaw": 92
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0.5,
+      3.5,
+      -3.375
+     ],
+     "config": null
+    },
+    "name": "sweep_020",
+    "output": {
+     "servo_eleron_left": 94,
+     "servo_eleron_right": 93,
+     "servo_yaw": 87
+    }
+   },
+   {
+    "input": {
+     "command": [
+      3.625,
+      3.25,
+      -40.375
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_021",
+    "output": {
+     "servo_yaw": 60
+    }
+   },
+   {
+    "input": {
+     "command": [
+      2.75,
+      20.375,
+      33.375
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_022",
+    "output": {
+     "servo_canard": 89,
+     "servo_eleron_left": 105,
+     "servo_eleron_right": 105,
+     "servo_yaw": 65
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -58.5,
+      -55.125,
+      -3.625
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_023",
+    "output": {
+     "servo_eleron_left": 46,
+     "servo_eleron_right": 94,
+     "servo_yaw": 87
+    }
+   },
+   {
+    "input": {
+     "command": [
+      8.5,
+      3.25,
+      -0.125
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_024",
+    "output": {
+     "servo_eleron_left": 100,
+     "servo_eleron_right": 85,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -2.25,
+      -1.75,
+      27.875
+     ],
+     "config": null
+    },
+    "name": "sweep_025",
+    "output": {
+     "servo_eleron_left": 86,
+     "servo_eleron_right": 90,
+     "servo_yaw": 118
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -1.25,
+      2.875,
+      17.25
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_026",
+    "output": {
+     "servo_yaw": 107
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -32.875,
+      50.0,
+      -3.0
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_027",
+    "output": {
+     "servo_canard": 65,
+     "servo_eleron_left": 105,
+     "servo_eleron_right": 105,
+     "servo_yaw": 83
+    }
+   },
+   {
+    "input": {
+     "command": [
+      1.5,
+      56.25,
+      8.125
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_028",
+    "output": {
+     "servo_eleron_left": 136,
+     "servo_eleron_right": 136,
+     "servo_yaw": 99
+    }
+   },
+   {
+    "input": {
+     "command": [
+      34.0,
+      -43.0,
+      2.375
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_029",
+    "output": {
+     "servo_eleron_left": 81,
+     "servo_eleron_right": 80,
+     "servo_yaw": 92
+    }
+   },
+   {
+    "input": {
+     "command": [
+      29.625,
+      2.75,
+      -50.25
+     ],
+     "config": null
+    },
+    "name": "sweep_030",
+    "output": {
+     "servo_eleron_left": 122,
+     "servo_eleron_right": 63,
+     "servo_yaw": 45
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -10.0,
+      29.0,
+      0.25
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_031",
+    "output": {
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -1.75,
+      -1.75,
+      -1.375
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_032",
+    "output": {
+     "servo_canard": 84,
+     "servo_eleron_left": 82,
+     "servo_eleron_right": 84,
+     "servo_yaw": 87
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0.125,
+      3.5,
+      -0.125
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_033",
+    "output": {
+     "servo_eleron_left": 95,
+     "servo_eleron_right": 94,
+     "servo_yaw": 91
+    }
+   },
+   {
+    "input": {
+     "command": [
+      2.75,
+      -59.875,
+      23.125
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_034",
+    "output": {
+     "servo_eleron_left": 80,
+     "servo_eleron_right": 80,
+     "servo_yaw": 100
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -40.375,
+      -2.75,
+      58.375
+     ],
+     "config": null
+    },
+    "name": "sweep_035",
+    "output": {
+     "servo_eleron_left": 47,
+     "servo_eleron_right": 128,
+     "servo_yaw": 135
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -4.0,
+      28.125,
+      -50.375
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_036",
+    "output": {
+     "servo_yaw": 60
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -40.875,
+      3.0,
+      -1.875
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_037",
+    "output": {
+     "servo_canard": 65,
+     "servo_eleron_left": 68,
+     "servo_eleron_right": 105,
+     "servo_yaw": 79
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -60.0,
+      -34.125,
+      -55.375
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_038",
+    "output": {
+     "servo_eleron_left": 46,
+     "servo_eleron_right": 117,
+     "servo_yaw": 46
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -52.5,
+      -0.125,
+      -45.875
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_039",
+    "output": {
+     "servo_eleron_left": 80,
+     "servo_eleron_right": 100,
+     "servo_yaw": 80
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -2.0,
+      23.625,
+      2.375
+     ],
+     "config": null
+    },
+    "name": "sweep_040",
+    "output": {
+     "servo_eleron_left": 112,
+     "servo_eleron_right": 116,
+     "servo_yaw": 92
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -12.125,
+      51.5,
+      -1.75
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_041",
+    "output": {
+     "servo_yaw": 88
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -0.125,
+      1.375,
+      40.875
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_042",
+    "output": {
+     "servo_canard": 104,
+     "servo_eleron_left": 87,
+     "servo_eleron_right": 87,
+     "servo_yaw": 65
+    }
+   },
+   {
+    "input": {
+     "command": [
+      9.0,
+      -33.375,
+      -3.875
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_043",
+    "output": {
+     "servo_eleron_left": 67,
+     "servo_eleron_right": 49,
+     "servo_yaw": 87
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -0.375,
+      -7.125,
+      0.625
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_044",
+    "output": {
+     "servo_eleron_left": 82,
+     "servo_eleron_right": 83,
+     "servo_yaw": 91
+    }
+   },
+   {
+    "input": {
+     "command": [
+      29.75,
+      56.625,
+      -56.125
+     ],
+     "config": null
+    },
+    "name": "sweep_045",
+    "output": {
+     "servo_eleron_left": 135,
+     "servo_eleron_right": 117,
+     "servo_yaw": 45
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -46.375,
+      2.125,
+      -3.0
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_046",
+    "output": {
+     "servo_yaw": 87
+    }
+   },
+   {
+    "input": {
+     "command": [
+      3.875,
+      -2.625,
+      0.5
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_047",
+    "output": {
+     "servo_canard": 91,
+     "servo_eleron_left": 84,
+     "servo_eleron_right": 80,
+     "servo_yaw": 85
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0.25,
+      -13.875,
+      -2.0
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_048",
+    "output": {
+     "servo_eleron_left": 77,
+     "servo_eleron_right": 77,
+     "servo_yaw": 89
+    }
+   },
+   {
+    "input": {
+     "command": [
+      51.75,
+      -47.5,
+      -2.375
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_049",
+    "output": {
+     "servo_eleron_left": 94,
+     "servo_eleron_right": 80,
+     "servo_yaw": 88
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -40.5,
+      3.875,
+      -2.75
+     ],
+     "config": null
+    },
+    "name": "sweep_050",
+    "output": {
+     "servo_eleron_left": 53,
+     "servo_eleron_right": 134,
+     "servo_yaw": 87
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0.125,
+      -0.125,
+      31.0
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_051",
+    "output": {
+     "servo_yaw": 120
+    }
+   },
+   {
+    "input": {
+     "command": [
+      39.625,
+      -3.625,
+      -9.125
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_052",
+    "output": {
+     "servo_canard": 105,
+     "servo_eleron_left": 100,
+     "servo_eleron_right": 65,
+     "servo_yaw": 105
+    }
+   },
+   {
+    "input": {
+     "command": [
+      28.375,
+      39.75,
+      -51.625
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_053",
+    "output": {
+     "servo_eleron_left": 136,
+     "servo_eleron_right": 102,
+     "servo_yaw": 46
+    }
+   },
+   {
+    "input": {
+     "command": [
+      28.125,
+      -2.125,
+      1.125
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_054",
+    "output": {
+     "servo_eleron_left": 100,
+     "servo_eleron_right": 80,
+     "servo_yaw": 91
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -1.0,
+      -30.375,
+      -43.875
+     ],
+     "config": null
+    },
+    "name": "sweep_055",
+    "output": {
+     "servo_eleron_left": 59,
+     "servo_eleron_right": 61,
+     "servo_yaw": 46
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -18.75,
+      59.375,
+      -5.375
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_056",
+    "output": {
+     "servo_yaw": 85
+    }
+   },
+   {
+    "input": {
+     "command": [
+      58.625,
+      1.375,
+      0.75
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_057",
+    "output": {
+     "servo_canard": 105,
+     "servo_eleron_left": 105,
+     "servo_eleron_right": 65,
+     "servo_yaw": 98
+    }
+   },
+   {
+    "input": {
+     "command": [
+      41.625,
+      -3.875,
+      2.125
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_058",
+    "output": {
+     "servo_eleron_left": 129,
+     "servo_eleron_right": 46,
+     "servo_yaw": 93
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -44.375,
+      39.625,
+      -2.25
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_059",
+    "output": {
+     "servo_eleron_left": 85,
+     "servo_eleron_right": 100,
+     "servo_yaw": 88
+    }
+   },
+   {
+    "input": {
+     "command": [
+      43.125,
+      3.5,
+      -2.125
+     ],
+     "config": null
+    },
+    "name": "sweep_060",
+    "output": {
+     "servo_eleron_left": 135,
+     "servo_eleron_right": 50,
+     "servo_yaw": 88
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -25.0,
+      3.25,
+      1.0
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_061",
+    "output": {
+     "servo_yaw": 91
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -2.75,
+      -2.0,
+      -0.875
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_062",
+    "output": {
+     "servo_canard": 83,
+     "servo_eleron_left": 81,
+     "servo_eleron_right": 84,
+     "servo_yaw": 86
+    }
+   },
+   {
+    "input": {
+     "command": [
+      39.5,
+      1.25,
+      -11.0
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_063",
+    "output": {
+     "servo_eleron_left": 132,
+     "servo_eleron_right": 53,
+     "servo_yaw": 80
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -42.25,
+      18.75,
+      48.25
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_064",
+    "output": {
+     "servo_eleron_left": 80,
+     "servo_eleron_right": 100,
+     "servo_yaw": 100
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -0.625,
+      13.25,
+      0.0
+     ],
+     "config": null
+    },
+    "name": "sweep_065",
+    "output": {
+     "servo_eleron_left": 103,
+     "servo_eleron_right": 104,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -52.5,
+      2.0,
+      -45.0
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_066",
+    "output": {
+     "servo_yaw": 60
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -1.5,
+      -32.375,
+      2.125
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_067",
+    "output": {
+     "servo_canard": 105,
+     "servo_eleron_left": 65,
+     "servo_eleron_right": 65,
+     "servo_yaw": 80
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -0.875,
+      -1.0,
+      -10.75
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_068",
+    "output": {
+     "servo_eleron_left": 89,
+     "servo_eleron_right": 91,
+     "servo_yaw": 80
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -47.0,
+      -3.0,
+      -15.0
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_069",
+    "output": {
+     "servo_eleron_left": 80,
+     "servo_eleron_right": 100,
+     "servo_yaw": 80
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -13.25,
+      59.5,
+      2.125
+     ],
+     "config": null
+    },
+    "name": "sweep_070",
+    "output": {
+     "servo_eleron_left": 135,
+     "servo_eleron_right": 135,
+     "servo_yaw": 92
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -30.75,
+      23.5,
+      -25.25
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_071",
+    "output": {
+     "servo_yaw": 65
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -2.5,
+      -8.875,
+      0.0
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_072",
+    "output": {
+     "servo_canard": 89,
+     "servo_eleron_left": 73,
+     "servo_eleron_right": 75,
+     "servo_yaw": 84
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -3.875,
+      59.625,
+      36.125
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_073",
+    "output": {
+     "servo_eleron_left": 136,
+     "servo_eleron_right": 136,
+     "servo_yaw": 127
+    }
+   },
+   {
+    "input": {
+     "command": [
+      34.375,
+      -17.5,
+      3.25
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_074",
+    "output": {
+     "servo_eleron_left": 100,
+     "servo_eleron_right": 80,
+     "servo_yaw": 93
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -3.5,
+      -52.25,
+      -1.125
+     ],
+     "config": null
+    },
+    "name": "sweep_075",
+    "output": {
+     "servo_eleron_left": 45,
+     "servo_eleron_right": 45,
+     "servo_yaw": 89
+    }
+   },
+   {
+    "input": {
+     "command": [
+      4.0,
+      38.25,
+      -1.875
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_076",
+    "output": {
+     "servo_yaw": 88
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -24.375,
+      -4.75,
+      3.125
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_077",
+    "output": {
+     "servo_canard": 66,
+     "servo_eleron_left": 67,
+     "servo_eleron_right": 91,
+     "servo_yaw": 73
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -3.25,
+      33.125,
+      2.875
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_078",
+    "output": {
+     "servo_eleron_left": 121,
+     "servo_eleron_right": 127,
+     "servo_yaw": 94
+    }
+   },
+   {
+    "input": {
+     "command": [
+      38.125,
+      2.375,
+      0.25
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_079",
+    "output": {
+     "servo_eleron_left": 100,
+     "servo_eleron_right": 80,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -0.625,
+      -36.0,
+      2.375
+     ],
+     "config": null
+    },
+    "name": "sweep_080",
+    "output": {
+     "servo_eleron_left": 53,
+     "servo_eleron_right": 55,
+     "servo_yaw": 92
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -1.75,
+      -47.5,
+      -30.375
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_081",
+    "output": {
+     "servo_yaw": 60
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -15.875,
+      -2.0,
+      2.75
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_082",
+    "output": {
+     "servo_canard": 72,
+     "servo_eleron_left": 75,
+     "servo_eleron_right": 90,
+     "servo_yaw": 76
+    }
+   },
+   {
+    "input": {
+     "command": [
+      57.25,
+      -8.875,
+      -1.375
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_083",
+    "output": {
+     "servo_eleron_left": 136,
+     "servo_eleron_right": 46,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      4.0,
+      -1.25,
+      -8.75
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_084",
+    "output": {
+     "servo_eleron_left": 93,
+     "servo_eleron_right": 85,
+     "servo_yaw": 81
+    }
+   },
+   {
+    "input": {
+     "command": [
+      1.875,
+      2.875,
+      4.0
+     ],
+     "config": null
+    },
+    "name": "sweep_085",
+    "output": {
+     "servo_eleron_left": 95,
+     "servo_eleron_right": 91,
+     "servo_yaw": 94
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0.75,
+      -44.125,
+      -20.375
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_086",
+    "output": {
+     "servo_yaw": 70
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -3.875,
+      -1.5,
+      1.625
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_087",
+    "output": {
+     "servo_canard": 83,
+     "servo_eleron_left": 81,
+     "servo_eleron_right": 85,
+     "servo_yaw": 81
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -1.25,
+      -2.625,
+      29.75
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_088",
+    "output": {
+     "servo_eleron_left": 87,
+     "servo_eleron_right": 90,
+     "servo_yaw": 121
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -46.0,
+      -1.5,
+      -1.875
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_089",
+    "output": {
+     "servo_eleron_left": 80,
+     "servo_eleron_right": 100,
+     "servo_yaw": 88
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -59.75,
+      -7.75,
+      -1.0
+     ],
+     "config": null
+    },
+    "name": "sweep_090",
+    "output": {
+     "servo_eleron_left": 45,
+     "servo_eleron_right": 135,
+     "servo_yaw": 89
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -0.125,
+      -35.25,
+      49.5
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_091",
+    "output": {
+     "servo_yaw": 120
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -48.0,
+      51.125,
+      -2.75
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_092",
+    "output": {
+     "servo_canard": 65,
+     "servo_eleron_left": 105,
+     "servo_eleron_right": 105,
+     "servo_yaw": 78
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -0.25,
+      -0.875,
+      -1.375
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_093",
+    "output": {
+     "servo_eleron_left": 90,
+     "servo_eleron_right": 90,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -14.25,
+      30.5,
+      36.125
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_094",
+    "output": {
+     "servo_eleron_left": 100,
+     "servo_eleron_right": 100,
+     "servo_yaw": 100
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0.625,
+      -2.75,
+      1.25
+     ],
+     "config": null
+    },
+    "name": "sweep_095",
+    "output": {
+     "servo_eleron_left": 88,
+     "servo_eleron_right": 87,
+     "servo_yaw": 91
+    }
+   },
+   {
+    "input": {
+     "command": [
+      29.875,
+      2.125,
+      29.875
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_096",
+    "output": {
+     "servo_yaw": 120
+    }
+   },
+   {
+    "input": {
+     "command": [
+      52.75,
+      1.375,
+      18.625
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_097",
+    "output": {
+     "servo_canard": 105,
+     "servo_eleron_left": 105,
+     "servo_eleron_right": 65,
+     "servo_yaw": 65
+    }
+   },
+   {
+    "input": {
+     "command": [
+      2.875,
+      -2.25,
+      3.5
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_098",
+    "output": {
+     "servo_eleron_left": 92,
+     "servo_eleron_right": 86,
+     "servo_yaw": 94
+    }
+   },
+   {
+    "input": {
+     "command": [
+      50.75,
+      3.25,
+      2.5
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_099",
+    "output": {
+     "servo_eleron_left": 100,
+     "servo_eleron_right": 80,
+     "servo_yaw": 92
+    }
+   },
+   {
+    "input": {
+     "command": [
+      40.0,
+      50.5,
+      9.5
+     ],
+     "config": null
+    },
+    "name": "sweep_100",
+    "output": {
+     "servo_eleron_left": 135,
+     "servo_eleron_right": 100,
+     "servo_yaw": 100
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -1.125,
+      1.25,
+      -2.125
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_101",
+    "output": {
+     "servo_yaw": 88
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -3.375,
+      3.5,
+      -2.75
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_102",
+    "output": {
+     "servo_canard": 78,
+     "servo_eleron_left": 88,
+     "servo_eleron_right": 91,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -3.125,
+      0.75,
+      30.25
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_103",
+    "output": {
+     "servo_eleron_left": 89,
+     "servo_eleron_right": 95,
+     "servo_yaw": 121
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -1.75,
+      0.375,
+      -0.375
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_104",
+    "output": {
+     "servo_eleron_left": 89,
+     "servo_eleron_right": 92,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -51.5,
+      -2.625,
+      3.625
+     ],
+     "config": null
+    },
+    "name": "sweep_105",
+    "output": {
+     "servo_eleron_left": 45,
+     "servo_eleron_right": 135,
+     "servo_yaw": 94
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -58.75,
+      54.75,
+      -21.375
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_106",
+    "output": {
+     "servo_yaw": 69
+    }
+   },
+   {
+    "input": {
+     "command": [
+      14.5,
+      3.625,
+      -0.5
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_107",
+    "output": {
+     "servo_canard": 97,
+     "servo_eleron_left": 97,
+     "servo_eleron_right": 82,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      3.125,
+      3.125,
+      4.0
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_108",
+    "output": {
+     "servo_eleron_left": 97,
+     "servo_eleron_right": 91,
+     "servo_yaw": 95
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -1.75,
+      -53.875,
+      -3.25
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_109",
+    "output": {
+     "servo_eleron_left": 80,
+     "servo_eleron_right": 80,
+     "servo_yaw": 87
+    }
+   },
+   {
+    "input": {
+     "command": [
+      22.5,
+      -0.75,
+      1.75
+     ],
+     "config": null
+    },
+    "name": "sweep_110",
+    "output": {
+     "servo_eleron_left": 112,
+     "servo_eleron_right": 67,
+     "servo_yaw": 92
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -1.75,
+      -42.375,
+      24.875
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_111",
+    "output": {
+     "servo_yaw": 115
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -32.625,
+      1.375,
+      1.375
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_112",
+    "output": {
+     "servo_canard": 65,
+     "servo_eleron_left": 70,
+     "servo_eleron_right": 103,
+     "servo_yaw": 74
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -34.0,
+      50.75,
+      -3.0
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_113",
+    "output": {
+     "servo_eleron_left": 108,
+     "servo_eleron_right": 136,
+     "servo_yaw": 88
+    }
+   },
+   {
+    "input": {
+     "command": [
+      4.75,
+      1.5,
+      2.5
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_114",
+    "output": {
+     "servo_eleron_left": 96,
+     "servo_eleron_right": 87,
+     "servo_yaw": 92
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -1.75,
+      -56.0,
+      -30.5
+     ],
+     "config": null
+    },
+    "name": "sweep_115",
+    "output": {
+     "servo_eleron_left": 45,
+     "servo_eleron_right": 45,
+     "servo_yaw": 60
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -7.625,
+      -3.625,
+      -1.0
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_116",
+    "output": {
+     "servo_yaw": 89
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -36.5,
+      1.875,
+      -53.875
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_117",
+    "output": {
+     "servo_canard": 65,
+     "servo_eleron_left": 69,
+     "servo_eleron_right": 105,
+     "servo_yaw": 105
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -0.125,
+      0.5,
+      -38.5
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_118",
+    "output": {
+     "servo_eleron_left": 91,
+     "servo_eleron_right": 92,
+     "servo_yaw": 52
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -8.0,
+      -43.625,
+      -36.875
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_119",
+    "output": {
+     "servo_eleron_left": 80,
+     "servo_eleron_right": 80,
+     "servo_yaw": 80
+    }
+   },
+   {
+    "input": {
+     "command": [
+      25.25,
+      2.25,
+      59.75
+     ],
+     "config": null
+    },
+    "name": "sweep_120",
+    "output": {
+     "servo_eleron_left": 118,
+     "servo_eleron_right": 67,
+     "servo_yaw": 135
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0.875,
+      -2.125,
+      -15.75
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_121",
+    "output": {
+     "servo_yaw": 74
+    }
+   },
+   {
+    "input": {
+     "command": [
+      2.125,
+      2.375,
+      56.125
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_122",
+    "output": {
+     "servo_canard": 105,
+     "servo_eleron_left": 89,
+     "servo_eleron_right": 87,
+     "servo_yaw": 65
+    }
+   },
+   {
+    "input": {
+     "command": [
+      7.625,
+      -26.125,
+      20.5
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_123",
+    "output": {
+     "servo_eleron_left": 72,
+     "servo_eleron_right": 57,
+     "servo_yaw": 112
+    }
+   },
+   {
+    "input": {
+     "command": [
+      2.875,
+      -55.25,
+      2.875
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_124",
+    "output": {
+     "servo_eleron_left": 80,
+     "servo_eleron_right": 80,
+     "servo_yaw": 93
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -2.5,
+      45.25,
+      -3.5
+     ],
+     "config": null
+    },
+    "name": "sweep_125",
+    "output": {
+     "servo_eleron_left": 133,
+     "servo_eleron_right": 135,
+     "servo_yaw": 86
+    }
+   },
+   {
+    "input": {
+     "command": [
+      48.75,
+      3.375,
+      1.375
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_126",
+    "output": {
+     "servo_yaw": 91
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -59.75,
+      2.875,
+      15.25
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_127",
+    "output": {
+     "servo_canard": 65,
+     "servo_eleron_left": 65,
+     "servo_eleron_right": 105,
+     "servo_yaw": 65
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -3.875,
+      -3.875,
+      2.5
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_128",
+    "output": {
+     "servo_eleron_left": 83,
+     "servo_eleron_right": 91,
+     "servo_yaw": 94
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -35.375,
+      -46.375,
+      3.5
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_129",
+    "output": {
+     "servo_eleron_left": 80,
+     "servo_eleron_right": 80,
+     "servo_yaw": 94
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -2.375,
+      3.25,
+      -3.625
+     ],
+     "config": null
+    },
+    "name": "sweep_130",
+    "output": {
+     "servo_eleron_left": 91,
+     "servo_eleron_right": 96,
+     "servo_yaw": 86
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -1.5,
+      -1.125,
+      -3.375
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_131",
+    "output": {
+     "servo_yaw": 87
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -2.125,
+      -0.875,
+      0.125
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_132",
+    "output": {
+     "servo_canard": 84,
+     "servo_eleron_left": 83,
+     "servo_eleron_right": 85,
+     "servo_yaw": 84
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -2.5,
+      47.25,
+      -3.375
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_133",
+    "output": {
+     "servo_eleron_left": 136,
+     "servo_eleron_right": 136,
+     "servo_yaw": 88
+    }
+   },
+   {
+    "input": {
+     "command": [
+      2.25,
+      13.5,
+      -33.5
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_134",
+    "output": {
+     "servo_eleron_left": 100,
+     "servo_eleron_right": 100,
+     "servo_yaw": 80
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -2.375,
+      23.25,
+      20.25
+     ],
+     "config": null
+    },
+    "name": "sweep_135",
+    "output": {
+     "servo_eleron_left": 111,
+     "servo_eleron_right": 116,
+     "servo_yaw": 110
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -51.125,
+      25.875,
+      -8.25
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_136",
+    "output": {
+     "servo_yaw": 82
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -11.125,
+      -0.625,
+      45.0
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_137",
+    "output": {
+     "servo_canard": 97,
+     "servo_eleron_left": 79,
+     "servo_eleron_right": 90,
+     "servo_yaw": 65
+    }
+   },
+   {
+    "input": {
+     "command": [
+      30.5,
+      8.375,
+      2.25
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_138",
+    "output": {
+     "servo_eleron_left": 130,
+     "servo_eleron_right": 69,
+     "servo_yaw": 93
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -11.0,
+      -2.0,
+      0.625
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_139",
+    "output": {
+     "servo_eleron_left": 80,
+     "servo_eleron_right": 99,
+     "servo_yaw": 91
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -29.75,
+      58.625,
+      -8.0
+     ],
+     "config": null
+    },
+    "name": "sweep_140",
+    "output": {
+     "servo_eleron_left": 119,
+     "servo_eleron_right": 135,
+     "servo_yaw": 82
+    }
+   },
+   {
+    "input": {
+     "command": [
+      22.25,
+      43.625,
+      3.0
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_141",
+    "output": {
+     "servo_yaw": 93
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -50.125,
+      -53.5,
+      21.875
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_142",
+    "output": {
+     "servo_canard": 86,
+     "servo_eleron_left": 65,
+     "servo_eleron_right": 65,
+     "servo_yaw": 65
+    }
+   },
+   {
+    "input": {
+     "command": [
+      9.625,
+      -33.25,
+      4.0
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_143",
+    "output": {
+     "servo_eleron_left": 67,
+     "servo_eleron_right": 48,
+     "servo_yaw": 95
+    }
+   },
+   {
+    "input": {
+     "command": [
+      38.375,
+      0.875,
+      -23.0
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_144",
+    "output": {
+     "servo_eleron_left": 100,
+     "servo_eleron_right": 80,
+     "servo_yaw": 80
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -4.0,
+      -19.625,
+      38.125
+     ],
+     "config": null
+    },
+    "name": "sweep_145",
+    "output": {
+     "servo_eleron_left": 66,
+     "servo_eleron_right": 74,
+     "servo_yaw": 128
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -3.0,
+      13.5,
+      17.5
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_146",
+    "output": {
+     "servo_yaw": 108
+    }
+   },
+   {
+    "input": {
+     "command": [
+      13.5,
+      -30.125,
+      3.875
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_147",
+    "output": {
+     "servo_canard": 105,
+     "servo_eleron_left": 65,
+     "servo_eleron_right": 65,
+     "servo_yaw": 81
+    }
+   },
+   {
+    "input": {
+     "command": [
+      1.5,
+      8.125,
+      1.125
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_148",
+    "output": {
+     "servo_eleron_left": 101,
+     "servo_eleron_right": 98,
+     "servo_yaw": 92
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -57.125,
+      -38.5,
+      -0.25
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_149",
+    "output": {
+     "servo_eleron_left": 80,
+     "servo_eleron_right": 100,
+     "servo_yaw": 90
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -2.5,
+      -51.375,
+      2.25
+     ],
+     "config": null
+    },
+    "name": "sweep_150",
+    "output": {
+     "servo_eleron_left": 45,
+     "servo_eleron_right": 45,
+     "servo_yaw": 92
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -53.75,
+      -3.625,
+      -40.625
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_151",
+    "output": {
+     "servo_yaw": 60
+    }
+   },
+   {
+    "input": {
+     "command": [
+      56.0,
+      58.75,
+      3.5
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_152",
+    "output": {
+     "servo_canard": 99,
+     "servo_eleron_left": 105,
+     "servo_eleron_right": 105,
+     "servo_yaw": 92
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -45.75,
+      -13.75,
+      46.25
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_153",
+    "output": {
+     "servo_eleron_left": 46,
+     "servo_eleron_right": 123,
+     "servo_yaw": 136
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -0.625,
+      14.375,
+      -28.5
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_154",
+    "output": {
+     "servo_eleron_left": 100,
+     "servo_eleron_right": 100,
+     "servo_yaw": 80
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -16.0,
+      55.125,
+      -17.625
+     ],
+     "config": null
+    },
+    "name": "sweep_155",
+    "output": {
+     "servo_eleron_left": 129,
+     "servo_eleron_right": 135,
+     "servo_yaw": 72
+    }
+   },
+   {
+    "input": {
+     "command": [
+      38.75,
+      -10.5,
+      -59.875
+     ],
+     "config": {
+      "limit_deg": 30,
+      "neutral_deg": 90,
+      "surfaces": {
+       "servo_yaw": {
+        "yaw": 1
+       }
+      }
+     }
+    },
+    "name": "sweep_156",
+    "output": {
+     "servo_yaw": 60
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -51.0,
+      3.875,
+      -14.625
+     ],
+     "config": {
+      "limit_deg": 20,
+      "neutral_deg": 85,
+      "surfaces": {
+       "servo_canard": {
+        "pitch": -0.75,
+        "roll": 1,
+        "yaw": 0.5
+       },
+       "servo_eleron_left": {
+        "pitch": 1.25,
+        "roll": 0.5
+       },
+       "servo_eleron_right": {
+        "pitch": 1.25,
+        "roll": -0.5
+       },
+       "servo_yaw": {
+        "roll": 0.25,
+        "yaw": -2
+       }
+      }
+     }
+    },
+    "name": "sweep_157",
+    "output": {
+     "servo_canard": 65,
+     "servo_eleron_left": 65,
+     "servo_eleron_right": 105,
+     "servo_yaw": 102
+    }
+   },
+   {
+    "input": {
+     "command": [
+      -17.125,
+      -27.625,
+      -55.5
+     ],
+     "config": {
+      "neutral_deg": 91
+     }
+    },
+    "name": "sweep_158",
+    "output": {
+     "servo_eleron_left": 46,
+     "servo_eleron_right": 80,
+     "servo_yaw": 46
+    }
+   },
+   {
+    "input": {
+     "command": [
+      0.875,
+      3.0,
+      3.125
+     ],
+     "config": {
+      "limit_deg": 10,
+      "neutral_deg": 90.7
+     }
+    },
+    "name": "sweep_159",
+    "output": {
+     "servo_eleron_left": 94,
+     "servo_eleron_right": 92,
+     "servo_yaw": 93
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "whole degrees per fin: plan B mix() then sg90 round() (half to even); dyadic inputs, so every sum is exact in f32 and f64 and a tie is a tie on both sides"
+ }
+}

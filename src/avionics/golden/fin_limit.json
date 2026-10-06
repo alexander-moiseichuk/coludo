@@ -1,0 +1,1476 @@
+{
+ "cases": [
+  {
+   "input": 0,
+   "name": "plan_b_speed_0",
+   "output": 45
+  },
+  {
+   "input": 15,
+   "name": "plan_b_speed_15",
+   "output": 45
+  },
+  {
+   "input": 30,
+   "name": "plan_b_speed_30",
+   "output": 14
+  },
+  {
+   "input": 50,
+   "name": "plan_b_speed_50",
+   "output": 5
+  },
+  {
+   "input": 200,
+   "name": "plan_b_speed_200",
+   "output": 5
+  },
+  {
+   "input": -5,
+   "name": "plan_b_speed_-5",
+   "output": 45
+  },
+  {
+   "input": 0.0,
+   "name": "plan_b_speed_0.0",
+   "output": 45
+  },
+  {
+   "input": 5.0,
+   "name": "plan_b_speed_5.0",
+   "output": 45
+  },
+  {
+   "input": 15.0,
+   "name": "plan_b_speed_15.0",
+   "output": 45
+  },
+  {
+   "input": 30.0,
+   "name": "plan_b_speed_30.0",
+   "output": 14
+  },
+  {
+   "input": 90.0,
+   "name": "plan_b_speed_90.0",
+   "output": 5
+  },
+  {
+   "input": 40.0,
+   "name": "plan_b_speed_40.0",
+   "output": 8
+  },
+  {
+   "input": 4.0,
+   "name": "plan_b_speed_4.0",
+   "output": 45
+  },
+  {
+   "input": 14.0,
+   "name": "plan_b_speed_14.0",
+   "output": 45
+  },
+  {
+   "input": 28.0,
+   "name": "plan_b_speed_28.0",
+   "output": 16
+  },
+  {
+   "input": 60.0,
+   "name": "plan_b_speed_60.0",
+   "output": 5
+  },
+  {
+   "input": -0.5,
+   "name": "plan_b_speed_-0.5",
+   "output": 45
+  },
+  {
+   "input": -1.5,
+   "name": "plan_b_speed_-1.5",
+   "output": 45
+  },
+  {
+   "input": 0.5,
+   "name": "plan_b_speed_0.5",
+   "output": 45
+  },
+  {
+   "input": 1000000.0,
+   "name": "plan_b_speed_1000000.0",
+   "output": 5
+  },
+  {
+   "input": -1000000.0,
+   "name": "plan_b_speed_-1000000.0",
+   "output": 45
+  },
+  {
+   "input": 0.0,
+   "name": "whole_00",
+   "output": 45
+  },
+  {
+   "input": 1.0,
+   "name": "whole_01",
+   "output": 45
+  },
+  {
+   "input": 2.0,
+   "name": "whole_02",
+   "output": 45
+  },
+  {
+   "input": 3.0,
+   "name": "whole_03",
+   "output": 45
+  },
+  {
+   "input": 4.0,
+   "name": "whole_04",
+   "output": 45
+  },
+  {
+   "input": 5.0,
+   "name": "whole_05",
+   "output": 45
+  },
+  {
+   "input": 6.0,
+   "name": "whole_06",
+   "output": 45
+  },
+  {
+   "input": 7.0,
+   "name": "whole_07",
+   "output": 45
+  },
+  {
+   "input": 8.0,
+   "name": "whole_08",
+   "output": 45
+  },
+  {
+   "input": 9.0,
+   "name": "whole_09",
+   "output": 45
+  },
+  {
+   "input": 10.0,
+   "name": "whole_10",
+   "output": 45
+  },
+  {
+   "input": 11.0,
+   "name": "whole_11",
+   "output": 45
+  },
+  {
+   "input": 12.0,
+   "name": "whole_12",
+   "output": 45
+  },
+  {
+   "input": 13.0,
+   "name": "whole_13",
+   "output": 45
+  },
+  {
+   "input": 14.0,
+   "name": "whole_14",
+   "output": 45
+  },
+  {
+   "input": 15.0,
+   "name": "whole_15",
+   "output": 45
+  },
+  {
+   "input": 16.0,
+   "name": "whole_16",
+   "output": 45
+  },
+  {
+   "input": 17.0,
+   "name": "whole_17",
+   "output": 43
+  },
+  {
+   "input": 18.0,
+   "name": "whole_18",
+   "output": 39
+  },
+  {
+   "input": 19.0,
+   "name": "whole_19",
+   "output": 35
+  },
+  {
+   "input": 20.0,
+   "name": "whole_20",
+   "output": 31
+  },
+  {
+   "input": 21.0,
+   "name": "whole_21",
+   "output": 28
+  },
+  {
+   "input": 22.0,
+   "name": "whole_22",
+   "output": 26
+  },
+  {
+   "input": 23.0,
+   "name": "whole_23",
+   "output": 24
+  },
+  {
+   "input": 24.0,
+   "name": "whole_24",
+   "output": 22
+  },
+  {
+   "input": 25.0,
+   "name": "whole_25",
+   "output": 20
+  },
+  {
+   "input": 26.0,
+   "name": "whole_26",
+   "output": 18
+  },
+  {
+   "input": 27.0,
+   "name": "whole_27",
+   "output": 17
+  },
+  {
+   "input": 28.0,
+   "name": "whole_28",
+   "output": 16
+  },
+  {
+   "input": 29.0,
+   "name": "whole_29",
+   "output": 15
+  },
+  {
+   "input": 30.0,
+   "name": "whole_30",
+   "output": 14
+  },
+  {
+   "input": 31.0,
+   "name": "whole_31",
+   "output": 13
+  },
+  {
+   "input": 32.0,
+   "name": "whole_32",
+   "output": 12
+  },
+  {
+   "input": 33.0,
+   "name": "whole_33",
+   "output": 11
+  },
+  {
+   "input": 34.0,
+   "name": "whole_34",
+   "output": 11
+  },
+  {
+   "input": 35.0,
+   "name": "whole_35",
+   "output": 10
+  },
+  {
+   "input": 36.0,
+   "name": "whole_36",
+   "output": 10
+  },
+  {
+   "input": 37.0,
+   "name": "whole_37",
+   "output": 9
+  },
+  {
+   "input": 38.0,
+   "name": "whole_38",
+   "output": 9
+  },
+  {
+   "input": 39.0,
+   "name": "whole_39",
+   "output": 8
+  },
+  {
+   "input": 40.0,
+   "name": "whole_40",
+   "output": 8
+  },
+  {
+   "input": 41.0,
+   "name": "whole_41",
+   "output": 7
+  },
+  {
+   "input": 42.0,
+   "name": "whole_42",
+   "output": 7
+  },
+  {
+   "input": 43.0,
+   "name": "whole_43",
+   "output": 7
+  },
+  {
+   "input": 44.0,
+   "name": "whole_44",
+   "output": 6
+  },
+  {
+   "input": 45.0,
+   "name": "whole_45",
+   "output": 6
+  },
+  {
+   "input": 46.0,
+   "name": "whole_46",
+   "output": 6
+  },
+  {
+   "input": 47.0,
+   "name": "whole_47",
+   "output": 6
+  },
+  {
+   "input": 48.0,
+   "name": "whole_48",
+   "output": 5
+  },
+  {
+   "input": 49.0,
+   "name": "whole_49",
+   "output": 5
+  },
+  {
+   "input": 50.0,
+   "name": "whole_50",
+   "output": 5
+  },
+  {
+   "input": 51.0,
+   "name": "whole_51",
+   "output": 5
+  },
+  {
+   "input": 52.0,
+   "name": "whole_52",
+   "output": 5
+  },
+  {
+   "input": 53.0,
+   "name": "whole_53",
+   "output": 5
+  },
+  {
+   "input": 54.0,
+   "name": "whole_54",
+   "output": 5
+  },
+  {
+   "input": 55.0,
+   "name": "whole_55",
+   "output": 5
+  },
+  {
+   "input": 56.0,
+   "name": "whole_56",
+   "output": 5
+  },
+  {
+   "input": 57.0,
+   "name": "whole_57",
+   "output": 5
+  },
+  {
+   "input": 58.0,
+   "name": "whole_58",
+   "output": 5
+  },
+  {
+   "input": 59.0,
+   "name": "whole_59",
+   "output": 5
+  },
+  {
+   "input": 60.0,
+   "name": "whole_60",
+   "output": 5
+  },
+  {
+   "input": 61.0,
+   "name": "whole_61",
+   "output": 5
+  },
+  {
+   "input": 62.0,
+   "name": "whole_62",
+   "output": 5
+  },
+  {
+   "input": 63.0,
+   "name": "whole_63",
+   "output": 5
+  },
+  {
+   "input": 64.0,
+   "name": "whole_64",
+   "output": 5
+  },
+  {
+   "input": 65.0,
+   "name": "whole_65",
+   "output": 5
+  },
+  {
+   "input": 66.0,
+   "name": "whole_66",
+   "output": 5
+  },
+  {
+   "input": 67.0,
+   "name": "whole_67",
+   "output": 5
+  },
+  {
+   "input": 68.0,
+   "name": "whole_68",
+   "output": 5
+  },
+  {
+   "input": 69.0,
+   "name": "whole_69",
+   "output": 5
+  },
+  {
+   "input": 70.0,
+   "name": "whole_70",
+   "output": 5
+  },
+  {
+   "input": 71.0,
+   "name": "whole_71",
+   "output": 5
+  },
+  {
+   "input": 72.0,
+   "name": "whole_72",
+   "output": 5
+  },
+  {
+   "input": 73.0,
+   "name": "whole_73",
+   "output": 5
+  },
+  {
+   "input": 74.0,
+   "name": "whole_74",
+   "output": 5
+  },
+  {
+   "input": 75.0,
+   "name": "whole_75",
+   "output": 5
+  },
+  {
+   "input": 76.0,
+   "name": "whole_76",
+   "output": 5
+  },
+  {
+   "input": 77.0,
+   "name": "whole_77",
+   "output": 5
+  },
+  {
+   "input": 78.0,
+   "name": "whole_78",
+   "output": 5
+  },
+  {
+   "input": 79.0,
+   "name": "whole_79",
+   "output": 5
+  },
+  {
+   "input": 80.0,
+   "name": "whole_80",
+   "output": 5
+  },
+  {
+   "input": 81.0,
+   "name": "whole_81",
+   "output": 5
+  },
+  {
+   "input": 16.999,
+   "name": "step_17_under",
+   "output": 45
+  },
+  {
+   "input": 17.001,
+   "name": "step_17_over",
+   "output": 43
+  },
+  {
+   "input": 16.5,
+   "name": "step_17_midpoint_below",
+   "output": 45
+  },
+  {
+   "input": 17.999,
+   "name": "step_18_under",
+   "output": 43
+  },
+  {
+   "input": 18.001,
+   "name": "step_18_over",
+   "output": 39
+  },
+  {
+   "input": 17.5,
+   "name": "step_18_midpoint_below",
+   "output": 43
+  },
+  {
+   "input": 18.999,
+   "name": "step_19_under",
+   "output": 39
+  },
+  {
+   "input": 19.001,
+   "name": "step_19_over",
+   "output": 35
+  },
+  {
+   "input": 18.5,
+   "name": "step_19_midpoint_below",
+   "output": 39
+  },
+  {
+   "input": 19.999,
+   "name": "step_20_under",
+   "output": 35
+  },
+  {
+   "input": 20.001,
+   "name": "step_20_over",
+   "output": 31
+  },
+  {
+   "input": 19.5,
+   "name": "step_20_midpoint_below",
+   "output": 35
+  },
+  {
+   "input": 20.999,
+   "name": "step_21_under",
+   "output": 31
+  },
+  {
+   "input": 21.001,
+   "name": "step_21_over",
+   "output": 28
+  },
+  {
+   "input": 20.5,
+   "name": "step_21_midpoint_below",
+   "output": 31
+  },
+  {
+   "input": 21.999,
+   "name": "step_22_under",
+   "output": 28
+  },
+  {
+   "input": 22.001,
+   "name": "step_22_over",
+   "output": 26
+  },
+  {
+   "input": 21.5,
+   "name": "step_22_midpoint_below",
+   "output": 28
+  },
+  {
+   "input": 22.999,
+   "name": "step_23_under",
+   "output": 26
+  },
+  {
+   "input": 23.001,
+   "name": "step_23_over",
+   "output": 24
+  },
+  {
+   "input": 22.5,
+   "name": "step_23_midpoint_below",
+   "output": 26
+  },
+  {
+   "input": 23.999,
+   "name": "step_24_under",
+   "output": 24
+  },
+  {
+   "input": 24.001,
+   "name": "step_24_over",
+   "output": 22
+  },
+  {
+   "input": 23.5,
+   "name": "step_24_midpoint_below",
+   "output": 24
+  },
+  {
+   "input": 24.999,
+   "name": "step_25_under",
+   "output": 22
+  },
+  {
+   "input": 25.001,
+   "name": "step_25_over",
+   "output": 20
+  },
+  {
+   "input": 24.5,
+   "name": "step_25_midpoint_below",
+   "output": 22
+  },
+  {
+   "input": 25.999,
+   "name": "step_26_under",
+   "output": 20
+  },
+  {
+   "input": 26.001,
+   "name": "step_26_over",
+   "output": 18
+  },
+  {
+   "input": 25.5,
+   "name": "step_26_midpoint_below",
+   "output": 20
+  },
+  {
+   "input": 26.999,
+   "name": "step_27_under",
+   "output": 18
+  },
+  {
+   "input": 27.001,
+   "name": "step_27_over",
+   "output": 17
+  },
+  {
+   "input": 26.5,
+   "name": "step_27_midpoint_below",
+   "output": 18
+  },
+  {
+   "input": 27.999,
+   "name": "step_28_under",
+   "output": 17
+  },
+  {
+   "input": 28.001,
+   "name": "step_28_over",
+   "output": 16
+  },
+  {
+   "input": 27.5,
+   "name": "step_28_midpoint_below",
+   "output": 17
+  },
+  {
+   "input": 28.999,
+   "name": "step_29_under",
+   "output": 16
+  },
+  {
+   "input": 29.001,
+   "name": "step_29_over",
+   "output": 15
+  },
+  {
+   "input": 28.5,
+   "name": "step_29_midpoint_below",
+   "output": 16
+  },
+  {
+   "input": 29.999,
+   "name": "step_30_under",
+   "output": 15
+  },
+  {
+   "input": 30.001,
+   "name": "step_30_over",
+   "output": 14
+  },
+  {
+   "input": 29.5,
+   "name": "step_30_midpoint_below",
+   "output": 15
+  },
+  {
+   "input": 30.999,
+   "name": "step_31_under",
+   "output": 14
+  },
+  {
+   "input": 31.001,
+   "name": "step_31_over",
+   "output": 13
+  },
+  {
+   "input": 30.5,
+   "name": "step_31_midpoint_below",
+   "output": 14
+  },
+  {
+   "input": 31.999,
+   "name": "step_32_under",
+   "output": 13
+  },
+  {
+   "input": 32.001,
+   "name": "step_32_over",
+   "output": 12
+  },
+  {
+   "input": 31.5,
+   "name": "step_32_midpoint_below",
+   "output": 13
+  },
+  {
+   "input": 32.999,
+   "name": "step_33_under",
+   "output": 12
+  },
+  {
+   "input": 33.001,
+   "name": "step_33_over",
+   "output": 11
+  },
+  {
+   "input": 32.5,
+   "name": "step_33_midpoint_below",
+   "output": 12
+  },
+  {
+   "input": 34.999,
+   "name": "step_35_under",
+   "output": 11
+  },
+  {
+   "input": 35.001,
+   "name": "step_35_over",
+   "output": 10
+  },
+  {
+   "input": 34.5,
+   "name": "step_35_midpoint_below",
+   "output": 11
+  },
+  {
+   "input": 36.999,
+   "name": "step_37_under",
+   "output": 10
+  },
+  {
+   "input": 37.001,
+   "name": "step_37_over",
+   "output": 9
+  },
+  {
+   "input": 36.5,
+   "name": "step_37_midpoint_below",
+   "output": 10
+  },
+  {
+   "input": 38.999,
+   "name": "step_39_under",
+   "output": 9
+  },
+  {
+   "input": 39.001,
+   "name": "step_39_over",
+   "output": 8
+  },
+  {
+   "input": 38.5,
+   "name": "step_39_midpoint_below",
+   "output": 9
+  },
+  {
+   "input": 40.999,
+   "name": "step_41_under",
+   "output": 8
+  },
+  {
+   "input": 41.001,
+   "name": "step_41_over",
+   "output": 7
+  },
+  {
+   "input": 40.5,
+   "name": "step_41_midpoint_below",
+   "output": 8
+  },
+  {
+   "input": 43.999,
+   "name": "step_44_under",
+   "output": 7
+  },
+  {
+   "input": 44.001,
+   "name": "step_44_over",
+   "output": 6
+  },
+  {
+   "input": 43.5,
+   "name": "step_44_midpoint_below",
+   "output": 7
+  },
+  {
+   "input": 47.999,
+   "name": "step_48_under",
+   "output": 6
+  },
+  {
+   "input": 48.001,
+   "name": "step_48_over",
+   "output": 5
+  },
+  {
+   "input": 47.5,
+   "name": "step_48_midpoint_below",
+   "output": 6
+  },
+  {
+   "input": 54.32413004764709,
+   "name": "sweep_000",
+   "output": 5
+  },
+  {
+   "input": 77.62364825052138,
+   "name": "sweep_001",
+   "output": 5
+  },
+  {
+   "input": 109.23185078449742,
+   "name": "sweep_002",
+   "output": 5
+  },
+  {
+   "input": 56.27720062157793,
+   "name": "sweep_003",
+   "output": 5
+  },
+  {
+   "input": 91.78493874277909,
+   "name": "sweep_004",
+   "output": 5
+  },
+  {
+   "input": 20.315152839257188,
+   "name": "sweep_005",
+   "output": 31
+  },
+  {
+   "input": 71.29779970806266,
+   "name": "sweep_006",
+   "output": 5
+  },
+  {
+   "input": 82.14248993128213,
+   "name": "sweep_007",
+   "output": 5
+  },
+  {
+   "input": 101.72630368349593,
+   "name": "sweep_008",
+   "output": 5
+  },
+  {
+   "input": 88.72582721842178,
+   "name": "sweep_009",
+   "output": 5
+  },
+  {
+   "input": 4.005113255175605,
+   "name": "sweep_010",
+   "output": 45
+  },
+  {
+   "input": 20.59262413639131,
+   "name": "sweep_011",
+   "output": 31
+  },
+  {
+   "input": 0.4461279235329858,
+   "name": "sweep_012",
+   "output": 45
+  },
+  {
+   "input": 23.455797508502727,
+   "name": "sweep_013",
+   "output": 24
+  },
+  {
+   "input": 64.81214072919046,
+   "name": "sweep_014",
+   "output": 5
+  },
+  {
+   "input": 37.912721587553946,
+   "name": "sweep_015",
+   "output": 9
+  },
+  {
+   "input": 18.303575074117052,
+   "name": "sweep_016",
+   "output": 39
+  },
+  {
+   "input": 1.167459422755046,
+   "name": "sweep_017",
+   "output": 45
+  },
+  {
+   "input": 54.82455430515196,
+   "name": "sweep_018",
+   "output": 5
+  },
+  {
+   "input": 17.57775862997846,
+   "name": "sweep_019",
+   "output": 43
+  },
+  {
+   "input": 11.59134017615845,
+   "name": "sweep_020",
+   "output": 45
+  },
+  {
+   "input": 85.05150574657118,
+   "name": "sweep_021",
+   "output": 5
+  },
+  {
+   "input": 49.514818622118014,
+   "name": "sweep_022",
+   "output": 5
+  },
+  {
+   "input": -6.198045188970069,
+   "name": "sweep_023",
+   "output": 45
+  },
+  {
+   "input": 2.687357309838701,
+   "name": "sweep_024",
+   "output": 45
+  },
+  {
+   "input": 46.692667664499865,
+   "name": "sweep_025",
+   "output": 6
+  },
+  {
+   "input": 13.742251871182372,
+   "name": "sweep_026",
+   "output": 45
+  },
+  {
+   "input": 25.495190963236787,
+   "name": "sweep_027",
+   "output": 20
+  },
+  {
+   "input": 40.33221306632427,
+   "name": "sweep_028",
+   "output": 8
+  },
+  {
+   "input": 19.632309680163672,
+   "name": "sweep_029",
+   "output": 35
+  },
+  {
+   "input": 109.81144932205208,
+   "name": "sweep_030",
+   "output": 5
+  },
+  {
+   "input": 19.493976645199147,
+   "name": "sweep_031",
+   "output": 35
+  },
+  {
+   "input": 56.3230933612177,
+   "name": "sweep_032",
+   "output": 5
+  },
+  {
+   "input": 54.47197720412525,
+   "name": "sweep_033",
+   "output": 5
+  },
+  {
+   "input": 71.89944020910919,
+   "name": "sweep_034",
+   "output": 5
+  },
+  {
+   "input": 21.770591625102426,
+   "name": "sweep_035",
+   "output": 28
+  },
+  {
+   "input": 17.228518133409555,
+   "name": "sweep_036",
+   "output": 43
+  },
+  {
+   "input": 2.7009003311745854,
+   "name": "sweep_037",
+   "output": 45
+  },
+  {
+   "input": 111.85516070751385,
+   "name": "sweep_038",
+   "output": 5
+  },
+  {
+   "input": 111.93125816734769,
+   "name": "sweep_039",
+   "output": 5
+  },
+  {
+   "input": 54.49485671902994,
+   "name": "sweep_040",
+   "output": 5
+  },
+  {
+   "input": 91.41694820130091,
+   "name": "sweep_041",
+   "output": 5
+  },
+  {
+   "input": 111.54000477529144,
+   "name": "sweep_042",
+   "output": 5
+  },
+  {
+   "input": -4.741119031021631,
+   "name": "sweep_043",
+   "output": 45
+  },
+  {
+   "input": 82.70295540092687,
+   "name": "sweep_044",
+   "output": 5
+  },
+  {
+   "input": 68.73861143189202,
+   "name": "sweep_045",
+   "output": 5
+  },
+  {
+   "input": 35.665766732582455,
+   "name": "sweep_046",
+   "output": 10
+  },
+  {
+   "input": 5.2230857981974275,
+   "name": "sweep_047",
+   "output": 45
+  },
+  {
+   "input": 80.84358688925427,
+   "name": "sweep_048",
+   "output": 5
+  },
+  {
+   "input": 33.006932030631205,
+   "name": "sweep_049",
+   "output": 11
+  },
+  {
+   "input": -5.067425443922553,
+   "name": "sweep_050",
+   "output": 45
+  },
+  {
+   "input": 28.13438805006554,
+   "name": "sweep_051",
+   "output": 16
+  },
+  {
+   "input": 14.048364935306736,
+   "name": "sweep_052",
+   "output": 45
+  },
+  {
+   "input": 54.62881764787329,
+   "name": "sweep_053",
+   "output": 5
+  },
+  {
+   "input": 10.03872202302852,
+   "name": "sweep_054",
+   "output": 45
+  },
+  {
+   "input": 106.17268626350383,
+   "name": "sweep_055",
+   "output": 5
+  },
+  {
+   "input": 6.849544319846764,
+   "name": "sweep_056",
+   "output": 45
+  },
+  {
+   "input": 4.526405858156023,
+   "name": "sweep_057",
+   "output": 45
+  },
+  {
+   "input": -5.622366677094513,
+   "name": "sweep_058",
+   "output": 45
+  },
+  {
+   "input": 3.816644431785754,
+   "name": "sweep_059",
+   "output": 45
+  },
+  {
+   "input": 73.71785402173651,
+   "name": "sweep_060",
+   "output": 5
+  },
+  {
+   "input": 52.82301745667893,
+   "name": "sweep_061",
+   "output": 5
+  },
+  {
+   "input": 8.355678103446468,
+   "name": "sweep_062",
+   "output": 45
+  },
+  {
+   "input": 60.10988157883256,
+   "name": "sweep_063",
+   "output": 5
+  },
+  {
+   "input": -0.8214358282501575,
+   "name": "sweep_064",
+   "output": 45
+  },
+  {
+   "input": 107.8342881689267,
+   "name": "sweep_065",
+   "output": 5
+  },
+  {
+   "input": 87.31758279939102,
+   "name": "sweep_066",
+   "output": 5
+  },
+  {
+   "input": 103.94264926324402,
+   "name": "sweep_067",
+   "output": 5
+  },
+  {
+   "input": 67.16540562978238,
+   "name": "sweep_068",
+   "output": 5
+  },
+  {
+   "input": 109.448322391195,
+   "name": "sweep_069",
+   "output": 5
+  },
+  {
+   "input": 50.62091062247159,
+   "name": "sweep_070",
+   "output": 5
+  },
+  {
+   "input": 95.43959028930277,
+   "name": "sweep_071",
+   "output": 5
+  },
+  {
+   "input": 112.86235346121012,
+   "name": "sweep_072",
+   "output": 5
+  },
+  {
+   "input": 69.22953436579685,
+   "name": "sweep_073",
+   "output": 5
+  },
+  {
+   "input": 3.6819021460655357,
+   "name": "sweep_074",
+   "output": 45
+  },
+  {
+   "input": 105.99767674639955,
+   "name": "sweep_075",
+   "output": 5
+  },
+  {
+   "input": 65.65459750794523,
+   "name": "sweep_076",
+   "output": 5
+  },
+  {
+   "input": -0.29532854335089453,
+   "name": "sweep_077",
+   "output": 45
+  },
+  {
+   "input": 82.34021264067478,
+   "name": "sweep_078",
+   "output": 5
+  },
+  {
+   "input": -7.022193354247175,
+   "name": "sweep_079",
+   "output": 45
+  },
+  {
+   "input": 42.35589899900742,
+   "name": "sweep_080",
+   "output": 7
+  },
+  {
+   "input": 49.58887982371956,
+   "name": "sweep_081",
+   "output": 5
+  },
+  {
+   "input": 38.32744840473475,
+   "name": "sweep_082",
+   "output": 9
+  },
+  {
+   "input": 51.36719651908678,
+   "name": "sweep_083",
+   "output": 5
+  },
+  {
+   "input": -1.5635187812309699,
+   "name": "sweep_084",
+   "output": 45
+  },
+  {
+   "input": 79.64993734808021,
+   "name": "sweep_085",
+   "output": 5
+  },
+  {
+   "input": 12.072312847383373,
+   "name": "sweep_086",
+   "output": 45
+  },
+  {
+   "input": 97.47249717912442,
+   "name": "sweep_087",
+   "output": 5
+  },
+  {
+   "input": 19.646673064041547,
+   "name": "sweep_088",
+   "output": 35
+  },
+  {
+   "input": 92.03135065536696,
+   "name": "sweep_089",
+   "output": 5
+  },
+  {
+   "input": 43.71471109473009,
+   "name": "sweep_090",
+   "output": 7
+  },
+  {
+   "input": 67.03428540573879,
+   "name": "sweep_091",
+   "output": 5
+  },
+  {
+   "input": 59.87239322847998,
+   "name": "sweep_092",
+   "output": 5
+  },
+  {
+   "input": 71.97699497331388,
+   "name": "sweep_093",
+   "output": 5
+  },
+  {
+   "input": 36.65696365430122,
+   "name": "sweep_094",
+   "output": 10
+  },
+  {
+   "input": 107.22447373098304,
+   "name": "sweep_095",
+   "output": 5
+  },
+  {
+   "input": 27.712078757694478,
+   "name": "sweep_096",
+   "output": 17
+  },
+  {
+   "input": 44.021974789681956,
+   "name": "sweep_097",
+   "output": 6
+  },
+  {
+   "input": 17.385229377768212,
+   "name": "sweep_098",
+   "output": 43
+  },
+  {
+   "input": 1.668407070535558,
+   "name": "sweep_099",
+   "output": 45
+  },
+  {
+   "input": 61.83514465353383,
+   "name": "sweep_100",
+   "output": 5
+  },
+  {
+   "input": 96.17966116306569,
+   "name": "sweep_101",
+   "output": 5
+  },
+  {
+   "input": 0.8930007135071243,
+   "name": "sweep_102",
+   "output": 45
+  },
+  {
+   "input": 75.9663653568828,
+   "name": "sweep_103",
+   "output": 5
+  },
+  {
+   "input": 92.25583432263643,
+   "name": "sweep_104",
+   "output": 5
+  },
+  {
+   "input": 27.012860091573074,
+   "name": "sweep_105",
+   "output": 17
+  },
+  {
+   "input": 102.3442565045909,
+   "name": "sweep_106",
+   "output": 5
+  },
+  {
+   "input": 46.12320829044975,
+   "name": "sweep_107",
+   "output": 6
+  },
+  {
+   "input": 47.59703232395522,
+   "name": "sweep_108",
+   "output": 6
+  },
+  {
+   "input": 7.526900640008122,
+   "name": "sweep_109",
+   "output": 45
+  },
+  {
+   "input": -8.207515565264963,
+   "name": "sweep_110",
+   "output": 45
+  },
+  {
+   "input": 54.29380678275591,
+   "name": "sweep_111",
+   "output": 5
+  },
+  {
+   "input": 49.16998066013852,
+   "name": "sweep_112",
+   "output": 5
+  },
+  {
+   "input": 62.87225549689245,
+   "name": "sweep_113",
+   "output": 5
+  },
+  {
+   "input": 45.5583692065492,
+   "name": "sweep_114",
+   "output": 6
+  },
+  {
+   "input": 83.06792416980925,
+   "name": "sweep_115",
+   "output": 5
+  },
+  {
+   "input": 2.7373909974359893,
+   "name": "sweep_116",
+   "output": 45
+  },
+  {
+   "input": 84.89183463550334,
+   "name": "sweep_117",
+   "output": 5
+  },
+  {
+   "input": 30.073919307817995,
+   "name": "sweep_118",
+   "output": 14
+  },
+  {
+   "input": 44.157318530763405,
+   "name": "sweep_119",
+   "output": 6
+  }
+ ],
+ "compare": {
+  "kind": "exact"
+ },
+ "meta": {
+  "commit": "1f204b57fdfa4590bde43fde9954fbafafd7925d",
+  "generator": "fin_limit",
+  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "python": "3.12",
+  "source": "src/glider/commons.py",
+  "tag": "micropython_plan_B_2"
+ },
+ "note": "whole degrees; int() truncates the speed; no speed within 1e-3 of a whole number it is not"
+}

@@ -1,7 +1,7 @@
 """
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
-The golden-vector generator: runs plan B (src/glider, frozen at tag micropython_plan_B) on CPython through
+The golden-vector generator: runs plan B (src/glider, frozen at the tag _TAG names) on CPython through
 shims.py and writes what it answers as the fixtures the Rust port (src/avionics) is tested against.
 
 Every fixture has one builder, golden/build_<fixture>.py, exposing build() -> dict: the whole fixture
@@ -15,9 +15,9 @@ The provenance has to be true, so the driver refuses to run (exit 2) unless:
     json, int parsing), and a patch level must not make every fixture stale, so only major.minor is kept;
   * src/glider has no uncommitted change: the builders read the working tree, and glider_tree and commit
     name HEAD;
-  * src/glider outside test/ is what the tag micropython_plan_B froze, so `tag` names the plan B the
-    fixture really came from. A plan B fix moves the tag (or _TAG) on purpose; until then nothing is
-    generated from a plan B the tag does not describe.
+  * src/glider outside test/ is what the tag _TAG names froze, so `tag` names the plan B the
+    fixture really came from. A plan B fix moves the tag (or _TAG) on purpose, and crates/golden's
+    PLAN_B_TAG with it; until then nothing is generated from a plan B the tag does not describe.
 
 Each builder runs in a FRESH interpreter. Plan B keeps registries in class state (the Inspector, the
 Databoard, the Recorder, layout.RESOLVED), so a builder run after another would otherwise answer differently

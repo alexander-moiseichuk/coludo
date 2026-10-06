@@ -293,6 +293,70 @@ fn geometry_needs_a_zone_and_an_origin() {
 }
 
 #[test]
+fn the_zone_shape_picks_the_endgame_pattern() {
+    use control::guidance::Heading;
+    let with_zone = |zone: Value| {
+        let mut mission = loaded("{}");
+        mission.update(&properties(json!({ "zone": zone })));
+        mission
+    };
+    // test_guidance's strip (0.001 by 0.010 degree near 48 N, aspect ~6.7) flies two lobes
+    let strip = with_zone(json!([[48.001, 11.0], [48.0, 11.01]]));
+    assert!((strip.zone_aspect() - 6.69).abs() < 0.01);
+    assert_eq!(strip.endgame_heading(), Heading::TwoLobes);
+    // aspect ~3 flies the oval, a square the circle
+    assert_eq!(
+        with_zone(json!([[48.001, 11.0], [48.0, 11.00448]])).endgame_heading(),
+        Heading::Oval
+    );
+    assert_eq!(
+        with_zone(json!([[48.001, 11.0], [48.0, 11.0015]])).endgame_heading(),
+        Heading::Circle
+    );
+    // the aspect is a ratio of sides, so a tall strip decides as a wide one does
+    assert_eq!(
+        with_zone(json!([[48.008, 11.0], [48.0, 11.001]])).endgame_heading(),
+        Heading::TwoLobes
+    );
+    // NEGATIVE: no zone has an aspect of 1 and circles; never 'auto', which would ask the Mission again
+    let blank = loaded("{}");
+    assert_eq!((blank.zone_aspect(), blank.endgame_heading()), (1.0, Heading::Circle));
+    for zone in [
+        json!([[48.001, 11.0], [48.0, 11.01]]),
+        json!([[48.001, 11.0], [48.0, 11.0015]]),
+    ] {
+        assert_ne!(with_zone(zone).endgame_heading(), Heading::Auto);
+    }
+}
+
+#[test]
+fn the_pattern_thresholds_are_inclusive_from_below() {
+    // a zone 2 and 6 times as wide as it is tall, on the equator, where the integer sides are exact: the oval
+    // starts AT 2 and the two lobes AT 6 (plan B's `aspect >= OVAL_ASPECT`), and just below each the gentler
+    // pattern holds
+    use control::guidance::Heading;
+    let mission = |longitude_units: i32| Mission {
+        zone: Some(Zone {
+            top_left: Position {
+                latitude_e7: 1000,
+                longitude_e7: 0,
+            },
+            bottom_right: Position {
+                latitude_e7: 0,
+                longitude_e7: longitude_units,
+            },
+        }),
+        ..loaded("{}")
+    };
+    assert_eq!(mission(2000).zone_aspect(), 2.0);
+    assert_eq!(mission(2000).endgame_heading(), Heading::Oval);
+    assert_eq!(mission(1999).endgame_heading(), Heading::Circle);
+    assert_eq!(mission(6000).zone_aspect(), 6.0);
+    assert_eq!(mission(6000).endgame_heading(), Heading::TwoLobes);
+    assert_eq!(mission(5999).endgame_heading(), Heading::Oval);
+}
+
+#[test]
 fn probe_names_what_fails() {
     let mut mission = loaded("{}");
     assert_eq!(

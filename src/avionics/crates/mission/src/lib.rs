@@ -35,11 +35,11 @@
 //!  * Nothing is memoized. Plan B caches the zone geometry by identity for its hot path; here it is a little
 //!    integer and f32 work, done when asked.
 //!
-//! Not yet ported from plan B's Mission: `freeze_launch` (the arm freeze of the launch point, M7),
-//! `select_site` and `fallback_zone` (CC-less field operation, M11), and `zone_aspect`/`endgame_heading` (the
-//! endgame pattern for guidance, M13; `control::navigation::zone_aspect` already exists). A milestone that
-//! needs one ports it here first.
+//! Not yet ported from plan B's Mission: `freeze_launch` (the arm freeze of the launch point, M7), and
+//! `select_site` and `fallback_zone` (CC-less field operation, M11). A milestone that needs one ports it here
+//! first, as M13 did `zone_aspect` and `endgame_heading` for the guidance law.
 
+use control::guidance::Heading;
 use control::navigation;
 use serde_json::{Map, Value, json};
 use std::ops::RangeInclusive;
@@ -322,6 +322,32 @@ impl Mission {
             max_distance_m,
             in_range: max_distance_m <= self.max_range_m,
         })
+    }
+
+    /// The landing zone's long/short side ratio, >= 1 (mission.py `zone_aspect`); 1.0 when no zone is set, as
+    /// plan B's. [`Mission::endgame_heading`] decides by it.
+    pub fn zone_aspect(&self) -> f32 {
+        self.zone
+            .map_or(1.0, |zone| navigation::zone_aspect(zone.top_left, zone.bottom_right))
+    }
+
+    /// The endgame holding pattern the guidance law's 'auto' setting resolves to (mission.py `endgame_heading`),
+    /// decided by the zone's SHAPE, its long/short aspect k.
+    ///
+    /// Squarish (k below `Heading::OVAL_ASPECT`, 2) flies the single circle; a MODERATELY elongated strip (up
+    /// to `Heading::TWO_LOBES_ASPECT`, 6) the centreline oval; a VERY elongated one the two lobes. The Mission
+    /// owns the zone, so it owns this decision: the caller hands the answer to guidance in its `Landing`, and
+    /// guidance only reads it when its config says 'auto'. No zone answers the circle (an aspect of 1). Never
+    /// `Auto`.
+    pub fn endgame_heading(&self) -> Heading {
+        let aspect = self.zone_aspect();
+        if aspect >= Heading::TWO_LOBES_ASPECT {
+            Heading::TwoLobes
+        } else if aspect >= Heading::OVAL_ASPECT {
+            Heading::Oval
+        } else {
+            Heading::Circle
+        }
     }
 
     /// The pre-flight self-test (mission.py `probe`): a launch position is known (set, or the live fix) and, when

@@ -1,88 +1,18 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! The flight stages (src/glider controller.Stage): their ids, their operator-facing names, and which of them
-//! are on the ground. The stage machine itself (tasks/sequencer.py) lands here with the control thread.
+//! The flight stages and the stage machine, one module per plan B module it ports:
+//! - [`controller`]: the flight stages (src/glider controller.py `Stage`);
+//! - [`commons`]: the detector primitives, the leaky dwell and the apogee tracker (src/glider commons.py,
+//!   `dwell_step`/`apogee_step`);
+//! - [`sequencer`]: the stage machine (src/glider tasks/sequencer.py), a pure `step` the control thread runs at
+//!   20 Hz.
+//!
+//! The machine allocates nothing and reads no clock. The crate is `std` for one reason: `f32::sqrt`, which the
+//! reason text's |accel| takes and which `core` lacks on stable Rust.
 
-#![no_std]
+pub mod commons;
+pub mod controller;
+pub mod sequencer;
 
-/// One flight stage. The ids are plan B's, so a warm-start crumb reads the same on both firmwares; 0 is the
-/// NVS "no checkpoint" sentinel and never a live stage.
-#[repr(u8)]
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Stage {
-    /// On the pad: the sequencer is free to detect the launch.
-    Setting = 1,
-    /// Powered boost.
-    Boosting = 2,
-    /// Unpowered glide after separation.
-    Gliding = 3,
-    /// The endgame: the approach and the landing.
-    Landing = 4,
-    /// Landed; the flight is over.
-    Done = 5,
-}
-
-impl Stage {
-    /// Every stage, in id order.
-    pub const ALL: [Stage; 5] = [
-        Stage::Setting,
-        Stage::Boosting,
-        Stage::Gliding,
-        Stage::Landing,
-        Stage::Done,
-    ];
-
-    /// The operator-facing name (`stage`, `health`, `whoami`).
-    pub fn name(self) -> &'static str {
-        match self {
-            Stage::Setting => "setting",
-            Stage::Boosting => "boosting",
-            Stage::Gliding => "gliding",
-            Stage::Landing => "landing",
-            Stage::Done => "done",
-        }
-    }
-
-    /// The stage an operator names, None for a name that is not a stage.
-    pub fn from_name(name: &str) -> Option<Stage> {
-        Stage::ALL.into_iter().find(|stage| stage.name() == name)
-    }
-
-    /// The stage with this id, None for 0 (the sentinel) or an id past the last stage.
-    pub fn from_id(id: u8) -> Option<Stage> {
-        Stage::ALL.into_iter().find(|stage| *stage as u8 == id)
-    }
-
-    /// Nothing is flying: the stages active commands may run in (src/glider cc_client `_GROUND`).
-    pub fn ground(self) -> bool {
-        matches!(self, Stage::Setting | Stage::Done)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::Stage;
-
-    #[test]
-    fn names_round_trip_and_ids_match_plan_b() {
-        for (index, stage) in Stage::ALL.into_iter().enumerate() {
-            assert_eq!(stage as u8, index as u8 + 1);
-            assert_eq!(Stage::from_name(stage.name()), Some(stage));
-            assert_eq!(Stage::from_id(stage as u8), Some(stage));
-        }
-    }
-
-    #[test]
-    fn rejects_the_sentinel_and_unknown_names() {
-        assert_eq!(Stage::from_id(0), None);
-        assert_eq!(Stage::from_id(6), None);
-        assert_eq!(Stage::from_name("auto"), None);
-        assert_eq!(Stage::from_name("Setting"), None);
-    }
-
-    #[test]
-    fn only_setting_and_done_are_ground() {
-        let ground: [bool; 5] = Stage::ALL.map(Stage::ground);
-        assert_eq!(ground, [true, false, false, false, true]);
-    }
-}
+pub use controller::Stage;
+pub use sequencer::{Reading, Readings, Reason, Settings, Source, StageMachine, Step, Transition};

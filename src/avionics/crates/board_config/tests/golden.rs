@@ -160,7 +160,7 @@ fn the_fixtures_say_where_they_came_from() {
     ] {
         let fixture = Fixture::parse(text);
         let meta = fixture.get("meta");
-        assert_eq!(meta["tag"], "micropython_plan_B");
+        assert_eq!(meta["tag"], golden::PLAN_B_TAG);
         assert_eq!(meta["generator"], generator);
         assert_eq!(meta["python"], "3.12");
         assert!(meta["source"].as_str().unwrap().contains("src/glider/"));

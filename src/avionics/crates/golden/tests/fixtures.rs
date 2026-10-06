@@ -16,7 +16,7 @@ const CC_DISPATCH: &str = include_str!("../../../golden/cc_dispatch.json");
 /// Every fixture says where it came from.
 fn assert_provenance(fixture: &Fixture, generator: &str) {
     let meta = fixture.get("meta");
-    assert_eq!(meta["tag"], "micropython_plan_B");
+    assert_eq!(meta["tag"], golden::PLAN_B_TAG);
     assert_eq!(meta["generator"], generator);
     assert_eq!(meta["python"], "3.12", "the oracle's major.minor, never a patch level");
     for member in ["source", "commit", "glider_tree"] {

@@ -1,0 +1,16 @@
+[package]
+name = "warmstart"
+description = "In-flight reboot recovery: the NVS crumb, the warm-start gate with the boot rules, the apply plan and the checkpoint schedule (src/glider warmstart.py)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+control.workspace = true  # Position, the 1e-7 degree integer a crumb's launch and zone are held in
+sequencer.workspace = true  # Stage, the ids the crumb's stage i32 carries
+serde.workspace = true  # the crumb writer: f32 fields print as their shortest text
+serde_json.workspace = true
+
+[dev-dependencies]
+golden.workspace = true

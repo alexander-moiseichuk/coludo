@@ -2,10 +2,10 @@
 Coludo project, copyright under MIT license, Alexander Moiseichuk
 
 Golden fixture mission.json: plan B's Mission (src/glider/mission.py) as the Rust port (crates/mission) must
-answer it -- launch.config load, update(), the time-set rule, persisted(), probe(), inspect() and the board clock
-text.
+answer it -- launch.config load, update(), the time-set rule, persisted(), probe(), inspect(), the board clock
+text, and the endgame pattern the guidance law's 'auto' resolves to.
 
-Three members carry cases:
+Four members carry cases:
   * scenarios -- stateful: a launch.config text (or none) and max_range_m to start from, then steps. Each step
     is an action with the GNSS fix it runs under, and plan B's answer after it: the changed list, persisted(),
     the in-memory sites, probe(), and inspect() minus clock and epoch (the caller's clock). The actions:
@@ -16,6 +16,10 @@ Three members carry cases:
   * time_sets -- one update each on a fresh HPRC mission: the changed list, the epoch set_time accepted, and the
     momentary inputs plan B hands its session.csv row.
   * clocks -- an epoch set through set_time, and the text clock() then reads back.
+  * endgame_headings -- a launch.config text, and the pattern endgame_heading() resolves for its zone by the
+    zone's long/short aspect (a guidance.Heading id: 1 circle, 2 two lobes, 3 oval). The aspect itself is
+    navigation.zone_aspect, pinned by navigation.json; no case lies within 0.1 % of the two thresholds, where the
+    Rust f32 aspect could fall on the other side.
 
 The fixture compares under abs 5.01e-8 (see `tolerance`): degrees to half a 1e-7 degree unit (the Rust units;
 a zone centre is the integer mean, at most half a unit off), so a one-unit slip in a corner, gate or pad fails;
@@ -54,6 +58,7 @@ import tempfile
 import time
 
 import databoard
+import guidance
 import mission
 import navigation
 import recorder
@@ -61,6 +66,8 @@ import recorder
 _SEED: int = 20261006  # the clock sweep's random.Random seed
 _CLOCK_SWEEP: int = 40  # seeded clock cases on top of the explicit ones
 _CLOCK_SWEEP_END: int = 4102444800  # 2100-01-01: the sweep covers the 21st century the RTC lives in
+_ENDGAME_SWEEP: int = 40  # seeded endgame-pattern cases on top of the explicit ones
+_ASPECT_MARGIN: float = 1e-3  # a sweep zone whose aspect lies this close (relative) to a threshold is skipped
 _UNITS_PER_DEGREE: float = 1e7  # a Rust Position counts 1e-7 degrees
 _FIX_WINDOW_MS: int = 60000  # the GNSS stand-in's freshness window: roomy, a fix pushed for a step is fresh in it
 _F32_RELATIVE: float = 3e-07  # the Rust f32 distance's error, relative (worst measured over 5 km: 2.6e-7)...
@@ -487,6 +494,77 @@ _CLOCKS: tuple = (
 )
 
 
+"""
+The endgame-pattern cases: (name, zone in units or None). test_guidance's strip (aspect ~6.7) and square, an
+aspect ~3 zone, a tall strip, zones just either side of both thresholds (2 and 6, within a few percent), and no
+zone at all. The HPRC default (no launch.config) is its own case.
+"""
+_ENDGAME_ZONES: tuple = (
+    ('the_test_strip_flies_two_lobes', [[480010000, 110000000], [480000000, 110100000]]),
+    ('a_square_flies_a_circle', [[480010000, 110000000], [480000000, 110015000]]),
+    ('aspect_three_flies_the_oval', [[480010000, 110000000], [480000000, 110044800]]),
+    ('a_tall_strip_flies_two_lobes', [[480080000, 110000000], [480000000, 110010000]]),
+    ('just_under_two_circles', [[480010000, 110000000], [480000000, 110029200]]),
+    ('just_over_two_flies_the_oval', [[480010000, 110000000], [480000000, 110030600]]),
+    ('just_under_six_flies_the_oval', [[480010000, 110000000], [480000000, 110087600]]),
+    ('just_over_six_flies_two_lobes', [[480010000, 110000000], [480000000, 110091800]]),
+    ('southern_and_western_zone', [[-346030000, -583830000], [-346040000, -583810000]]),
+    ('no_zone_circles', None),
+)
+
+
+def _endgame_heading(name: str, stored: str | None) -> dict:
+    """
+    One endgame-pattern case: what plan B's Mission, loaded from `stored`, answers for endgame_heading().
+
+    Args:
+        name - the case name.
+        stored - the launch.config text, or None for none (the HPRC default).
+
+    Returns:
+        {name, input: stored, output: the guidance.Heading id}.
+    """
+    with tempfile.TemporaryDirectory() as directory:
+        path = os.path.join(directory, mission.LAUNCH_PATH)
+        if stored is not None:
+            with open(path, 'w') as handle:
+                handle.write(stored)
+        return {'name': name, 'input': stored, 'output': mission.Mission(path).endgame_heading()}
+
+
+def _zone_text(zone: list | None) -> str:
+    """A launch.config text holding this zone (in units), in degrees, which the Rust load rounds back to the units."""
+    return json.dumps({} if zone is None else {'zone': [list(_degrees(zone[0])), list(_degrees(zone[1]))]})
+
+
+def _endgame_headings(generator: random.Random) -> list:
+    """
+    The endgame-pattern cases: the explicit zones, the HPRC default, and a seeded sweep of zones 30 m to 1 km a side
+    anywhere within 60 degrees of the equator.
+
+    Raises:
+        ValueError - an explicit zone lies within _ASPECT_MARGIN of a threshold.
+    """
+    thresholds = (guidance.Heading.OVAL_ASPECT, guidance.Heading.OO_ASPECT)
+    near = lambda zone: any(abs(navigation.zone_aspect(_degrees(zone[0]), _degrees(zone[1])) - threshold)  # noqa: E731
+                            < _ASPECT_MARGIN * threshold for threshold in thresholds)
+    cases = []
+    for name, zone in _ENDGAME_ZONES:
+        if zone is not None and near(zone):
+            raise ValueError('%s: the aspect sits on a threshold' % name)
+        cases.append(_endgame_heading(name, _zone_text(zone)))
+    cases.append(_endgame_heading('hprc_default', None))
+    while len(cases) < len(_ENDGAME_ZONES) + 1 + _ENDGAME_SWEEP:
+        latitude, longitude = generator.randint(-600_000_000, 600_000_000), generator.randint(-1_790_000_000,
+                                                                                               1_790_000_000)
+        height, width = generator.randint(2_700, 90_000), generator.randint(2_700, 90_000)
+        zone = [[latitude + height, longitude], [latitude, longitude + width]]
+        if near(zone):
+            continue
+        cases.append(_endgame_heading('sweep_%02d' % (len(cases) - len(_ENDGAME_ZONES) - 1), _zone_text(zone)))
+    return cases
+
+
 def build() -> dict:
     """
     The mission fixture document.
@@ -495,14 +573,14 @@ def build() -> dict:
         (none)
 
     Returns:
-        {meta, compare, tolerance, scenarios, time_sets, clocks}.
+        {meta, compare, tolerance, scenarios, time_sets, clocks, endgame_headings}.
     """
     channel = _install()
     generator = random.Random(_SEED)
     sweep = sorted(generator.randrange(mission._EPOCH_OFFSET, _CLOCK_SWEEP_END) for _ in range(_CLOCK_SWEEP))
     clocks = list(_CLOCKS) + [('sweep_%02d' % index, epoch) for index, epoch in enumerate(sweep)]
     return {
-        'meta': {'source': 'src/glider/mission.py, src/glider/navigation.py'},
+        'meta': {'source': 'src/glider/mission.py, src/glider/navigation.py, src/glider/guidance.py'},
         'compare': {'kind': 'abs', 'tol': _TOLERANCE},
         'tolerance': ('5.01e-8: degrees to half the Rust 1e-7 degree unit plus float slack (a zone centre is the '
                       'integer mean, at most half a unit off; a one-unit slip fails); metres exactly, since every '
@@ -511,4 +589,5 @@ def build() -> dict:
         'scenarios': [_scenario(channel, *scenario) for scenario in _SCENARIOS],
         'time_sets': [_time_set(*case) for case in _TIME_SETS],
         'clocks': [_clock(*case) for case in clocks],
+        'endgame_headings': _endgame_headings(generator),
     }

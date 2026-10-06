@@ -3,13 +3,14 @@
 //! The mission answers as plan B does: src/avionics/golden/mission.json, which golden/build_mission.py builds
 //! from src/glider/mission.py on CPython. One tolerance covers the whole fixture (its `tolerance` member says
 //! why), and the deliberate divergences (`sites`, and integers written as floats) are applied where the
-//! fixture marks them.
+//! fixture marks them. The endgame pattern the guidance law's 'auto' resolves to is the Mission's rule too, so
+//! its cases live here and not in guidance.json.
 
 use golden::{Compare, Fixture};
 use mission::{DEFAULT_MAX_RANGE_M, Mission, Position, TimeSet, clock_text, epoch_request};
 use serde_json::{Map, Value, json};
 
-/// plan B's Mission over load/update/set-config/reboot scenarios, time sets and clock texts.
+/// plan B's Mission over load/update/set-config/reboot scenarios, time sets, clock texts and endgame patterns.
 const MISSION: &str = include_str!("../../../golden/mission.json");
 
 /// How a request's fields are applied: [`Mission::update`] (`update mission`) or [`Mission::merge`]
@@ -145,7 +146,7 @@ fn scenario_answers() -> Vec<(String, Value, Value)> {
 fn the_fixture_says_where_it_came_from() {
     let fixture = Fixture::parse(MISSION);
     let meta = fixture.get("meta");
-    assert_eq!(meta["tag"], "micropython_plan_B");
+    assert_eq!(meta["tag"], golden::PLAN_B_TAG);
     assert_eq!(meta["generator"], "mission");
     assert!(meta["source"].as_str().unwrap().contains("src/glider/mission.py"));
     assert_eq!(fixture.compare(), Compare::Abs(5.01e-8));
@@ -237,5 +238,14 @@ fn time_sets_match_plan_b() {
 fn clocks_match_plan_b() {
     golden::run(&section("clocks"), |input| {
         json!(clock_text(input.as_i64().expect("an epoch is an integer")))
+    });
+}
+
+#[test]
+fn endgame_headings_match_plan_b() {
+    // a launch.config text in, plan B's guidance.Heading id out: the pattern 'auto' flies for that zone
+    golden::run(&section("endgame_headings"), |input| {
+        let mission = Mission::load(input.as_str(), DEFAULT_MAX_RANGE_M);
+        json!(mission.endgame_heading() as u8)
     });
 }

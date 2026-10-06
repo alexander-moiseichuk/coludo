@@ -39,7 +39,7 @@ fn units(point: Position) -> Value {
 fn the_fixture_says_where_it_came_from() {
     let fixture = Fixture::parse(NAVIGATION_ZONE);
     let meta = fixture.get("meta");
-    assert_eq!(meta["tag"], "micropython_plan_B");
+    assert_eq!(meta["tag"], "micropython_plan_B_2");
     assert_eq!(meta["generator"], "navigation_zone");
     assert!(meta["source"].as_str().unwrap().contains("src/glider/navigation.py"));
 }

@@ -1,0 +1,843 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
+//! In-flight reboot recovery (src/glider warmstart.py; doc/specs/coludo.md "In-flight reboot & warm start", and the
+//! boot rules of doc/specs/avionics-port.md §4.6). A mid-air reset (a watchdog, a panic, a crash) must not turn the
+//! glider ballistic. The checkpoint keeps a tiny CRUMB in NVS carrying the live flight state; at boot, before any
+//! thread runs, the crumb and the physical signals decide whether the board resumes the saved stage (a warm start)
+//! or boots cold, and the normal detectors (separation, apogee, landing) re-evaluate from there.
+//!
+//! The crumb lives in NVS, never in a file: a file write locks the scheduler and wears the data flash, while NVS
+//! commits to its own partition in milliseconds. It is two keys in the namespace [`NAMESPACE`], the same as plan B's,
+//! so a crumb plan B wrote reads back here and the other way round:
+//!  * [`CRUMB_KEY`], one JSON blob of at most [`BLOB_MAX`] bytes (about 250 in practice): full precision, no
+//!    per-field key bookkeeping, and a new field is a member rather than an NVS schema change;
+//!  * [`STAGE_KEY`], the stage id as an i32, written LAST. It IS the flag: 0 ([`NO_STAGE`], what an unwritten key
+//!    reads as) means no flight was checkpointed, anything else is the stage to recover. Written last, a torn
+//!    write leaves the previous stage, never a new stage pointing at a half-written blob; the i32 is authoritative
+//!    over the blob's own copy.
+//!
+//! Only an ARMED flight writes a crumb (a disarmed passive flight must never warm-start into an armed stage), and
+//! the recovery identity (the launch point, the zone, the pad altitude, the pitot tare) is frozen once, at
+//! BOOSTING entry, and rides every later crumb.
+//!
+//! The pieces, each plan B's function as data, so the firmware's `warm.rs` and supervisor only move bytes:
+//!  * [`Crumb`], with [`Crumb::from_json`] and [`Crumb::to_json`], and [`save`]/[`clear`]/[`load`] over the [`Nvs`]
+//!    trait (the firmware implements it on esp-idf NVS; the tests on memory);
+//!  * [`should_restore`], the gate, with [`ResetReason`] (the ESP-IDF reset reasons and which count as a reset);
+//!  * [`ApplyPlan`], what a passed gate restores, in plan B's order;
+//!  * [`restore`], plan B's boot decision end to end;
+//!  * [`Checkpoint`], plan B's Checkpoint task as a pure schedule: when to write, and the identity it carries.
+//!
+//! Nothing here reads a clock: the time is an argument. A crumb's `stamp` is whole seconds since 2000-01-01 UTC,
+//! MicroPython's esp32 epoch, so plan B's crumbs and these share one clock; the firmware subtracts
+//! [`UNIX_SECONDS_AT_2000`] from `gettimeofday`. Metres, m/s and pascals are f32 (decision D18); the launch and
+//! zone are `Position` integers in 1e-7 degrees, f64 only as JSON numbers.
+//!
+//! Deliberate differences from plan B (doc/specs/avionics-port.md §4.6, M8; each one marked in the golden fixture,
+//! but the last, which no exact fixture case can hold and the unit tests pin):
+//!  * the operator's boot rules of 2026-10-06: any power-up after DONE is a new session in SETTING (plan B restored
+//!    DONE after a reset within 600 s), and only a crumb in BOOSTING..LANDING warm-starts (plan B restored SETTING,
+//!    re-armed, after a reset on the pad). No crumb is SETTING in both;
+//!  * a crumb stage that is no flight stage is refused. Plan B passed it ('recover ?') and then raised in
+//!    `Controller.set_stage()`, crashing the boot halfway through the restore;
+//!  * the P4's CPU_LOCKUP (a double exception, an in-flight crash) is a reset; MicroPython maps it to 0, cold;
+//!  * a crumb blob that is JSON but not an object reads as no crumb; plan B's load() raised TypeError there and
+//!    crashed the boot. A value of the wrong JSON type reads as absent, where plan B computed on whatever arrived;
+//!  * the writer never puts NaN or infinity in the blob (they become null); CPython would write NaN, which a board's
+//!    MicroPython json cannot read back;
+//!  * the zone's centre, which stands in for a missing launch point at the freeze, is the integer mean of the corners'
+//!    1e-7 degree units, rounded toward zero as the mission's zone centre is. Plan B averages the float degrees, so
+//!    when the corners' units sum to an odd number the two differ by half a unit (5.6 mm). The checkpoint fixture
+//!    compares exactly and holds coordinates of at most 7 decimals, so it cannot carry that half unit.
+//!
+//! Not ported: the GC handling (plan B collected and disabled the GC on an airborne warm start), the log lines
+//! (the firmware logs the [`Reason`] it gets back), and MicroPython's SOFT_RESET (an interpreter reboot without a
+//! chip reset), which has no ESP-IDF reason.
+
+use control::navigation::Position;
+use sequencer::Stage;
+use serde::Serialize;
+use serde_json::{Map, Value, json};
+use std::fmt;
+
+/// The NVS namespace both firmwares keep their small state in (plan B `NVS('coludo')`).
+pub const NAMESPACE: &str = "coludo";
+
+/// The NVS key of the crumb blob, the JSON document.
+pub const CRUMB_KEY: &str = "crumb";
+
+/// The NVS key of the stage i32, the flag written last.
+pub const STAGE_KEY: &str = "stage";
+
+/// The stage i32 that means "no crumb": what an unwritten key reads as, and what [`clear`] writes (plan B
+/// `Stage.NULL`). Never a live stage.
+pub const NO_STAGE: i32 = 0;
+
+/// The read buffer for the crumb blob (plan B `_BLOB_MAX`). A crumb is about 250 bytes; the headroom is for new
+/// fields. A longer blob does not fit the buffer, so it reads as no crumb (a cold boot), on both firmwares.
+pub const BLOB_MAX: usize = 512;
+
+/// The oldest crumb the gate accepts, in seconds (plan B `_MAX_AGE_S`). Airborne crumbs are re-stamped every
+/// checkpoint, so they arrive at a reset about a second old; the bound rejects a stale crumb from a past session.
+/// (Plan B also sized it as the DONE operator-wait dwell; DONE no longer warm-starts.)
+pub const MAX_AGE_S: i64 = 600;
+
+/// Unix seconds at 2000-01-01T00:00:00Z: the stamp's epoch is MicroPython's, so the firmware subtracts this from
+/// `gettimeofday` before it stamps a crumb or asks the gate.
+pub const UNIX_SECONDS_AT_2000: i64 = 946_684_800;
+
+/// The baro drivers whose setup re-zeroes the altitude, so a warm start rebases them to the pad (plan B
+/// `_REBASED_BAROS`). Every one: the BMP581 (TMS-7F's backup elevation) was once missing, so after a mid-air reset
+/// it read about 0 m aloft and an ICP outage handed the landing check the ground.
+pub const REBASED_BAROS: [&str; 3] = ["icp10111", "bmp280", "bmp581"];
+
+/// The latitude limit in degrees, either side of the equator: a crumb coordinate past it reads as absent. f64, as
+/// the JSON number it is checked against (the boundary decision D18 allows).
+const LATITUDE_LIMIT: f64 = 90.0;
+
+/// The longitude limit in degrees, either side of Greenwich (f64, as above).
+const LONGITUDE_LIMIT: f64 = 180.0;
+
+/// A failed NVS operation: the `esp_err_t` the firmware's NVS returned (0x1102 is ESP_ERR_NVS_NOT_FOUND).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NvsError(pub i32);
+
+/// The NVS namespace as the warm start uses it: one i32 and one blob, read at boot and written by the checkpoint.
+///
+/// The firmware implements it over esp-idf's NVS handle; the tests over memory. A key that was never written is an
+/// error, as esp-idf reports it.
+pub trait Nvs {
+    /// The i32 under `key`.
+    fn get_i32(&mut self, key: &str) -> Result<i32, NvsError>;
+
+    /// Read the blob under `key` into `buffer` and return its length. A blob longer than the buffer is an error
+    /// (ESP_ERR_NVS_INVALID_LENGTH), as esp-idf reports it.
+    fn get_blob(&mut self, key: &str, buffer: &mut [u8]) -> Result<usize, NvsError>;
+
+    /// Store `value` as the blob under `key`.
+    fn set_blob(&mut self, key: &str, value: &[u8]) -> Result<(), NvsError>;
+
+    /// Store `value` as the i32 under `key`.
+    fn set_i32(&mut self, key: &str, value: i32) -> Result<(), NvsError>;
+
+    /// Make the writes durable.
+    fn commit(&mut self) -> Result<(), NvsError>;
+}
+
+/// The recovery identity: what a flight launched with, frozen at BOOSTING entry and carried by every crumb after.
+///
+/// These do not change through a flight, so they are captured once (the launch fix pinned at the last ground
+/// moment) rather than sampled per checkpoint: the pitot tare in particular is a calibration taken on the pad, and
+/// re-reading it in flight would persist whatever a disturbed sensor happened to show.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Identity {
+    /// The launch point, for the mission (`launch`).
+    pub launch: Option<Position>,
+    /// The landing zone's two corners, as the mission holds them (`zone`).
+    pub zone: Option<[Position; 2]>,
+    /// The pad altitude in metres, which the rebooted baros are rebased to (`pad_altitude`). Their setup re-zeroed
+    /// mid-air, so without it the elevation reads about 0 aloft and the landing detector flares at once.
+    pub pad_altitude_m: Option<f32>,
+    /// The pitot tare in pascals (`pitot_zero`). The SDP810 keeps it in RAM, so a rebooted board would fly on
+    /// dynamic pressure still holding the interior-static bias, and the fin governor caps off that airspeed.
+    /// 0.0 is a real tare (a perfectly zeroed pitot), never "none": plan B once dropped it as falsy.
+    pub pitot_zero_pa: Option<f32>,
+}
+
+impl Identity {
+    /// Nothing frozen yet (plan B's empty `_static`): the next BOOSTING entry captures afresh.
+    pub fn is_empty(&self) -> bool {
+        *self == Identity::default()
+    }
+}
+
+/// The checkpoint crumb: the live flight state plus the recovery identity, as the NVS blob carries it.
+///
+/// Every field may be absent, as in plan B's dict: a torn or older crumb lacks some, and the gate and the apply
+/// plan decide what an absent one means. A field of the wrong JSON type, or a coordinate off the globe, reads as
+/// absent.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Crumb {
+    /// The stage id (`stage`). [`load`] sets it from the NVS i32, which is authoritative over the blob's copy.
+    pub stage: Option<i32>,
+    /// When it was written, in whole seconds since 2000-01-01 (`stamp`).
+    pub stamp_s: Option<i64>,
+    /// Whether the flight was armed (`armed`); only an armed flight writes a crumb, and a warm start re-arms to
+    /// match.
+    pub armed: bool,
+    /// The fused altitude in metres when written, absent when stale (`altitude`); recorded, never restored.
+    pub altitude_m: Option<f32>,
+    /// The GNSS ground speed in m/s when written, absent when stale (`speed`); recorded, never restored.
+    pub speed_ms: Option<f32>,
+    /// The fused airspeed in m/s, to 0.1 (`airspeed`). A warm start hands it back to the flight task so the fin cap
+    /// comes off a real speed rather than the blunt unconfident floor.
+    pub airspeed_ms: Option<f32>,
+    /// The uptime in milliseconds when written (`ticks_ms`); recorded, never restored.
+    pub ticks_ms: Option<u64>,
+    /// The recovery identity frozen at BOOSTING (`launch`, `zone`, `pad_altitude`, `pitot_zero`).
+    pub identity: Identity,
+}
+
+/// The crumb as the blob writes it: plan B's checkpoint key order, the identity first and only when present, the
+/// live state always (null when unknown). f32 fields print as their shortest text (412.5, not 412.5000000), and a
+/// NaN or infinity prints as null.
+#[derive(Serialize)]
+struct Written {
+    /// `launch`, in decimal degrees: f64 because it is the JSON number itself, divided out of the exact units.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    launch: Option<[f64; 2]>,
+    /// `zone`, two corners in decimal degrees.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    zone: Option<[[f64; 2]; 2]>,
+    /// `pad_altitude`, metres.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pad_altitude: Option<f32>,
+    /// `pitot_zero`, pascals.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pitot_zero: Option<f32>,
+    /// `stage`, the id.
+    stage: Option<i32>,
+    /// `armed`.
+    armed: bool,
+    /// `altitude`, metres.
+    altitude: Option<f32>,
+    /// `speed`, m/s.
+    speed: Option<f32>,
+    /// `airspeed`, m/s.
+    airspeed: Option<f32>,
+    /// `ticks_ms`.
+    ticks_ms: Option<u64>,
+    /// `stamp`, seconds since 2000.
+    stamp: Option<i64>,
+}
+
+impl Crumb {
+    /// The crumb a blob holds: None when the JSON is not an object (plan B raised TypeError there and crashed the
+    /// boot). Every member is read on its own (see [`Crumb`]); an unknown member is ignored.
+    pub fn from_json(value: &Value) -> Option<Crumb> {
+        let members = value.as_object()?;
+        let member = |key: &str| members.get(key).unwrap_or(&Value::Null);
+        Some(Crumb {
+            stage: member("stage").as_i64().and_then(|stage| i32::try_from(stage).ok()),
+            stamp_s: member("stamp").as_i64(),
+            armed: member("armed").as_bool() == Some(true),
+            altitude_m: number(member("altitude")),
+            speed_ms: number(member("speed")),
+            airspeed_ms: number(member("airspeed")),
+            ticks_ms: member("ticks_ms").as_u64(),
+            identity: Identity {
+                launch: position(member("launch")),
+                zone: zone(member("zone")),
+                pad_altitude_m: number(member("pad_altitude")),
+                pitot_zero_pa: number(member("pitot_zero")),
+            },
+        })
+    }
+
+    /// The blob text: compact JSON, well under [`BLOB_MAX`] bytes (about 250 for a full crumb).
+    pub fn to_json(&self) -> String {
+        let identity = &self.identity;
+        let written = Written {
+            launch: identity.launch.map(Position::degrees),
+            zone: identity.zone.map(|[first, second]| [first.degrees(), second.degrees()]),
+            pad_altitude: identity.pad_altitude_m,
+            pitot_zero: identity.pitot_zero_pa,
+            stage: self.stage,
+            armed: self.armed,
+            altitude: self.altitude_m,
+            speed: self.speed_ms,
+            airspeed: self.airspeed_ms,
+            ticks_ms: self.ticks_ms,
+            stamp: self.stamp_s,
+        };
+        serde_json::to_string(&written).expect("a crumb always serializes")
+    }
+}
+
+/// A JSON number as f32, absent for anything else (or for a number past f32's range).
+fn number(value: &Value) -> Option<f32> {
+    value
+        .as_f64()
+        .map(|number| number as f32)
+        .filter(|number| number.is_finite())
+}
+
+/// A `[latitude, longitude]` pair in decimal degrees as a Position, absent for any other shape or a point off the
+/// globe.
+fn position(value: &Value) -> Option<Position> {
+    let [latitude, longitude] = value.as_array()?.as_slice() else {
+        return None;
+    };
+    let (latitude, longitude) = (latitude.as_f64()?, longitude.as_f64()?);
+    if latitude.abs() > LATITUDE_LIMIT || longitude.abs() > LONGITUDE_LIMIT {
+        return None;
+    }
+    Some(Position::from_degrees(latitude, longitude))
+}
+
+/// A zone, `[[latitude, longitude], [latitude, longitude]]`, absent for any other shape.
+fn zone(value: &Value) -> Option<[Position; 2]> {
+    let [first, second] = value.as_array()?.as_slice() else {
+        return None;
+    };
+    Some([position(first)?, position(second)?])
+}
+
+/// Commit the crumb to NVS: the blob, then the stage i32 LAST, then the commit (plan B `save`).
+///
+/// The i32 is the flag, written last, so a torn write leaves the previous stage, never a new stage pointing at a
+/// half-written blob.
+///
+/// Returns true when committed; false, having written nothing, when the crumb has no stage, and false when NVS
+/// refused a write (absent or full). Never panics: a failed checkpoint must never block the flight.
+pub fn save(nvs: &mut impl Nvs, crumb: &Crumb) -> bool {
+    let Some(stage) = crumb.stage else {
+        return false;
+    };
+    nvs.set_blob(CRUMB_KEY, crumb.to_json().as_bytes())
+        .and_then(|()| nvs.set_i32(STAGE_KEY, stage))
+        .and_then(|()| nvs.commit())
+        .is_ok()
+}
+
+/// Reset the stage i32 to [`NO_STAGE`] after a rejected warm start (plan B `clear`), so the next boot is
+/// unambiguously cold. The blob stays: the i32 alone decides, so the clear is one fast write. A failed clear is
+/// swallowed.
+pub fn clear(nvs: &mut impl Nvs) {
+    // a failed clear only means the next boot re-reads the crumb, and the gate refuses it again
+    let _ = nvs.set_i32(STAGE_KEY, NO_STAGE).and_then(|()| nvs.commit());
+}
+
+/// The last checkpoint crumb (plan B `load`): the stage i32 gates it, then the blob fills it in.
+///
+/// Returns None when no flight was checkpointed (the stage unwritten or [`NO_STAGE`]) or the blob is missing,
+/// longer than [`BLOB_MAX`], torn, not JSON or not a JSON object: a cold boot. The crumb's stage is the i32's.
+pub fn load(nvs: &mut impl Nvs) -> Option<Crumb> {
+    let stage = nvs.get_i32(STAGE_KEY).ok()?;
+    if stage == NO_STAGE {
+        return None;
+    }
+    let mut buffer = [0_u8; BLOB_MAX];
+    let length = nvs.get_blob(CRUMB_KEY, &mut buffer).ok()?;
+    let value: Value = serde_json::from_slice(buffer.get(..length)?).ok()?;
+    let mut crumb = Crumb::from_json(&value)?;
+    crumb.stage = Some(stage);
+    Some(crumb)
+}
+
+/// Why the board reset, as ESP-IDF's `esp_reset_reason()` reports it (esp_system.h `esp_reset_reason_t`, IDF 5.5;
+/// the discriminant is the code).
+///
+/// Plan B saw MicroPython's `machine.reset_cause()`, which the esp32 port derives from these
+/// (ports/esp32/modmachine.c, v1.29.0): SW, PANIC and EXT are HARD_RESET; INT_WDT, TASK_WDT and WDT are WDT_RESET;
+/// POWERON and BROWNOUT are PWRON_RESET; DEEPSLEEP is DEEPSLEEP_RESET; everything else is 0.
+#[repr(u32)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ResetReason {
+    /// ESP_RST_UNKNOWN: the reason cannot be determined (also any code past the last below).
+    Unknown = 0,
+    /// ESP_RST_POWERON: power applied, or an EN/CHIP_PU pulse from DTR/RTS or esptool (the P4 reports no EXT).
+    PowerOn = 1,
+    /// ESP_RST_EXT: the external reset pin; the P4 never reports it.
+    External = 2,
+    /// ESP_RST_SW: `esp_restart()`, the firmware's own deliberate reset (and the control-stall restart).
+    Software = 3,
+    /// ESP_RST_PANIC: a panic or exception; the firmware aborts on panic, so a crash in flight lands here.
+    Panic = 4,
+    /// ESP_RST_INT_WDT: the interrupt watchdog.
+    InterruptWatchdog = 5,
+    /// ESP_RST_TASK_WDT: the task watchdog, which the supervisor reconfigures to panic.
+    TaskWatchdog = 6,
+    /// ESP_RST_WDT: another watchdog.
+    Watchdog = 7,
+    /// ESP_RST_DEEPSLEEP: waking from deep sleep.
+    DeepSleep = 8,
+    /// ESP_RST_BROWNOUT: the supply sagged below the brownout threshold.
+    Brownout = 9,
+    /// ESP_RST_SDIO: a reset over SDIO.
+    Sdio = 10,
+    /// ESP_RST_USB: the USB peripheral (on the P4, an esptool reset over the USB-Serial-JTAG).
+    Usb = 11,
+    /// ESP_RST_JTAG: a reset by JTAG.
+    Jtag = 12,
+    /// ESP_RST_EFUSE: an eFuse error.
+    Efuse = 13,
+    /// ESP_RST_PWR_GLITCH: a power glitch was detected.
+    PowerGlitch = 14,
+    /// ESP_RST_CPU_LOCKUP: the CPU locked up (a double exception): a crash.
+    CpuLockup = 15,
+}
+
+impl ResetReason {
+    /// Every reason, in code order.
+    pub const ALL: [ResetReason; 16] = [
+        ResetReason::Unknown,
+        ResetReason::PowerOn,
+        ResetReason::External,
+        ResetReason::Software,
+        ResetReason::Panic,
+        ResetReason::InterruptWatchdog,
+        ResetReason::TaskWatchdog,
+        ResetReason::Watchdog,
+        ResetReason::DeepSleep,
+        ResetReason::Brownout,
+        ResetReason::Sdio,
+        ResetReason::Usb,
+        ResetReason::Jtag,
+        ResetReason::Efuse,
+        ResetReason::PowerGlitch,
+        ResetReason::CpuLockup,
+    ];
+
+    /// The reason for an `esp_reset_reason_t` code; [`ResetReason::Unknown`] for a code this list does not know.
+    pub fn from_code(code: u32) -> ResetReason {
+        usize::try_from(code)
+            .ok()
+            .and_then(|index| ResetReason::ALL.get(index).copied())
+            .unwrap_or(ResetReason::Unknown)
+    }
+
+    /// The ESP-IDF name after `ESP_RST_`, as the golden fixture and the boot log write it.
+    pub fn name(self) -> &'static str {
+        match self {
+            ResetReason::Unknown => "UNKNOWN",
+            ResetReason::PowerOn => "POWERON",
+            ResetReason::External => "EXT",
+            ResetReason::Software => "SW",
+            ResetReason::Panic => "PANIC",
+            ResetReason::InterruptWatchdog => "INT_WDT",
+            ResetReason::TaskWatchdog => "TASK_WDT",
+            ResetReason::Watchdog => "WDT",
+            ResetReason::DeepSleep => "DEEPSLEEP",
+            ResetReason::Brownout => "BROWNOUT",
+            ResetReason::Sdio => "SDIO",
+            ResetReason::Usb => "USB",
+            ResetReason::Jtag => "JTAG",
+            ResetReason::Efuse => "EFUSE",
+            ResetReason::PowerGlitch => "PWR_GLITCH",
+            ResetReason::CpuLockup => "CPU_LOCKUP",
+        }
+    }
+
+    /// The reason with this [`name`](ResetReason::name), None for any other text.
+    pub fn from_name(name: &str) -> Option<ResetReason> {
+        ResetReason::ALL.into_iter().find(|reason| reason.name() == name)
+    }
+
+    /// Whether this is a RESET the warm start may recover from, rather than a cold boot (§4.6).
+    ///
+    /// A reset is the firmware's own doing in flight: a software restart, a panic, a watchdog, a CPU lockup. A
+    /// power-on is human hands (a battery insertion, the power switch: a fresh flight or a recovery crew), and so
+    /// is a USB or JTAG reset from a host; a brownout means the power is not there to fly on. EXT counts as a reset
+    /// because plan B counted it (MicroPython's HARD_RESET), though the P4 never reports it. CPU_LOCKUP is the one
+    /// reason plan B read as cold (MicroPython maps it to 0) that is a reset here.
+    pub fn is_reset(self) -> bool {
+        matches!(
+            self,
+            ResetReason::Software
+                | ResetReason::Panic
+                | ResetReason::External
+                | ResetReason::InterruptWatchdog
+                | ResetReason::TaskWatchdog
+                | ResetReason::Watchdog
+                | ResetReason::CpuLockup
+        )
+    }
+}
+
+/// Why the gate answered as it did: plan B's reason texts, plus the ones the boot rules add. Display gives the text
+/// the boot log writes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reason {
+    /// No crumb: no flight was checkpointed. A cold boot in SETTING.
+    NoCrumb,
+    /// The crumb has no stage or no stamp: torn, a cold boot.
+    Torn,
+    /// The crumb's stage id is no flight stage (a corrupted i32): a cold boot. (New: plan B passed it.)
+    NotAStage(i32),
+    /// The crumb reads DONE: any power-up after DONE is a new session in SETTING. (New: the operator's rule.)
+    AfterDone,
+    /// The crumb reads SETTING: only BOOSTING..LANDING warm-starts, so the pad boot is cold. (New: the operator's
+    /// rule.)
+    OnThePad,
+    /// The reset reason is no reset: human hands, never a recovery.
+    PowerOn,
+    /// The crumb's age in seconds is outside 0..=[`MAX_AGE_S`]: the clock went back, or the crumb is stale.
+    Age(i64),
+    /// A gliding stage, but the separation latch reads nested: this glider never left its booster.
+    Nested,
+    /// The gate passed: recover this stage, this many seconds after the checkpoint.
+    Recover {
+        /// The stage to restore.
+        stage: Stage,
+        /// The crumb's age in seconds.
+        age_s: i64,
+    },
+}
+
+impl fmt::Display for Reason {
+    /// Plan B's texts word for word where plan B has the case.
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Reason::NoCrumb => formatter.write_str("no crumb"),
+            Reason::Torn => formatter.write_str("crumb missing stage/stamp -> cold boot"),
+            Reason::NotAStage(stage) => write!(formatter, "crumb stage {stage} is no flight stage -> cold boot"),
+            Reason::AfterDone => formatter.write_str("crumb reads done -> a new session in setting"),
+            Reason::OnThePad => {
+                formatter.write_str("crumb reads setting -> a cold boot (only boosting..landing warm-start)")
+            }
+            Reason::PowerOn => formatter.write_str("power-on boot (human hands), not a reset"),
+            Reason::Age(age_s) => write!(formatter, "crumb age {age_s}s outside 0..{MAX_AGE_S}s"),
+            Reason::Nested => formatter.write_str("separation switch reads nested"),
+            Reason::Recover { stage, age_s } => {
+                write!(formatter, "recover {}, {age_s}s after checkpoint", stage.name())
+            }
+        }
+    }
+}
+
+/// The flight stage a crumb's i32 names, None for an id that is no stage.
+fn flight_stage(id: i32) -> Option<Stage> {
+    u8::try_from(id).ok().and_then(Stage::from_id)
+}
+
+/// The unpowered glide after separation, GLIDING..LANDING (plan B `Stage.passive`): the boost stack is gone, so the
+/// separation latch must read separated.
+fn passive(stage: Stage) -> bool {
+    matches!(stage, Stage::Gliding | Stage::Landing)
+}
+
+/// The warm-start gate (plan B `should_restore`, behind the operator's boot rules): is this a legitimate mid-flight
+/// reset to recover the crumb's stage into?
+///
+/// The checkpoint re-stamps the crumb every second aloft, so its STAGE is trustworthy; the gate confirms this is a
+/// genuine, RECENT reset of a real flight. In order, the first that fails is the reason:
+///  * a crumb, with a stage and a stamp;
+///  * the stage rules (§4.6): a flight stage, not DONE (a new session), not SETTING (a cold pad boot);
+///  * the reset reason is a reset ([`ResetReason::is_reset`]), never a power-on;
+///  * the age `now_s - stamp` within 0..=[`MAX_AGE_S`]: the RTC survives a reset, so continuity holds, while a
+///    power cycle restarts it and breaks the arithmetic;
+///  * GLIDING and LANDING need the separation latch SEPARATED: the physical latch no software can fake, so a
+///    landed-then-nested glider never recovers into a glide. BOOSTING is the boost itself (latch nested), so the
+///    reset and the age carry it.
+///
+/// `now_s` is in seconds since 2000, like the stamp. Returns (true, [`Reason::Recover`]) on a pass, else false with
+/// the first failing reason.
+pub fn should_restore(crumb: Option<&Crumb>, separated: bool, reset: ResetReason, now_s: i64) -> (bool, Reason) {
+    let Some(crumb) = crumb else {
+        return (false, Reason::NoCrumb);
+    };
+    let (Some(id), Some(stamp_s)) = (crumb.stage, crumb.stamp_s) else {
+        return (false, Reason::Torn);
+    };
+    let stage = match flight_stage(id) {
+        None => return (false, Reason::NotAStage(id)),
+        Some(Stage::Done) => return (false, Reason::AfterDone),
+        Some(Stage::Setting) => return (false, Reason::OnThePad),
+        Some(stage) => stage,
+    };
+    if !reset.is_reset() {
+        return (false, Reason::PowerOn);
+    }
+    let age_s = now_s.saturating_sub(stamp_s);
+    if !(0..=MAX_AGE_S).contains(&age_s) {
+        return (false, Reason::Age(age_s));
+    }
+    if passive(stage) && !separated {
+        return (false, Reason::Nested);
+    }
+    (true, Reason::Recover { stage, age_s })
+}
+
+/// The baros a warm start rebases, and the pad altitude it rebases them to.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Rebase {
+    /// The pad altitude in metres, each baro's new ground (plan B `update({'ground': pad_altitude})`).
+    pub ground_m: f32,
+    /// The config names of the sensors whose driver is in [`REBASED_BAROS`], in config order.
+    pub baros: Vec<String>,
+}
+
+/// What a passed gate restores (plan B `_apply_restore`), as data. The firmware's `warm.rs` applies it before any
+/// thread runs, in the field order, which is plan B's:
+///  1. the mission's launch point and zone, BEFORE the arm: arming freezes the launch point from the live fix
+///     unless one is set, and mid-air that fix is not the pad;
+///  2. the baro rebase, the pitot tare and the airspeed seed, before anything reads altitude or airspeed;
+///  3. the checkpoint's identity, else the first checkpoint after the restore saves a crumb with none, and a second
+///     reset skips the rebase and the tare (and a warm start into BOOSTING would freeze the mid-air altitude as the
+///     pad);
+///  4. the stage, the arm (only if the crumb was armed), and the warm-started mark (degraded `WARM-STARTED`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct ApplyPlan {
+    /// The launch point and zone for the mission, when the crumb carries both (frozen at BOOSTING).
+    pub mission: Option<(Position, [Position; 2])>,
+    /// The baro rebase, when the crumb carries a pad altitude.
+    pub rebase: Option<Rebase>,
+    /// The pitot tare in pascals for the SDP810 (plan B finds it as `airspeed_sdp810`), when the crumb carries one;
+    /// 0.0 included. Absent leaves the driver's own tare alone, never zeroes it.
+    pub pitot_zero_pa: Option<f32>,
+    /// The fused airspeed in m/s to seed the flight task with, when the crumb carries one. Recovery order is pitot,
+    /// then this, then GNSS: the accel backbone integrates on from it, and the first in-band pitot read overrides it.
+    pub airspeed_ms: Option<f32>,
+    /// The identity to seed the checkpoint with (plan B `Checkpoint.seed`).
+    pub identity: Identity,
+    /// The SAVED stage; the detectors re-evaluate from it.
+    pub stage: Stage,
+    /// Re-arm: only an armed flight ever checkpoints, so this matches what was flying.
+    pub armed: bool,
+}
+
+impl ApplyPlan {
+    /// The plan for a crumb whose stage is a flight stage; None otherwise (the gate never passes one).
+    ///
+    /// `sensors` are the board config's sensors as (name, driver) pairs, in config order; those whose driver is in
+    /// [`REBASED_BAROS`] are rebased.
+    pub fn new<'a>(crumb: &Crumb, sensors: impl IntoIterator<Item = (&'a str, &'a str)>) -> Option<ApplyPlan> {
+        let stage = flight_stage(crumb.stage?)?;
+        let identity = crumb.identity;
+        Some(ApplyPlan {
+            mission: identity.launch.zip(identity.zone),
+            rebase: identity.pad_altitude_m.map(|ground_m| Rebase {
+                ground_m,
+                baros: sensors
+                    .into_iter()
+                    .filter(|(_name, driver)| REBASED_BAROS.contains(driver))
+                    .map(|(name, _driver)| name.to_owned())
+                    .collect(),
+            }),
+            pitot_zero_pa: identity.pitot_zero_pa,
+            airspeed_ms: crumb.airspeed_ms,
+            identity,
+            stage,
+            armed: crumb.armed,
+        })
+    }
+
+    /// The mission update as plan B sends it, `{latitude, longitude, zone}` in decimal degrees, for the mission's
+    /// update path; None when the crumb carried no launch point and zone.
+    pub fn mission_update(&self) -> Option<Map<String, Value>> {
+        let (launch, [first, second]) = self.mission?;
+        let [latitude, longitude] = launch.degrees();
+        let update = json!({"latitude": latitude, "longitude": longitude, "zone": [first.degrees(), second.degrees()]});
+        update.as_object().cloned()
+    }
+}
+
+/// The boot decision (plan B `restore`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Restore {
+    /// No crumb: the normal cold boot, nothing written.
+    Cold,
+    /// A crumb, but the checkpoint component's `warm_start` is off: a cold boot; the stage was cleared.
+    Disabled,
+    /// The gate refused: a cold boot; the stage was cleared, so the next boot is unambiguously cold.
+    Refused(Reason),
+    /// The gate passed: apply the plan before any thread runs.
+    Warm {
+        /// The passing reason ([`Reason::Recover`]), for the boot log.
+        reason: Reason,
+        /// What to restore.
+        plan: ApplyPlan,
+    },
+}
+
+/// Decide the boot from NVS (plan B `restore`, without its logging and GC handling): load the crumb, honour the
+/// config toggle, ask the gate, and clear the stage on a refusal.
+///
+/// `warm_start` is the checkpoint component's toggle (default on), `separated` the separation latch read at
+/// setup, `reset` this boot's reset reason, `now_s` the clock in seconds since 2000, and `sensors` the board
+/// config's (name, driver) pairs for the baro rebase.
+pub fn restore<'a>(
+    nvs: &mut impl Nvs,
+    warm_start: bool,
+    separated: bool,
+    reset: ResetReason,
+    now_s: i64,
+    sensors: impl IntoIterator<Item = (&'a str, &'a str)>,
+) -> Restore {
+    let Some(crumb) = load(nvs) else {
+        return Restore::Cold;
+    };
+    if !warm_start {
+        clear(nvs);
+        return Restore::Disabled;
+    }
+    let (allowed, reason) = should_restore(Some(&crumb), separated, reset, now_s);
+    match ApplyPlan::new(&crumb, sensors).filter(|_plan| allowed) {
+        Some(plan) => Restore::Warm { reason, plan },
+        None => {
+            clear(nvs);
+            Restore::Refused(reason)
+        }
+    }
+}
+
+/// What one pass of the checkpoint schedule asks for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Step {
+    /// The recovery identity was frozen on this pass (BOOSTING entry with none held).
+    pub froze: bool,
+    /// Write a checkpoint now: the telemetry row always, and the NVS crumb ([`Checkpoint::crumb`]) when armed.
+    pub checkpoint: bool,
+}
+
+/// What [`Checkpoint::step`] freezes at BOOSTING entry, read by the caller when asked (plan B `_freeze_static`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Freeze {
+    /// The mission's zone, None when it has none (then no launch or zone is frozen at all).
+    pub zone: Option<[Position; 2]>,
+    /// The mission's launch point after `freeze_launch` (a fix that arrived after arm pins here, the last ground
+    /// moment); None without a fix or a CC point, when the zone's centre stands in.
+    pub launch_point: Option<Position>,
+    /// A fresh altitude reading in metres, used only when no pad altitude was latched in SETTING.
+    pub fresh_altitude_m: Option<f32>,
+    /// The pitot's tare in pascals, None without a pitot.
+    pub pitot_zero_pa: Option<f32>,
+}
+
+/// The live values a checkpoint records (plan B `_checkpoint`); each absent when its source is stale.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Live {
+    /// The fused altitude in metres, from a FRESH reading only (an extrapolated one would lie in checkpoint.csv
+    /// about how high the flight was when it reset, the record a post-mortem trusts).
+    pub altitude_m: Option<f32>,
+    /// The GNSS ground speed in m/s, fresh only.
+    pub speed_ms: Option<f32>,
+    /// The flight task's fused airspeed in m/s, None without a flight task; rounded to 0.1 in the crumb.
+    pub airspeed_ms: Option<f32>,
+    /// The uptime in milliseconds.
+    pub ticks_ms: u64,
+}
+
+/// The checkpoint schedule (plan B's Checkpoint task): a crumb on every stage change and every period while
+/// airborne, the recovery identity frozen at BOOSTING entry, the pad altitude latched in SETTING.
+///
+/// SETTING and DONE checkpoint once on entry and never periodically: nothing moves during the long pad dwell or the
+/// post-landing wait, so re-writing every period would only wear the flash. The NVS crumb goes out only for an
+/// ARMED flight (the caller checks), the telemetry row always.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Checkpoint {
+    /// The airborne cadence in microseconds (`checkpoint_s`, floored at 1 s).
+    period_us: u64,
+    /// How often the owner polls the stage: fast enough to catch a change promptly, at most 500 ms.
+    poll_ms: u64,
+    /// The recovery identity: empty until BOOSTING entry or a seed.
+    identity: Identity,
+    /// The pad altitude latched while in SETTING, from fresh readings only.
+    pad_m: Option<f32>,
+    /// The stage of the last checkpoint, None before the first.
+    last_stage: Option<Stage>,
+    /// When the last checkpoint was written (or the schedule started), in microseconds.
+    last_us: u64,
+}
+
+impl Checkpoint {
+    /// The schedule for a `checkpoint_s` cadence (the component's config, default 1), started at `now_us`.
+    ///
+    /// Any number is a cadence, as plan B takes any: below 1 s (or NaN) is 1 s, and a cadence too long for the
+    /// microsecond clock (past ~1.8e13 s, or infinite) saturates there, which never falls due, so the schedule
+    /// only checkpoints on a stage change. Nothing validates `checkpoint_s`, and an overflow here would panic at
+    /// bring-up and reboot the board into the same boot path.
+    pub fn new(checkpoint_s: f32, now_us: u64) -> Checkpoint {
+        let period_ms = (checkpoint_s.max(1.0) * 1000.0) as u64; // `as` saturates: infinity is u64::MAX
+        Checkpoint {
+            period_us: period_ms.saturating_mul(1000),
+            poll_ms: period_ms.min(500),
+            identity: Identity::default(),
+            pad_m: None,
+            last_stage: None,
+            last_us: now_us,
+        }
+    }
+
+    /// The polling period in milliseconds the owner sleeps between [`step`](Checkpoint::step)s.
+    pub fn poll_ms(&self) -> u64 {
+        self.poll_ms
+    }
+
+    /// The recovery identity the crumbs carry now.
+    pub fn identity(&self) -> &Identity {
+        &self.identity
+    }
+
+    /// Carry a restored crumb's identity forward (the warm start's [`ApplyPlan::identity`]). The schedule starts
+    /// empty, which only BOOSTING entry fills, so without this the first checkpoint after a warm start went out
+    /// with no identity.
+    pub fn seed(&mut self, identity: Identity) {
+        self.identity = identity;
+    }
+
+    /// One poll (plan B's `run` loop body): the stage now, the time, a FRESH altitude reading or None, and the
+    /// identity inputs, read only when this pass freezes.
+    ///
+    /// In SETTING a fresh altitude becomes the pad and the identity is dropped (the next BOOSTING is a new flight).
+    /// Entering BOOSTING with no identity freezes one, never over a seeded one: a warm start into BOOSTING would
+    /// otherwise freeze the mid-air altitude as the pad. A checkpoint is due on a stage change, and every period
+    /// while airborne.
+    pub fn step(
+        &mut self,
+        stage: Stage,
+        now_us: u64,
+        fresh_altitude_m: Option<f32>,
+        freeze: impl FnOnce() -> Freeze,
+    ) -> Step {
+        if stage == Stage::Setting {
+            if fresh_altitude_m.is_some() {
+                self.pad_m = fresh_altitude_m;
+            }
+            self.identity = Identity::default();
+        }
+        let changed = self.last_stage != Some(stage);
+        let froze = changed && stage == Stage::Boosting && self.identity.is_empty();
+        if froze {
+            self.freeze(freeze());
+        }
+        let airborne = matches!(stage, Stage::Boosting | Stage::Gliding | Stage::Landing);
+        let due = airborne && now_us.saturating_sub(self.last_us) >= self.period_us;
+        let checkpoint = changed || due;
+        if checkpoint {
+            self.last_stage = Some(stage);
+            self.last_us = now_us;
+        }
+        Step { froze, checkpoint }
+    }
+
+    /// Freeze the recovery identity (plan B `_freeze_static`): the launch and zone when the mission has a zone (the
+    /// zone's centre standing in for a missing launch point, which keeps the crumb usable), the latched pad or else
+    /// a fresh reading, and the pitot tare (0.0 included).
+    fn freeze(&mut self, inputs: Freeze) {
+        let mut identity = Identity::default();
+        if let Some([first, second]) = inputs.zone {
+            identity.zone = Some([first, second]);
+            // the integer mean, rounded toward zero, as the mission's zone centre is (control::navigation::zone);
+            // plan B averages the float degrees, at most half a unit (5.6 mm) away (see the crate notes)
+            identity.launch = Some(inputs.launch_point.unwrap_or(Position {
+                latitude_e7: first.latitude_e7.midpoint(second.latitude_e7),
+                longitude_e7: first.longitude_e7.midpoint(second.longitude_e7),
+            }));
+        }
+        identity.pad_altitude_m = self.pad_m.or(inputs.fresh_altitude_m);
+        identity.pitot_zero_pa = inputs.pitot_zero_pa;
+        self.identity = identity;
+    }
+
+    /// The crumb to save for a checkpoint at `stage` (only an armed flight saves one): the identity, then the live
+    /// state, the airspeed rounded to 0.1 m/s, stamped `stamp_s` (seconds since 2000).
+    pub fn crumb(&self, stage: Stage, live: Live, stamp_s: i64) -> Crumb {
+        Crumb {
+            stage: Some(i32::from(stage as u8)),
+            stamp_s: Some(stamp_s),
+            armed: true,
+            altitude_m: live.altitude_m,
+            speed_ms: live.speed_ms,
+            airspeed_ms: live
+                .airspeed_ms
+                .map(|airspeed| (airspeed * 10.0).round_ties_even() / 10.0),
+            ticks_ms: Some(live.ticks_ms),
+            identity: self.identity,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests;

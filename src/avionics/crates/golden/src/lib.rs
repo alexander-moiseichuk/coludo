@@ -25,6 +25,10 @@ pub mod dispatch;
 
 use serde_json::Value;
 
+/// The git tag plan B is frozen at, which every fixture names in `meta.tag` (golden/generate.py `_TAG`). The
+/// tests assert it through this one constant, so moving the tag on purpose is one edit here, not one per crate.
+pub const PLAN_B_TAG: &str = "micropython_plan_B_2";
+
 /// How a fixture's expected values compare with a port's answers.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Compare {
