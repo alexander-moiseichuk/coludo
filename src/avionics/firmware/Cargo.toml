@@ -29,5 +29,10 @@ remote_component = { name = "espressif/esp_wifi_remote", version = "0.15.2" }
 [[package.metadata.esp-idf-sys.extra_components]]
 remote_component = { name = "espressif/esp_hosted", version = "2.7.0" }
 
+# Espressif's DSP kernels: the only route to the P4's PIE SIMD and hardware loops (upstream LLVM, so Rust,
+# cannot emit them)
+[[package.metadata.esp-idf-sys.extra_components]]
+remote_component = { name = "espressif/esp-dsp", version = "1.8.2" }
+
 [[package.metadata.esp-idf-sys.extra_components]]
 bindings_header = "bindings.h"
