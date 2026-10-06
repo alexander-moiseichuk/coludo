@@ -1,0 +1,23 @@
+== coludo glider board benchmark ==
+impl: 3.4.0; MicroPython v1.29.0 on 2026-08-24  platform: esp32  freq: 360000000  mem_free: 33083504
+-- synchronous --
+> ticks
+ticks_us() overhead        : 2.9133 us/call
+> alloc
+alloc dict/list8/b256/ba256: 2.255 / 6.642 / 39.463 / 35.757 us
+> buffer
+slice-assign 32B vs buflen: 64=3.9us 4096=71.1us 65536=1097.5us 262144=6132.6us
+pack_into 16B / indexed b : 7.620 / 2.708 us/op
+> psram
+psram 1MB memcpy          : 31573 us  (33.2 MB/s)
+> gc
+gc collect clean/frag     : 308 / 22124 us  (10000 live objs)
+-- asyncio --
+await sleep_ms(0) yield   : 79.409 us/iter
+sleep_ms(1 ) actual us    : min/avg/p95/max = 7106/9981.0/10004/10005
+sleep_ms(5 ) actual us    : min/avg/p95/max = 8628/9988.2/10003/10004
+sleep_ms(10) actual us    : min/avg/p95/max = 9953/10039.7/10004/18829
+event ping-pong rt us     : min/avg/p95/max = 162/292.6/383/432
+ctl loop 6tasks_gc_on lateness us: min/avg/p95/max = 4923/752408.3/1429910/1499909
+ctl loop 6tasks_gc_off lateness us: min/avg/p95/max = 1774/749232.6/1426731/1496729
+BENCH_JSON {"gc_collect_clean_us": 308, "alloc_bytes256_us": 39.4625, "gc_frag_objects": 10000, "ctl_200hz_6tasks_gc_off": {"p95": 1426731, "min": 1774, "max": 1496729, "avg": 749232.6, "n": 300}, "mem_free_end": 32544640, "indexed_write_us": 2.708, "impl": "3.4.0; MicroPython v1.29.0 on 2026-08-24", "mem_free_start": 33083504, "sleep_5ms_us": {"p95": 10003, "min": 8628, "max": 10004, "avg": 9988.2, "n": 200}, "pack_into_16B_us": 7.62, "ctl_200hz_6tasks_gc_on": {"p95": 1429910, "min": 4923, "max": 1499909, "avg": 752408.3, "n": 300}, "await_sleep0_us": 79.409, "gc_collect_fragmented_us": 22124, "alloc_dict_us": 2.255, "ticks_us_call_us": 2.9133, "alloc_bytearray256_us": 35.7565, "platform": "esp32", "freq_hz": 360000000, "psram_memcpy_us_1MB": 31573.1, "sleep_1ms_us": {"p95": 10004, "min": 7106, "max": 10005, "avg": 9981.0, "n": 200}, "alloc_list8_us": 6.6425, "sleep_10ms_us": {"p95": 10004, "min": 9953, "max": 18829, "avg": 10039.7, "n": 200}, "slice_assign_us_by_buflen": {"64": 3.916, "4096": 71.103, "65536": 1097.53, "262144": 6132.64}, "event_pingpong_us": {"p95": 383, "min": 162, "max": 432, "avg": 292.6, "n": 500}, "psram_memcpy_MBps": 33.2}

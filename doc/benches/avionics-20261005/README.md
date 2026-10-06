@@ -23,6 +23,72 @@ Per HP core at 360 MHz; "chip" is both cores running at once. Throughput, from `
 | stream read, internal SRAM | 436 MB/s | 872 MB/s |
 | stream read, PSRAM (CPU, cache-miss bound) | 70 MB/s | 140 MB/s |
 
+## Our flight code: Rust vs MicroPython, and which rustc flags
+
+The cases are our own functions, not synthetic kernels: each is a faithful Rust port of the `src/glider`
+function it is named after ([`src/bin/cases.rs`](../../../src/avionics/firmware/src/bin/cases.rs)). The MicroPython
+column comes from the twin [`src/glider/test/bench_cases.py`](../../../src/glider/test/bench_cases.py), which calls
+the REAL deployed modules with the same inputs: MicroPython 1.29.0 (`PRE_REV3_C6_WIFI`, viper/native where the
+module binds them), on the same taster, the same day. Both sides print 12 `check;` lines (PID outputs, fin angles,
+the CORDIC angle, the steer bearing, the CRC-framed recorder line byte for byte, ...): **all 12 are identical** on
+every flag set, so the ports compute exactly what the MicroPython code does.
+
+Nanoseconds per call, best of 5 runs (MicroPython: best of 3), loop and call included. **Bold** = fastest flag set.
+`pid_step_f32` / `control_step_f32` are the PID written the Rust way (plain f32): `fixed.py`'s centidegree
+integers exist only to dodge MicroPython's boxed floats with the GC off, and in Rust the f32 version costs the
+same.
+
+| case | MicroPython 1.29 | o3 | o3_lto | o2 | os | os_inline | os_lto | oz | best vs MicroPython |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|---:|
+| `clamp_int` | 7034 | **36.3** | **36.3** | **36.3** | 55.9 | 55.8 | 55.8 | 55.8 | 194× |
+| `wrap180` | 6810 | 64.3 | 64.2 | 64.3 | 61.4 | 64.4 | 61.4 | **42.1** | 162× |
+| `between` | 8417 | **61.5** | **61.5** | **61.5** | 64.3 | 64.3 | 64.3 | 64.3 | 137× |
+| `magnitude_sq` | 30754 | **55.9** | **55.9** | **55.9** | 64.3 | 64.3 | 64.3 | 64.3 | 550× |
+| `bank_demand` | 21589 | 72.7 | 72.7 | **72.6** | 81.0 | 83.2 | 93.0 | 81.0 | 297× |
+| `sensirion_crc8` | 8670 | **41.9** | **41.9** | **41.9** | 634 | 576 | 433 | 684 | 207× |
+| `atan2_cd` | 16229 | 370 | **370** | 468 | 537 | 455 | 523 | 623 | 44× |
+| `to_str` | 78583 | 2361 | 2332 | **2293** | 2563 | 2397 | 2634 | 3265 | 34× |
+| `pid_step` | 37409 | **134** | 134 | 226 | 238 | 235 | 221 | 285 | 279× |
+| `pid_step_x3` | 102114 | 357 | **357** | 693 | 722 | 716 | 674 | 836 | 286× |
+| `mixer_actuate` | 65596 | **439** | 448 | 449 | 559 | 466 | 568 | 587 | 149× |
+| `control_step` | 275158 | **1208** | 1218 | 1494 | 1636 | 1537 | 1588 | 1852 | 228× |
+| `pid_step_f32` | — | **137** | **137** | 243 | 254 | 157 | 257 | 347 | — |
+| `control_step_f32` | — | **1196** | 1207 | 1535 | 1631 | 1270 | 1638 | 1969 | — |
+| `steer_f32` | 535903 | 3534 | **2135** | 3593 | 3554 | 3552 | 2399 | 4148 | 251× |
+| `approach_f32` | 367852 | 2871 | **890** | 2905 | 2926 | 2916 | 3122 | 3189 | 413× |
+| `telemetry_row_format` | 259439 | 23626 | **19797** | 23716 | 26097 | 24756 | 26941 | 34726 | 13× |
+| `recorder_wrap` | 51651 | 5437 | **5406** | 5444 | 6324 | 6317 | 5820 | 6339 | 10× |
+| `ticks_us` | 2490 | 773 | 770 | 792 | 780 | 798 | **762** | 769 | 3× |
+| `alloc_bytes256` | 221790 | 5632 | **5553** | 5625 | 6073 | 6094 | 5832 | 6456 | 40× |
+| `pack_into_16B` | 11524 | **115** | **115** | **115** | 498 | 498 | 126 | 780 | 101× |
+| `yield` | — | 4766 | 4790 | **4728** | 4802 | 4791 | 4781 | 4742 | — |
+| image text (bytes) | — | 783880 | 749366 | 765184 | 736234 | 754202 | 685046 | 729992 | |
+
+Flag sets, each a full build of the same sources (`CARGO_PROFILE_RELEASE_*`; `os_inline` adds
+`-C llvm-args=-inline-threshold=225`, the analogue of GCC's `-Os -finline-functions`):
+
+| flags | opt-level | LTO | codegen-units | geomean (ns) | vs MicroPython (geomean) | text of the `cases` binary |
+|---|---|---|---|---:|---:|---:|
+| **`o3_lto`** (now the release profile) | 3 | fat | 1 | **415** | **98×** | 749 KB |
+| `o3` (the previous default) | 3 | — | 16 | 458 | 88× | 784 KB |
+| `o2` | 2 | — | 16 | 500 | 81× | 765 KB |
+| `os_lto` | s | fat | 1 | 604 | 67× | **685 KB** |
+| `os_inline` | s + inline 225 | — | 16 | 659 | 61× | 754 KB |
+| `os` | s | — | 16 | 679 | 60× | 736 KB |
+| `oz` | z | — | 16 | 739 | 55× | 730 KB |
+
+* **Rust is 55–98× faster on our code** (geometric mean over the 19 shared cases), 10–550× per case: a whole glide
+  control step (governor, bank demand, three PIDs, the fused mixer) 275 µs → **1.2 µs**, one PID step 37 µs →
+  **134 ns**, `navigation.steer` 536 µs → **2.1 µs**.
+* **`opt-level=3` + fat LTO + one codegen unit wins**: fastest overall, and smaller than plain O3. LTO matters most
+  where code crosses functions: `approach` 2.9 → 0.9 µs, `steer` 3.5 → 2.1 µs. It is the release profile now.
+* **The size levels cost 1.4–1.8×**, up to 15× on bit loops (`sensirion_crc8` 42 ns at O3, 434–684 ns at s/z: O3
+  unrolls the 16-step loop). Raising the inline threshold under `s` buys little. The smallest image
+  (`os_lto`, 685 KB) would be the pick only if flash space ever got tight -- it does not: the app partition is 4 MB.
+* **Weak spot: text formatting.** A 20-integer telemetry row costs 20 µs (only 13×): `core::fmt` is heavy. At
+  100 Hz that is 0.2% of a core; a digit-writing formatter would cut it ~10× if it ever matters.
+* `ticks_us` (esp_timer) costs 770 ns -- a peripheral-bus read; hot-path timing reads the `cycle` CSR instead.
+
 ## Selections and tweaks
 
 | area | chosen | why (measured here unless noted) |
@@ -31,14 +97,16 @@ Per HP core at 360 MHz; "chip" is both cores running at once. Throughput, from `
 | ESP-IDF | **v5.5.5 tag**, pinned | the esp-idf crates' version; 6.0.0–6.0.2 break SD + esp_hosted; esp_ipa crashes on rev < 3 under 6.x |
 | crates | esp-idf-sys 0.38.1 / hal 0.47.0 / svc 0.53.0 | latest; Wi-Fi bindings work through esp_wifi_remote (X1) |
 | silicon | `ESP32P4_SELECTS_REV_LESS_V3` + `REV_MIN_100`; **360 MHz** | the fleet is rev v1.3; 400 MHz needs Espressif-qualified chips |
-| C6 Wi-Fi link | esp_hosted 2.7.0 + esp_wifi_remote 0.15.2 | exactly MicroPython v1.29.0's pair: the C6 is not reflashed |
+| C6 Wi-Fi link | esp_hosted 2.7.0 + esp_wifi_remote 0.15.2, plus `components/hosted_no_reboot` | MicroPython v1.29.0's pair; the C6 keeps its factory firmware (reflashing needs its UART pad). The guard parks esp_hosted's "reset host" paths: a C6 brown-out no longer reboots the P4 (tested) |
 | code placement | **XIP from PSRAM** | flash writes stall nothing (B4: 0 missed 1 kHz ticks vs 125 ms stalls); control step −5% |
 | PSRAM / flash | PSRAM 200 MHz hex, boot memtest off; flash QIO 80 MHz, declared 16 MB | memtest cost 0.9 s per boot; >16 MB addressing not yet tested |
 | scheduler | `FREERTOS_HZ=1000`; pacing = esp_timer / IMU interrupt → task notify | `thread::sleep` is tick-quantised (918 µs p99) |
 | codegen | **`+zcb`** only | Zcmp crash-looped and was 9% slower (reverted, in git history); Zb*/Zicond trap |
+| release profile | **`opt-level=3`, `lto="fat"`, `codegen-units=1`** | fastest of seven flag sets on our own code, and smaller than plain O3 (see above) |
 | SIMD | esp-dsp (PIE + hardware loops) via FFI, for int16/int8 vector work | upstream LLVM cannot emit PIE; 13× on int16, 1.2× on f32 |
 | concurrency | one owner per resource; atomics + task notify; **no mutex in the hot path** | std Mutex 4.25 µs, FreeRTOS mutex 3.98 µs, atomics 59 ns |
-| floats | f32 everywhere on the hot path, never in an ISR | f64 is 10–15× slower; a float in an ISR aborts |
+| floats | **f32 only -- no f64 anywhere** (JSON via typed structs; lat/lon in a local metric frame); never in an ISR | no double-precision unit: f64 is 10–15× slower; a float in an ISR aborts; `json!` widens f32 to f64 |
+| temperature | on-die sensor (20..100 °C band, ±2 °C) on health and every bench | CPU load alone: +4 °C (see the soak) |
 | storage | 8 MB `log` partition (provisional) for the telemetry ring | pre-erase 8 MB in 8.6 s |
 | Wi-Fi | power save off; one write per reply line; `TCP_NODELAY` | hub round trip 154 ms → 3 ms |
 | console | UART0 (CH343P) speaks the CC protocol; DTR+RTS held asserted on open | releasing them resets the board |
@@ -59,6 +127,8 @@ cargo build --release                                   # all binaries; nightly 
 | `src/bin/isa.rs` | which ISA extensions the core implements; atomics and locks across cores; esp-dsp SIMD kernels |
 | `src/bin/flash.rs` | B4: flash erase/program latency, and the **stall test** (a 1 kHz loop while the other core writes flash) |
 | `src/bin/peak.rs` | CoreMark and peak throughput (FLOPS, OPS, MAC/s, stream bandwidth) on one core and both |
+| `src/bin/cases.rs` | our own flight functions, ported (twin of `src/glider/test/bench_cases.py`) |
+| `src/bin/soak.rs` | thermal soak: 10 min full load on both cores, then 3 min idle |
 | `src/main.rs` | X1: console, panic → reboot, Wi-Fi through the C6, `whoami`/`health` to the CC hub |
 
 ## Results
@@ -142,11 +212,55 @@ The same bench on the XIP build costs nothing that matters, and is slightly fast
 * 64 KB PSRAM copies −2%;
 * about 0.75 MB of PSRAM for the copied image.
 
+### MicroPython 1.29.0 on the same board, the same day
+
+Flashed with `tools/flash_micropython.sh` (NVS kept), the existing benches run unchanged; raw logs in
+[`micropython-1.29.0/`](micropython-1.29.0/).
+
+* **`bench_flight` step breakdown**: whole `_tick` (nav cached) **611 µs**; `_run_pid` 517 µs (85% of a step);
+  one `pid.step` 35.4 µs, three 95.5 µs; `rate.value` (databoard) 26.6 µs; `mixer.actuate` 67.8 µs;
+  `navigation.steer` 330 µs (throttled ~1 in 10 steps). A step is 6.1% of the 100 Hz budget.
+  *Retro-finding:* its load sweep reports **0.0 Hz achieved** at every schedule -- the harness no longer drives
+  the flight task (an API drift in the bench, not the flight code). Recorded for the MicroPython side.
+* **`bench_commons`** (ns/call, bytecode → optimised): `clamp_int` 6137 → 2925 (viper, 2.10×), `wrap180`
+  7523 → 2686 (2.80×), `between` 6737 → 4117 (native, 1.64×), `magnitude_sq` 11550 → 9232 (1.25×),
+  `bank_demand` 10693 → 10168 (1.05×).
+* **`bench_emitters`**: `clamp_int` bytecode 6136 / viper 2953 ns; a PID-axis float chain bytecode 11422 /
+  native 9116 ns (`asm_rv32` is not in this firmware).
+* **`bench_asyncio`**: PSRAM memcpy 1 MB 33.2 MB/s; `await sleep_ms(0)` 79 µs; `sleep_ms(1)` really ~10 ms
+  (the asyncio floor); event ping-pong p50 ~293 µs; gc collect clean / fragmented 0.3 / 22 ms; `ticks_us()`
+  2.9 µs; `bytearray(256)` 36 µs.
+
+The Rust counterparts: control step 1.2 µs (vs 611 µs `_tick`), task-notify round trip 15 µs (vs 293 µs), no
+sleep floor (esp_timer pacing 15 µs late), PSRAM copy 57 MB/s, no GC.
+
+### Thermal soak (`src/bin/soak.rs`), bare board, no heatsink
+
+10 min of f32 FMA on both cores, then 3 min idle, the die read every 5 s:
+
+| idle start | plateau under full load | time to plateau | idle after |
+|---:|---:|---:|---:|
+| 33.3 °C | **37.3 °C** | ~2 min | 33.3 °C within a minute |
+
+CPU load alone heats the die by ~4 °C: no throttling risk from compute. The camera/H.264 test (V8) repeats the
+soak with the video pipeline running, with and without a heatsink.
+
+### C6 link failure (`c6reset`): no longer a reboot
+
+esp_hosted 2.7.0 restarts the whole P4 when its SDIO link fails. With `components/hosted_no_reboot`, the console's
+`c6reset` (C6 EN, P4 GPIO54, low for 100 ms) gives: "sdio_write_task: Failed to send data" → esp_hosted asks for
+a host restart → the guard parks the task instead; the board stays up (uptime unbroken), the console answers,
+health shows `degraded: ["c6-link-parked"]`, and the link thread stops calling Wi-Fi. Without the guard the same
+test logged "Unrecoverable host sdio state, reset host mcu" and rebooted. Wi-Fi returns at the next boot.
+
 ## Decided by these numbers
 
 * **D5 pacing:** esp_timer / IMU interrupt → task notify (not `sleep`). 400 Hz has headroom.
 * **D6 storage tier:** keep the flash ring. Build with `CONFIG_SPIRAM_XIP_FROM_PSRAM=y`.
-* **D18 numerics:** f32 in the hot path, no f64.
+* **D18 numerics:** f32 only, no f64 anywhere (operator's rule). In Rust the PID is plain f32 -- `fixed.py`'s
+  integers were a MicroPython GC workaround and cost the same here.
+* **Build:** `opt-level=3` + fat LTO + one codegen unit (fastest and smaller than plain O3).
+* **C6 link:** host-side guard instead of a C6 reflash; a link failure parks Wi-Fi, never reboots.
 * **Codegen:** `+zcb`, nothing else. PIE SIMD only via esp-dsp, and only for int16/int8 vector work.
 * **Concurrency:** no mutex in the hot path (4 µs each). Atomics and notify between single owners.
 
@@ -155,7 +269,11 @@ The same bench on the XIP build costs nothing that matters, and is slightly fast
 * **B4 soak:** 10 minutes rather than 10 s. Then a **10 min stall test with video DMA on PSRAM**: code fetch now
   shares that bus.
 * **B3b:** L2 cache 256/512 KB and 128 B lines, plus GDMA `async_memcpy` for bulk PSRAM moves.
-* **The recorder row (53 µs):** format integers (the wire's `_cd`/`_cms` units) instead of floats.
+* **The recorder row:** 53 µs with floats, 20 µs with integers (`core::fmt`); a digit writer would cut it ~10×.
+* **esp_hosted 2.7.0, still open:** its streaming-mode RX trusts the length word -- an all-ones read becomes a
+  ~1 MB allocation and an assert. Fixing that needs a patched copy of the component. Also: never call
+  `esp_hosted_deinit` with the SD card mounted (2.7.0 deinits the whole SDMMC host), and decide whether a parked
+  link may reboot the board on the ground (never in flight; the post-landing beacon needs Wi-Fi).
 * **The 32 MB part's upper 16 MB:** IDF marks `0x19`-class GD chips 32 MB-capable (4-byte addressing). The ring
   could live there.
 * **S1/S2:** SD on SDMMC slot 0 next to the C6 on slot 1. V1: the camera.
