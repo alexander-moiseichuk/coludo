@@ -189,14 +189,43 @@ fn above_16_megabytes(partition: Partition) {
     let identical = unsafe {
         sys::esp!(sys::esp_partition_erase_range(partition.0, low, 4096)).expect("erase");
         sys::esp!(sys::esp_partition_erase_range(partition.0, high, 4096)).expect("erase");
-        sys::esp!(sys::esp_partition_write_raw(partition.0, low, pattern_low.as_ptr().cast(), 4096)).expect("write");
-        sys::esp!(sys::esp_partition_write_raw(partition.0, high, pattern_high.as_ptr().cast(), 4096)).expect("write");
-        sys::esp!(sys::esp_partition_read(partition.0, low, back.as_mut_ptr().cast(), 4096)).expect("read");
+        sys::esp!(sys::esp_partition_write_raw(
+            partition.0,
+            low,
+            pattern_low.as_ptr().cast(),
+            4096
+        ))
+        .expect("write");
+        sys::esp!(sys::esp_partition_write_raw(
+            partition.0,
+            high,
+            pattern_high.as_ptr().cast(),
+            4096
+        ))
+        .expect("write");
+        sys::esp!(sys::esp_partition_read(
+            partition.0,
+            low,
+            back.as_mut_ptr().cast(),
+            4096
+        ))
+        .expect("read");
         let low_intact = back == pattern_low;
-        sys::esp!(sys::esp_partition_read(partition.0, high, back.as_mut_ptr().cast(), 4096)).expect("read");
+        sys::esp!(sys::esp_partition_read(
+            partition.0,
+            high,
+            back.as_mut_ptr().cast(),
+            4096
+        ))
+        .expect("read");
         (low_intact, back == pattern_high)
     };
-    report("boundary", "high_absolute_address", (base + high) as f32 / 1048576.0, "MB");
+    report(
+        "boundary",
+        "high_absolute_address",
+        (base + high) as f32 / 1048576.0,
+        "MB",
+    );
     report("boundary", "low_kept_its_pattern", identical.0 as u8 as f32, "bool");
     report("boundary", "high_kept_its_pattern", identical.1 as u8 as f32, "bool");
 }
@@ -247,7 +276,11 @@ fn stall(partition: Partition, writing: bool) {
             // the region latencies() used
             // SAFETY: a found partition descriptor lives for the program.
             let (base, size) = unsafe { ((*partition.raw()).address as usize, (*partition.raw()).size as usize) };
-            let first = if base + size > 0x100_0000 + 128 * 65536 { (0x100_0000 - base.min(0x100_0000)) / 65536 } else { 16 };
+            let first = if base + size > 0x100_0000 + 128 * 65536 {
+                (0x100_0000 - base.min(0x100_0000)) / 65536
+            } else {
+                16
+            };
             let last = first + 111;
             let mut block = first;
             while running.load(Ordering::Relaxed) {
