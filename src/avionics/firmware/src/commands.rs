@@ -37,6 +37,7 @@ struct Identity {
 #[derive(Serialize)]
 struct Health {
     temp: Option<f32>,
+    sd_free_mb: Option<u32>,
     mem_free: usize,
     psram_free: usize,
     uptime: i64,
@@ -65,7 +66,7 @@ fn whoami(board: &Board) -> String {
 }
 
 /// The non-nominal states, one operator signal (src/glider cc_client health `degraded`).
-fn degraded() -> Vec<&'static str> {
+fn degraded(board: &Board) -> Vec<&'static str> {
     let mut degraded = Vec::new();
     // SAFETY: plain reads of flags hosted_no_reboot keeps.
     unsafe {
@@ -76,6 +77,9 @@ fn degraded() -> Vec<&'static str> {
             degraded.push("c6-link-parked"); // the Wi-Fi link failed; it is gone until the next boot
         }
     }
+    if !board.sd_mounted {
+        degraded.push("no-sd"); // video and the flash-ring copy have nowhere to go
+    }
     degraded
 }
 
@@ -83,12 +87,17 @@ fn degraded() -> Vec<&'static str> {
 fn health(board: &Board) -> String {
     let info = Health {
         temp: board.celsius(),
+        sd_free_mb: if board.sd_mounted {
+            firmware::sd::free_megabytes()
+        } else {
+            None
+        },
         mem_free: board::heap_free(sys::MALLOC_CAP_INTERNAL),
         psram_free: board::heap_free(sys::MALLOC_CAP_SPIRAM),
         uptime: board::uptime_ms(),
         stage: "setting",
         layout: None,
-        degraded: degraded(),
+        degraded: degraded(board),
     };
     cc_protocol::build("ok", &[&serde_json::to_string(&info).unwrap_or_default()], &[])
 }

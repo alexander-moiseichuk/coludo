@@ -3,7 +3,9 @@
 //!
 //! `wifi <ssid> <password>` stores the network to join (values follow the CC encoding, so a password with
 //! spaces travels as `base64:`); `reboot` restarts; `panic` panics on purpose, to prove a panic reboots;
-//! `c6reset` browns the Wi-Fi co-processor out on purpose, to prove a failing C6 link does not reboot the P4.
+//! `c6reset` browns the Wi-Fi co-processor out on purpose, to prove a failing C6 link does not reboot the P4;
+//! `sdtest [megabytes] [kilobytes per second]` writes to the microSD (flat out, or paced) and reports the rate and
+//! the worst single write.
 
 use std::io::{BufRead, Write};
 use std::sync::Arc;
@@ -28,6 +30,9 @@ pub fn start(
     receive: impl InputPin + 'static,
     board: Arc<Board>,
 ) -> anyhow::Result<()> {
+    // drain what the boot already printed: installing the driver mid-line cuts the line off
+    // SAFETY: a polling wait on the console UART's transmit FIFO.
+    unsafe { esp_idf_svc::sys::uart_wait_tx_idle_polling(0) };
     let driver = UartDriver::new(
         uart,
         transmit,
@@ -76,6 +81,26 @@ fn operator(line: &str, board: &Board) -> Option<String> {
                 esp_idf_svc::sys::gpio_set_level(C6_ENABLE_PIN, 1);
             }
             Some(cc_protocol::build("ok", &["c6reset"], &[]))
+        }
+        "sdtest" => {
+            let megabytes = message
+                .args
+                .first()
+                .and_then(|value| value.parse().ok())
+                .unwrap_or(16usize);
+            let rate = message.args.get(1).and_then(|value| value.parse().ok());
+            Some(match (board.sd_mounted, firmware::sd::write_test(megabytes, rate)) {
+                (false, _) => cc_protocol::build("err", &["no-sd"], &[]),
+                (true, Ok(test)) => cc_protocol::build(
+                    "ok",
+                    &["sdtest"],
+                    &[
+                        ("rate_mbs", &format!("{:.2}", test.rate)),
+                        ("worst_ms", &format!("{:.1}", test.worst_write_ms)),
+                    ],
+                ),
+                (true, Err(error)) => cc_protocol::build("err", &["sdtest", &error.to_string()], &[]),
+            })
         }
         "wifi" => Some(match message.args.as_slice() {
             [ssid, password] => match board.set_credentials(ssid, password) {

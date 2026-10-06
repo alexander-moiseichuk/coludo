@@ -24,11 +24,17 @@ pub struct Board {
     /// The die temperature sensor; None when it would not start (health then reports no temperature). Behind
     /// a lock: IDF does not promise its read is thread-safe, and the console and the link both ask.
     pub thermometer: Mutex<Option<Thermometer>>,
+    /// Whether the microSD mounted at boot (firmware::sd).
+    pub sd_mounted: bool,
 }
 
 impl Board {
     /// Open the store, count this boot, keep the thermometer.
-    pub fn open(partition: EspDefaultNvsPartition, thermometer: Option<Thermometer>) -> anyhow::Result<Self> {
+    pub fn open(
+        partition: EspDefaultNvsPartition,
+        thermometer: Option<Thermometer>,
+        sd_mounted: bool,
+    ) -> anyhow::Result<Self> {
         let store = EspNvs::new(partition, NAMESPACE, true)?;
         let boot_id = count_boot(&store);
         Ok(Self {
@@ -36,6 +42,7 @@ impl Board {
             boot_id,
             store: Mutex::new(store),
             thermometer: Mutex::new(thermometer),
+            sd_mounted,
         })
     }
 

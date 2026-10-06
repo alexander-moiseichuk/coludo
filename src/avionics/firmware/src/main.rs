@@ -27,8 +27,19 @@ fn main() -> anyhow::Result<()> {
     let thermometer = Thermometer::new(peripherals.temp_sensor)
         .inspect_err(|error| log::warn!("thermometer :: {error}"))
         .ok();
-    let board = Arc::new(board::Board::open(partition.clone(), thermometer)?);
-    // the console first: installing its UART driver mid-line would cut whatever is still printing
+    let sd_mounted = firmware::sd::mount();
+    if sd_mounted {
+        let start = std::time::Instant::now();
+        let free = firmware::sd::measure_free();
+        log::info!(
+            "sd :: mounted, {free:?} MB free (measured in {} ms)",
+            start.elapsed().as_millis()
+        );
+    } else {
+        log::warn!("sd :: no usable microSD -- running without it");
+    }
+    let board = Arc::new(board::Board::open(partition.clone(), thermometer, sd_mounted)?);
+    // the console drains the UART before taking it over, so the lines above survive
     console::start(
         peripherals.uart0,
         peripherals.pins.gpio37,

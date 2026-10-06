@@ -706,3 +706,13 @@ xip_from_psram;sd;contiguous_psram_512k;write_p99;417.301;ms
 xip_from_psram;sd;contiguous_psram_512k;write_max;422.720;ms
 xip_from_psram;sd;contiguous_psram_512k;readback_matches;1.000;bool
 xip_from_psram;sd;thermal;die_end;35.3;C
+xip_from_psram;sd_link;rtt_p50;none;3.3;ms
+xip_from_psram;sd_link;rtt_p99;none;5.3;ms
+xip_from_psram;sd_link;rtt_p50;sd_1000KBs;4.7;ms
+xip_from_psram;sd_link;rtt_p99;sd_1000KBs;10.3;ms
+xip_from_psram;sd_link;rtt_p50;sd_3000KBs;8.1;ms
+xip_from_psram;sd_link;rtt_p99;sd_3000KBs;56.5;ms
+xip_from_psram;sd_link;rtt_p50;sd_flat_4.27MBs;8.1;ms
+xip_from_psram;sd_link;rtt_p99;sd_flat_4.27MBs;53.6;ms
+xip_from_psram;sd_link;sdtest_worst_write;sd_1000KBs;181.2;ms
+xip_from_psram;sd_link;sdtest_worst_write;sd_flat;178.7;ms

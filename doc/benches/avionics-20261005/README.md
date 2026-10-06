@@ -255,6 +255,22 @@ failed SD mount cannot take the C6 link down. FatFs needs long file names enable
   the 0.5 s stalls. Write in 32–128 KB chunks, not 512 KB.
 * Files: one directory per session id, names from the start uptime (`/video/<boot>/<uptime_ms>.h264`).
 
+**SD writes vs the C6 link (S5)** -- the avionics firmware mounts the card at boot (46 ms) and the console's
+`sdtest <MB> [KB/s]` writes 128 KB PSRAM chunks while the hub pings the board (60 pings, 4/s):
+
+| SD write rate | hub round trip p50 | p99 | timeouts |
+|---|---:|---:|---:|
+| none | 3.3 ms | 5.3 ms | 0 |
+| 1 MB/s (video at 8 Mbit/s) | 4.7 ms | 10 ms | 0 |
+| 2.85 MB/s | 8.1 ms | 57 ms | 0 |
+| flat out (4.27 MB/s) | 8.1 ms | 54 ms | 0 |
+
+The shared SDMMC controller is no problem: the C6 keeps its link at any SD rate. A first run looked like
+starvation -- a ping over 5 s, the hub dropping the link -- but the culprit was health calling `f_getfree`, which
+waits for the FatFs volume lock a writer holds (`vfs_fat: Failed to get number of free clusters (15)` =
+FR_TIMEOUT). Rule: **nothing on the link or health path touches the filesystem**; free space is measured after
+mounting (0 ms -- the card's FSINFO) and after write bursts, and health reads the cached figure.
+
 ### PSRAM bandwidth as DMA sees it (B3b, `src/bin/dma.rs`)
 
 The camera, ISP and H.264 encoder move frames by DMA, so CPU copies (latency-bound, 57 MB/s) say little about
@@ -340,5 +356,6 @@ test logged "Unrecoverable host sdio state, reset host mcu" and rebooted. Wi-Fi 
   ~1 MB allocation and an assert. Fixing that needs a patched copy of the component. Also: never call
   `esp_hosted_deinit` with the SD card mounted (2.7.0 deinits the whole SDMMC host), and decide whether a parked
   link may reboot the board on the ground (never in flight; the post-landing beacon needs Wi-Fi).
-* **S1 under load:** SD writes while the C6 carries hub traffic (both on one SDMMC host). V1: the camera.
+* **V1: the camera** (component recipe ready: esp_video 2.5.0 + esp_cam_sensor 2.6.0 + esp_h264 1.4.1; start at
+  1080p20, then 25, fall back to the 960p binned full-field mode).
 * **Pin the nightly** (`rust-toolchain.toml` says `nightly`; it was 1.101.0-nightly 2026-10-04 here).
