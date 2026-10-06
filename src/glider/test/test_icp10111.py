@@ -12,6 +12,7 @@ import time
 import commons
 import config_default
 import databoard
+import inspector
 import task
 from drivers import icp10111
 
@@ -25,6 +26,27 @@ class _Sink:
 
 class _StubController:
     config = config_default.default()
+
+
+class _Bus:
+    """A bus that answers every write: the general call 'lands', so the re-arm that follows can be watched."""
+
+    async def writeto(self, address, data):
+        pass
+
+
+class _Peer:
+    """A registered device on some bus: counts its rearm() calls (or has none, when `can_rearm` is False)."""
+
+    def __init__(self, name: str, bus, can_rearm: bool = True):
+        self.name = name
+        self._bus = bus
+        self.rearms = 0
+        if can_rearm:
+            self.rearm = self._rearm
+
+    async def _rearm(self) -> None:
+        self.rearms += 1
 
 
 async def amain():
@@ -113,6 +135,36 @@ async def amain():
 
 
     """
+    GENERAL CALL -> RE-ARM EVERY PEER ON THIS BUS, found by membership (the operator's rule, 2026-10-06).
+
+    The general call resets every part on the bus that honours it. The recovery used to re-arm a fixed
+    list (bmp280, ina226), so on 7C the SEN0697 parts (BMI323, BMM350, BMP581, added later) stayed in their
+    power-on state after a mid-flight recovery of the primary baro. POSITIVE: every peer sharing this Bus
+    object is re-armed exactly once, whatever its name. NEGATIVE: a peer on ANOTHER bus is not touched (the
+    general call never reached it), the ICP does not re-arm itself, and a peer without rearm() is skipped
+    without breaking the walk.
+    """
+    shared = _Bus()
+    recovering = icp10111.Icp10111('baro_icp', {}, _StubController())
+    recovering._bus, recovering._period_ms = shared, 0
+    peers = [_Peer('imu_bmi323', shared), _Peer('magnet_bmm350', shared), _Peer('baro_bmp581', shared),
+             _Peer('laser_agl', shared, can_rearm=False), _Peer('pitot_sdp810', _Bus())]
+    for peer in peers:
+        inspector.Inspector.register(peer)
+    inspector.Inspector.register(recovering)
+    try:
+        await recovering._recover()
+        on_bus = [peer.rearms for peer in peers[:3]]
+        assert on_bus == [1, 1, 1], 'every peer on the bus must be re-armed once: %s' % on_bus
+        assert peers[4].rearms == 0, 'a peer on another bus was re-armed: the general call never reached it'
+        await recovering._rearm_peers()                  # a second recovery re-arms them again, once each
+        assert [peer.rearms for peer in peers[:3]] == [2, 2, 2]
+    finally:
+        for peer in peers:
+            inspector.Inspector.unregister(peer.name)
+        inspector.Inspector.unregister(recovering.name)
+
+    """
     `update {"rezero": true}` re-zeroes from the driver's OWN channel, fresh within 3 periods. It called
     read() -- the Parameter's method, which a channel does not have -- so every re-zero raised
     AttributeError and the documented pre-launch re-zero answered `err internal`.
@@ -154,7 +206,7 @@ async def amain():
     assert verdict is None, verdict
 
     print('ok: icp10111 driver registered; graceful-absent; conversion ~%d Pa; frame CRC +/-; run-loop recovery; '
-          're-zero fresh-only; probe needs live data' % pa)
+          'general call re-arms every peer on its bus (not others); re-zero fresh-only; probe needs live data' % pa)
 
 
 asyncio.run(amain())
