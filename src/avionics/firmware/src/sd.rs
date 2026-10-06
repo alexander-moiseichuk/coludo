@@ -9,6 +9,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use esp_idf_svc::sys;
 
+use crate::gcl::{self, Command, Gate, Kind, Parameter, Reach};
+
 /// The last measured free space in MB (u32::MAX = unknown). Health reads this, never the card: f_getfree waits
 /// for the volume lock a writer holds and can scan megabytes of FAT -- it stalled the hub link for seconds.
 static FREE_MEGABYTES: AtomicU32 = AtomicU32::new(u32::MAX);
@@ -91,4 +93,45 @@ pub fn write_test(megabytes: usize, kilobytes_per_second: Option<u32>) -> anyhow
     unsafe { sys::heap_caps_free(buffer) };
     measure_free();
     result
+}
+
+/// The card's console command (the Glider Command Language, crate::gcl), registered when the card mounts.
+pub fn register_commands() {
+    gcl::register(vec![Command {
+        owner: "sd",
+        words: "sdtest",
+        about: "write to the card and report the sustained rate and the worst single write (the ring sizes this)",
+        gate: Gate::Setting,
+        reach: Reach::Everywhere,
+        parameters: &[
+            Parameter {
+                name: "megabytes",
+                kind: Kind::Integer { low: 1, high: 1024 },
+                default: Some("16"),
+                about: "how much to write",
+            },
+            Parameter {
+                name: "rate",
+                kind: Kind::Integer { low: 0, high: 100_000 },
+                default: Some("0"),
+                about: "pace the writes at this many KB/s (the video case is ~1000 at 8 Mbit/s); 0 writes flat out",
+            },
+        ],
+        bare_words: &[],
+        run: Box::new(|arguments| {
+            let rate = arguments.integer("rate");
+            let pace = (rate > 0).then_some(rate as u32);
+            match write_test(arguments.integer("megabytes") as usize, pace) {
+                Ok(test) => cc_protocol::build(
+                    "ok",
+                    &["sdtest"],
+                    &[
+                        ("rate_mbs", &format!("{:.2}", test.rate)),
+                        ("worst_ms", &format!("{:.1}", test.worst_write_ms)),
+                    ],
+                ),
+                Err(error) => cc_protocol::build("err", &["sdtest", &error.to_string()], &[]),
+            }
+        }),
+    }]);
 }

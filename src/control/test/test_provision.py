@@ -42,8 +42,19 @@ PARTITIONS: str = os.path.join(ROOT, 'src', 'avionics', 'firmware', 'partitions.
 IDF: str = os.environ.get('IDF_PATH') or os.path.expanduser('~/.espressif/esp-idf/v5.5.5')
 NVS_TOOL: str = os.path.join(IDF, 'components', 'nvs_flash', 'nvs_partition_tool', 'nvs_tool.py')
 GEN_ESP32PART: str = os.path.join(IDF, 'components', 'partition_table', 'gen_esp32part.py')
-CFG_OFFSET: str = '0x7e0000'  # partitions.csv's cfg row
-CFG_SIZE: int = 0x20000
+
+
+def _cfg_row() -> tuple:
+    """partitions.csv's cfg row as (offset text, size): the test follows the table, as the script does."""
+    with open(PARTITIONS) as table:
+        for row in table:
+            fields = [field.strip() for field in row.split('#', 1)[0].split(',')]
+            if fields[0] == 'cfg':
+                return fields[3], int(fields[4], 0)
+    raise AssertionError('partitions.csv has no cfg row')
+
+
+CFG_OFFSET, CFG_SIZE = _cfg_row()  # today 0x620000, 1 MB
 NVS_PAGE: int = 0x1000  # bytes per NVS page
 
 """
@@ -81,7 +92,7 @@ LAUNCH: dict = {'launch_id': 'provision-test', 'site': 'HPRC', 'latitude': 25.51
                 'altitude': 2.0, 'note': 'rocket \U0001f680', 'serial': 10 ** 300, 'ceiling': 1e300}
 
 """
-A MicroPython-like table, without cfg (0x7e0000 is filesystem there), a Rust table with cfg elsewhere, and one whose
+A MicroPython-like table, without cfg (filesystem there), a Rust table with cfg elsewhere, and one whose
 cfg sits at the right offset and size but is not NVS.
 """
 MICROPYTHON_TABLE: str = ('nvs, data, nvs, 0x9000, 0x6000\nphy_init, data, phy, 0xf000, 0x1000\n'
@@ -89,7 +100,7 @@ MICROPYTHON_TABLE: str = ('nvs, data, nvs, 0x9000, 0x6000\nphy_init, data, phy, 
 MOVED_TABLE: str = ('nvs, data, nvs, 0x9000, 0x6000\nphy_init, data, phy, 0xf000, 0x1000\n'
                     'factory, app, factory, 0x10000, 0x400000\ncfg, data, nvs, 0x7f0000, 0x10000\n')
 FAT_CFG_TABLE: str = ('nvs, data, nvs, 0x9000, 0x6000\nphy_init, data, phy, 0xf000, 0x1000\n'
-                      'factory, app, factory, 0x10000, 0x400000\ncfg, data, fat, 0x7e0000, 0x20000\n')
+                      'factory, app, factory, 0x10000, 0x400000\ncfg, data, fat, %s, %#x\n' % (CFG_OFFSET, CFG_SIZE))
 
 """
 The esptool stand-in: logs its arguments, answers read-flash with $FAKE_TABLE, keeps write-flash's image. The command
@@ -254,7 +265,7 @@ def test_dry_run() -> None:
     assert result.returncode == 0, result.stdout + result.stderr
     lines = result.stdout.splitlines()
     assert lines[0] == 'board config %s: valid, board.id TMS-7F, config_id %s' % (BOARD, BOARD_CONFIG_ID), lines
-    assert lines[1] == 'cfg image verified: 0x20000 bytes for the cfg partition at 0x7e0000; it holds', lines
+    assert lines[1] == 'cfg image verified: %#x bytes for the cfg partition at %s; it holds' % (CFG_SIZE, CFG_OFFSET), lines
     expected = sorted(['  config/board     blob, %d bytes' % os.path.getsize(BOARD),
                        '  config/launch    blob, %d bytes' % os.path.getsize(_path('launch.config'))]
                       + ['  %-16s string: the password for %s' % ('creds/' + KEYS[ssid], ssid)
@@ -343,7 +354,7 @@ def test_board_without_cfg_refused() -> None:
     for name, table in (('micropython', MICROPYTHON_TABLE), ('moved', MOVED_TABLE), ('fat', FAT_CFG_TABLE)):
         result = _run('--ssid', 'panda', BOARD, table=_table(name, table))
         assert result.returncode == 1, (name, result.stdout, result.stderr)
-        assert 'has no cfg NVS partition at 0x7e0000+0x20000' in result.stderr, result.stderr
+        assert 'has no cfg NVS partition at %s+%#x' % (CFG_OFFSET, CFG_SIZE) in result.stderr, result.stderr
         assert 'flash the Rust firmware first' in result.stderr, result.stderr
         calls = _esptool_calls()
         assert [call[6] for call in calls] == ['read-flash'], (name, calls)

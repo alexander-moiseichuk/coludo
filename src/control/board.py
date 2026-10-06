@@ -19,7 +19,9 @@ travel and samples the INA226 while it moves; on a three-servo airframe that was
 against the 10 s default. A timeout mid-`arm` is the worst case there is: the arm can still land on the
 board while the hub has already declared the link dead -- and then refuses `disarm`.
 """
-_SLOW_TIMEOUT_S: dict = {'arm': 30.0, 'verify': 30.0, 'probe': 30.0, 'calibrate': 30.0}
+_SLOW_TIMEOUT_S: dict = {'arm': 30.0, 'verify': 30.0, 'probe': 30.0, 'calibrate': 30.0,
+                         # the Rust board's diagnostics (Glider Command Language) run for their `seconds=` window
+                         'load': 30.0, 'pace': 30.0, 'sdtest': 30.0}
 
 
 def timeout_for(line: str) -> float:

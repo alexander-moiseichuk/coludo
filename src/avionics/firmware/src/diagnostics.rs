@@ -1,15 +1,22 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! Operator diagnostics on the console: `load [seconds]` -- per-core CPU load and the busiest tasks over a window;
-//! `pace [seconds] [gptimer]` -- a 1 kHz loop on core 1 (priority 20, the flight thread's place) woken by an
-//! esp_timer (its task lives on core 0) or by a gptimer interrupt allocated on core 1, and how late each tick
-//! wakes. Run them while the camera records to price video against the flight loop.
+//! Operator diagnostics, registered as GCL commands (crate::gcl) at boot:
+//! - `load seconds=5` -- per-core CPU load and the busiest tasks over a window;
+//! - `pace seconds=10 source=gptimer` -- a 1 kHz loop on core 1 (priority 20, the flight thread's place) woken by a
+//!   gptimer interrupt allocated on core 1 (the flight design) or by an esp_timer (its task lives on core 0), and how
+//!   late each tick wakes.
+//! Run them while the camera records to price video against the flight loop. Both are SETTING-only: `pace` runs a
+//! priority-20 loop on the flight core, and neither belongs anywhere near a flight.
+//!
+//! (The `flashwrite` load generator is gone: it wrote raw patterns into the `log` partition, which is the live
+//! telemetry ring now. src/bin/flash.rs keeps that measurement.)
 
 use std::time::Duration;
 
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
 use esp_idf_svc::sys;
+use firmware::gcl::{Command, Gate, Kind, Parameter, Reach};
 
 /// One task's run time at a moment.
 struct Sample {
@@ -245,59 +252,53 @@ pub fn pace(seconds: u64, source: Source) -> String {
     )
 }
 
-/// Write the flash `log` partition flat out for `seconds` on a background thread (core 0, priority 5): erase a
-/// 64 KB block, program it in 4 KB pages, next block, from 16 MB up (4-byte addressing). Returns at once; the
-/// thread logs the blocks written when it ends. The telemetry ring's worst case, to run beside `pace` and `video`.
-pub fn flash_write(seconds: u64) -> String {
-    // SAFETY: a lookup by label; the descriptor lives for the program.
-    let partition = unsafe {
-        sys::esp_partition_find_first(
-            sys::esp_partition_type_t_ESP_PARTITION_TYPE_DATA,
-            sys::esp_partition_subtype_t_ESP_PARTITION_SUBTYPE_ANY,
-            c"log".as_ptr(),
-        )
-    };
-    if partition.is_null() {
-        return cc_protocol::build("err", &["flashwrite", "no log partition"], &[]);
-    }
-    let partition = partition as usize;
-    ThreadSpawnConfiguration {
-        pin_to_core: Some(Core::Core0),
-        priority: 5,
-        ..Default::default()
-    }
-    .set()
-    .ok();
-    let spawned = std::thread::Builder::new().stack_size(8192).spawn(move || {
-        let partition = partition as *const sys::esp_partition_t;
-        let page = vec![0xa5u8; 4096];
-        // SAFETY: the descriptor lives for the program.
-        let (base, size) = unsafe { ((*partition).address as usize, (*partition).size as usize) };
-        let first = 0x100_0000usize.saturating_sub(base) / 65536; // from 16 MB absolute
-        let last = size / 65536 - 1;
-        let deadline = unsafe { sys::esp_timer_get_time() } + seconds as i64 * 1_000_000;
-        let (mut block, mut written) = (first, 0u32);
-        while unsafe { sys::esp_timer_get_time() } < deadline {
-            // SAFETY: inside the log partition, with a live buffer.
-            unsafe {
-                if sys::esp_partition_erase_range(partition, block * 65536, 65536) != sys::ESP_OK {
-                    break;
-                }
-                for index in 0..16 {
-                    sys::esp_partition_write_raw(partition, block * 65536 + index * 4096, page.as_ptr().cast(), 4096);
-                }
-            }
-            written += 1;
-            block = if block >= last { first } else { block + 1 };
-        }
-        log::info!(
-            "flashwrite :: {written} blocks of 64 KB in {seconds} s ({} KB/s)",
-            written as u64 * 64 / seconds
-        );
-    });
-    ThreadSpawnConfiguration::default().set().ok();
-    match spawned {
-        Ok(_) => cc_protocol::build("ok", &["flashwrite", "started"], &[("seconds", &seconds.to_string())]),
-        Err(error) => cc_protocol::build("err", &["flashwrite", &error.to_string()], &[]),
-    }
+/// The diagnostics' console commands (the Glider Command Language), registered at boot.
+pub fn register_commands() {
+    firmware::gcl::register(vec![
+        Command {
+            owner: "diagnostics",
+            words: "load",
+            about: "each core's CPU load and the busiest tasks over a window",
+            gate: Gate::Setting,
+            reach: Reach::Everywhere,
+            parameters: &[Parameter {
+                name: "seconds",
+                kind: Kind::Integer { low: 1, high: 600 },
+                default: Some("5"),
+                about: "the window (through the hub keep it under ~25 s: its exchange times out at 30)",
+            }],
+            bare_words: &[],
+            run: Box::new(|arguments| load(arguments.integer("seconds") as u64)),
+        },
+        Command {
+            owner: "diagnostics",
+            words: "pace",
+            about: "a 1 kHz loop on core 1 at the flight thread's priority, and how late each tick wakes",
+            gate: Gate::Setting,
+            reach: Reach::Everywhere,
+            parameters: &[
+                Parameter {
+                    name: "seconds",
+                    kind: Kind::Integer { low: 1, high: 600 },
+                    default: Some("10"),
+                    about: "how long (through the hub keep it under ~25 s: its exchange times out at 30)",
+                },
+                Parameter {
+                    name: "source",
+                    kind: Kind::Choice(&["gptimer", "esptimer"]),
+                    default: Some("gptimer"),
+                    about: "what wakes the loop: a core-1 gptimer interrupt (the flight design) or an esp_timer",
+                },
+            ],
+            bare_words: &[],
+            run: Box::new(|arguments| {
+                let source = if arguments.text("source") == "esptimer" {
+                    Source::EspTimer
+                } else {
+                    Source::Gptimer
+                };
+                pace(arguments.integer("seconds") as u64, source)
+            }),
+        },
+    ]);
 }

@@ -20,6 +20,7 @@ use esp_idf_svc::wifi::{AuthMethod, BlockingWifi, ClientConfiguration, Configura
 
 use crate::commands::Executor;
 use crate::config::Credentials;
+use firmware::gcl::Origin;
 
 /// No line from the hub this long -> it is gone; drop and re-dial. The hub polls every ~2 s.
 const SILENT: Duration = Duration::from_secs(60);
@@ -217,9 +218,35 @@ fn serve(stream: TcpStream, executor: &Executor) -> std::io::Result<()> {
         if reader.read_line(&mut line)? == 0 {
             return Ok(());
         }
-        if let Some(mut reply) = executor.ask(line.trim()) {
+        if let Some(mut reply) = executor.ask(line.trim(), Origin::Hub) {
             reply.push('\n'); // one write per line: two would wait out the hub's delayed ACK (~150 ms)
             writer.write_all(reply.as_bytes())?;
         }
     }
+}
+
+/// The P4 pin that drives the C6's EN (the Function-EV pinout; esp_hosted's slave reset).
+const C6_ENABLE_PIN: i32 = 54;
+
+/// The C6 link's console command (the Glider Command Language), registered at boot.
+pub fn register_commands() {
+    firmware::gcl::register(vec![firmware::gcl::Command {
+        owner: "c6",
+        words: "c6reset",
+        about: "brown the Wi-Fi co-processor out for 100 ms: proves a failing C6 link parks, never reboots the P4",
+        gate: firmware::gcl::Gate::Setting,
+        reach: firmware::gcl::Reach::Everywhere,
+        parameters: &[],
+        bare_words: &[firmware::gcl::CONFIRM],
+        run: Box::new(|_| {
+            // the C6's EN is P4 GPIO54 (esp_hosted drives it as an output): 100 ms low = a C6 brown-out
+            // SAFETY: level writes on the pin esp_hosted already configured as an output.
+            unsafe {
+                esp_idf_svc::sys::gpio_set_level(C6_ENABLE_PIN, 0);
+                std::thread::sleep(Duration::from_millis(100));
+                esp_idf_svc::sys::gpio_set_level(C6_ENABLE_PIN, 1);
+            }
+            cc_protocol::build("ok", &["c6reset"], &[])
+        }),
+    }]);
 }

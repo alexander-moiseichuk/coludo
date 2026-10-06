@@ -275,6 +275,45 @@ mutation handlers — just "validate-and-persist a whole config," "delete config
 A failed validation comes straight back as `err invalid <msg>` and the board keeps running its
 previous config.
 
+### The Glider Command Language (the Rust board)
+
+The Rust firmware (`src/avionics`) keeps every command above and adds the operator's own: the **Glider Command
+Language** (GCL, `src/avionics/firmware/src/gcl.rs`). It is not a second protocol. A GCL line is a CC line,
+`command [sub] [word ...] name=value ...`: positional words, `name=value` named parameters, `base64:` for a value
+with a space, parsed by the same parser.
+
+- **One point of injection.** The board's CC executor is the only dispatcher. The USB console and the hub hand
+  it their lines alike; it answers a CC command from its table, and passes any other name to the GCL registry.
+  So `video start fps=25` works from the hub (`cc.py <board> video start fps=25`), and `stage`, `health` and the
+  rest work from the console.
+- **Components own their commands.** Each component registers its commands when it activates:
+  - the SD card when it mounts: `sdtest`, `video start|stop|stats`;
+  - the diagnostics: `load`, `pace`;
+  - the credential store: `wifi`;
+  - the C6 link: `c6reset`;
+  - the system: `panic`.
+
+  A driver will register its own when its part answers. `help` lists exactly what this board runs, with each
+  command's component, parameters (kind, range, default) and words. Adding or removing a component needs no edit
+  elsewhere.
+- **Validation from the declaration.** A command takes only the parameters and words it declares. A wrong name, a
+  value out of range, a missing required parameter, or a missing subcommand answers
+  `err badargs <what it does take>`.
+- **The same gates as the CC commands.**
+  - Every GCL command that changes the board, loads a core or takes the board away runs only in SETTING:
+    `err unsafe refused -- stage is X (changes only in setting)`.
+  - A command whose arguments must never cross the network is console only (`wifi`: the hub logs every line).
+    The board then answers the hub `err unsafe <command> is console only`. The hub has still logged the line,
+    so never type a password at the hub.
+  - A command that takes the board away needs the word `confirm` (`panic confirm`, `c6reset confirm`).
+- **Long diagnostics** (`load`, `pace`, `sdtest`) answer after their `seconds=` window. The hub gives them its
+  30 s exchange timeout, so keep the window under ~25 s through the hub.
+
+`tools/avionics_console.py` is the operator's end on USB:
+- an interactive console with history and tab completion from `help`;
+- one command, or several with `-c`, in one attach;
+- replies rendered readably.
+
 ## Responses & error codes
 
 A board reply carries no id (Control re-tags per socket); only `iam` carries one.

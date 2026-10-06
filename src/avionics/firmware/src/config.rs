@@ -12,6 +12,7 @@ use std::sync::OnceLock;
 use esp_idf_svc::handle::RawHandle;
 use esp_idf_svc::nvs::{EspCustomNvsPartition, EspNvs, NvsCustom};
 use esp_idf_svc::sys;
+use firmware::gcl::{Command, Gate, Kind, Parameter, Reach};
 use serde_json::Value;
 
 /// The partition's label in partitions.csv.
@@ -161,4 +162,40 @@ fn key(ssid: &str) -> String {
     // SAFETY: the ROM CRC reads exactly `len` bytes of the slice. Seeded with 0 it is zlib's crc32.
     let checksum = unsafe { sys::esp_rom_crc32_le(0, ssid.as_ptr(), ssid.len() as u32) };
     format!("w{checksum:08x}")
+}
+
+impl Credentials {
+    /// The credential store's console command (the Glider Command Language), registered at boot. Console only:
+    /// over CC the password would land in the hub's log.
+    pub fn register_commands(&self) {
+        let credentials = self.clone();
+        firmware::gcl::register(vec![Command {
+            owner: "credentials",
+            words: "wifi",
+            about: "store a network's password (the network list itself is the board config's)",
+            gate: Gate::Setting,
+            reach: Reach::Console,
+            parameters: &[
+                Parameter {
+                    name: "ssid",
+                    kind: Kind::Text,
+                    default: None,
+                    about: "the network, 1..32 bytes",
+                },
+                Parameter {
+                    name: "password",
+                    kind: Kind::Text,
+                    default: None,
+                    about: "its password, at most 64 bytes (tools/avionics_console.py --wifi reads it from the creds file)",
+                },
+            ],
+            bare_words: &[],
+            run: Box::new(move |arguments| {
+                match credentials.set_password(arguments.text("ssid"), arguments.text("password")) {
+                    Ok(()) => cc_protocol::build("ok", &[arguments.text("ssid")], &[]),
+                    Err(error) => cc_protocol::build("err", &["store", &error.to_string()], &[]),
+                }
+            }),
+        }]);
+    }
 }

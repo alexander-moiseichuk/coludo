@@ -28,6 +28,7 @@ use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
 use cc_protocol::Message;
 use esp_idf_svc::hal::cpu::Core;
 use esp_idf_svc::hal::task::thread::ThreadSpawnConfiguration;
+use firmware::gcl::Origin;
 use mission::Mission;
 use sequencer::Stage;
 
@@ -143,20 +144,32 @@ const TABLE: &[(&str, Gate, Handler)] = &[
     ("reboot", Gate::Setting, system::reboot),
 ];
 
-/// Answer one request line; None for an empty line.
-pub fn handle(line: &str, context: &mut Context) -> Option<String> {
+/// Answer one request line -- the one point of injection for the hub and the console alike; None for an empty
+/// line. A CC command answers from [`TABLE`]; any other name goes to the Glider Command Language registry
+/// (firmware::gcl: `help`, and every command a component registered), under the same SETTING gate; a name neither
+/// knows answers `err badcmd`.
+pub fn handle(line: &str, context: &mut Context, origin: Origin) -> Option<String> {
     let message = match cc_protocol::parse(line) {
         Ok(message) => message,
         Err(error) => return Some(failure(&Fault::new(Code::BadArguments, format!("{error:?}")))),
     };
     let command = message.command.as_deref()?;
     let Some((_, gate, handler)) = TABLE.iter().find(|(name, _, _)| *name == command) else {
-        return Some(failure(&Fault::new(Code::BadCommand, command)));
+        let refusal = outside_setting();
+        return Some(
+            firmware::gcl::handle(line, origin, refusal.as_deref())
+                .unwrap_or_else(|| failure(&Fault::new(Code::BadCommand, command))),
+        );
     };
     if let (Gate::Setting, Some(refusal)) = (gate, outside_setting()) {
         return Some(failure(&Fault::new(Code::Unsafe, refusal)));
     }
     Some(handler(&message, context).unwrap_or_else(|fault| failure(&fault)))
+}
+
+/// The CC commands' names, for the GCL `help` (firmware::gcl::set_cc_names).
+pub fn names() -> Vec<&'static str> {
+    TABLE.iter().map(|(name, _, _)| *name).collect()
 }
 
 /// Why a command that changes the board must not run now, or None in SETTING (plan B's `_in_flight`, narrowed).
@@ -225,10 +238,12 @@ pub fn stage_problem() -> Option<String> {
     })
 }
 
-/// One line to run, and where its reply goes.
+/// One line to run, who sent it, and where its reply goes.
 struct Request {
     /// The request line, trimmed.
     line: String,
+    /// The console or the hub: a console-only command refuses the hub.
+    origin: Origin,
     /// The reply (None: no reply for this line).
     reply: SyncSender<Option<String>>,
 }
@@ -266,12 +281,13 @@ impl Executor {
         Ok(Self { queue })
     }
 
-    /// Run one line and wait for its reply; None for a line with no reply.
-    pub fn ask(&self, line: &str) -> Option<String> {
+    /// Run one line from `origin` and wait for its reply; None for a line with no reply.
+    pub fn ask(&self, line: &str, origin: Origin) -> Option<String> {
         let (reply, answer) = sync_channel(1);
         self.queue
             .send(Request {
                 line: line.to_string(),
+                origin,
                 reply,
             })
             .ok()?;
@@ -282,7 +298,7 @@ impl Executor {
 /// The executor thread: one line at a time, forever.
 fn serve(requests: Receiver<Request>, mut context: Context) {
     for request in requests {
-        let reply = handle(&request.line, &mut context);
+        let reply = handle(&request.line, &mut context, request.origin);
         let _ = request.reply.send(reply); // the caller may have gone (a dropped link); nothing to do
     }
 }

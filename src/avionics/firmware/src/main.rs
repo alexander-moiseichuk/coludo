@@ -63,6 +63,18 @@ fn main() -> anyhow::Result<()> {
     let mission = mission::Mission::load(store.launch().as_deref(), range);
     let wifi = board_config::wifi(&loaded.document);
     let credentials = config::Credentials::new(settings);
+    // the Glider Command Language: each component registers its own commands as it activates, so `help` lists
+    // exactly what this board runs (firmware::gcl)
+    firmware::gcl::set_cc_names(commands::names());
+    register_system_commands();
+    diagnostics::register_commands();
+    credentials.register_commands();
+    link::register_commands();
+    if sd_mounted {
+        firmware::sd::register_commands();
+        let session = board.session().unwrap_or_else(|| "uncounted".into());
+        firmware::video::register_commands(session, board.boot_id.unwrap_or(0) as u32);
+    }
     let executor = commands::Executor::start(commands::Context {
         board: board.clone(),
         store,
@@ -75,10 +87,23 @@ fn main() -> anyhow::Result<()> {
         peripherals.uart0,
         peripherals.pins.gpio37,
         peripherals.pins.gpio38,
-        board.clone(),
         executor.clone(),
-        credentials.clone(),
     )?;
     log::info!("{}", board.banner());
     link::run(peripherals.modem, event_loop, partition, wifi, credentials, &executor)
+}
+
+/// The system's own console command (the Glider Command Language): `panic confirm`, which proves a panic reboots the
+/// board (and warm-starts it, once that is ported).
+fn register_system_commands() {
+    firmware::gcl::register(vec![firmware::gcl::Command {
+        owner: "system",
+        words: "panic",
+        about: "panic on purpose: proves a panic reboots the board (and warm-starts it once that is ported)",
+        gate: firmware::gcl::Gate::Setting,
+        reach: firmware::gcl::Reach::Everywhere,
+        parameters: &[],
+        bare_words: &[firmware::gcl::CONFIRM],
+        run: Box::new(|_| panic!("deliberate panic from a console command")),
+    }]);
 }

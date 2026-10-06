@@ -6,6 +6,7 @@
 
 use esp_idf_svc::sys;
 
+use crate::gcl::{self, Command, Gate, Kind, Parameter, Reach, Word};
 use crate::{i2c, sd};
 
 /// The OV5647's Bayer order as the ISP must be told it: BGGR. esp_cam_sensor's tables run the readout mirrored
@@ -78,4 +79,117 @@ pub fn stats() -> sys::coludo_video_stats_t {
     // SAFETY: copies the counters into a live struct.
     unsafe { sys::coludo_video_stats(&mut stats) };
     stats
+}
+
+/// The recorder's parameters (`video start`): the flight setting by default, FHD@25 at 8 Mbit/s.
+const START_PARAMETERS: &[Parameter] = &[
+    Parameter {
+        name: "width",
+        kind: Kind::Integer { low: 1280, high: 1920 },
+        default: Some("1920"),
+        about: "sensor mode width: 1920 (1080p crop) or 1280 (960p binned, the full field of view)",
+    },
+    Parameter {
+        name: "height",
+        kind: Kind::Integer { low: 960, high: 1080 },
+        default: Some("1080"),
+        about: "sensor mode height: 1080 or 960",
+    },
+    Parameter {
+        name: "fps",
+        kind: Kind::Integer { low: 1, high: 45 },
+        default: Some("25"),
+        about: "frame rate; 25 is the flight setting (the encoder tops out near 26.6 at 1080p on rev v1.3)",
+    },
+    Parameter {
+        name: "kbps",
+        kind: Kind::Integer { low: 500, high: 20_000 },
+        default: Some("8000"),
+        about: "target bit rate, kbit/s",
+    },
+    Parameter {
+        name: "bayer",
+        kind: Kind::Integer { low: 0, high: 3 },
+        default: Some("3"),
+        about: "the Bayer order the ISP is told, 0 RGGB .. 3 BGGR (the OV5647's, see OV5647_BAYER)",
+    },
+];
+
+/// The camera's console commands (the Glider Command Language, crate::gcl), registered when the card mounts:
+/// recording needs it. `session` and `boot_id` name and stamp the files this boot writes.
+pub fn register_commands(session: String, boot_id: u32) {
+    gcl::register(vec![
+        Command {
+            owner: "camera",
+            words: "video start",
+            about: "record to /sdcard/video/<session>/<start uptime ms>.h264, every frame stamped (tools/video_sei.py)",
+            gate: Gate::Setting,
+            reach: Reach::Everywhere,
+            parameters: START_PARAMETERS,
+            bare_words: &[Word {
+                name: "bars",
+                about: "the sensor's colour-bar test pattern instead of the image: proves the pipeline in the dark",
+            }],
+            run: Box::new(move |arguments| {
+                let settings = Settings {
+                    width: arguments.integer("width") as u16,
+                    height: arguments.integer("height") as u16,
+                    fps: arguments.integer("fps") as u8,
+                    kilobits: arguments.integer("kbps") as u32,
+                    test_pattern: arguments.word("bars"),
+                    bayer: arguments.integer("bayer") as i8,
+                };
+                match start(&session, boot_id, &settings) {
+                    Ok(path) => cc_protocol::build("ok", &["video", &path], &[]),
+                    Err(error) => cc_protocol::build("err", &["video", &error.to_string()], &[]),
+                }
+            }),
+        },
+        Command {
+            owner: "camera",
+            words: "video stop",
+            about: "stop recording: flush, fsync and close the file; the counters stay readable",
+            gate: Gate::Setting,
+            reach: Reach::Everywhere,
+            parameters: &[],
+            bare_words: &[],
+            run: Box::new(|_| match stop() {
+                Ok(()) => counters("stopped"),
+                Err(error) => cc_protocol::build("err", &["video", &error.to_string()], &[]),
+            }),
+        },
+        Command {
+            owner: "camera",
+            words: "video stats",
+            about: "the recorder's counters: frames captured, encoded and dropped, encode and write times",
+            gate: Gate::Open,
+            reach: Reach::Everywhere,
+            parameters: &[],
+            bare_words: &[],
+            run: Box::new(|_| counters("running")),
+        },
+    ]);
+}
+
+/// The recorder's counters as one `ok video <state> name=value...` line.
+fn counters(state: &str) -> String {
+    let counters = stats();
+    let average = counters.encode_microseconds_total / counters.frames_encoded.max(1) as u64;
+    let values = [
+        ("captured", counters.frames_captured.to_string()),
+        ("missed", counters.frames_missed.to_string()),
+        ("encoded", counters.frames_encoded.to_string()),
+        ("idr", counters.frames_idr.to_string()),
+        ("dropped", counters.frames_dropped.to_string()),
+        ("encode_errors", counters.encode_errors.to_string()),
+        ("timeouts", counters.capture_timeouts.to_string()),
+        ("write_errors", counters.write_errors.to_string()),
+        ("written", counters.bytes_written.to_string()),
+        ("encode_us_avg", average.to_string()),
+        ("encode_us_max", counters.encode_microseconds_max.to_string()),
+        ("write_us_max", counters.write_microseconds_max.to_string()),
+        ("ring_max", counters.ring_used_max.to_string()),
+    ];
+    let named: Vec<(&str, &str)> = values.iter().map(|(key, value)| (*key, value.as_str())).collect();
+    cc_protocol::build("ok", &["video", state], &named)
 }
