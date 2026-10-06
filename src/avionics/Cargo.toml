@@ -29,6 +29,11 @@ flash_ring = { path = "crates/flash_ring" }
 recorder = { path = "crates/recorder" }
 warmstart = { path = "crates/warmstart" }
 gnss = { path = "crates/gnss" }
+databoard = { path = "crates/databoard" }
+layout = { path = "crates/layout" }
+drivers = { path = "crates/drivers" }
+# the device traits the drivers are written over (I2c, SpiDevice, DelayNs); esp-idf-hal implements the same 1.0
+embedded-hal = "1"
 serde = { version = "1", features = ["derive"] }
 # float_roundtrip: a JSON number parses to the exact f64 Python's json reads (config_id hashes the repr)
 serde_json = { version = "1", features = ["float_roundtrip"] }

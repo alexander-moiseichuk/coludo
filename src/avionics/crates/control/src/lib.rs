@@ -12,9 +12,12 @@
 //!  * [`governor`] -- the dynamic-pressure fin governor: the estimate's throttle and the mixer's 1/v^2 cap;
 //!  * [`navigation`] -- the landing-zone geometry the Mission resolves its target and gates with;
 //!  * [`wind`] -- the wind triangle from the GNSS ground velocity, the heading and the airspeed;
-//!  * [`guidance`] -- the stage-dependent guidance law: the attitude setpoints and the heading error.
+//!  * [`guidance`] -- the stage-dependent guidance law: the attitude setpoints and the heading error;
+//!  * [`attitude`] -- the primary attitude: the complementary filter (gyro, gravity, track, magnetometer), its
+//!    blind window and the handover to a source above or below it.
 
 pub mod airspeed;
+pub mod attitude;
 pub mod commons;
 pub mod governor;
 pub mod guidance;

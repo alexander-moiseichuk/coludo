@@ -1,0 +1,7147 @@
+{
+ "airspeed": {
+  "cases": [
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 8100,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_8100_scale_60_zero_0_rho_1.225",
+    "output": {
+     "airspeed": 14.846149779161806,
+     "airspeed_cms": 1484,
+     "dynamic_pressure": 135.0
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": -600,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_-600_scale_60_zero_0_rho_1.225",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": -10.0
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 0,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_0_scale_60_zero_0_rho_1.225",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": 0.0
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 8100,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_8100_scale_60_zero_0_rho_1.18",
+    "output": {
+     "airspeed": 15.126584522688322,
+     "airspeed_cms": 1512,
+     "dynamic_pressure": 135.0
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 30000,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_30000_scale_60_zero_0_rho_1.18",
+    "output": {
+     "airspeed": 29.111125486979102,
+     "airspeed_cms": 2911,
+     "dynamic_pressure": 500.0
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 600,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_600_scale_60_zero_0_rho_1.18",
+    "output": {
+     "airspeed": 4.116934847963091,
+     "airspeed_cms": 411,
+     "dynamic_pressure": 10.0
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 8100,
+     "scale": 60,
+     "zero": 13500
+    },
+    "name": "raw_8100_scale_60_zero_13500_rho_1.18",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": 0.0
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 8100,
+     "scale": 60,
+     "zero": 13600
+    },
+    "name": "raw_8100_scale_60_zero_13600_rho_1.18",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": -1.0
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 3,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_3_scale_60_zero_0_rho_1.18",
+    "output": {
+     "airspeed": 0.291111254869791,
+     "airspeed_cms": 29,
+     "dynamic_pressure": 0.05
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 30,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_30_scale_60_zero_0_rho_1.18",
+    "output": {
+     "airspeed": 0.9205746178983234,
+     "airspeed_cms": 92,
+     "dynamic_pressure": 0.5
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 57,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_57_scale_60_zero_0_rho_1.18",
+    "output": {
+     "airspeed": 1.2689245413047316,
+     "airspeed_cms": 126,
+     "dynamic_pressure": 0.95
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 12,
+     "scale": 240,
+     "zero": 0
+    },
+    "name": "raw_12_scale_240_zero_0_rho_1.18",
+    "output": {
+     "airspeed": 0.291111254869791,
+     "airspeed_cms": 29,
+     "dynamic_pressure": 0.05
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 16148,
+     "scale": 60,
+     "zero": -51
+    },
+    "name": "raw_16148_scale_60_zero_-51_rho_1.225",
+    "output": {
+     "airspeed": 20.981624613660674,
+     "airspeed_cms": 2098,
+     "dynamic_pressure": 269.64
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 7045,
+     "scale": 60,
+     "zero": -412
+    },
+    "name": "raw_7045_scale_60_zero_-412_rho_1.225",
+    "output": {
+     "airspeed": 14.086033030296791,
+     "airspeed_cms": 1408,
+     "dynamic_pressure": 121.53
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 17339,
+     "scale": 240,
+     "zero": 226
+    },
+    "name": "raw_17339_scale_240_zero_226_rho_1.225",
+    "output": {
+     "airspeed": 10.688922360298525,
+     "airspeed_cms": 1068,
+     "dynamic_pressure": 69.98
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 23847,
+     "scale": 60,
+     "zero": 80
+    },
+    "name": "raw_23847_scale_60_zero_80_rho_1.3",
+    "output": {
+     "airspeed": 24.70284941521462,
+     "airspeed_cms": 2470,
+     "dynamic_pressure": 396.65
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": -1180,
+     "scale": 60,
+     "zero": -127
+    },
+    "name": "raw_-1180_scale_60_zero_-127_rho_1.225",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": -18.4
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 12551,
+     "scale": 60,
+     "zero": -39
+    },
+    "name": "raw_12551_scale_60_zero_-39_rho_1.18",
+    "output": {
+     "airspeed": 18.84684031424123,
+     "airspeed_cms": 1884,
+     "dynamic_pressure": 209.57
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 9626,
+     "scale": 60,
+     "zero": 66
+    },
+    "name": "raw_9626_scale_60_zero_66_rho_1.1",
+    "output": {
+     "airspeed": 17.04379385849609,
+     "airspeed_cms": 1704,
+     "dynamic_pressure": 159.77
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 23585,
+     "scale": 60,
+     "zero": -26
+    },
+    "name": "raw_23585_scale_60_zero_-26_rho_1.3",
+    "output": {
+     "airspeed": 24.599562222496186,
+     "airspeed_cms": 2459,
+     "dynamic_pressure": 393.34
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 811,
+     "scale": 60,
+     "zero": 318
+    },
+    "name": "raw_811_scale_60_zero_318_rho_1.1",
+    "output": {
+     "airspeed": 4.333799508724208,
+     "airspeed_cms": 433,
+     "dynamic_pressure": 10.33
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 2109,
+     "scale": 60,
+     "zero": -435
+    },
+    "name": "raw_2109_scale_60_zero_-435_rho_1.1",
+    "output": {
+     "airspeed": 8.47456086285194,
+     "airspeed_cms": 847,
+     "dynamic_pressure": 39.5
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 31610,
+     "scale": 240,
+     "zero": -432
+    },
+    "name": "raw_31610_scale_240_zero_-432_rho_1.1",
+    "output": {
+     "airspeed": 15.72606406285727,
+     "airspeed_cms": 1572,
+     "dynamic_pressure": 136.02
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 5458,
+     "scale": 60,
+     "zero": 351
+    },
+    "name": "raw_5458_scale_60_zero_351_rho_1.18",
+    "output": {
+     "airspeed": 12.174577568977531,
+     "airspeed_cms": 1217,
+     "dynamic_pressure": 87.45
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 2373,
+     "scale": 240,
+     "zero": -378
+    },
+    "name": "raw_2373_scale_240_zero_-378_rho_1.1",
+    "output": {
+     "airspeed": 4.98360949878335,
+     "airspeed_cms": 498,
+     "dynamic_pressure": 13.66
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 10133,
+     "scale": 60,
+     "zero": 310
+    },
+    "name": "raw_10133_scale_60_zero_310_rho_1.225",
+    "output": {
+     "airspeed": 16.451784842070964,
+     "airspeed_cms": 1645,
+     "dynamic_pressure": 165.78
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 2549,
+     "scale": 60,
+     "zero": 325
+    },
+    "name": "raw_2549_scale_60_zero_325_rho_1.18",
+    "output": {
+     "airspeed": 8.154233588984853,
+     "airspeed_cms": 815,
+     "dynamic_pressure": 39.23
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 9633,
+     "scale": 60,
+     "zero": -483
+    },
+    "name": "raw_9633_scale_60_zero_-483_rho_1.3",
+    "output": {
+     "airspeed": 15.950886158165922,
+     "airspeed_cms": 1595,
+     "dynamic_pressure": 165.38
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": -1215,
+     "scale": 60,
+     "zero": 33
+    },
+    "name": "raw_-1215_scale_60_zero_33_rho_1.18",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": -20.58
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 25220,
+     "scale": 60,
+     "zero": -457
+    },
+    "name": "raw_25220_scale_60_zero_-457_rho_1.3",
+    "output": {
+     "airspeed": 25.567407136671243,
+     "airspeed_cms": 2556,
+     "dynamic_pressure": 424.9
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 6294,
+     "scale": 240,
+     "zero": -314
+    },
+    "name": "raw_6294_scale_240_zero_-314_rho_1.1",
+    "output": {
+     "airspeed": 7.306286209957708,
+     "airspeed_cms": 730,
+     "dynamic_pressure": 29.36
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 25619,
+     "scale": 240,
+     "zero": 283
+    },
+    "name": "raw_25619_scale_240_zero_283_rho_1.18",
+    "output": {
+     "airspeed": 13.270969974640009,
+     "airspeed_cms": 1327,
+     "dynamic_pressure": 103.91
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 16587,
+     "scale": 60,
+     "zero": 399
+    },
+    "name": "raw_16587_scale_60_zero_399_rho_1.1",
+    "output": {
+     "airspeed": 22.25717453276175,
+     "airspeed_cms": 2225,
+     "dynamic_pressure": 272.46
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 4586,
+     "scale": 240,
+     "zero": 286
+    },
+    "name": "raw_4586_scale_240_zero_286_rho_1.1",
+    "output": {
+     "airspeed": 5.43390032364164,
+     "airspeed_cms": 543,
+     "dynamic_pressure": 16.24
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": -363,
+     "scale": 60,
+     "zero": 261
+    },
+    "name": "raw_-363_scale_60_zero_261_rho_1.225",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": -8.66
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 27501,
+     "scale": 60,
+     "zero": -226
+    },
+    "name": "raw_27501_scale_60_zero_-226_rho_1.225",
+    "output": {
+     "airspeed": 27.422916083644573,
+     "airspeed_cms": 2742,
+     "dynamic_pressure": 460.61
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": -1936,
+     "scale": 60,
+     "zero": 195
+    },
+    "name": "raw_-1936_scale_60_zero_195_rho_1.18",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": -34.22
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 14439,
+     "scale": 60,
+     "zero": -22
+    },
+    "name": "raw_14439_scale_60_zero_-22_rho_1.1",
+    "output": {
+     "airspeed": 20.927146354566705,
+     "airspeed_cms": 2092,
+     "dynamic_pressure": 240.87
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 30559,
+     "scale": 60,
+     "zero": 116
+    },
+    "name": "raw_30559_scale_60_zero_116_rho_1.1",
+    "output": {
+     "airspeed": 30.395872925597825,
+     "airspeed_cms": 3039,
+     "dynamic_pressure": 508.15
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 4930,
+     "scale": 240,
+     "zero": -206
+    },
+    "name": "raw_4930_scale_240_zero_-206_rho_1.1",
+    "output": {
+     "airspeed": 6.410219114110617,
+     "airspeed_cms": 641,
+     "dynamic_pressure": 22.6
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 30791,
+     "scale": 60,
+     "zero": -461
+    },
+    "name": "raw_30791_scale_60_zero_-461_rho_1.1",
+    "output": {
+     "airspeed": 30.68283499998596,
+     "airspeed_cms": 3068,
+     "dynamic_pressure": 517.79
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 3531,
+     "scale": 60,
+     "zero": -45
+    },
+    "name": "raw_3531_scale_60_zero_-45_rho_1.18",
+    "output": {
+     "airspeed": 10.025391492419196,
+     "airspeed_cms": 1002,
+     "dynamic_pressure": 59.3
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 24329,
+     "scale": 60,
+     "zero": -278
+    },
+    "name": "raw_24329_scale_60_zero_-278_rho_1.1",
+    "output": {
+     "airspeed": 27.245016224823743,
+     "airspeed_cms": 2724,
+     "dynamic_pressure": 408.26
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 6544,
+     "scale": 60,
+     "zero": 343
+    },
+    "name": "raw_6544_scale_60_zero_343_rho_1.225",
+    "output": {
+     "airspeed": 13.132293891668082,
+     "airspeed_cms": 1313,
+     "dynamic_pressure": 105.63
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 6657,
+     "scale": 60,
+     "zero": 367
+    },
+    "name": "raw_6657_scale_60_zero_367_rho_1.3",
+    "output": {
+     "airspeed": 12.847028989075794,
+     "airspeed_cms": 1284,
+     "dynamic_pressure": 107.28
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 7233,
+     "scale": 60,
+     "zero": -186
+    },
+    "name": "raw_7233_scale_60_zero_-186_rho_1.18",
+    "output": {
+     "airspeed": 14.403977793345366,
+     "airspeed_cms": 1440,
+     "dynamic_pressure": 122.41
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 6136,
+     "scale": 240,
+     "zero": -299
+    },
+    "name": "raw_6136_scale_240_zero_-299_rho_1.225",
+    "output": {
+     "airspeed": 6.827316083056298,
+     "airspeed_cms": 682,
+     "dynamic_pressure": 28.55
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 27058,
+     "scale": 60,
+     "zero": -254
+    },
+    "name": "raw_27058_scale_60_zero_-254_rho_1.1",
+    "output": {
+     "airspeed": 28.714899521771873,
+     "airspeed_cms": 2871,
+     "dynamic_pressure": 453.5
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 5475,
+     "scale": 60,
+     "zero": 452
+    },
+    "name": "raw_5475_scale_60_zero_452_rho_1.1",
+    "output": {
+     "airspeed": 12.557504094799615,
+     "airspeed_cms": 1255,
+     "dynamic_pressure": 86.73
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 16006,
+     "scale": 60,
+     "zero": -444
+    },
+    "name": "raw_16006_scale_60_zero_-444_rho_1.18",
+    "output": {
+     "airspeed": 21.439706549977604,
+     "airspeed_cms": 2143,
+     "dynamic_pressure": 271.2
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 32250,
+     "scale": 60,
+     "zero": -496
+    },
+    "name": "raw_32250_scale_60_zero_-496_rho_1.225",
+    "output": {
+     "airspeed": 29.759855167521174,
+     "airspeed_cms": 2975,
+     "dynamic_pressure": 542.46
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 8925,
+     "scale": 240,
+     "zero": 354
+    },
+    "name": "raw_8925_scale_240_zero_354_rho_1.1",
+    "output": {
+     "airspeed": 7.820718404573608,
+     "airspeed_cms": 782,
+     "dynamic_pressure": 33.64
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 27522,
+     "scale": 60,
+     "zero": -432
+    },
+    "name": "raw_27522_scale_60_zero_-432_rho_1.225",
+    "output": {
+     "airspeed": 27.494563470041914,
+     "airspeed_cms": 2749,
+     "dynamic_pressure": 463.02
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 13083,
+     "scale": 60,
+     "zero": -252
+    },
+    "name": "raw_13083_scale_60_zero_-252_rho_1.3",
+    "output": {
+     "airspeed": 18.421141700189526,
+     "airspeed_cms": 1842,
+     "dynamic_pressure": 220.57
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 18483,
+     "scale": 240,
+     "zero": 497
+    },
+    "name": "raw_18483_scale_240_zero_497_rho_1.3",
+    "output": {
+     "airspeed": 10.527619352482747,
+     "airspeed_cms": 1052,
+     "dynamic_pressure": 72.04
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 14605,
+     "scale": 60,
+     "zero": -14
+    },
+    "name": "raw_14605_scale_60_zero_-14_rho_1.3",
+    "output": {
+     "airspeed": 19.356970519487486,
+     "airspeed_cms": 1935,
+     "dynamic_pressure": 243.55
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": -201,
+     "scale": 240,
+     "zero": -71
+    },
+    "name": "raw_-201_scale_240_zero_-71_rho_1.3",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": -0.13
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 9463,
+     "scale": 60,
+     "zero": 290
+    },
+    "name": "raw_9463_scale_60_zero_290_rho_1.3",
+    "output": {
+     "airspeed": 15.432732446628846,
+     "airspeed_cms": 1543,
+     "dynamic_pressure": 154.81
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 10757,
+     "scale": 60,
+     "zero": 315
+    },
+    "name": "raw_10757_scale_60_zero_315_rho_1.1",
+    "output": {
+     "airspeed": 17.89514916496545,
+     "airspeed_cms": 1789,
+     "dynamic_pressure": 176.13
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 6405,
+     "scale": 240,
+     "zero": 118
+    },
+    "name": "raw_6405_scale_240_zero_118_rho_1.225",
+    "output": {
+     "airspeed": 6.452337023220694,
+     "airspeed_cms": 645,
+     "dynamic_pressure": 25.5
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 5739,
+     "scale": 240,
+     "zero": -337
+    },
+    "name": "raw_5739_scale_240_zero_-337_rho_1.3",
+    "output": {
+     "airspeed": 6.478366365777005,
+     "airspeed_cms": 647,
+     "dynamic_pressure": 27.28
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 19048,
+     "scale": 60,
+     "zero": -361
+    },
+    "name": "raw_19048_scale_60_zero_-361_rho_1.18",
+    "output": {
+     "airspeed": 23.327804026053677,
+     "airspeed_cms": 2332,
+     "dynamic_pressure": 321.07
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 15622,
+     "scale": 60,
+     "zero": 457
+    },
+    "name": "raw_15622_scale_60_zero_457_rho_1.18",
+    "output": {
+     "airspeed": 20.82168035681453,
+     "airspeed_cms": 2082,
+     "dynamic_pressure": 255.79
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 11295,
+     "scale": 60,
+     "zero": -308
+    },
+    "name": "raw_11295_scale_60_zero_-308_rho_1.18",
+    "output": {
+     "airspeed": 18.008001987816982,
+     "airspeed_cms": 1800,
+     "dynamic_pressure": 191.33
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 15261,
+     "scale": 60,
+     "zero": -280
+    },
+    "name": "raw_15261_scale_60_zero_-280_rho_1.3",
+    "output": {
+     "airspeed": 19.890082569345573,
+     "airspeed_cms": 1989,
+     "dynamic_pressure": 257.15
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 8439,
+     "scale": 60,
+     "zero": 353
+    },
+    "name": "raw_8439_scale_60_zero_353_rho_1.3",
+    "output": {
+     "airspeed": 14.52425027854609,
+     "airspeed_cms": 1452,
+     "dynamic_pressure": 137.12
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": -2259,
+     "scale": 60,
+     "zero": -333
+    },
+    "name": "raw_-2259_scale_60_zero_-333_rho_1.3",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": -34.32
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 24332,
+     "scale": 60,
+     "zero": 107
+    },
+    "name": "raw_24332_scale_60_zero_107_rho_1.3",
+    "output": {
+     "airspeed": 24.944862273545503,
+     "airspeed_cms": 2494,
+     "dynamic_pressure": 404.46
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 20222,
+     "scale": 60,
+     "zero": 266
+    },
+    "name": "raw_20222_scale_60_zero_266_rho_1.1",
+    "output": {
+     "airspeed": 24.65654993192386,
+     "airspeed_cms": 2465,
+     "dynamic_pressure": 334.37
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 16459,
+     "scale": 60,
+     "zero": 315
+    },
+    "name": "raw_16459_scale_60_zero_315_rho_1.1",
+    "output": {
+     "airspeed": 22.20401274135335,
+     "airspeed_cms": 2220,
+     "dynamic_pressure": 271.16
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 31817,
+     "scale": 240,
+     "zero": -226
+    },
+    "name": "raw_31817_scale_240_zero_-226_rho_1.1",
+    "output": {
+     "airspeed": 15.657121528092402,
+     "airspeed_cms": 1565,
+     "dynamic_pressure": 134.83
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 17975,
+     "scale": 60,
+     "zero": 248
+    },
+    "name": "raw_17975_scale_60_zero_248_rho_1.3",
+    "output": {
+     "airspeed": 21.37935740561262,
+     "airspeed_cms": 2137,
+     "dynamic_pressure": 297.1
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 22778,
+     "scale": 60,
+     "zero": -180
+    },
+    "name": "raw_22778_scale_60_zero_-180_rho_1.3",
+    "output": {
+     "airspeed": 24.224272633360627,
+     "airspeed_cms": 2422,
+     "dynamic_pressure": 381.43
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 24733,
+     "scale": 60,
+     "zero": -56
+    },
+    "name": "raw_24733_scale_60_zero_-56_rho_1.18",
+    "output": {
+     "airspeed": 26.450144980538866,
+     "airspeed_cms": 2645,
+     "dynamic_pressure": 412.77
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 38,
+     "scale": 60,
+     "zero": 243
+    },
+    "name": "raw_38_scale_60_zero_243_rho_1.1",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": -1.8
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 19773,
+     "scale": 60,
+     "zero": -216
+    },
+    "name": "raw_19773_scale_60_zero_-216_rho_1.225",
+    "output": {
+     "airspeed": 23.271599578429832,
+     "airspeed_cms": 2327,
+     "dynamic_pressure": 331.71
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 31062,
+     "scale": 240,
+     "zero": -488
+    },
+    "name": "raw_31062_scale_240_zero_-488_rho_1.225",
+    "output": {
+     "airspeed": 14.807609736971358,
+     "airspeed_cms": 1480,
+     "dynamic_pressure": 134.3
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 29297,
+     "scale": 60,
+     "zero": -290
+    },
+    "name": "raw_29297_scale_60_zero_-290_rho_1.225",
+    "output": {
+     "airspeed": 28.318307340168566,
+     "airspeed_cms": 2831,
+     "dynamic_pressure": 491.18
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 4461,
+     "scale": 60,
+     "zero": 110
+    },
+    "name": "raw_4461_scale_60_zero_110_rho_1.3",
+    "output": {
+     "airspeed": 10.615663318526435,
+     "airspeed_cms": 1061,
+     "dynamic_pressure": 73.25
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 18363,
+     "scale": 60,
+     "zero": 312
+    },
+    "name": "raw_18363_scale_60_zero_312_rho_1.18",
+    "output": {
+     "airspeed": 22.659229421277804,
+     "airspeed_cms": 2265,
+     "dynamic_pressure": 302.93
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 3359,
+     "scale": 240,
+     "zero": 119
+    },
+    "name": "raw_3359_scale_240_zero_119_rho_1.3",
+    "output": {
+     "airspeed": 4.437601569801833,
+     "airspeed_cms": 443,
+     "dynamic_pressure": 12.8
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 24135,
+     "scale": 60,
+     "zero": -490
+    },
+    "name": "raw_24135_scale_60_zero_-490_rho_1.18",
+    "output": {
+     "airspeed": 26.26946413162461,
+     "airspeed_cms": 2626,
+     "dynamic_pressure": 407.15
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 18142,
+     "scale": 60,
+     "zero": -320
+    },
+    "name": "raw_18142_scale_60_zero_-320_rho_1.225",
+    "output": {
+     "airspeed": 22.33547558006668,
+     "airspeed_cms": 2233,
+     "dynamic_pressure": 305.56
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 1180,
+     "scale": 60,
+     "zero": -56
+    },
+    "name": "raw_1180_scale_60_zero_-56_rho_1.3",
+    "output": {
+     "airspeed": 5.577427032933045,
+     "airspeed_cms": 557,
+     "dynamic_pressure": 20.22
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": -53,
+     "scale": 60,
+     "zero": 128
+    },
+    "name": "raw_-53_scale_60_zero_128_rho_1.225",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": -2.17
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 925,
+     "scale": 240,
+     "zero": 450
+    },
+    "name": "raw_925_scale_240_zero_450_rho_1.3",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": -0.65
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 25800,
+     "scale": 60,
+     "zero": -209
+    },
+    "name": "raw_25800_scale_60_zero_-209_rho_1.1",
+    "output": {
+     "airspeed": 28.028881208820692,
+     "airspeed_cms": 2802,
+     "dynamic_pressure": 432.09
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 1763,
+     "scale": 60,
+     "zero": -447
+    },
+    "name": "raw_1763_scale_60_zero_-447_rho_1.18",
+    "output": {
+     "airspeed": 7.57448885113261,
+     "airspeed_cms": 757,
+     "dynamic_pressure": 33.85
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 9822,
+     "scale": 240,
+     "zero": 17
+    },
+    "name": "raw_9822_scale_240_zero_17_rho_1.3",
+    "output": {
+     "airspeed": 7.917847415321142,
+     "airspeed_cms": 791,
+     "dynamic_pressure": 40.75
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 32488,
+     "scale": 240,
+     "zero": 371
+    },
+    "name": "raw_32488_scale_240_zero_371_rho_1.3",
+    "output": {
+     "airspeed": 14.231600807304199,
+     "airspeed_cms": 1423,
+     "dynamic_pressure": 131.65
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 97,
+     "scale": 240,
+     "zero": 117
+    },
+    "name": "raw_97_scale_240_zero_117_rho_1.3",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": -0.77
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 13879,
+     "scale": 60,
+     "zero": -265
+    },
+    "name": "raw_13879_scale_60_zero_-265_rho_1.3",
+    "output": {
+     "airspeed": 18.97204421085038,
+     "airspeed_cms": 1897,
+     "dynamic_pressure": 233.96
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 2865,
+     "scale": 60,
+     "zero": 181
+    },
+    "name": "raw_2865_scale_60_zero_181_rho_1.18",
+    "output": {
+     "airspeed": 8.824081072817782,
+     "airspeed_cms": 882,
+     "dynamic_pressure": 45.94
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 13908,
+     "scale": 240,
+     "zero": -273
+    },
+    "name": "raw_13908_scale_240_zero_-273_rho_1.225",
+    "output": {
+     "airspeed": 9.953360626195659,
+     "airspeed_cms": 995,
+     "dynamic_pressure": 60.68
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": -422,
+     "scale": 60,
+     "zero": 487
+    },
+    "name": "raw_-422_scale_60_zero_487_rho_1.225",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": -11.91
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 18803,
+     "scale": 240,
+     "zero": -21
+    },
+    "name": "raw_18803_scale_240_zero_-21_rho_1.18",
+    "output": {
+     "airspeed": 11.538439808758332,
+     "airspeed_cms": 1153,
+     "dynamic_pressure": 78.55
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 27861,
+     "scale": 240,
+     "zero": -264
+    },
+    "name": "raw_27861_scale_240_zero_-264_rho_1.18",
+    "output": {
+     "airspeed": 14.185215507106363,
+     "airspeed_cms": 1418,
+     "dynamic_pressure": 118.72
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 31265,
+     "scale": 240,
+     "zero": 233
+    },
+    "name": "raw_31265_scale_240_zero_233_rho_1.225",
+    "output": {
+     "airspeed": 14.452737894705669,
+     "airspeed_cms": 1445,
+     "dynamic_pressure": 127.94
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 7204,
+     "scale": 60,
+     "zero": 361
+    },
+    "name": "raw_7204_scale_60_zero_361_rho_1.225",
+    "output": {
+     "airspeed": 13.788489728015604,
+     "airspeed_cms": 1378,
+     "dynamic_pressure": 116.45
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 8079,
+     "scale": 60,
+     "zero": -341
+    },
+    "name": "raw_8079_scale_60_zero_-341_rho_1.1",
+    "output": {
+     "airspeed": 15.843553320457561,
+     "airspeed_cms": 1584,
+     "dynamic_pressure": 138.06
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 14719,
+     "scale": 60,
+     "zero": -393
+    },
+    "name": "raw_14719_scale_60_zero_-393_rho_1.1",
+    "output": {
+     "airspeed": 21.287640460220956,
+     "airspeed_cms": 2128,
+     "dynamic_pressure": 249.24
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 32180,
+     "scale": 240,
+     "zero": -487
+    },
+    "name": "raw_32180_scale_240_zero_-487_rho_1.3",
+    "output": {
+     "airspeed": 14.620849180852346,
+     "airspeed_cms": 1462,
+     "dynamic_pressure": 138.95
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 21704,
+     "scale": 240,
+     "zero": -75
+    },
+    "name": "raw_21704_scale_240_zero_-75_rho_1.18",
+    "output": {
+     "airspeed": 12.431507265064681,
+     "airspeed_cms": 1243,
+     "dynamic_pressure": 91.18
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 26461,
+     "scale": 60,
+     "zero": -372
+    },
+    "name": "raw_26461_scale_60_zero_-372_rho_1.225",
+    "output": {
+     "airspeed": 26.946053438646025,
+     "airspeed_cms": 2694,
+     "dynamic_pressure": 444.73
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 19255,
+     "scale": 60,
+     "zero": -178
+    },
+    "name": "raw_19255_scale_60_zero_-178_rho_1.18",
+    "output": {
+     "airspeed": 23.38658169527626,
+     "airspeed_cms": 2338,
+     "dynamic_pressure": 322.69
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 3578,
+     "scale": 60,
+     "zero": 233
+    },
+    "name": "raw_3578_scale_60_zero_233_rho_1.1",
+    "output": {
+     "airspeed": 10.20694950422594,
+     "airspeed_cms": 1020,
+     "dynamic_pressure": 57.3
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 19431,
+     "scale": 60,
+     "zero": 227
+    },
+    "name": "raw_19431_scale_60_zero_227_rho_1.225",
+    "output": {
+     "airspeed": 22.9135019459831,
+     "airspeed_cms": 2291,
+     "dynamic_pressure": 321.58
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 23962,
+     "scale": 60,
+     "zero": 425
+    },
+    "name": "raw_23962_scale_60_zero_425_rho_1.1",
+    "output": {
+     "airspeed": 26.802645731006074,
+     "airspeed_cms": 2680,
+     "dynamic_pressure": 395.11
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 21031,
+     "scale": 60,
+     "zero": 500
+    },
+    "name": "raw_21031_scale_60_zero_500_rho_1.225",
+    "output": {
+     "airspeed": 23.75074649739821,
+     "airspeed_cms": 2375,
+     "dynamic_pressure": 345.51
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": -1427,
+     "scale": 60,
+     "zero": 189
+    },
+    "name": "raw_-1427_scale_60_zero_189_rho_1.18",
+    "output": {
+     "airspeed": 0.0,
+     "airspeed_cms": 0,
+     "dynamic_pressure": -25.68
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 31885,
+     "scale": 60,
+     "zero": -341
+    },
+    "name": "raw_31885_scale_60_zero_-341_rho_1.3",
+    "output": {
+     "airspeed": 28.684490582891655,
+     "airspeed_cms": 2868,
+     "dynamic_pressure": 534.82
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 32738,
+     "scale": 60,
+     "zero": -496
+    },
+    "name": "raw_32738_scale_60_zero_-496_rho_1.225",
+    "output": {
+     "airspeed": 29.982035437568143,
+     "airspeed_cms": 2998,
+     "dynamic_pressure": 550.59
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 18986,
+     "scale": 240,
+     "zero": 153
+    },
+    "name": "raw_18986_scale_240_zero_153_rho_1.3",
+    "output": {
+     "airspeed": 10.924214458644682,
+     "airspeed_cms": 1092,
+     "dynamic_pressure": 77.57
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 5733,
+     "scale": 60,
+     "zero": 98
+    },
+    "name": "raw_5733_scale_60_zero_98_rho_1.18",
+    "output": {
+     "airspeed": 12.660495076939936,
+     "airspeed_cms": 1266,
+     "dynamic_pressure": 94.57
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 25518,
+     "scale": 60,
+     "zero": 20
+    },
+    "name": "raw_25518_scale_60_zero_20_rho_1.18",
+    "output": {
+     "airspeed": 26.842288922077255,
+     "airspeed_cms": 2684,
+     "dynamic_pressure": 425.1
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 31145,
+     "scale": 240,
+     "zero": -411
+    },
+    "name": "raw_31145_scale_240_zero_-411_rho_1.18",
+    "output": {
+     "airspeed": 15.06370652387015,
+     "airspeed_cms": 1506,
+     "dynamic_pressure": 133.88
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 28293,
+     "scale": 60,
+     "zero": 79
+    },
+    "name": "raw_28293_scale_60_zero_79_rho_1.1",
+    "output": {
+     "airspeed": 29.256234766751387,
+     "airspeed_cms": 2925,
+     "dynamic_pressure": 470.76
+    }
+   },
+   {
+    "input": {
+     "density": 1.1,
+     "raw": 26703,
+     "scale": 240,
+     "zero": -114
+    },
+    "name": "raw_26703_scale_240_zero_-114_rho_1.1",
+    "output": {
+     "airspeed": 14.295581008256935,
+     "airspeed_cms": 1429,
+     "dynamic_pressure": 112.4
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 14176,
+     "scale": 60,
+     "zero": -498
+    },
+    "name": "raw_14176_scale_60_zero_-498_rho_1.225",
+    "output": {
+     "airspeed": 19.845937228808214,
+     "airspeed_cms": 1984,
+     "dynamic_pressure": 241.24
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 11329,
+     "scale": 60,
+     "zero": -369
+    },
+    "name": "raw_11329_scale_60_zero_-369_rho_1.225",
+    "output": {
+     "airspeed": 17.728105208558365,
+     "airspeed_cms": 1772,
+     "dynamic_pressure": 192.5
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 10348,
+     "scale": 240,
+     "zero": -310
+    },
+    "name": "raw_10348_scale_240_zero_-310_rho_1.3",
+    "output": {
+     "airspeed": 8.431625447818925,
+     "airspeed_cms": 843,
+     "dynamic_pressure": 46.21
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 6998,
+     "scale": 60,
+     "zero": -293
+    },
+    "name": "raw_6998_scale_60_zero_-293_rho_1.225",
+    "output": {
+     "airspeed": 13.971399357258385,
+     "airspeed_cms": 1397,
+     "dynamic_pressure": 119.56
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 25524,
+     "scale": 240,
+     "zero": 466
+    },
+    "name": "raw_25524_scale_240_zero_466_rho_1.18",
+    "output": {
+     "airspeed": 13.128439823657258,
+     "airspeed_cms": 1312,
+     "dynamic_pressure": 101.69
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 5499,
+     "scale": 60,
+     "zero": 288
+    },
+    "name": "raw_5499_scale_60_zero_288_rho_1.225",
+    "output": {
+     "airspeed": 12.038713064314555,
+     "airspeed_cms": 1203,
+     "dynamic_pressure": 88.77
+    }
+   },
+   {
+    "input": {
+     "density": 1.225,
+     "raw": 28044,
+     "scale": 240,
+     "zero": -441
+    },
+    "name": "raw_28044_scale_240_zero_-441_rho_1.225",
+    "output": {
+     "airspeed": 14.07037704555502,
+     "airspeed_cms": 1407,
+     "dynamic_pressure": 121.26
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 12665,
+     "scale": 60,
+     "zero": -232
+    },
+    "name": "raw_12665_scale_60_zero_-232_rho_1.3",
+    "output": {
+     "airspeed": 18.119263017785585,
+     "airspeed_cms": 1811,
+     "dynamic_pressure": 213.4
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 6856,
+     "scale": 60,
+     "zero": -105
+    },
+    "name": "raw_6856_scale_60_zero_-105_rho_1.3",
+    "output": {
+     "airspeed": 13.319159132617944,
+     "airspeed_cms": 1331,
+     "dynamic_pressure": 115.31
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 12963,
+     "scale": 60,
+     "zero": -353
+    },
+    "name": "raw_12963_scale_60_zero_-353_rho_1.18",
+    "output": {
+     "airspeed": 19.291694884727566,
+     "airspeed_cms": 1929,
+     "dynamic_pressure": 219.58
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 21339,
+     "scale": 240,
+     "zero": -223
+    },
+    "name": "raw_21339_scale_240_zero_-223_rho_1.3",
+    "output": {
+     "airspeed": 11.841257729455288,
+     "airspeed_cms": 1184,
+     "dynamic_pressure": 91.14
+    }
+   },
+   {
+    "input": {
+     "density": 1.18,
+     "raw": 13447,
+     "scale": 60,
+     "zero": -430
+    },
+    "name": "raw_13447_scale_60_zero_-430_rho_1.18",
+    "output": {
+     "airspeed": 19.675761566463926,
+     "airspeed_cms": 1967,
+     "dynamic_pressure": 228.41
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 6082,
+     "scale": 240,
+     "zero": 145
+    },
+    "name": "raw_6082_scale_240_zero_145_rho_1.3",
+    "output": {
+     "airspeed": 6.062495043614152,
+     "airspeed_cms": 606,
+     "dynamic_pressure": 23.89
+    }
+   },
+   {
+    "input": {
+     "density": 1.3,
+     "raw": 31115,
+     "scale": 240,
+     "zero": -138
+    },
+    "name": "raw_31115_scale_240_zero_-138_rho_1.3",
+    "output": {
+     "airspeed": 14.197507906996593,
+     "airspeed_cms": 1419,
+     "dynamic_pressure": 131.02
+    }
+   }
+  ],
+  "compare": {
+   "kind": "abs",
+   "tol": 0.01
+  },
+  "measured": {
+   "sweeps_redrawn": 4,
+   "worst_plan_b_against_the_law_ms": 0.001398
+  },
+  "note": "_airspeed(_pressure(raw)) m/s with _scale, _zero (Pa x 100) and _density; airspeed_cms = int(airspeed x 100), exact; dynamic_pressure, the Pa it came from. Plan B derives it from the floored Pa x 100, the port from raw / scale - zero / 100 in f32"
+ },
+ "crc": {
+  "cases": [
+   {
+    "input": {
+     "first": 190,
+     "second": 239
+    },
+    "name": "crc_beef",
+    "output": 146
+   },
+   {
+    "input": {
+     "first": 0,
+     "second": 0
+    },
+    "name": "crc_0000",
+    "output": 129
+   },
+   {
+    "input": {
+     "first": 255,
+     "second": 255
+    },
+    "name": "crc_ffff",
+    "output": 172
+   },
+   {
+    "input": {
+     "first": 0,
+     "second": 1
+    },
+    "name": "crc_0001",
+    "output": 176
+   },
+   {
+    "input": {
+     "first": 128,
+     "second": 0
+    },
+    "name": "crc_8000",
+    "output": 162
+   },
+   {
+    "input": {
+     "first": 253,
+     "second": 41
+    },
+    "name": "crc_fd29",
+    "output": 215
+   },
+   {
+    "input": {
+     "first": 146,
+     "second": 147
+    },
+    "name": "crc_9293",
+    "output": 127
+   },
+   {
+    "input": {
+     "first": 100,
+     "second": 119
+    },
+    "name": "crc_6477",
+    "output": 56
+   },
+   {
+    "input": {
+     "first": 16,
+     "second": 55
+    },
+    "name": "crc_1037",
+    "output": 189
+   },
+   {
+    "input": {
+     "first": 5,
+     "second": 120
+    },
+    "name": "crc_0578",
+    "output": 183
+   },
+   {
+    "input": {
+     "first": 59,
+     "second": 41
+    },
+    "name": "crc_3b29",
+    "output": 39
+   },
+   {
+    "input": {
+     "first": 131,
+     "second": 236
+    },
+    "name": "crc_83ec",
+    "output": 51
+   },
+   {
+    "input": {
+     "first": 218,
+     "second": 188
+    },
+    "name": "crc_dabc",
+    "output": 105
+   },
+   {
+    "input": {
+     "first": 111,
+     "second": 2
+    },
+    "name": "crc_6f02",
+    "output": 47
+   },
+   {
+    "input": {
+     "first": 43,
+     "second": 83
+    },
+    "name": "crc_2b53",
+    "output": 106
+   },
+   {
+    "input": {
+     "first": 255,
+     "second": 68
+    },
+    "name": "crc_ff44",
+    "output": 249
+   },
+   {
+    "input": {
+     "first": 108,
+     "second": 65
+    },
+    "name": "crc_6c41",
+    "output": 108
+   },
+   {
+    "input": {
+     "first": 85,
+     "second": 234
+    },
+    "name": "crc_55ea",
+    "output": 11
+   },
+   {
+    "input": {
+     "first": 30,
+     "second": 14
+    },
+    "name": "crc_1e0e",
+    "output": 157
+   },
+   {
+    "input": {
+     "first": 49,
+     "second": 223
+    },
+    "name": "crc_31df",
+    "output": 237
+   },
+   {
+    "input": {
+     "first": 32,
+     "second": 93
+    },
+    "name": "crc_205d",
+    "output": 111
+   },
+   {
+    "input": {
+     "first": 139,
+     "second": 63
+    },
+    "name": "crc_8b3f",
+    "output": 83
+   },
+   {
+    "input": {
+     "first": 198,
+     "second": 248
+    },
+    "name": "crc_c6f8",
+    "output": 74
+   },
+   {
+    "input": {
+     "first": 116,
+     "second": 81
+    },
+    "name": "crc_7451",
+    "output": 118
+   },
+   {
+    "input": {
+     "first": 182,
+     "second": 116
+    },
+    "name": "crc_b674",
+    "output": 118
+   },
+   {
+    "input": {
+     "first": 19,
+     "second": 253
+    },
+    "name": "crc_13fd",
+    "output": 12
+   },
+   {
+    "input": {
+     "first": 0,
+     "second": 125
+    },
+    "name": "crc_007d",
+    "output": 53
+   },
+   {
+    "input": {
+     "first": 107,
+     "second": 50
+    },
+    "name": "crc_6b32",
+    "output": 105
+   },
+   {
+    "input": {
+     "first": 63,
+     "second": 20
+    },
+    "name": "crc_3f14",
+    "output": 45
+   },
+   {
+    "input": {
+     "first": 210,
+     "second": 254
+    },
+    "name": "crc_d2fe",
+    "output": 1
+   },
+   {
+    "input": {
+     "first": 86,
+     "second": 20
+    },
+    "name": "crc_5614",
+    "output": 187
+   },
+   {
+    "input": {
+     "first": 218,
+     "second": 179
+    },
+    "name": "crc_dab3",
+    "output": 71
+   },
+   {
+    "input": {
+     "first": 59,
+     "second": 169
+    },
+    "name": "crc_3ba9",
+    "output": 93
+   },
+   {
+    "input": {
+     "first": 19,
+     "second": 157
+    },
+    "name": "crc_139d",
+    "output": 183
+   },
+   {
+    "input": {
+     "first": 150,
+     "second": 247
+    },
+    "name": "crc_96f7",
+    "output": 131
+   },
+   {
+    "input": {
+     "first": 94,
+     "second": 254
+    },
+    "name": "crc_5efe",
+    "output": 150
+   },
+   {
+    "input": {
+     "first": 78,
+     "second": 23
+    },
+    "name": "crc_4e17",
+    "output": 177
+   },
+   {
+    "input": {
+     "first": 66,
+     "second": 57
+    },
+    "name": "crc_4239",
+    "output": 156
+   },
+   {
+    "input": {
+     "first": 237,
+     "second": 17
+    },
+    "name": "crc_ed11",
+    "output": 197
+   },
+   {
+    "input": {
+     "first": 54,
+     "second": 252
+    },
+    "name": "crc_36fc",
+    "output": 150
+   },
+   {
+    "input": {
+     "first": 117,
+     "second": 247
+    },
+    "name": "crc_75f7",
+    "output": 216
+   },
+   {
+    "input": {
+     "first": 154,
+     "second": 72
+    },
+    "name": "crc_9a48",
+    "output": 166
+   },
+   {
+    "input": {
+     "first": 36,
+     "second": 37
+    },
+    "name": "crc_2425",
+    "output": 173
+   },
+   {
+    "input": {
+     "first": 33,
+     "second": 227
+    },
+    "name": "crc_21e3",
+    "output": 59
+   },
+   {
+    "input": {
+     "first": 58,
+     "second": 238
+    },
+    "name": "crc_3aee",
+    "output": 3
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "commons.sensirion_crc8(first, second): poly 0x31, seed 0xFF"
+ },
+ "diagnose": {
+  "cases": [
+   {
+    "input": {
+     "script": [
+      {
+       "address": 37,
+       "bytes": "000000000000000000",
+       "fails": true,
+       "op": "read"
+      }
+     ]
+    },
+    "name": "absent",
+    "output": "absent -- no ack at 0x25 (check wiring / bus id)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 37,
+       "bytes": "1fa44e1388fe003c39",
+       "op": "read"
+      }
+     ]
+    },
+    "name": "garbage",
+    "output": "garbage -- acks at 0x25 but CRC fails (wrong device or bus noise)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 37,
+       "bytes": "1fa44e13880100f003",
+       "op": "read"
+      }
+     ]
+    },
+    "name": "present",
+    "output": "present at 0x25 but setup rejected the frame (scale 240?)"
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "diagnose(): one frame read; the verdict text"
+ },
+ "frames": {
+  "cases": [
+   {
+    "input": {
+     "frame": "1fa44e138801003c39"
+    },
+    "name": "good_8100_5000_60",
+    "output": {
+     "ok": true,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "fda89c138801003c39"
+    },
+    "name": "good_-600_5000_60",
+    "output": {
+     "ok": true,
+     "pressure": -600,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "000081fb50fd00f003"
+    },
+    "name": "good_0_-1200_240",
+    "output": {
+     "ok": true,
+     "pressure": 0,
+     "scale": 240,
+     "temperature": -1200
+    }
+   },
+   {
+    "input": {
+     "frame": "7fff8f7fff8fffffac"
+    },
+    "name": "good_32767_32767_65535",
+    "output": {
+     "ok": true,
+     "pressure": 32767,
+     "scale": 65535,
+     "temperature": 32767
+    }
+   },
+   {
+    "input": {
+     "frame": "8000a28000a2000081"
+    },
+    "name": "good_-32768_-32768_0",
+    "output": {
+     "ok": true,
+     "pressure": -32768,
+     "scale": 0,
+     "temperature": -32768
+    }
+   },
+   {
+    "input": {
+     "frame": "0001b0000081003c39"
+    },
+    "name": "good_1_0_60",
+    "output": {
+     "ok": true,
+     "pressure": 1,
+     "scale": 60,
+     "temperature": 0
+    }
+   },
+   {
+    "input": {
+     "frame": "1ea44e138801003c39"
+    },
+    "name": "flip_byte0_bit0",
+    "output": {
+     "ok": false,
+     "pressure": 7844,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1da44e138801003c39"
+    },
+    "name": "flip_byte0_bit1",
+    "output": {
+     "ok": false,
+     "pressure": 7588,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1ba44e138801003c39"
+    },
+    "name": "flip_byte0_bit2",
+    "output": {
+     "ok": false,
+     "pressure": 7076,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "17a44e138801003c39"
+    },
+    "name": "flip_byte0_bit3",
+    "output": {
+     "ok": false,
+     "pressure": 6052,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "0fa44e138801003c39"
+    },
+    "name": "flip_byte0_bit4",
+    "output": {
+     "ok": false,
+     "pressure": 4004,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "3fa44e138801003c39"
+    },
+    "name": "flip_byte0_bit5",
+    "output": {
+     "ok": false,
+     "pressure": 16292,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "5fa44e138801003c39"
+    },
+    "name": "flip_byte0_bit6",
+    "output": {
+     "ok": false,
+     "pressure": 24484,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "9fa44e138801003c39"
+    },
+    "name": "flip_byte0_bit7",
+    "output": {
+     "ok": false,
+     "pressure": -24668,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa54e138801003c39"
+    },
+    "name": "flip_byte1_bit0",
+    "output": {
+     "ok": false,
+     "pressure": 8101,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa64e138801003c39"
+    },
+    "name": "flip_byte1_bit1",
+    "output": {
+     "ok": false,
+     "pressure": 8102,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa04e138801003c39"
+    },
+    "name": "flip_byte1_bit2",
+    "output": {
+     "ok": false,
+     "pressure": 8096,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fac4e138801003c39"
+    },
+    "name": "flip_byte1_bit3",
+    "output": {
+     "ok": false,
+     "pressure": 8108,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fb44e138801003c39"
+    },
+    "name": "flip_byte1_bit4",
+    "output": {
+     "ok": false,
+     "pressure": 8116,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1f844e138801003c39"
+    },
+    "name": "flip_byte1_bit5",
+    "output": {
+     "ok": false,
+     "pressure": 8068,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fe44e138801003c39"
+    },
+    "name": "flip_byte1_bit6",
+    "output": {
+     "ok": false,
+     "pressure": 8164,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1f244e138801003c39"
+    },
+    "name": "flip_byte1_bit7",
+    "output": {
+     "ok": false,
+     "pressure": 7972,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44f138801003c39"
+    },
+    "name": "flip_byte2_bit0",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44c138801003c39"
+    },
+    "name": "flip_byte2_bit1",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44a138801003c39"
+    },
+    "name": "flip_byte2_bit2",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa446138801003c39"
+    },
+    "name": "flip_byte2_bit3",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa45e138801003c39"
+    },
+    "name": "flip_byte2_bit4",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa46e138801003c39"
+    },
+    "name": "flip_byte2_bit5",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa40e138801003c39"
+    },
+    "name": "flip_byte2_bit6",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa4ce138801003c39"
+    },
+    "name": "flip_byte2_bit7",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e128801003c39"
+    },
+    "name": "flip_byte3_bit0",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 4744
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e118801003c39"
+    },
+    "name": "flip_byte3_bit1",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 4488
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e178801003c39"
+    },
+    "name": "flip_byte3_bit2",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 6024
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e1b8801003c39"
+    },
+    "name": "flip_byte3_bit3",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 7048
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e038801003c39"
+    },
+    "name": "flip_byte3_bit4",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 904
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e338801003c39"
+    },
+    "name": "flip_byte3_bit5",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 13192
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e538801003c39"
+    },
+    "name": "flip_byte3_bit6",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 21384
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e938801003c39"
+    },
+    "name": "flip_byte3_bit7",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": -27768
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138901003c39"
+    },
+    "name": "flip_byte4_bit0",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5001
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138a01003c39"
+    },
+    "name": "flip_byte4_bit1",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5002
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138c01003c39"
+    },
+    "name": "flip_byte4_bit2",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5004
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138001003c39"
+    },
+    "name": "flip_byte4_bit3",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 4992
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e139801003c39"
+    },
+    "name": "flip_byte4_bit4",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5016
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e13a801003c39"
+    },
+    "name": "flip_byte4_bit5",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5032
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e13c801003c39"
+    },
+    "name": "flip_byte4_bit6",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5064
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e130801003c39"
+    },
+    "name": "flip_byte4_bit7",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 4872
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138800003c39"
+    },
+    "name": "flip_byte5_bit0",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138803003c39"
+    },
+    "name": "flip_byte5_bit1",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138805003c39"
+    },
+    "name": "flip_byte5_bit2",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138809003c39"
+    },
+    "name": "flip_byte5_bit3",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138811003c39"
+    },
+    "name": "flip_byte5_bit4",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138821003c39"
+    },
+    "name": "flip_byte5_bit5",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138841003c39"
+    },
+    "name": "flip_byte5_bit6",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138881003c39"
+    },
+    "name": "flip_byte5_bit7",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801013c39"
+    },
+    "name": "flip_byte6_bit0",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 316,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801023c39"
+    },
+    "name": "flip_byte6_bit1",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 572,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801043c39"
+    },
+    "name": "flip_byte6_bit2",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 1084,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801083c39"
+    },
+    "name": "flip_byte6_bit3",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 2108,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801103c39"
+    },
+    "name": "flip_byte6_bit4",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 4156,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801203c39"
+    },
+    "name": "flip_byte6_bit5",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 8252,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801403c39"
+    },
+    "name": "flip_byte6_bit6",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 16444,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801803c39"
+    },
+    "name": "flip_byte6_bit7",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 32828,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801003d39"
+    },
+    "name": "flip_byte7_bit0",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 61,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801003e39"
+    },
+    "name": "flip_byte7_bit1",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 62,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801003839"
+    },
+    "name": "flip_byte7_bit2",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 56,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801003439"
+    },
+    "name": "flip_byte7_bit3",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 52,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801002c39"
+    },
+    "name": "flip_byte7_bit4",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 44,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801001c39"
+    },
+    "name": "flip_byte7_bit5",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 28,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801007c39"
+    },
+    "name": "flip_byte7_bit6",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 124,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e13880100bc39"
+    },
+    "name": "flip_byte7_bit7",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 188,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801003c38"
+    },
+    "name": "flip_byte8_bit0",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801003c3b"
+    },
+    "name": "flip_byte8_bit1",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801003c3d"
+    },
+    "name": "flip_byte8_bit2",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801003c31"
+    },
+    "name": "flip_byte8_bit3",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801003c29"
+    },
+    "name": "flip_byte8_bit4",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801003c19"
+    },
+    "name": "flip_byte8_bit5",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801003c79"
+    },
+    "name": "flip_byte8_bit6",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801003cb9"
+    },
+    "name": "flip_byte8_bit7",
+    "output": {
+     "ok": false,
+     "pressure": 8100,
+     "scale": 60,
+     "temperature": 5000
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801003c"
+    },
+    "name": "short",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "frame": "1fa44e138801003c3900"
+    },
+    "name": "long",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "frame": ""
+    },
+    "name": "empty",
+    "output": {
+     "ok": false
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "_frame_ok(frame) (length and all three CRCs); for 9 bytes the _signed16 words and the scale"
+ },
+ "meta": {
+  "commit": "d678051716277422e03ca401f39b368aa6ffc460",
+  "generator": "drivers_sdp810",
+  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "python": "3.12",
+  "source": "src/glider/drivers/sdp810.py, src/glider/commons.py, src/glider/fixed.py, src/glider/test/test_sdp810.py",
+  "tag": "micropython_plan_B_2"
+ },
+ "pressure": {
+  "cases": [
+   {
+    "input": {
+     "raw": 8100,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_8100_scale_60_zero_0",
+    "output": {
+     "dynamic_pressure": 135.0,
+     "hundredths": 13500
+    }
+   },
+   {
+    "input": {
+     "raw": -600,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_-600_scale_60_zero_0",
+    "output": {
+     "dynamic_pressure": -10.0,
+     "hundredths": -1000
+    }
+   },
+   {
+    "input": {
+     "raw": 200,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_200_scale_60_zero_0",
+    "output": {
+     "dynamic_pressure": 3.33,
+     "hundredths": 333
+    }
+   },
+   {
+    "input": {
+     "raw": 200,
+     "scale": 60,
+     "zero": 333
+    },
+    "name": "raw_200_scale_60_zero_333",
+    "output": {
+     "dynamic_pressure": 0.0,
+     "hundredths": 0
+    }
+   },
+   {
+    "input": {
+     "raw": 0,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_0_scale_60_zero_0",
+    "output": {
+     "dynamic_pressure": 0.0,
+     "hundredths": 0
+    }
+   },
+   {
+    "input": {
+     "raw": -1,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_-1_scale_60_zero_0",
+    "output": {
+     "dynamic_pressure": -0.02,
+     "hundredths": -2
+    }
+   },
+   {
+    "input": {
+     "raw": 1,
+     "scale": 60,
+     "zero": 0
+    },
+    "name": "raw_1_scale_60_zero_0",
+    "output": {
+     "dynamic_pressure": 0.01,
+     "hundredths": 1
+    }
+   },
+   {
+    "input": {
+     "raw": 8100,
+     "scale": 240,
+     "zero": 0
+    },
+    "name": "raw_8100_scale_240_zero_0",
+    "output": {
+     "dynamic_pressure": 33.75,
+     "hundredths": 3375
+    }
+   },
+   {
+    "input": {
+     "raw": -32768,
+     "scale": 60,
+     "zero": -125
+    },
+    "name": "raw_-32768_scale_60_zero_-125",
+    "output": {
+     "dynamic_pressure": -544.89,
+     "hundredths": -54489
+    }
+   },
+   {
+    "input": {
+     "raw": 32767,
+     "scale": 60,
+     "zero": 20
+    },
+    "name": "raw_32767_scale_60_zero_20",
+    "output": {
+     "dynamic_pressure": 545.91,
+     "hundredths": 54591
+    }
+   },
+   {
+    "input": {
+     "raw": 7,
+     "scale": 3,
+     "zero": 0
+    },
+    "name": "raw_7_scale_3_zero_0",
+    "output": {
+     "dynamic_pressure": 2.33,
+     "hundredths": 233
+    }
+   },
+   {
+    "input": {
+     "raw": -7,
+     "scale": 3,
+     "zero": 0
+    },
+    "name": "raw_-7_scale_3_zero_0",
+    "output": {
+     "dynamic_pressure": -2.34,
+     "hundredths": -234
+    }
+   },
+   {
+    "input": {
+     "raw": -2826,
+     "scale": 240,
+     "zero": -1688
+    },
+    "name": "raw_-2826_scale_240_zero_-1688",
+    "output": {
+     "dynamic_pressure": 5.1,
+     "hundredths": 510
+    }
+   },
+   {
+    "input": {
+     "raw": 5409,
+     "scale": 1248,
+     "zero": 882
+    },
+    "name": "raw_5409_scale_1248_zero_882",
+    "output": {
+     "dynamic_pressure": -4.49,
+     "hundredths": -449
+    }
+   },
+   {
+    "input": {
+     "raw": -19481,
+     "scale": 60,
+     "zero": 50
+    },
+    "name": "raw_-19481_scale_60_zero_50",
+    "output": {
+     "dynamic_pressure": -325.19,
+     "hundredths": -32519
+    }
+   },
+   {
+    "input": {
+     "raw": -19424,
+     "scale": 60,
+     "zero": -56
+    },
+    "name": "raw_-19424_scale_60_zero_-56",
+    "output": {
+     "dynamic_pressure": -323.18,
+     "hundredths": -32318
+    }
+   },
+   {
+    "input": {
+     "raw": -32017,
+     "scale": 60,
+     "zero": 1746
+    },
+    "name": "raw_-32017_scale_60_zero_1746",
+    "output": {
+     "dynamic_pressure": -551.08,
+     "hundredths": -55108
+    }
+   },
+   {
+    "input": {
+     "raw": -17070,
+     "scale": 1975,
+     "zero": -1320
+    },
+    "name": "raw_-17070_scale_1975_zero_-1320",
+    "output": {
+     "dynamic_pressure": 4.55,
+     "hundredths": 455
+    }
+   },
+   {
+    "input": {
+     "raw": -9692,
+     "scale": 240,
+     "zero": 846
+    },
+    "name": "raw_-9692_scale_240_zero_846",
+    "output": {
+     "dynamic_pressure": -48.85,
+     "hundredths": -4885
+    }
+   },
+   {
+    "input": {
+     "raw": -6938,
+     "scale": 743,
+     "zero": -20
+    },
+    "name": "raw_-6938_scale_743_zero_-20",
+    "output": {
+     "dynamic_pressure": -9.14,
+     "hundredths": -914
+    }
+   },
+   {
+    "input": {
+     "raw": -2021,
+     "scale": 6,
+     "zero": -617
+    },
+    "name": "raw_-2021_scale_6_zero_-617",
+    "output": {
+     "dynamic_pressure": -330.67,
+     "hundredths": -33067
+    }
+   },
+   {
+    "input": {
+     "raw": 1994,
+     "scale": 1517,
+     "zero": 697
+    },
+    "name": "raw_1994_scale_1517_zero_697",
+    "output": {
+     "dynamic_pressure": -5.66,
+     "hundredths": -566
+    }
+   },
+   {
+    "input": {
+     "raw": -26423,
+     "scale": 60,
+     "zero": -1837
+    },
+    "name": "raw_-26423_scale_60_zero_-1837",
+    "output": {
+     "dynamic_pressure": -422.02,
+     "hundredths": -42202
+    }
+   },
+   {
+    "input": {
+     "raw": -30560,
+     "scale": 76,
+     "zero": 1796
+    },
+    "name": "raw_-30560_scale_76_zero_1796",
+    "output": {
+     "dynamic_pressure": -420.07,
+     "hundredths": -42007
+    }
+   },
+   {
+    "input": {
+     "raw": -29314,
+     "scale": 60,
+     "zero": 618
+    },
+    "name": "raw_-29314_scale_60_zero_618",
+    "output": {
+     "dynamic_pressure": -494.75,
+     "hundredths": -49475
+    }
+   },
+   {
+    "input": {
+     "raw": 5091,
+     "scale": 240,
+     "zero": 573
+    },
+    "name": "raw_5091_scale_240_zero_573",
+    "output": {
+     "dynamic_pressure": 15.48,
+     "hundredths": 1548
+    }
+   },
+   {
+    "input": {
+     "raw": -25824,
+     "scale": 104,
+     "zero": -114
+    },
+    "name": "raw_-25824_scale_104_zero_-114",
+    "output": {
+     "dynamic_pressure": -247.17,
+     "hundredths": -24717
+    }
+   },
+   {
+    "input": {
+     "raw": -7548,
+     "scale": 240,
+     "zero": 61
+    },
+    "name": "raw_-7548_scale_240_zero_61",
+    "output": {
+     "dynamic_pressure": -32.06,
+     "hundredths": -3206
+    }
+   },
+   {
+    "input": {
+     "raw": 19012,
+     "scale": 60,
+     "zero": 203
+    },
+    "name": "raw_19012_scale_60_zero_203",
+    "output": {
+     "dynamic_pressure": 314.83,
+     "hundredths": 31483
+    }
+   },
+   {
+    "input": {
+     "raw": 18368,
+     "scale": 60,
+     "zero": -1637
+    },
+    "name": "raw_18368_scale_60_zero_-1637",
+    "output": {
+     "dynamic_pressure": 322.5,
+     "hundredths": 32250
+    }
+   },
+   {
+    "input": {
+     "raw": 15982,
+     "scale": 240,
+     "zero": -853
+    },
+    "name": "raw_15982_scale_240_zero_-853",
+    "output": {
+     "dynamic_pressure": 75.12,
+     "hundredths": 7512
+    }
+   },
+   {
+    "input": {
+     "raw": 12766,
+     "scale": 902,
+     "zero": 1945
+    },
+    "name": "raw_12766_scale_902_zero_1945",
+    "output": {
+     "dynamic_pressure": -5.3,
+     "hundredths": -530
+    }
+   },
+   {
+    "input": {
+     "raw": -24812,
+     "scale": 240,
+     "zero": -588
+    },
+    "name": "raw_-24812_scale_240_zero_-588",
+    "output": {
+     "dynamic_pressure": -97.51,
+     "hundredths": -9751
+    }
+   },
+   {
+    "input": {
+     "raw": 12868,
+     "scale": 60,
+     "zero": -89
+    },
+    "name": "raw_12868_scale_60_zero_-89",
+    "output": {
+     "dynamic_pressure": 215.35,
+     "hundredths": 21535
+    }
+   },
+   {
+    "input": {
+     "raw": 29401,
+     "scale": 240,
+     "zero": 1649
+    },
+    "name": "raw_29401_scale_240_zero_1649",
+    "output": {
+     "dynamic_pressure": 106.01,
+     "hundredths": 10601
+    }
+   },
+   {
+    "input": {
+     "raw": 19751,
+     "scale": 60,
+     "zero": 275
+    },
+    "name": "raw_19751_scale_60_zero_275",
+    "output": {
+     "dynamic_pressure": 326.43,
+     "hundredths": 32643
+    }
+   },
+   {
+    "input": {
+     "raw": 23074,
+     "scale": 60,
+     "zero": -1993
+    },
+    "name": "raw_23074_scale_60_zero_-1993",
+    "output": {
+     "dynamic_pressure": 404.49,
+     "hundredths": 40449
+    }
+   },
+   {
+    "input": {
+     "raw": -15107,
+     "scale": 686,
+     "zero": -1621
+    },
+    "name": "raw_-15107_scale_686_zero_-1621",
+    "output": {
+     "dynamic_pressure": -5.82,
+     "hundredths": -582
+    }
+   },
+   {
+    "input": {
+     "raw": 31696,
+     "scale": 98,
+     "zero": -1559
+    },
+    "name": "raw_31696_scale_98_zero_-1559",
+    "output": {
+     "dynamic_pressure": 339.01,
+     "hundredths": 33901
+    }
+   },
+   {
+    "input": {
+     "raw": -7983,
+     "scale": 240,
+     "zero": -1977
+    },
+    "name": "raw_-7983_scale_240_zero_-1977",
+    "output": {
+     "dynamic_pressure": -13.5,
+     "hundredths": -1350
+    }
+   },
+   {
+    "input": {
+     "raw": 1332,
+     "scale": 60,
+     "zero": 1410
+    },
+    "name": "raw_1332_scale_60_zero_1410",
+    "output": {
+     "dynamic_pressure": 8.1,
+     "hundredths": 810
+    }
+   },
+   {
+    "input": {
+     "raw": -13702,
+     "scale": 60,
+     "zero": 990
+    },
+    "name": "raw_-13702_scale_60_zero_990",
+    "output": {
+     "dynamic_pressure": -238.27,
+     "hundredths": -23827
+    }
+   },
+   {
+    "input": {
+     "raw": -14837,
+     "scale": 1584,
+     "zero": -1236
+    },
+    "name": "raw_-14837_scale_1584_zero_-1236",
+    "output": {
+     "dynamic_pressure": 2.99,
+     "hundredths": 299
+    }
+   },
+   {
+    "input": {
+     "raw": 10129,
+     "scale": 240,
+     "zero": 1964
+    },
+    "name": "raw_10129_scale_240_zero_1964",
+    "output": {
+     "dynamic_pressure": 22.56,
+     "hundredths": 2256
+    }
+   },
+   {
+    "input": {
+     "raw": -29201,
+     "scale": 60,
+     "zero": -334
+    },
+    "name": "raw_-29201_scale_60_zero_-334",
+    "output": {
+     "dynamic_pressure": -483.35,
+     "hundredths": -48335
+    }
+   },
+   {
+    "input": {
+     "raw": -31058,
+     "scale": 65,
+     "zero": -1309
+    },
+    "name": "raw_-31058_scale_65_zero_-1309",
+    "output": {
+     "dynamic_pressure": -464.73,
+     "hundredths": -46473
+    }
+   },
+   {
+    "input": {
+     "raw": 3173,
+     "scale": 60,
+     "zero": -1519
+    },
+    "name": "raw_3173_scale_60_zero_-1519",
+    "output": {
+     "dynamic_pressure": 68.07,
+     "hundredths": 6807
+    }
+   },
+   {
+    "input": {
+     "raw": 19342,
+     "scale": 240,
+     "zero": 1593
+    },
+    "name": "raw_19342_scale_240_zero_1593",
+    "output": {
+     "dynamic_pressure": 64.66,
+     "hundredths": 6466
+    }
+   },
+   {
+    "input": {
+     "raw": 24794,
+     "scale": 807,
+     "zero": 314
+    },
+    "name": "raw_24794_scale_807_zero_314",
+    "output": {
+     "dynamic_pressure": 27.58,
+     "hundredths": 2758
+    }
+   },
+   {
+    "input": {
+     "raw": -9867,
+     "scale": 60,
+     "zero": 545
+    },
+    "name": "raw_-9867_scale_60_zero_545",
+    "output": {
+     "dynamic_pressure": -169.9,
+     "hundredths": -16990
+    }
+   },
+   {
+    "input": {
+     "raw": 1575,
+     "scale": 240,
+     "zero": -120
+    },
+    "name": "raw_1575_scale_240_zero_-120",
+    "output": {
+     "dynamic_pressure": 7.76,
+     "hundredths": 776
+    }
+   },
+   {
+    "input": {
+     "raw": -10020,
+     "scale": 1312,
+     "zero": 75
+    },
+    "name": "raw_-10020_scale_1312_zero_75",
+    "output": {
+     "dynamic_pressure": -8.39,
+     "hundredths": -839
+    }
+   },
+   {
+    "input": {
+     "raw": -13236,
+     "scale": 1392,
+     "zero": 1389
+    },
+    "name": "raw_-13236_scale_1392_zero_1389",
+    "output": {
+     "dynamic_pressure": -23.4,
+     "hundredths": -2340
+    }
+   },
+   {
+    "input": {
+     "raw": 4519,
+     "scale": 1686,
+     "zero": 1855
+    },
+    "name": "raw_4519_scale_1686_zero_1855",
+    "output": {
+     "dynamic_pressure": -15.87,
+     "hundredths": -1587
+    }
+   },
+   {
+    "input": {
+     "raw": 21305,
+     "scale": 494,
+     "zero": 983
+    },
+    "name": "raw_21305_scale_494_zero_983",
+    "output": {
+     "dynamic_pressure": 33.29,
+     "hundredths": 3329
+    }
+   },
+   {
+    "input": {
+     "raw": 5984,
+     "scale": 240,
+     "zero": -1705
+    },
+    "name": "raw_5984_scale_240_zero_-1705",
+    "output": {
+     "dynamic_pressure": 41.98,
+     "hundredths": 4198
+    }
+   },
+   {
+    "input": {
+     "raw": -30983,
+     "scale": 60,
+     "zero": 847
+    },
+    "name": "raw_-30983_scale_60_zero_847",
+    "output": {
+     "dynamic_pressure": -524.86,
+     "hundredths": -52486
+    }
+   },
+   {
+    "input": {
+     "raw": 2061,
+     "scale": 240,
+     "zero": -243
+    },
+    "name": "raw_2061_scale_240_zero_-243",
+    "output": {
+     "dynamic_pressure": 11.01,
+     "hundredths": 1101
+    }
+   },
+   {
+    "input": {
+     "raw": 1755,
+     "scale": 716,
+     "zero": -19
+    },
+    "name": "raw_1755_scale_716_zero_-19",
+    "output": {
+     "dynamic_pressure": 2.64,
+     "hundredths": 264
+    }
+   },
+   {
+    "input": {
+     "raw": 17467,
+     "scale": 60,
+     "zero": 1941
+    },
+    "name": "raw_17467_scale_60_zero_1941",
+    "output": {
+     "dynamic_pressure": 271.7,
+     "hundredths": 27170
+    }
+   },
+   {
+    "input": {
+     "raw": 267,
+     "scale": 1175,
+     "zero": 103
+    },
+    "name": "raw_267_scale_1175_zero_103",
+    "output": {
+     "dynamic_pressure": -0.81,
+     "hundredths": -81
+    }
+   },
+   {
+    "input": {
+     "raw": 25371,
+     "scale": 60,
+     "zero": 916
+    },
+    "name": "raw_25371_scale_60_zero_916",
+    "output": {
+     "dynamic_pressure": 413.69,
+     "hundredths": 41369
+    }
+   },
+   {
+    "input": {
+     "raw": 12385,
+     "scale": 1359,
+     "zero": 1547
+    },
+    "name": "raw_12385_scale_1359_zero_1547",
+    "output": {
+     "dynamic_pressure": -6.36,
+     "hundredths": -636
+    }
+   },
+   {
+    "input": {
+     "raw": -4502,
+     "scale": 340,
+     "zero": 390
+    },
+    "name": "raw_-4502_scale_340_zero_390",
+    "output": {
+     "dynamic_pressure": -17.15,
+     "hundredths": -1715
+    }
+   },
+   {
+    "input": {
+     "raw": 28505,
+     "scale": 240,
+     "zero": -1653
+    },
+    "name": "raw_28505_scale_240_zero_-1653",
+    "output": {
+     "dynamic_pressure": 135.3,
+     "hundredths": 13530
+    }
+   },
+   {
+    "input": {
+     "raw": -15716,
+     "scale": 240,
+     "zero": 1639
+    },
+    "name": "raw_-15716_scale_240_zero_1639",
+    "output": {
+     "dynamic_pressure": -81.88,
+     "hundredths": -8188
+    }
+   },
+   {
+    "input": {
+     "raw": 7085,
+     "scale": 60,
+     "zero": 95
+    },
+    "name": "raw_7085_scale_60_zero_95",
+    "output": {
+     "dynamic_pressure": 117.13,
+     "hundredths": 11713
+    }
+   },
+   {
+    "input": {
+     "raw": -1947,
+     "scale": 60,
+     "zero": -1881
+    },
+    "name": "raw_-1947_scale_60_zero_-1881",
+    "output": {
+     "dynamic_pressure": -13.64,
+     "hundredths": -1364
+    }
+   },
+   {
+    "input": {
+     "raw": 6083,
+     "scale": 1745,
+     "zero": 1391
+    },
+    "name": "raw_6083_scale_1745_zero_1391",
+    "output": {
+     "dynamic_pressure": -10.43,
+     "hundredths": -1043
+    }
+   },
+   {
+    "input": {
+     "raw": -31214,
+     "scale": 240,
+     "zero": -1224
+    },
+    "name": "raw_-31214_scale_240_zero_-1224",
+    "output": {
+     "dynamic_pressure": -117.82,
+     "hundredths": -11782
+    }
+   },
+   {
+    "input": {
+     "raw": -30110,
+     "scale": 240,
+     "zero": 1078
+    },
+    "name": "raw_-30110_scale_240_zero_1078",
+    "output": {
+     "dynamic_pressure": -136.24,
+     "hundredths": -13624
+    }
+   },
+   {
+    "input": {
+     "raw": -5274,
+     "scale": 60,
+     "zero": 1161
+    },
+    "name": "raw_-5274_scale_60_zero_1161",
+    "output": {
+     "dynamic_pressure": -99.51,
+     "hundredths": -9951
+    }
+   },
+   {
+    "input": {
+     "raw": -5659,
+     "scale": 60,
+     "zero": -1758
+    },
+    "name": "raw_-5659_scale_60_zero_-1758",
+    "output": {
+     "dynamic_pressure": -76.74,
+     "hundredths": -7674
+    }
+   },
+   {
+    "input": {
+     "raw": -972,
+     "scale": 240,
+     "zero": 1316
+    },
+    "name": "raw_-972_scale_240_zero_1316",
+    "output": {
+     "dynamic_pressure": -17.21,
+     "hundredths": -1721
+    }
+   },
+   {
+    "input": {
+     "raw": -8935,
+     "scale": 240,
+     "zero": 1956
+    },
+    "name": "raw_-8935_scale_240_zero_1956",
+    "output": {
+     "dynamic_pressure": -56.79,
+     "hundredths": -5679
+    }
+   },
+   {
+    "input": {
+     "raw": -3335,
+     "scale": 618,
+     "zero": 891
+    },
+    "name": "raw_-3335_scale_618_zero_891",
+    "output": {
+     "dynamic_pressure": -14.31,
+     "hundredths": -1431
+    }
+   },
+   {
+    "input": {
+     "raw": -17096,
+     "scale": 60,
+     "zero": -741
+    },
+    "name": "raw_-17096_scale_60_zero_-741",
+    "output": {
+     "dynamic_pressure": -277.53,
+     "hundredths": -27753
+    }
+   },
+   {
+    "input": {
+     "raw": 18721,
+     "scale": 240,
+     "zero": 1261
+    },
+    "name": "raw_18721_scale_240_zero_1261",
+    "output": {
+     "dynamic_pressure": 65.39,
+     "hundredths": 6539
+    }
+   },
+   {
+    "input": {
+     "raw": -7645,
+     "scale": 60,
+     "zero": -194
+    },
+    "name": "raw_-7645_scale_60_zero_-194",
+    "output": {
+     "dynamic_pressure": -125.48,
+     "hundredths": -12548
+    }
+   },
+   {
+    "input": {
+     "raw": 21182,
+     "scale": 60,
+     "zero": -890
+    },
+    "name": "raw_21182_scale_60_zero_-890",
+    "output": {
+     "dynamic_pressure": 361.93,
+     "hundredths": 36193
+    }
+   },
+   {
+    "input": {
+     "raw": -30547,
+     "scale": 60,
+     "zero": -83
+    },
+    "name": "raw_-30547_scale_60_zero_-83",
+    "output": {
+     "dynamic_pressure": -508.29,
+     "hundredths": -50829
+    }
+   },
+   {
+    "input": {
+     "raw": -6953,
+     "scale": 519,
+     "zero": -1789
+    },
+    "name": "raw_-6953_scale_519_zero_-1789",
+    "output": {
+     "dynamic_pressure": 4.49,
+     "hundredths": 449
+    }
+   },
+   {
+    "input": {
+     "raw": 15,
+     "scale": 1127,
+     "zero": -237
+    },
+    "name": "raw_15_scale_1127_zero_-237",
+    "output": {
+     "dynamic_pressure": 2.38,
+     "hundredths": 238
+    }
+   },
+   {
+    "input": {
+     "raw": -6419,
+     "scale": 240,
+     "zero": 906
+    },
+    "name": "raw_-6419_scale_240_zero_906",
+    "output": {
+     "dynamic_pressure": -35.81,
+     "hundredths": -3581
+    }
+   },
+   {
+    "input": {
+     "raw": -9791,
+     "scale": 1941,
+     "zero": 810
+    },
+    "name": "raw_-9791_scale_1941_zero_810",
+    "output": {
+     "dynamic_pressure": -13.15,
+     "hundredths": -1315
+    }
+   },
+   {
+    "input": {
+     "raw": 17223,
+     "scale": 60,
+     "zero": 431
+    },
+    "name": "raw_17223_scale_60_zero_431",
+    "output": {
+     "dynamic_pressure": 282.74,
+     "hundredths": 28274
+    }
+   },
+   {
+    "input": {
+     "raw": 20745,
+     "scale": 240,
+     "zero": 804
+    },
+    "name": "raw_20745_scale_240_zero_804",
+    "output": {
+     "dynamic_pressure": 78.39,
+     "hundredths": 7839
+    }
+   },
+   {
+    "input": {
+     "raw": 27688,
+     "scale": 60,
+     "zero": -57
+    },
+    "name": "raw_27688_scale_60_zero_-57",
+    "output": {
+     "dynamic_pressure": 462.03,
+     "hundredths": 46203
+    }
+   },
+   {
+    "input": {
+     "raw": 25938,
+     "scale": 1418,
+     "zero": 44
+    },
+    "name": "raw_25938_scale_1418_zero_44",
+    "output": {
+     "dynamic_pressure": 17.85,
+     "hundredths": 1785
+    }
+   },
+   {
+    "input": {
+     "raw": 30647,
+     "scale": 579,
+     "zero": -89
+    },
+    "name": "raw_30647_scale_579_zero_-89",
+    "output": {
+     "dynamic_pressure": 53.82,
+     "hundredths": 5382
+    }
+   },
+   {
+    "input": {
+     "raw": -2030,
+     "scale": 1542,
+     "zero": -1746
+    },
+    "name": "raw_-2030_scale_1542_zero_-1746",
+    "output": {
+     "dynamic_pressure": 16.14,
+     "hundredths": 1614
+    }
+   },
+   {
+    "input": {
+     "raw": -13150,
+     "scale": 240,
+     "zero": 800
+    },
+    "name": "raw_-13150_scale_240_zero_800",
+    "output": {
+     "dynamic_pressure": -62.8,
+     "hundredths": -6280
+    }
+   },
+   {
+    "input": {
+     "raw": 20515,
+     "scale": 60,
+     "zero": -1810
+    },
+    "name": "raw_20515_scale_60_zero_-1810",
+    "output": {
+     "dynamic_pressure": 360.01,
+     "hundredths": 36001
+    }
+   },
+   {
+    "input": {
+     "raw": 29725,
+     "scale": 240,
+     "zero": -399
+    },
+    "name": "raw_29725_scale_240_zero_-399",
+    "output": {
+     "dynamic_pressure": 127.84,
+     "hundredths": 12784
+    }
+   },
+   {
+    "input": {
+     "raw": -24368,
+     "scale": 248,
+     "zero": -461
+    },
+    "name": "raw_-24368_scale_248_zero_-461",
+    "output": {
+     "dynamic_pressure": -93.65,
+     "hundredths": -9365
+    }
+   },
+   {
+    "input": {
+     "raw": -9753,
+     "scale": 240,
+     "zero": 1589
+    },
+    "name": "raw_-9753_scale_240_zero_1589",
+    "output": {
+     "dynamic_pressure": -56.53,
+     "hundredths": -5653
+    }
+   },
+   {
+    "input": {
+     "raw": -3928,
+     "scale": 60,
+     "zero": 454
+    },
+    "name": "raw_-3928_scale_60_zero_454",
+    "output": {
+     "dynamic_pressure": -70.01,
+     "hundredths": -7001
+    }
+   },
+   {
+    "input": {
+     "raw": 3393,
+     "scale": 60,
+     "zero": -1501
+    },
+    "name": "raw_3393_scale_60_zero_-1501",
+    "output": {
+     "dynamic_pressure": 71.56,
+     "hundredths": 7156
+    }
+   },
+   {
+    "input": {
+     "raw": 11977,
+     "scale": 240,
+     "zero": 1524
+    },
+    "name": "raw_11977_scale_240_zero_1524",
+    "output": {
+     "dynamic_pressure": 34.66,
+     "hundredths": 3466
+    }
+   },
+   {
+    "input": {
+     "raw": -29616,
+     "scale": 963,
+     "zero": 433
+    },
+    "name": "raw_-29616_scale_963_zero_433",
+    "output": {
+     "dynamic_pressure": -35.09,
+     "hundredths": -3509
+    }
+   },
+   {
+    "input": {
+     "raw": -11181,
+     "scale": 1946,
+     "zero": 1965
+    },
+    "name": "raw_-11181_scale_1946_zero_1965",
+    "output": {
+     "dynamic_pressure": -25.4,
+     "hundredths": -2540
+    }
+   },
+   {
+    "input": {
+     "raw": -11547,
+     "scale": 240,
+     "zero": 608
+    },
+    "name": "raw_-11547_scale_240_zero_608",
+    "output": {
+     "dynamic_pressure": -54.2,
+     "hundredths": -5420
+    }
+   },
+   {
+    "input": {
+     "raw": -31534,
+     "scale": 60,
+     "zero": -303
+    },
+    "name": "raw_-31534_scale_60_zero_-303",
+    "output": {
+     "dynamic_pressure": -522.54,
+     "hundredths": -52254
+    }
+   },
+   {
+    "input": {
+     "raw": 20518,
+     "scale": 60,
+     "zero": -512
+    },
+    "name": "raw_20518_scale_60_zero_-512",
+    "output": {
+     "dynamic_pressure": 347.08,
+     "hundredths": 34708
+    }
+   },
+   {
+    "input": {
+     "raw": -16800,
+     "scale": 1169,
+     "zero": 1131
+    },
+    "name": "raw_-16800_scale_1169_zero_1131",
+    "output": {
+     "dynamic_pressure": -25.69,
+     "hundredths": -2569
+    }
+   },
+   {
+    "input": {
+     "raw": 3674,
+     "scale": 60,
+     "zero": 958
+    },
+    "name": "raw_3674_scale_60_zero_958",
+    "output": {
+     "dynamic_pressure": 51.65,
+     "hundredths": 5165
+    }
+   },
+   {
+    "input": {
+     "raw": 17499,
+     "scale": 60,
+     "zero": -295
+    },
+    "name": "raw_17499_scale_60_zero_-295",
+    "output": {
+     "dynamic_pressure": 294.6,
+     "hundredths": 29460
+    }
+   },
+   {
+    "input": {
+     "raw": -32556,
+     "scale": 240,
+     "zero": 601
+    },
+    "name": "raw_-32556_scale_240_zero_601",
+    "output": {
+     "dynamic_pressure": -141.66,
+     "hundredths": -14166
+    }
+   },
+   {
+    "input": {
+     "raw": 14404,
+     "scale": 60,
+     "zero": 1720
+    },
+    "name": "raw_14404_scale_60_zero_1720",
+    "output": {
+     "dynamic_pressure": 222.86,
+     "hundredths": 22286
+    }
+   },
+   {
+    "input": {
+     "raw": -1627,
+     "scale": 240,
+     "zero": 1189
+    },
+    "name": "raw_-1627_scale_240_zero_1189",
+    "output": {
+     "dynamic_pressure": -18.67,
+     "hundredths": -1867
+    }
+   },
+   {
+    "input": {
+     "raw": -5863,
+     "scale": 1595,
+     "zero": -716
+    },
+    "name": "raw_-5863_scale_1595_zero_-716",
+    "output": {
+     "dynamic_pressure": 3.48,
+     "hundredths": 348
+    }
+   },
+   {
+    "input": {
+     "raw": -10208,
+     "scale": 60,
+     "zero": 398
+    },
+    "name": "raw_-10208_scale_60_zero_398",
+    "output": {
+     "dynamic_pressure": -174.12,
+     "hundredths": -17412
+    }
+   },
+   {
+    "input": {
+     "raw": -30083,
+     "scale": 60,
+     "zero": -491
+    },
+    "name": "raw_-30083_scale_60_zero_-491",
+    "output": {
+     "dynamic_pressure": -496.48,
+     "hundredths": -49648
+    }
+   },
+   {
+    "input": {
+     "raw": 32161,
+     "scale": 60,
+     "zero": 1006
+    },
+    "name": "raw_32161_scale_60_zero_1006",
+    "output": {
+     "dynamic_pressure": 525.95,
+     "hundredths": 52595
+    }
+   },
+   {
+    "input": {
+     "raw": 18340,
+     "scale": 240,
+     "zero": 1742
+    },
+    "name": "raw_18340_scale_240_zero_1742",
+    "output": {
+     "dynamic_pressure": 58.99,
+     "hundredths": 5899
+    }
+   },
+   {
+    "input": {
+     "raw": -25992,
+     "scale": 1489,
+     "zero": -1459
+    },
+    "name": "raw_-25992_scale_1489_zero_-1459",
+    "output": {
+     "dynamic_pressure": -2.87,
+     "hundredths": -287
+    }
+   },
+   {
+    "input": {
+     "raw": 24055,
+     "scale": 817,
+     "zero": -1274
+    },
+    "name": "raw_24055_scale_817_zero_-1274",
+    "output": {
+     "dynamic_pressure": 42.18,
+     "hundredths": 4218
+    }
+   },
+   {
+    "input": {
+     "raw": -19173,
+     "scale": 240,
+     "zero": -422
+    },
+    "name": "raw_-19173_scale_240_zero_-422",
+    "output": {
+     "dynamic_pressure": -75.67,
+     "hundredths": -7567
+    }
+   },
+   {
+    "input": {
+     "raw": -11916,
+     "scale": 625,
+     "zero": 1037
+    },
+    "name": "raw_-11916_scale_625_zero_1037",
+    "output": {
+     "dynamic_pressure": -29.44,
+     "hundredths": -2944
+    }
+   },
+   {
+    "input": {
+     "raw": -22828,
+     "scale": 240,
+     "zero": -569
+    },
+    "name": "raw_-22828_scale_240_zero_-569",
+    "output": {
+     "dynamic_pressure": -89.43,
+     "hundredths": -8943
+    }
+   },
+   {
+    "input": {
+     "raw": 16919,
+     "scale": 67,
+     "zero": -1969
+    },
+    "name": "raw_16919_scale_67_zero_-1969",
+    "output": {
+     "dynamic_pressure": 272.21,
+     "hundredths": 27221
+    }
+   },
+   {
+    "input": {
+     "raw": -2346,
+     "scale": 240,
+     "zero": -332
+    },
+    "name": "raw_-2346_scale_240_zero_-332",
+    "output": {
+     "dynamic_pressure": -6.46,
+     "hundredths": -646
+    }
+   },
+   {
+    "input": {
+     "raw": 26508,
+     "scale": 739,
+     "zero": -1677
+    },
+    "name": "raw_26508_scale_739_zero_-1677",
+    "output": {
+     "dynamic_pressure": 52.64,
+     "hundredths": 5264
+    }
+   },
+   {
+    "input": {
+     "raw": 18493,
+     "scale": 1414,
+     "zero": -1283
+    },
+    "name": "raw_18493_scale_1414_zero_-1283",
+    "output": {
+     "dynamic_pressure": 25.9,
+     "hundredths": 2590
+    }
+   },
+   {
+    "input": {
+     "raw": -8719,
+     "scale": 60,
+     "zero": -1087
+    },
+    "name": "raw_-8719_scale_60_zero_-1087",
+    "output": {
+     "dynamic_pressure": -134.45,
+     "hundredths": -13445
+    }
+   },
+   {
+    "input": {
+     "raw": 2227,
+     "scale": 60,
+     "zero": -1017
+    },
+    "name": "raw_2227_scale_60_zero_-1017",
+    "output": {
+     "dynamic_pressure": 47.28,
+     "hundredths": 4728
+    }
+   },
+   {
+    "input": {
+     "raw": 9351,
+     "scale": 60,
+     "zero": -552
+    },
+    "name": "raw_9351_scale_60_zero_-552",
+    "output": {
+     "dynamic_pressure": 161.37,
+     "hundredths": 16137
+    }
+   },
+   {
+    "input": {
+     "raw": 31667,
+     "scale": 492,
+     "zero": 1026
+    },
+    "name": "raw_31667_scale_492_zero_1026",
+    "output": {
+     "dynamic_pressure": 54.1,
+     "hundredths": 5410
+    }
+   },
+   {
+    "input": {
+     "raw": -5286,
+     "scale": 60,
+     "zero": -1970
+    },
+    "name": "raw_-5286_scale_60_zero_-1970",
+    "output": {
+     "dynamic_pressure": -68.4,
+     "hundredths": -6840
+    }
+   },
+   {
+    "input": {
+     "raw": 23770,
+     "scale": 240,
+     "zero": -535
+    },
+    "name": "raw_23770_scale_240_zero_-535",
+    "output": {
+     "dynamic_pressure": 104.39,
+     "hundredths": 10439
+    }
+   },
+   {
+    "input": {
+     "raw": -14461,
+     "scale": 208,
+     "zero": -1190
+    },
+    "name": "raw_-14461_scale_208_zero_-1190",
+    "output": {
+     "dynamic_pressure": -57.63,
+     "hundredths": -5763
+    }
+   },
+   {
+    "input": {
+     "raw": 1052,
+     "scale": 60,
+     "zero": -254
+    },
+    "name": "raw_1052_scale_60_zero_-254",
+    "output": {
+     "dynamic_pressure": 20.07,
+     "hundredths": 2007
+    }
+   }
+  ],
+  "compare": {
+   "kind": "abs",
+   "tol": 0.01
+  },
+  "measured": {
+   "sweeps_redrawn": 6,
+   "worst_plan_b_against_the_law_pa": 0.008824
+  },
+  "note": "_pressure(raw) with _scale = scale and _zero = zero: the tared dynamic pressure as the telemetry carries it (hundredths, Pa x 100, exact) and as the channel does (dynamic_pressure, Pa, signed: plan B floors to the hundredth, the port computes raw / scale - zero / 100 in f32)"
+ },
+ "run": {
+  "compare": {
+   "kind": "abs",
+   "tol": 0.01
+  },
+  "note": "run(): per pass the I2C transcript (the period wait left out: the owner schedules it) and its out: the telemetry row [dynamic_pressure Pa x 100, airspeed_cms, temperature x 100] (integers, exact) with the channel values pushed, dynamic_pressure Pa and airspeed m/s; or the fault (bus | checksum) and restart: null when no restart ran on that pass, true when it ran and plan B logged it, false when it ran and failed. _scale 60, _zero 0, _density 1.18",
+  "scenarios": [
+   {
+    "name": "healthy_reads",
+    "steps": [
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "1fa44e138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "airspeed": 15.126584522688322,
+       "dynamic_pressure": 135.0,
+       "row": [
+        13500,
+        1512,
+        2501
+       ]
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "fda89c138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "airspeed": 0.0,
+       "dynamic_pressure": -10.0,
+       "row": [
+        -1000,
+        0,
+        2501
+       ]
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "0bb89d138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "airspeed": 9.205746178983235,
+       "dynamic_pressure": 50.0,
+       "row": [
+        5000,
+        920,
+        2501
+       ]
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000081138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "airspeed": 0.0,
+       "dynamic_pressure": 0.0,
+       "row": [
+        0,
+        0,
+        2501
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "name": "five_failures_restart_once",
+    "steps": [
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        },
+        {
+         "address": 37,
+         "bytes": "3ff9",
+         "op": "write"
+        },
+        {
+         "ms": 3,
+         "op": "delay_ms"
+        },
+        {
+         "address": 37,
+         "bytes": "3615",
+         "op": "write"
+        },
+        {
+         "ms": 20,
+         "op": "delay_ms"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": true
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "1fa44e138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "airspeed": 15.126584522688322,
+       "dynamic_pressure": 135.0,
+       "row": [
+        13500,
+        1512,
+        2501
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "name": "a_good_read_rearms_the_ladder",
+    "steps": [
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "1fa44e138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "airspeed": 15.126584522688322,
+       "dynamic_pressure": 135.0,
+       "row": [
+        13500,
+        1512,
+        2501
+       ]
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        },
+        {
+         "address": 37,
+         "bytes": "3ff9",
+         "op": "write"
+        },
+        {
+         "ms": 3,
+         "op": "delay_ms"
+        },
+        {
+         "address": 37,
+         "bytes": "3615",
+         "op": "write"
+        },
+        {
+         "ms": 20,
+         "op": "delay_ms"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": true
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "1fa44e138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "airspeed": 15.126584522688322,
+       "dynamic_pressure": 135.0,
+       "row": [
+        13500,
+        1512,
+        2501
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "name": "crc_rejects_neither_count_nor_rearm",
+    "steps": [
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "1fa45e138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "checksum",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "1fa45e138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "checksum",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "1fa45e138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "checksum",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        },
+        {
+         "address": 37,
+         "bytes": "3ff9",
+         "op": "write"
+        },
+        {
+         "ms": 3,
+         "op": "delay_ms"
+        },
+        {
+         "address": 37,
+         "bytes": "3615",
+         "op": "write"
+        },
+        {
+         "ms": 20,
+         "op": "delay_ms"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": true
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "1fa44e138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "airspeed": 15.126584522688322,
+       "dynamic_pressure": 135.0,
+       "row": [
+        13500,
+        1512,
+        2501
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "name": "a_dead_restart_is_not_logged",
+    "steps": [
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        },
+        {
+         "address": 37,
+         "bytes": "3ff9",
+         "fails": true,
+         "op": "write"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": false
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "1fa44e138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "airspeed": 15.126584522688322,
+       "dynamic_pressure": 135.0,
+       "row": [
+        13500,
+        1512,
+        2501
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "name": "a_restart_whose_start_naks",
+    "steps": [
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        },
+        {
+         "address": 37,
+         "bytes": "3ff9",
+         "op": "write"
+        },
+        {
+         "ms": 3,
+         "op": "delay_ms"
+        },
+        {
+         "address": 37,
+         "bytes": "3615",
+         "fails": true,
+         "op": "write"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": false
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "1fa44e138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "airspeed": 15.126584522688322,
+       "dynamic_pressure": 135.0,
+       "row": [
+        13500,
+        1512,
+        2501
+       ]
+      }
+     }
+    ]
+   },
+   {
+    "name": "a_second_run_restarts_again",
+    "steps": [
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        },
+        {
+         "address": 37,
+         "bytes": "3ff9",
+         "op": "write"
+        },
+        {
+         "ms": 3,
+         "op": "delay_ms"
+        },
+        {
+         "address": 37,
+         "bytes": "3615",
+         "op": "write"
+        },
+        {
+         "ms": 20,
+         "op": "delay_ms"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": true
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "1fa44e138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "airspeed": 15.126584522688322,
+       "dynamic_pressure": 135.0,
+       "row": [
+        13500,
+        1512,
+        2501
+       ]
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": null
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "000000000000000000",
+         "fails": true,
+         "op": "read"
+        },
+        {
+         "address": 37,
+         "bytes": "3ff9",
+         "op": "write"
+        },
+        {
+         "ms": 3,
+         "op": "delay_ms"
+        },
+        {
+         "address": 37,
+         "bytes": "3615",
+         "op": "write"
+        },
+        {
+         "ms": 20,
+         "op": "delay_ms"
+        }
+       ]
+      },
+      "out": {
+       "fault": "bus",
+       "restart": true
+      }
+     },
+     {
+      "in": {
+       "script": [
+        {
+         "address": 37,
+         "bytes": "1fa44e138b52003c39",
+         "op": "read"
+        }
+       ]
+      },
+      "out": {
+       "airspeed": 15.126584522688322,
+       "dynamic_pressure": 135.0,
+       "row": [
+        13500,
+        1512,
+        2501
+       ]
+      }
+     }
+    ]
+   }
+  ]
+ },
+ "setup": {
+  "cases": [
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801003c39",
+       "op": "read"
+      }
+     ],
+     "stored_zero": null
+    },
+    "name": "healthy_scale_60",
+    "output": {
+     "ok": true,
+     "scale": 60,
+     "tared": false,
+     "zero": 0
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "ffd8bd09c4c100f003",
+       "op": "read"
+      }
+     ],
+     "stored_zero": null
+    },
+    "name": "the_125pa_part_scale_240",
+    "output": {
+     "ok": true,
+     "scale": 240,
+     "tared": false,
+     "zero": 0
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801000081",
+       "op": "read"
+      }
+     ],
+     "stored_zero": null
+    },
+    "name": "scale_0_keeps_the_default",
+    "output": {
+     "ok": true,
+     "scale": 60,
+     "tared": false,
+     "zero": 0
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "fails": true,
+       "op": "write"
+      },
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801003c39",
+       "op": "read"
+      }
+     ],
+     "stored_zero": null
+    },
+    "name": "stop_naks_then_a_retry_starts",
+    "output": {
+     "ok": true,
+     "scale": 60,
+     "tared": false,
+     "zero": 0
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "fails": true,
+       "op": "write"
+      },
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801003c39",
+       "op": "read"
+      }
+     ],
+     "stored_zero": null
+    },
+    "name": "start_naks_then_a_retry_starts",
+    "output": {
+     "ok": true,
+     "scale": 60,
+     "tared": false,
+     "zero": 0
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000000000000000000",
+       "fails": true,
+       "op": "read"
+      },
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801003c39",
+       "op": "read"
+      }
+     ],
+     "stored_zero": null
+    },
+    "name": "read_naks_then_a_retry_reads",
+    "output": {
+     "ok": true,
+     "scale": 60,
+     "tared": false,
+     "zero": 0
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801003c38",
+       "op": "read"
+      },
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801003c39",
+       "op": "read"
+      }
+     ],
+     "stored_zero": null
+    },
+    "name": "a_corrupt_scale_then_a_good_frame",
+    "output": {
+     "ok": true,
+     "scale": 60,
+     "tared": false,
+     "zero": 0
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801003c38",
+       "op": "read"
+      },
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801003c38",
+       "op": "read"
+      },
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      }
+     ],
+     "stored_zero": null
+    },
+    "name": "two_corrupt_frames_fail_and_stop_the_part",
+    "output": {
+     "ok": false,
+     "scale": 60,
+     "tared": false,
+     "zero": 0
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801003c38",
+       "op": "read"
+      },
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801003c38",
+       "op": "read"
+      },
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "fails": true,
+       "op": "write"
+      }
+     ],
+     "stored_zero": null
+    },
+    "name": "two_corrupt_frames_and_a_dead_stop",
+    "output": {
+     "ok": false,
+     "scale": 60,
+     "tared": false,
+     "zero": 0
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "fails": true,
+       "op": "write"
+      },
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "fails": true,
+       "op": "write"
+      }
+     ],
+     "stored_zero": null
+    },
+    "name": "nothing_acks",
+    "output": {
+     "ok": false,
+     "scale": 60,
+     "tared": false,
+     "zero": 0
+    }
+   },
+   {
+    "input": {
+     "config": {
+      "addr": 38
+     },
+     "script": [
+      {
+       "address": 38,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 38,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 38,
+       "bytes": "000cfc138801003c39",
+       "op": "read"
+      }
+     ],
+     "stored_zero": null
+    },
+    "name": "another_address",
+    "output": {
+     "ok": true,
+     "scale": 60,
+     "tared": false,
+     "zero": 0
+    }
+   },
+   {
+    "input": {
+     "config": {
+      "air_density": 1.25,
+      "period_ms": 40,
+      "zero_offset_pa": 2.0
+     },
+     "script": [
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801003c39",
+       "op": "read"
+      }
+     ],
+     "stored_zero": null
+    },
+    "name": "the_config_zero_when_nvs_has_none",
+    "output": {
+     "ok": true,
+     "scale": 60,
+     "tared": false,
+     "zero": 200
+    }
+   },
+   {
+    "input": {
+     "config": {
+      "zero_offset_pa": 2.0
+     },
+     "script": [
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801003c39",
+       "op": "read"
+      }
+     ],
+     "stored_zero": -125
+    },
+    "name": "nvs_zero_wins_over_the_config",
+    "output": {
+     "ok": true,
+     "scale": 60,
+     "tared": true,
+     "zero": -125
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801003c39",
+       "op": "read"
+      }
+     ],
+     "stored_zero": 0
+    },
+    "name": "nvs_stored_0_is_a_tare",
+    "output": {
+     "ok": true,
+     "scale": 60,
+     "tared": true,
+     "zero": 0
+    }
+   },
+   {
+    "input": {
+     "config": {
+      "zero_offset_pa": -1.18
+     },
+     "script": [
+      {
+       "address": 37,
+       "bytes": "3ff9",
+       "op": "write"
+      },
+      {
+       "ms": 3,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "3615",
+       "op": "write"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 37,
+       "bytes": "000cfc138801003c39",
+       "op": "read"
+      }
+     ],
+     "stored_zero": null
+    },
+    "name": "nvs_without_the_key",
+    "output": {
+     "ok": true,
+     "scale": 60,
+     "tared": false,
+     "zero": -118
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "setup() over a scripted part: input config, stored_zero (the NVS i32, null for none) and the I2C transcript; output ok, the latched scale, the zero (Pa x 100) and tared"
+ },
+ "tare": {
+  "compare": {
+   "kind": "abs",
+   "tol": 1e-06
+  },
+  "note": "stateful; init sets _scale, _zero (Pa x 100), _density, _tared; actions pressure(raw) -> hundredths, update(properties) -> changed and the tare persisted (or the refusal text), calibration(channel Pa x 100 or null) -> prompt, calibrate() -> message (null on success) and the tare persisted; every out carries zero, tared and density after the step",
+  "scenarios": [
+   {
+    "init": {
+     "density": 1.225,
+     "scale": 60,
+     "tared": false,
+     "zero": 0
+    },
+    "name": "test_sdp810_ladder",
+    "steps": [
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "zero": true
+       }
+      },
+      "out": {
+       "density": 1.225,
+       "refused": "no reading yet -- wait for the first frame before taring",
+       "tared": false,
+       "zero": 0
+      }
+     },
+     {
+      "in": {
+       "action": "calibrate"
+      },
+      "out": {
+       "density": 1.225,
+       "message": "no reading yet",
+       "persist": null,
+       "tared": false,
+       "zero": 0
+      }
+     },
+     {
+      "in": {
+       "action": "pressure",
+       "raw": 200
+      },
+      "out": {
+       "density": 1.225,
+       "hundredths": 333,
+       "tared": false,
+       "zero": 0
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "zero": true
+       }
+      },
+      "out": {
+       "changed": [
+        "zero_offset_pa"
+       ],
+       "density": 1.225,
+       "persist": 333,
+       "tared": true,
+       "zero": 333
+      }
+     },
+     {
+      "in": {
+       "action": "pressure",
+       "raw": 200
+      },
+      "out": {
+       "density": 1.225,
+       "hundredths": 0,
+       "tared": true,
+       "zero": 333
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "zero_offset_pa": 1.5
+       }
+      },
+      "out": {
+       "changed": [
+        "zero_offset_pa"
+       ],
+       "density": 1.225,
+       "persist": null,
+       "tared": true,
+       "zero": 150
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "air_density": 1.2
+       }
+      },
+      "out": {
+       "changed": [
+        "air_density"
+       ],
+       "density": 1.2,
+       "persist": null,
+       "tared": true,
+       "zero": 150
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "zero_offset_pa": -1.25
+       }
+      },
+      "out": {
+       "changed": [
+        "zero_offset_pa"
+       ],
+       "density": 1.2,
+       "persist": null,
+       "tared": true,
+       "zero": -125
+      }
+     },
+     {
+      "in": {
+       "action": "pressure",
+       "raw": -600
+      },
+      "out": {
+       "density": 1.2,
+       "hundredths": -875,
+       "tared": true,
+       "zero": -125
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "density": 1.225,
+     "scale": 60,
+     "tared": false,
+     "zero": 0
+    },
+    "name": "a_0_pa_tare_is_a_tare",
+    "steps": [
+     {
+      "in": {
+       "action": "calibration",
+       "channel": null
+      },
+      "out": {
+       "density": 1.225,
+       "prompt": "keep the pitot in STILL AIR -- do NOT blow into it, this captures the zero tare (now 0.00 Pa)",
+       "tared": false,
+       "zero": 0
+      }
+     },
+     {
+      "in": {
+       "action": "calibration",
+       "channel": 1234
+      },
+      "out": {
+       "density": 1.225,
+       "prompt": "keep the pitot in STILL AIR -- do NOT blow into it, this captures the zero tare (now 12.34 Pa)",
+       "tared": false,
+       "zero": 0
+      }
+     },
+     {
+      "in": {
+       "action": "pressure",
+       "raw": 0
+      },
+      "out": {
+       "density": 1.225,
+       "hundredths": 0,
+       "tared": false,
+       "zero": 0
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "zero": true
+       }
+      },
+      "out": {
+       "changed": [
+        "zero_offset_pa"
+       ],
+       "density": 1.225,
+       "persist": 0,
+       "tared": true,
+       "zero": 0
+      }
+     },
+     {
+      "in": {
+       "action": "calibration",
+       "channel": 0
+      },
+      "out": {
+       "density": 1.225,
+       "prompt": "",
+       "tared": true,
+       "zero": 0
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "density": 1.225,
+     "scale": 60,
+     "tared": false,
+     "zero": 0
+    },
+    "name": "a_restored_0_offset_is_a_tare",
+    "steps": [
+     {
+      "in": {
+       "action": "calibration",
+       "channel": -125
+      },
+      "out": {
+       "density": 1.225,
+       "prompt": "keep the pitot in STILL AIR -- do NOT blow into it, this captures the zero tare (now -1.25 Pa)",
+       "tared": false,
+       "zero": 0
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "zero_offset_pa": 0.0
+       }
+      },
+      "out": {
+       "changed": [
+        "zero_offset_pa"
+       ],
+       "density": 1.225,
+       "persist": null,
+       "tared": true,
+       "zero": 0
+      }
+     },
+     {
+      "in": {
+       "action": "calibration",
+       "channel": -125
+      },
+      "out": {
+       "density": 1.225,
+       "prompt": "",
+       "tared": true,
+       "zero": 0
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "density": 1.18,
+     "scale": 60,
+     "tared": false,
+     "zero": 0
+    },
+    "name": "a_tare_and_an_offset_in_one_update",
+    "steps": [
+     {
+      "in": {
+       "action": "pressure",
+       "raw": -600
+      },
+      "out": {
+       "density": 1.18,
+       "hundredths": -1000,
+       "tared": false,
+       "zero": 0
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "air_density": 1.25,
+        "zero": true,
+        "zero_offset_pa": 2.0
+       }
+      },
+      "out": {
+       "changed": [
+        "zero_offset_pa",
+        "zero_offset_pa",
+        "air_density"
+       ],
+       "density": 1.25,
+       "persist": -1000,
+       "tared": true,
+       "zero": 200
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {}
+      },
+      "out": {
+       "changed": [],
+       "density": 1.25,
+       "persist": null,
+       "tared": true,
+       "zero": 200
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "zero": false
+       }
+      },
+      "out": {
+       "changed": [],
+       "density": 1.25,
+       "persist": null,
+       "tared": true,
+       "zero": 200
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "zero": 0
+       }
+      },
+      "out": {
+       "changed": [],
+       "density": 1.25,
+       "persist": null,
+       "tared": true,
+       "zero": 200
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "zero": 1
+       }
+      },
+      "out": {
+       "changed": [
+        "zero_offset_pa"
+       ],
+       "density": 1.25,
+       "persist": -1000,
+       "tared": true,
+       "zero": -1000
+      }
+     }
+    ]
+   },
+   {
+    "init": {
+     "density": 1.18,
+     "scale": 240,
+     "tared": false,
+     "zero": 0
+    },
+    "name": "a_tare_at_scale_240",
+    "steps": [
+     {
+      "in": {
+       "action": "pressure",
+       "raw": -7
+      },
+      "out": {
+       "density": 1.18,
+       "hundredths": -3,
+       "tared": false,
+       "zero": 0
+      }
+     },
+     {
+      "in": {
+       "action": "calibrate"
+      },
+      "out": {
+       "density": 1.18,
+       "message": null,
+       "persist": -3,
+       "tared": true,
+       "zero": -3
+      }
+     },
+     {
+      "in": {
+       "action": "pressure",
+       "raw": -7
+      },
+      "out": {
+       "density": 1.18,
+       "hundredths": 0,
+       "tared": true,
+       "zero": -3
+      }
+     },
+     {
+      "in": {
+       "action": "update",
+       "properties": {
+        "zero_offset_pa": 1.18
+       }
+      },
+      "out": {
+       "changed": [
+        "zero_offset_pa"
+       ],
+       "density": 1.18,
+       "persist": null,
+       "tared": true,
+       "zero": 118
+      }
+     }
+    ]
+   }
+  ]
+ }
+}

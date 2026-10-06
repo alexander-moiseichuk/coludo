@@ -1,0 +1,17 @@
+[package]
+name = "drivers"
+description = "The device logic of the src/glider drivers: register tables, conversions, CRCs, calibration, re-arm, over embedded-hal 1.0"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+control.workspace = true  # commons: altitude_m, the one barometric altitude every baro driver publishes; mixer: the Fin trait the servos implement
+embedded-hal.workspace = true  # the I2c bus, the DelayNs waits and the XSHUT OutputPin the drivers are written over
+sequencer.workspace = true  # separation: the flight Stage it advances and the wrapping-clock helpers it times with
+serde_json.workspace = true  # each driver reads its own config block and answers `update` like plan B
+
+[dev-dependencies]
+golden.workspace = true
+serde_json.workspace = true

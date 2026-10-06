@@ -1,0 +1,14 @@
+[package]
+name = "layout"
+description = "Which board is this: the bus map by I2C scan placement, the attitude modules, and the config rewrite (src/glider layout.py)"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+board_config.workspace = true  # Python's == and %s over config values, as plan B's config.py reads them
+serde_json.workspace = true
+
+[dev-dependencies]
+golden.workspace = true

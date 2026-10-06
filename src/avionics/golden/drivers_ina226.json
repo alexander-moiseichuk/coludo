@@ -1,0 +1,3474 @@
+{
+ "alert": {
+  "cases": [
+   {
+    "input": {
+     "alert_ma": 3000,
+     "shunt_mohms": 10
+    },
+    "name": "alert_3000_ma_shunt_10_mohm",
+    "output": 12000
+   },
+   {
+    "input": {
+     "alert_ma": 5000,
+     "shunt_mohms": 10
+    },
+    "name": "alert_5000_ma_shunt_10_mohm",
+    "output": 20000
+   },
+   {
+    "input": {
+     "alert_ma": 1,
+     "shunt_mohms": 1
+    },
+    "name": "alert_1_ma_shunt_1_mohm",
+    "output": 0
+   },
+   {
+    "input": {
+     "alert_ma": 2,
+     "shunt_mohms": 1
+    },
+    "name": "alert_2_ma_shunt_1_mohm",
+    "output": 0
+   },
+   {
+    "input": {
+     "alert_ma": 3,
+     "shunt_mohms": 1
+    },
+    "name": "alert_3_ma_shunt_1_mohm",
+    "output": 1
+   },
+   {
+    "input": {
+     "alert_ma": 0,
+     "shunt_mohms": 10
+    },
+    "name": "alert_0_ma_shunt_10_mohm",
+    "output": 0
+   },
+   {
+    "input": {
+     "alert_ma": -1,
+     "shunt_mohms": 10
+    },
+    "name": "alert_-1_ma_shunt_10_mohm",
+    "output": null
+   },
+   {
+    "input": {
+     "alert_ma": 163837,
+     "shunt_mohms": 1
+    },
+    "name": "alert_163837_ma_shunt_1_mohm",
+    "output": 65534
+   },
+   {
+    "input": {
+     "alert_ma": 163838,
+     "shunt_mohms": 1
+    },
+    "name": "alert_163838_ma_shunt_1_mohm",
+    "output": 65535
+   },
+   {
+    "input": {
+     "alert_ma": 16383,
+     "shunt_mohms": 10
+    },
+    "name": "alert_16383_ma_shunt_10_mohm",
+    "output": 65532
+   },
+   {
+    "input": {
+     "alert_ma": 16384,
+     "shunt_mohms": 10
+    },
+    "name": "alert_16384_ma_shunt_10_mohm",
+    "output": null
+   },
+   {
+    "input": {
+     "alert_ma": 7486,
+     "shunt_mohms": 12
+    },
+    "name": "alert_7486_ma_shunt_12_mohm",
+    "output": 35932
+   },
+   {
+    "input": {
+     "alert_ma": 2500,
+     "shunt_mohms": 10
+    },
+    "name": "alert_2500_ma_shunt_10_mohm",
+    "output": 10000
+   },
+   {
+    "input": {
+     "alert_ma": 19954,
+     "shunt_mohms": 20
+    },
+    "name": "alert_19954_ma_shunt_20_mohm",
+    "output": null
+   },
+   {
+    "input": {
+     "alert_ma": 18488,
+     "shunt_mohms": 4
+    },
+    "name": "alert_18488_ma_shunt_4_mohm",
+    "output": 29580
+   },
+   {
+    "input": {
+     "alert_ma": 9178,
+     "shunt_mohms": 5
+    },
+    "name": "alert_9178_ma_shunt_5_mohm",
+    "output": 18356
+   },
+   {
+    "input": {
+     "alert_ma": 16406,
+     "shunt_mohms": 18
+    },
+    "name": "alert_16406_ma_shunt_18_mohm",
+    "output": null
+   },
+   {
+    "input": {
+     "alert_ma": 3337,
+     "shunt_mohms": 4
+    },
+    "name": "alert_3337_ma_shunt_4_mohm",
+    "output": 5339
+   },
+   {
+    "input": {
+     "alert_ma": 15553,
+     "shunt_mohms": 1
+    },
+    "name": "alert_15553_ma_shunt_1_mohm",
+    "output": 6221
+   },
+   {
+    "input": {
+     "alert_ma": 6241,
+     "shunt_mohms": 4
+    },
+    "name": "alert_6241_ma_shunt_4_mohm",
+    "output": 9985
+   },
+   {
+    "input": {
+     "alert_ma": 17761,
+     "shunt_mohms": 6
+    },
+    "name": "alert_17761_ma_shunt_6_mohm",
+    "output": 42626
+   },
+   {
+    "input": {
+     "alert_ma": 5770,
+     "shunt_mohms": 4
+    },
+    "name": "alert_5770_ma_shunt_4_mohm",
+    "output": 9232
+   },
+   {
+    "input": {
+     "alert_ma": 10342,
+     "shunt_mohms": 7
+    },
+    "name": "alert_10342_ma_shunt_7_mohm",
+    "output": 28957
+   },
+   {
+    "input": {
+     "alert_ma": 11882,
+     "shunt_mohms": 20
+    },
+    "name": "alert_11882_ma_shunt_20_mohm",
+    "output": null
+   },
+   {
+    "input": {
+     "alert_ma": 15841,
+     "shunt_mohms": 8
+    },
+    "name": "alert_15841_ma_shunt_8_mohm",
+    "output": 50691
+   },
+   {
+    "input": {
+     "alert_ma": 88,
+     "shunt_mohms": 19
+    },
+    "name": "alert_88_ma_shunt_19_mohm",
+    "output": 668
+   },
+   {
+    "input": {
+     "alert_ma": 11065,
+     "shunt_mohms": 9
+    },
+    "name": "alert_11065_ma_shunt_9_mohm",
+    "output": 39834
+   },
+   {
+    "input": {
+     "alert_ma": 17879,
+     "shunt_mohms": 2
+    },
+    "name": "alert_17879_ma_shunt_2_mohm",
+    "output": 14303
+   },
+   {
+    "input": {
+     "alert_ma": 6995,
+     "shunt_mohms": 18
+    },
+    "name": "alert_6995_ma_shunt_18_mohm",
+    "output": 50364
+   },
+   {
+    "input": {
+     "alert_ma": 1903,
+     "shunt_mohms": 2
+    },
+    "name": "alert_1903_ma_shunt_2_mohm",
+    "output": 1522
+   },
+   {
+    "input": {
+     "alert_ma": 2856,
+     "shunt_mohms": 2
+    },
+    "name": "alert_2856_ma_shunt_2_mohm",
+    "output": 2284
+   },
+   {
+    "input": {
+     "alert_ma": 553,
+     "shunt_mohms": 2
+    },
+    "name": "alert_553_ma_shunt_2_mohm",
+    "output": 442
+   },
+   {
+    "input": {
+     "alert_ma": 16747,
+     "shunt_mohms": 1
+    },
+    "name": "alert_16747_ma_shunt_1_mohm",
+    "output": 6698
+   },
+   {
+    "input": {
+     "alert_ma": 14894,
+     "shunt_mohms": 4
+    },
+    "name": "alert_14894_ma_shunt_4_mohm",
+    "output": 23830
+   },
+   {
+    "input": {
+     "alert_ma": 9465,
+     "shunt_mohms": 2
+    },
+    "name": "alert_9465_ma_shunt_2_mohm",
+    "output": 7572
+   },
+   {
+    "input": {
+     "alert_ma": 10590,
+     "shunt_mohms": 2
+    },
+    "name": "alert_10590_ma_shunt_2_mohm",
+    "output": 8472
+   },
+   {
+    "input": {
+     "alert_ma": 1654,
+     "shunt_mohms": 15
+    },
+    "name": "alert_1654_ma_shunt_15_mohm",
+    "output": 9924
+   },
+   {
+    "input": {
+     "alert_ma": 6306,
+     "shunt_mohms": 17
+    },
+    "name": "alert_6306_ma_shunt_17_mohm",
+    "output": 42880
+   },
+   {
+    "input": {
+     "alert_ma": 12475,
+     "shunt_mohms": 17
+    },
+    "name": "alert_12475_ma_shunt_17_mohm",
+    "output": null
+   },
+   {
+    "input": {
+     "alert_ma": 12946,
+     "shunt_mohms": 5
+    },
+    "name": "alert_12946_ma_shunt_5_mohm",
+    "output": 25892
+   },
+   {
+    "input": {
+     "alert_ma": 7296,
+     "shunt_mohms": 18
+    },
+    "name": "alert_7296_ma_shunt_18_mohm",
+    "output": 52531
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "the ALERT LIMIT setup() arms with a pin wired (max_current_ma 5000), read from the transcript; null for poll only. A trip of 0 mA arms a limit of 0, as plan B writes it"
+ },
+ "calibration": {
+  "cases": [
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "shunt_mohms": 10
+    },
+    "name": "max_5000_ma_shunt_10_mohm",
+    "output": 3355
+   },
+   {
+    "input": {
+     "max_current_ma": 3000,
+     "shunt_mohms": 10
+    },
+    "name": "max_3000_ma_shunt_10_mohm",
+    "output": 5592
+   },
+   {
+    "input": {
+     "max_current_ma": 20000,
+     "shunt_mohms": 2
+    },
+    "name": "max_20000_ma_shunt_2_mohm",
+    "output": 4194
+   },
+   {
+    "input": {
+     "max_current_ma": 1000,
+     "shunt_mohms": 1
+    },
+    "name": "max_1000_ma_shunt_1_mohm",
+    "output": null
+   },
+   {
+    "input": {
+     "max_current_ma": 2560,
+     "shunt_mohms": 1
+    },
+    "name": "max_2560_ma_shunt_1_mohm",
+    "output": null
+   },
+   {
+    "input": {
+     "max_current_ma": 2561,
+     "shunt_mohms": 1
+    },
+    "name": "max_2561_ma_shunt_1_mohm",
+    "output": 65510
+   },
+   {
+    "input": {
+     "max_current_ma": 0,
+     "shunt_mohms": 10
+    },
+    "name": "max_0_ma_shunt_10_mohm",
+    "output": null
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "shunt_mohms": 0
+    },
+    "name": "max_5000_ma_shunt_0_mohm",
+    "output": null
+   },
+   {
+    "input": {
+     "max_current_ma": -5000,
+     "shunt_mohms": 10
+    },
+    "name": "max_-5000_ma_shunt_10_mohm",
+    "output": null
+   },
+   {
+    "input": {
+     "max_current_ma": -5000,
+     "shunt_mohms": -10
+    },
+    "name": "max_-5000_ma_shunt_-10_mohm",
+    "output": 3355
+   },
+   {
+    "input": {
+     "max_current_ma": 167772160,
+     "shunt_mohms": 1
+    },
+    "name": "max_167772160_ma_shunt_1_mohm",
+    "output": 1
+   },
+   {
+    "input": {
+     "max_current_ma": 167772161,
+     "shunt_mohms": 1
+    },
+    "name": "max_167772161_ma_shunt_1_mohm",
+    "output": 0
+   },
+   {
+    "input": {
+     "max_current_ma": 100000000000,
+     "shunt_mohms": 100000000000
+    },
+    "name": "max_100000000000_ma_shunt_100000000000_mohm",
+    "output": 0
+   },
+   {
+    "input": {
+     "max_current_ma": 1,
+     "shunt_mohms": 1
+    },
+    "name": "max_1_ma_shunt_1_mohm",
+    "output": null
+   },
+   {
+    "input": {
+     "max_current_ma": 32428,
+     "shunt_mohms": 11
+    },
+    "name": "max_32428_ma_shunt_11_mohm",
+    "output": 470
+   },
+   {
+    "input": {
+     "max_current_ma": 18782,
+     "shunt_mohms": 37
+    },
+    "name": "max_18782_ma_shunt_37_mohm",
+    "output": 241
+   },
+   {
+    "input": {
+     "max_current_ma": 33412,
+     "shunt_mohms": 26
+    },
+    "name": "max_33412_ma_shunt_26_mohm",
+    "output": 193
+   },
+   {
+    "input": {
+     "max_current_ma": 36638,
+     "shunt_mohms": 30
+    },
+    "name": "max_36638_ma_shunt_30_mohm",
+    "output": 152
+   },
+   {
+    "input": {
+     "max_current_ma": 34310,
+     "shunt_mohms": 81
+    },
+    "name": "max_34310_ma_shunt_81_mohm",
+    "output": 60
+   },
+   {
+    "input": {
+     "max_current_ma": 34389,
+     "shunt_mohms": 91
+    },
+    "name": "max_34389_ma_shunt_91_mohm",
+    "output": 53
+   },
+   {
+    "input": {
+     "max_current_ma": 35712,
+     "shunt_mohms": 97
+    },
+    "name": "max_35712_ma_shunt_97_mohm",
+    "output": 48
+   },
+   {
+    "input": {
+     "max_current_ma": 2106,
+     "shunt_mohms": 14
+    },
+    "name": "max_2106_ma_shunt_14_mohm",
+    "output": 5690
+   },
+   {
+    "input": {
+     "max_current_ma": 753,
+     "shunt_mohms": 31
+    },
+    "name": "max_753_ma_shunt_31_mohm",
+    "output": 7187
+   },
+   {
+    "input": {
+     "max_current_ma": 7635,
+     "shunt_mohms": 11
+    },
+    "name": "max_7635_ma_shunt_11_mohm",
+    "output": 1997
+   },
+   {
+    "input": {
+     "max_current_ma": 16866,
+     "shunt_mohms": 60
+    },
+    "name": "max_16866_ma_shunt_60_mohm",
+    "output": 165
+   },
+   {
+    "input": {
+     "max_current_ma": 37715,
+     "shunt_mohms": 55
+    },
+    "name": "max_37715_ma_shunt_55_mohm",
+    "output": 80
+   },
+   {
+    "input": {
+     "max_current_ma": 24154,
+     "shunt_mohms": 28
+    },
+    "name": "max_24154_ma_shunt_28_mohm",
+    "output": 248
+   },
+   {
+    "input": {
+     "max_current_ma": 366,
+     "shunt_mohms": 11
+    },
+    "name": "max_366_ma_shunt_11_mohm",
+    "output": 41672
+   },
+   {
+    "input": {
+     "max_current_ma": 10715,
+     "shunt_mohms": 64
+    },
+    "name": "max_10715_ma_shunt_64_mohm",
+    "output": 244
+   },
+   {
+    "input": {
+     "max_current_ma": 8798,
+     "shunt_mohms": 28
+    },
+    "name": "max_8798_ma_shunt_28_mohm",
+    "output": 681
+   },
+   {
+    "input": {
+     "max_current_ma": 8393,
+     "shunt_mohms": 22
+    },
+    "name": "max_8393_ma_shunt_22_mohm",
+    "output": 908
+   },
+   {
+    "input": {
+     "max_current_ma": 30003,
+     "shunt_mohms": 8
+    },
+    "name": "max_30003_ma_shunt_8_mohm",
+    "output": 698
+   },
+   {
+    "input": {
+     "max_current_ma": 1917,
+     "shunt_mohms": 86
+    },
+    "name": "max_1917_ma_shunt_86_mohm",
+    "output": 1017
+   },
+   {
+    "input": {
+     "max_current_ma": 6396,
+     "shunt_mohms": 92
+    },
+    "name": "max_6396_ma_shunt_92_mohm",
+    "output": 285
+   },
+   {
+    "input": {
+     "max_current_ma": 28581,
+     "shunt_mohms": 9
+    },
+    "name": "max_28581_ma_shunt_9_mohm",
+    "output": 652
+   },
+   {
+    "input": {
+     "max_current_ma": 11970,
+     "shunt_mohms": 35
+    },
+    "name": "max_11970_ma_shunt_35_mohm",
+    "output": 400
+   },
+   {
+    "input": {
+     "max_current_ma": 8072,
+     "shunt_mohms": 50
+    },
+    "name": "max_8072_ma_shunt_50_mohm",
+    "output": 415
+   },
+   {
+    "input": {
+     "max_current_ma": 31747,
+     "shunt_mohms": 30
+    },
+    "name": "max_31747_ma_shunt_30_mohm",
+    "output": 176
+   },
+   {
+    "input": {
+     "max_current_ma": 10418,
+     "shunt_mohms": 46
+    },
+    "name": "max_10418_ma_shunt_46_mohm",
+    "output": 350
+   },
+   {
+    "input": {
+     "max_current_ma": 14869,
+     "shunt_mohms": 5
+    },
+    "name": "max_14869_ma_shunt_5_mohm",
+    "output": 2256
+   },
+   {
+    "input": {
+     "max_current_ma": 33436,
+     "shunt_mohms": 64
+    },
+    "name": "max_33436_ma_shunt_64_mohm",
+    "output": 78
+   },
+   {
+    "input": {
+     "max_current_ma": 3,
+     "shunt_mohms": 81
+    },
+    "name": "max_3_ma_shunt_81_mohm",
+    "output": null
+   },
+   {
+    "input": {
+     "max_current_ma": 16017,
+     "shunt_mohms": 84
+    },
+    "name": "max_16017_ma_shunt_84_mohm",
+    "output": 124
+   },
+   {
+    "input": {
+     "max_current_ma": 13727,
+     "shunt_mohms": 13
+    },
+    "name": "max_13727_ma_shunt_13_mohm",
+    "output": 940
+   },
+   {
+    "input": {
+     "max_current_ma": 8069,
+     "shunt_mohms": 6
+    },
+    "name": "max_8069_ma_shunt_6_mohm",
+    "output": 3465
+   },
+   {
+    "input": {
+     "max_current_ma": 26922,
+     "shunt_mohms": 64
+    },
+    "name": "max_26922_ma_shunt_64_mohm",
+    "output": 97
+   },
+   {
+    "input": {
+     "max_current_ma": 11116,
+     "shunt_mohms": 6
+    },
+    "name": "max_11116_ma_shunt_6_mohm",
+    "output": 2515
+   },
+   {
+    "input": {
+     "max_current_ma": 27969,
+     "shunt_mohms": 92
+    },
+    "name": "max_27969_ma_shunt_92_mohm",
+    "output": 65
+   },
+   {
+    "input": {
+     "max_current_ma": 39694,
+     "shunt_mohms": 45
+    },
+    "name": "max_39694_ma_shunt_45_mohm",
+    "output": 93
+   },
+   {
+    "input": {
+     "max_current_ma": 7675,
+     "shunt_mohms": 68
+    },
+    "name": "max_7675_ma_shunt_68_mohm",
+    "output": 321
+   },
+   {
+    "input": {
+     "max_current_ma": 21681,
+     "shunt_mohms": 75
+    },
+    "name": "max_21681_ma_shunt_75_mohm",
+    "output": 103
+   },
+   {
+    "input": {
+     "max_current_ma": 2487,
+     "shunt_mohms": 40
+    },
+    "name": "max_2487_ma_shunt_40_mohm",
+    "output": 1686
+   },
+   {
+    "input": {
+     "max_current_ma": 19225,
+     "shunt_mohms": 62
+    },
+    "name": "max_19225_ma_shunt_62_mohm",
+    "output": 140
+   },
+   {
+    "input": {
+     "max_current_ma": 12124,
+     "shunt_mohms": 73
+    },
+    "name": "max_12124_ma_shunt_73_mohm",
+    "output": 189
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "the CALIBRATION value setup() writes; null where plan B setup fails before writing it"
+ },
+ "diagnose": {
+  "cases": [
+   {
+    "input": {
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "22",
+       "write": "ff"
+      }
+     ]
+    },
+    "name": "present",
+    "output": "id 0x22 ok -- device present; setup failed AFTER detect (init / config / timing)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "00",
+       "write": "ff"
+      }
+     ]
+    },
+    "name": "unpowered",
+    "output": "id reads 0x00 -- chip-select not asserting, or device unpowered"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "ff",
+       "write": "ff"
+      }
+     ]
+    },
+    "name": "idle_high",
+    "output": "id reads 0xFF -- bus idle-high: no device driving MISO (absent / MISO miswired)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "40",
+       "write": "ff"
+      }
+     ]
+    },
+    "name": "crosswired",
+    "output": "id reads 0x40, expected 0x22 -- wrong device on this bus/select (crosswired)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 64,
+       "fails": true,
+       "op": "write_read",
+       "read": "00",
+       "write": "ff"
+      }
+     ]
+    },
+    "name": "absent",
+    "output": "no bus response -- device not acking (absent / unpowered / miswired)"
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "diagnose(): one byte of the die id; the verdict text"
+ },
+ "meta": {
+  "commit": "d678051716277422e03ca401f39b368aa6ffc460",
+  "generator": "drivers_ina226",
+  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "python": "3.12",
+  "source": "src/glider/drivers/ina226.py, src/glider/i2cbus.py, src/glider/test/test_ina226.py",
+  "tag": "micropython_plan_B_2"
+ },
+ "probe": {
+  "cases": [
+   {
+    "input": {
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0b54",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "012c",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0078",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "passes",
+    "output": {
+     "failed": null
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "5449",
+       "write": "ff"
+      }
+     ]
+    },
+    "name": "another_die",
+    "output": {
+     "failed": "die id"
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 64,
+       "fails": true,
+       "op": "write_read",
+       "read": "0000",
+       "write": "ff"
+      }
+     ]
+    },
+    "name": "the_die_id_naks",
+    "output": {
+     "failed": "die id"
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0b54",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "fails": true,
+       "op": "write_read",
+       "read": "0000",
+       "write": "04"
+      }
+     ]
+    },
+    "name": "the_current_naks",
+    "output": {
+     "failed": "read"
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "probe(): the transcript and the step that failed ('die id', 'read'), null when it passed"
+ },
+ "read": {
+  "cases": [
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0f95",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "04b0",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "012c",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "bench_bus_0x0f95",
+    "output": {
+     "current_ma": 183,
+     "power_mw": 1125,
+     "voltage_mv": 4986
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0ce4",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "fb50",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "012c",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "a_charging_current",
+    "output": {
+     "current_ma": -184,
+     "power_mw": 1125,
+     "voltage_mv": 4125
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0000",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "8000",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0000",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "the_most_negative_current",
+    "output": {
+     "current_ma": -5000,
+     "power_mw": 0,
+     "voltage_mv": 0
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "ffff",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "7fff",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "ffff",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "full_scale",
+    "output": {
+     "current_ma": 4999,
+     "power_mw": 249975,
+     "voltage_mv": 81918
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0000",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0000",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0000",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "zero",
+    "output": {
+     "current_ma": 0,
+     "power_mw": 0,
+     "voltage_mv": 0
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0001",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "ffff",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0001",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "one_lsb_negative_floors",
+    "output": {
+     "current_ma": -1,
+     "power_mw": 0,
+     "voltage_mv": 1
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 1,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0003",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "fffd",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0003",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "a_1_ma_full_scale",
+    "output": {
+     "current_ma": -1,
+     "power_mw": 0,
+     "voltage_mv": 3
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "e08e",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "faee",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "4e7b",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_00",
+    "output": {
+     "current_ma": -199,
+     "power_mw": 76625,
+     "voltage_mv": 71857
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "6dfb",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "1ee6",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "6fea",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_01",
+    "output": {
+     "current_ma": 1206,
+     "power_mw": 109275,
+     "voltage_mv": 35193
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "ef34",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "8e39",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "cc39",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_02",
+    "output": {
+     "current_ma": -4445,
+     "power_mw": 199425,
+     "voltage_mv": 76545
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 3000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "797e",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "12c1",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "e6a0",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_03",
+    "output": {
+     "current_ma": 439,
+     "power_mw": 135125,
+     "voltage_mv": 38877
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 3000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2ff1",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "1493",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "cfb3",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_04",
+    "output": {
+     "current_ma": 482,
+     "power_mw": 121675,
+     "voltage_mv": 15341
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 32366,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "ece6",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "9dc7",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "043e",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_05",
+    "output": {
+     "current_ma": -24837,
+     "power_mw": 26800,
+     "voltage_mv": 75807
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 20000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "27ea",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "7b0f",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "208c",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_06",
+    "output": {
+     "current_ma": 19227,
+     "power_mw": 127125,
+     "voltage_mv": 12772
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "a28e",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "c214",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "b31f",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_07",
+    "output": {
+     "current_ma": -2419,
+     "power_mw": 174900,
+     "voltage_mv": 52017
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "29fa",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "bd45",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "965d",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_08",
+    "output": {
+     "current_ma": -2607,
+     "power_mw": 146825,
+     "voltage_mv": 13432
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 20000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "5712",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "ab5a",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "8b90",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_09",
+    "output": {
+     "current_ma": -13227,
+     "power_mw": 545150,
+     "voltage_mv": 27862
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "62b2",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "b6c7",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "08eb",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_10",
+    "output": {
+     "current_ma": -2861,
+     "power_mw": 8700,
+     "voltage_mv": 31582
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 34669,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0df2",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "a41b",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2a80",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_11",
+    "output": {
+     "current_ma": -24890,
+     "power_mw": 287775,
+     "voltage_mv": 4462
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "15ba",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "5d24",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "489d",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_12",
+    "output": {
+     "current_ma": 3638,
+     "power_mw": 70900,
+     "voltage_mv": 6952
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 3000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "a46c",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "5f96",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "25b2",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_13",
+    "output": {
+     "current_ma": 2240,
+     "power_mw": 22075,
+     "voltage_mv": 52615
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 20000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "b7d6",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "bb44",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "b9cd",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_14",
+    "output": {
+     "current_ma": -10740,
+     "power_mw": 725775,
+     "voltage_mv": 58827
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 3000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "60e6",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "6e4b",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "9837",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_15",
+    "output": {
+     "current_ma": 2584,
+     "power_mw": 89175,
+     "voltage_mv": 31007
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 3000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0850",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "fda5",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "32f2",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_16",
+    "output": {
+     "current_ma": -56,
+     "power_mw": 29850,
+     "voltage_mv": 2660
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "ef0c",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0662",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "7729",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_17",
+    "output": {
+     "current_ma": 249,
+     "power_mw": 116350,
+     "voltage_mv": 76495
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 20000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "3df4",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "133f",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "9cdd",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_18",
+    "output": {
+     "current_ma": 3007,
+     "power_mw": 612725,
+     "voltage_mv": 19825
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "90e6",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "9fa3",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2093",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_19",
+    "output": {
+     "current_ma": -3765,
+     "power_mw": 31800,
+     "voltage_mv": 46367
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 20000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "3307",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "8677",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "e3f5",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_20",
+    "output": {
+     "current_ma": -18990,
+     "power_mw": 890450,
+     "voltage_mv": 16328
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 4206,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "f549",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "ef24",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "bd7a",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_21",
+    "output": {
+     "current_ma": -554,
+     "power_mw": 155650,
+     "voltage_mv": 78491
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 3000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "8110",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "eb96",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "4b72",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_22",
+    "output": {
+     "current_ma": -479,
+     "power_mw": 44200,
+     "voltage_mv": 41300
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 52344,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "d23d",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "cff3",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "6b0d",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_23",
+    "output": {
+     "current_ma": -19650,
+     "power_mw": 1094425,
+     "voltage_mv": 67276
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "4760",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "e4ae",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "4634",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_24",
+    "output": {
+     "current_ma": -1068,
+     "power_mw": 68550,
+     "voltage_mv": 22840
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 41833,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "b810",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "fb47",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "9b59",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_25",
+    "output": {
+     "current_ma": -1544,
+     "power_mw": 1269250,
+     "voltage_mv": 58900
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 3000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "17b4",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0c9f",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "947d",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_26",
+    "output": {
+     "current_ma": 295,
+     "power_mw": 87000,
+     "voltage_mv": 7585
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2299",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "6738",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "0227",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_27",
+    "output": {
+     "current_ma": 4031,
+     "power_mw": 2100,
+     "voltage_mv": 11071
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 3000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "5d2a",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "08f5",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "ee75",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_28",
+    "output": {
+     "current_ma": 209,
+     "power_mw": 139700,
+     "voltage_mv": 29812
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "6113",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "fda6",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "5520",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_29",
+    "output": {
+     "current_ma": -92,
+     "power_mw": 83125,
+     "voltage_mv": 31063
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 15935,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "a7d6",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "463c",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "898a",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_30",
+    "output": {
+     "current_ma": 8743,
+     "power_mw": 428050,
+     "voltage_mv": 53707
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 5000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "f343",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "6db6",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "15df",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_31",
+    "output": {
+     "current_ma": 4285,
+     "power_mw": 21350,
+     "voltage_mv": 77843
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 39108,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "f3ce",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "e15e",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "fa18",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_32",
+    "output": {
+     "current_ma": -9360,
+     "power_mw": 1910275,
+     "voltage_mv": 78017
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 50596,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "6b7b",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2baa",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "8242",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_33",
+    "output": {
+     "current_ma": 17259,
+     "power_mw": 1287200,
+     "voltage_mv": 34393
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 3000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "7b8e",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "c446",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "51f2",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_34",
+    "output": {
+     "current_ma": -1400,
+     "power_mw": 48000,
+     "voltage_mv": 39537
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 20000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "9cf6",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "c5b7",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2b05",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_35",
+    "output": {
+     "current_ma": -9108,
+     "power_mw": 168025,
+     "voltage_mv": 50227
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 20000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "ea59",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "ac82",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "6faf",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_36",
+    "output": {
+     "current_ma": -13046,
+     "power_mw": 436250,
+     "voltage_mv": 74991
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 3000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "38e4",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "d91f",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "e140",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_37",
+    "output": {
+     "current_ma": -912,
+     "power_mw": 131975,
+     "voltage_mv": 18205
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 20000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "8f1c",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "ee05",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "d2ca",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_38",
+    "output": {
+     "current_ma": -2810,
+     "power_mw": 823375,
+     "voltage_mv": 45795
+    }
+   },
+   {
+    "input": {
+     "max_current_ma": 20000,
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "c3a1",
+       "write": "02"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "85cb",
+       "write": "04"
+      },
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "3ab5",
+       "write": "03"
+      }
+     ]
+    },
+    "name": "sweep_39",
+    "output": {
+     "current_ma": -19095,
+     "power_mw": 229300,
+     "voltage_mv": 62601
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "_read() with _max_current_ma: the transcript (three 2-byte reads: 0x02, 0x04, 0x03) and the mV / mA / mW"
+ },
+ "rearm": {
+  "cases": [
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      }
+     ],
+     "setup": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "restores_configuration_and_calibration",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "max_current_ma": 20000,
+      "shunt_mohms": 2
+     },
+     "script": [
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "051062",
+       "op": "write"
+      }
+     ],
+     "setup": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "051062",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "restores_a_custom_calibration",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "bytes": "004327",
+       "fails": true,
+       "op": "write"
+      }
+     ],
+     "setup": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "a_dead_bus_is_reported",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "fails": true,
+       "op": "write"
+      }
+     ],
+     "setup": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "the_calibration_naks",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port also restores ALERT LIMIT and MASK/ENABLE, which the general call cleared and plan B left so: the same two writes setup made, after plan B two; a refused one ends the re-arm and fails it",
+     "ok": true,
+     "script": [
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "072ee0",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "068000",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "alert_wired": true,
+     "config": {
+      "alert_ma": 3000,
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      }
+     ],
+     "setup": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "072ee0",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "068000",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "with_the_alert_armed",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port also restores ALERT LIMIT and MASK/ENABLE, which the general call cleared and plan B left so: the same two writes setup made, after plan B two; a refused one ends the re-arm and fails it",
+     "ok": false,
+     "script": [
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "072ee0",
+       "fails": true,
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "alert_wired": true,
+     "config": {
+      "alert_ma": 3000,
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      }
+     ],
+     "setup": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "072ee0",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "068000",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "the_alert_limit_naks",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port also restores ALERT LIMIT and MASK/ENABLE, which the general call cleared and plan B left so: the same two writes setup made, after plan B two; a refused one ends the re-arm and fails it",
+     "ok": false,
+     "script": [
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "072ee0",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "068000",
+       "fails": true,
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "alert_wired": true,
+     "config": {
+      "alert_ma": 3000,
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      }
+     ],
+     "setup": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "072ee0",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "068000",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "the_mask_naks",
+    "output": {
+     "ok": true
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "rearm() after a healthy setup (its transcript in `setup`): the re-arm transcript and ok (plan B logs a failure); a case with a divergence owes its script and ok instead -- an armed alert, whose two extra writes plan B never made, so a refusal of either fails only the port"
+ },
+ "setup": {
+  "cases": [
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "healthy",
+    "output": {
+     "alert_ma": 0,
+     "calibration": 3355,
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {},
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "defaults",
+    "output": {
+     "alert_ma": 0,
+     "calibration": 3355,
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "addr": 65
+     },
+     "script": [
+      {
+       "address": 65,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 65,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 65,
+       "bytes": "050d1b",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "another_address",
+    "output": {
+     "alert_ma": 0,
+     "calibration": 3355,
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2270",
+       "write": "ff"
+      }
+     ]
+    },
+    "name": "not_an_ina226",
+    "output": {
+     "alert_ma": 0,
+     "calibration": null,
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "fails": true,
+       "op": "write_read",
+       "read": "0000",
+       "write": "ff"
+      }
+     ]
+    },
+    "name": "nothing_acks",
+    "output": {
+     "alert_ma": 0,
+     "calibration": null,
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "fails": true,
+       "op": "write"
+      }
+     ]
+    },
+    "name": "configuration_naks",
+    "output": {
+     "alert_ma": 0,
+     "calibration": null,
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "fails": true,
+       "op": "write"
+      }
+     ]
+    },
+    "name": "calibration_naks",
+    "output": {
+     "alert_ma": 0,
+     "calibration": null,
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "max_current_ma": 1000,
+      "shunt_mohms": 1
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "a_calibration_past_16_bits",
+    "output": {
+     "alert_ma": 0,
+     "calibration": null,
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "shunt_mohms": 0
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "a_zero_shunt",
+    "output": {
+     "alert_ma": 0,
+     "calibration": null,
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "max_current_ma": 5000,
+      "shunt_mohms": 10.5
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "a_fractional_shunt",
+    "output": {
+     "alert_ma": 0,
+     "calibration": null,
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "max_current_ma": 5000,
+      "shunt_mohms": 10.0
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "a_whole_float_shunt",
+    "output": {
+     "alert_ma": 0,
+     "calibration": null,
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "max_current_ma": 5000.5,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "a_fractional_full_scale",
+    "output": {
+     "alert_ma": 0,
+     "calibration": null,
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "alert_wired": true,
+     "config": {
+      "alert_ma": 3000,
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "072ee0",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "068000",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "the_alert_armed",
+    "output": {
+     "alert_ma": 3000,
+     "calibration": 3355,
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "alert_wired": true,
+     "config": {
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "072ee0",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "068000",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "the_alert_at_its_default",
+    "output": {
+     "alert_ma": 3000,
+     "calibration": 3355,
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "alert_wired": true,
+     "config": {
+      "alert_ma": 20000,
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "an_alert_limit_past_16_bits",
+    "output": {
+     "alert_ma": 0,
+     "calibration": 3355,
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "alert_wired": true,
+     "config": {
+      "alert_ma": 3000,
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "072ee0",
+       "fails": true,
+       "op": "write"
+      }
+     ]
+    },
+    "name": "the_alert_limit_naks",
+    "output": {
+     "alert_ma": 0,
+     "calibration": 3355,
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "alert_wired": true,
+     "config": {
+      "alert_ma": 3000,
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "072ee0",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "068000",
+       "fails": true,
+       "op": "write"
+      }
+     ]
+    },
+    "name": "the_mask_naks",
+    "output": {
+     "alert_ma": 0,
+     "calibration": 3355,
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "alert_wired": false,
+     "config": {
+      "alert_ma": 3000,
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "no_pin_no_alert_writes",
+    "output": {
+     "alert_ma": 0,
+     "calibration": 3355,
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "alert_wired": true,
+     "config": {
+      "alert_ma": 2500.5,
+      "max_current_ma": 5000,
+      "shunt_mohms": 10
+     },
+     "script": [
+      {
+       "address": 64,
+       "op": "write_read",
+       "read": "2260",
+       "write": "ff"
+      },
+      {
+       "address": 64,
+       "bytes": "004327",
+       "op": "write"
+      },
+      {
+       "address": 64,
+       "bytes": "050d1b",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "a_fractional_alert_trip_polls_only",
+    "output": {
+     "alert_ma": 0,
+     "calibration": 3355,
+     "ok": true
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "setup() over a scripted part: input the component block, whether an alert pin is wired and the transcript; output ok, the CALIBRATION written (null on failure) and the alert trip armed (0: none, or poll only)"
+ }
+}

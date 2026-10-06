@@ -1,0 +1,1590 @@
+{
+ "diagnose": {
+  "cases": [
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "50",
+       "write": "01"
+      }
+     ]
+    },
+    "name": "present",
+    "output": "id 0x50 ok -- device present; setup failed AFTER detect (init / config / timing)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00",
+       "write": "01"
+      }
+     ]
+    },
+    "name": "unpowered",
+    "output": "id reads 0x00 -- chip-select not asserting, or device unpowered"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "ff",
+       "write": "01"
+      }
+     ]
+    },
+    "name": "idle_high",
+    "output": "id reads 0xFF -- bus idle-high: no device driving MISO (absent / MISO miswired)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "58",
+       "write": "01"
+      }
+     ]
+    },
+    "name": "crosswired",
+    "output": "id reads 0x58, expected 0x50 -- wrong device on this bus/select (crosswired)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "fails": true,
+       "op": "write_read",
+       "read": "00",
+       "write": "01"
+      }
+     ]
+    },
+    "name": "absent",
+    "output": "no bus response -- device not acking (absent / unpowered / miswired)"
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "diagnose(): one identity byte; the verdict text"
+ },
+ "meta": {
+  "commit": "d678051716277422e03ca401f39b368aa6ffc460",
+  "generator": "drivers_bmp581",
+  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "python": "3.12",
+  "source": "src/glider/drivers/bmp581.py, src/glider/commons.py, src/glider/i2cbus.py, src/glider/test/test_bmp581.py",
+  "tag": "micropython_plan_B_2"
+ },
+ "probe": {
+  "cases": [
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "50",
+       "write": "01"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "passes",
+    "output": {
+     "failed": null
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "58",
+       "write": "01"
+      }
+     ]
+    },
+    "name": "another_part",
+    "output": {
+     "failed": "chip id"
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "fails": true,
+       "op": "write_read",
+       "read": "00",
+       "write": "01"
+      }
+     ]
+    },
+    "name": "the_identity_naks",
+    "output": {
+     "failed": "chip id"
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "50",
+       "write": "01"
+      },
+      {
+       "address": 71,
+       "fails": true,
+       "op": "write_read",
+       "read": "000000000000",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "the_read_naks",
+    "output": {
+     "failed": "read"
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "probe(): the transcript and the step that failed ('chip id', 'read'), null when it passed"
+ },
+ "read": {
+  "cases": [
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "test_bmp581_25_c",
+    "output": {
+     "altitude": -0.9157606882989633,
+     "pressure": 101336.0,
+     "temperature": 25.0
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "0000f600f662",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "test_bmp581_minus_10_c",
+    "output": {
+     "altitude": -0.9157606882989633,
+     "pressure": 101336.0,
+     "temperature": -10.0
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "000000000000",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "a_dead_read_is_no_altitude",
+    "output": {
+     "altitude": 0.0,
+     "pressure": 0.0,
+     "temperature": 0.0
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "ffffff010000",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "one_count_each_way",
+    "output": {
+     "altitude": 42089.07065724298,
+     "pressure": 0.015625,
+     "temperature": -1.52587890625e-05
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "000080ffffff",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "the_rails",
+    "output": {
+     "altitude": -8789.737510211738,
+     "pressure": 262143.984375,
+     "temperature": -128.0
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00000040f362",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sea_level",
+    "output": {
+     "altitude": 0.0,
+     "pressure": 101325.0,
+     "temperature": 0.0
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "0000e2004c1d",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "a_mountain_top",
+    "output": {
+     "altitude": 9165.155569137742,
+     "pressure": 30000.0,
+     "temperature": -30.0
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "01001901f662",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "the_xlsb_counts",
+    "output": {
+     "altitude": -0.9170614274837208,
+     "pressure": 101336.015625,
+     "temperature": 25.000015258789062
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "fffff53ff662",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "the_xlsb_counts_below_zero",
+    "output": {
+     "altitude": -0.9977069397403615,
+     "pressure": 101336.984375,
+     "temperature": -10.000015258789062
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "a35517b9b427",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_00",
+    "output": {
+     "altitude": 7070.745921140336,
+     "pressure": 40658.890625,
+     "temperature": 23.334518432617188
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "8d462ed8fa41",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_01",
+    "output": {
+     "altitude": 3290.2397740436636,
+     "pressure": 67563.375,
+     "temperature": 46.27558898925781
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "c3654def3f42",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_02",
+    "output": {
+     "altitude": 3258.3481272431814,
+     "pressure": 67839.734375,
+     "temperature": 77.39750671386719
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "ee4119ed8736",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_03",
+    "output": {
+     "altitude": 4751.945973302871,
+     "pressure": 55839.703125,
+     "temperature": 25.257537841796875
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "11383c91da64",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_04",
+    "output": {
+     "altitude": -161.03590989879442,
+     "pressure": 103274.265625,
+     "temperature": 60.21900939941406
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "48d9f5c44e60",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_05",
+    "output": {
+     "altitude": 227.75751878235866,
+     "pressure": 98619.0625,
+     "temperature": -10.1512451171875
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "0c0c286f7660",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_06",
+    "output": {
+     "altitude": 214.2634062815754,
+     "pressure": 98777.734375,
+     "temperature": 40.04705810546875
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "93b932ed0b63",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_07",
+    "output": {
+     "altitude": -8.21425332567464,
+     "pressure": 101423.703125,
+     "temperature": 50.72489929199219
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "e70146e46821",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_08",
+    "output": {
+     "altitude": 8275.013054654211,
+     "pressure": 34211.5625,
+     "temperature": 70.00743103027344
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "26cae52ac41e",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_09",
+    "output": {
+     "altitude": 8836.148127073075,
+     "pressure": 31504.65625,
+     "temperature": -26.210357666015625
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "391ff652352c",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_10",
+    "output": {
+     "altitude": 6301.33764791549,
+     "pressure": 45269.28125,
+     "temperature": -9.878036499023438
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "1149e2eb3c3e",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_11",
+    "output": {
+     "altitude": 3743.67850591439,
+     "pressure": 63731.671875,
+     "temperature": -29.714584350585938
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "8e181343f566",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_12",
+    "output": {
+     "altitude": -336.21112052838146,
+     "pressure": 105429.046875,
+     "temperature": 19.095916748046875
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "71a20ef4784c",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_13",
+    "output": {
+     "altitude": 2121.34305382274,
+     "pressure": 78307.8125,
+     "temperature": 14.634536743164062
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "1107483e2a39",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_14",
+    "output": {
+     "altitude": 4395.060181950735,
+     "pressure": 58536.96875,
+     "temperature": 72.02760314941406
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "d9b6d8e34a28",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_15",
+    "output": {
+     "altitude": 6966.622199334799,
+     "pressure": 41259.546875,
+     "temperature": -39.28575134277344
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "69edecc61f5d",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_16",
+    "output": {
+     "altitude": 508.9677743955125,
+     "pressure": 95359.09375,
+     "temperature": -19.072616577148438
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "802ee94a7338",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_17",
+    "output": {
+     "altitude": 4490.550451585169,
+     "pressure": 57805.15625,
+     "temperature": -22.818359375
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "5864e8588e32",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_18",
+    "output": {
+     "altitude": 5317.892905924535,
+     "pressure": 51769.375,
+     "temperature": -23.6080322265625
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "2d075165e557",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_19",
+    "output": {
+     "altitude": 988.1353927166203,
+     "pressure": 90005.578125,
+     "temperature": 81.02803039550781
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "42acdf530a21",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_20",
+    "output": {
+     "altitude": 8351.21556870399,
+     "pressure": 33833.296875,
+     "temperature": -32.327117919921875
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "805c2dfec929",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_21",
+    "output": {
+     "altitude": 6706.431285344667,
+     "pressure": 42791.96875,
+     "temperature": 45.361328125
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "4607330a1e55",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_22",
+    "output": {
+     "altitude": 1252.280385556437,
+     "pressure": 87160.15625,
+     "temperature": 51.028411865234375
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "f00fe082ac34",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_23",
+    "output": {
+     "altitude": 5012.049047772504,
+     "pressure": 53938.03125,
+     "temperature": -31.937744140625
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "95d951f83e40",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_24",
+    "output": {
+     "altitude": 3497.6887900212873,
+     "pressure": 65787.875,
+     "temperature": 81.84992980957031
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "f3c3e7d0da4e",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_25",
+    "output": {
+     "altitude": 1874.2256707672548,
+     "pressure": 80747.25,
+     "temperature": -24.234573364257812
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "5001162a793a",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_26",
+    "output": {
+     "altitude": 4222.728134455218,
+     "pressure": 59876.65625,
+     "temperature": 22.005126953125
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "9758ece2f94a",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_27",
+    "output": {
+     "altitude": 2279.770327052316,
+     "pressure": 76775.53125,
+     "temperature": -19.653945922851562
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "4c0af53d3922",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_28",
+    "output": {
+     "altitude": 8109.502204469499,
+     "pressure": 35044.953125,
+     "temperature": -10.95977783203125
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "804d19e7c65c",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_29",
+    "output": {
+     "altitude": 540.10104277468,
+     "pressure": 95003.609375,
+     "temperature": 25.302734375
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "6101d824943c",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_30",
+    "output": {
+     "altitude": 3951.8452949752937,
+     "pressure": 62032.5625,
+     "temperature": -39.99461364746094
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "c8d32b431b38",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_31",
+    "output": {
+     "altitude": 4536.844509248623,
+     "pressure": 57453.046875,
+     "temperature": 43.8272705078125
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "6af84468cd29",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_32",
+    "output": {
+     "altitude": 6704.146736997189,
+     "pressure": 42805.625,
+     "temperature": 68.97036743164062
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "2bc2e7247422",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_33",
+    "output": {
+     "altitude": 8063.288597459947,
+     "pressure": 35280.5625,
+     "temperature": -24.241531372070312
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "2e0e50cee051",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_34",
+    "output": {
+     "altitude": 1569.1603696844481,
+     "pressure": 83843.21875,
+     "temperature": 80.05538940429688
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "ac8017a50133",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_35",
+    "output": {
+     "altitude": 5251.992941743499,
+     "pressure": 52230.578125,
+     "temperature": 23.50262451171875
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "8f2ddd0cec53",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_36",
+    "output": {
+     "altitude": 1368.055547358777,
+     "pressure": 85936.1875,
+     "temperature": -34.82203674316406
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "d94633f9d26a",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_37",
+    "output": {
+     "altitude": -650.6306444293632,
+     "pressure": 109387.890625,
+     "temperature": 51.27674865722656
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "a9b03c95424a",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_38",
+    "output": {
+     "altitude": 2356.4857555691374,
+     "pressure": 76042.328125,
+     "temperature": 60.69007873535156
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "2ede2e27492c",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "sweep_39",
+    "output": {
+     "altitude": 6288.665389344735,
+     "pressure": 45348.609375,
+     "temperature": 46.867889404296875
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "fields": {
+   "altitude": {
+    "kind": "abs",
+    "tol": 0.005
+   }
+  },
+  "note": "_read(): altitude m, temperature degrees C, pressure Pa; temperature and pressure exact (power-of-two scalings), altitude abs 0.005 (commons.altitude_m's f32)"
+ },
+ "rearm": {
+  "cases": [
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "bytes": "3650",
+       "op": "write"
+      },
+      {
+       "address": 71,
+       "bytes": "37bd",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "writes_the_mode_again",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "bytes": "3650",
+       "fails": true,
+       "op": "write"
+      }
+     ]
+    },
+    "name": "a_dead_part_is_logged",
+    "output": {
+     "ok": false
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "rearm(): the transcript (the mode written again) and ok (plan B logs a failure)"
+ },
+ "setup": {
+  "cases": [
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "50",
+       "write": "01"
+      },
+      {
+       "address": 71,
+       "bytes": "3650",
+       "op": "write"
+      },
+      {
+       "address": 71,
+       "bytes": "37bd",
+       "op": "write"
+      },
+      {
+       "ms": 50,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "00001900f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      }
+     ]
+    },
+    "name": "healthy",
+    "output": {
+     "ground": -0.9157606882989633,
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "50",
+       "write": "01"
+      },
+      {
+       "address": 71,
+       "bytes": "3650",
+       "op": "write"
+      },
+      {
+       "address": 71,
+       "bytes": "37bd",
+       "op": "write"
+      },
+      {
+       "ms": 50,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "97fb18edf562",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "b8f618cdf562",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "c4071976f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "cd0a1958f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "86f718c7f562",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "63f81838f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "110619b8f662",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "8af7186cf562",
+       "write": "1d"
+      },
+      {
+       "ms": 20,
+       "op": "delay_ms"
+      }
+     ]
+    },
+    "name": "a_drifting_pad",
+    "output": {
+     "ground": -0.9435631093548347,
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "58",
+       "write": "01"
+      }
+     ]
+    },
+    "name": "another_part",
+    "output": {
+     "ground": null,
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "fails": true,
+       "op": "write_read",
+       "read": "00",
+       "write": "01"
+      }
+     ]
+    },
+    "name": "the_identity_naks",
+    "output": {
+     "ground": null,
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "50",
+       "write": "01"
+      },
+      {
+       "address": 71,
+       "bytes": "3650",
+       "op": "write"
+      },
+      {
+       "address": 71,
+       "bytes": "37bd",
+       "fails": true,
+       "op": "write"
+      }
+     ]
+    },
+    "name": "the_rate_naks",
+    "output": {
+     "ground": null,
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 71,
+       "op": "write_read",
+       "read": "50",
+       "write": "01"
+      },
+      {
+       "address": 71,
+       "bytes": "3650",
+       "op": "write"
+      },
+      {
+       "address": 71,
+       "bytes": "37bd",
+       "op": "write"
+      },
+      {
+       "ms": 50,
+       "op": "delay_ms"
+      },
+      {
+       "address": 71,
+       "fails": true,
+       "op": "write_read",
+       "read": "000000000000",
+       "write": "1d"
+      }
+     ]
+    },
+    "name": "a_read_naks_while_averaging",
+    "output": {
+     "ground": null,
+     "ok": false
+    }
+   }
+  ],
+  "compare": {
+   "kind": "abs",
+   "tol": 0.01
+  },
+  "note": "setup() over a scripted part: the transcript; output ok and the ground zero (m) it captured"
+ },
+ "update": {
+  "cases": [
+   {
+    "input": {
+     "fresh_altitude": null,
+     "properties": {
+      "ground": 12.5
+     }
+    },
+    "name": "a_direct_ground",
+    "output": {
+     "changed": [
+      "ground"
+     ],
+     "ground": 12.5
+    }
+   },
+   {
+    "input": {
+     "fresh_altitude": 123.5,
+     "properties": {
+      "rezero": true
+     }
+    },
+    "name": "a_re_zero_from_a_fresh_altitude",
+    "output": {
+     "changed": [
+      "ground"
+     ],
+     "ground": 123.5
+    }
+   },
+   {
+    "input": {
+     "fresh_altitude": null,
+     "properties": {
+      "rezero": true
+     }
+    },
+    "name": "a_re_zero_with_no_fresh_altitude",
+    "output": {
+     "ground": 7.0,
+     "refused": "no fresh altitude to re-zero from"
+    }
+   },
+   {
+    "input": {
+     "fresh_altitude": 123.5,
+     "properties": {
+      "rezero": false
+     }
+    },
+    "name": "a_falsy_re_zero",
+    "output": {
+     "changed": [],
+     "ground": 7.0
+    }
+   },
+   {
+    "input": {
+     "fresh_altitude": 9.0,
+     "properties": {
+      "ground": 3.0,
+      "rezero": true
+     }
+    },
+    "name": "the_ground_wins_over_a_re_zero",
+    "output": {
+     "changed": [
+      "ground"
+     ],
+     "ground": 3.0
+    }
+   },
+   {
+    "input": {
+     "fresh_altitude": 1.0,
+     "properties": {
+      "other": 1
+     }
+    },
+    "name": "nothing_known",
+    "output": {
+     "changed": [],
+     "ground": 7.0
+    }
+   },
+   {
+    "input": {
+     "fresh_altitude": null,
+     "properties": {
+      "ground": "12.5"
+     }
+    },
+    "name": "a_numeral_string_ground",
+    "output": {
+     "changed": [
+      "ground"
+     ],
+     "ground": 12.5
+    }
+   },
+   {
+    "input": {
+     "fresh_altitude": null,
+     "properties": {
+      "ground": true
+     }
+    },
+    "name": "a_bool_ground",
+    "output": {
+     "changed": [
+      "ground"
+     ],
+     "ground": 1.0
+    }
+   },
+   {
+    "divergence": {
+     "note": "float()'s own error text is the interpreter's (\"could not convert string to float: 'high'\" here); the port refuses in its own words",
+     "output": {
+      "ground": 7.0,
+      "refused": "ground must be a number"
+     }
+    },
+    "input": {
+     "fresh_altitude": null,
+     "properties": {
+      "ground": "high"
+     }
+    },
+    "name": "a_word_ground_is_refused",
+    "output": {
+     "ground": 7.0,
+     "refused": "could not convert string to float: 'high'"
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "update() from a ground of 7.0 m: the changed properties and the ground, or the refusal text and the ground left as it was; a case with a divergence owes its output instead"
+ }
+}

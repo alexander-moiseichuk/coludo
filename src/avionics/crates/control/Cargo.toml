@@ -1,6 +1,6 @@
 [package]
 name = "control"
-description = "The flight math (src/glider commons, pid, mixer, airspeed, governor, navigation, wind, guidance), in f32"
+description = "The flight math (src/glider commons, pid, mixer, airspeed, governor, navigation, wind, guidance, tasks/attitude), in f32"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

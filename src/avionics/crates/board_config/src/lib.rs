@@ -11,6 +11,8 @@
 //! * [`write()`]: the canonical pretty text (`json.dumps(indent=1, sort_keys=True)` plus a newline).
 //! * A typed view of the few keys the firmware reads so far: [`board_id`], [`mcu`], [`wifi`],
 //!   [`max_range_m`].
+//! * [`python`]: Python's `==`, `%s` and truthiness over config values, for the ports that read a config as
+//!   plan B does.
 //!
 //! Python semantics are CPython 3.12's, the golden oracle (src/avionics/golden), including the float repr
 //! and the str repr's escapes. A document is a `serde_json::Value`, whose numbers are f64 or integers: the
@@ -33,7 +35,7 @@
 //! No writer the project has emits any of these.
 
 mod printable;
-mod python;
+pub mod python;
 mod validate;
 mod view;
 mod writer;

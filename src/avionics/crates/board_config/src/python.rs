@@ -7,6 +7,9 @@
 //! str, an integer an int, any other number a float, and true/false/null are True/False/None. The oracle is
 //! CPython 3.12, not MicroPython: plan B's board prints non-ASCII text raw and floats in single precision, and
 //! the port plan (§6, `config_id` floats) fixes the CPython meaning as the contract.
+//!
+//! Public for the other ports of code that reads the config the same way (crates/layout: layout.py compares,
+//! formats and tests config values as config.py does): [`equals`], [`formatted`] and [`truthy`].
 
 use serde_json::{Number, Value};
 
@@ -63,7 +66,7 @@ pub(crate) fn write_representation(out: &mut String, value: &Value) {
 
 /// Python's `'%s' % value`: the text itself for a string, the repr of anything else (a float's str is its
 /// repr in Python 3).
-pub(crate) fn formatted(value: &Value) -> String {
+pub fn formatted(value: &Value) -> String {
     match value {
         Value::String(text) => text.clone(),
         other => representation(other),
@@ -188,7 +191,7 @@ pub(crate) fn write_string(out: &mut String, text: &str) {
 
 /// Python's truthiness, as `x or y` and `if x` read a value: None, False, a zero, and an empty str, list or
 /// dict are false; everything else is true.
-pub(crate) fn truthy(value: &Value) -> bool {
+pub fn truthy(value: &Value) -> bool {
     match value {
         Value::Null => false,
         Value::Bool(flag) => *flag,
@@ -237,7 +240,7 @@ impl Numeric {
 
 /// Python's `left == right` between two JSON values: numbers (and bools) by value across int and float, str
 /// by text, list by items in order, dict by the same keys with equal values; different kinds are unequal.
-pub(crate) fn equals(left: &Value, right: &Value) -> bool {
+pub fn equals(left: &Value, right: &Value) -> bool {
     match (left, right) {
         (Value::Null, Value::Null) => true,
         (Value::String(left), Value::String(right)) => left == right,

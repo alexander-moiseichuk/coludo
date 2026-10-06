@@ -1,0 +1,10895 @@
+{
+ "default_configuration": {
+  "cases": [
+   {
+    "input": {
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x",
+    "output": "0001010102000208000810010100000000ff000f0000000000200b0000020a2100000500000000c8000038ff010008000001db0f01f10d0168008008b8000000000f8900000000000000010f0d0e0e000002c7ff9b000000010000"
+   },
+   {
+    "input": {
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx",
+    "output": "1200001102000208000810010100000000ff000f0000000000200b000002142100000500000000c8000038ff010008000001cc0701f10500a000800838000000000f89000000000000000107050606000002c7ff9b000000010000"
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "_DEFAULT_CONFIG, registers 0x2D..0x87, as hex"
+ },
+ "diagnose": {
+  "cases": [
+   {
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ea",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_l1x_silicon",
+    "output": "id 0xEA ok -- device present; setup failed AFTER detect (init / config / timing)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "eb",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_l4cx_silicon",
+    "output": "id reads 0xEB, expected 0xEA -- wrong device on this bus/select (crosswired)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_unpowered",
+    "output": "id reads 0x00 -- chip-select not asserting, or device unpowered"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ff",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_idle_high",
+    "output": "id reads 0xFF -- bus idle-high: no device driving MISO (absent / MISO miswired)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "fails": true,
+       "op": "write_read",
+       "read": "00",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_absent",
+    "output": "no bus response -- device not acking (absent / unpowered / miswired)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ea",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_l1x_silicon",
+    "output": "id reads 0xEA, expected 0xEB -- wrong device on this bus/select (crosswired)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "eb",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_l4cx_silicon",
+    "output": "id 0xEB ok -- device present; setup failed AFTER detect (init / config / timing)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_unpowered",
+    "output": "id reads 0x00 -- chip-select not asserting, or device unpowered"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ff",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_idle_high",
+    "output": "id reads 0xFF -- bus idle-high: no device driving MISO (absent / MISO miswired)"
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "fails": true,
+       "op": "write_read",
+       "read": "00",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_absent",
+    "output": "no bus response -- device not acking (absent / unpowered / miswired)"
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "diagnose(): one byte of the model id; the verdict text (the other silicon is a wrong device)"
+ },
+ "meta": {
+  "commit": "d678051716277422e03ca401f39b368aa6ffc460",
+  "generator": "drivers_vl53",
+  "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
+  "python": "3.12",
+  "source": "src/glider/drivers/vl53l1x.py, src/glider/drivers/vl53l4cx.py, src/glider/i2cbus.py, src/glider/test/test_vl53l1x.py",
+  "tag": "micropython_plan_B_2"
+ },
+ "probe": {
+  "cases": [
+   {
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "eacc",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_on_its_silicon",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ebaa",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_on_the_l4cx",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ea00",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_on_a_shared_high_byte",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads the full 16-bit model id (plan B: the high byte alone)",
+     "ok": true,
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ebaa",
+       "write": "010f"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "eb",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_on_its_silicon",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "divergence": {
+     "note": "the port reads the full 16-bit model id (plan B: the high byte alone)",
+     "ok": false,
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "eacc",
+       "write": "010f"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ea",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_on_the_l1x",
+    "output": {
+     "ok": false
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "probe(): the model id read and whether it passed; a divergence's transcript is owed instead"
+ },
+ "setup": {
+  "cases": [
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "eacc",
+       "write": "010f"
+      },
+      {
+       "address": 41,
+       "bytes": "002d0001010102000208000810010100000000ff000f0000000000200b0000020a2100000500000000c8000038ff010008000001db0f01f10d0168008008b8000000000f8900000000000000010f0d0e0e000002c7ff9b000000010000",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0030"
+      },
+      {
+       "address": 41,
+       "bytes": "008740",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008700",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000809",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000b00",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008740",
+       "op": "write"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_healthy",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "config": {
+      "xshut_pin": "laser_xshut"
+     },
+     "script": [
+      {
+       "high": false,
+       "op": "pin"
+      },
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "high": true,
+       "op": "pin"
+      },
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "eacc",
+       "write": "010f"
+      },
+      {
+       "address": 41,
+       "bytes": "002d0001010102000208000810010100000000ff000f0000000000200b0000020a2100000500000000c8000038ff010008000001db0f01f10d0168008008b8000000000f8900000000000000010f0d0e0e000002c7ff9b000000010000",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0030"
+      },
+      {
+       "address": 41,
+       "bytes": "008740",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008700",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000809",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000b00",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008740",
+       "op": "write"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_with_xshut",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "eacc",
+       "write": "010f"
+      },
+      {
+       "address": 41,
+       "bytes": "002d0001010102000208000810010100000000ff000f0000000000200b0000020a2100000500000000c8000038ff010008000001db0f01f10d0168008008b8000000000f8900000000000000010f0d0e0e000002c7ff9b000000010000",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "11",
+       "write": "0030"
+      },
+      {
+       "address": 41,
+       "bytes": "008740",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008700",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000809",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000b00",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008740",
+       "op": "write"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_active_low_data_ready",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ebaa",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_refuses_the_other_silicon",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_firmware_never_boots",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "eacc",
+       "write": "010f"
+      },
+      {
+       "address": 41,
+       "bytes": "002d0001010102000208000810010100000000ff000f0000000000200b0000020a2100000500000000c8000038ff010008000001db0f01f10d0168008008b8000000000f8900000000000000010f0d0e0e000002c7ff9b000000010000",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0030"
+      },
+      {
+       "address": 41,
+       "bytes": "008740",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008700",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000809",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000b00",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008740",
+       "op": "write"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_calibration_never_ready",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "fails": true,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_nothing_acks",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "eacc",
+       "write": "010f"
+      },
+      {
+       "address": 41,
+       "bytes": "002d0001010102000208000810010100000000ff000f0000000000200b0000020a2100000500000000c8000038ff010008000001db0f01f10d0168008008b8000000000f8900000000000000010f0d0e0e000002c7ff9b000000010000",
+       "fails": true,
+       "op": "write"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_the_block_naks",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "config": {
+      "addr": 48
+     },
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 48,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 48,
+       "op": "write_read",
+       "read": "eacc",
+       "write": "010f"
+      },
+      {
+       "address": 48,
+       "bytes": "002d0001010102000208000810010100000000ff000f0000000000200b0000020a2100000500000000c8000038ff010008000001db0f01f10d0168008008b8000000000f8900000000000000010f0d0e0e000002c7ff9b000000010000",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "op": "write_read",
+       "read": "01",
+       "write": "0030"
+      },
+      {
+       "address": 48,
+       "bytes": "008740",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 48,
+       "bytes": "008601",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "bytes": "008700",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "bytes": "000809",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "bytes": "000b00",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "bytes": "008740",
+       "op": "write"
+      }
+     ],
+     "silicon": "vl53l1x"
+    },
+    "name": "vl53l1x_another_address",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ebaa",
+       "write": "010f"
+      },
+      {
+       "address": 41,
+       "bytes": "002d1200001102000208000810010100000000ff000f0000000000200b000002142100000500000000c8000038ff010008000001cc0701f10500a000800838000000000f89000000000000000107050606000002c7ff9b000000010000",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0030"
+      },
+      {
+       "address": 41,
+       "bytes": "008721",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008700",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000809",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000b00",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "00240500",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0b9a",
+       "write": "0006"
+      },
+      {
+       "address": 41,
+       "bytes": "005e003b",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "0061004f",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008721",
+       "op": "write"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_healthy",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "config": {
+      "xshut_pin": "laser_xshut"
+     },
+     "script": [
+      {
+       "high": false,
+       "op": "pin"
+      },
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "high": true,
+       "op": "pin"
+      },
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ebaa",
+       "write": "010f"
+      },
+      {
+       "address": 41,
+       "bytes": "002d1200001102000208000810010100000000ff000f0000000000200b000002142100000500000000c8000038ff010008000001cc0701f10500a000800838000000000f89000000000000000107050606000002c7ff9b000000010000",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0030"
+      },
+      {
+       "address": 41,
+       "bytes": "008721",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008700",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000809",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000b00",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "00240500",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0b9a",
+       "write": "0006"
+      },
+      {
+       "address": 41,
+       "bytes": "005e003b",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "0061004f",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008721",
+       "op": "write"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_with_xshut",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ebaa",
+       "write": "010f"
+      },
+      {
+       "address": 41,
+       "bytes": "002d1200001102000208000810010100000000ff000f0000000000200b000002142100000500000000c8000038ff010008000001cc0701f10500a000800838000000000f89000000000000000107050606000002c7ff9b000000010000",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "11",
+       "write": "0030"
+      },
+      {
+       "address": 41,
+       "bytes": "008721",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008700",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000809",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000b00",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "00240500",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0b9a",
+       "write": "0006"
+      },
+      {
+       "address": 41,
+       "bytes": "005e003b",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "0061004f",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008721",
+       "op": "write"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_active_low_data_ready",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "eacc",
+       "write": "010f"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_refuses_the_other_silicon",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_firmware_never_boots",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ebaa",
+       "write": "010f"
+      },
+      {
+       "address": 41,
+       "bytes": "002d1200001102000208000810010100000000ff000f0000000000200b000002142100000500000000c8000038ff010008000001cc0701f10500a000800838000000000f89000000000000000107050606000002c7ff9b000000010000",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0030"
+      },
+      {
+       "address": 41,
+       "bytes": "008721",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0031"
+      },
+      {
+       "ms": 1,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008700",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000809",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000b00",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "00240500",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0b9a",
+       "write": "0006"
+      },
+      {
+       "address": 41,
+       "bytes": "005e003b",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "0061004f",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008721",
+       "op": "write"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_calibration_never_ready",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "fails": true,
+       "op": "write_read",
+       "read": "00",
+       "write": "00e5"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_nothing_acks",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ebaa",
+       "write": "010f"
+      },
+      {
+       "address": 41,
+       "bytes": "002d1200001102000208000810010100000000ff000f0000000000200b000002142100000500000000c8000038ff010008000001cc0701f10500a000800838000000000f89000000000000000107050606000002c7ff9b000000010000",
+       "fails": true,
+       "op": "write"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_the_block_naks",
+    "output": {
+     "ok": false
+    }
+   },
+   {
+    "input": {
+     "config": {
+      "addr": 48
+     },
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 48,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 48,
+       "op": "write_read",
+       "read": "ebaa",
+       "write": "010f"
+      },
+      {
+       "address": 48,
+       "bytes": "002d1200001102000208000810010100000000ff000f0000000000200b000002142100000500000000c8000038ff010008000001cc0701f10500a000800838000000000f89000000000000000107050606000002c7ff9b000000010000",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "op": "write_read",
+       "read": "01",
+       "write": "0030"
+      },
+      {
+       "address": 48,
+       "bytes": "008721",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 48,
+       "bytes": "008601",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "bytes": "008700",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "bytes": "000809",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "bytes": "000b00",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "bytes": "00240500",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "op": "write_read",
+       "read": "0b9a",
+       "write": "0006"
+      },
+      {
+       "address": 48,
+       "bytes": "005e003b",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "bytes": "0061004f",
+       "op": "write"
+      },
+      {
+       "address": 48,
+       "bytes": "008721",
+       "op": "write"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_another_address",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ebaa",
+       "write": "010f"
+      },
+      {
+       "address": 41,
+       "bytes": "002d1200001102000208000810010100000000ff000f0000000000200b000002142100000500000000c8000038ff010008000001cc0701f10500a000800838000000000f89000000000000000107050606000002c7ff9b000000010000",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0030"
+      },
+      {
+       "address": 41,
+       "bytes": "008721",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008700",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000809",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000b00",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "00240500",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0000",
+       "write": "0006"
+      },
+      {
+       "address": 41,
+       "bytes": "008721",
+       "op": "write"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_oscillator_0_sets_no_budget",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "config": {
+      "timing_budget_ms": 100
+     },
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ebaa",
+       "write": "010f"
+      },
+      {
+       "address": 41,
+       "bytes": "002d1200001102000208000810010100000000ff000f0000000000200b000002142100000500000000c8000038ff010008000001cc0701f10500a000800838000000000f89000000000000000107050606000002c7ff9b000000010000",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0030"
+      },
+      {
+       "address": 41,
+       "bytes": "008721",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008700",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000809",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000b00",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "00240500",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0b9a",
+       "write": "0006"
+      },
+      {
+       "address": 41,
+       "bytes": "005e007a",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "006100a3",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008721",
+       "op": "write"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_a_100_ms_budget",
+    "output": {
+     "ok": true
+    }
+   },
+   {
+    "input": {
+     "config": {},
+     "script": [
+      {
+       "ms": 2,
+       "op": "delay_ms"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "00e5"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ebaa",
+       "write": "010f"
+      },
+      {
+       "address": 41,
+       "bytes": "002d1200001102000208000810010100000000ff000f0000000000200b000002142100000500000000c8000038ff010008000001cc0701f10500a000800838000000000f89000000000000000107050606000002c7ff9b000000010000",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0030"
+      },
+      {
+       "address": 41,
+       "bytes": "008721",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "008700",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000809",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "000b00",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "bytes": "00240500",
+       "op": "write"
+      },
+      {
+       "address": 41,
+       "fails": true,
+       "op": "write_read",
+       "read": "0000",
+       "write": "0006"
+      }
+     ],
+     "silicon": "vl53l4cx"
+    },
+    "name": "vl53l4cx_the_oscillator_read_naks",
+    "output": {
+     "ok": false
+    }
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "setup() over a scripted part: input the silicon (the driver), the component block (xshut_pin names a wired XSHUT) and the transcript; output ok"
+ },
+ "status": {
+  "cases": [
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "00",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x00_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x01_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "02",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "02",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x02_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "03",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x03_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x04_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "05",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "05",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x05_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "06",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "06",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x06_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "07",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "07",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x07_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "08",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "08",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x08_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": 1.234,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "09",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "09",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x09_1234_mm",
+    "output": {
+     "agl": 1.234
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0a",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0a",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x0a_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0b",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0b",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x0b_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0c",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0c",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x0c_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0d",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0d",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x0d_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0e",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0e",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x0e_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0f",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0f",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x0f_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "10",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "10",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x10_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "11",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "11",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x11_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "12",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "12",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x12_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "13",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "13",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x13_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "14",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "14",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x14_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "15",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "15",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x15_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "16",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "16",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x16_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "17",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "17",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x17_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "18",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "18",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x18_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "19",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "19",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x19_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "1a",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "1a",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x1a_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "1b",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "1b",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x1b_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "1c",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "1c",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x1c_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "1d",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "1d",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x1d_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "1e",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "1e",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x1e_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "1f",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "1f",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "04d2",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x1f_1234_mm",
+    "output": {
+     "agl": null
+    }
+   },
+   {
+    "divergence": {
+     "agl": 1.5,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "e9",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "05dc",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "e9",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "05dc",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0xe9_1500_mm",
+    "output": {
+     "agl": 1.5
+    }
+   },
+   {
+    "divergence": {
+     "agl": 0.0,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "09",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0000",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "09",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0000",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x09_0_mm",
+    "output": {
+     "agl": 0.0
+    }
+   },
+   {
+    "divergence": {
+     "agl": 65.535,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "09",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ffff",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "09",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "ffff",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x09_65535_mm",
+    "output": {
+     "agl": 65.535
+    }
+   },
+   {
+    "divergence": {
+     "agl": 3.999,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "09",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0f9f",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "09",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0f9f",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x09_3999_mm",
+    "output": {
+     "agl": 3.999
+    }
+   },
+   {
+    "divergence": {
+     "agl": null,
+     "note": "the port reads GPIO__TIO_HV_STATUS first and ranges only on data-ready (polarity 1, bit 0 set here)",
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "01",
+       "write": "0031"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "13",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0320",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "input": {
+     "script": [
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "13",
+       "write": "0089"
+      },
+      {
+       "address": 41,
+       "op": "write_read",
+       "read": "0320",
+       "write": "0096"
+      },
+      {
+       "address": 41,
+       "bytes": "008601",
+       "op": "write"
+      }
+     ]
+    },
+    "name": "raw_0x13_800_mm",
+    "output": {
+     "agl": null
+    }
+   }
+  ],
+  "compare": {
+   "kind": "abs",
+   "tol": 1e-05
+  },
+  "note": "_range_locked(): the AGL in metres (distance_mm / 1000.0) for status 0, null otherwise; the port owes each case its divergence (the data-ready read first)"
+ },
+ "timing_budget": {
+  "cases": [
+   {
+    "input": {
+     "budget_ms": 50,
+     "oscillator": 2970
+    },
+    "name": "osc_2970_budget_50",
+    "output": [
+     [
+      94,
+      59
+     ],
+     [
+      97,
+      79
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 20,
+     "oscillator": 2970
+    },
+    "name": "osc_2970_budget_20",
+    "output": [
+     [
+      94,
+      21
+     ],
+     [
+      97,
+      28
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 100,
+     "oscillator": 2970
+    },
+    "name": "osc_2970_budget_100",
+    "output": [
+     [
+      94,
+      122
+     ],
+     [
+      97,
+      163
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 200,
+     "oscillator": 2970
+    },
+    "name": "osc_2970_budget_200",
+    "output": [
+     [
+      94,
+      248
+     ],
+     [
+      97,
+      421
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 1000,
+     "oscillator": 2970
+    },
+    "name": "osc_2970_budget_1000",
+    "output": [
+     [
+      94,
+      924
+     ],
+     [
+      97,
+      977
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 50,
+     "oscillator": 3008
+    },
+    "name": "osc_3008_budget_50",
+    "output": [
+     [
+      94,
+      60
+     ],
+     [
+      97,
+      80
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 33,
+     "oscillator": 3072
+    },
+    "name": "osc_3072_budget_33",
+    "output": [
+     [
+      94,
+      39
+     ],
+     [
+      97,
+      52
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 50,
+     "oscillator": 0
+    },
+    "name": "osc_0_budget_50",
+    "output": []
+   },
+   {
+    "input": {
+     "budget_ms": 50,
+     "oscillator": 1
+    },
+    "name": "osc_1_budget_50",
+    "output": [
+     [
+      94,
+      255
+     ],
+     [
+      97,
+      255
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 50,
+     "oscillator": 65535
+    },
+    "name": "osc_65535_budget_50",
+    "output": [
+     [
+      94,
+      932
+     ],
+     [
+      97,
+      987
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 3,
+     "oscillator": 2970
+    },
+    "name": "osc_2970_budget_3",
+    "output": [
+     [
+      94,
+      0
+     ],
+     [
+      97,
+      0
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 2,
+     "oscillator": 2970
+    },
+    "name": "osc_2970_budget_2",
+    "output": [
+     [
+      94,
+      254
+     ],
+     [
+      97,
+      254
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 0,
+     "oscillator": 2970
+    },
+    "name": "osc_2970_budget_0",
+    "output": [
+     [
+      94,
+      252
+     ],
+     [
+      97,
+      251
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": -5,
+     "oscillator": 2970
+    },
+    "name": "osc_2970_budget_-5",
+    "output": [
+     [
+      94,
+      246
+     ],
+     [
+      97,
+      242
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 1000000000,
+     "oscillator": 2970
+    },
+    "name": "osc_2970_budget_1000000000",
+    "output": [
+     [
+      94,
+      6038
+     ],
+     [
+      97,
+      6088
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 51,
+     "oscillator": 4074
+    },
+    "name": "osc_4074_budget_51",
+    "output": [
+     [
+      94,
+      83
+     ],
+     [
+      97,
+      111
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 479,
+     "oscillator": 3221
+    },
+    "name": "osc_3221_budget_479",
+    "output": [
+     [
+      94,
+      674
+     ],
+     [
+      97,
+      728
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 271,
+     "oscillator": 3230
+    },
+    "name": "osc_3230_budget_271",
+    "output": [
+     [
+      94,
+      439
+     ],
+     [
+      97,
+      500
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 410,
+     "oscillator": 2855
+    },
+    "name": "osc_2855_budget_410",
+    "output": [
+     [
+      94,
+      502
+     ],
+     [
+      97,
+      676
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 278,
+     "oscillator": 3003
+    },
+    "name": "osc_3003_budget_278",
+    "output": [
+     [
+      94,
+      431
+     ],
+     [
+      97,
+      489
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 65,
+     "oscillator": 2179
+    },
+    "name": "osc_2179_budget_65",
+    "output": [
+     [
+      94,
+      57
+     ],
+     [
+      97,
+      76
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 130,
+     "oscillator": 2095
+    },
+    "name": "osc_2095_budget_130",
+    "output": [
+     [
+      94,
+      112
+     ],
+     [
+      97,
+      150
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 51,
+     "oscillator": 2525
+    },
+    "name": "osc_2525_budget_51",
+    "output": [
+     [
+      94,
+      51
+     ],
+     [
+      97,
+      68
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 246,
+     "oscillator": 3102
+    },
+    "name": "osc_3102_budget_246",
+    "output": [
+     [
+      94,
+      415
+     ],
+     [
+      97,
+      469
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 198,
+     "oscillator": 3796
+    },
+    "name": "osc_3796_budget_198",
+    "output": [
+     [
+      94,
+      413
+     ],
+     [
+      97,
+      465
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 12,
+     "oscillator": 2939
+    },
+    "name": "osc_2939_budget_12",
+    "output": [
+     [
+      94,
+      11
+     ],
+     [
+      97,
+      15
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 93,
+     "oscillator": 2399
+    },
+    "name": "osc_2399_budget_93",
+    "output": [
+     [
+      94,
+      91
+     ],
+     [
+      97,
+      122
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 78,
+     "oscillator": 4090
+    },
+    "name": "osc_4090_budget_78",
+    "output": [
+     [
+      94,
+      130
+     ],
+     [
+      97,
+      174
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 75,
+     "oscillator": 2916
+    },
+    "name": "osc_2916_budget_75",
+    "output": [
+     [
+      94,
+      89
+     ],
+     [
+      97,
+      118
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 494,
+     "oscillator": 2728
+    },
+    "name": "osc_2728_budget_494",
+    "output": [
+     [
+      94,
+      653
+     ],
+     [
+      97,
+      701
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 40,
+     "oscillator": 3923
+    },
+    "name": "osc_3923_budget_40",
+    "output": [
+     [
+      94,
+      61
+     ],
+     [
+      97,
+      82
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 351,
+     "oscillator": 2167
+    },
+    "name": "osc_2167_budget_351",
+    "output": [
+     [
+      94,
+      415
+     ],
+     [
+      97,
+      469
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 374,
+     "oscillator": 2447
+    },
+    "name": "osc_2447_budget_374",
+    "output": [
+     [
+      94,
+      448
+     ],
+     [
+      97,
+      640
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 42,
+     "oscillator": 3834
+    },
+    "name": "osc_3834_budget_42",
+    "output": [
+     [
+      94,
+      63
+     ],
+     [
+      97,
+      85
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 497,
+     "oscillator": 2796
+    },
+    "name": "osc_2796_budget_497",
+    "output": [
+     [
+      94,
+      658
+     ],
+     [
+      97,
+      707
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 73,
+     "oscillator": 3166
+    },
+    "name": "osc_3166_budget_73",
+    "output": [
+     [
+      94,
+      94
+     ],
+     [
+      97,
+      125
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 258,
+     "oscillator": 3633
+    },
+    "name": "osc_3633_budget_258",
+    "output": [
+     [
+      94,
+      452
+     ],
+     [
+      97,
+      643
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 91,
+     "oscillator": 2981
+    },
+    "name": "osc_2981_budget_91",
+    "output": [
+     [
+      94,
+      111
+     ],
+     [
+      97,
+      148
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 126,
+     "oscillator": 3509
+    },
+    "name": "osc_3509_budget_126",
+    "output": [
+     [
+      94,
+      183
+     ],
+     [
+      97,
+      244
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 271,
+     "oscillator": 2205
+    },
+    "name": "osc_2205_budget_271",
+    "output": [
+     [
+      94,
+      250
+     ],
+     [
+      97,
+      423
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 10,
+     "oscillator": 4079
+    },
+    "name": "osc_4079_budget_10",
+    "output": [
+     [
+      94,
+      12
+     ],
+     [
+      97,
+      16
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 345,
+     "oscillator": 3049
+    },
+    "name": "osc_3049_budget_345",
+    "output": [
+     [
+      94,
+      477
+     ],
+     [
+      97,
+      659
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 445,
+     "oscillator": 2905
+    },
+    "name": "osc_2905_budget_445",
+    "output": [
+     [
+      94,
+      648
+     ],
+     [
+      97,
+      693
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 73,
+     "oscillator": 2448
+    },
+    "name": "osc_2448_budget_73",
+    "output": [
+     [
+      94,
+      72
+     ],
+     [
+      97,
+      97
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 490,
+     "oscillator": 2213
+    },
+    "name": "osc_2213_budget_490",
+    "output": [
+     [
+      94,
+      484
+     ],
+     [
+      97,
+      664
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 264,
+     "oscillator": 3730
+    },
+    "name": "osc_3730_budget_264",
+    "output": [
+     [
+      94,
+      462
+     ],
+     [
+      97,
+      649
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 30,
+     "oscillator": 2742
+    },
+    "name": "osc_2742_budget_30",
+    "output": [
+     [
+      94,
+      31
+     ],
+     [
+      97,
+      42
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 375,
+     "oscillator": 3796
+    },
+    "name": "osc_3796_budget_375",
+    "output": [
+     [
+      94,
+      661
+     ],
+     [
+      97,
+      711
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 357,
+     "oscillator": 3486
+    },
+    "name": "osc_3486_budget_357",
+    "output": [
+     [
+      94,
+      642
+     ],
+     [
+      97,
+      686
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 281,
+     "oscillator": 2527
+    },
+    "name": "osc_2527_budget_281",
+    "output": [
+     [
+      94,
+      404
+     ],
+     [
+      97,
+      454
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 306,
+     "oscillator": 3403
+    },
+    "name": "osc_3403_budget_306",
+    "output": [
+     [
+      94,
+      474
+     ],
+     [
+      97,
+      657
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 167,
+     "oscillator": 2203
+    },
+    "name": "osc_2203_budget_167",
+    "output": [
+     [
+      94,
+      153
+     ],
+     [
+      97,
+      204
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 257,
+     "oscillator": 3249
+    },
+    "name": "osc_3249_budget_257",
+    "output": [
+     [
+      94,
+      430
+     ],
+     [
+      97,
+      489
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 300,
+     "oscillator": 2805
+    },
+    "name": "osc_2805_budget_300",
+    "output": [
+     [
+      94,
+      432
+     ],
+     [
+      97,
+      491
+     ]
+    ]
+   },
+   {
+    "input": {
+     "budget_ms": 88,
+     "oscillator": 4084
+    },
+    "name": "osc_4084_budget_88",
+    "output": [
+     [
+      94,
+      147
+     ],
+     [
+      97,
+      196
+     ]
+    ]
+   }
+  ],
+  "compare": {
+   "kind": "exact"
+  },
+  "note": "_set_timing_budget(budget_ms) after the oscillator word reads `oscillator`: the [register, word] writes in order, none for an oscillator of 0"
+ }
+}
