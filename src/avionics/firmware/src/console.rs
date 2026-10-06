@@ -1,8 +1,8 @@
 //! The device console on UART0 (the board's CH343P USB-serial port): the CC commands, plus a few that only
 //! an operator at the cable may run.
 //!
-//! `wifi <ssid> <password>` stores the network to join (values follow the CC encoding, so a password with
-//! spaces travels as `base64:`); `panic` panics on purpose, to prove a panic reboots;
+//! `wifi <ssid> <password>` stores a network's password (values follow the CC encoding, so a password with
+//! spaces travels as `base64:`; the network list itself is the board config's); `panic` panics on purpose, to prove a panic reboots;
 //! `c6reset` browns the Wi-Fi co-processor out on purpose, to prove a failing C6 link does not reboot the P4;
 //! `sdtest [megabytes] [kilobytes per second]` writes to the microSD (flat out, or paced) and reports the rate and
 //! the worst single write; `video start [width height fps kbit/s]` / `video stop` / `video stats` drive the
@@ -18,6 +18,7 @@ use esp_idf_svc::io::vfs::BlockingStdIo;
 
 use crate::board::Board;
 use crate::commands::Executor;
+use crate::config::Credentials;
 
 /// The P4 pin that drives the C6's EN (the Function-EV pinout; esp_hosted's slave reset).
 const C6_ENABLE_PIN: i32 = 54;
@@ -32,6 +33,7 @@ pub fn start(
     receive: impl InputPin + 'static,
     board: Arc<Board>,
     executor: Executor,
+    credentials: Credentials,
 ) -> anyhow::Result<()> {
     // drain what the boot already printed: installing the driver mid-line cuts the line off
     // SAFETY: a polling wait on the console UART's transmit FIFO.
@@ -56,7 +58,7 @@ pub fn start(
                 if std::io::stdin().lock().read_line(&mut line).is_err() {
                     continue;
                 }
-                if let Some(reply) = operator(line.trim(), &board).or_else(|| executor.ask(line.trim())) {
+                if let Some(reply) = operator(line.trim(), &board, &credentials).or_else(|| executor.ask(line.trim())) {
                     println!("{reply}");
                     let _ = std::io::stdout().flush();
                 }
@@ -66,7 +68,7 @@ pub fn start(
 }
 
 /// The console-only commands; None hands the line on to the CC commands.
-fn operator(line: &str, board: &Board) -> Option<String> {
+fn operator(line: &str, board: &Board, credentials: &Credentials) -> Option<String> {
     let message = cc_protocol::parse(line).ok()?;
     match message.command.as_deref()? {
         "panic" => panic!("deliberate panic from the console"),
@@ -112,7 +114,7 @@ fn operator(line: &str, board: &Board) -> Option<String> {
             Some(crate::diagnostics::pace(seconds(&message.args, 10), source))
         }
         "wifi" => Some(match message.args.as_slice() {
-            [ssid, password] => match board.set_credentials(ssid, password) {
+            [ssid, password] => match credentials.set_password(ssid, password) {
                 Ok(()) => cc_protocol::build("ok", &[ssid], &[]),
                 Err(error) => cc_protocol::build("err", &["store", &error.to_string()], &[]),
             },

@@ -6,21 +6,17 @@ use esp_idf_svc::nvs::{EspDefaultNvsPartition, EspNvs, NvsDefault};
 use esp_idf_svc::sys;
 use firmware::thermal::Thermometer;
 
-/// The id the hub registers this board under, until board config lands (src/glider: `board.id`).
-const BOARD_ID: &str = "taster";
 /// The firmware's name on the wire: the hub shows it as the board's version.
 pub const FIRMWARE_VERSION: &str = concat!("avionics-", env!("CARGO_PKG_VERSION"));
 /// The NVS namespace src/glider uses too, so the boot count and the calibrations carry across a reflash.
 const NAMESPACE: &str = "coludo";
 
-/// This board: its id, this boot's id, and the NVS namespace behind both.
+/// This board: its id, this boot's id, its vitals.
 pub struct Board {
-    /// The id the hub registers.
-    pub id: &'static str,
+    /// The id the hub registers: the config's `board.id`.
+    pub id: String,
     /// This boot's NVS count (src/glider main._next_boot); None when the store would not count it.
     pub boot_id: Option<i32>,
-    /// The `coludo` NVS namespace (boot count, Wi-Fi credentials).
-    pub store: Mutex<EspNvs<NvsDefault>>,
     /// The die temperature sensor; None when it would not start (health then reports no temperature). Behind
     /// a lock: IDF does not promise its read is thread-safe, and the console and the link both ask.
     pub thermometer: Mutex<Option<Thermometer>>,
@@ -29,8 +25,9 @@ pub struct Board {
 }
 
 impl Board {
-    /// Open the store, count this boot, keep the thermometer.
+    /// Count this boot in the `coludo` NVS namespace (the one plan B shares), keep the thermometer.
     pub fn open(
+        id: String,
         partition: EspDefaultNvsPartition,
         thermometer: Option<Thermometer>,
         sd_mounted: bool,
@@ -38,9 +35,8 @@ impl Board {
         let store = EspNvs::new(partition, NAMESPACE, true)?;
         let boot_id = count_boot(&store);
         Ok(Self {
-            id: BOARD_ID,
+            id,
             boot_id,
-            store: Mutex::new(store),
             thermometer: Mutex::new(thermometer),
             sd_mounted,
         })
@@ -76,30 +72,7 @@ impl Board {
             self.celsius(),
         )
     }
-
-    /// The Wi-Fi network to join, as the console stored it: (ssid, password).
-    pub fn credentials(&self) -> Option<(String, String)> {
-        let store = self.store.lock().unwrap();
-        let mut ssid = [0u8; 33];
-        let mut password = [0u8; 65];
-        let ssid = store.get_str(SSID_KEY, &mut ssid).ok()??.to_string();
-        let password = store.get_str(PASSWORD_KEY, &mut password).ok()??.to_string();
-        Some((ssid, password))
-    }
-
-    /// Store the Wi-Fi network to join; the link picks it up on its next dial.
-    pub fn set_credentials(&self, ssid: &str, password: &str) -> anyhow::Result<()> {
-        let store = self.store.lock().unwrap();
-        store.set_str(SSID_KEY, ssid)?;
-        store.set_str(PASSWORD_KEY, password)?;
-        Ok(())
-    }
 }
-
-/// NVS key of the Wi-Fi network name.
-const SSID_KEY: &str = "wifi_ssid";
-/// NVS key of the Wi-Fi password. Never in the image, never in git: the console sets it.
-const PASSWORD_KEY: &str = "wifi_password";
 
 /// Count this boot: NVS `coludo`/`boot` + 1, committed before anything records (src/glider main._next_boot).
 ///

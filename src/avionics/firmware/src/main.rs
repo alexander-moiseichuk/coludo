@@ -1,7 +1,7 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! Avionics bring-up: start the clock, count the boot, load the mission, start the CC executor, open the UART
-//! console, then join Wi-Fi through the C6 and serve the CC hub forever. A panic anywhere prints its backtrace
+//! Avionics bring-up: start the clock, load the board config, count the boot, load the mission, start the CC
+//! executor, open the UART console, then join Wi-Fi through the C6 and serve the CC hub forever. A panic anywhere prints its backtrace
 //! and reboots (sdkconfig: PANIC_PRINT_REBOOT).
 
 mod board;
@@ -44,14 +44,31 @@ fn main() -> anyhow::Result<()> {
     } else {
         log::warn!("sd :: no usable microSD -- running without it");
     }
-    let board = Arc::new(board::Board::open(partition.clone(), thermometer, sd_mounted)?);
-    let store = config::Store::open()?;
-    // the zone range gate is plan B's default until the board config (its `field` component) is read (M2)
-    let mission = mission::Mission::load(store.launch().as_deref(), mission::DEFAULT_MAX_RANGE_M);
+    // the board config first: it names the board, its networks and its mission range (plan B config.load)
+    let settings = config::partition()?;
+    let store = config::Store::open(settings.clone())?;
+    let loaded = board_config::load(store.board().as_deref(), config::defaults());
+    let config_id = board_config::config_id(&loaded.document);
+    log::info!("config :: {config_id} {}", loaded.source);
+    for error in &loaded.errors {
+        log::warn!("config :: {error}");
+    }
+    let board = Arc::new(board::Board::open(
+        board_config::board_id(&loaded.document),
+        partition.clone(),
+        thermometer,
+        sd_mounted,
+    )?);
+    let range = board_config::max_range_m(&loaded.document).unwrap_or(mission::DEFAULT_MAX_RANGE_M);
+    let mission = mission::Mission::load(store.launch().as_deref(), range);
+    let wifi = board_config::wifi(&loaded.document);
+    let credentials = config::Credentials::new(settings);
     let executor = commands::Executor::start(commands::Context {
         board: board.clone(),
         store,
         mission,
+        config: loaded,
+        config_id,
     })?;
     // the console drains the UART before taking it over, so the lines above survive
     console::start(
@@ -60,7 +77,8 @@ fn main() -> anyhow::Result<()> {
         peripherals.pins.gpio38,
         board.clone(),
         executor.clone(),
+        credentials.clone(),
     )?;
     log::info!("{}", board.banner());
-    link::run(peripherals.modem, event_loop, partition, &board, &executor)
+    link::run(peripherals.modem, event_loop, partition, wifi, credentials, &executor)
 }

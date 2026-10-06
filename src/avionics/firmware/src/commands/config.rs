@@ -1,66 +1,55 @@
 //! get-config / set-config / reset-config -- the named configs (src/glider cc_client `_register_config`).
 //!
-//! `launch` is launch.config: merge-applied into the mission and saved in the settings store. The board config
-//! (`board`/`running`/`saved`/`default`) is plan B's built-in default, embedded from the golden fixture generated
-//! out of src/glider config_default.py, until the config store lands (port plan M2); writing it is refused.
-
-use std::sync::OnceLock;
+//! - `board`/`running`: the config this boot runs (immutable for the run: a change is save + reboot).
+//! - `saved`: what the next boot loads -- the saved board.config through the same load the boot uses, so a
+//!   read-modify-write starts from it and never reverts a save not yet rebooted.
+//! - `default`: the built-in default.
+//! - `launch`: launch.config, merge-applied into the mission and saved.
 
 use cc_protocol::Message;
-use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::{Code, Context, Fault, Reply};
 
-/// What a board config write answers until the store exists.
-const NO_STORE: &str = "config store -- port plan M2";
-
-/// Plan B's built-in board config, as the golden generator wrote it (src/avionics/golden/config_default.json).
-#[derive(Deserialize)]
-pub struct Defaults {
-    /// config_default.default(), the whole document, stamped with this firmware's version.
-    pub document: Value,
-    /// Its config_id, computed by plan B's config.config_id (which leaves board.firmware_version out, so the
-    /// stamp does not change it).
-    pub config_id: String,
-}
-
-/// The embedded default, parsed and stamped once. The fixture pins board.firmware_version to 'dev' (plan B reads
-/// it from a deploy-generated file), so the running document carries this build's version instead.
-pub fn defaults() -> &'static Defaults {
-    static DEFAULTS: OnceLock<Defaults> = OnceLock::new();
-    DEFAULTS.get_or_init(|| {
-        let mut defaults: Defaults = serde_json::from_str(include_str!("../../../golden/config_default.json"))
-            .expect("golden/config_default.json is generated, so it parses");
-        defaults.document["board"]["firmware_version"] = crate::board::FIRMWARE_VERSION.into();
-        defaults
-    })
-}
-
-impl Defaults {
-    /// The document's board.mcu.
-    pub fn mcu(&self) -> &str {
-        self.document["board"]["mcu"].as_str().unwrap_or("esp32p4")
-    }
-}
-
-/// `get-config [name]`: board/running/saved/default (all the built-in default for now) or launch.
+/// `get-config [name]`: board/running, saved, default, or launch (default `board`).
 pub fn get_config(message: &Message, context: &mut Context) -> Reply {
     match message.args.first().map_or("board", String::as_str) {
-        "board" | "running" | "saved" | "default" => super::ok_json(&defaults().document),
+        "board" | "running" => super::ok_json(&context.config.document),
+        "saved" => {
+            let saved = board_config::load(context.store.board().as_deref(), crate::config::defaults());
+            super::ok_json(&saved.document)
+        }
+        "default" => super::ok_json(crate::config::defaults()),
         "launch" => super::ok_json(&context.mission.persisted()),
         other => Err(Fault::new(Code::BadArguments, format!("unknown config {other}"))),
     }
 }
 
-/// `set-config <name> <json>`: launch merges into the mission and is saved; board waits for the config store.
+/// `set-config <name> <json>`: `board` validates and saves the whole document (it runs from the next boot) and
+/// replies its config_id; `launch` merges into the mission and is saved.
 pub fn set_config(message: &Message, context: &mut Context) -> Reply {
     let [name, payload, ..] = message.args.as_slice() else {
         return Err(Fault::new(Code::BadArguments, "set-config <name> <json>"));
     };
     let payload: Value = super::parse_json(payload, Code::BadArguments, Some("bad json"))?;
     match name.as_str() {
-        "board" => Err(Fault::new(Code::Unsupported, NO_STORE)),
+        "board" => {
+            // plan B config.save: an invalid config is never written
+            let errors = board_config::validate(&payload);
+            if !errors.is_empty() {
+                return Err(Fault::new(
+                    Code::Invalid,
+                    format!("invalid config: {}", errors.join("; ")),
+                ));
+            }
+            context
+                .store
+                .save_board(&board_config::write(&payload))
+                .map_err(|error| Fault::new(Code::Internal, format!("board.config not saved: {error}")))?;
+            let config_id = board_config::config_id(&payload);
+            log::info!("config :: saved {config_id} -- it runs from the next boot");
+            super::ok_json(&json!({"config_id": config_id}))
+        }
         "launch" => {
             let fields = payload
                 .as_object()
@@ -80,7 +69,11 @@ pub fn set_config(message: &Message, context: &mut Context) -> Reply {
     }
 }
 
-/// `reset-config`: waits for the config store.
-pub fn reset_config(_message: &Message, _context: &mut Context) -> Reply {
-    Err(Fault::new(Code::Unsupported, NO_STORE))
+/// `reset-config`: forget the saved board.config, so the next boot runs the default.
+pub fn reset_config(_message: &Message, context: &mut Context) -> Reply {
+    context
+        .store
+        .remove_board()
+        .map_err(|error| Fault::new(Code::Internal, format!("board.config not removed: {error}")))?;
+    Ok(cc_protocol::build("ok", &[], &[]))
 }

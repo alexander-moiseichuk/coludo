@@ -31,10 +31,14 @@ use crate::status::STATUS;
 pub struct Context {
     /// Who this board is, and its vitals.
     pub board: Arc<Board>,
-    /// The `cfg` settings store (launch.config).
+    /// The `cfg` settings store (board.config, launch.config).
     pub store: crate::config::Store,
     /// The per-launch mission (src/glider mission.Mission), owned here until a supervisor thread takes it.
     pub mission: Mission,
+    /// The board config this boot runs, how it was chosen, and its validation errors (plan B config.load).
+    pub config: board_config::Loaded,
+    /// The running config's id, hashed once at boot (it is immutable for the run).
+    pub config_id: String,
 }
 
 /// The error codes on the wire (cc-protocol.md "Errors"), as plan B answers them.
@@ -44,6 +48,8 @@ pub enum Code {
     BadCommand,
     /// Missing or malformed arguments.
     BadArguments,
+    /// A config the validator rejects.
+    Invalid,
     /// Refused for safety: in flight, or a failed arm gate.
     Unsafe,
     /// A device refused a property change.
@@ -60,6 +66,7 @@ impl Code {
         match self {
             Code::BadCommand => "badcmd",
             Code::BadArguments => "badargs",
+            Code::Invalid => "invalid",
             Code::Unsafe => "unsafe",
             Code::Refused => "refused",
             Code::Unsupported => "unsupported",

@@ -5,18 +5,18 @@ use esp_idf_svc::sys;
 use serde::Serialize;
 
 use super::{Context, Reply};
-use crate::board::{self, Board};
+use crate::board;
 use crate::clock;
 use crate::status::STATUS;
 
 /// The `iam` payload. Replies are typed structs, not `json!` values: a Value widens every f32 to f64 (a 33.3 °C
 /// reading prints as 33.29999923706055); a struct field serialises as f32.
 #[derive(Serialize)]
-struct Identity {
-    mcu: &'static str,
+struct Identity<'a> {
+    mcu: String,
     firmware_version: &'static str,
-    config_id: &'static str,
-    config_source: &'static str,
+    config_id: &'a str,
+    config_source: &'a str,
     stage: &'static str,
     uptime: i64,
     boot_id: Option<i32>,
@@ -27,12 +27,11 @@ struct Identity {
 
 /// `iam <id> <json>`: who the board is -- the one reply carrying the id.
 pub fn whoami(_message: &Message, context: &mut Context) -> Reply {
-    let defaults = super::config::defaults();
     let info = Identity {
-        mcu: defaults.mcu(),
+        mcu: board_config::mcu(&context.config.document),
         firmware_version: board::FIRMWARE_VERSION,
-        config_id: &defaults.config_id,
-        config_source: "default", // the config store lands with port plan M2
+        config_id: &context.config_id,
+        config_source: &context.config.source,
         stage: STATUS.stage().name(),
         uptime: board::uptime_ms(),
         boot_id: context.board.boot_id,
@@ -41,7 +40,7 @@ pub fn whoami(_message: &Message, context: &mut Context) -> Reply {
     };
     let json =
         serde_json::to_string(&info).map_err(|error| super::Fault::new(super::Code::Internal, error.to_string()))?;
-    Ok(cc_protocol::build("iam", &[context.board.id, &json], &[]))
+    Ok(cc_protocol::build("iam", &[&context.board.id, &json], &[]))
 }
 
 /// `pong`.
@@ -108,13 +107,14 @@ pub fn health(_message: &Message, context: &mut Context) -> Reply {
         site: Some(mission.site.clone()).filter(|site| !site.is_empty()),
         armed: STATUS.armed(),
         tasks: Vec::new(),
-        degraded: degraded(&context.board, mission),
+        degraded: degraded(context),
     };
     super::ok_json(&info)
 }
 
 /// The non-nominal states, one operator signal (src/glider cc_client health `degraded`). Empty = nominal.
-fn degraded(board: &Board, mission: &mission::Mission) -> Vec<String> {
+fn degraded(context: &Context) -> Vec<String> {
+    let (board, mission) = (&context.board, &context.mission);
     let mut degraded = Vec::new();
     // SAFETY: plain reads of flags hosted_no_reboot keeps.
     unsafe {
@@ -133,6 +133,10 @@ fn degraded(board: &Board, mission: &mission::Mission) -> Vec<String> {
     }
     if STATUS.manual() {
         degraded.push("STAGE HELD".into()); // an operator hold suppresses every stage detector
+    }
+    if context.config.source.starts_with("default(fallback") {
+        // board.config failed to load, so this airframe booted the bench default: id taster, watchdog off
+        degraded.push(format!("CONFIG FALLBACK -- {}", context.config.source));
     }
     if mission.site == "fallback" {
         degraded.push("cc-less-fallback".into());
