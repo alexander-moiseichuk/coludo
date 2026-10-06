@@ -44,6 +44,7 @@ typedef struct {
     uint8_t test_pattern;             /*!< 1: the sensor's colour bars instead of the image (pipeline check) */
     int8_t bayer;                     /*!< Bayer order for the ISP (0 RGGB, 1 GRBG, 2 GBRG, 3 BGGR), -1: the driver's */
     uint32_t sensor_clock_hz;         /*!< the module's oscillator (0 = 25 MHz); sets the frame-rate stretch */
+    uint8_t exposure_target;          /*!< the sensor AEC's mean linear luma, 8-bit (0: left as the registers hold it) */
 } coludo_video_config_t;
 
 /** Counters since the last start; all monotonic, kept after stop. */
@@ -62,13 +63,22 @@ typedef struct {
     uint32_t encode_microseconds_max;           /*!< longest esp_h264_enc_process() */
     uint64_t encode_microseconds_total;         /*!< sum of esp_h264_enc_process() durations */
     uint32_t write_microseconds_max;            /*!< longest single chunk write() */
+    uint64_t write_microseconds_total;          /*!< time in write() and fsync(): the card's busy time */
+    int64_t started_microseconds;               /*!< esp_timer when the stream came up (0: never) */
+    int64_t stopped_microseconds;               /*!< esp_timer when the file was closed (0: still recording) */
     uint32_t ring_used_max;           /*!< ring high-water mark in bytes */
+    uint16_t red_gain_thousandths;    /*!< the white-balance trim's red gain x 1000 (1000 = none) */
+    uint16_t blue_gain_thousandths;   /*!< the white-balance trim's blue gain x 1000 */
+    uint32_t balance_errors;          /*!< trims the ISP refused */
 } coludo_video_stats_t;
 
 /**
- * Opens the file, starts the writer and the encode task; the encode task brings up esp_video (CSI + ISP,
- * OV5647 detect over config->i2c_bus), the encoder and the stream on config->encode_core, so their
- * interrupts land there. Returns once streaming (or with the first error, everything undone).
+ * Opens the file, starts the writer and the encode task; the encode task starts the stream on config->encode_core,
+ * so its interrupts land there. The first start also opens the pipeline, which later starts reuse: the encoder (a
+ * start with another size or QP range reopens it) and the camera -- esp_video (CSI + ISP, OV5647 detect over
+ * config->i2c_bus), the capture buffers and the ISP tuning (another mode or Bayer order reopens it). Returns once
+ * streaming, or with the first error: the file and tasks undone, the camera closed, the encoder kept.
+ * ESP_ERR_INVALID_STATE after a failed STREAMOFF (nothing records again until a reboot).
  */
 esp_err_t coludo_video_start(const coludo_video_config_t *config);
 
@@ -78,7 +88,8 @@ esp_err_t coludo_video_force_idr(void);
 /** Copies the counters of the running (or the last) recording. */
 void coludo_video_stats(coludo_video_stats_t *stats);
 
-/** Stops capture, flushes the ring to the file, fsyncs and closes it, and releases every resource. */
+/** Stops the stream, flushes the ring to the file, fsyncs and closes it, and frees the recording's buffers. The
+ * pipeline stays open (its encoder holds a contiguous internal-RAM block a later start could not find again). */
 esp_err_t coludo_video_stop(void);
 
 #ifdef __cplusplus

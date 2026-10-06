@@ -36,6 +36,20 @@
 #define _REGISTER_VTS_LOW             0x380f
 #define _REGISTER_TEST_PATTERN        0x503d
 #define _TEST_PATTERN_COLOUR_BARS     0x80
+/* AEC: stable range in (WPT/BPT), stable range out (WPT2/BPT2), fast-zone limits (VPT high/low) */
+#define _REGISTER_AEC_WPT             0x3a0f
+#define _REGISTER_AEC_BPT             0x3a10
+#define _REGISTER_AEC_WPT2            0x3a1b
+#define _REGISTER_AEC_BPT2            0x3a1e
+#define _REGISTER_AEC_VPT_HIGH        0x3a11
+#define _REGISTER_AEC_VPT_LOW         0x3a1f
+/* AGC ceiling, real gain = value / 16 (10 bits) */
+#define _REGISTER_GAIN_CEILING_HIGH   0x3a18
+#define _REGISTER_GAIN_CEILING_LOW    0x3a19
+/** 8x: enough for a lit room, no worse grain; daylight runs at ~1x. */
+#define _GAIN_CEILING                 (8 * 16)
+/** Half-width of the AEC's stable range around the target (the stock tables use 4). */
+#define _AEC_STABLE_HALF_WIDTH        4
 
 static const char *TAG = "coludo_ov5647";
 
@@ -45,6 +59,12 @@ static esp_cam_sensor_ops_t _operations;
 static int (*_stock_priv_ioctl)(esp_cam_sensor_device_t *device, uint32_t command, void *argument);
 /** Frame rate the next stream-on programs; 0 keeps the mode's native rate. */
 static uint8_t _target_fps;
+/** The native VTS of _vts_format, read at its first stream-on: a stream restarted on the same mode must stretch from
+ * the native frame length, not from the one the previous stream-on already stretched. */
+static uint32_t _native_vts;
+static const esp_cam_sensor_format_t *_vts_format;
+/** AEC target the next stream-on programs; 0 keeps the stock tables'. */
+static uint8_t _exposure_target;
 /** The module's oscillator. The stock tables' native rates assume 25 MHz; a 24 MHz module (the taster's, found
  * from the SEI frame stamps: every rate came out 24/25 of the request) runs them 4 % slow. */
 static uint32_t _clock_hz = 25000000;
@@ -101,24 +121,60 @@ void coludo_ov5647_set_fps(uint8_t fps)
     _target_fps = fps;
 }
 
+void coludo_ov5647_set_exposure_target(uint8_t luma)
+{
+    _exposure_target = luma;
+}
+
+static esp_err_t _write(esp_cam_sensor_device_t *device, uint16_t address, uint8_t value)
+{
+    return esp_sccb_transmit_reg_a16v8(device->sccb_handle, address, value);
+}
+
+/** The AEC target (a stable range of +-4 around it, the stock tables' shape) and the AGC ceiling. */
+static esp_err_t _apply_exposure(esp_cam_sensor_device_t *device)
+{
+    ESP_RETURN_ON_ERROR(_write(device, _REGISTER_GAIN_CEILING_HIGH, _GAIN_CEILING >> 8), TAG, "gain ceiling");
+    ESP_RETURN_ON_ERROR(_write(device, _REGISTER_GAIN_CEILING_LOW, _GAIN_CEILING & 0xff), TAG, "gain ceiling");
+    if (_exposure_target == 0) {
+        return ESP_OK;
+    }
+    uint32_t target = _exposure_target < 2 * _AEC_STABLE_HALF_WIDTH ? 2 * _AEC_STABLE_HALF_WIDTH : _exposure_target;
+    uint32_t high = target + _AEC_STABLE_HALF_WIDTH > 0xff ? 0xff : target + _AEC_STABLE_HALF_WIDTH;
+    uint32_t low = target - _AEC_STABLE_HALF_WIDTH;
+    uint32_t fast_high = target + 3 * _AEC_STABLE_HALF_WIDTH > 0xff ? 0xff : target + 3 * _AEC_STABLE_HALF_WIDTH;
+    ESP_RETURN_ON_ERROR(_write(device, _REGISTER_AEC_WPT, high), TAG, "AEC");
+    ESP_RETURN_ON_ERROR(_write(device, _REGISTER_AEC_BPT, low), TAG, "AEC");
+    ESP_RETURN_ON_ERROR(_write(device, _REGISTER_AEC_WPT2, high), TAG, "AEC");
+    ESP_RETURN_ON_ERROR(_write(device, _REGISTER_AEC_BPT2, low), TAG, "AEC");
+    ESP_RETURN_ON_ERROR(_write(device, _REGISTER_AEC_VPT_HIGH, fast_high), TAG, "AEC");
+    ESP_RETURN_ON_ERROR(_write(device, _REGISTER_AEC_VPT_LOW, target / 2), TAG, "AEC");
+    return ESP_OK;
+}
+
 /** Stretches VTS (frame length in lines) so the mode runs at _target_fps on this module's oscillator. */
 static esp_err_t _apply_fps(esp_cam_sensor_device_t *device)
 {
+    if (_vts_format != device->cur_format) {
+        uint8_t high;
+        uint8_t low;
+        ESP_RETURN_ON_ERROR(esp_sccb_transmit_receive_reg_a16v8(device->sccb_handle, _REGISTER_VTS_HIGH, &high), TAG, "read VTS");
+        ESP_RETURN_ON_ERROR(esp_sccb_transmit_receive_reg_a16v8(device->sccb_handle, _REGISTER_VTS_LOW, &low), TAG, "read VTS");
+        _native_vts = ((uint32_t)high << 8) | low;
+        _vts_format = device->cur_format;
+    }
     /* the mode's native rate on this oscillator, in milli-fps (integer: the rate scales with the clock) */
     uint32_t native_millifps = (uint32_t)((uint64_t)device->cur_format->fps * 1000 * _clock_hz / 25000000);
-    if (_target_fps == 0 || (uint32_t)_target_fps * 1000 >= native_millifps) {
-        return ESP_OK; /* the native frame length is the shortest: cannot go faster */
+    uint32_t vts = _native_vts;  /* the native frame length is the shortest: a rate at or above it runs native */
+    if (_target_fps != 0 && (uint32_t)_target_fps * 1000 < native_millifps) {
+        vts = (_native_vts * native_millifps + _target_fps * 500) / (_target_fps * 1000);
     }
-    uint8_t high;
-    uint8_t low;
-    ESP_RETURN_ON_ERROR(esp_sccb_transmit_receive_reg_a16v8(device->sccb_handle, _REGISTER_VTS_HIGH, &high), TAG, "read VTS");
-    ESP_RETURN_ON_ERROR(esp_sccb_transmit_receive_reg_a16v8(device->sccb_handle, _REGISTER_VTS_LOW, &low), TAG, "read VTS");
-    uint32_t vts = ((uint32_t)high << 8) | low;
-    uint32_t stretched = (vts * native_millifps + _target_fps * 500) / (_target_fps * 1000);
-    ESP_RETURN_ON_ERROR(esp_sccb_transmit_reg_a16v8(device->sccb_handle, _REGISTER_VTS_HIGH, stretched >> 8), TAG, "write VTS");
-    ESP_RETURN_ON_ERROR(esp_sccb_transmit_reg_a16v8(device->sccb_handle, _REGISTER_VTS_LOW, stretched & 0xff), TAG, "write VTS");
-    ESP_LOGI(TAG, "VTS %" PRIu32 " -> %" PRIu32 " (%" PRIu32 " -> %u fps at %" PRIu32 " Hz)", vts, stretched,
-             native_millifps / 1000, _target_fps, _clock_hz);
+    /* written on every stream-on, native included: the camera stays open across recordings, so the register still
+     * holds the previous recording's stretch */
+    ESP_RETURN_ON_ERROR(esp_sccb_transmit_reg_a16v8(device->sccb_handle, _REGISTER_VTS_HIGH, vts >> 8), TAG, "write VTS");
+    ESP_RETURN_ON_ERROR(esp_sccb_transmit_reg_a16v8(device->sccb_handle, _REGISTER_VTS_LOW, vts & 0xff), TAG, "write VTS");
+    ESP_LOGI(TAG, "VTS %" PRIu32 " -> %" PRIu32 " (%" PRIu32 " fps native -> %u requested at %" PRIu32 " Hz)", _native_vts,
+             vts, native_millifps / 1000, _target_fps, _clock_hz);
     return ESP_OK;
 }
 
@@ -128,6 +184,7 @@ static int _priv_ioctl(esp_cam_sensor_device_t *device, uint32_t command, void *
         return _stock_priv_ioctl(device, command, argument);
     }
     ESP_RETURN_ON_ERROR(_apply_fps(device), TAG, "frame rate");
+    ESP_RETURN_ON_ERROR(_apply_exposure(device), TAG, "exposure");
     ESP_RETURN_ON_ERROR(esp_sccb_transmit_reg_a16v8(device->sccb_handle, _REGISTER_TEST_PATTERN,
                                                     _test_pattern ? _TEST_PATTERN_COLOUR_BARS : 0x00), TAG, "test pattern");
     ESP_RETURN_ON_ERROR(esp_sccb_transmit_reg_a16v8(device->sccb_handle, _REGISTER_MIPI_CTRL00, _MIPI_CTRL00_STREAMING), TAG, "MIPI_CTRL00");

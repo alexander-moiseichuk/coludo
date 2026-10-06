@@ -466,10 +466,47 @@ for these parts.
   - **Segments (operator, 2026-10-06):** on the pad the recorder starts a new file every 5 minutes, bounding what
     one damaged file can cost. Once ignition is detected the current file keeps running through the whole
     flight: a file switch never happens in the air.
-  - **Image tuning for flight:** the taster's 2026-10-06 daylight clip was sharp but rotated 90° (the module sits
-    sideways), lavender-cast (no AWB: Espressif's esp_ipa does not run on rev v1.3) and overexposed in the
-    whites (no AE). Set fixed daylight white-balance gains and a fixed exposure in the ISP; fix the rotation in
-    the mount or with the PPA.
+  - **Image tuning (done 2026-10-06, components/coludo_video):** the first taster clip was sharp, but
+    rotated 90° (the module sits sideways), flat and lavender-cast, with 24 % of the frame clipped and grain
+    indoors. Espressif's esp_ipa does not run on rev v1.3, so nothing tuned the ISP. Now:
+    - the sensor's own AEC aims at a mean linear luma of 48 instead of 84 (GCL `video start ae=`), under an 8×
+      gain ceiling instead of 64×;
+    - the ISP runs a Bayer denoise and the OV5647's colour matrix (both from esp_cam_sensor's
+      `ov5647_default.json`), plus a BT.709 gamma curve;
+    - a grey-world trim, once a second from 16 sampled rows, sets the ISP's red/blue gains over the sensor's
+      AWB. It converged in about a second to R 0.94 / B 0.91.
+    - Result: neutral whites (mean R 101 G 102 B 101), 7 % clipped (a sunlit window), no grain. Still open:
+      the rotation (fix it in the mount, or with the PPA). Optionally, freeze the trim at ignition.
+    - The taster's module (a Raspberry-Pi-style OV5647 board) is bench-only; it proves the pipeline. The flight
+      camera is the Arducam OV5647 (B012V1HEP4, ~3 g). Same chip, so the code and the colour matrix carry over.
+      Re-check per module:
+      - its oscillator: `OV5647_CLOCK_HZ` (the taster's is 24 MHz), measured from the SEI fps (`video_sei.py`);
+      - `bars`, to confirm the Bayer order;
+      - a daylight clip: `ae`, the trim's converged gains, the focus and the IR filter;
+      - the mounting rotation.
+  - **The pipeline stays open across recordings:** a second `video start` failed `No memory for reference
+    frame`. The H.264 encoder needs a contiguous block of INTERNAL RAM, and after a recording (or ~40 s of Wi-Fi
+    traffic) the internal heap no longer had one (largest block 75–80 KB). The first start opens esp_video, the
+    capture buffers, the ISP tuning and the encoder, and keeps them: ~160 KB internal plus ~12.6 MB PSRAM.
+    - A stop is STREAMOFF. A start re-queues, sets rate control, forces an IDR, and does STREAMON (which also
+      rewrites VTS and the AEC target).
+    - The two halves close separately. The encoder opens first and closes only for another size or QP range. The
+      camera closes for another mode or Bayer order, and after a failed start, without the encoder.
+    - A failed STREAMOFF wedges the recorder until a reboot: DMA may still be writing the buffers, so nothing is
+      freed.
+    - This also suits the 5-minute segments above.
+  - **Open: sporadic single missed frames:** about 1 in 300, with Wi-Fi up. At FHD@25 the encoder takes 36 of the
+    40 ms on core 0, beside esp_hosted and lwIP. The radio is off in flight (from BOOSTING).
+  - **Wi-Fi vs camera RAM:** with the encoder's internal block held, a full-speed download asserted inside
+    esp_hosted (`transport_drv.c:267 copy_buff`: every TX frame is copied into a fresh INTERNAL|DMA buffer) and
+    rebooted the board. The same would happen to any heavy pad traffic while recording. Fix:
+    `CONFIG_SPIRAM_TRY_ALLOCATE_WIFI_LWIP=y` (lwIP's heap in PSRAM). Proof:
+    - 3/3 resets with a 14 s recording across the Wi-Fi join, then 3 × 14 MB downloads, at 3.3–4.4 MB/s;
+    - 40 MB of traffic, then 4 start/stop/download cycles; 113 KB internal stays free.
+  - **SD load (measured):** FHD@25 at 8 Mbit/s writes ~1.0 MB/s, and the card is busy 30–48 % of the wall time
+    (64 KB writes plus an fsync each second, ~2.9 MB/s effective through FAT; `video stats` reports
+    `sd_busy_pct`). The 2 MB ring peaked at 0.4–0.9 MB. Headroom without pre-cooking the card; pre-cooking stays
+    the operator's option for latency.
 - **Camera preview in CC (operator, 2026-10-06; the pad's killer feature):** check where the camera points
   without touching the airframe.
   - Board: once a second, the latest captured frame is scaled to 640×480 by the P4's PPA (which can also turn

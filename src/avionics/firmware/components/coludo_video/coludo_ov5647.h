@@ -17,3 +17,8 @@ void coludo_ov5647_set_bayer(int order);
 
 /** The module's oscillator in Hz (0 = 25 MHz, what the stock tables assume): the frame-rate stretch uses it. */
 void coludo_ov5647_set_clock(uint32_t hz);
+
+/** The sensor's own auto-exposure target on the next stream-on: the mean 8-bit luma of the linear image it holds.
+ * 0 writes nothing: the AEC keeps what the registers hold (the stock tables' 84 on a freshly opened camera, which
+ * clips whites; the previous recording's target on a kept-open one). */
+void coludo_ov5647_set_exposure_target(uint8_t luma);

@@ -14,7 +14,22 @@
  *   write:  whole 64 KB chunks from the ring -> write(); fsync() once a second; tail + close on stop
  * The CPU touches the YUV frame only through a cache write-back call; it copies the bitstream (~40 KB
  * per frame at 8 Mbit/s) once, into the ring.
+ *
+ * The pipeline is opened by the first recording and then kept: the encoder's reference buffer must be one contiguous
+ * block of INTERNAL RAM, and after a recording (or ~40 s of Wi-Fi traffic) the internal heap no longer has one (the
+ * taster's second start failed "No memory for reference frame" with 271 KB free, largest block 75 KB). A stop is
+ * STREAMOFF; a start re-queues the buffers, sets the rate control, forces an IDR and STREAMONs. It has two halves:
+ *   - the encoder: opened first (while the heap is whole), closed only for another size or QP range;
+ *   - the camera: esp_video (CSI + ISP + sensor), the capture buffers, the ISP tuning; closed for another mode or
+ *     Bayer order, and after a failed start (a clean slate) -- never taking the encoder with it.
+ * A failed STREAMOFF wedges the recorder: CSI/ISP may still be writing the buffers, so nothing is freed or started
+ * again until a reboot.
+ *
+ * Image tuning: no IPA runs on rev < 3 (esp_ipa ships no library for it), so the ISP gets a fixed tuning when the
+ * pipeline opens -- Bayer denoise, the OV5647's colour matrix (both from esp_cam_sensor's ov5647_default.json) and
+ * a BT.709 gamma curve. Exposure and white balance are the sensor's own (coludo_ov5647.c).
  */
+#include <math.h>
 #include <string.h>
 #include <fcntl.h>
 #include <unistd.h>
@@ -25,6 +40,7 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/semphr.h"
+#include "esp_cache.h"
 #include "esp_heap_caps.h"
 #include "esp_timer.h"
 #include "esp_log.h"
@@ -33,6 +49,7 @@
 #include "esp_video_init.h"
 #include "esp_video_device.h"
 #include "esp_video_ioctl.h"
+#include "esp_video_isp_ioctl.h"
 #include "esp_h264_enc_single_hw.h"
 #include "coludo_video.h"
 #include "coludo_ov5647.h"
@@ -51,23 +68,62 @@
 #define _SEI_BYTES_MAX          96
 #define _SEI_PAYLOAD_BYTES      36
 #define _TASK_STACK_BYTES       4096
+/** Bayer-filter denoise strength (the ISP's range is 2..20; ov5647_default.json uses 5). */
+#define _DENOISE_LEVEL          5
+/* Grey-world white-balance trim (see _trim_balance): once a second, from 2 x 8 rows of every 4th pixel pair */
+#define _BALANCE_PERIOD_FRAMES          25
+#define _BALANCE_ROW_PAIRS              8
+#define _BALANCE_PIXEL_PAIR_STEP        4
+/** Only mid-tones are evidence: clipped highlights and black noise carry no colour of the light. */
+#define _BALANCE_LUMA_LOW               24
+#define _BALANCE_LUMA_HIGH              230
+/** Fewer qualifying samples per chroma than this (a dark or blown-out frame): no trim. */
+#define _BALANCE_EVIDENCE_MIN           256
+/** Only near-neutral samples are evidence (|U| or |V| up to this): a blue sky or a green field is the scene's colour,
+ * not the light's, and would drag a plain grey-world mean. */
+#define _BALANCE_CHROMA_MAX             32
+/** The trim's range around the sensor's own white balance: a residual, not a white balance of its own (the taster
+ * settled at R 0.94 / B 0.91), so a scene that fools it cannot push the colours far. */
+#define _BALANCE_GAIN_MIN               0.7f
+#define _BALANCE_GAIN_MAX               1.4f
 
 static const char *TAG = "coludo_video";
 
+/** The camera pipeline: opened by the first recording, kept open after it (see the top of this file). Only the
+ * encode task of the running recording touches it (starts and stops never overlap). */
 typedef struct {
-    coludo_video_config_t config;
+    /* the camera half */
+    bool camera_open;                               /*!< everything in this half is up */
+    bool video_initialised;                         /*!< esp_video_init succeeded */
     int capture;                                    /*!< /dev/video0 file descriptor */
+    int isp;                                        /*!< /dev/video20 file descriptor: the ISP's controls */
     uint8_t *capture_buffers[_CAPTURE_BUFFERS];     /*!< MMAP'ed CSI/ISP output buffers (PSRAM, YUV420) */
+    uint16_t width;                                 /*!< the mode it was opened for */
+    uint16_t height;
+    int8_t bayer;
+    float red_gain;                                 /*!< white-balance trim, kept from one recording to the next */
+    float blue_gain;
+    /* the encoder half */
     esp_h264_enc_handle_t encoder;
     esp_h264_enc_param_hw_handle_t encoder_parameters;
+    uint16_t encoder_width;                         /*!< what it was allocated for */
+    uint16_t encoder_height;
+    uint8_t qp_min;
+    uint8_t qp_max;
+    bool wedged;                                    /*!< a STREAMOFF failed: no start until a reboot */
+} _pipeline_t;
+
+static _pipeline_t _pipeline = {.capture = -1, .isp = -1};
+
+/** One recording: its file, ring and tasks. */
+typedef struct {
+    coludo_video_config_t config;
     uint8_t *frame;                                 /*!< encoder output, config.frame_bytes (PSRAM) */
     uint8_t *ring;                                  /*!< bitstream ring, ring_bytes (PSRAM) */
     uint32_t ring_bytes;                            /*!< config.ring_bytes rounded up to a whole chunk */
     atomic_uint_least32_t ring_head;                /*!< bytes produced, modulo 2^32 */
     atomic_uint_least32_t ring_tail;                /*!< bytes consumed, modulo 2^32 */
     int file;
-    bool video_initialised;                         /*!< esp_video_init succeeded */
-    bool streaming;                                 /*!< STREAMON succeeded */
     TaskHandle_t write_task;
     SemaphoreHandle_t finished;                     /*!< given once by each task when it exits */
     SemaphoreHandle_t started;                      /*!< given by the encode task once the pipeline is up (or failed) */
@@ -154,7 +210,7 @@ static void _put_access_unit(_recorder_t *recorder, const esp_h264_enc_out_frame
     uint32_t head = atomic_load(&recorder->ring_head);
     uint32_t used = head - atomic_load(&recorder->ring_tail);
     if (total > recorder->ring_bytes - used) {
-        esp_h264_enc_force_idr(&recorder->encoder_parameters->base);
+        esp_h264_enc_force_idr(&_pipeline.encoder_parameters->base);
         portENTER_CRITICAL(&_stats_lock);
         _stats.frames_dropped++;
         portEXIT_CRITICAL(&_stats_lock);
@@ -173,18 +229,115 @@ static void _put_access_unit(_recorder_t *recorder, const esp_h264_enc_out_frame
     portEXIT_CRITICAL(&_stats_lock);
 }
 
-static esp_err_t _open_pipeline(_recorder_t *recorder);
-static void _close_pipeline(_recorder_t *recorder);
+/** Grey-world evidence from one captured frame: sums over its mid-tone samples (U and V offset from 128). */
+typedef struct {
+    int32_t luma;
+    int32_t u;
+    int32_t v;
+    uint32_t u_count;
+    uint32_t v_count;
+} _chroma_t;
 
-/** Owns the pipeline: opens it on this core (so the CSI, ISP and H.264 interrupts land here), loops, closes it. */
+/**
+ * Samples _BALANCE_ROW_PAIRS row pairs spread over the frame, every _BALANCE_PIXEL_PAIR_STEP-th pixel pair. The
+ * layout is O_UYY_E_VYY: even rows [U Y Y] and odd rows [V Y Y] per pixel pair (esp_h264's test_apps/h264_io.c).
+ * The ISP wrote the frame by DMA, so each sampled row's cache lines are dropped first -- whole lines: a 1080p row
+ * is 2880 bytes = 45 x 64, the frame base is line-aligned. Called before the buffer goes back to the receiver.
+ */
+static void _measure_chroma(const uint8_t *frame, _chroma_t *chroma)
+{
+    const uint32_t row_bytes = (uint32_t)_pipeline.width * 3 / 2;
+    *chroma = (_chroma_t){0};
+    for (uint32_t pair = 0; pair < _BALANCE_ROW_PAIRS; pair++) {
+        uint32_t row = (uint32_t)(_pipeline.height / 2) * (2 * pair + 1) / (2 * _BALANCE_ROW_PAIRS) * 2;
+        for (uint32_t line = 0; line < 2; line++) {
+            const uint8_t *bytes = frame + (row + line) * row_bytes;
+            if (esp_cache_msync((void *)bytes, row_bytes, ESP_CACHE_MSYNC_FLAG_DIR_M2C | ESP_CACHE_MSYNC_FLAG_TYPE_DATA) != ESP_OK) {
+                continue;  /* no fresh view of this row: leave it out */
+            }
+            for (uint32_t index = 0; index + 2 < row_bytes; index += 3 * _BALANCE_PIXEL_PAIR_STEP) {
+                uint8_t luma = bytes[index + 1];
+                int32_t offset = (int32_t)bytes[index] - 128;
+                if (luma < _BALANCE_LUMA_LOW || luma > _BALANCE_LUMA_HIGH || offset > _BALANCE_CHROMA_MAX ||
+                    offset < -_BALANCE_CHROMA_MAX) {
+                    continue;
+                }
+                chroma->luma += luma;
+                if (line == 0) {
+                    chroma->u += offset;
+                    chroma->u_count++;
+                } else {
+                    chroma->v += offset;
+                    chroma->v_count++;
+                }
+            }
+        }
+    }
+}
+
+static float _clamp_gain(float gain)
+{
+    return gain < _BALANCE_GAIN_MIN ? _BALANCE_GAIN_MIN : gain > _BALANCE_GAIN_MAX ? _BALANCE_GAIN_MAX : gain;
+}
+
+/**
+ * Grey-world white-balance trim: moves the ISP's red and blue gains a damped step toward a grey mean of the
+ * near-neutral mid-tones.
+ *
+ * The sensor runs its own AWB, but leaves a few percent of magenta that the colour matrix (diagonal ~2) amplifies:
+ * the taster's white walls came out pink (mean R 112, G 104, B 118). This loop measures the FINAL image and trims
+ * what is left, so it converges whatever the matrix and gamma do. On rev < 3 (no white-balance block) esp_video
+ * folds the gains into the matrix's input columns. The step is the square root of the measured G/R and G/B ratios:
+ * through the matrix and gamma the loop gain is ~1, so the square root settles in a few seconds without overshoot.
+ */
+static void _trim_balance(const _chroma_t *chroma)
+{
+    if (chroma->u_count < _BALANCE_EVIDENCE_MIN || chroma->v_count < _BALANCE_EVIDENCE_MIN) {
+        return;
+    }
+    float luma = (float)chroma->luma / (float)(chroma->u_count + chroma->v_count);
+    float u = (float)chroma->u / (float)chroma->u_count;
+    float v = (float)chroma->v / (float)chroma->v_count;
+    /* the mean colour of the mid-tones (BT.601) */
+    float red = luma + 1.402f * v;
+    float green = luma - 0.344f * u - 0.714f * v;
+    float blue = luma + 1.772f * u;
+    if (red <= 0.0f || green <= 0.0f || blue <= 0.0f) {
+        return;
+    }
+    _pipeline.red_gain = _clamp_gain(_pipeline.red_gain * sqrtf(green / red));
+    _pipeline.blue_gain = _clamp_gain(_pipeline.blue_gain * sqrtf(green / blue));
+    struct v4l2_ext_control controls[] = {
+        {.id = V4L2_CID_RED_BALANCE, .value = (int32_t)(_pipeline.red_gain * V4L2_CID_RED_BALANCE_DEN + 0.5f)},
+        {.id = V4L2_CID_BLUE_BALANCE, .value = (int32_t)(_pipeline.blue_gain * V4L2_CID_BLUE_BALANCE_DEN + 0.5f)},
+    };
+    struct v4l2_ext_controls request = {
+        .ctrl_class = V4L2_CTRL_CLASS_USER,
+        .count = sizeof(controls) / sizeof(controls[0]),
+        .controls = controls,
+    };
+    bool failed = ioctl(_pipeline.isp, VIDIOC_S_EXT_CTRLS, &request) != 0;
+    portENTER_CRITICAL(&_stats_lock);
+    _stats.balance_errors += failed;
+    _stats.red_gain_thousandths = (uint16_t)(_pipeline.red_gain * 1000.0f + 0.5f);
+    _stats.blue_gain_thousandths = (uint16_t)(_pipeline.blue_gain * 1000.0f + 0.5f);
+    portEXIT_CRITICAL(&_stats_lock);
+}
+
+static esp_err_t _stream_on(const coludo_video_config_t *config);
+static void _stream_off(void);
+
+/** Runs one recording: streams on from this core (so the CSI and ISP interrupts land here; the H.264 one landed on the
+ * core of the recording that opened the pipeline), loops, streams off. */
 static void _encode_loop(void *argument)
 {
     _recorder_t *recorder = argument;
     const int64_t period_microseconds = 1000000 / recorder->config.fps;
     int64_t previous_microseconds = 0;
     uint32_t frame = 0;
+    uint32_t frames_since_balance = 0;
 
-    recorder->start_result = _open_pipeline(recorder);
+    recorder->start_result = _stream_on(&recorder->config);
     xSemaphoreGive(recorder->started);
     if (recorder->start_result != ESP_OK) {
         atomic_store(&recorder->stopping, true);
@@ -195,7 +348,7 @@ static void _encode_loop(void *argument)
             .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
             .memory = V4L2_MEMORY_MMAP,
         };
-        if (ioctl(recorder->capture, VIDIOC_DQBUF, &buffer) != 0) {
+        if (ioctl(_pipeline.capture, VIDIOC_DQBUF, &buffer) != 0) {
             portENTER_CRITICAL(&_stats_lock);
             _stats.capture_timeouts++;
             portEXIT_CRITICAL(&_stats_lock);
@@ -217,13 +370,24 @@ static void _encode_loop(void *argument)
         int64_t encode_start_microseconds = esp_timer_get_time();
         if (!(buffer.flags & V4L2_BUF_FLAG_ERROR)) {
             esp_h264_enc_in_frame_t in = {
-                .raw_data = {.buffer = recorder->capture_buffers[buffer.index], .len = buffer.bytesused},
+                .raw_data = {.buffer = _pipeline.capture_buffers[buffer.index], .len = buffer.bytesused},
                 .pts = (uint32_t)(uptime_microseconds / 1000),
             };
-            result = esp_h264_enc_process(recorder->encoder, &in, &out);
+            result = esp_h264_enc_process(_pipeline.encoder, &in, &out);
         }
         uint32_t encode_microseconds = (uint32_t)(esp_timer_get_time() - encode_start_microseconds);
-        ioctl(recorder->capture, VIDIOC_QBUF, &buffer);  /* back to the receiver before the copy */
+        /* the white-balance trim reads the frame before it goes back; the colour bars are left as they are */
+        _chroma_t chroma;
+        bool balance = ++frames_since_balance >= _BALANCE_PERIOD_FRAMES && !(buffer.flags & V4L2_BUF_FLAG_ERROR) &&
+                       recorder->config.test_pattern == 0;
+        if (balance) {
+            _measure_chroma(_pipeline.capture_buffers[buffer.index], &chroma);
+            frames_since_balance = 0;
+        }
+        ioctl(_pipeline.capture, VIDIOC_QBUF, &buffer);  /* back to the receiver before the copy */
+        if (balance) {
+            _trim_balance(&chroma);
+        }
 
         portENTER_CRITICAL(&_stats_lock);
         _stats.frames_captured++;
@@ -238,7 +402,9 @@ static void _encode_loop(void *argument)
         }
         /* any encoder error already made the next frame an IDR (esp_h264 >= 1.3.8) */
     }
-    _close_pipeline(recorder);
+    if (recorder->start_result == ESP_OK) {
+        _stream_off();
+    }
     atomic_store(&recorder->encode_finished, true);
     xTaskNotifyGive(recorder->write_task);
     xSemaphoreGive(recorder->finished);
@@ -255,16 +421,19 @@ static void _write_out(_recorder_t *recorder, uint32_t tail, uint32_t bytes)
     _stats.write_errors += written != (ssize_t)bytes;
     _stats.bytes_written += written > 0 ? (uint64_t)written : 0;
     _stats.write_microseconds_max = MAX(_stats.write_microseconds_max, took_microseconds);
+    _stats.write_microseconds_total += took_microseconds;
     portEXIT_CRITICAL(&_stats_lock);
 }
 
 static void _sync(_recorder_t *recorder)
 {
-    if (fsync(recorder->file) != 0) {
-        portENTER_CRITICAL(&_stats_lock);
-        _stats.write_errors++;
-        portEXIT_CRITICAL(&_stats_lock);
-    }
+    int64_t start_microseconds = esp_timer_get_time();
+    bool failed = fsync(recorder->file) != 0;
+    uint32_t took_microseconds = (uint32_t)(esp_timer_get_time() - start_microseconds);
+    portENTER_CRITICAL(&_stats_lock);
+    _stats.write_errors += failed;
+    _stats.write_microseconds_total += took_microseconds;  /* the card is as busy flushing as writing */
+    portEXIT_CRITICAL(&_stats_lock);
 }
 
 static void _write_loop(void *argument)
@@ -320,46 +489,117 @@ static esp_err_t _select_sensor_mode(int capture, uint16_t width, uint16_t heigh
     return ESP_ERR_NOT_SUPPORTED;
 }
 
-static esp_err_t _open_capture(_recorder_t *recorder)
+static esp_err_t _open_capture(const coludo_video_config_t *config)
 {
-    const coludo_video_config_t *config = &recorder->config;
-    recorder->capture = open(ESP_VIDEO_MIPI_CSI_DEVICE_NAME, O_RDONLY);
-    ESP_RETURN_ON_FALSE(recorder->capture >= 0, ESP_FAIL, TAG, "open %s", ESP_VIDEO_MIPI_CSI_DEVICE_NAME);
-    ESP_RETURN_ON_ERROR(_select_sensor_mode(recorder->capture, config->width, config->height), TAG, "sensor mode");
+    _pipeline.capture = open(ESP_VIDEO_MIPI_CSI_DEVICE_NAME, O_RDONLY);
+    ESP_RETURN_ON_FALSE(_pipeline.capture >= 0, ESP_FAIL, TAG, "open %s", ESP_VIDEO_MIPI_CSI_DEVICE_NAME);
+    ESP_RETURN_ON_ERROR(_select_sensor_mode(_pipeline.capture, config->width, config->height), TAG, "sensor mode");
 
     struct v4l2_format format = {
         .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
         .fmt.pix = {.width = config->width, .height = config->height, .pixelformat = V4L2_PIX_FMT_YUV420},
     };
-    ESP_RETURN_ON_FALSE(ioctl(recorder->capture, VIDIOC_S_FMT, &format) == 0, ESP_FAIL, TAG, "S_FMT YUV420");
+    ESP_RETURN_ON_FALSE(ioctl(_pipeline.capture, VIDIOC_S_FMT, &format) == 0, ESP_FAIL, TAG, "S_FMT YUV420");
 
     struct timeval timeout = {.tv_sec = _CAPTURE_TIMEOUT_MICROSECONDS / 1000000, .tv_usec = _CAPTURE_TIMEOUT_MICROSECONDS % 1000000};
-    ESP_RETURN_ON_FALSE(ioctl(recorder->capture, VIDIOC_S_DQBUF_TIMEOUT, &timeout) == 0, ESP_FAIL, TAG, "DQBUF timeout");
+    ESP_RETURN_ON_FALSE(ioctl(_pipeline.capture, VIDIOC_S_DQBUF_TIMEOUT, &timeout) == 0, ESP_FAIL, TAG, "DQBUF timeout");
 
     struct v4l2_requestbuffers request = {
         .count = _CAPTURE_BUFFERS,
         .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
         .memory = V4L2_MEMORY_MMAP,
     };
-    ESP_RETURN_ON_FALSE(ioctl(recorder->capture, VIDIOC_REQBUFS, &request) == 0, ESP_ERR_NO_MEM, TAG, "REQBUFS");
+    ESP_RETURN_ON_FALSE(ioctl(_pipeline.capture, VIDIOC_REQBUFS, &request) == 0, ESP_ERR_NO_MEM, TAG, "REQBUFS");
     for (uint32_t index = 0; index < _CAPTURE_BUFFERS; index++) {
         struct v4l2_buffer buffer = {
             .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
             .memory = V4L2_MEMORY_MMAP,
             .index = index,
         };
-        ESP_RETURN_ON_FALSE(ioctl(recorder->capture, VIDIOC_QUERYBUF, &buffer) == 0, ESP_FAIL, TAG, "QUERYBUF");
-        recorder->capture_buffers[index] = mmap(NULL, buffer.length, PROT_READ | PROT_WRITE, MAP_SHARED,
-                                                recorder->capture, buffer.m.offset);
-        ESP_RETURN_ON_FALSE(recorder->capture_buffers[index] != MAP_FAILED, ESP_FAIL, TAG, "mmap");
-        ESP_RETURN_ON_FALSE(ioctl(recorder->capture, VIDIOC_QBUF, &buffer) == 0, ESP_FAIL, TAG, "QBUF");
+        ESP_RETURN_ON_FALSE(ioctl(_pipeline.capture, VIDIOC_QUERYBUF, &buffer) == 0, ESP_FAIL, TAG, "QUERYBUF");
+        _pipeline.capture_buffers[index] = mmap(NULL, buffer.length, PROT_READ | PROT_WRITE, MAP_SHARED,
+                                                _pipeline.capture, buffer.m.offset);
+        ESP_RETURN_ON_FALSE(_pipeline.capture_buffers[index] != MAP_FAILED, ESP_FAIL, TAG, "mmap");
     }
     return ESP_OK;
 }
 
-static esp_err_t _open_encoder(_recorder_t *recorder)
+/** Hands every capture buffer to the receiver: once per recording, because STREAMOFF takes them all back. */
+static esp_err_t _queue_buffers(void)
 {
-    const coludo_video_config_t *config = &recorder->config;
+    for (uint32_t index = 0; index < _CAPTURE_BUFFERS; index++) {
+        struct v4l2_buffer buffer = {
+            .type = V4L2_BUF_TYPE_VIDEO_CAPTURE,
+            .memory = V4L2_MEMORY_MMAP,
+            .index = index,
+        };
+        ESP_RETURN_ON_FALSE(ioctl(_pipeline.capture, VIDIOC_QBUF, &buffer) == 0, ESP_FAIL, TAG, "QBUF %" PRIu32, index);
+    }
+    return ESP_OK;
+}
+
+/** BT.709's transfer curve (linear toe below 0.018, so the darkest noise is not amplified) at x of [0, 256]. */
+static uint8_t _gamma_709(uint32_t x)
+{
+    float linear = (float)x / 256.0f;
+    float encoded = linear < 0.018f ? 4.5f * linear : 1.099f * powf(linear, 0.45f) - 0.099f;
+    float y = encoded * 255.0f + 0.5f;
+    return y >= 255.0f ? 255 : (uint8_t)y;
+}
+
+/**
+ * The ISP's fixed tuning, set on /dev/video20 and applied by esp_video at every stream-on:
+ *   - Bayer-filter denoise (the stock pipeline runs none: the taster's indoor clip was grainy);
+ *   - the OV5647's colour matrix from esp_cam_sensor's ov5647_default.json -- every row sums to 1, so the sensor's
+ *     white balance stays neutral, and it restores the saturation the raw image lacks;
+ *   - a BT.709 gamma curve (the stock pipeline output linear light: dark midtones, so the AEC aimed high and clipped).
+ * The curve's 16 points crowd the dark end (the ISP wants power-of-two steps between them, ending at 255).
+ */
+static esp_err_t _tune_image(void)
+{
+    esp_video_isp_bf_t denoise = {
+        .enable = true,
+        .level = _DENOISE_LEVEL,
+        .matrix = {{1, 2, 1}, {2, 4, 2}, {1, 2, 1}},
+    };
+    esp_video_isp_ccm_t colour = {
+        .enable = true,
+        .matrix = {
+            {2.0000f, -0.5459f, -0.4541f},
+            {-0.4751f, 1.7696f, -0.2945f},
+            {-0.2002f, -0.7998f, 2.0000f},
+        },
+    };
+    static const uint8_t _GAMMA_X[ISP_GAMMA_CURVE_POINTS_NUM] = {
+        4, 8, 16, 24, 32, 48, 64, 80, 96, 112, 128, 160, 192, 224, 240, 255,
+    };
+    esp_video_isp_gamma_t gamma = {.enable = true};
+    for (int index = 0; index < ISP_GAMMA_CURVE_POINTS_NUM; index++) {
+        gamma.points[index].x = _GAMMA_X[index];
+        gamma.points[index].y = _gamma_709(_GAMMA_X[index] == 255 ? 256 : _GAMMA_X[index]);
+    }
+    struct v4l2_ext_control controls[] = {
+        {.id = V4L2_CID_USER_ESP_ISP_BF, .size = sizeof(denoise), .p_u8 = (uint8_t *)&denoise},
+        {.id = V4L2_CID_USER_ESP_ISP_CCM, .size = sizeof(colour), .p_u8 = (uint8_t *)&colour},
+        {.id = V4L2_CID_USER_ESP_ISP_GAMMA, .size = sizeof(gamma), .p_u8 = (uint8_t *)&gamma},
+    };
+    struct v4l2_ext_controls request = {
+        .ctrl_class = V4L2_CTRL_CLASS_USER,
+        .count = sizeof(controls) / sizeof(controls[0]),
+        .controls = controls,
+    };
+    /* kept open: the white-balance trim sets the ISP's gains through it once a second */
+    _pipeline.isp = open(ESP_VIDEO_ISP1_DEVICE_NAME, O_RDWR);
+    ESP_RETURN_ON_FALSE(_pipeline.isp >= 0, ESP_FAIL, TAG, "open %s", ESP_VIDEO_ISP1_DEVICE_NAME);
+    ESP_RETURN_ON_FALSE(ioctl(_pipeline.isp, VIDIOC_S_EXT_CTRLS, &request) == 0, ESP_FAIL, TAG, "ISP tuning");
+    _pipeline.red_gain = 1.0f;   /* the ISP's own: no balance gains until the first trim */
+    _pipeline.blue_gain = 1.0f;
+    return ESP_OK;
+}
+
+/** The encoder half: esp_h264's hardware encoder for this size and QP range (fps, GOP and bit rate are set per start). */
+static esp_err_t _open_encoder(const coludo_video_config_t *config)
+{
     esp_h264_enc_cfg_hw_t encoder_config = {
         .pic_type = ESP_H264_RAW_FMT_O_UYY_E_VYY,   /* = the ISP's V4L2_PIX_FMT_YUV420 layout */
         .gop = config->gop,
@@ -367,21 +607,58 @@ static esp_err_t _open_encoder(_recorder_t *recorder)
         .res = {.width = config->width, .height = config->height},
         .rc = {.bitrate = config->bitrate, .qp_min = config->qp_min, .qp_max = config->qp_max},
     };
-    ESP_RETURN_ON_FALSE(esp_h264_enc_hw_new(&encoder_config, &recorder->encoder) == ESP_H264_ERR_OK,
-                        ESP_ERR_NO_MEM, TAG, "esp_h264_enc_hw_new");
-    ESP_RETURN_ON_FALSE(esp_h264_enc_hw_get_param_hd(recorder->encoder, &recorder->encoder_parameters) == ESP_H264_ERR_OK,
+    ESP_RETURN_ON_FALSE(esp_h264_enc_hw_new(&encoder_config, &_pipeline.encoder) == ESP_H264_ERR_OK,
+                        ESP_ERR_NO_MEM, TAG, "esp_h264_enc_hw_new (internal RAM: %u free, largest block %u)",
+                        heap_caps_get_free_size(MALLOC_CAP_INTERNAL), heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL));
+    ESP_RETURN_ON_FALSE(esp_h264_enc_hw_get_param_hd(_pipeline.encoder, &_pipeline.encoder_parameters) == ESP_H264_ERR_OK,
                         ESP_FAIL, TAG, "encoder parameters");
-    ESP_RETURN_ON_FALSE(esp_h264_enc_open(recorder->encoder) == ESP_H264_ERR_OK, ESP_FAIL, TAG, "esp_h264_enc_open");
+    ESP_RETURN_ON_FALSE(esp_h264_enc_open(_pipeline.encoder) == ESP_H264_ERR_OK, ESP_FAIL, TAG, "esp_h264_enc_open");
+    _pipeline.encoder_width = config->width;
+    _pipeline.encoder_height = config->height;
+    _pipeline.qp_min = config->qp_min;
+    _pipeline.qp_max = config->qp_max;
     return ESP_OK;
 }
 
-static esp_err_t _open_pipeline(_recorder_t *recorder)
+/** Gives the encoder half back (whatever _open_encoder got through). */
+static void _close_encoder(void)
 {
-    esp_err_t ret = ESP_OK;  /* the name ESP_GOTO_ON_* assigns */
+    if (_pipeline.encoder != NULL) {
+        esp_h264_enc_close(_pipeline.encoder);
+        esp_h264_enc_del(_pipeline.encoder);
+    }
+    _pipeline.encoder = NULL;
+    _pipeline.encoder_parameters = NULL;
+}
+
+/** Gives the camera half back (whatever _open_camera got through), in reverse; never called while streaming. */
+static void _close_camera(void)
+{
+    if (_pipeline.capture >= 0) {
+        struct v4l2_requestbuffers request = {.type = V4L2_BUF_TYPE_VIDEO_CAPTURE, .memory = V4L2_MEMORY_MMAP};
+        ioctl(_pipeline.capture, VIDIOC_REQBUFS, &request);
+        close(_pipeline.capture);
+    }
+    if (_pipeline.isp >= 0) {
+        close(_pipeline.isp);
+    }
+    if (_pipeline.video_initialised) {
+        esp_video_deinit();
+    }
+    _pipeline.camera_open = false;
+    _pipeline.video_initialised = false;
+    _pipeline.capture = -1;
+    _pipeline.isp = -1;
+    memset(_pipeline.capture_buffers, 0, sizeof(_pipeline.capture_buffers));
+}
+
+/** The camera half: esp_video (CSI + ISP, OV5647 detect), the capture buffers and the ISP tuning, for this mode. */
+static esp_err_t _open_camera(const coludo_video_config_t *config)
+{
     const esp_video_init_csi_config_t csi = {
         .sccb_config = {
             .init_sccb = false,
-            .i2c_handle = recorder->config.i2c_bus,
+            .i2c_handle = config->i2c_bus,
             .freq = _SCCB_HZ,
         },
         .reset_pin = GPIO_NUM_NC,                   /* CSI_IO0 is a 10K pull-up to 3V3 on this board, IO1 unconnected */
@@ -389,40 +666,82 @@ static esp_err_t _open_pipeline(_recorder_t *recorder)
         .dont_init_ldo = false,                     /* esp_video takes LDO channel 3 at 2.5 V = VDD_MIPI_DPHY here */
     };
     const esp_video_init_config_t video = {.csi = &csi};
-    coludo_ov5647_set_fps(recorder->config.fps);
-    coludo_ov5647_set_test_pattern(recorder->config.test_pattern != 0);
-    coludo_ov5647_set_bayer(recorder->config.bayer);
-    coludo_ov5647_set_clock(recorder->config.sensor_clock_hz);
-    ESP_GOTO_ON_ERROR(esp_video_init_with_flags(&video, ESP_VIDEO_INIT_FLAGS_MIPI_CSI | ESP_VIDEO_INIT_FLAGS_ISP),
-                      done, TAG, "esp_video_init");
-    recorder->video_initialised = true;
-    ESP_GOTO_ON_ERROR(_open_capture(recorder), done, TAG, "capture");
-    ESP_GOTO_ON_ERROR(_open_encoder(recorder), done, TAG, "encoder");
+    coludo_ov5647_set_bayer(config->bayer);         /* read by the format query during detect */
+    ESP_RETURN_ON_ERROR(esp_video_init_with_flags(&video, ESP_VIDEO_INIT_FLAGS_MIPI_CSI | ESP_VIDEO_INIT_FLAGS_ISP),
+                        TAG, "esp_video_init");
+    _pipeline.video_initialised = true;
+    ESP_RETURN_ON_ERROR(_open_capture(config), TAG, "capture");
+    ESP_RETURN_ON_ERROR(_tune_image(), TAG, "image tuning");
+    _pipeline.width = config->width;
+    _pipeline.height = config->height;
+    _pipeline.bayer = config->bayer;
+    _pipeline.camera_open = true;
+    return ESP_OK;
+}
+
+/**
+ * Starts one recording's stream:
+ *   1. drops a half allocated for something else (the encoder for another size or QP range, the camera for another
+ *      mode or Bayer order);
+ *   2. opens what is missing, the encoder first, while the internal heap is least fragmented;
+ *   3. sets the encoder's rate control and an IDR first (the new file must decode from its first frame), queues the
+ *      buffers and STREAMONs -- which runs the sensor's stream-on (frame rate, exposure: coludo_ov5647.c) and starts
+ *      CSI + ISP.
+ * A failure closes the camera half (STREAMOFF resets nothing on a stream that never started, so the queues need the
+ * reopen) and keeps the encoder, whose internal-RAM block a reopen could not find again.
+ */
+static esp_err_t _stream_on(const coludo_video_config_t *config)
+{
+    esp_err_t ret = ESP_OK;  /* the name ESP_GOTO_ON_* assigns */
+    ESP_RETURN_ON_FALSE(!_pipeline.wedged, ESP_ERR_INVALID_STATE, TAG, "an earlier STREAMOFF failed: reboot to record");
+    if (_pipeline.encoder != NULL &&
+        (_pipeline.encoder_width != config->width || _pipeline.encoder_height != config->height ||
+         _pipeline.qp_min != config->qp_min || _pipeline.qp_max != config->qp_max)) {
+        ESP_LOGI(TAG, "new size or QP range: reopening the encoder");
+        _close_encoder();
+    }
+    if (_pipeline.camera_open &&
+        (_pipeline.width != config->width || _pipeline.height != config->height || _pipeline.bayer != config->bayer)) {
+        ESP_LOGI(TAG, "new mode or Bayer order: reopening the camera");
+        _close_camera();
+    }
+    coludo_ov5647_set_fps(config->fps);
+    coludo_ov5647_set_test_pattern(config->test_pattern != 0);
+    coludo_ov5647_set_clock(config->sensor_clock_hz);
+    coludo_ov5647_set_exposure_target(config->exposure_target);
+    if (_pipeline.encoder == NULL) {
+        ret = _open_encoder(config);
+        if (ret != ESP_OK) {
+            _close_encoder();
+            return ret;
+        }
+    }
+    if (!_pipeline.camera_open) {
+        ESP_GOTO_ON_ERROR(_open_camera(config), fail, TAG, "camera");
+    }
+    esp_h264_enc_param_handle_t parameters = &_pipeline.encoder_parameters->base;
+    ESP_GOTO_ON_FALSE(esp_h264_enc_set_fps(parameters, config->fps) == ESP_H264_ERR_OK &&
+                      esp_h264_enc_set_gop(parameters, config->gop) == ESP_H264_ERR_OK &&
+                      esp_h264_enc_set_bitrate(parameters, config->bitrate) == ESP_H264_ERR_OK &&
+                      esp_h264_enc_force_idr(parameters) == ESP_H264_ERR_OK,
+                      ESP_FAIL, fail, TAG, "rate control");
+    ESP_GOTO_ON_ERROR(_queue_buffers(), fail, TAG, "buffers");
     int type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    ESP_GOTO_ON_FALSE(ioctl(recorder->capture, VIDIOC_STREAMON, &type) == 0, ESP_FAIL, done, TAG, "STREAMON");
-    recorder->streaming = true;
-done:
+    ESP_GOTO_ON_FALSE(ioctl(_pipeline.capture, VIDIOC_STREAMON, &type) == 0, ESP_FAIL, fail, TAG, "STREAMON");
+    return ESP_OK;
+fail:
+    _close_camera();
     return ret;
 }
 
-/** Undoes whatever _open_pipeline got through, in reverse. */
-static void _close_pipeline(_recorder_t *recorder)
+/** Ends one recording's stream (sensor to standby, CSI + ISP stopped); both halves stay open for the next. */
+static void _stream_off(void)
 {
-    if (recorder->streaming) {
-        int type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-        ioctl(recorder->capture, VIDIOC_STREAMOFF, &type);
-    }
-    if (recorder->encoder != NULL) {
-        esp_h264_enc_close(recorder->encoder);
-        esp_h264_enc_del(recorder->encoder);
-    }
-    if (recorder->capture >= 0) {
-        struct v4l2_requestbuffers request = {.type = V4L2_BUF_TYPE_VIDEO_CAPTURE, .memory = V4L2_MEMORY_MMAP};
-        ioctl(recorder->capture, VIDIOC_REQBUFS, &request);
-        close(recorder->capture);
-    }
-    if (recorder->video_initialised) {
-        esp_video_deinit();
+    int type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+    if (ioctl(_pipeline.capture, VIDIOC_STREAMOFF, &type) != 0) {
+        /* CSI/ISP may still be writing the capture buffers: freeing them would let DMA write freed memory */
+        ESP_LOGE(TAG, "STREAMOFF failed: the recorder is wedged until a reboot");
+        _pipeline.wedged = true;
     }
 }
 
@@ -451,7 +770,6 @@ esp_err_t coludo_video_start(const coludo_video_config_t *config)
     _recorder_t *recorder = heap_caps_calloc(1, sizeof(_recorder_t), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
     ESP_RETURN_ON_FALSE(recorder != NULL, ESP_ERR_NO_MEM, TAG, "recorder");
     recorder->config = *config;
-    recorder->capture = -1;
     recorder->ring_bytes = (config->ring_bytes + _CHUNK_BYTES - 1) / _CHUNK_BYTES * _CHUNK_BYTES;
     recorder->ring = heap_caps_aligned_alloc(_CHUNK_BYTES, recorder->ring_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
     recorder->frame = heap_caps_calloc(1, config->frame_bytes, MALLOC_CAP_SPIRAM | MALLOC_CAP_CACHE_ALIGNED | MALLOC_CAP_8BIT);
@@ -479,12 +797,17 @@ esp_err_t coludo_video_start(const coludo_video_config_t *config)
     }
     xSemaphoreTake(recorder->started, portMAX_DELAY);
     if (recorder->start_result != ESP_OK) {
-        /* the encode task closed what it opened and exits; the writer closes the empty file */
+        /* _stream_on closed the pipeline and the encode task exits; the writer closes the empty file */
         xSemaphoreTake(recorder->finished, portMAX_DELAY);
         xSemaphoreTake(recorder->finished, portMAX_DELAY);
         ret = recorder->start_result;
         goto fail;
     }
+    portENTER_CRITICAL(&_stats_lock);
+    _stats.started_microseconds = esp_timer_get_time();
+    _stats.red_gain_thousandths = (uint16_t)(_pipeline.red_gain * 1000.0f + 0.5f);  /* the trim carried over */
+    _stats.blue_gain_thousandths = (uint16_t)(_pipeline.blue_gain * 1000.0f + 0.5f);
+    portEXIT_CRITICAL(&_stats_lock);
     _recorder = recorder;
     return ESP_OK;
 
@@ -498,7 +821,7 @@ fail:
 esp_err_t coludo_video_force_idr(void)
 {
     ESP_RETURN_ON_FALSE(_recorder != NULL, ESP_ERR_INVALID_STATE, TAG, "not started");
-    return esp_h264_enc_force_idr(&_recorder->encoder_parameters->base) == ESP_H264_ERR_OK ? ESP_OK : ESP_FAIL;
+    return esp_h264_enc_force_idr(&_pipeline.encoder_parameters->base) == ESP_H264_ERR_OK ? ESP_OK : ESP_FAIL;
 }
 
 void coludo_video_stats(coludo_video_stats_t *stats)
@@ -515,6 +838,9 @@ esp_err_t coludo_video_stop(void)
     atomic_store(&recorder->stopping, true);
     xSemaphoreTake(recorder->finished, portMAX_DELAY);  /* encode task (within one DQBUF timeout) */
     xSemaphoreTake(recorder->finished, portMAX_DELAY);  /* writer: tail written, fsync'ed, closed */
+    portENTER_CRITICAL(&_stats_lock);
+    _stats.stopped_microseconds = esp_timer_get_time();
+    portEXIT_CRITICAL(&_stats_lock);
     _recorder = NULL;
     _release(recorder);
     return ESP_OK;
