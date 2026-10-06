@@ -6,6 +6,7 @@
 mod board;
 mod commands;
 mod console;
+mod diagnostics;
 mod files;
 mod link;
 

@@ -734,3 +734,17 @@ xip_from_psram;video;sd_write_max;1080p25;133.2;ms
 xip_from_psram;video;ring_max;1080p25;442717;bytes
 xip_from_psram;video;die;1080p25;37.3;C
 xip_from_psram;video;http_download;sd;4.58;MB/s
+xip_from_psram;v5;cpu_core0;no_video;0.1;pct
+xip_from_psram;v5;cpu_core1;no_video;0.0;pct
+xip_from_psram;v5;cpu_core0;1080p25;13.1;pct
+xip_from_psram;v5;cpu_core1;1080p25;0.0;pct
+xip_from_psram;v5;cpu_video_write;1080p25;10.7;pct
+xip_from_psram;v5;cpu_video_encode;1080p25;2.3;pct
+xip_from_psram;v5;pace_esp_timer_max;no_video;59;us
+xip_from_psram;v5;pace_esp_timer_p999;1080p25;243;us
+xip_from_psram;v5;pace_esp_timer_max;1080p25;4146;us
+xip_from_psram;v5;pace_esp_timer_missed;1080p25;17;ticks_of_30000
+xip_from_psram;v5;pace_gptimer_core1_max;no_video;6;us
+xip_from_psram;v5;pace_gptimer_core1_p999;1080p25;18;us
+xip_from_psram;v5;pace_gptimer_core1_max;1080p25;139;us
+xip_from_psram;v5;pace_gptimer_core1_missed;1080p25;0;ticks_of_30000

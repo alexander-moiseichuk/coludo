@@ -6,7 +6,7 @@
 //! `c6reset` browns the Wi-Fi co-processor out on purpose, to prove a failing C6 link does not reboot the P4;
 //! `sdtest [megabytes] [kilobytes per second]` writes to the microSD (flat out, or paced) and reports the rate and
 //! the worst single write; `video start [width height fps kbit/s]` / `video stop` / `video stats` drive the
-//! camera recorder.
+//! camera recorder; `load [s]` / `pace [s]` price CPU and the flight loop's timing (src/diagnostics.rs).
 
 use std::io::{BufRead, Write};
 use std::sync::Arc;
@@ -104,6 +104,15 @@ fn operator(line: &str, board: &Board) -> Option<String> {
             })
         }
         "video" => Some(video(&message.args, board)),
+        "load" => Some(crate::diagnostics::load(seconds(&message.args, 5))),
+        "pace" => {
+            let source = if message.args.iter().any(|arg| arg == "gptimer") {
+                crate::diagnostics::Source::Gptimer
+            } else {
+                crate::diagnostics::Source::EspTimer
+            };
+            Some(crate::diagnostics::pace(seconds(&message.args, 10), source))
+        }
         "wifi" => Some(match message.args.as_slice() {
             [ssid, password] => match board.set_credentials(ssid, password) {
                 Ok(()) => cc_protocol::build("ok", &[ssid], &[]),
@@ -174,4 +183,12 @@ fn video_stats(state: &str) -> String {
     ];
     let named: Vec<(&str, &str)> = values.iter().map(|(key, value)| (*key, value.as_str())).collect();
     cc_protocol::build("ok", &["video", state], &named)
+}
+
+/// The first argument as whole seconds (1..=600), else `default`.
+fn seconds(args: &[String], default: u64) -> u64 {
+    args.first()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(default)
+        .clamp(1, 600)
 }

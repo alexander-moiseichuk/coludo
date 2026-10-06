@@ -132,6 +132,7 @@ cargo build --release                                   # all binaries; nightly 
 | `src/bin/dma.rs` | PSRAM/internal bandwidth through AXI-GDMA, by burst size and number of engines |
 | `src/bin/sd.rs` | microSD mount, write rate and per-write latency by chunk size and buffer, contiguous file |
 | `src/main.rs` console `video start [w h fps kbit/s] [bars] [bayer=N]` / `stop` / `stats` | the camera recorder; `tools/video_sei.py` reads its frame stamps |
+| `src/main.rs` console `load [s]`, `pace [s] [gptimer]` | per-core CPU load and top tasks; the 1 kHz loop's lateness (src/diagnostics.rs) |
 | `src/main.rs` | X1: console, panic → reboot, Wi-Fi through the C6, `whoami`/`health` to the CC hub |
 
 ## Results
@@ -338,6 +339,24 @@ Exact frame rates from the SEI stamps, 8 Mbit/s target, sensor at night (pure no
   registry -- there is no auto white balance or colour correction, the sensor's own auto-exposure only),
   orientation, the Arducam module's oscillator, CPU load and the 1 kHz loop with video running (V5).
 
+### What video costs the flight loop (V5)
+
+The avionics console's `load [s]` (FreeRTOS run-time stats) and `pace [s] [gptimer]` (a 1 kHz loop on core 1 at
+the flight thread's priority, 20) while 1080p25 records:
+
+| measure | no video | 1080p25 recording |
+|---|---:|---:|
+| CPU, core 0 | 0.1 % | **13.1 %** (SD writer 10.7 %, encoder 2.3 % -- it waits on the hardware) |
+| CPU, core 1 (flight) | 0.0 % | **0.0 %** |
+| 1 kHz loop, esp_timer (its task is on core 0): p99.9 / max / missed of 30 000 | 19 / 59 µs / 0 | 243 / **4146 µs / 17** |
+| 1 kHz loop, **gptimer interrupt on core 1**: p99 / p99.9 / max / missed | 0 / 1 / 6 µs / 0 | 11 / 18 / **139 µs / 0** |
+
+* **Video leaves the flight core alone** (0 % on core 1) and costs 13 % of core 0, mostly the SD writer (FatFs +
+  SDMMC at 1 MB/s) -- the one thing to optimise (larger chunks, raw sectors) if core 0 gets busy.
+* **Pacing from esp_timer is not good enough under video**: its task shares core 0 with the camera and SD traffic,
+  and ticks went missing. A gptimer interrupt allocated on core 1 holds the loop within 139 µs worst case.
+  The flight loop is paced by a core-1 timer interrupt (or the IMU's INT1 routed to core 1), never esp_timer.
+
 ### MicroPython 1.29.0 on the same board, the same day
 
 Flashed with `tools/flash_micropython.sh` (NVS kept), the existing benches run unchanged; raw logs in
@@ -381,7 +400,8 @@ test logged "Unrecoverable host sdio state, reset host mcu" and rebooted. Wi-Fi 
 
 ## Decided by these numbers
 
-* **D5 pacing:** esp_timer / IMU interrupt → task notify (not `sleep`). 400 Hz has headroom.
+* **D5 pacing:** a timer interrupt on core 1 (gptimer, or the IMU's INT1 routed to core 1) → task notify; never
+  `sleep`, and not esp_timer either (its task shares core 0 with video: 17 missed ticks per 30 s at 1 kHz).
 * **D6 storage tier:** keep the flash ring. Build with `CONFIG_SPIRAM_XIP_FROM_PSRAM=y`.
 * **D18 numerics:** f32 by default; f64 only where a critical computation needs it and the reason is written
   down -- never for incidentals like a temperature on the wire. In Rust the PID is plain f32 -- `fixed.py`'s
@@ -401,6 +421,6 @@ test logged "Unrecoverable host sdio state, reset host mcu" and rebooted. Wi-Fi 
   ~1 MB allocation and an assert. Fixing that needs a patched copy of the component. Also: never call
   `esp_hosted_deinit` with the SD card mounted (2.7.0 deinits the whole SDMMC host), and decide whether a parked
   link may reboot the board on the ground (never in flight; the post-landing beacon needs Wi-Fi).
-* **Camera, next:** daylight image + orientation; V5 (CPU load, the 1 kHz loop and B4's stall test with video
-  running); the Arducam module's oscillator; recording from the rod-placement event.
+* **Camera, next:** daylight image + orientation; B4's flash stall test with video running; the Arducam module's
+  oscillator; recording from the rod-placement event; the SD writer's 10.7 % of core 0.
 * **Pin the nightly** (`rust-toolchain.toml` says `nightly`; it was 1.101.0-nightly 2026-10-04 here).
