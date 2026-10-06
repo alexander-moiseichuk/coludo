@@ -1,0 +1,19 @@
+//! reboot -- restart the board (src/glider cc_client `_register_system`).
+
+use std::time::Duration;
+
+use cc_protocol::Message;
+
+use super::{Context, Reply};
+
+/// How long the reset waits, so the `ok` reaches the hub before the socket dies.
+const FLUSH: Duration = Duration::from_millis(200);
+
+/// `reboot`: replies `ok`, then restarts.
+pub fn reboot(_message: &Message, _context: &mut Context) -> Reply {
+    std::thread::spawn(|| {
+        std::thread::sleep(FLUSH);
+        esp_idf_svc::hal::reset::restart();
+    });
+    Ok(cc_protocol::build("ok", &[], &[]))
+}

@@ -11,7 +11,7 @@ use esp_idf_svc::nvs::EspDefaultNvsPartition;
 use esp_idf_svc::wifi::{BlockingWifi, ClientConfiguration, Configuration, EspWifi};
 
 use crate::board::Board;
-use crate::commands;
+use crate::commands::Executor;
 
 /// The hub's board port (src/glider cc_client: `cc_port`).
 const HUB_PORT: u16 = 1234;
@@ -26,6 +26,7 @@ pub fn run(
     event_loop: EspSystemEventLoop,
     partition: EspDefaultNvsPartition,
     board: &Board,
+    executor: &Executor,
 ) -> ! {
     let mut wifi = BlockingWifi::wrap(
         EspWifi::new(modem, event_loop.clone(), Some(partition)).expect("the C6 Wi-Fi driver"),
@@ -72,7 +73,7 @@ pub fn run(
         };
         let hub = (address.subnet.gateway, HUB_PORT);
         log::info!("link :: {} -> hub {}:{}", address.ip, hub.0, hub.1);
-        match TcpStream::connect(hub).and_then(|stream| serve(stream, board)) {
+        match TcpStream::connect(hub).and_then(|stream| serve(stream, executor)) {
             Ok(()) => log::info!("link :: hub closed the link"),
             Err(error) => log::warn!("link :: {error}"),
         }
@@ -114,7 +115,7 @@ fn join(wifi: &mut BlockingWifi<EspWifi<'static>>, ssid: &str, password: &str) -
 ///
 /// Reads and writes share the one socket through `&TcpStream`: `try_clone()` dups the descriptor, and lwIP
 /// sockets do not dup (ENOSYS).
-fn serve(stream: TcpStream, board: &Board) -> std::io::Result<()> {
+fn serve(stream: TcpStream, executor: &Executor) -> std::io::Result<()> {
     stream.set_read_timeout(Some(SILENT))?;
     stream.set_nodelay(true)?; // a reply is one small segment; never hold it back for the ACK of the last
     let mut writer = &stream;
@@ -125,7 +126,7 @@ fn serve(stream: TcpStream, board: &Board) -> std::io::Result<()> {
         if reader.read_line(&mut line)? == 0 {
             return Ok(());
         }
-        if let Some(mut reply) = commands::handle(line.trim(), board) {
+        if let Some(mut reply) = executor.ask(line.trim()) {
             reply.push('\n'); // one write per line: two would wait out the hub's delayed ACK (~150 ms)
             writer.write_all(reply.as_bytes())?;
         }

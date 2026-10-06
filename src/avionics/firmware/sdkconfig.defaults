@@ -125,3 +125,7 @@ CONFIG_FREERTOS_GENERATE_RUN_TIME_STATS=y
 CONFIG_FREERTOS_VTASKLIST_INCLUDE_COREID=y
 CONFIG_FREERTOS_RUN_TIME_COUNTER_TYPE_U64=y
 CONFIG_FREERTOS_RUN_TIME_STATS_USING_ESP_TIMER=y
+
+# lwIP's TCP/IP task on core 0: unpinned at priority 18 it can run on core 1, the flight core, beside the bus
+# owners (port plan §4.2). esp_hosted's own tasks are unpinned too; they need the OS-table hook (hosted_no_reboot).
+CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0=y
