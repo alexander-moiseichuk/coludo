@@ -105,7 +105,7 @@ Flag sets, each a full build of the same sources (`CARGO_PROFILE_RELEASE_*`; `os
 | release profile | **`opt-level=3`, `lto="fat"`, `codegen-units=1`** | fastest of seven flag sets on our own code, and smaller than plain O3 (see above) |
 | SIMD | esp-dsp (PIE + hardware loops) via FFI, for int16/int8 vector work | upstream LLVM cannot emit PIE; 13× on int16, 1.2× on f32 |
 | concurrency | one owner per resource; atomics + task notify; **no mutex in the hot path** | std Mutex 4.25 µs, FreeRTOS mutex 3.98 µs, atomics 59 ns |
-| floats | **f32 only -- no f64 anywhere** (JSON via typed structs; lat/lon in a local metric frame); never in an ISR | no double-precision unit: f64 is 10–15× slower; a float in an ISR aborts; `json!` widens f32 to f64 |
+| floats | **f32 by default**; f64 only with a stated reason in a genuinely critical spot (none so far: JSON via typed structs, lat/lon in a local metric frame); never a float in an ISR | no double-precision unit: f64 is 10–15× slower; a float in an ISR aborts; `json!` widens f32 to f64 |
 | temperature | on-die sensor (20..100 °C band, ±2 °C) on health and every bench | CPU load alone: +4 °C (see the soak) |
 | storage | flash declared 32 MB; **24 MB `log` partition** (0x800000 to the end) for the telemetry ring | 4-byte addressing verified across 16 MB; 0 missed ticks while writing above it; pre-erase 31 s |
 | Wi-Fi | power save off; one write per reply line; `TCP_NODELAY` | hub round trip 154 ms → 3 ms |
@@ -130,6 +130,7 @@ cargo build --release                                   # all binaries; nightly 
 | `src/bin/cases.rs` | our own flight functions, ported (twin of `src/glider/test/bench_cases.py`) |
 | `src/bin/soak.rs` | thermal soak: 10 min full load on both cores, then 3 min idle |
 | `src/bin/dma.rs` | PSRAM/internal bandwidth through AXI-GDMA, by burst size and number of engines |
+| `src/bin/sd.rs` | microSD mount, write rate and per-write latency by chunk size and buffer, contiguous file |
 | `src/main.rs` | X1: console, panic → reboot, Wi-Fi through the C6, `whoami`/`health` to the CC hub |
 
 ## Results
@@ -227,6 +228,33 @@ needs 4-byte addressing, which `CONFIG_ESPTOOLPY_FLASHSIZE_32MB` turns on in the
 | pre-erase all 24 MB | 31 s (a pad-time, one-off cost) |
 | capacity | at 80 KB/s (400 Hz × 200 B rows) the ring holds 5 min before the GC must have freed blocks |
 
+### The microSD (S1/S2, `src/bin/sd.rs`)
+
+Taster's card: SDHC, 29.8 GB, 4-bit at 40 MHz (high speed; UHS is excluded -- it drops LDO VO4 to 1.8 V, and VO4
+also feeds the IMU's SPI pins). Mounted on SDMMC slot 0 next to the C6 on slot 1 in **67 ms**, never formatted.
+Power: Q1 (SI2301CDS, P-channel) switches ESP_3V3 to the card, gate on **GPIO45 with a 10 k pull-down -- low = on**
+(the default), so GPIO45 high power-cycles a hung card. IDF 5.5.5's default host deinitialises per slot, so a
+failed SD mount cannot take the C6 link down. FatFs needs long file names enabled (8.3 by default).
+
+32 MB per row, sustained rate including the final fsync; every readback verified:
+
+| write chunk | buffer | rate | write p50 | p99 | max |
+|---|---|---:|---:|---:|---:|
+| 4 KB | internal | 1.8 MB/s | 1.7 ms | 10 ms | 61 ms |
+| 4 KB | PSRAM | 1.6 MB/s | 1.8 ms | 49 ms | 65 ms |
+| 32 KB | internal | **8.0 MB/s** | 3.8 ms | 20 ms | 24 ms |
+| 32 KB | PSRAM | 4.1 MB/s | 4.8 ms | 59 ms | 118 ms |
+| 128 KB | internal | 4.7 MB/s | 15 ms | 121 ms | 194 ms |
+| 128 KB | PSRAM | **6.5 MB/s** | 19 ms | 38 ms | 39 ms |
+| 512 KB | PSRAM | 4.1 MB/s | 94 ms | 425 ms | 473 ms |
+| 512 KB, preallocated contiguous file | PSRAM | 4.3 MB/s | 80 ms | 417 ms | 423 ms |
+
+* **The card sets the pace** (4–8 MB/s, with write stalls up to ~0.5 s -- the SD busy window), not FatFs: the
+  preallocated contiguous file (no FAT updates) is no faster. A faster card is the lever, if one is ever needed.
+* **For video that is comfortable**: 8 Mbit/s is 1 MB/s (4–8× headroom); a ~1–2 MB PSRAM bitstream ring absorbs
+  the 0.5 s stalls. Write in 32–128 KB chunks, not 512 KB.
+* Files: one directory per session id, names from the start uptime (`/video/<boot>/<uptime_ms>.h264`).
+
 ### PSRAM bandwidth as DMA sees it (B3b, `src/bin/dma.rs`)
 
 The camera, ISP and H.264 encoder move frames by DMA, so CPU copies (latency-bound, 57 MB/s) say little about
@@ -294,7 +322,8 @@ test logged "Unrecoverable host sdio state, reset host mcu" and rebooted. Wi-Fi 
 
 * **D5 pacing:** esp_timer / IMU interrupt → task notify (not `sleep`). 400 Hz has headroom.
 * **D6 storage tier:** keep the flash ring. Build with `CONFIG_SPIRAM_XIP_FROM_PSRAM=y`.
-* **D18 numerics:** f32 only, no f64 anywhere (operator's rule). In Rust the PID is plain f32 -- `fixed.py`'s
+* **D18 numerics:** f32 by default; f64 only where a critical computation needs it and the reason is written
+  down -- never for incidentals like a temperature on the wire. In Rust the PID is plain f32 -- `fixed.py`'s
   integers were a MicroPython GC workaround and cost the same here.
 * **Build:** `opt-level=3` + fat LTO + one codegen unit (fastest and smaller than plain O3).
 * **C6 link:** host-side guard instead of a C6 reflash; a link failure parks Wi-Fi, never reboots.
@@ -311,5 +340,5 @@ test logged "Unrecoverable host sdio state, reset host mcu" and rebooted. Wi-Fi 
   ~1 MB allocation and an assert. Fixing that needs a patched copy of the component. Also: never call
   `esp_hosted_deinit` with the SD card mounted (2.7.0 deinits the whole SDMMC host), and decide whether a parked
   link may reboot the board on the ground (never in flight; the post-landing beacon needs Wi-Fi).
-* **S1/S2:** SD on SDMMC slot 0 next to the C6 on slot 1. V1: the camera.
+* **S1 under load:** SD writes while the C6 carries hub traffic (both on one SDMMC host). V1: the camera.
 * **Pin the nightly** (`rust-toolchain.toml` says `nightly`; it was 1.101.0-nightly 2026-10-04 here).

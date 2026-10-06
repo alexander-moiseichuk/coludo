@@ -3,3 +3,4 @@
 #include "esp_dsp.h"
 #include "hosted_no_reboot.h"
 #include "esp_async_memcpy.h"
+#include "sd_card.h"
