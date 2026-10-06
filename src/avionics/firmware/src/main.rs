@@ -6,6 +6,7 @@
 mod board;
 mod commands;
 mod console;
+mod files;
 mod link;
 
 use std::sync::Arc;

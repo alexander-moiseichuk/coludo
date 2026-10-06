@@ -131,6 +131,7 @@ cargo build --release                                   # all binaries; nightly 
 | `src/bin/soak.rs` | thermal soak: 10 min full load on both cores, then 3 min idle |
 | `src/bin/dma.rs` | PSRAM/internal bandwidth through AXI-GDMA, by burst size and number of engines |
 | `src/bin/sd.rs` | microSD mount, write rate and per-write latency by chunk size and buffer, contiguous file |
+| `src/main.rs` console `video start [w h fps kbit/s] [bars] [bayer=N]` / `stop` / `stats` | the camera recorder; `tools/video_sei.py` reads its frame stamps |
 | `src/main.rs` | X1: console, panic → reboot, Wi-Fi through the C6, `whoami`/`health` to the CC hub |
 
 ## Results
@@ -293,6 +294,50 @@ video. AXI-GDMA async memcpy, MB/s of copy (each byte read once and written once
   250 MHz PSRAM option (+25%) exists only for rev v3.x silicon (`SPIRAM_SPEED_250M` depends on
   `!ESP32P4_SELECTS_REV_LESS_V3`; the v1.3 datasheet specifies 200 MHz).
 
+### The camera (V1/V3): OV5647 → ISP → H.264 → microSD (`components/coludo_video`)
+
+esp_video 2.5.0 + esp_cam_sensor 2.6.0 + esp_h264 1.4.1 (rev v1.x profile) + esp_sccb_intf 0.0.9, pinned to the
+IDF v5.5.5 tag. Capture through V4L2 (`/dev/video0`, 3 MMAP buffers in PSRAM) → the H.264 hardware encoder called
+directly (force-IDR, frame type, QP range) → a 2 MB PSRAM bitstream ring → an SD writer task (aligned 64 KB
+writes, fsync once a second) → `/sdcard/video/<session>/<start uptime ms>.h264`, raw Annex-B, an IDR every second.
+Every frame carries an SEI user-data NAL with boot id, frame number and the uptime at the end of its readout
+(`tools/video_sei.py` lists them); files come off the board over Wi-Fi (`GET /sd/...`, 4.6 MB/s).
+
+Board: a 22-pin 0.5 mm camera connector (Pi-5 style, 2 lanes), no camera power or reset pin, the MIPI PHY on LDO
+VO3. The camera's SCCB shares I2C port 0 (GPIO7/8) with the flight sensors, so the firmware owns port 0 as one
+`i2c_master` bus (`firmware::i2c`) and skips IDF's legacy-driver conflict check (esp-idf-hal links the legacy
+driver; it must never touch port 0).
+
+Found and fixed on the way:
+* **Stream-on** (esp-video-components #97): the stock driver writes `0x4800 = 0x14` and the receiver never sees
+  a frame; the component wraps the driver's stream-on (`0x34`) instead of patching it.
+* **Bayer order**: the stock tables run the readout mirrored but declare GBRG; the sensor's colour bars came out
+  green↔magenta swapped. Recorded once per order: **BGGR** gives the exact bars (white, yellow, cyan, green,
+  magenta, red, blue, black) -- what Linux's ov5647 driver declares. Overridden by wrapping the driver's format
+  table (esp_video resolves every format to the table entry, so a corrected copy only works as the table).
+* **The taster's module runs on a 24 MHz oscillator**: every frame rate came out exactly 24/25 of the request in
+  the SEI stamps (the tables assume 25 MHz). The frame-rate stretch now computes with the real clock.
+
+Exact frame rates from the SEI stamps, 8 Mbit/s target, sensor at night (pure noise: the hardest content):
+
+| mode | measured fps | encode avg / max | frame interval p50 / max | missed / dropped |
+|---|---:|---:|---:|---:|
+| 1920×1080 @ 20 (before the clock fix) | 19.20 | 34.3 / 36 ms | 52.1 / 53 ms | 0 / 0 |
+| 1920×1080 @ 25 (before the clock fix) | 24.00 | 35.9 / 61 ms | 41.7 / 62 ms | 1 / 0 |
+| **1920×1080 @ 25, 65 s** | **25.010** | **36.3 / 39 ms** | **40.0 / 45 ms** | **0 / 0** |
+| 1920×1080 @ 30 | 26.57 -- encoder-bound | 36.9 / 40 ms | 36.5 / 42 ms | -- |
+| 1280×960 binned @ 30 (before the clock fix) | 28.79 | 19.9 / 20 ms | 34.7 / 35 ms | 0 / 0 |
+| 1280×960 binned @ 45 (before the clock fix) | 43.20 | 21.1 / 23 ms | 23.1 / 23 ms | 0 / 0 |
+
+* **FHD @ 25 fps holds**: 1626 frames in 65 s, none missed or dropped, every frame decodes; 8 Mbit/s exactly;
+  worst SD write 133 ms; the ring peaked at 443 KB of 2 MB; die 37 °C while recording.
+* **FHD @ 30 is out on rev v1.3**: the encoder needs ~37 ms per 1080p frame (≈27 fps ceiling) -- before PSRAM
+  contention, which the DMA bench put at the edge too.
+* The binned 960p mode (the sensor's full field of view; 1080p is a centre crop) encodes in ~20 ms and runs 45 fps.
+* Open: a daylight image check (the night frames are sensor noise; without esp_ipa -- no rev<3 build in the
+  registry -- there is no auto white balance or colour correction, the sensor's own auto-exposure only),
+  orientation, the Arducam module's oscillator, CPU load and the 1 kHz loop with video running (V5).
+
 ### MicroPython 1.29.0 on the same board, the same day
 
 Flashed with `tools/flash_micropython.sh` (NVS kept), the existing benches run unchanged; raw logs in
@@ -356,6 +401,6 @@ test logged "Unrecoverable host sdio state, reset host mcu" and rebooted. Wi-Fi 
   ~1 MB allocation and an assert. Fixing that needs a patched copy of the component. Also: never call
   `esp_hosted_deinit` with the SD card mounted (2.7.0 deinits the whole SDMMC host), and decide whether a parked
   link may reboot the board on the ground (never in flight; the post-landing beacon needs Wi-Fi).
-* **V1: the camera** (component recipe ready: esp_video 2.5.0 + esp_cam_sensor 2.6.0 + esp_h264 1.4.1; start at
-  1080p20, then 25, fall back to the 960p binned full-field mode).
+* **Camera, next:** daylight image + orientation; V5 (CPU load, the 1 kHz loop and B4's stall test with video
+  running); the Arducam module's oscillator; recording from the rod-placement event.
 * **Pin the nightly** (`rust-toolchain.toml` says `nightly`; it was 1.101.0-nightly 2026-10-04 here).

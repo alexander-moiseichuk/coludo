@@ -32,6 +32,10 @@ pub fn run(
         event_loop,
     )
     .expect("the Wi-Fi event loop");
+    // the microSD over HTTP (recordings, logs) -- only now: the Wi-Fi driver brought up the TCP/IP stack it needs
+    let _files = crate::files::serve()
+        .inspect_err(|error| log::warn!("files :: {error}"))
+        .ok();
     let mut told = false;
     let mut parked = false;
     loop {

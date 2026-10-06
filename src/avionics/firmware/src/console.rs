@@ -5,7 +5,8 @@
 //! spaces travels as `base64:`); `reboot` restarts; `panic` panics on purpose, to prove a panic reboots;
 //! `c6reset` browns the Wi-Fi co-processor out on purpose, to prove a failing C6 link does not reboot the P4;
 //! `sdtest [megabytes] [kilobytes per second]` writes to the microSD (flat out, or paced) and reports the rate and
-//! the worst single write.
+//! the worst single write; `video start [width height fps kbit/s]` / `video stop` / `video stats` drive the
+//! camera recorder.
 
 use std::io::{BufRead, Write};
 use std::sync::Arc;
@@ -102,6 +103,7 @@ fn operator(line: &str, board: &Board) -> Option<String> {
                 (true, Err(error)) => cc_protocol::build("err", &["sdtest", &error.to_string()], &[]),
             })
         }
+        "video" => Some(video(&message.args, board)),
         "wifi" => Some(match message.args.as_slice() {
             [ssid, password] => match board.set_credentials(ssid, password) {
                 Ok(()) => cc_protocol::build("ok", &[ssid], &[]),
@@ -111,4 +113,65 @@ fn operator(line: &str, board: &Board) -> Option<String> {
         }),
         _ => None,
     }
+}
+
+/// `video start [width height fps kbit/s] [bars] [bayer=N]` (default 1920 1080 20 8000; `bars`: the sensor's
+/// colour-bar test pattern; `bayer=`: the ISP's Bayer order, 0 RGGB .. 3 BGGR, default the OV5647's BGGR) |
+/// `video stop` | `video stats`.
+fn video(args: &[String], board: &Board) -> String {
+    let number = |index: usize, default: u32| args.get(index).and_then(|value| value.parse().ok()).unwrap_or(default);
+    match args.first().map(String::as_str) {
+        Some("start") if !board.sd_mounted => cc_protocol::build("err", &["no-sd"], &[]),
+        Some("start") => {
+            let settings = firmware::video::Settings {
+                width: number(1, 1920) as u16,
+                height: number(2, 1080) as u16,
+                fps: number(3, 20) as u8,
+                kilobits: number(4, 8000),
+                test_pattern: args.iter().any(|arg| arg == "bars"),
+                bayer: args
+                    .iter()
+                    .find_map(|arg| arg.strip_prefix("bayer=").and_then(|value| value.parse().ok()))
+                    .unwrap_or(firmware::video::OV5647_BAYER),
+            };
+            let session = board.session().unwrap_or_else(|| "uncounted".into());
+            match firmware::video::start(&session, board.boot_id.unwrap_or(0) as u32, &settings) {
+                Ok(path) => cc_protocol::build("ok", &["video", &path], &[]),
+                Err(error) => cc_protocol::build("err", &["video", &error.to_string()], &[]),
+            }
+        }
+        Some("stop") => match firmware::video::stop() {
+            Ok(()) => video_stats("stopped"),
+            Err(error) => cc_protocol::build("err", &["video", &error.to_string()], &[]),
+        },
+        Some("stats") => video_stats("running"),
+        _ => cc_protocol::build(
+            "err",
+            &["usage", "video start [width height fps kbit/s] | stop | stats"],
+            &[],
+        ),
+    }
+}
+
+/// The recorder's counters as one `ok video <state> key=value...` line.
+fn video_stats(state: &str) -> String {
+    let stats = firmware::video::stats();
+    let average = stats.encode_microseconds_total / stats.frames_encoded.max(1) as u64;
+    let values = [
+        ("captured", stats.frames_captured.to_string()),
+        ("missed", stats.frames_missed.to_string()),
+        ("encoded", stats.frames_encoded.to_string()),
+        ("idr", stats.frames_idr.to_string()),
+        ("dropped", stats.frames_dropped.to_string()),
+        ("encode_errors", stats.encode_errors.to_string()),
+        ("timeouts", stats.capture_timeouts.to_string()),
+        ("write_errors", stats.write_errors.to_string()),
+        ("written", stats.bytes_written.to_string()),
+        ("encode_us_avg", average.to_string()),
+        ("encode_us_max", stats.encode_microseconds_max.to_string()),
+        ("write_us_max", stats.write_microseconds_max.to_string()),
+        ("ring_max", stats.ring_used_max.to_string()),
+    ];
+    let named: Vec<(&str, &str)> = values.iter().map(|(key, value)| (*key, value.as_str())).collect();
+    cc_protocol::build("ok", &["video", state], &named)
 }

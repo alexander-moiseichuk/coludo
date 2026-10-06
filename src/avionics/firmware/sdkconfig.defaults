@@ -63,3 +63,58 @@ CONFIG_LWIP_TCP_SACK_OUT=y
 # FatFs on the microSD: long file names (session files like 000135_flight.csv); FatFs defaults to 8.3 only
 CONFIG_FATFS_LFN_HEAP=y
 CONFIG_FATFS_MAX_LFN=255
+
+# ---------------------------------------------------------------------------------------------------------
+# Camera recorder (components/coludo_video): OV5647 on the 22-pin MIPI-CSI connector -> ISP -> H.264 HW
+# encoder -> Annex-B file on SD. esp_video 2.5.0 / esp_cam_sensor 2.6.0 / esp_ipa 2.4.0 / esp_h264 1.4.1.
+# ---------------------------------------------------------------------------------------------------------
+
+# esp_video's SCCB uses the new i2c_master driver while esp-idf-hal links the legacy one (the boot log's
+# "i2c: This driver is an old driver"); without this IDF aborts at boot. Safe only while the two never
+# drive the same port: the camera shares the firmware's own i2c_master bus on port 0 (SDA 7 / SCL 8).
+CONFIG_I2C_SKIP_LEGACY_CONFLICT_CHECK=y
+
+# Sensor: OV5647 only. Its stock auto-detect entry is replaced by coludo_video's (stream-on fix for
+# esp-video-components #97). Both RAW10 modes are compiled in so the mode is a runtime choice:
+# 1920x1080 (30 fps native, 408 Mbit/s/lane at 25 MHz) and 1280x960 binned (45 fps native).
+CONFIG_CAMERA_OV5647=y
+# CONFIG_CAMERA_OV5647_AUTO_DETECT_MIPI_INTERFACE_SENSOR is not set
+# CONFIG_CAMERA_OV5647_MIPI_RAW8_800X800_50FPS is not set
+CONFIG_CAMERA_OV5647_MIPI_RAW10_1920X1080_30FPS=y
+CONFIG_CAMERA_OV5647_MIPI_RAW10_1280X960_BINNING_45FPS=y
+CONFIG_CAMERA_OV5647_MIPI_DEFAULT_FMT_RAW10_1920X1080_30FPS=y
+# line-start/end short packets: the ISP is told to expect them (mipi_info.line_sync_en) and 0x4800 sends them
+CONFIG_CAMERA_OV5647_CSI_LINESYNC_ENABLE=y
+# fixed-focus lens, no VCM
+# CONFIG_CAMERA_OV5647_ENABLE_MOTOR_BY_GPIO0 is not set
+
+# esp_video: MIPI-CSI + ISP only; the H.264 encoder is driven through esp_h264 directly (force-IDR, frame
+# type), so the /dev/video11 M2M device is not built.
+CONFIG_ESP_VIDEO_ENABLE_MIPI_CSI_VIDEO_DEVICE=y
+CONFIG_ESP_VIDEO_DISABLE_MIPI_CSI_DRIVER_BACKUP_BUFFER=y
+CONFIG_ESP_VIDEO_ENABLE_ISP_VIDEO_DEVICE=y
+# The IPA (auto white balance, CCM, gamma) runs a task per frame; off: the OV5647 runs its own AEC/AGC,
+# static ISP tuning goes through /dev/video20. esp_ipa 2.4.0 (registry) has no rev<3 library; its v5.5
+# libesp_ipa.a carries no Zb*/esp.* opcodes (scanned), but the v6.0+ one does (sh1add/sh2add/sh3add).
+# CONFIG_ESP_VIDEO_ENABLE_ISP_PIPELINE_CONTROLLER is not set
+CONFIG_ESP_VIDEO_DISABLE_ISP_ERROR_INTERRUPT=y
+# CONFIG_ESP_VIDEO_ENABLE_HW_H264_VIDEO_DEVICE is not set
+# CONFIG_ESP_VIDEO_ENABLE_HW_JPEG_ENC_VIDEO_DEVICE is not set
+# CONFIG_ESP_VIDEO_ENABLE_DVP_VIDEO_DEVICE is not set
+# CONFIG_ESP_VIDEO_ENABLE_USB_UVC_VIDEO_DEVICE is not set
+
+# Keep the CSI frame-done interrupt alive while flash is erased/programmed (telemetry ring).
+# CONFIG_ISP_ISR_IRAM_SAFE=y does NOT compile on v5.5.5 (isp_core.c etc.: esp_ptr_in_iram undeclared,
+# no on_env_change member) -- leave it off; the ISP interrupt only feeds statistics, not frame delivery.
+CONFIG_CAM_CTLR_MIPI_CSI_ISR_CACHE_SAFE=y
+
+# No IPA pipeline: keep its algorithms out of the image (they are force-linked with -u otherwise)
+# CONFIG_ESP_IPA_IAN_ALGORITHM is not set
+# CONFIG_ESP_IPA_ADN_ALGORITHM is not set
+# CONFIG_ESP_IPA_AWB_ALGORITHM is not set
+# CONFIG_ESP_IPA_ACC_ALGORITHM is not set
+# CONFIG_ESP_IPA_AGC_ALGORITHM is not set
+# CONFIG_ESP_IPA_AEN_ALGORITHM is not set
+# CONFIG_ESP_IPA_AF_ALGORITHM is not set
+# CONFIG_ESP_IPA_ATC_ALGORITHM is not set
+# CONFIG_ESP_IPA_EXT_CONFIG is not set

@@ -1,0 +1,7 @@
+# Pinned to the set that resolves together on ESP-IDF v5.5.5 (2026-10-06): esp_video 2.5.0 pulls
+# esp_cam_sensor 2.6.0, esp_ipa 2.4.0, esp_sccb_intf 0.0.9, usb_host_uvc 2.5.2, cmake_utilities 0.5.3.
+dependencies:
+  idf: ">=5.5.5,<5.5.6"
+  espressif/esp_video: "==2.5.0"
+  espressif/esp_cam_sensor: "==2.6.0"
+  espressif/esp_h264: "==1.4.1"

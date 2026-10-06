@@ -50,7 +50,12 @@ remote_component = { name = "espressif/esp-dsp", version = "1.8.2" }
 remote_component = { name = "espressif/coremark", version = "1.1.0~2" }
 
 [[package.metadata.esp-idf-sys.extra_components]]
-component_dirs = ["components/coremark_entry", "components/hosted_no_reboot", "components/sd_card"]
+component_dirs = [
+    "components/coremark_entry",
+    "components/hosted_no_reboot",
+    "components/sd_card",
+    "components/coludo_video",
+]
 
 [[package.metadata.esp-idf-sys.extra_components]]
 bindings_header = "bindings.h"
