@@ -10,7 +10,9 @@ Since doc/specs/recorder-wire.md every line also carries the integrity wrapper `
 (tools/recorder_wire.py). A capture holding wrapped lines is read strictly: a line counts only when its
 checks pass, or when salvage proves which routing it belongs to, and a salvaged record is placed by its
 time, never where it happened to sit. An older capture, with no wrapper at all, is read on trust as it
-always was. line_counts() says how each line of the last capture was judged.
+always was. line_counts() says how each line of the last capture was judged. A wrapped capture is read through
+the duplicate filter first (recorder_wire.unique: a Rust board's session can hold a line twice), and
+duplicates() says how many lines it dropped.
 parse() reads a raw capture (both kinds interleaved) and returns the streams + logs; load() reads a
 capture file into it as UTF-8 with errors='surrogateescape', so the checks see the bytes the board sent
 and a byte the link damaged costs its row, never the whole read. Stdlib only, so it stays importable in
@@ -301,6 +303,7 @@ _PLACE_SLACK: int = 60_000_000  # us a recovered record may lie past the good li
                                 # drained; logs flushed in batches) -- any window under a wrap still places uniquely
 _SPLICED: list = []      # stream names whose line was found spliced, reset per parse()
 _COUNTS: dict = dict.fromkeys(('good', 'salvaged', 'rejected', 'legacy'), 0)  # line verdicts, per parse()
+_DUPLICATES: list = []   # the routing of each duplicate line the duplicate filter dropped, reset per parse()
 
 
 def name_hint(tag: str) -> str:
@@ -330,11 +333,20 @@ def line_counts() -> dict:
     return dict(_COUNTS)
 
 
+def duplicates() -> int:
+    """
+    How many lines the LAST parse() dropped as duplicates (recorder_wire.unique), before any verdict: they are
+    in none of line_counts(). 0 on a capture with none, and on an unwrapped one, which has no CRC to key them by.
+    """
+    return len(_DUPLICATES)
+
+
 def line_summary() -> str:
     """The LAST parse()'s line verdicts as one phrase, for the capture-health lines a tool prints."""
     if _COUNTS['legacy']:
         return '%d unchecked (a capture from before the integrity wrapper)' % _COUNTS['legacy']
-    return '%(good)d good, %(salvaged)d salvaged, %(rejected)d rejected' % _COUNTS
+    dropped = ', %d duplicates dropped' % len(_DUPLICATES) if _DUPLICATES else ''
+    return '%(good)d good, %(salvaged)d salvaged, %(rejected)d rejected' % _COUNTS + dropped
 
 
 def _entry(line: str) -> tuple:
@@ -681,6 +693,7 @@ def parse(text: str) -> tuple:
     streams = {}
     logs = []
     del _SPLICED[:]          # per-parse, so spliced_rows() describes THIS capture
+    del _DUPLICATES[:]       # and duplicates() too
     _COUNTS.update(dict.fromkeys(_COUNTS, 0))
     queue = [_entry(line) for line in (raw.strip() for raw in text.splitlines()) if line]
     good = {routing for _line, status, routing, _text in queue if status == recorder_wire.GOOD}
@@ -693,6 +706,14 @@ def parse(text: str) -> tuple:
     """
     wrapped = bool(good)
     if wrapped:
+        """
+        A duplicate goes before anything else sees it: filed twice, a row would sit twice in its stream and
+        a log line twice in the logs. Only lines that check out can be duplicates (recorder_wire.unique).
+        """
+        keep = recorder_wire.unique([(routing, text if status == recorder_wire.GOOD else None)
+                                     for _line, status, routing, text in queue])
+        _DUPLICATES.extend(entry[2] for entry, kept in zip(queue, keep) if not kept)
+        queue = [entry for entry, kept in zip(queue, keep) if kept]
         known = sorted((good - {None}) | {recorder_wire.SESSION_INDEX})
         tags = known
     else:

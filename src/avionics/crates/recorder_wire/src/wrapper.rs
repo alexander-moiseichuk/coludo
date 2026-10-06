@@ -15,8 +15,9 @@
 //! round trip is exactly these bytes, and every index it compares at is an ASCII character's.
 //!
 //! The offline salvage of the host reference (`salvage`, `pieces`, `recover`, `fit`) is not ported: the board
-//! keeps a line only when it verifies under its own routing (doc/specs/avionics-port.md "SD mover"), and a
-//! flash frame is torn by a cut, not by the UART's lost bytes those rules repair.
+//! never reads a wrapped line back. The ring_saver prints every line itself from a record of a chunk whose CRC
+//! checked (doc/specs/avionics-port.md "The ring_saver"), and a cut tears a chunk whole, failing its CRC, not
+//! the UART's lost bytes those rules repair.
 
 use crate::crc::crc32;
 use alloc::vec::Vec;
@@ -57,7 +58,7 @@ pub fn checks(routing: Option<&[u8]>, payload: &[u8]) -> (u32, u32) {
 /// The wire line for `payload` under `routing` (None for a log line), with its `\n`.
 ///
 /// `payload` is the record without a line end. It must not hold a `\n` (that splits the line) nor a byte below
-/// 0x0A (recorderd and the mover drop those, so the line fails its check): the row and log text of this crate
+/// 0x0A (recorderd and [`crate::split`] drop those, so the line fails its check): the row and log text of this crate
 /// never does.
 pub fn wrap(routing: Option<&str>, payload: &[u8]) -> Vec<u8> {
     let routing_bytes = routing.map_or(0, |routing| routing.len() + 2);
@@ -66,7 +67,8 @@ pub fn wrap(routing: Option<&str>, payload: &[u8]) -> Vec<u8> {
     line
 }
 
-/// [`wrap`], appended to `line`: the flash writer's frame buffer takes one line after another without a copy.
+/// [`wrap`], appended to `line`: the ring_saver's batch buffer for a file takes one line after another without a
+/// copy.
 pub fn wrap_into(line: &mut Vec<u8>, routing: Option<&str>, payload: &[u8]) {
     let (open, close) = checks(routing.map(str::as_bytes), payload);
     if let Some(routing) = routing {

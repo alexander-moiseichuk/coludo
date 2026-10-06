@@ -1,27 +1,34 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! The recorder's producer side and its flash writer (doc/specs/avionics-port.md "Storage design": "Producer
-//! side", "The flash writer", "Row, log and index text", "CC tees and the HTTP exits"), the port of src/glider
+//! The recorder (doc/specs/avionics-port.md "Storage design": "Producer side", "The ring_writer", "The
+//! ring_saver" Decode, "Row, log and index text", "CC tees and the HTTP exits"), the port of src/glider
 //! recorder.py with the UART to the Luckfox replaced by the flash ring:
 //!
 //! ```text
 //! producers (any core) -- binary records --> PSRAM SPSC ring per thread --> Writer::step --> flash_ring::Ring
-//!   Telemetry::push, Recorder::log             (+ misc ring, try_lock)        | format, tee, wrap, cut
-//!                                                                             +--> CC tees (log, tlm)
+//!   Telemetry::push, Recorder::log             (+ misc ring, try_lock)        | verbatim, into chunks
+//!   Recorder::index_session                                                   +--> CC tees (log, tlm)
+//!
+//! flash block --> Decoder::block --> wire lines `[@<routing>@]{OPEN};<payload>;<CLOSE>\n` (ring_saver, /ring, tools)
 //! ```
 //!
 //! * [`Registry`]: the streams, built before any thread spawns and then fixed.
 //! * [`Recorder`]: the shared state, one per boot (`&'static` on the board): the producer rings, the tees, the
-//!   counters, and [`Recorder::log`], [`Recorder::index_session`], [`Recorder::stats`], [`Recorder::inspect`]
-//!   and [`Recorder::set_stats_ms`] (plan B's `update`).
+//!   counters, `writer_position`, the flight flag, and [`Recorder::log`], [`Recorder::index_session`],
+//!   [`Recorder::stats`], [`Recorder::inspect`] and [`Recorder::set_stats_ms`] (plan B's `update`).
 //! * [`Telemetry`]: a stream's producer side, `due`/`push`, owned by its thread.
-//! * [`Writer`]: the flash writer's loop body, [`Writer::step`], generic over [`flash_ring::Flash`].
+//! * [`Writer`]: the ring_writer's loop body, [`Writer::step`], generic over [`flash_ring::Flash`].
+//! * [`Decoder`]: a flash block back to the lines recorderd wrote, for the ring_saver and the tools.
+//!
+//! Nothing on a producer's path or in the writer prints a record: the records are binary from the producer to
+//! flash, and only the decoder and a tee's drain make text, off the flight path (invariant 4).
 //!
 //! Portable and host-tested; it runs on the ESP32-P4 (rv32imafc) too, so it holds no 64-bit atomic (the P4 has
 //! none) and no mutex on a producer's path. It needs std for the thread-local ring binding and the locks that
 //! guard the shared `misc` ring and a tee's consumer side, neither on a hot path.
 
 mod byte_ring;
+mod decoder;
 mod published;
 mod record;
 mod recorder;
@@ -30,10 +37,11 @@ mod tee;
 mod telemetry;
 mod writer;
 
+pub use decoder::{BlockError, BlockSummary, DecodedLine, Decoder};
 pub use published::Stats;
-pub use recorder::{AttachError, Attachment, Buffers, Clock, Identity, Inspection, Overflow, Recorder, Settings};
+pub use recorder::{AttachError, Attachment, Buffers, Clock, Identity, Inspection, Overflow, Recorder, Settings, Wake};
 pub use recorder_wire::Cell;
 pub use registry::{Registry, RegistryError, Stream, StreamId};
 pub use tee::TeeBatch;
 pub use telemetry::Telemetry;
-pub use writer::{ANCHOR_AFTER_US, CUT_AGE_US, FRAME_BYTES, MERGE_HORIZON_US, Progress, Writer};
+pub use writer::{ANCHOR_AFTER_US, HEADER_REPEAT_BYTES, MERGE_HORIZON_US, Progress, TICK_US, Writer};

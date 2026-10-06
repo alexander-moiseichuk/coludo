@@ -272,41 +272,53 @@ pub struct SessionRow<'a> {
     pub cc_position: Option<(i32, i32)>,
 }
 
-impl SessionRow<'_> {
-    /// Append the row's text, the cells of [`SESSION_INDEX_HEADER`] in order.
+/// The cells of a session.csv row after its uptime: the columns of [`SESSION_INDEX_HEADER`] past `uptime`.
+pub const SESSION_INDEX_CELLS: usize = 10;
+
+impl<'a> SessionRow<'a> {
+    /// Append the row's text, the cells of [`SESSION_INDEX_HEADER`] in order: [`row`] of [`SessionRow::cells`],
+    /// so the text the board's ring_saver prints from a session.csv record and this text are one and the same.
     pub fn append_to(&self, line: &mut Vec<u8>) {
-        append(line, self.uptime_us);
-        line.push(b';');
-        if let Some(boot_id) = self.boot_id {
-            append(line, boot_id);
-        }
-        line.push(b';');
-        line.extend_from_slice(self.session.as_bytes());
-        line.push(b';');
-        if self.epoch >= CLOCK_SET_EPOCH {
+        let mut date = String::new();
+        row(line, self.uptime_us, &self.cells(&mut date));
+    }
+
+    /// The row's cells after its uptime, as a session.csv ROW record carries them (doc/specs/avionics-port.md
+    /// "Producer side": a session.csv row is a ROW to `session.csv` with Text and integer cells, never text made
+    /// on the flight path). [`row`] prints them behind the record's uptime as [`SessionRow::append_to`] writes the
+    /// row: a boot nothing counted, an unset clock's utc and utc_offset, and a missing CC position are empty Text
+    /// cells, and the free text goes through [`cell`]. The config id is a Text cell as it comes (it is hex, so
+    /// the Text cell's rule, a `;` or a control byte made a space, never changes it).
+    ///
+    /// `date` receives the utc cell's text, which that cell borrows: a set clock's `YYYY-MM-DDTHH:MM:SSZ`, else
+    /// nothing. It is cleared first.
+    pub fn cells<'b>(&'b self, date: &'b mut String) -> [Cell<'b>; SESSION_INDEX_CELLS]
+    where
+        'a: 'b,
+    {
+        date.clear();
+        let clock_set = self.epoch >= CLOCK_SET_EPOCH;
+        if clock_set {
             let (year, month, day, hour, minute, second) = civil(self.epoch);
-            let _ = write!(
-                Appender(line),
-                "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z"
-            );
+            let _ = write!(date, "{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z");
         }
-        line.push(b';');
-        let offset = self.utc_offset.filter(|minutes| UTC_OFFSET_MINUTES.contains(minutes));
-        if let (Some(minutes), true) = (offset, self.epoch >= CLOCK_SET_EPOCH) {
-            append(line, minutes);
-        }
-        for text in [cell(self.board), cell(self.firmware), self.config_id, cell(self.source)] {
-            line.push(b';');
-            line.extend_from_slice(text.as_bytes());
-        }
-        line.push(b';');
-        if let Some((latitude, _)) = self.cc_position {
-            append_degrees(line, latitude);
-        }
-        line.push(b';');
-        if let Some((_, longitude)) = self.cc_position {
-            append_degrees(line, longitude);
-        }
+        let date: &'b String = date;
+        let empty = Cell::Text("");
+        let offset = self
+            .utc_offset
+            .filter(|minutes| clock_set && UTC_OFFSET_MINUTES.contains(minutes));
+        [
+            self.boot_id.map_or(empty, |boot_id| Cell::I64(i64::from(boot_id))),
+            Cell::Text(self.session),
+            Cell::Text(date),
+            offset.map_or(empty, Cell::I32),
+            Cell::Text(cell(self.board)),
+            Cell::Text(cell(self.firmware)),
+            Cell::Text(self.config_id),
+            Cell::Text(cell(self.source)),
+            self.cc_position.map_or(empty, |(latitude, _)| Cell::E7(latitude)),
+            self.cc_position.map_or(empty, |(_, longitude)| Cell::E7(longitude)),
+        ]
     }
 }
 
@@ -337,8 +349,9 @@ impl Counters {
 /// `'session': '<s>'`.
 ///
 /// `members` follow `log` in their order, each `(key, value)` written `, '<key>': <value>`, with `value` already
-/// in Python repr: the flash writer's `'ring': {...}` (doc/specs/avionics-port.md, "The flash writer") and M4's
-/// `'mover': {...}`, whose figures their owners format. Plan B's message has none, so `&[]` writes it exactly.
+/// in Python repr: the ring's `'ring': {...}` (erased, unsaved and lost blocks, the positions) and the ring_saver's
+/// `'saver': {...}` (doc/specs/avionics-port.md M4), whose figures their owners format. Plan B's message has
+/// none, so `&[]` writes it exactly.
 ///
 /// `session` and each key are written between single quotes as they are: a prefix is letters, digits, `-` and
 /// `_`, and a key is an identifier, never a quote or backslash, which Python's repr would escape.
@@ -622,6 +635,45 @@ mod tests {
     }
 
     #[test]
+    fn a_session_row_is_typed_cells_that_print_as_its_text() {
+        let mut date = String::from("stale");
+        let set = time_set();
+        let cells = set.cells(&mut date);
+        assert_eq!(
+            cells,
+            [
+                Cell::I64(123),
+                Cell::Text("000123"),
+                Cell::Text("2026-10-03T14:21:07Z"),
+                Cell::I32(-240),
+                Cell::Text("taster"),
+                Cell::Text("2026.09.23.55c494a0c659"),
+                Cell::Text("3f2a91"),
+                Cell::Text("cc-auto"),
+                Cell::E7(255_144_000),
+                Cell::E7(-803_918_000),
+            ]
+        );
+        assert_eq!(row_text(set.uptime_us, &cells), session_text(set));
+        // negative: what has no value is an empty Text cell, never `None`
+        let bare = SessionRow {
+            boot_id: None,
+            epoch: 0,
+            cc_position: None,
+            board: "tms;7",
+            ..time_set()
+        };
+        let mut date = String::new();
+        let cells = bare.cells(&mut date);
+        let empty = Cell::Text("");
+        assert_eq!([cells[0], cells[2], cells[3], cells[4], cells[8], cells[9]], [empty; 6]);
+        assert_eq!(
+            row_text(0, &cells),
+            "0;;000123;;;;2026.09.23.55c494a0c659;3f2a91;cc-auto;;"
+        );
+    }
+
+    #[test]
     fn an_unset_clock_dates_nothing() {
         for epoch in [0, 946_684_800, 978_307_199] {
             let text = session_text(SessionRow { epoch, ..time_set() });
@@ -687,16 +739,13 @@ mod tests {
             "000123",
             &Counters::default(),
             &Counters::default(),
-            &[
-                ("ring", "{'erased_ahead': 380, 'formatting': False}"),
-                ("mover", "None"),
-            ],
+            &[("ring", "{'erased': 380, 'lost': 0}"), ("saver", "None")],
         );
         assert!(text.starts_with("{'session': '000123', 'tlm': {"), "{text}");
         assert!(
             text.ends_with(
                 "'log': {'count': 0, 'max': 0, 'dropped': 0}, \
-                 'ring': {'erased_ahead': 380, 'formatting': False}, 'mover': None}"
+                 'ring': {'erased': 380, 'lost': 0}, 'saver': None}"
             ),
             "{text}"
         );

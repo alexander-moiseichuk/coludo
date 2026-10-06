@@ -1,8 +1,9 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! CRC-32 as zlib and Python's `binascii.crc32` compute it (IEEE 802.3, the reflected polynomial 0xEDB88320):
-//! the wrapper's OPEN tag and the flash frame's checksums. A 256-entry table built at compile time (1 KiB of
-//! read-only data) instead of a crate: the wire needs this one function and nothing else from a CRC library.
+//! the wrapper's OPEN tag, and flash_ring's block and chunk checksums. A 256-entry table built at compile time
+//! (1 KiB of read-only data) instead of a crate: the wire needs this one function and nothing else from a CRC
+//! library.
 
 /// The reflected IEEE 802.3 polynomial, the one zlib, `binascii` and plan B's `_crc_table` use.
 const POLYNOMIAL: u32 = 0xEDB8_8320;

@@ -811,7 +811,7 @@
   }
  ],
  "meta": {
-  "commit": "76c138c418f780a41bf433756207931211199bf7",
+  "commit": "1f204b57fdfa4590bde43fde9954fbafafd7925d",
   "generator": "recorder_wire",
   "glider_tree": "8e20aa5f6ec48c5dfb57d2cab8173877d2db3981",
   "python": "3.12",
@@ -1567,11 +1567,11 @@
     "members": [
      [
       "ring",
-      "{'erased_ahead': 380, 'unconfirmed': 4, 'spill_frames': 0, 'formatting': False}"
+      "{'erased': 380, 'unsaved': 4, 'lost': 0, 'writer': (1234, 4040), 'saver': (1230, 0)}"
      ],
      [
-      "mover",
-      "{'lag_ms': 120, 'batches': 3}"
+      "saver",
+      "{'card': True, 'batches': 3, 'unsaved_s': 1.5}"
      ]
     ],
     "session": "000123",
@@ -1582,7 +1582,7 @@
     }
    },
    "name": "members_after_the_log",
-   "output": "{'session': '000123', 'tlm': {'count': 0, 'max': 3, 'dropped': 0}, 'log': {'count': 0, 'max': 2, 'dropped': 0}, 'ring': {'erased_ahead': 380, 'unconfirmed': 4, 'spill_frames': 0, 'formatting': False}, 'mover': {'lag_ms': 120, 'batches': 3}}"
+   "output": "{'session': '000123', 'tlm': {'count': 0, 'max': 3, 'dropped': 0}, 'log': {'count': 0, 'max': 2, 'dropped': 0}, 'ring': {'erased': 380, 'unsaved': 4, 'lost': 0, 'writer': (1234, 4040), 'saver': (1230, 0)}, 'saver': {'card': True, 'batches': 3, 'unsaved_s': 1.5}}"
   }
  ],
  "telemetry": [

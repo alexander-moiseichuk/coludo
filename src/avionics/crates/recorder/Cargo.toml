@@ -1,6 +1,6 @@
 [package]
 name = "recorder"
-description = "The recorder's producer side and flash writer: stream registry, Telemetry, per-thread PSRAM SPSC rings, CC tees, and the writer that formats, wraps and cuts frames into the flash ring (src/glider recorder.py; doc/specs/avionics-port.md, Storage design)"
+description = "The recorder: stream registry, Telemetry, per-thread PSRAM SPSC rings of binary records, the ring_writer that copies them verbatim into flash chunks, CC tees, and the block decoder back to wire lines (src/glider recorder.py; doc/specs/avionics-port.md, Storage design)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

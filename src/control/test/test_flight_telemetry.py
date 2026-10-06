@@ -4,8 +4,8 @@ Coludo project, copyright under MIT license, Alexander Moiseichuk
 Host (CPython) test for the flight telemetry parser (tools/flight_telemetry.py): demux a recorder
 capture into streams + logs, against both an explicit fixture and the synthetic flight, and read a
 capture carrying the integrity wrapper (doc/specs/recorder-wire.md) strictly -- good, salvaged and
-rejected lines -- while an unwrapped capture reads as it always did. Stdlib only (no plotly). Run by
-`make test`.
+rejected lines, a duplicate dropped before any verdict -- while an unwrapped capture reads as it always did.
+Stdlib only (no plotly). Run by `make test`.
 """
 
 import os
@@ -434,6 +434,28 @@ def test_an_unwrapped_line_in_a_wrapped_capture_is_rejected():
     assert len(streams['accel.csv'].rows) == 3 and logs[-1][1] == '{deadbeef};looks wrapped;<00000000>'
 
 
+
+def test_duplicates_are_dropped_before_any_verdict():
+    """
+    A Rust board's session can hold a line twice (doc/specs/avionics-port.md "Duplicates": a re-saved batch, a
+    program retried after it landed). The parser drops the later copy of each exact line before it judges any, so
+    every row and log line counts once and a repeated batch is no splice. A different row at the same uptime
+    stays. NEGATIVE: an unwrapped capture has no CRC to key a duplicate by, and keeps every line.
+    """
+    lines = _wire_lines()
+    other = recorder_wire.wrap('1010000;9.9;9.9;9.9', '000123_accel.csv').rstrip('\n')  # its uptime, other values
+    streams, logs = flight_telemetry.parse('\n'.join(lines + lines[1:4] + lines[6:8] + [other]))
+    assert flight_telemetry.duplicates() == 5
+    assert flight_telemetry.line_counts() == {'good': len(_BOOT) + 1, 'salvaged': 0, 'rejected': 0, 'legacy': 0}
+    assert [row[0] for row in streams['accel.csv'].rows] == [0, 10000, 20000, 10000], streams['accel.csv'].rows
+    assert len(logs) == 2 and flight_telemetry.spliced(streams) == []
+    assert flight_telemetry.line_summary() == '%d good, 0 salvaged, 0 rejected, 5 duplicates dropped' % (len(_BOOT) + 1)
+    # NEGATIVE: the same lines unwrapped are all kept, and the count starts again with every parse
+    streams, logs = flight_telemetry.parse('\n'.join(_legacy_lines() + _legacy_lines()[1:4]))
+    assert flight_telemetry.duplicates() == 0 and flight_telemetry.line_counts()['legacy'] == len(_BOOT) + 3
+    assert len(streams['accel.csv'].rows) == 6 and '5 duplicates' not in flight_telemetry.line_summary()
+
+
 test_fixture()
 test_synthetic_flight()
 test_wire_vectors()
@@ -446,9 +468,10 @@ test_a_sparse_stream_times_nothing_past_a_wrap_it_missed()
 test_the_session_index_reads_as_rows()
 test_an_unwrapped_line_in_a_wrapped_capture_is_rejected()
 test_load_reads_the_bytes_the_board_sent()
+test_duplicates_are_dropped_before_any_verdict()
 print('ok: flight telemetry parser — streams + logs from fixture and synthetic flight; wrapped captures: '
       'wire vectors, legacy twin, salvage/reject per damage kind, recovered rows placed by time (across a '
       'wrap too; two boots rejected, log lines merged back, a junk row by its stream span, nothing by a '
       'sparse stream past a wrap it missed), the session '
       'index (boot/anchor rows, a clock never set, a label "session"), unwrapped lines in a wrapped '
-      'capture, load() on damaged bytes')
+      'capture, load() on damaged bytes, duplicates dropped before any verdict')

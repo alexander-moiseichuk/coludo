@@ -1,164 +1,177 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! The boot scan (doc/specs/avionics-port.md, "Boot scan and recovery"): it reads the 40 bytes at each block
-//! start (384 reads, ~8 ms on the board) and classifies the slot. Three facts make one header per block enough:
-//! * the writer programs a block in address order with its BOOT frame first;
-//! * GC erases a block's sectors in reverse order, so the header sector goes last;
-//! * a block that reads erased at offset 0 therefore holds nothing, and a block whose header is neither valid,
-//!   nor erased, nor a whole header of another layout version holds at most a torn BOOT frame.
+//! The bring-up scan (doc/specs/avionics-port.md, "Bring-up: the scan, the positions and the session-start
+//! record"). It reads the 56-byte header at each of the 6144 block starts (about 0.15 s, estimated) and classifies
+//! each slot into the [`BlockTable`] the three ring tasks share. It runs in the ring_writer thread before the first
+//! append, so the rest of boot goes on and the producers queue in PSRAM meanwhile.
 //!
-//! The writer still reads a whole block before its first program into it ([`crate::Ring`]), because a torn
-//! erase of the header sector can leave an erased header over a dirty sector.
+//! One header per block is enough to classify it, because a block is one erase sector and the writer programs its
+//! header first. What the header cannot show (a cut erase that left an erased header over dirty bytes) the writer
+//! catches with its full read of a block before it opens it.
+//!
+//! The ring positions in the `cfg` NVS are hints, written about once a second: the scan is the truth for what is
+//! in flash and where the writer goes. A hint only keeps the block sequence from going back. The previous boot
+//! may have opened blocks that are no longer in flash (saved and erased, or a header a cut tore), and a sequence
+//! number is never given twice.
+//!
+//! A hint is trusted only within [`HINT_REACH`] of the newest block in flash. One beyond it is corrupt, or was
+//! written in another build's encoding (a reboot in flight that came back on another image reads the positions
+//! the other image left). Taken as it is, it would push the numbering up to u32::MAX, where no block can open.
 
-use alloc::vec;
-use alloc::vec::Vec;
+use crate::header::{BlockHeader, HEADER_BYTES, VERSION};
+use crate::{BlockTable, Error, Flash, Geometry, Position, Slot};
 
-use crate::frame::{FrameError, HEADER_BYTES, Header, Kind};
-use crate::{Flash, Geometry};
+/// How far a hint may run ahead of the newest block in flash (of 0 when flash holds none) and still raise the
+/// numbering: 2^31 blocks, 8 TiB of writing, some 17 years at the flight rate. A real hint is at most a few blocks
+/// ahead (headers a cut tore or a failed program spent), or anywhere when the ring was erased whole; the reach
+/// takes both, and refuses the top half of the u32 range that only a corrupt hint reaches.
+pub const HINT_REACH: u32 = 1 << 31;
 
-/// What a slot holds, judged by its offset-0 header.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Slot {
-    /// The header reads all 0xFF: free for the writer, after its full read proves the rest erased too.
-    Erased,
-    /// A BOOT header for a block that belongs in this slot: ring data, erased only once the mover has
-    /// confirmed it.
-    Valid {
-        /// The block's sequence number.
-        block_sequence: u32,
-        /// The boot that opened it.
-        boot_id: u32,
-    },
-    /// Anything else: a torn BOOT, MicroPython-era filesystem data, a bench pattern, or a dirty block the
-    /// writer refused. It holds no recoverable ring data, so GC erases it without a confirmation.
-    Foreign,
-    /// A whole header (magic and header CRC good) of another layout version: ring data that a newer or older
-    /// firmware wrote and this one cannot read. It is no torn BOOT, so it may still be unmoved, and the board
-    /// never erases unconfirmed data on its own. GC idles at it, as at an unconfirmed block, until the
-    /// operator's discard.
-    OtherVersion,
+/// The ring positions a previous boot left in the `cfg` NVS, when there are any.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Hints {
+    /// The writer's last published position.
+    pub writer: Option<Position>,
+    /// The saver's last published position. It also chooses where the saver starts
+    /// ([`BlockTable::saver_start`]).
+    pub saver: Option<Position>,
 }
 
-impl Slot {
-    /// The block sequence of a valid slot. Returns None for any other.
-    pub fn block_sequence(self) -> Option<u32> {
-        match self {
-            Slot::Valid { block_sequence, .. } => Some(block_sequence),
-            Slot::Erased | Slot::Foreign | Slot::OtherVersion => None,
-        }
-    }
+/// What the bring-up scan found.
+#[derive(Debug)]
+pub struct Scan {
+    /// Every slot's state, for the writer, the eraser and the saver to share.
+    pub table: BlockTable,
+    /// The sequence the writer gives the first block it opens: one past the newest block in flash and every
+    /// hint within [`HINT_REACH`], so a new boot never reuses a number, nor appends to an old block. u32::MAX
+    /// when every number is spent: the writer then refuses to open a block ([`Error::Exhausted`]).
+    pub next_sequence: u32,
+    /// No block of any layout anywhere: an unformatted ring (spec "Bring-up", step 2). The firmware shows
+    /// `degraded: ring-unformatted` while this holds and [`crate::Figures::foreign`] is above 0, that is while
+    /// the eraser formats the foreign slots ahead of the writer. Only the scan can tell: once the writer has
+    /// opened a block, the table no longer shows it.
+    pub unformatted: bool,
 }
 
-/// Classifies slot `slot` by the bytes at its offset 0.
-///
-/// A header counts as valid only when it is a BOOT frame, the frame every block starts with, and its block
-/// sequence maps to this slot. A block found in the wrong slot comes from another geometry. Trusting it would
-/// break the FIFO the writer and GC walk. It stays foreign: the geometry is fixed for the partition, and a
-/// header check could not keep another geometry's blocks anyway, since their starts fall between this ring's.
-/// A version is different. Another layout version keeps the slots and the BOOT-first rule, so its header is
-/// found where this ring looks, and it is kept ([`Slot::OtherVersion`]).
-pub fn classify(slot: u32, header: &[u8], geometry: Geometry) -> Slot {
-    if header.iter().all(|&byte| byte == 0xFF) {
+/// What a slot holds, judged by the 56 bytes at its start: [`Slot::Erased`] when they are all 0xFF,
+/// [`Slot::Valid`] or [`Slot::OtherVersion`] for a whole header by its version, else [`Slot::Foreign`].
+/// The scan never finds a block open: a new boot opens a block of its own.
+pub fn classify(header: &[u8]) -> Slot {
+    if header
+        .get(..HEADER_BYTES)
+        .is_some_and(|header| header.iter().all(|&byte| byte == 0xFF))
+    {
         return Slot::Erased;
     }
-    match Header::decode(header) {
-        Ok(header) if header.kind == Kind::Boot && geometry.slot(header.block_sequence) == slot => Slot::Valid {
+    match BlockHeader::decode(header) {
+        Ok(header) if header.version == VERSION => Slot::Valid {
             block_sequence: header.block_sequence,
-            boot_id: header.boot_id,
+            flight: header.flight,
         },
-        Err(FrameError::Version) => Slot::OtherVersion,
-        _ => Slot::Foreign,
+        Ok(header) => Slot::OtherVersion {
+            block_sequence: header.block_sequence,
+            flight: header.flight,
+            version: header.version,
+        },
+        Err(_) => Slot::Foreign,
     }
 }
 
-/// Every slot of the ring, classified from its offset-0 header: one 40-byte read per block.
-pub fn scan<F: Flash>(flash: &F, geometry: Geometry) -> Result<Vec<Slot>, F::Error> {
-    let mut header = [0u8; HEADER_BYTES];
-    let mut slots = vec![Slot::Erased; geometry.blocks() as usize];
-    for (slot, state) in (0..geometry.blocks()).zip(slots.iter_mut()) {
-        flash.read(geometry.slot_offset(slot), &mut header)?;
-        *state = classify(slot, &header, geometry);
+/// Scans the ring: one 56-byte read per slot, classified into a new [`BlockTable`]. The writer's cursor goes to
+/// the newest block's slot (it opens the first erased slot after it), and [`Scan::next_sequence`] goes past the
+/// newest block and every hint within [`HINT_REACH`] of it.
+///
+/// Args:
+/// * `flash` - the `log` partition.
+/// * `geometry` - the ring's shape.
+/// * `hints` - the positions the previous boot left in the `cfg` NVS (none on a first boot).
+///
+/// Returns the scan. Errors: `Geometry` when the geometry is larger than the flash, and `Flash` when a read fails.
+pub fn scan<F: Flash>(flash: &F, geometry: Geometry, hints: Hints) -> Result<Scan, Error<F::Error>> {
+    if geometry.bytes() > flash.size() {
+        return Err(Error::Geometry);
     }
-    Ok(slots)
+    let table = BlockTable::new(geometry);
+    let mut header = [0u8; HEADER_BYTES];
+    let mut newest: Option<(u32, u32)> = None; // (block sequence, slot)
+    for slot in 0..geometry.blocks() {
+        flash
+            .read(geometry.slot_offset(slot), &mut header)
+            .map_err(Error::Flash)?;
+        let state = classify(&header);
+        if let Some(block_sequence) = state.block_sequence()
+            && newest.is_none_or(|(newest, _)| block_sequence > newest)
+        {
+            newest = Some((block_sequence, slot));
+        }
+        table.set(slot, state);
+    }
+    if let Some((_, slot)) = newest {
+        table.set_cursor(slot);
+    }
+    let reach = newest.map_or(0, |(newest, _)| newest).saturating_add(HINT_REACH);
+    let past_hints = [hints.writer, hints.saver]
+        .into_iter()
+        .flatten()
+        .map(|hint| hint.block_sequence)
+        .filter(|&block_sequence| block_sequence <= reach)
+        .map(|block_sequence| block_sequence.saturating_add(1));
+    // saturating: past a block numbered u32::MAX, u32::MAX itself says every number is spent
+    let next_sequence = newest
+        .map(|(newest, _)| newest.saturating_add(1))
+        .into_iter()
+        .chain(past_hints)
+        .max()
+        .unwrap_or(0);
+    Ok(Scan {
+        table,
+        next_sequence,
+        unformatted: newest.is_none(),
+    })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::Flags;
+    use crate::header::Session;
 
-    /// A BOOT header for `block_sequence`.
-    fn boot(block_sequence: u32) -> Vec<u8> {
-        Header {
-            kind: Kind::Boot,
-            flags: Flags::default(),
-            payload_length: 0,
+    /// The header of `block_sequence` in layout `version`.
+    fn header(block_sequence: u32, version: u8, flight: bool) -> [u8; HEADER_BYTES] {
+        BlockHeader {
+            version,
+            flight,
             block_sequence,
             boot_id: 9,
-            frame_sequence: 0,
-            uptime_us: 1,
+            session: Session::new("000009").unwrap(),
         }
-        .encode(b"")
-        .unwrap()
+        .encode()
     }
 
     #[test]
-    fn classifies_erased_valid_and_foreign() {
-        let geometry = Geometry::new(4, 1).unwrap();
-        assert_eq!(classify(1, &[0xFF; 40], geometry), Slot::Erased);
-        let valid = Slot::Valid {
-            block_sequence: 5,
-            boot_id: 9,
-        };
-        assert_eq!(classify(1, &boot(5), geometry), valid);
-        assert_eq!(valid.block_sequence(), Some(5));
-        assert_eq!(Slot::Foreign.block_sequence(), None);
-    }
-
-    #[test]
-    fn a_torn_wrong_kind_or_misplaced_header_is_foreign() {
-        let geometry = Geometry::new(4, 1).unwrap();
-        let mut torn = boot(5);
-        torn[20..].fill(0xFF); // the program stopped inside the header
-        assert_eq!(classify(1, &torn, geometry), Slot::Foreign);
+    fn classifies_erased_valid_other_version_and_foreign() {
+        assert_eq!(classify(&[0xFF; HEADER_BYTES]), Slot::Erased);
         assert_eq!(
-            classify(2, &boot(5), geometry),
-            Slot::Foreign,
-            "block 5 lives in slot 1 of 4"
+            classify(&header(5, VERSION, true)),
+            Slot::Valid {
+                block_sequence: 5,
+                flight: true
+            }
         );
-        let data = Header {
-            kind: Kind::Data,
-            ..Header::decode(&boot(5)).unwrap()
-        }
-        .encode(b"")
-        .unwrap();
-        assert_eq!(classify(1, &data, geometry), Slot::Foreign, "a block starts with BOOT");
-        assert_eq!(classify(1, &[0x00; 40], geometry), Slot::Foreign);
-        let mut almost_erased = [0xFF; 40];
-        almost_erased[39] = 0xFE;
-        assert_eq!(classify(1, &almost_erased, geometry), Slot::Foreign);
-    }
-
-    /// `header` re-stamped as layout `version`, with its header CRC recomputed: what another firmware writes.
-    fn restamped(mut header: Vec<u8>, version: u8) -> Vec<u8> {
-        header[4] = version;
-        let header_crc = recorder_wire::crc32(0, &header[..36]);
-        header[36..40].copy_from_slice(&header_crc.to_le_bytes());
-        header
-    }
-
-    #[test]
-    fn a_whole_header_of_another_version_is_kept_apart_from_foreign() {
-        let geometry = Geometry::new(4, 1).unwrap();
-        for version in [0, 2, 0xFF] {
-            assert_eq!(classify(1, &restamped(boot(5), version), geometry), Slot::OtherVersion);
-        }
-        assert_eq!(Slot::OtherVersion.block_sequence(), None);
-        let mut torn = restamped(boot(5), 2);
-        torn[30..].fill(0xFF); // torn before its header CRC: nothing proves it whole
-        assert_eq!(classify(1, &torn, geometry), Slot::Foreign);
-        let mut stale = boot(5);
-        stale[4] = 2; // the version changed, the CRC did not: a damaged header, not another layout
-        assert_eq!(classify(1, &stale, geometry), Slot::Foreign);
+        assert_eq!(
+            classify(&header(6, 2, false)),
+            Slot::OtherVersion {
+                block_sequence: 6,
+                flight: false,
+                version: 2
+            }
+        );
+        assert_eq!(classify(&[0x00; HEADER_BYTES]), Slot::Foreign);
+        let mut torn = header(5, VERSION, false);
+        torn[30..].fill(0xFF);
+        assert_eq!(classify(&torn), Slot::Foreign, "a torn header");
+        let mut almost_erased = [0xFF; HEADER_BYTES];
+        almost_erased[55] = 0xFE;
+        assert_eq!(classify(&almost_erased), Slot::Foreign);
+        assert_eq!(classify(&[0xFF; 20]), Slot::Foreign, "too short to be anything");
     }
 }

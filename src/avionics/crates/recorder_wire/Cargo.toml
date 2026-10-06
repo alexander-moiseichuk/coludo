@@ -1,6 +1,6 @@
 [package]
 name = "recorder_wire"
-description = "The recorder's line wire codec (doc/specs/recorder-wire.md): CRC-32, wrap/verify, recorderd's split, row/log/session.csv text (src/glider recorder.py, tools/recorder_wire.py), and the flash frame codec"
+description = "The recorder's line wire codec (doc/specs/recorder-wire.md): CRC-32, wrap/verify, recorderd's split, row/log/session.csv text (src/glider recorder.py, tools/recorder_wire.py)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

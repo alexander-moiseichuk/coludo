@@ -102,7 +102,7 @@ fn text_or_empty(value: &Value) -> &str {
 fn the_fixture_says_where_it_came_from() {
     let fixture = Fixture::parse(FIXTURE);
     let meta = fixture.get("meta");
-    assert_eq!(meta["tag"], "micropython_plan_B");
+    assert_eq!(meta["tag"], golden::PLAN_B_TAG);
     assert_eq!(meta["generator"], "recorder_wire");
     for source in [
         "src/glider/recorder.py",

@@ -18,8 +18,8 @@ Members, each a list of {name, input, output} cases:
   * logs -- Recorder.log(descriptor, message) under a ring cell's limit to the wire line.
   * session_rows -- index_session(), the boot row and the anchor to session.csv's header and row lines.
   * statuses -- Recorder.report() to its str(), the status message; one case also carries members plan B never
-    had, after 'log' (the flash writer's 'ring', M4's 'mover'), each as its repr() text, and its oracle is str() of
-    the report with them added. Their keys are placeholders: the case pins how members join, not their figures.
+    had, after 'log' (the ring's 'ring' and the ring_saver's 'saver', M4), each as its repr() text, and its oracle
+    is str() of the report with them added. Their figures are placeholders: the case pins how members join.
   * cells, labels, prefixes -- _cell(), _is_label(), and the session prefix a recorder.session value gives.
 
 A byte string is its UTF-8 text, or {"hex": ...} when it is not UTF-8 (a cut inside a character, a damaged byte).
@@ -750,12 +750,13 @@ def _session_row_case(name: str, boot_id: int | None, board: dict, how: str, sec
 
 
 """
-Members after 'log' that plan B's report never had: (key, value). Placeholders for the flash writer's 'ring' and M4's
-'mover' (doc/specs/avionics-port.md), whose figures those stages define; a bool shows Python's own spelling.
+Members after 'log' that plan B's report never had: (key, value). Placeholders for M4's 'ring' (erased, unsaved and
+lost blocks, the positions) and 'saver' (doc/specs/avionics-port.md M4), whose exact figures that stage defines; a
+tuple and a bool show Python's own spelling.
 """
 _STATUS_MEMBERS: tuple = (
-    ('ring', {'erased_ahead': 380, 'unconfirmed': 4, 'spill_frames': 0, 'formatting': False}),
-    ('mover', {'lag_ms': 120, 'batches': 3}),
+    ('ring', {'erased': 380, 'unsaved': 4, 'lost': 0, 'writer': (1234, 4040), 'saver': (1230, 0)}),
+    ('saver', {'card': True, 'batches': 3, 'unsaved_s': 1.5}),
 )
 
 

@@ -1,1085 +1,1333 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! The ring's behaviour over an in-memory flash: append and read back, block rollover, wrap, reboot, spill,
-//! GC rules, foreign blocks, the CONFIRM walk, and the figures. Power cuts are in power_cut.rs.
+//! The ring's behaviour over an in-memory flash: append and read back, block rollover, the board's 6144-slot wrap,
+//! reboots, would-block, the eraser's normal rule and its delay, newest wins with a dead saver, the reserve and its
+//! margin, foreign and other-version blocks, the flight flag and a reboot in flight, failed programs, a sector that
+//! never erases and a slot that never reads, the hints and their reach, a trusted saver hint, the end of the
+//! numbering and the refusals. Power cuts are in power_cut.rs, the two tasks on two threads in concurrent.rs.
 
 mod common;
 
-use common::*;
-use std::cell::Cell;
-use std::rc::Rc;
+use std::collections::HashMap;
 
-use flash_ring::frame::{self, Confirm, Flags, HEADER_BYTES, Kind, frame_bytes};
-use flash_ring::scan::Slot;
+use common::*;
+use flash_ring::chunk::{self, ALIGNMENT, CHUNK_HEADER_BYTES, MAX_PAYLOAD, Torn, Walked, chunk_bytes};
+use flash_ring::header::{BlockHeader, HEADER_BYTES, VERSION};
 use flash_ring::{
-    CONFIRM_SEARCH_BLOCKS, Erasure, Error, Figures, Flash, Geometry, MemoryFlash, Options, Position, Ring,
+    BLOCK_BYTES, BlockTable, ERASE_ATTEMPTS, Eraser, Erasure, Error, Figures, Flash, Geometry, HINT_REACH, Hints, Loss,
+    MemoryError, MemoryFlash, Position, Ring, Slot, scan,
 };
 
-#[test]
-fn round_trips_many_frames_in_order() {
-    let geometry = Geometry::new(16, 4).unwrap();
-    let mut ring = mount(erased(geometry), geometry, 7);
-    for index in 0..400 {
-        ring.append(Kind::Data, &payload(7, index), index % 7 == 0, uptime(index))
-            .unwrap();
+/// A position, briefly.
+fn at(block_sequence: u32, offset: u32) -> Position {
+    Position { block_sequence, offset }
+}
+
+/// A valid slot, briefly.
+fn valid(block_sequence: u32, flight: bool) -> Slot {
+    Slot::Valid { block_sequence, flight }
+}
+
+/// The header boot `boot` gives block `block_sequence`.
+fn header(block_sequence: u32, boot: u32, flight: bool) -> BlockHeader {
+    BlockHeader {
+        version: VERSION,
+        flight,
+        block_sequence,
+        boot_id: boot,
+        session: session(boot),
     }
-    let image = ring.flash().image().to_vec();
+}
+
+#[test]
+fn round_trips_chunks_in_order() {
+    let geometry = Geometry::new(16).unwrap();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    assert_eq!(scanned.next_sequence, 0, "a fresh ring starts at block 0");
+    let mut ring = writer(&flash, &scanned, 7);
+    assert_eq!(ring.position(), at(0, 0), "nothing readable yet");
+    let starts: Vec<Position> = (0..60)
+        .map(|index| ring.append(&payload(7, index), records(index)).unwrap())
+        .collect();
+    let image = flash.image();
     let found = walk(&image, geometry);
-    assert_eq!(data(&found), (0..400).map(|index| (7, index)).collect::<Vec<_>>());
-    let mut index = 0;
-    for (number, found) in found.iter().enumerate() {
-        assert_eq!(
-            found.header.frame_sequence, number as u32,
-            "+1 for every frame, BOOT included"
-        );
-        assert_eq!(found.header.boot_id, 7);
-        assert_eq!(found.offset as usize % frame::ALIGNMENT, 0);
+    assert_eq!(data(&found), (0..60).map(|index| (7, index)).collect::<Vec<_>>());
+    for (index, (found, start)) in (0..).zip(found.iter().zip(&starts)) {
+        assert_eq!(at(found.header.block_sequence, found.offset), *start);
+        assert_eq!(found.offset as usize % ALIGNMENT, 0);
+        assert_eq!(found.records, records(index));
         assert_eq!(
             found.slot, found.header.block_sequence,
             "block k in slot k on a fresh ring"
         );
-        if found.header.kind == Kind::Boot {
-            assert_eq!(found.offset, 0, "a BOOT frame opens every block, and only there");
-            assert_eq!(found.payload, boot_payload(7));
-            continue;
-        }
-        assert_eq!(found.header.uptime_us, uptime(index));
-        let flags = Flags {
-            spilled: false,
-            durable: index % 7 == 0,
-        };
-        assert_eq!(found.header.flags, flags);
-        index += 1;
+        assert_eq!(found.header, header(found.header.block_sequence, 7, false));
     }
-    let last = found.last().unwrap();
-    let end = last.offset + frame_bytes(last.payload.len()) as u32;
-    assert_eq!(
-        ring.programmed(),
-        Some(Position {
-            block_sequence: last.header.block_sequence,
-            offset: end
-        })
-    );
-    for (block, slot) in blocks(&image, geometry) {
-        let frames = block_frames(&image, geometry, slot, block);
-        let bytes = slot_bytes(&image, geometry, slot);
-        let mut covered = 0;
-        for found in &frames {
-            assert!(
-                bytes[covered..found.offset as usize].iter().all(|&byte| byte == 0xFF),
-                "padding stays erased"
-            );
-            covered = found.offset as usize + HEADER_BYTES + found.payload.len();
+    let blocks = blocks(&image, geometry);
+    assert!(blocks.len() > 5, "60 chunks fill several blocks");
+    for block in &blocks {
+        assert!(block.torn.is_empty());
+        let bytes = slot_bytes(&image, block.slot);
+        let mut covered = HEADER_BYTES;
+        for found in &block.chunks {
+            let padding = &bytes[covered..found.offset as usize];
+            assert!(padding.iter().all(|&byte| byte == 0xFF), "padding is never programmed");
+            covered = found.offset as usize + CHUNK_HEADER_BYTES + found.payload.len();
         }
         assert!(
             bytes[covered..].iter().all(|&byte| byte == 0xFF),
-            "block {block}: the tail stays erased"
+            "the tail stays erased"
         );
     }
+    let last = found.last().unwrap();
+    let end = last.offset + chunk_bytes(last.payload.len()) as u32;
+    assert_eq!(
+        ring.position(),
+        at(last.header.block_sequence, end),
+        "the end of the last chunk"
+    );
+    assert_eq!(
+        flash.programs() as usize,
+        60 + blocks.len(),
+        "one program per chunk, and one per block header"
+    );
 }
 
 #[test]
-fn a_full_block_rolls_over_to_a_new_block_with_its_boot_frame() {
-    let geometry = Geometry::new(4, 1).unwrap();
-    let mut ring = mount(erased(geometry), geometry, 3);
-    let boot = frame_bytes(boot_payload(3).len()) as u32;
-    let largest = ring.max_payload();
-    assert_eq!(largest, 4096 - boot as usize - HEADER_BYTES);
-    ring.append(Kind::Data, &vec![b'x'; largest], false, 10).unwrap();
-    assert_eq!(
-        ring.programmed(),
-        Some(Position {
-            block_sequence: 0,
-            offset: 4096
-        }),
-        "the largest payload fills a block exactly"
-    );
-    ring.append(Kind::Data, b"1", false, 20).unwrap();
-    assert_eq!(
-        ring.programmed(),
-        Some(Position {
-            block_sequence: 1,
-            offset: boot + 48
-        })
-    );
-    let image = ring.flash().image().to_vec();
-    let second = block_frames(&image, geometry, 1, 1);
-    assert_eq!(second[0].header.kind, Kind::Boot);
-    assert_eq!(
-        second[0].header.uptime_us, 20,
-        "the BOOT frame takes the uptime of the frame it opened for"
-    );
-    assert_eq!(
-        (second[0].header.frame_sequence, second[1].header.frame_sequence),
-        (2, 3)
-    );
-
-    // A frame that does not fit the open block's rest goes to the next block, and a later small one that would
-    // have fitted the rest never goes back: a closed block stays closed.
-    ring.append(Kind::Data, &[b'w'; 200], false, 25).unwrap();
-    ring.append(Kind::Data, &vec![b'y'; largest - 100], false, 30).unwrap();
-    ring.append(Kind::Data, b"small", false, 40).unwrap();
-    let image = ring.flash().image().to_vec();
-    assert_eq!(
-        block_frames(&image, geometry, 1, 1).len(),
-        3,
-        "block 1 was closed by the frame that did not fit"
-    );
-    let third: Vec<usize> = block_frames(&image, geometry, 2, 2)
-        .iter()
-        .map(|found| found.payload.len())
-        .collect();
-    assert_eq!(third[1..], [largest - 100, 5]);
-}
-
-#[test]
-fn cutting_at_room_fills_a_block_to_its_last_byte() {
-    let geometry = Geometry::new(4, 1).unwrap();
-    let mut ring = mount(erased(geometry), geometry, 3);
-    let largest = ring.max_payload();
-    assert_eq!(ring.room(), largest, "no block is open: the next append opens one");
-    ring.append(Kind::Data, &[b'a'; 100], false, 0).unwrap();
-    let boot = frame_bytes(boot_payload(3).len());
-    assert_eq!(ring.room(), 4096 - boot - frame_bytes(100) - HEADER_BYTES);
-
-    let room = ring.room();
-    ring.append(Kind::Data, &vec![b'b'; room], false, 1).unwrap();
-    let full = Position {
-        block_sequence: 0,
-        offset: 4096,
-    };
-    assert_eq!(
-        ring.programmed(),
-        Some(full),
-        "to the block's last byte, without opening block 1"
-    );
+fn a_chunk_that_does_not_fit_opens_the_next_block_header_first() {
+    let geometry = Geometry::new(4).unwrap();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &scanned, 1);
     assert_eq!(
         ring.room(),
-        largest,
-        "nothing more fits block 0: the next append opens block 1"
+        MAX_PAYLOAD,
+        "no block open: a new one takes the largest chunk"
     );
-
-    // One byte past room() does not fit: it closes block 1 and opens block 2. There it leaves a rest of
-    // exactly one header, which takes no payload, so room() counts it as none.
-    ring.append(Kind::Data, b"c", false, 2).unwrap();
-    let room = ring.room();
-    ring.append(Kind::Data, &vec![b'd'; room + 1], false, 3).unwrap();
-    let after = Position {
-        block_sequence: 2,
-        offset: 4096 - HEADER_BYTES as u32,
-    };
-    assert_eq!(ring.programmed(), Some(after));
-    let image = ring.flash().image().to_vec();
-    assert_eq!(
-        block_frames(&image, geometry, 1, 1).len(),
-        2,
-        "block 1 kept only BOOT and 'c'"
-    );
-    assert_eq!(ring.room(), largest, "a rest of one header takes no payload");
-    ring.append(Kind::Data, b"f", false, 4).unwrap();
-    assert_eq!(ring.programmed().unwrap().block_sequence, 3);
-}
-
-#[test]
-fn refuses_a_boot_frame_a_payload_too_large_and_a_flash_too_small() {
-    let geometry = Geometry::new(4, 1).unwrap();
-    let mut ring = mount(erased(geometry), geometry, 3);
-    let largest = ring.max_payload();
-    assert_eq!(ring.append(Kind::Boot, b"boot=9", false, 0), Err(Error::BootKind));
-    assert_eq!(
-        ring.append(Kind::Data, &vec![0; largest + 1], false, 0),
-        Err(Error::TooLarge)
-    );
-    assert_eq!(
-        (ring.flash().programs(), ring.programmed()),
-        (0, None),
-        "a refusal writes nothing"
-    );
-
-    let short = MemoryFlash::new(geometry.bytes() - 4096);
-    let mounted = Ring::mount(short, geometry, OPTIONS, 1, b"boot=1");
-    assert!(matches!(mounted, Err(Error::Geometry)));
-    let mounted = Ring::mount(erased(geometry), geometry, OPTIONS, 1, &[b'b'; 4096 - 47]);
-    assert!(
-        matches!(mounted, Err(Error::TooLarge)),
-        "no room left for a frame behind the BOOT"
-    );
-    assert!(Ring::mount(erased(geometry), geometry, OPTIONS, 1, &[b'b'; 4096 - 88]).is_ok());
-}
-
-#[test]
-fn checks_a_block_is_erased_with_one_read_before_its_first_frame() {
-    let geometry = small();
-    let mut ring = mount(erased(geometry), geometry, 1);
-    assert_eq!(ring.flash().reads(), 5, "the boot scan: one header read per block");
-    ring.append(Kind::Data, &payload(1, 0), false, uptime(0)).unwrap();
-    assert_eq!(ring.flash().reads(), 6, "opening block 0 reads it once");
-    let mut index = 1;
-    while ring.programmed().unwrap().block_sequence == 0 {
-        ring.append(Kind::Data, &payload(1, index), false, uptime(index))
-            .unwrap();
-        index += 1;
-    }
-    assert_eq!(
-        ring.flash().reads(),
-        7,
-        "frames into an open block read nothing; block 1 took one read"
-    );
-}
-
-#[test]
-fn wraps_around_the_slots_with_a_lagging_mover() {
-    let geometry = small();
-    let mut ring = mount(erased(geometry), geometry, 4);
-    let mut accepted = Vec::new();
-    let mut index = 0;
-    while ring
-        .programmed()
-        .is_none_or(|at| at.block_sequence < 3 * geometry.blocks())
-    {
-        ring.append(Kind::Data, &payload(4, index), false, uptime(index))
-            .unwrap();
-        accepted.push((4, index));
-        index += 1;
-        let newest = ring.programmed().unwrap().block_sequence;
-        ring.confirm_moved(Position {
-            block_sequence: newest.saturating_sub(2),
-            offset: 0,
-        });
-        ring.erase_step().unwrap();
-        assert_eq!(ring.figures().spill_frames, 0, "GC keeps ahead of the writer");
-    }
-    let image = ring.flash().image().to_vec();
-    for (block, slot) in blocks(&image, geometry) {
-        assert_eq!(slot, block % geometry.blocks(), "block k lives in slot k % blocks");
-    }
-    let confirmed = ring.confirmed().block_sequence;
-    let kept = data(&walk_from(&image, geometry, confirmed));
-    assert!(kept.len() > 50);
-    assert_eq!(
-        kept[..],
-        accepted[accepted.len() - kept.len()..],
-        "the unconfirmed tail is whole and in order"
-    );
-    let open = block_frames(&image, geometry, geometry.slot(15), 15);
-    assert_eq!(open[0].header.kind, Kind::Boot, "the third lap's first block");
-}
-
-#[test]
-fn wraps_the_board_geometry() {
-    let geometry = Geometry::BOARD;
-    let boot = boot_payload(9);
-    let mut ring = Ring::mount(MemoryFlash::new(24 << 20), geometry, Options::BOARD, 9, &boot).unwrap();
-    assert_eq!(ring.figures().erased_ahead, 383);
-    let line = vec![b'r'; 1700]; // a 50 ms frame at the flight rate (~35 KB/s)
-    let mut frames = 0u32;
-    let mut journal = 0;
-    while ring.programmed().is_none_or(|at| at.block_sequence < 384 + 8) {
-        ring.append(Kind::Data, &line, false, uptime(frames)).unwrap();
-        frames += 1;
-        let newest = ring.programmed().unwrap().block_sequence;
-        if frames.is_multiple_of(100) && newest > 0 {
-            let moved = Position {
-                block_sequence: newest - 1,
-                offset: 0,
-            };
-            journal += 1;
-            let confirm = Confirm {
-                moved,
-                boot_id: 9,
-                journal_sequence: journal,
-                ..Confirm::default()
-            };
-            ring.confirm_moved(moved);
-            ring.append(Kind::Confirm, &confirm.encode(), false, uptime(frames))
-                .unwrap();
-        }
-        ring.erase_step().unwrap();
-        assert_eq!(
-            ring.figures().spill_frames,
-            0,
-            "one sector per frame keeps ahead at the flight rate"
-        );
-    }
-    let newest = ring.programmed().unwrap().block_sequence;
-    let confirmed = ring.confirmed();
-    let image = ring.into_flash().into_image();
-    assert_eq!(
-        classify(&image, geometry)[geometry.slot(newest) as usize].block_sequence(),
-        Some(newest)
-    );
-
-    let mut reboot = Ring::mount(MemoryFlash::from_image(image), geometry, Options::BOARD, 10, &boot).unwrap();
-    let recovered = reboot
-        .recover_confirm()
-        .unwrap()
-        .expect("a CONFIRM among the newest 16 blocks");
-    assert_eq!((recovered.moved, recovered.journal_sequence), (confirmed, journal));
-    reboot.append(Kind::Data, b"after the reboot\n", false, 5).unwrap();
-    assert_eq!(
-        reboot.programmed().unwrap().block_sequence,
-        newest + 1,
-        "the reboot opens the slot after the newest block"
-    );
-}
-
-#[test]
-fn a_reboot_opens_the_next_slot_and_never_appends_to_an_old_block() {
-    let geometry = small();
-    let mut first = mount(erased(geometry), geometry, 1);
-    fill_to(&mut first, 1, 0, 2, 4000);
-    let image = first.into_flash().into_image();
-
-    let second = mount(MemoryFlash::from_image(image.clone()), geometry, 2);
-    let valid = |block_sequence| Slot::Valid {
-        block_sequence,
-        boot_id: 1,
-    };
-    assert_eq!(
-        second.slots(),
-        [valid(0), valid(1), valid(2), Slot::Erased, Slot::Erased]
-    );
-    let next = Position {
-        block_sequence: 3,
-        offset: 0,
-    };
-    assert_eq!(
-        (second.programmed(), second.flash().programs(), second.flash().erases()),
-        (Some(next), 0, 0),
-        "the old blocks are closed, so readable whole, and nothing of block 3 yet"
-    );
-
-    let mut second = second;
-    second.append(Kind::Data, &payload(2, 0), false, uptime(0)).unwrap();
-    let after = second.into_flash().into_image();
-    for slot in 0..3 {
-        assert_eq!(
-            slot_bytes(&after, geometry, slot),
-            slot_bytes(&image, geometry, slot),
-            "slot {slot} untouched"
-        );
-    }
-    let opened = block_frames(&after, geometry, 3, 3);
-    assert_eq!(
-        opened
-            .iter()
-            .map(|found| (found.header.kind, found.header.boot_id, found.header.frame_sequence))
-            .collect::<Vec<_>>(),
-        [(Kind::Boot, 2, 0), (Kind::Data, 2, 1)]
-    );
-
-    let mut third = mount(MemoryFlash::from_image(after.clone()), geometry, 3);
-    third.append(Kind::Data, &payload(3, 0), false, uptime(0)).unwrap();
-    let after_third = third.into_flash().into_image();
-    assert_eq!(
-        slot_bytes(&after_third, geometry, 3),
-        slot_bytes(&after, geometry, 3),
-        "boot 2's block is closed"
-    );
-    assert_eq!(blocks(&after_third, geometry).last(), Some(&(4, 4)));
-
-    // The next block, 5, falls in slot 0 over block 0, which nobody confirmed: the frame spills.
-    let mut fourth = mount(MemoryFlash::from_image(after_third.clone()), geometry, 4);
-    assert_eq!(fourth.recover_confirm(), Ok(None));
-    fourth.append(Kind::Data, &payload(4, 0), false, uptime(0)).unwrap();
-    assert_eq!((fourth.figures().spill_frames, fourth.flash().programs()), (1, 0));
-    assert_eq!(fourth.erase_step(), Ok(Erasure::Idle), "block 0 is not confirmed");
-    assert_eq!(fourth.flash().image(), &after_third[..]);
-}
-
-#[test]
-fn a_reboot_over_a_ring_full_of_unconfirmed_blocks_lets_the_mover_read_them_all() {
-    // A long run with no card: boot 1 fills all four slots, and nothing is confirmed.
-    let geometry = Geometry::new(4, 1).unwrap();
-    let mut first = mount(erased(geometry), geometry, 1);
-    let largest = vec![b'f'; first.max_payload()];
-    for _ in 0..4 {
-        first.append(Kind::Data, &largest, false, 0).unwrap();
-    }
-    let image = first.into_flash().into_image();
-
-    // Boot 2 spills from its first frame, so it programs nothing, yet the mover gets its bound at once.
-    let mut ring = mount(MemoryFlash::from_image(image), geometry, 2);
-    for index in 0..6 {
-        ring.append(Kind::Data, &payload(2, index), false, uptime(index))
-            .unwrap();
-    }
-    let figures = ring.figures();
-    assert_eq!((figures.spill_frames, figures.unconfirmed), (6, 4));
-    assert_eq!(ring.erase_step(), Ok(Erasure::Idle));
-    let bound = ring.programmed().expect("a bound before this boot programs anything");
-    for block in 0..4 {
-        let block_end = Position {
-            block_sequence: block,
-            offset: geometry.block_bytes(),
-        };
-        assert!(block_end <= bound, "block {block} is readable whole");
-    }
-    assert_eq!(
-        bound,
-        Position {
-            block_sequence: 4,
-            offset: 0
-        },
-        "and nothing of block 4"
-    );
-
-    // The card arrives: the mover copies up to the bound and confirms it, GC frees slot 0, the spill drains.
-    ring.confirm_moved(bound);
-    while ring.figures().spill_frames > 0 {
-        assert!(matches!(ring.erase_step(), Ok(Erasure::Sector { .. })));
-        ring.drain().unwrap();
-    }
-    let kept = walk_from(ring.flash().image(), geometry, 4);
-    assert_eq!(data(&kept), (0..6).map(|index| (2, index)).collect::<Vec<_>>());
-}
-
-#[test]
-fn spills_while_the_next_block_is_unconfirmed_and_drains_in_order() {
-    let geometry = Geometry::new(4, 2).unwrap();
-    let options = Options {
-        spill_capacity: 12 << 10,
-        reserve_blocks: 1,
-    };
-    let mut ring = Ring::mount(erased(geometry), geometry, options, 5, &boot_payload(5)).unwrap();
-    let durable = |index: u32| index.is_multiple_of(3);
-    // Every accepted frame's index, and whether it was spilled: a spilled frame is the queue's last.
-    let mut accepted: Vec<(u32, bool)> = Vec::new();
-    let mut index = 0;
-    let held = loop {
-        match ring.append(Kind::Data, &payload(5, index), durable(index), uptime(index)) {
-            Ok(()) => accepted.push((index, ring.figures().spill_frames > 0)),
-            Err(Error::SpillFull) => break index,
-            Err(other) => panic!("append failed: {other:?}"),
-        }
-        index += 1;
-    };
-    let figures = ring.figures();
-    assert!(
-        figures.spill_frames > 20,
-        "a spill holds more than one 8 KiB block: {figures:?}"
-    );
-    assert!(figures.spill_bytes as usize <= options.spill_capacity);
-    assert_eq!(
-        ring.programmed().unwrap().block_sequence,
-        3,
-        "blocks 0..3 filled; block 4 needs slot 0"
-    );
-    let programs = ring.flash().programs();
-
-    // Back-pressure: the writer keeps the frame it cut, cuts no more, and appends it again after GC steps.
-    assert_eq!(
-        ring.erase_step(),
-        Ok(Erasure::Idle),
-        "unconfirmed data is never erased to make room"
-    );
-    let again = ring.append(Kind::Data, &payload(5, held), durable(held), uptime(held));
-    assert_eq!(again, Err(Error::SpillFull));
-    assert_eq!(
-        (ring.figures(), ring.flash().programs()),
-        (figures, programs),
-        "a refusal stores, programs and numbers nothing"
-    );
+    assert_eq!(ring.append(&[b'a'; 3000], 1), Ok(at(0, 56)));
+    let second = (HEADER_BYTES + chunk_bytes(3000)) as u32;
+    let room = (BLOCK_BYTES - second) as usize - CHUNK_HEADER_BYTES;
+    assert_eq!(ring.room(), room);
+    assert_eq!(ring.append(&vec![b'b'; room], 2), Ok(at(0, second)));
+    assert_eq!(ring.position(), at(0, BLOCK_BYTES), "filled to its last byte");
     assert_eq!(
         ring.room(),
-        ring.max_payload(),
-        "no block is open while frames are spilled"
+        MAX_PAYLOAD,
+        "no room for a chunk header: the next append opens a block"
     );
-
-    ring.confirm_moved(Position {
-        block_sequence: 1,
-        offset: 0,
-    });
-    assert_eq!(ring.erase_step(), Ok(Erasure::Sector { slot: 0, sector: 1 }));
-    assert_eq!(ring.erase_step(), Ok(Erasure::Sector { slot: 0, sector: 0 }));
-    assert_eq!(ring.erase_step(), Ok(Erasure::Idle));
-    ring.append(Kind::Data, &payload(5, held), durable(held), uptime(held))
-        .unwrap(); // the spill drains into block 4 first, which makes room
-    accepted.push((held, ring.figures().spill_frames > 0));
-    assert_eq!(ring.programmed().unwrap().block_sequence, 4);
-    assert!(
-        ring.figures().spill_frames > 0,
-        "the rest waits for slot 1, which holds unconfirmed block 1"
-    );
-
-    ring.confirm_moved(Position {
-        block_sequence: 3,
-        offset: 0,
-    });
-    while ring.figures().spill_frames > 0 {
-        assert!(matches!(ring.erase_step(), Ok(Erasure::Sector { .. })));
-        ring.drain().unwrap();
-    }
-    let last = held + 1;
-    ring.append(Kind::Data, &payload(5, last), durable(last), uptime(last))
-        .unwrap();
-    accepted.push((last, ring.figures().spill_frames > 0));
-
-    let image = ring.flash().image().to_vec();
-    let kept = walk_from(&image, geometry, 3);
-    let kept_data: Vec<&Found> = kept.iter().filter(|found| found.header.kind == Kind::Data).collect();
-    let tail = &accepted[accepted.len() - kept_data.len()..];
-    assert!(
-        tail.iter().any(|&(index, _)| index == held),
-        "the refused frame is stored once there is room"
-    );
-    for (found, &(index, spilled)) in kept_data.iter().zip(tail) {
-        assert_eq!(identify(&found.payload), (5, index), "in order, nothing skipped");
-        let flags = Flags {
-            spilled,
-            durable: durable(index),
-        };
-        assert_eq!(found.header.flags, flags, "frame {index}");
-    }
-    assert!(
-        tail.iter().any(|&(index, spilled)| spilled && durable(index)),
-        "a durable frame was spilled and kept its bit"
-    );
-    assert!(!tail[tail.len() - 1].1, "the last one went direct");
-    let numbers: Vec<u32> = kept.iter().map(|found| found.header.frame_sequence).collect();
-    assert!(
-        numbers.windows(2).all(|pair| pair[1] == pair[0] + 1),
-        "no gap: a refusal takes no number, and the frame takes one when programmed: {numbers:?}"
-    );
-}
-
-#[test]
-fn erases_only_confirmed_blocks_in_reverse_sector_order() {
-    let geometry = small();
-    let mut ring = mount(erased(geometry), geometry, 1);
-    fill_to(&mut ring, 1, 0, 3, 100);
-    let before = ring.flash().image().to_vec();
-    assert_eq!(ring.erase_step(), Ok(Erasure::Idle), "nothing confirmed");
-    ring.confirm_moved(Position {
-        block_sequence: 0,
-        offset: 16000,
-    });
+    let full = slot_bytes(&flash.image(), 0).to_vec();
+    let programs = flash.programs();
+    assert_eq!(ring.append(b"c", 3), Ok(at(1, 56)));
+    assert_eq!(flash.programs(), programs + 2, "the header, then the chunk");
+    assert_eq!(slot_bytes(&flash.image(), 0), full, "the full block is left as it was");
+    let room = ring.room();
+    assert_eq!(room, BLOCK_BYTES as usize - 72 - CHUNK_HEADER_BYTES);
     assert_eq!(
-        ring.erase_step(),
-        Ok(Erasure::Idle),
-        "a cursor inside block 0 does not free block 0"
+        ring.append(&vec![b'd'; room + 1], 4),
+        Ok(at(2, 56)),
+        "past the room: a new block"
     );
-
-    ring.confirm_moved(Position {
-        block_sequence: 1,
-        offset: 0,
-    });
-    for sector in [3, 2, 1] {
-        assert_eq!(ring.erase_step(), Ok(Erasure::Sector { slot: 0, sector }));
-        assert_eq!(
-            classify(ring.flash().image(), geometry)[0],
-            Slot::Valid {
-                block_sequence: 0,
-                boot_id: 1
+    assert_eq!(
+        snapshot(&scanned.table),
+        [
+            valid(0, false),
+            valid(1, false),
+            Slot::Open {
+                block_sequence: 2,
+                flight: false
             },
-            "the header sector goes last"
-        );
-    }
-    assert_eq!(ring.erase_step(), Ok(Erasure::Sector { slot: 0, sector: 0 }));
-    assert!(
-        slot_bytes(ring.flash().image(), geometry, 0)
-            .iter()
-            .all(|&byte| byte == 0xFF)
+            Slot::Erased
+        ],
+        "a block closes when a chunk does not fit, with room left or none"
     );
-    assert_eq!(ring.erase_step(), Ok(Erasure::Idle), "block 1 is not before the cursor");
-    for slot in 1..4 {
-        assert_eq!(
-            slot_bytes(ring.flash().image(), geometry, slot),
-            slot_bytes(&before, geometry, slot)
-        );
-    }
+    let image = flash.image();
+    let counts: Vec<Vec<u16>> = blocks(&image, geometry)
+        .iter()
+        .map(|block| block.chunks.iter().map(|found| found.records).collect())
+        .collect();
+    assert_eq!(counts, [vec![1, 2], vec![3], vec![4]]);
+}
 
-    ring.confirm_moved(Position::default());
+#[test]
+fn wraps_the_6144_slots_of_the_board_behind_a_saver_that_keeps_up() {
+    let geometry = Geometry::BOARD;
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    assert_eq!(scanned.table.figures(None).erased_ahead, 6144);
+    let mut ring = writer(&flash, &scanned, 9);
+    let mut eraser = eraser(&flash, &scanned.table);
+    let (mut index, mut now_ms, mut saved) = (0u32, 0u32, 0u32);
+    while ring.position().block_sequence < 6144 + 64 {
+        let mut chunk = format!("9:{index}:").into_bytes();
+        chunk.resize(1990, b'r'); // two chunks a block
+        ring.append(&chunk, 1)
+            .expect("the saver keeps up, so a block is always erased");
+        index += 1;
+        now_ms += 10;
+        let saver = at(ring.position().block_sequence, 0);
+        match eraser.erase_step(Some(saver), now_ms).unwrap() {
+            Erasure::Saved { .. } => saved += 1,
+            Erasure::Idle => {}
+            other => panic!("{other:?}: a saver that keeps up leaves only the normal rule"),
+        }
+    }
+    let newest = ring.position().block_sequence;
     assert_eq!(
-        ring.confirmed(),
-        Position {
-            block_sequence: 1,
-            offset: 0
-        },
-        "the cursor never goes back"
+        slot_of(&scanned.table, newest),
+        newest % 6144,
+        "block k in slot k mod 6144"
+    );
+    assert!(saved > 6144, "every slot was erased behind the saver at least once");
+    assert_eq!(scanned.table.figures(None).lost, 0);
+    drop((ring, eraser));
+
+    let image = flash.into_image();
+    let kept = blocks(&image, geometry);
+    let last = kept.last().unwrap();
+    assert_eq!(last.header.block_sequence, newest);
+    assert_eq!(
+        data(&last.chunks),
+        [(9, index - 1)],
+        "the loop stopped at the newest block's first chunk"
+    );
+    assert_eq!(data(&kept[kept.len() - 2].chunks), [(9, index - 3), (9, index - 2)]);
+    let flash = MemoryFlash::from_image(image);
+    let rescanned = bring_up(&flash, geometry, Hints::default());
+    assert_eq!(rescanned.next_sequence, newest + 1);
+    let mut ring = writer(&flash, &rescanned, 10);
+    assert_eq!(ring.append(b"10:0:after the reboot", 1), Ok(at(newest + 1, 56)));
+    assert_eq!(
+        slot_of(&rescanned.table, newest + 1),
+        (newest + 1) % 6144,
+        "the slot after the newest"
     );
 }
 
 #[test]
-fn never_erases_the_newest_block_even_when_confirmed() {
+fn a_reboot_opens_a_new_block_and_never_appends_to_an_old_one() {
     let geometry = small();
-    let mut ring = mount(erased(geometry), geometry, 1);
-    fill_to(&mut ring, 1, 0, 1, 100);
-    ring.confirm_moved(Position {
-        block_sequence: 9,
-        offset: 0,
-    });
-    let mut erased_slots = Vec::new();
-    while let Ok(Erasure::Sector { slot, .. }) = ring.erase_step() {
-        erased_slots.push(slot);
-    }
-    assert_eq!(erased_slots, [0, 0, 0, 0], "block 0 only; open block 1 is the writer's");
-    assert!(ring.slots()[1].block_sequence() == Some(1));
-}
-
-#[test]
-fn does_not_skip_an_unconfirmed_block_to_erase_a_later_one() {
-    let geometry = small();
-    let mut first = mount(erased(geometry), geometry, 1);
-    fill_to(&mut first, 1, 0, 2, 100);
-    let mut image = first.into_flash().into_image();
-    let start = geometry.slot_offset(1) as usize;
-    image[start..start + 4096].copy_from_slice(&noise(77, 4096)); // block 1 damaged into a foreign slot
-
-    let mut ring = mount(MemoryFlash::from_image(image), geometry, 2);
-    assert_eq!(ring.slots()[1], Slot::Foreign);
-    assert_eq!(ring.figures().foreign, 1);
-    assert_eq!(
-        ring.erase_step(),
-        Ok(Erasure::Idle),
-        "slot 0 (unconfirmed) stands before the foreign slot 1"
-    );
-    ring.confirm_moved(Position {
-        block_sequence: 1,
-        offset: 0,
-    });
-    let mut erased_slots = Vec::new();
-    while let Ok(Erasure::Sector { slot, .. }) = ring.erase_step() {
-        erased_slots.push(slot);
-    }
-    assert_eq!(
-        erased_slots,
-        [0, 0, 0, 0, 1, 1, 1, 1],
-        "then both go, the newest block (2) stays"
-    );
-}
-
-#[test]
-fn the_flight_pause_holds_erases_once_enough_blocks_are_erased_ahead() {
-    let geometry = Geometry::new(6, 1).unwrap();
-    let options = Options {
-        spill_capacity: 0,
-        reserve_blocks: 2,
-    };
-    let mut ring = Ring::mount(erased(geometry), geometry, options, 1, &boot_payload(1)).unwrap();
-    let largest = vec![b'z'; ring.max_payload()];
-    for index in 0..5 {
-        ring.append(Kind::Data, &largest, false, uptime(index)).unwrap(); // one block each
-    }
-    ring.confirm_moved(Position {
-        block_sequence: 4,
-        offset: 0,
-    });
-    ring.pause_erases(true);
-    assert_eq!(ring.figures().erased_ahead, 1);
-    assert_eq!(
-        ring.erase_step(),
-        Ok(Erasure::Sector { slot: 0, sector: 0 }),
-        "1 erased ahead is below 2"
-    );
-    assert_eq!(
-        ring.erase_step(),
-        Ok(Erasure::Paused),
-        "2 erased ahead: the pause holds"
-    );
-    ring.pause_erases(false);
-    assert_eq!(ring.erase_step(), Ok(Erasure::Sector { slot: 1, sector: 0 }));
-    ring.pause_erases(true);
-    assert_eq!(ring.erase_step(), Ok(Erasure::Paused));
-    assert_eq!(ring.figures().erased_ahead, 3);
-}
-
-#[test]
-fn a_foreign_block_is_erased_without_a_confirmation() {
-    let geometry = small();
-    let mut first = mount(erased(geometry), geometry, 1);
-    fill_to(&mut first, 1, 0, 2, 100);
-    let mut image = first.into_flash().into_image();
-    let foreign = geometry.slot_offset(4) as usize;
-    image[foreign..foreign + 16384].copy_from_slice(&noise(5, 16384));
-    let before = image.clone();
-
-    let mut ring = mount(MemoryFlash::from_image(image), geometry, 2);
-    assert_eq!(ring.slots()[4], Slot::Foreign);
-    for sector in [3, 2, 1, 0] {
-        assert_eq!(ring.erase_step(), Ok(Erasure::Sector { slot: 4, sector }));
-    }
-    assert_eq!(ring.erase_step(), Ok(Erasure::Idle));
-    assert_eq!(ring.slots()[4], Slot::Erased);
-    assert!(
-        slot_bytes(ring.flash().image(), geometry, 4)
-            .iter()
-            .all(|&byte| byte == 0xFF)
-    );
-    for slot in 0..3 {
-        assert_eq!(
-            slot_bytes(ring.flash().image(), geometry, slot),
-            slot_bytes(&before, geometry, slot)
-        );
-    }
-}
-
-#[test]
-fn a_block_of_another_layout_version_is_never_erased() {
-    let geometry = small();
-    let mut first = mount(erased(geometry), geometry, 1);
-    fill_to(&mut first, 1, 0, 2, 100);
-    let mut image = first.into_flash().into_image();
-    image[4] = 2; // block 0's BOOT, re-stamped as layout version 2 with a good header CRC: another firmware's
-    let header_crc = recorder_wire::crc32(0, &image[..36]);
-    image[36..40].copy_from_slice(&header_crc.to_le_bytes());
-    let before = image.clone();
-
-    let mut ring = mount(MemoryFlash::from_image(image), geometry, 2);
-    assert_eq!(ring.slots()[0], Slot::OtherVersion);
-    let figures = ring.figures();
-    assert_eq!((figures.other_version, figures.foreign, figures.unconfirmed), (1, 0, 2));
-    ring.confirm_moved(Position {
-        block_sequence: 9,
-        offset: 0,
-    });
-    assert_eq!(
-        ring.erase_step(),
-        Ok(Erasure::Idle),
-        "slots 3 and 4 are erased, and GC stops at slot 0 whatever the cursor"
-    );
+    let flash = erased(geometry);
+    let first = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &first, 1);
     let mut index = 0;
-    while ring.figures().spill_frames == 0 {
-        ring.append(Kind::Data, &payload(2, index), false, uptime(index))
-            .unwrap(); // blocks 3 and 4, then block 5 would need slot 0
+    while ring.position() < at(2, 2000) {
+        ring.append(&payload(1, index), records(index)).unwrap();
         index += 1;
     }
-    assert_eq!(ring.programmed().unwrap().block_sequence, 4);
-    for _ in 0..8 {
-        assert_eq!(ring.erase_step(), Ok(Erasure::Idle));
-    }
-    assert_eq!(
-        slot_bytes(ring.flash().image(), geometry, 0),
-        slot_bytes(&before, geometry, 0),
-        "only the operator's discard erases it"
-    );
-}
+    let position = ring.position();
+    drop(ring);
+    let image = flash.image();
 
-#[test]
-fn an_all_foreign_ring_is_formatted_ahead_of_the_writer() {
-    let geometry = small();
-    let mut ring = mount(
-        MemoryFlash::from_image(noise(11, geometry.bytes() as usize)),
-        geometry,
-        1,
-    );
-    assert_eq!(ring.slots(), [Slot::Foreign; 5]);
-    let figures = ring.figures();
-    assert!(figures.foreign == 5 && figures.unconfirmed == 0, "{figures:?}");
-
-    ring.append(Kind::Data, &payload(1, 0), false, uptime(0)).unwrap();
-    assert_eq!(
-        (ring.figures().spill_frames, ring.programmed()),
-        (1, None),
-        "spills until slot 0 is erased"
-    );
-    for sector in [3, 2, 1, 0] {
-        assert_eq!(ring.erase_step(), Ok(Erasure::Sector { slot: 0, sector }));
-    }
-    ring.append(Kind::Data, &payload(1, 1), true, uptime(1)).unwrap();
-    while let Ok(Erasure::Sector { .. }) = ring.erase_step() {}
-    let figures = ring.figures();
-    assert!(figures.foreign == 0, "the format is done: {figures:?}");
-    assert_eq!(ring.slots()[1..], [Slot::Erased; 4]);
-
-    let opened = block_frames(ring.flash().image(), geometry, 0, 0);
-    let summary: Vec<(Kind, bool, u32)> = opened
-        .iter()
-        .map(|found| {
-            (
-                found.header.kind,
-                found.header.flags.spilled,
-                found.header.frame_sequence,
-            )
-        })
-        .collect();
-    assert_eq!(
-        summary,
-        [(Kind::Boot, false, 0), (Kind::Data, true, 1), (Kind::Data, false, 2)]
-    );
-}
-
-#[test]
-fn a_format_a_reboot_interrupted_still_counts_as_unformatted() {
-    let geometry = Geometry::new(6, 1).unwrap();
-    let mut ring = mount(
-        MemoryFlash::from_image(noise(13, geometry.bytes() as usize)),
-        geometry,
-        1,
-    );
-    ring.append(Kind::Data, &payload(1, 0), false, uptime(0)).unwrap();
-    assert_eq!(ring.erase_step(), Ok(Erasure::Sector { slot: 0, sector: 0 }));
-    ring.drain().unwrap();
-    assert_eq!(ring.programmed().unwrap().block_sequence, 0);
-    assert_eq!(ring.figures().foreign, 5, "ring-unformatted");
-    let image = ring.into_flash().into_image();
-
-    let mut ring = mount(MemoryFlash::from_image(image), geometry, 2);
-    let first_block = Slot::Valid {
-        block_sequence: 0,
-        boot_id: 1,
+    let flash = MemoryFlash::from_image(image.clone());
+    let hints = Hints {
+        writer: Some(position),
+        saver: None,
     };
-    assert_eq!(ring.slots()[0], first_block, "the scan finds a valid block");
-    assert_eq!(ring.figures().foreign, 5, "still ring-unformatted: the format goes on");
-    let mut erased_slots = Vec::new();
-    while let Ok(Erasure::Sector { slot, .. }) = ring.erase_step() {
-        erased_slots.push(slot);
-    }
+    let second = bring_up(&flash, geometry, hints);
+    assert_eq!(second.next_sequence, 3);
     assert_eq!(
-        erased_slots,
-        [1, 2, 3, 4, 5],
-        "ahead of the writer, then it stops at block 0"
+        snapshot(&second.table)[..4],
+        [valid(0, false), valid(1, false), valid(2, false), Slot::Erased]
     );
-    assert_eq!(ring.figures().foreign, 0, "formatted");
+    let mut ring = writer(&flash, &second, 2);
+    assert_eq!(ring.position(), at(3, 0), "every old block is readable whole");
+    assert_eq!(
+        ring.append(b"2:0:", 1),
+        Ok(at(3, 56)),
+        "block 2 had room, and is left closed"
+    );
+    let after = flash.image();
+    for slot in 0..3 {
+        assert_eq!(
+            slot_bytes(&after, slot),
+            slot_bytes(&image, slot),
+            "old block {slot} untouched"
+        );
+    }
+    let opened = &blocks(&after, geometry)[3];
+    assert_eq!((opened.slot, opened.header), (3, header(3, 2, false)));
+    assert_eq!(data(&opened.chunks), [(2, 0)]);
 }
 
 #[test]
-fn a_dirty_block_behind_an_erased_header_is_refused_then_erased() {
+fn a_reboot_searches_past_kept_blocks_for_an_erased_slot() {
+    // boot 1 fills the 8 slots, block 0 in flight; newest wins then takes block 1, the oldest non-flight one
+    let geometry = small();
+    let flash = erased(geometry);
+    let first = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &first, 1);
+    let mut eraser = eraser(&flash, &first.table);
+    ring.set_flight(true);
+    ring.append(&[b'f'; MAX_PAYLOAD], 1).unwrap();
+    ring.set_flight(false);
+    for _ in 1..8 {
+        ring.append(&[b'g'; MAX_PAYLOAD], 1).unwrap();
+    }
+    assert_eq!(ring.append(b"x", 1), Err(Error::WouldBlock));
+    let Ok(Erasure::Lost(loss)) = eraser.erase_step(None, 0) else {
+        panic!("a full ring with a dead saver loses a block");
+    };
+    assert_eq!((loss.slot, loss.block_sequence, loss.flight), (1, 1, false));
+    drop((ring, eraser));
+
+    let flash = MemoryFlash::from_image(flash.into_image());
+    let second = bring_up(&flash, geometry, Hints::default());
+    assert_eq!(
+        second.table.slot(0),
+        valid(0, true),
+        "the slot after the newest holds a kept flight block"
+    );
+    let mut ring = writer(&flash, &second, 2);
+    assert_eq!(ring.append(b"2:0:", 1), Ok(at(8, 56)));
+    assert_eq!(slot_of(&second.table, 8), 1, "the first erased slot after the newest");
+}
+
+#[test]
+fn appends_would_block_without_an_erased_slot_and_resume_once_one_is_freed() {
+    let geometry = Geometry::new(4).unwrap();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &scanned, 1);
+    for _ in 0..4 {
+        ring.append(&[b'a'; MAX_PAYLOAD], 1).unwrap();
+    }
+    let (position, programs) = (ring.position(), flash.programs());
+    for _ in 0..3 {
+        assert_eq!(ring.append(b"waits in PSRAM", 1), Err(Error::WouldBlock));
+    }
+    assert_eq!(
+        (ring.position(), flash.programs()),
+        (position, programs),
+        "nothing programmed, nothing published"
+    );
+    assert_eq!(scanned.table.slot(3), valid(3, false), "the full block closed");
+    assert_eq!(ring.room(), MAX_PAYLOAD);
+    let mut eraser = eraser(&flash, &scanned.table);
+    let Ok(Erasure::Lost(loss)) = eraser.erase_step(None, 0) else {
+        panic!("newest wins frees a slot");
+    };
+    assert_eq!((loss.slot, loss.block_sequence), (0, 0));
+    assert_eq!(ring.append(b"waits in PSRAM", 1), Ok(at(4, 56)));
+    assert_eq!(slot_of(&scanned.table, 4), 0, "the ring wrapped into the freed slot");
+}
+
+#[test]
+fn erases_behind_the_saver_no_sooner_than_100_ms_and_never_the_open_block() {
+    let geometry = small();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &scanned, 1);
+    let mut eraser = eraser(&flash, &scanned.table);
+    for _ in 0..3 {
+        ring.append(&[b'a'; MAX_PAYLOAD], 1).unwrap();
+    }
+    ring.append(b"x", 1).unwrap(); // block 3, open
+    let saver = Some(at(2, 0));
+    let figures = Figures {
+        erased_ahead: 4,
+        saved: 2,
+        unsaved: 1,
+        ..Figures::default()
+    };
+    assert_eq!(scanned.table.figures(saver), figures, "the open block is in no count");
+    for now_ms in [1000, 1050, 1099] {
+        assert_eq!(
+            eraser.erase_step(saver, now_ms),
+            Ok(Erasure::Idle),
+            "{now_ms} ms: too soon"
+        );
+    }
+    let saved = |slot, block_sequence| Ok(Erasure::Saved { slot, block_sequence });
+    assert_eq!(eraser.erase_step(saver, 1100), saved(0, 0), "oldest first");
+    assert_eq!(eraser.erase_step(saver, 1100), saved(1, 1));
+    assert_eq!(
+        eraser.erase_step(saver, 1101),
+        Ok(Erasure::Idle),
+        "block 2 is only where the saver is"
+    );
+
+    let past = Some(at(10, 0)); // past the open block: the guard, not a real saver
+    assert_eq!(eraser.erase_step(past, 2000), Ok(Erasure::Idle));
+    assert_eq!(eraser.erase_step(past, 2100), saved(2, 2));
+    assert_eq!(eraser.erase_step(past, 2200), Ok(Erasure::Idle), "block 3 is open");
+    ring.set_flight(true); // closes it
+    assert_eq!(eraser.erase_step(past, 2201), saved(3, 3));
+    assert_eq!(
+        eraser.erase_step(None, 2202),
+        Ok(Erasure::Idle),
+        "nothing left, and the reserve holds"
+    );
+}
+
+#[test]
+fn a_saver_that_moves_on_every_step_has_its_blocks_erased_100_to_200_ms_after_it() {
+    let geometry = Geometry::new(64).unwrap();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &scanned, 1);
+    let mut eraser = eraser(&flash, &scanned.table);
+    let mut passed_ms: HashMap<u32, u32> = HashMap::new();
+    let mut waits = Vec::new();
+    for tick in 0..600 {
+        let now_ms = tick * 10; // the eraser steps every 10 ms
+        if tick % 3 == 0 {
+            ring.append(&[b'a'; MAX_PAYLOAD], 1).unwrap(); // a block every 30 ms
+        }
+        let saver = at(ring.position().block_sequence, 0); // the saver passes each block as it closes
+        for block_sequence in 0..saver.block_sequence {
+            passed_ms.entry(block_sequence).or_insert(now_ms);
+        }
+        if let Erasure::Saved { block_sequence, .. } = eraser.erase_step(Some(saver), now_ms).unwrap() {
+            waits.push(now_ms - passed_ms[&block_sequence]);
+        }
+    }
+    assert!(waits.len() > 150, "{} erases", waits.len());
+    // 100 ms of delay, at most another 100 ms for the position before it to settle, and a step per block queued
+    assert!(waits.iter().all(|&wait| (100..=220).contains(&wait)), "{waits:?}");
+    assert!(
+        waits.iter().any(|&wait| wait > 150),
+        "a moving saver waits out the one before"
+    );
+}
+
+/// One block-sized chunk, then one eraser step with no saver. A loss is checked against the newest-wins rule on
+/// the table as it was before the step: the oldest non-flight block, else the oldest flight one, and only once no
+/// more than the reserve is free.
+fn block_then_step(
+    ring: &mut Ring<'_, &MemoryFlash>,
+    eraser: &mut Eraser<'_, &MemoryFlash>,
+    table: &BlockTable,
+) -> Erasure {
+    ring.append(&[b'n'; MAX_PAYLOAD], 1).unwrap();
+    let before = snapshot(table);
+    let erasure = eraser.erase_step(None, 0).unwrap();
+    let free = before.iter().filter(|slot| **slot == Slot::Erased).count() as u32;
+    if let Erasure::Lost(loss) = erasure {
+        let candidates: Vec<(u32, bool)> = before
+            .iter()
+            .filter_map(|slot| match *slot {
+                Slot::Valid { block_sequence, flight } => Some((block_sequence, flight)),
+                _ => None,
+            })
+            .collect();
+        let non_flight = candidates.iter().filter(|(_, flight)| !flight).min();
+        let expected = non_flight.or(candidates.iter().min()).copied();
+        assert_eq!(Some((loss.block_sequence, loss.flight)), expected);
+        assert!(
+            free <= table.geometry().reserve_blocks(),
+            "newest wins with {free} free"
+        );
+        let header = header(loss.block_sequence, 1, loss.flight);
+        assert_eq!(loss.header, Some(header), "the loss line has its boot and session");
+    } else {
+        assert!(free > table.geometry().reserve_blocks(), "idle with {free} free");
+    }
+    erasure
+}
+
+#[test]
+fn newest_wins_with_a_dead_saver_gives_up_flight_blocks_last() {
+    let geometry = small();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let table = &scanned.table;
+    let mut ring = writer(&flash, &scanned, 1);
+    let mut eraser = eraser(&flash, table);
+    let mut erasures = Vec::new();
+    for _ in 0..2 {
+        erasures.push(block_then_step(&mut ring, &mut eraser, table)); // pad blocks 0 and 1
+    }
+    ring.set_flight(true);
+    for _ in 0..3 {
+        erasures.push(block_then_step(&mut ring, &mut eraser, table)); // flight blocks 2, 3, 4
+    }
+    ring.set_flight(false);
+    for _ in 0..12 {
+        erasures.push(block_then_step(&mut ring, &mut eraser, table)); // pad blocks 5..16, at the reserve from 6 on
+    }
+    assert_eq!(
+        lost(&erasures),
+        [0, 1, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+        "the pad goes, the flight stays"
+    );
+    for block_sequence in 2..5 {
+        assert_eq!(table.slot(slot_of(table, block_sequence)), valid(block_sequence, true));
+    }
+    // a long flight: once no pad block is left, the oldest flight blocks go
+    ring.set_flight(true);
+    erasures.clear();
+    for _ in 0..8 {
+        erasures.push(block_then_step(&mut ring, &mut eraser, table)); // flight blocks 17..24
+    }
+    assert_eq!(lost(&erasures), [14, 15, 16, 2, 3, 4, 17, 18]);
+    assert_eq!(table.figures(None).lost, 19, "every loss is counted");
+}
+
+#[test]
+fn the_reserve_holds_between_the_writers_open_and_the_erasers_step() {
+    // the steady state of newest wins (no card): the writer runs above the eraser and opens a block before the
+    // eraser's next step, so `ring-low` and the arm gate are sampled there too; they must never see the ring short
+    let geometry = Geometry::new(300).unwrap();
+    let reserve = geometry.reserve_blocks();
+    assert_eq!(reserve, 3);
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &scanned, 1);
+    let mut eraser = eraser(&flash, &scanned.table);
+    let mut opened = 0;
+    for index in 0..4000 {
+        let before = ring.position().block_sequence;
+        ring.append(&payload(1, index), records(index))
+            .expect("the eraser keeps a block ready: the writer never blocks");
+        opened += u32::from(ring.position().block_sequence != before);
+        let after_open = scanned.table.figures(None);
+        assert!(
+            after_open.erased_ahead >= reserve,
+            "chunk {index}, before the eraser's step: {after_open:?}"
+        );
+        eraser.erase_step(None, index * 10).unwrap();
+        let after_step = scanned.table.figures(None);
+        assert!(after_step.erased_ahead > reserve, "chunk {index}: {after_step:?}");
+    }
+    let figures = scanned.table.figures(None);
+    assert!(
+        figures.lost > 100 && opened > geometry.blocks(),
+        "the workload wrapped the ring into newest wins: {figures:?}, {opened} opened"
+    );
+    assert_eq!(
+        figures.erased_ahead,
+        reserve + 1,
+        "the reserve and the margin for one open, no more"
+    );
+}
+
+#[test]
+fn an_unformatted_ring_is_formatted_ahead_of_the_writer_without_a_loss() {
+    let geometry = small();
+    let flash = MemoryFlash::from_image(noise(23, geometry.bytes() as usize));
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    assert_eq!(scanned.next_sequence, 0);
+    assert!(scanned.unformatted, "no block anywhere");
+    let foreign = Figures {
+        foreign: 8,
+        ..Figures::default()
+    };
+    assert_eq!(
+        scanned.table.figures(None),
+        foreign,
+        "no block anywhere: ring-unformatted"
+    );
+    let mut ring = writer(&flash, &scanned, 1);
+    let mut eraser = eraser(&flash, &scanned.table);
+    assert_eq!(
+        ring.append(b"1:0:", 1),
+        Err(Error::WouldBlock),
+        "until a slot is formatted"
+    );
+    for slot in 0..8 {
+        let formatted = eraser.erase_step(None, 0);
+        assert_eq!(
+            formatted,
+            Ok(Erasure::Foreign { slot }),
+            "in the order the writer takes them"
+        );
+        if slot == 0 {
+            assert_eq!(ring.append(b"1:0:", 1), Ok(at(0, 56)), "the writer starts at once");
+        }
+    }
+    assert_eq!(eraser.erase_step(None, 0), Ok(Erasure::Idle));
+    let formatted = Figures {
+        erased_ahead: 7,
+        ..Figures::default()
+    };
+    assert_eq!(
+        scanned.table.figures(None),
+        formatted,
+        "no loss: foreign bytes hold nothing"
+    );
+    assert!(scanned.unformatted, "the scan remembers what the table no longer shows");
+}
+
+#[test]
+fn a_ring_with_any_block_is_formatted_and_an_erased_one_is_not() {
+    let geometry = small();
+    let fresh = bring_up(&erased(geometry), geometry, Hints::default());
+    assert!(
+        fresh.unformatted,
+        "all 0xFF holds no block either, and no foreign slot to format"
+    );
+    assert_eq!(fresh.table.figures(None).foreign, 0, "so `ring-unformatted` stays off");
+    // one block of this layout, or of another, among foreign slots: formatted, whatever else is there
+    for version in [VERSION, 2] {
+        let mut image = noise(31, geometry.bytes() as usize);
+        let header = BlockHeader {
+            version,
+            ..header(4, 1, false)
+        };
+        image[3 * BLOCK_BYTES as usize..][..HEADER_BYTES].copy_from_slice(&header.encode());
+        let scanned = bring_up(&MemoryFlash::from_image(image), geometry, Hints::default());
+        assert!(!scanned.unformatted, "version {version}");
+        assert_eq!(scanned.table.figures(None).foreign, 7);
+    }
+}
+
+#[test]
+fn a_foreign_slot_goes_before_saved_blocks_and_before_newest_wins() {
+    let geometry = Geometry::new(4).unwrap();
+    let flash = erased(geometry);
+    let first = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &first, 1);
+    for _ in 0..4 {
+        ring.append(&[b'a'; MAX_PAYLOAD], 1).unwrap();
+    }
+    drop(ring);
+    let mut image = flash.into_image();
+    image[BLOCK_BYTES as usize..][..16].copy_from_slice(&noise(5, 16)); // slot 1: a bench pattern
+    let flash = MemoryFlash::from_image(image);
+    let second = bring_up(&flash, geometry, Hints::default());
+    assert_eq!(second.table.slot(1), Slot::Foreign);
+    let mut eraser = eraser(&flash, &second.table);
+    let saver = Some(at(3, 0));
+    assert_eq!(
+        eraser.erase_step(saver, 0),
+        Ok(Erasure::Foreign { slot: 1 }),
+        "full, but no loss needed"
+    );
+    assert_eq!(
+        eraser.erase_step(saver, 100),
+        Ok(Erasure::Saved {
+            slot: 0,
+            block_sequence: 0
+        })
+    );
+}
+
+#[test]
+fn blocks_of_another_layout_are_kept_ordered_and_given_up_last_as_their_flag_says() {
+    // a newer build left blocks 12 (flight) and 13 beside this build's 10 and 11, then this build booted
     let geometry = small();
     let mut image = vec![0xFF; geometry.bytes() as usize];
-    image[5000] = 0x00; // a stray programmed byte in slot 0's second sector
-    let mut ring = mount(MemoryFlash::from_image(image), geometry, 1);
-    assert_eq!(ring.slots()[0], Slot::Erased, "the header alone reads erased");
-    ring.append(Kind::Data, &payload(1, 0), false, uptime(0)).unwrap();
-    assert_eq!(ring.slots()[0], Slot::Foreign, "the one full read refused it");
-    assert_eq!((ring.flash().programs(), ring.figures().spill_frames), (0, 1));
-    while let Ok(Erasure::Sector { slot: 0, .. }) = ring.erase_step() {}
-    ring.drain().unwrap();
-    assert_eq!(ring.programmed().unwrap().block_sequence, 0);
-    assert_eq!(ring.flash().image()[5000], 0xFF);
-    assert_eq!(data(&walk(ring.flash().image(), geometry)), [(1, 0)]);
-}
-
-/// A ring of 20 one-sector blocks where boot 1 wrote `confirms` (block, cursors) as CONFIRM frames, one block per
-/// entry, then filled `filler` more blocks with one DATA frame each.
-fn confirm_ring(confirms: &[&[Position]], filler: u32) -> Vec<u8> {
-    let geometry = Geometry::new(20, 1).unwrap();
-    let mut ring = mount(erased(geometry), geometry, 1);
-    let largest = vec![b'f'; ring.max_payload()];
-    for (journal, moved) in confirms.iter().enumerate() {
-        for moved in moved.iter() {
-            let confirm = Confirm {
-                moved: *moved,
-                boot_id: 1,
-                journal_sequence: journal as u32,
-                ..Confirm::default()
-            };
-            ring.append(Kind::Confirm, &confirm.encode(), false, 0).unwrap();
-        }
-        let room = ring.room();
-        ring.append(Kind::Data, &largest[..room], false, 0).unwrap(); // fills the block to its last byte
+    for (slot, block_sequence, version, flight) in [
+        (0, 10, 1, false),
+        (1, 11, 1, false),
+        (2, 12, 2, true),
+        (3, 13, 2, false),
+    ] {
+        let start = slot * BLOCK_BYTES as usize;
+        let header = BlockHeader {
+            version,
+            ..header(block_sequence, 4, flight)
+        };
+        image[start..start + HEADER_BYTES].copy_from_slice(&header.encode());
+        image[start + HEADER_BYTES..start + HEADER_BYTES + 16].fill(0x5A); // chunks this build cannot read
     }
-    for _ in 0..filler {
-        ring.append(Kind::Data, &largest, false, 0).unwrap();
-    }
-    ring.into_flash().into_image()
-}
-
-#[test]
-fn recovers_the_newest_confirm_within_16_blocks() {
-    let geometry = Geometry::new(20, 1).unwrap();
-    let at = |block_sequence, offset| Position { block_sequence, offset };
-    let image = confirm_ring(&[&[at(0, 10)], &[at(0, 900), at(1, 64)]], 3);
-    let mut ring = mount(MemoryFlash::from_image(image.clone()), geometry, 2);
-    let found = ring.recover_confirm().unwrap().unwrap();
-    assert_eq!(
-        (found.moved, found.journal_sequence),
-        (at(1, 64), 1),
-        "the last CONFIRM of the newest block"
-    );
-    assert_eq!(ring.confirmed(), at(1, 64));
-
-    // A torn last CONFIRM ends its block's walk; the one before it wins.
-    let mut torn = image.clone();
-    let second = block_frames(&image, geometry, 1, 1);
-    let damaged = second
-        .iter()
-        .filter(|found| found.header.kind == Kind::Confirm)
-        .nth(1)
-        .unwrap();
-    torn[4096 + damaged.offset as usize + HEADER_BYTES] ^= 0x01;
-    let mut ring = mount(MemoryFlash::from_image(torn), geometry, 2);
-    assert_eq!(ring.recover_confirm().unwrap().unwrap().moved, at(0, 900));
-
-    // Block 0's CONFIRM, with block 15 newest, is the 16th block back: found. With block 16 newest it is not.
-    let mut ring = mount(MemoryFlash::from_image(confirm_ring(&[&[at(0, 10)]], 15)), geometry, 2);
-    assert_eq!(CONFIRM_SEARCH_BLOCKS, 16);
-    assert_eq!(ring.recover_confirm().unwrap().unwrap().moved, at(0, 10));
-    let mut ring = mount(MemoryFlash::from_image(confirm_ring(&[&[at(0, 10)]], 16)), geometry, 2);
-    assert_eq!(ring.recover_confirm(), Ok(None));
-    assert_eq!(
-        ring.confirmed(),
-        Position::default(),
-        "conservative: nothing becomes erasable"
-    );
-
-    let mut fresh = mount(erased(geometry), geometry, 1);
-    assert_eq!(fresh.recover_confirm(), Ok(None), "an empty ring has none");
-}
-
-#[test]
-fn publishes_the_programmed_position_and_the_figures() {
-    let geometry = small();
-    let mut ring = mount(erased(geometry), geometry, 1);
-    assert_eq!(ring.programmed(), None);
-    let boot = frame_bytes(boot_payload(1).len()) as u32;
-    ring.append(Kind::Data, b"0123456789", false, 1).unwrap();
-    assert_eq!(
-        ring.programmed(),
-        Some(Position {
-            block_sequence: 0,
-            offset: boot + 56
-        })
-    );
-    fill_to(&mut ring, 1, 1, 3, 100);
-    ring.confirm_moved(Position {
-        block_sequence: 2,
-        offset: 0,
-    });
-    let figures = ring.figures();
-    let expected = Figures {
-        erased_ahead: 1,
-        moved_not_erased: 2,
-        foreign: 0,
-        other_version: 0,
-        unconfirmed: 2,
-        spill_frames: 0,
-        spill_bytes: 0,
+    let flash = MemoryFlash::from_image(image);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let other = |block_sequence, flight| Slot::OtherVersion {
+        block_sequence,
+        flight,
+        version: 2,
     };
-    assert_eq!(figures, expected);
-    while let Ok(Erasure::Sector { .. }) = ring.erase_step() {}
-    let figures = ring.figures();
     assert_eq!(
-        (figures.erased_ahead, figures.moved_not_erased),
-        (3, 0),
-        "slot 4 then slots 0 and 1"
+        snapshot(&scanned.table)[..4],
+        [valid(10, false), valid(11, false), other(12, true), other(13, false)]
     );
-}
-
-#[test]
-fn a_failed_program_closes_the_block_and_the_retry_lands_in_a_new_one() {
-    /// A flash whose next program fails without writing, as a flash timeout would, once `fail_after` more
-    /// programs have gone through.
-    struct Failing {
-        /// The flash behind it.
-        memory: MemoryFlash,
-        /// Programs still to let through before one fails, or None for no failure. Shared with the test, which
-        /// sets it between calls.
-        fail_after: Rc<Cell<Option<u32>>>,
-    }
-    impl Flash for Failing {
-        type Error = &'static str;
-        fn read(&self, offset: u32, buffer: &mut [u8]) -> Result<(), &'static str> {
-            self.memory.read(offset, buffer).map_err(|_| "read")
-        }
-        fn program(&mut self, offset: u32, data: &[u8]) -> Result<(), &'static str> {
-            match self.fail_after.get() {
-                Some(0) => {
-                    self.fail_after.set(None);
-                    return Err("timeout");
-                }
-                Some(more) => self.fail_after.set(Some(more - 1)),
-                None => {}
-            }
-            self.memory.program(offset, data).map_err(|_| "program")
-        }
-        fn erase_sector(&mut self, offset: u32) -> Result<(), &'static str> {
-            self.memory.erase_sector(offset).map_err(|_| "erase")
-        }
-        fn size(&self) -> u32 {
-            self.memory.size()
-        }
-    }
-    let geometry = Geometry::new(4, 1).unwrap();
-    let fail_after = Rc::new(Cell::new(None));
-    let flash = Failing {
-        memory: erased(geometry),
-        fail_after: fail_after.clone(),
+    assert_eq!(scanned.next_sequence, 14, "numbered past the other build's blocks too");
+    assert_eq!(
+        scanned.table.saver_start(None),
+        at(10, 0),
+        "the saver starts at what it can read"
+    );
+    let figures = Figures {
+        erased_ahead: 4,
+        unsaved: 2,
+        other_version: 2,
+        ..Figures::default()
     };
-    let mut ring = Ring::mount(flash, geometry, OPTIONS, 1, &boot_payload(1)).unwrap();
-    let largest = vec![b'l'; ring.max_payload()];
-    ring.append(Kind::Data, &largest, false, 0).unwrap(); // block 0: BOOT 0, DATA 1, full
+    assert_eq!(scanned.table.figures(None), figures);
 
-    fail_after.set(Some(0)); // block 1's BOOT program fails
-    assert_eq!(ring.append(Kind::Data, b"a", false, 1), Err(Error::Flash("timeout")));
-    assert_eq!(ring.slots()[1], Slot::Foreign, "a failed BOOT leaves its slot to GC");
-    assert_eq!(ring.programmed().unwrap().block_sequence, 0);
-    assert_eq!(ring.erase_step(), Ok(Erasure::Sector { slot: 1, sector: 0 }));
-    ring.append(Kind::Data, b"a", false, 1).unwrap(); // the same block 1, once erased: BOOT 3, DATA 4
-
-    fail_after.set(Some(0)); // a DATA program into open block 1 fails
-    assert_eq!(ring.append(Kind::Data, b"b", false, 2), Err(Error::Flash("timeout")));
-    assert_eq!(ring.room(), ring.max_payload(), "the failed frame closed block 1");
-    ring.append(Kind::Data, b"b", false, 2).unwrap(); // the retry opens block 2: BOOT 6, DATA 7
-
-    let numbers = |image: &[u8], block: u32| -> Vec<(Kind, u32)> {
-        block_frames(image, geometry, geometry.slot(block), block)
-            .iter()
-            .map(|found| (found.header.kind, found.header.frame_sequence))
-            .collect()
-    };
-    let image = ring.flash().memory.image().to_vec();
-    assert_eq!(numbers(&image, 0), [(Kind::Boot, 0), (Kind::Data, 1)]);
-    assert_eq!(
-        numbers(&image, 1),
-        [(Kind::Boot, 3), (Kind::Data, 4)],
-        "frame 2 was the failed BOOT: a visible gap"
-    );
-    assert_eq!(
-        numbers(&image, 2),
-        [(Kind::Boot, 6), (Kind::Data, 7)],
-        "block 1 was closed by the failed frame 5"
-    );
-
-    // A spilled frame whose program fails in drain() stays first in the queue, and lands later, once and in
-    // order, in a new block.
-    let room = ring.room();
-    ring.append(Kind::Data, &largest[..room], false, 3).unwrap(); // block 2 full: DATA 8
-    ring.append(Kind::Data, &largest, false, 4).unwrap(); // block 3: BOOT 9, DATA 10, full
-    ring.append(Kind::Data, b"s1", true, 5).unwrap(); // block 4 needs slot 0, which holds unconfirmed block 0
-    ring.append(Kind::Data, b"s2", false, 6).unwrap();
-    assert_eq!(ring.figures().spill_frames, 2);
-    ring.confirm_moved(Position {
-        block_sequence: 1,
-        offset: 0,
-    });
-    assert_eq!(ring.erase_step(), Ok(Erasure::Sector { slot: 0, sector: 0 }));
-    fail_after.set(Some(1)); // block 4's BOOT 11 goes through, then s1's program (frame 12) fails
-    assert_eq!(ring.drain(), Err(Error::Flash("timeout")));
-    assert_eq!(ring.figures().spill_frames, 2, "s1 is still first in the queue");
-    assert_eq!(ring.drain(), Ok(()), "block 5 waits: slot 1 holds unconfirmed block 1");
-    ring.confirm_moved(Position {
-        block_sequence: 2,
-        offset: 0,
-    });
-    assert_eq!(ring.erase_step(), Ok(Erasure::Sector { slot: 1, sector: 0 }));
-    ring.drain().unwrap();
-    assert_eq!(ring.figures().spill_frames, 0);
-
-    let image = ring.flash().memory.image().to_vec();
-    assert_eq!(
-        numbers(&image, 4),
-        [(Kind::Boot, 11)],
-        "the failed s1 closed block 4 and left nothing in it"
-    );
-    let spilled = |durable| Flags { spilled: true, durable };
-    let landed: Vec<(Kind, u32, Vec<u8>, Flags)> = block_frames(&image, geometry, 1, 5)
+    // the saver passes all four (it skips what it cannot read): the normal rule erases this build's only
+    let mut eraser = eraser(&flash, &scanned.table);
+    let saver = Some(at(14, 0));
+    let erasures: Vec<Erasure> = [0, 100, 101, 102]
         .into_iter()
-        .map(|found| {
-            (
-                found.header.kind,
-                found.header.frame_sequence,
-                found.payload,
-                found.header.flags,
-            )
-        })
+        .map(|now_ms| eraser.erase_step(saver, now_ms).unwrap())
         .collect();
+    let saved = |slot, block_sequence| Erasure::Saved { slot, block_sequence };
+    assert_eq!(erasures, [Erasure::Idle, saved(0, 10), saved(1, 11), Erasure::Idle]);
+
+    // the card dies; the ring fills: the other build's pad block goes first, its flight block only after the pad
+    let mut ring = writer(&flash, &scanned, 5);
+    let mut erasures = Vec::new();
+    for _ in 0..8 {
+        ring.append(&[b'p'; MAX_PAYLOAD], 1).unwrap(); // blocks 14..21
+        erasures.push(eraser.erase_step(saver, 200).unwrap());
+    }
+    assert_eq!(lost(&erasures), [13, 14, 15, 16]);
+    let Erasure::Lost(loss) = erasures
+        .iter()
+        .find(|erasure| matches!(erasure, Erasure::Lost(_)))
+        .unwrap()
+    else {
+        unreachable!()
+    };
     assert_eq!(
-        landed,
-        [
-            (Kind::Boot, 13, boot_payload(1), Flags::default()),
-            (Kind::Data, 14, b"s1".to_vec(), spilled(true)),
-            (Kind::Data, 15, b"s2".to_vec(), spilled(false)),
-        ]
+        loss.header.map(|header| header.version),
+        Some(2),
+        "the loss line still names its boot"
     );
+    ring.set_flight(true);
+    erasures.clear();
+    for _ in 0..8 {
+        ring.append(&[b'f'; MAX_PAYLOAD], 1).unwrap(); // flight blocks 22..29
+        erasures.push(eraser.erase_step(saver, 200).unwrap());
+    }
+    assert_eq!(
+        lost(&erasures),
+        [17, 18, 19, 20, 21, 12, 22, 23],
+        "pad first, then the oldest flight block"
+    );
+}
+
+#[test]
+fn a_flight_change_closes_the_block_and_marks_the_next() {
+    let geometry = small();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let table = &scanned.table;
+    let mut ring = writer(&flash, &scanned, 1);
+    assert_eq!(ring.append(b"pad", 1), Ok(at(0, 56)));
+    assert!(!ring.flight());
+    ring.set_flight(true); // BOOSTING
+    assert!(ring.flight());
+    assert_eq!(table.slot(0), valid(0, false), "closed at the change");
+    assert_eq!(ring.room(), MAX_PAYLOAD);
+    assert_eq!(ring.append(b"boost", 1), Ok(at(1, 56)));
+    ring.set_flight(true); // no change: the block stays open
+    assert_eq!(ring.append(b"glide", 1), Ok(at(1, 72)));
+    assert_eq!(
+        table.slot(1),
+        Slot::Open {
+            block_sequence: 1,
+            flight: true
+        }
+    );
+    ring.set_flight(false);
+    assert_eq!(ring.append(b"beacon", 1), Ok(at(2, 56)));
+    let image = flash.image();
+    let flags: Vec<bool> = blocks(&image, geometry)
+        .iter()
+        .map(|block| block.header.flight)
+        .collect();
+    assert_eq!(flags, [false, true, false]);
+}
+
+#[test]
+fn a_failed_chunk_program_is_retried_at_the_next_offset() {
+    let geometry = small();
+    let retry = vec![b'r'; 100];
+    let next = 72 + chunk_bytes(100) as u32;
+    for torn in [0, 1, 5, 8, 40, usize::MAX] {
+        let flash = erased(geometry);
+        let scanned = bring_up(&flash, geometry, Hints::default());
+        let mut ring = writer(&flash, &scanned, 1);
+        assert_eq!(ring.append(b"before", 1), Ok(at(0, 56)));
+        flash.fail(0, torn);
+        assert_eq!(
+            ring.append(&retry, 4),
+            Err(Error::Flash(MemoryError::Failed)),
+            "torn {torn}"
+        );
+        assert_eq!(
+            ring.position(),
+            at(0, 72),
+            "torn {torn}: a failed chunk is not published"
+        );
+        assert_eq!(
+            ring.append(&retry, 4),
+            Ok(at(0, next)),
+            "torn {torn}: behind whatever landed"
+        );
+        let image = flash.image();
+        let walked: Vec<Walked<'_>> = chunk::chunks(slot_bytes(&image, 0)).collect();
+        let whole = |offset| {
+            Walked::Chunk(chunk::Chunk {
+                offset,
+                records: 4,
+                payload: &retry,
+            })
+        };
+        // the debris is followed by the retry: no loss line for it
+        let expected = match torn {
+            0 => vec![whole(next)], // nothing landed: an erased gap
+            1 => vec![
+                Walked::Torn(Torn {
+                    offset: 72,
+                    records: None,
+                    followed: true,
+                }),
+                whole(next),
+            ],
+            usize::MAX => vec![whole(72), whole(next)], // it landed whole: a duplicate, for the tools to drop
+            _ => vec![
+                Walked::Torn(Torn {
+                    offset: 72,
+                    records: Some(4),
+                    followed: true,
+                }),
+                whole(next),
+            ],
+        };
+        assert_eq!(walked[1..], expected, "torn {torn}");
+    }
+}
+
+#[test]
+fn a_failed_program_whose_retry_does_not_fit_is_retried_in_the_next_block_of_the_boot() {
+    // the torn chunk is its block's last, as after a cut, but the boot's next block holds the retry: the saver
+    // tells the two apart by that block (see chunk::Torn)
+    let geometry = small();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &scanned, 1);
+    let first = 3000;
+    assert_eq!(ring.append(&vec![b'a'; first], 1), Ok(at(0, 56)));
+    let retry = vec![b'r'; ring.room()]; // fits once, not twice
+    let end = (HEADER_BYTES + chunk_bytes(first)) as u32;
+    flash.fail(0, 20);
+    assert_eq!(ring.append(&retry, 6), Err(Error::Flash(MemoryError::Failed)));
+    assert_eq!(ring.append(&retry, 6), Ok(at(1, 56)), "no room behind the debris");
+    let image = flash.image();
+    let blocks = blocks(&image, geometry);
+    let torn = Torn {
+        offset: end,
+        records: Some(6),
+        followed: false,
+    };
+    assert_eq!((blocks[0].torn.as_slice(), blocks[0].chunks.len()), (&[torn][..], 1));
+    assert_eq!(
+        (blocks[1].header.boot_id, blocks[1].chunks[0].records),
+        (blocks[0].header.boot_id, 6),
+        "the same boot's next block opens with the retried records"
+    );
+}
+
+#[test]
+fn a_failed_block_header_spends_its_sequence_and_leaves_the_slot_to_the_eraser() {
+    let geometry = small();
+    for torn in [0, 30, usize::MAX] {
+        let flash = erased(geometry);
+        let scanned = bring_up(&flash, geometry, Hints::default());
+        let mut ring = writer(&flash, &scanned, 1);
+        flash.fail(0, torn); // block 0's header
+        assert_eq!(ring.append(b"x", 1), Err(Error::Flash(MemoryError::Failed)));
+        assert_eq!(scanned.table.slot(0), Slot::Foreign, "torn {torn}");
+        assert_eq!(
+            ring.append(b"x", 1),
+            Ok(at(1, 56)),
+            "torn {torn}: the next slot, the next number"
+        );
+        assert_eq!(slot_of(&scanned.table, 1), 1);
+        // a reboot now sees block 0 empty (its header landed whole) or foreign: never two blocks numbered alike
+        let rescanned = bring_up(&MemoryFlash::from_image(flash.image()), geometry, Hints::default());
+        let expected = match torn {
+            0 => Slot::Erased, // nothing landed
+            usize::MAX => valid(0, false),
+            _ => Slot::Foreign,
+        };
+        assert_eq!(rescanned.table.slot(0), expected, "torn {torn}");
+        assert_eq!(rescanned.next_sequence, 2);
+        let mut eraser = eraser(&flash, &scanned.table);
+        assert_eq!(eraser.erase_step(None, 0), Ok(Erasure::Foreign { slot: 0 }));
+    }
+}
+
+#[test]
+fn a_slot_with_an_erased_header_over_dirty_bytes_is_refused_and_erased() {
+    let geometry = small();
+    let mut image = vec![0xFF; geometry.bytes() as usize];
+    image[BLOCK_BYTES as usize + 1000] = 0x00; // slot 1: an erase cut after its header went
+    let flash = MemoryFlash::from_image(image);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    assert_eq!(scanned.table.slot(1), Slot::Erased, "the header alone reads erased");
+    let mut ring = writer(&flash, &scanned, 1);
+    assert_eq!(ring.append(&[b'a'; MAX_PAYLOAD], 1), Ok(at(0, 56)));
+    let reads = flash.reads();
+    assert_eq!(ring.append(b"x", 1), Ok(at(1, 56)));
+    assert_eq!(
+        flash.reads(),
+        reads + 2,
+        "one full read refused slot 1, one passed slot 2"
+    );
+    assert_eq!(slot_of(&scanned.table, 1), 2);
+    assert_eq!(scanned.table.slot(1), Slot::Foreign);
+    let mut eraser = eraser(&flash, &scanned.table);
+    assert_eq!(eraser.erase_step(None, 0), Ok(Erasure::Foreign { slot: 1 }));
+    assert!(slot_bytes(&flash.image(), 1).iter().all(|&byte| byte == 0xFF));
+}
+
+#[test]
+fn the_hints_raise_the_next_sequence_but_the_scan_places_the_writer() {
+    let geometry = small();
+    // an empty ring: the previous boot's blocks were saved and erased, and only the hints remember their numbers
+    let flash = erased(geometry);
+    let cases = [
+        (None, None, 0),
+        (Some(at(500, 1000)), None, 501),
+        (Some(at(500, 1000)), Some(at(501, 0)), 502), // a saver at a block not yet opened: a gap is harmless
+        (None, Some(at(7, 0)), 8),
+        (Some(at(HINT_REACH, 0)), None, HINT_REACH + 1), // as far as a hint is trusted
+        (Some(at(HINT_REACH + 1, 0)), Some(at(9, 0)), 10), // corrupt: ignored, the other hint still counts
+        (Some(at(u32::MAX, 0)), None, 0),                // would spend every number at once
+    ];
+    for (writer_hint, saver_hint, next) in cases {
+        let hints = Hints {
+            writer: writer_hint,
+            saver: saver_hint,
+        };
+        assert_eq!(bring_up(&flash, geometry, hints).next_sequence, next, "{hints:?}");
+    }
+
+    let first = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &first, 1);
+    for _ in 0..3 {
+        ring.append(&[b'a'; MAX_PAYLOAD], 1).unwrap(); // blocks 0, 1, 2
+    }
+    drop(ring);
+    // with blocks 0..2 in flash: a hint near u32::MAX (corrupt, or another build's encoding) is ignored
+    for (hint, next) in [
+        (at(1, 100), 3),
+        (at(40, 8), 41),
+        (at(u32::MAX - 1, 0), 3),
+        (at(2 + HINT_REACH + 1, 0), 3),
+    ] {
+        let hints = Hints {
+            writer: Some(hint),
+            saver: None,
+        };
+        let rebooted = MemoryFlash::from_image(flash.image());
+        let scanned = bring_up(&rebooted, geometry, hints);
+        assert_eq!(
+            scanned.next_sequence, next,
+            "{hint:?}: the newer of the scan and the hint"
+        );
+        let mut ring = writer(&rebooted, &scanned, 2);
+        assert_eq!(ring.append(b"x", 1), Ok(at(next, 56)));
+        assert_eq!(
+            slot_of(&scanned.table, next),
+            3,
+            "{hint:?}: the slot after the newest block"
+        );
+    }
+}
+
+#[test]
+fn refuses_a_chunk_too_large_and_a_flash_smaller_than_the_ring() {
+    let geometry = small();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &scanned, 1);
+    let reads = flash.reads();
+    assert_eq!(ring.append(&vec![0; MAX_PAYLOAD + 1], 1), Err(Error::TooLarge));
+    assert_eq!((flash.programs(), flash.reads()), (0, reads), "no block opened for it");
+    assert_eq!(ring.append(&vec![0; MAX_PAYLOAD], 1), Ok(at(0, 56)));
+    assert_eq!(ring.position(), at(0, BLOCK_BYTES), "the largest chunk fills a block");
+    let short = MemoryFlash::new(geometry.bytes() - BLOCK_BYTES);
+    assert!(matches!(scan(&short, geometry, Hints::default()), Err(Error::Geometry)));
+    let session = session(1);
+    assert!(matches!(
+        Ring::new(&short, &scanned.table, 0, 1, session, false),
+        Err(Error::Geometry)
+    ));
+    assert!(matches!(
+        Eraser::new(&short, &scanned.table, None),
+        Err(Error::Geometry)
+    ));
+}
+
+#[test]
+fn the_eraser_never_takes_the_open_block() {
+    let geometry = Geometry::new(2).unwrap();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &scanned, 1);
+    let mut eraser = eraser(&flash, &scanned.table);
+    ring.append(&[1; MAX_PAYLOAD], 1).unwrap(); // block 0
+    assert_eq!(
+        eraser.erase_step(None, 0),
+        Ok(Erasure::Idle),
+        "slot 1 is erased: the reserve holds"
+    );
+    ring.append(&[2; MAX_PAYLOAD], 1).unwrap(); // block 1 in slot 1, block 0 closed
+    let Ok(Erasure::Lost(Loss {
+        slot: 0,
+        block_sequence: 0,
+        ..
+    })) = eraser.erase_step(None, 0)
+    else {
+        panic!("the closed block goes");
+    };
+    assert_eq!(
+        eraser.erase_step(None, 0),
+        Ok(Erasure::Idle),
+        "slot 1 holds the open block"
+    );
+    let past = Some(at(9, 0));
+    assert_eq!(eraser.erase_step(past, 0), Ok(Erasure::Idle));
+    assert_eq!(
+        eraser.erase_step(past, 100),
+        Ok(Erasure::Idle),
+        "saved or not, it is open"
+    );
+    ring.append(&[3; MAX_PAYLOAD], 1).unwrap(); // block 2 in slot 0, block 1 closed
+    let saved = Erasure::Saved {
+        slot: 1,
+        block_sequence: 1,
+    };
+    assert_eq!(eraser.erase_step(past, 200), Ok(saved));
+}
+
+#[test]
+fn after_a_flight_the_open_pad_block_is_kept_and_the_oldest_flight_block_goes() {
+    // DONE: every closed block is a flight block, and the only non-flight one is the writer's open block
+    let geometry = Geometry::new(4).unwrap();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &scanned, 1);
+    let mut eraser = eraser(&flash, &scanned.table);
+    ring.set_flight(true);
+    for _ in 0..3 {
+        ring.append(&[b'f'; MAX_PAYLOAD], 1).unwrap(); // flight blocks 0, 1, 2
+    }
+    ring.set_flight(false);
+    ring.append(b"1:0:beacon", 1).unwrap(); // block 3, open, not flight: the ring is full
+    let Ok(Erasure::Lost(loss)) = eraser.erase_step(None, 0) else {
+        panic!("a full ring with a dead saver loses a block");
+    };
+    assert_eq!(
+        (loss.block_sequence, loss.flight),
+        (0, true),
+        "never the open block, pad or not"
+    );
+    assert_eq!(
+        scanned.table.slot(3),
+        Slot::Open {
+            block_sequence: 3,
+            flight: false
+        }
+    );
+}
+
+/// What fails on [`BadSlot`]'s one slot.
+#[derive(Clone, Copy, Debug)]
+enum Fault {
+    /// Every erase: a worn sector, or a driver error that repeats.
+    Erase,
+    /// Every whole-block read: the writer's check that a slot is erased.
+    CheckRead,
+}
+
+/// A handle on a flash with one bad slot, where `fault` fails every time, as a driver error that repeats; every
+/// other call goes to the flash. The writer or the eraser holds it in place of a plain `&MemoryFlash`.
+struct BadSlot<'a> {
+    /// The flash.
+    flash: &'a MemoryFlash,
+    /// The bad slot's offset.
+    offset: u32,
+    /// What fails there.
+    fault: Fault,
+}
+
+impl Flash for BadSlot<'_> {
+    type Error = MemoryError;
+
+    fn read(&self, offset: u32, buffer: &mut [u8]) -> Result<(), MemoryError> {
+        let check = matches!(self.fault, Fault::CheckRead) && buffer.len() == BLOCK_BYTES as usize;
+        if check && offset == self.offset {
+            return Err(MemoryError::Failed);
+        }
+        self.flash.read(offset, buffer)
+    }
+
+    fn program(&mut self, offset: u32, data: &[u8]) -> Result<(), MemoryError> {
+        let mut flash = self.flash;
+        flash.program(offset, data)
+    }
+
+    fn erase_sector(&mut self, offset: u32) -> Result<(), MemoryError> {
+        if matches!(self.fault, Fault::Erase) && offset == self.offset {
+            return Err(MemoryError::Failed);
+        }
+        let mut flash = self.flash;
+        flash.erase_sector(offset)
+    }
+
+    fn size(&self) -> u32 {
+        self.flash.size()
+    }
+}
+
+#[test]
+fn a_sector_whose_erase_always_fails_is_given_up_and_the_next_oldest_block_goes() {
+    // a full ring with a dead saver, and the oldest block in a sector that no longer erases
+    let geometry = small();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let table = &scanned.table;
+    let mut ring = writer(&flash, &scanned, 1);
+    let worn = BadSlot {
+        flash: &flash,
+        offset: 0,
+        fault: Fault::Erase,
+    };
+    let mut eraser = Eraser::new(worn, table, None).unwrap();
+    for _ in 0..8 {
+        ring.append(&[b'a'; MAX_PAYLOAD], 1).unwrap(); // blocks 0..7
+    }
+    assert_eq!(ring.append(b"x", 1), Err(Error::WouldBlock));
+    for attempt in 1..=ERASE_ATTEMPTS {
+        assert_eq!(
+            eraser.erase_step(None, 0),
+            Err(Error::Flash(MemoryError::Failed)),
+            "attempt {attempt}: the same block, as the rules choose it"
+        );
+        assert_eq!(table.slot(0), valid(0, false), "unchanged: still the block it was");
+    }
+    let figures = table.figures(None);
+    assert_eq!((figures.bad, figures.lost), (1, 0), "given up, and no loss counted");
+    let Ok(Erasure::Lost(loss)) = eraser.erase_step(None, 0) else {
+        panic!("the next-oldest block goes instead");
+    };
+    assert_eq!((loss.slot, loss.block_sequence), (1, 1));
+    assert_eq!(ring.append(b"x", 1), Ok(at(8, 56)), "the writer goes on");
+    // the eraser keeps the ring going around the bad slot, which is neither free nor erased again
+    for index in 0..40 {
+        assert!(
+            matches!(eraser.erase_step(None, 0), Ok(Erasure::Lost(_))),
+            "block {index}"
+        );
+        ring.append(&[b'b'; MAX_PAYLOAD], 1)
+            .unwrap_or_else(|error| panic!("block {index}: {error:?}"));
+    }
+    assert_eq!(table.slot(0), valid(0, false), "passed over until the next boot");
+    assert_eq!(table.figures(None).bad, 1);
+}
+
+#[test]
+fn an_erase_that_fails_now_and_then_never_gives_its_slot_up() {
+    // a failure, then a success: the count starts again, so failures far apart never add up to a bad slot
+    let geometry = small();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &scanned, 1);
+    let mut eraser = eraser(&flash, &scanned.table);
+    for _ in 0..8 {
+        ring.append(&[b'a'; MAX_PAYLOAD], 1).unwrap();
+    }
+    for round in 0..2 * ERASE_ATTEMPTS {
+        for _ in 1..ERASE_ATTEMPTS {
+            flash.fail(0, 0); // the next erase fails, before it erased anything
+            assert_eq!(
+                eraser.erase_step(None, 0),
+                Err(Error::Flash(MemoryError::Failed)),
+                "round {round}"
+            );
+        }
+        assert!(
+            matches!(eraser.erase_step(None, 0), Ok(Erasure::Lost(_))),
+            "round {round}: the last attempt erases it"
+        );
+        ring.append(&[b'a'; MAX_PAYLOAD], 1).unwrap();
+    }
+    assert_eq!(scanned.table.figures(None).bad, 0);
+}
+
+#[test]
+fn a_slot_the_writer_cannot_read_goes_to_the_eraser_and_the_writer_opens_the_next() {
+    let geometry = small();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let unreadable = BadSlot {
+        flash: &flash,
+        offset: BLOCK_BYTES,
+        fault: Fault::CheckRead,
+    };
+    let mut ring = Ring::new(unreadable, &scanned.table, 0, 1, session(1), false).unwrap();
+    assert_eq!(ring.append(&[b'a'; MAX_PAYLOAD], 1), Ok(at(0, 56)));
+    assert_eq!(
+        ring.append(b"x", 1),
+        Ok(at(1, 56)),
+        "slot 1 fails its read: the next slot opens at once"
+    );
+    assert_eq!(slot_of(&scanned.table, 1), 2);
+    assert_eq!(
+        scanned.table.slot(1),
+        Slot::Foreign,
+        "the eraser's now, never read again by the writer"
+    );
+    let mut eraser = eraser(&flash, &scanned.table);
+    assert_eq!(eraser.erase_step(None, 0), Ok(Erasure::Foreign { slot: 1 }));
+
+    // negative: when no slot can be opened because a read failed, the append says so instead of would-block
+    let geometry = Geometry::new(2).unwrap();
+    let flash = erased(geometry);
+    let scanned = bring_up(&flash, geometry, Hints::default());
+    let unreadable = BadSlot {
+        flash: &flash,
+        offset: BLOCK_BYTES,
+        fault: Fault::CheckRead,
+    };
+    let mut ring = Ring::new(unreadable, &scanned.table, 0, 1, session(1), false).unwrap();
+    assert_eq!(ring.append(&[b'a'; MAX_PAYLOAD], 1), Ok(at(0, 56)));
+    assert_eq!(
+        ring.append(b"x", 1),
+        Err(Error::Flash(MemoryError::Failed)),
+        "the only erased slot is unreadable"
+    );
+    assert_eq!(
+        ring.append(b"x", 1),
+        Err(Error::WouldBlock),
+        "until the eraser has erased it again"
+    );
+}
+
+#[test]
+fn a_reboot_in_flight_writes_its_bring_up_into_a_flight_block() {
+    // boot 1: two pad blocks, then BOOSTING, two flight blocks, and the power goes (a brown-out, or a panic)
+    let geometry = small();
+    let flash = erased(geometry);
+    let first = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &first, 1);
+    for flight in [false, false, true, true] {
+        ring.set_flight(flight);
+        ring.append(&[b'a'; MAX_PAYLOAD], 1).unwrap(); // blocks 0, 1 (pad), 2, 3 (flight)
+    }
+    drop(ring);
+    let image = flash.into_image();
+
+    // boot 2 reads a crumb in BOOSTING..LANDING: storage comes up as a flight writer, long before the warm start
+    let flash = MemoryFlash::from_image(image.clone());
+    let second = bring_up(&flash, geometry, Hints::default());
+    let table = &second.table;
+    let mut ring = Ring::new(&flash, table, second.next_sequence, 2, session(2), true).unwrap();
+    assert!(ring.flight());
+    let provenance = b"2:0:boot: reset_cause 4";
+    assert_eq!(ring.append(provenance, 1), Ok(at(4, 56)));
+    ring.set_flight(true); // the warm start resumes the flight: nothing closes
+    let behind = (HEADER_BYTES + chunk_bytes(provenance.len())) as u32;
+    assert_eq!(ring.append(b"2:1:warm start", 1), Ok(at(4, behind)));
+    assert_eq!(
+        table.slot(4),
+        Slot::Open {
+            block_sequence: 4,
+            flight: true
+        }
+    );
+    // the card is dead: newest wins gives up boot 1's pad first, then the flight in order, the reboot with it
+    let mut eraser = eraser(&flash, table);
+    let mut erasures = Vec::new();
+    for _ in 0..5 {
+        ring.append(&[b'f'; MAX_PAYLOAD], 1).unwrap(); // flight blocks 5..9
+        erasures.push(eraser.erase_step(None, 0).unwrap());
+    }
+    assert_eq!(
+        lost(&erasures),
+        [0, 1, 2, 3],
+        "the reboot's evidence outlives the pad and the flight before it"
+    );
+    assert_eq!(table.slot(slot_of(table, 4)), valid(4, true));
+
+    // the gate refuses the warm start: the one block written before the decision closes, the next is a pad block
+    let flash = MemoryFlash::from_image(image);
+    let second = bring_up(&flash, geometry, Hints::default());
+    let mut ring = Ring::new(&flash, &second.table, second.next_sequence, 2, session(2), true).unwrap();
+    assert_eq!(ring.append(b"2:0:boot: reset_cause 1", 1), Ok(at(4, 56)));
+    ring.set_flight(false);
+    assert_eq!(ring.append(b"2:1:warm start refused", 1), Ok(at(5, 56)));
+    let flags: Vec<bool> = blocks(&flash.image(), geometry)
+        .iter()
+        .map(|block| block.header.flight)
+        .collect();
+    assert_eq!(flags, [false, false, true, true, true, false]);
+}
+
+#[test]
+fn a_ring_numbered_to_the_end_refuses_to_open_rather_than_give_a_number_twice() {
+    // a block numbered near u32::MAX, which only another build or a corrupt hint before it can leave
+    let geometry = small();
+    for (newest, opens) in [(u32::MAX - 3, 2), (u32::MAX - 1, 0), (u32::MAX, 0)] {
+        let mut image = vec![0xFF; geometry.bytes() as usize];
+        image[..HEADER_BYTES].copy_from_slice(&header(newest, 1, false).encode());
+        let flash = MemoryFlash::from_image(image);
+        let scanned = bring_up(&flash, geometry, Hints::default());
+        assert_eq!(scanned.next_sequence, newest.saturating_add(1), "{newest}");
+        let mut ring = writer(&flash, &scanned, 2);
+        for open in 0..opens {
+            let expected = at(newest + 1 + open, 56);
+            assert_eq!(ring.append(&[b'x'; MAX_PAYLOAD], 1), Ok(expected), "{newest}");
+        }
+        let (programs, reads) = (flash.programs(), flash.reads());
+        for _ in 0..2 {
+            assert_eq!(ring.append(&[b'x'; MAX_PAYLOAD], 1), Err(Error::Exhausted), "{newest}");
+        }
+        assert_eq!(
+            (flash.programs(), flash.reads()),
+            (programs, reads),
+            "{newest}: nothing read or programmed"
+        );
+        let mut numbers: Vec<u32> = blocks(&flash.image(), geometry)
+            .iter()
+            .map(|block| block.header.block_sequence)
+            .collect();
+        let count = numbers.len();
+        numbers.dedup();
+        assert_eq!(numbers.len(), count, "{newest}: no number given twice");
+        assert_eq!(count as u32, 1 + opens);
+    }
+}
+
+#[test]
+fn a_trusted_saver_hint_lets_the_saved_blocks_go_at_once_with_no_card_and_no_loss() {
+    // boot 1 wrote blocks 0..5 and its saver put 0..2 on the card (hint (3, 0)); boot 2 has no card
+    let geometry = small();
+    let flash = erased(geometry);
+    let first = bring_up(&flash, geometry, Hints::default());
+    let mut ring = writer(&flash, &first, 1);
+    for _ in 0..6 {
+        ring.append(&[b'a'; MAX_PAYLOAD], 1).unwrap();
+    }
+    let position = ring.position();
+    drop(ring);
+    let image = flash.into_image();
+    let hint = at(3, 0);
+    let hints = Hints {
+        writer: Some(position),
+        saver: Some(hint),
+    };
+    let flash = MemoryFlash::from_image(image.clone());
+    let scanned = bring_up(&flash, geometry, hints);
+    let mut eraser = Eraser::new(&flash, &scanned.table, Some(hint)).unwrap();
+    let erasures: Vec<Erasure> = (0..4).map(|_| eraser.erase_step(None, 0).unwrap()).collect();
+    let saved = |slot, block_sequence| Erasure::Saved { slot, block_sequence };
+    assert_eq!(
+        erasures,
+        [saved(0, 0), saved(1, 1), saved(2, 2), Erasure::Idle],
+        "on the old card: erased at once, oldest first, no delay"
+    );
+    assert_eq!(scanned.table.figures(None).lost, 0);
+
+    // another card (the bring-up passes None), or a hint that names no block in flash: nothing counts as saved
+    for untrusted in [None, Some(at(40, 0)), Some(at(3, BLOCK_BYTES + 8))] {
+        let flash = MemoryFlash::from_image(image.clone());
+        let scanned = bring_up(&flash, geometry, hints);
+        let mut eraser = Eraser::new(&flash, &scanned.table, untrusted).unwrap();
+        assert_eq!(
+            eraser.erase_step(None, 0),
+            Ok(Erasure::Idle),
+            "{untrusted:?}: two erased slots hold the reserve"
+        );
+        for _ in 0..2 {
+            assert!(matches!(eraser.erase_step(None, 0), Ok(Erasure::Idle)), "{untrusted:?}");
+        }
+    }
 }

@@ -55,6 +55,11 @@ shared session.csv lists every boot: the report says which of its rows date the 
 its clock was never set, and then names it by boot id, board, firmware and config; a dated boot's
 ignition gets its UTC. A dump from before the wrapper is read exactly as before.
 
+A Rust board's session directory can hold a line twice (doc/specs/avionics-port.md "Duplicates": the ring_saver
+re-saves after a reboot, a flash program is retried after it landed). A wrapped session is read through the
+duplicate filter (recorder_wire.unique), file by file: a duplicate row never reaches recorder/ or flight/, a
+duplicate log line never reaches board.log, and each stream reports how many it dropped.
+
 TWO BOOTS UNDER ONE LABEL lose their salvage, and nothing else. A boot id names one boot, but a label
 session holds every boot that ran under the label, and a watchdog or hard reset restarts the ticks, so
 the boots' spans overlap: a recovered row's time fits both, and it is rejected rather than guessed into
@@ -456,27 +461,36 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
     every good line board.log holds -- the previous boot's last lines at the head of its part of
     recorder.log too -- so good and salvaged in count exactly its lines that check out.
 
+    Every file is read through the duplicate filter (recorder_wire.unique) before anything else sees it: a
+    duplicate is counted, under its stream or under _BOARD_LOG for this session's part of recorder.log, and
+    is in none of the other counts. A duplicate session.csv row is dropped uncounted: it only repeats an index
+    row.
+
     Args:
         directory - the pulled /userdata/recordings directory.
         session - the session prefix, e.g. '000123'.
 
     Returns:
         (streams {stream: (header or None, boots, wraps)}, tally {stream, _NO_STREAM or _BOARD_LOG: [good,
-        salvaged in, rejected]}, clock [the session.csv payloads, this session's and any other's], elsewhere:
-        the lines of the dump's other junk files and other boots' part of recorder.log that prove no row of
-        this session, board: board.log's lines -- board_log()'s, with the log lines found in the session's
-        files at their time).
+        salvaged in, rejected, duplicates]}, clock [the session.csv payloads, this session's and any other's],
+        elsewhere: the lines of the dump's other junk files and other boots' part of recorder.log that prove no
+        row of this session, board: board.log's lines -- board_log()'s, with the log lines found in the
+        session's files at their time).
     """
     prefix, boot_id = session + '_', session.isdigit()
     names = sorted(name for name in os.listdir(directory) if os.path.isfile(os.path.join(directory, name)))
     headers, rows, places, stranded, clock = {}, {}, {}, [], []
-    tally = {_NO_STREAM: [0, 0, 0], _BOARD_LOG: [0, 0, 0]}
+    tally = {_NO_STREAM: [0, 0, 0, 0], _BOARD_LOG: [0, 0, 0, 0]}
     for name in names:
         if not (name.startswith(prefix) and name.endswith('.csv')):
             continue
         stream, header, kept, at, lost, good = name[len(prefix):-len('.csv')], None, [], [], [], 0
-        for position, line in enumerate(_lines(os.path.join(directory, name))):
-            payload = recorder_wire.verify(name, line)
+        lines = _lines(os.path.join(directory, name))
+        payloads = [recorder_wire.verify(name, line) for line in lines]
+        firsts = recorder_wire.unique([(name, payload) for payload in payloads])
+        for position, (line, payload) in enumerate(zip(lines, payloads)):
+            if not firsts[position]:
+                continue  # a duplicate: counted below, under the stream
             if payload is None:
                 lost.append((position, line))
                 continue
@@ -490,7 +504,7 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
             owner, source = _NO_STREAM, None
         elif boot_id or stream in _FIELDS:
             owner = source = stream
-            rows[stream], places[stream], tally[stream] = kept, at, [good, 0, 0]
+            rows[stream], places[stream], tally[stream] = kept, at, [good, 0, 0, firsts.count(False)]
             if header is not None:
                 headers[stream] = header
         else:
@@ -500,6 +514,10 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
     log, start, valid, logged, end = [], 0, 0, ([], []), 0
     if 'recorder.log' in names:
         log = _lines(os.path.join(directory, 'recorder.log'))
+        firsts = recorder_wire.unique([(None, recorder_wire.verify(None, line)) for line in log])
+        start, _first, end = _session_range(log, session)
+        tally[_BOARD_LOG][3] = firsts[start:end].count(False)  # this session's part, as recorder.log holds it
+        log = [line for line, kept in zip(log, firsts) if kept]
         start, first, end = _session_range(log, session)
         valid, *logged = _log_timeline(log, start, first, end)
         for index, line in enumerate(log):
@@ -519,8 +537,12 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
         if name != recorder_wire.SESSION_INDEX and (
                 not recorder_wire.wrapped(head) or recorder_wire.verify(name, head) is not None):
             continue  # a file from before the wrapper, or a real stream of another session
-        for line in _lines(path):
-            payload = recorder_wire.verify(name, line)
+        lines = _lines(path)
+        payloads = [recorder_wire.verify(name, line) for line in lines]
+        firsts = recorder_wire.unique([(name, payload) for payload in payloads])
+        for line, payload, kept in zip(lines, payloads, firsts):
+            if not kept:
+                continue  # a duplicate index row (or a junk file's: none, nothing checks out there)
             if payload is not None:
                 if name == recorder_wire.SESSION_INDEX:
                     clock.append(payload)
@@ -566,7 +588,7 @@ def _wrapped_streams(directory: str, session: str) -> tuple:
                 continue  # a log line already in recorder.log or perhaps another session's; another session's row
             claimed = True
             stream = routing[len(prefix):-len('.csv')]
-            counts = tally.setdefault(stream, [0, 0, 0])
+            counts = tally.setdefault(stream, [0, 0, 0, 0])
             if payload.startswith('uptime;'):
                 headers.setdefault(stream, tuple(payload.split(';')[1:]))
                 counts[1] += 1
@@ -668,8 +690,8 @@ def _report_checks(tally: dict, elsewhere: int) -> None:
     Print what the checks found in a wrapped session.
 
     Args:
-        tally - {stream, _NO_STREAM or _BOARD_LOG: [good, salvaged in, rejected]} over the whole session,
-            from _wrapped_streams().
+        tally - {stream, _NO_STREAM or _BOARD_LOG: [good, salvaged in, rejected, duplicates]} over the whole
+            session, from _wrapped_streams(). Duplicates are named only where there are any.
         elsewhere - the lines elsewhere in the dump that prove no row of this session.
 
     Returns:
@@ -677,8 +699,9 @@ def _report_checks(tally: dict, elsewhere: int) -> None:
     """
     print('rows checked over the whole session:')
     for stream in sorted(tally):
-        good, salvaged, rejected = tally[stream]
-        print('  %-18s %6d good, %6d salvaged in, %6d rejected' % (stream, good, salvaged, rejected))
+        good, salvaged, rejected, duplicates = tally[stream]
+        dropped = ', %6d duplicates dropped' % duplicates if duplicates else ''
+        print('  %-18s %6d good, %6d salvaged in, %6d rejected%s' % (stream, good, salvaged, rejected, dropped))
     if elsewhere:
         print('  %d more damaged line(s) in junk files without this prefix or in other boots\' part of '
               'recorder.log prove no row of this session' % elsewhere)

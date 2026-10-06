@@ -6,13 +6,17 @@
 //! Producers never format text and never take a lock on their path:
 //! * a producing thread [`Recorder::attach`]es itself to its own PSRAM ring, once (control, i2c0, i2c1, gnss,
 //!   supervisor, executor). From then on its [`crate::Telemetry`] rows and [`Recorder::log`] lines go into that
-//!   ring alone: a single-producer, single-consumer byte ring, with the flash writer the one consumer;
+//!   ring alone: a single-producer, single-consumer byte ring, with the ring_writer the one consumer;
 //! * any other thread (an unregistered one, IDF's vprintf hook) shares the `misc` ring, behind a `try_lock`:
 //!   contention drops the record and counts it, it never waits.
 //!
 //! A thread finds its ring through a thread-local binding set by `attach`, so a log line reaches the right ring
 //! from anywhere (the `log` crate bridge has no handle to pass). The binding names the Recorder by a process-
 //! unique id, so a thread attached to one Recorder writes into the `misc` ring of another.
+//!
+//! A durable record (a durable stream's, a session.csv row) wakes the writer through [`Wake`] as soon as it is
+//! queued, so it skips the writer's ~10 ms tick (spec "The ring_writer": a durable record is at risk for at most
+//! ~35 ms, not ~45).
 //!
 //! The error policy is plan B's: telemetry is evidence and raises ([`Overflow`] when its ring is full, counted
 //! in `tlm.dropped`), a log line is a convenience and is dropped with a count (`log.dropped`).
@@ -25,6 +29,7 @@ use std::sync::{Mutex, TryLockError};
 use std::vec::Vec;
 
 use flash_ring::Position;
+use flash_ring::header::Session;
 use recorder_wire::{Cell, SessionRow};
 
 use crate::byte_ring::ByteRing;
@@ -32,24 +37,24 @@ use crate::published::{PublishedPosition, PublishedStats, Stats};
 use crate::record;
 use crate::registry::{Registry, StreamId};
 use crate::tee::{Tee, TeeBatch};
-use crate::writer::{FRAME_BYTES, wrapped_bytes};
 
 /// A record class: the status line and `stats` count them apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Class {
-    /// HEADER, ROW and LINE records: evidence.
+    /// HEADER and ROW records (session.csv rows among them): evidence.
     Telemetry = 0,
     /// LOG records: best effort.
     Log = 1,
 }
 
 /// A telemetry record that could not be queued: its producer's ring is full (or, for the `misc` ring, busy), or
-/// the row is larger than a ring record may be, or its line could be longer than a frame holds. Counted in
-/// `tlm.dropped`.
+/// the row is longer than a flash chunk holds (4032 bytes) or has more than 255 cells. Counted in `tlm.dropped`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Overflow;
 
 impl core::fmt::Display for Overflow {
+    /// The text a caller logs when it reports the refused row: what went wrong, not which stream (the caller knows
+    /// that, and `tlm.dropped` has already counted it).
     fn fmt(&self, formatter: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         formatter.write_str("telemetry dropped: no room in the recorder ring")
     }
@@ -57,11 +62,14 @@ impl core::fmt::Display for Overflow {
 
 impl std::error::Error for Overflow {}
 
-/// Who this boot is, for the session.csv rows and the BOOT frame payload.
+/// Who this boot is, for the session.csv rows and the status line.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Identity {
     /// The NVS boot id; None when nothing counted the boot.
     pub boot_id: Option<u32>,
+    /// The session prefix (recorder_wire's `session_prefix`), the label every block header of this boot carries:
+    /// the bring-up passes the same one to `flash_ring::Ring::new`.
+    pub session: Session,
     /// The board id from the config.
     pub board: String,
     /// The firmware version.
@@ -111,18 +119,23 @@ pub struct Buffers {
     pub producers: Vec<&'static mut [u8]>,
     /// The ring unregistered threads share.
     pub misc: &'static mut [u8],
-    /// The log tee's lines (1024 x 256 B in the plan).
+    /// The log tee's records (256 KiB in the plan).
     pub log_tee: &'static mut [u8],
-    /// The telemetry tee's lines, likewise.
+    /// The telemetry tee's records, likewise.
     pub telemetry_tee: &'static mut [u8],
 }
 
-/// The uptime in microseconds (`esp_timer_get_time` on the board): what a log line is stamped with.
+/// The uptime in microseconds (`esp_timer_get_time` on the board): what a log line and a session.csv time-set
+/// row are stamped with.
 pub type Clock = Box<dyn Fn() -> u64 + Send + Sync>;
+
+/// Wakes the writer thread at once (`xTaskNotifyGive` on the board): called right after a durable record is
+/// queued, from the producer's thread. It must not block.
+pub type Wake = Box<dyn Fn() + Send + Sync>;
 
 /// One producer ring and its counters.
 pub(crate) struct Producer {
-    /// The records, the flash writer its consumer.
+    /// The records, the ring_writer its consumer.
     pub(crate) ring: ByteRing,
     /// Whether a thread holds it ([`Recorder::attach`]); always false for the `misc` ring, which a lock guards.
     claimed: AtomicBool,
@@ -194,6 +207,11 @@ pub struct Attachment<'r> {
 }
 
 impl Drop for Attachment<'_> {
+    /// Gives the ring up: first this thread's binding is cleared, so none of its later records can reach the ring,
+    /// then the claim is released with a Release store. The next thread to attach takes the claim with an Acquire
+    /// swap, so it is ordered after every push this thread made, and the ring keeps one producer at a time (the
+    /// byte ring's contract). `try_with`: during thread teardown the binding may already be gone, and nothing is
+    /// left to clear then.
     fn drop(&mut self) {
         let _ = ATTACHED.try_with(|attached| attached.set(None));
         self.recorder.producers[self.ring]
@@ -208,7 +226,7 @@ pub struct Recorder {
     id: u32,
     /// The streams.
     registry: Registry,
-    /// The boot, for the session.csv rows and the BOOT payload.
+    /// The boot, for the session.csv rows and the status line.
     identity: Identity,
     /// `recorder.telemetry_ms`, fixed for the boot.
     telemetry_ms: u32,
@@ -216,32 +234,48 @@ pub struct Recorder {
     stats_ms: AtomicU32,
     /// The uptime clock.
     clock: Clock,
+    /// Wakes the writer for a durable record.
+    wake: Wake,
     /// One ring per producing thread.
     pub(crate) producers: Vec<Producer>,
     /// The ring unregistered threads share.
     pub(crate) misc: Producer,
     /// Guards the `misc` ring's producer side.
     misc_lock: Mutex<()>,
-    /// The CC copy of the log lines.
+    /// The CC copy of the LOG records.
     pub(crate) log_tee: Tee,
-    /// The CC copy of the telemetry lines.
+    /// The CC copy of the HEADER and ROW records.
     pub(crate) telemetry_tee: Tee,
     /// Records refused per [`Class`]: by a full or busy ring, or by the writer as never programmable.
     pub(crate) dropped: [AtomicU32; 2],
     /// The writer's figures.
     pub(crate) published: PublishedStats,
-    /// The end of what is programmed, for the mover.
-    pub(crate) programmed: PublishedPosition,
-    /// Whether GC pauses its erases (flight, BOOSTING through LANDING).
-    erases_paused: AtomicBool,
+    /// `writer_position`: the end of what is programmed, for the ring_saver.
+    pub(crate) writer_position: PublishedPosition,
+    /// Whether the stage is in flight (BOOSTING..DONE): the blocks the writer opens carry the flight flag.
+    flight: AtomicBool,
     /// Whether a [`crate::Writer`] has taken this Recorder, and whether it still runs (`writer_state`).
     writer: AtomicU32,
 }
 
 impl Recorder {
-    /// The Recorder over `buffers`, with its streams, boot identity, settings and clock. Nothing runs until a
-    /// [`crate::Writer`] takes it; records queue in the rings meanwhile.
-    pub fn new(registry: Registry, identity: Identity, settings: Settings, buffers: Buffers, clock: Clock) -> Recorder {
+    /// The Recorder over `buffers`, with its streams, boot identity and settings, the uptime `clock` and the
+    /// writer's `wake`. Nothing runs until a [`crate::Writer`] takes it; records queue in the rings meanwhile.
+    ///
+    /// `flight` is the stage the bring-up starts from: true when the crumb names BOOSTING..LANDING (a reboot in
+    /// flight, spec "Ring geometry and block life cycle"), false for every other boot. The Recorder owns the flag
+    /// from here on: [`Recorder::set_flight`] may change it at any time, before the writer exists too, and the
+    /// writer applies it to its ring ([`crate::Writer::new`]), never the other way round. So a warm start refused
+    /// on main while the writer thread still scans is not lost.
+    pub fn new(
+        registry: Registry,
+        identity: Identity,
+        settings: Settings,
+        flight: bool,
+        buffers: Buffers,
+        clock: Clock,
+        wake: Wake,
+    ) -> Recorder {
         Recorder {
             id: NEXT_RECORDER.fetch_add(1, Ordering::Relaxed),
             registry,
@@ -249,6 +283,7 @@ impl Recorder {
             telemetry_ms: settings.telemetry_ms,
             stats_ms: AtomicU32::new(settings.stats_ms),
             clock,
+            wake,
             producers: buffers.producers.into_iter().map(Producer::new).collect(),
             misc: Producer::new(buffers.misc),
             misc_lock: Mutex::new(()),
@@ -256,8 +291,8 @@ impl Recorder {
             telemetry_tee: Tee::new(buffers.telemetry_tee),
             dropped: [AtomicU32::new(0), AtomicU32::new(0)],
             published: PublishedStats::default(),
-            programmed: PublishedPosition::new(),
-            erases_paused: AtomicBool::new(false),
+            writer_position: PublishedPosition::new(),
+            flight: AtomicBool::new(flight),
             writer: AtomicU32::new(writer_state::NONE),
         }
     }
@@ -311,37 +346,48 @@ impl Recorder {
         stored
     }
 
-    /// Queue a stream's HEADER record.
-    pub(crate) fn push_header(&self, stream: StreamId, durable: bool, uptime_us: u64) -> Result<(), Overflow> {
-        let fill = |slot: &mut [u8]| record::write_header(slot, stream.0, durable, uptime_us);
-        self.produce(Class::Telemetry, record::HEADER_BYTES, fill)
-            .then_some(())
-            .ok_or(Overflow)
+    /// Queue one telemetry record of `length` that `fill` writes, waking the writer when it is `durable`.
+    fn telemetry(&self, length: usize, durable: bool, fill: impl FnOnce(&mut [u8])) -> Result<(), Overflow> {
+        if !self.produce(Class::Telemetry, length, fill) {
+            return Err(Overflow);
+        }
+        if durable {
+            (self.wake)();
+        }
+        Ok(())
     }
 
-    /// Queue a ROW record. A row whose line could pass a frame once printed and wrapped is refused here, where
-    /// its producer learns of it: the writer could never program it.
-    pub(crate) fn push_row(
-        &self,
-        stream: StreamId,
-        durable: bool,
-        uptime_us: u64,
-        cells: &[Cell],
-    ) -> Result<(), Overflow> {
-        let routing = self.registry.stream(stream).map(|stream| stream.routing());
-        let fits = wrapped_bytes(routing, record::row_width(cells)) <= FRAME_BYTES;
-        let Some(length) = record::row_length(cells).filter(|_| fits) else {
-            self.dropped[Class::Telemetry as usize].fetch_add(1, Ordering::Relaxed);
-            return Err(Overflow);
+    /// Count one telemetry record refused before it reached a ring, and say so.
+    fn refuse(&self) -> Result<(), Overflow> {
+        self.dropped[Class::Telemetry as usize].fetch_add(1, Ordering::Relaxed);
+        Err(Overflow)
+    }
+
+    /// Queue a stream's HEADER record: its column list, copied from the registry.
+    pub(crate) fn push_header(&self, stream: StreamId, uptime_us: u64) -> Result<(), Overflow> {
+        let Some(entry) = self.registry.stream(stream) else {
+            return self.refuse();
         };
-        let fill = |slot: &mut [u8]| record::write_row(slot, stream.0, durable, uptime_us, cells);
-        self.produce(Class::Telemetry, length, fill)
-            .then_some(())
-            .ok_or(Overflow)
+        let (file, columns) = (entry.file(), entry.columns());
+        let fill = |slot: &mut [u8]| record::write_header(slot, file, entry.durable(), uptime_us, columns);
+        self.telemetry(record::header_length(file, columns), entry.durable(), fill)
+    }
+
+    /// Queue a ROW record of `cells`. A row no flash chunk could hold (more than 255 cells, or longer than 4032
+    /// bytes) is refused here, where its producer learns of it: the writer could never program it.
+    pub(crate) fn push_row(&self, stream: StreamId, uptime_us: u64, cells: &[Cell]) -> Result<(), Overflow> {
+        let Some(entry) = self.registry.stream(stream) else {
+            return self.refuse();
+        };
+        let Some(length) = record::row_length(entry.file(), cells) else {
+            return self.refuse();
+        };
+        let fill = |slot: &mut [u8]| record::write_row(slot, entry.file(), entry.durable(), uptime_us, cells);
+        self.telemetry(length, entry.durable(), fill)
     }
 
     /// A best-effort recorder.log line, `<uptime_us> <descriptor> :: <message>` (plan B `Recorder.log`): stamped
-    /// now, the descriptor cut to 255 bytes and the message to 1 KiB.
+    /// now, the descriptor cut to 255 bytes and the message to 1 KiB, queued as a LOG record.
     ///
     /// Returns true when queued; false when dropped (a full ring, or a busy `misc` ring), counted in
     /// `log.dropped`.
@@ -353,8 +399,9 @@ impl Recorder {
     }
 
     /// Append a session.csv row for a time set (plan B `Recorder.index_session`): this boot tied to the wall
-    /// clock, stamped now. The writer writes the `boot` and `anchor` rows, each after the header, itself; a time
-    /// set always comes after the boot row, so it needs no header of its own.
+    /// clock, stamped now, queued as a durable ROW to `session.csv` (a time set wakes the writer). The writer
+    /// writes the `boot` and `anchor` rows itself, each after the HEADER record; a time set always comes after
+    /// the boot row, so it needs no header of its own.
     ///
     /// Args:
     /// * `epoch_s` - the clock just set, in Unix seconds; before 2001 it dates nothing (empty utc, utc_offset).
@@ -372,14 +419,9 @@ impl Recorder {
         cc_position: Option<(i32, i32)>,
     ) -> Result<(), Overflow> {
         let uptime_us = (self.clock)();
-        let mut text = Vec::new();
-        self.session_row(uptime_us, epoch_s, utc_offset, source, cc_position)
-            .append_to(&mut text);
-        let durable = self.index_durable();
-        let fill = |slot: &mut [u8]| record::write_line(slot, StreamId::SESSION_INDEX.0, durable, uptime_us, &text);
-        self.produce(Class::Telemetry, record::line_length(&text), fill)
-            .then_some(())
-            .ok_or(Overflow)
+        let session_row = self.session_row(uptime_us, epoch_s, utc_offset, source, cc_position);
+        let mut date = String::new();
+        self.push_row(StreamId::SESSION_INDEX, uptime_us, &session_row.cells(&mut date))
     }
 
     /// A session.csv row of this boot.
@@ -394,7 +436,7 @@ impl Recorder {
         SessionRow {
             uptime_us,
             boot_id: self.identity.boot_id,
-            session: self.registry.session(),
+            session: self.session(),
             epoch: epoch_s,
             utc_offset,
             board: &self.identity.board,
@@ -405,41 +447,16 @@ impl Recorder {
         }
     }
 
-    /// Whether the session index is a durable stream (it is, from [`Registry::new`]).
-    fn index_durable(&self) -> bool {
-        self.registry
-            .stream(StreamId::SESSION_INDEX)
-            .is_some_and(|stream| stream.durable())
-    }
-
-    /// The BOOT frame payload every block this boot opens starts with (doc/specs/avionics-port.md "Flash frame
-    /// format"): `boot=<id>;session=<prefix>;board=<id>;firmware=<v>;config_id=<id>;reset=<cause>;card=<vsn|none>`.
-    /// A boot id nothing counted is empty, the card's FAT volume serial is 8 lowercase hex digits, and the text
-    /// fields follow session.csv's cell rule, so a `;` can never split one.
-    pub fn boot_payload(&self, reset_cause: &str, card: Option<u32>) -> Vec<u8> {
-        let boot = self.identity.boot_id.map(|id| id.to_string()).unwrap_or_default();
-        let card = card.map_or_else(|| String::from("none"), |serial| std::format!("{serial:08x}"));
-        std::format!(
-            "boot={boot};session={};board={};firmware={};config_id={};reset={};card={card}",
-            self.registry.session(),
-            recorder_wire::cell(&self.identity.board),
-            recorder_wire::cell(&self.identity.firmware),
-            recorder_wire::cell(&self.identity.config_id),
-            recorder_wire::cell(reset_cause),
-        )
-        .into_bytes()
-    }
-
     /// The CC `log [ms]` command: the log lines buffered since the last call, keeping the window open
     /// `duration_ms` more (0 or less stops it).
     pub fn drain_log_tee(&self, duration_ms: i64) -> TeeBatch {
-        self.log_tee.drain(self.now_ms(), duration_ms)
+        self.log_tee.drain(self.now_ms(), duration_ms, self.session())
     }
 
     /// The CC `tlm [ms]` command: the telemetry lines (`@<routing>@<row>`) buffered since the last call, keeping
     /// the window open `duration_ms` more (0 or less stops it).
     pub fn drain_telemetry_tee(&self, duration_ms: i64) -> TeeBatch {
-        self.telemetry_tee.drain(self.now_ms(), duration_ms)
+        self.telemetry_tee.drain(self.now_ms(), duration_ms, self.session())
     }
 
     /// The uptime in wrapping milliseconds, the tees' unit.
@@ -455,24 +472,30 @@ impl Recorder {
         ])
     }
 
-    /// The end of what the writer has programmed (block sequence, 8-aligned offset), for the SD mover: never
-    /// read beyond it. None until the writer's first step, and on an unformatted ring until its first frame.
-    /// Before this boot's first frame it is offset 0 of the block this boot opens, so every older block is
-    /// readable whole.
+    /// `writer_position`: the end of what the writer has programmed (block sequence, 8-aligned offset), for the
+    /// ring_saver, which never reads beyond it. None until the writer's first step. Before this boot's first chunk
+    /// it is offset 0 of the block this boot opens first, so every older block is readable whole.
     ///
     /// Any thread at any priority may call it: it never waits for the writer, even one it preempted mid-store.
-    pub fn programmed(&self) -> Option<Position> {
-        self.programmed.load()
+    pub fn writer_position(&self) -> Option<Position> {
+        self.writer_position.load()
     }
 
-    /// Pause GC erases for flight (BOOSTING through LANDING) or resume them; the writer applies it next step.
-    pub fn pause_erases(&self, paused: bool) {
-        self.erases_paused.store(paused, Ordering::Relaxed);
+    /// Tell the recorder whether the stage is in flight: true from BOOSTING, false from DONE, and false when the
+    /// warm start of a reboot in flight is refused (doc/specs/avionics-port.md "Ring geometry and block life
+    /// cycle"). The writer applies a rise before each chunk it programs and a fall once everything queued before it
+    /// is programmed, and a change closes its open block, so every record queued in flight lies in a block whose
+    /// header carries the flag (newest wins gives flight blocks up last).
+    ///
+    /// Any thread may call it at any time, before the writer exists too: the Recorder holds the flag from
+    /// [`Recorder::new`] on, and the writer takes it from here when it starts ([`crate::Writer::new`]).
+    pub fn set_flight(&self, flight: bool) {
+        self.flight.store(flight, Ordering::Release);
     }
 
-    /// Whether erases are paused.
-    pub(crate) fn erases_paused(&self) -> bool {
-        self.erases_paused.load(Ordering::Relaxed)
+    /// Whether the stage is in flight, as last told.
+    pub(crate) fn flight(&self) -> bool {
+        self.flight.load(Ordering::Acquire)
     }
 
     /// Whether a writer runs: until one does, [`crate::Telemetry::due`] is false, and records only queue.
@@ -502,6 +525,11 @@ impl Recorder {
         &self.registry
     }
 
+    /// The session prefix.
+    pub(crate) fn session(&self) -> &str {
+        self.identity.session.as_str()
+    }
+
     /// The recorder config, with `stats_ms` as it is now.
     pub fn settings(&self) -> Settings {
         Settings {
@@ -522,7 +550,7 @@ impl Recorder {
     /// The `inspect` snapshot: see [`Inspection`].
     pub fn inspect(&self) -> Inspection<'_> {
         Inspection {
-            session: self.registry.session(),
+            session: self.session(),
             stats_ms: self.stats_ms.load(Ordering::Relaxed),
             producer_bytes: self.producers.iter().map(|producer| producer.ring.capacity()).collect(),
             misc_bytes: self.misc.ring.capacity(),
@@ -542,9 +570,13 @@ impl Recorder {
 
 #[cfg(test)]
 mod tests {
-    use super::{AttachError, Buffers, Class, Identity, Recorder, Settings};
-    use crate::registry::Registry;
-    use std::sync::atomic::Ordering;
+    use super::{AttachError, Buffers, Class, Identity, Overflow, Recorder, Settings};
+    use crate::registry::{Registry, StreamId};
+    use crate::telemetry::Telemetry;
+    use flash_ring::header::Session;
+    use recorder_wire::Cell;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU32, Ordering};
     use std::vec::Vec;
 
     /// A leaked buffer of `bytes`.
@@ -552,8 +584,9 @@ mod tests {
         Vec::leak(vec![0; bytes])
     }
 
-    /// A Recorder of `rings` producer rings of `bytes` each, at a fixed uptime.
-    fn recorder(rings: usize, bytes: usize) -> Recorder {
+    /// A Recorder of `rings` producer rings of `bytes` each over `registry`, starting in flight when `flight` says
+    /// so, at a fixed uptime, counting its wakes.
+    fn recorder_with(registry: Registry, rings: usize, bytes: usize, flight: bool) -> (Recorder, Arc<AtomicU32>) {
         let buffers = Buffers {
             producers: (0..rings).map(|_| buffer(bytes)).collect(),
             misc: buffer(bytes),
@@ -562,6 +595,7 @@ mod tests {
         };
         let identity = Identity {
             boot_id: Some(123),
+            session: Session::new("000123").unwrap(),
             board: "taster".into(),
             firmware: "dev".into(),
             config_id: "3f2a91".into(),
@@ -570,13 +604,25 @@ mod tests {
             telemetry_ms: 0,
             stats_ms: 1000,
         };
-        Recorder::new(
-            Registry::new("000123").unwrap(),
+        let wakes = Arc::new(AtomicU32::new(0));
+        let counted = wakes.clone();
+        let recorder = Recorder::new(
+            registry,
             identity,
             settings,
+            flight,
             buffers,
             Box::new(|| 884_030),
-        )
+            Box::new(move || {
+                counted.fetch_add(1, Ordering::Relaxed);
+            }),
+        );
+        (recorder, wakes)
+    }
+
+    /// A Recorder of `rings` producer rings of `bytes` each, with only the session index.
+    fn recorder(rings: usize, bytes: usize) -> Recorder {
+        recorder_with(Registry::new(), rings, bytes, false).0
     }
 
     #[test]
@@ -624,16 +670,15 @@ mod tests {
 
     #[test]
     fn a_full_ring_drops_logs_and_raises_telemetry() {
-        let recorder = recorder(1, 64);
+        let recorder = recorder(1, 128);
         let _attached = recorder.attach(0).unwrap();
-        assert!(recorder.log("a", "b")); // 16 + 1 + 1 + 1 = 19 -> 20 bytes
-        assert!(recorder.log("a", "b"));
-        assert!(recorder.log("a", "b"), "60 of 64 bytes used");
+        for _ in 0..3 {
+            assert!(recorder.log("a", "b"), "16 + 12 + 1 + 1 + 1 = 31: 32 bytes each");
+        }
         assert!(!recorder.log("a", "b"), "a fourth would make head meet tail");
-        assert!(
-            recorder
-                .index_session(1_791_037_267, Some(-240), "cc-auto", None)
-                .is_err()
+        assert_eq!(
+            recorder.index_session(1_791_037_267, Some(-240), "cc-auto", None),
+            Err(Overflow)
         );
         let stats = recorder.stats();
         assert_eq!((stats.log.dropped, stats.telemetry.dropped), (1, 1));
@@ -649,6 +694,48 @@ mod tests {
         drop(held);
         assert!(recorder.log("free", "queued"));
         assert_eq!(recorder.stats().log.dropped, 1);
+    }
+
+    #[test]
+    fn a_durable_record_wakes_the_writer_and_no_other_does() {
+        let mut registry = Registry::new();
+        let events = registry.add("flight_events.csv", &["event"], -1, true).unwrap();
+        let imu = registry.add("imu.csv", &["ax"], -1, false).unwrap();
+        let (recorder, wakes) = recorder_with(registry, 0, 4096, false);
+        let mut imu = Telemetry::new(&recorder, imu).unwrap();
+        imu.push(1, &[Cell::F32(1.0)]).unwrap();
+        assert!(recorder.log("x", "y"));
+        assert_eq!(
+            wakes.load(Ordering::Relaxed),
+            0,
+            "rows of a plain stream and logs wait for the tick"
+        );
+        let mut events = Telemetry::new(&recorder, events).unwrap();
+        events.push(2, &[Cell::Text("apogee")]).unwrap();
+        assert_eq!(wakes.load(Ordering::Relaxed), 2, "its header, then its row");
+        recorder.index_session(0, None, "cc-auto", None).unwrap();
+        assert_eq!(wakes.load(Ordering::Relaxed), 3, "a session.csv row is durable");
+        // negative: a refused durable row wakes nobody
+        let text = "x".repeat(255);
+        assert_eq!(events.push(3, &vec![Cell::Text(&text); 16]), Err(Overflow));
+        assert_eq!(wakes.load(Ordering::Relaxed), 3);
+        assert_eq!(recorder.stats().telemetry.dropped, 1);
+        assert!(recorder.registry().stream(StreamId::SESSION_INDEX).unwrap().durable());
+    }
+
+    #[test]
+    fn the_flight_flag_is_whatever_was_told_last() {
+        let recorder = recorder(0, 64);
+        assert!(!recorder.flight(), "a boot with no crumb in flight starts on the pad");
+        recorder.set_flight(true);
+        assert!(recorder.flight());
+        recorder.set_flight(false);
+        assert!(!recorder.flight());
+        // a reboot in flight starts in flight, and a refused warm start, told before any writer exists, holds
+        let (rebooted, _) = recorder_with(Registry::new(), 0, 64, true);
+        assert!(rebooted.flight(), "the crumb named BOOSTING..LANDING");
+        rebooted.set_flight(false);
+        assert!(!rebooted.flight());
     }
 
     #[test]
@@ -671,21 +758,6 @@ mod tests {
                 inspection.misc_bytes
             ),
             ("000123", 250, vec![256, 256], 256)
-        );
-    }
-
-    #[test]
-    fn the_boot_payload_names_the_boot() {
-        let recorder = recorder(0, 64);
-        assert_eq!(
-            recorder.boot_payload("poweron", None),
-            b"boot=123;session=000123;board=taster;firmware=dev;config_id=3f2a91;reset=poweron;card=none"
-        );
-        assert!(
-            recorder
-                .boot_payload("sw;x", Some(0x1234_ABCD))
-                .ends_with(b";reset=;card=1234abcd"),
-            "a ';' empties its cell"
         );
     }
 }

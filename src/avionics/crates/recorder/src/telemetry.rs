@@ -10,7 +10,8 @@
 //! recorder had read its config, and capped a 100 Hz accelerometer at 50 Hz while the config said uncapped.
 //!
 //! A hot producer asks [`Telemetry::due`] first and builds its row only then. Time is an argument (the
-//! producer's own `esp_timer` read), never a clock read here.
+//! producer's own `esp_timer` read), never a clock read here. A push copies typed cells into the producer's
+//! PSRAM ring and formats nothing.
 
 use recorder_wire::Cell;
 
@@ -25,8 +26,6 @@ pub struct Telemetry<'r> {
     stream: StreamId,
     /// Its decimation setting, from the registry.
     decimate_us: i32,
-    /// Whether its records cut a frame, from the registry.
-    durable: bool,
     /// The uptime of the last row queued; None before the first.
     last_us: Option<u64>,
     /// Whether the HEADER record is queued.
@@ -41,7 +40,6 @@ impl<'r> Telemetry<'r> {
             recorder,
             stream,
             decimate_us: entry.decimate_us(),
-            durable: entry.durable(),
             last_us: None,
             header_sent: false,
         })
@@ -78,13 +76,13 @@ impl<'r> Telemetry<'r> {
     /// failed does not start a new window.
     pub fn push(&mut self, now_us: u64, row: &[Cell]) -> Result<(), Overflow> {
         if !self.header_sent {
-            self.recorder.push_header(self.stream, self.durable, now_us)?;
+            self.recorder.push_header(self.stream, now_us)?;
             self.header_sent = true;
         }
         if self.decimated(now_us) {
             return Ok(());
         }
-        self.recorder.push_row(self.stream, self.durable, now_us, row)?;
+        self.recorder.push_row(self.stream, now_us, row)?;
         self.last_us = Some(now_us);
         Ok(())
     }

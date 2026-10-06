@@ -1,60 +1,64 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! Power cuts at the recorder level (doc/specs/avionics-port.md "The flash writer", its power-cut bound, and
-//! "SD mover", the torn frame). Boot 123 records rows, durable events and log lines into a flash ring. It runs
-//! once whole, then once per flash operation it made, with the power cut there and the operation torn at several
-//! lengths. Boot 124 then mounts what is left and records again. After every cut:
-//! * boot 123's lines read back, as the mover files them (its whole frames, then the lines of the torn frame
-//!   whose wrapper verifies), as a gapless and duplicate-free prefix of what it queued, each stream under its
-//!   header;
-//! * every row queued more than `CUT_AGE_US` and one step before the cut is among them (a log line: plus the
-//!   merge horizon and one more step), and so is every durable event whose step ended with nothing spilled;
+//! Power cuts at the recorder level (doc/specs/avionics-port.md "The ring_writer", its power-cut bound; "Block and
+//! chunk format", the torn chunk). Boot 123 records rows, durable events and log lines into a flash ring, the
+//! eraser stepping beside the writer as its thread would. A durable event wakes the writer, which steps at once.
+//! The boot runs once whole, then once per flash operation it made (programs and erases), with the power cut
+//! there and the operation torn at several lengths. Boot 124 then brings the ring up again and records. After
+//! every cut:
+//! * boot 123's lines read back through the decoder, as the ring_saver reads them, as a gapless and duplicate-free
+//!   prefix of what it queued, each stream under its header, and with a loss line for every torn chunk the
+//!   decoder calls a loss;
+//! * every record that a step had programmed before the cut is there, and the oldest record missing is younger
+//!   than the bound: a row one tick (the writer's step), a durable event nothing (its wake carried it), a log
+//!   line one tick and the merge horizon; over a foreign ring, whose first block waits for the eraser, one tick
+//!   more. The spec's bound adds what the host flash does not take: an erase and an NVS page erase holding the
+//!   flash, which gives at most ~45 ms for rows, ~35 ms for a durable record and ~65 ms for log lines;
 //! * boot 124 opens the block after boot 123's newest, leaves boot 123's lines as they were, and every line it
-//!   records reads back whole, its session.csv rows included.
+//!   records reads back whole.
 //!
-//! Both over an erased ring and over a ring of foreign bytes that GC formats while boot 123 writes, spilling
-//! until the first block is erased.
+//! Both over an erased ring and over a ring of foreign bytes that the eraser formats while boot 123 writes. A ring
+//! that fills, with newest wins erasing next to a refused writer, is cut in newest_wins_cut.rs.
 
 mod common;
 
-use std::collections::BTreeMap;
+use common::*;
 
-use common::{BOOT_ID, EPOCH, OPTIONS, START_US, TestClock, buffer};
-use flash_ring::frame::{self, HEADER_BYTES, Header, Kind, frame_bytes};
-use flash_ring::{Geometry, MemoryFlash, Ring};
-use recorder::{
-    Buffers, CUT_AGE_US, Cell, Identity, MERGE_HORIZON_US, Recorder, Registry, Settings, StreamId, Telemetry, Writer,
-};
+use flash_ring::{Eraser, Geometry, MemoryFlash};
+use recorder::{Cell, MERGE_HORIZON_US, Registry, Settings, StreamId, TICK_US, Telemetry, Writer};
 
-/// 16 blocks of one 4 KiB sector: small enough to cut the power at every operation, big enough for several
-/// blocks per boot.
+/// 24 blocks: small enough to cut the power at every operation, big enough for several blocks per boot.
 fn geometry() -> Geometry {
-    Geometry::new(16, 1).unwrap()
+    Geometry::new(24).unwrap()
 }
 
-/// The writer's step period, as the firmware's loop runs it at most.
-const STEP_US: u64 = 10_000;
-
-/// Steps in which boot 123's producers queue records: enough for ten blocks.
-const PRODUCING_STEPS: u64 = 150;
+/// Steps in which boot 123's producers queue records: about five blocks.
+const PRODUCING_STEPS: u64 = 100;
 
 /// Steps after them, until everything queued is out.
-const SETTLING_STEPS: u64 = 12;
+const SETTLING_STEPS: u64 = 4;
 
-/// The tear lengths tried at each operation: nothing, inside a frame header, one byte short of it, the whole
-/// header, one byte more, inside the payload (or an erased prefix of a sector), and a call that completed but
-/// never returned.
-const TEARS: [usize; 8] = [0, 1, 39, 40, 41, 100, 1000, 100_000];
+/// The tear lengths tried at each operation: nothing, inside a chunk header, one short of it, the whole of it,
+/// one more, inside a record, around the 56-byte block header, inside a payload or an erased prefix of a sector,
+/// and a call that completed but never returned.
+const TEARS: [usize; 11] = [0, 1, 7, 8, 9, 30, 55, 56, 57, 300, 5000];
 
 /// The boot after the cut.
 const NEXT_BOOT: u32 = BOOT_ID + 1;
 
-/// A boot's recorder: the shared state, the clock its log lines read, and its two streams.
+/// The spec's power-cut bound for rows, which the host's own bound must stay inside.
+const SPEC_ROWS_US: u64 = 45_000;
+
+/// The spec's bound for a durable record.
+const SPEC_DURABLE_US: u64 = 35_000;
+
+/// The spec's bound for log lines.
+const SPEC_LOGS_US: u64 = 65_000;
+
+/// A boot's recorder and its two streams.
 struct Boot {
     /// The Recorder, with no attachable ring: the test thread queues through `misc`.
-    recorder: Recorder,
-    /// The uptime the test sets.
-    clock: TestClock,
+    parts: Parts,
     /// `<session>_imu.csv`: three rows a step.
     imu: StreamId,
     /// `<session>_flight_events.csv`: durable, a row every seventh step.
@@ -62,48 +66,49 @@ struct Boot {
 }
 
 impl Boot {
-    /// Boot `boot_id`'s recorder, with small buffers: a sweep makes a thousand of them, and each leaks its own.
+    /// Boot `boot_id`'s recorder, with small buffers: a sweep makes thousands of them, and each leaks its own.
     fn new(boot_id: u32) -> Boot {
-        let mut registry = Registry::new(&format!("{boot_id:06}")).unwrap();
+        let mut registry = Registry::new();
         let imu = registry.add("imu.csv", &["index", "value"], -1, false).unwrap();
         let events = registry.add("flight_events.csv", &["event"], -1, true).unwrap();
-        let clock = TestClock::default();
-        let reading = clock.clone();
-        let buffers = Buffers {
-            producers: Vec::new(),
-            misc: buffer(8 << 10),
-            log_tee: buffer(64),
-            telemetry_tee: buffer(64),
-        };
-        let identity = Identity {
-            boot_id: Some(boot_id),
-            board: "taster".into(),
-            firmware: "dev".into(),
-            config_id: "3f2a91".into(),
-        };
         let settings = Settings {
             telemetry_ms: 0,
             stats_ms: 200,
         };
         Boot {
-            recorder: Recorder::new(registry, identity, settings, buffers, Box::new(move || reading.now())),
-            clock,
+            parts: recorder_of(boot_id, registry, 0, 16 << 10, settings, false),
             imu,
             events,
         }
     }
+}
 
-    /// The flash ring over `flash`, mounted for this boot.
-    fn ring(&self, flash: MemoryFlash, boot_id: u32) -> Ring<MemoryFlash> {
-        Ring::mount(
-            flash,
-            geometry(),
-            OPTIONS,
-            boot_id,
-            &self.recorder.boot_payload("poweron", None),
-        )
-        .unwrap()
+/// The writer and the eraser of one boot over one flash, stepped as their two threads would be.
+struct Board<'a> {
+    /// The partition.
+    flash: &'a MemoryFlash,
+    /// The ring_writer.
+    writer: Writer<'static, 'a, &'a MemoryFlash>,
+    /// The ring_eraser.
+    eraser: Eraser<'a, &'a MemoryFlash>,
+    /// The operation the power goes at, if any.
+    cut: Option<u32>,
+}
+
+impl Board<'_> {
+    /// One writer step and one eraser step at `now_us`, the clock moved there. Returns true once the power is
+    /// cut: the board is dead from then on.
+    fn tick(&mut self, clock: &TestClock, now_us: u64) -> bool {
+        clock.set(now_us);
+        self.writer.step(now_us, EPOCH);
+        let _ = self.eraser.erase_step(None, (now_us / 1000) as u32); // a failed erase: the board is dead
+        self.cut.is_some_and(|operation| operations(self.flash) > operation)
     }
+}
+
+/// The program and erase calls made on `flash` so far, a torn one included.
+fn operations(flash: &MemoryFlash) -> u32 {
+    flash.programs() + flash.erases()
 }
 
 /// A record a producer queued: its uptime, and the payload it must read back as.
@@ -111,11 +116,11 @@ impl Boot {
 struct Queued {
     /// Its uptime.
     uptime_us: u64,
-    /// Its line's payload, as the writer prints it.
+    /// Its line's payload, as the decoder prints it.
     payload: String,
 }
 
-/// What a boot queued, per file, in order.
+/// What a boot queued, per file, in order, and how much of it a completed step had programmed.
 #[derive(Debug, Default)]
 struct Workload {
     /// The IMU rows.
@@ -124,175 +129,116 @@ struct Workload {
     events: Vec<Queued>,
     /// The producer's log lines.
     logs: Vec<Queued>,
-    /// The events whose step ended with nothing spilled: programmed, so on flash whatever comes after.
-    events_programmed: usize,
+    /// The IMU rows, events and log lines a completed step left with nothing of their class unprogrammed: on
+    /// flash, whatever came after.
+    programmed: [usize; 3],
 }
 
-/// A row's payload, as the writer prints it.
-fn row_text(uptime_us: u64, cells: &[Cell]) -> String {
-    let mut line = Vec::new();
-    recorder_wire::row(&mut line, uptime_us, cells);
-    String::from_utf8(line).unwrap()
-}
-
-/// The program and erase calls `writer` made so far, a torn one included.
-fn operations(writer: &Writer<'_, MemoryFlash>) -> u32 {
-    writer.ring().flash().programs() + writer.ring().flash().erases()
-}
-
-/// What boot 123 left: the flash image, what it queued, the uptime of the step the cut hit (None: no cut), and
-/// the flash operations it made.
+/// What boot 123 left.
 struct FirstBoot {
     /// The flash content after the cut, or after the whole run.
     image: Vec<u8>,
     /// What its producers queued.
     workload: Workload,
-    /// The uptime of the step the cut hit.
+    /// The uptime of the step the cut hit; None without a cut.
     cut_at: Option<u64>,
-    /// Program and erase calls.
+    /// Program and erase calls made.
     operations: u32,
 }
 
 /// Boot 123 over `image`, with the power cut at operation `cut` torn at its given length (None: never). Its
-/// producers queue three IMU rows a step, a log line every third and an event every seventh; then it settles.
-/// It stops at the step the cut hit: the board is dead.
+/// producers queue three IMU rows a step and a log line every third; every seventh step a durable event first,
+/// which wakes the writer at once. It stops at the step the cut hit: the board is dead.
 fn first_boot(image: &[u8], cut: Option<(u32, usize)>) -> FirstBoot {
-    let boot = Boot::new(BOOT_ID);
-    let mut flash = MemoryFlash::from_image(image.to_vec());
+    let flash = MemoryFlash::from_image(image.to_vec());
     if let Some((operation, torn)) = cut {
         flash.cut_power(operation, torn);
     }
-    let mut writer = Writer::new(&boot.recorder, boot.ring(flash, BOOT_ID)).unwrap();
-    let mut imu = Telemetry::new(&boot.recorder, boot.imu).unwrap();
-    let mut events = Telemetry::new(&boot.recorder, boot.events).unwrap();
+    let scanned = bring_up(&flash, geometry());
+    let boot = Boot::new(BOOT_ID);
+    let (recorder, clock, wakes) = (boot.parts.recorder, &boot.parts.clock, &boot.parts.wakes);
+    let mut board = Board {
+        flash: &flash,
+        writer: Writer::new(recorder, ring(&flash, &scanned, BOOT_ID)).unwrap(),
+        eraser: eraser(&flash, &scanned),
+        cut: cut.map(|(operation, _)| operation),
+    };
+    let mut imu = Telemetry::new(recorder, boot.imu).unwrap();
+    let mut events = Telemetry::new(recorder, boot.events).unwrap();
     let mut workload = Workload::default();
     let mut cut_at = None;
-    for step in 0..PRODUCING_STEPS + SETTLING_STEPS {
-        let now = START_US + step * STEP_US;
+    'steps: for step in 0..PRODUCING_STEPS + SETTLING_STEPS {
+        let now = START_US + step * TICK_US;
         if step < PRODUCING_STEPS {
+            if step % 7 == 3 {
+                let uptime_us = now - 9500;
+                let cells = [Cell::Text("mark")];
+                events.push(uptime_us, &cells).unwrap();
+                workload.events.push(Queued {
+                    uptime_us,
+                    payload: row_text(uptime_us, &cells),
+                });
+                assert!(wakes.take(), "a durable record wakes the writer");
+                if board.tick(clock, uptime_us) {
+                    cut_at = Some(uptime_us);
+                    break 'steps;
+                }
+                mark_programmed(recorder, &mut workload);
+            }
             for (back, index) in [9000, 6000, 3000].into_iter().zip(0..) {
                 let uptime_us = now - back;
                 let index = (step * 3 + index) as i32;
                 let cells = [Cell::I32(index), Cell::F32(index as f32 * 0.25)];
                 imu.push(uptime_us, &cells).unwrap();
-                let payload = row_text(uptime_us, &cells);
-                workload.imu.push(Queued { uptime_us, payload });
+                workload.imu.push(Queued {
+                    uptime_us,
+                    payload: row_text(uptime_us, &cells),
+                });
             }
             if step % 3 == 0 {
                 let uptime_us = now - 5000;
-                boot.clock.set(uptime_us);
+                clock.set(uptime_us);
                 let message = format!("step {step}");
-                assert!(boot.recorder.log("producer", &message));
+                assert!(recorder.log("producer", &message));
                 let mut line = Vec::new();
                 recorder_wire::log_line(&mut line, uptime_us, "producer", &message, usize::MAX);
-                let payload = String::from_utf8(line).unwrap();
-                workload.logs.push(Queued { uptime_us, payload });
-            }
-            if step % 7 == 3 {
-                let uptime_us = now - 1000;
-                let cells = [Cell::Text("mark")];
-                events.push(uptime_us, &cells).unwrap();
-                let payload = row_text(uptime_us, &cells);
-                workload.events.push(Queued { uptime_us, payload });
+                workload.logs.push(Queued {
+                    uptime_us,
+                    payload: String::from_utf8(line).unwrap(),
+                });
             }
         }
-        boot.clock.set(now);
-        writer.step(now, EPOCH);
-        if let Some((operation, _)) = cut
-            && operations(&writer) > operation
-        {
+        if board.tick(clock, now) {
             cut_at = Some(now);
             break;
         }
-        if writer.ring().figures().spill_frames == 0 {
-            workload.events_programmed = workload.events.len();
-        }
+        mark_programmed(recorder, &mut workload);
     }
-    let operations = operations(&writer);
+    drop(board);
     FirstBoot {
-        image: writer.into_ring().into_flash().into_image(),
+        operations: operations(&flash),
+        image: flash.into_image(),
         workload,
         cut_at,
-        operations,
     }
 }
 
-/// A boot's lines per file (None: recorder.log), as payloads.
-type Files = BTreeMap<Option<String>, Vec<String>>;
-
-/// File each line of `bytes` (whole wire lines) under its routing. Every line must verify under it.
-fn file_lines(files: &mut Files, bytes: &[u8]) {
-    let tail = recorder_wire::split(bytes, |routing, line| {
-        let body = line.strip_suffix(b"\n").expect("a split line keeps its line end");
-        let payload = recorder_wire::verify(routing, body)
-            .unwrap_or_else(|| panic!("a whole line fails its checks: {}", String::from_utf8_lossy(line)));
-        let routing = routing.map(|routing| String::from_utf8(routing.to_vec()).unwrap());
-        files
-            .entry(routing)
-            .or_default()
-            .push(String::from_utf8(payload.to_vec()).unwrap());
-    });
-    assert!(tail.is_empty(), "an unterminated line in whole lines");
-}
-
-/// What a boot left on a flash image, read as the SD mover reads it.
-struct ReadBack {
-    /// Its lines, per file.
-    files: Files,
-    /// Its blocks' sequence numbers, oldest first.
-    blocks: Vec<u32>,
-    /// The whole lines salvaged from a torn DATA frame, None when no frame was torn.
-    torn: Option<usize>,
-}
-
-/// Boot `boot`'s lines on `image`: each of its blocks (those whose BOOT header names it) in sequence order, every
-/// whole DATA frame, then the whole lines of a torn DATA frame behind them, whose unterminated tail is lost.
-fn read_boot(image: &[u8], boot: u32) -> ReadBack {
-    let block_bytes = geometry().block_bytes() as usize;
-    let mut blocks: Vec<(u32, &[u8])> = image
-        .chunks(block_bytes)
-        .filter_map(|block| {
-            let header = Header::decode(block).ok()?;
-            (header.kind == Kind::Boot && header.boot_id == boot).then_some((header.block_sequence, block))
-        })
-        .collect();
-    blocks.sort_by_key(|(sequence, _)| *sequence);
-    let mut read_back = ReadBack {
-        files: Files::new(),
-        blocks: blocks.iter().map(|(sequence, _)| *sequence).collect(),
-        torn: None,
-    };
-    for (sequence, block) in blocks {
-        let mut end = 0;
-        for found in frame::frames(block).take_while(|found| found.header.block_sequence == sequence) {
-            assert_eq!(found.header.boot_id, boot, "a boot writes only into blocks it opened");
-            if found.header.kind == Kind::Data {
-                file_lines(&mut read_back.files, found.payload);
-            }
-            end = found.offset as usize + frame_bytes(found.payload.len());
-        }
-        if let Some(rest) = block.get(end..)
-            && let Ok(header) = Header::decode(rest)
-            && header.kind == Kind::Data
-        {
-            assert_eq!((header.boot_id, header.block_sequence), (boot, sequence));
-            let programmed = &rest[HEADER_BYTES..rest.len().min(HEADER_BYTES + header.payload_length as usize)];
-            let whole = programmed
-                .iter()
-                .rposition(|&byte| byte == b'\n')
-                .map_or(0, |last| last + 1);
-            file_lines(&mut read_back.files, &programmed[..whole]);
-            assert!(read_back.torn.is_none(), "one torn frame at most");
-            read_back.torn = Some(programmed[..whole].iter().filter(|&&byte| byte == b'\n').count());
-        }
+/// After a completed step: a class with nothing left unprogrammed has all it queued so far on flash.
+fn mark_programmed(recorder: &recorder::Recorder, workload: &mut Workload) {
+    let stats = recorder.stats();
+    if stats.telemetry.count == 0 {
+        workload.programmed[0] = workload.imu.len();
+        workload.programmed[1] = workload.events.len();
     }
-    read_back
+    if stats.log.count == 0 {
+        workload.programmed[2] = workload.logs.len();
+    }
 }
 
 /// Check one file's read-back against what was queued for it: its header first (when it has one, and anything
 /// at all came back), then a gapless, duplicate-free prefix of the queue, at least `required` long.
 ///
-/// Returns how long ago before `cut_at` the oldest missing record was queued (0 when none is missing).
+/// Returns how long before `cut_at` the oldest missing record was queued (0 when none is missing).
 fn check_prefix(
     found: &[String],
     queued: &[Queued],
@@ -317,22 +263,12 @@ fn check_prefix(
     }
     assert!(
         rows.len() >= required,
-        "{context}: {} records back, {required} were old enough to be on flash",
+        "{context}: {} records back, {required} were programmed by a completed step",
         rows.len()
     );
     queued
         .get(rows.len())
         .map_or(0, |missing| cut_at.saturating_sub(missing.uptime_us))
-}
-
-/// Of `queued`, how many were queued more than `slack` before `cut_at` (all of them without a cut).
-fn old_enough(queued: &[Queued], cut_at: Option<u64>, slack: u64) -> usize {
-    cut_at.map_or(queued.len(), |cut_at| {
-        queued
-            .iter()
-            .take_while(|record| record.uptime_us + slack < cut_at)
-            .count()
-    })
 }
 
 /// A boot's session.csv rows: the header, and its `boot` row at the first step.
@@ -343,78 +279,91 @@ fn session_rows(boot: u32) -> Vec<String> {
     ]
 }
 
-/// The oldest losses a cut caused, in us before the cut: of a row (or event), and of a log line.
+/// The oldest losses a cut caused, in us before the cut.
 #[derive(Clone, Copy, Debug, Default)]
 struct Loss {
-    /// The oldest row or event missing.
+    /// The oldest IMU row missing.
     row_us: u64,
+    /// The oldest durable event missing.
+    durable_us: u64,
     /// The oldest log line missing.
     log_us: u64,
 }
 
 /// Check boot 123's read-back against its workload and the cut.
 fn check_first_boot(read_back: &ReadBack, workload: &Workload, cut_at: Option<u64>, context: &str) -> Loss {
-    let empty = Vec::new();
-    let file = |routing: Option<&str>| read_back.files.get(&routing.map(String::from)).unwrap_or(&empty);
     let cut = cut_at.unwrap_or(u64::MAX);
-    let row_slack = CUT_AGE_US + STEP_US;
-    let imu = check_prefix(
-        file(Some("000123_imu.csv")),
+    let row_us = check_prefix(
+        &read_back.file(Some("000123_imu.csv")),
         &workload.imu,
         Some("uptime;index;value"),
-        old_enough(&workload.imu, cut_at, row_slack),
+        workload.programmed[0],
         cut,
         &format!("{context} imu"),
     );
-    let required = old_enough(&workload.events, cut_at, row_slack).max(workload.events_programmed);
-    let events = check_prefix(
-        file(Some("000123_flight_events.csv")),
+    let durable_us = check_prefix(
+        &read_back.file(Some("000123_flight_events.csv")),
         &workload.events,
         Some("uptime;event"),
-        required,
+        workload.programmed[1],
         cut,
         &format!("{context} events"),
     );
-    let producer: Vec<String> = file(None)
+    let log = read_back.file(None);
+    let producer: Vec<String> = log
         .iter()
         .filter(|line| line.contains(" producer :: "))
         .cloned()
         .collect();
-    let logs = check_prefix(
+    let log_us = check_prefix(
         &producer,
         &workload.logs,
         None,
-        old_enough(&workload.logs, cut_at, MERGE_HORIZON_US + CUT_AGE_US + 2 * STEP_US),
+        workload.programmed[2],
         cut,
         &format!("{context} log"),
     );
+    let losses = log.iter().filter(|line| line.contains(" ring :: block ")).count();
+    assert_eq!(
+        losses as u32, read_back.lost,
+        "{context}: a loss line per torn chunk lost"
+    );
     let index = session_rows(BOOT_ID);
-    let session = file(Some("session.csv"));
+    let session = read_back.file(Some("session.csv"));
     assert_eq!(*session, index[..session.len()], "{context}: session.csv");
-    if START_US + row_slack < cut {
-        assert_eq!(session.len(), 2, "{context}: the boot row is old enough");
+    if cut_at.is_none() {
+        assert_eq!(session.len(), 2, "{context}: the boot row");
+        assert_eq!(
+            (row_us, durable_us, log_us),
+            (0, 0, 0),
+            "{context}: everything, with no cut"
+        );
     }
     Loss {
-        row_us: imu.max(events),
-        log_us: logs,
+        row_us,
+        durable_us,
+        log_us,
     }
 }
 
 /// Boot 124 over what boot 123 left: it records twenty steps of rows and an event, then settles. Checks that it
 /// opens the block after boot 123's newest, leaves boot 123's lines as they were, and reads back whole.
 fn check_next_boot(image: Vec<u8>, before: &ReadBack, context: &str) {
+    let flash = MemoryFlash::from_image(image);
+    let scanned = bring_up(&flash, geometry());
     let boot = Boot::new(NEXT_BOOT);
-    let mut writer = Writer::new(&boot.recorder, boot.ring(MemoryFlash::from_image(image), NEXT_BOOT)).unwrap();
-    assert_eq!(
-        boot.recorder.programmed(),
-        None,
-        "{context}: None until the writer's first step"
-    );
-    let mut imu = Telemetry::new(&boot.recorder, boot.imu).unwrap();
-    let mut events = Telemetry::new(&boot.recorder, boot.events).unwrap();
+    let (recorder, clock) = (boot.parts.recorder, &boot.parts.clock);
+    let mut board = Board {
+        flash: &flash,
+        writer: Writer::new(recorder, ring(&flash, &scanned, NEXT_BOOT)).unwrap(),
+        eraser: eraser(&flash, &scanned),
+        cut: None,
+    };
+    let mut imu = Telemetry::new(recorder, boot.imu).unwrap();
+    let mut events = Telemetry::new(recorder, boot.events).unwrap();
     let mut workload = Workload::default();
-    for step in 0..60 {
-        let now = START_US + step * STEP_US;
+    for step in 0..40 {
+        let now = START_US + step * TICK_US;
         if step < 20 {
             let cells = [Cell::I32(step as i32), Cell::F32(0.5)];
             imu.push(now - 5000, &cells).unwrap();
@@ -431,46 +380,45 @@ fn check_next_boot(image: Vec<u8>, before: &ReadBack, context: &str) {
                 payload: row_text(now - 1000, &cells),
             });
         }
-        boot.clock.set(now);
-        writer.step(now, EPOCH);
+        board.tick(clock, now);
     }
-    assert_eq!(writer.ring().figures().spill_frames, 0, "{context}: boot 124 settled");
+    assert_eq!(recorder.stats().telemetry.count, 0, "{context}: boot 124 settled");
     assert!(
-        boot.recorder.programmed().is_some(),
-        "{context}: published for the mover"
+        recorder.writer_position().is_some(),
+        "{context}: published for the saver"
     );
-    let image = writer.into_ring().into_flash().into_image();
+    drop(board);
+    let image = flash.into_image();
 
-    let after = read_boot(&image, BOOT_ID);
+    let after = read_back(&image, geometry(), Some("000123"));
     assert_eq!(
         after.files, before.files,
         "{context}: boot 124 changed boot 123's lines"
     );
-    let next = read_boot(&image, NEXT_BOOT);
-    assert_eq!(next.torn, None, "{context}: boot 124 tore nothing");
+    let next = read_back(&image, geometry(), Some("000124"));
+    assert_eq!(next.lost, 0, "{context}: boot 124 tore nothing");
     let first = before.blocks.last().map_or(0, |newest| newest + 1);
     assert_eq!(
         next.blocks.first(),
         Some(&first),
         "{context}: the block after boot 123's newest"
     );
-    let file = |routing: &str| next.files.get(&Some(routing.to_string())).cloned().unwrap_or_default();
     let rows = |queued: &[Queued], header: &str| -> Vec<String> {
         std::iter::once(header.to_string())
             .chain(queued.iter().map(|record| record.payload.clone()))
             .collect()
     };
     assert_eq!(
-        file("000124_imu.csv"),
+        next.file(Some("000124_imu.csv")),
         rows(&workload.imu, "uptime;index;value"),
         "{context}"
     );
     assert_eq!(
-        file("000124_flight_events.csv"),
+        next.file(Some("000124_flight_events.csv")),
         rows(&workload.events, "uptime;event"),
         "{context}"
     );
-    assert_eq!(file("session.csv"), session_rows(NEXT_BOOT), "{context}");
+    assert_eq!(next.file(Some("session.csv")), session_rows(NEXT_BOOT), "{context}");
 }
 
 /// What a sweep saw.
@@ -480,18 +428,18 @@ struct Sweep {
     operations: u32,
     /// The oldest losses over every cut.
     worst: Loss,
-    /// The cuts that tore a DATA frame after some of its whole lines, which the salvage then kept.
-    salvaged: u32,
+    /// The cuts after which the decoder logged a torn chunk as a loss.
+    torn: u32,
 }
 
 /// Run boot 123 whole over `image`, then cut it at every operation and every tear, each followed by boot 124.
 fn sweep(image: &[u8], name: &str) -> Sweep {
     let whole = first_boot(image, None);
     assert_eq!(whole.cut_at, None);
-    let read_back = read_boot(&whole.image, BOOT_ID);
-    assert_eq!(read_back.torn, None, "{name}: nothing torn without a cut");
-    check_first_boot(&read_back, &whole.workload, None, name);
-    check_next_boot(whole.image.clone(), &read_back, name);
+    let read = read_back(&whole.image, geometry(), Some("000123"));
+    assert_eq!(read.lost, 0, "{name}: nothing torn without a cut");
+    check_first_boot(&read, &whole.workload, None, name);
+    check_next_boot(whole.image.clone(), &read, name);
     let mut sweep = Sweep {
         operations: whole.operations,
         ..Sweep::default()
@@ -501,25 +449,37 @@ fn sweep(image: &[u8], name: &str) -> Sweep {
             let context = format!("{name}: cut at operation {operation}, {torn} bytes");
             let cut = first_boot(image, Some((operation, torn)));
             let cut_at = cut.cut_at.unwrap_or_else(|| panic!("{context}: the cut never came"));
-            let read_back = read_boot(&cut.image, BOOT_ID);
-            let loss = check_first_boot(&read_back, &cut.workload, Some(cut_at), &context);
+            let read = read_back(&cut.image, geometry(), Some("000123"));
+            let loss = check_first_boot(&read, &cut.workload, Some(cut_at), &context);
             sweep.worst.row_us = sweep.worst.row_us.max(loss.row_us);
+            sweep.worst.durable_us = sweep.worst.durable_us.max(loss.durable_us);
             sweep.worst.log_us = sweep.worst.log_us.max(loss.log_us);
-            sweep.salvaged += u32::from(read_back.torn.is_some_and(|lines| lines > 0));
-            check_next_boot(cut.image, &read_back, &context);
+            sweep.torn += u32::from(read.lost > 0);
+            check_next_boot(cut.image, &read, &context);
         }
     }
     eprintln!("{name} ring: {} tears per operation, {sweep:?}", TEARS.len());
     sweep
 }
 
-/// The sweep's own checks: it cut many operations, salvaged torn frames, and stayed inside the spec's bounds.
-fn check_sweep(sweep: &Sweep, fewest_operations: u32) {
+/// The sweep's own checks: it cut many operations, left torn chunks the decoder logged, and stayed inside the
+/// host's bound, which is inside the spec's. `waits` is the ticks the first block may wait for the eraser.
+fn check_sweep(sweep: &Sweep, fewest_operations: u32, waits: u64) {
     assert!(sweep.operations >= fewest_operations, "{sweep:?}");
-    assert!(sweep.salvaged > 0, "some cut tore a frame after whole lines: {sweep:?}");
-    assert!(sweep.worst.row_us <= CUT_AGE_US + STEP_US, "{sweep:?}");
     assert!(
-        sweep.worst.log_us <= MERGE_HORIZON_US + CUT_AGE_US + 2 * STEP_US,
+        sweep.torn > 0,
+        "some cut tore a chunk the decoder logged as lost: {sweep:?}"
+    );
+    assert!(sweep.worst.row_us <= (1 + waits) * TICK_US, "{sweep:?}");
+    assert!(sweep.worst.durable_us <= waits * TICK_US, "{sweep:?}");
+    assert!(
+        sweep.worst.log_us <= (1 + waits) * TICK_US + MERGE_HORIZON_US,
+        "{sweep:?}"
+    );
+    assert!(
+        sweep.worst.row_us <= SPEC_ROWS_US
+            && sweep.worst.durable_us <= SPEC_DURABLE_US
+            && sweep.worst.log_us <= SPEC_LOGS_US,
         "{sweep:?}"
     );
 }
@@ -527,11 +487,11 @@ fn check_sweep(sweep: &Sweep, fewest_operations: u32) {
 #[test]
 fn a_cut_over_an_erased_ring_loses_only_the_newest_records() {
     let sweep = sweep(&vec![0xFF; geometry().bytes() as usize], "erased");
-    check_sweep(&sweep, 50);
+    check_sweep(&sweep, 100, 0);
 }
 
 #[test]
-fn a_cut_while_gc_formats_a_foreign_ring_loses_only_the_newest_records() {
+fn a_cut_while_the_eraser_formats_a_foreign_ring_loses_only_the_newest_records() {
     let sweep = sweep(&vec![0; geometry().bytes() as usize], "foreign");
-    check_sweep(&sweep, 60);
+    check_sweep(&sweep, 120, 1);
 }

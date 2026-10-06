@@ -1,9 +1,9 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! recorderd's demux (src/camera/recorded/recorderd.cpp `processing` and `processBuffer`): how a raw byte
-//! stream becomes lines filed by routing. The Luckfox daemon is frozen, and the SD mover files a flash
-//! frame's lines by the same rule (doc/specs/avionics-port.md "SD mover"), so a session pulled from either is
-//! the same set of files.
+//! stream becomes lines filed by routing. The Luckfox daemon is frozen, and the ring_saver files the lines it
+//! prints from a flash block by the same rule (doc/specs/avionics-port.md "The ring_saver"), so a session pulled
+//! from either is the same set of files.
 //!
 //! The rule, byte for byte:
 //!  * every byte below 0x0A is dropped as it arrives. recorderd compares a `char`, which is unsigned on the
@@ -15,7 +15,8 @@
 //!  * any other line goes whole to recorder.log, its leading `@` included.
 //!
 //! Not ported: recorderd's line buffer is 256 KiB, and a longer line wedges it for good (its loop stops
-//! consuming bytes). A flash frame is at most 16 KiB, so no line comes near it.
+//! consuming bytes). No line comes near it: a flash chunk is at most 4032 bytes, and a LOG message at most
+//! 1 KiB.
 
 use alloc::vec::Vec;
 
@@ -33,7 +34,7 @@ const ROUTING_CLOSE_MINIMUM: usize = 4;
 /// `stream`).
 ///
 /// Returns the bytes after the last `\n`, as they came: an unterminated line, which recorderd holds until the
-/// next `\n` arrives, and which a whole flash frame never leaves (a torn frame does).
+/// next `\n` arrives. The saver's lines never leave one (each ends with its `\n`); a capture cut short does.
 pub fn split(stream: &[u8], mut each: impl FnMut(Option<&[u8]>, &[u8])) -> &[u8] {
     let mut rest = stream;
     while let Some(end) = rest.iter().position(|&byte| byte == LINE_END) {

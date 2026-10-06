@@ -56,7 +56,7 @@ The workspace rule (`src/avionics/Cargo.toml:3-7`) is unchanged:
 | `recorder` | `recorder.py` (producer side) | **exists** (`97f785f`), extended in the M3 rework. Stream registry, `Telemetry` (`due`/`push`), the binary record codec (§3.2), per-producer SPSC byte rings, the CC tees and the counters. |
 | `flash_ring` | — (new; replaces the UART + recorderd) | **exists** (`97f785f`), **in rework** for the operator's ring (§3). 4 KiB blocks, the block header and chunk codec, the bring-up scan and block table, the writer's append, the saver's walk, and the eraser's rules with newest wins. Written over two traits, `Flash` and `Fs`, so it is host-tested with an in-memory NOR flash that cuts power on demand and a temp directory. |
 | `databoard` | `databoard.py` | `no_std`, core atomics. Seqlock `Channel<T>` and `Parameter<T>` (rank, window, `read() -> Option<Reading>`). There is no extrapolating accessor. Reconcile learning runs on the writer side. |
-| `sequencer` | `controller.py` Stage, `tasks/sequencer.py`, `commons.dwell_step`/`apogee_step` | **exists** (`Stage` only, commit `83c02236`): `#[repr(u8)]` ids 1..5 (SETTING..DONE) with names and `ground()`; 0 is the NVS no-checkpoint sentinel, not a variant. The detectors and the pure `StageMachine::step(now_ms, &Readings, manual) -> Option<Transition>` join later (M7). |
+| `sequencer` | `controller.py` Stage, `tasks/sequencer.py`, `commons.dwell_step`/`apogee_step` | **exists** (M7; `Stage` since `83c02236`). One module per plan B module: `controller` (`Stage`, `#[repr(u8)]` ids 1..5 SETTING..DONE with names, `ground()` and `airborne()`; 0 is the NVS no-checkpoint sentinel, not a variant), `commons` (the leaky `dwell_step`, the IIR `apogee_step`) and `sequencer`, whose pure `StageMachine::step(now_ms, stage, &Readings, manual) -> Step` takes the stage the `StageCell` holds; the caller writes the step's advance into the `StageCell` before the next step. A `Step` carries up to two sequencer.csv rows, the external move seen first and then the machine's own advance, because one tick can record both (a hold released past the flight timeout). The crate is `std`, for the `f32::sqrt` of the reason text, which `core` lacks on stable. Golden: `commons.json` (`dwell_step`, `apogee_step`) and `sequencer_trace.json`. |
 | `warmstart` | `warmstart.py` | The crumb serde (the same NVS keys), `should_restore(...) -> (bool, Reason)` with the boot rules (§4.6), and the apply plan as data. |
 | `control` | `pid.py`, `mixer.py`, `governor.py`, `airspeed.py`, `wind.py`, `navigation.py`, `guidance.py`, `tasks/attitude.py` (filter), `commons` fin table and `altitude_m` | **exists** in part (M1: the navigation subset; the rest in M9/M13). f32 flight math with one module per Python file. Every function takes time as an argument; nothing reads a clock. |
 | `gnss` | `gnss.py`, `drivers/neo6mv2.py`, `drivers/atgm336h.py` | NMEA checksum and parse with integer ddmm→e7, GSV/sky row, CASIC/PUBX/UBX command bytes, and a thin wrapper over the `ublox` crate (NAV-PVT) for the NEO-M8N. |
@@ -790,10 +790,13 @@ fn push(&mut self, now_us: u64, row: &[Value]) -> Result<(), Overflow>  // telem
 - The first push emits a HEADER record before the row, and always emits, whatever the decimation. The HEADER
   record carries the column list itself, so every flash block reads without the registry, even under a later
   firmware.
-- **HEADER records are repeated:** the writer appends every registered stream's HEADER record again about once
-  per MiB written (the registry keeps their bytes, so this is a copy, not formatting). A session whose first
-  blocks newest wins erased unsaved still gets its headers within the next MiB; the saver writes a header line
-  only when a file starts or its columns change, so the repeats never reach the SD.
+- **HEADER records are repeated:** the writer appends the HEADER record of every registered stream this boot has
+  started again about once per MiB of flash written (the registry keeps their bytes, so this is a copy, not
+  formatting). The MiB is counted by the writer position, block headers and unused block tails included, so a
+  reader that starts anywhere meets every header within the next MiB. A stream that never pushed is not repeated,
+  so it gets no file. A session whose first blocks newest wins erased unsaved still gets its headers within the
+  next MiB; the saver writes a header line only when a file starts or its columns change, so the repeats never
+  reach the SD.
 - `Recorder::log(desc, msg) -> bool` is best effort and drops with a counter.
 
 **One SPSC byte ring per producing thread**, in PSRAM (`heap_caps` SPIRAM):
@@ -847,7 +850,8 @@ Durable streams: `sequencer`, `separation`, `checkpoint`, `<task>_events`, sessi
    header first in address order. G1 proved that many small programs into one page are safe (§7, R1).
 6. Release the records from their rings (invariant 2) and publish `writer_position = (block_sequence, offset)`.
 7. A record that does not fit closes the block. The writer takes the next erased block (§3.5), checks it is
-   fully erased (one 4 KiB read, ~0.4 ms), programs its header and goes on.
+   fully erased (one 4 KiB read, ~0.4 ms), programs its header and goes on. A slot that fails the check, dirty or
+   unreadable, goes to the eraser as `FOREIGN`, and the writer takes the next erased one.
    - With no erased block, records stay in PSRAM until the eraser frees one. Once a producer ring is full,
      `Telemetry::push` returns `Err` (counted in `tlm.dropped`) and logs drop with a count.
    - A failed program is retried at the next offset. If the failed call had landed whole, the chunk is in flash
@@ -877,6 +881,15 @@ tail. A partly filled block is valid; its FF tail is unused space.
 | 48 | u32 | reserved 0 |
 | 52 | u32 | header_crc over bytes 0..52 (zlib CRC-32; `esp_rom_crc32_le` matches) |
 
+The 56 header bytes and the 4 KiB slot grid never change, in any build: they let a build order, keep and give up
+another build's blocks (after an update, or a reboot in flight that comes back on an older image). Everything
+behind the header is versioned: the version covers the chunk format and the record format (§3.2), any change to
+either bumps it, and byte-exact test vectors on both sides pin it. A build keeps a block of another version, never
+saves it, and gives it up only under newest wins, flight blocks last (§3.7). The host side is where both layouts
+meet: `ring_split.py` reports a block of a version it does not read from its header (boot, session, sequence,
+flight flag) and files nothing of it, and a new version's decoder goes in beside the old one, never in its place,
+so the newest tool reads a ring that a revert left in two layouts.
+
 **Chunk**, at an 8-aligned offset; the next starts at `align8(offset + 8 + len)`:
 
 | off | type | field |
@@ -886,9 +899,12 @@ tail. A partly filled block is valid; its FF tail is unused space.
 | 4 | u32 | crc over bytes 0..4 and the payload (zlib CRC-32) |
 | 8 | … | payload: whole records (§3.2), verbatim |
 
-- A chunk whose CRC fails, or whose length runs past the block end, is **torn**: a cut during its program. It is
-  always the last chunk of its block, because a new boot never appends to an old block (§3.5). Its records count
-  as lost.
+- A chunk whose CRC fails, or whose length runs past the block end, is **torn**. A cut tears only the last chunk
+  of its boot's last block, because a new boot never appends to an old block (§3.5). A failed program leaves
+  debris anywhere, and the writer retries its records at the next offset, or in the boot's next block when they no
+  longer fit (§3.3, step 7): the walk steps over the debris in 8-byte steps to the next whole chunk. So a torn
+  chunk's records count as lost only when no whole chunk follows it in its block and no later block of its boot
+  is in flash.
 - A record never straddles chunks or blocks, so every valid chunk decodes on its own.
 - One boot's blocks, decoded and wrapped, have the old UART stream's format and make a valid `flight_telemetry`
   capture (the numbers are not byte-identical to MicroPython's: f32 `Display`, u64 uptime). A raw ring image is
@@ -916,7 +932,12 @@ tail. A partly filled block is valid; its FF tail is unused space.
 - **A new boot never appends to a previous boot's block.** It opens an erased block with
   `block_sequence = max + 1`.
 - **Flight blocks:** the writer closes its block when the stage enters BOOSTING, so every record from BOOSTING
-  on lies in a block with the flight flag.
+  on lies in a block with the flight flag. A reboot in flight brings storage up (§4.5, step 3) before the warm
+  start decides (step 8), so the writer opens its first block with the flight flag when the crumb names
+  BOOSTING..LANDING; a refused warm start closes that one block. The fall at DONE (or a refused warm start) closes
+  the block only once every record queued before it is programmed: one completed writer step past the 20 ms merge
+  horizon, with no chunk waiting. Applied at once, the last LANDING rows and log lines, drained after the call,
+  would lie in a pad block, which newest wins gives up first.
 - **Crash consistency of erase:** a cut during an erase leaves a block that reads as `FOREIGN`, or as a valid
   header over damaged chunks. Either is erased again; a damaged chunk fails its CRC and never decodes as a wrong
   record.
@@ -939,13 +960,18 @@ append, so the rest of boot goes on and the producers queue in PSRAM meanwhile:
    previous boot's session-start record names (FAT volume serial); otherwise at the oldest valid block, so a new
    card gets everything still in flash. Saved blocks are erased within 200 ms, so a stale or lost hint costs at
    most about a second of re-saved records: duplicates (§3.8), never lost data.
-5. **Eraser:** the saved and foreign blocks first, then its normal rule (§3.7).
+5. **Eraser:** the saved and foreign blocks first, then its normal rule (§3.7). The blocks behind the
+   `saver_position` hint count as saved when the mounted card is the one the hint was saved to, or no card is
+   mounted; with another card nothing does, so the new card gets everything.
 6. **Session-start record:** written once per boot to the `cfg` NVS: boot id, session label, config_id, reset
    cause, card (VSN or none), and the ring positions this boot started from. It is what a fast start needs.
 
 **Positions:** `writer_position` and `saver_position` (each `(block_sequence, offset)`) live in the `cfg` NVS as
 hints, written about once a second. The scan wins over the writer's hint; the saver's hint is its only record of
-progress, and without one it starts at the oldest valid block.
+progress, and without one it starts at the oldest valid block. A hint more than 2³¹ blocks ahead of the newest
+block in flash is ignored: it is corrupt, or another build's encoding. `block_sequence = u32::MAX` is never given,
+so a ring numbered up to it (only a corrupt hint or another build gets there; 2³² blocks are 16 TiB) refuses to
+open a block rather than give a number twice.
 
 ### 3.7 The ring_eraser and newest wins
 
@@ -954,14 +980,19 @@ progress, and without one it starts at the oldest valid block.
 - **Normal rule:** erase each block 100–200 ms after the saver has passed it (`block_sequence` behind
   `saver_position`), and keep about 1 % of the ring (~61 blocks, ~245 KB, about 15 s at the flight rate) erased
   ahead of the writer.
-- **Newest wins:** above ~99 % use (fewer than ~1 % of the blocks erased or saved), the eraser erases the
-  **oldest** block even unsaved: non-flight blocks first, flight blocks only when no non-flight block is left.
+- **Newest wins:** above ~99 % use (no more than ~1 % of the blocks erased or saved: the reserve, plus one block
+  of margin for the block the writer opens before the eraser's next step, so `ring-low` and the gate do not
+  flicker), the eraser erases the **oldest** block even unsaved: non-flight blocks first, flight blocks only when
+  no non-flight block is left.
   Each such erase is logged as a loss, `<uptime> ring :: block <sequence> (boot <id>, session <s>, flight
   <0|1>) erased unsaved`, and counted in `ring.lost`.
   - With no card, or a dead one, the ring therefore keeps the newest ~24 MiB, about 26 min at the flight rate
     (§3.13), and the flight's blocks outlive the pad's.
 - **No flight pause:** the eraser runs on the pad and in flight alike. One erase holds the flash at most 17 ms,
   which the §3.3 bound includes.
+- **A failing erase:** an erase that fails 3 times in a row on one slot gives the slot up until the next boot
+  (counted in `ring.bad`). The eraser passes over it and takes the next block by the same rules, so one bad
+  sector never stops the ring.
 - **After DONE** the logging drops to a trickle (M11b), so the saver catches up and the eraser follows it.
 - **Budget figures:**
 
@@ -990,8 +1021,19 @@ Duplicates between flash and the SD are fine (the operator's rule). They arise w
 - a `/ring` or image pull overlaps a session already on the SD.
 
 The board never removes them; the tools drop them. `tools/recorder_wire.py` keeps the first line of each
-(stream, uptime, line CRC) key (M3), and `recorder_flight`, `assemble_capture` and `flight_telemetry` read
-through it. Two different lines with the same uptime differ in their CRC, so both stay.
+(stream, uptime, line CRC) key (`unique()`, M3), and `recorder_flight`, `assemble_capture` and `flight_telemetry`
+read through it. Two different lines with the same uptime differ in their CRC, so both stay. The uptime is the
+line's leading decimal, and the stream (its routing, or recorder.log) stays in the key even though the CRC covers
+it, so a CRC collision across two streams drops nothing. Only a stamped line that verifies is keyed:
+- a damaged line has no CRC to prove it a duplicate, and stays damage;
+- a line with no uptime of its own, a stream's header, is never a duplicate. A stream's second header is what
+  `flight_telemetry` flags as two boots appended into one file (a `recorder.session` label reused across boots),
+  and nothing in the header line tells a re-printed one from a new boot's. So the saver must not print a header
+  again into a file that already holds one, after a restart too (M4): a fresh decoder that re-saves from
+  `saver_position` reaches the next header repeat, and a header line there would read as a splice.
+
+`ring_split.py` writes a session as the saver would, duplicates included, and counts them in its summary; the
+readers drop them.
 
 ### 3.9 The ring_saver
 
@@ -1003,7 +1045,7 @@ long as the board is powered.
 
 **Decode:**
 - Check the block header. It names the session (the directory) and the boot.
-- Walk the chunks and check each CRC. A torn chunk ends the block (§3.4).
+- Walk the chunks and check each CRC. The walk steps over a torn chunk to the next whole one (§3.4).
 - Turn each record into its line with `recorder_wire`: a ROW prints `<uptime>;v1;…;vn`, a HEADER its column
   list, a LOG `<uptime_us> <desc> :: <msg>` (§3.11). Wrap it with its routing, `<session>_<file>` (the bare
   `session.csv` for the index): `{OPEN};<payload>;<CLOSE>\n` (`recorder-wire.md:25-50`; `{%08x};%s;<%08x>`,
@@ -1014,9 +1056,11 @@ long as the board is powered.
   - a LOG line to `<session dir>/recorder.log`.
 - A file name must match `[A-Za-z0-9._-]{3,64}` (no `/`); a record whose name does not goes to recorder.log.
 - Every loss is logged into recorder.log as a full log line, `<uptime> ring :: block <sequence>: torn chunk at
-  <offset>, k records lost`, wrapped with `recorder_wire.wrap` (as `assemble_capture` does for its own host
-  lines). An unwrapped line in a wrapped session counts as rejected damage in `recorder_flight` and
-  `flight_telemetry`.
+  <offset>, k records lost` (a torn chunk is a loss only with no whole chunk behind it in its block and no later
+  block of its boot in flash, §3.4; a retried program is not), wrapped with `recorder_wire.wrap` (as
+  `assemble_capture` does for its own host lines). `<uptime>` is the newest uptime decoded in that session, so
+  recorder.log never goes back in time, and `k` is `?` when the count never landed. An unwrapped line in a wrapped
+  session counts as rejected damage in `recorder_flight` and `flight_telemetry`.
 
 **Batches** are ≤ 1 s of blocks or 64 blocks (256 KiB), whichever comes first. **A batch never spans two
 sessions** and touches at most 32 files. Order per batch:
@@ -1096,7 +1140,8 @@ The saver prints records by these rules, and so does the `cc` executor for the t
   - `land_s` comes from the elevation slope once ported, else `None`.
 - **session.csv:** header `uptime;boot;session;utc;utc_offset;board;firmware;config_id;source;cc_lat;cc_lon`.
   - Rows are written at `boot`, at every successful clock set (`cc-auto`/`dashboard`), and at `anchor` (60 s
-    after Recorder start). The header goes out again before the boot and anchor rows.
+    after Recorder start). A HEADER record goes into flash again before the boot and anchor rows, so a reader that
+    starts at either finds the columns; the saver prints it only where the file starts (§3.2).
   - `utc` and `utc_offset` are empty before 2001-01-01, and `utc_offset` is empty outside −720..+840.
   - Text cells are emptied unless printable ASCII, without `;`, and at most 32 characters (`recorder.py:76-110,602-697`).
 - **Session prefix**, fixed at boot and carried in every block header:
@@ -1334,7 +1379,7 @@ Bus owners run their tables on the same notify:
 | `layout.json` | `_TMS7C`/`_TASTER`/`_LEGACY` scans → verdict, edits, ranks | exact | M5 |
 | `databoard.json` | Parameter rank handover, window, born-stale (no extrapolation cases) | exact | M5 |
 | `drivers_*.json` | lsm6dso32 (scaling, frame decode), sdp810, bmi323, bmp581, bmm350, ina226, icp10111 (pinned exactly), bmp280, sg90 pulse map, vl53 timing; adxl375 with M18 | exact / abs | M6-M10 |
-| `commons.json` | `dwell_step`, `apogee_step`, `fin_deflection_limit`, `altitude_m` | exact / abs 1e-3 m | M7 |
+| `commons.json` | `dwell_step`, `apogee_step`, `fin_deflection_limit`, `altitude_m` | `dwell_step`, `fin_deflection_limit` exact; `apogee_step` abs 1e-3 m; `altitude_m` abs 0.01 m (f32: a pressure ratio near 1 resolves to ~3.4 mm) | M7 |
 | `sequencer_trace.json` | `Sequencer._tick` with scripted post-freshness reads (`test_sequencer.py:43-140` + regressions) | exact | M7 |
 | `warmstart.json` | `should_restore` boundaries, torn crumb | exact | M8 |
 | `attitude.json`, `magnetic_yaw.json` | `tasks/attitude.py` | angle 0.1 deg; flags exact | M9 |

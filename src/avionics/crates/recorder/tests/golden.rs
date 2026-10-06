@@ -2,15 +2,15 @@
 //!
 //! Telemetry decimates as plan B does: src/avionics/golden/recorder.json, which golden/build_recorder.py builds from
 //! src/glider/recorder.py's `Telemetry.due` and `push` on CPython. For each push, whether a row was due before it
-//! and whether it emitted one; the rows are read back from the flash the writer filled, so "emitted" means on
-//! flash. Every value compares exactly.
+//! and whether it emitted one; the rows are read back from the flash the writer filled, through the block decoder,
+//! so "emitted" means on flash. Every value compares exactly.
 
 mod common;
 
 use common::*;
 
-use flash_ring::Geometry;
-use recorder::{CUT_AGE_US, Cell, MERGE_HORIZON_US, Registry, Settings, Telemetry, Writer};
+use flash_ring::{Geometry, MemoryFlash};
+use recorder::{Cell, MERGE_HORIZON_US, Registry, Settings, Telemetry, Writer};
 use serde_json::{Value, json};
 
 /// The fixture, compiled in.
@@ -26,29 +26,28 @@ fn decimation(input: &Value) -> Value {
         .iter()
         .map(|push| push.as_u64().unwrap())
         .collect();
-    let mut registry = Registry::new(SESSION).unwrap();
+    let mut registry = Registry::new();
     let stream = registry.add("imu.csv", &["index"], decimate_us, false).unwrap();
     let settings = Settings {
         telemetry_ms,
         stats_ms: 1000,
     };
-    let (recorder, clock) = recorder(registry, 1, 1 << 16, settings);
-    let mut writer = Writer::new(recorder, ring(recorder, Geometry::new(8, 16).unwrap(), OPTIONS)).unwrap();
-    let _attached = recorder.attach(0).unwrap();
-    let mut telemetry = Telemetry::new(recorder, stream).unwrap();
+    let parts = recorder(registry, 1, 1 << 16, settings);
+    let geometry = Geometry::new(64).unwrap();
+    let flash = MemoryFlash::new(geometry.bytes());
+    let scanned = bring_up(&flash, geometry);
+    let mut writer = Writer::new(parts.recorder, ring(&flash, &scanned, BOOT_ID)).unwrap();
+    let _attached = parts.recorder.attach(0).unwrap();
+    let mut telemetry = Telemetry::new(parts.recorder, stream).unwrap();
     let mut due = Vec::new();
     for (index, &now) in pushes.iter().enumerate() {
         due.push(telemetry.due(now));
         telemetry.push(now, &[Cell::I32(index as i32)]).unwrap();
     }
-    let end = *pushes.last().unwrap();
-    for now in [end, end + MERGE_HORIZON_US, end + MERGE_HORIZON_US + CUT_AGE_US] {
-        clock.set(now);
-        writer.step(now, EPOCH);
-    }
-    let rows = read_back(writer.ring())
-        .remove(&Some(format!("{SESSION}_imu.csv")))
-        .unwrap();
+    let end = *pushes.last().unwrap() + MERGE_HORIZON_US;
+    parts.clock.set(end);
+    writer.step(end, EPOCH);
+    let rows = read_back(&flash.image(), geometry, None).file(Some(&format!("{SESSION}_imu.csv")));
     assert_eq!(rows[0], "uptime;index", "the header first");
     let emitted: Vec<usize> = rows[1..]
         .iter()
@@ -70,6 +69,11 @@ fn telemetry_decimates_as_plan_b_does() {
 #[test]
 fn the_fixture_covers_every_setting() {
     let document: Value = serde_json::from_str(FIXTURE).unwrap();
+    assert_eq!(
+        document["meta"]["tag"],
+        golden::PLAN_B_TAG,
+        "the fixture says where it came from"
+    );
     let settings: Vec<i64> = document["cases"]
         .as_array()
         .unwrap()

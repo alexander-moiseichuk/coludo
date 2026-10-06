@@ -1,9 +1,10 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
-//! What the flash writer publishes for other threads, with no 64-bit atomic (the P4 has none):
-//! * [`PublishedPosition`], the end of what is programmed, for the SD mover (doc/specs/avionics-port.md "The
-//!   flash writer", step 7): a block sequence and an offset that must be read as a pair, so a seqlock over
-//!   AtomicU32, in its two-copy "latch" form so that a reader never waits for the writer;
+//! What the ring_writer publishes for other threads, with no 64-bit atomic (the P4 has none):
+//! * [`PublishedPosition`], the end of what is programmed (`writer_position`, doc/specs/avionics-port.md "The
+//!   ring_writer", step 6): the ring_saver never reads past it. A block sequence and an offset that must be read
+//!   as a pair, so a seqlock over AtomicU32, in its two-copy "latch" form so that a reader never waits for the
+//!   writer;
 //! * [`PublishedStats`], the counters and ring figures `stats`/`inspect` report. Each counter is an AtomicU32 read
 //!   on its own, since a report may mix two steps' values without harm; the ring figures are copied whole.
 
@@ -69,7 +70,7 @@ impl PublishedPosition {
         }
     }
 
-    /// Store `position`. Only the flash writer calls it: one writer, so the sequence needs no read-modify-write.
+    /// Store `position`. Only the ring_writer calls it: one writer, so the sequence needs no read-modify-write.
     pub(crate) fn store(&self, position: Position) {
         let sequence = self.sequence.load(Ordering::Relaxed);
         if sequence == 0 {
@@ -112,19 +113,20 @@ struct PublishedCounters {
     max: AtomicU32,
 }
 
-/// The counters and figures the writer publishes after each step.
+/// The counters and figures the writer publishes.
 #[derive(Default)]
 pub(crate) struct PublishedStats {
-    /// Telemetry records (headers, rows, session.csv rows).
+    /// Telemetry records (headers and rows, session.csv rows among them).
     telemetry: PublishedCounters,
     /// Log records.
     log: PublishedCounters,
-    /// The flash ring's figures, copied whole. The writer only `try_lock`s it, skipping a step's copy rather than
-    /// waiting for a `stats` reader; it is not a producer path.
+    /// The flash ring's figures, copied whole with each status line (they walk the whole block table, so not on
+    /// every step). The writer only `try_lock`s it, skipping a copy rather than waiting for a `stats` reader; it is
+    /// not a producer path.
     ring: Mutex<Figures>,
-    /// DATA frames this writer appended.
-    frames: AtomicU32,
-    /// Flash calls that failed.
+    /// Chunks the writer programmed this boot.
+    chunks: AtomicU32,
+    /// Flash calls of the writer that failed this boot.
     flash_errors: AtomicU32,
 }
 
@@ -136,26 +138,30 @@ pub struct Stats {
     pub telemetry: Counters,
     /// Log records, likewise.
     pub log: Counters,
-    /// The flash ring's budget figures.
+    /// The flash ring's budget figures, as of the last status line (every `stats_ms`).
     pub ring: Figures,
-    /// DATA frames appended to the ring this boot.
-    pub frames: u32,
-    /// Flash calls that failed this boot (a program or an erase).
+    /// Chunks programmed into the ring this boot.
+    pub chunks: u32,
+    /// Flash calls of the writer that failed this boot (a chunk or a block header program, a check read).
     pub flash_errors: u32,
 }
 
 impl PublishedStats {
-    /// Publish a step's figures; `count` and `max` are (telemetry, log).
-    pub(crate) fn store(&self, count: [u32; 2], max: [u32; 2], ring: Figures, frames: u32, flash_errors: u32) {
+    /// Publish a step's counters; `count` and `max` are (telemetry, log).
+    pub(crate) fn store(&self, count: [u32; 2], max: [u32; 2], chunks: u32, flash_errors: u32) {
         for (counters, (count, max)) in [&self.telemetry, &self.log].into_iter().zip(count.into_iter().zip(max)) {
             counters.count.store(count, Ordering::Relaxed);
             counters.max.store(max, Ordering::Relaxed);
         }
+        self.chunks.store(chunks, Ordering::Relaxed);
+        self.flash_errors.store(flash_errors, Ordering::Relaxed);
+    }
+
+    /// Publish the ring's figures, unless a `stats` reader holds them right now.
+    pub(crate) fn store_ring(&self, ring: Figures) {
         if let Ok(mut figures) = self.ring.try_lock() {
             *figures = ring;
         }
-        self.frames.store(frames, Ordering::Relaxed);
-        self.flash_errors.store(flash_errors, Ordering::Relaxed);
     }
 
     /// The published figures, with the drop counts (telemetry, log) the producers keep.
@@ -169,7 +175,7 @@ impl PublishedStats {
             telemetry: counters(&self.telemetry, dropped[0]),
             log: counters(&self.log, dropped[1]),
             ring: *self.ring.lock().unwrap_or_else(|poisoned| poisoned.into_inner()),
-            frames: self.frames.load(Ordering::Relaxed),
+            chunks: self.chunks.load(Ordering::Relaxed),
             flash_errors: self.flash_errors.load(Ordering::Relaxed),
         }
     }
@@ -259,29 +265,31 @@ mod tests {
         let published = PublishedStats::default();
         let ring = Figures {
             erased_ahead: 1,
-            moved_not_erased: 2,
-            foreign: 3,
+            saved: 2,
+            unsaved: 3,
             other_version: 4,
-            unconfirmed: 5,
-            spill_frames: 6,
-            spill_bytes: 7,
+            foreign: 5,
+            lost: 6,
+            bad: 7,
         };
-        published.store([10, 20], [11, 21], ring, 7, 8);
+        published.store([10, 20], [11, 21], 7, 8);
+        published.store_ring(ring);
         let stats = published.load([12, 22]);
         assert_eq!(
             (stats.telemetry.count, stats.telemetry.max, stats.telemetry.dropped),
             (10, 11, 12)
         );
         assert_eq!((stats.log.count, stats.log.max, stats.log.dropped), (20, 21, 22));
-        assert_eq!((stats.ring, stats.frames, stats.flash_errors), (ring, 7, 8));
+        assert_eq!((stats.ring, stats.chunks, stats.flash_errors), (ring, 7, 8));
         let held = published.ring.lock().unwrap();
-        published.store([0, 0], [0, 0], flash_ring::Figures::default(), 9, 9);
+        published.store_ring(Figures::default());
+        published.store([0, 0], [0, 0], 9, 9);
         drop(held);
         assert_eq!(
             published.load([0, 0]).ring,
             ring,
             "a busy copy is skipped, not waited for"
         );
-        assert_eq!(published.load([0, 0]).frames, 9);
+        assert_eq!(published.load([0, 0]).chunks, 9, "the counters never wait");
     }
 }

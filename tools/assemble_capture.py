@@ -12,7 +12,9 @@ Luckfox holds them, byte for byte (read and written as UTF-8 with errors='surrog
 (doc/specs/recorder-wire.md) becomes its original wire line again, since its file's name is its routing,
 so flight_telemetry checks and salvages it. The lines this tool adds itself -- the stage marks and an
 optional note -- are wrapped too when the capture is, or the strict reader of a wrapped capture would
-reject them as damage.
+reject them as damage. Each file is read through the duplicate filter (recorder_wire.unique;
+doc/specs/avionics-port.md "Duplicates"): a Rust board's session directory can hold a row twice, and a
+sequencer row twice would also mark its stage twice.
 
 Usage: assemble_capture.py <session> <indir> <out.txt> [note]
   note: one host log line appended at the end, e.g. hitl_collect's '0 capture :: build ...'
@@ -52,12 +54,15 @@ def assemble(session: str, indir: str, out: str, note: str | None = None) -> int
     Returns:
         The number of lines written to `out`.
     """
-    files = []
+    files, duplicates = [], 0
     names = sorted(os.path.basename(path) for path in glob.glob(os.path.join(indir, session + '_*.csv')))
     for name in recorder_wire.session_files(session, names):
         with open(os.path.join(indir, name), 'rb') as handle:  # a damaged byte fails its row's check, not the tool
             rows = [raw.decode('utf-8', 'surrogateescape').rstrip('\r\n') for raw in handle]
-        files.append((name, [row for row in rows if row]))
+        rows = [row for row in rows if row]
+        keep = recorder_wire.unique([(name, recorder_wire.verify(name, row)) for row in rows])
+        duplicates += keep.count(False)
+        files.append((name, [row for row, kept in zip(rows, keep) if kept]))
     # one row that checks out under its file's name makes the capture wrapped; a lookalike does not
     wrapped = any(recorder_wire.verify(routing, row) is not None for routing, rows in files for row in rows)
     lines = []
@@ -90,6 +95,8 @@ def assemble(session: str, indir: str, out: str, note: str | None = None) -> int
         printable = name.encode('utf-8', 'surrogateescape').decode('utf-8', 'backslashreplace')
         print('  %-28s %6d rows' % (printable, inventory[name]))
     print('  %-28s %6d streams' % ('TOTAL', len(inventory)))
+    if duplicates:
+        print('  %-28s %6d rows dropped' % ('duplicates', duplicates))
     return len(lines)
 
 

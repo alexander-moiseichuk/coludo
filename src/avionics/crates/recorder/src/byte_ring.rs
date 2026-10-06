@@ -1,11 +1,12 @@
 //! Coludo project, copyright under MIT license, Alexander Moiseichuk
 //!
 //! The single-producer, single-consumer byte ring under every recorder queue (doc/specs/avionics-port.md
-//! "Producer side"): a producing thread's records on their way to the flash writer, and the writer's lines on
-//! their way to a CC tee.
+//! "Producer side"): a producing thread's records on their way to the ring_writer, and the writer's copies of
+//! them on their way to a CC tee.
 //!
 //! A record is a u16 length (the record's whole size, a multiple of 4) followed by its bytes, padded with zeros
-//! to that size. A length of 0 is the wrap marker: the record that did not fit before the buffer's end starts
+//! to that size: the record format's own length field, so a record crosses the ring, the flash chunk and the tee
+//! byte for byte. A length of 0 is the wrap marker: the record that did not fit before the buffer's end starts
 //! at offset 0. The producer owns `head` and the consumer owns `tail`, both AtomicUsize: the producer publishes
 //! a record with a Release store of `head`, and the consumer frees its bytes with a Release store of `tail`,
 //! each read by the other side with Acquire. Neither side ever writes the other's index, so no lock is taken
@@ -13,8 +14,8 @@
 //!
 //! `head == tail` means empty, so a record may never make `head` reach `tail`: a full ring refuses the record
 //! and keeps everything queued. The free space can be split in two by the buffer's end, and a record takes one
-//! piece whole, so a ring takes records much smaller than itself (the writer's are at most ~1.3 KiB, the
-//! smallest ring 128 KiB).
+//! piece whole, so a ring takes records much smaller than itself (a record is at most one 4032-byte chunk
+//! payload, the smallest ring 128 KiB).
 //!
 //! The buffer is the caller's, `&'static mut [u8]`: the firmware hands over PSRAM it allocated with
 //! `heap_caps_malloc` (and never frees), the host tests a leaked Vec. Owning it for good is what makes the raw
@@ -24,16 +25,17 @@ use core::ptr::NonNull;
 use core::sync::atomic::{AtomicUsize, Ordering};
 
 /// Records start on this alignment, and their sizes are multiples of it.
-pub(crate) const ALIGNMENT: usize = 4;
+const ALIGNMENT: usize = 4;
 
 /// The record's length field, its first bytes. The ring writes it; a length of 0 is the wrap marker.
 pub(crate) const LENGTH_BYTES: usize = 2;
 
-/// The largest record: the largest multiple of [`ALIGNMENT`] the u16 length holds.
-pub(crate) const MAX_RECORD_BYTES: usize = u16::MAX as usize & !(ALIGNMENT - 1);
+/// The largest record the ring takes: the largest multiple of [`ALIGNMENT`] the u16 length holds. The recorder's
+/// records stop far below it, at a chunk payload.
+const MAX_RECORD_BYTES: usize = u16::MAX as usize & !(ALIGNMENT - 1);
 
 /// `length` rounded up to the alignment: the bytes a record of `length` takes.
-pub(crate) const fn padded(length: usize) -> usize {
+const fn padded(length: usize) -> usize {
     (length + ALIGNMENT - 1) & !(ALIGNMENT - 1)
 }
 
@@ -153,6 +155,13 @@ impl ByteRing {
     /// The bytes the ring holds at most, for `inspect`.
     pub(crate) fn capacity(&self) -> usize {
         self.capacity
+    }
+
+    /// The producer's published position: every record before it is readable. A consumer reads it to bound a walk
+    /// to what was queued at one moment ([`crate::tee`] ends a batch there); the Acquire pairs with the producer's
+    /// Release store, so every record before it is whole.
+    pub(crate) fn head(&self) -> usize {
+        self.head.load(Ordering::Acquire)
     }
 
     /// The consumer's freed-up-to position.

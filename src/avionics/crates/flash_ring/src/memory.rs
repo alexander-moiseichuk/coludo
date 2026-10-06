@@ -6,15 +6,19 @@
 //! * an erase takes a whole 4 KiB sector;
 //! * a call out of range fails.
 //!
-//! It also cuts power on demand ([`MemoryFlash::cut_power`]). After a set number of program and erase calls, the
-//! next one is torn: only its first bytes take effect, and every later call fails, as on a dead board. The
-//! test then reboots by mounting a new ring over [`MemoryFlash::into_image`].
+//! The writer and the eraser each hold their own handle on the board, so here both borrow one `MemoryFlash`:
+//! [`Flash`] is implemented for `&MemoryFlash` as well, over interior mutability.
+//!
+//! It also fails on demand. [`MemoryFlash::cut_power`]: after a set number of program and erase calls, the next
+//! one is torn (only its first bytes take effect) and every later call fails, as on a dead board; the test then
+//! boots again over [`MemoryFlash::into_image`]. [`MemoryFlash::fail`] tears one call the same way but leaves the
+//! flash alive, as a flash error the writer retries.
 
 use alloc::vec;
 use alloc::vec::Vec;
-use core::cell::Cell;
+use core::cell::{Cell, RefCell};
 
-use crate::{Flash, SECTOR_BYTES};
+use crate::{BLOCK_BYTES, Flash};
 
 /// Why a [`MemoryFlash`] call failed.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -30,32 +34,36 @@ pub enum MemoryError {
     },
     /// The power was cut: this call was torn, or came after the cut.
     PowerCut,
+    /// This one call failed after its first bytes took effect ([`MemoryFlash::fail`]); later calls work.
+    Failed,
 }
 
-/// A scheduled power cut.
+/// A scheduled fault.
 #[derive(Clone, Copy, Debug)]
-struct Cut {
+struct Fault {
     /// Program and erase calls still to complete before the torn one.
     operations: u32,
     /// How many leading bytes of the torn call take effect.
     torn_bytes: usize,
+    /// Whether the power goes with it, failing every later call.
+    power: bool,
 }
 
-/// A NOR flash in RAM, with operation counters and an optional power cut.
+/// A NOR flash in RAM, with operation counters and an optional fault.
 #[derive(Debug)]
 pub struct MemoryFlash {
     /// The flash content.
-    bytes: Vec<u8>,
-    /// Read calls so far. A Cell, because [`Flash::read`] takes `&self`, as the board's does.
+    bytes: RefCell<Vec<u8>>,
+    /// Read calls so far.
     reads: Cell<u32>,
     /// Program calls so far, a torn one included.
-    programs: u32,
+    programs: Cell<u32>,
     /// Erase calls so far, a torn one included.
-    erases: u32,
-    /// The cut to come, if any.
-    cut: Option<Cut>,
-    /// Whether the cut has happened.
-    dead: bool,
+    erases: Cell<u32>,
+    /// The fault to come, if any.
+    fault: Cell<Option<Fault>>,
+    /// Whether the power was cut.
+    dead: Cell<bool>,
 }
 
 impl MemoryFlash {
@@ -67,30 +75,45 @@ impl MemoryFlash {
     /// A flash holding `image`, such as the image of a flash whose power was cut, to boot again over.
     pub fn from_image(image: Vec<u8>) -> MemoryFlash {
         MemoryFlash {
-            bytes: image,
+            bytes: RefCell::new(image),
             reads: Cell::new(0),
-            programs: 0,
-            erases: 0,
-            cut: None,
-            dead: false,
+            programs: Cell::new(0),
+            erases: Cell::new(0),
+            fault: Cell::new(None),
+            dead: Cell::new(false),
         }
     }
 
-    /// The flash content.
-    pub fn image(&self) -> &[u8] {
-        &self.bytes
+    /// A copy of the flash content.
+    pub fn image(&self) -> Vec<u8> {
+        self.bytes.borrow().clone()
     }
 
-    /// The flash content, to mount again or keep.
+    /// The flash content, to boot again over or keep.
     pub fn into_image(self) -> Vec<u8> {
-        self.bytes
+        self.bytes.into_inner()
     }
 
-    /// Cuts the power on a later call. The next `operations` program or erase calls complete, then the
-    /// following one is torn: only its first `torn_bytes` bytes are programmed (or erased to 0xFF), it fails
-    /// with [`MemoryError::PowerCut`], and so does every call after it, reads included.
-    pub fn cut_power(&mut self, operations: u32, torn_bytes: usize) {
-        self.cut = Some(Cut { operations, torn_bytes });
+    /// Cuts the power on a later call. The next `operations` program or erase calls complete, then the following
+    /// one is torn: only its first `torn_bytes` bytes are programmed (or erased to 0xFF), it fails with
+    /// [`MemoryError::PowerCut`], and so does every call after it, reads included. A `torn_bytes` past the call's
+    /// length lets it complete before the power goes: it was done but never returned.
+    pub fn cut_power(&self, operations: u32, torn_bytes: usize) {
+        self.fault.set(Some(Fault {
+            operations,
+            torn_bytes,
+            power: true,
+        }));
+    }
+
+    /// Fails one later call: as [`MemoryFlash::cut_power`], but it fails with [`MemoryError::Failed`] and the
+    /// calls after it work, as a flash error that a retry gets past.
+    pub fn fail(&self, operations: u32, torn_bytes: usize) {
+        self.fault.set(Some(Fault {
+            operations,
+            torn_bytes,
+            power: false,
+        }));
     }
 
     /// Read calls so far.
@@ -100,60 +123,71 @@ impl MemoryFlash {
 
     /// Program calls so far, a torn one included.
     pub fn programs(&self) -> u32 {
-        self.programs
+        self.programs.get()
     }
 
     /// Erase calls so far, a torn one included.
     pub fn erases(&self) -> u32 {
-        self.erases
+        self.erases.get()
     }
 
     /// The bytes `offset..offset + length`, or OutOfRange.
     fn range(&self, offset: u32, length: usize) -> Result<core::ops::Range<usize>, MemoryError> {
         let start = offset as usize;
         let end = start.checked_add(length).ok_or(MemoryError::OutOfRange)?;
-        if end > self.bytes.len() {
+        if end > self.bytes.borrow().len() {
             return Err(MemoryError::OutOfRange);
         }
         Ok(start..end)
     }
 
-    /// Starts a program or erase. Returns how many leading bytes take effect when the cut lands on this call
-    /// (None: the whole call), or PowerCut after the cut.
-    fn begin(&mut self) -> Result<Option<usize>, MemoryError> {
-        if self.dead {
+    /// Starts a program or erase. Returns the fault when it lands on this call (None: the whole call), or
+    /// PowerCut after a cut.
+    fn begin(&self) -> Result<Option<Fault>, MemoryError> {
+        if self.dead.get() {
             return Err(MemoryError::PowerCut);
         }
-        match self.cut.as_mut() {
-            Some(cut) if cut.operations == 0 => {
-                self.dead = true;
-                Ok(Some(cut.torn_bytes))
+        match self.fault.get() {
+            Some(fault) if fault.operations == 0 => {
+                self.fault.set(None);
+                self.dead.set(fault.power);
+                Ok(Some(fault))
             }
-            Some(cut) => {
-                cut.operations -= 1;
+            Some(fault) => {
+                self.fault.set(Some(Fault {
+                    operations: fault.operations - 1,
+                    ..fault
+                }));
                 Ok(None)
             }
             None => Ok(None),
         }
     }
-}
 
-impl Flash for MemoryFlash {
-    type Error = MemoryError;
+    /// Ends a program or erase that `fault` (if any) tore.
+    fn end(fault: Option<Fault>) -> Result<(), MemoryError> {
+        match fault {
+            Some(Fault { power: true, .. }) => Err(MemoryError::PowerCut),
+            Some(Fault { power: false, .. }) => Err(MemoryError::Failed),
+            None => Ok(()),
+        }
+    }
 
-    fn read(&self, offset: u32, buffer: &mut [u8]) -> Result<(), MemoryError> {
-        if self.dead {
+    /// [`Flash::read`], through a shared handle.
+    fn read_at(&self, offset: u32, buffer: &mut [u8]) -> Result<(), MemoryError> {
+        if self.dead.get() {
             return Err(MemoryError::PowerCut);
         }
         let range = self.range(offset, buffer.len())?;
-        buffer.copy_from_slice(&self.bytes[range]);
+        buffer.copy_from_slice(&self.bytes.borrow()[range]);
         self.reads.set(self.reads.get() + 1);
         Ok(())
     }
 
-    fn program(&mut self, offset: u32, data: &[u8]) -> Result<(), MemoryError> {
+    /// [`Flash::program`], through a shared handle.
+    fn program_at(&self, offset: u32, data: &[u8]) -> Result<(), MemoryError> {
         let range = self.range(offset, data.len())?;
-        if let Some(index) = self.bytes[range.clone()]
+        if let Some(index) = self.bytes.borrow()[range.clone()]
             .iter()
             .zip(data)
             .position(|(&old, &new)| old & new != new)
@@ -162,37 +196,67 @@ impl Flash for MemoryFlash {
                 offset: offset + index as u32,
             });
         }
-        let torn = self.begin()?;
-        self.programs += 1;
-        let done = torn.unwrap_or(data.len()).min(data.len());
-        for (cell, &new) in self.bytes[range.start..range.start + done].iter_mut().zip(data) {
+        let fault = self.begin()?;
+        self.programs.set(self.programs.get() + 1);
+        let done = fault.map_or(data.len(), |fault| fault.torn_bytes.min(data.len()));
+        let mut bytes = self.bytes.borrow_mut();
+        for (cell, &new) in bytes[range.start..range.start + done].iter_mut().zip(data) {
             *cell &= new;
         }
-        if torn.is_some() {
-            Err(MemoryError::PowerCut)
-        } else {
-            Ok(())
+        MemoryFlash::end(fault)
+    }
+
+    /// [`Flash::erase_sector`], through a shared handle.
+    fn erase_at(&self, offset: u32) -> Result<(), MemoryError> {
+        if !offset.is_multiple_of(BLOCK_BYTES) {
+            return Err(MemoryError::Misaligned);
         }
+        let range = self.range(offset, BLOCK_BYTES as usize)?;
+        let fault = self.begin()?;
+        self.erases.set(self.erases.get() + 1);
+        let done = fault.map_or(range.len(), |fault| fault.torn_bytes.min(range.len()));
+        self.bytes.borrow_mut()[range.start..range.start + done].fill(0xFF);
+        MemoryFlash::end(fault)
+    }
+}
+
+impl Flash for MemoryFlash {
+    type Error = MemoryError;
+
+    fn read(&self, offset: u32, buffer: &mut [u8]) -> Result<(), MemoryError> {
+        self.read_at(offset, buffer)
+    }
+
+    fn program(&mut self, offset: u32, data: &[u8]) -> Result<(), MemoryError> {
+        self.program_at(offset, data)
     }
 
     fn erase_sector(&mut self, offset: u32) -> Result<(), MemoryError> {
-        if !offset.is_multiple_of(SECTOR_BYTES) {
-            return Err(MemoryError::Misaligned);
-        }
-        let range = self.range(offset, SECTOR_BYTES as usize)?;
-        let torn = self.begin()?;
-        self.erases += 1;
-        let done = torn.unwrap_or(range.len()).min(range.len());
-        self.bytes[range.start..range.start + done].fill(0xFF);
-        if torn.is_some() {
-            Err(MemoryError::PowerCut)
-        } else {
-            Ok(())
-        }
+        self.erase_at(offset)
     }
 
     fn size(&self) -> u32 {
-        self.bytes.len() as u32
+        self.bytes.borrow().len() as u32
+    }
+}
+
+impl Flash for &MemoryFlash {
+    type Error = MemoryError;
+
+    fn read(&self, offset: u32, buffer: &mut [u8]) -> Result<(), MemoryError> {
+        self.read_at(offset, buffer)
+    }
+
+    fn program(&mut self, offset: u32, data: &[u8]) -> Result<(), MemoryError> {
+        self.program_at(offset, data)
+    }
+
+    fn erase_sector(&mut self, offset: u32) -> Result<(), MemoryError> {
+        self.erase_at(offset)
+    }
+
+    fn size(&self) -> u32 {
+        self.bytes.borrow().len() as u32
     }
 }
 
@@ -234,6 +298,18 @@ mod tests {
     }
 
     #[test]
+    fn two_handles_share_one_flash() {
+        let flash = MemoryFlash::new(8192);
+        let mut writer = &flash;
+        let mut eraser = &flash;
+        writer.program(4096, &[0x12]).unwrap();
+        assert_eq!(flash.image()[4096], 0x12);
+        eraser.erase_sector(4096).unwrap();
+        assert_eq!(flash.image()[4096], 0xFF);
+        assert_eq!((flash.programs(), flash.erases(), writer.size()), (1, 1, 8192));
+    }
+
+    #[test]
     fn a_cut_tears_one_call_and_kills_the_rest() {
         let mut flash = MemoryFlash::new(8192);
         flash.cut_power(1, 3);
@@ -258,5 +334,23 @@ mod tests {
             "a 100-byte prefix of the sector"
         );
         assert_eq!(flash.into_image().len(), 8192);
+    }
+
+    #[test]
+    fn a_failure_tears_one_call_and_the_flash_goes_on() {
+        let mut flash = MemoryFlash::new(8192);
+        flash.fail(0, 2);
+        assert_eq!(flash.program(0, &[0; 8]), Err(MemoryError::Failed));
+        assert_eq!(flash.image()[..3], [0, 0, 0xFF], "a 2-byte prefix");
+        flash.program(8, &[0; 8]).unwrap();
+        flash.erase_sector(0).unwrap();
+        assert_eq!((flash.programs(), flash.erases()), (2, 1));
+        flash.fail(0, usize::MAX);
+        assert_eq!(
+            flash.program(0, &[1, 2]),
+            Err(MemoryError::Failed),
+            "it landed whole and still failed"
+        );
+        assert_eq!(flash.image()[..2], [1, 2]);
     }
 }

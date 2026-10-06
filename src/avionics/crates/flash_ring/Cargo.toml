@@ -1,6 +1,6 @@
 [package]
 name = "flash_ring"
-description = "The flash ring of the log partition: frame codec, geometry, boot scan, append with spill, reverse-order sector GC (doc/specs/avionics-port.md, Storage design)"
+description = "The flash ring of the log partition: 4 KiB blocks, the block header and chunk codec, the bring-up scan and block table, the writer's append and the eraser's rules with newest wins (doc/specs/avionics-port.md, Storage design)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
