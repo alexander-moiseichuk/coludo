@@ -142,7 +142,10 @@ VL53L1X (0x29 on i2c:1) has since moved to 7F. It carries a NEO-6M, three SG90s,
 - **System and streaming.**
   - `reboot` joins the shared table (ground-only). It replies `ok` and calls `esp_restart` 200 ms later. The
     console's own `reboot` uses the same handler, so its `ok rebooting` goes away.
-  - `log [ms]` runs off a `log` crate bridge into a tee ring (temporary until M3's writer tee).
+  - `log [ms]` runs off a `log` crate bridge into a tee ring (temporary until M3's writer tee). `probe mission`
+    logs its check through that bridge, as plan B does (`mission.py` `probe`: `probe: launch position ...`,
+    then the verdict): the contract's stream tier opens a window across it and requires at least one line, the
+    one case a stub `ok {lines:[], dropped:0}` cannot pass.
   - `tlm` replies `ok {samples:[],dropped:0}`.
 - **Honest answers where the feature does not exist yet:**
 
@@ -152,25 +155,33 @@ VL53L1X (0x29 on i2c:1) has since moved to 7F. It carries a NEO-6M, three SG90s,
   | `set-config board`, `reset-config` | `err unsupported 'config store -- M2'` |
   | `arm` | `err unsafe base64:{"flight":"flight -- not ported yet"}` |
   | `verify` | `ok {pass:false, devices:{}, problems:{flight:…}, alternatives:{}, ready:false, readiness:{flight:…}}` |
-  | `probe` | `ok {}` |
-  | `calibrate` | `ok {}` |
+  | `probe`, `probe mission` | `ok {mission: null}` (or the mission's problem): plan B's answer over a registry holding only the mission |
+  | `probe <other>` | `err badargs 'no probe for <other>'` |
+  | `calibrate` | `ok {}` (nothing outstanding) |
+  | `calibrate <device>` | `err badargs 'no calibrate for <device>'` |
   | `disarm` | `ok {armed:false}` |
   | `objects`, `inspect`, `stats`, `report` | over a registry holding `mission` |
   | `detect`, `bustune` | `err unsupported` until M5 |
   | `push-*` | `err badcmd` (§6) |
 
 **Proof**
-- Contract runner tiers core, config(launch), stream(log), control(stage) and system, with `BOARD=fake` and
-  `BOARD=taster`. `--diff fake` shows only the masked fields and the documented not-yet answers.
+- Contract runner, every tier, with `BOARD=fake` and `BOARD=taster`: `tools/cc_contract.py taster --milestone M1
+  --beats 30 --allow-launch-write --allow-stage --allow-reboot --allow-active` exits 0, so every case M1 owes
+  passes (core, stream(log), config(launch), inspect(mission), control(stage), diagnostics(probe/verify/
+  calibrate), hub, system); a not-yet answer to one of them is a violation. `--allow-active` is harmless on the
+  M1 taster, where no fin is driven yet; it is not on plan B. `--diff fake` lists the known differences apart
+  and shows only the documented not-yet answers.
   - The fake needs more than a bare dispatcher (§5.3): a `mission.Mission`, a stub Controller
     (stage/armed/manual) and `config.BOOT_SOURCE = 'default'`. The shims add `time.time()` on MicroPython's
     2000 epoch as an int and a `machine.RTC` stub, so `update mission {epoch}` reports `changed`.
-  - `normalize` masks `firmware_version` and `config_source` as known diffs. The fake resolves the layout
+  - `normalize` lists `firmware_version` and `config_source` as known differences. The fake resolves the layout
     over an empty host scan, as the golden `cc_dispatch` builder does, so `layout` reads `undecided` like the
     taster's (a bare dispatcher reports null).
-- Hub level: the taster registers. It stays online across 30 heartbeats. The hub logs `clock set 2000-… ->
-  2026-…`. The dashboard's 'sync time' and 'sync GNSS' work. `cc.py taster ping` and `cc.py taster whoami`
-  exit 0, and `cc.py taster verify` exits 1 (honest).
+- Hub level, by the runner's hub tier: the taster registers, its dashboard row fills, it stays online and fresh
+  across 30 heartbeats, and its clock no longer reads 2000. By hand: the hub logs `clock set 2000-… -> 2026-…`
+  at a cold registration, the board goes offline after 3 missed beats when it is powered off, and the
+  dashboard's 'sync time' and 'sync GNSS' work. `cc.py taster ping` and `cc.py taster whoami` exit 0, and
+  `cc.py taster verify` exits 1 (honest).
 - Golden: dispatcher error paths (`golden/cc_dispatch.json`).
 
 **Operator gains.** The dashboard row shows version, config id, stage, clock, launch pad, uptime and
@@ -1149,34 +1160,43 @@ Bus owners run their tables on the same notify:
     `time.time()` on the 2000 epoch as an int and the `machine.RTC` stub), a `mission.Mission`, a stub
     Controller (stage/armed/manual) and `config.BOOT_SOURCE = 'default'`. Without them `get-config launch`
     and `update mission` fail, `stage` is ignored and the whoami epoch is a float near 2.74e9;
-  - `hub`: a mini `server.Server` on :1234 that waits for the board to dial in, or the live hub's `/api/cmd`;
-  - `serial`: UART0 with ESP log lines filtered out and DTR/RTS held asserted.
-- `src/control/contract/normalize.py`: masks uptime, mem_free, temp, epoch, clock, session, boot_id,
-  psram_free and sd_free_mb for `--diff`, and firmware_version and config_source as known diffs.
-- `tools/cc_contract.py BOARD=fake|taster|<id> [--tier …] [--diff fake]` prints a capability report and exits
-  non-zero on a contract violation. A documented "not yet" answer (`unsupported`, `badcmd` for `push-*`) is
-  reported, not failed.
+  - `hub`: the live hub's `/api/cmd` for request lines and its `/api/boards` for the hub tier;
+  - `serial`: UART0 with ESP log lines and the ROM boot banner filtered out and DTR/RTS held asserted.
+- `src/control/contract/normalize.py`: for `--diff`, removes uptime, mem_free, temp, epoch, clock, session,
+  boot_id, psram_free, internal_free and sd_free_mb (so a Rust-only one is no difference either), compares log
+  `lines` and telemetry `samples` by shape only (no two boards log alike), and lists firmware_version and
+  config_source apart as known differences, never counted.
+- `tools/cc_contract.py BOARD=fake|taster|<id> [--tier …] [--diff fake] [--milestone M<n>] [--beats N]
+  [--allow-…]` prints a capability report and exits 1 on a contract violation, 2 when the run cannot start or
+  does not finish. A documented "not yet" answer (`unsupported`, `badcmd` for `push-*`) is reported, not
+  failed, unless `--milestone` claims a milestone that owes the case (each case names the milestone that owes
+  it; most are M1).
+- Nothing that changes a board goes out without its flag: `--allow-active` (arm, probe, verify, calibrate
+  <device>, detect, bustune), `--allow-stage` (the gliding hold, only on a board seen disarmed),
+  `--allow-launch-write` (the launch-config round trip; never on a plan B board whose launch.config carries
+  `sites`, which plan B's save drops), `--allow-config-write`, `--allow-reboot`. The preflight refuses an
+  airborne or armed board, and with any flag one whose stage or arm state it cannot read. A run that stops on
+  an error or Ctrl-C sends the undo of what it wrote before it exits.
 - `src/control/test/test_contract.py` runs `BOARD=fake` in `make test`.
 
 **Tiers and when they become mandatory:**
 
 | tier | commands | must pass from |
 |---|---|---|
-| core | whoami, ping, health, unknown → badcmd, parse error → badargs, empty line → no reply, one reply per line | M1 |
-| system | reboot (ground-only, `ok` with no payload) | M1 |
-| stream | log/tlm window semantics; samples `split()` GOOD with `recorder_wire` | M1 (log), M3 (tlm) |
+| core | whoami, ping, health (the full key set), unknown → badcmd, parse error → badargs, empty line → no reply, one reply per line | M1 |
+| system | reboot (ground-only, `ok` with no payload, then a whoami from a new boot: another boot_id, or an uptime shorter than the time since the `ok`) | M1 |
+| stream | log/tlm window semantics; a window open across `probe mission` drains a line (a board only); samples `split()` GOOD with `recorder_wire` | M1 (log), M3 (tlm) |
 | config | get-config (5 names, `saved` → ok or **badargs**), set-config, reset-config | M1 (launch), M2 (board) |
 | inspect | objects, inspect (mission, gnss, servo_* `props.trim` numeric), update (`changed`), stats | M1 (mission), M13 (servos) |
-| control | stage, arm/disarm, report; gating | M1 (stage), M7 |
-| diag | probe (two maps), verify (keys; cc.py exit 0/1/3), calibrate, detect, bustune | M5-M7 |
+| control | stage, arm/disarm, report; gating | M1 (stage; arm's refusal), M7 (a real arm) |
+| diagnostics | probe (two maps), verify (keys; cc.py exit 0/1/3), calibrate, detect, bustune | M1 (probe, verify, calibrate answers), M5 (detect, bustune) |
 | ota | push-* | M15 (redesigned) |
+| hub | the dashboard row (GET /api/boards): registered, fields filled, online and fresh across `--beats` heartbeats, a clock past 2000 in setting | M1 |
 
-**Hub-level checks** (parameterised `test_server`/`test_e2e` against a real endpoint):
-- handshake registration;
-- `board_rows()` fields populated;
-- online across N beats and offline after 3 missed;
-- clock sync only for an integer epoch inside 2000, only in setting, and only with a CC clock at 2020 or later;
-- `start_stream('tlm')` → a capture `flight_telemetry` parses.
+**Hub-level checks.** The hub tier covers registration, the `board_rows()` fields, online across N beats and a
+synced clock (it diagnoses a board left in 2000: a whoami epoch that is not a JSON integer, or a sync the hub
+logged as refused). Checked by hand, because they need the board powered off or a capture: offline after 3
+missed beats, and `start_stream('tlm')` → a capture `flight_telemetry` parses (M3).
 
 **Capture acceptance:** `recorder_wire.split/recover`, `recorder_flight`, `assemble_capture`,
 `flight_telemetry` and `flight_kpi` in strict wrapped mode. A `gen_schema --check` diff against a stream table
