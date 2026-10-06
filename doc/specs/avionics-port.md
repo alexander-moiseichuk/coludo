@@ -1606,6 +1606,18 @@ The operator's decisions on the earlier questions, one line each:
 - **Q15. Post-landing beacon:** before the first passive Rust flight, as M11b: an open AP `<BOARD>_glider` on
   channel 3 at the maximum TX power, Wi-Fi only. The separate recorder's `<BOARD>_beacon` on channel 6 is the second
   (M20).
+- **Q16. No crumb (operator, 2026-10-06):** the warm start reads what NVS holds (the crumb: stage, position and
+  the rest). Nothing there means a cold boot in SETTING, whatever the speed: speed is not an input to `restore()`.
+  A crumb in BOOSTING..LANDING means recover, and get the situation under control from there.
+- **Q17. A crumb at SETTING (operator, 2026-10-06):** a cold boot, disarmed (reason OnThePad); only
+  BOOSTING..LANDING warm-starts. This diverges from plan B, which restores SETTING re-armed with `warm_started` set;
+  a reboot on the pad then needs a fresh `arm` (§6).
+- **Q18. The hold hazard (operator, 2026-10-06):** kept as plan B. In plan B a pad bump, then `stage gliding` (a fin
+  check), then `stage setting` launches on the first boosting sample after the hold, because the launch dwells are
+  not reset; with the Rust Wi-Fi policy that launch also turns the radio off. The operator's call:
+  - while the board is in SETTING, the pad is CC's and the operator's to watch and handle;
+  - once out of SETTING the flight must go on, so the firmware adds no guard that could stop one.
+  - The golden test `a_hold_hides_the_return_to_setting` pins the behaviour.
 
 ### 7.3 Open for the operator
 
