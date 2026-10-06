@@ -1,4 +1,14 @@
 dependencies:
+  espressif/coremark:
+    component_hash: 1f95044d7fe042d997b7715e0dc9753e65c6724158c2d028997f7816df1329d7
+    dependencies:
+    - name: idf
+      require: private
+      version: '>=5.0'
+    source:
+      registry_url: https://components.espressif.com/
+      type: service
+    version: 1.1.0~2
   espressif/eppp_link:
     component_hash: c1369b37f2b0b427b198ae14e07e7547d3da92b95fe4dc7f949e5de560b35f21
     dependencies:
@@ -68,9 +78,10 @@ dependencies:
       type: idf
     version: 5.5.5
 direct_dependencies:
+- espressif/coremark
 - espressif/esp-dsp
 - espressif/esp_hosted
 - espressif/esp_wifi_remote
-manifest_hash: 08e98f644628b4cc60b29ebb56c92ae6087231b96f1a37a0af63e1598b061e3a
+manifest_hash: fb1362f1adf857f3bfef1247c3f3db97d75fe4c1de43bd9cd1ac73d581de6a29
 target: esp32p4
 version: 2.0.0

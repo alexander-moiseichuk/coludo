@@ -6,6 +6,44 @@ The first numbers for Phase 6 (`src/avionics`, Rust std on ESP-IDF v5.5.5). Ever
 the code executed from). The tables quote the XIP-from-PSRAM build, now the default, unless a column says
 otherwise. The code-in-flash runs are in the CSV.
 
+## Headline numbers
+
+Per HP core at 360 MHz; "chip" is both cores running at once. Throughput, from `src/bin/peak.rs`:
+
+| measure | per core | chip |
+|---|---|---|
+| **CoreMark** (EEMBC, Espressif's port, GCC 14.2 `-O3`, code in IRAM) | **1068 = 2.97 CoreMark/MHz** | (single-threaded run) |
+| **f32 FMA**, 16 independent chains | **499 MFLOPS** | **996 MFLOPS ≈ 1.0 GFLOPS** |
+| f32 FMA / add / mul, 8 chains (latency not hidden) | 382 / 191 / 191 MFLOPS | 764 / 382 / 382 |
+| f64 (software emulation) | 4.3 MFLOPS | 8.6 |
+| int32 add/shift/xor, 16 chains | 313 MOPS (IPC ~0.9, single-issue) | 625 MOPS |
+| int32 multiply-add, 8 chains | 250 MOPS | 498 MOPS |
+| **PIE SIMD int16 MAC** (esp-dsp Q15 dot product) | **546 MMAC/s = 1.09 GOPS** | **1.09 GMAC/s = 2.2 GOPS** |
+| f32 dot product (esp-dsp, hardware loops) | 142 MFLOPS | 284 MFLOPS |
+| stream read, internal SRAM | 436 MB/s | 872 MB/s |
+| stream read, PSRAM (CPU, cache-miss bound) | 70 MB/s | 140 MB/s |
+
+## Selections and tweaks
+
+| area | chosen | why (measured here unless noted) |
+|---|---|---|
+| language / runtime | Rust std on ESP-IDF; `riscv32imafc-esp-espidf`, nightly + build-std | no_std esp-hal does not support P4 rev < 3, nor CSI / H.264 |
+| ESP-IDF | **v5.5.5 tag**, pinned | the esp-idf crates' version; 6.0.0–6.0.2 break SD + esp_hosted; esp_ipa crashes on rev < 3 under 6.x |
+| crates | esp-idf-sys 0.38.1 / hal 0.47.0 / svc 0.53.0 | latest; Wi-Fi bindings work through esp_wifi_remote (X1) |
+| silicon | `ESP32P4_SELECTS_REV_LESS_V3` + `REV_MIN_100`; **360 MHz** | the fleet is rev v1.3; 400 MHz needs Espressif-qualified chips |
+| C6 Wi-Fi link | esp_hosted 2.7.0 + esp_wifi_remote 0.15.2 | exactly MicroPython v1.29.0's pair: the C6 is not reflashed |
+| code placement | **XIP from PSRAM** | flash writes stall nothing (B4: 0 missed 1 kHz ticks vs 125 ms stalls); control step −5% |
+| PSRAM / flash | PSRAM 200 MHz hex, boot memtest off; flash QIO 80 MHz, declared 16 MB | memtest cost 0.9 s per boot; >16 MB addressing not yet tested |
+| scheduler | `FREERTOS_HZ=1000`; pacing = esp_timer / IMU interrupt → task notify | `thread::sleep` is tick-quantised (918 µs p99) |
+| codegen | **`+zcb`** only | Zcmp crash-looped and was 9% slower (reverted, in git history); Zb*/Zicond trap |
+| SIMD | esp-dsp (PIE + hardware loops) via FFI, for int16/int8 vector work | upstream LLVM cannot emit PIE; 13× on int16, 1.2× on f32 |
+| concurrency | one owner per resource; atomics + task notify; **no mutex in the hot path** | std Mutex 4.25 µs, FreeRTOS mutex 3.98 µs, atomics 59 ns |
+| floats | f32 everywhere on the hot path, never in an ISR | f64 is 10–15× slower; a float in an ISR aborts |
+| storage | 8 MB `log` partition (provisional) for the telemetry ring | pre-erase 8 MB in 8.6 s |
+| Wi-Fi | power save off; one write per reply line; `TCP_NODELAY` | hub round trip 154 ms → 3 ms |
+| console | UART0 (CH343P) speaks the CC protocol; DTR+RTS held asserted on open | releasing them resets the board |
+| flashing | esptool `elf2image` + IDF `gen_esp32part.py` (`firmware/flash.sh`) | espflash rejects custom subtypes and cannot package XIP images |
+
 ## Reproduce
 
 ```sh
@@ -20,6 +58,7 @@ cargo build --release                                   # all binaries; nightly 
 | `src/bin/bench.rs` | B1 CPU, B2 FPU, B3 memory, B5 threads and loop pacing |
 | `src/bin/isa.rs` | which ISA extensions the core implements; atomics and locks across cores; esp-dsp SIMD kernels |
 | `src/bin/flash.rs` | B4: flash erase/program latency, and the **stall test** (a 1 kHz loop while the other core writes flash) |
+| `src/bin/peak.rs` | CoreMark and peak throughput (FLOPS, OPS, MAC/s, stream bandwidth) on one core and both |
 | `src/main.rs` | X1: console, panic → reboot, Wi-Fi through the C6, `whoami`/`health` to the CC hub |
 
 ## Results
