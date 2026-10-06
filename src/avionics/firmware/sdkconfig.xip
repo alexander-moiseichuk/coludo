@@ -1,0 +1,3 @@
+# Variant: execute the firmware from PSRAM (copied there at boot). Flash erase/program then no longer freezes
+# the instruction cache, because the P4's flash and PSRAM sit on separate buses. Layered over sdkconfig.defaults.
+CONFIG_SPIRAM_XIP_FROM_PSRAM=y

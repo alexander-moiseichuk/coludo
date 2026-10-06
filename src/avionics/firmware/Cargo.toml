@@ -18,6 +18,10 @@ anyhow = "1"
 log = "0.4"
 serde_json = "1"
 
+# esp-idf-sys hands every enabled sdkconfig option to this crate as an `esp_idf_<option>` cfg
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(esp_idf_spiram_xip_from_psram)"] }
+
 [build-dependencies]
 embuild = "0.33"
 
