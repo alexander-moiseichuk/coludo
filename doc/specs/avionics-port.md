@@ -1,7 +1,11 @@
 # Avionics port: src/glider (MicroPython) → src/avionics (Rust)
 
-Status: accepted as the build plan, 2026-10-06; M1 in progress. Branch `lmoiseichuk/phase6_rustification`.
-Plan B is frozen at tag `micropython_plan_B`, and 7C still flies it.
+Status: accepted as the build plan; revised 2026-10-06 (operator ring redesign); M1, M1b, M2 done, M3 in rework.
+Branch `lmoiseichuk/phase6_rustification`.
+Done so far: M1 `e34f11e`, M1b `07ab6f2`, M2 `8efffa8`/`6303a2d`/`c06bf0a`, G1 `127bc0d`, M3 host crates `97f785f`
+(to be reworked), `ring_split.py` `7aa92a7`.
+Plan B is frozen at tag `micropython_plan_B`, and 7C still flies it. Its one sanctioned change, due with M5, is
+the ICP re-init by bus membership for 7C's SEN0697 (§7.2, Q9).
 
 This document is the build plan for moving the flight firmware from `src/glider` to the Rust firmware in
 `src/avionics`. Four things stay as they are on the wire and on disk, and the Rust board must match them:
@@ -11,7 +15,8 @@ This document is the build plan for moving the flight firmware from `src/glider`
 - the telemetry schema (`doc/telemetry.md`).
 
 `src/control` (hub, dashboard) and `tools/` (`tools/cc.py` among them) keep working against the Rust board
-without changes. The new host code listed below (contract runner, pull tool, HITL host) is additive.
+without changes, apart from the duplicate filter the SD-reading tools gain (§3.8). The new host code listed below
+(contract runner, pull tool, card preparation, HITL host) is additive.
 
 Decisions this plan builds on:
 - **D5:** the flight loop is paced by a timer interrupt on core 1.
@@ -19,8 +24,11 @@ Decisions this plan builds on:
 - **D18:** f32 by default. f64 needs a clear written reason and only goes into absolutely critical spots
   (§7.2, Q8); never for plain values such as the MCU temperature.
 - No mutex in hot paths: one owner per resource, plus atomics and task notify.
-- Storage tiers: telemetry → PSRAM ring → flash ring (top priority) → SD mover (below video). On the SD, video
-  is priority 1 and logging priority 2: the mover yields to the video writer.
+- Storage tiers: telemetry → PSRAM rings → flash ring (top priority: power can drop at any moment) → SD (the
+  ring_saver, below video). On the SD, video is priority 1 and logging priority 2: the saver yields to the video
+  writer (§3).
+- Changes run only in SETTING: `update`, `set-config`, `reset-config`, `calibrate <device>`, `probe`, `detect`,
+  `bustune` and `reboot`. Reads, `stage` and `disarm` stay open, and there is no reboot at DONE (§6).
 - Video target: **FHD@25**. The operator accepts 25 fps, and FHD@30 is encoder-bound at about 26.6 fps on P4
   rev v1.3 (`doc/benches/avionics-20261005/README.md` §camera).
 
@@ -40,16 +48,17 @@ The workspace rule (`src/avionics/Cargo.toml:3-7`) is unchanged:
 | crate | ports | one line |
 |---|---|---|
 | `cc_protocol` | `cc_protocol.py` | **exists.** Tokens, base64, build/parse. Add the dispatcher error-path vectors. |
-| `golden` | — | **Being built in M1.** Dev-only. Loads a fixture JSON and applies its compare kind (`exact`/`abs`/`rel`/`angle_deg`/`bytes_hex`) with per-case messages. |
-| `board_config` | `config.py`, `config_default.py` (as data) | `ConfigDocument(serde_json::Value)`, Python-repr canon, `config_id`, `validate` (the same accept set as Python), `load` → `BootSource`, a canonical pretty writer, and a typed read-only view. |
+| `golden` | — | **exists** (M1). Dev-only. Loads a fixture JSON and applies its compare kind (`exact`/`abs`/`rel`/`angle_deg`/`bytes_hex`) with per-case messages. |
+| `board_config` | `config.py`, `config_default.py` (as data) | **exists** (M2). `ConfigDocument(serde_json::Value)`, Python-repr canon, `config_id`, `validate` (the same accept set as Python), `load` → `BootSource`, a canonical pretty writer, and a typed read-only view. |
 | `layout` | `layout.py` | `resolve(&mut Value, scan)` → `Resolved{Declared,Detected,Undecided}`, plus `verdict`/`apply`/`fit`/`rank`/`fitted`. The scan is injected as a closure. |
-| `mission` | `mission.py` | **Being built in M1** (it came forward from the supervisor: the `cc` executor owns the Mission until a supervisor thread exists). The launch.config document, merge/persist (keeps `sites`), the HPRC default, zone geometry, `select_site`/`fallback_zone`, `probe` checks. Positions are i32 1e-7 deg plus an f32 local metric frame. |
-| `recorder_wire` | `recorder.py` (wire parts), `tools/recorder_wire.py` | CRC-32, `wrap`/`verify`/salvage, row/log/session.csv text, label rules, flash frame codec, and recorderd's demux `split`. |
-| `flash_ring` | — (new; replaces the UART + recorderd) | Ring geometry, boot-scan logic, GC rules, and the mover with its journal. Written over two traits, `Flash` and `Fs`, so it is host-tested with an in-memory flash and a temp directory. |
+| `mission` | `mission.py` | **exists** (M1; it came forward from the supervisor: the `cc` executor owns the Mission until a supervisor thread exists). The launch.config document, merge/persist (keeps `sites`), the HPRC default, zone geometry, `select_site`/`fallback_zone`, `probe` checks. Positions are i32 1e-7 deg plus an f32 local metric frame. |
+| `recorder_wire` | `recorder.py` (wire parts), `tools/recorder_wire.py` | **exists** (`97f785f`). CRC-32, `wrap`/`verify`/salvage, row/log/header/session.csv text (how the saver prints a record), label rules, and recorderd's demux `split`. Its flash frame codec goes in the M3 rework. |
+| `recorder` | `recorder.py` (producer side) | **exists** (`97f785f`), extended in the M3 rework. Stream registry, `Telemetry` (`due`/`push`), the binary record codec (§3.2), per-producer SPSC byte rings, the CC tees and the counters. |
+| `flash_ring` | — (new; replaces the UART + recorderd) | **exists** (`97f785f`), **in rework** for the operator's ring (§3). 4 KiB blocks, the block header and chunk codec, the bring-up scan and block table, the writer's append, the saver's walk, and the eraser's rules with newest wins. Written over two traits, `Flash` and `Fs`, so it is host-tested with an in-memory NOR flash that cuts power on demand and a temp directory. |
 | `databoard` | `databoard.py` | `no_std`, core atomics. Seqlock `Channel<T>` and `Parameter<T>` (rank, window, `read() -> Option<Reading>`). There is no extrapolating accessor. Reconcile learning runs on the writer side. |
 | `sequencer` | `controller.py` Stage, `tasks/sequencer.py`, `commons.dwell_step`/`apogee_step` | **exists** (`Stage` only, commit `83c02236`): `#[repr(u8)]` ids 1..5 (SETTING..DONE) with names and `ground()`; 0 is the NVS no-checkpoint sentinel, not a variant. The detectors and the pure `StageMachine::step(now_ms, &Readings, manual) -> Option<Transition>` join later (M7). |
-| `warmstart` | `warmstart.py` | The crumb serde (the same NVS keys), `should_restore(...) -> (bool, Reason)`, and the apply plan as data. |
-| `control` | `pid.py`, `mixer.py`, `governor.py`, `airspeed.py`, `wind.py`, `navigation.py`, `guidance.py`, `tasks/attitude.py` (filter), `commons` fin table and `altitude_m` | **Being built in M1** (the navigation subset first; the rest in M9/M13). f32 flight math with one module per Python file. Every function takes time as an argument; nothing reads a clock. |
+| `warmstart` | `warmstart.py` | The crumb serde (the same NVS keys), `should_restore(...) -> (bool, Reason)` with the boot rules (§4.6), and the apply plan as data. |
+| `control` | `pid.py`, `mixer.py`, `governor.py`, `airspeed.py`, `wind.py`, `navigation.py`, `guidance.py`, `tasks/attitude.py` (filter), `commons` fin table and `altitude_m` | **exists** in part (M1: the navigation subset; the rest in M9/M13). f32 flight math with one module per Python file. Every function takes time as an argument; nothing reads a clock. |
 | `gnss` | `gnss.py`, `drivers/neo6mv2.py`, `drivers/atgm336h.py` | NMEA checksum and parse with integer ddmm→e7, GSV/sky row, CASIC/PUBX/UBX command bytes, and a thin wrapper over the `ublox` crate (NAV-PVT) for the NEO-M8N. |
 | `drivers` | `drivers/*.py` (device logic) | One module per part. Register init tables as data, conversions, the CRC-8, and `Device` trait impls over embedded-hal 1.0 `I2c`/`SpiDevice`. Host-tested with a scripted mock bus. |
 | `sim_link` | `tasks/hitl.py` (interface only) | A versioned, allocation-free binary codec for SENSORS/FINS frames, shared by the firmware and `sitl`. |
@@ -59,13 +68,14 @@ The workspace rule (`src/avionics/Cargo.toml:3-7`) is unchanged:
 | module | role |
 |---|---|
 | `main.rs` | Bring-up in a fixed order (§4.5). |
-| `board.rs`, `thermal.rs`, `sd.rs`, `video.rs`, `files.rs`, `diagnostics.rs`, `console.rs`, `link.rs` | **Exist.** `board.rs` loses its hard-coded `taster` (M2). `files.rs` gains `GET /ring` and an answer for locked files (M3/M4). |
+| `board.rs`, `thermal.rs`, `sd.rs`, `video.rs`, `files.rs`, `diagnostics.rs`, `console.rs`, `link.rs` | **Exist.** `board.rs` loses its hard-coded `taster` (M2). `files.rs` gains `GET /ring` and `GET /ring/image` (M3) and an answer for locked files (M4). |
 | `commands/{mod,identity,control,inspection,config,diagnostics,streaming,system}.rs` | Replaces `commands.rs`. One table and one executor thread (§4.4). |
 | `config.rs` | Config store on the `cfg` NVS partition. Boot load, then `Box::leak` into a `&'static` resolved document, typed view and cached `config_id`. |
 | `controller.rs` | Sequential bring-up: `DeviceEntry` table, setup retries, the alternatives pass, the static databoard topology. |
 | `inspector.rs` | The frozen `&'static [&'static dyn Inspectable]`, sorted by name. |
-| `recorder/{ring,telemetry,writer,tee}.rs` | Producer SPSC rings, `Telemetry`, the flash-owner writer thread, the CC tees. |
-| `recorder/mover.rs` | The SD mover thread. It glues `flash_ring::mover` to FatFs. |
+| `recorder.rs` | The ring bring-up (scan, block table, positions, session-start record) and the three ring tasks: `ring_writer`, `ring_saver`, `ring_eraser` (§3). It glues `crates/recorder` and `crates/flash_ring` to `esp_partition_*` and FatFs. |
+| `logging.rs`, `components/log_hook` | The `log` crate bridge and IDF's `esp_log_set_vprintf` hook, into recorder.log. |
+| `beacon.rs` | The DONE beacon: the open AP `beacon_<BOARD>` and its page (M11b). |
 | `buses/{i2c,spi,uart}.rs` | `I2cPort` for ports 0 and 1 (wedge recovery, general call, probe), SPI2 with discard-N, UART2. |
 | `sensors/<part>.rs` | Owner-thread glue per part: schedule slot, channel publish, telemetry row, inspect/update/probe/calibrate. |
 | `control.rs` | The core-1 control thread: gptimer ISR, tick, IMU read, attitude, sequencer, separation, flight, fins (LEDC). |
@@ -80,7 +90,8 @@ The workspace rule (`src/avionics/Cargo.toml:3-7`) is unchanged:
 | `src/avionics/golden/{generate.py,shims.py,*.json}` | Frozen oracle fixtures generated from `src/glider` under CPython 3.12. |
 | `src/avionics/sitl/` | Host binary: `control` + `sequencer` behind a UDP `sim_link` endpoint. |
 | `src/control/contract/{cases,transports,normalize}.py`, `tools/cc_contract.py`, `src/control/test/test_contract.py` | The contract runner (`BOARD=fake|taster|<id>`). |
-| `tools/board_pull.sh`, `tools/ring_split.py` | Pull a session over HTTP; demux a raw ring dump. |
+| `tools/board_pull.sh`, `tools/ring_split.py` | Pull a session over HTTP; turn a ring image or a `/ring` capture into session directories (`ring_split.py` exists, `7aa92a7`, and is re-pointed at the binary blocks in M3). |
+| `tools/sd_prepare.sh` | The operator's card preparation: discard the card, FAT32 on 25–50 % of it, the rest untouched (§3.10). |
 | `tools/hitl_host.py`, `doc/specs/sim-link.md` | HITL with the physics on the host (`sim_model.py` stays the one implementation). |
 | `tools/provision.sh` | Writes a board's `cfg` NVS partition (board config, launch config, Wi-Fi creds) over USB with esptool, after `flash.sh`, once the board's partition table proves the `cfg` row; the image lives only in a temporary directory and is never committed (§7, Q12). |
 
@@ -92,7 +103,8 @@ Rules for every milestone:
 - Each one fits in one or two days on the taster.
 - Each ends with a commit of the passed stage. A failed experiment gets an enable commit plus a revert commit
   carrying the reason.
-- `src/glider` is never edited. The generator only reads it.
+- `src/glider` is never edited, with one sanctioned exception: the ICP re-init by bus membership for 7C's
+  SEN0697 (M5, §7.2 Q9). The generator only reads it.
 
 The taster is v1.1. Its scan in `test_layout.py:27` (`_TASTER`, derived from its 2026-09-16 verdict plus the
 ES8311 anchor, not a recorded scan) is i2c:0 {0x15, 0x18, 0x40, 0x47, 0x69} and i2c:1 {0x25, 0x29, 0x63}. Its
@@ -103,11 +115,17 @@ VL53L1X (0x29 on i2c:1) has since moved to 7F. It carries a NEO-6M, three SG90s,
 
 **Scope**
 - **`commands/` table.** Add `ErrCode` (badcmd, badargs, invalid, unsafe, refused, unsupported, internal) and
-  `Gate` (`Open`, `Ground` = stage in {setting, done}). A parse failure answers `err badargs <repr>`, which
+  `Gate` (`Open`, `Setting` = the stage is setting). A parse failure answers `err badargs <repr>`, which
   replaces `badline` (`commands.rs:11`). An unknown command answers `err badcmd <cmd>`. A handler `Err`
-  answers `err internal`. The gate refusal answers code `unsafe` with verbatim text: `err unsafe refused in
-  flight -- stage is X (ground-only: setting/done)`. (`refused` is only the `update` driver-rejection code,
-  even though the gate text starts with the word.)
+  answers `err internal`.
+  - `Setting` gates `update`, `set-config`, `reset-config`, `probe`, `detect`, `bustune` and `reboot`, and the
+    `calibrate` handler gates `calibrate <device>` (a bare `calibrate` is a read). Reads, `stage` and `disarm`
+    stay open in every stage (§6).
+  - The gate refusal answers code `unsafe` with the text `err unsafe refused -- stage is X (changes only in
+    setting)`. (`refused` is only the `update` driver-rejection code, even though the gate text starts with the
+    word.)
+  - M1 shipped plan B's gate (`Ground` = setting or done, with plan B's text `refused in flight -- stage is X
+    (ground-only: setting/done)`); the operator's rule of 2026-10-06 narrowed it to SETTING.
 - **One `cc` executor thread** (core 0, priority 5). Link and console post lines to it through a bounded
   channel (depth 4) with a reply slot. Every handler runs serially and needs no locks.
 - **Clock.** At boot, if `gettimeofday` reads before 946684800, set it to 946684800 + uptime. A cold board then
@@ -137,10 +155,10 @@ VL53L1X (0x29 on i2c:1) has since moved to 7F. It carries a NEO-6M, three SG90s,
   - launch.config lives in a new `cfg` NVS partition (§3.10).
   - `update mission {epoch, utc_offset, cc_position, source, launch fields}` replies `ok {changed:[…,'epoch']}`.
     The session.csv row is written from M3 on.
-  - Also: `inspect mission`, `get-config launch`, `set-config launch` (ground-only), and the health launchpad
+  - Also: `inspect mission`, `get-config launch`, `set-config launch` (SETTING-only), and the health launchpad
     fields.
 - **System and streaming.**
-  - `reboot` joins the shared table (ground-only). It replies `ok` and calls `esp_restart` 200 ms later. The
+  - `reboot` joins the shared table (SETTING-only). It replies `ok` and calls `esp_restart` 200 ms later. The
     console's own `reboot` uses the same handler, so its `ok rebooting` goes away.
   - `log [ms]` runs off a `log` crate bridge into a tee ring (temporary until M3's writer tee). `probe mission`
     logs its check through that bridge, as plan B does (`mission.py` `probe`: `probe: launch position ...`,
@@ -217,7 +235,7 @@ TCP/IP task on core 0.
   - The typed view uses config_default values as its serde defaults. Integer knobs accept integral floats.
 - **`firmware/config.rs`:**
   - Boot load from `cfg` blob `board`.
-  - `set-config board` validates, writes, and replies `{config_id of the payload}`, ground-only.
+  - `set-config board` validates, writes, and replies `{config_id of the payload}`, SETTING-only.
   - `reset-config` erases the key.
   - `get-config` follows the plan B meanings: `board`/`running` (the running document), `saved` (re-run
     load), `default`, `launch`.
@@ -251,72 +269,102 @@ TCP/IP task on core 0.
 **Operator gains.** Config is edited from the dashboard and cc.py exactly as on MicroPython. The board id and
 network come from the board file. A bad file boots the default and says so.
 
-### M3. Recorder core and the flash-ring writer (2 days)
+### M3. Recorder core, the ring_writer and the bring-up scan (2 days; in rework)
+
+The host crates were built first (`97f785f`) to the earlier design: text in flash, 64 KiB blocks, never
+overwrite. They are reworked to the operator's ring (§3) before M4. `tools/ring_split.py` (`7aa92a7`) is
+re-pointed at the binary blocks.
 
 **Scope**
-- **`crates/recorder_wire`:** wrap/verify, row/log/session.csv text, the frame codec, `split`.
-- **`crates/flash_ring`:** scan, spill and open logic over the `Flash` trait.
-- **Firmware recorder:**
-  - stream registry, `Telemetry` (`due`/`push`), per-producer PSRAM SPSC rings (§3.2);
-  - the writer thread, which formats, tees, wraps, cuts 50 ms frames and does one `esp_partition_write_raw`
-    per frame;
-  - BOOT frames, boot scan, spill, and a first-boot format of a foreign ring;
-  - CC tees (replacing M1's temporary one);
+- **Partition table first** (§3.10): `otadata`, `ota_0`/`ota_1` of 3 MB each, and the 1 MB `cfg` at 0x620000.
+  `flash.sh` writes the app to `ota_0` and erases `otadata`; `provision.sh` follows `partitions.csv`; the
+  taster is re-provisioned.
+- **`crates/recorder_wire`:** wrap/verify, row/log/header/session.csv text, `split`. Its flash frame codec goes.
+- **`crates/flash_ring`** (reworked): 4 KiB blocks, the block header and the chunk codec (§3.4), the bring-up
+  scan and the block table (§3.6), the writer's append. It keeps the `Flash` trait, `MemoryFlash` (power cuts on
+  demand), the CRC, the G1-proven append programming and the power-cut harness.
+- **`crates/recorder`** (extended): every record carries its destination file name and uptime, and the kinds are
+  HEADER, ROW and LOG (§3.2). It keeps the byte rings, the registry, `Telemetry`, the tees, the seqlock and the
+  counters.
+- **Firmware recorder** (`recorder.rs`, `logging.rs`, `components/log_hook`):
+  - the bring-up routine: the scan, the positions and the session-start record (§3.6);
+  - the ring_writer thread, copying records verbatim (§3.3);
+  - CC tees (replacing M1's temporary one), formatted by the executor when it drains (§3.12);
   - session.csv `boot`, clock-set and `anchor` rows;
   - the `'session': '<s>'` status line every `stats_ms`;
-  - `health.csv` at 1 Hz;
-  - the `log` crate bridge plus IDF `esp_log_set_vprintf` into recorder.log;
-  - `GET /ring[?boot=N]` on the file server.
+  - `health.csv` at 1 Hz (`supervisor.rs`);
+  - the `log` crate bridge plus IDF `esp_log_set_vprintf` (the `log_hook` component) into recorder.log;
+  - `GET /ring[?boot=N]` and `GET /ring/image` on the file server (§3.12);
+  - `board::reset_reason` made public, for the session-start record.
+- **Tools:** `ring_split.py` decodes the binary blocks and keeps its demux and session layout. The duplicate
+  filter (§3.8) goes into `tools/recorder_wire.py`.
 - The Recorder comes up **first** in bring-up, so setup-time log lines are not lost (`recorder.py:21-23`). The
   old global-decimation latch bug is fixed separately, by reading the global decimation at use (§3.2), as plan
   B fixed it.
+- The ring_eraser comes with the writer in M3: the writer needs erased blocks ahead. Until M4's saver exists
+  nothing is saved, so in M3 the eraser runs newest wins only (§3.7), oldest non-flight blocks first.
 
 **Proof**
 - Golden `recorder_wire.json`: the 8 literal vectors (`test_recorder.py:23-44`), damage cases, row/log/index
   text.
-- Host: a Rust-built ring image passes `ring_split.py` and then `flight_telemetry` strict, with every line
-  'good'.
-- Bench gate G1: 10 000 frames of 40-200 B appended at 8-byte alignment, read back intact. This is partial-page
-  programming on the GD `C84019` (§7, R1).
-- On the taster: the dashboard 'telemetry' stream shows health rows. A `/ring` dump parses strict.
+- Host:
+  - the power-cut sweeps, re-targeted at 4 KiB blocks: no valid chunk lost, and every reboot opens the right
+    block;
+  - a Rust-built ring image passes `ring_split.py` and then `flight_telemetry` strict, with every line 'good';
+  - a chunk programmed twice reads as one set of lines once the duplicate filter has run.
+- Bench gate G1 **passed** (`127bc0d`): 10 000 frames of 40-200 B appended at 8-byte alignment read back with 0
+  corrupt, and 32 programs of 8 B into each of 64 pages left 0 bytes different. Partial-page programming on the
+  GD `C84019` is safe (§7, R1).
+- On the taster:
+  - the contract runner with the log and tlm tiers live; the dashboard 'telemetry' stream shows health rows;
+  - a `/ring` dump parses strictly;
+  - 5 power pulls while writing at the flight rate with FHD@25 recording: each loses at most §3.3's worst case
+    (about 45 ms of rows, 65 ms of log lines), and the scan after each is clean;
+  - the 1 kHz core-1 `pace` stays at 0 missed;
+  - the image boots from `ota_0` and stays under 3 MB.
 
 **Operator gains.** Live telemetry on the dashboard. From boot, every log line and row is on flash with about
-70 ms typical and at most about 115 ms at risk (135 ms for log lines, §3.3). No Luckfox and no SD card are
-needed to get a record.
+11 ms typical and at most about 45 ms at risk (65 ms for log lines, §3.3). No Luckfox and no SD card are needed
+to get a record.
 
-### M4. SD mover, GC, journal, HTTP pull (2 days)
+### M4. ring_saver, SD, HTTP pull (2 days)
 
 **Scope**
-- `flash_ring::mover`: cursor, demux, salvage, journal, idempotent batches.
-- The firmware mover thread at priority 4.
-- CONFIRM frames.
-- The 4 KiB reverse-order GC.
-- `ring_erased_s`, `ring_reclaim_s` and the `ring-*` degraded tokens.
-- Recorder `stats`/`inspect` grows `ring:{…}` and `mover:{…}`.
+- **`crates/flash_ring`:** the saver's walk, decode and batches (§3.9) over the `Flash` and `Fs` traits; the
+  eraser's normal rule (erase behind the saver, §3.7) on top of M3's newest wins; the `ring_unsaved_s` figure.
+- **Firmware:** the ring_saver thread at priority 4, set up by the bring-up routine (§3.6) beside M3's writer and
+  eraser; the saver position written to `cfg` about once a second.
+- The `ring-*` and `saver-behind` degraded tokens.
+- Recorder `stats`/`inspect` grows `ring:{…}` (erased, unsaved and lost blocks, the positions) and `saver:{…}`.
 - `sd_card.c` `max_files` goes from 8 to 40.
 - `CONFIG_FATFS_FS_LOCK` goes from 0 (the IDF default) to at least `max_files` (40). Below that, a full lock
   table answers `FR_TOO_MANY_OPEN_FILES` (ENFILE).
 - `files.rs` answers `503` on a locked file. Through `std::fs` and the VFS that arrives as errno EACCES (os
-  error 13), not `FR_LOCKED`. Without the lock table, an HTTP read during a mover batch simply succeeds with
+  error 13), not `FR_LOCKED`. Without the lock table, an HTTP read during a saver batch simply succeeds with
   the size recorded before the batch.
+- `tools/sd_prepare.sh`, the operator's card preparation (§3.10). The firmware mounts the first partition and
+  never formats.
 - `tools/board_pull.sh <host> [session] [outdir]` verifies file count and byte sizes and flags 0-byte streams.
 
 **Proof**
-- Host end to end: Rust ring, then mover into a temp session dir, then `recorder_flight` (0 rejected,
-  board.log non-empty, session.csv dates the boot) and `assemble_capture` plus `flight_telemetry.parse` (all
-  good). This includes a mover crash at every journal step (no duplicated rows or header) and a session
-  longer than 2³⁰ µs whose `anchor` row is dated.
-  - The long-session case is limited to a dated anchor (the normal case: the hub syncs on connect, usually
-    inside the 60 s before the anchor row). `recorder_flight._clock_times` still enumerates 2³⁰ wraps for
-    every session.csv row, so in a boot longer than 2³⁰ µs a clock-set row that is the only dated row gets
-    two places and the boot stays undated, as it already does for plan B. Restricting the test is the
-    conservative one of the two fixes; the other is a tool change (no wraps seen in the streams means k = 0).
-- On the taster: 5 power pulls while writing at the flight rate with FHD@25 recording. Each must show loss of
-  at most §3.3's worst case (about 115 ms of rows, 135 ms of log lines), a clean salvage, and no spliced
-  streams. Tightening this to 100 ms needs Q11's crumb-frame alternative.
+- Host end to end: N producers, then writer, saver and eraser over `MemoryFlash` plus a temp SD directory, then
+  `recorder_flight` (0 rejected, board.log non-empty, session.csv dates the boot) and `assemble_capture` plus
+  `flight_telemetry.parse` (all good). This includes:
+  - a saver cut at every step of a batch, re-saving into duplicates that the tools drop;
+  - newest wins with a dead SD: the pad blocks go first, the flight blocks stay, and every loss is logged;
+  - a session longer than 2³⁰ µs whose `anchor` row is dated. The long-session case is limited to a dated
+    anchor (the normal case: the hub syncs on connect, usually inside the 60 s before the anchor row).
+    `recorder_flight._clock_times` still enumerates 2³⁰ wraps for every session.csv row, so in a boot longer
+    than 2³⁰ µs a clock-set row that is the only dated row gets two places and the boot stays undated, as it
+    already does for plan B. Restricting the test is the conservative one of the two fixes; the other is a tool
+    change (no wraps seen in the streams means k = 0).
+- On the taster: a session lands on the SD while video records, and parses through `assemble_capture`,
+  `flight_telemetry` and `recorder_flight`. 5 power pulls during saver batches each resume the copy at the next
+  boot with no line lost (duplicates only).
 
-**Operator gains.** `tools/board_pull.sh taster` drops a session into the unchanged tool chain
-(`assemble_capture`, `flight_svg`, `flight_report`, `flight_kpi`, `recorder_flight`).
+**Operator gains.** `tools/board_pull.sh taster` drops a session into the same tool chain as before
+(`assemble_capture`, `flight_svg`, `flight_report`, `flight_kpi`, `recorder_flight`). The flash empties itself
+to the SD in the background, and a board without a card keeps the newest ~26 min.
 
 ### M5. Buses, layout, databoard, device registry (2 days)
 
@@ -324,6 +372,13 @@ needed to get a record.
 - **`I2cPort`** for ports 0 (SDA7/SCL8) and 1 (SDA31/SCL30). Each implements `embedded_hal::i2c::I2c` over
   `i2c_master` with per-device speed. Wedge = 4 consecutive failures, cured by `i2c_master_bus_reset` and
   re-adding the handles. Also `general_call_reset()` and `probe(addr)`.
+- **Generic bus re-init:** after a general-call reset, the bus owner re-initializes **every** device registered
+  on that bus, found by membership in the device registry, never by a hard-coded list (§4.3). The general call
+  is rare, so there is no per-device fast path.
+- **Plan B patch** (the one sanctioned `src/glider` change, §7.2 Q9): the same membership-based re-init in
+  `drivers/icp10111.py`, so 7C's SEN0697 (BMI323, BMM350, BMP581) is re-armed after the ICP's general call.
+  It is tested on a board, or with plan B's own test pattern, and committed on its own; the golden fixtures are
+  regenerated with it (their meta pins the `src/glider` tree).
 - **SPI2** on 48/47/46, mode 3, one handle per CS. Discard-N on first use.
 - **`crates/layout`** with `resolve`. `health.layout` becomes real. `detect` and `bustune` work through
   bus-owner mailboxes.
@@ -346,7 +401,8 @@ needed to get a record.
 - On the taster: the scan set equals `_TASTER` minus `0x29` (the VL53L1X, now on 7F) plus `0x36` (OV5647
   SCCB, while the camera is powered): i2c:0 {0x15, 0x18, 0x36, 0x40, 0x47, 0x69} and i2c:1 {0x25, 0x63}.
   `detect` gives `v1.1`. A
-  `bustune taster i2c 0` ladder restores the frequency afterwards.
+  `bustune taster i2c 0` ladder restores the frequency afterwards. A forced general call on each port is
+  followed by a re-init of every device registered there, and each reads valid data afterwards.
 
 **Operator gains.** The detect-layout and bus-tune cards work. The dashboard layout column is real.
 
@@ -364,8 +420,8 @@ needed to get a record.
   If the taster's LSM6DSO32 is not fitted, the BMI323 (M9) is pulled forward and the LSM6DSO32 is verified
   on 7F.
 - **ICP-10111** on whichever bus owner `layout.resolve()` assigns: i2c:1 on v1.x (taster, 7F), i2c:0 on v0.1
-  (7C, next to the SEN0697). A two-phase measurement, the general call, and **re-arm by bus membership** (§7,
-  R6).
+  (7C, next to the SEN0697). A two-phase measurement, the general call, and the **re-init of every device on
+  that bus** (M5; §7, R6).
 - **Separation:** GPIO33 with pull-down. The ISR only wakes the control thread, which runs the 3-reads / 20 ms
   debounce.
 - Streams `imu_lsm6dso32.csv`, `baro_icp10111.csv` and `separation.csv`.
@@ -396,19 +452,21 @@ for these parts.
     (§6).
   - `probe` returns the two-map reply.
   - `not-flight-capable` is removed from `degraded`.
-- **Ring gate:** `arm` and `verify` also require `ring_erased_s ≥ 300` (§3.7).
+- **Ring gate:** `arm` and `verify` also require the eraser to hold its reserve: at least ~1 % of the ring erased
+  ahead of the writer (§3.7). No card is a `no-sd` warning, not a refusal: newest wins keeps the flight's
+  blocks over the pad's.
 - **Wi-Fi policy** `auto`: the radio is **off** from the **detected** ignition (the stage machine's own
-  SETTING→BOOSTING transition) through LANDING and resumed at DONE for recovery. This is a deliberate divergence
-  from plan B, which keeps the pad link up in flight (§6). An operator hold (`stage boosting` from CC, manual)
-  leaves the radio up: keying on a held stage would cut the very link the operator holds it from, and the
-  console would be the only way back.
+  SETTING→BOOSTING transition) through LANDING and resumed at DONE for recovery (the beacon, M11b). This is a
+  deliberate divergence from plan B, which keeps the pad link up in flight (§6). An operator hold (`stage
+  boosting` from CC, manual) leaves the radio up: keying on a held stage would cut the very link the operator
+  holds it from, and the console would be the only way back.
 - **Video by stage:** recording starts when the glider stands **vertical on the rod** (attitude-based, from
-  M9; until then arm is the trigger) at 1920×1080@25, 8 Mbit/s, and stops 30 s after DONE. The console default
+  M9; until then arm is the trigger) at 1920×1080@25, 8 Mbit/s, and stops at DONE (M11b). The console default
   fps goes from 20 to 25 (`console.rs` `video`).
 - **Pad sequence** (the operator's; the gates fit it): (1) assemble glider and booster, plug the battery,
   close the cover; (2) CC check, time sync and probe; (3) if there is time, wait 5 min for GNSS; (4) place on
   the rod; (5) tie to the ignition system; (6) launch.
-  - The board boots at (1). The ring pre-erase runs in the background from then on, and the hub's clock sync
+  - The board boots at (1). The ring_eraser runs in the background from then on, and the hub's clock sync
     on connect is normally done before (2).
   - (2) is `verify`, `probe` and the ring gate, all on the ground with the pad link up.
   - `arm` freezes the launch point, so it belongs after (3).
@@ -432,7 +490,10 @@ for these parts.
 **Scope**
 - `crates/warmstart` plus `warm.rs`. Restore runs **before** any thread spawns: stage, armed, ground for all
   baros, pitot tare, governor seed, checkpoint identity, sequencer timeout base.
-- The checkpoint writes the NVS crumb only when armed, `stage` i32 last, then `checkpoint.csv`.
+- **The operator's boot rules** (§4.6): any power-up after DONE is a new session in SETTING; a crumb in
+  BOOSTING..LANDING means a warm start; no crumb and speed 0 means SETTING.
+- The checkpoint writes the NVS crumb only when armed, `stage` i32 last, then `checkpoint.csv`, as plan B does
+  (§7.2, Q11). The session-start record (§3.6, written from M3 on) lives in `cfg`.
 - The supervisor's watchdog feeds the TWDT. With the current sdkconfig a TWDT timeout only prints a warning,
   so the supervisor first calls `esp_task_wdt_reconfigure` with `trigger_panic = true` and the timeout from
   `wdt_timeout_ms`, as plan B's `machine.WDT` does (the conservative one of the two fixes; the other is
@@ -448,8 +509,10 @@ for these parts.
   `gettimeofday` has survived. (Plan B writes the crumb only while armed and freezes the pad only on entry to
   BOOSTING, so a disarmed hold straight from SETTING reboots cold.) The survival of `gettimeofday` across
   SW/panic/TWDT resets is itself measured here (§7, R7).
+- On the taster: the same armed run carried on to DONE, then a console `panic`, boots a new session in SETTING.
 
-**Operator gains.** A mid-air reset resumes the flight. The board can no longer hang silently.
+**Operator gains.** A mid-air reset resumes the flight, and a reset after landing starts a fresh session. The
+board can no longer hang silently.
 
 ### M9. SEN0697: BMI323, BMP581, BMM350, and the attitude filter (2 days)
 
@@ -460,6 +523,8 @@ for these parts.
 - **Attitude complementary filter** (`control::attitude`) at 50 Hz in the control thread. It publishes
   attitude at p1, writes `attitude.csv` with centidegree integer columns, and drives `attitude-blind` and
   `attitude-backup`.
+- **Axes:** the IMUs are mounted per their marks (x forward, y left, z up). The optional per-sensor `axes` key
+  in the board config covers an exception (§7.2, Q7); it is a schema addition, and old files stay valid.
 - **Video start** moves from arm to the attitude trigger: the glider standing vertical on the rod (M7).
 
 **Proof**
@@ -491,7 +556,7 @@ the dashboard 'calibrate' button.
 
 **Operator gains.** Airspeed and power in health and telemetry. The servo probe's closed-loop verdict works.
 
-### M11. GNSS, gnss_calib, field: passive flight ready (2 days)
+### M11. GNSS, gnss_calib, field (2 days)
 
 **Scope**
 - **`crates/gnss` on uart:2** (TX22/RX23):
@@ -510,8 +575,37 @@ the dashboard 'calibrate' button.
 - Golden `gnss_calib.json` and `field.json`.
 - On the taster: `gps taster` on the hub console. A NEO-6M fix with an active antenna.
 
+**Operator gains.** Position in health and telemetry, the pad drift calibration, and CC-less field arming.
+
+### M11b. DONE and the recovery beacon (1-2 days; before the first passive flight)
+
+**Scope**
+- **At DONE:**
+  - the camera and the non-essential sensors stop (the IMUs, the pitot, the fins). The GNSS drops to 1 Hz, and
+    the other sources the beacon page shows (the baros, the laser, the INA226) keep a slow rate;
+  - logging drops to a trickle, and the ring_saver keeps emptying the flash to the SD while the board is powered
+    (§3.9);
+  - nothing reboots the board: `reboot` and every other change are SETTING-only (§6).
+- **The beacon:** an open Wi-Fi AP `beacon_<BOARD>` at the maximum TX power, Wi-Fi only (no BLE). Its one HTTP
+  page shows:
+  - the last good fix and a Google Maps link to it;
+  - the elevation from every source: GNSS, each baro, the laser AGL (how high the glider hangs, should it land
+    in a tree);
+  - the battery voltage and the remaining time, where an INA226 is fitted;
+  - the flash→SD progress (`ring_unsaved_s` and the blocks left).
+- Power-off or reset ends it. Any power-up after DONE is a new session in SETTING (§4.6), and every boot resumes
+  the flash→SD copy when a card is present.
+
+**Proof**
+- On the taster at DONE: a phone sees `beacon_taster`, and the page shows the fix with a working Maps link, every
+  elevation source, the battery figures and the flash→SD progress falling to 0. The camera has stopped and the
+  GNSS rows come at 1 Hz.
+- A power cycle after DONE comes back in SETTING as a new session, with the copy resumed.
+- The battery time at DONE is measured on the INA226 (about 1.5-2 h expected on 800 mAh).
+
 **Operator gains.** **Passive-flight ready.** This covers the flight-test ladder's second rung (passive
-electronics E16/F15, no active fins): stages, data, video, warm start, pull.
+electronics E16/F15, no active fins): stages, data, video, warm start, pull, and a beacon that leads to the
+airframe after landing (even without a fix, the phone's signal strength helps).
 
 ### M12. HITL over a UDP sim-link, realtime and passive (2 days)
 
@@ -522,7 +616,8 @@ electronics E16/F15, no active fins): stages, data, video, warm start, pull.
   and publishes p0 snapshots with the timestamp of arrival.
 - `tools/hitl_host.py`: `sim_model.Body`, `config_hitl` scenarios and `Faults`. A realtime accumulator mirrors
   `hitl.py:323-391`. It drives the board over CC (set-config board, reboot, arm) and prints the
-  SESSION/STAGE/DONE lines that `hitl_collect.sh` parses.
+  SESSION/STAGE/DONE lines that `hitl_collect.sh` parses. Both `set-config` and `reboot` are SETTING-only, so
+  between scenarios the host first returns the board from DONE with `stage setting`.
 - The real mid-glide reboot (console `panic`) replaces the simulated one.
 
 **Proof**
@@ -539,8 +634,8 @@ before.
   came in M1), with the golden fixtures.
 - Servos on LEDC at 50 Hz with ≥14-bit duty. Pins are held LOW until configured, and boot centring is
   staggered by `fins.concurrency`.
-- `set_angle` compare-and-set, the fin probe sweep as a control-thread state machine (ground, disarmed only),
-  and `update <servo name> {trim|angle}`.
+- `set_angle` compare-and-set, the fin probe sweep as a control-thread state machine (SETTING, disarmed only),
+  and `update <servo name> {trim|angle}` (SETTING-only, like every `update`).
 - `flight.csv` at 10 Hz with plan B units.
 - `health.flight` vitals complete: reach, r_min_m, fins, wind, heading_error.
 
@@ -570,46 +665,64 @@ corner families are not gated on miss). All silent-success guards are kept.
 
 | id | scope |
 |---|---|
-| M15 | Firmware OTA (esp_ota over HTTP POST to the file server, gated ground and disarmed). Replaces `push-*` for the Rust image (§7, Q5). |
+| M15 | Firmware OTA over CC into the `ota_0`/`ota_1` slots that M3's partition table already has (esp_ota; SETTING-only and disarmed). Replaces `push-*` for the Rust image (§7.2, Q5). **No app rollback, ever** (`CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE=n`, pinned): with rollback, a build that has not yet confirmed itself is reverted at the next reset, so a reboot in flight could come back on the OLD build. A reset always boots the slot otadata selects; the slot changes only by an OTA in SETTING followed by a reboot on the ground, and `arm` refuses when the running slot is not the selected one. USB flashing (`flash.sh`) writes ota_0, erases otadata and invalidates ota_1, so no stale build can be selected. |
 | M16 | NEO-M8N UBX NAV-PVT (CFG-PRT baud-up, autobaud after a P4 reboot). |
-| M17 | Post-landing recovery beacon: an AP `coludo_<BOARD>_beacon` carrying the last fix (operator feature). |
+| M17 | — (the post-landing recovery beacon moved forward to M11b, before the first passive flight). |
 | M18 | Legacy parts as needed: ADXL375 (7C), BNO055, BMP280. |
 
 ---
 
 ## 3. Storage design
 
+The operator's ring (decided 2026-10-06). Power can drop at any moment, so getting every record into flash fast
+is the critical path; the SD copy comes second.
+
 ### 3.1 Data path
 
 ```
-producers (any core)                          core 0, prio 7                core 0, prio 4
- control / i2c0 / i2c1 / gnss / supervisor     ┌──────────────┐  frames     ┌──────────┐  files
- / executor  ── binary records ──► PSRAM SPSC ─►│ flash writer │──────────►  │  mover   │──────────► /sdcard/recordings/
- log bridge  ── (one ring per thread)           │ (owner of    │  24 MiB     │ (journal)│
-                                                │  `log` part.)│  `log` ring └──────────┘
-                                                └──┬────────┬──┘     ▲  cursor (2×AtomicU32 pairs)
-                                       CC tees ◄───┘        └── GC ◄─┘
+producers (any core)                          core 0, prio 7          core 0, prio 4
+ control / i2c0 / i2c1 / gnss / supervisor      ┌─────────────┐ chunks  ┌────────────┐ text + CRC
+ / executor  ── binary records ──► PSRAM SPSC ─►│ ring_writer │───────► │ ring_saver │───────────► /sdcard/recordings/
+ log bridge  ── (one ring per thread)           │ (programs)  │ 24 MiB  │  (reads)   │
+                                                └──┬──────────┘ `log`   └─────┬──────┘
+                                       CC tees ◄───┘            ring ▲        │ saver_position
+                                                                     │  ┌─────▼───────┐
+                                                               erase └──┤ ring_eraser │ core 0, prio 3
+                                                                        └─────────────┘
 video: encoder (prio 10) → 2 MB PSRAM ring → SD writer (prio 6) → /sdcard/video/<session>/   (independent)
 ```
 
-Invariants:
-1. **Exactly one owner per resource.** One writer per SPSC ring end, one owner of the `log` partition (the
-   writer), one owner of each SD recording file (the mover).
-2. **A record is always in PSRAM, in flash, or in both.** It leaves PSRAM only after its program call returns.
-   This is the operator's rule: "better to have duplicates in both than lost data".
-3. **GC never erases past the journal-committed cursor.**
-4. **No mutex on any producer path.**
+Three tasks share the `log` partition, each in one role:
+- the **ring_writer** appends binary records, verbatim (no text), into the current flash block as soon as it
+  can while the block has space (§3.3);
+- the **ring_saver** decodes the oldest unsaved block to text with the CRC wrapper and writes it to the SD,
+  below the video writer (§3.9);
+- the **ring_eraser** erases blocks behind the saver, and when the ring is full the oldest block even unsaved
+  (§3.7).
 
-The whole 24 MiB flash ring serves logging. A background GC erases blocks once they are confirmed on the SD.
-The pre-erase runs in the background, so boot is never blocked, and in the worst case PSRAM holds the data
-while blocks erase (§3.8).
+Invariants:
+1. **One role per resource.** One writer per SPSC ring end. Only the ring_writer programs the `log` partition,
+   only the ring_eraser erases it, and the ring_saver only reads it; the saver owns every SD recording file. The
+   three coordinate through two published positions (`writer_position`, `saver_position`: each two AtomicU32
+   under a seqlock) and the block table's atomics (§3.6). The flash driver serialises the operations themselves.
+2. **A record is always in PSRAM, in flash, or on the SD** (or in two of them). It leaves PSRAM only after its
+   program call returns, and its block is erased only after the saver has written and fsynced it. The one
+   exception is newest wins (§3.7): above ~99 % use the oldest unsaved block is erased, and the loss is logged.
+   Everywhere else the operator's rule holds: "better to have duplicates in both than lost data" (§3.8).
+3. **No mutex on any producer path.**
+4. **Text is made only off the flight path.** Producers and the writer move binary records; the saver (and the
+   `cc` executor, for the tees) turns them into text.
+
+The whole 24 MiB flash ring serves logging. The eraser runs in the background, so boot is never blocked, and
+PSRAM holds the records while a block erases.
 
 ### 3.2 Producer side: `Telemetry` and the PSRAM rings
 
 **Stream registry.** The registry is built during bring-up, before any thread spawns, and is then immutable.
 Each entry holds:
 - `id: u16`;
-- routing (`<session>_<file>`, or the bare `session.csv`);
+- the destination file name: the stream file without the session prefix (`imu_lsm6dso32.csv`), or the bare
+  `session.csv`;
 - the header field list;
 - `decimate_us`. A stream's own value wins when it is non-zero; 0 means use the global
   `recorder.telemetry_ms*1000`, read at use; a negative value means never decimate (`<task>_events.csv`, -1).
@@ -622,7 +735,13 @@ fn due(&self, now_us: u64) -> bool                        // false while the rec
 fn push(&mut self, now_us: u64, row: &[Value]) -> Result<(), Overflow>  // telemetry raises (policy)
 ```
 
-- The first push emits a HEADER record before the row, and always emits, whatever the decimation.
+- The first push emits a HEADER record before the row, and always emits, whatever the decimation. The HEADER
+  record carries the column list itself, so every flash block reads without the registry, even under a later
+  firmware.
+- **HEADER records are repeated:** the writer appends every registered stream's HEADER record again about once
+  per MiB written (the registry keeps their bytes, so this is a copy, not formatting). A session whose first
+  blocks newest wins erased unsaved still gets its headers within the next MiB; the saver writes a header line
+  only when a file starts or its columns change, so the repeats never reach the SD.
 - `Recorder::log(desc, msg) -> bool` is best effort and drops with a counter.
 
 **One SPSC byte ring per producing thread**, in PSRAM (`heap_caps` SPIRAM):
@@ -634,242 +753,231 @@ fn push(&mut self, now_us: u64, row: &[Value]) -> Result<(), Overflow>  // telem
 
 The config keys `recorder.tlm_capacity`, `log_capacity` and `cell_size` stay accepted and act as lower bounds.
 
-**Ring record format** (little-endian, 4-byte aligned):
+**Record format** (little-endian, 4-byte aligned). The same bytes sit in the PSRAM ring and, verbatim, in a flash
+chunk (§3.4):
 
 | off | size | field |
 |---|---|---|
-| 0 | u16 | `len` = total record bytes including this header, a multiple of 4. `0` = wrap marker (the consumer jumps to offset 0). |
-| 2 | u8 | `kind`: 1 HEADER, 2 ROW, 3 LOG, 4 LINE (a preformatted payload, e.g. a session.csv row) |
-| 3 | u8 | `flags`: bit0 durable (cut a frame right after it) |
-| 4 | u16 | `stream` (HEADER/ROW/LINE) or descriptor id (LOG; 0 = inline text) |
-| 6 | u8 | `count` = number of cells (ROW) |
-| 7 | u8 | reserved 0 |
+| 0 | u16 | `len` = total record bytes including this header and the name, a multiple of 4. `0` = the PSRAM ring's wrap marker (the consumer jumps to offset 0); never in flash. |
+| 2 | u8 | `kind`: 1 HEADER, 2 ROW, 3 LOG |
+| 3 | u8 | `flags`: bit0 durable (the writer programs it at once, §3.3) |
+| 4 | u8 | `name_len` = bytes of the destination file name |
+| 5 | u8 | `count` = number of cells (ROW), else 0 |
+| 6 | u16 | reserved 0 |
 | 8 | u64 | `uptime_us` (esp_timer, unwrapped) |
-| 16 | … | ROW cells, each `tag u8` plus payload: 0 None (prints `None`), 1 I32, 2 I64, 3 F32 (prints with Rust `Display`: shortest round-trip, never an exponent; `NaN`/`inf` allowed), 4 Bool (prints `0`/`1`), 5 E7 (i32 printed as `d.ddddddd` degrees), 6 Text (`u8 len` plus bytes; never `;`, `\n` or control bytes). LOG: `u8 desc_len`, desc, message (≤ 1 KiB, CR/LF replaced by spaces). LINE: raw payload bytes. |
+| 16 | … | The destination file name (`[A-Za-z0-9._-]{3,64}`: `imu_lsm6dso32.csv`, `session.csv`, and `recorder.log` for every LOG), then the body. HEADER: the column list text, so the record reads as `file@columns`. ROW: cells, each `tag u8` plus payload: 0 None (prints `None`), 1 I32, 2 I64, 3 F32 (prints with Rust `Display`: shortest round-trip, never an exponent; `NaN`/`inf` allowed), 4 Bool (prints `0`/`1`), 5 E7 (i32 printed as `d.ddddddd` degrees), 6 Text (`u8 len` plus bytes; never `;`, `\n` or control bytes). LOG: `u8 desc_len`, desc, message (≤ 1 KiB, CR/LF replaced by spaces). |
 
-Producers never format text. That keeps `core::fmt` (53 µs per 20-field float row) off core 1.
+There is no preformatted kind: a session.csv row is a ROW to `session.csv` with Text and integer cells.
+
+Nobody on the flight path formats text (invariant 4). That keeps `core::fmt` (53 µs per 20-field float row) off
+core 1 and off the flash path.
 
 Durable streams: `sequencer`, `separation`, `checkpoint`, `<task>_events`, session.csv rows.
 
-### 3.3 The flash writer (flash owner)
+### 3.3 The ring_writer
 
 **Placement.** One thread on core 0 at priority 7: above the video SD writer (6), below the encoder (10).
 - IDF flash programming busy-waits: L1 measured core 0 at 98.5 % when writing flat out.
-- At the real rate (~35 KB/s, about 1.75 KB per 50 ms frame, about 3.5 ms per program) that is about 7 % of
-  core 0 for programming. In flight, GC erases are paused (§3.7).
+- At the real rate (about 16 KB/s in flash, §3.13: some 160 B per 10 ms tick, one program of ~0.4 ms each, G1)
+  that is about 4 % of core 0.
 - L1 measured the opposite priority order (writer at 5) with 0 dropped frames. At 7 the writer can delay the
-  video writer by at most one frame program plus one 4 KiB erase (≤ 50 ms). The 2 MB video ring absorbs about
-  2 s. R3 confirms this (§7, R2).
+  video writer by at most one chunk program: ≤ 1.5 ms for a tick's chunk (G1), about 10 ms (estimated) for a
+  full 4 KiB chunk after a backlog. The 2 MB video ring absorbs about 2 s. R3 confirms this (§7, R2).
 
 **Loop:**
-1. Drain the rings: telemetry rings first, then log records merged by `uptime_us` across rings. A log record
-   is emitted only once it is older than a 20 ms merge horizon, so recorder.log stays in uptime order.
-2. Format each record into a line:
-   - routed: `<uptime>;v1;…;vn` with routing `<session>_<file>`;
-   - log: `<uptime_us> <desc> :: <msg>`;
-   - the status line every `stats_ms`: `<us> Recorder :: {'session': '<s>', 'tlm': {'count': n, 'max': n,
-     'dropped': n}, 'log': {…}, 'ring': {…}}`, in Python dict repr with single quotes.
-3. Tee the unwrapped line into the matching CC tee if its deadline is in the future (§3.12).
-4. Wrap it: `[@<routing>@]{OPEN};<payload>;<CLOSE>\n` (`recorder-wire.md:25-50`; `{%08x};%s;<%08x>`,
-   `tools/recorder_wire.py:75`). Append it to the open frame buffer (16 KiB, internal RAM).
-5. **Cut** the frame when any of these holds:
-   - the oldest pending record is 50 ms old;
-   - the buffer reaches 16 KiB;
-   - a durable record was appended;
-   - the frame would cross the block end.
-6. **Program** header and payload with **one** `esp_partition_write_raw` at the 8-byte-aligned offset. The
-   header comes first in address order.
-7. Publish `programmed = (block_seq, offset)` (two AtomicU32 written under a seqlock counter) for the mover.
-8. GC step (§3.7).
+1. Wait for the ~10 ms tick, or for the notify of a producer that pushed a durable record.
+2. Drain the rings: telemetry rings first, then log records merged by `uptime_us` across rings. A log record is
+   taken only once it is older than a 20 ms merge horizon, so recorder.log stays in uptime order.
+3. Copy whole records, verbatim, into one chunk while they fit in the open block (§3.4). A record never
+   straddles blocks.
+4. Copy each record whose CC tee window is open into that tee (§3.12). The writer never formats text.
+5. **Program** the chunk (header and records) with **one** `esp_partition_write_raw` at its 8-aligned offset,
+   header first in address order. G1 proved that many small programs into one page are safe (§7, R1).
+6. Release the records from their rings (invariant 2) and publish `writer_position = (block_sequence, offset)`.
+7. A record that does not fit closes the block. The writer takes the next erased block (§3.5), checks it is
+   fully erased (one 4 KiB read, ~0.4 ms), programs its header and goes on.
+   - With no erased block, records stay in PSRAM until the eraser frees one. Once a producer ring is full,
+     `Telemetry::push` returns `Err` (counted in `tlm.dropped`) and logs drop with a count.
+   - A failed program is retried at the next offset. If the failed call had landed whole, the chunk is in flash
+     twice: a duplicate (§3.8).
 
-**Power-cut bound:** 50 ms (cut age) + ≤ 17 ms (an in-progress 4 KiB erase) + the frame program (≈ 4 ms
-typical, ≤ 32 ms for 16 KiB) + ≤ 16 ms (an NVS page erase holding the flash lock). That is about 70 ms
-typical and ≤ ~115 ms worst case. Log records wait up to 20 ms more for the merge horizon (step 1), so a log
-line's worst case is ~135 ms. Moving checkpoint NVS writes to frames only (§7, Q11) would bring the row bound
-back to ~100 ms.
+**Power-cut bound** for rows: ≤ 10 ms (the tick) + ≤ 17 ms (an eraser's 4 KiB erase in progress) + ≤ 16 ms
+(an NVS page erase holding the flash lock) + ≤ 2 ms (opening a block and programming the chunk, G1). That is
+about 11 ms typical and ≤ ~45 ms worst case. Log records wait up to 20 ms more for the merge horizon (step 2),
+so a log line's worst case is ~65 ms. A durable record skips the tick: ≤ ~35 ms.
 
-### 3.4 Flash frame format (`recorder_wire::frame`)
+### 3.4 Block and chunk format (`flash_ring`)
 
-The frame is a 40-byte little-endian header at an 8-aligned offset, followed by the payload. The next frame
-starts at `align8(offset + 40 + payload_len)`.
+A block is one 4 KiB erase sector: a 56-byte header at offset 0, then appended chunks, then the erased (0xFF)
+tail. A partly filled block is valid; its FF tail is unused space.
+
+**Block header** (little-endian), programmed once, when the writer opens the block:
 
 | off | type | field |
 |---|---|---|
-| 0 | [u8;4] | magic `F7 43 52 31` (`"\xF7CR1"`; 0xF7 never occurs in UTF-8, and the magic is neither all-0 nor all-1) |
+| 0 | [u8;4] | magic `F7 43 42 31` (`"\xF7CB1"`; 0xF7 never occurs in UTF-8, and the magic is neither all-0 nor all-1) |
 | 4 | u8 | version = 1 |
-| 5 | u8 | kind: 1 DATA, 2 BOOT, 3 CONFIRM |
-| 6 | u8 | flags: bit0 spilled (waited in PSRAM for an erased block), bit1 durable cut |
-| 7 | u8 | reserved 0 |
-| 8 | u32 | payload_len |
-| 12 | u32 | block_seq |
-| 16 | u32 | boot_id (0 = uncounted) |
-| 20 | u32 | frame_seq (per boot, from 0, +1 for every kind; a gap means frames were lost) |
-| 24 | u64 | uptime_us of the first record |
-| 32 | u32 | payload_crc (zlib CRC-32; `esp_rom_crc32_le` matches) |
-| 36 | u32 | header_crc over bytes 0..36 |
+| 5 | u8 | flags: bit0 flight (opened in BOOSTING..DONE) |
+| 6 | u16 | reserved 0 |
+| 8 | u32 | block_sequence (global: +1 on every block opened, across boots) |
+| 12 | u32 | boot_id (0 = uncounted) |
+| 16 | [u8;32] | session label (§3.11), ASCII, zero-padded |
+| 48 | u32 | reserved 0 |
+| 52 | u32 | header_crc over bytes 0..52 (zlib CRC-32; `esp_rom_crc32_le` matches) |
 
-Payloads:
-- **DATA:** one or more complete wire lines. A line never splits across frames, and each line proves itself
-  after a torn frame. One boot's DATA payloads, concatenated, have the old UART stream's format and make a
-  valid `flight_telemetry` capture (the numbers are not byte-identical to MicroPython's: f32 `Display`, u64
-  uptime). A raw ring dump is not one: it carries the binary frame headers, BOOT payloads, 0xFF tails and
-  many boots, so it goes through `ring_split.py` first (as in M3).
-- **BOOT:** `boot=<id>;session=<prefix>;board=<id>;firmware=<v>;config_id=<id>;reset=<cause>;card=<vsn|none>`.
-- **CONFIRM** (24 B): moved `block_seq u32`, moved `offset u32`, `boot_id u32`, `frame_seq u32`,
-  `journal_seq u32`, `card_vsn u32` (FAT volume serial).
+**Chunk**, at an 8-aligned offset; the next starts at `align8(offset + 8 + len)`:
+
+| off | type | field |
+|---|---|---|
+| 0 | u16 | len = payload bytes; `0xFFFF` = the erased tail, no chunk here |
+| 2 | u16 | record count |
+| 4 | u32 | crc over bytes 0..4 and the payload (zlib CRC-32) |
+| 8 | … | payload: whole records (§3.2), verbatim |
+
+- A chunk whose CRC fails, or whose length runs past the block end, is **torn**: a cut during its program. It is
+  always the last chunk of its block, because a new boot never appends to an old block (§3.5). Its records count
+  as lost.
+- A record never straddles chunks or blocks, so every valid chunk decodes on its own.
+- One boot's blocks, decoded and wrapped, have the old UART stream's format and make a valid `flight_telemetry`
+  capture (the numbers are not byte-identical to MicroPython's: f32 `Display`, u64 uptime). A raw ring image is
+  not one: it holds binary blocks of many boots, so it goes through `ring_split.py` first (M3).
 
 ### 3.5 Ring geometry and block life cycle
 
-- **Partition:** `log`, found by label: 0x800000–0x2000000, 24 MiB (`partitions.csv:8`). It is accessed only
-  through `esp_partition_read`/`write_raw`/`erase_range`, and never mmap while writes run.
-- **Blocks:** 384 × 64 KiB, each 16 × 4 KiB sectors.
-- **Sequence:** a global `block_seq: u32` increases on every block open, across boots. Block `k` lives in slot
-  `k % 384`, a strict FIFO.
-- **Block layout:** every block starts at offset 0 with a BOOT frame. Frames never cross the block end, and the
-  tail stays erased (0xFF).
+- **Partition:** `log`, found by label: 0x800000–0x2000000, 24 MiB (§3.10). It is accessed only through
+  `esp_partition_read`/`write_raw`/`erase_range`, and never mmap while writes run.
+- **Blocks:** 6144 × 4 KiB, one erase sector each.
+- **Sequence:** a global `block_sequence: u32` increases on every block open, across boots, and blocks are read
+  in its order. The writer takes the next erased slot after its current one, so the ring runs as a FIFO while
+  the saver keeps up. After a newest-wins erase out of order (§3.7), slot order and sequence order can differ;
+  the block table (§3.6) maps one to the other.
 - **States:**
 
   | state | meaning |
   |---|---|
   | `ERASED` | all 0xFF |
   | `OPEN` | the writer's current block |
-  | `CLOSED` | valid, not moved |
-  | `MOVED` | `block_seq < cursor.block_seq` |
-  | erased again | by GC |
+  | `UNSAVED` | closed and valid, not yet on the SD |
+  | `SAVED` | behind `saver_position`; the eraser erases it 100–200 ms later |
+  | `FOREIGN` | an offset-0 header that is neither valid nor all 0xFF |
 
-- **A new boot never appends to a previous boot's block.** It opens slot `(max_block_seq + 1) % 384` with
-  `block_seq = max + 1`.
-- **Before the first write into a block,** the writer verifies it is fully erased (one 64 KiB read, ~6 ms). If
-  it is not, the writer spills (§3.8).
-- **Crash consistency of erase:** GC erases a block's sectors **in reverse order (15 → 0)**, so the header
-  sector goes last.
-  - A block whose offset-0 header reads all 0xFF is therefore fully erased.
-  - A block whose header is still valid but whose tail is partly erased was already moved, and is simply
-    erased again.
-- **Foreign blocks:** a block whose offset-0 header is neither valid nor all 0xFF holds at most a torn BOOT
-  frame, because blocks are written in address order with BOOT first. It carries no recoverable data and is
-  free to erase. This covers MicroPython-era VFS data and the `flashwrite` bench patterns.
+- **A new boot never appends to a previous boot's block.** It opens an erased block with
+  `block_sequence = max + 1`.
+- **Flight blocks:** the writer closes its block when the stage enters BOOSTING, so every record from BOOSTING
+  on lies in a block with the flight flag.
+- **Crash consistency of erase:** a cut during an erase leaves a block that reads as `FOREIGN`, or as a valid
+  header over damaged chunks. Either is erased again; a damaged chunk fails its CRC and never decodes as a wrong
+  record.
+- **Foreign blocks** hold nothing recoverable (MicroPython-era VFS data, the `flashwrite` and `ring` bench
+  patterns, a cut erase) and are free to erase.
 
-### 3.6 Boot scan and recovery
+### 3.6 Bring-up: the scan, the positions and the session-start record
 
-Before the writer opens its first block, with a 50 ms target and without blocking the rest of boot:
-1. Read the 40-byte header at each of the 384 block starts (~8 ms). Classify each slot as valid
-   `(block_seq, boot_id)`, `ERASED` or `FOREIGN`.
+One bring-up routine (`recorder.rs`) sets up all three tasks. It runs in the ring_writer thread before the first
+append, so the rest of boot goes on and the producers queue in PSRAM meanwhile:
+1. Read the 56-byte header at each of the 6144 block starts (about 0.15 s, estimated; measured in M3). Classify
+   each slot as valid `(block_sequence, boot_id, session, flight)`, `ERASED` or `FOREIGN`, into the **block
+   table** (6144 entries in PSRAM) that the three tasks share through atomics.
 2. **No valid block anywhere** means an unformatted ring:
    - `degraded: ring-unformatted`;
-   - GC formats in 4 KiB reverse-order steps ahead of the writer (~100 s for 24 MiB);
-   - the writer starts as soon as slot 0 is erased (~0.3 s) and spills until then.
-3. Otherwise the writer opens the slot after the max `block_seq`.
-4. **Cursors** (computed in the background):
-   - **GC cursor** = the max of the SD journal's last COMMIT (when the card is mounted) and the newest
-     CONFIRM frame. The newest CONFIRM is found by walking the newest blocks backwards, at most 16 blocks;
-     otherwise the oldest valid block is used, which is conservative (no erase until the mover catches up).
-   - **Mover copy cursor:**
-     - a valid journal on this card gives its COMMIT;
-     - with no journal, a card whose VSN equals the newest CONFIRM's `card_vsn` gives that CONFIRM;
-     - any other card starts at the oldest valid block, so the ring is re-copied (§3.9, duplicate rule).
+   - the eraser erases the foreign blocks ahead of the writer (~15 ms each, about 90 s for 24 MiB);
+   - the writer starts as soon as one block is erased.
+3. **Writer:** the first erased block after the newest valid one, with `block_sequence = max + 1`.
+4. **Saver:** at the `saver_position` hint when it names a valid block and the mounted card is the one the
+   previous boot's session-start record names (FAT volume serial); otherwise at the oldest valid block, so a new
+   card gets everything still in flash. Saved blocks are erased within 200 ms, so a stale or lost hint costs at
+   most about a second of re-saved records: duplicates (§3.8), never lost data.
+5. **Eraser:** the saved and foreign blocks first, then its normal rule (§3.7).
+6. **Session-start record:** written once per boot to the `cfg` NVS: boot id, session label, config_id, reset
+   cause, card (VSN or none), and the ring positions this boot started from. It is what a fast start needs.
 
-### 3.7 GC and erase policy
+**Positions:** `writer_position` and `saver_position` (each `(block_sequence, offset)`) live in the `cfg` NVS as
+hints, written about once a second. The scan wins over the writer's hint; the saver's hint is its only record of
+progress, and without one it starts at the oldest valid block.
 
-- GC is owned by the writer thread (the single eraser). After each frame program, if allowed, it erases
-  **one 4 KiB sector** (13-17 ms) of the oldest `MOVED` block lying ahead of the writer, in reverse sector
-  order.
-- A 64 KiB erase (95-107 ms) is never issued while the writer is live.
-- **A block is erasable only if `block_seq < gc_cursor.block_seq`.** Unconfirmed data is never erased.
-- **Flight pause:** no erases from BOOSTING through LANDING, unless fewer than 8 blocks (512 KiB, ~15 s) are
-  erased ahead.
-- **Pad pre-erase:** the same GC runs continuously on the ground, ahead of the writer through moved blocks.
+### 3.7 The ring_eraser and newest wins
+
+- **Thread:** core 0, priority 3, the only task that erases the `log` partition. It erases one 4 KiB block per
+  call (13-17 ms); a 64 KiB erase is never issued.
+- **Normal rule:** erase each block 100–200 ms after the saver has passed it (`block_sequence` behind
+  `saver_position`), and keep about 1 % of the ring (~61 blocks, ~245 KB, about 15 s at the flight rate) erased
+  ahead of the writer.
+- **Newest wins:** above ~99 % use (fewer than ~1 % of the blocks erased or saved), the eraser erases the
+  **oldest** block even unsaved: non-flight blocks first, flight blocks only when no non-flight block is left.
+  Each such erase is logged as a loss, `<uptime> ring :: block <sequence> (boot <id>, session <s>, flight
+  <0|1>) erased unsaved`, and counted in `ring.lost`.
+  - With no card, or a dead one, the ring therefore keeps the newest ~24 MiB, about 26 min at the flight rate
+    (§3.13), and the flight's blocks outlive the pad's.
+- **No flight pause:** the eraser runs on the pad and in flight alike. One erase holds the flash at most 17 ms,
+  which the §3.3 bound includes.
+- **After DONE** the logging drops to a trickle (M11b), so the saver catches up and the eraser follows it.
 - **Budget figures:**
 
   | figure | meaning |
   |---|---|
-  | `ring_erased_s` | erased blocks ahead × 64 KiB / measured write rate |
-  | `ring_reclaim_s` | moved but not yet erased blocks, by the same measure |
-  | `arm` / `verify` gate | `ring_erased_s ≥ 300` (§7, Q10) |
+  | `ring_erased_s` | erased plus saved blocks × 4 KiB / measured write rate: the time before newest wins |
+  | `ring_unsaved_s` | unsaved blocks by the same measure: the flash→SD backlog |
+  | `arm` / `verify` gate | the erased reserve (~1 % ahead of the writer) is held; no card warns (`no-sd`), never refuses (§7.2, Q10) |
 
 - **Degraded tokens:**
 
   | token | when |
   |---|---|
-  | `ring-low` | `ring_erased_s` < 300 |
-  | `ring-full` | the writer is spilling |
-  | `ring-dirty` | salvage pending |
-  | `mover-behind` | SD mounted and lag growing for more than 60 s |
-  | `ring-unformatted` | format in progress |
+  | `ring-low` | the erased reserve ahead of the writer has fallen under ~1 % (the eraser is not keeping up) |
+  | `ring-full` | newest wins is erasing unsaved blocks |
+  | `saver-behind` | SD mounted and `ring_unsaved_s` growing for more than 60 s |
+  | `ring-unformatted` | the foreign blocks of a first boot are being erased |
 
-- Endurance is not an issue: 100k cycles × 24 MiB is about 2 years at a continuous 35 KB/s.
+- Endurance is not an issue: 100k cycles × 24 MiB is about 5 years at a continuous 16 KB/s.
 
-### 3.8 Spill
+### 3.8 Duplicates
 
-If the next slot is not fully erased:
-- the writer keeps cutting frames, numbering them normally (flags.spilled), into a 2 MiB PSRAM spill queue;
-- it programs them in order as soon as GC frees the block. Nothing is reordered or skipped.
+Duplicates between flash and the SD are fine (the operator's rule). They arise when:
+- the saver starts again from a stale `saver_position` hint, or on a new card (§3.6);
+- a program fails after its chunk has landed, and the writer programs it again (§3.3);
+- a `/ring` or image pull overlaps a session already on the SD.
 
-This is the operator's rule (invariant 2): "better to have duplicates in both than lost data". PSRAM holds the
-data while blocks erase.
+The board never removes them; the tools drop them. `tools/recorder_wire.py` keeps the first line of each
+(stream, uptime, line CRC) key (M3), and `recorder_flight`, `assemble_capture` and `flight_telemetry` read
+through it. Two different lines with the same uptime differ in their CRC, so both stay.
 
-When the spill queue and the producer rings are full, `Telemetry::push` returns `Err` (counted in
-`tlm.dropped`) and logs drop with a count.
-
-**The board never overwrites unconfirmed blocks.** Data is discarded only by the explicit, ground-only console
-command `ring discard-unconfirmed`, after an HTTP `/ring` or esptool dump.
-
-### 3.9 SD mover
+### 3.9 The ring_saver
 
 **Thread:** core 0, priority 4, below the video writer (6) and the encoder (10): on the SD, video is priority 1
-and logging priority 2, so the mover yields to the video writer. It reads frames in `block_seq` order with
-`esp_partition_read`, in chunks of ≤ 16 KiB, never beyond the writer's published `programmed` position.
+and logging priority 2, so the saver yields to the video writer. It reads blocks in `block_sequence` order with
+`esp_partition_read`, one 4 KiB read per block, never past the writer's published `writer_position`. Every boot
+resumes the copy as soon as a card is present, and after DONE the saver keeps emptying the flash to the SD for as
+long as the board is powered.
 
-**Demux** (recorderd's rule, `recorderd.cpp:153-182`, plus new mover limits):
-- Check `header_crc` and `payload_crc`.
-- BOOT sets the current session directory. CONFIRM is skipped.
-- For each DATA line:
-  - recorderd's rule: a line starting with `@` whose next `@` at position 4 or later closes the routing (so it
-    is at least 3 characters, and an `@` among its first three is kept) is appended to
-    `<session dir>/<routing>`, as the bytes after that `@`. recorderd also drops every byte below 0x0A before demuxing (`recorderd.cpp:209-211`).
-  - New mover rules, not recorderd's: the routing must match `[A-Za-z0-9._-]{3,64}` (no `/`). They differ from
-    recorderd only on damaged or unusual lines.
-  - The routing `session.csv` goes to **both** `<session dir>/session.csv` and the global
-    `/sdcard/recordings/session.csv`.
-  - Anything else goes to `<session dir>/recorder.log`.
-- **Torn frame** (payload CRC fails): keep each line whose wrapper verifies under its own routing
-  (`recorder_wire.verify`) and count the rest as lost.
-- **Torn header:** scan forward on 8-byte alignment for the next valid header and salvage lines in between the
-  same way.
-- Every loss is logged into recorder.log as a full log line, `<uptime> ring :: frame <boot>/<seq>: k salvaged,
-  m lost`, wrapped with `recorder_wire.wrap` (as `assemble_capture` does for its own host lines). An unwrapped
-  line in a wrapped session counts as rejected damage in `recorder_flight` and `flight_telemetry`.
+**Decode:**
+- Check the block header. It names the session (the directory) and the boot.
+- Walk the chunks and check each CRC. A torn chunk ends the block (§3.4).
+- Turn each record into its line with `recorder_wire`: a ROW prints `<uptime>;v1;…;vn`, a HEADER its column
+  list, a LOG `<uptime_us> <desc> :: <msg>` (§3.11). Wrap it with its routing, `<session>_<file>` (the bare
+  `session.csv` for the index): `{OPEN};<payload>;<CLOSE>\n` (`recorder-wire.md:25-50`; `{%08x};%s;<%08x>`,
+  `tools/recorder_wire.py:75`). These are the bytes recorderd wrote.
+- Route it as recorderd did (`recorderd.cpp:153-182`):
+  - a stream line to `<session dir>/<session>_<file>`;
+  - `session.csv` to **both** `<session dir>/session.csv` and the global `/sdcard/recordings/session.csv`;
+  - a LOG line to `<session dir>/recorder.log`.
+- A file name must match `[A-Za-z0-9._-]{3,64}` (no `/`); a record whose name does not goes to recorder.log.
+- Every loss is logged into recorder.log as a full log line, `<uptime> ring :: block <sequence>: torn chunk at
+  <offset>, k records lost`, wrapped with `recorder_wire.wrap` (as `assemble_capture` does for its own host
+  lines). An unwrapped line in a wrapped session counts as rejected damage in `recorder_flight` and
+  `flight_telemetry`.
 
-**Batches** are ≤ 2 s or 256 KiB on the pad and ≤ 1 s in flight. **A batch never spans two sessions** and
-touches at most 32 files. Order per batch:
-1. Write and fsync a journal **INTENT** `{journal_seq, card_vsn, from, to, [(path, size_before)…]}`.
-2. Append each file's bytes from PSRAM in writes of up to 32 KiB (a 1 s flight batch holds only a few KB per
-   file), then `fsync` every touched file. This is the conservative one of the two fixes; the other is to
-   batch per file across a longer window.
-3. Write and fsync a **COMMIT** `{journal_seq, to}`, where a cursor is `{block_seq, offset, boot_id,
-   frame_seq}`.
-4. Publish the cursor to the writer (two AtomicU32 pairs under a seqlock). The writer writes a CONFIRM frame,
-   and GC may then erase older blocks.
+**Batches** are ≤ 1 s of blocks or 64 blocks (256 KiB), whichever comes first. **A batch never spans two
+sessions** and touches at most 32 files. Order per batch:
+1. Append each file's lines in writes of up to 32 KiB.
+2. `fsync` every touched file.
+3. Advance and publish `saver_position` past the batch. The eraser may erase those blocks 100–200 ms later.
 
-**Journal:** `/sdcard/coludo/mover.journal`, two 4 KiB slots A and B.
-- Each record (magic `CJN1`, version, `journal_seq`, kind INTENT/COMMIT, `card_vsn`, cursors, entries,
-  CRC-32) is written to the slot **not** holding the latest valid record. The order is INTENT(k) < COMMIT(k) <
-  INTENT(k+1).
-- **Recovery:** read both slots and take the newest valid record.
-  - INTENT(k): `ftruncate` each listed file to `size_before`, then redo from `from`.
-  - COMMIT(k): the cursor is `to`.
-  - A torn write leaves the other slot's previous record, and both cases above stay correct.
-  - Without this rule, a power cut at landing (the normal end of a session) would re-move a batch of data
-    rows. The duplicated rows' uptime goes backwards: `recorder_flight` reads that as a reboot and splits the
-    boot, and `flight_telemetry` files the duplicates out of order. A duplicated header, and so a spliced
-    flag, happens only if the interrupted batch was the session's first.
+There is no journal. A cut inside a batch re-saves it at the next boot from `saver_position`: duplicates (§3.8).
+Before its first append to a file after boot, the saver ends a torn last line with `\n`, so the fragment stays a
+line of its own (counted as damage by the tools) and never merges with a re-saved line.
 
-**Duplicate rule.** On a card with no journal, if a target session directory already exists, the mover writes
-into `<session>.r<k>/` (k = first unused) and logs it. It never truncates or appends to files it did not
-create.
-
-**Handles:** the mover opens and closes files per batch, which is acceptable with per-session directories.
-`max_files` goes to 40 for video, HTTP reads and the mover together, with `CONFIG_FATFS_FS_LOCK` at least as
+**Handles:** the saver opens and closes files per batch, which is acceptable with per-session directories.
+`max_files` goes to 40 for video, HTTP reads and the saver together, with `CONFIG_FATFS_FS_LOCK` at least as
 large (M4). Nothing on the link or health path touches FatFs.
 
 ### 3.10 SD and flash file layout
@@ -884,12 +992,11 @@ large (M4). Nothing on the link or health path touches FatFs.
       recorder.log                   this session's unrouted lines (status line carries 'session': '000123')
       session.csv                    this session's index rows
   video/<session>/<start uptime ms>.h264   (exists; raw Annex-B, SEI per frame)
-  coludo/mover.journal
 ```
 
 A pulled session directory, with the global `session.csv` copied over the per-session one, is a drop-in
 replacement for a Luckfox `/userdata/recordings` dump. `recorder_flight.py <dir> --session <s> -o <out>` and
-`assemble_capture.py <s> <dir> <out.txt> [note]` use it unchanged.
+`assemble_capture.py <s> <dir> <out.txt> [note]` use it unchanged, apart from the duplicate filter (§3.8).
 
 Per-session directories avoid FatFs's linear `f_open` scan, and the FAT32 limit of 65 536 entries per
 directory that a flat layout reaches after about 1 400 boots.
@@ -898,14 +1005,31 @@ File names are long (FatFs LFN, already on in `sdkconfig.defaults`), because the
 routing. 32 GB cards are the safe size. A 64 GB card can be one FAT32 volume (`mkfs.vfat -F 32`); no split is
 needed.
 
-**Flash partitions** (proposal, `partitions.csv`):
-- `nvs` stays at 0x9000/0x6000, shared with MicroPython: boot count, calibrations, crumb.
-- **New `cfg`** is an NVS partition at **0x7E0000, size 0x20000**. It holds blobs `board` and `launch`, plus
-  the `creds` namespace.
-- 0x410000–0x7E0000 stays free for a later OTA slot (§7, Q5).
-- `log` is unchanged.
+**Card preparation** (the operator's option): `tools/sd_prepare.sh` discards the whole card, then writes one FAT32
+partition over 25–50 % of it and leaves the rest untouched, as spare area for the card's controller. The firmware
+mounts the first partition and never formats a card.
+
+**Flash partitions** (`partitions.csv`, decided 2026-10-06):
+
+| partition | type | offset | size | holds |
+|---|---|---|---|---|
+| `nvs` | nvs | 0x9000 | 0x6000 | unchanged, shared with MicroPython: boot count, calibrations, crumb |
+| `phy_init` | phy | 0xF000 | 0x1000 | |
+| `otadata` | ota | 0x10000 | 0x2000 | which app slot boots |
+| `ota_0` | app | 0x20000 | 0x300000 | 3 MB app slot (the image is 1.6 MB today) |
+| `ota_1` | app | 0x320000 | 0x300000 | 3 MB app slot, for OTA (M15) |
+| `cfg` | nvs | 0x620000 | 0x100000 | 1 MB: blobs `board` and `launch`, the `creds` namespace, the session-start record, the ring positions |
+| `log` | data | 0x800000 | 0x1800000 | unchanged: the 24 MiB ring |
+
+- `flash.sh` writes the app to `ota_0` and erases `otadata`, so the bootloader boots `ota_0`. OTA itself comes
+  later, over CC (M15).
+- `tools/provision.sh` reads the `cfg` row from `partitions.csv`, so it follows the move. A board flashed with the
+  old table (the taster) is re-provisioned once.
+- 0x720000–0x800000 stays free.
 
 ### 3.11 Row, log and index text (byte rules)
+
+The saver prints records by these rules, and so does the `cc` executor for the tees.
 
 - **uptime:** `esp_timer_get_time()` µs as an unwrapped u64 everywhere. There is no 2³⁰ wrap, and CLOSE uses
   `U mod 2³²`.
@@ -923,7 +1047,7 @@ needed.
     after Recorder start). The header goes out again before the boot and anchor rows.
   - `utc` and `utc_offset` are empty before 2001-01-01, and `utc_offset` is empty outside −720..+840.
   - Text cells are emptied unless printable ASCII, without `;`, and at most 32 characters (`recorder.py:76-110,602-697`).
-- **Session prefix:**
+- **Session prefix**, fixed at boot and carried in every block header:
   1. a valid `recorder.session` label (ASCII letters, digits and `-`, at least one letter, at most 32
      characters);
   2. else `%06u` of NVS `coludo/boot`;
@@ -931,29 +1055,32 @@ needed.
 
 ### 3.12 CC tees and the HTTP exits
 
-- **Tees:** `Tee { deadline_ms: AtomicU32, ring: SPSC (writer → executor, 1024 × 256 B in PSRAM), dropped: AtomicU32 }`,
+- **Tees:** `Tee { deadline_ms: AtomicU32, ring: SPSC (writer → executor, 256 KiB in PSRAM), dropped: AtomicU32 }`,
   one for logs and one for telemetry. The deadline is a wrapping u32 in uptime milliseconds (0 = closed), as
-  M1's log tee already does: the P4 has no 64-bit atomics (§4).
+  M1's log tee already does: the P4 has no 64-bit atomics (§4). While a window is open, the writer copies each
+  matching record into the tee, verbatim; the `cc` executor formats the records when it drains.
   - `log [ms]` / `tlm [ms]` drain what was buffered since the last call and re-arm the window for `ms` more
     (default 1000; 0 or less stops it). A lapsed window is discarded on the next tee.
   - Replies are `ok {"lines":[…],"dropped":n}` and `ok {"samples":["@<session>_<file>@<row>",…],"dropped":n}`,
-    without the CRC wrapper. A full tee (1024 × 256 B = 262 144 B) is about 350 KB in base64, plus JSON
-    quoting; typical ~100 B rows give ~140 KB. Either is well under the hub's 2 MiB line limit.
+    without the CRC wrapper. A full tee (256 KiB of records) prints as about 600 KB of text, about 0.9 MB in
+    base64 with JSON quoting: under the hub's 2 MiB line limit.
 - **`GET /sd/recordings/…`** exists (`files.rs`). The listing format is `<name>;<bytes>`.
-- **`GET /ring[?boot=N]`** streams valid DATA lines in `block_seq` order, a byte-exact wire capture.
-  `tools/ring_split.py` demuxes it, and an `esptool read_flash 0x800000 0x1800000` image, into a session
-  directory. This is the recovery path when the card failed in flight, and the confirmation step before any
-  forced ring discard.
+- **`GET /ring[?boot=N]`** streams every valid block decoded to wire lines (`[@<routing>@]{OPEN};…;<CLOSE>`,
+  the saver's text with its routing) in `block_sequence` order: a byte-exact wire capture.
+- **`GET /ring/image`** streams the raw 24 MiB partition, as `esptool read_flash 0x800000 0x1800000` reads it.
+- `tools/ring_split.py` turns either into session directories. This is the recovery path when the card failed
+  in flight.
 
 ### 3.13 Budget (v0.1 sensor set at the true Rust rates)
 
 | item | value |
 |---|---|
-| rows | ~375 rows/s × ~68 B on SD ≈ 26 KB/s; in flash with routing ≈ 35 KB/s |
-| ring holds | 24 MiB / 35 KB/s ≈ 11.7 min with no SD progress (≈ 4 min if the IMUs go to 1 kHz) |
-| flash busy | program ≈ 7 % (flight). GC on the pad: ≈ 13 % more just to keep pace with the writer (35 KB/s ÷ 4 KiB ≈ 8.5 sectors/s × ~15 ms), but the §3.7 rule (one sector after every frame program) gives 20 sectors/s × 13-17 ms = 26-34 % at a 50 ms cut while a moved-block backlog exists |
-| core 0 | video 13 % + writer ≈ 9 % (program + format) + mover < 1 % + link/health ≈ 1 % |
-| frame overhead | ≈ 800 B/s at a 50 ms cut |
+| rows | ~375 rows/s. On the SD as text ≈ 26 KB/s (~68 B a line, unchanged). In flash as binary records ≈ 14.6 KB/s: about 2.4× denser than the 35 KB/s of routed text |
+| chunk and block overhead | ≈ 1.2 KB/s at a 10 ms tick (an 8 B chunk header and its padding per chunk, a 56 B header per block): ≈ 16 KB/s in flash in all |
+| ring holds | 24 MiB / 16 KB/s ≈ 26 min with no SD progress (≈ 9 min if the IMUs go to 1 kHz) |
+| flash busy | program ≈ 4 %; erase ≈ 6 % to keep pace (16 KB/s ÷ 4 KiB ≈ 4 blocks/s × ~15 ms); saver reads < 1 % |
+| core 0 | video 13 % + writer ≈ 4 % (program only) + eraser ≤ 6 % + saver ≈ 2 % (decode, format, SD writes) + link/health ≈ 1 % |
+| after DONE | a trickle (GNSS at 1 Hz, the beacon's sources, health); the saver drains the backlog at SD speed |
 
 ---
 
@@ -995,13 +1122,14 @@ or becomes a wrapping u32 in milliseconds (M1's log tee does that).
 | `i2c0` | 1 | 18 | I2C port 0 sensor devices (SEN0697, INA226 on v1.x; ICP, SDP810, laser on v0.1, …); the camera SCCB shares the bus handle | ISR notify + rate-monotonic table by tick count |
 | `i2c1` | 1 | 17 | I2C port 1 (ICP, SDP810, laser on v1.x; INA226 on v0.1) | same |
 | `gnss` | 1 | 14 | UART2 receiver, NMEA/UBX | blocking read with timeout |
-| esp_hosted, Wi-Fi, lwIP | 0* | 18-23 | IDF; off from BOOSTING through LANDING (M7) | — |
+| esp_hosted, Wi-Fi, lwIP | 0* | 18-23 | IDF; off from BOOSTING through LANDING (M7); the beacon AP at DONE (M11b) | — |
 | `video encoder` | 0 | 10 | exists | camera |
 | `supervisor` | 0 | 9 | TWDT feed, health 1 Hz, checkpoint (NVS), gnss_calib, field, Mission | 100 ms base tick |
-| `flash writer` | 0 | 7 | `log` partition, ring consumers, tees, GC | drain loop, ≤ 10 ms wait |
+| `ring_writer` | 0 | 7 | programs the `log` partition; ring consumers, tees | ~10 ms tick, or a durable record's notify |
 | `video SD writer` | 0 | 6 | exists | — |
 | `cc` executor, `link`, `console`, httpd | 0 | 5 | command table; Wi-Fi + hub socket; UART0; HTTP | blocking |
-| `mover` | 0 | 4 | SD recording files, journal | batches |
+| `ring_saver` | 0 | 4 | reads the `log` partition; SD recording files | batches |
+| `ring_eraser` | 0 | 3 | erases the `log` partition | the saver's progress and the erased reserve |
 | `sim_link` (HITL only) | 0 | 12 | UDP; p0 snapshots | frames |
 
 \* lwIP's TCP/IP task (priority 18) is pinned to core 0 (`CONFIG_LWIP_TCPIP_TASK_AFFINITY_CPU0`, done in M1).
@@ -1041,7 +1169,8 @@ Bus owners run their tables on the same notify:
 - the ICP is a two-phase state machine (issue 0x48A3, collect ≥ 12 ms later);
 - mailboxes (Probe, Calibrate, Update{ground, zero_offset_pa, rezero}, Bustune) are serviced between
   transactions;
-- a general call is followed by `rearm()` on **every** device registered on that port.
+- a general call is followed by `rearm()` on **every** device registered on that port, found by membership,
+  never by a hard-coded list (M5).
 
 ### 4.4 CC executor and request plumbing
 
@@ -1057,8 +1186,9 @@ Bus owners run their tables on the same notify:
 1. NVS and the boot count (exists). Latch the reset reason. If the clock reads before 2000, set it to
    2000-01-01 + uptime.
 2. Config load from `cfg` → `BootSource`.
-3. **Storage first:** SD mount (exists), recorder registry and rings, writer thread (the boot scan runs in it),
-   `log` bridge, provenance line `boot: board <id> | firmware <v> | config <id> <source> | reset_cause <n> |
+3. **Storage first:** SD mount (exists), recorder registry and rings, the ring_writer thread (the bring-up scan
+   runs in it, writes the session-start record, then starts the ring_saver and the ring_eraser, §3.6), `log`
+   bridge, provenance line `boot: board <id> | firmware <v> | config <id> <source> | reset_cause <n> |
    boot <id> | session <s>`.
 4. Buses created on core 1 by their owner threads, which are spawned parked. `layout.resolve` by scan
    (100 kHz probes). Cache the post-layout `config_id`.
@@ -1067,12 +1197,16 @@ Bus owners run their tables on the same notify:
    `provides`. Then the alternatives pass.
 7. Freeze the databoard topology and the inspector (`Box::leak` → `&'static`).
 8. `warm.rs` restore, before any flight-relevant thread runs.
-9. Unpark the bus owners. Spawn control (core 1), supervisor, mover. Arm the gptimer. Reconfigure the TWDT to
+9. Unpark the bus owners. Spawn control (core 1) and the supervisor. Arm the gptimer. Reconfigure the TWDT to
    panic at `wdt_timeout_ms` and subscribe the supervisor to it.
 10. Console, link and httpd (as today).
 
-### 4.6 Warm-start and reset classes
+### 4.6 Warm-start, boot rules and reset classes
 
+- **Boot rules** (the operator's, 2026-10-06):
+  - any power-up after DONE (the crumb reads DONE) is a new session in SETTING, never a warm start;
+  - a crumb in BOOSTING..LANDING means a warm start, through the gate below;
+  - no crumb and speed 0 means SETTING.
 - **Gate** (`warmstart.py:132-176`):
   - the crumb has a stage and a stamp;
   - the reset is a reset class (below);
@@ -1083,10 +1217,12 @@ Bus owners run their tables on the same notify:
   `EFUSE`, and unknown are cold.
   - The P4 never reports `EXT`. An EN/CHIP_PU pulse from DTR/RTS or esptool reads as `POWERON` (or `USB` on the
     USB-Serial-JTAG), a cold boot in both plan B and Rust.
-  - On the P4, plan B's `HARD_RESET` means SW + PANIC only. The real path into the DONE + armed trap is `SW`:
-    the CC `reboot` is allowed at DONE (§7.3, Q3).
+  - On the P4, plan B's `HARD_RESET` means SW + PANIC only. Plan B's real path into the DONE + armed trap is
+    `SW`, the CC `reboot` at DONE. Rust closes it twice: `reboot` is SETTING-only, and a crumb at DONE boots a
+    new session (§7.2, Q3).
 - **NVS:** the same keys in namespace `coludo`: `crumb` (JSON ≤ 512 B) and the `stage` i32 written last. A
-  rejected gate clears the stage.
+  rejected gate clears the stage. The session-start record (technical data plus the ring positions, §3.6)
+  lives in `cfg`.
 
 ---
 
@@ -1189,7 +1325,7 @@ Bus owners run their tables on the same notify:
 | tier | commands | must pass from |
 |---|---|---|
 | core | whoami, ping, health (the full key set), unknown → badcmd, parse error → badargs, empty line → no reply, one reply per line | M1 |
-| system | reboot (ground-only, `ok` with no payload, then a whoami from a new boot: another boot_id, or an uptime shorter than the time since the `ok`) | M1 |
+| system | reboot (SETTING-only, `ok` with no payload, then a whoami from a new boot: another boot_id, or an uptime shorter than the time since the `ok`) | M1 |
 | stream | log/tlm window semantics; a window open across `probe mission` drains a line (a board only); samples `split()` GOOD with `recorder_wire` | M1 (log), M3 (tlm) |
 | config | get-config (5 names, `saved` → ok or **badargs**), set-config, reset-config | M1 (launch), M2 (board) |
 | inspect | objects, inspect (mission, gnss, servo_* `props.trim` numeric), update (`changed`), stats | M1 (mission), M13 (servos) |
@@ -1233,6 +1369,15 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
 - The `layout` scan re-clock dance: `i2c_master` speed is per device.
 
 **Changed on purpose** (each is visible; the host already accepts it):
+- **Changes only in SETTING** (the operator's rule, 2026-10-06): `update`, `set-config`, `reset-config`,
+  `calibrate <device>`, `probe`, `detect`, `bustune` and `reboot` answer `err unsafe` in every other stage, DONE
+  included; reads, `stage` and `disarm` stay open (M1). Plan B leaves `update` open in flight and allows the
+  rest at DONE. There is no reboot at DONE: the beacon and the flash→SD copy run until power-off (M11b).
+- **Storage:** binary records in a flash ring that the board copies to its own SD (§3), instead of text lines
+  over the UART to the Luckfox. With a full ring and no SD progress the newest data wins (§3.7). A line can
+  reach the SD twice; the tools drop duplicates (§3.8, a filter added in M3).
+- **DONE:** the camera and the non-essential sensors stop, the GNSS drops to 1 Hz, and the beacon AP comes up
+  (M11b). Plan B has neither.
 - **SD layout:** one directory per session instead of a flat directory (§3.10).
 - **uptime:** u64 µs with no 2³⁰ wrap. `recorder_wire.fit` reduces to k = 0 (`recorder_wire.py:268-281`);
   `recorder_flight._clock_times` does not, so the conformance case covers a session longer than 2³⁰ µs whose
@@ -1243,15 +1388,15 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
 
   | kind | tokens |
   |---|---|
-  | added | `c6-reboot-guard-missing`, `c6-link-parked`, `no-sd`, `ring-low`, `ring-full`, `ring-dirty`, `ring-unformatted`, `mover-behind`, `not-flight-capable` (until M7) |
+  | added | `c6-reboot-guard-missing`, `c6-link-parked`, `no-sd`, `ring-low`, `ring-full`, `ring-unformatted`, `saver-behind`, `not-flight-capable` (until M7) |
   | dropped | `memory-rescued` |
   | kept where the mechanism exists | `attitude-backup`, `attitude-blind`, `STAGE HELD`, `CONFIG FALLBACK -- …`, `needs-calibration`, `cc-less-fallback`, `WARM-STARTED (rebooted in flight)` |
 
 - **Crash semantics:** a panic reboots and warm-starts, instead of marking a loop DOWN and flying on with dead
   data.
 - **Wi-Fi in flight:** the radio is **off** from the detected ignition through LANDING and resumed at DONE for
-  recovery (M7; an operator stage hold leaves it up). Plan B keeps the pad link up in flight and only stops new connections. This loses in-flight
-  CC; the operator accepted that.
+  recovery, as the beacon AP (M7, M11b; an operator stage hold leaves it up). Plan B keeps the pad link up in
+  flight and only stops new connections. This loses in-flight CC; the operator accepted that.
 - **Stale values in inspect:** a stale channel reads null instead of plan B's extrapolated `value()`.
 - **HITL sensor mask:** after masking the `_SIM_SENSORS` sensors by config name, `sim_link.rs` refuses to start
   if one is still enabled; plan B only masks (M12).
@@ -1260,7 +1405,8 @@ the firmware exports (`console schema`) keeps `doc/telemetry.md` honest.
 - **`config_id` floats:** the CPython f64-repr semantics are used. Identical for every committed file (all
   floats have ≤ 7 significant digits). Plan B's announced id for the same file is cross-checked once on 7C.
 - **Mission `sites`** are kept on `set-config launch`. Plan B silently dropped them (`mission.py` `persisted()`).
-- **ICP general-call re-arm** is done by bus membership, not by the stale name list (`icp10111.py:297`).
+- **ICP general-call re-arm** re-initializes every device registered on the bus, by membership, not by the
+  stale name list (`icp10111.py:297`). Plan B gets the same patch, its one sanctioned change (M5, §7.2 Q9).
 - **INA226 `rearm()`** also restores ALERT_LIM and MASK.
 - **VL53 poll mode** checks data-ready, so a repeated range is never republished as fresh.
 
@@ -1277,70 +1423,60 @@ the keys `boot`, `crumb`, `stage`, `sdp810_zero` (i32), `bno055_calib` (22 B), `
 
 | # | risk | mitigation |
 |---|---|---|
-| R1 | Partial-page NOR programming (several program operations per 256 B page) on the GD `C84019` is assumed, not measured. | Bench gate G1 in M3. Fallback: pad frames to 256 B pages (≈ 2× flash at a 50 ms cut). |
-| R2 | The loss bound (§3.3: ~70 ms typical, ≤ ~115 ms worst for rows) needs short flash-lock holds. NVS writes (checkpoint, calibrations), mover reads and the writer share the esp_flash lock. The writer at priority 7 can briefly delay the video writer. B4 was 10 s without video. | R3: a 10 min soak at the real flight rate with FHD@25, the 1 kHz `pace`, and commit-to-commit maximum ≤ 115 ms. Q11 below. |
-| R3 | FatFs is not journaled. A power cut during FAT updates (mover or video) can damage the FAT itself, not just a file tail. | The ring keeps everything unconfirmed. `GET /ring` + `ring_split.py` recovery. Host fsck on bad cards. |
+| R1 | Partial-page NOR programming (several program operations per 256 B page) on the GD `C84019`. | **Passed** by bench gate G1 (`127bc0d`): 10 000 frames of 40-200 B appended at 8-byte alignment, 0 corrupt; 32 programs of 8 B into each of 64 pages, 0 bytes differ. Chunks stay unpadded. |
+| R2 | The loss bound (§3.3: ~11 ms typical, ≤ ~45 ms worst for rows) needs short flash-lock holds. NVS writes (checkpoint, ring positions, calibrations), saver reads, eraser erases and the writer share the esp_flash lock. The writer at priority 7 can briefly delay the video writer. B4 was 10 s without video. | R3: a 10 min soak at the real flight rate with FHD@25, the 1 kHz `pace`, and a chunk-to-chunk maximum ≤ 45 ms. The crumb stays in NVS (§7.2, Q11). |
+| R3 | FatFs is not journaled. A power cut during FAT updates (saver or video) can damage the FAT itself, not just a file tail. | The ring keeps every block until the saver has fsynced it, and the saver re-saves from its position after a cut (duplicates, §3.8). `GET /ring` + `ring_split.py` recovery. Host fsck on bad cards. |
 | R4 | The first Rust boot carries nothing from MicroPython's VFS (board.config, launch.config, `*.creds`). TMS-7F is sealed and Wi-Fi only. | `tools/provision.sh` writes the `cfg` partition (config, launch, creds) over USB with esptool, after `flash.sh` and **before** the seal. Never flash a sealed board without it. |
 | R5 | esp_hosted 2.7.0 tasks run at priority 23, unpinned (plain `xTaskCreate`); the streaming-mode length assert is still open. | lwIP's TCP/IP task is pinned to core 0 already (M1). M1b pins esp_hosted by wrapping `g_hosted_osi_funcs._h_thread_create`, the hook `components/hosted_no_reboot` uses for `_h_restart_host`. From M7 the radio is actually off from BOOSTING through LANDING in Rust (a deliberate divergence, §6; plan B keeps the pad link up). |
-| R6 | On 7C (v0.1 + SEN0697) a plan B ICP general call resets the BMI323, BMM350 and BMP581 without re-arming them. | Fixed by design in Rust. Q9 asks about plan B. |
+| R6 | On 7C (v0.1 + SEN0697) a plan B ICP general call resets the BMI323, BMM350 and BMP581 without re-arming them. | Rust re-initializes every device registered on the bus after a general call (M5). Plan B gets the same patch (M5, §7.2 Q9). |
 | R7 | `gettimeofday` surviving SW, panic and TWDT resets on the P4 is unverified, and gate 3 depends on it. | Measured in M8. Otherwise the crumb carries an RTC-memory stamp. |
 | R8 | base64 strictness differs: CPython is lenient, Rust is strict. A bad token could answer differently from the fake. | Rust answers `err badargs` (strict). The contract runner records the fake's deviation as known. |
 | R9 | Detector drift vs the host sim: `virtual_flight.py` grades the Python detectors once the board runs Rust. | `commons.json`, `sequencer_trace.json`, `control_trace_*.json` are the only guards. `generate.py --check` in CI. |
 | R10 | HITL masking: a fresh bench sensor silently becomes the only source (pitot 7/27, mag 9/16). | `sim_link.rs` masks the `_SIM_SENSORS` sensors by config name (they are sensor names, not drivers), as plan B does, and re-applies the mask after layout. It then refuses to start if one is still enabled, which is new (plan B only masks). |
-| R11 | Per-sensor axes: the LSM6DSO32 and BMI323 publish raw axes into one channel, and a failover may flip axes. gx/gy and the signs are unverified on any airframe. | M9 move-and-hold check. Q7. |
+| R11 | Per-sensor axes: the LSM6DSO32 and BMI323 publish raw axes into one channel, and a failover may flip axes. gx/gy and the signs are unverified on any airframe. | The IMUs are mounted per their marks (x forward, y left, z up), and the optional `axes` key covers an exception (§7.2, Q7). M9 move-and-hold check. |
 | R12 | Two physics implementations would repeat the sim-mirrors-flight-code trap. | `sim_model.py` stays the only physics. Rust never ports it. |
 | R13 | Silent-success harness traps (1 of 12 flown reported done; empty streams passed). | Every new runner counts artefacts and fails loudly. |
 | R14 | Port 0 is shared with the camera SCCB, and `i2c_master`'s internal mutex arbitrates. | Camera register traffic only pre-flight. Measure the bus-owner jitter with video on in M6. |
-| R15 | One reply line must stay under the hub's 2 MiB limit (`server.py:697`). | Tee capped at 1024 × 256 B (~350 KB base64 when full, plus JSON quoting). `get-config` ~10 KB. |
+| R15 | One reply line must stay under the hub's 2 MiB limit (`server.py:697`). | Tee capped at 256 KiB of records (~0.9 MB in base64 when full, with JSON quoting). `get-config` ~10 KB. |
 
 ### 7.2 Decided
 
 The operator's decisions on the earlier questions, one line each:
 - **Q1. SD layout:** one directory per session with long file names (the names carry the telemetry routing);
   video at `/sdcard/video/<session>/<start uptime ms>.h264` (§3.10).
+- **Q2. Changes in flight:** `update`, `set-config`, `reset-config`, `calibrate <device>`, `probe`, `detect`,
+  `bustune` and `reboot` run only in SETTING; reads, `stage` and `disarm` stay open; no reboot at DONE. A
+  deliberate divergence from plan B (§6).
+- **Q3. Reset at DONE:** any power-up after DONE is a new session in SETTING, never a warm start; a crumb in
+  BOOSTING..LANDING means a warm start; no crumb and speed 0 means SETTING (§4.6).
 - **Q4. `config_id` before vs after layout:** keep plan B's split, which is plan B behaviour: `set-config`
   returns the pre-layout id, `whoami` announces the post-layout one, and the boot log line names both (M5).
+- **Q5. Partitions and OTA:** `otadata` plus `ota_0` and `ota_1` of 3 MB each now, a 1 MB `cfg` at 0x620000,
+  `nvs` and `log` unchanged (§3.10). OTA itself comes later, over CC (M15).
 - **Q6. Watchdog timeout:** keep 5000 ms in board files (Python `validate` rejects < 4000) until Rust measures
   its own floor.
+- **Q7. IMU axes:** the IMUs are mounted per their marks (x forward, y left, z up); an optional per-sensor `axes`
+  key in the board config (a signed permutation such as `'-y+x+z'`, default identity) covers exceptions (M9).
 - **Q8. f64 (D18):** f32 by default. f64 needs a clear written reason and only goes into absolutely critical
   spots: lat/lon at the JSON boundary and the config document's fidelity (its internal `serde_json` f64, for
   hash and bytes only, never computed with); the ICP-10111 polynomial only if the golden f32-vs-f64
   comparison (M6) proves f32 insufficient. Never f64 for plain values such as the MCU temperature.
-- **Q10. Arm gate on ring space:** `ring_erased_s ≥ 300 s` as a constant, with no config key (YAGNI).
+- **Q9. Plan B ICP re-arm on 7C:** yes, patch plan B to re-initialize every device registered on the bus after
+  the general call, as Rust does (M5). It is the one sanctioned plan B change.
+- **Q10. Arm gate on ring space:** the eraser's reserve (~1 % erased ahead) as a constant, with no config key
+  (YAGNI). A missing or dead card does not block arm: newest wins keeps the flight (operator, 2026-10-06).
+- **Q11. The crumb:** stays in the shared `nvs` and is written as plan B writes it; a new session-start record
+  (technical data plus the ring positions) goes to `cfg` (§3.6). Their page erases are inside the §3.3 bound.
 - **Q12. Provisioning:** `tools/provision.sh` is approved as tooling. The `cfg` image is built in a temporary
   directory and never committed: it carries Wi-Fi credentials.
 - **Q13. Video:** FHD@25 (FHD@30 is encoder-bound at about 26.6 fps on P4 rev v1.3), 8 Mbit/s, IDR every 1 s.
-  Recording starts when the glider stands vertical on the rod (attitude, M9; arm until then) and stops 30 s
-  after DONE. On the SD, video is priority 1 and logging priority 2.
+  Recording starts when the glider stands vertical on the rod (attitude, M9; arm until then) and stops at DONE
+  (M11b). On the SD, video is priority 1 and logging priority 2.
 - **Q14. Apogee dwell:** port plan B's reuse of `launch_ms` faithfully (`sequencer.py:364-366`), to stay
   comparable with the HITL baselines.
+- **Q15. Post-landing beacon:** before the first passive Rust flight, as M11b: an open AP `beacon_<BOARD>` at the
+  maximum TX power, Wi-Fi only.
 
-### 7.3 Open for the operator (each with a recommendation)
+### 7.3 Open for the operator
 
-- **Q2. `update` mid-flight.** Plan B leaves `update` ungated in every stage. Object names have no wildcard
-  (`update servo_*` answers `err badargs 'no object servo_*'`), and `all` broadcasts to every board, not every
-  object. The real risk is `all update <exact servo name> {...}` or a stale dashboard selection moving a fin in
-  flight; with the radio off from BOOSTING through LANDING in Rust (§6), that exposure narrows to the console
-  and held stages. Recommended: keep `update mission` open (clock, pad), and make servo `angle`/`trim` and
-  sensor `ground`/`rezero`/`zero` **ground-only** in Rust. This is a deliberate divergence from plan B.
-- **Q3. Warm start after a SW reset at DONE?** The P4 never reports `EXT`: an EN/CHIP_PU pulse from DTR/RTS or
-  esptool reads as `POWERON` (or `USB`), a cold boot in both plan B and Rust, and plan B's `HARD_RESET` means
-  SW + PANIC on the P4. The real path into the DONE + armed ground trap is `SW`: the CC `reboot` is allowed at
-  DONE, plan B writes the crumb on entering DONE while armed, and Rust already counts SW as a reset (§4.6).
-  Should a SW reset at DONE with an armed crumb warm-start? Recommended: count SW as a reset only when the
-  crumb stage is BOOSTING..LANDING, so a reboot at DONE boots cold.
-- **Q5. OTA** (needed only by M15). The partition table has a 4 MB `factory` slot. Recommended:
-  - shrink to `ota_0` and `ota_1` of 2 MB each, plus `otadata`, all inside 0x10000–0x7E0000;
-  - `log` and `nvs` untouched;
-  - the image goes up over HTTP POST to the file server (not 256 B CC chunks), and the command is gated to
-    ground and disarmed.
-- **Q7. Optional `axes` key per sensor** (needed by M9; a signed permutation such as `'-y+x+z'`, default
-  identity). This is a schema addition, and old files stay valid. Approve before M9?
-- **Q9. Plan B fix for the ICP re-arm on 7C.** It is a real in-flight failure mode on the board that still
-  flies MicroPython in December. Fix it there (a plan B bug fix) or accept it for December?
-- **Q11. Checkpoint NVS writes in flight** add up to ~16 ms of flash-lock time per NVS page erase. Plan B writes
-  the crumb at 1 Hz while armed and airborne, and also on every stage change while armed, including entering
-  DONE after landing (the crumb behind Q3's trap). Recommended: keep NVS for the crumb (warm start needs it),
-  write it as plan B does, and accept ~115 ms worst-case loss. Alternative: a crumb frame inside the ring.
-- **Q15. Post-landing beacon** (AP `coludo_<BOARD>_beacon` with the last fix). It is scheduled as M17. Should
-  it come before the first passive Rust flight instead?
+None.
