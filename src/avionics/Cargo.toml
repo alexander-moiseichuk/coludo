@@ -22,7 +22,12 @@ base64 = { version = "0.22", default-features = false, features = ["alloc"] }
 
 [profile.release]
 debug = true  # symbols stay on the host (the .elf); the flashed image is unaffected
+# Measured on our own flight code (src/bin/cases.rs, doc/benches/avionics-20261005): O3 + fat LTO + one codegen
+# unit is the fastest of seven flag sets (geomean 415 ns vs 458 for plain O3; navigation up to 3x) AND smaller
+# than plain O3 (749 KB vs 784 KB text). The size levels (s, z) cost 1.4-1.8x, up to 15x on bit loops.
 opt-level = 3
+lto = "fat"
+codegen-units = 1
 
 [profile.dev]
 debug = true
