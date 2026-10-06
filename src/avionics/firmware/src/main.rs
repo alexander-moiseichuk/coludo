@@ -1,0 +1,34 @@
+//! Coludo project, copyright under MIT license, Alexander Moiseichuk
+//!
+//! Avionics bring-up: count the boot, open the UART console, then join Wi-Fi through the C6 and serve the
+//! CC hub forever. A panic anywhere prints its backtrace and reboots (sdkconfig: PANIC_PRINT_REBOOT).
+
+mod board;
+mod commands;
+mod console;
+mod link;
+
+use std::sync::Arc;
+
+use esp_idf_svc::eventloop::EspSystemEventLoop;
+use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_svc::nvs::EspDefaultNvsPartition;
+
+fn main() -> anyhow::Result<()> {
+    esp_idf_svc::sys::link_patches();
+    esp_idf_svc::log::EspLogger::initialize_default();
+
+    let peripherals = Peripherals::take()?;
+    let event_loop = EspSystemEventLoop::take()?;
+    let partition = EspDefaultNvsPartition::take()?;
+    let board = Arc::new(board::Board::open(partition.clone())?);
+    // the console first: installing its UART driver mid-line would cut whatever is still printing
+    console::start(
+        peripherals.uart0,
+        peripherals.pins.gpio37,
+        peripherals.pins.gpio38,
+        board.clone(),
+    )?;
+    log::info!("{}", board.banner());
+    link::run(peripherals.modem, event_loop, partition, &board)
+}

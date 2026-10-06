@@ -1,0 +1,5 @@
+# The firmware target (riscv32imafc-esp-espidf) is Tier 3: nightly + rust-src for -Zbuild-std.
+# Only here: the crates/ build on stable.
+[toolchain]
+channel = "nightly"
+components = ["rust-src", "clippy", "rustfmt"]

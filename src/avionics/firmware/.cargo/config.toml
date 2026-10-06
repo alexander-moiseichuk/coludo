@@ -1,0 +1,22 @@
+# The firmware build: ESP32-P4 (RISC-V, hard float), ESP-IDF via esp-idf-sys. Host crates do not read this.
+[build]
+target = "riscv32imafc-esp-espidf"
+
+[target.riscv32imafc-esp-espidf]
+linker = "ldproxy"
+runner = "./flash.sh"
+rustflags = ["--cfg", "espidf_time64"]
+
+[unstable]
+build-std = ["std", "panic_abort"]
+
+[env]
+MCU = "esp32p4"
+# The workspace manifest is virtual, so name the crate whose [package.metadata.esp-idf-sys] (the C6 Wi-Fi
+# components, bindings.h) esp-idf-sys must read -- without it they are silently skipped.
+ESP_IDF_SYS_ROOT_CRATE = "firmware"
+# Pinned on purpose: 6.0.0-6.0.2 broke SD + esp_hosted together, and the esp-idf crates track 5.5.
+ESP_IDF_VERSION = "tag:v5.5.5"
+# One ESP-IDF + toolchain install under ~/.espressif, shared by every checkout.
+ESP_IDF_TOOLS_INSTALL_DIR = "global"
+ESP_IDF_SDKCONFIG_DEFAULTS = { value = "sdkconfig.defaults", relative = true }

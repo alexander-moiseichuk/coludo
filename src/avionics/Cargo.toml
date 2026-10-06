@@ -1,0 +1,29 @@
+# Coludo avionics: the Rust flight firmware (Phase 6). src/glider stays the MicroPython plan B.
+#
+# One workspace, many crates:
+#  * crates/<name> -- portable crates, named after the src/glider module they port (cc_protocol, ...). They
+#    build and test on the host with stable Rust: `cargo test` here.
+#  * firmware -- the ESP-IDF binary. Its directory carries the nightly toolchain, the target and build-std,
+#    so build it from there: `cd firmware && cargo build --release` (`cargo run --release` flashes).
+[workspace]
+resolver = "3"
+members = ["crates/*", "firmware"]
+default-members = ["crates/*"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Alexander Moiseichuk"]
+
+[workspace.dependencies]
+cc_protocol = { path = "crates/cc_protocol" }
+base64 = { version = "0.22", default-features = false, features = ["alloc"] }
+
+[profile.release]
+debug = true  # symbols stay on the host (the .elf); the flashed image is unaffected
+opt-level = 3
+
+[profile.dev]
+debug = true
+opt-level = "z"
