@@ -241,6 +241,11 @@ so it must run on both.
   It is not a `deploy.sh` replacement: no wipe, one file at a time, and it cannot rescue a board
   whose new module breaks the boot — the checksum stops a corrupt file being installed, but an
   intact-and-wrong one imports and fails, and that is a USB recovery.
+- **`tools/flash_micropython.sh <image.bin> [port]`** flashes a MicroPython firmware image **without wiping
+  NVS**. The official `ESP32_GENERIC_P4-*.bin` images are merged with 0xFF over nvs (0x9000..0xEFFF), so
+  `esptool write-flash 0x2000 <image>` erases it on every reflash: the boot counter restarts (session ids
+  repeat, capture files collide on the logger) and NVS calibrations (the pitot zero) are lost. The tool
+  writes bootloader, partition table and app only; `tools/deploy.sh` follows as usual.
 - The Wi-Fi password is **not** committed: a `src/glider/<ssid>.creds` file (e.g. `panda.creds`,
   one line — the plain password) is gitignored (`*.creds`) and pushed by `tools/deploy.sh`; `wifi.py`
   reads it for the password.
