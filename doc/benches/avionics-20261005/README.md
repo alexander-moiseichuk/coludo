@@ -353,6 +353,11 @@ the flight thread's priority, 20) while 1080p25 records:
 
 * **Video leaves the flight core alone** (0 % on core 1) and costs 13 % of core 0, mostly the SD writer (FatFs +
   SDMMC at 1 MB/s) -- the one thing to optimise (larger chunks, raw sectors) if core 0 gets busy.
+* **Everything at once** (the L1 preview): 1080p25 recording + the flash ring written flat out (`flashwrite`,
+  core 0, from 16 MB up) + the 1 kHz loop on core 1 (gptimer): loop p99 9 µs, p99.9 16 µs, **max 24 µs, 0 missed**;
+  video 1484 frames, **0 dropped** (1 missed), encoder 36.4 ms, worst SD write 131 ms. Core 0 runs at 98.5 %:
+  flash programming busy-waits inside IDF -- the ring writer must batch whole pages and stay at low priority
+  (at a real ~80 KB/s of telemetry that is roughly 15 % of core 0, to measure in R3).
 * **Pacing from esp_timer is not good enough under video**: its task shares core 0 with the camera and SD traffic,
   and ticks went missing. A gptimer interrupt allocated on core 1 holds the loop within 139 µs worst case.
   The flight loop is paced by a core-1 timer interrupt (or the IMU's INT1 routed to core 1), never esp_timer.
@@ -421,6 +426,6 @@ test logged "Unrecoverable host sdio state, reset host mcu" and rebooted. Wi-Fi 
   ~1 MB allocation and an assert. Fixing that needs a patched copy of the component. Also: never call
   `esp_hosted_deinit` with the SD card mounted (2.7.0 deinits the whole SDMMC host), and decide whether a parked
   link may reboot the board on the ground (never in flight; the post-landing beacon needs Wi-Fi).
-* **Camera, next:** daylight image + orientation; B4's flash stall test with video running; the Arducam module's
-  oscillator; recording from the rod-placement event; the SD writer's 10.7 % of core 0.
+* **Camera, next:** daylight image + orientation; the Arducam module's oscillator; recording from the
+  rod-placement event; the SD writer's 10.7 % of core 0; a 10 min L1 run with real telemetry rates.
 * **Pin the nightly** (`rust-toolchain.toml` says `nightly`; it was 1.101.0-nightly 2026-10-04 here).

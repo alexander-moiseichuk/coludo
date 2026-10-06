@@ -6,7 +6,8 @@
 //! `c6reset` browns the Wi-Fi co-processor out on purpose, to prove a failing C6 link does not reboot the P4;
 //! `sdtest [megabytes] [kilobytes per second]` writes to the microSD (flat out, or paced) and reports the rate and
 //! the worst single write; `video start [width height fps kbit/s]` / `video stop` / `video stats` drive the
-//! camera recorder; `load [s]` / `pace [s]` price CPU and the flight loop's timing (src/diagnostics.rs).
+//! camera recorder; `load [s]` / `pace [s]` price CPU and the flight loop's timing, `flashwrite [s]` loads the
+//! flash ring in the background (src/diagnostics.rs).
 
 use std::io::{BufRead, Write};
 use std::sync::Arc;
@@ -105,6 +106,7 @@ fn operator(line: &str, board: &Board) -> Option<String> {
         }
         "video" => Some(video(&message.args, board)),
         "load" => Some(crate::diagnostics::load(seconds(&message.args, 5))),
+        "flashwrite" => Some(crate::diagnostics::flash_write(seconds(&message.args, 30))),
         "pace" => {
             let source = if message.args.iter().any(|arg| arg == "gptimer") {
                 crate::diagnostics::Source::Gptimer

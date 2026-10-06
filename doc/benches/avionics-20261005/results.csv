@@ -748,3 +748,10 @@ xip_from_psram;v5;pace_gptimer_core1_max;no_video;6;us
 xip_from_psram;v5;pace_gptimer_core1_p999;1080p25;18;us
 xip_from_psram;v5;pace_gptimer_core1_max;1080p25;139;us
 xip_from_psram;v5;pace_gptimer_core1_missed;1080p25;0;ticks_of_30000
+xip_from_psram;l1_preview;pace_gptimer_core1_p999;video_flash_loop;16;us
+xip_from_psram;l1_preview;pace_gptimer_core1_max;video_flash_loop;24;us
+xip_from_psram;l1_preview;pace_gptimer_core1_missed;video_flash_loop;0;ticks_of_30000
+xip_from_psram;l1_preview;video_dropped;video_flash_loop;0;frames
+xip_from_psram;l1_preview;video_missed;video_flash_loop;1;frames
+xip_from_psram;l1_preview;cpu_core0;video_flash_loop;98.5;pct
+xip_from_psram;l1_preview;cpu_core1;video_flash_loop;0.0;pct
