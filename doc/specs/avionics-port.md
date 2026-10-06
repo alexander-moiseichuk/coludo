@@ -582,7 +582,7 @@ for these parts.
 - `degraded` gains `WARM-STARTED (rebooted in flight)`.
 
 **Proof**
-- Golden `warmstart.json`: `should_restore` over every crumb, cause and age boundary, plus a torn crumb.
+- Golden `warmstart.json`: `should_restore` over every crumb, cause and age boundary, plus a torn crumb. Q19 drops the age and power-on refusals: the crate's gate changes in M8. Plan B's verdicts for those cases become listed divergences (the stage rules and the separation latch stay exact).
 - On the taster: arm, pass through BOOSTING (M7's hand-shaken launch), then hold `stage gliding` with the
   separation latch reading separated; console `panic` then returns warm into GLIDING with the same pad, and
   `gettimeofday` has survived. (Plan B writes the crumb only while armed and freezes the pad only on entry to
@@ -749,6 +749,7 @@ corner families are not gated on miss). All silent-success guards are kept.
 | M16 | NEO-M8N UBX NAV-PVT (CFG-PRT baud-up, autobaud after a P4 reboot). |
 | M17 | — (the post-landing recovery beacon moved forward to M11b, before the first passive flight). |
 | M18 | Legacy parts as needed: ADXL375 (7C), BNO055, BMP280. |
+| M21 | **Entry file: GCL at boot (operator, 2026-10-06; Q20).** `/sdcard/entry.gcl`: one GCL line per line, `#` comments. Once bring-up is done, each line runs in order through the executor (origin `entry`, the one point of injection), under the normal gates, so changes still run only in SETTING. Each line and its answer go to `recorder.log`. It replaces MicroPython's run-any-script flexibility for bench tests, soaks and HITL setup (for example `ring load seconds=600`, `video start`, `pace seconds=60`). Safety: while an entry file is present, `verify` and `arm` refuse with `entry-file`, so a bench mode never rides into a flight. Small; after M4. |
 | M19 | **uart_saver: the remote recorder (operator, 2026-10-06).** The purpose: the data survives when the MCU and its SD card are both damaged. <ul><li>The ring_saver already decodes each block into wire lines (`[@routing@]{OPEN};payload;<CLOSE>`, binary → text + CRC) for the SD. It also hands the same lines to the uart_saver, which sends them out of a UART TX in its own time. One decode, two sinks.</li><li>These are the bytes plan B sent to the Luckfox, so the frozen recorderd is the receiver as it is. The Luckfox is the test bench now. Later it becomes a physically separate flight recorder: a C3/C6 with its own battery and SD card, which could also carry the DONE beacon.</li><li>The handoff never blocks the flash→SD path:<ul><li>a bounded PSRAM byte ring (SPSC: saver in, uart_saver out);</li><li>the saver pushes without waiting. When the ring is full, the oldest undelivered lines go (recency first: the last seconds before an impact matter most), counted;</li><li>the uart_saver runs its own thread below the saver, and shares no lock with it.</li></ul></li><li>Per block, the saver hands the lines to the uart_saver before its SD write, so an SD stall does not delay what is already decoded.</li><li>With no card, the saver still walks and decodes for the uart_saver. It uses a cursor of its own: `saver_position` keeps meaning "on the SD and fsynced", so the eraser never takes a block as saved because the UART had it.</li><li>Lag: the uart_saver trails the saver, not the writer. The saver keeps up by a wide margin (≈ 26 KB/s of text against an SD that takes MB/s), so normally the lag is a block or two.</li><li>Resends after a gap or a reboot are duplicates the tools drop (§3.8).</li><li>Hardware: its own battery, and only TX + GND to the main board, so a short or brown-out there does not take it down. Mounted apart from the main board.</li><li>Link sizing: plan B's link (UART1 TX GPIO20, 921600 baud) carries ≈ 92 KB/s, against ≈ 35 KB/s of routed text at the v0.1 flight rate (§3.13): about 38 % busy, so normally nothing is dropped. 1 kHz IMUs (about 3×) need ≈ 2 Mbaud.</li><li>Open: the UART pins on the v1.x boards.</li></ul> |
 | M20 | **The separate flight recorder and its beacon (operator, 2026-10-06).** The operator builds a C6 + battery + SD card box; the receiver firmware is Rust (esp-idf on the C6, riscv32imac) and reuses `recorder_wire` (line verify, routing). It plugs in where the Luckfox sits now, and the boxes can be swapped. <ul><li>Receiver: reads the uart_saver's lines (M19), verifies each line's CRC, and writes the session layout that recorderd writes (§3.10) to its own SD card.</li><li>Beacon by data, not by protocol: the main board adds an ordinary recorder stream, `beacon.csv`. Its rows are what a finder needs, about once a second and on every change: the last good fix (latitude, longitude, GNSS altitude, fix age), every elevation source (each baro, laser AGL), the stage, and the battery voltage where an INA226 is fitted. The P4 keeps writing it through the flight and just before.</li><li>The receiver knows that one stream by its routing (`beacon.csv`) and keeps the latest row. When it beacons, it serves that position: the same page as M11b (last fix, a Google Maps link, the elevation sources) from an open AP `<BOARD>_beacon` on channel 6, at maximum TX power.</li><li>The P4 controls it (operator), all through `beacon.csv` lines:<ul><li>when it starts;</li><li>the network name: `<BOARD>_beacon`, beside the P4's own `<BOARD>_glider`;</li><li>the channel: low channels, 6 for the recorder and 3 for the P4, so the two never share one;</li><li>the page data: position, elevation from every source, stage, battery.</li></ul></li><li>It starts BEFORE launch: once the glider is installed on the rod, the P4 turns on the camera and the recorder's beacon together (the rod trigger, M9; until M9, `arm`). A P4 that dies in flight no longer matters, because no trigger is owed after launch.</li><li>Once on, it stays on until power-off. The on state and the parameters are kept in the recorder's NVS, so a recorder that reboots (an impact, a brown-out) beacons again at once, under the same name and channel. Only the P4's next session in SETTING turns it off.</li><li>The page shows the latest `beacon.csv` row: the pad position before launch, the last fix after.</li><li>Battery (ESP32-C6 datasheet v1.5, Tables 5-7 and 5-10):<ul><li>A SoftAP keeps its receiver on, so it cannot modem-sleep. Wi-Fi RX is 78 mA at any CPU clock (80 MHz is the floor for the Wi-Fi PLL). The beacon frames add about 4 mA (a ~1 ms frame at 1 Mbps every 102 ms, 354 mA at 21 dBm), so the AP draws ≈ 80-85 mA.</li><li>The modem-sleep figures (14-38 mA at 80-160 MHz) hold only with Wi-Fi clock-gated: a station between DTIMs, or the recording phase before the beacon starts.</li><li>A 120 mAh LiPo (about 85 % usable) gives ≈ 1.2 h of continuous AP, short of the 1.5-2 h search target.</li><li>Chosen (operator): Wi-Fi 1 minute on, 1 minute off. On average ≈ 41 mA plus the off-minute's draw: about 0.2 mA in light sleep, or 14 mA with the CPU idle in modem sleep. A 120 mAh cell then lasts ≈ 2.1-2.4 h, against ≈ 1.2 h always-on. The AP stays on while a phone is connected, and a searcher waits at most a minute to see it. That fits how a search goes (operator): you walk to the approximate location and circle the trees nearby, so sooner or later an on-minute is caught. The parts are more often in the grass or stuck in a tree, which is why the page shows every elevation source beside the position. A 300 mAh cell remains the option for longer searches.</li><li>The beacon frames add little either way: the receiver is the cost.</li></ul></li><li>The same `beacon.csv` rows can feed the P4's own beacon at DONE (M11b), so both beacons show one data set.</li><li>Two beacons by design: two radios, two antennas, two batteries, two mounting spots. One that is buried, shadowed or flat does not hide the glider. Both run at once from DONE (the recorder's has been on since the rod). Each has its own SSID and channel (`<BOARD>_glider` on 3, `<BOARD>_beacon` on 6), so a phone sees which one answers and the signal strength of each, which helps walking in on the glider.</li></ul> |
 
@@ -1332,16 +1333,25 @@ Bus owners run their tables on the same notify:
 
 ### 4.6 Warm-start, boot rules and reset classes
 
-- **Boot rules** (the operator's, 2026-10-06):
-  - any power-up after DONE (the crumb reads DONE) is a new session in SETTING, never a warm start;
-  - a crumb in BOOSTING..LANDING means a warm start, through the gate below;
-  - no crumb and speed 0 means SETTING.
-- **Gate** (`warmstart.py:132-176`):
-  - the crumb has a stage and a stamp;
-  - the reset is a reset class (below);
-  - `0 ≤ now − stamp ≤ 600 s` via `gettimeofday`;
-  - GLIDING and LANDING also need the separation latch read at setup.
-- **Reset classes:** `SW`, `PANIC`, `INT_WDT`, `TASK_WDT`, `WDT` and the P4-only `CPU_LOCKUP` (an in-flight
+- **Boot rules** (the operator's, 2026-10-06): plan B's warm start as closely as possible, as a simple state
+  machine on the crumb's stage. Boot looks at the situation; anything but BOOSTING..LANDING relaxes and stays where it
+  is (most testing lives in SETTING):
+  - no crumb (`stage` 0) or a crumb at SETTING: SETTING, cold and disarmed (Q16, Q17);
+  - a crumb at DONE: a new session in SETTING, never a warm start;
+  - a crumb in BOOSTING..LANDING: recover into that stage, and the normal detectors (separation, apogee, landing,
+    the timeouts) walk it on from there.
+- **Gate** (diverges from `warmstart.py:132-176`, Q19): only physical evidence can refuse.
+  - The crumb must carry a stage.
+  - GLIDING and LANDING also need the separation latch read at setup (the latch no software can fake, so a
+    nested glider never recovers into a glide).
+  - Plan B's two time and cause checks are dropped:
+    - the crumb age `0 ≤ now − stamp ≤ 600 s`: with no battery-backed RTC, a power cycle loses the time, so the boot
+      cannot know whether a crumb is fresh, and makes no assumption;
+    - the reset cause: a power-on is no longer "human hands, cold", because a battery bounce in flight is a
+      power-on too.
+  - A stale crumb from an interrupted flight therefore recovers. The state machine then walks it to DONE (a lying
+    glider reaches DONE by stillness), and the next power-up after DONE is a new session.
+- **Reset classes** (logged and kept in the session-start record; they no longer gate the warm start): `SW`, `PANIC`, `INT_WDT`, `TASK_WDT`, `WDT` and the P4-only `CPU_LOCKUP` (an in-flight
   crash) count as resets. `POWERON`, `BROWNOUT`, `DEEPSLEEP`, the P4-only `USB`, `JTAG`, `PWR_GLITCH` and
   `EFUSE`, and unknown are cold.
   - The P4 never reports `EXT`. An EN/CHIP_PU pulse from DTR/RTS or esptool reads as `POWERON` (or `USB` on the
@@ -1558,7 +1568,7 @@ the keys `boot`, `crumb`, `stage`, `sdp810_zero` (i32), `bno055_calib` (22 B), `
 | R4 | The first Rust boot carries nothing from MicroPython's VFS (board.config, launch.config, `*.creds`). TMS-7F is sealed and Wi-Fi only. | `tools/provision.sh` writes the `cfg` partition (config, launch, creds) over USB with esptool, after `flash.sh` and **before** the seal. Never flash a sealed board without it. |
 | R5 | esp_hosted 2.7.0 tasks run at priority 23, unpinned (plain `xTaskCreate`); the streaming-mode length assert is still open. | lwIP's TCP/IP task is pinned to core 0 already (M1). M1b pins esp_hosted by wrapping `g_hosted_osi_funcs._h_thread_create`, the hook `components/hosted_no_reboot` uses for `_h_restart_host`. From M7 the radio is actually off from BOOSTING through LANDING in Rust (a deliberate divergence, §6; plan B keeps the pad link up). |
 | R6 | On 7C (v0.1 + SEN0697) a plan B ICP general call resets the BMI323, BMM350 and BMP581 without re-arming them. | Rust re-initializes every device registered on the bus after a general call (M5). Plan B gets the same patch (M5, §7.2 Q9). |
-| R7 | `gettimeofday` surviving SW, panic and TWDT resets on the P4 is unverified, and gate 3 depends on it. | Measured in M8. Otherwise the crumb carries an RTC-memory stamp. |
+| R7 | Closed by Q19: the warm-start gate no longer reads the time (no RTC, no freshness assumption). The crumb's stamp is only recorded. | — |
 | R8 | base64 strictness differs: CPython is lenient, Rust is strict. A bad token could answer differently from the fake. | Rust answers `err badargs` (strict). The contract runner records the fake's deviation as known. |
 | R9 | Detector drift vs the host sim: `virtual_flight.py` grades the Python detectors once the board runs Rust. | `commons.json`, `sequencer_trace.json`, `control_trace_*.json` are the only guards. `generate.py --check` in CI. |
 | R10 | HITL masking: a fresh bench sensor silently becomes the only source (pitot 7/27, mag 9/16). | `sim_link.rs` masks the `_SIM_SENSORS` sensors by config name (they are sensor names, not drivers), as plan B does, and re-applies the mask after layout. It then refuses to start if one is still enabled, which is new (plan B only masks). |
@@ -1618,6 +1628,14 @@ The operator's decisions on the earlier questions, one line each:
   - while the board is in SETTING, the pad is CC's and the operator's to watch and handle;
   - once out of SETTING the flight must go on, so the firmware adds no guard that could stop one.
   - The golden test `a_hold_hides_the_return_to_setting` pins the behaviour.
+
+- **Q19. Warm-start gate (operator, 2026-10-06):** follow plan B's warm start as closely as possible, but as a simple
+  state machine on the crumb's stage (§4.6). Boot makes no freshness assumption, because there is no RTC: plan B's
+  crumb-age and power-on checks are dropped, and only the separation latch can refuse a glide stage.
+- **Q20. Files and the console instead of scripts (operator, 2026-10-06):** MicroPython's flexibility (any script
+  run on the board) is replaced by files on the filesystem and the console API (the Glider Command Language). An
+  **entry file** carries GCL lines that run once the board is up, to drive the image outside the usual cycle (a
+  bench test, a soak, a HITL setup). See M21.
 
 ### 7.3 Open for the operator
 
