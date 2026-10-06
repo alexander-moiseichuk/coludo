@@ -1113,39 +1113,49 @@ large (M4). Nothing on the link or health path touches FatFs.
 
 ### 3.10 SD and flash file layout
 
+**Session first, on two partitions (operator, 2026-10-06; built after M4).** Each session keeps its own
+directory, on both partitions: FAT does not like many files in one directory.
+
 ```
+Partition 1, the recordings (mounted at /sdcard):
 /sdcard/
-  recordings/
-    session.csv                      global index, every boot's rows (wrapped lines, no routing)
-    000123/                          one directory per session (the boot id %06u, or the recorder.session label)
-      000123_imu_lsm6dso32.csv       <session>_<stream>.csv, exactly the bytes recorderd wrote
-      000123_health.csv  000123_sequencer.csv  000123_flight.csv  …  000123_<task>_events.csv
-      recorder.log                   this session's unrouted lines (status line carries 'session': '000123')
+  sessions.csv                       the global index: every boot's session.csv rows (wrapped lines, no routing)
+  entry.gcl                          service files that belong to no session (M21)
+  000276/                            one directory per session (the boot id %06u, or the recorder.session label)
+    recordings/
+      000276_imu_lsm6dso32.csv       <session>_<stream>.csv, exactly the bytes recorderd wrote
+      000276_health.csv  000276_sequencer.csv  000276_flight.csv  …  000276_<task>_events.csv
+      recorder.log                   this session's unrouted lines (the status line carries 'session': '000276')
       session.csv                    this session's index rows
-  videos/<session>/<start uptime ms>.h264  raw Annex-B, SEI per frame (`videos/`, as on the Luckfox; today `video/`)
+    <kind>/                          later kinds slot in beside recordings/
+Partition 2, the videos (mounted at /sdcard/videos):
+/sdcard/videos/
+  000276/<start uptime ms>.h264      raw Annex-B, SEI per frame
 ```
 
-**Recordings and videos on separate partitions (operator, 2026-10-06; built after M4):**
-- Partition 1 holds `recordings/` and mounts at `/sdcard`. Partition 2 holds `videos/` at its root and mounts at
-  `/sdcard/videos`. IDF's VFS takes the longest matching prefix, and 14 characters fit `ESP_VFS_PATH_MAX`, so the
-  board paths stay the Luckfox's.
-- The card is initialised once and registered as one FatFs physical drive. `VolToPart` maps logical drive 0 to
-  partition 1 and drive 1 to partition 2 (`FF_MULTI_PARTITION` is on; `FATFS_VOLUME_COUNT` is 2).
-- What it buys:
-  - each volume has its own VFS lock and FatFs sync object, so the video writer and the ring_saver no longer
-    serialise on one volume lock across a whole `write`/`fsync` (a 64 KB video write held it 25-140 ms);
-  - each has its own FAT, so a power cut mid-video cannot touch the recordings' FAT;
-  - video's large allocations no longer fragment the recordings.
-- What it does not change: the SDMMC host mutex serialises single SD transactions on both volumes, and the card's
-  controller and its stalls are shared. The two streams still meet, but only per transaction.
-- A card with one partition works as today: `videos/` is a folder on partition 1.
-- `files.rs` lists `videos` in `/sd/` itself: it is a mount point, not a directory on partition 1.
-- `tools/sd_prepare.sh` writes both: partition 1 for recordings (a few GB, since ~26 KB/s of text is ~94 MB per
-  hour), partition 2 for videos up to the 25-50 % in use, and the rest left untouched as spare.
-
-A pulled session directory, with the global `session.csv` copied over the per-session one, is a drop-in
-replacement for a Luckfox `/userdata/recordings` dump. `recorder_flight.py <dir> --session <s> -o <out>` and
-`assemble_capture.py <s> <dir> <out.txt> [note]` use it unchanged, apart from the duplicate filter (§3.8).
+- **The session object.** One place maps (session, kind) to a directory, so no consumer builds a path:
+  - recordings go to `/sdcard/<session>/recordings`;
+  - videos go to `/sdcard/videos/<session>`;
+  - any later kind goes to `/sdcard/<session>/<kind>`.
+  The ring_saver asks it per block, with the session from the block header, because it also files earlier boots'
+  blocks. The camera asks it with this boot's session. A `recorder.session` label may not be `videos`.
+- **Why videos on their own partition.** The lock that matters is per volume: one VFS lock and FatFs sync object
+  per mounted FAT, held across a whole `write`/`fsync`. A 64 KB video write held it 23 ms on average, 143 ms at
+  most. On their own volume, video and the ring_saver no longer serialise on it, and each has its own FAT, so a power
+  cut mid-video (the impact) cannot tear a FAT sector that holds the chains of saved recordings. The SDMMC host
+  mutex still serialises single SD transactions on both, and the card's controller is shared: the two streams still
+  meet, but only per transaction.
+- **How the board mounts them.** The card is initialised once and registered as one FatFs physical drive.
+  `VolToPart` maps logical drive 0 to partition 1 and drive 1 to partition 2 (`FF_MULTI_PARTITION` is on;
+  `FATFS_VOLUME_COUNT` is 2). IDF's VFS takes the longest matching prefix, so `/sdcard/videos` (14 characters,
+  within `ESP_VFS_PATH_MAX`) shadows partition 1. A card with one partition still works, with `videos/` as a plain
+  directory on it.
+- **Over HTTP.** `files.rs` lists `videos` in `/sd/` itself, because it is a mount point, not a directory on
+  partition 1.
+- **Pulling a flight.** `tools/board_pull.sh` reassembles a flight on the host as `<session>/recordings/` and
+  `<session>/videos/`. `recorder_flight.py`, `assemble_capture.py` and `ring_split.py` take a session's
+  `recordings/` directory; it holds the session's `recorder.log` and `session.csv` beside the streams. They keep
+  reading Luckfox dumps (`/userdata/recordings`) as before.
 
 Per-session directories avoid FatFs's linear `f_open` scan, and the FAT32 limit of 65 536 entries per
 directory that a flat layout reaches after about 1 400 boots.
@@ -1154,9 +1164,7 @@ File names are long (FatFs LFN, already on in `sdkconfig.defaults`), because the
 routing. 32 GB cards are the safe size. A 64 GB card can be one FAT32 volume (`mkfs.vfat -F 32`); no split is
 needed.
 
-**Card preparation** (the operator's option): `tools/sd_prepare.sh` discards the whole card, then writes one FAT32
-partition over 25–50 % of it and leaves the rest untouched, as spare area for the card's controller. The firmware
-mounts the first partition and never formats a card.
+**Card preparation** (the operator's option): `tools/sd_prepare.sh` discards the whole card. It then writes partition 1 (FAT32, the recordings: a few GB, since ~26 KB/s of text is ~94 MB an hour) and partition 2 (FAT32, the videos: up to the 25–50 % of the card in use). It leaves the rest untouched, as spare area for the card's controller. The firmware mounts both and never formats a card.
 
 **Flash partitions** (`partitions.csv`, decided 2026-10-06):
 
